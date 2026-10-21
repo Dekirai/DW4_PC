@@ -26,8 +26,11 @@ namespace {
 // took its one hit), E<n> (the stage holding the exit was entered at player
 // point n, see Exit::entry), S<n> (player 1 has reached form n, shinka row:
 // BASE_ISUSE), C<n> (player 1 is form n now), L<n> (player 1 is level n or
-// more), G (the god mode test cheat is on); '!' negates an atom, '&' binds
-// tighter than '|'; no parentheses.
+// more), A<n> (player 1's swings have element n, 0 fire .. 3 dark: a chip in
+// the weapon's pockets), H<n> (player 1 holds a PWR Medal of element n),
+// R<n> (player 1 holds a weapon of rank n or more it can put on, see
+// pocket_weapon), G (the god mode test cheat is on); '!' negates an atom,
+// '&' binds tighter than '|'; no parentheses.
 // Empty = always.
 
 // The story phase the lobby scripts branch on (stagML11 start.lua and
@@ -60,6 +63,89 @@ std::size_t flags_hash(engine::Engine& engine) {
     for (const auto& [flag, value] : engine.flags())
         if (value) h = (h ^ std::size_t(flag)) * 1099511628211ull;
     return h;
+}
+
+// ---------------------------------------------------------------------------
+// Chips in the weapon's power pockets
+// ---------------------------------------------------------------------------
+// The weapon in use (POWERSOCKET 0) opens one chip pocket per rank (1..5,
+// SlotWindow::pocket_sequence: SQ_<rank>LINEOPEN), and RECALCPLAYER adds the
+// chips' TSUYOSA, CHIMEIRITSU, HPDRAIN and MPDRAIN; the first element among
+// them (abChip ZOKUSEI) is the attack element of the swings (GETPATKZOKUSEI
+// for bullet kinds outside the technique group 4xxxx). A new weapon in use
+// empties the pockets (SlotWindow::equip). The driver plays the PWR Medals:
+// chips for weapons only (WU, not BLUEAB) that raise TSUYOSA, one at a time
+// (a chip put in replaces the chips raising the same stat, 80381D20); the
+// stagML13 chip shop (n_digilfm#1, bML01011.lua -> chipshop.lua -> SUBWND
+// CHIP, program 8, shopChip) sells one of each element at every level row
+// (abChip 45 fire, 60 ice, 75 thunder, 90 dark: TSUYOSA 30, 1000 bits).
+const char* const kElements[4] = {"fire", "ice", "thunder", "dark"};
+
+// The element index (0 fire .. 3 dark) of an abChip record, -1 none.
+int chip_element(engine::DatabaseManager& db, int record) {
+    const auto element = db.text("abChip", record, "ZOKUSEI");
+    for (int e = 0; e < 4; ++e)
+        if (element == kElements[e]) return e;
+    return -1;
+}
+
+// A PWR Medal: a weapon chip that raises TSUYOSA.
+bool pwr_medal(engine::DatabaseManager& db, const engine::ItemDevice& d) {
+    return d.type == 3 && db.number("abChip", d.record, "WU").value_or(0) != 0 && db.number("abChip", d.record, "BLUEAB").value_or(0) == 0 &&
+           db.number("abChip", d.record, "TSUYOSA").value_or(0) > 0;
+}
+
+// Whether player 1 can put weapon `d` on in the weapon kind it fights with
+// (the SKILL row of the weapon in use: the bots fight with that kind's moves
+// and its skill points grow with use; SOUBI's species bit and SKILLPOINT as
+// SlotWindow::can_equip asks).
+bool weapon_fits(engine::DatabaseManager& db, const engine::GameSystem::PlayerSlot& p, const engine::ItemDevice& d) {
+    if (d.type != 0 || d.record == 276) return false; // (276: an unidentified weapon)
+    const auto& st = p.stats;
+    const auto* worn = p.device(p.power_socket.empty() ? -1 : p.power_socket[0]);
+    const int row = db.number("weapon", d.record, "SKILL").value_or(0);
+    if (worn && row != db.number("weapon", worn->record, "SKILL").value_or(0)) return false;
+    const auto soubi = std::uint32_t(db.number("weapon", d.record, "SOUBI").value_or(0));
+    return st.species >= 0 && st.species < 32 && (soubi & (1u << st.species)) != 0 &&
+           st.skill[std::size_t(std::clamp(row, 0, 8))] >= db.number("weapon", d.record, "SKILLPOINT").value_or(0);
+}
+
+// The strongest weapon of rank `rank` or more player 1 holds (worn or in the
+// folder) and can put on, -1 none.
+int pocket_weapon(engine::Engine& engine, int rank) {
+    auto* sys = engine.get<engine::GameSystem>();
+    auto* db = engine.get<engine::DatabaseManager>();
+    if (!sys || !db || !db->has_column("weapon", "SOUBI")) return -1;
+    const auto& p = sys->players[0];
+    int best = -1, best_strength = -1;
+    for (std::size_t i = 0; i < p.devices.size(); ++i) {
+        const auto& d = p.devices[i];
+        if (d.type != 0 || d.rank < rank || !weapon_fits(*db, p, d)) continue;
+        const int strength = db->number("weapon", d.record, "TSUYOSA").value_or(0) + d.value;
+        if (strength > best_strength) best = int(i), best_strength = strength;
+    }
+    return best;
+}
+
+// Elements the story's walls ask of the player's blows (no god mode: the
+// cheat run takes them from the forms' techniques, kObjectives): the cell
+// walls of dng308b1-b3 and dng309b2/b3 burn only to fire (key items 7, 8).
+struct ElementNeed {
+    int element;
+    const char* when; // a condition (see atom())
+};
+constexpr ElementNeed kElementNeeds[] = {
+    {0, "P5&!K7|P5&!K8"},
+};
+
+bool holds(engine::Engine& engine, std::string_view condition, int entry = -1);
+
+// The element the walls ahead need, -1 none.
+int wanted_element(engine::Engine& engine) {
+    if (engine.cheats().god) return -1;
+    for (const auto& need : kElementNeeds)
+        if (holds(engine, need.when, -1)) return need.element;
+    return -1;
 }
 
 // `entry`: the player point the stage holding the condition was (or will be)
@@ -105,11 +191,21 @@ bool atom(engine::Engine& engine, std::string_view text, int entry) {
                 value = text.front() == 'C' ? slot.stats.species == n : slot.stats.level >= n;
             }
         }
+    } else if (text.front() == 'A') {
+        if (auto* sys = engine.get<engine::GameSystem>()) value = sys->players[0].stats.attack_zokusei == n;
+    } else if (text.front() == 'H') {
+        auto* sys = engine.get<engine::GameSystem>();
+        auto* db = engine.get<engine::DatabaseManager>();
+        if (sys && db && db->has_column("abChip", "WU"))
+            for (const auto& d : sys->players[0].devices)
+                if (pwr_medal(*db, d) && chip_element(*db, d.record) == n) value = true;
+    } else if (text.front() == 'R') {
+        value = pocket_weapon(engine, n) >= 0;
     }
     return value != negate;
 }
 
-bool holds(engine::Engine& engine, std::string_view condition, int entry = -1) {
+bool holds(engine::Engine& engine, std::string_view condition, int entry) {
     if (condition.empty()) return true;
     for (std::size_t start = 0;;) {
         const auto bar = condition.find('|', start);
@@ -224,8 +320,23 @@ constexpr Objective kObjectives[] = {
     // in stagML12 adds a second rookie form (stagML12 n_digilff_01.lua ->
     // sin_digi.lua: Veemon -> Guilmon, shinka row 2, Petty Fire), and the
     // Digi-Lab behind her (bML01004.lua, LABO) digivolves between the two.
-    {"Guilmon form from the Digi-Elf (level 16)", "S2|K7&K8|P6|!L16", "stagml12", "talk:n_digilff#1"},
-    {"digivolve to Guilmon (fire for the cell walls)", "C2|K7&K8|P6|!S2", "stagml12", "evolve:2"},
+    // A wall takes fire from a swing or from a technique outside bullet kinds
+    // 40040..40099 (hit_g_dcellwall.lua: funcTechWazaHitCheck leaves those
+    // alone; the rookie techniques are 40000-40039).
+    // Without the test cheats the fire comes from a chip: a new form begins
+    // at level 1 (the no-cheat chain lost 18 times in a row as a level 1
+    // Guilmon in stag0301), so the player keeps Veemon, buys a fire PWR
+    // Medal at the chip shop and puts it into a pocket of its weapon (the
+    // pockets open by the weapon's rank: a rank 1+ weapon from the weapon
+    // shop, whose stock is rolled anew on every visit, or from a drop; see
+    // "Chips in the weapon's power pockets"); the Digi-Lab errand puts the
+    // weapon and the medal on (next_equip). The cheat run takes the
+    // Guilmon form's Petty Fire.
+    {"a weapon with chip pockets (rank 1+, weapon shop)", "G|A0|R1|K7&K8|P6", "stagml13", "gear:n_digilfm#0"},
+    {"a fire PWR Medal from the chip shop", "G|A0|H0|K7&K8|P6", "stagml13", "gear:n_digilfm#1"},
+    {"the fire PWR Medal into the weapon's pocket", "G|A0|K7&K8|P6", "stagml12", "equip:n_digilff#1"},
+    {"Guilmon form from the Digi-Elf (level 16)", "S2|K7&K8|P6|!L16|A0", "stagml12", "talk:n_digilff#1"},
+    {"digivolve to Guilmon (fire for the cell walls)", "C2|K7&K8|P6|!S2|A0", "stagml12", "evolve:2"},
     {"key item 7 (dng308b3 boss)", "K7|P6", "dng308b3", "explore:matz02"},
     // (Loading a save clears flags 36-66 again, stagIS10 gameStart.lua: the
     // lever and the console count as done once key item 8 is held.) Flag 56
@@ -1674,6 +1785,28 @@ double CampaignBot::equip_value(engine::Engine& engine, const engine::ItemDevice
         if (!weapon || row != skill_row || st.species < 0 || st.species >= 32 || !(soubi & (1u << st.species)) ||
             st.skill[std::size_t(std::clamp(row, 0, 8))] < cell(d, "SKILLPOINT"))
             return 0.0;
+        // The pockets: the chips of the weapon in use leave with it (a new
+        // weapon in use empties them); a weapon of rank 1+ takes the
+        // strongest PWR Medal held (next_equip puts it in).
+        int pocketed = 0, medal = 0;
+        if (db->has_column("abChip", "WU")) {
+            for (const int index : p.power_pocket)
+                if (const auto* c = p.device(index)) pocketed += db->number("abChip", c->record, "TSUYOSA").value_or(0);
+            for (const auto& c : p.devices)
+                if (pwr_medal(*db, c)) medal = std::max(medal, db->number("abChip", c.record, "TSUYOSA").value_or(0));
+        }
+        Gain off = gain(weapon), on = gain(&d);
+        off.str += weapon->rank >= 1 ? std::max(pocketed, medal) : pocketed;
+        if (d.rank >= 1) on.str += medal;
+        const double v = score(off, on) / score(off, off);
+        // An element the walls ahead need (wanted_element) comes from a chip
+        // in a pocket: no weapon without pockets replaces one with them, and
+        // one with pockets replaces one without, whatever their strength.
+        if (wanted_element(engine) >= 0) {
+            if (weapon->rank >= 1 && d.rank < 1) return 0.0;
+            if (weapon->rank < 1 && d.rank >= 1) return 10.0 * std::max(v, 0.1);
+        }
+        return v;
     } else if (st.level < cell(d, "LVPOINT")) {
         return 0.0;
     }
@@ -1686,6 +1819,7 @@ double CampaignBot::equip_value(engine::Engine& engine, const engine::ItemDevice
 
 CampaignBot::EquipPick CampaignBot::next_equip(engine::Engine& engine) const {
     auto* sys = engine.get<engine::GameSystem>();
+    auto* db = engine.get<engine::DatabaseManager>();
     if (!sys) return {};
     const auto& p = sys->players[0];
     for (int kind = 0; kind < 3; ++kind) {
@@ -1700,6 +1834,31 @@ CampaignBot::EquipPick CampaignBot::next_equip(engine::Engine& engine) const {
             }
         }
         if (pick >= 0) return {kind, pick};
+        // After the weapon a PWR Medal into a pocket of the weapon in use
+        // (kind 3; the element the walls ahead need first, then the most
+        // TSUYOSA): into the pocket of the medal it replaces, else the first
+        // empty one.
+        if (kind != 0 || !db || !db->has_column("abChip", "WU")) continue;
+        const auto* weapon = p.device(p.power_socket.empty() ? -1 : p.power_socket[0]);
+        const int open = weapon ? std::min(weapon->rank, int(p.power_pocket.size())) : 0;
+        if (open < 1) continue;
+        const int want = wanted_element(engine);
+        const auto key = [&](const engine::ItemDevice& c) {
+            return (want >= 0 && chip_element(*db, c.record) == want ? 100000 : 0) + db->number("abChip", c.record, "TSUYOSA").value_or(0);
+        };
+        int at = -1, best_key = -1;
+        for (int i = 0; i < open; ++i)
+            if (const auto* c = p.device(p.power_pocket[std::size_t(i)]); c && pwr_medal(*db, *c)) at = i, best_key = key(*c);
+        int chip = -1;
+        for (std::size_t i = 0; i < p.devices.size(); ++i) {
+            const auto& d = p.devices[i];
+            if (d.flag || !pwr_medal(*db, d) || equip_failed_.count({3, d.record})) continue;
+            if (key(d) > best_key) best_key = key(d), chip = int(i);
+        }
+        if (chip < 0) continue;
+        for (int i = 0; i < open && at < 0; ++i)
+            if (!p.device(p.power_pocket[std::size_t(i)])) at = i;
+        return {3, chip, std::max(at, 0)};
     }
     return {};
 }
@@ -1716,18 +1875,45 @@ CampaignBot::EquipPick CampaignBot::next_equip(engine::Engine& engine) const {
 // kGearReserve (for disks) the device that gains most over what is worn
 // (equip_value, at least kGearGain percent) is bought; the Digi-Lab then
 // puts it on.
-constexpr int kGearBits = 900, kGearReserve = 600, kGearGain = 8;
+// While the walls ahead need an element (wanted_element, kObjectives) the
+// weapon shop is asked for a weapon of rank 1+ of the kind in use (chip
+// pockets; the strongest the bits buy beyond the medal's 1000) and the chip
+// shop (program 8) for the cheapest PWR Medal of that element.
+constexpr int kGearBits = 900, kGearReserve = 600, kGearGain = 8, kMedalBits = 1000;
 
 int CampaignBot::next_gear(engine::Engine& engine, int program) const {
     auto* sys = engine.get<engine::GameSystem>();
     auto* db = engine.get<engine::DatabaseManager>();
     auto* windows = engine.get<engine::SubWindowManager>();
-    if (!sys || !db || !windows || (program != 6 && program != 7)) return -1;
+    if (!sys || !db || !windows || program < 6 || program > 8) return -1;
     const auto* stock = windows->shop_stock(program);
     const auto& p = sys->players[0];
     if (!stock || p.devices.size() >= 36) return -1;
     static const int buy_rank[6] = {0, 500, 1500, 6000, 12000, 24000};
     static const char* const tables[3] = {"weapon", "armor1", "armor2"};
+    const int want = wanted_element(engine);
+    if (program == 8) {
+        if (want < 0 || holds(engine, "H" + std::to_string(want))) return -1;
+        int pick = -1, cheapest = 0;
+        for (std::size_t i = 0; i < stock->size(); ++i) {
+            const auto& e = (*stock)[i];
+            if (!e || !pwr_medal(*db, *e) || chip_element(*db, e->record) != want) continue;
+            const int price = db->number("abChip", e->record, "HANBAI").value_or(0);
+            if (price > 0 && price <= p.bits && (pick < 0 || price < cheapest)) pick = int(i), cheapest = price;
+        }
+        return pick;
+    }
+    if (program == 6 && want >= 0 && pocket_weapon(engine, 1) < 0) {
+        int pick = -1, strongest = -1;
+        for (std::size_t i = 0; i < stock->size(); ++i) {
+            const auto& e = (*stock)[i];
+            if (!e || e->type != 0 || e->rank < 1 || !weapon_fits(*db, p, *e)) continue;
+            const int price = db->number("weapon", e->record, "HANBAI").value_or(0) + 100 * e->value + buy_rank[std::clamp(e->rank, 0, 5)];
+            const int strength = db->number("weapon", e->record, "TSUYOSA").value_or(0) + e->value;
+            if (price > 0 && price <= p.bits - kMedalBits && strength > strongest) pick = int(i), strongest = strength;
+        }
+        if (pick >= 0) return pick;
+    }
     // (Measured against the best held of each kind too: a device bought is
     // put on at the lab only later.)
     std::array<double, 3> held{1.0, 1.0, 1.0};
@@ -1755,10 +1941,11 @@ int CampaignBot::next_gear(engine::Engine& engine, int program) const {
 // 12 a page, at KAITORI + 25 * value (+ 250 .. 12000 by rank for weapons and
 // boards, 803A0CDC's price); equipped devices cannot be sold). Of each kind
 // the strongest unequipped device is kept (weapons per SKILL row by TSUYOSA +
-// value, boards and accessories by their MAMORI / TSUYOSA + value and MAXHP);
-// the rest goes, chips too (the driver plays no chips): bits for disks, and
-// room in the folder, which takes no drop when it holds 36. The shop is
-// visited for it once the folder holds kSellFrom devices.
+// value, boards and accessories by their MAMORI / TSUYOSA + value and MAXHP;
+// besides, the strongest weapon of rank 1+ for the chip pockets, and the
+// strongest PWR Medal of each element); the rest goes, the other chips too:
+// bits for disks, and room in the folder, which takes no drop when it holds
+// 36. The shop is visited for it once the folder holds kSellFrom devices.
 constexpr int kSellFrom = 24;
 
 int CampaignBot::next_sale(engine::Engine& engine) const {
@@ -1774,25 +1961,38 @@ int CampaignBot::next_sale(engine::Engine& engine) const {
     const auto placeholder = [](const engine::ItemDevice& d) {
         return (d.type == 0 && d.record == 276) || (d.type == 1 && d.record == 31) || (d.type == 2 && d.record == 44);
     };
-    std::map<std::pair<int, int>, std::pair<int, int>> kept; // (type, SKILL row) -> (strength, device)
+    // (type, SKILL row) -> (strength, device); (0, 100 + SKILL row) the
+    // weapons of rank 1+, (3, element) the PWR Medals.
+    std::map<std::pair<int, int>, std::pair<int, int>> kept;
+    const bool chips = db->has_column("abChip", "WU");
+    const auto keep = [&](const std::pair<int, int>& key, int strength, int index) {
+        if (const auto it = kept.find(key); it == kept.end() || strength > it->second.first) kept[key] = {strength, index};
+    };
     for (std::size_t i = 0; i < p.devices.size(); ++i) {
         const auto& d = p.devices[i];
-        if (d.flag || placeholder(d) || d.type == 3) continue;
+        if (d.flag || placeholder(d)) continue;
+        if (d.type == 3) {
+            if (chips && pwr_medal(*db, d)) keep({3, chip_element(*db, d.record)}, cell(d, "TSUYOSA"), int(i));
+            continue;
+        }
         int strength = 0;
         if (d.type == 0) strength = cell(d, "TSUYOSA") + d.value;
         else if (d.type == 1) strength = cell(d, "MAMORI") + d.value + cell(d, "MAXHP") / 4;
         else strength = cell(d, "TSUYOSA") + cell(d, "MAMORI") + d.value + cell(d, "MAXHP") / 4;
-        const std::pair<int, int> key{d.type, d.type == 0 ? cell(d, "SKILL") : 0};
-        if (const auto it = kept.find(key); it == kept.end() || strength > it->second.first) kept[key] = {strength, int(i)};
+        keep({d.type, d.type == 0 ? cell(d, "SKILL") : 0}, strength, int(i));
+        if (d.type == 0 && d.rank >= 1) keep({0, 100 + cell(d, "SKILL")}, strength, int(i));
     }
+    const auto is_kept = [&](int index) {
+        for (const auto& [key, entry] : kept)
+            if (entry.second == index) return true;
+        return false;
+    };
     for (std::size_t i = 0; i < p.devices.size(); ++i) {
         const auto& d = p.devices[i];
         if (d.flag || placeholder(d)) continue;
         int price = cell(d, "KAITORI") + 25 * d.value;
         if (d.type <= 1) price += sell_rank[std::clamp(d.rank, 0, 5)];
-        if (price < 1) continue;
-        const auto it = kept.find({d.type, d.type == 0 ? cell(d, "SKILL") : 0});
-        if (it != kept.end() && it->second.second == int(i)) continue;
+        if (price < 1 || is_kept(int(i))) continue;
         return int(i);
     }
     return -1;
@@ -2425,6 +2625,17 @@ std::optional<CampaignBot::Step> CampaignBot::next_step(engine::Engine& engine) 
         }
     if (!objective) return std::nullopt;
     const std::string here = lower(engine.stage_name());
+    // A shop objective (gear:) whose shop has run and closed in this visit
+    // without what it wants (a weapon of rank 1+ is not always in stock):
+    // the stock is rolled anew when the program starts in a later visit
+    // (a stage change empties it), so the player steps out to stagML12 and
+    // comes back.
+    static constexpr Objective kRestockErrand{"a fresh shop stock: out and back in", "", "stagml12", "wait"};
+    if (std::string_view(objective->action).rfind("gear:", 0) == 0 && here == objective->stage) {
+        const std::string_view action = objective->action;
+        const int program = action.find("n_digilff") != std::string_view::npos ? 7 : action.find("n_digilfm#1") != std::string_view::npos ? 8 : 6;
+        if (gear_visit_[std::size_t(program - 6)] == stage_frame_) objective = &kRestockErrand;
+    }
     // Survival: in the lobby a purchase due at the disk shop comes first
     // (kSupplies; the shop sells from phase 2 on, flag 1 off).
     static constexpr Objective kShopErrand{"restock at the disk shop", "", "stagml13", "shop:n_digilff#0"};
@@ -2612,11 +2823,14 @@ bool CampaignBot::answer_menu(engine::Engine& engine, const engine::ModelCtrlMan
         engine.messenger().send(engine, "SUBWND", std::nullopt, -1, "ISRUN", running);
         if (running.bools.empty() || !running.bools[0]) equip_open_ = false;
     }
+    if (!equip_open_) equip_pockets_ = false;
     // The gear errand's shop program likewise; once it has run and closed the
     // shop is looked at for this level (next_gear).
+    // (stagML13: n_digilfm#0 the weapon shop, n_digilff#1 the armor shop,
+    // n_digilfm#1 the chip shop.)
     if (step.action.rfind("gear:", 0) == 0 && !shop_open_) {
         gear_open_ = true;
-        gear_program_ = step.action.find("n_digilfm") != std::string::npos ? 6 : 7;
+        gear_program_ = step.action.find("n_digilff") != std::string::npos ? 7 : step.action.find("n_digilfm#1") != std::string::npos ? 8 : 6;
     }
     if (gear_open_) {
         engine::Packet running;
@@ -2624,8 +2838,10 @@ bool CampaignBot::answer_menu(engine::Engine& engine, const engine::ModelCtrlMan
         if (!running.bools.empty() && running.bools[0]) {
             gear_ran_ = true;
         } else if (gear_ran_ || step.action.rfind("gear:", 0) != 0) {
-            if (gear_ran_)
+            if (gear_ran_) {
                 if (auto* sys = engine.get<engine::GameSystem>()) gear_checked_[std::size_t(gear_program_ - 6)] = sys->players[0].stats.level;
+                gear_visit_[std::size_t(gear_program_ - 6)] = stage_frame_;
+            }
             gear_open_ = gear_buying_ = gear_ran_ = false;
         }
     }
@@ -2737,21 +2953,36 @@ bool CampaignBot::answer_menu(engine::Engine& engine, const engine::ModelCtrlMan
             // Chips / Remove (i_stmesscr), and in the device list (i_stfolder
             // up) the pick's page and line; everything else backed out of
             // once the pick is done or of another kind.
+            // A PWR Medal (kind 3) goes by Power Socket, its first slot,
+            // Chips (the action menu's second line, open with a weapon of
+            // rank 1+), the pocket cursor (i_stcursor01, one line per rank)
+            // the pick's pocket, Change of Change / Remove (i_stmesscr, 2
+            // lines) and the chip list (i_stfolder up, the folder's pages).
             const auto pick = next_equip(engine);
-            const bool mine = pick.device >= 0 && pick.kind == equip_kind_;
+            const int pick_kind = pick.kind == 3 ? 0 : pick.kind;
+            const bool mine = pick.device >= 0 && pick_kind == equip_kind_;
+            const bool chip = mine && pick.kind == 3;
             if (menu.name == "i_messcr") {
                 want = menu.items >= 3 ? (pick.device >= 0 ? 1 : menu.items - 1) : 0;
             } else if (menu.name == "i_stcursor02") {
-                if (pick.device >= 0) want = pick.kind;
+                if (pick.device >= 0) want = pick_kind;
                 else cancel = true;
             } else if (menu.name == "i_stcursor01" && device_list) {
-                if (!mine) {
+                if (!mine || chip != equip_pockets_) {
                     cancel = true;
                 } else if (turn_to(pick.device)) {
                     return true;
                 } else {
                     want = pick.device % 12;
                 }
+            } else if (menu.name == "i_stmesscr" && menu.items >= 3) {
+                // (The action menu: back from the pockets.)
+                equip_pockets_ = false;
+                if (mine) want = chip ? 1 : 0;
+                else cancel = true;
+            } else if (equip_pockets_ && (menu.name == "i_stcursor01" || menu.name == "i_stmesscr")) {
+                if (chip) want = menu.name == "i_stcursor01" ? std::clamp(pick.pocket, 0, std::max(menu.items - 1, 0)) : 0;
+                else cancel = true;
             } else if (menu.name == "i_stcursor01" || menu.name == "i_stmesscr") {
                 if (mine) want = 0;
                 else cancel = true;
@@ -2817,6 +3048,7 @@ bool CampaignBot::answer_menu(engine::Engine& engine, const engine::ModelCtrlMan
             // windows that follow); in the disk shop Sell or not, the sale
             // list opening (Devices) or a device sold (yes), a device picked.
             if (equip_open_ && menu.name == "i_stcursor02") equip_kind_ = want;
+            if (equip_open_ && menu.name == "i_stmesscr" && menu.items >= 3) equip_pockets_ = want == 1;
             if (gear_open_ && !equip_open_ && !heal_open_ && !shop_open_) {
                 if (menu.name == "i_stmesscr" && menu.items >= 3) {
                     gear_buying_ = want == 0;
@@ -4579,7 +4811,7 @@ CampaignBot::Output CampaignBot::play(engine::Engine& engine, const engine::Mode
             const auto& d = sys->players[0].devices[std::size_t(pick.device)];
             if (auto* db = engine.get<engine::DatabaseManager>(); db && trace())
                 std::printf("[%d] campaign: equips %s (device %d, %s) at the Digi-Lab\n", frame, db->text(engine::device_table(d), d.record, "NAME").c_str(),
-                            pick.device, pick.kind == 0 ? "weapon" : pick.kind == 1 ? "board" : "accessory");
+                            pick.device, pick.kind == 0 ? "weapon" : pick.kind == 1 ? "board" : pick.kind == 2 ? "accessory" : "chip into a power pocket");
         } else if (sys && pick.device >= 0 && frame - equip_since_ > kEquipWalk) {
             equip_failed_.insert({pick.kind, sys->players[0].devices[std::size_t(pick.device)].record});
             std::printf("[%d] campaign: the Digi-Lab did not equip device %d, left out\n", frame, pick.device);

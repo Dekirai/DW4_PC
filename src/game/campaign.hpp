@@ -84,13 +84,14 @@ private:
     int planned_spend(engine::Engine& engine) const;
     // The next device to equip at the Digi-Lab (campaign.cpp kEquipGain):
     // kind 0 the weapon in use (POWERSOCKET 0), 1 the board (MAINSLOT), 2 the
-    // accessory (SUBSLOT); device -1 when the equipment is the best held.
+    // accessory (SUBSLOT), 3 a PWR Medal into power pocket `pocket` of the
+    // weapon in use; device -1 when the equipment is the best held.
     struct EquipPick {
-        int kind = -1, device = -1;
+        int kind = -1, device = -1, pocket = -1;
     };
     EquipPick next_equip(engine::Engine& engine) const;
     double equip_value(engine::Engine& engine, const engine::ItemDevice& d) const;
-    // The stock line of a device shop (6 weapons, 7 armor) to buy, -1 none.
+    // The stock line of a device shop (6 weapons, 7 armor, 8 chips) to buy, -1 none.
     int next_gear(engine::Engine& engine, int program) const;
     // The next device to sell at the disk shop (campaign.cpp kSellFrom), -1 none.
     int next_sale(engine::Engine& engine) const;
@@ -198,6 +199,7 @@ private:
     int list_page_ = 0;          // a device list's page (lab or sale list, counted from its opening)
     int list_turn_ = 0, list_turn_at_ = -100000; // a page turn pressed (+1 / -1), when
     bool equip_folder_ = false;  // the device list was open in the last frame
+    bool equip_pockets_ = false; // Chips was chosen for the weapon in use (the pocket cursor and its menus follow)
     EquipPick equip_tried_{};    // the pick the errand began with
     int equip_since_ = -1;       // the errand's step since
     std::set<std::pair<int, int>> equip_failed_; // (kind, device record) picks the lab did not take
@@ -206,12 +208,13 @@ private:
     bool sale_confirm_ = false;  // a device was picked from the sale list (its yes follows)
     int sale_target_ = -1;       // that device
     int sale_at_ = -1;           // a device sold (the list's page follows the folder)
-    // Gear from the weapon and armor shops (next_gear).
+    // Gear from the weapon, armor and chip shops (next_gear).
     bool gear_open_ = false;     // a device shop program of the errand may be running
-    int gear_program_ = 6;       // its program (6 weapons, 7 armor)
+    int gear_program_ = 6;       // its program (6 weapons, 7 armor, 8 chips)
     bool gear_buying_ = false;   // Buy was chosen: the stock list
     bool gear_ran_ = false;      // its program was seen running
-    std::array<int, 2> gear_checked_{-1, -1}; // the level each shop was last looked at
+    std::array<int, 3> gear_checked_{-1, -1, -1}; // the level each shop was last looked at
+    std::array<int, 3> gear_visit_{-1, -1, -1};   // the stage visit (its stage_frame_) each shop last ran and closed in
     // Training (campaign.cpp kTraining).
     std::string objective_now_;  // the objective worked on (defeats raise its gate)
     std::map<std::string, int> defeat_levels_; // objective -> highest level a defeat (or a Gate Disk escape) at it came at
