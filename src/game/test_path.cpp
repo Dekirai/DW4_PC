@@ -1354,6 +1354,14 @@ void ExploreBot::plan(engine::Engine& engine, const engine::ModelCtrlManager::Mo
         }
         return clear;
     };
+    // Whether a point stands on a quicksand mat (where the sand pulls).
+    auto on_sand = [&](const engine::Vec3f& p) {
+        for (const auto& box : boxes)
+            if (p.x >= box.min.x && p.x <= box.max.x && p.z >= box.min.z && p.z <= box.max.z && p.y >= box.min.y - 5.0f &&
+                p.y <= box.max.y + 10.0f && quicksand_mat(engine, box.name))
+                return true;
+        return false;
+    };
     // How far the reached sand gets from the pits (see kSandFightMargin):
     // the enemy margin stays below it, so a small room still has enemies to
     // fight.
@@ -1592,8 +1600,16 @@ void ExploreBot::plan(engine::Engine& engine, const engine::ModelCtrlManager::Mo
             // same shells, 33 and 37.)
             if (hold && !on_hold(at)) continue;
             // Near a pit in a quicksand basin: struck only in passing (with
-            // real blows further off as well, see the hold below).
-            if (sandy && in_pit(at, std::min(kSandFightMargin, std::max(0.0f, sand_clear - 15.0f)))) {
+            // real blows further off as well, see the hold below), where the
+            // sand pulls (the enemy on a quicksand mat) or right at the pit.
+            // (An enemy off the sand is walked to: dng205b3's GENE-14 wave,
+            // eight e_mecha2 on the floor at y 35 north of the sand, some 100
+            // off the matt23 sink and staying there, was never fought; its
+            // flag 188 opens the door to Anomalocarimon, and a fresh level 21
+            // to 26 no-cheat chain gave key item 5 up ten times in 3 million
+            // frames, the wave's members respawning 1264 times meanwhile.)
+            if (sandy && in_pit(at, std::min(kSandFightMargin, std::max(0.0f, sand_clear - 15.0f))) &&
+                (in_pit(at, 15.0f) || on_sand(at))) {
                 unreachable_[e.get()] = frame + 120;
                 continue;
             }
