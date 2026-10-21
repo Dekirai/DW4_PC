@@ -229,10 +229,13 @@ constexpr Objective kObjectives[] = {
     // (Loading a save clears flags 36-66 again, stagIS10 gameStart.lua: the
     // lever and the console count as done once key item 8 is held.) Flag 56
     // needs all seven levers g_lever01z03 #0-#6 pulled in one visit
-    // (hit_g_lever01z03.lua counts them in a stage global): the nearest one
-    // not pulled yet is struck. (The full runs so far had the ExploreBot pull
-    // them all in passing; the run that did not stalled on #0 alone.)
-    {"lever (stag0301)", "F56|K8|P6", "stag0301", "strike:g_lever01z03#*"},
+    // (hit_g_lever01z03.lua counts them in a stage global). They take the
+    // talk check (talk boxes), which the ExploreBot gives every gimmick it
+    // finds: it plays the whole field until the flag is set. (The full runs
+    // so far had it pull them all in passing on the way to dng307 or
+    // stag0302; a run that did not stalled 970000 frames on strike:#0, and
+    // strike:#* also pulled none in 260000 frames among the frogs.)
+    {"lever (stag0301)", "F56|K8|P6", "stag0301", "explore:none"},
     {"console (stag0302)", "F57|K8|P6", "stag0302", "strike:g_consolez03#0"},
     {"key item 8 (dng309b4 boss)", "K8|P6", "dng309b4", "explore:matz02"},
     {"Gekomon (stag0302, flag 333)", "F333|P6", "stag0302", "talk:n_gekoa#0"},
