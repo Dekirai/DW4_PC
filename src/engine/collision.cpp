@@ -187,7 +187,7 @@ void CollisionWorld::refresh_still() const {
     memo->used = ++memo_clock_;
     if (++memo->scopes < 2) return;
     // (Bounded: a long exploration of one floor keeps adding places.)
-    if (memo->land.size() + memo->wall.size() > 1'000'000) {
+    if (memo->land.size() + memo->wall.size() > 400'000) {
         memo->land.clear();
         memo->wall.clear();
     }

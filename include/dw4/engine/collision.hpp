@@ -160,8 +160,9 @@ private:
     mutable int still_depth_ = 0;
     mutable bool still_stale_ = true;
     void refresh_still() const;
-    // Kept answers per collision state (Still): an open-addressing table
-    // keyed by the arguments' bits.
+    // Kept answers per collision state (Still): an open-addressing table of
+    // (hash, entry) slots over the entries in insertion order, keyed by the
+    // arguments' bits.
     template <std::size_t N, class Value> class Answers {
     public:
         using Key = std::array<std::uint32_t, N>;
@@ -171,28 +172,27 @@ private:
             const std::size_t mask = slots_.size() - 1;
             for (std::size_t i = std::size_t(h) & mask;; i = (i + 1) & mask) {
                 const Slot& slot = slots_[i];
-                if (!slot.used) return nullptr;
-                if (slot.hash == h && slot.key == key) return &slot.value;
+                if (!slot.entry) return nullptr;
+                if (slot.hash == h && entries_[slot.entry - 1].first == key) return &entries_[slot.entry - 1].second;
             }
         }
         // `key` must not be in the table yet.
         const Value& insert(const Key& key, Value value) {
-            if ((count_ + 1) * 2 > slots_.size()) grow();
-            const std::uint64_t h = hash(key);
-            return place(h, key, std::move(value));
+            if ((entries_.size() + 1) * 2 > slots_.size()) grow();
+            entries_.emplace_back(key, std::move(value));
+            place(hash(key), std::uint32_t(entries_.size()));
+            return entries_.back().second;
         }
-        std::size_t size() const { return count_; }
+        std::size_t size() const { return entries_.size(); }
         void clear() {
             slots_.clear();
-            count_ = 0;
+            entries_.clear();
         }
 
     private:
         struct Slot {
             std::uint64_t hash{};
-            Key key{};
-            Value value{};
-            bool used{};
+            std::uint32_t entry{}; // entries_ index + 1, 0: empty
         };
         static std::uint64_t hash(const Key& key) {
             std::uint64_t h = 0x9E3779B97F4A7C15ull;
@@ -201,23 +201,18 @@ private:
             h *= 0xC4CEB9FE1A85EC53ull;
             return h ^ (h >> 33);
         }
-        const Value& place(std::uint64_t h, const Key& key, Value value) {
+        void place(std::uint64_t h, std::uint32_t entry) {
             const std::size_t mask = slots_.size() - 1;
             std::size_t i = std::size_t(h) & mask;
-            while (slots_[i].used) i = (i + 1) & mask;
-            slots_[i] = Slot{h, key, std::move(value), true};
-            ++count_;
-            return slots_[i].value;
+            while (slots_[i].entry) i = (i + 1) & mask;
+            slots_[i] = Slot{h, entry};
         }
         void grow() {
-            std::vector<Slot> old = std::move(slots_);
-            slots_.assign(old.empty() ? 4096 : old.size() * 2, Slot{});
-            count_ = 0;
-            for (auto& slot : old)
-                if (slot.used) place(slot.hash, slot.key, std::move(slot.value));
+            slots_.assign(slots_.empty() ? 4096 : slots_.size() * 2, Slot{});
+            for (std::size_t e = 0; e < entries_.size(); ++e) place(hash(entries_[e].first), std::uint32_t(e + 1));
         }
         std::vector<Slot> slots_;
-        std::size_t count_{};
+        std::vector<std::pair<Key, Value>> entries_;
     };
     struct StillMemo {
         std::vector<std::uint32_t> state;
