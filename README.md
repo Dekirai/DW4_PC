@@ -239,7 +239,13 @@ also guards against enemy blows and touches, heals with HP disks from the L pane
 the X-Data shop's refill and Gate Disks, sells the weaker devices and restocks at the disk shop,
 buys stronger devices at the weapon and armor shops, recovers its bit capsule with a
 Raise Disk after a defeat and trains in the area's field below an objective's gate level (a Gate
-Disk escape raises that level like a defeat)),
+Disk escape raises that level like a defeat); with `DW4_CAMPAIGN_CHECKPOINTS=dir` it saves the game
+like a player at nine points of the story where it returns to the lobby (the save Digi-Elf in
+stagML12, `kCheckpoints`) and copies Card A to `dir/<checkpoint>`, with `DW4_CAMPAIGN_LOAD=1` it
+calls the saved character of Card A at the title instead of starting a new game, so a story run can
+be split into segments that start from such saves and run side by side (memory card saves stay
+valid when the engine changes, save states do not); `DW4_CAMPAIGN_STOP=1` ends a run once it has
+saved its first checkpoint or the story is done, `DW4_CAMPAIGN_STOP=end` only at the story's end),
 `--screenshot FILE.bmp`,
 `--screenshot-frames N,M`, `--flag N=V`, `--load-state FILE` (start from a save state file; with `DW4_STAGE_STATES=dir` a test run leaves one at
 every stage start, `<frame>_<stage>.dw4state`; `DW4_CHEATS_FROM_ENV=1` replaces the state's test cheats by

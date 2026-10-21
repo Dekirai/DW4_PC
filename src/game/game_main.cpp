@@ -1166,6 +1166,9 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     auto* cameras = engine.get<dw4::engine::CameraManager>();
                     const auto* p = models ? models->player(0) : nullptr;
                     const auto out = campaign.update(engine, p, frame);
+                    // A segment run that has saved its checkpoint ends here
+                    // (DW4_CAMPAIGN_STOP).
+                    if (campaign.finished()) running = false;
                     input |= out.buttons;
                     if (out.walk && p && p->node && cameras) {
                         const float dx = out.x - p->node->matrix(3, 0), dz = out.z - p->node->matrix(3, 2);

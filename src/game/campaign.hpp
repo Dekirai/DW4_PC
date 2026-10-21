@@ -12,7 +12,10 @@
 // flags are set by the game's own scripts. Without the test cheats it plays
 // for survival (campaign.cpp "Survival"): techniques and MP disks without
 // DW4_ONE_HIT; guards, heals, heal gates, Gate Disks, the lobby shops, the
-// bit capsule and training below gate levels without DW4_GOD.
+// bit capsule and training below gate levels without DW4_GOD. With
+// DW4_CAMPAIGN_CHECKPOINTS it saves the game at checkpoints of the story,
+// with DW4_CAMPAIGN_LOAD it calls such a save at the title (segment runs,
+// campaign.cpp "Checkpoints").
 #include "test_path.hpp"
 
 #include <cstdint>
@@ -33,6 +36,9 @@ public:
     };
     // `player` is null outside the game stages (logos, title, loading).
     Output update(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam* player, int frame);
+    // Segment runs (campaign.cpp "Checkpoints"): true once the run has done
+    // what DW4_CAMPAIGN_STOP asks for (the caller ends the test run).
+    bool finished() const { return segment_.finished; }
 
 private:
     struct Step {
@@ -185,6 +191,29 @@ private:
     std::string gate_mat_;       // its mat
     engine::Vec3f gate_at_{};    // where it is
     std::set<std::string> gate_tried_; // "<stage> <mat>" heal gates given up
+
+    // Checkpoints and segment runs (campaign.cpp "Checkpoints"): saves of
+    // the game on the memory card at points of the story, and runs that call
+    // such a save at the title and play on to the next one. Kept apart from
+    // the members above: after a checkpoint save the driver forgets them all
+    // (checkpoint_forget), only this survives.
+    struct Segment {
+        bool began = false;            // the game (new or loaded) has begun
+        std::set<std::string> held;    // checkpoints already behind the game when it began
+        std::set<std::string> saved;   // checkpoints saved in this run
+        std::string due;               // the checkpoint being saved now, empty none
+        int due_since = -1;            // when it came due
+        int tries = 0;                 // save room visits for it
+        std::string card_before;       // Card A's save file before the save room (unchanged = not saved)
+        std::string last_stage;        // the stage of the last frame
+        bool story_done = false;       // flag 86 reported
+        bool finished = false;         // DW4_CAMPAIGN_STOP: the run's work is done
+    };
+    Segment segment_;
+    void checkpoint_update(engine::Engine& engine, int frame);
+    std::optional<Output> checkpoint_boot(engine::Engine& engine, int frame);
+    void checkpoint_saved(engine::Engine& engine, int frame);
+    void checkpoint_forget();
 };
 
 // One step of a ride's targets (campaign.cpp kRideTargets: the stag0103
