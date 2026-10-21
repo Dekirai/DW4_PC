@@ -4,6 +4,7 @@
 #include "dw4/engine/scene_graph.hpp"
 #include "dw4/igb_document.hpp"
 #include "dw4/lua4.hpp"
+#include "dw4/packages.hpp"
 #include "dw4/pad.hpp"
 #include "dw4/resources.hpp"
 
@@ -235,6 +236,8 @@ struct StageSnapshot {
     OriginalPads pads;
     std::string random;                  // system generator state (fight::generator)
     std::int32_t point_no{};             // PLAYERPOINT's generate point (it survives stage loads)
+    std::int32_t loader_teardown{};      // milli-fields the update that starts this load takes (Engine::process_stage_loader)
+    bool loader_common{};                // this load still reads BecText.igb and _common/sbiallse.igb (the first of a session)
     std::shared_ptr<const void> system;  // GameSystem copy
     std::shared_ptr<const void> sound;        // SoundManager streams
     std::uint64_t serial{};                   // counts the snapshots of an engine
@@ -365,7 +368,25 @@ public:
 
 private:
     void process_stage_loader();
-    void begin_stage_load();
+    void loader_update();
+    // `restoring`: a save state's snapshot (its loader values instead of the
+    // outgoing stage's).
+    void begin_stage_load(const StageSnapshot* restoring = nullptr);
+    std::int32_t loader_teardown_cost() const;
+    std::int64_t loader_register_cost(const std::vector<ObjectView>& infos) const;
+    std::int64_t loader_start_cost() const;
+    static constexpr int kLoaderDescriptor = 30; // port-only: beSystem's descriptor request (80316258)
+    static constexpr int kLoaderBoot = 31;       // port-only: the boot's reads before the first descriptor
+    // The loader's reads (process_stage_loader): one file at a time.
+    struct LoaderItem {
+        std::string name;        // logical path or member specifier
+        int member{-1};          // index into loader_members_, -1 for a logical path
+        bool timing_only{};      // read, not loaded (BecText / sbiallse: the port has its own)
+    };
+    void loader_request(const LoaderItem& item);
+    bool loader_ready() const;
+    bool loader_queue_step(int kind);
+    void loader_route(const LoaderItem& item, int kind);
     void load_file(const std::string& logical_path, bool member, std::vector<ObjectView>& deferred_infos);
     void register_info(const ObjectView& info);
     void update_managers();
@@ -407,9 +428,33 @@ private:
     std::string stage_folder_;
     std::string pending_stage_;
     int loader_state_ = -1;
-    std::string loader_last_file_; // the last file of state 4's queue: its final chunk is read on the simulated drive
-    bool loader_read_{};           // that read was requested
-    std::int64_t loader_booked_{-1}; // the frame that first saw it booked
+    // The file on its way (802F9E98's pending directory): requested, its
+    // read issued on the simulated drive, the frame that first saw its last
+    // chunk booked, the fields its processing still takes after that.
+    struct LoaderFile {
+        LoaderItem item;
+        bool active{}, issued{};
+        unsigned archive{}, entry{};
+        std::uint32_t sectors{};
+        std::uint32_t read{};      // sectors read so far (requests of up to 64)
+        std::uint32_t heavy{};     // sectors up to the end of the igb's object data
+        int stall_chunk{-1};       // the chunk after which the loader makes the objects
+        int stall{};               // ... for that many fields
+        std::int64_t booked{-1};   // the frame that saw the chunk on its way booked
+        int parse{};
+        std::int64_t route_cost{}; // milli-fields of the update that routes the file
+        std::shared_ptr<const IgbDocument> document; // parsed at the request, routed when ready
+        std::optional<std::uint64_t> raw_offset;      // a read of `sectors` at a disc offset (the boot reads)
+    } loader_file_;
+    int loader_boot_step_{};                 // the boot reads (kLoaderBoot) done so far
+    std::vector<LoaderItem> loader_queue_;   // the queue the current state reads (+0x24 / system +0x34)
+    std::size_t loader_index_{};             // its ordinal (+0x38)
+    std::vector<PackageMember> loader_members_;
+    std::vector<ObjectView> loader_preliminary_; // infos of the /s members, registered when state 100 ends
+    std::int64_t loader_cost_{};             // milli-fields the current loader update takes
+    int loader_skip_{};                      // retraces the original's current update still covers
+    std::int32_t loader_teardown_{};         // see StageSnapshot::loader_teardown
+    bool loader_common_{true};               // see StageSnapshot::loader_common
     bool stage_active_{}; // beSystem +0x2C, see stage_active()
     bool soft_reset_allowed_{}; // stage data +63, set after first.lua outside the title stages
     Cheats cheats_;

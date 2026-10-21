@@ -68,12 +68,15 @@ public:
     std::optional<std::uint64_t> archive_disc_offset(std::size_t archive) const {
         return archive < disc_offsets_.size() ? disc_offsets_[archive] : std::nullopt;
     }
+    // Where the catalog (ndmw.igb) lies on the game disc, the same way.
+    std::optional<std::uint64_t> catalog_disc_offset() const { return catalog_disc_offset_; }
 
 private:
     std::vector<std::filesystem::path> overrides_;
     ResourceCatalog catalog_;
     std::vector<assets::AfsArchive> archives_;
     std::vector<std::optional<std::uint64_t>> disc_offsets_;
+    std::optional<std::uint64_t> catalog_disc_offset_;
 };
 
 } // namespace dw4

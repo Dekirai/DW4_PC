@@ -1115,17 +1115,17 @@ bool SoundManager::open_stream(Engine& engine, Stream& stream, const std::string
     return true;
 }
 
-// The stage loader's last request of a file (Engine::process_stage_loader):
-// its final chunk of up to 64 sectors (the loader reads 64 at a time) goes
-// through the loader's stream (CriStreams::load). Only that read decides
-// where the head is and when the drive is free again as the load ends.
-void SoundManager::load_file(Engine& engine, const std::string& logical_path) {
-    const auto* record = engine.resources().catalog().find(logical_path);
-    if (!record || !record->location) return;
-    const auto [offset, size] = disc_extent(engine, record->location->archive_index, record->location->entry_index);
+// A file the stage loader asks for (Engine::process_stage_loader): the igb
+// directory's asynchronous read (8006FD34) goes through the loader's ADXSTM
+// (8051B1D0), which reads the AFS entry from its first sector in requests of
+// at most 64 sectors, one at a time (every capture: 64, 64, ..., the rest).
+std::uint32_t SoundManager::read_entry(Engine& engine, unsigned archive, unsigned entry, std::uint32_t first, std::uint32_t count) {
+    const auto [offset, size] = disc_extent(engine, archive, entry);
     const std::uint32_t sectors = (size + 2047) / 2048;
-    const std::uint32_t last = sectors % 64 ? sectors % 64 : std::min<std::uint32_t>(sectors, 64);
-    cri_.load(offset + std::uint64_t(sectors - last) * 2048, last);
+    if (first >= sectors) return 0;
+    count = std::min(count, sectors - first);
+    cri_.load(offset + std::uint64_t(first) * 2048, count);
+    return count;
 }
 
 // Where an AFS entry lies on the disc ("[archive.entry]": the entry inside

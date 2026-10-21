@@ -333,10 +333,28 @@ Node* Engine::find_named_node(Node* from, std::string_view name) {
     return nullptr;
 }
 
-void Engine::begin_stage_load() {
+void Engine::begin_stage_load(const StageSnapshot* restoring) {
     const std::string next = pending_stage_;
     pending_stage_.clear();
     log("stage change -> " + next);
+    // The update after NEXTSTAGE (beSystem 80316258) releases the stage's
+    // directories (8006F794) before it asks for the next descriptor: its
+    // length follows what the outgoing stage holds (loader_teardown_cost).
+    if (restoring) {
+        loader_teardown_ = restoring->loader_teardown;
+        loader_common_ = restoring->loader_common;
+    } else {
+        loader_teardown_ = loader_teardown_cost();
+    }
+    if (std::getenv("DW4_TRACE_LOADER")) {
+        std::size_t objects = 0, bytes = 0, rams = 0;
+        for (const auto& file : files_)
+            if (file.document) { objects += file.document->objects.size(); bytes += file.document->bytes().size(); }
+        if (auto* models = get<ModelCtrlManager>()) rams = models->rams().size();
+        log("loader teardown of " + stage_name_ + ": " + std::to_string(files_.size()) + " files, " + std::to_string(objects) +
+            " objects, " + std::to_string(bytes) + " bytes, " + std::to_string(rams) + " model RAMs -> " +
+            std::to_string(loader_teardown_) + " milli-fields");
+    }
     for (auto& m : managers_) m->clear_stage(*this);
     schedule_.clear();
     messenger_.clear();
@@ -357,10 +375,16 @@ void Engine::begin_stage_load() {
     stage_folder_ = next;
     loading_node_ = nullptr;
     soft_reset_allowed_ = false;
-    loader_state_ = 0;
-    loader_last_file_.clear();
-    loader_read_ = false;
-    loader_booked_ = -1;
+    // The session's first load starts with the boot's reads.
+    loader_state_ = loader_common_ ? kLoaderBoot : kLoaderDescriptor;
+    loader_boot_step_ = 0;
+    loader_file_ = {};
+    loader_queue_.clear();
+    loader_index_ = 0;
+    loader_members_.clear();
+    loader_preliminary_.clear();
+    loader_skip_ = 0;
+    loader_cost_ = 0;
     // What survives into this stage, for save states.
     StageSnapshot snapshot;
     snapshot.stage = next;
@@ -377,6 +401,8 @@ void Engine::begin_stage_load() {
         snapshot.random = random.str();
     }
     if (auto* points = get<PlayerPointManager>()) snapshot.point_no = points->point_no();
+    snapshot.loader_teardown = loader_teardown_;
+    snapshot.loader_common = loader_common_;
     if (auto* sys = get<GameSystem>()) snapshot.system = std::make_shared<const GameSystem>(*sys);
     if (auto* sound = get<SoundManager>()) snapshot.sound = sound->persistent();
     snapshot.serial = ++snapshot_serial_;
@@ -406,7 +432,7 @@ void Engine::restore(const StageSnapshot& snapshot) {
     if (auto* sound = get<SoundManager>()) sound->restore(*this, snapshot.sound);
     // The rest of the step that started the load (Engine::step).
     pending_stage_ = snapshot.stage;
-    begin_stage_load();
+    begin_stage_load(&snapshot);
     process_stage_loader();
     if (auto* camera = get<CameraManager>()) camera->begin_frame(*this);
     messenger_.update(*this);
@@ -428,6 +454,9 @@ std::uint64_t Engine::fingerprint() {
     mix_value(time_);
     mix(stage_name_.data(), stage_name_.size());
     mix_value(loader_state_);
+    mix_value(loader_index_);
+    mix_value(loader_skip_);
+    mix_value(loader_file_.booked);
     mix_value(stage_active_);
     for (const auto& [key, value] : flags_) {
         mix_value(key);
@@ -519,118 +548,423 @@ void Engine::register_info(const ObjectView& info) {
     if (!accepted) note("info type " + info.type());
 }
 
-void Engine::process_stage_loader() {
-    if (loader_state_ < 0) return;
-    switch (loader_state_) {
-    case 0: {
-        // 802F8A64 state 0 clears beSystem +0x2C (_isActive, 0x802F8B54):
-        // no manager updates until state 8.
-        stage_active_ = false;
-        // 802F8A64 state 0/1: loadingUSA/ld<stage name from its third
-        // letter>.igb shows while the stage loads (its scene with a
-        // beLoadingNode, later the LOADING layer).
-        if (stage_name_.size() > 2) {
-            const std::string path = "loadingusa/ld" + stage_name_.substr(2) + ".igb";
-            if (const auto* record = resources_.catalog().find(path); record && record->location) {
-                std::vector<ObjectView> infos;
-                load_file(path, false, infos);
-                for (const auto& info : infos) register_info(info);
-                loading_node_ = find_loading_node(&global_root_);
-            }
-        }
-        loader_state_ = 1;
-        break;
+// ---------------------------------------------------------------------------
+// Stage loader timing
+// ---------------------------------------------------------------------------
+// The original reads every file of a stage load from the disc while the
+// loading screen shows, one at a time, and its load time is the sum of those
+// reads and of the updates its state machine needs (Dolphin captures with an
+// OSReport log of the loader's states, directory requests and DVD commands,
+// work/dref/fix_r22load). The port parses its files at once but its loader
+// waits for the same reads on the simulated drive (disc_timing.hpp) and steps
+// like the original's updates:
+// - A directory request (8006FD34) in an update is read by the loader's
+//   ADXSTM from the next server tick on (SoundManager::read_entry); the
+//   file is routed (80070130 true, 80070140) in the update after the one that
+//   saw its last chunk booked, later by the time the original takes to
+//   process it in the background (loader_parse_fields). The next request
+//   follows in the next update.
+// - An update that takes the original longer than a field (the teardown of
+//   the outgoing stage, routing a large stage member, registering the stage's
+//   infos in state 5, start.lua) covers the following retraces: the loader
+//   skips them, and a read it asked for is issued with the last of them.
+namespace {
+// What the original's loader spends on a file besides reading it (the
+// captures' stage loads, 12 stage members of 1.0 to 4.9 MB):
+// - a chunk of the igb's object data (header, types, entries and object
+//   buffer: the first 1.5 MB of a 4.5 MB stage member) is processed into the
+//   field after its booking, so the next request comes one tick later than
+//   the drive would allow (chunks 0-9 of the members almost always, the
+//   later chunks with the memory data on time);
+// - after the chunk that completes the object directory (the first one for
+//   up to 30000 declared objects, the second one above) the objects are made:
+//   about 0.207 fields per 1000 objects minus 2.8 more (10900 objects: 0,
+//   23900: 2, 40400: 8; within 2.4);
+// - after the last chunk is booked the file is ready about a field per
+//   600000 bytes later (2746890 bytes -> 5, 4975354 -> 8; p_dorumon 1);
+// - the update that routes a stage member takes about 0.2 fields plus 0.022
+//   per 1000 objects (40382 objects: 1.10, 23931: 0.69).
+struct LoaderCost {
+    std::uint32_t heavy{};
+    int stall_chunk{-1};
+    int stall{};
+    int parse{};
+    std::int64_t route{};
+};
+LoaderCost loader_cost(std::size_t bytes, const IgbDocument* document, bool stage_member) {
+    LoaderCost cost;
+    cost.parse = int((bytes + 300000) / 600000);
+    if (!document) return cost;
+    const auto& h = document->metadata.header;
+    const std::uint64_t object_end = 48ull + h.field_type_buffer_size + h.object_type_buffer_size + h.entry_buffer_size + h.object_buffer_size;
+    cost.heavy = std::uint32_t((object_end + 2047) / 2048);
+    if (!stage_member) return cost;
+    const std::size_t objects = document->objects.size();
+    const std::int64_t stall = (std::int64_t(objects) * 207 / 1000 - 2780 + 500) / 1000;
+    if (stall > 0) {
+        cost.stall = int(stall);
+        cost.stall_chunk = objects < 30000 ? 0 : 1;
     }
-    case 1: {
+    cost.route = 200 + std::int64_t(objects) * 22 / 1000;
+    return cost;
+}
+
+bool trace_loader() {
+    static const bool on = std::getenv("DW4_TRACE_LOADER") != nullptr;
+    return on;
+}
+} // namespace
+
+// The update after NEXTSTAGE (80316258: the managers release the outgoing
+// stage's RAMs, 8006F794 its directories) before the descriptor request
+// grows with the stage's model RAMs: 4.8 fields after the logos (12 RAMs),
+// 7.6 after the title (190), 16.2 after stag0203 (848), 20.5 after stag0204
+// (1137).
+std::int32_t Engine::loader_teardown_cost() const {
+    if (files_.empty()) return 0;
+    const auto* models = get<ModelCtrlManager>();
+    return 4600 + 14 * std::int32_t(models ? models->rams().size() : 0);
+}
+
+// State 5 (802FA53C) registers the stage's infos; the update grows with the
+// model RAMs they make: 0.05 fields + 0.0024 per RAM (12 captures, 0.9 fields
+// for the lobby's 199 RAMs to 3.7 for 1344, within 0.5).
+std::int64_t Engine::loader_register_cost(const std::vector<ObjectView>& infos) const {
+    (void)infos;
+    const auto* models = get<ModelCtrlManager>();
+    return 50 + std::int64_t(models ? models->rams().size() : 0) * 24 / 10;
+}
+
+// State 7: TEXTCTL INITIALIZE and start.lua, 0.45 fields + 0.0177 per model
+// it generates (9 generated: below 0.6 fields, 78: 1.77; within 0.2).
+std::int64_t Engine::loader_start_cost() const {
+    std::size_t generated = 0;
+    if (const auto* models = get<ModelCtrlManager>())
+        for (const auto& ram : models->rams()) generated += ram->generated ? 1 : 0;
+    return 450 + std::int64_t(generated) * 177 / 10;
+}
+
+void Engine::loader_request(const LoaderItem& item) {
+    loader_file_ = {};
+    loader_file_.item = item;
+    loader_file_.active = true;
+    std::optional<ResourceLocation> location;
+    const PackageMember* member = item.member >= 0 && std::size_t(item.member) < loader_members_.size()
+                                      ? &loader_members_[std::size_t(item.member)] : nullptr;
+    if (member) {
+        location = member->location;
+    } else if (const auto* record = resources_.catalog().find(item.name)) {
+        location = record->location;
+    }
+    std::size_t bytes = 0;
+    if (location) {
+        loader_file_.archive = unsigned(location->archive_index);
+        loader_file_.entry = unsigned(location->entry_index);
+        if (location->archive_index < resources_.archives().size() &&
+            location->entry_index < resources_.archives()[location->archive_index].entries().size())
+            bytes = resources_.archives()[location->archive_index].entries()[location->entry_index].size;
+        loader_file_.sectors = std::uint32_t((bytes + 2047) / 2048);
+    }
+    // The file itself is parsed now and routed when the original has it.
+    if (!item.timing_only) {
+        try {
+            if (member) loader_file_.document = std::make_shared<const IgbDocument>(read_package_member(resources_, *member));
+            else loader_file_.document = std::make_shared<const IgbDocument>(read_igb_document(resources_.read(item.name)));
+        } catch (const std::exception& error) {
+            log("load failed: " + item.name + ": " + error.what());
+        }
+    }
+    const bool stage_member = member && member->suffix != "/s";
+    const auto cost = loader_cost(bytes, loader_file_.document.get(), stage_member);
+    loader_file_.parse = cost.parse;
+    loader_file_.route_cost = cost.route;
+    loader_file_.heavy = cost.heavy;
+    loader_file_.stall_chunk = cost.stall_chunk;
+    loader_file_.stall = cost.stall;
+    if (trace_loader())
+        log("loader F " + item.name + " bytes " + std::to_string(bytes) + " objects " +
+            std::to_string(loader_file_.document ? loader_file_.document->objects.size() : 0) + " object data " +
+            std::to_string(loader_file_.heavy) + " sectors, stall " + std::to_string(loader_file_.stall) + " parse " +
+            std::to_string(loader_file_.parse) + " route " + std::to_string(loader_file_.route_cost));
+}
+
+// 80070130 for the pending directory: its last chunk was booked and the
+// original processed it.
+bool Engine::loader_ready() const {
+    if (!loader_file_.active || !loader_file_.issued) return false;
+    if (loader_file_.sectors == 0 || !get<SoundManager>()) return true;
+    if (loader_file_.read < loader_file_.sectors) return false;
+    return loader_file_.booked >= 0 && std::int64_t(frame_) >= loader_file_.booked + 1 + loader_file_.parse;
+}
+
+// The routing of a ready file (802F9E98 0x802F9EF8..0x802FA100) by queue:
+// 0 preliminary (/s members, registered when state 100 ends), 1 stage
+// members, 2 common files.
+void Engine::loader_route(const LoaderItem& item, int kind) {
+    const auto document = loader_file_.document;
+    if (item.timing_only || !document) return;
+    const bool member = item.member >= 0;
+    files_.push_back({member ? stage_name_ + loader_members_[std::size_t(item.member)].specifier : item.name, document, member});
+    if (std::getenv("DW4_TRACE_LOAD")) log("load " + files_.back().logical_path);
+    if (!document->info_list_reference) return;
+    for (const auto& element : document->object_list(*document->info_list_reference)) {
+        if (!element) continue;
+        ObjectView info(document.get(), *element);
+        if (kind == 0) loader_preliminary_.push_back(info);
+        else if (info.type() == "beLuaInfo") lua_infos_.push_back(info);
+        else deferred_infos_.push_back(info);
+    }
+}
+
+// One call of 802F9E98 over the current queue: true once every file is
+// routed; otherwise requests the next file or routes the pending one.
+bool Engine::loader_queue_step(int kind) {
+    if (loader_index_ >= loader_queue_.size()) return true;
+    if (!loader_file_.active) {
+        loader_request(loader_queue_[loader_index_]);
+        return false;
+    }
+    if (!loader_ready()) return false;
+    if (trace_loader()) log("loader R " + loader_file_.item.name);
+    loader_cost_ += loader_file_.route_cost;
+    loader_route(loader_file_.item, kind);
+    loader_file_ = {};
+    ++loader_index_;
+    return false;
+}
+
+void Engine::process_stage_loader() {
+    if (loader_state_ == -1) return;
+    auto* sound = get<SoundManager>();
+    // The read on its way: the frame that first sees its last chunk booked
+    // (the driver tick after the previous step's update booked it).
+    if (loader_file_.issued && loader_file_.booked < 0 && (!sound || !sound->loading())) loader_file_.booked = std::int64_t(frame_);
+    // The original's update is still running: no update for this retrace.
+    if (loader_skip_ > 0) --loader_skip_;
+    else {
+        loader_cost_ = 0;
+        const int before = loader_state_;
+        loader_update();
+        loader_skip_ = int(loader_cost_ / 1000);
+        if (trace_loader() && loader_state_ != before) log("loader state " + std::to_string(loader_state_));
+        if (trace_loader() && loader_skip_ > 0) log("loader update covers " + std::to_string(loader_skip_) + " more fields");
+    }
+    if (!loader_file_.active) return;
+    // A request is read from the server tick after the update that made it
+    // (a long update: with the last retrace it covers), chunk by chunk.
+    if (!loader_file_.issued) {
+        if (loader_skip_ > 0) return;
+        loader_file_.issued = true;
+        if (!sound || !loader_file_.sectors) {
+            loader_file_.read = loader_file_.sectors;
+            return;
+        }
+        if (loader_file_.raw_offset) {
+            sound->read_disc(*loader_file_.raw_offset, loader_file_.sectors);
+            loader_file_.read = loader_file_.sectors;
+        } else {
+            loader_file_.read = sound->read_entry(*this, loader_file_.archive, loader_file_.entry, 0, 64);
+        }
+        return;
+    }
+    // The next chunk: from the tick after the booking, a tick later after a
+    // chunk of object data, after the object directory once the objects are
+    // made.
+    if (loader_file_.read >= loader_file_.sectors || loader_file_.booked < 0 || !sound) return;
+    const int chunk = int((loader_file_.read - 1) / 64);
+    const std::uint32_t chunk_start = std::uint32_t(chunk) * 64;
+    std::int64_t wait = chunk_start < loader_file_.heavy ? 1 : 0;
+    if (chunk == loader_file_.stall_chunk) wait += loader_file_.stall;
+    if (std::int64_t(frame_) < loader_file_.booked + wait) return;
+    loader_file_.booked = -1;
+    loader_file_.read += sound->read_entry(*this, loader_file_.archive, loader_file_.entry, loader_file_.read, 64);
+}
+
+void Engine::loader_update() {
+    switch (loader_state_) {
+    case kLoaderBoot: {
+        // The session's first load: the boot loader's reads before the first
+        // descriptor (every capture): ndmw.igb (53 sectors) at the first
+        // update, routed 3 fields after its booking; 2 fields later the CRI
+        // AFS partitions read their directories one sector at a time, each
+        // asked for with the booking of the one before: ndmw.afs from +0x2000
+        // (4 sectors), one field later area.afs from its start (6); the
+        // descriptor request follows 3 fields after the last booking.
+        struct BootRead {
+            const char* archive; // nullptr: ndmw.igb
+            std::uint32_t sector;
+            int ready;           // fields from the booking to the next request
+        };
+        static constexpr BootRead kBoot[] = {{nullptr, 0, 5},       {"ndmw.afs", 4, 0}, {"ndmw.afs", 5, 0}, {"ndmw.afs", 6, 0},
+                                             {"ndmw.afs", 7, 1},    {"area.afs", 0, 0}, {"area.afs", 1, 0}, {"area.afs", 2, 0},
+                                             {"area.afs", 3, 0},    {"area.afs", 4, 0}, {"area.afs", 5, 3}};
+        if (loader_file_.active) {
+            if (!loader_ready()) return;
+            loader_file_ = {};
+            ++loader_boot_step_;
+        }
+        if (loader_boot_step_ >= int(std::size(kBoot))) {
+            loader_state_ = kLoaderDescriptor;
+            loader_update();
+            return;
+        }
+        const auto& read = kBoot[loader_boot_step_];
+        loader_file_.active = true;
+        loader_file_.item.name = read.archive ? std::string(read.archive) + " directory" : std::string("ndmw.igb");
+        loader_file_.sectors = read.archive ? 1 : 53;
+        loader_file_.parse = read.ready - 1;
+        std::uint64_t offset = 0x5703c298; // GDJEB2's ndmw.igb without the disc's FST
+        if (!read.archive) {
+            if (const auto known = resources_.catalog_disc_offset()) offset = *known;
+        } else if (auto* sound = get<SoundManager>()) {
+            for (unsigned i = 0; i < resources_.catalog().archives.size(); ++i) {
+                std::string name = resources_.catalog().archives[i].filename;
+                for (auto& c : name) c = char(std::tolower(static_cast<unsigned char>(c)));
+                if (name == read.archive) offset = sound->archive_offset(*this, i);
+            }
+            offset += std::uint64_t(read.sector) * 2048;
+        }
+        loader_file_.raw_offset = offset;
+        if (trace_loader()) log("loader boot read " + loader_file_.item.name);
+        return;
+    }
+    case kLoaderDescriptor: {
+        // beSystem (80316258): the update after NEXTSTAGE releases the old
+        // stage and asks for <stage>.igb (0x803165A0); once that directory is
+        // ready (0x80316674) its beFileListInfo starts the file-list manager,
+        // whose update follows in the same frame (state 0).
+        if (!loader_file_.active) {
+            loader_request({stage_name_ + ".igb"});
+            loader_cost_ += loader_teardown_;
+            return;
+        }
+        if (!loader_ready()) return;
+        loader_file_ = {};
         try {
             const auto descriptor = load_package_descriptor(resources_, stage_name_ + ".igb");
-            std::string section = descriptor.section;
-            log("stage " + stage_name_ + " section " + section + ", " + std::to_string(descriptor.members.size()) + " members");
-            // Preliminary "/s" members first (state 1), then the rest (state 2).
-            std::vector<ObjectView> preliminary;
-            for (const auto& member : descriptor.members) {
-                if (member.suffix != "/s") continue;
-                const auto document = std::make_shared<const IgbDocument>(read_package_member(resources_, member));
-                files_.push_back({stage_name_ + member.specifier, document, true});
-                if (document->info_list_reference)
-                    for (const auto& element : document->object_list(*document->info_list_reference))
-                        if (element) preliminary.push_back(ObjectView(document.get(), *element));
-            }
-            for (const auto& info : preliminary) register_info(info);
-            for (const auto& member : descriptor.members) {
-                if (member.suffix == "/s") continue;
-                const auto document = std::make_shared<const IgbDocument>(read_package_member(resources_, member));
-                files_.push_back({stage_name_ + member.specifier, document, true});
-                if (!document->info_list_reference) continue;
-                for (const auto& element : document->object_list(*document->info_list_reference)) {
-                    if (!element) continue;
-                    ObjectView info(document.get(), *element);
-                    if (info.type() == "beLuaInfo") lua_infos_.push_back(info);
-                    else deferred_infos_.push_back(info);
-                }
-            }
+            log("stage " + stage_name_ + " section " + descriptor.section + ", " + std::to_string(descriptor.members.size()) + " members");
+            loader_members_ = descriptor.members;
         } catch (const std::exception& error) {
             log(std::string("stage load failed: ") + error.what());
             loader_state_ = -1;
             return;
         }
-        loader_state_ = 3;
-        break;
+        loader_state_ = 0;
+        [[fallthrough]];
     }
+    case 0: {
+        // 802F8A64 state 0 clears beSystem +0x2C (_isActive, 0x802F8B54):
+        // no manager updates until state 8.
+        stage_active_ = false;
+        // loadingUSA/ld<stage name from its third letter>.igb shows while
+        // the stage loads (its scene with a beLoadingNode, later the LOADING
+        // layer): asked for at 0x802F8D54, routed in state 1.
+        loader_state_ = 1;
+        if (stage_name_.size() > 2) {
+            const std::string path = "loadingusa/ld" + stage_name_.substr(2) + ".igb";
+            if (const auto* record = resources_.catalog().find(path); record && record->location) loader_request({path});
+        }
+        return;
+    }
+    case 1: {
+        if (loader_file_.active) {
+            if (!loader_ready()) return;
+            // 0x802F8DE0: the card's infos are registered at once.
+            if (const auto document = loader_file_.document) {
+                files_.push_back({loader_file_.item.name, document, false});
+                if (document->info_list_reference)
+                    for (const auto& element : document->object_list(*document->info_list_reference)) {
+                        if (!element) continue;
+                        ObjectView info(document.get(), *element);
+                        if (info.type() == "beLuaInfo") lua_infos_.push_back(info);
+                        else register_info(info);
+                    }
+            }
+            loading_node_ = find_loading_node(&global_root_);
+            loader_file_ = {};
+        }
+        // 0x802F8F30: the first load of a session also reads BecText.igb and
+        // _common/sbiallse.igb (the port loads its own copies when used);
+        // then the preliminary "/s" members (state 100), the rest in state 2.
+        loader_queue_.clear();
+        loader_index_ = 0;
+        if (loader_common_) {
+            loader_queue_.push_back({"bectext.igb", -1, true});
+            loader_queue_.push_back({"_common/sbiallse.igb", -1, true});
+            loader_common_ = false;
+        }
+        for (std::size_t i = 0; i < loader_members_.size(); ++i)
+            if (loader_members_[i].suffix == "/s") loader_queue_.push_back({loader_members_[i].specifier, int(i)});
+        loader_state_ = loader_queue_.empty() ? 102 : 100;
+        return;
+    }
+    case 100:
+        if (!loader_queue_step(0)) return;
+        // 802FA53C registers the preliminary infos, then SOUND SEARCH /
+        // MAKEBINLIST (state 101) and ISDONETRANS (every capture: one update
+        // each).
+        for (const auto& info : loader_preliminary_) register_info(info);
+        loader_preliminary_.clear();
+        loader_state_ = 101;
+        return;
+    case 101:
+        loader_state_ = 102;
+        return;
+    case 102:
+        loader_queue_.clear();
+        loader_index_ = 0;
+        for (std::size_t i = 0; i < loader_members_.size(); ++i)
+            if (loader_members_[i].suffix != "/s") loader_queue_.push_back({loader_members_[i].specifier, int(i)});
+        loader_state_ = 2;
+        return;
+    case 2:
+        if (!loader_queue_step(1)) return;
+        loader_state_ = 3;
+        return;
     case 3:
         install_lua();
         run_script("func.lua");
         run_script("boot.lua");
-        loader_state_ = 4;
-        break;
-    case 4: {
-        auto queue = std::move(common_queue_);
+        // State 4 reads the common file list boot.lua made (system +0x34).
+        loader_queue_.clear();
+        loader_index_ = 0;
+        for (const auto& path : common_queue_) loader_queue_.push_back({path});
         common_queue_.clear();
-        for (const auto& path : queue) load_file(path, false, deferred_infos_);
-        loader_last_file_ = queue.empty() ? std::string() : queue.back();
-        loader_state_ = 10;
-        break;
-    }
-    case 10: {
-        // State 4 (802F973C) ends once the loading screen played its minimum
-        // time (80311674) and the queued files are read and processed
-        // (802F9E98); then it holds its lock time (80311660). The port reads
-        // the files at once, so its load ends with the loading screen. The
-        // drive sees the original's last read there, the final chunk of the
-        // last queued file: requested kLoaderLead fields before the end (19
-        // fields before first.lua in the captures, without their lag fields),
-        // and state 4 ends no earlier than three fields after its booking
-        // (every capture). The stream refills behind it seek back as the
-        // original's do, so one can still be on the drive at first.lua (the
-        // loader's earlier reads and the original's load time are not
-        // simulated).
-        constexpr std::int64_t kLoaderLead = 14;
+        loader_state_ = 4;
+        return;
+    case 4: {
+        // State 4 (802F973C) ends once the queued files are routed (802F9E98)
+        // and the loading screen played its minimum time (80311674); then it
+        // holds its lock time (80311660).
+        const bool queued = loader_queue_step(2);
         const bool finished = !loading_node_ || loading_node_->anim->finished();
-        auto* sound = get<SoundManager>();
-        if (sound && !loader_last_file_.empty() && !loader_read_) {
-            std::int64_t left = 0;
-            if (!finished)
-                left = (loading_node_->anim->play_limit - loading_node_->anim->played) / std::max<std::int64_t>(1, frame_delta()) + 1;
-            if (left <= kLoaderLead) {
-                sound->load_file(*this, loader_last_file_);
-                loader_read_ = true;
-            }
-        }
-        // The read is booked by a driver tick (after the game update); the
-        // original's loader sees a booking one field after the port would.
-        if (loader_read_ && loader_booked_ < 0 && sound && !sound->loading()) loader_booked_ = std::int64_t(frame_);
-        if (!finished) break;
-        if (loader_read_ && (loader_booked_ < 0 || std::int64_t(frame_) < loader_booked_ + 2)) break;
+        if (!queued || !finished) return;
         if (loading_node_) loading_node_->anim->fixed = loading_node_->anim->lock;
-        loader_state_ = 5;
-        break;
+        loader_state_ = 20;
+        return;
     }
+    case 20:
+        loader_state_ = 21;
+        return;
+    case 21:
+        loader_state_ = 5;
+        return;
     case 5: {
         auto infos = std::move(deferred_infos_);
         deferred_infos_.clear();
+        if (trace_loader()) {
+            std::map<std::string, int> types;
+            for (const auto& info : infos) ++types[std::string(info.type())];
+            std::string text = "loader state 5 registers " + std::to_string(infos.size()) + " infos:";
+            for (const auto& [type, count] : types) text += " " + type + "=" + std::to_string(count);
+            log(text);
+        }
         for (const auto& info : infos) register_info(info);
+        loader_cost_ += loader_register_cost(infos);
+        if (trace_loader())
+            if (auto* models = get<ModelCtrlManager>()) log("loader state 5 model RAMs " + std::to_string(models->rams().size()));
         loader_state_ = 6;
-        break;
+        return;
     }
     case 6: {
         Packet packet;
@@ -641,14 +975,21 @@ void Engine::process_stage_loader() {
         loading.strings = {std::string("LOADING"), std::string("SET")};
         messenger_.send(*this, "LAYERCTL", std::nullopt, -1, "SWITCH", loading);
         loader_state_ = 7;
-        break;
+        return;
     }
     case 7: {
         Packet packet;
         messenger_.send(*this, "TEXTCTL", std::nullopt, -1, "INITIALIZE", packet);
         run_script("start.lua");
+        loader_cost_ += loader_start_cost();
+        if (trace_loader())
+            if (auto* models = get<ModelCtrlManager>()) {
+                std::size_t generated = 0;
+                for (const auto& ram : models->rams()) generated += ram->generated ? 1 : 0;
+                log("loader start.lua generated " + std::to_string(generated) + " of " + std::to_string(models->rams().size()) + " model RAMs");
+            }
         loader_state_ = 8;
-        break;
+        return;
     }
     case 8:
         // The step after start.lua sets beSystem +0x2C (0x802F9B68): the
@@ -656,7 +997,7 @@ void Engine::process_stage_loader() {
         // the RAMs start.lua created get their first update here.
         stage_active_ = true;
         loader_state_ = 9;
-        break;
+        return;
     case 9:
         run_script("first.lua");
         // The soft reset works outside the logo, opening, title and ending
@@ -671,10 +1012,10 @@ void Engine::process_stage_loader() {
             for (const auto& entry : schedule_) order += " " + entry.manager->slot_name(entry.slot);
             log(order);
         }
-        break;
+        return;
     default:
         loader_state_ = -1;
-        break;
+        return;
     }
 }
 
