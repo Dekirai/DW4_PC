@@ -2015,15 +2015,19 @@ void ExploreBot::track_fire(engine::Engine& engine, int frame) {
     // The stored models are read later (posts, the turret in front): keep
     // only those still alive (a removed model, or a state load that builds a
     // new engine on the same stage, leaves stale keys).
-    std::set<const void*> alive;
-    for (const auto& e : models->rams()) alive.insert(e.get());
-    const auto dead = [&](const auto& entry) { return !alive.count(entry.first); };
+    // (A sorted list rather than a set: this runs every step over all RAMs.)
+    std::vector<const void*> alive;
+    alive.reserve(models->rams().size());
+    for (const auto& e : models->rams()) alive.push_back(e.get());
+    std::sort(alive.begin(), alive.end());
+    const auto is_alive = [&](const void* p) { return std::binary_search(alive.begin(), alive.end(), p); };
+    const auto dead = [&](const auto& entry) { return !is_alive(entry.first); };
     std::erase_if(shots_, dead);
     std::erase_if(standing_, dead);
     std::erase_if(bullet_speed_, dead);
     std::erase_if(turret_band_, dead);
     for (auto& [key, cell] : fire_cells_)
-        if (cell.shooter && !alive.count(cell.shooter)) cell.shooter = nullptr;
+        if (cell.shooter && !is_alive(cell.shooter)) cell.shooter = nullptr;
     std::map<const void*, std::pair<engine::Vec3f, const void*>> live;
     for (const auto& e : models->rams()) {
         if (!e->generated || !e->node || e->is_player) continue;
@@ -2130,7 +2134,7 @@ void ExploreBot::track_fire(engine::Engine& engine, int frame) {
                 }
                 if (shots.size() > 12) shots.erase(shots.begin());
             }
-        } else if (known && e->hitboxes.empty() && e->seq_name.rfind("SQ_ERAS", 0) != 0 && alive.count(before->second.second)) {
+        } else if (known && e->hitboxes.empty() && e->seq_name.rfind("SQ_ERAS", 0) != 0 && is_alive(before->second.second)) {
             steady[e.get()] = {at, before->second.second};
         }
     }
