@@ -2033,6 +2033,9 @@ void ExploreBot::track_fire(engine::Engine& engine, int frame) {
             if (flat(stand->second.first, at) > 1.0f) stand->second = {at, frame};
             continue;
         }
+        // A bullet in SQ_ERAS keeps its boxes until its REMOVE next step
+        // (0x8030E884): it is gone already, no fire to wait for.
+        if (e->seq_name.rfind("SQ_ERAS", 0) == 0) continue;
         bool enemy_fire = false;
         for (const auto& h : e->hitboxes) enemy_fire = enemy_fire || h.kind / 10000 == 7 || h.kind / 10000 == 8;
         if (!enemy_fire) continue;
