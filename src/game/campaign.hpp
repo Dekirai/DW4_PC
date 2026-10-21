@@ -209,6 +209,14 @@ private:
     bool sale_confirm_ = false;  // a device was picked from the sale list (its yes follows)
     int sale_target_ = -1;       // that device
     int sale_at_ = -1;           // a device sold (the list's page follows the folder)
+    // The bank (campaign.cpp kBankDust).
+    bool bank_open_ = false;     // a bank errand's program may be running
+    bool bank_deposit_ = false;  // it deposits (else withdraws)
+    bool bank_ran_ = false;      // its program was seen running
+    bool bank_withdrawn_ = false; // the bits came out in this stay in the lobby
+    int bank_tries_ = 0;         // bank visits in this stay
+    int bank_ups_ = 0;           // UP presses on the amount's top digit
+    int bank_digits_at_ = -100000; // the amount's digit cursor last seen
     // Gear from the weapon, armor and chip shops (next_gear).
     bool gear_open_ = false;     // a device shop program of the errand may be running
     int gear_program_ = 6;       // its program (6 weapons, 7 armor, 8 chips)

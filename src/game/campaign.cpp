@@ -1719,12 +1719,13 @@ CampaignBot::Purchase CampaignBot::next_purchase(engine::Engine& engine) const {
     return {};
 }
 
-// The bits all the purchases due would spend (next_purchase in turn).
+// The bits all the purchases due would spend (next_purchase in turn), with
+// the bank's bits too (a trip to the lobby takes them out first, kBankDust).
 int CampaignBot::planned_spend(engine::Engine& engine) const {
     auto* sys = engine.get<engine::GameSystem>();
     if (!sys) return 0;
     const auto& slot = sys->players[0];
-    int bits = slot.bits, spend = 0;
+    int bits = slot.bits + slot.bank_bits, spend = 0;
     for (const auto& s : kSupplies) {
         if (slot.max_hp < s.from_hp || slot.max_hp >= s.to_hp) continue;
         const auto it = prices_.find(s.record);
@@ -1896,6 +1897,20 @@ CampaignBot::EquipPick CampaignBot::next_equip(engine::Engine& engine) const {
 // pockets; the strongest the bits buy beyond the medal's 1000) and the chip
 // shop (program 8) for the cheapest PWR Medal of that element.
 constexpr int kGearBits = 900, kGearReserve = 600, kGearGain = 8, kMedalBits = 1000;
+
+// The bank (stagML12 n_digilff#0 and stagML13 n_digilff#4: bML01005.lua
+// "use the bank?" yes -> bankshop.lua -> SUBWND BANK, beNDMWShopCtrl30
+// 80394FC4): Deposit / Withdraw / Exit, then Devices / Bits, then the seven
+// digit amount (beNDMWShopCtrlEditBit 8039E478: UP / DOWN change the digit
+// under the cursor, the amount clamped to what can go: so the top digit's
+// UP, pressed a few times, takes all), A, the message, Exit. A defeat
+// leaves the bits in the bit capsule, and one the Raise Disk does not get
+// back takes them all: a fresh no-cheat chain lost 120000 bits to one
+// Belphemon defeat and went into area 3 with a few hundred, without the
+// HP disks to stay there. So the bits go into the bank when the player
+// leaves the lobby with kBankDust or more, and come out once per stay in
+// the lobby (at most kBankTries bank visits a stay).
+constexpr int kBankDust = 1000, kBankTries = 4, kBankUps = 8;
 
 int CampaignBot::next_gear(engine::Engine& engine, int program) const {
     auto* sys = engine.get<engine::GameSystem>();
@@ -2668,9 +2683,20 @@ std::optional<CampaignBot::Step> CampaignBot::next_step(engine::Engine& engine) 
     // blows dealt count there too; not with the one-hit cheat, which makes
     // them all the same and keeps the recorded cheat run's path.)
     static constexpr Objective kEquipErrand{"equip at the Digi-Lab", "", "stagml12", "equip:n_digilff#1"};
+    // The bank (not in god mode): bits a defeat would leave behind in the bit
+    // capsule are kept there while the player is out of the lobby (see
+    // kBankDust), and taken out again once per stay in the lobby before
+    // the shops.
+    static constexpr Objective kWithdrawErrand12{"bits out of the bank", "", "stagml12", "withdraw:n_digilff#0"};
+    static constexpr Objective kWithdrawErrand13{"bits out of the bank", "", "stagml13", "withdraw:n_digilff#4"};
+    static constexpr Objective kDepositErrand12{"bits into the bank", "", "stagml12", "deposit:n_digilff#0"};
+    static constexpr Objective kDepositErrand13{"bits into the bank", "", "stagml13", "deposit:n_digilff#4"};
+    const bool banking = !engine.cheats().god && lobby(here) && !holds(engine, "F1") && slot && bank_tries_ < kBankTries;
     if (!engine.cheats().god && lobby(here) && !holds(engine, "F1") && hurt) objective = &kHealErrand;
     else if (!engine.cheats().one_hit && lobby(here) && !holds(engine, "F1|F409") && next_equip(engine).device >= 0)
         objective = &kEquipErrand;
+    else if (banking && !bank_withdrawn_ && slot->bank_bits > 0)
+        objective = here == "stagml13" ? &kWithdrawErrand13 : &kWithdrawErrand12;
     else if (!engine.cheats().god && lobby(here) && !holds(engine, "F1") &&
              (next_purchase(engine).record >= 0 || (slot && int(slot->devices.size()) >= kSellFrom && next_sale(engine) >= 0)))
         objective = &kShopErrand;
@@ -2686,6 +2712,9 @@ std::optional<CampaignBot::Step> CampaignBot::next_step(engine::Engine& engine) 
     // trains in the area's field first (kTraining, kGates).
     else if (!engine.cheats().god)
         if (const auto* training = train_for(engine, *objective, defeat_levels_, train_falls_)) objective = training;
+    // Leaving the lobby with bits: into the bank first.
+    if (banking && slot->bits >= kBankDust && !lobby(objective->stage) && objective->stage[0] != 0)
+        objective = here == "stagml13" ? &kDepositErrand13 : &kDepositErrand12;
     // A checkpoint reached is saved before anything else (segment runs).
     if (!segment_.due.empty()) objective = &kSaveErrand;
     // The maze region of a place: from the point it was entered at, for the
@@ -2818,6 +2847,35 @@ bool CampaignBot::answer_menu(engine::Engine& engine, const engine::ModelCtrlMan
         engine.messenger().send(engine, "SUBWND", std::nullopt, -1, "ISRUN", running);
         if (running.bools.empty() || !running.bools[0]) shop_open_ = false;
     }
+    // The bank errand's program likewise; once it has run and closed it
+    // counts as a visit (and a withdrawal as done for this stay).
+    // (Not while another errand's program still runs: the lab's menus left
+    // open after its last pick were answered as the bank's, round and round.)
+    if ((step.action.rfind("deposit:", 0) == 0 || step.action.rfind("withdraw:", 0) == 0) && !shop_open_ && !equip_open_ && !gear_open_ &&
+        !heal_open_) {
+        // (The direction is the one the program was opened for: a deposit
+        // done while its menus are still up is no withdrawal.)
+        if (!bank_open_) bank_ran_ = false, bank_deposit_ = step.action[0] == 'd';
+        bank_open_ = true;
+    }
+    if (bank_open_) {
+        engine::Packet running;
+        engine.messenger().send(engine, "SUBWND", std::nullopt, -1, "ISRUN", running);
+        if (!running.bools.empty() && running.bools[0]) {
+            bank_ran_ = true;
+        } else if (bank_ran_ || (step.action.rfind("deposit:", 0) != 0 && step.action.rfind("withdraw:", 0) != 0)) {
+            if (bank_ran_) {
+                // (Any visit ends the stay's withdrawal: after a deposit the
+                // bits stay in the bank until the next stay.)
+                ++bank_tries_;
+                bank_withdrawn_ = true;
+                if (auto* sys = engine.get<engine::GameSystem>(); sys && trace())
+                    std::printf("[%d] campaign: bank visit (%s): %d bits, %d in the bank\n", frame, bank_deposit_ ? "deposit" : "withdraw",
+                                sys->players[0].bits, sys->players[0].bank_bits);
+            }
+            bank_open_ = bank_ran_ = false;
+        }
+    }
     if (step.action.rfind("heal:", 0) == 0) {
         heal_open_ = true;
     } else if (heal_open_) {
@@ -2937,6 +2995,35 @@ bool CampaignBot::answer_menu(engine::Engine& engine, const engine::ModelCtrlMan
             else cancel = true;
         } else if (menu.name == "i_zzstchgwn") {
             cancel = !on_step_mat;
+        } else if (bank_open_ && !shop_open_ && !equip_open_ && !gear_open_ && !heal_open_) {
+            // The bank (kBankDust): "use the bank?" yes (i_messcr, 2
+            // lines), Deposit or Withdraw of Deposit / Withdraw / Exit
+            // (i_stmesscr, 3 lines; Exit once done), Bits of Devices / Bits
+            // (2 lines), the amount (i_stcursor03, seven digits): the cursor
+            // to the top digit, UP kBankUps times (each adds a million,
+            // clamped to all that can go), A; a list is backed out of.
+            auto* sys = engine.get<engine::GameSystem>();
+            const bool done = !sys || (bank_deposit_ ? sys->players[0].bits < kBankDust : sys->players[0].bank_bits == 0);
+            if (menu.name == "i_stmesscr" && menu.items >= 3) {
+                want = done ? menu.items - 1 : bank_deposit_ ? 0 : 1;
+            } else if (menu.name == "i_stmesscr") {
+                if (done) cancel = true;
+                else want = 1;
+            } else if (menu.name == "i_stcursor03") {
+                if (frame - bank_digits_at_ > 60) bank_ups_ = 0;
+                bank_digits_at_ = frame;
+                if (menu.cursor == 0 && bank_ups_ < kBankUps) {
+                    if (frame - menu_pressed_ < 14) return true;
+                    out.buttons |= pad_button::up;
+                    ++bank_ups_;
+                    menu_pressed_ = frame;
+                    if (trace()) std::printf("[%d] campaign menu i_stcursor03 top digit -> UP\n", frame);
+                    return true;
+                }
+                want = 0;
+            } else if (menu.name.rfind("i_stcursor", 0) == 0) {
+                cancel = true;
+            }
         } else if (heal_open_ && !equip_open_ && !gear_open_) { // (the lab or a device shop first: an errand that follows waits)
             // The X-Data shop: "use it?" yes (i_messcr, 2 lines), then Exit
             // of Stats / Chips / Exit (i_stmesscr, 3 lines); a list is backed
@@ -4766,6 +4853,10 @@ CampaignBot::Output CampaignBot::play(engine::Engine& engine, const engine::Mode
         exhausted_since_ = -1;
         maze_since_ = -1;
         stage_frame_ = frame;
+        // (Out of the lobby into the story's stages: a new stay in the lobby
+        // follows, see kBankDust.)
+        if (stage.rfind("stag0", 0) == 0 || stage.rfind("dng", 0) == 0 || stage.rfind("stagbs", 0) == 0 || stage.rfind("staggf", 0) == 0)
+            bank_withdrawn_ = false, bank_tries_ = 0;
         route_.clear();
         route_frame_ = -100000;
         waited_ = 0;
@@ -5158,7 +5249,7 @@ CampaignBot::Output CampaignBot::play(engine::Engine& engine, const engine::Mode
                     if (!goal || flat(centre, me) < flat(*goal, me)) goal = centre;
                 }
         if (goal) walk_to(engine, *player, *goal, 1.5f, frame, out);
-    } else if (kind == "talk" || kind == "strike" || kind == "evolve" || kind == "shop" || kind == "heal" ||
+    } else if (kind == "talk" || kind == "strike" || kind == "evolve" || kind == "shop" || kind == "heal" || kind == "deposit" || kind == "withdraw" ||
                kind == "equip" || kind == "gear" || kind == "save") {
         if (const auto* model = find_model(engine, kind == "evolve" ? "n_digilff#1" : what, me, frame)) {
             // Ten seconds of walking without reaching one of several ("#*"; a
