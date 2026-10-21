@@ -293,6 +293,23 @@ void trace_unlock(Engine& engine, const ModelCtrlManager::ModelRam& ram, std::st
 }
 } // namespace
 
+// 803108A0, the subcommand cleanup of every sequence start except SQ_ERAS and
+// of REMOVE: each entry of the ctrl's list (+0xE4) gets its end call (vtable
+// +0x64) in list order, an effect entry (meta 80534C20) only when it is tied
+// to the sequence (+0x38); a started one erases its effect RAM with SQ_ERAS,
+// a hitbox's end call is empty. Then every entry is released and the count
+// set to 0 (0x80310984..0x80310A50).
+void ModelCtrlManager::release_subcommands(Engine& engine, ModelRam& ram) {
+    for (const auto& effect : ram.effects)
+        if (effect.sequence_dead && effect.started && effect.ram >= 0) {
+            Packet erase;
+            engine.messenger().send(engine, "MODELCTRL", effect.model, effect.ram, "SQ_ERAS", erase);
+        }
+    ram.effects.clear();
+    ram.hitboxes.clear();
+    ++ram.hitbox_generation;
+}
+
 void ModelCtrlManager::select_sequence(Engine& engine, ModelRam& ram, std::string_view name) {
     // DW4_TRACE_SEQ=<model> logs that model's sequence changes (=* every
     // model's, to set beside the Dolphin S log of 8030E978).
@@ -308,28 +325,32 @@ void ModelCtrlManager::select_sequence(Engine& engine, ModelRam& ram, std::strin
     // item class (804EDC5C: 803ABE0C, its name label) have one; the other
     // model classes keep the empty 8030F5D8 (scan of every vtable with the
     // update 8030CB2C at +0x84).
-    if (name == "SQ_ERAS" && ram.generated) {
-        if (ram.is_player) player_erase_hook(engine, ram);
-        else if (ram.category == "ITEM") item_erase_hook(engine, ram);
-    }
-    // Sequence cleanup releases the queued hitboxes (MODEL_HITBOX) and a
-    // sequence-long invulnerability; started sequence-dead effects are erased.
-    for (const auto& effect : ram.effects)
-        if (effect.sequence_dead && effect.started && effect.ram >= 0) {
-            Packet erase;
-            engine.messenger().send(engine, "MODELCTRL", effect.model, effect.ram, "SQ_ERAS", erase);
-        }
-    ram.effects.clear();
-    ram.hitboxes.clear();
-    ++ram.hitbox_generation;
-    if (ram.muteki < 0) ram.muteki = 0;
+    //
+    // That is all SQ_ERAS does: no subcommand cleanup (803108A0) and no end
+    // of a sequence-long invulnerability. The queued effects and hitboxes
+    // stay for the rest of this update, whose subcommand pass (803107E0 at
+    // 0x8030D008) still runs after the wait (0x8030CFEC) that resumed the
+    // command list; REMOVE drops them on the model's next update (0x8030CC58
+    // -> 803108A0 at 0x8030DC68). x_200mind03, the invisible carrier of the
+    // Bind / Sleep / Freeze / Pwr Dwn techniques, lands, starts ACTION ATCK0n,
+    // whose action starter queues x_200mind02 SQ_ATCKnn with delay 0 (the
+    // gold ring with the bullet box), and jumps to SQ_ERAS at once: the ring
+    // starts in that frame (Dolphin: ring 12 frames after BINDD1, the enemy
+    // bound 6 frames later). The port used to clear the list here, so these
+    // four technique families never showed their ring or hit.
     if (name == "SQ_ERAS") {
+        if (ram.generated) {
+            if (ram.is_player) player_erase_hook(engine, ram);
+            else if (ram.category == "ITEM") item_erase_hook(engine, ram);
+        }
         ram.seq_name = "SQ_ERAS";
         ram.seq = nullptr;
         ++ram.sequence_serial;
         ram.wait_name.reset();
         return;
     }
+    // 803108A0, every other sequence start (0x8030E9D0, SQ_ERAS2 0x8030E920).
+    release_subcommands(engine, ram);
     if (name == "SQ_ERAS2") {
         Packet packet;
         engine.messenger().send(engine, "ACTION", ram.info_name, ram.index, "NDSP", packet);
@@ -349,6 +370,9 @@ void ModelCtrlManager::select_sequence(Engine& engine, ModelRam& ram, std::strin
     ram.cursor = 0;
     ram.label_passed = false;
     ram.wait_name.reset();
+    // 0x8030EA0C: an ordinary start ends a sequence-long invulnerability
+    // (MUTEKI ON -1); SQ_ERAS and SQ_ERAS2 keep it.
+    if (ram.muteki < 0) ram.muteki = 0;
     // Ordinary entry: mode/phase and PDMOVE count reset, flagged channel stops.
     ram.ctrl_mode = 0;
     ram.ctrl_phase = 0;
@@ -937,6 +961,9 @@ bool ModelCtrlManager::command(Engine& engine, Ram& base, std::string_view comma
             close_panel(); // 0x8030DC1C, before ACTION NDSP
             Packet p;
             engine.messenger().send(engine, "ACTION", ram.info_name, ram.index, "NDSP", p);
+            // 0x8030DC68: the subcommand cleanup 803108A0 (a model in SQ_ERAS
+            // kept its list until now; its started sequence-dead effects go here).
+            release_subcommands(engine, ram);
             ram.generated = false;
             ram.active = false;
             ram.seq = nullptr;
@@ -1751,8 +1778,24 @@ void ModelCtrlManager::update_slot(Engine& engine, int slot) {
             if (left < 0.0f) left = 0.0f;
             ram.muteki = left;
         }
+        // 803107E0 (0x8030D008): one pass over the subcommand list, in list
+        // order, over the entries it had when the pass began (the count is
+        // read once, r31): an entry a callback appends waits for the next
+        // pass, and a sequence start inside the pass (803108A0 empties the
+        // list) leaves the new sequence's entries to the next pass too. A
+        // model that went to SQ_ERAS in this update (in its wait, or a bullet
+        // in its own BHit script) keeps its list, so its delay-0 effects still
+        // start here. (The port keeps hitboxes and effects in two lists and
+        // runs the hitboxes first.)
+        const auto generation = ram.hitbox_generation;
+        const std::size_t effects = ram.effects.size();
         if (!ram.hitboxes.empty()) update_hitboxes(engine, ram);
-        if (!ram.effects.empty() && ram.generated) update_effects(engine, ram);
+        if (static const bool trace = std::getenv("DW4_TRACE_EFFECT") != nullptr;
+            trace && ram.generated && ram.effects.size() > (ram.hitbox_generation == generation ? effects : 0))
+            engine.log("effect pass " + ram.info_name + "#" + std::to_string(ram.index) + ": " +
+                       std::to_string(ram.effects.size() - (ram.hitbox_generation == generation ? effects : 0)) +
+                       " effect(s) queued during the hitbox pass wait");
+        if (effects && ram.generated && ram.hitbox_generation == generation) update_effects(engine, ram, effects);
         // 8030D00C..8030D028: walls and floors while +78 is set.
         if (ram.translated && ram.generated) {
             if (ram.pos_lock && trace_lock() && engine.messenger().count("HITLANDDELIVER", ram.info_name, ram.index))
@@ -1800,7 +1843,9 @@ void ModelCtrlManager::check_wait(Engine& engine, ModelRam& ram) {
 void ModelCtrlManager::update_hitboxes(Engine& engine, ModelRam& ram) {
     const auto generation = ram.hitbox_generation;
     const float step = engine.system_step();
-    for (std::size_t i = 0; i < ram.hitboxes.size();) {
+    // 803107E0 reads the count once and lowers it with each removal (r31).
+    std::size_t count = ram.hitboxes.size();
+    for (std::size_t i = 0; i < count && i < ram.hitboxes.size();) {
         auto& box = ram.hitboxes[i];
         box.elapsed += step;
         bool check = false;
@@ -1811,6 +1856,7 @@ void ModelCtrlManager::update_hitboxes(Engine& engine, ModelRam& ram) {
             }
         } else if (box.elapsed >= box.end) {
             ram.hitboxes.erase(ram.hitboxes.begin() + std::ptrdiff_t(i));
+            --count;
             continue;
         } else {
             check = true;
@@ -1924,9 +1970,11 @@ bool ModelCtrlManager::player_wait(Engine& engine, ModelRam& ram, std::string_vi
 // every frame: 1.001 per NTSC field, more or less with a jittering clock
 // (Dolphin, DW4_CLOCK_FILE), so a delay can end one frame later than a
 // +1.0 count.
-void ModelCtrlManager::update_effects(Engine& engine, ModelRam& ram) {
+void ModelCtrlManager::update_effects(Engine& engine, ModelRam& ram, std::size_t count) {
     const float step = engine.system_step();
-    for (std::size_t i = 0; i < ram.effects.size();) {
+    const auto generation = ram.hitbox_generation;
+    // The first `count` entries: those the pass began with (803107E0, r31).
+    for (std::size_t i = 0; i < count && i < ram.effects.size();) {
         auto& effect = ram.effects[i];
         effect.elapsed += step;
         if (effect.started || effect.elapsed < effect.delay) { ++i; continue; }
@@ -1936,6 +1984,7 @@ void ModelCtrlManager::update_effects(Engine& engine, ModelRam& ram) {
         if (find.ints.empty()) {
             engine.note("effect model " + effect.model);
             ram.effects.erase(ram.effects.begin() + std::ptrdiff_t(i));
+            --count;
             continue;
         }
         effect.ram = find.ints[0];
@@ -1960,10 +2009,15 @@ void ModelCtrlManager::update_effects(Engine& engine, ModelRam& ram) {
                        effect.sequence + " from " + ram.info_name + "#" + std::to_string(ram.index) + " owner " +
                        std::string(generate.string(2)) + "#" + std::to_string(generate.ints[1]));
         }
-        if (!keep) ram.effects.erase(ram.effects.begin() + std::ptrdiff_t(i));
-        else ++i;
+        if (!keep) {
+            ram.effects.erase(ram.effects.begin() + std::ptrdiff_t(i));
+            --count;
+        } else {
+            ++i;
+        }
         engine.messenger().send(engine, "MODELCTRL", model, target, "GENERATE", generate);
-        if (!ram.generated) return;
+        // A sequence start (or REMOVE) the new effect caused emptied the list.
+        if (!ram.generated || ram.hitbox_generation != generation) return;
     }
 }
 
