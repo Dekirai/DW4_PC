@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <bit>
+#include <cmath>
 #include <fstream>
 #include <iostream>
 #include <iterator>
@@ -164,7 +165,7 @@ void values_and_arithmetic() {
     check(inverted.completed && inverted.returned.size() == 3 && inverted.returned[0].as_number() == 1 &&
         !inverted.returned[1].truthy() && !inverted.returned[2].truthy(), "NOT used modern boolean semantics");
     f.code = {s(Pushint, 1), s(Pushint, 0), Div, Return, End}; stopped(run(f), "non-finite");
-    f.code = {s(Pushint, 2), s(Pushint, 3), Pow, Return, End}; stopped(run(f), "tag method");
+    f.code = {s(Pushint, 2), s(Pushint, 3), Pow, Return, End}; numeric_result(run(f), {8}); // Math library pow tag method.
     f.code = {u(Pushnil, 1), Minus, Return, End}; stopped(run(f), "arithmetic");
     f.code = {u(Pushnil, 1), u(Pushstring, 1), u(Concat, 2), Return, End}; stopped(run(f), "concatenation");
     f.code = {Add, End}; stopped(run(f), "underflow");
@@ -302,7 +303,7 @@ void host_and_limits() {
     Function recurse; recurse.strings = {"f"}; recurse.code = {u(Getglobal), ab(Call, 0, 0), End};
     f.children = {recurse}; f.code = {ab(Closure, 0, 0), u(Setglobal), u(Getglobal), ab(Call, 0, 0), End};
     Lua4Limits limits; limits.max_call_depth = 4; stopped(run(f, limits), "call depth");
-    limits = {}; limits.max_stack_values = 31; stopped(run(f, limits), "aggregate stack");
+    limits = {}; stopped(run(f, limits), "stack overflow"); // The 1024-slot stack binds before the depth guard.
     f = {}; f.code = {u(Createtable), u(Createtable), u(Createtable), u(Createtable), End};
     limits = {}; limits.max_objects = 3; stopped(run(f, limits), "object count"); // Four live tables.
     f = {}; f.code = {u(Createtable), Pop | (1u << 6), s(Jmp, -3), End};
@@ -481,7 +482,7 @@ void continuation_ownership_and_faults() {
 void nested_faults_and_limits() {
     Function call;call.strings={"host"};call.code={u(Getglobal),ab(Call,0,0),End};const auto chunk=program(call);
     for(int mode=0;mode<4;++mode) {
-        Lua4Limits limits;if(mode==2)limits.max_call_depth=1;if(mode==3)limits.max_stack_values=16;
+        Lua4Limits limits;if(mode==2)limits.max_call_depth=1;if(mode==3)limits.stack_size=30; // The child (16 slots) at slot 4 needs 29 < stack_last.
         Lua4Vm vm(limits);vm.set_global("host",Lua4Value::host_function("host"));std::optional<Lua4Execution> child;
         vm.set_resumable_host_handler([&](const Lua4HostCall& call)->Lua4HostResult {
             if(child && call.execution_id==child->id())return {};
@@ -492,7 +493,11 @@ void nested_faults_and_limits() {
             return {true,{},{}}; // Deliberately invalid completion or swallowed child fault.
         });
         auto root=vm.begin_execution(chunk);const auto result=vm.resume(root);
-        check(result.stop==Lua4RunStop::faulted && !result.completed,"Pending/abandoned/faulted child was hidden by parent host completion");
+        if(mode>=2) { // A child's script error ends only the child, like a nested lua_dobuffer.
+            check(result.completed && !vm.stopped(),"A nested script error faulted its parent or stopped the VM");
+            continue;
+        }
+        check(result.stop==Lua4RunStop::faulted && !result.completed && vm.stopped(),"Pending/abandoned child was hidden by parent host completion");
         check(vm.resume(root).instructions==result.instructions,"Nested fault replayed the parent invocation");
     }
     Lua4Limits limits;limits.max_instructions=5;limits.max_host_calls=1;
@@ -601,6 +606,185 @@ void garbage_collection() {
     check(nested.heap_stats().collections > 20, "Nested chunk did not collect");
 }
 
+// igLuaState::runBuffer (80272768) only logs a failed lua_dobuffer: the
+// error first calls _ERRORMESSAGE (lua_error -> message 802788A4), then
+// luaD_runprotected drops the chunk's frames and the lua_State goes on.
+void script_errors_keep_the_vm() {
+    Function handler; handler.parameters = 1; handler.strings = {"alert", "stage"}; // _ERRORMESSAGE(m): alert(m, stage)
+    handler.code = {u(Getglobal), u(Getlocal), u(Getglobal, 1), ab(Call, 1, 0), End};
+    Function define; define.strings = {"_ERRORMESSAGE"}; define.children = {handler};
+    define.code = {ab(Closure, 0, 0), u(Setglobal), End};
+    Function failing; failing.strings = {"stage", "missing"}; // stage = 7; missing(); stage = 9
+    failing.code = {s(Pushint, 7), u(Setglobal), u(Getglobal, 1), ab(Call, 0, 0), s(Pushint, 9), u(Setglobal), End};
+    Function reads; reads.strings = {"stage"}; reads.code = {u(Getglobal), Return, End};
+    std::vector<std::string> alerts;
+    auto alert = [&](const Lua4HostCall& call) {
+        check(call.name == "alert" && call.arguments.size() == 2, "_ERRORMESSAGE fixture call changed");
+        alerts.push_back(std::string(call.arguments[0].as_string()) + "|" + call.arguments[1].describe());
+    };
+    Lua4Vm vm; vm.set_global("alert", Lua4Value::host_function("alert"));
+    vm.set_host_handler([&](const Lua4HostCall& call) { alert(call); return std::vector<Lua4Value>{}; });
+    check(vm.execute(program(define)).completed, "_ERRORMESSAGE definition failed");
+    const auto failed = vm.execute(program(failing));
+    stopped(failed, "cannot call nil");
+    check(failed.stop == Lua4RunStop::faulted && failed.site.pc == 3 && !vm.stopped(), "A script error stopped the VM");
+    check(alerts.size() == 1 && alerts[0] == "cannot call nil|7", "_ERRORMESSAGE did not get the error text on top of the failing chunk");
+    numeric_result(vm.execute(program(reads)), {7}); // Globals stay as written, no rollback, no later writes.
+    check(alerts.size() == 1, "A completed chunk called _ERRORMESSAGE");
+    Function forever; forever.code = {s(Jmp, -1), End}; // A port guard ends the run like a break.
+    stopped(vm.execute(program(forever)), "instruction budget");
+    check(alerts.size() == 1 && !vm.stopped(), "A port guard called _ERRORMESSAGE or stopped the VM");
+
+    // A nested chunk's error ends only that chunk (its own protected lua_call);
+    // the host callback and the parent go on with their frame values.
+    Function parent; parent.strings = {"v", "host"};
+    parent.code = {u(Createtable), u(Pushstring), s(Pushint, 7), u(Setmap, 1), u(Getglobal, 1), ab(Call, 1, 0),
+        u(Getlocal), u(Getdotted), u(Return, 1), End};
+    Function bad; bad.strings = {"stage"}; bad.code = {u(Getglobal), s(Pushint, 1), Add, u(Setglobal), Pushnil | (1u << 6), s(Pushint, 1), Add, End};
+    const auto bad_program = program(bad);
+    Lua4Vm nested; nested.set_global("host", Lua4Value::host_function("host"));
+    nested.set_global("alert", Lua4Value::host_function("alert")); nested.set_global("stage", Lua4Value::number(1));
+    unsigned children = 0;
+    nested.set_resumable_host_handler([&](const Lua4HostCall& call) {
+        if (call.name == "alert") { alert(call); return Lua4HostResult{true, {}, {}}; }
+        auto child = nested.begin_nested(bad_program); const auto result = nested.resume(child); ++children;
+        check(result.stop == Lua4RunStop::faulted && result.diagnostic.find("arithmetic") != std::string::npos && !nested.stopped(),
+            "The nested script error was not contained in its chunk: " + result.diagnostic);
+        return Lua4HostResult{true, {}, {}};
+    });
+    auto defined = nested.begin_execution(program(define)); check(nested.resume(defined).completed, "Nested _ERRORMESSAGE definition failed");
+    auto root = nested.begin_execution(program(parent)); numeric_result(nested.resume(root), {7});
+    check(children == 1 && !nested.stopped() && nested.get_global("stage").as_number() == 2 && alerts.size() == 2 &&
+        alerts[1].starts_with("arithmetic/tag method unsupported for nil|2"), "The parent did not go on after its child's error");
+
+    // An error inside _ERRORMESSAGE calls it again further up; the chain ends,
+    // the VM stays usable and the invocation reports the first error.
+    Function looping; looping.parameters = 1; looping.strings = {"count"}; // count = count + 1; m()
+    looping.code = {u(Getglobal), s(Addi, 1), u(Setglobal), u(Getlocal), ab(Call, 0, 0), End};
+    Function define_loop; define_loop.strings = {"_ERRORMESSAGE", "count"}; define_loop.children = {looping};
+    define_loop.code = {ab(Closure, 0, 0), u(Setglobal), s(Pushint, 0), u(Setglobal, 1), End};
+    Lua4Vm chain; check(chain.execute(program(define_loop)).completed, "Looping handler definition failed");
+    const auto chained = chain.execute(program(failing));
+    stopped(chained, "cannot call nil");
+    // The chunk's closure sits at slot 2 (the game's API stack), level k at
+    // 4 + 3(k-1), needing its entry top + 16 + 8 < 1023: 331 levels, the
+    // first overflow lends 40 slots (13 more), the second one breaks with
+    // LUA_ERRERR.
+    const auto levels = chain.get_global("count").as_number();
+    check(!chain.stopped() && levels == 344, "A failing _ERRORMESSAGE chain did not end at the stack: " + std::to_string(levels));
+    check(chain.execute(program(reads)).completed, "The VM did not survive a failing _ERRORMESSAGE");
+
+    // Out of memory breaks without a message (luaD_breakrun LUA_ERRMEM).
+    Function grow; grow.strings = {"list", "n"}; // list[n] = {} forever
+    grow.code = {u(Getglobal, 1), s(Addi, 1), u(Setglobal, 1), u(Getglobal), u(Getglobal, 1), u(Createtable), ab(Settable, 3, 3),
+        s(Jmp, -8), End};
+    Function setup; setup.strings = {"list", "n"}; setup.code = {u(Createtable), u(Setglobal), s(Pushint, 0), u(Setglobal, 1), End};
+    Lua4Limits tight; tight.max_heap_bytes = 64u * 1024u; Lua4Vm full(tight); full.set_global("alert", Lua4Value::host_function("alert"));
+    full.set_host_handler([&](const Lua4HostCall& call) { alert(call); return std::vector<Lua4Value>{}; });
+    check(full.execute(program(define)).completed && full.execute(program(setup)).completed, "Out-of-memory setup failed");
+    stopped(full.execute(program(grow)), "not enough memory");
+    check(alerts.size() == 2 && !full.stopped(), "Out of memory called _ERRORMESSAGE or stopped the VM");
+    check(full.execute(program(setup)).completed, "The VM did not go on after running out of memory");
+}
+
+// The original's one 1024-slot stack (lua_open(0) -> f_luaopen 8027E924):
+// luaD_checkstack (80278088) fails when stack_last - top <= n.
+void stack_limit() {
+    // f() { n = n + 1; f() }: the chunk's closure sits at slot 2 (what the
+    // game leaves on the API stack), level k has local 0 at slot k + 3 and
+    // needs k + 3 + 16 + 8 < 1023, so 995 levels run and the 996th overflows.
+    Function recurse; recurse.strings = {"n", "f"};
+    recurse.code = {u(Getglobal), s(Addi, 1), u(Setglobal), u(Getglobal, 1), ab(Call, 0, 0), End};
+    Function start; start.strings = {"f", "n"}; start.children = {recurse};
+    start.code = {ab(Closure, 0, 0), u(Setglobal), s(Pushint, 0), u(Setglobal, 1), u(Getglobal), ab(Call, 0, 0), End};
+    Function again; again.strings = {"f"}; again.code = {u(Getglobal), ab(Call, 0, 0), End};
+    Lua4Vm vm; vm.set_global("alert", Lua4Value::host_function("alert"));
+    std::vector<std::string> alerts;
+    vm.set_host_handler([&](const Lua4HostCall& call) { check(call.arguments.size() == 1, "alert fixture"); alerts.push_back(std::string(call.arguments[0].as_string())); return std::vector<Lua4Value>{}; });
+    stopped(vm.execute(program(start)), "stack overflow");
+    check(vm.get_global("n").as_number() == 995 && !vm.stopped() && vm.heap_stats().stack_peak == 1023,
+        "Recursion did not overflow at the original's stack slot: " + vm.get_global("n").describe());
+    stopped(vm.execute(program(again)), "stack overflow"); // The lent EXTRA_STACK was taken back.
+    check(vm.get_global("n").as_number() == 995 * 2, "The stack limit was not restored after the overflow");
+    // The first overflow lends 40 slots to _ERRORMESSAGE (at slot 999 here).
+    Function handler; handler.parameters = 1; handler.stack = 4; handler.strings = {"alert"};
+    handler.code = {u(Getglobal), u(Getlocal), ab(Call, 1, 0), End};
+    Function define; define.strings = {"_ERRORMESSAGE"}; define.children = {handler}; define.code = {ab(Closure, 0, 0), u(Setglobal), End};
+    check(vm.execute(program(define)).completed, "Handler definition failed");
+    stopped(vm.execute(program(again)), "stack overflow");
+    check(alerts.size() == 1 && alerts[0] == "stack overflow", "_ERRORMESSAGE did not run on the lent stack");
+    // A handler that needs more than the lent slots breaks without a message.
+    define.children[0].stack = 60;
+    check(vm.execute(program(define)).completed, "Large handler definition failed");
+    stopped(vm.execute(program(again)), "stack overflow");
+    check(alerts.size() == 1 && !vm.stopped(), "A second overflow did not break without a message");
+
+    // C calls: callCclosure needs nupvalues + 20 slots above the call top,
+    // the binding's tag methods first 2 (gettable) or 3 (getglobal) more.
+    // The values come from a Dolphin AR log of luaD_checkstack (docs/LUA4.md).
+    auto fits = [&](const Function& chunk, std::size_t size, bool host_object) {
+        Lua4Limits limits; limits.stack_size = size; Lua4Vm small(limits);
+        small.set_global("h", Lua4Value::host_function("h"));
+        if (host_object) small.set_global("be", Lua4Value::host_object("be"));
+        small.set_host_handler([](const Lua4HostCall&) { return std::vector<Lua4Value>{}; });
+        const auto result = small.execute(program(chunk));
+        check(result.completed || result.diagnostic.find("stack overflow") != std::string::npos, "Unexpected stop: " + result.diagnostic);
+        return result.completed;
+    };
+    // Local 0 of the chunk is slot 3.
+    Function plain; plain.stack = 4; plain.strings = {"h"}; plain.code = {u(Getglobal), ab(Call, 0, 0), End}; // call top 4: 4 + 20
+    check(!fits(plain, 25, false) && fits(plain, 26, false), "The C call reserve moved");
+    // be:m(): the class's gettable method (one upvalue) at top 5 (5 + 2 + 1 + 20), the call at 5 (5 + 1 + 20).
+    Function method; method.stack = 4; method.strings = {"be", "m"};
+    method.code = {u(Getglobal), u(Pushself, 1), ab(Call, 0, 0), End};
+    check(!fits(method, 29, true) && fits(method, 30, true), "The gettable tag method reserve moved");
+    Function missing; missing.stack = 4; missing.strings = {"x"}; missing.code = {u(Getglobal), End}; // nil global at top 3: 3 + 3 + 20
+    check(!fits(missing, 27, false) && fits(missing, 28, false), "The getglobal tag method reserve moved");
+    Function lua; lua.stack = 30; lua.code = {End}; // Entry at top 3: 3 + 30 + 8
+    check(!fits(lua, 42, false) && fits(lua, 43, false), "The Lua frame reserve moved");
+    Lua4Limits empty; empty.api_stack_top = 0; empty.stack_size = 41; // An empty API stack: entry at top 1, 1 + 38 < 40.
+    Lua4Vm bare(empty); check(bare.execute(program(lua)).completed && bare.heap_stats().stack_peak == 39, "The API stack top did not move the chunk");
+
+    // A nested chunk starts at the callback's top: here slot 4 (h at 3, no
+    // arguments, no upvalues), so a 16-slot child needs 5 + 16 + 8 < last.
+    for (const std::size_t size : {30u, 31u}) {
+        Lua4Limits limits; limits.stack_size = size; Lua4Vm host(limits); host.set_global("h", Lua4Value::host_function("h"));
+        const auto child_program = program(Function{}); bool child_ok = false;
+        host.set_resumable_host_handler([&](const Lua4HostCall&) {
+            auto child = host.begin_nested(child_program); child_ok = host.resume(child).completed;
+            return Lua4HostResult{true, {}, {}};
+        });
+        auto root = host.begin_execution(program(plain));
+        check(host.resume(root).completed && child_ok == (size == 31), "A nested chunk did not start at its callback's top");
+    }
+    // No original script comes near: the deepest check of the regression
+    // runs is far below slot 1023 (docs/LUA4.md).
+}
+
+// '^' (OP_POW) has no numeric meaning of its own: call_binTM finds the math
+// library's pow tag method for numbers (lua_mathlibopen 8027BC14 -> math_pow
+// 8027B668) through either operand and calls it with (a, b, "pow").
+void power() {
+    Function f; f.strings = {"3", "2", "x"};
+    f.code = {s(Pushint, 2), s(Pushint, 10), Pow, s(Pushint, 9), u(Pushnum), Pow, s(Pushint, 2), u(Pushstring), Pow,
+        u(Pushstring, 1), s(Pushint, 3), Pow, s(Pushint, -2), s(Pushint, 2), Pow, Return, End};
+    f.numbers = {0.5};
+    numeric_result(run(f), {1024, 3, 8, 8, 4}); // number ^ numeric string, numeric string ^ number
+    f.code = {s(Pushint, 2), u(Pushnum), Pow, Return, End};
+    numeric_result(run(f), {std::pow(2.0, 0.5)});
+    f.code = {u(Pushstring, 1), u(Pushstring), Pow, Return, End}; stopped(run(f), "undefined operation"); // No number: no method.
+    f.code = {u(Pushnil, 2), Pow, Return, End}; stopped(run(f), "undefined operation");
+    f.code = {s(Pushint, 2), u(Pushnil, 1), Pow, Return, End}; stopped(run(f), "bad argument #2 to `?' (number expected, got nil)");
+    f.code = {u(Createtable), s(Pushint, 2), Pow, Return, End}; stopped(run(f), "bad argument #1 to `?' (number expected, got table)");
+    f.code = {s(Pushint, 2), u(Pushstring, 2), Pow, Return, End}; stopped(run(f), "numeric string");
+    f.code = {s(Pushint, 0), s(Pushint, -1), Pow, Return, End}; stopped(run(f), "non-finite"); // The port has no infinities.
+    // The method call needs the event name, the method and callCclosure's 20
+    // slots above the two operands (top 5 here): 5 + 2 + 20 < stack_last.
+    Function small; small.stack = 4; small.code = {s(Pushint, 2), s(Pushint, 3), Pow, Return, End};
+    Lua4Limits limits; limits.stack_size = 28; stopped(run(small, limits), "stack overflow");
+    limits.stack_size = 29; numeric_result(run(small, limits), {8});
+}
+
 Bytes file_bytes(const char* path) {
     std::ifstream file(path, std::ios::binary);
     if (!file) throw std::runtime_error("Cannot read optional original Lua chunk");
@@ -628,7 +812,7 @@ int main(int argc, char** argv) {
     try {
         reader_checks(); values_and_arithmetic(); control_flow(); calls_closures_and_tables(); host_and_limits();
         resumed_frames_and_results();resumed_tailcalls();nested_owned_invocations();continuation_ownership_and_faults();nested_faults_and_limits();
-        garbage_collection();
+        garbage_collection(); script_errors_keep_the_vm(); stack_limit(); power();
         if (argc == 3) original(argv[1], argv[2]);
         else if (argc != 1) throw std::runtime_error("Usage: dw4_lua4_tests [func-chunk boot-chunk]");
         std::cout << "Lua 4 tests passed: " << checks << " checks\n"; return 0;

@@ -1254,12 +1254,15 @@ public:
         bool key_input{};
         bool on_ground = true;
         // KIND_ITEM work (beNDMWMdlItem): drop table id and record (+EC/+10),
-        // the rolled equipment (+F0), the nearest player (+FC), the name line.
+        // the rolled equipment (+F0); the name label: its owner player, which
+        // is also its ITNAMEFONT line (+FC, -1 = no label: +100 clear), the
+        // blink phase (+108, set while the full colour shows) and the named
+        // RAM timer "COLOR".
         int item_table = -1, item_record{};
         ItemDevice item_device;
-        int item_player = -1, item_label = -1;
-        bool item_dim{};
-        std::int64_t item_blink{};
+        int item_label = -1;
+        bool item_lit{};
+        std::optional<NodeTimer> item_color_timer;
         std::string label;
         std::map<std::string, std::string, std::less<>> labels; // SETLABEL per sequence
         const HitBody* hit{};
@@ -1387,7 +1390,10 @@ private:
     void check_wait(Engine& engine, ModelRam& ram);
     bool capsule_command(Engine& engine, ModelRam& ram, std::string_view command, Packet& packet);
     void update_item(Engine& engine, ModelRam& ram);
-    void item_label(Engine& engine, ModelRam& ram, bool show);
+    void show_item_label(Engine& engine, ModelRam& ram, int player);
+    void update_item_label(Engine& engine, ModelRam& ram);
+    void item_erase_hook(Engine& engine, ModelRam& ram);
+    void item_sequence_hook(Engine& engine, ModelRam& ram);
     bool pick_item(Engine& engine, ModelRam& ram, int player);
     void update_effects(Engine& engine, ModelRam& ram);
     void place_attached(ModelRam& ram);
@@ -1424,7 +1430,9 @@ private:
     std::map<InfoKey, std::unique_ptr<HitBody>> hit_bodies_;
     std::map<InfoKey, std::unique_ptr<Homing>> homings_;
     std::map<InfoKey, std::unique_ptr<std::vector<ObjectView>>> ai_maps_;
-    std::array<bool, 4> item_labels_{}; // ITNAMEFONT font00..03 in use
+    // Manager +0x30 (803AB6A0..803AB6D0): one item name label per player,
+    // shown on that player's ITNAMEFONT line font00..03.
+    std::array<bool, 4> item_labels_{};
 };
 
 // PLAYERARMS (beWeapon, commands 80318474): weapon infos. Their sequence rows

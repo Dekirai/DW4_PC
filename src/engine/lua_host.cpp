@@ -103,19 +103,40 @@ bool Engine::run_script(std::string_view name) {
             }
             ++script_depth_;
             Lua4RunResult run;
-            if (script_depth_ > 1) {
-                auto execution = lua_->begin_nested(found->second);
-                run = lua_->resume(execution);
-            } else {
-                auto execution = lua_->begin_execution(found->second);
-                run = lua_->resume(execution);
+            try {
+                if (script_depth_ > 1) {
+                    auto execution = lua_->begin_nested(found->second);
+                    run = lua_->resume(execution);
+                } else {
+                    auto execution = lua_->begin_execution(found->second);
+                    run = lua_->resume(execution);
+                }
+            } catch (const std::exception& error) {
+                run.diagnostic = error.what(); // A stopped VM refuses to begin.
             }
             --script_depth_;
             ran = true;
+            // DW4_TRACE_LUA_STACK=1 logs each new high of the Lua stack (the
+            // deepest luaD_checkstack top + reserve, 1023 overflows) and the
+            // slot where a nested chunk started.
+            if (static const bool trace_stack = std::getenv("DW4_TRACE_LUA_STACK") != nullptr; trace_stack) {
+                static std::size_t logged = 0;
+                if (script_depth_ > 0) log("lua nested run " + std::string(name) + " at slot " + std::to_string(run.stack_base));
+                else if (const auto peak = lua_->heap_stats().stack_peak; peak > logged) {
+                    logged = peak;
+                    log("lua stack peak " + std::to_string(peak) + " of 1023 after " + std::string(name));
+                }
+            }
             if (!run.completed) {
+                // igLuaState::runBuffer (80272768) only logs "runBuffer(%s)
+                // failed - reason %s" after the script's _ERRORMESSAGE ran
+                // (be:MsgBox): the half-run chunk's frames are gone
+                // (luaD_runprotected restored the stack top), the lua_State
+                // and all stage globals stay, and a nested run's caller goes
+                // on. Only a host fault stops the port's VM for good; then a
+                // fresh VM gets func.lua's helpers back.
                 log("script " + std::string(name) + " stopped: " + run.diagnostic);
-                if (script_depth_ == 0) {
-                    // Keep going with a fresh VM (restore shared helpers).
+                if (script_depth_ == 0 && lua_->stopped()) {
                     install_lua();
                     if (name != "func.lua") run_script("func.lua");
                 }

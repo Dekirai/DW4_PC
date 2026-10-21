@@ -99,7 +99,7 @@ original scripts keep running.
 | `ModelCtrlManager` | beModelCtrl (8030D910, 8030C3AC) | sequences, waits, motion, player control and attack chains (8034C3C8, 8034D214), HIT bodies, HITBOX queue, MUTEKI, CHKBULLET (8030E56C), SETLABEL sections, AIM / AIH AI (a provisional chase fallback without AI maps), rides and floor effects |
 | `GeneraterManager` | beGenerater (802FCF68, 802FD5C4) | enemy waves from DATABASE enemy rows, start/fill modes, `_callLua` on clear |
 | `WeaponManager` | beWeapon / PLAYERARMS (80318474) | weapon sequence labels for the carrying player |
-| `ActionManager` | beAction2 (802F1794) | joint/fade/flash/wait, motions on actors |
+| `ActionManager` | beAction2 (802F1794) | joint/fade/flash/wait, motions on actors; an action start sets the switch-mask bit (visibility, kind 0x400 collision) before the action lookup, so an unknown name still shows the model |
 | `TextCtlManager` | beFont (802FA900) | per-line TEXTSET/SWITCH/ALIGN/COLOR from the pack unicode strings |
 | `SelectCtrlManager` | beSelectCtrl (803132C0) | cursor menus and prompts |
 | `Title2Manager` | beNDMWTitle2 (80369284) | press start, menu, option window |
@@ -141,7 +141,10 @@ replaced BGM's fade-out step through the original's fade tables (8031D5D0 /
 that stopped or played out is freed at once (802F53B8). beSeInfo holds each
 model's SE set: the sounds an ACTION2 action plays after a frame delay (through
 the PLAY handler, 803105DC); a looping sound (type 4) stops at the model's next
-action. Levels follow the
+action. The SE sets hear the action through ACTION_BROADCAST (803130D4 sends
+MODELCTRL SETSOUND), which an action start sends after its first commands ran
+and only when the action changes (802F1794, 80305ED0 at 0x802F21D8), so the
+same action given again plays nothing. Levels follow the
 AX mixer (MIXInitChannel 80259334): the left side is attenuated by the pan
 table at the pan and the right side by the table at 127 - pan, so effect
 voices (split pan through the 8045D130 curve; every shipped split is centred)

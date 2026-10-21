@@ -36,8 +36,8 @@ the game. Builds and tests run locally; GitHub Actions is disabled.
 - Death Valley combat: the original AIM enemy AI, enemy attacks and damage,
   player defeat with the bit capsule, EXP and level-ups with the HUD meters,
   hit effects, and item drops from the generator tables (bits picked up on
-  contact, disks, key items and rolled equipment picked up with A, floating
-  item names).
+  contact, disks, key items and rolled equipment picked up with A, one
+  floating item name per player, and only that item is picked up).
 - Quick panels (L disks, R techniques, Z status, Y emergency heal), MP
   techniques with magic damage, and the START status window with its
   equipment page: weapon socket (reorder, chip pockets), armor and sub slots,
