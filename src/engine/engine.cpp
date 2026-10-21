@@ -72,15 +72,28 @@ void Manager::fallback(Engine& engine, Ram& ram, std::string_view command, Packe
 // ---------------------------------------------------------------------------
 void Messenger::add_row(std::string category, std::optional<std::string> name, std::int32_t index, Ram* recipient) {
     rows_.push_back({std::move(category), std::move(name), index, recipient});
+    by_category_stale_ = true;
 }
 
 void Messenger::remove_rows(Manager* manager) {
     std::erase_if(rows_, [&](const MessengerRow& row) { return row.recipient && row.recipient->manager == manager; });
+    by_category_stale_ = true;
 }
 
 void Messenger::clear() {
     rows_.clear();
     deferred_.clear();
+    by_category_stale_ = true;
+}
+
+const std::vector<std::uint32_t>* Messenger::category_rows(std::string_view category) const {
+    if (by_category_stale_) {
+        by_category_.clear();
+        for (std::size_t i = 0; i < rows_.size(); ++i) by_category_[rows_[i].category].push_back(std::uint32_t(i));
+        by_category_stale_ = false;
+    }
+    const auto it = by_category_.find(category);
+    return it == by_category_.end() ? nullptr : &it->second;
 }
 
 namespace {
@@ -94,7 +107,8 @@ bool row_matches(const MessengerRow& row, std::string_view category, std::option
 
 std::size_t Messenger::count(std::string_view category, std::optional<std::string_view> name, std::int32_t index) const {
     std::size_t n = 0;
-    for (const auto& row : rows_) if (row_matches(row, category, name, index)) ++n;
+    if (const auto* rows = category_rows(category))
+        for (const auto i : *rows) if (row_matches(rows_[i], category, name, index)) ++n;
     return n;
 }
 
@@ -115,7 +129,10 @@ std::size_t Messenger::send(Engine& engine, std::string_view category, std::opti
         // happens. Scripts GENERATE into a free RAM that way (Lucemon's
         // x_035frunn01a grids, Infermon's split).
         bool any = false;
-        for (const auto& row : rows_) {
+        static const std::vector<std::uint32_t> none;
+        const auto* rows = category_rows(category);
+        for (const auto i : rows ? *rows : none) {
+            const auto& row = rows_[i];
             if (row.category != category || (name && row.name && *row.name != *name)) continue;
             any = true;
             if (row.recipient && !row.recipient->active) {
@@ -124,8 +141,11 @@ std::size_t Messenger::send(Engine& engine, std::string_view category, std::opti
             }
         }
         if (any && recipients.empty()) return 0;
-    } else
-        for (const auto& row : rows_) if (row_matches(row, category, name, index)) recipients.push_back(row.recipient);
+    } else if (const auto* rows = category_rows(category)) {
+        // (The rows of the category, in row order: the same selection as
+        // the original's walk over all rows.)
+        for (const auto i : *rows) if (row_matches(rows_[i], category, name, index)) recipients.push_back(rows_[i].recipient);
+    }
     if (recipients.empty()) {
         engine.note("no recipient: " + std::string(category) + " " + std::string(command) +
                     (name ? " (" + std::string(*name) + ")" : std::string()));
