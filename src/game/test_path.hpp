@@ -207,6 +207,7 @@ private:
         std::vector<engine::Vec3f> trail;     // the origin each step, oldest first
         int last_frame = -1;
         int moving_steps{};                   // steps it moved of the recorded ones
+        int moved_at = -1;                    // the last frame it was seen moving
         bool hop_on{};                        // moves sideways and keeps moving (set by each plan)
         bool sideways() const;
     };

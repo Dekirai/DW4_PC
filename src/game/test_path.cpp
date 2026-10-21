@@ -789,6 +789,8 @@ void ExploreBot::track_platforms(engine::Engine& engine, const engine::Vec3f& me
         if (known != platforms_.end()) {
             auto& p = *known;
             if (p.last_frame == frame) continue;
+            // (Across a gap too: against the last position seen.)
+            if (!p.trail.empty() && flat(at, p.trail.back()) > 0.02f) p.moved_at = frame;
             if (p.last_frame != frame - 1) {
                 p.trail.clear(); // a gap: the steps no longer follow each other
                 p.moving_steps = 0;
@@ -834,6 +836,7 @@ void ExploreBot::track_platforms(engine::Engine& engine, const engine::Vec3f& me
         p.offset = {(reach[0] - reach[1]) * 0.5f, 0.0f, (reach[2] - reach[3]) * 0.5f};
         p.trail.push_back(at);
         p.last_frame = frame;
+        p.moved_at = frame;
         p.moving_steps = 1;
         if (std::getenv("DW4_TRACE_EXPLORE"))
             std::printf("[%d] explore: platform %s#%d at (%.0f,%.0f,%.0f), top %.1f half %.1f x %.1f\n", frame, e->info_name.c_str(), e->index,
@@ -1551,15 +1554,16 @@ void ExploreBot::plan(engine::Engine& engine, const engine::ModelCtrlManager::Mo
                 return;
             }
         }
-    // The moving platform the player rides (one seen moving whose own floor
-    // is under the player; also while it waits at a stop), else -1, and
-    // whether a reached point lies on it: on its path (the walking map's
-    // moving floor) or on its collision where it stands (a platform that
-    // waits is plain floor in the map).
+    // The moving platform the player rides (its own floor under the player,
+    // seen moving within the last 60 frames), else -1, and whether a reached
+    // point lies on it: on its path (the walking map's moving floor) or on
+    // its collision where it stands (a platform the map takes for fixed, one
+    // whose recorded steps did not keep moving sideways, is plain floor
+    // there).
     int ride = -1;
     if (const auto land = hitland->world().check_land({me.x, me.y + 5.0f, me.z}, 1.0f, 400.0f, 1.0f); land.found && land.position.y >= me.y - 8.0f)
         for (std::size_t i = 0; i < platforms_.size() && ride < 0; ++i)
-            if (platforms_[i].info == land.info && platforms_[i].child == land.child) ride = int(i);
+            if (platforms_[i].info == land.info && platforms_[i].child == land.child && frame - platforms_[i].moved_at <= 60) ride = int(i);
     const auto on_ride = [&](const engine::Vec3f& q, int support) {
         if (support == ride) return true;
         const auto land = hitland->world().check_land({q.x, q.y + 5.0f, q.z}, 1.0f, 400.0f, 1.0f);
