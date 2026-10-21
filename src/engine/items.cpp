@@ -251,10 +251,10 @@ void ModelCtrlManager::update_item_label(Engine& engine, ModelRam& ram) {
 // The item class's erase hook (vtable +B4, 803ABE0C): with a label shown
 // (+100) it clears that flag, frees the owner's line (manager +0x30), sets
 // +FC = -1 and sends TEXTCTL SWITCH ITNAMEFONT <line> CLR. It runs when the
-// owner walks away (0x803ABDC0), after a pickup (0x803AC408) and when SQ_ERAS
-// starts on the generated item (command handler 0x8030E884, select_sequence),
-// so a vanishing item's name goes with its SQ_ERAS, a frame before the
-// removal.
+// owner walks away (0x803ABDC0), after a pickup (0x803AC408), when SQ_ERAS
+// starts on the generated item (command handler 0x8030E884) and from the
+// class's sequence hook (vtable +B8, 803ABFB8) when SQ_EXIT has started
+// (item_sequence_hook): a vanishing drop's name goes with its SQ_EXIT.
 void ModelCtrlManager::item_erase_hook(Engine& engine, ModelRam& ram) {
     if (ram.item_label < 0) return;
     const int line = std::clamp(ram.item_label, 0, 3);
@@ -263,6 +263,15 @@ void ModelCtrlManager::item_erase_hook(Engine& engine, ModelRam& ram) {
     Packet off = text_packet(line, "CLR");
     engine.messenger().send(engine, "TEXTCTL", std::nullopt, -1, "SWITCH", off);
     trace_label(engine, ram, line, "off");
+}
+
+// The item class's sequence hook (vtable +B8, 803ABFB8), run by the command
+// handler after a selected sequence's first commands (0x8030EA98): when the
+// current sequence (work +0x14) is "SQ_EXIT" (8045C564) it runs the erase
+// hook, so the label of a drop that starts to vanish goes off at once; the
+// class update would not drop it (SQ_EXIT has no CTRL mode).
+void ModelCtrlManager::item_sequence_hook(Engine& engine, ModelRam& ram) {
+    if (ram.seq_name == "SQ_EXIT") item_erase_hook(engine, ram);
 }
 
 // 803AC0E8 (vtable +BC, DROPITEM ACTION1 <player>): only a non-instant item

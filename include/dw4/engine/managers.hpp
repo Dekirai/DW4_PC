@@ -1393,6 +1393,7 @@ private:
     void show_item_label(Engine& engine, ModelRam& ram, int player);
     void update_item_label(Engine& engine, ModelRam& ram);
     void item_erase_hook(Engine& engine, ModelRam& ram);
+    void item_sequence_hook(Engine& engine, ModelRam& ram);
     bool pick_item(Engine& engine, ModelRam& ram, int player);
     void update_effects(Engine& engine, ModelRam& ram);
     void place_attached(ModelRam& ram);

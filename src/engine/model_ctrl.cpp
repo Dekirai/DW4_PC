@@ -386,6 +386,7 @@ void ModelCtrlManager::select_sequence(Engine& engine, ModelRam& ram, std::strin
     // so a jumped-to sequence runs the hook before the outer one does.
     if (ram.is_player) player_sequence_hook(engine, ram);
     else if (ram.category == "ENEMY") status_sequence_check(engine, ram);
+    else if (ram.category == "ITEM") item_sequence_hook(engine, ram);
 }
 
 // beNDMWMdlPlayer +B8 (8034E1B0): standing in SQ_WAIT, the player's number
