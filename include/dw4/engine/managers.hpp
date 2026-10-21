@@ -322,11 +322,18 @@ public:
     // A Cri sound entry's volume fade (disc_timing.hpp).
     using Fade = CriFade;
 
-    // The stage loader's last read on the simulated drive (the loader's own
-    // CRI file stream, CriStreams::Loader, after the stream handles' reads):
-    // the final chunk of `logical_path`; loading() holds until it is booked.
-    void load_file(Engine& engine, const std::string& logical_path);
+    // A stage loader read on the simulated drive (the loader's own CRI file
+    // stream, CriStreams::Loader, after the stream handles' reads): the whole
+    // AFS entry (or `count` sectors of it from sector `first`) in requests of
+    // up to 64 sectors; loading() holds until its last chunk is booked.
+    // Returns the sectors read (0: nothing to read).
+    std::uint32_t read_entry(Engine& engine, unsigned archive, unsigned entry, std::uint32_t first = 0,
+                             std::uint32_t count = 0xFFFFFFFFu);
     bool loading() const { return cri_.loader.active; }
+    // A loader read of `sectors` at a disc offset (the boot's catalog and
+    // AFS directory reads), and where an archive starts on the disc.
+    void read_disc(std::uint64_t offset, std::uint32_t sectors) { cri_.load(offset, sectors); }
+    std::uint64_t archive_offset(Engine& engine, unsigned archive) const { return disc_extent(engine, archive, ~0u).first; }
 
 private:
     void update_driver(Engine& engine);

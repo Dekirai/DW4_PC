@@ -29,11 +29,17 @@ namespace dw4 {
 class DiscDrive {
 public:
     static constexpr std::int64_t kTicksPerSecond = 486000000;
-    // Rotational latency: the mean half turn (default), or Dolphin's formula,
-    // whose disc angle follows the whole seconds of its emulated clock (test
-    // tool: matches a Dolphin capture when `clock_offset` maps the caller's
-    // clock to Dolphin's).
+    // Rotational latency: Dolphin's formula (default), whose disc angle
+    // follows the whole seconds of its emulated clock (so a seek costs one of
+    // two latencies by the parity of the second), or the mean half turn.
     enum class Rotation : std::uint8_t { mean, dolphin };
+    // Dolphin's clock (CoreTiming ticks since boot) at the caller's clock 0,
+    // modulo the 2 s its rotation formula repeats in. The captures' DVD
+    // interrupts follow Dolphin's clock = TB * 12 + 23.8e6 ticks (all 394
+    // reads of a stage load within 0.006 field), and their world clock starts
+    // 6903.2e6 ticks after boot; the port's driver tick at world time t stands
+    // for the servers of the next field (t + 8108108 ticks).
+    static constexpr std::int64_t kDolphinClockOffset = 107330000;
 
     // Duration (ticks) of a read of `length` bytes at disc offset `offset`
     // that starts at time `now`; updates the read-ahead buffer.
@@ -45,8 +51,8 @@ public:
     static double raw_read_time(std::uint64_t offset, std::uint64_t length);
     static double rotational_latency(std::uint64_t offset, double time_seconds);
 
-    Rotation rotation{Rotation::mean};
-    std::int64_t clock_offset{}; // ticks added to the clock for Rotation::dolphin
+    Rotation rotation{Rotation::dolphin};
+    std::int64_t clock_offset{kDolphinClockOffset}; // ticks added to the clock for Rotation::dolphin
     // The read-ahead buffer: [start offset, end offset) fills from start time
     // to end time (DVDInterface m_read_buffer_*).
     std::uint64_t buffer_start_offset{}, buffer_end_offset{};
@@ -99,7 +105,9 @@ public:
     // ADXT readers 8051ABD0.. in each file server pass, so a stream refill
     // wins a tick both want): a file is read in requests of at most 64
     // sectors, one at a time; the loader consumes a booked chunk in the game
-    // update that follows, so the next request comes one field later.
+    // update that follows, so the next request comes one field later (the
+    // engine asks for one chunk at a time and adds the loading thread's work,
+    // Engine::process_stage_loader).
     void load(std::uint64_t disc_offset, std::uint32_t sectors);
     // One VI field of the CRI servers at time `now`.
     void tick(std::int64_t now);

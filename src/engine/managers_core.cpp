@@ -1115,17 +1115,17 @@ bool SoundManager::open_stream(Engine& engine, Stream& stream, const std::string
     return true;
 }
 
-// The stage loader's last request of a file (Engine::process_stage_loader):
-// its final chunk of up to 64 sectors (the loader reads 64 at a time) goes
-// through the loader's stream (CriStreams::load). Only that read decides
-// where the head is and when the drive is free again as the load ends.
-void SoundManager::load_file(Engine& engine, const std::string& logical_path) {
-    const auto* record = engine.resources().catalog().find(logical_path);
-    if (!record || !record->location) return;
-    const auto [offset, size] = disc_extent(engine, record->location->archive_index, record->location->entry_index);
+// A file the stage loader asks for (Engine::process_stage_loader): the igb
+// directory's asynchronous read (8006FD34) goes through the loader's ADXSTM
+// (8051B1D0), which reads the AFS entry from its first sector in requests of
+// at most 64 sectors, one at a time (every capture: 64, 64, ..., the rest).
+std::uint32_t SoundManager::read_entry(Engine& engine, unsigned archive, unsigned entry, std::uint32_t first, std::uint32_t count) {
+    const auto [offset, size] = disc_extent(engine, archive, entry);
     const std::uint32_t sectors = (size + 2047) / 2048;
-    const std::uint32_t last = sectors % 64 ? sectors % 64 : std::min<std::uint32_t>(sectors, 64);
-    cri_.load(offset + std::uint64_t(sectors - last) * 2048, last);
+    if (first >= sectors) return 0;
+    count = std::min(count, sectors - first);
+    cri_.load(offset + std::uint64_t(first) * 2048, count);
+    return count;
 }
 
 // Where an AFS entry lies on the disc ("[archive.entry]": the entry inside
@@ -1701,6 +1701,11 @@ void SoundManager::update_driver(Engine& engine) {
     // decoding, PLAYING (disc_timing.hpp). The port's driver tick follows the
     // frame's game update, as the original's servers follow the previous one.
     static const bool trace = std::getenv("DW4_TRACE_SOUND") != nullptr;
+    // Test tool: DW4_DISC_CLOCK=<ticks> replaces the drive's Dolphin clock
+    // offset (DiscDrive::kDolphinClockOffset), to line a run up with a capture
+    // whose world clock stands elsewhere.
+    static const char* disc_clock = std::getenv("DW4_DISC_CLOCK");
+    if (disc_clock && *disc_clock) cri_.drive.clock_offset = std::strtoll(disc_clock, nullptr, 10);
     const int inflight_before = cri_.inflight.slot;
     const std::int64_t done_before = cri_.inflight.done;
     std::array<bool, CriStreams::kSlots> playing_before{};
@@ -1752,6 +1757,15 @@ void SoundManager::trace_cri(Engine& engine, int inflight_before, std::int64_t d
                       cri_.inflight.slot, request, static_cast<unsigned long long>(offset),
                       double(cri_.inflight.done - now) / double(CriStreams::kFieldTicks), static_cast<unsigned long long>(engine.frame()));
         engine.log(line);
+        static const bool ring = std::getenv("DW4_TRACE_CRI_RING") != nullptr;
+        if (ring && !loader) {
+            const auto& h = cri_.handles[std::size_t(cri_.inflight.slot)];
+            std::snprintf(line, sizeof line, "  ring: written %llu consumed %llu (used %llu) write_pos %u decoded %llu sj %u aram %llu",
+                          static_cast<unsigned long long>(h.written), static_cast<unsigned long long>(h.consumed),
+                          static_cast<unsigned long long>(h.written - h.consumed), h.write_pos,
+                          static_cast<unsigned long long>(h.decoded), h.sj, static_cast<unsigned long long>(h.moved - h.reclaimed));
+            engine.log(line);
+        }
     }
     for (int slot = 0; slot < CriStreams::kSlots; ++slot)
         if (cri_.playing(slot) && !playing_before[std::size_t(slot)])

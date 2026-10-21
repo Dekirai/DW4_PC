@@ -173,6 +173,7 @@ MountedResources MountedResources::open(const std::filesystem::path& root) {
         const auto* catalog = disc.find("ndmw.igb");
         if (!catalog) fail("disc image has no ndmw.igb: " + root.string());
         result.catalog_ = read_resource_catalog(read_igb_document(disc.read(*catalog)));
+        result.catalog_disc_offset_ = catalog->offset;
         for (const auto& archive : result.catalog_.archives) {
             const auto* file = disc.find(archive.filename);
             if (!file) fail("disc image has no archive " + archive.filename);
@@ -203,6 +204,7 @@ MountedResources MountedResources::open(const std::filesystem::path& root) {
     } catch (const std::exception&) {
         layout.reset();
     }
+    if (const auto* file = layout ? layout->find("ndmw.igb") : nullptr) result.catalog_disc_offset_ = file->offset;
     for (const auto& archive : result.catalog_.archives) {
         // Only validated archive basenames become host paths. Logical resource
         // paths are identifiers and are never opened on the host filesystem.

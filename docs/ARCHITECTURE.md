@@ -170,22 +170,36 @@ their ADXSTM readers (one DVD read at a time through gcCi, the lowest handle
 first, 25 sectors before the header is parsed, refills below 85 %), the
 decoder (+72 samples per call), the ARAM renderer (4096 samples, played
 halves given back) and `dw4::DiscDrive`, Dolphin's GameCube drive timing
-(radius-dependent read speed, seek by head travel, rotational latency as the
-mean half turn, 1 MiB read-ahead). The disc offsets come from the disc
+(radius-dependent read speed, seek by head travel, rotational latency by
+Dolphin's formula, whose disc angle follows the whole seconds of its emulated
+clock, 1 MiB read-ahead; the captures' every DVD interrupt follows it to 0.006
+field once Dolphin's clock is placed 107.33e6 ticks ahead of the port's world
+clock, `DiscDrive::kDolphinClockOffset`). The disc offsets come from the disc
 image's FST or the extraction's sys/fst.bin. tests/disc_tests.cpp replays
 three captured stage starts (stagBS01, stagBS02, dngQ1B1e) read for read. A
 replaced BGM fades over the original's table (8031D5D0) and stops once the
 fade reaches -21 dB with the stage's base volume (beSoundInfo [9]). The stage
-loader's own reads share the drive (a CRI file stream after the ADXT readers,
-64-sector requests): the port loads a stage's files at once, so its load
-ends with the loading screen's minimum time, but it simulates the original's
-last read there, the final chunk of the last queued file, requested 14 fields
-before that end (about 19 before first.lua, as in the captures) and ending
-loader state 4 no earlier than three fields after its booking; the old BGM's
-next refill seeks back from it and may still be on the drive at first.lua as
-in the original. The earlier loader reads and the original's load time are not
-simulated. `DW4_TRACE_SOUND=1` logs every simulated read,
-PLAYING, stream start, fade stop and ISREADY / ISALLREADY change.
+loader's own reads share the drive: like the original's loading thread
+(igAdxFile 802AA1B0 over a CRI file stream that comes after the ADXT readers
+in each server pass) the loader reads every file of a load in 64-sector
+requests and asks for the next chunk once the thread has used the last one,
+which takes it whole fields more where the chunk holds the reference index,
+the start of the object buffer (the objects are made there, 0.34 fields per
+1000), object records or the start of the memory blocks; after the last
+chunk the file is ready by the time its memory blocks take, then routed in
+the next update. The teardown of the outgoing stage, routing a large member,
+state 5 and start.lua are long updates that cover the retraces after them.
+So a stage starts 500-900 fields after its NEXTSTAGE as in the original (the
+Dolphin captures of 12 stage loads after the title, the boot's three and two
+in-game changes agree within the noise of the drive's interleaving with the
+BGM refills and of the thread's share of a field, about 20 fields; a constant
+106 before). The port parses each file when the original asks for it.
+`DW4_TRACE_SOUND=1` logs every simulated read,
+PLAYING, stream start, fade stop and ISREADY / ISALLREADY change,
+`DW4_TRACE_LOADER=1` the loader's requests, routings, states and long updates
+(`DW4_TRACE_LOADER_CHUNKS=1` also what each chunk of a file holds), and
+`DW4_DISC_CLOCK=<ticks>` replaces the drive's clock offset to line a run up
+with a capture.
 
 Each manager documents the addresses it follows in its header comment. Shared
 helpers such as COMMDLCTRL (`CommonModelControl`), MESWIN (`MessageWindow`)
