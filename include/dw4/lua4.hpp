@@ -94,11 +94,24 @@ using Lua4ResumableHostHandler = std::function<Lua4HostResult(const Lua4HostCall
 
 struct Lua4Limits {
     std::size_t max_instructions = 1000000; // Per root invocation, including nested chunks.
-    std::size_t max_call_depth = 64;
-    std::size_t max_stack_values = 16384;
+    // Lua frames alive at once (a port guard; every frame takes at least one
+    // stack slot, so the 1024-slot stack below binds first).
+    std::size_t max_call_depth = 1024;
+    // The original's one Lua stack in slots: igLuaState 80272594 calls
+    // lua_open(0, pool) (8027E9D4), so f_luaopen 8027E924 takes the default
+    // 1024 (L->stacksize). Chunks, Lua frames and C calls share it through
+    // absolute positions; luaD_checkstack (80278088) raises "stack
+    // overflow" (docs/LUA4.md, Stack).
+    std::size_t stack_size = 1024;
+    // Values on the API stack when the game starts a chunk: a run from the
+    // game puts its closure at this slot. Measured in Dolphin (AR log at
+    // igLuaState::runBuffer 80272768): L->top - L->stack is 2 slots at every
+    // run of a new game up to dng101b1, over four stage loads.
+    std::size_t api_stack_top = 2;
     // Live Lua data after a garbage collection (the Lua 4.0.1 nblocks model);
-    // above it the VM stops with "not enough memory" like the original's
-    // allocator failure (luaM_realloc 8027BD18 -> luaD_breakrun LUA_ERRMEM).
+    // above it the invocation ends with "not enough memory" like the
+    // original's allocator failure (luaM_realloc 8027BD18 -> luaD_breakrun
+    // LUA_ERRMEM, no _ERRORMESSAGE).
     std::size_t max_heap_bytes = 32u * 1024u * 1024u;
     std::size_t max_objects = 65536; // Live tables + closures (a collection runs before failing).
     std::size_t max_table_entries = 262144; // Live table entries (a collection runs before failing).
@@ -116,6 +129,9 @@ struct Lua4HeapStats {
     std::size_t collections{};
     std::size_t objects{}; // Tables + closures not yet swept (garbage included until a collection).
     std::size_t table_entries{};
+    // Highest top + reserve any luaD_checkstack check of this VM asked for;
+    // a check fails once this reaches stack_size - 1.
+    std::size_t stack_peak{};
 };
 
 enum class Lua4RunStop { completed, host_required, faulted };
@@ -127,6 +143,7 @@ struct Lua4RunResult {
     std::size_t host_calls{};
     std::vector<Lua4Value> returned;
     Lua4RunStop stop = Lua4RunStop::faulted;
+    std::size_t stack_base{}; // Stack slot of the chunk's closure (local 0 is the next one).
 };
 
 // One retained invocation, owning program/frame/argument/result state. An
@@ -167,6 +184,12 @@ public:
     // frame referring to it is invalid after a collection.
     void collect_garbage();
     Lua4HeapStats heap_stats() const;
+    // A script error (a Lua runtime error, stack overflow, out of memory or
+    // a port guard) ends only its invocation, like lua_dobuffer's protected
+    // call: the VM, its globals and any parent invocation go on. Only host
+    // or API faults (callback exceptions, malformed host results, abandoned
+    // invocations) stop the VM for good; then a fresh VM is needed.
+    bool stopped() const noexcept;
     Lua4RunResult execute(const Lua4Program& program);
     // Exactly one pending root per VM. Existing execute() stays synchronous
     // and uses only the ordinary handler; this API explicitly opts into pauses.
