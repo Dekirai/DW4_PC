@@ -242,15 +242,17 @@ the X-Data shop's refill and Gate Disks, sells the weaker devices and restocks a
 buys stronger devices at the weapon and armor shops, takes the fire the dng308 / dng309 cell walls
 need from a fire PWR Medal (stagML13 chip shop) in the pocket of a rank 1+ weapon (weapon shop,
 whose stock is rolled anew on each visit) instead of the Guilmon form, which begins at level 1,
-recovers its bit capsule with a
+keeps its bits in the bank while it is out of the lobby (a defeat leaves them in the bit capsule)
+and takes them out once per stay before the shops, recovers its bit capsule with a
 Raise Disk after a defeat and trains in the area's field below an objective's gate level (a Gate
 Disk escape raises that level like a defeat unless the visit set a story flag never seen before: then
 it restocks and comes back, at most eight times per objective; after a defeat in a field it trains in
 the area before while short of HP disks); with real blows it strikes the stag0103 boat's towers in
 passing, fights e_mammos off its arena's wall and Apocalymon from its dais, dodging the blast pillars,
 guards against shells in flight, fights turrets, chases no enemy over moving platforms, holds
-waves away from pits and quicksand sinks, takes no guard with a drop behind it and fights
-Belphemon by a boss routine; a field step that stalls for 180000 frames leaves the field and comes
+waves away from pits and quicksand sinks (an enemy off the sand is walked to), takes no guard with a
+drop behind it, fights Belphemon by a boss routine and dodges Lucemon's bomb rows from their markers
+(omens: a blast's rings known before its boxes exist); a field step that stalls for 180000 frames leaves the field and comes
 back; with `DW4_CAMPAIGN_CHECKPOINTS=dir` it saves the game
 like a player at nine points of the story where it returns to the lobby (the save Digi-Elf in
 stagML12, `kCheckpoints`) and copies Card A to `dir/<checkpoint>`, with `DW4_CAMPAIGN_LOAD=1` it
