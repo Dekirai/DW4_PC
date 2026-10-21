@@ -337,9 +337,9 @@ void Engine::begin_stage_load(const StageSnapshot* restoring) {
     const std::string next = pending_stage_;
     pending_stage_.clear();
     log("stage change -> " + next);
-    // The update after NEXTSTAGE (beSystem 80316258) releases the stage's
-    // directories (8006F794) before it asks for the next descriptor: its
-    // length follows what the outgoing stage holds (loader_teardown_cost).
+    // The update that asks for the next descriptor (beSystem 80316258) first
+    // releases the outgoing stage (8006F794): its length follows what the
+    // stage holds (loader_teardown_cost); a save state keeps it.
     if (restoring) {
         loader_teardown_ = restoring->loader_teardown;
         loader_common_ = restoring->loader_common;
@@ -347,24 +347,14 @@ void Engine::begin_stage_load(const StageSnapshot* restoring) {
         loader_teardown_ = loader_teardown_cost();
     }
     if (std::getenv("DW4_TRACE_LOADER")) {
-        std::size_t objects = 0, bytes = 0, rams = 0, memories = 0, memory_bytes = 0, generated = 0;
+        std::size_t objects = 0, memories = 0;
         for (const auto& file : files_)
             if (file.document) {
                 objects += file.document->objects.size();
-                bytes += file.document->bytes().size();
                 memories += file.document->memories.size();
-                for (const auto& m : file.document->memories) memory_bytes += m.size;
             }
-        if (auto* models = get<ModelCtrlManager>()) {
-            rams = models->rams().size();
-            for (const auto& ram : models->rams()) generated += ram->generated ? 1 : 0;
-        }
-        log("loader teardown features " + stage_name_ + ": memories " + std::to_string(memories) + " memory bytes " +
-            std::to_string(memory_bytes) + " generated " + std::to_string(generated) + " lua infos " + std::to_string(lua_infos_.size()) +
-            " schedule " + std::to_string(schedule_.size()));
         log("loader teardown of " + stage_name_ + ": " + std::to_string(files_.size()) + " files, " + std::to_string(objects) +
-            " objects, " + std::to_string(bytes) + " bytes, " + std::to_string(rams) + " model RAMs -> " +
-            std::to_string(loader_teardown_) + " milli-fields");
+            " objects, " + std::to_string(memories) + " memory blocks -> " + std::to_string(loader_teardown_) + " milli-fields");
     }
     for (auto& m : managers_) m->clear_stage(*this);
     schedule_.clear();
@@ -567,15 +557,18 @@ void Engine::register_info(const ObjectView& info) {
 // loading screen shows, one at a time, and its load time is the sum of those
 // reads and of the updates its state machine needs (Dolphin captures with an
 // OSReport log of the loader's states, directory requests and DVD commands,
-// work/dref/fix_r22load). The port parses its files at once but its loader
+// work/dref/fix_r22load2: 12 stage loads after the title, the boot's three,
+// two in-game changes). The port parses its files at once but its loader
 // waits for the same reads on the simulated drive (disc_timing.hpp) and steps
 // like the original's updates:
 // - A directory request (8006FD34) in an update is read by the loader's
-//   ADXSTM from the next server tick on (SoundManager::read_entry); the
-//   file is routed (80070130 true, 80070140) in the update after the one that
-//   saw its last chunk booked, later by the time the original takes to
-//   process it in the background (loader_parse_fields). The next request
-//   follows in the next update.
+//   ADXSTM (8051B1D0, after the ADX streams' readers in each server pass)
+//   from the next server tick on, 64 sectors at a time; the loading thread
+//   asks for the next chunk once it has used the last one (chunk_extra). The
+//   file is routed (80070130 true, 80070140) in the update after the one
+//   that saw its last chunk booked, later by the time the thread spends on
+//   it after that (LoaderCost::post). The next request follows in the next
+//   update.
 // - An update that takes the original longer than a field (the teardown of
 //   the outgoing stage, routing a large stage member, registering the stage's
 //   infos in state 5, start.lua) covers the following retraces: the loader
@@ -622,8 +615,6 @@ LoaderCost loader_cost(const IgbDocument* document) {
     return cost;
 }
 
-// Fields the loading thread spends on chunk `chunk` of a file beyond the
-// one the next request takes anyway.
 // Milli-fields the loading thread spends on chunk `chunk` of a file beyond
 // the field the next request takes anyway; the captures' memory chunks cost a
 // field more one time in 13, object chunks one time in 7 (the main thread's
@@ -829,9 +820,9 @@ void Engine::process_stage_loader() {
         }
         return;
     }
-    // The next chunk: from the tick after the booking, a tick later after a
-    // chunk of object data, after the object directory once the objects are
-    // made.
+    // The next chunk: from the tick after the booking, later by the whole
+    // fields the loading thread spends on the booked chunk (chunk_extra; the
+    // load's running sum keeps their fractions).
     if (loader_file_.read >= loader_file_.sectors || loader_file_.booked < 0 || !sound) return;
     const int chunk = int((loader_file_.read - 1) / 64);
     if (!loader_file_.chunk_costed) {

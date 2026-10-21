@@ -1705,7 +1705,7 @@ void SoundManager::update_driver(Engine& engine) {
     // offset (DiscDrive::kDolphinClockOffset), to line a run up with a capture
     // whose world clock stands elsewhere.
     static const char* disc_clock = std::getenv("DW4_DISC_CLOCK");
-    if (disc_clock) cri_.drive.clock_offset = std::strtoll(disc_clock, nullptr, 10);
+    if (disc_clock && *disc_clock) cri_.drive.clock_offset = std::strtoll(disc_clock, nullptr, 10);
     const int inflight_before = cri_.inflight.slot;
     const std::int64_t done_before = cri_.inflight.done;
     std::array<bool, CriStreams::kSlots> playing_before{};

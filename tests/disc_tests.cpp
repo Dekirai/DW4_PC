@@ -100,6 +100,11 @@ void test_rejects() {
 constexpr std::uint64_t kNdmw = 0x2dbfb298; // ndmw.afs on the GDJEB2 disc
 constexpr double kField = 486000000.0 / 59.94;
 
+// The r14/r15 captures' times are their time base * 12, which their reads
+// follow with Dolphin's rotation formula as it stands (the port's own clock
+// has DiscDrive::kDolphinClockOffset added).
+constexpr std::int64_t kCaptureClock = 0;
+
 dw4::CriStreams::File adx(std::uint32_t sector, std::uint32_t sectors, std::uint32_t header, std::uint32_t channels,
                           std::uint32_t rate, std::uint32_t samples, std::uint32_t loop_start = 0, std::uint32_t loop_end = 0) {
     dw4::CriStreams::File f;
@@ -138,6 +143,7 @@ struct Capture {
 std::vector<Event> replay(const Capture& c, dw4::DiscDrive::Rotation rotation, int ticks) {
     dw4::CriStreams cri;
     cri.drive.rotation = rotation;
+    cri.drive.clock_offset = kCaptureClock;
     const std::uint64_t ecc = 0x8000;
     const std::uint64_t first = c.last_offset - c.last_offset % ecc;
     const std::uint64_t last = (c.last_offset + c.last_length + ecc - 1) / ecc * ecc;
@@ -219,6 +225,7 @@ void test_stream_reads() {
     {
         dw4::DiscDrive drive;
         drive.rotation = R::dolphin;
+        drive.clock_offset = kCaptureClock;
         const auto c = stagbs01();
         const std::uint64_t ecc = 0x8000, first = c.last_offset - c.last_offset % ecc;
         const std::uint64_t last = (c.last_offset + c.last_length + ecc - 1) / ecc * ecc;
@@ -335,6 +342,7 @@ void test_loader_reads() {
     for (const auto& c : cases) {
         dw4::DiscDrive drive;
         drive.rotation = R::dolphin;
+        drive.clock_offset = kCaptureClock;
         after(drive, c.before);
         const auto loader = drive.read(c.loader.offset, c.loader.length, ticks(c.loader.issue));
         if (std::llabs(loader - (ticks(c.loader.done) - ticks(c.loader.issue))) >= 24300)
@@ -437,6 +445,45 @@ void test_fades() {
         check(!fade.running && v == int(std::fabs(-210.0f * 0.49000001f)) - 240, "A partial fade ends at the target's level");
     }
 }
+// The r22 captures (fix_r22load2, dngQ6B01 after the title): the descriptor
+// read, the BGM refill, the loading card, the next refill and the first chunk
+// of the preliminary member, each after a seek read. Dolphin's clock runs
+// 23.8e6 ticks ahead of their time base * 12; with that offset its rotation
+// formula gives every duration to 0.7 us, without it one read lands a half
+// turn off, and the mean rotation misses all four by 7 to 17 ms.
+void test_rotation_clock() {
+    using R = dw4::DiscDrive::Rotation;
+    struct Read {
+        std::int64_t issue;     // ticks (time base * 12)
+        std::uint64_t offset, length;
+        std::int64_t duration;  // to the DVD interrupt
+    };
+    const Read reads[] = {{36140296644, 0x3e0eea98, 4096, 35612556},   {36189013152, 0x39640a98, 16384, 49658580},
+                          {36245807256, 0x2daeaa98, 131072, 62489004}, {36334937364, 0x39644a98, 16384, 61566744},
+                          {36399746616, 0x4a5a2298, 131072, 66177060}};
+    auto run = [&](R rotation, std::int64_t clock) {
+        int matched = 0;
+        for (std::size_t i = 0; i + 1 < std::size(reads); ++i) {
+            const auto& r = reads[i];
+            dw4::DiscDrive drive;
+            drive.rotation = rotation;
+            drive.clock_offset = clock;
+            const std::uint64_t ecc = 0x8000, first = r.offset - r.offset % ecc;
+            const std::uint64_t last = (r.offset + r.length + ecc - 1) / ecc * ecc;
+            drive.buffer_start_offset = last;
+            drive.buffer_end_offset = std::max(last + 0x100000 - 2 * ecc, first + 0x100000);
+            drive.buffer_start_time = r.issue + r.duration;
+            drive.buffer_end_time = drive.buffer_start_time +
+                                    std::int64_t(486000000.0 * dw4::DiscDrive::raw_read_time(last, drive.buffer_end_offset - last));
+            const auto& next = reads[i + 1];
+            if (std::llabs(drive.read(next.offset, next.length, next.issue) - next.duration) < 1000) ++matched;
+        }
+        return matched;
+    };
+    check(run(R::dolphin, 23800000) == 4, "Dolphin's rotation with its clock gives the capture's four seek reads");
+    check(run(R::dolphin, 0) == 3, "One of them is near a whole second: the clock matters");
+    check(run(R::mean, 0) == 0, "The mean rotation misses them");
+}
 } // namespace
 
 int main() {
@@ -445,6 +492,7 @@ int main() {
         test_rejects();
         test_stream_reads();
         test_loader_reads();
+        test_rotation_clock();
         test_fades();
     } catch (const std::exception& error) {
         std::cerr << "disc tests failed: " << error.what() << '\n';
