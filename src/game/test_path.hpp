@@ -192,6 +192,17 @@ public:
     // The player stands on a floor that gives way (the campaign driver's
     // fading floors): no wait at a jump's take-off for the enemies there.
     void set_hurry(bool on) { hurry_ = on; }
+    // Gimmicks the objective needs (the campaign driver without the test
+    // cheats; '|'-separated model name prefixes, e.g. the stag0301 levers):
+    // each one not used yet is gone for before anything else once a route
+    // reaches it, and one no route reaches is opened first - a structure
+    // that heals itself standing next to it is struck down (its SQ_DDMG
+    // takes its body out of the way for a while), else a breakable gimmick
+    // next to it is struck even within a healer's keep (kHealerKeep).
+    void set_wanted(const std::string& prefixes) {
+        if (prefixes != wanted_) planned_ = -1000;
+        wanted_ = prefixes;
+    }
 
 private:
     enum class Gimmick { none, strike, talk, step, tech };
@@ -394,6 +405,7 @@ private:
     std::set<std::string> regenerating_names_;   // see regenerating_names()
     bool transit_ = false;                       // see set_transit()
     bool hurry_ = false;                         // see set_hurry()
+    std::string wanted_;                         // see set_wanted()
     std::vector<std::pair<engine::Vec3f, int>> fall_spots_; // see avoid_fall(): where, until
     std::set<const void*> unkillable_;           // enemies that heal themselves or took no damage thrice: left alone for the stage
     std::set<const void*> regenerating_;         // enemies seen healing back above their lowest HP

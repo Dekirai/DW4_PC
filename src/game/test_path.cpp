@@ -1652,6 +1652,98 @@ void ExploreBot::plan(engine::Engine& engine, const engine::ModelCtrlManager::Mo
         return land.found && land.info == p.info && land.child == p.child;
     };
     std::set<const void*> off_ride;
+    // The objective's gimmicks (set_wanted), without the test cheats: one not
+    // used yet that a route reaches is gone for first; for one that no route
+    // reaches the way is opened first. (Three of the seven stag0301 levers
+    // stand in narrow ways that a poison plant's body fills - g_poison01z03
+    // #0, #1 and #4, 44 to 53 off levers #0, #4 and #6 - and the bot, which
+    // leaves such a plant alone once it was seen healing, never got there:
+    // flag 56 needs all seven in one visit and a loaded save clears it, so a
+    // segment from the k7 save stalled 1.8 million frames on the levers. Two
+    // blows put a plant into SQ_DDMG, whose DEAD01 takes its body out of the
+    // way for some 1900 frames, and the lever is pressed meanwhile; the
+    // cheat runs' plants go down the same way, at once.)
+    if (!wanted_.empty() && !engine.cheats().one_hit && !engine.cheats().god) {
+        const std::string list = "|" + wanted_ + "|";
+        const auto is_wanted = [&](const engine::ModelCtrlManager::ModelRam& e) {
+            for (std::size_t at = 1; at < list.size();) {
+                const auto bar = list.find('|', at);
+                if (bar == std::string::npos) break;
+                if (bar > at && e.info_name.rfind(list.substr(at, bar - at), 0) == 0) return true;
+                at = bar + 1;
+            }
+            return false;
+        };
+        const auto tolerance_of = [](const engine::ModelCtrlManager::ModelRam& e) {
+            return e.hit->player_talk && box_reach(e) > kFarTalk ? box_reach(e) + 10.0f : 20.0f;
+        };
+        const engine::ModelCtrlManager::ModelRam* reached = nullptr;
+        float reached_cost = std::numeric_limits<float>::infinity();
+        std::vector<const engine::ModelCtrlManager::ModelRam*> shut;
+        for (const auto& e : models->rams()) {
+            if (!e->generated || !e->node || e->hp <= 0 || !e->hit || e->hit->boxes.empty() || !is_wanted(*e)) continue;
+            if (e->hit->player_talk ? switched_on(*e) : !e->hit->player_bullet) continue;
+            const float cost = keep(e.get(), map.cost_to(position_of(*e), tolerance_of(*e)));
+            if (!std::isfinite(cost)) shut.push_back(e.get());
+            else if (cost < reached_cost) reached_cost = cost, reached = e.get();
+        }
+        if (reached) {
+            const bool talk = reached->hit->player_talk;
+            go(position_of(*reached), reached, std::string(talk ? "press " : "strike ") + reached->info_name + "#" + std::to_string(reached->index) + " (wanted)");
+            route_ = map.route_to(position_of(*reached), tolerance_of(*reached));
+            gimmick_ = talk ? Gimmick::talk : Gimmick::strike;
+            return;
+        }
+        // The way to a shut one: a structure seen healing itself within
+        // kOpenHealer of it (one that gates it) that is not down already
+        // (SQ_DDMG), else a breakable gimmick within kOpenBreak of it or of
+        // a structure gating it (the stag0301 plants stand in pockets of
+        // bushes that the healers' keep leaves standing otherwise,
+        // pick_gimmick); the cheapest walk, the nearer the better.
+        constexpr float kOpenHealer = 60.0f, kOpenBreak = 40.0f;
+        const engine::ModelCtrlManager::ModelRam* opener = nullptr;
+        const engine::ModelCtrlManager::ModelRam* behind = nullptr;
+        bool opener_healer = false;
+        float open_score = std::numeric_limits<float>::infinity();
+        for (const auto* w : shut) {
+            std::vector<engine::Vec3f> gates;
+            for (const auto& e : models->rams())
+                if (e->generated && e->node && e->category == "ENEMY" && regenerating_names_.count(e->info_name) &&
+                    flat(position_of(*e), position_of(*w)) <= kOpenHealer)
+                    gates.push_back(position_of(*e));
+            for (const auto& e : models->rams()) {
+                if (!e->generated || !e->node || e->hp <= 0 || e.get() == w || !e->hit || e->hit->boxes.empty()) continue;
+                if (!engine.has_script("hit_" + e->info_name + ".lua")) continue;
+                const auto at = position_of(*e);
+                const bool healer = e->category == "ENEMY" && regenerating_names_.count(e->info_name) > 0;
+                const bool breakable = !healer && e->info_name.rfind("g_", 0) == 0 && e->category != "ENEMY" && e->category != "ITEM" &&
+                                       e->hit->player_bullet && !e->hit->player_talk && !is_wanted(*e) && !(e->ai_maps && !e->ai_maps->empty());
+                if ((!healer && !breakable) || (healer && e->seq_name == "SQ_DDMG")) continue;
+                // (A gimmick that took its budget of blows unbroken is no way.)
+                if (const auto spent = struck_.find(e.get()); breakable && spent != struck_.end() && spent->second >= 240) continue;
+                float d = flat(at, position_of(*w));
+                if (breakable)
+                    for (const auto& g : gates) d = std::min(d, flat(at, g));
+                if (d > (healer ? kOpenHealer : kOpenBreak)) continue;
+                const float cost = map.cost_to(at, healer ? 30.0f : 20.0f);
+                if (static const char* traced = std::getenv("DW4_TRACE_GIMMICK"); traced && frame % 300 < 30)
+                    std::printf("[%d] wanted %s#%d shut: %s#%d %s %.0f off, cost %.0f\n", frame, w->info_name.c_str(), w->index, e->info_name.c_str(),
+                                e->index, healer ? "healer" : "breakable", d, cost);
+                if (!std::isfinite(cost)) continue;
+                const float score = cost + 2.0f * d + (healer ? 0.0f : 50.0f);
+                if (score < open_score) open_score = score, opener = e.get(), behind = w, opener_healer = healer;
+            }
+        }
+        if (opener) {
+            go(position_of(*opener), opener,
+               "open the way to " + behind->info_name + "#" + std::to_string(behind->index) + ": strike " + opener->info_name + "#" +
+                   std::to_string(opener->index));
+            route_ = map.route_to(position_of(*opener), opener_healer ? 30.0f : 20.0f);
+            gimmick_ = opener_healer ? Gimmick::none : Gimmick::strike;
+            waiting_since_ = -1;
+            return;
+        }
+    }
     // Live enemies (structures such as towers first), then pickups: the
     // cheapest to walk to. While defending enemies are only struck in
     // passing (update), except structures.
@@ -2019,15 +2111,23 @@ void ExploreBot::plan(engine::Engine& engine, const engine::ModelCtrlManager::Mo
                     const auto* turret = static_cast<const engine::ModelCtrlManager::ModelRam*>(shield->second);
                     if (turret->generated && turret->hp > 0) continue;
                 }
+            // DW4_TRACE_GIMMICK=<prefix> (research): why such a gimmick is or
+            // is not picked, a few plans every five seconds.
+            static const char* traced = std::getenv("DW4_TRACE_GIMMICK");
+            const bool tracing = traced && e->info_name.rfind(traced, 0) == 0 && frame % 300 < 30;
             // A switch seen switched on is done for a long while (pairs that
             // power each other back on would otherwise take turns forever).
             if (kind != Gimmick::strike) {
-                if (switches_done_.count(e.get())) continue;
+                if (switches_done_.count(e.get())) {
+                    if (tracing) std::printf("[%d] gimmick %s#%d done\n", frame, e->info_name.c_str(), e->index);
+                    continue;
+                }
                 if (const auto on = switched_.find(e.get()); on != switched_.end() && frame - on->second < 6000) continue;
             }
             const int budget = kind == Gimmick::strike ? 240 : kind == Gimmick::talk ? 12 : kind == Gimmick::tech ? 3 : 60;
             const auto spent = struck_.find(e.get());
             if (spent != struck_.end() && spent->second >= budget) {
+                if (tracing) std::printf("[%d] gimmick %s#%d budget spent %d\n", frame, e->info_name.c_str(), e->index, spent->second);
                 if (kind == Gimmick::strike || kind == Gimmick::tech || frame - struck_at_[e.get()] < 900) continue;
                 // A wall switch that went on before and now takes its presses
                 // without going on again (its script ignores it once its flag
@@ -2041,11 +2141,17 @@ void ExploreBot::plan(engine::Engine& engine, const engine::ModelCtrlManager::Mo
             // A wall that was started on is finished first (it takes several hits).
             const bool was_tried = kind != Gimmick::strike && struck_.count(e.get()) && struck_[e.get()] > 0 && e.get() != previous;
             if (was_tried != tried) continue;
-            if (left_alone(e.get())) continue;
+            if (left_alone(e.get())) {
+                if (tracing) std::printf("[%d] gimmick %s#%d left alone\n", frame, e->info_name.c_str(), e->index);
+                continue;
+            }
             const auto at = position_of(*e);
             if (kind == Gimmick::strike && near_healer(at)) continue; // (switches are worked all the same)
             const float tolerance = gimmick_tolerance(*e, kind);
             float cost = keep(e.get(), map.cost_to(at, tolerance));
+            if (tracing)
+                std::printf("[%d] gimmick %s#%d kind %d cost %.0f (tried %d, spent %d) near healer %d\n", frame, e->info_name.c_str(), e->index, int(kind),
+                            cost, int(tried), spent == struck_.end() ? -1 : spent->second, int(near_healer(at)));
             // A wall being broken (or walked to) is finished first.
             if (kind == Gimmick::strike && (struck_.count(e.get()) || e.get() == previous)) cost *= 0.3f;
             // A switch whose script also switches walls back on may lock a
