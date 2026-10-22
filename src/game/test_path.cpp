@@ -1744,6 +1744,24 @@ void ExploreBot::plan(engine::Engine& engine, const engine::ModelCtrlManager::Mo
             return;
         }
     }
+    // Members of a key wave (a started generator whose clear script powers
+    // something on, opens a wall or sets a flag: gene<NN>.lua with POWERON,
+    // OFFHIT or FLGset) are hunted while crossing a field too: stag0304's
+    // switches before its boss gate go on only once its GENE-21 and GENE-31
+    // waves are cleared (gene21.lua / gene31.lua), and a no-cheat run that
+    // left the last e_mecha1 of GENE-21 alone walked the stage for 20000
+    // frames to no end and spent its heals there.
+    std::set<std::pair<std::string, int>> key_wave;
+    if (transit_)
+        if (auto* generators = engine.get<engine::GeneraterManager>())
+            for (const auto& wave : generators->waves()) {
+                if (wave.name.rfind("GENE-", 0) != 0 || wave.members.empty()) continue;
+                std::string script = "gene" + wave.name.substr(5) + ".lua";
+                std::transform(script.begin(), script.end(), script.begin(), [](unsigned char c) { return char(std::tolower(c)); });
+                if (!engine.script_mentions(script, "POWERON") && !engine.script_mentions(script, "OFFHIT") && !engine.script_mentions(script, "FLGset"))
+                    continue;
+                for (const int member : wave.members) key_wave.insert({wave.enemy, member});
+            }
     // Live enemies (structures such as towers first), then pickups: the
     // cheapest to walk to. While defending enemies are only struck in
     // passing (update), except structures.
@@ -1775,7 +1793,7 @@ void ExploreBot::plan(engine::Engine& engine, const engine::ModelCtrlManager::Mo
             // (A structure seen firing along a lane is a turret.)
             const auto fired = shots_.find(e.get());
             const bool turret = pass == 0 && structure && fired != shots_.end() && !fired->second.empty();
-            if (pass == 0 && defending && !structure && !boss && !hover) continue;
+            if (pass == 0 && defending && !structure && !boss && !hover && !key_wave.count({e->info_name, e->index})) continue;
             // (Turrets are fought with real blows too. Leaving them alone
             // until the stage was explored to the end kept the way shut where
             // their bodies fill it - stag0201's g_cannon01 pair before the
