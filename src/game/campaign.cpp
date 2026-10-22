@@ -664,6 +664,69 @@ std::vector<std::string> transporter_areas(engine::Engine& engine) {
     }
 }
 
+// Stages whose player hit script spares one kind of damage while an
+// accessory is worn (hit_p_*.lua: SYSctlDeviceFolder ISEQUIP armor2 N; the
+// only one is stag0303's): the swamp fog of stag0303 (g_damagefogz06, a grid
+// of 13 tiles over the swamp floor, 70119 every 32 frames, some 100 HP at
+// level 36) does nothing to a player with the Filter Board (armor2 42) on.
+// A no-cheat chain walking the swamp to matg00 used 23 heals in 7000
+// frames, the guard against the fog's boxes taking most of its steps, and
+// gave the fortress up there again and again. The junk shop sells the board
+// (stagML13 n_metete#0: shopJunk line 0 of every row, once COUNTER[1], the
+// bits donated there, reaches 1000, ShopJunk 80397E60); the armor shop has
+// it only from level 198 (shopArmor row 29, 80351CD4). So while the way to
+// the story's next objective passes such a stage the driver donates
+// kJunkDonation bits at the junk shop, buys the board there and wears it
+// in the accessory slot (next_equip), and never sells it.
+struct Protection {
+    const char* stage;
+    int record; // armor2
+};
+constexpr Protection kProtections[] = {{"stag0303", 42}};
+constexpr int kJunkDonation = 1000;  // COUNTER[1] that opens the junk shop's first stock
+constexpr int kJunkVisits = 3;       // junk shop visits a stay in the lobby at most
+
+bool protection_device(int type, int record) {
+    if (type != 2) return false;
+    for (const auto& p : kProtections)
+        if (p.record == record) return true;
+    return false;
+}
+
+// The armor2 record kProtections wants worn on the way to the story's next
+// objective (the fewest stage changes from the lobby over the exits usable
+// now, kExits; the points they lead to left aside), else -1. Never in god
+// mode: nothing hurts there.
+int protection_wanted(engine::Engine& engine) {
+    if (engine.cheats().god) return -1;
+    const Objective* objective = nullptr;
+    for (const auto& o : kObjectives)
+        if (!holds(engine, o.done)) {
+            objective = &o;
+            break;
+        }
+    if (!objective || !objective->stage[0]) return -1;
+    const std::string target = objective->stage;
+    const auto areas = transporter_areas(engine);
+    std::map<std::string, std::string> parent{{"stagml11", ""}};
+    std::vector<std::string> open{"stagml11"};
+    for (std::size_t at = 0; at < open.size() && !parent.count(target); ++at)
+        for (const auto& exit : kExits) {
+            if (open[at] != exit.stage || parent.count(exit.target)) continue;
+            const bool usable = std::string_view(exit.when) == "transporter"
+                                    ? std::find(areas.begin(), areas.end(), exit.target) != areas.end()
+                                    : holds(engine, exit.when);
+            if (!usable) continue;
+            parent[exit.target] = open[at];
+            open.push_back(exit.target);
+        }
+    if (!parent.count(target)) return -1;
+    for (std::string stage = target; !stage.empty(); stage = parent[stage])
+        for (const auto& p : kProtections)
+            if (stage == p.stage) return p.record;
+    return -1;
+}
+
 // Per-stage settings the ExploreBot reads from the environment at a stage
 // start (a switch puzzle's solution, given like the survey presets).
 struct StageSetting {
@@ -1848,6 +1911,16 @@ CampaignBot::EquipPick CampaignBot::next_equip(engine::Engine& engine) const {
     if (!sys) return {};
     const auto& p = sys->players[0];
     for (int kind = 0; kind < 3; ++kind) {
+        // The accessory a stage on the way asks for (kProtections) goes on,
+        // and stays on while it is wanted, whatever is stronger.
+        if (kind == 2)
+            if (const int want = protection_wanted(engine); want >= 0) {
+                const auto* worn = p.device(p.sub_slot.empty() ? -1 : p.sub_slot[0]);
+                if (worn && worn->type == 2 && worn->record == want) continue;
+                if (!equip_failed_.count({2, want}))
+                    for (std::size_t i = 0; i < p.devices.size(); ++i)
+                        if (p.devices[i].type == 2 && p.devices[i].record == want && !p.devices[i].flag) return {2, int(i)};
+            }
         double best = (100 + kEquipGain) / 100.0;
         int pick = -1;
         for (std::size_t i = 0; i < p.devices.size(); ++i) {
@@ -1924,12 +1997,25 @@ int CampaignBot::next_gear(engine::Engine& engine, int program) const {
     auto* sys = engine.get<engine::GameSystem>();
     auto* db = engine.get<engine::DatabaseManager>();
     auto* windows = engine.get<engine::SubWindowManager>();
-    if (!sys || !db || !windows || program < 6 || program > 8) return -1;
+    if (!sys || !db || !windows || program < 6 || program > 9) return -1;
     const auto* stock = windows->shop_stock(program);
     const auto& p = sys->players[0];
     if (!stock || p.devices.size() >= 36) return -1;
     static const int buy_rank[6] = {0, 500, 1500, 6000, 12000, 24000};
     static const char* const tables[3] = {"weapon", "armor1", "armor2"};
+    // The junk shop: the accessory a stage on the way asks for (kProtections).
+    if (program == 9) {
+        const int wanted = protection_wanted(engine);
+        if (wanted < 0) return -1;
+        for (const auto& d : p.devices)
+            if (d.type == 2 && d.record == wanted) return -1;
+        for (std::size_t i = 0; i < stock->size(); ++i) {
+            const auto& e = (*stock)[i];
+            if (!e || e->type != 2 || e->record != wanted) continue;
+            if (db->number("armor2", e->record, "HANBAI").value_or(0) + 100 * e->value <= p.bits) return int(i);
+        }
+        return -1;
+    }
     const int want = wanted_element(engine);
     if (program == 8) {
         if (want < 0 || holds(engine, "H" + std::to_string(want))) return -1;
@@ -2028,7 +2114,7 @@ int CampaignBot::next_sale(engine::Engine& engine) const {
     };
     for (std::size_t i = 0; i < p.devices.size(); ++i) {
         const auto& d = p.devices[i];
-        if (d.flag || placeholder(d)) continue;
+        if (d.flag || placeholder(d) || protection_device(d.type, d.record)) continue; // (kProtections: kept)
         int price = cell(d, "KAITORI") + 25 * d.value;
         if (d.type <= 1) price += sell_rank[std::clamp(d.rank, 0, 5)];
         if (price < 1 || is_kept(int(i))) continue;
@@ -2724,9 +2810,21 @@ std::optional<CampaignBot::Step> CampaignBot::next_step(engine::Engine& engine) 
     // Then a look at the weapon and the armor shop (next_gear) once per level.
     static constexpr Objective kWeaponErrand{"gear from the weapon shop", "", "stagml13", "gear:n_digilfm#0"};
     static constexpr Objective kArmorErrand{"gear from the armor shop", "", "stagml13", "gear:n_digilff#1"};
+    // Before them the junk shop while a stage on the way asks for an
+    // accessory not held (kProtections): the donation first, then the board.
+    static constexpr Objective kJunkErrand{"an accessory from the junk shop", "", "stagml13", "gear:n_metete#0"};
+    bool junk = false;
+    if (const int want = protection_wanted(engine); want >= 0 && slot && junk_visits_ < kJunkVisits) {
+        junk = true;
+        for (const auto& d : slot->devices) junk = junk && !(d.type == 2 && d.record == want);
+        // (After the donation the dealer sells only once the lobby gate was
+        // used again, flag 594 off: until then he has words only, no shop.)
+        junk = junk && (engine.counters()[1] >= kJunkDonation ? !holds(engine, "F594") : slot->bits >= kJunkDonation + kGearBits);
+    }
     if (objective != &kHealErrand && objective != &kEquipErrand && objective != &kShopErrand && !engine.cheats().god &&
         lobby(here) && !holds(engine, "F1") && slot && slot->bits >= kGearBits && slot->devices.size() < 36) {
-        if (gear_checked_[0] != slot->stats.level) objective = &kWeaponErrand;
+        if (junk) objective = &kJunkErrand;
+        else if (gear_checked_[0] != slot->stats.level) objective = &kWeaponErrand;
         else if (gear_checked_[1] != slot->stats.level) objective = &kArmorErrand;
     }
     // Training (no god mode): below the objective's gate level the player
@@ -2925,7 +3023,10 @@ bool CampaignBot::answer_menu(engine::Engine& engine, const engine::ModelCtrlMan
     // n_digilfm#1 the chip shop.)
     if (step.action.rfind("gear:", 0) == 0 && !shop_open_) {
         gear_open_ = true;
-        gear_program_ = step.action.find("n_digilff") != std::string::npos ? 7 : step.action.find("n_digilfm#1") != std::string::npos ? 8 : 6;
+        gear_program_ = step.action.find("n_digilff") != std::string::npos     ? 7
+                        : step.action.find("n_digilfm#1") != std::string::npos ? 8
+                        : step.action.find("n_metete") != std::string::npos    ? 9
+                                                                               : 6;
     }
     if (gear_open_) {
         engine::Packet running;
@@ -2936,6 +3037,10 @@ bool CampaignBot::answer_menu(engine::Engine& engine, const engine::ModelCtrlMan
             if (gear_ran_) {
                 if (auto* sys = engine.get<engine::GameSystem>()) gear_checked_[std::size_t(gear_program_ - 6)] = sys->players[0].stats.level;
                 gear_visit_[std::size_t(gear_program_ - 6)] = stage_frame_;
+                if (gear_program_ == 9) {
+                    ++junk_visits_;
+                    if (trace()) std::printf("[%d] campaign: junk shop visit, %d bits donated there\n", frame, engine.counters()[1]);
+                }
                 // (Traced: what a weapon shop asked for the pockets had in stock.)
                 auto* sys = engine.get<engine::GameSystem>();
                 auto* db = engine.get<engine::DatabaseManager>();
@@ -3133,9 +3238,33 @@ bool CampaignBot::answer_menu(engine::Engine& engine, const engine::ModelCtrlMan
             // stock's page and line (i_stcursor01), the message (A) and yes
             // (i_stmesscr, 2 lines); the list is backed out of when nothing
             // more is wanted.
+            // The junk shop (ShopJunk 80397E60, kProtections): "use it?" yes,
+            // Donate / Buy / Exit (i_stmesscr, 3 lines: Donate while
+            // COUNTER[1] is below kJunkDonation, Buy while next_gear finds
+            // the accessory), the donation's seven digits (i_stcursor03,
+            // ShopEditBit mode 2: UP adds 10^(6 - cursor), clamped to the
+            // bits held): the thousands digit (cursor 3) UP once and A, the
+            // message and yes (i_stmesscr, 2 lines); crossing 1000 runs
+            // junkexit.lua (flag 594) and closes the shop with a message. The
+            // next visit buys from the stock list (i_stcursor01) like the
+            // device shops.
             const int gear = next_gear(engine, gear_program_);
-            if (menu.name == "i_stmesscr" && menu.items >= 3) want = gear >= 0 ? 0 : menu.items - 1;
-            else if (menu.name == "i_stcursor01" && gear_buying_) {
+            const bool junk = gear_program_ == 9;
+            if (menu.name == "i_stmesscr" && menu.items >= 3)
+                want = junk ? (engine.counters()[1] < kJunkDonation ? 0 : gear >= 0 ? 1 : menu.items - 1) : gear >= 0 ? 0 : menu.items - 1;
+            else if (junk && menu.name == "i_stcursor03") {
+                if (frame - junk_digits_at_ > 60) junk_ups_ = 0;
+                junk_digits_at_ = frame;
+                if (menu.cursor == 3 && junk_ups_ < 1) {
+                    if (frame - menu_pressed_ < 14) return true;
+                    out.buttons |= pad_button::up;
+                    ++junk_ups_;
+                    menu_pressed_ = frame;
+                    if (trace()) std::printf("[%d] campaign menu i_stcursor03 thousands digit -> UP\n", frame);
+                    return true;
+                }
+                want = 3;
+            } else if (menu.name == "i_stcursor01" && gear_buying_) {
                 if (gear < 0) cancel = true;
                 else if (turn_to(gear)) return true;
                 else want = gear % 12;
@@ -3190,7 +3319,7 @@ bool CampaignBot::answer_menu(engine::Engine& engine, const engine::ModelCtrlMan
             if (equip_open_ && menu.name == "i_stmesscr" && menu.items >= 3) equip_pockets_ = want == 1;
             if (gear_open_ && !equip_open_ && !heal_open_ && !shop_open_) {
                 if (menu.name == "i_stmesscr" && menu.items >= 3) {
-                    gear_buying_ = want == 0;
+                    gear_buying_ = want == (gear_program_ == 9 ? 1 : 0); // (the junk shop: Donate / Buy / Exit)
                     list_page_ = 0;
                     list_turn_ = 0;
                 } else if (gear_buying_ && menu.name == "i_stcursor01") {
@@ -4411,12 +4540,23 @@ void CampaignBot::survive(engine::Engine& engine, const engine::ModelCtrlManager
         const bool shopping = objective_now_.rfind("train", 0) == 0 &&
                               ((planned_spend(engine) >= kGateTripBits && heal_stock <= kTripHealStock) ||
                                (slot.devices.size() >= 36 && next_sale(engine) >= 0));
-        if ((dying || shopping) && blow_due(engine, player, kHoldAttackLead + 8.0f, frame) > kHoldAttackLead + 8.0f) {
+        // (The junk shop's accessory, kProtections: after the donation the
+        // dealer only says to come back later until the next trip through
+        // the lobby gate (flag 594, cleared by stagML11 gateclear.lua when a
+        // destination is chosen), so out in the field without it the player
+        // goes back for it at once.)
+        bool junk = false;
+        if (const int want = protection_wanted(engine); want >= 0 && engine.counters()[1] >= kJunkDonation && !holds(engine, "F594") &&
+                                                         !lobby(lower(engine.stage_name()))) {
+            junk = true;
+            for (const auto& d : slot.devices) junk = junk && !(d.type == 2 && d.record == want);
+        }
+        if ((dying || shopping || junk) && blow_due(engine, player, kHoldAttackLead + 8.0f, frame) > kHoldAttackLead + 8.0f) {
             gate_disk_at_ = frame;
             heal_at_ = frame;
             start_disk(slot, kGateDisk, frame);
-            std::printf("[%d] campaign: Gate Disk back to the lobby (%s, %d/%d HP, %d bits)\n", frame, dying ? "no heal left" : "shopping",
-                        slot.hp, slot.max_hp, slot.bits);
+            std::printf("[%d] campaign: Gate Disk back to the lobby (%s, %d/%d HP, %d bits)\n", frame,
+                        dying ? "no heal left" : shopping ? "shopping" : "the junk shop", slot.hp, slot.max_hp, slot.bits);
             // An objective given up for want of heals raises its gate level
             // like a defeat (kGates): a boss that outlasts the supplies would
             // otherwise be walked back to again and again (s2h: dng102b3's
@@ -4885,7 +5025,7 @@ CampaignBot::Output CampaignBot::play(engine::Engine& engine, const engine::Mode
         // (Out of the lobby into the story's stages: a new stay in the lobby
         // follows, see kBankDust.)
         if (stage.rfind("stag0", 0) == 0 || stage.rfind("dng", 0) == 0 || stage.rfind("stagbs", 0) == 0 || stage.rfind("staggf", 0) == 0)
-            bank_withdrawn_ = false, bank_tries_ = 0;
+            bank_withdrawn_ = false, bank_tries_ = 0, junk_visits_ = 0;
         route_.clear();
         route_frame_ = -100000;
         waited_ = 0;

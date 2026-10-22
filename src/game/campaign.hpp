@@ -219,11 +219,15 @@ private:
     int bank_digits_at_ = -100000; // the amount's digit cursor last seen
     // Gear from the weapon, armor and chip shops (next_gear).
     bool gear_open_ = false;     // a device shop program of the errand may be running
-    int gear_program_ = 6;       // its program (6 weapons, 7 armor, 8 chips)
+    int gear_program_ = 6;       // its program (6 weapons, 7 armor, 8 chips, 9 the junk shop)
     bool gear_buying_ = false;   // Buy was chosen: the stock list
     bool gear_ran_ = false;      // its program was seen running
-    std::array<int, 3> gear_checked_{-1, -1, -1}; // the level each shop was last looked at
-    std::array<int, 3> gear_visit_{-1, -1, -1};   // the stage visit (its stage_frame_) each shop last ran and closed in
+    std::array<int, 4> gear_checked_{-1, -1, -1, -1}; // the level each shop was last looked at
+    std::array<int, 4> gear_visit_{-1, -1, -1, -1};   // the stage visit (its stage_frame_) each shop last ran and closed in
+    // The junk shop (campaign.cpp kProtections).
+    int junk_visits_ = 0;          // its visits in this stay in the lobby
+    int junk_ups_ = 0;             // UP presses on the donation's thousands digit
+    int junk_digits_at_ = -100000; // the donation's digit cursor last seen
     // Training (campaign.cpp kTraining).
     std::string objective_now_;  // the objective worked on (defeats raise its gate)
     std::map<std::string, int> defeat_levels_; // objective -> highest level a defeat (or a Gate Disk escape) at it came at
