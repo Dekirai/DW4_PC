@@ -139,6 +139,15 @@ constexpr ElementNeed kElementNeeds[] = {
     // The scrap walls of dng412b1-b4 (hit_g_dscrap.lua) break only to a
     // swing of thunder (a technique does nothing to them): key item 10.
     {2, "P6&!K10"},
+    // Daemon's forms (enemy 360 / 363 / 366 at the first difficulty) resist
+    // thunder 250 / 650 / 800 and dark 800 / 800 / 250 of 1000: a blow of
+    // the element adds (1000 - resistance) / 1000 of it again when the
+    // resistance is below random % 1000 (P2EDAMAGE), so a dark medal has the
+    // last form, by far the longest fight (5645 HP; a no-cheat test spent
+    // 34 heals on it), take some 1.5 times as much a swing, for less in
+    // the first one's. The last three boss stages follow one another with
+    // no lobby between them.
+    {3, "K10&!F86"},
 };
 
 bool holds(engine::Engine& engine, std::string_view condition, int entry = -1);
@@ -404,6 +413,11 @@ constexpr Objective kObjectives[] = {
     {"a thunder PWR Medal from the chip shop", "G|A2|H2|K10|P7", "stagml13", "gear:n_digilfm#1"},
     {"the thunder PWR Medal into the weapon's pocket", "G|A2|K10|P7", "stagml12", "equip:n_digilff#1"},
     {"key item 10 (dng412b4 boss)", "K10|P7", "dng412b4", "explore:matz02"},
+    // Without the test cheats a dark PWR Medal in the weapon's pocket for
+    // Daemon (kElementNeeds).
+    {"a weapon with chip pockets (rank 1+, for a dark medal)", "G|A3|R1|F86|!K10", "stagml13", "gear:n_digilfm#0"},
+    {"a dark PWR Medal from the chip shop", "G|A3|H3|F86|!K10", "stagml13", "gear:n_digilfm#1"},
+    {"the dark PWR Medal into the weapon's pocket", "G|A3|F86|!K10", "stagml12", "equip:n_digilff#1"},
     {"Daemon (stagBS06)", "F86|F70", "stagbs06", "explore:matz01"},
     // The return gate of stagBS06 leads to the staff roll (stagIS20
     // first.lua: j_endroll, then stagML11), whose start.lua turns flag 70
@@ -791,6 +805,19 @@ bool heavy_way(engine::Engine& engine) {
             const std::string_view stage = o.stage;
             return stage.rfind("stagbs", 0) == 0 || behind_gauntlet(engine, o.stage);
         }
+    return false;
+}
+
+// Whether the story's next objective is the last boss (kLastBoss): the
+// supplies are bought with no bits kept back (Supply::reserve), there is no
+// restock after it. (A no-cheat chain went into Daemon's three stages with 4
+// HP Disks L and one Recovery and 30954 bits in the bank, and its heals ran
+// out at the last form.)
+constexpr const char* kLastBoss = "stagbs06";
+bool last_stand(engine::Engine& engine) {
+    if (engine.cheats().god) return false;
+    for (const auto& o : kObjectives)
+        if (!holds(engine, o.done)) return std::string_view(o.stage) == kLastBoss;
     return false;
 }
 
@@ -1947,14 +1974,14 @@ CampaignBot::Purchase CampaignBot::next_purchase(engine::Engine& engine) const {
     auto* sys = engine.get<engine::GameSystem>();
     if (!sys) return {};
     const auto& slot = sys->players[0];
-    const bool heavy = heavy_way(engine);
+    const bool heavy = heavy_way(engine), last = last_stand(engine);
     for (const auto& s : kSupplies) {
         if (slot.max_hp < s.from_hp || slot.max_hp >= s.to_hp || (s.heavy && !heavy)) continue;
         const auto it = prices_.find(s.record);
         if (it == prices_.end() || it->second <= 0) continue;
         const int held = disks_held(slot, s.record);
         const int want = std::min({s.keep, 9}) - held;
-        const int count = std::min(want, std::max(0, slot.bits - s.reserve) / it->second);
+        const int count = std::min(want, std::max(0, slot.bits - (last ? 0 : s.reserve)) / it->second);
         if (count > 0) return {s.record, count, held};
     }
     return {};
@@ -1967,12 +1994,13 @@ int CampaignBot::planned_spend(engine::Engine& engine) const {
     if (!sys) return 0;
     const auto& slot = sys->players[0];
     int bits = slot.bits + slot.bank_bits, spend = 0;
-    const bool heavy = heavy_way(engine);
+    const bool heavy = heavy_way(engine), last = last_stand(engine);
     for (const auto& s : kSupplies) {
         if (slot.max_hp < s.from_hp || slot.max_hp >= s.to_hp || (s.heavy && !heavy)) continue;
         const auto it = prices_.find(s.record);
         if (it == prices_.end() || it->second <= 0) continue;
-        const int count = std::min(std::min({s.keep, 9}) - disks_held(slot, s.record), std::max(0, bits - s.reserve) / it->second);
+        const int count =
+            std::min(std::min({s.keep, 9}) - disks_held(slot, s.record), std::max(0, bits - (last ? 0 : s.reserve)) / it->second);
         if (count <= 0) continue;
         bits -= count * it->second;
         spend += count * it->second;
