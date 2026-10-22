@@ -145,8 +145,9 @@ the 2D layers stay 4:3 and full-screen fades stretch), `vsync`,
 picture blends between the last two updates) and `msaa` (2/4/8 samples, applied at start-up),
 `[audio] volume` (percent), `[menu] pause` (pause while the menu is open),
 `[preferences] skip_intro` (boot straight to the title), `[gameplay]`
-`exp_rate`, `damage_dealt`, `damage_taken` (percent, 100 = original) and
-`drop_seed` (item drop randomizer, 0 = off; key items stay), `[data] cards` (the
+`exp_rate`, `damage_dealt`, `damage_taken` (percent, 100 = original),
+`drop_seed` (item drop randomizer, 0 = off; key items stay) and `loading`
+(`original`, the default, or `fast`; see *Fast loading* below), `[data] cards` (the
 memory card folder with `Card A` / `Card B`, default `saves/GC/USA` next to the
 program; Dolphin's `GC/USA` folder works too), `[data] card_a` / `card_b` (what
 the slots hold: `none` for an empty slot, `unformatted`, and / or the card's
@@ -155,6 +156,42 @@ its folder exists, also `DW4_CARD_A` / `DW4_CARD_B`) and
 `[keyboard]` with up to three key names per button (`a=Return, Space, K`) and
 `[gamepad]` with up to three SDL controller inputs per button (`l=lefttrigger,
 leftshoulder`).
+
+### Fast loading
+
+The port loads a stage the way the original does: every file comes off a
+simulated GameCube disc drive in 64-sector reads, the loading thread spends the
+original's time on each, the outgoing stage's teardown and the registration of
+the new one take the updates they took on the GameCube, the loading screen
+plays its minimum time, and the music is ready only once its first blocks came
+off the disc. A stage change therefore takes 400-900 frames (7-15 seconds)
+like the original. *Loading: Fast* in the F1 menu's Settings tab (also part of
+the Modernized preset; `[gameplay] loading=fast`, `--loading fast` for one
+run) is a deliberate deviation from that timing: the loader runs the same
+states in the same order and the scripts run as always, but no file waits for
+the drive, none of the GameCube's teardown / routing / registration time is
+spent, the loading screen goes as soon as the files are in, and the sound
+driver's disc reads end at its next update, so the stage's music is ready a
+few frames after it starts. A stage change then takes about 16 frames (a
+quarter of a second) plus the stage's own fades and opening scenes, which stay
+as they are. Large files are parsed one per frame, smaller ones are grouped up
+to 1 MiB per frame, so no frame takes much longer than with the original
+timing. A change applies from the next stage change on. The option changes
+the frames a session plays, so save states keep it (a state replays with the
+timing it was made with; afterwards the current choice applies), online
+sessions use the host's choice on every machine, and Original stays
+frame-identical to the original timing. Memory card access keeps its original
+speed: it takes well under two seconds per save and the save room's messages
+follow it.
+
+| Stage change (frames from the change to the stage start) | Original | Fast |
+| --- | --- | --- |
+| Boot: logos / opening / title (`stagIS08` / `09` / `10`) | 234 / 62 / 118 | 15 / 15 / 15 |
+| Dungeon `dng101b1` (to player control) | 490 (550) | 16 (76) |
+| Field `stag0101` / `stag0204` | 769 / 797 | 16 / 16 |
+| Quest `dngQ1B1e` (to player control) | 575 (635) | 16 (76) |
+| Boss `stagBS01` | 262 | 16 |
+| Lobby `stagML11` | 516 | 15 |
 
 ### Online co-op
 
@@ -168,7 +205,8 @@ dw4_game.exe --join 192.168.1.20           rem or --join host:port
 ```
 
 `--port N` and `--net-delay N` (input delay in steps, default 3) adjust the
-session. Every machine starts the same way (the host's stage and cheats) and
+session. Every machine starts the same way (the host's stage, cheats,
+rebalancing and loading choice) and
 each step waits for every player's input, so the simulation stays identical;
 guests report state fingerprints and a desync shows on screen. Each machine's
 keyboard and first controller play its own player (host 1, guests 2-4). The
@@ -284,6 +322,9 @@ difficulty (0-2) before the first stage loads, `DW4_CARD_RECORD=FILE.gci:N` make
 save box N (as the character select loads it), `DW4_ENTRY=n` starts a
 test run's first stage at player point group n (as when arriving from another exit),
 `DW4_PLAYERS=n` joins n players, `DW4_OPEN_MENU=1` opens the F1 menu,
+`DW4_FAST_LOADING=1` loads with the fast loading option (`--loading original|fast` overrides it),
+`DW4_TRACE_LOADTIME=1` prints for every stage load the frames to the stage start and to player 1's
+control and the real time the load's frames took (`=2` every frame of the load with the loader state),
 `DW4_WINDOW=WxH` and `DW4_WIDESCREEN=1` size test windows, `DW4_SMOKE_STAGES=n` ends a test run
 once the n-th stage has loaded,
 `DW4_TRACE_SELECT`, `DW4_TRACE_TEXT`, `DW4_TRACE_PLAYER`, `DW4_TRACE_HIT`, `DW4_TRACE_EXPLORE` and
@@ -324,8 +365,8 @@ gamepads control players 2 to 4. As on the original, holding B and X and
 then START for a second on player 1's controller returns to the title
 (outside the logo, opening, title and ending stages).
 
-F1 opens the menu: the Settings tab (an Original / Modernized preset, display,
-widescreen, frame limit, anti-aliasing,
+F1 opens the menu: the Settings tab (an Original / Modernized preset, the
+loading speed (Original / Fast), display, widescreen, frame limit, anti-aliasing,
 window size, volume, keyboard and controller bindings), the Cheats tab
 (god mode, infinite MP, one-hit defeats, refills, levels and bits per player,
 session only and off by default; plus the saved rebalancing and randomizer

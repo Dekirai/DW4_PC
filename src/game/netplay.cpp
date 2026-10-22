@@ -476,6 +476,10 @@ bool NetSession::lobby(const SessionStart& host_start, std::string& status, std:
     if (role_ == Role::guest) {
         if (peers_.empty() || peers_.front()->closed) {
             error = messages_.empty() ? "The connection to the host closed." : messages_.back();
+            // A rejection (another program version, other game data) says
+            // why, not only that the host is gone.
+            for (const auto& message : messages_)
+                if (message.rfind("Rejected: ", 0) == 0) error = message;
             return false;
         }
         status = slot_ ? "Joined as player " + std::to_string(slot_ + 1) + "; waiting for the host to start..." : "Connecting...";

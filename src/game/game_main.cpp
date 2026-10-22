@@ -511,8 +511,10 @@ int run(const Options& options, dw4::game::Settings& settings) {
         if (mod.enabled && mod.problem.empty()) std::cout << "mod: " << mod.name << " " << mod.version << " (" << mod.file_count << " files)\n";
     // Fast loading (settings.ini [gameplay] loading; --loading; test runs:
     // DW4_FAST_LOADING=1). A stage load latches it (Engine::fast_loading).
+    // A choice in the F1 menu replaces the command line's.
+    std::optional<bool> loading_override = options.fast_loading;
     auto fast_loading_choice = [&] {
-        if (options.fast_loading) return *options.fast_loading;
+        if (loading_override) return *loading_override;
         if (options.smoke_frames) {
             const char* text = std::getenv("DW4_FAST_LOADING");
             return text && std::atoi(text) != 0;
@@ -1600,6 +1602,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                                 settings.msaa = modern ? 4 : 0;
                                 settings.skip_intro = modern;
                                 settings.fast_loading = modern;
+                                loading_override.reset();
                                 if (!modern) {
                                     settings.exp_rate = settings.damage_dealt = settings.damage_taken = 100;
                                     settings.drop_seed = 0;
@@ -1608,22 +1611,33 @@ int run(const Options& options, dw4::game::Settings& settings) {
                                 if (!net.active()) apply_gameplay(engine.cheats());
                                 settings_changed = true;
                             }
-                            ImGui::TextDisabled("Original: 4:3, 60 fps motion, no anti-aliasing, the intro, GameCube load times and the original balance.");
-                            // Loading: the original's disc and loading-thread time or none of it.
-                            int loading = settings.fast_loading ? 1 : 0;
+                            ImGui::PushTextWrapPos(0.0f);
+                            ImGui::TextDisabled("Original: 4:3, 60 fps motion, no anti-aliasing, the intro, GameCube load times and the "
+                                                "original balance.");
+                            ImGui::PopTextWrapPos();
+                            // Loading: the original's disc and loading-thread time or none
+                            // of it (shown as it applies: online the host's choice).
+                            const bool fast = net.active() ? engine.cheats().fast_loading : fast_loading_choice();
+                            int loading = fast ? 1 : 0;
                             static const char* loadings[] = {"Original", "Fast"};
                             ImGui::BeginDisabled(net.active());
                             if (ImGui::Combo("Loading", &loading, loadings, 2)) {
                                 settings.fast_loading = loading == 1;
+                                loading_override.reset();
                                 apply_gameplay(engine.cheats());
                                 settings_changed = true;
                             }
                             ImGui::EndDisabled();
-                            ImGui::TextDisabled(net.active() ? "Online, the host's loading choice applies."
-                                                : settings.fast_loading
-                                                    ? "Fast: stage changes skip the GameCube's disc reads and loading waits (well under a second)."
-                                                    : "Original: stage changes take as long as on the GameCube (about 7-15 seconds).");
-                            ImGui::TextDisabled("A change applies from the next stage change on.");
+                            ImGui::PushTextWrapPos(0.0f);
+                            if (net.active())
+                                ImGui::TextDisabled("Online, the host's loading choice applies to everyone.");
+                            else if (fast)
+                                ImGui::TextDisabled("Fast: a stage change skips the GameCube's disc reads and loading waits and takes "
+                                                    "well under a second. Applies from the next stage change.");
+                            else
+                                ImGui::TextDisabled("Original: a stage change takes as long as on the GameCube (about 7-15 seconds). "
+                                                    "Applies from the next stage change.");
+                            ImGui::PopTextWrapPos();
                         }
                         if (ImGui::CollapsingHeader("Display", ImGuiTreeNodeFlags_DefaultOpen)) {
                             if (ImGui::Checkbox("Fullscreen (F11)", &settings.fullscreen)) {
