@@ -1457,10 +1457,13 @@ void visit(Node* n, TraversalContext& ctx, const Mat4& parent_model, const State
     }
     case NodeKind::particle_timer: {
         // 8031A0A4: the timer advances on the traversal's time (the time
-        // stack's top) whenever the traversal reaches it, drawn or not.
+        // stack's top) whenever the traversal reaches it, drawn or not. A
+        // timer the original has not reached since its start (_time -1) has
+        // no effect time yet, so the wider picture leaves it out.
+        const bool started = n->timer.time != -1;
         const std::int64_t elapsed = cull.simulate ? n->timer.visit(time) : n->timer.peek(time);
         if constexpr (picture)
-            if (cull.draw) particle_items(n, ctx, model, state, elapsed);
+            if (cull.draw && (cull.simulate || started)) particle_items(n, ctx, model, state, elapsed);
         break;
     }
     case NodeKind::transform_recorder:

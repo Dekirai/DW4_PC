@@ -550,7 +550,7 @@ void test_frustum_cull_traversal() {
     items.clear();
     context.picture_widen = 0.75f;
     traverse(&root, context);
-    check(items.size() == 2, "The widened picture draws the subtree the original culls");
+    check(items.size() == 2, "The widened picture draws the subtree the original culls (not its unstarted timer)");
     check(!aside_recorder.recorded.has_value() && aside_timer.timer.time == -1,
           "The widened picture's extra subtree changes no state");
 
