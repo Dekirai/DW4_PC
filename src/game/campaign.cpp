@@ -3923,7 +3923,12 @@ static bool shaped_spot(engine::Engine& engine, const engine::ModelCtrlManager::
                 const auto land = hitland->world().check_land({q.x, q.y + 5.0f, q.z}, 1.0f, 400.0f, 1.0f);
                 if (!land.found || std::abs(land.position.y - me.y) > 3.0f) break;
             }
-            if (flat(q, me) < best) best = flat(q, me), spot = q;
+            // (The straight way there outside the boxes too, else the way
+            // round costs: a walk across the body took the touches.)
+            float cost = flat(q, me);
+            for (float t = 0.2f; t < 1.0f; t += 0.2f)
+                if (inside(me.x + (q.x - me.x) * t, me.z + (q.z - me.z) * t)) cost += 40.0f;
+            if (cost < best) best = cost, spot = q;
             break;
         }
     }
@@ -4920,8 +4925,14 @@ void CampaignBot::survive(engine::Engine& engine, const engine::ModelCtrlManager
             // (Y takes the highest record held, a Recovery first: only while two
             // of the biggest recent blows would end the player, or below 30 %:
             // the poison plants' spit, 5 % a hit, comes every 13 frames.)
+            // (Recovery is kept for the boss stages: Y takes it first, and a
+            // chain with 9 for Daemon's stages spent 5 on stag0401's mines.
+            // Outside them Y is taken over a held Recovery only below
+            // kHealQuickBelow percent.)
+            const bool keep_recovery = !boss_stage && pick != 9 && disks_held(slot, 9) > 0 && slot.hp * 100 >= slot.max_hp * kHealQuickBelow;
             if (!disk_quick_ && blow_due(engine, player, walk, frame) <= walk) {
-                if (slot.hp * 100 < slot.max_hp * kHealBelow && ((big_hits && slot.hp < 2 * big_hit_) || slot.hp * 100 < slot.max_hp * 30)) {
+                if (!keep_recovery && slot.hp * 100 < slot.max_hp * kHealBelow &&
+                    ((big_hits && slot.hp < 2 * big_hit_) || slot.hp * 100 < slot.max_hp * 30)) {
                     disk_quick_ = true;
                 } else {
                     disk_use_ = -1;
