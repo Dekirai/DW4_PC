@@ -375,6 +375,31 @@ void test_card_setting() {
     check(!dw4::engine::parse_card_setting("full") && !dw4::engine::parse_card_setting("4096"), "Unknown settings are refused");
 }
 
+// GAMERAM GATESTAGENAME: a null string object until set (SYSgetGateStageName
+// nil), kept apart from the empty string in save states.
+void test_gate_stage_name() {
+    using dw4::engine::GameSystem;
+    auto round_trip = [](const GameSystem& system) {
+        dw4::engine::StageSnapshot snapshot;
+        snapshot.stage = "stagml11";
+        snapshot.system = std::make_shared<GameSystem>(system);
+        const auto bytes = dw4::engine::encode_snapshot(snapshot);
+        const auto back = dw4::engine::decode_snapshot(bytes);
+        return *static_cast<const GameSystem*>(back.system.get());
+    };
+    GameSystem system;
+    check(!system.gate_stage_name && system.gate_stage_no == 0, "The gate stage is unset after boot");
+    check(!round_trip(system).gate_stage_name, "An unset gate stage stays unset in a save state");
+    system.gate_stage_name = std::string();
+    check(round_trip(system).gate_stage_name == std::string(), "The empty name (SYSsetGateStage(nil)) is not unset");
+    system.gate_stage_name = "GateOff";
+    system.gate_stage_no = -1;
+    const auto copy = round_trip(system);
+    check(copy.gate_stage_name == std::string("GateOff") && copy.gate_stage_no == -1, "A set gate stage survives a save state");
+    system.reset_gate_stage();
+    check(!system.gate_stage_name && system.gate_stage_no == 0, "GAMEDATAINIT of slot 0 unsets the gate stage");
+}
+
 void test_text_layout() {
     // NORMAL metrics of bectext.igb: digits advance past their right edge,
     // '!' has an x offset.
@@ -438,6 +463,7 @@ int main() {
         test_text_layout();
         test_particle_records();
         test_card_setting();
+        test_gate_stage_name();
     } catch (const std::exception& error) {
         std::cerr << "scene tests failed: " << error.what() << '\n';
         return 1;

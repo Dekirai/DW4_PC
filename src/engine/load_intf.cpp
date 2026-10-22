@@ -737,6 +737,10 @@ void LoadIntf2Manager::update_ctrl(Engine& engine, PanelRam& ram, SaveCommon& co
                 if (ram.detail2 == 0) {
                     if (ram.fresh && sys) {
                         auto& target = sys->players[std::size_t(idx)];
+                        // GAMEDATAINIT of player 1 (0x8035ECC4 / 0x8035EF58)
+                        // also rebuilds the common record (8036CE1C): the
+                        // gate stage is unset again.
+                        if (idx == 0 && (ram.new_game || entry.card)) sys->reset_gate_stage();
                         if (ram.new_game) {
                             // GAMEDATAINIT, GAMESTART with the partner and a
                             // new UNIQUE, then the record for the windows.

@@ -533,10 +533,13 @@ std::vector<Lua4Value> Engine::lua_call(const Lua4HostCall& call) {
         return number(fight::damage_rank(to_int(arg(0)), model ? model->max_hp : 0, result, to_int(arg(1)) != 0, bullet_kind));
     }
     if (method == "BLPgetAttackZokusei") {
-        // 802EF518: FIGHTCALC GETPATKZOKUSEI of the shooter and bullet.
+        // 802EF518: FIGHTCALC GETPATKZOKUSEI of the shooter and bullet, kept
+        // as the hit's attribute (80535A58, 0x802EF58C) and named by the
+        // BLTgetAttributeStr helper 802EEA2C.
         static const char* names[] = {"fire", "ice", "thunder", "dark"};
         const auto* slot = shooter_slot();
         const int attribute = slot ? fight::player_attack_attribute(*this, *slot, bullet_kind) : -1;
+        if (context) context->attribute = attribute;
         return string_result(attribute >= 0 && attribute < 4 ? names[attribute] : "common");
     }
     if (method == "BLTgetAttributeStr") {

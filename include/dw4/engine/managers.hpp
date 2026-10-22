@@ -1837,8 +1837,19 @@ public:
     std::int32_t ninzu = 1;
     bool game_started{}; // beSystem byte 4840: set by TITLE2 GAMESTART
     std::int32_t text_call{}; // TEXTORDER call number read by TXTgetCallNo (80535950)
-    std::string gate_stage_name;
+    // GAMERAM GETCOMMON GATESTAGENAME / GATESTAGENO. The name is a string
+    // variable (common table 804EA930, type 4) whose string object stays null
+    // until 802EBCFC writes it (SYSsetGateStage, the gate disk 803B139C), so
+    // SYSgetGateStageName answers nil until then (80269ECC -> 80273330).
+    // GAMEDATAINIT of slot 0 (8036CE1C, 0x8036CE3C..0x8036CF70) rebuilds the
+    // common record from that table: unset again, number 0 (reset_gate_stage).
+    // The memory card holds neither.
+    std::optional<std::string> gate_stage_name;
     std::int32_t gate_stage_no{};
+    void reset_gate_stage() {
+        gate_stage_name.reset();
+        gate_stage_no = 0;
+    }
 };
 
 // FIGHTCALC (GAMERAM dispatcher 803717A4, subcommand names 804E3F38). The
