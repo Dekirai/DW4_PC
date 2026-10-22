@@ -8,6 +8,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <ctime>
 #include <optional>
 #include <span>
 #include <string>
@@ -84,5 +85,13 @@ struct GciEntry {
 };
 std::array<std::uint8_t, kGciEntrySize> encode_gci_entry(const GciEntry& entry);
 GciEntry decode_gci_entry(std::span<const std::uint8_t> bytes);
+
+// The card's file time: the seconds since 2000-01-01 00:00 on the console
+// clock (CARDCreate / CARDWrite / CARDSetStatus store OSGetTime() / (bus
+// clock / 4) in the directory entry, 0x8024B480 / 0x8024BBAC / 0x8024C43C).
+// That clock has no time zone: it shows what the IPL was set to, normally the
+// local time. `calendar` is that clock's reading (std::tm fields, seconds
+// 0..60); results outside 0..2^32-1 are clamped.
+std::uint32_t card_time(const std::tm& calendar);
 
 } // namespace dw4::save

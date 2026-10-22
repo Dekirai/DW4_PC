@@ -696,8 +696,8 @@ void StageCtlManager::clear_stage(Engine&) {
 
 // 80347BB4: START pressed on pad 1 while B and X are held arms the soft
 // reset; held for a second it stops the sounds and the status window, hides
-// the layers, freezes the models and generators and, two frames later,
-// returns to the title.
+// the layers, freezes the models and generators, holds the messenger's
+// posted messages and, two frames later, returns to the title.
 void StageCtlManager::update(Engine& engine) {
     if (rams_.empty()) return;
     const auto& pad = engine.pads()[0].buttons;
@@ -740,6 +740,7 @@ void StageCtlManager::update(Engine& engine) {
         send("LAYERCTL", "SWITCH", {"ALL", "DISPOFF"});
         send("MODELCTRL", "ONFREEZE");
         send("GENERATER", "ONFREEZE");
+        messenger.pause(engine, true); // 0x80347EB8, until the stage teardown
         reset_state_ = 3;
         break;
     case 3:

@@ -1,6 +1,7 @@
 #include "dw4/save_data.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cstring>
 #include <stdexcept>
 
@@ -239,6 +240,17 @@ GciEntry decode_gci_entry(std::span<const std::uint8_t> bytes) {
     e.blocks = rd.u16(56);
     e.comment_offset = rd.u32(60);
     return e;
+}
+
+std::uint32_t card_time(const std::tm& calendar) {
+    using namespace std::chrono;
+    // Days of the proleptic Gregorian calendar; normalised std::tm fields
+    // (as localtime gives them) are valid dates.
+    const sys_days day = year{calendar.tm_year + 1900} / month{unsigned(calendar.tm_mon + 1)} / std::chrono::day{unsigned(calendar.tm_mday)};
+    constexpr long long kEpoch2000 = 946684800; // 2000-01-01 00:00 in seconds since 1970
+    const long long seconds = duration_cast<std::chrono::seconds>(day.time_since_epoch()).count() + calendar.tm_hour * 3600LL +
+                              calendar.tm_min * 60LL + calendar.tm_sec - kEpoch2000;
+    return std::uint32_t(std::clamp<long long>(seconds, 0, 0xFFFFFFFFLL));
 }
 
 } // namespace dw4::save

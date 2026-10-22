@@ -267,26 +267,36 @@ std::vector<Lua4Value> Engine::lua_call(const Lua4HostCall& call) {
 
     // --- Messenger ---
     if (method == "sd") {
+        // The four overloads (method table 0x80424428..0x8042447C, Lua
+        // dispatcher cases 29..32 of 802EA1FC; a number fits only a number
+        // slot, a string or nil only a string slot, 802699FC):
+        //   29 sd(cat, name, idx, cmd, args)        802ECD20: 80305344 + 80305A28, sent now
+        //   30 sd(cat, name, idx, cmd)              802ECDA0: 80305ED0, sent now
+        //   31 sd(cat, name, idx, cmd, args, delay) 802ECDE0: 80305F9C + 803061BC, posted
+        //   32 sd(cat, name, idx, cmd, delay)       802ECE80: 8030650C (80305F9C + 803061BC), posted
+        // 803061BC files the message for now + delay * 16666666 ns without a
+        // case for 0, so even a delay-0 message arrives at the next delivery
+        // pass (the following frame's Messenger::update before the managers),
+        // never inside the script. None of them returns a value
+        // (0x802EA7F8..0x802EA860: 0 results).
         const auto category = opt_string(arg(0)).value_or("");
         const auto target = opt_string(arg(1));
         const auto index = to_int(arg(2), -1);
         const auto command = opt_string(arg(3)).value_or("");
         Packet packet;
-        std::int64_t delay = 0;
+        std::optional<std::int64_t> delay;
         if (args.size() > 4) {
             if (arg(4).type() == Lua4Type::String) parse_packet_arguments(arg(4).as_string(), packet);
             else if (arg(4).type() == Lua4Type::Number && args.size() == 5) delay = static_cast<std::int64_t>(arg(4).as_number());
         }
         if (args.size() > 5 && arg(5).type() == Lua4Type::Number) delay = static_cast<std::int64_t>(arg(5).as_number());
-        if (delay > 0) {
-            messenger().post(time() + kFrameNs * delay, category, target, index, command, std::move(packet));
+        if (delay) {
+            messenger().post(time() + kFrameNs * *delay, category, target, index, command, std::move(packet));
             return {};
         }
         std::optional<std::string_view> target_view;
         if (target) target_view = *target;
         messenger().send(*this, category, target_view, index, command, packet);
-        if (!packet.bools.empty()) return number(packet.bools[0]);
-        if (!packet.ints.empty()) return number(packet.ints[0]);
         return {};
     }
     if (method == "DMsetSD" || method == "DMchkSD" || method == "DMswtSD") {

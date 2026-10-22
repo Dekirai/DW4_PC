@@ -1035,11 +1035,9 @@ void SubWindowManager::clear_stage(Engine&) {
 bool SubWindowManager::command(Engine& engine, Ram&, std::string_view command, Packet& packet) {
     auto* sys = engine.get<GameSystem>();
     auto& messenger = engine.messenger();
-    auto freeze = [&](const char* how) {
-        for (const char* category : {"MODELCTRL", "GENERATER", "SOUND"}) {
-            Packet p;
-            messenger.send(engine, category, std::nullopt, -1, how, p);
-        }
+    auto freeze = [&](const char* category) {
+        Packet p;
+        messenger.send(engine, category, std::nullopt, -1, "ONFREEZE", p);
     };
     if (command == "GENERATE") {
         if (running_) return true;
@@ -1051,13 +1049,24 @@ bool SubWindowManager::command(Engine& engine, Ram&, std::string_view command, P
         player_ = packet.integer(0, 0);
         running_ = true;
         state_ = 0;
-        freeze("ONFREEZE");
+        // 8034FBF0..8034FC40: models and generators freeze, the messenger
+        // holds its posted messages until the program ends, the sounds freeze.
+        freeze("MODELCTRL");
+        freeze("GENERATER");
+        messenger.pause(engine, true);
+        freeze("SOUND");
         return true;
     }
     if (command == "REMOVE") {
         if (running_) {
-            if (window_) window_->next_state(2);
-            else running_ = false;
+            if (window_) {
+                window_->next_state(2);
+            } else {
+                // 8034FC80: no window yet: the messenger runs again and the
+                // REMOVE comes back a frame later.
+                messenger.pause(engine, false);
+                messenger.post(engine.time() + kFrameNs, "SUBWND", std::nullopt, -1, "REMOVE", {});
+            }
         }
         return true;
     }
@@ -1184,6 +1193,7 @@ void SubWindowManager::update(Engine& engine) {
         Packet p;
         messenger.send(engine, category, std::nullopt, -1, "OFFREEZE", p);
     }
+    messenger.pause(engine, false); // 0x8034F950
     running_ = false;
     if (auto* sys = engine.get<GameSystem>())
         for (int slot = 0; slot < 4; ++slot)
