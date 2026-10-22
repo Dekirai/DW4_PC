@@ -951,6 +951,14 @@ constexpr BossFight kBossFights[] = {
     // middle, its hit body 8: struck from 2.5 off the hit body the player
     // stood in it, `clear_touch`.)
     {"stagbs02", "f_belvam", "f_belvam", 25.0f, true, true, "", 0.0f, 0.0f, 0.0f, true},
+    // dng412b4 with real blows: the knight of its GENE-21 wave (e_ldknight,
+    // 2200 HP, the key item 10 boss) spends most of the fight in SQ_TURN2 /
+    // SQ_TURN3, 190 frames of MUTEKI spinning about the arena (70064, ~8 %
+    // of the HP a hit), and can be struck only while it walks, waits or
+    // swings (SQ_WALK, SQ_WAIT, SQ_ATCK3). The ExploreBot chased it through
+    // its spins: a level 41 no-cheat run struck it twice in 110000 frames
+    // and spent a full stock of heals there, three times.
+    {"dng412b4", "e_ldknight", "e_ldknight", 30.0f, true, true},
 };
 
 // Whether a model is named by a '|'-separated list ("<model>#<n>" names that
@@ -1590,6 +1598,11 @@ constexpr Supply kSupplies[] = {
     {3, 6, 0, 1 << 30},    // MP Disk S: 400 MP for 160 bits (techniques, kTechReach)
     {7, 1, 0, 1 << 30},    // Raise Disk (200 bits): the bit capsule after a defeat
     {8, 2, 0, 1 << 30},    // Gate Disk (120 bits): back to the lobby (kGateTrip)
+    // Cure Disks (150 bits): poison (kCureTicks). The dng412b4 knight's spins
+    // (eneatk 64: doku, KOUKARANK 3, KOUKATIME 2700) poison for 23 ticks of
+    // 3 % of the maximum HP, as much as their blows took: a level 41 run's
+    // heals went half to the poison there.
+    {6, 4, 0, 1 << 30},
     // A full second slot of heals with 5000 bits to spare (a slot holds 9 of
     // one record: 9 HP Disks S were all a no-cheat run at level 17 took into
     // dng204b2's minotaur waves, twice given up with no heal left and 40000
@@ -1611,6 +1624,8 @@ constexpr Supply kSupplies[] = {
     {9, 9, 0, 1 << 30, 50000},
 };
 constexpr int kRaiseDisk = 7;
+constexpr int kCureDisk = 6;
+constexpr int kCureTicks = 4; // poison ticks still to come that are worth a Cure Disk
 constexpr int kRaiseWalk = 1500; // frames to reach the bit capsule
 constexpr int kLobbyHealBelow = 90; // percent of HP or MP: refilled at the X-Data shop in the lobby
 // The Gate Disk (conItem 8, 803B1390 -> gatedisc.lua: every player back to
@@ -4779,6 +4794,19 @@ void CampaignBot::survive(engine::Engine& engine, const engine::ModelCtrlManager
             return;
         }
     }
+    // A Cure Disk against poison (not in god mode): conItem 6 ends it when
+    // 8 - the poison's GEDOKU reaches a roll of ten (803B1288), while some
+    // kCureTicks of its 2-second ticks (each its DAMAGE share of the maximum
+    // HP) are still to come and no blow is due.
+    if (!engine.cheats().god && panel && controllable && !player.panel_open && panel_ready && frame - heal_at_ >= kHealGap && player.status &&
+        player.status->timer[0] >= kCureTicks && disks_held(slot, kCureDisk) > 0 &&
+        blow_due(engine, player, kHoldAttackLead, frame) > kHoldAttackLead) {
+        heal_at_ = frame;
+        start_disk(slot, kCureDisk, frame);
+        if (trace()) std::printf("[%d] campaign cures the poison (%d ticks left, %d Cure Disks)\n", frame, player.status->timer[0], disks_held(slot, kCureDisk));
+        survive(engine, player, frame, out);
+        return;
+    }
     // MP for the techniques (not with the one-hit cheat): below the first
     // technique's cost an MP disk is used (the smallest held), when no blow
     // is due.
@@ -5381,7 +5409,8 @@ CampaignBot::Output CampaignBot::play(engine::Engine& engine, const engine::Mode
                                                                   std::string_view(std::getenv("DW4_TRACE_CAMPAIGN")) == "2") {
                 static const char* tables[4] = {"weapon", "armor1", "armor2", "abChip"};
                 const auto& st = slot.stats;
-                std::printf("      stats STR %d DEF %d WIS %d SPI %d SPD %d skills", st.tsuyosa, st.mamori, st.kashikosa, st.seishin, st.subayasa);
+                std::printf("      stats STR %d DEF %d WIS %d SPI %d SPD %d HIT %d weapon skill %d skills", st.tsuyosa, st.mamori, st.kashikosa, st.seishin, st.subayasa,
+                            st.meichuritsu, st.weapon_skill_no);
                 for (const int s : st.skill) std::printf(" %d", s);
                 std::printf("\n");
                 for (std::size_t i = 0; i < slot.devices.size(); ++i) {
@@ -5434,19 +5463,23 @@ CampaignBot::Output CampaignBot::play(engine::Engine& engine, const engine::Mode
         if (std::sscanf(span, "%d-%d", &from, &to) == 2 && frame >= from && frame <= to) {
             const auto me = position_of(*player);
             auto* sys = engine.get<engine::GameSystem>();
+            // DW4_TRACE_DB=table:row:column[,...] (research): those cells and
+            // the player's resistances, once, on the span's first frame.
             if (auto* db = engine.get<engine::DatabaseManager>(); db && sys && frame == from) {
-                for (const int row : {100, 101, 102, 104, 111})
-                    std::printf("eneatk %d TYPE %d TSUYOSA %d ZOKUSEI %s\n", row, db->number("eneatk", row, "TYPE").value_or(-1),
-                                db->number("eneatk", row, "TSUYOSA").value_or(-1), db->text("eneatk", row, "ZOKUSEI").c_str());
+                const std::string cells = std::getenv("DW4_TRACE_DB") ? std::getenv("DW4_TRACE_DB") : "";
+                for (std::size_t at = 0; at < cells.size();) {
+                    const auto comma = std::min(cells.find(',', at), cells.size());
+                    const std::string cell = cells.substr(at, comma - at);
+                    at = comma + 1;
+                    const auto c1 = cell.find(':'), c2 = cell.find(':', c1 + 1);
+                    if (c1 == std::string::npos || c2 == std::string::npos) continue;
+                    const std::string table = cell.substr(0, c1), column = cell.substr(c2 + 1);
+                    const int row = std::atoi(cell.c_str() + c1 + 1);
+                    std::printf("db %s %d %s = %d '%s'\n", table.c_str(), row, column.c_str(), db->number(table, row, column).value_or(-1),
+                                db->text(table, row, column).c_str());
+                }
                 const auto& st = sys->players[0].stats;
-                std::printf("player resist %d %d %d %d\n", st.resist[0], st.resist[1], st.resist[2], st.resist[3]);
-                for (const char* table : {"armor1", "armor2", "abChip"})
-                    for (int r = 0; r < int(db->rows(table)); ++r)
-                        if (db->number(table, r, "RES_ICE").value_or(0) != 0 || db->number(table, r, "RES_FIRE").value_or(0) != 0)
-                            std::printf("res %s %d %s fire %d ice %d thunder %d dark %d LV %d HANBAI %d\n", table, r, db->text(table, r, "NAME").c_str(),
-                                        db->number(table, r, "RES_FIRE").value_or(0), db->number(table, r, "RES_ICE").value_or(0),
-                                        db->number(table, r, "RES_THUNDER").value_or(0), db->number(table, r, "RES_DARK").value_or(0),
-                                        db->number(table, r, "LVPOINT").value_or(0), db->number(table, r, "HANBAI").value_or(0));
+                std::printf("player resist %d %d %d %d poison %d\n", st.resist[0], st.resist[1], st.resist[2], st.resist[3], st.dokuteikou);
             }
             std::string near;
             for (const auto& e : engine.get<engine::ModelCtrlManager>()->rams()) {
@@ -5626,7 +5659,8 @@ CampaignBot::Output CampaignBot::play(engine::Engine& engine, const engine::Mode
                                  " STR " + std::to_string(db->number("enemy", e->record, "TSUYOSA").value_or(-1)) + " DEF " +
                                  std::to_string(db->number("enemy", e->record, "MAMORI").value_or(-1)) + " HPMAX " +
                                  std::to_string(db->number("enemy", e->record, "HPMAX").value_or(-1)) + " EXP " +
-                                 std::to_string(db->number("enemy", e->record, "EXP").value_or(-1)) + " SPI " +
+                                 std::to_string(db->number("enemy", e->record, "EXP").value_or(-1)) + " SPD " +
+                                 std::to_string(db->number("enemy", e->record, "SUBAYASA").value_or(-1)) + " SPI " +
                                  std::to_string(db->number("enemy", e->record, "SEISHIN").value_or(-1)) + " RES " +
                                  std::to_string(db->number("enemy", e->record, "RES_FIRE").value_or(-1)) + "/" +
                                  std::to_string(db->number("enemy", e->record, "RES_ICE").value_or(-1)) + "/" +
