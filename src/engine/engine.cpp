@@ -900,16 +900,17 @@ void Engine::loader_update() {
         // descriptor (every capture): ndmw.igb (53 sectors) at the first
         // update, routed 3 fields after its booking; 2 fields later the CRI
         // AFS partitions read their directories one sector at a time, each
-        // asked for with the booking of the one before: ndmw.afs from +0x2000
-        // (4 sectors), one field later area.afs from its start (6); the
-        // descriptor request follows 3 fields after the last booking.
+        // asked for with the booking of the one before: ndmw.afs from its
+        // start (4 sectors; every capture: 0x2dbfb298.., ADXSTM positions
+        // 0..3), one field later area.afs from its start (6); the descriptor
+        // request follows 3 fields after the last booking.
         struct BootRead {
             const char* archive; // nullptr: ndmw.igb
             std::uint32_t sector;
             int ready;           // fields from the booking to the next request
         };
-        static constexpr BootRead kBoot[] = {{nullptr, 0, 5},       {"ndmw.afs", 4, 0}, {"ndmw.afs", 5, 0}, {"ndmw.afs", 6, 0},
-                                             {"ndmw.afs", 7, 1},    {"area.afs", 0, 0}, {"area.afs", 1, 0}, {"area.afs", 2, 0},
+        static constexpr BootRead kBoot[] = {{nullptr, 0, 5},       {"ndmw.afs", 0, 0}, {"ndmw.afs", 1, 0}, {"ndmw.afs", 2, 0},
+                                             {"ndmw.afs", 3, 1},    {"area.afs", 0, 0}, {"area.afs", 1, 0}, {"area.afs", 2, 0},
                                              {"area.afs", 3, 0},    {"area.afs", 4, 0}, {"area.afs", 5, 3}};
         if (loader_file_.active) {
             if (!loader_ready()) return;
@@ -1013,14 +1014,16 @@ void Engine::loader_update() {
     }
     case 100:
         if (!loader_queue_step(0)) return;
-        // 802FA53C registers the preliminary infos, then SOUND SEARCH /
-        // MAKEBINLIST (state 101) and ISDONETRANS (every capture: one update
-        // each).
+        // 802FA53C registers the preliminary infos; with a SOUND RAM among
+        // them (SOUND SEARCH, 0x802F9524) the loader sends MAKEBINLIST and
+        // goes to state 101, without one straight to 102.
         for (const auto& info : loader_preliminary_) register_info(info);
         loader_preliminary_.clear();
-        loader_state_ = 101;
+        loader_state_ = messenger_.count("SOUND", std::nullopt, -1) != 0 ? 101 : 102;
         return;
     case 101:
+        // SOUND ISDONETRANS (0x802F957C) holds the state until it answers 1;
+        // every capture spends one update here.
         loader_state_ = 102;
         return;
     case 102:

@@ -119,6 +119,13 @@ public:
     // ADXT status 3 (PLAYING).
     bool playing(int slot) const { return status(slot) == 3; }
     bool reading() const { return inflight.slot >= 0; }
+    // Samples the renderer sees played on the voices since the ring's last
+    // reset (its read of the voice address, 802A733C).
+    std::uint64_t ring_position(int slot, std::int64_t now) const {
+        if (!active(slot)) return 0;
+        const auto& h = handles[std::size_t(slot)];
+        return played(h, now) - h.played_base;
+    }
 
     // State (save states).
     struct Handle {
@@ -138,8 +145,8 @@ public:
         std::uint64_t decoded{};                 // samples per channel
         std::uint32_t sj{};                      // decoded samples in the output SJ
         std::uint64_t moved{}, reclaimed{};      // samples into the ARAM ring / played back out
-        std::int64_t dsp_start{-1};              // time the DSP started playing (-1: stopped)
-        double played_before{};                  // samples played before a pause
+        std::int64_t dsp_start{-1};              // time the renderer switched the voices on (-1: off)
+        std::uint64_t played_base{};             // samples moved into the ARAM ring before that start
     };
     std::array<Handle, kSlots> handles{};
     // The inflight slot of the loader's reads.
@@ -157,9 +164,21 @@ public:
     } inflight;
     DiscDrive drive;
 
+    // The DSP's frames: AX mixes 160 samples per frame at the AI's 32 kHz
+    // rate, which is 54 MHz / 1686 (32028.5 Hz; the r29 captures: one frame
+    // every 2427840 ticks over 1400 fields), and copies the voices' progress
+    // back to the CPU at each frame boundary. ax_phase is a boundary on the
+    // caller's clock: the one of the r29 captures' boot, whose frames start
+    // kAxPhase ticks after a multiple of the frame from the port's world
+    // clock 0.
+    static constexpr std::int64_t kAxFrameTicks = 2427840;
+    static constexpr std::int64_t kAxPhase = 1099812;
+    std::int64_t ax_phase{kAxPhase};
+
 private:
     static bool valid(int slot) { return slot >= 0 && slot < kSlots; }
-    double played(const Handle& h, std::int64_t now) const;
+    std::int64_t ax_frame(std::int64_t t) const;
+    std::uint64_t played(const Handle& h, std::int64_t now) const;
 };
 
 } // namespace dw4

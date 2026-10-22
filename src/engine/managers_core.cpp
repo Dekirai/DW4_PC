@@ -965,6 +965,10 @@ int SoundManager::busy(int channel) const {
 }
 
 void SoundManager::pause_channel(Engine& engine, int channel, bool paused) {
+    static const bool trace = std::getenv("DW4_TRACE_SOUND") != nullptr;
+    if (trace && cri_.active(channel) && cri_.handles[std::size_t(channel)].paused != paused)
+        engine.log("stream " + std::string(paused ? "pause" : "resume") + " slot " + std::to_string(channel) + " frame " +
+                   std::to_string(engine.frame()));
     cri_.pause(channel, paused, cri_ticks(engine.time()));
 }
 
@@ -1672,7 +1676,7 @@ void SoundManager::serialize_persistent(StateArchive& a, std::shared_ptr<const v
         a.io(h.moved);
         a.io(h.reclaimed);
         a.io(h.dsp_start);
-        a.io(h.played_before);
+        a.io(h.played_base);
     }
     a.io(cri.loader.active);
     a.io(cri.loader.busy);
@@ -1706,6 +1710,10 @@ void SoundManager::update_driver(Engine& engine) {
     // whose world clock stands elsewhere.
     static const char* disc_clock = std::getenv("DW4_DISC_CLOCK");
     if (disc_clock && *disc_clock) cri_.drive.clock_offset = std::strtoll(disc_clock, nullptr, 10);
+    // Test tool: DW4_AX_PHASE=<ticks> moves the DSP's frame grid
+    // (CriStreams::kAxPhase) to line a run up with a capture.
+    static const char* ax_phase = std::getenv("DW4_AX_PHASE");
+    if (ax_phase && *ax_phase) cri_.ax_phase = std::strtoll(ax_phase, nullptr, 10);
     const int inflight_before = cri_.inflight.slot;
     const std::int64_t done_before = cri_.inflight.done;
     std::array<bool, CriStreams::kSlots> playing_before{};
@@ -1767,6 +1775,18 @@ void SoundManager::trace_cri(Engine& engine, int inflight_before, std::int64_t d
             engine.log(line);
         }
     }
+    // DW4_TRACE_CRI_RING also logs the renderer's view of the stereo voices
+    // each field (compare with a capture's renderer reads).
+    static const bool ring_play = std::getenv("DW4_TRACE_CRI_RING") != nullptr;
+    if (ring_play)
+        for (int slot = 0; slot < 2; ++slot)
+            if (cri_.active(slot) && cri_.handles[std::size_t(slot)].dsp_start >= 0) {
+                char line[96];
+                std::snprintf(line, sizeof line, "  play slot %d: ring position %llu, frame %llu", slot,
+                              static_cast<unsigned long long>(cri_.ring_position(slot, cri_ticks(engine.time())) % 4096),
+                              static_cast<unsigned long long>(engine.frame()));
+                engine.log(line);
+            }
     for (int slot = 0; slot < CriStreams::kSlots; ++slot)
         if (cri_.playing(slot) && !playing_before[std::size_t(slot)])
             engine.log("stream PLAYING slot " + std::to_string(slot) +

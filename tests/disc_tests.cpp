@@ -104,6 +104,13 @@ constexpr double kField = 486000000.0 / 59.94;
 // follow with Dolphin's rotation formula as it stands (the port's own clock
 // has DiscDrive::kDolphinClockOffset added).
 constexpr std::int64_t kCaptureClock = 0;
+// The DSP's frame grid on that clock: the r29 captures' renderer reads put a
+// frame boundary at time base 164817 (mod 202320), on Dolphin's clock (time
+// base * 12 + 23.8e6, see test_rotation_clock) 1499404 ticks after a
+// multiple of the frame. Every phase from 0.79e6 to 1.76e6 gives the reads
+// below; the others put the ambience's refill after ISALLREADY in stagBS02 a
+// field early.
+constexpr std::int64_t kCaptureAxPhase = 1499404;
 
 dw4::CriStreams::File adx(std::uint32_t sector, std::uint32_t sectors, std::uint32_t header, std::uint32_t channels,
                           std::uint32_t rate, std::uint32_t samples, std::uint32_t loop_start = 0, std::uint32_t loop_end = 0) {
@@ -144,6 +151,7 @@ std::vector<Event> replay(const Capture& c, dw4::DiscDrive::Rotation rotation, i
     dw4::CriStreams cri;
     cri.drive.rotation = rotation;
     cri.drive.clock_offset = kCaptureClock;
+    cri.ax_phase = kCaptureAxPhase;
     const std::uint64_t ecc = 0x8000;
     const std::uint64_t first = c.last_offset - c.last_offset % ecc;
     const std::uint64_t last = (c.last_offset + c.last_length + ecc - 1) / ecc * ecc;
@@ -276,11 +284,12 @@ void test_stream_reads() {
     bs02.commands = {{0.123, 0, 1}, {0.126, 1, 1}, {0.127, 1, 0, adx(2153, 2149, 2048, 2, 48000, 3908769, 1, 2149)},
                      {0.1271, 1, 2}, {0.128, 2, 1}, {0.129, 2, 0, adx(132138, 36, 40, 1, 24000, 128969)},
                      {0.131, 0, 1}, {0.132, 0, 0, adx(34676, 2696, 1556, 2, 48000, 4904908, 655, 2615)}, {48.014, 0, 2}};
-    // (The ambience's next refill comes at 48 here, at 49 in the capture: the
-    // DSP's progress is modelled to its AX frame on average only.)
-    const auto bs02_exact = replay(bs02, R::dolphin, 48);
+    // The ambience's refill after ISALLREADY comes with the DSP's frame
+    // (49 as in the capture; a progress counted per tick had it at 48).
+    const auto bs02_exact = replay(bs02, R::dolphin, 56);
     check_events(bs02_exact, {{4, 1, 25, 2153}, {12, 0, 25, 34676}, {16, 1, 0, 0}, {18, 1, 28, 2178}, {22, 0, 0, 0},
-                              {25, 0, 28, 34701}, {31, 1, 13, 2206}, {38, 2, 13, 132138}},
+                              {25, 0, 28, 34701}, {31, 1, 13, 2206}, {38, 2, 13, 132138}, {48, 2, 0, 0},
+                              {49, 1, 8, 2219}, {55, 0, 9, 34729}},
                  "stagBS02: every read and PLAYING of the capture");
     check(all_ready(bs02_exact) == 48, "stagBS02: ISALLREADY at field 48 as in Dolphin");
     check(all_ready(replay(bs02, R::mean, 60)) == 49, "stagBS02 with the mean rotation: field 49");
@@ -304,6 +313,60 @@ void test_stream_reads() {
             status = cri.status(2);
         }
         check(status == 5, "A one-shot plays out (ADXT status 5)");
+    }
+}
+
+// The DSP's progress as the renderer reads it (r29 captures: renderer reads
+// of the char-select streams, 802A733C). A voice plays from the first AX
+// frame boundary after the renderer switched it on; the CPU copy of its
+// address shows the frames finished before the last boundary, 240 samples
+// each for 48 kHz.
+void test_dsp_frames() {
+    constexpr std::int64_t P = dw4::CriStreams::kAxFrameTicks, F = dw4::CriStreams::kFieldTicks;
+    const auto ambience = adx(4, 2149, 2048, 2, 48000, 3908784, 1, 2149);
+    // Switched on by the ADXT server (status 3) 0.469 frame after a boundary:
+    // the next servers read 480, 1440, 2160 and 2880 samples.
+    {
+        dw4::CriStreams cri;
+        cri.start(1, ambience);
+        std::int64_t t0 = 0;
+        for (int k = 1; k <= 200 && !t0; ++k) {
+            cri.tick(std::int64_t(k) * F);
+            if (cri.playing(1)) t0 = std::int64_t(k) * F;
+        }
+        check(t0 != 0, "The ambience becomes PLAYING");
+        cri.ax_phase = t0 - P * 469 / 1000;
+        const std::uint64_t want[] = {0, 480, 1440, 2160, 2880};
+        bool same = true;
+        for (int k = 0; k < 5; ++k) same = same && cri.ring_position(1, t0 + k * F) == want[k];
+        check(same, "A voice started by the server shows whole AX frames, one behind");
+    }
+    // Resumed by the game update (ADXT_Pause 0) before a server 0.528 frame
+    // after a boundary: 480, 1200, 2160. The pause before dropped what the
+    // ARAM ring held (802A7534 resets its SJ).
+    {
+        dw4::CriStreams cri;
+        cri.pause(0, true, 0);
+        cri.start(0, ambience);
+        std::int64_t t = 0;
+        for (int k = 1; k <= 200 && !t; ++k) {
+            cri.tick(std::int64_t(k) * F);
+            if (cri.playing(0)) t = std::int64_t(k) * F;
+        }
+        check(t != 0, "A paused stream still becomes PLAYING");
+        for (int k = 0; k < 10; ++k) cri.tick(t += F);
+        check(cri.ring_position(0, t) == 0, "Nothing plays while paused");
+        t += F;
+        cri.ax_phase = t - P * 528 / 1000;
+        cri.pause(0, false, t);
+        const std::uint64_t want[] = {480, 1200, 2160};
+        bool same = true;
+        for (int k = 0; k < 3; ++k) same = same && cri.ring_position(0, t + k * F) == want[k];
+        check(same, "A resumed voice shows the frames since the game update's switch-on");
+        cri.tick(t);
+        cri.pause(0, true, t + F);
+        const auto& h = cri.handles[0];
+        check(h.moved == h.reclaimed && h.dsp_start < 0, "A pause drops the ARAM ring's unplayed samples");
     }
 }
 
@@ -491,6 +554,7 @@ int main() {
         test_parse();
         test_rejects();
         test_stream_reads();
+        test_dsp_frames();
         test_loader_reads();
         test_rotation_clock();
         test_fades();
