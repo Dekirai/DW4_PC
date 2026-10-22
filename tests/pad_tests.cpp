@@ -1,3 +1,4 @@
+#include "dw4/console_reset.hpp"
 #include "dw4/pad.hpp"
 
 #include <array>
@@ -227,6 +228,68 @@ void invalid_inputs() {
     pads.update(samples);
     check(pads.states()[3].left == samples[3].left, "Valid bounded analog endpoints were changed");
 }
+// The controller's B+X+START combination presses the reset button
+// (ConsoleReset): 180 fields to the tap, 33 more to the latched release.
+void console_reset() {
+    constexpr std::uint32_t combo = pad_button::b | pad_button::x | pad_button::start;
+    auto run = [](ConsoleReset& reset, std::uint32_t buttons, int fields, int pad = 0, bool connected = true) {
+        std::array<PadSample, 4> samples{};
+        samples[std::size_t(pad)] = {connected, {}, {}, buttons};
+        int first = -1;
+        for (int i = 0; i < fields; ++i)
+            if (reset.update(samples) && first < 0) first = i;
+        return first;
+    };
+    {
+        // Held from field 0: the tap at field 180, the reboot at 213.
+        ConsoleReset reset;
+        check(run(reset, combo, 300) == 213, "Reset combination did not reboot 213 fields after it started");
+        check(reset.latched(), "Reset release was not latched");
+    }
+    {
+        // Released after 180 fields (just before the tap): nothing.
+        ConsoleReset reset;
+        check(run(reset, combo, 180) < 0, "Combination shorter than three seconds pressed the reset button");
+        check(run(reset, 0, 100) < 0 && !reset.button_down(), "Released combination reset later");
+    }
+    {
+        // Released right after the tap: the button still goes down for half
+        // a second, so the reboot comes at the same field.
+        ConsoleReset reset;
+        check(run(reset, combo, 181) < 0 && reset.button_down(), "Tap did not press the reset button");
+        check(run(reset, 0, 100) == 213 - 181, "Reset after the tap did not follow the button's release");
+    }
+    {
+        // A, Y or the D-pad: Dolphin compares the face buttons only.
+        ConsoleReset reset;
+        check(run(reset, combo | pad_button::a, 400) < 0, "Combination with A pressed the reset button");
+        check(run(reset, combo | pad_button::y, 400) < 0, "Combination with Y pressed the reset button");
+        ConsoleReset dpad;
+        check(run(dpad, combo | pad_button::up | pad_button::r | pad_button::z, 300) == 213, "D-pad, R or Z blocked the combination");
+    }
+    {
+        // Every controller has the combination; a disconnected one none.
+        ConsoleReset reset;
+        check(run(reset, combo, 300, 3) == 213, "Controller 4 combination did not reboot");
+        ConsoleReset off;
+        check(run(off, combo, 300, 2, false) < 0, "Disconnected controller pressed the reset button");
+    }
+    {
+        // A latched release waits while the reset is disabled (+0x5F).
+        ConsoleReset reset;
+        reset.set_enabled(false);
+        check(run(reset, combo, 300) < 0 && reset.latched(), "Disabled reset lost the latched release");
+        reset.set_enabled(true);
+        check(run(reset, 0, 1) == 0, "Enabled reset did not reboot on the latched release");
+    }
+    {
+        // An interrupted combination starts its three seconds again.
+        ConsoleReset reset;
+        check(run(reset, combo, 150) < 0 && run(reset, 0, 1) < 0, "Interrupted combination reset");
+        check(run(reset, combo, 300) == 213, "Combination timer did not restart");
+    }
+}
+
 } // namespace
 
 int main() {
@@ -235,6 +298,7 @@ int main() {
         repeats_and_independence();
         conversions();
         invalid_inputs();
+        console_reset();
         std::cout << checks << " original pad checks passed\n";
         return 0;
     } catch (const std::exception& error) {

@@ -448,6 +448,7 @@ void Engine::begin_stage_load(const StageSnapshot* restoring) {
     snapshot.pad_input_enabled = pad_input_enabled_;
     snapshot.cheats = cheats_;
     snapshot.pads = pads_;
+    snapshot.console_reset = console_reset_;
     {
         std::ostringstream random;
         random << fight::generator();
@@ -472,6 +473,7 @@ void Engine::restore(const StageSnapshot& snapshot) {
     pad_input_enabled_ = snapshot.pad_input_enabled;
     cheats_ = snapshot.cheats;
     pads_ = snapshot.pads;
+    console_reset_ = snapshot.console_reset;
     {
         std::istringstream random(snapshot.random);
         random >> fight::generator();
@@ -1158,6 +1160,12 @@ const std::map<std::uint64_t, std::int64_t>& clock_file() {
 } // namespace
 
 void Engine::step(const std::array<PadSample, 4>& samples) {
+    // The console reloads the game (rebooting): nothing of the old one runs.
+    if (rebooting_) {
+        ++frame_;
+        ++reboot_fields_;
+        return;
+    }
     auto input = samples;
     // STAGECTL PADINPUT DISABLE: the game sees released controls.
     if (!pad_input_enabled_)
@@ -1174,6 +1182,16 @@ void Engine::step(const std::array<PadSample, 4>& samples) {
     // 80316258 keeps the world time of its last update (+0x18) and stores the
     // difference as the frame step (+0x28) each frame (system_step).
     world_delta_ = time_ - before;
+    // beSystem's update (80316258) first reads the reset button (the
+    // controllers' combination presses it, ConsoleReset); its latched release
+    // blackens the picture and restarts the disc (OSResetSystem 0x80316304),
+    // nothing after it runs.
+    if (console_reset_.update(samples)) {
+        rebooting_ = true;
+        reboot_fields_ = 0;
+        log("reset button: the console reboots");
+        return;
+    }
     if (!pending_stage_.empty()) begin_stage_load();
     process_stage_loader();
     // The current camera viewer (802F4268, a scheduled module ahead of the
@@ -1250,6 +1268,7 @@ void Engine::traverse_scene() {
     // As render(): the same nodes in the same order with the same camera,
     // time and poses; only the draw items (geometry, particle quads, skin
     // palettes, lights) are left out.
+    if (rebooting_) return;
     FrameCamera camera;
     Vec4f clear_color;
     TraversalContext context = frame_context(nullptr, camera, clear_color);
@@ -1259,6 +1278,12 @@ void Engine::traverse_scene() {
 
 void Engine::render(std::vector<DrawItem>& out, FrameCamera& camera, Vec4f& clear_color, ShadowFrame* shadow) {
     out.clear();
+    // VISetBlack (0x803162E0): a rebooting console shows black.
+    if (rebooting_) {
+        clear_color = {0, 0, 0, 1};
+        if (shadow) shadow->active = false;
+        return;
+    }
     TraversalContext context = frame_context(&out, camera, clear_color);
     traverse(&global_root_, context);
     // The scene traversal submits its packages to the igSorter it holds at
