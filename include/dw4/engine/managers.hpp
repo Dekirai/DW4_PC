@@ -499,7 +499,9 @@ private:
 // MODELCTRL rows. GENERATE (80312554) places an instance on a model with an
 // offset, an X/Y/Z rotation in radians (Y above 2 pi: random) and optionally
 // follows it; the update (80312268) starts the instance's ParticleTimer and
-// switches it off after the info's duration ([10]).
+// switches it off once the world time minus the timer's _timeBias reaches the
+// info's duration ([10]); the bias only moves when the traversal visits the
+// timer.
 class ParticleCtrlManager final : public Manager {
 public:
     ParticleCtrlManager() : Manager("beParticleCtrl2") {}
@@ -513,8 +515,7 @@ private:
     struct ParticleRam : Ram {
         bool running{};
         int state{};
-        std::int64_t start{};
-        std::int64_t paused = -1; // ONFREEZE: the time the effect stopped at (-1: not stopped)
+        std::int64_t start{}; // the start's world time (only for an instance without a timer)
         Node* transform{};  // ram [11]
         Node* timer{};      // ram [12] ParticleTimer
         std::string owner;  // followed model (lock)
@@ -1640,14 +1641,22 @@ public:
         std::int64_t pose_time = -1;
         std::vector<Mat4> locals;         // the bone locals of `pose`
         std::vector<Mat4> combiner_cache; // combiner +0x40: the last traversal's bone locals
+        // Combiner +0x54: the bone matrices the last traversal of the model's
+        // actors computed (801DCF30, skeleton vtable +0x5C), which
+        // GETBONEMATRIX reads (802F18A4). Stays as it is while no actor of
+        // the model is traversed (culled, switched off, before the first
+        // picture); null skeleton until the first traversal (801D13DC
+        // allocates identities).
+        ActorPose traversed;
+        std::int64_t traversed_time = -1; // the world time of that traversal (traces)
         ActorPose peek;                   // peek_pose's picture (no game state)
         std::vector<Mat4> peek_locals;
     };
-    // The actor's pose at `world_time`. The scene traversal (`traversal`)
-    // evaluates the combiner as 801D0C14 does: its update retires finished
-    // fades and its output stays in the combiner cache MOTIONSET bakes from;
-    // a query (GETBONEMATRIX) only reads the pose.
-    const ActorPose* pose_for(const Node& actor, std::int64_t world_time, bool traversal = false);
+    // The actor's pose at `world_time` for the scene traversal: it evaluates
+    // the combiner as 801D0C14 does (its update retires finished fades, its
+    // output stays in the combiner cache MOTIONSET bakes from) and leaves the
+    // bone matrices GETBONEMATRIX reads.
+    const ActorPose* pose_for(const Node& actor, std::int64_t world_time);
     // The pose for a picture of an actor the original's frustum cull skips
     // (drawn only in the widened widescreen picture): evaluated without the
     // combiner update and without touching the pose or combiner caches.

@@ -2221,7 +2221,6 @@ void ParticleCtrlManager::stop(ParticleRam& ram) {
     // goes and the outer switch with the last one.
     ram.running = false;
     ram.owner.clear();
-    ram.paused = -1;
     if (ram.timer) {
         ram.timer->timer.running = false;
         ram.timer->particle_live = false;
@@ -2289,19 +2288,12 @@ bool ParticleCtrlManager::command(Engine& engine, Ram& base, std::string_view co
         return true;
     }
     if (command == "ONFREEZE" || command == "OFFREEZE") {
-        // 0x80312914 / 0x80312930: _timeRunning 0 / 1; the effect time stands
-        // from the timer's next traversal on (its last visit's time stays).
-        if (ram.running && ram.timer && ram.timer->particle_live) {
-            if (command == "ONFREEZE" && ram.paused < 0) {
-                ram.paused = engine.time();
-                ram.timer->timer.running = false;
-            }
-            if (command == "OFFREEZE" && ram.paused >= 0) {
-                ram.start += engine.time() - ram.paused;
-                ram.paused = -1;
-                ram.timer->timer.running = true;
-            }
-        }
+        // 0x80312900..0x80312934: a running instance (+0x14) sets its timer's
+        // _timeRunning to 0 / 1, nothing else. The effect time stands from the
+        // timer's next traversal on (its last visit's time stays) because the
+        // visits move _timeBias along, which also holds back the lifetime
+        // test; a frozen timer the traversal does not reach keeps ageing.
+        if (ram.running && ram.timer) ram.timer->timer.running = command == "OFFREEZE";
         return true;
     }
     return command == "ONCTRL" || command == "OFCTRL";
@@ -2323,18 +2315,37 @@ void ParticleCtrlManager::update(Engine& engine) {
             if (instances && instances->kind == NodeKind::switch_node) instances->set_child_enabled(std::size_t(ram.index), true);
             if (ram.timer) {
                 // 0x80312328..0x80312340: _time -1 (the timer's next
-                // traversal is the effect's time 0), _timeRunning 1.
+                // traversal is the effect's time 0), _timeRunning 1. _timeBias
+                // keeps the value of the last visit (0 before the first).
                 ram.timer->timer.time = -1;
                 ram.timer->timer.running = true;
                 ram.timer->particle_live = true;
             }
-            ram.paused = -1;
             ram.start = engine.time();
             ram.state = 1;
             continue;
         }
-        const bool paused = ram.paused >= 0;
-        if (ram.state == 1 && (paused || engine.time() - ram.start < ram.info.i64(10))) continue;
+        if (ram.state == 1) {
+            // 0x80312374..0x803123B4: the world time (manager +0xC, +0x50)
+            // minus the timer's _timeBias (+0x30), 64-bit and wrapping,
+            // against the info's lifetime (+0x28), signed; no exception for a
+            // frozen effect. Only the timer's visits move the bias (8031A0A4:
+            // to the first visit's time after a start, along with the time
+            // while stopped), so an instance whose timer the traversal did
+            // not reach since its start (culled, switched off) still has the
+            // bias of its last visit and is usually stopped at the next update,
+            // and a frozen instance out of view ages on. An instance without
+            // a timer (no original counterpart) counts from its start.
+            const std::int64_t life = ram.info.i64(10);
+            const std::int64_t age =
+                ram.timer ? static_cast<std::int64_t>(static_cast<std::uint64_t>(engine.time()) - static_cast<std::uint64_t>(ram.timer->timer.bias))
+                          : engine.time() - ram.start;
+            if (age < life) continue;
+            if (static const bool trace = std::getenv("DW4_TRACE_PARTICLES") != nullptr; trace)
+                engine.log("particles " + ram.info_name + "#" + std::to_string(ram.index) + " ends at age " + std::to_string(age / 1000000) +
+                           " ms of " + std::to_string(life / 1000000) + " ms, " + std::to_string((engine.time() - ram.start) / 1000000) +
+                           " ms after its start" + (ram.timer && ram.timer->timer.time == -1 ? " (timer not visited since)" : ""));
+        }
         stop(ram);
         if (instances && instances->kind == NodeKind::switch_node) {
             instances->set_child_enabled(std::size_t(ram.index), false);

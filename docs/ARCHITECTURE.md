@@ -89,7 +89,14 @@ camera. The shadow shader dispatches its casters on the same traversal, so
 they are culled against the light's view and box; the receivers against the
 camera. A ParticleTimer's effect time advances only when the traversal visits
 it (_timeRunning / _timeBias / _time, 8031A0A4): an effect started out of view
-begins at its first visit. `Engine::render` also tests the picture's own
+counts its time from its first visit. beParticleCtrl2's lifetime test reads the
+same bias (80312268: world time minus _timeBias against the lifetime, no
+exception for ONFREEZE), so such an effect usually stops at the next update,
+before it is ever drawn, and a frozen effect out of view keeps ageing. The bone
+matrices GETBONEMATRIX reads (802F18A4) are the ones the last traversal of the
+model's actors left (`ActionManager::ActionRam::traversed`): the updates run
+before the traversal, so a bone follower is a frame behind its bone, and it
+stays put while its actor is culled or hidden. `Engine::render` also tests the picture's own
 frustum (the renderer widens perspective projections for widescreen, and a
 debug camera shows everything): a subtree outside the original's frustum but
 in the picture is drawn without its updates (`ActionManager::peek_pose`, copied
@@ -317,7 +324,8 @@ at the eye (3: damage numbers, status icons, most effect sprites).
 Particle effects (`y_*` names) are beParticleCtrl2Info instances answering as
 MODELCTRL rows (`ParticleCtrlManager`): FIND_SPACE and GENERATE place an
 instance on a model (offset, radian rotations, optional follow), start its
-ParticleTimer and switch it off after the info's duration. A ParticleTimer node
+ParticleTimer and switch it off once the world time minus the timer's
+_timeBias reaches the info's duration (see the cull above). A ParticleTimer node
 draws its igParticleAttr arrays (`dw4/engine/particles.hpp`): each 180-byte
 particle is a quadratic in time for position, RGBA, size and texture rectangle,
 built into camera-facing quads every frame (`DW4_TRACE_PARTICLES=1` logs the
