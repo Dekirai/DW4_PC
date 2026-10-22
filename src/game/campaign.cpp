@@ -770,9 +770,10 @@ int protection_wanted(engine::Engine& engine) {
 // behind_gauntlet).
 constexpr const char* kGauntlets[] = {"stag0304"};
 
-// Whether the story's next objective is a heavy way: a boss (its name says
-// so, or a stagBS stage) or a stage behind a gauntlet (the dng310 fortress
-// and Lucemon past the stag0304 climb). kSupplies' heavy rows are for it.
+// Whether the story's next objective is a heavy way: a boss stage (stagBS)
+// or a stage behind a gauntlet (the dng310 fortress past the stag0304
+// climb). kSupplies' heavy rows are for it. (Not the key item bosses of the
+// dungeons: the whole dungeon trip has them as its objective.)
 bool heavy_way(engine::Engine& engine);
 
 // Whether the way from the lobby to `stage` passes a gauntlet before it.
@@ -787,8 +788,8 @@ bool behind_gauntlet(engine::Engine& engine, const std::string& stage) {
 bool heavy_way(engine::Engine& engine) {
     for (const auto& o : kObjectives)
         if (!holds(engine, o.done)) {
-            const std::string_view name = o.name, stage = o.stage;
-            return name.find("boss") != std::string_view::npos || stage.rfind("stagbs", 0) == 0 || behind_gauntlet(engine, o.stage);
+            const std::string_view stage = o.stage;
+            return stage.rfind("stagbs", 0) == 0 || behind_gauntlet(engine, o.stage);
         }
     return false;
 }
