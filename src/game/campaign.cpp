@@ -903,6 +903,12 @@ struct BossFight {
     // With `dodge`: markers that show where blasts will come before their
     // boxes exist (omen_areas).
     const char* omen = "";
+    // With `dodge`: effect models ('|'-separated prefixes) whose live boxes
+    // drift after the player: kept off by kHomingKeep more (dodge_areas).
+    const char* homing = "";
+    // A boss that walks past the player is struck where it will be when the
+    // swing lands (boss_fight: its last step, kSwingLand).
+    bool lead = false;
 };
 constexpr BossFight kBossFights[] = {
     // stagBS03 with real blows: Lucemon lays rows of five bombs across its
@@ -973,7 +979,15 @@ constexpr BossFight kBossFights[] = {
     // swings (SQ_WALK, SQ_WAIT, SQ_ATCK3). The ExploreBot chased it through
     // its spins: a level 41 no-cheat run struck it twice in 110000 frames
     // and spent a full stock of heals there, three times.
-    {"dng412b4", "e_ldknight", "e_ldknight", 30.0f, true, true},
+    // (Most of its damage came from its orbs, x_032eactn02a, 70064, ~9 % of
+    // a level 40 player's HP: some ten of them come out one after another as
+    // it turns away from the player, live for 125 frames each and drift
+    // after the player at ~0.12 a frame. Guarded where it stood, the player
+    // took them in the gaps between the guards: 28 of 35 hits in 13000
+    // frames of a no-cheat test; walked off, they never reach it. Its walks
+    // carry it past the player at ~1.3 a frame: struck where it stood, the
+    // swing met the air, 4 swings and 2 hits in those frames, `lead`.)
+    {"dng412b4", "e_ldknight", "e_ldknight", 30.0f, true, true, "", 0.0f, 0.0f, 0.0f, false, "", "|x_032eactn02a|", true},
 };
 
 // Whether a model is named by a '|'-separated list ("<model>#<n>" names that
@@ -3702,12 +3716,19 @@ void reach_report(engine::Engine& engine, const engine::ModelCtrlManager::ModelR
 // (Apocalymon's SQ_MAGIC makes all its pillars at the cast, live 24..84
 // frames later: the horizon sees them all.)
 constexpr float kDodgeHorizon = 100.0f, kDodgeMargin = 1.5f;
+// The ground round a live box of a homing effect (BossFight::homing) kept
+// off, as if it went live kHomingDue frames on (some 0.12 a frame: 10 in
+// 80 frames; due within a swing, no swing starts there).
+constexpr float kHomingKeep = 10.0f, kHomingDue = 30.0f;
 // A swing takes some 30 frames in which the player cannot leave (SQ_ATCK1).
 constexpr float kSwingBusy = 32.0f;
+// A swing's boxes go live some 10 frames after A (SQ_ATCK1), A is read
+// within a frame or two of its press.
+constexpr float kSwingLand = 12.0f;
 struct DodgeArea {
     float x0, x1, z0, z1, due, end;
 };
-std::vector<DodgeArea> dodge_areas(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player) {
+std::vector<DodgeArea> dodge_areas(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player, const char* homing) {
     std::vector<DodgeArea> areas;
     auto* models = engine.get<engine::ModelCtrlManager>();
     if (!models || !player.node) return areas;
@@ -3729,6 +3750,12 @@ std::vector<DodgeArea> dodge_areas(engine::Engine& engine, const engine::ModelCt
             if (me.y + body_height + 1.0f <= cy - box.size.y * 0.5f || me.y - 1.0f >= cy + box.size.y * 0.5f) continue;
             const float gx = box.size.x * 0.5f + body_half + kDodgeMargin, gz = box.size.z * 0.5f + body_half + kDodgeMargin;
             areas.push_back({cx - gx, cx + gx, cz - gz, cz + gz, due, std::max(0.0f, box.end - box.elapsed)});
+            // (A homing effect's box: the ground kHomingKeep round it as well,
+            // due kHomingDue frames on, so the player walks off before it
+            // comes; inside the box itself only a guard is left.)
+            if (homing && *homing && e->category != "ENEMY" && listed_in(homing, *e))
+                areas.push_back({cx - gx - kHomingKeep, cx + gx + kHomingKeep, cz - gz - kHomingKeep, cz + gz + kHomingKeep, std::max(due, kHomingDue),
+                                 std::max(0.0f, box.end - box.elapsed)});
         }
     }
     return areas;
@@ -3787,7 +3814,7 @@ float dodge_due(const std::vector<DodgeArea>& areas, float x, float z) {
 
 bool CampaignBot::boss_fight(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player, const std::string& strike,
                              const std::string& follow, float keep, bool dodge, float arena_x, float arena_z, float arena_r, bool clear_touch,
-                             const char* omen, int frame, Output& out) {
+                             const char* omen, const char* homing, bool lead, int frame, Output& out) {
     auto* models = engine.get<engine::ModelCtrlManager>();
     if (!models) return false;
     const auto me = position_of(player);
@@ -3878,7 +3905,7 @@ bool CampaignBot::boss_fight(engine::Engine& engine, const engine::ModelCtrlMana
     std::vector<DodgeArea> areas;
     float here_due = 1e9f;
     if (dodge) {
-        areas = dodge_areas(engine, player);
+        areas = dodge_areas(engine, player, homing);
         if (omen && *omen) omen_areas(engine, player, omen, frame, omen_seen_, areas);
         here_due = dodge_due(areas, me.x, me.z);
         // (A box about to go live within 20 of the player: no heal now that
@@ -4080,6 +4107,31 @@ bool CampaignBot::boss_fight(engine::Engine& engine, const engine::ModelCtrlMana
         }
         // (clear_touch: from outside the focus's body box, touch_reach.)
         const float near = clear_touch ? std::max(2.5f, touch_reach(*focus) + body_half + 0.5f) : 2.5f;
+        // `lead`: where the focus will be when the swing lands, from its
+        // step in the last frame (focus_seen_); walking at the player it is
+        // waited for, and struck as it comes into reach.
+        if (lead) {
+            const auto c = position_of(*focus);
+            const bool seen = focus_seen_ == focus && focus_frame_ == frame - 1;
+            const engine::Vec3f step = seen ? engine::Vec3f{c.x - focus_at_.x, 0.0f, c.z - focus_at_.z} : engine::Vec3f{};
+            focus_seen_ = focus;
+            focus_at_ = c;
+            focus_frame_ = frame;
+            if (std::hypot(step.x, step.z) > 0.3f) {
+                const engine::Vec3f then{at.x + step.x * kSwingLand, at.y, at.z + step.z * kSwingLand};
+                const float ahead = flat(then, me);
+                if (tracing && frame % 10 == 0)
+                    std::printf("[%d] campaign boss lead: %.0f off now, %.0f when the swing lands\n", frame, best, ahead);
+                if (ahead <= near + 4.0f) {
+                    if (safe && frame % 4 < 2) out.buttons |= pad_button::a;
+                    return true;
+                }
+                // (Coming at the player: waited for where the player stands.)
+                if (ahead < best - 2.0f && best < 40.0f) return true;
+                if (way_clear) walk_to(engine, player, then, near + 2.5f, frame, out);
+                return true;
+            }
+        }
         if (best > near + 4.0f) {
             if (way_clear) walk_to(engine, player, at, near + 2.5f, frame, out);
         } else if (best < near) {
@@ -5835,7 +5887,7 @@ CampaignBot::Output CampaignBot::play(engine::Engine& engine, const engine::Mode
             if (stage == fight.stage && (!fight.real_blows || (!engine.cheats().one_hit && !engine.cheats().god)) &&
                 !any_alive(engine, fight.first) &&
                 boss_fight(engine, *player, fight.strike, fight.follow, fight.keep, fight.dodge, fight.arena_x, fight.arena_z, fight.arena_r,
-                           fight.clear_touch, fight.omen, frame, out)) {
+                           fight.clear_touch, fight.omen, fight.homing, fight.lead, frame, out)) {
                 last_ = me;
                 return out;
             }

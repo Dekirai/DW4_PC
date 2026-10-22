@@ -71,7 +71,7 @@ private:
     // One frame of a boss fight (kBossFights); false when the boss is down.
     bool boss_fight(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player, const std::string& strike,
                     const std::string& follow, float keep, bool dodge, float arena_x, float arena_z, float arena_r, bool clear_touch,
-                    const char* omen, int frame, Output& out);
+                    const char* omen, const char* homing, bool lead, int frame, Output& out);
     // A maze floor swept (ExploreBot exhausted): on to another exit.
     void maze_turn(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player, const std::string& goal, int frame);
     // Survival without god mode (campaign.cpp kSupplies): the next disk shop
@@ -194,6 +194,9 @@ private:
     int panel_ready_at_ = -100000; // the panel's FIRE wait after the last pick runs out (survive)
     int last_hp_ = -1;           // player 1's HP in the last frame (survive)
     int big_hit_ = 0, big_hit_at_ = -100000; // the biggest blow taken lately, when
+    const void* focus_seen_ = nullptr; // a boss fight's focus in the last frame (BossFight::lead) ...
+    engine::Vec3f focus_at_{};   // ... where it stood ...
+    int focus_frame_ = -1;       // ... and when
     int dodge_frame_ = -1;       // the last frame a boss fight's dodge saw a box about to meet the player (survive: no slow heal)
     std::string exit_to_;        // the stage the current step's exit mat leads to (kExits; survive tops the HP up before a stage without heals)
     std::set<std::string> no_panel_stages_; // stages seen without the quick panels (survive), beside kNoHealStages
