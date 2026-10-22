@@ -324,7 +324,7 @@ keeps its bits in the bank while it is out of the lobby (a defeat leaves them in
 and takes them out once per stay before the shops, recovers its bit capsule with a
 Raise Disk after a defeat and trains in the area's field below an objective's gate level (a Gate
 Disk escape raises that level like a defeat unless the visit set a story flag never seen before: then
-it restocks and comes back, at most eight times per objective; after a defeat in a field it trains in
+it restocks and comes back, at most eight times per objective; where the panel refuses the Gate Disk, stagBS01 and Daemon's stages, the objective is taken up again and the fight goes on; after a defeat in a field it trains in
 the area before while short of HP disks); with real blows it strikes the stag0103 boat's towers in
 passing, fights e_mammos off its arena's wall and Apocalymon from its dais, dodging the blast pillars,
 guards against shells in flight and turret beams (also in its aggressive windows), fights turrets
