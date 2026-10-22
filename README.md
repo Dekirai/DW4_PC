@@ -305,9 +305,13 @@ casts its first technique while the MP lasts (MP disks when it runs out) and put
 devices found on at the Digi-Lab (PWR Medals into the chip pockets of a weapon of rank 1+), and
 without `DW4_GOD` it
 also guards against enemy blows and touches (measured against the body's real height, its HIT
-boxes), heals with HP disks from the L panel (with Y at once while blows leave no gap), uses heal gates,
+boxes), heals with HP disks from the L panel (the smallest disk that makes the missing HP up within
+10 % of the maximum; with Y at once while blows leave no gap, outside the boss stages only below 20 % while
+it holds a Recovery, which Y takes first; in a boss stage the biggest blow of the visit keeps the heals
+early), uses heal gates,
 the X-Data shop's refill and Gate Disks, sells the weaker devices and restocks at the disk shop (HP
-Disks L and Recovery too with bits to spare; each lobby errand waits until no other errand's shop or
+Disks L and Recovery too with bits to spare, every bit's worth before the last boss, Daemon's three stages
+with no lobby between them; each lobby errand waits until no other errand's shop or
 bank program runs, and one that stalls is left until the next lobby room), goes back to restock on the
 way to an objective when its heals were down to half a stock already as it entered the stage (twice an
 objective; never from a stage behind the stag0304 cannon climb, `kGauntlets`), donates at the junk shop and wears the
