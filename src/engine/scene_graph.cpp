@@ -1221,9 +1221,12 @@ int frustum_cull_code(const Mat4& modelview, const Mat4& projection, const Vec3f
     if (all == 0x3F) return 1;
     // The second test (0x801E92B4): x, y and z scaled by the global
     // 1 / _outerFrustCullScale (r13-0x4460; 801E9BE0 stores 1.0f / 1.1f when
-    // 8040B3EC makes the stage camera's traversal, the only one there is).
+    // 8040B3EC makes the stage camera's traversal, the only one there is;
+    // 1.1 is below the _outerScissorWindowScale default 2.0). Dolphin reads
+    // 0x3F68BA2E there from the first frame on.
     constexpr float kOuterScale = 1.1f; // 80462E24
-    const float scale = 1.0f / kOuterScale;
+    constexpr float scale = 1.0f / kOuterScale;
+    static_assert(std::bit_cast<std::uint32_t>(scale) == 0x3F68BA2Eu);
     all = 0x3F;
     for (const auto& corner : corners) all &= inside(corner[0] * scale, corner[1] * scale, corner[2] * scale, corner[3]);
     return all == 0x3F ? 5 : 3;
