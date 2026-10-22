@@ -262,6 +262,13 @@ private:
     std::map<std::string, int> defeat_levels_; // objective -> highest level a defeat (or a Gate Disk escape) at it came at
     std::map<std::string, int> train_falls_;   // training field -> highest level a defeat there came at (train_for)
     int escape_stage_frame_ = -1; // the stage visit a Gate Disk escape raised the gate in
+    // What that escape changed for its objective, taken back when the panel
+    // then refuses the Gate Disk (no way out of the stage: the fight goes on).
+    struct EscapeUndo {
+        std::string objective;
+        std::optional<int> defeat_level, restock_trips, progress_trips;
+    };
+    std::optional<EscapeUndo> escape_undo_;
     int train_exp_ = -1, train_exp_at_{}; // EXP seen while training, when it last grew
     bool train_leaving_ = false; // the training field is spent: leaving it
     std::string stall_leave_;    // a field step stalled: the exit mat it is left by for this visit (kStallLeave)
