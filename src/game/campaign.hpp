@@ -172,6 +172,7 @@ private:
     };
     std::map<std::pair<const void*, int>, BoxSeen> boxes_seen_; // attack boxes' world centres (their motion)
     bool blow_shot_ = false;     // the blow blow_due found last is a shot in flight
+    bool blow_effect_ = false;   // ... or a box of an effect (no enemy's own body: a turret's shell or beam)
     engine::Vec3f me_seen_{}, me_step_{}; // player 1's position when blow_due last ran, its step in the frame before
     int me_seen_frame_ = -1;
     int guard_pulse_from_ = -100, guard_pulse_last_ = -100; // the B pulse of survive's guards (guard_pulse)
@@ -198,6 +199,9 @@ private:
     std::map<std::string, int> progress_trips_; // objective -> Gate Disk trips out of it with progress (no gate raised)
     std::map<std::string, int> restock_trips_;  // objective -> Gate Disk trips back to restock on the way to it (kRestockTrips)
     std::string restock_pending_;               // the objective of a restocking trip started, counted back in the lobby
+    int heal_stock_percent(engine::Engine& engine) const; // the heals held against a full stock (kRestockBelow)
+    int stock_at_entry_ = -1;                   // heal_stock_percent when the stage visit stock_visit_ began
+    int stock_visit_ = -1;
     engine::Vec3f grounded_at_{};               // where the player last stood with control (a fall's start)
     int grounded_frame_ = -1;
     std::string grounded_floor_;                // the HitLand info of that floor (empty: the stage's own)
@@ -239,6 +243,7 @@ private:
     bool gear_ran_ = false;      // its program was seen running
     std::array<int, 4> gear_checked_{-1, -1, -1, -1}; // the level each shop was last looked at
     std::array<int, 4> gear_visit_{-1, -1, -1, -1};   // the stage visit (its stage_frame_) each shop last ran and closed in
+    std::map<std::string, std::pair<int, int>> gear_restocks_; // gear objective -> (level, fresh-stock trips at it), kGearRestocks
     // The junk shop (campaign.cpp kProtections).
     int junk_visits_ = 0;          // its visits in this stay in the lobby
     int junk_ups_ = 0;             // UP presses on the donation's thousands digit
