@@ -74,11 +74,26 @@ execute that calculation.
 
 The common record is built from the table at `804EA930` (type, count, name;
 types 0 Int, 1 IntList, 3 BoolList, 4 String, 5 StringList, 7 FloatList, -1
-ends it) by `8036C2B0`. GAMEDATAINIT of slot 0 (`8036CE1C`, branch
-`0x8036CE3C`) releases every common variable and builds them again, so it
-also clears `GATESTAGENAME` and `GATESTAGENO`; the title's GENERATE_TITLE
-(`803689A8`) and the character select's new or called character of player 1
-(`0x8035ECC4` / `0x8035EF58`) send it. A fresh String variable holds a null
+ends it) by `8036C2B0` (jump table `804EACF0`). Every variable starts at its
+type's default: Int 0, IntList filled with `804EACE4` (0), BoolList with the
+byte at r13-0x3AF0 (0), FloatList with `804EACE8` (0.0), String and
+StringList entries null string objects. GAMEDATAINIT of slot 0 (`8036CE1C`,
+branch `0x8036CE3C`) releases every common variable and builds them again:
+NINZU, DIFFICULTY, CAMERAMODE and LIGHTMODE 0, no FLAG, FLAGFOLDER or COUNTER
+set, no bit capsule (BKCHIPSTAGE / BKCHIPNAME null, BKCHIPPOS / BKCHIPDATA 0),
+`GATESTAGENAME` unset and `GATESTAGENO` 0 (`GameSystem::reset_common`). It
+runs at boot (the constructor loop `8036D37C`, slots 0-3), for the title's
+GENERATE_TITLE (`803689A8`, slots 0-3) and for a new or called character of
+player 1 in the character select or the call shop (`0x8035ECC4` /
+`0x8035EF58`); a Dolphin run logs all three (work/dref/r29reset,
+`tools/mk_resetlog.py`: `I` lines at boot, at GENERATE_TITLE and for the new
+game, again after the soft reset's title). LOADCTRL2 writes NINZU back when it
+closes the panels, DIFFICULTY, CAMERAMODE and LIGHTMODE only in title mode
+(`0x803687C0`): a call-shop character of player 1 (a party where player 1
+left at the save room) leaves them 0. Player 1's BASE_FLAG / BASE_FLAGFOLDER
+/ BASE_COUNTER become the common ones again with BASE2CURRENT. SAVECTRL
+clears BKCHIPSTAGE of every player not in the party when it counts NINZU
+(`0x80378ECC..0x80378F68`). A fresh String variable holds a null
 string object: `SYSgetGateStageName` (dispatch 14, `802EBE94`) then pushes
 nil through `80269ECC` -> `80273330`, and stagML11 `start.lua` reacts with
 `SYSsetGateStage('GateOff', -1)`, which makes the lobby exit `g_cyexit` take

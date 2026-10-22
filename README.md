@@ -322,7 +322,11 @@ jitter included.
 Player 1 uses the keyboard and the first gamepad; the second to fourth
 gamepads control players 2 to 4. As on the original, holding B and X and
 then START for a second on player 1's controller returns to the title
-(outside the logo, opening, title and ending stages).
+(outside the logo, opening, title and ending stages). Holding B, X and START
+together on any controller for more than three seconds presses the console's
+reset button, as the GameCube controller does: the game reboots with the
+license screen, the memory card check, the logos and the opening (memory
+cards, mods and PC options stay).
 
 F1 opens the menu: the Settings tab (an Original / Modernized preset, display,
 widescreen, frame limit, anti-aliasing,

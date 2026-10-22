@@ -30,6 +30,12 @@ exactly n steps. In order:
    samples (disabled while STAGECTL `PADINPUT DISABLE` is active).
 2. The frame clock advances, so updates and the following render observe the
    same time.
+   beSystem's update (80316258) then reads the console's reset button
+   (`dw4::ConsoleReset`: B, X and START held on a controller for more than
+   three seconds tap it, as the controller hardware does); its latched
+   release turns the picture black and nothing else runs: after
+   `Engine::kRebootFields` steps the host starts a new engine on the boot
+   stage (the console restarted the disc, OSResetSystem).
 3. Pending stage change and the stage loader states (802F8A64): the loading
    screen `loadingUSA/ld<stage name from its third letter>.igb`, package
    members, `func.lua` / `boot.lua`, common files queued with `CFLsetName`,

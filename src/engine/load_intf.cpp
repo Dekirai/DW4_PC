@@ -868,6 +868,9 @@ void LoadIntf2Manager::update_ctrl(Engine& engine, PanelRam& ram, SaveCommon& co
                     if (in.trigger & dw4::pad_button::start) {
                         common.state = 3;
                         common.deactivate_all();
+                        // 0x8035F8E8..0x8035F8F4: STAGECTL's soft reset is
+                        // off (beSystem +0x63) until the next stage.
+                        engine.set_soft_reset_allowed(false);
                         next_detail();
                     }
                 } else {

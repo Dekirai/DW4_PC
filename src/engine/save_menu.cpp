@@ -1926,6 +1926,16 @@ void card_open_flow(Engine& engine, SaveCommon& common, int idx, MessageWindow& 
         message.cancel(engine, idx);
         finish(2);
     };
+    // Making or formatting the file turns the console's reset button off
+    // (beSystem +0x5F, 80360C3C) until the request ends, and in the call
+    // shop's character select (not from the title) STAGECTL's soft reset
+    // too (+0x63, 80360CAC): LoadIntf 0x8035FDF0..0x8035FF30 /
+    // 0x8036012C..0x80360268, SaveIntf 0x8037BE7C / 0x8037BF78 and
+    // 0x8037C178 / 0x8037C264.
+    auto reset_gate = [&](bool on) {
+        if (loading && !common.title) engine.set_soft_reset_allowed(on);
+        engine.set_reset_enabled(on);
+    };
     switch (entry.sub) {
     case 0: {
         const int r = common.check(engine, idx, slot, 3);
@@ -1952,9 +1962,11 @@ void card_open_flow(Engine& engine, SaveCommon& common, int idx, MessageWindow& 
         break;
     case 2:
         if (entry.detail == 0) {
+            reset_gate(false);
             next_detail(entry);
         } else if (entry.detail == 1) {
             const int r = common.create(engine, idx, message, slot, 3);
+            if (r != 0) reset_gate(true);
             if (r == 1) set_sub(entry, 5);
             else if (r == 2) {
                 if (io.result == 7) set_sub(entry, 3);
@@ -1977,9 +1989,11 @@ void card_open_flow(Engine& engine, SaveCommon& common, int idx, MessageWindow& 
     case 4:
         if (entry.detail == 0) {
             message.show(id | 0x2008);
+            reset_gate(false);
             next_detail(entry);
         } else if (entry.detail == 1) {
             const int r = common.format(engine, idx, slot, 3);
+            if (r != 0) reset_gate(true);
             if (r == 1) {
                 if (loading) finish(4); // an empty card: pick again
                 else set_sub(entry, 1);
@@ -2166,8 +2180,11 @@ void SaveIntfManager::card_flow(Engine& engine, PanelRam& ram, SaveCommon& commo
         break;
     }
     case 2:
+        // 0x8037B744..0x8037BA18: the reset button is off (beSystem +0x5F)
+        // from the box's slot animation until the write or an error ends.
         if (entry.detail == 0) {
             if (entry.detail2 == 0) {
+                engine.set_reset_enabled(false);
                 ram.slots.clear_flags();
                 ram.slots.set_phase(0);
                 ++entry.detail2;
@@ -2177,15 +2194,20 @@ void SaveIntfManager::card_flow(Engine& engine, PanelRam& ram, SaveCommon& commo
             } else if (entry.detail2 == 2) {
                 if (ram.slots.open(engine, ram.models, idx, ram.position, io)) {
                     io.result = 12;
+                    engine.set_reset_enabled(true);
                     error();
                 }
             }
         } else if (entry.detail == 1) {
             const int r = common.check(engine, idx, slot, 3);
             if (r == 1) next_detail(entry);
-            else if (r == 2) error();
+            else if (r == 2) {
+                engine.set_reset_enabled(true);
+                error();
+            }
         } else if (entry.detail == 2) {
             const int r = common.write(engine, idx, slot, ram.boxes.cursor(), 3);
+            if (r != 0) engine.set_reset_enabled(true);
             if (r == 1) next_sub(entry);
             else if (r == 2) error();
         }
