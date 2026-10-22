@@ -57,6 +57,10 @@ public:
     // to end time (DVDInterface m_read_buffer_*).
     std::uint64_t buffer_start_offset{}, buffer_end_offset{};
     std::int64_t buffer_start_time{}, buffer_end_time{};
+    // PC fast loading (not the original): every read takes no time and
+    // leaves the read-ahead buffer alone; a request ends at the next server
+    // tick. The sound driver sets it each tick from the engine.
+    bool instant{};
 };
 
 // A Cri sound entry's volume fade (the fade object at entry +16: set up by

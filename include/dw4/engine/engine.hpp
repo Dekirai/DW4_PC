@@ -232,8 +232,13 @@ struct Cheats {
     int damage_dealt = 100;      // percent of the damage player hits do
     int damage_taken = 100;      // percent of the damage enemies do
     std::uint32_t drop_seed = 0; // item drop randomizer, 0 off
+    // PC loading (settings.ini [gameplay] loading): off is the original's
+    // load timing (the simulated disc drive and loading thread), on takes
+    // none of it (Engine::fast_loading). A stage load latches it.
+    bool fast_loading{};
     bool original() const {
-        return !god && !infinite_mp && !one_hit && exp_rate == 100 && damage_dealt == 100 && damage_taken == 100 && !drop_seed;
+        return !god && !infinite_mp && !one_hit && exp_rate == 100 && damage_dealt == 100 && damage_taken == 100 && !drop_seed &&
+               !fast_loading;
     }
 };
 
@@ -390,6 +395,17 @@ public:
     // (0x802F8B54), set by its state 8, the step after start.lua
     // (0x802F9B68). The managers' updates run only while it is set.
     bool stage_active() const { return stage_active_; }
+    // A stage load is running (NEXTSTAGE to first.lua).
+    bool loading() const { return loader_state_ != -1; }
+    // Fast loading (a PC option, Cheats::fast_loading as it was when the
+    // running stage's load started, so a change applies from the next load
+    // on): the loader runs the same states in the same order without the
+    // simulated disc and the original's loading-thread time (no chunk reads,
+    // no teardown / routing / registration / start.lua updates that cover
+    // retraces, no minimum time of the loading screen), and the sound
+    // driver's disc reads end at its next tick (DiscDrive::instant), so ADX
+    // streams are ready a few fields after they start.
+    bool fast_loading() const { return loader_fast_; }
     const std::vector<LoadedFile>& loaded_files() const { return files_; }
     std::vector<std::string>& common_file_queue() { return common_queue_; }
     // Loads a common package now and registers its infos (a direct stage
@@ -417,6 +433,14 @@ private:
     void loader_request(const LoaderItem& item);
     bool loader_ready() const;
     bool loader_queue_step(int kind);
+    // Fast loading: several files of the queue per update (loader_queue_step).
+    bool loader_queue_fast(int kind);
+    std::size_t loader_item_bytes(const LoaderItem& item) const;
+    // Fast loading takes further files into an update while those it took
+    // stay within this many bytes (the first file is always taken): a
+    // frame's parsing stays near that of the largest single file, which the
+    // original timing parses in one update as well.
+    static constexpr std::size_t kFastLoadBytes = 1u << 20;
     void loader_route(const LoaderItem& item, int kind);
     void load_file(const std::string& logical_path, bool member, std::vector<ObjectView>& deferred_infos);
     void register_info(const ObjectView& info);
@@ -506,6 +530,7 @@ private:
     std::int64_t loader_processing_{};       // milli-fields of chunk processing so far in this load (chunk_extra)
     std::int32_t loader_teardown_{};         // see StageSnapshot::loader_teardown
     bool loader_common_{true};               // see StageSnapshot::loader_common
+    bool loader_fast_{};                     // see fast_loading()
     bool stage_active_{}; // beSystem +0x2C, see stage_active()
     bool soft_reset_allowed_{}; // stage data +63, set after first.lua outside the title stages
     Cheats cheats_;

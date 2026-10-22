@@ -140,9 +140,10 @@ struct Capture {
     std::vector<Command> commands;
 };
 
-std::vector<Event> replay(const Capture& c, dw4::DiscDrive::Rotation rotation, int ticks) {
+std::vector<Event> replay(const Capture& c, dw4::DiscDrive::Rotation rotation, int ticks, bool instant = false) {
     dw4::CriStreams cri;
     cri.drive.rotation = rotation;
+    cri.drive.instant = instant;
     cri.drive.clock_offset = kCaptureClock;
     const std::uint64_t ecc = 0x8000;
     const std::uint64_t first = c.last_offset - c.last_offset % ecc;
@@ -451,6 +452,37 @@ void test_fades() {
 // 23.8e6 ticks ahead of their time base * 12; with that offset its rotation
 // formula gives every duration to 0.7 us, without it one read lands a half
 // turn off, and the mean rotation misses all four by 7 to 17 ms.
+// PC fast loading: the drive takes no time (DiscDrive::instant), so a read
+// ends at the next server tick and the streams of a stage start are ready
+// within a few fields instead of the original's 22-53.
+void test_instant_drive() {
+    using R = dw4::DiscDrive::Rotation;
+    dw4::DiscDrive drive;
+    drive.instant = true;
+    const auto before = drive;
+    check(drive.read(kNdmw + 31987ull * 2048, 51200, 38404059708) == 0, "An instant read takes no time");
+    check(drive.buffer_start_offset == before.buffer_start_offset && drive.buffer_end_offset == before.buffer_end_offset &&
+              drive.buffer_start_time == before.buffer_start_time && drive.buffer_end_time == before.buffer_end_time,
+          "An instant read leaves the read-ahead buffer alone");
+    const auto bs01 = stagbs01();
+    const auto fast = replay(bs01, R::dolphin, 80, true);
+    const int ready = all_ready(fast);
+    if (ready > 12) std::cerr << "  instant stagBS01 ISALLREADY at field " << ready << '\n';
+    check(ready > 0 && ready <= 12, "stagBS01 with an instant drive: ISALLREADY within 12 fields (53 with the drive)");
+    // One read per tick: every event is a tick of its own and in the original order of the streams.
+    bool one_per_tick = true;
+    for (std::size_t i = 1; i < fast.size(); ++i)
+        if (fast[i].sectors && fast[i - 1].sectors && fast[i].tick == fast[i - 1].tick) one_per_tick = false;
+    check(one_per_tick, "The instant drive still serves one read at a time");
+    // The loader's 64-sector requests: one tick each, the next in the tick after the booking.
+    dw4::CriStreams cri;
+    cri.drive.instant = true;
+    cri.load(kNdmw + 300000ull * 2048, 173);
+    int k = 1;
+    for (; k <= 40 && (cri.loader.active || cri.loader.busy); ++k) cri.tick(std::int64_t(k) * dw4::CriStreams::kFieldTicks);
+    check(!cri.loader.active && !cri.loader.busy && k - 1 == 6, "An instant drive reads 64 + 64 + 45 sectors in six ticks");
+}
+
 void test_rotation_clock() {
     using R = dw4::DiscDrive::Rotation;
     struct Read {
@@ -493,6 +525,7 @@ int main() {
         test_stream_reads();
         test_loader_reads();
         test_rotation_clock();
+        test_instant_drive();
         test_fades();
     } catch (const std::exception& error) {
         std::cerr << "disc tests failed: " << error.what() << '\n';

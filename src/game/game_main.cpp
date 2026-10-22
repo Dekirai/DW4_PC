@@ -58,6 +58,9 @@ struct Options {
     bool net_host{};
     std::string net_join;
     int net_port = 52040, net_players = 2, net_delay = 3;
+    // --loading original|fast: this run's load timing instead of settings.ini
+    // [gameplay] loading (test runs: else DW4_FAST_LOADING=1).
+    std::optional<bool> fast_loading;
 };
 
 
@@ -506,9 +509,20 @@ int run(const Options& options, dw4::game::Settings& settings) {
     engine.set_resource_overrides(mod_folders);
     for (const auto& mod : mods)
         if (mod.enabled && mod.problem.empty()) std::cout << "mod: " << mod.name << " " << mod.version << " (" << mod.file_count << " files)\n";
+    // Fast loading (settings.ini [gameplay] loading; --loading; test runs:
+    // DW4_FAST_LOADING=1). A stage load latches it (Engine::fast_loading).
+    auto fast_loading_choice = [&] {
+        if (options.fast_loading) return *options.fast_loading;
+        if (options.smoke_frames) {
+            const char* text = std::getenv("DW4_FAST_LOADING");
+            return text && std::atoi(text) != 0;
+        }
+        return settings.fast_loading;
+    };
     // Rebalancing / randomizer (settings.ini [gameplay]; test runs:
-    // DW4_GAMEPLAY=exp,dealt,taken,seed).
+    // DW4_GAMEPLAY=exp,dealt,taken,seed) and the load timing.
     auto apply_gameplay = [&](dw4::engine::Cheats& cheats) {
+        cheats.fast_loading = fast_loading_choice();
         if (options.smoke_frames) {
             if (const char* text = std::getenv("DW4_GAMEPLAY")) {
                 unsigned seed = 0;
@@ -562,6 +576,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
         start.damage_dealt = engine.cheats().damage_dealt;
         start.damage_taken = engine.cheats().damage_taken;
         start.drop_seed = engine.cheats().drop_seed;
+        start.fast_loading = engine.cheats().fast_loading;
         std::string status, shown;
         const auto deadline = std::chrono::steady_clock::now() + std::chrono::minutes(options.smoke_frames ? 1 : 30);
         SDL_Init(SDL_INIT_VIDEO);
@@ -605,6 +620,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
         engine.cheats().damage_dealt = started.damage_dealt;
         engine.cheats().damage_taken = started.damage_taken;
         engine.cheats().drop_seed = started.drop_seed;
+        engine.cheats().fast_loading = started.fast_loading; // the host's choice for everyone
         // Every machine plays from the same card copies.
         session_cards = std::filesystem::temp_directory_path() /
                         ("dw4_session_" + std::to_string(net.local_slot()) + "_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
@@ -867,6 +883,9 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 if (step.drawn) engine.traverse_scene();
             }
             const bool exact = engine.fingerprint() == state.fingerprint;
+            // The replay loaded with the state's load timing; from the next
+            // stage load on the current choice applies again.
+            engine.cheats().fast_loading = fast_loading_choice();
             input_log = state.inputs;
             load_step_drawn = state.load_step_drawn;
             last_step_loaded = false;
@@ -900,6 +919,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
             engine.cheats().damage_dealt = started.damage_dealt;
             engine.cheats().damage_taken = started.damage_taken;
             engine.cheats().drop_seed = started.drop_seed;
+            engine.cheats().fast_loading = started.fast_loading; // the host's choice for everyone
             session_cards = std::filesystem::temp_directory_path() /
                             ("dw4_session_" + std::to_string(net.local_slot()) + "_" +
                              std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
@@ -977,7 +997,28 @@ int run(const Options& options, dw4::game::Settings& settings) {
         // DW4_STAGE_STATES=DIR (test runs): a state file at every stage start
         // (DIR/<frame>_<stage>.dw4state), for resuming long scripted runs.
         const char* stage_states = std::getenv("DW4_STAGE_STATES");
+        // DW4_TRACE_LOADTIME=1 (test runs): for every stage load the fields
+        // from the step that took the change to the stage start (first.lua)
+        // and to the first step after it in which player 1 has control with
+        // pad input on, and the real time the loop passes of the load took
+        // (all of them and the longest); DW4_TRACE_LOADTIME=2 also every pass
+        // of a load with the loader's state.
+        const int trace_loadtime = std::getenv("DW4_TRACE_LOADTIME") ? std::atoi(std::getenv("DW4_TRACE_LOADTIME")) : 0;
+        struct LoadTiming {
+            std::string stage;
+            std::uint64_t serial{}, begin{}, started{}, control{};
+            double total_ms{}, longest_ms{};
+            bool fast{};
+        } load_timing;
+        auto print_load_timing = [&] {
+            const std::string control = load_timing.control ? std::to_string(load_timing.control - load_timing.begin) : std::string("-");
+            std::printf("loadtime %s%s: started after %lld fields, control after %s fields, loop %.1f ms (longest pass %.1f ms)\n",
+                        load_timing.stage.c_str(), load_timing.fast ? " (fast)" : "",
+                        load_timing.started ? (long long)(load_timing.started - load_timing.begin) : -1LL, control.c_str(),
+                        load_timing.total_ms, load_timing.longest_ms);
+        };
         while (running) {
+            const auto pass_start = std::chrono::steady_clock::now();
             SDL_Event event;
             while (SDL_PollEvent(&event)) {
                 // A key binding being edited takes the next key (F1 still
@@ -1135,6 +1176,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 start.damage_dealt = engine.cheats().damage_dealt;
                 start.damage_taken = engine.cheats().damage_taken;
                 start.drop_seed = engine.cheats().drop_seed;
+                start.fast_loading = engine.cheats().fast_loading;
                 std::string error;
                 if (net.lobby(start, lobby_status, error)) {
                     begin_session();
@@ -1540,13 +1582,15 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     if (ImGui::BeginTabBar("menu")) {
                     if (ImGui::BeginTabItem("Settings")) {
                         {
-                            // Presets: Original (the GameCube presentation and
-                            // balance) or Modernized (widescreen, smooth motion,
-                            // anti-aliasing, straight to the title).
+                            // Presets: Original (the GameCube presentation, load
+                            // times and balance) or Modernized (widescreen, smooth
+                            // motion, anti-aliasing, straight to the title, fast
+                            // loading).
                             const bool original = !settings.widescreen && !settings.smooth_motion && settings.msaa == 0 &&
-                                                  !settings.skip_intro && settings.exp_rate == 100 && settings.damage_dealt == 100 &&
-                                                  settings.damage_taken == 100 && settings.drop_seed == 0;
-                            const bool modernized = settings.widescreen && settings.smooth_motion && settings.msaa >= 4 && settings.skip_intro;
+                                                  !settings.skip_intro && !settings.fast_loading && settings.exp_rate == 100 &&
+                                                  settings.damage_dealt == 100 && settings.damage_taken == 100 && settings.drop_seed == 0;
+                            const bool modernized = settings.widescreen && settings.smooth_motion && settings.msaa >= 4 && settings.skip_intro &&
+                                                    settings.fast_loading;
                             int preset = original ? 0 : modernized ? 1 : 2;
                             static const char* presets[] = {"Original", "Modernized", "Custom"};
                             if (ImGui::Combo("Preset", &preset, presets, 3) && preset < 2) {
@@ -1555,14 +1599,31 @@ int run(const Options& options, dw4::game::Settings& settings) {
                                 settings.smooth_motion = modern;
                                 settings.msaa = modern ? 4 : 0;
                                 settings.skip_intro = modern;
+                                settings.fast_loading = modern;
                                 if (!modern) {
                                     settings.exp_rate = settings.damage_dealt = settings.damage_taken = 100;
                                     settings.drop_seed = 0;
-                                    apply_gameplay(engine.cheats());
                                 }
+                                // (Online the host's gameplay settings stay.)
+                                if (!net.active()) apply_gameplay(engine.cheats());
                                 settings_changed = true;
                             }
-                            ImGui::TextDisabled("Original: 4:3, 60 fps motion, no anti-aliasing, the intro and the original balance.");
+                            ImGui::TextDisabled("Original: 4:3, 60 fps motion, no anti-aliasing, the intro, GameCube load times and the original balance.");
+                            // Loading: the original's disc and loading-thread time or none of it.
+                            int loading = settings.fast_loading ? 1 : 0;
+                            static const char* loadings[] = {"Original", "Fast"};
+                            ImGui::BeginDisabled(net.active());
+                            if (ImGui::Combo("Loading", &loading, loadings, 2)) {
+                                settings.fast_loading = loading == 1;
+                                apply_gameplay(engine.cheats());
+                                settings_changed = true;
+                            }
+                            ImGui::EndDisabled();
+                            ImGui::TextDisabled(net.active() ? "Online, the host's loading choice applies."
+                                                : settings.fast_loading
+                                                    ? "Fast: stage changes skip the GameCube's disc reads and loading waits (well under a second)."
+                                                    : "Original: stage changes take as long as on the GameCube (about 7-15 seconds).");
+                            ImGui::TextDisabled("A change applies from the next stage change on.");
                         }
                         if (ImGui::CollapsingHeader("Display", ImGuiTreeNodeFlags_DefaultOpen)) {
                             if (ImGui::Checkbox("Fullscreen (F11)", &settings.fullscreen)) {
@@ -1900,6 +1961,27 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     frame_times[frame_time_at++ % frame_times.size()] = float(seconds * 1000.0);
                 }
             }
+            if (trace_loadtime && steps > 0) {
+                const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - pass_start).count();
+                if (const auto* snapshot = engine.stage_snapshot(); snapshot && snapshot->serial != load_timing.serial) {
+                    if (load_timing.serial && !load_timing.control) print_load_timing();
+                    load_timing = {snapshot->stage, snapshot->serial, snapshot->frame};
+                    load_timing.fast = engine.fast_loading();
+                }
+                if (load_timing.serial && !load_timing.started) {
+                    if (trace_loadtime > 1)
+                        std::printf("[%llu] load pass %.2f ms (%s)\n", (unsigned long long)engine.frame(), ms, engine.loader_state().c_str());
+                    load_timing.total_ms += ms;
+                    load_timing.longest_ms = std::max(load_timing.longest_ms, ms);
+                    if (!engine.loading()) load_timing.started = engine.frame();
+                }
+                if (load_timing.started && !load_timing.control && engine.pad_input_enabled())
+                    if (auto* models = engine.get<dw4::engine::ModelCtrlManager>())
+                        if (const auto* p = models->player(0); p && p->control_enabled) {
+                            load_timing.control = engine.frame();
+                            print_load_timing();
+                        }
+            }
             // Frame limit (settings.ini fps_limit): presents are spaced out;
             // the simulation keeps its fixed 60 Hz steps.
             if (!options.smoke_frames && settings.fps_limit > 0) {
@@ -2062,6 +2144,11 @@ int main(int argc, char** argv) {
                 }
             } else if (arg == "--input") options.input_script = next();
             else if (arg == "--load-state") options.load_state = next();
+            else if (arg == "--loading") {
+                const std::string value = next();
+                if (value != "original" && value != "fast") throw std::runtime_error("--loading takes original or fast");
+                options.fast_loading = value == "fast";
+            }
             else if (arg == "--flag") {
                 const std::string value = next();
                 const auto eq = value.find('=');
@@ -2080,7 +2167,7 @@ int main(int argc, char** argv) {
             else if (arg == "--help" || arg == "-h") {
                 std::cout << "dw4_game [--data EXTRACTED_ROOT] [--stage NAME] [--smoke-test FRAMES] [--screenshot FILE.bmp]\n"
                              "         [--screenshot-frames N,M,...] [--input SCRIPT] [--card-dir GCI_ROOT]\n"
-                             "         [--load-state FILE]\n";
+                             "         [--load-state FILE] [--loading original|fast]\n";
                 return 0;
             } else throw std::runtime_error("unknown option " + arg);
         }

@@ -150,6 +150,7 @@ double DiscDrive::rotational_latency(std::uint64_t offset, double time_seconds) 
 // a streaming read right behind the head, or a seek (head travel plus the
 // rotation to the block). Afterwards the drive keeps reading ahead.
 std::int64_t DiscDrive::read(std::uint64_t offset, std::uint64_t length, std::int64_t now) {
+    if (instant) return 0;
     std::uint64_t dvd = offset - offset % kEccBlock;
     const std::uint64_t first_block = dvd;
     std::uint64_t buffer_start = 0, buffer_end = 0, head = 0;

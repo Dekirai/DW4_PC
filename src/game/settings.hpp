@@ -53,6 +53,9 @@ struct Settings {
     // [gameplay]: optional rebalancing and randomizer (100 / 0 = original)
     int exp_rate = 100, damage_dealt = 100, damage_taken = 100;
     std::uint32_t drop_seed = 0; // boot straight to the title (no logos / opening movie)
+    // [gameplay] loading = original / fast: stage loads with the GameCube's
+    // disc and loading-thread time, or without it (engine::Cheats::fast_loading).
+    bool fast_loading = false;
     // [keyboard]: up to three keys per button.
     static constexpr std::size_t kKeysPerButton = 3;
     std::array<std::array<SDL_Scancode, kKeysPerButton>, kPadKeyCount> keys{};
