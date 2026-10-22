@@ -153,9 +153,22 @@ program; Dolphin's `GC/USA` folder works too), `[data] card_a` / `card_b` (what
 the slots hold: `none` for an empty slot, `unformatted`, and / or the card's
 blocks such as `251`; default a 2043-block card in slot A and one in slot B when
 its folder exists, also `DW4_CARD_A` / `DW4_CARD_B`) and
-`[keyboard]` with up to three key names per button (`a=Return, Space, K`) and
-`[gamepad]` with up to three SDL controller inputs per button (`l=lefttrigger,
-leftshoulder`).
+`[keyboard]` with up to three key names per control (`a=Return, Space, K`) and
+`[gamepad]` with up to three SDL controller inputs per control (`l=lefttrigger,
+leftshoulder`). The controls are `a`, `b`, `x`, `y`, `start`, `l`, `r`, `z`,
+`stick_up` / `stick_down` / `stick_left` / `stick_right` (the main stick),
+`dpad_up` ... `dpad_right` (the D-pad) and `cstick_up` ... `cstick_right` (the
+C-stick); a controller's left and right stick are always the main stick and the
+C-stick. Files from before the separate D-pad and C-stick (one `up` / `down` /
+`left` / `right` input that set the D-pad bit and walked) are migrated when
+they are read and saved with the new names: the keyboard's keys go to the main
+stick except the arrow keys, which become the D-pad (so the old default `W, Up`
+becomes WASD walking and arrow-key D-pad); a direction bound to arrow keys only
+keeps them for walking and leaves the D-pad without keys (bind them in the F1
+menu; the keypad C-stick still moves the quick panel cursor). The controller's
+old inputs (default the D-pad buttons) become the D-pad, which no longer walks,
+as on the GameCube (bind D-pad buttons to `stick_*` to walk with them). A
+default key that the file uses for another control is left out.
 
 ### Fast loading
 
@@ -273,8 +286,12 @@ dw4_game.exe --stage stagml11   rem jump straight to the Home lobby
 `Play-DW4-Game.cmd` starts `build\Game\dw4_game.exe`. Further options:
 `--smoke-test FRAMES` (fixed steps as fast as the machine runs them; without a picture, see
 below), `--input SCRIPT` (lines
-`frame BUTTON [duration [player]]` (BUTTON A, B, X, Y, Z, L, R, START, UP, DOWN, LEFT, RIGHT or `STICK:x,y`
-with raw stick values -128..127, several joined by `+`), `frame GOTO x z [duration]`, `frame SEEK duration [model-prefix]`
+`frame BUTTON [duration [player]]` (BUTTON A, B, X, Y, Z, L, R, START; UP, DOWN, LEFT, RIGHT, which set
+the D-pad bit and push the main stick fully (the scripts' combined direction, unchanged so older scripts,
+the determinism references and the campaign checkpoints keep their meaning; a GOTO / SEEK steering or a
+`STICK` replaces the push); DPAD_UP, DPAD_DOWN, DPAD_LEFT, DPAD_RIGHT for the D-pad alone; `STICK:x,y` /
+`CSTICK:x,y` for the main stick / C-stick at raw device values -128..127; several joined by `+`; the
+quick panels' cursor takes the D-pad and the C-stick, walking the main stick), `frame GOTO x z [duration]`, `frame SEEK duration [model-prefix]`
 and `frame SEND CATEGORY COMMAND [arguments|- [row]]`; `SEEK duration mat:matz02` walks a route onto
 a mat and confirms its prompt, `SEEK duration explore:matz02` plays through the stage to it: it fights
 enemies (hovering ones from a ledge its swing reaches them from, turrets in the gaps between their
@@ -338,7 +355,8 @@ once the n-th stage has loaded,
 `DW4_TRACE_SELECT`, `DW4_TRACE_TEXT`, `DW4_TRACE_PLAYER`, `DW4_TRACE_HIT`, `DW4_TRACE_EXPLORE` and
 `DW4_TRACE_CAMPAIGN` log menu cursors, text, player state, hits, the exploring bot's targets and the
 campaign driver's menu answers, heals, guards and trainings (`DW4_TRACE_GUARD` every enemy attack box
-the guard looks at), `DW4_TRACE_STATS` every player status calculation; `DW4_TRACE_SCRIPT=1` (or a
+the guard looks at), `DW4_TRACE_STATS` every player status calculation, `DW4_TRACE_PANEL` the quick
+panels' selected line whenever it changes; `DW4_TRACE_SCRIPT=1` (or a
 script name) logs script runs and `DW4_TRACE_SEQ=<model>` a model's sequence changes
 (`DW4_DUMP_SEQ=<model>` lists all its sequences with their commands). Campaign research reports
 (they change the stage): `DW4_CAMPAIGN_REGIONS=wall,...` prints a stage's regions with those
@@ -358,15 +376,23 @@ jitter included.
 
 | Original | Keyboard (default, rebindable) | Gamepad (default, rebindable) |
 | --- | --- | --- |
-| Stick | Arrow keys / WASD | Left stick, D-pad |
-| A (talk, confirm) | Enter, Space, K | South |
+| Main stick (walk, menus) | W / A / S / D | Left stick |
+| D-pad (menus, quick panel cursor) | Arrow keys | D-pad |
+| C-stick (quick panel cursor) | Keypad 8 / 4 / 2 / 6 | Right stick |
+| A (talk, confirm, use the panel's line) | Enter, Space, K | South |
 | B (cancel) | Backspace, L | East |
 | X (jump) | J | West |
 | Y | I | North |
 | START | Esc, Tab | Start |
-| L / R | Q / E | Left / right trigger (L also on the left shoulder) |
+| L / R (disk / technique panel) | Q / E | Left / right trigger (L also on the left shoulder) |
 | Z | Z | Right shoulder |
-| C stick | | Right stick |
+
+As on the GameCube the three direction inputs are separate: the main stick
+walks, the quick panels (R techniques, L disks) move their cursor with the
+D-pad or the C-stick only (8034A24C), so walking with a panel open never picks
+another line, and menus take the main stick and the D-pad. With the default
+keys the left hand walks with WASD and opens the panels with Q / E, the right
+hand picks the line with the arrow keys and Space or Enter uses it.
 
 Player 1 uses the keyboard and the first gamepad; the second to fourth
 gamepads control players 2 to 4. As on the original, holding B and X and
