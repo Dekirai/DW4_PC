@@ -257,7 +257,8 @@ the area before while short of HP disks); with real blows it strikes the stag010
 passing, fights e_mammos off its arena's wall and Apocalymon from its dais, dodging the blast pillars,
 guards against shells in flight, fights turrets, leaves structures that heal themselves (the area 3
 poison plants) and the ground round them alone, crosses a field to its exit striking only the enemies
-that come near, chases no enemy over moving platforms, holds
+that come near, crosses a floor that gave way under it before (dng310f3's fading tiles) without a stop
+and keeps the spot a fall began from off its routes for a while, chases no enemy over moving platforms, holds
 waves away from pits and quicksand sinks (an enemy off the sand is walked to), takes no guard with a
 pit, quicksand or a deep drop behind it, fights Belphemon by a boss routine and dodges Lucemon's bomb rows from their markers
 (omens: a blast's rings known before its boxes exist); a field step that stalls for 180000 frames leaves the field and comes
