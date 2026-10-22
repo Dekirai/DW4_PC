@@ -69,7 +69,7 @@ void bc1_tests() {
     const Bytes transparent{0x1f, 0x00, 0x00, 0xf8, 0xe4, 0xe4, 0xe4, 0xe4};
     const auto alpha = decode_bc1(transparent, 4, 4);
     check(pixel(alpha, 2, 0) == std::array<std::uint8_t, 4>{127, 0, 127, 255}, "BC1 three-color average");
-    check(pixel(alpha, 3, 0) == std::array<std::uint8_t, 4>{0, 0, 0, 0}, "BC1 transparent black, distinct from GX CMPR");
+    check(pixel(alpha, 3, 0) == std::array<std::uint8_t, 4>{127, 0, 127, 0}, "GX CMPR transparent texel keeps the average colour");
     const Bytes solid_red{0x00, 0xf8, 0x00, 0x00, 0, 0, 0, 0};
     const Bytes solid_green{0xe0, 0x07, 0x00, 0x00, 0, 0, 0, 0};
     const Bytes solid_blue{0x1f, 0x00, 0x00, 0x00, 0, 0, 0, 0};

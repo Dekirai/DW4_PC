@@ -65,9 +65,12 @@ bool build_particles(const ObjectView& particle_attr, float time, const Mat4& mo
     }
 
     // Camera axes in world space (row-vector view: columns of the rotation).
+    // 800E1C70 builds the corners in view space around the centre the saved
+    // modelview (800E1A40) transforms; the sizes are view-space sizes the
+    // model scale never enters (igPointSpriteExt stores 0.5 * w, h at
+    // 800E3618 / 800E3650).
     const Vec3f right{view(0, 0), view(1, 0), view(2, 0)};
     const Vec3f up{view(0, 1), view(1, 1), view(2, 1)};
-    const float scale = length(Vec3f{model(0, 0), model(0, 1), model(0, 2)});
 
     // Particles first(+0x34) .. first + count(+0x38) (loop test 800E0C74).
     for (std::uint32_t i = first; i < first + count; ++i) {
@@ -82,9 +85,7 @@ bool build_particles(const ObjectView& particle_attr, float time, const Mat4& mo
         const Vec3f center = transform_point(local, model);
         const float r = quadratic(p, 0x24, 0x10, t), g = quadratic(p, 0x28, 0x10, t);
         const float b = quadratic(p, 0x2C, 0x10, t), a = quadratic(p, 0x30, 0x10, t);
-        float w = quadratic(p, 0x54, 0x08, t), h = one_size ? w : quadratic(p, 0x58, 0x08, t);
-        w *= scale;
-        h *= scale;
+        const float w = quadratic(p, 0x54, 0x08, t), h = one_size ? w : quadratic(p, 0x58, 0x08, t);
         if (w <= 0.0f || h <= 0.0f || a <= 0.0f) continue;
         float u0 = read_f32(p, 0x6C), v0 = read_f32(p, 0x70), u1 = read_f32(p, 0x74), v1 = read_f32(p, 0x78);
         if (bec) {

@@ -478,8 +478,18 @@ const GlRenderer::Texture* GlRenderer::texture(const engine::Attribute* binding)
         const std::uint8_t* pixels = image.rgba.data();
         std::optional<TextureImage> replaced;
         if (pack_) {
-            // Texture packs: dumps and replacements by pixel hash.
-            const auto hash = TexturePack::hash(pixels, image.rgba.size(), width, height);
+            // Texture packs: dumps and replacements by pixel hash. CMPR
+            // textures keep the hash of the earlier decode with black
+            // transparent texels, so existing packs still match them.
+            std::uint64_t hash;
+            if (image.block_compressed) {
+                auto earlier = image.rgba;
+                for (std::size_t i = 0; i + 3 < earlier.size(); i += 4)
+                    if (earlier[i + 3] == 0) earlier[i] = earlier[i + 1] = earlier[i + 2] = 0;
+                hash = TexturePack::hash(earlier.data(), earlier.size(), width, height);
+            } else {
+                hash = TexturePack::hash(pixels, image.rgba.size(), width, height);
+            }
             const std::string name(binding->image.str(22));
             pack_->dump(name, pixels, width, height, hash);
             replaced = pack_->replacement(hash);
@@ -606,10 +616,24 @@ void GlRenderer::render_shadow_map() {
         } else {
             gl.Uniform1i(gl.u_skinned, 0);
         }
+        // 801FDCCC locks (801D5190) only igLightingStateAttr, igDepthStateAttr,
+        // the unit-0 igTextureStateAttr, _shadowColor and the viewport; every
+        // caster keeps its own blending. An additive one (stagBS06 f_devl31
+        // ring1 / ring2: SRC_ALPHA, ONE) adds its grey to the white map and
+        // casts nothing.
+        const auto& s = item.state;
+        if (s.blend_enabled) {
+            glEnable(GL_BLEND);
+            gl.BlendFuncSeparate(blend_factor(s.blend_src), blend_factor(s.blend_dst), GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+            gl.BlendEquation(s.blend_equation == 1 ? GL_FUNC_SUBTRACT : GL_FUNC_ADD);
+        } else {
+            glDisable(GL_BLEND);
+        }
         gl.BindVertexArray(m->vao);
         glDrawElements(GL_TRIANGLES, m->index_count, GL_UNSIGNED_INT, nullptr);
     }
     gl.BindVertexArray(0);
+    glDisable(GL_BLEND);
     gl.Uniform1i(gl.u_shadow_pass, 0);
     if (static const bool trace = std::getenv("DW4_TRACE_SHADOW") != nullptr; trace && frame_ % 120 == 0) {
         std::vector<std::uint8_t> pixels(std::size_t(shadow_width_ * shadow_height_) * 4);
@@ -654,24 +678,40 @@ void GlRenderer::render_shadow_receivers(const engine::FrameCamera& camera) {
     glEnable(GL_BLEND);
     gl.BlendFuncSeparate(GL_DST_COLOR, GL_ZERO, GL_ZERO, GL_ONE);
     gl.BlendEquation(GL_FUNC_ADD);
-    glEnable(GL_DEPTH_TEST);
-    glDepthFunc(GL_LEQUAL);
-    glDepthMask(GL_FALSE);
-    glDisable(GL_CULL_FACE);
-    glEnable(GL_POLYGON_OFFSET_FILL);
-    glPolygonOffset(-1.0f, -1.0f);
+    glDisable(GL_DEPTH_CLAMP);
     glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_FALSE);
     gl.UniformMatrix4fv(gl.u_view, 1, GL_FALSE, camera.view.m.data());
     gl.UniformMatrix4fv(gl.u_proj, 1, GL_FALSE, camera.projection.m.data());
     for (const auto& item : shadow_->receivers) {
         const auto* m = mesh(item.geometry);
         if (!m || !m->index_count) continue;
+        // 801FE190 pushes the texture, colour, texture coordinate source and
+        // function, the map, the texture matrix, the blend state and function
+        // and a disabled alpha test, but no depth, cull or offset attribute:
+        // each receiver is drawn again on its own vertices with its own depth
+        // test, function, write and culling (GX has no polygon offset). A
+        // decal receiver (dng307b2's boss arena emblem, 0.1 above the floor
+        // and drawn first as a whole square) so writes its depth and keeps the
+        // floor receiver from shading its pixels a second time.
+        const auto& s = item.state;
+        if (s.depth_test) {
+            glEnable(GL_DEPTH_TEST);
+            glDepthFunc(depth_func(s.depth_func));
+        } else {
+            glDisable(GL_DEPTH_TEST);
+        }
+        glDepthMask(s.depth_write ? GL_TRUE : GL_FALSE);
+        if (s.cull_enabled) {
+            glEnable(GL_CULL_FACE);
+            glCullFace(s.cull_mode == 1 ? GL_FRONT : s.cull_mode == 2 ? GL_FRONT_AND_BACK : GL_BACK);
+        } else {
+            glDisable(GL_CULL_FACE);
+        }
         gl.UniformMatrix4fv(gl.u_model, 1, GL_FALSE, item.model.m.data());
         gl.BindVertexArray(m->vao);
         glDrawElements(GL_TRIANGLES, m->index_count, GL_UNSIGNED_INT, nullptr);
     }
     gl.BindVertexArray(0);
-    glDisable(GL_POLYGON_OFFSET_FILL);
     glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
     gl.Uniform1i(gl.u_shadow_pass, 0);
 }

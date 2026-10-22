@@ -19,6 +19,7 @@ struct RgbaImage {
     std::uint32_t width{};
     std::uint32_t height{};
     std::vector<std::uint8_t> rgba; // Top-to-bottom rows, straight RGBA8.
+    bool block_compressed{};        // Decoded from BC1 / GX CMPR blocks.
 };
 
 struct TextureInfo {
