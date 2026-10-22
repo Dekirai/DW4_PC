@@ -9,6 +9,7 @@
 #include <charconv>
 #include <chrono>
 #include <cstdlib>
+#include <ctime>
 #include <fstream>
 #include <iterator>
 #include <system_error>
@@ -59,8 +60,17 @@ bool write_gci(const Engine& engine, int slot, std::span<const std::uint8_t> fil
     std::error_code error;
     std::filesystem::create_directories(card_folder(engine, slot), error);
     save::GciEntry entry;
-    const auto now = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
-    entry.modified = std::uint32_t(std::max<std::int64_t>(0, now - 946684800)); // GameCube epoch 2000-01-01
+    // The entry's time is the console clock's (CARDSetStatus 0x8024C43C), the
+    // local time of a console set to the PC's clock: the PC's local calendar
+    // time counted from 2000-01-01, not UTC. The game never reads it back.
+    const std::time_t now = std::time(nullptr);
+    std::tm local{};
+#if defined(_WIN32)
+    const bool known = localtime_s(&local, &now) == 0;
+#else
+    const bool known = localtime_r(&now, &local) != nullptr;
+#endif
+    if (known) entry.modified = save::card_time(local);
     const auto head = save::encode_gci_entry(entry);
     const auto path = card_folder(engine, slot) / kGciName;
     const auto temporary = path.string() + ".tmp";

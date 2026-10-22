@@ -42,7 +42,10 @@ exactly n steps. In order:
    the wait for the loading screen's minimum play time (its beLoadingNode
    then holds its lock time on the LOADING layer until the scripts remove
    it), info registration, `start.lua`, `first.lua`.
-4. Deferred messenger sends (`sd(..., delay)`), then the demo manager
+4. Deferred messenger sends (80304C58: every `sd(..., delay)`, also a delay
+   of 0, and the engine's own posts arrive here, in a later frame than they
+   were sent; none while a SUBWND program or the soft reset pauses the queue,
+   see docs/research/DEFERRED_MESSENGER.md), then the demo manager
    (`DMsetSD` / `DMchkSD` / switch records, one blocking record at a time).
 5. The managers' updates in the original scheduler order
    (`Engine::update_managers`, igSerialScheduler 8028B7B0): first beSystem,

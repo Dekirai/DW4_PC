@@ -107,16 +107,32 @@ public:
     // Select + send. Results are left in the packet.
     std::size_t send(Engine& engine, std::string_view category, std::optional<std::string_view> name,
                      std::int32_t index, std::string_view command, Packet& packet);
+    // Files a message for delivery at `time` (803061BC: behind the messages
+    // of the same or an earlier time). A time that is already due still
+    // waits for the next delivery pass (update).
     void post(std::int64_t time, std::string category, std::optional<std::string> name, std::int32_t index,
               std::string command, Packet arguments);
+    // The delivery pass of the frame (80304C58), after the camera viewer and
+    // before the demo and the managers.
     void update(Engine& engine);
+    // 80304FA8: holds the posted messages while on (SUBWND programs, the soft
+    // reset); their times move on with the world clock until it is off.
+    void pause(const Engine& engine, bool on);
     std::size_t count(std::string_view category, std::optional<std::string_view> name, std::int32_t index) const;
     const std::vector<MessengerRow>& rows() const { return rows_; }
     void clear_deferred() { deferred_.clear(); }
 
 private:
+    // 80303C0C makes 32 deferred records; preparing a post grows the pool by
+    // one record while all are in use. A delivery pass covers at most the
+    // records the pool had when it began.
+    static constexpr std::size_t kDeferredRecords = 32;
     std::vector<MessengerRow> rows_;
     std::vector<DeferredMessage> deferred_;
+    std::size_t deferred_records_ = kDeferredRecords;
+    // beMessenger +0x28: the world time of the pause or of the last paused
+    // pass; 0 = running (also when paused at time 0, as the original).
+    std::int64_t paused_at_ = 0;
     // The rows of each category, all and by name, as row numbers in row
     // order (selection reads only these; rebuilt after the rows change).
     struct TextHash {

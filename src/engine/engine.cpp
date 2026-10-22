@@ -81,8 +81,13 @@ void Messenger::remove_rows(Manager* manager) {
 }
 
 void Messenger::clear() {
+    // A stage change reloads every module (NEXTSTAGE 80347F2C -> 8028A87C):
+    // the messenger's reset hook 803040C0 also drops the deferred record
+    // pool and the pause.
     rows_.clear();
     deferred_.clear();
+    deferred_records_ = kDeferredRecords;
+    paused_at_ = 0;
     by_category_stale_ = true;
 }
 
@@ -183,14 +188,31 @@ std::size_t Messenger::send(Engine& engine, std::string_view category, std::opti
 
 void Messenger::post(std::int64_t time, std::string category, std::optional<std::string> name, std::int32_t index,
                      std::string command, Packet arguments) {
+    // 80305F9C prepares the message in the pool's last record and makes a new
+    // one when that record is still in use.
+    if (deferred_.size() >= deferred_records_) ++deferred_records_;
     DeferredMessage message{time, std::move(category), std::move(name), index, std::move(command), std::move(arguments)};
     auto it = std::upper_bound(deferred_.begin(), deferred_.end(), message.time,
                                [](std::int64_t t, const DeferredMessage& m) { return t < m.time; });
     deferred_.insert(it, std::move(message));
 }
 
+void Messenger::pause(const Engine& engine, bool on) { paused_at_ = on ? engine.time() : 0; }
+
 void Messenger::update(Engine& engine) {
-    while (!deferred_.empty() && deferred_.front().time <= engine.time()) {
+    const auto now = engine.time();
+    // 80304C58 while paused: every posted time moves on by the world time
+    // since the pause or the last pass, nothing is delivered.
+    if (paused_at_ != 0) {
+        const auto shift = now - paused_at_;
+        for (auto& message : deferred_) message.time += shift;
+        paused_at_ = now;
+        return;
+    }
+    // Otherwise the head is delivered while its time is not after now, at
+    // most as many times as the pool had records when the pass began: a
+    // message a delivery posts for now usually still arrives in this pass.
+    for (std::size_t budget = deferred_records_; budget > 0 && !deferred_.empty() && deferred_.front().time <= now; --budget) {
         DeferredMessage message = std::move(deferred_.front());
         deferred_.erase(deferred_.begin());
         std::optional<std::string_view> name;

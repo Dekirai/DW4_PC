@@ -97,6 +97,26 @@ void gci() {
     check(bytes[0] == 'G' && bytes[6] == 0xFF && bytes[45] == 0 && bytes[47] == 0x40 && bytes[57] == 11, "GCI entry layout");
     const auto back = save::decode_gci_entry(bytes);
     check(back.file_name == "NDMWSaveData" && back.modified == entry.modified && back.blocks == 11, "GCI entry round trip");
+
+    // The console clock's calendar reading counted from 2000-01-01 (no zone).
+    auto at = [](int y, int mo, int d, int h, int mi, int s) {
+        std::tm t{};
+        t.tm_year = y - 1900;
+        t.tm_mon = mo - 1;
+        t.tm_mday = d;
+        t.tm_hour = h;
+        t.tm_min = mi;
+        t.tm_sec = s;
+        return save::card_time(t);
+    };
+    check(at(2000, 1, 1, 0, 0, 0) == 0, "Card time epoch");
+    check(at(2000, 2, 29, 23, 59, 59) == 5183999, "Card time leap day");
+    check(at(2026, 9, 27, 18, 53, 22) == 0x324C22A2, "Card time of the research save (Dolphin's console clock)");
+    check(at(2026, 10, 22, 13, 29, 0) == 0x326CCC1C, "Card time 13:29 local");
+    check(at(1999, 12, 31, 23, 59, 59) == 0, "Card time before 2000 clamps");
+    check(at(2136, 2, 7, 6, 28, 15) == 0xFFFFFFFFu && at(2136, 2, 7, 6, 28, 14) == 0xFFFFFFFEu &&
+              at(2137, 1, 1, 0, 0, 0) == 0xFFFFFFFFu,
+          "Card time end of range");
 }
 
 // One request stepped once per NTSC field; the updates until it is done.
