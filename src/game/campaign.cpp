@@ -139,15 +139,11 @@ constexpr ElementNeed kElementNeeds[] = {
     // The scrap walls of dng412b1-b4 (hit_g_dscrap.lua) break only to a
     // swing of thunder (a technique does nothing to them): key item 10.
     {2, "P6&!K10"},
-    // Daemon's forms (enemy 360 / 363 / 366 at the first difficulty) resist
-    // thunder 250 / 650 / 800 and dark 800 / 800 / 250 of 1000: a blow of
-    // the element adds (1000 - resistance) / 1000 of it again when the
-    // resistance is below random % 1000 (P2EDAMAGE), so a dark medal has the
-    // last form, by far the longest fight (5645 HP; a no-cheat test spent
-    // 34 heals on it), take some 1.5 times as much a swing, for less in
-    // the first one's. The last three boss stages follow one another with
-    // no lobby between them.
-    {3, "K10&!F86"},
+    // (Not dark for Daemon, though its last form resists dark 250 of 1000
+    // against thunder 800: its first two forms, which come before it with no
+    // lobby between, resist dark 800 and thunder 250 / 650, and two no-cheat
+    // chains with a dark medal spent all their heals on them; with thunder
+    // they reached the last form.)
 };
 
 bool holds(engine::Engine& engine, std::string_view condition, int entry = -1);
@@ -413,11 +409,6 @@ constexpr Objective kObjectives[] = {
     {"a thunder PWR Medal from the chip shop", "G|A2|H2|K10|P7", "stagml13", "gear:n_digilfm#1"},
     {"the thunder PWR Medal into the weapon's pocket", "G|A2|K10|P7", "stagml12", "equip:n_digilff#1"},
     {"key item 10 (dng412b4 boss)", "K10|P7", "dng412b4", "explore:matz02"},
-    // Without the test cheats a dark PWR Medal in the weapon's pocket for
-    // Daemon (kElementNeeds).
-    {"a weapon with chip pockets (rank 1+, for a dark medal)", "G|A3|R1|F86|!K10", "stagml13", "gear:n_digilfm#0"},
-    {"a dark PWR Medal from the chip shop", "G|A3|H3|F86|!K10", "stagml13", "gear:n_digilfm#1"},
-    {"the dark PWR Medal into the weapon's pocket", "G|A3|F86|!K10", "stagml12", "equip:n_digilff#1"},
     {"Daemon (stagBS06)", "F86|F70", "stagbs06", "explore:matz01"},
     // The return gate of stagBS06 leads to the staff roll (stagIS20
     // first.lua: j_endroll, then stagML11), whose start.lua turns flag 70
@@ -1656,6 +1647,7 @@ constexpr int kHealBelow = 40; // percent of the maximum HP
 constexpr const char* kNoHealStages[] = {"stag0203"};
 constexpr int kHealGap = 90;   // frames between two emergency heals
 constexpr int kHealQuickBelow = 20; // percent: Y (whatever disk it takes) instead of the panel
+constexpr int kHealSlack = 10;      // percent of the maximum HP a heal may leave missing (the smaller disk)
 // Also low HP: below kBigHitMargin percent of the biggest blow taken within
 // kBigHitFor frames (survive).
 constexpr int kBigHitMargin = 130, kBigHitFor = 3600;
@@ -4896,12 +4888,15 @@ void CampaignBot::survive(engine::Engine& engine, const engine::ModelCtrlManager
     const bool dodging = dodge_frame_ >= frame - 1 && slot.hp * 100 >= slot.max_hp * 25 && (!big_hits || slot.hp > 2 * big_hit_);
     if (!engine.cheats().god && panel && slot.hp > 0 && low_hp && !dodging && frame - heal_at_ >= kHealGap && controllable && !player.panel_open &&
         panel_ready) {
+        // (Made up within kHealSlack percent of the maximum HP: an HP Disk L,
+        // 5400, went for 1831 missing where an M, 1800, nearly did it, and a
+        // chain spent all 9 L of its last stock on stag0404's climb.)
         int pick = -1;
         auto* db = engine.get<engine::DatabaseManager>();
         for (const int record : {0, 1, 2})
             if (disks_held(slot, record) > 0) {
                 pick = record;
-                if (db && db->number("conItem", record, "HP").value_or(0) >= slot.max_hp - slot.hp) break;
+                if (db && db->number("conItem", record, "HP").value_or(0) * 100 >= (slot.max_hp - slot.hp) * 100 - slot.max_hp * kHealSlack) break;
             }
         if (pick < 0 && disks_held(slot, 9) > 0) pick = 9;
         if (pick >= 0) {
