@@ -46,11 +46,15 @@ constexpr std::uint32_t kLoaderRequest = 64;       // the loader's reads (every 
 constexpr std::uint32_t kOutputSamples = 0x2000;   // output SJ per channel (8029B820: +0x30)
 constexpr std::uint32_t kAramSamples = 4096;       // RNARES ring per channel (802A8590)
 constexpr std::uint32_t kAramStep = 2048;          // played samples are given back in halves (802A72F0)
-// The DSP starts with the next AX frame (5 ms): half a frame on average
-// after the renderer is switched on, which the captures confirm.
-constexpr std::int64_t kDspDelay = CriStreams::kFieldTicks * 15 / 100;
 // A command of the game update runs 0.02 field after the servers of its field.
 constexpr std::int64_t kGamePhase = CriStreams::kFieldTicks * 2 / 100;
+// AX output samples per frame (5 ms at the nominal 32 kHz).
+constexpr std::int64_t kAxFrameSamples = 160;
+
+// The voice's sample-rate converter step (16.16) the renderer gives AX: the
+// stream's rate over the nominal 32000 Hz (the captures: a 48 kHz voice moves
+// exactly 240 samples per frame, a 24 kHz one 120).
+std::int64_t src_ratio(const CriStreams::File& file) { return (std::int64_t(file.sample_rate) << 16) / 32000; }
 
 // 8029C1E0: samples per channel the decoder may produce per server call:
 // three fields of a looping stream, half that for one-shots, rounded to a
@@ -250,16 +254,37 @@ void CriStreams::pause(int slot, bool paused, std::int64_t now) {
     // before the driver tick that follows it.
     const std::int64_t at = now - kFieldTicks + kGamePhase;
     if (paused) {
-        h.played_before = played(h, at);
+        // 802A7534 (switch off): the voices stop and the ARAM ring is reset;
+        // what it held unplayed is dropped (the transfer refills it).
+        h.reclaimed = h.moved;
         h.dsp_start = -1;
     } else {
-        h.dsp_start = at + kDspDelay;
+        // 802A7534 (switch on): the voices start again at the ring's start,
+        // where the data written after the reset begins.
+        h.played_base = h.reclaimed;
+        h.dsp_start = at;
     }
 }
 
-double CriStreams::played(const Handle& h, std::int64_t now) const {
-    if (h.dsp_start < 0) return h.played_before;
-    return h.played_before + std::max<double>(0.0, double(now - h.dsp_start) * double(h.file.sample_rate) / double(DiscDrive::kTicksPerSecond));
+// The AX frame boundary at or before `t` (its index on the frame grid).
+std::int64_t CriStreams::ax_frame(std::int64_t t) const {
+    const std::int64_t d = t - ax_phase;
+    return d >= 0 ? d / kAxFrameTicks : -((-d + kAxFrameTicks - 1) / kAxFrameTicks);
+}
+
+// The renderer reads the voice's current address from the CPU copy of its
+// parameter block (VPB +0x1B2, 802A733C). AX copies the DSP's address there
+// once per frame (__AXSyncPBs -> 8023E4A8, at the frame's AI interrupt),
+// before it sends the frame's command list: the copy shows the frames the
+// DSP finished before the last boundary. A voice switched on at `dsp_start`
+// plays from the first boundary after it, so after n boundaries the renderer
+// sees n - 1 frames (the r29 captures: every renderer read of a 48 kHz
+// stream within 0 samples).
+std::uint64_t CriStreams::played(const Handle& h, std::int64_t now) const {
+    if (h.dsp_start < 0) return h.played_base;
+    const std::int64_t frames = ax_frame(now) - ax_frame(h.dsp_start) - 1;
+    if (frames <= 0) return h.played_base;
+    return h.played_base + std::uint64_t(frames * kAxFrameSamples * src_ratio(h.file) >> 16);
 }
 
 void CriStreams::tick(std::int64_t now) {
@@ -303,7 +328,11 @@ void CriStreams::tick(std::int64_t now) {
             const bool decoded_all = !h.file.loop && h.decoded >= h.file.samples;
             if (aram >= 2ull * decode_unit(h.file) || kAramSamples - aram <= 32 || decoded_all) {
                 h.state = 3;
-                if (!h.paused) h.dsp_start = now + kDspDelay;
+                // 8029D9A0 -> 802A7534: the voices start at the ring's start.
+                if (!h.paused) {
+                    h.played_base = h.reclaimed;
+                    h.dsp_start = now;
+                }
             }
         } else if (h.state == 3) {
             // 8029BF14: a one-shot decoded to its end whose output SJ holds
@@ -316,17 +345,17 @@ void CriStreams::tick(std::int64_t now) {
             // renderer stops (8029D9A0) and the stream has ended (status 5).
             if (h.moved <= h.reclaimed) {
                 h.state = 5;
-                h.played_before = played(h, now);
+                h.played_base = h.reclaimed;
                 h.dsp_start = -1;
             }
         }
     }
-    // Renderer server (802A6DF8): the DSP's progress comes back in halves,
-    // then the ring is refilled from the output SJ (also before playback).
+    // Renderer server (802A6DF8): the DSP's progress comes back in halves
+    // (802A72F0: at most one per call), then the ring is refilled from the
+    // output SJ (also before playback).
     for (auto& h : handles) {
         if (!h.active || h.state < 2 || h.state > 4) continue;
-        const double p = played(h, now);
-        while (p - double(h.reclaimed) >= double(kAramStep)) h.reclaimed += kAramStep;
+        if (played(h, now) >= h.reclaimed + kAramStep) h.reclaimed += kAramStep;
         // After DECEND the transfer is off: the ring only gets silence
         // (802A6FF0), the DSP plays the rest out.
         if (h.state == 4) continue;

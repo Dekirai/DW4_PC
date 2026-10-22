@@ -182,7 +182,11 @@ BGM and ambience with a 53-sector input ring, four mono with 13 sectors),
 their ADXSTM readers (one DVD read at a time through gcCi, the lowest handle
 first, 25 sectors before the header is parsed, refills below 85 %), the
 decoder (+72 samples per call), the ARAM renderer (4096 samples, played
-halves given back) and `dw4::DiscDrive`, Dolphin's GameCube drive timing
+halves given back), the DSP's progress as the renderer reads it (the voice
+address AX copies back at each 5 ms frame boundary, one frame behind: 240
+samples per frame of a 48 kHz voice, frames of 2427840 ticks at the AI's
+54 MHz / 1686; a pause stops the voices and drops the ARAM ring, 802A7534)
+and `dw4::DiscDrive`, Dolphin's GameCube drive timing
 (radius-dependent read speed, seek by head travel, rotational latency by
 Dolphin's formula, whose disc angle follows the whole seconds of its emulated
 clock, 1 MiB read-ahead; the captures' every DVD interrupt follows it to 0.006
@@ -202,17 +206,24 @@ the start of the object buffer (the objects are made there, 0.34 fields per
 chunk the file is ready by the time its memory blocks take, then routed in
 the next update. The teardown of the outgoing stage, routing a large member,
 state 5 and start.lua are long updates that cover the retraces after them.
-So a stage starts 500-900 fields after its NEXTSTAGE as in the original (the
-Dolphin captures of 12 stage loads after the title, the boot's three and two
-in-game changes agree within the noise of the drive's interleaving with the
-BGM refills and of the thread's share of a field, about 20 fields; a constant
-106 before). The port parses each file when the original asks for it.
+So a stage starts 500-900 fields after its NEXTSTAGE as in the original (a
+constant 106 before). The load time depends strongly on where the BGM's
+refill cycle stands when it starts: Dolphin itself gives 497 or 607 fields
+for dng307b1 at two login times 155 fields apart. Against captures of 15
+loads at both BGM phases (the boot's three: 234 / 61 / 118 fields against
+233.8 / 62 / 121) the port's BGM refills come on the original's fields with
+its sizes; what remains is the loading thread's share of a field (a chunk a
+field early or late now and then, which can swap a chunk with a refill), on
+average -4 fields and 15 fields apart per load. The port parses each file
+when the original asks for it.
 `DW4_TRACE_SOUND=1` logs every simulated read,
-PLAYING, stream start, fade stop and ISREADY / ISALLREADY change,
+PLAYING, stream start, pause / resume, fade stop and ISREADY / ISALLREADY
+change (`DW4_TRACE_CRI_RING=1` also the ring of each refill and the
+renderer's view of the stereo voices every field),
 `DW4_TRACE_LOADER=1` the loader's requests, routings, states and long updates
 (`DW4_TRACE_LOADER_CHUNKS=1` also what each chunk of a file holds), and
-`DW4_DISC_CLOCK=<ticks>` replaces the drive's clock offset to line a run up
-with a capture.
+`DW4_DISC_CLOCK=<ticks>` / `DW4_AX_PHASE=<ticks>` replace the drive's clock
+offset and the DSP's frame grid to line a run up with a capture.
 
 Fast loading (`Cheats::fast_loading`, the F1 menu's *Loading: Fast*, a PC
 option and not the original timing) is a separate switch around that model:

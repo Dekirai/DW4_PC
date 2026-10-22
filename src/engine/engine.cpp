@@ -641,11 +641,14 @@ namespace {
 // 802A9DC4 sleeps to the next retrace, so a chunk that takes the thread more
 // than the rest of its field delays the next request by whole fields):
 // - a chunk before the object buffer (header, types, entries, the reference
-//   index) or inside it: one field more (object records of 15000-18000
-//   fields: one, at times two);
+//   index): one field more; a chunk inside it (object records of
+//   15000-18000 fields) 1.1;
 // - the chunk holding the start of the object buffer: the objects are made
-//   first, 0.7 + 0.34 per 1000 objects (1079: 1, 8535: 3, 23931: 9, 40382:
-//   14; within 1);
+//   first, 0.8 + 0.33 per 1000 objects (1079: 1, 8535: 3, 23931: 9, 40382:
+//   14; within 1), counted in milli-fields like the rest (the r29 captures
+//   at a second BGM phase, where no refill hides it: every stage's /s
+//   member, 470-680 objects, takes one field more over its first two
+//   chunks, already in the first from about 600 objects on);
 // - the chunk where the memory blocks start: two more;
 // - memory chunks: none (at times one);
 // - after the last chunk the file is ready 0.49 + 0.32 per 1000 memory
@@ -655,7 +658,7 @@ namespace {
 struct LoaderCost {
     int object_chunk{-1}; // the chunk holding the start of the object buffer (-1: no objects)
     int memory_chunk{-1}; // the chunk holding the start of the memory blocks (-1: none)
-    int stall{};
+    int stall{};          // milli-fields the objects take
     int post{};
     std::int64_t route{};
 };
@@ -670,7 +673,7 @@ LoaderCost loader_cost(const IgbDocument* document) {
     const std::size_t object_start = memory_start - std::min<std::size_t>(memory_start, document->metadata.header.object_buffer_size);
     if (objects) cost.object_chunk = int(object_start / chunk);
     if (memories) cost.memory_chunk = int(memory_start / chunk);
-    cost.stall = int((700 + objects * 34 / 100) / 1000);
+    cost.stall = int(800 + objects * 33 / 100);
     cost.post = int((492 + memories * 32 / 100 + memory_bytes * 1132 / 1000000) / 1000);
     cost.route = std::int64_t(memories) * 81 / 1000;
     return cost;
@@ -678,13 +681,15 @@ LoaderCost loader_cost(const IgbDocument* document) {
 
 // Milli-fields the loading thread spends on chunk `chunk` of a file beyond
 // the field the next request takes anyway; the captures' memory chunks cost a
-// field more one time in 13, object chunks one time in 7 (the main thread's
-// share of a field varies), which the load's running sum spreads evenly.
+// field more one time in 13, object chunks one time in 10 (the main thread's
+// share of a field varies), which the load's running sum spreads evenly. Over
+// both r29 capture sets this predicts 259 of the 302 chunks no refill hides
+// (the truncated object cost before: 230), the rest within a field.
 std::int64_t chunk_extra(int chunk, int object_chunk, int memory_chunk, int stall) {
     if (object_chunk < 0) return 0;
     if (chunk < object_chunk) return 1000;
-    if (chunk == object_chunk) return std::int64_t(stall) * 1000;
-    if (memory_chunk < 0 || chunk < memory_chunk) return 1150;
+    if (chunk == object_chunk) return stall;
+    if (memory_chunk < 0 || chunk < memory_chunk) return 1100;
     if (chunk == memory_chunk) return 2000;
     return 80;
 }
@@ -952,16 +957,17 @@ void Engine::loader_update() {
         // descriptor (every capture): ndmw.igb (53 sectors) at the first
         // update, routed 3 fields after its booking; 2 fields later the CRI
         // AFS partitions read their directories one sector at a time, each
-        // asked for with the booking of the one before: ndmw.afs from +0x2000
-        // (4 sectors), one field later area.afs from its start (6); the
-        // descriptor request follows 3 fields after the last booking.
+        // asked for with the booking of the one before: ndmw.afs from its
+        // start (4 sectors; every capture: 0x2dbfb298.., ADXSTM positions
+        // 0..3), one field later area.afs from its start (6); the descriptor
+        // request follows 3 fields after the last booking.
         struct BootRead {
             const char* archive; // nullptr: ndmw.igb
             std::uint32_t sector;
             int ready;           // fields from the booking to the next request
         };
-        static constexpr BootRead kBoot[] = {{nullptr, 0, 5},       {"ndmw.afs", 4, 0}, {"ndmw.afs", 5, 0}, {"ndmw.afs", 6, 0},
-                                             {"ndmw.afs", 7, 1},    {"area.afs", 0, 0}, {"area.afs", 1, 0}, {"area.afs", 2, 0},
+        static constexpr BootRead kBoot[] = {{nullptr, 0, 5},       {"ndmw.afs", 0, 0}, {"ndmw.afs", 1, 0}, {"ndmw.afs", 2, 0},
+                                             {"ndmw.afs", 3, 1},    {"area.afs", 0, 0}, {"area.afs", 1, 0}, {"area.afs", 2, 0},
                                              {"area.afs", 3, 0},    {"area.afs", 4, 0}, {"area.afs", 5, 3}};
         // Fast loading: these reads (timing only) take no time.
         if (loader_fast_) loader_boot_step_ = int(std::size(kBoot));
@@ -1067,14 +1073,16 @@ void Engine::loader_update() {
     }
     case 100:
         if (!loader_queue_step(0)) return;
-        // 802FA53C registers the preliminary infos, then SOUND SEARCH /
-        // MAKEBINLIST (state 101) and ISDONETRANS (every capture: one update
-        // each).
+        // 802FA53C registers the preliminary infos; with a SOUND RAM among
+        // them (SOUND SEARCH, 0x802F9524) the loader sends MAKEBINLIST and
+        // goes to state 101, without one straight to 102.
         for (const auto& info : loader_preliminary_) register_info(info);
         loader_preliminary_.clear();
-        loader_state_ = 101;
+        loader_state_ = messenger_.count("SOUND", std::nullopt, -1) != 0 ? 101 : 102;
         return;
     case 101:
+        // SOUND ISDONETRANS (0x802F957C) holds the state until it answers 1;
+        // every capture spends one update here.
         loader_state_ = 102;
         return;
     case 102:
