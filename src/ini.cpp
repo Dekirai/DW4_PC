@@ -134,6 +134,12 @@ void IniFile::set(std::string_view section, std::string_view key, std::string_vi
     lines_.insert(lines_.begin() + std::ptrdiff_t(last_in_section + 1), std::move(line));
 }
 
+bool IniFile::remove(std::string_view section, std::string_view key) {
+    const auto before = lines_.size();
+    std::erase_if(lines_, [&](const Line& line) { return !line.key.empty() && same(line.section, section) && same(line.key, key); });
+    return lines_.size() != before;
+}
+
 void IniFile::set_int(std::string_view section, std::string_view key, int value) { set(section, key, std::to_string(value)); }
 
 void IniFile::set_bool(std::string_view section, std::string_view key, bool value) {

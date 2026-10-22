@@ -168,6 +168,27 @@ hardware calibration, error recovery, analog trigger events and rumble are not
 implemented by the physical-slot core. Native SDL device ownership and mapping
 must not be inferred from successful core tests.
 
+## Which code reads which channel
+
+Manager update `80311F84` feeds device stick 0 (the main stick) through
+`803118F4` into the left channel, device stick 1 (the C-stick) through
+`803119B4` into the right channel and the logical buttons, D-pad included,
+through `80311880`. All 26 callers of the getter `80312138` were followed
+(their loads from the returned pad and the field accessors `80361214..8036122C`
+that the menus use):
+
+| Reader | Fields | Meaning |
+| --- | --- | --- |
+| Player input `8034C3C8` | `+24` held mask, `+0C/+10` analog, `+44` held and `+48` trigger buttons (A, B, X, Y, START, L, R, Z) | walks and turns with the **main stick** only; no D-pad bit and no C-stick |
+| Quick panel update `8034A210` (NDMWPANEL) | `+30 / +34` right channel trigger / repeat, `+48 / +4C` button trigger / repeat | cursor up: C-stick bit 1 or D-pad `0x10`; down: C-stick bit 4 or D-pad `0x40` (`8034A24C..8034A294`); A fires, L / R / Z switch or close; **never the main stick** |
+| The other 24 callers, e.g. the UI cursor `803133BC` and the menu / window readers at `80354218`, `803561C8`, `80357334`, `80359A28`, `80362C30`, `8036975C`, `8037E7D4`, `8037E8F4`, `8038CE30`, `8039F0E8` (and through the accessors at `8035CAD4`, `803798A4`) | left channel `+1C / +20` or `+24`, buttons `+44` / `+48 / +4C`; some only buttons | menus: **main stick and D-pad** |
+
+No other caller loads the right channel, so the C-stick's only use in the game
+is the quick panels' cursor, and nothing reads the D-pad for walking or the
+camera. The port mirrors this: `PanelManager::update` reads `right_directions`
+and the D-pad, and the host layer (`HostPadInput`, `src/game/controls.cpp`)
+delivers the main stick, the D-pad and the C-stick as separate inputs.
+
 ## Player input and update order
 
 Player controller registration `80338DCC` identifies `beNDMWMdlPlayer`, size

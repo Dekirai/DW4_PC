@@ -1,7 +1,9 @@
 #include "dw4/engine/managers.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cstdio>
+#include <cstdlib>
 
 namespace dw4::engine {
 namespace {
@@ -372,9 +374,13 @@ void PanelManager::update(Engine& engine) {
         const auto& pad = engine.pads()[std::size_t(std::clamp(ram.index, 0, 3))];
         const auto trigger = pad.buttons.trigger;
         const auto press = pad.buttons.trigger | pad.buttons.repeat;
-        const auto stick = pad.left_directions.trigger | pad.left_directions.repeat;
-        const bool up = (stick & pad_direction::positive_y) || (press & pad_button::up);
-        const bool down = (stick & pad_direction::negative_y) || (press & pad_button::down);
+        // 8034A24C..8034A294: the cursor takes the C-stick (bePadData +30 /
+        // +34, the right stick's trigger and repeat masks) and the D-pad
+        // (+48 / +4C, buttons 0x10 / 0x40), never the main stick, so the
+        // player walks with a panel open without moving its cursor.
+        const auto c_stick = pad.right_directions.trigger | pad.right_directions.repeat;
+        const bool up = (c_stick & pad_direction::positive_y) || (press & pad_button::up);
+        const bool down = (c_stick & pad_direction::negative_y) || (press & pad_button::down);
         int previous_count = list.count;
         int previous_line = list.cursor + list.line_mode;
         if (ram.state == 2) {
@@ -478,6 +484,18 @@ void PanelManager::update(Engine& engine) {
         } else if (ram.cursor_shown) {
             model(engine, ram, "i_wzslcursel", "SQ_CLOSE", false, nullptr);
             ram.cursor_shown = false;
+        }
+        // DW4_TRACE_PANEL (test runs): the selected line whenever it changes.
+        if (static const bool trace = std::getenv("DW4_TRACE_PANEL") != nullptr; trace) {
+            static std::array<std::array<int, 6>, 4> traced{};
+            const int at = shown.cursor + shown.scroll;
+            const int row = at >= 0 && at < int(shown.rows.size()) ? shown.rows[std::size_t(at)] : -1;
+            const std::array<int, 6> now{ram.kind, shown.count, shown.cursor, shown.scroll, row, ram.decided ? 1 : 0};
+            if (auto& last = traced[std::size_t(std::clamp(ram.index, 0, 3))]; now != last) {
+                last = now;
+                std::printf("[%llu] panel %d kind %d count %d cursor %d scroll %d row %d%s\n", static_cast<unsigned long long>(engine.frame()),
+                            ram.index, ram.kind, shown.count, shown.cursor, shown.scroll, row, ram.decided ? " decided" : "");
+            }
         }
     }
 }

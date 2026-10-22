@@ -41,12 +41,22 @@ void test_write() {
     check(again.get_int("window", "height", 0) == 1080 && again.get_or("keyboard", "a", "") == "Return",
           "A saved document reads back");
 }
+
+void test_remove() {
+    auto ini = dw4::IniFile::parse(kSample);
+    check(ini.remove("WINDOW", "Width"), "A key is removed without case");
+    check(!ini.remove("window", "width"), "A removed key is gone");
+    check(!ini.remove("data", "width"), "Other sections keep their keys");
+    check(ini.text() == "; DW4 PC settings\n[window]\nvsync = false\n\n[data]\npath=E:\\Games\\DW4\n",
+          "Only the key's line goes");
+}
 } // namespace
 
 int main() {
     try {
         test_read();
         test_write();
+        test_remove();
     } catch (const std::exception& error) {
         std::cerr << "ini tests failed: " << error.what() << '\n';
         return 1;

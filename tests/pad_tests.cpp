@@ -290,6 +290,66 @@ void console_reset() {
     }
 }
 
+// Host controls keep the GameCube pad's three direction channels apart: the
+// player walks on the main stick's held mask (8034C4D4), the quick panels'
+// cursor reads the C-stick's and the D-pad's trigger/repeat (8034A24C..60).
+void host_inputs() {
+    const auto states = [](const HostPadInput& input) {
+        OriginalPads pads;
+        OriginalPads::Samples samples{};
+        samples[0] = host_pad_sample(input);
+        pads.update(samples);
+        return pads.states()[0];
+    };
+    HostPadInput walk;
+    walk.stick_directions = pad_direction::positive_y;
+    auto state = states(walk);
+    check(state.buttons.held == 0, "Movement keys set D-pad bits");
+    check(state.left_directions.held == pad_direction::positive_y, "Movement keys did not push the main stick");
+    check(state.right_directions.held == 0, "Movement keys moved the C-stick");
+    check(state.left.y == 72.0f / 74.0f && state.left.x == 0.0f, "Main stick full deflection is not 72/74");
+
+    HostPadInput dpad;
+    dpad.buttons = pad_button::down;
+    state = states(dpad);
+    check(state.buttons.held == pad_button::down, "D-pad bit lost");
+    check(state.left_directions.held == 0 && state.right_directions.held == 0, "The D-pad moved a stick");
+
+    HostPadInput c_stick;
+    c_stick.c_stick_directions = pad_direction::negative_y;
+    state = states(c_stick);
+    check(state.right_directions.held == pad_direction::negative_y && state.left_directions.held == 0 && state.buttons.held == 0,
+          "C-stick keys left their channel");
+    check(state.right.y == -59.0f / 74.0f, "C-stick full deflection is not 59/74");
+
+    // Analog sticks win over keys while moved; keys push when centred.
+    HostPadInput both;
+    both.stick_directions = pad_direction::positive_x;
+    both.stick = {0.0f, -0.5f};
+    check(host_pad_sample(both).left.x == 0.0f && host_pad_sample(both).left.y == -0.5f * (72.0f / 74.0f),
+          "A moved analog stick did not replace the keys");
+    both.stick = {};
+    check(host_pad_sample(both).left.x == 72.0f / 74.0f, "Keys did not push a centred stick");
+    both.stick_directions = pad_direction::positive_x | pad_direction::negative_x | pad_direction::positive_y | pad_direction::negative_y;
+    check(host_pad_sample(both).left.x > 0.0f && host_pad_sample(both).left.y < 0.0f, "Opposite keys changed priority");
+    both.stick = {3.0f, -7.0f};
+    check(host_pad_sample(both).left.x == 72.0f / 74.0f && host_pad_sample(both).left.y == -72.0f / 74.0f,
+          "Analog input beyond the host range was not limited");
+
+    // A second device of the same player (keyboard + first controller).
+    HostPadInput keyboard, controller;
+    keyboard.buttons = pad_button::a;
+    keyboard.stick_directions = pad_direction::negative_x;
+    controller.buttons = pad_button::up;
+    controller.c_stick = {0.0f, 1.0f};
+    merge(keyboard, controller);
+    const auto merged = host_pad_sample(keyboard);
+    check(merged.buttons == (pad_button::a | pad_button::up), "Merged buttons lost");
+    check(merged.left.x == -72.0f / 74.0f && merged.right.y == 59.0f / 74.0f, "Merged sticks lost");
+    HostPadInput idle;
+    merge(keyboard, idle);
+    check(keyboard.c_stick.y == 1.0f, "A centred stick replaced a moved one");
+}
 } // namespace
 
 int main() {
@@ -299,6 +359,7 @@ int main() {
         conversions();
         invalid_inputs();
         console_reset();
+        host_inputs();
         std::cout << checks << " original pad checks passed\n";
         return 0;
     } catch (const std::exception& error) {

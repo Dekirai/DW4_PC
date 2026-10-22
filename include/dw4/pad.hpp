@@ -60,6 +60,32 @@ struct PadState {
 // GDJEB2 800CCF5C: ignores raw PADStatus bits that have no logical mapping.
 std::uint32_t gamecube_buttons(std::uint16_t raw_buttons) noexcept;
 
+// One pad's host controls before the device conversion: keyboard keys and
+// controller inputs bound to GameCube controls, and a controller's analog
+// sticks. The main stick, the D-pad and the C-stick are separate channels
+// like on a GameCube pad: the original reads them in different places (the
+// player walks with the main stick only, the quick panels' cursor takes the
+// C-stick and the D-pad, menus the main stick and the D-pad).
+struct HostPadInput {
+    // pad_button bits: A, B, X, Y, START, L, R, Z and the four D-pad bits.
+    std::uint32_t buttons{};
+    // pad_direction bits of digital main stick / C-stick inputs (keys).
+    std::uint32_t stick_directions{}, c_stick_directions{};
+    // Analog sticks in host units ([-1,1] per axis, y up, deadzone applied).
+    PadStick stick{}, c_stick{};
+};
+
+// Adds `other`'s inputs (a second device of the same player): buttons and
+// digital directions join, a moved analog stick replaces a centred one.
+void merge(HostPadInput& into, const HostPadInput& other) noexcept;
+
+// The logical sample of a connected pad. A stick takes its analog value when
+// it is moved, else its digital directions at full deflection; each axis is
+// limited to [-1,1] and scaled to the original device's full deflection
+// after the SDK clamp (axis limit / 74: 72/74 main stick, 59/74 C-stick).
+// D-pad bits never move a stick and stick keys never set D-pad bits.
+PadSample host_pad_sample(const HostPadInput& input) noexcept;
+
 // SDK ClampStick/PADClamp followed by the original device's division by 74.
 // Pass raw signed PADStatus axes, not already normalized host input. The
 // left stick uses (deadzone, axis, diagonal) = (15,72,40); C-stick = (15,59,31).
