@@ -355,8 +355,9 @@ struct TraversalContext {
     // igModelViewMatrixAttr +0x58, filled by 801FE5E4) with 801D4F14 and
     // traverses the casters (801FE498) on the scene traversal, whose view
     // and inverse view (+0x64 / +0xA4, set from the camera by 801DB8F0 in
-    // 8040B8C0) stay the camera's. Only the billboards read both (see
-    // billboard_matrix); nothing else in the casters' subtrees does.
+    // 8040B8C0) stay the camera's. Only the billboards use it: the casters'
+    // subtrees in the data hold no igLod or igTransformRecorder, the other
+    // nodes that read the modelview stack top.
     std::optional<Mat4> modelview_base;
 };
 
