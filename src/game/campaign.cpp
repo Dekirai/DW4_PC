@@ -4729,7 +4729,12 @@ void CampaignBot::survive(engine::Engine& engine, const engine::ModelCtrlManager
             out.buttons &= ~pad_button::a;
             guard_held_ = frame;
         }
-        if (guard_it && due <= kGuardLead && player.muteki <= due + 1.0f && controllable && !fading && guard_footing(engine, player)) {
+        // (A turret's shot is guarded against over a plain drop as well, see
+        // guard_footing: its blow throws the player as far as the guard's
+        // recoil, and takes 15 to 22 % of the HP with a stun the next shot of
+        // a crossfire meets - stag0304's cannon nest, g_cannon01 round
+        // g_cannon03z03, on its plateau at y 100.)
+        if (guard_it && due <= kGuardLead && player.muteki <= due + 1.0f && controllable && !fading && guard_footing(engine, player, !blow_shot_)) {
             if (guard_pulse(frame)) out.buttons |= pad_button::b;
             if (trace() && frame - guard_traced_ >= 600) {
                 guard_traced_ = frame;
@@ -4769,7 +4774,7 @@ bool CampaignBot::on_fading_floor(engine::Engine& engine, const engine::ModelCtr
     return land.found && land.info != 0xFFFF && land.position.y > me.y - 3.0f && fading_floors_.count(hitland->world().info_name(land.info)) > 0;
 }
 
-bool CampaignBot::guard_footing(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player) const {
+bool CampaignBot::guard_footing(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player, bool deep) const {
     auto* hitland = engine.get<engine::HitLandManager>();
     if (!hitland || !player.node) return true;
     const auto me = position_of(player);
@@ -4781,13 +4786,20 @@ bool CampaignBot::guard_footing(engine::Engine& engine, const engine::ModelCtrlM
         d = std::max(0.01f, std::hypot(dx, dz));
     }
     for (const float k : {3.0f, 6.0f, 9.0f, 12.0f, 15.0f}) {
-        const auto land = hitland->world().check_land({me.x + dx / d * k, me.y + 5.0f, me.z + dz / d * k}, 1.0f, 400.0f, 1.0f);
+        auto land = hitland->world().check_land({me.x + dx / d * k, me.y + 5.0f, me.z + dz / d * k}, 1.0f, 400.0f, 1.0f);
+        // (A probe on a seam between two floor triangles finds none: the
+        // floor beside it counts. stag0304's cannon nest plateau has such
+        // seams, and the guard was kept back against its shells there.)
+        for (const auto [ox, oz] : {std::pair{1.5f, 0.0f}, std::pair{-1.5f, 0.0f}, std::pair{0.0f, 1.5f}, std::pair{0.0f, -1.5f}})
+            if (!land.found) land = hitland->world().check_land({me.x + dx / d * k + ox, me.y + 5.0f, me.z + dz / d * k + oz}, 1.0f, 400.0f, 1.0f);
         // (A step down onto plain floor is no drop: a pit's respawn mat or
         // quicksand down there is, and so is a deep one, kGuardDeepDrop. On
         // stag0304's terraces, 10 units above the next, the guard was never
         // taken against the heavy cannons' shells, 15 % of the HP each.)
         if (!land.found) return false;
-        if (land.position.y < me.y - kGuardDrop && (land.position.y < me.y - kGuardDeepDrop || perilous_floor(engine, land.position))) return false;
+        // (`deep` false: only a pit, quicksand or no floor at all count.)
+        if (land.position.y < me.y - kGuardDrop && ((deep && land.position.y < me.y - kGuardDeepDrop) || perilous_floor(engine, land.position)))
+            return false;
     }
     return true;
 }

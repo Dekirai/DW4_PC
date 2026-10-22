@@ -102,7 +102,7 @@ private:
     std::optional<engine::Vec3f> touch_escape(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player, float& gap, int frame);
     void track_step(const engine::ModelCtrlManager::ModelRam& player, int frame);
     bool guard_pulse(int frame);
-    bool guard_footing(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player) const;
+    bool guard_footing(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player, bool deep = true) const;
     // Whether player 1 stands on a floor that gave way before (fading_floors_).
     bool on_fading_floor(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player) const;
     bool tech_target(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player, const engine::GameSystem::PlayerSlot& slot) const;
