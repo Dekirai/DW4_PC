@@ -5115,8 +5115,13 @@ float CampaignBot::blow_due(engine::Engine& engine, const engine::ModelCtrlManag
             const auto& box = e->hitboxes[index];
             const int group = box.kind / 10000;
             // (A permanent body box, end 1e8, hurts on touch: no guard against
-            // it, the attack goes on; only the blows of attacks count.)
-            if ((group != 7 && group != 8) || box.elapsed >= box.end || box.end >= 1e7f) continue;
+            // it, the attack goes on; only the blows of attacks count. But a
+            // gimmick's body that runs at the player counts as a shot: the
+            // dng412b3 / b4 trains, g_dtrailmon, whose body box 70118 takes
+            // 20 % of the maximum HP, ran a no-cheat run down 30 times in one
+            // visit; the player's hit script takes no damage in SQ_GUARD.)
+            const bool body = box.end >= 1e7f;
+            if ((group != 7 && group != 8) || box.elapsed >= box.end || (body && e->category == "ENEMY")) continue;
             if (unguarded_kind(stage_, box.kind)) continue; // (kProtections)
             const float due = std::max(0.0f, box.delay - box.elapsed);
             if (due > horizon) continue;
@@ -5136,6 +5141,8 @@ float CampaignBot::blow_due(engine::Engine& engine, const engine::ModelCtrlManag
             }
             if (e->category != "ENEMY" && due == 0.0f && seen.prev_frame == frame - 1) {
                 const engine::Vec3f shot{seen.at.x - seen.prev.x, seen.at.y - seen.prev.y, seen.at.z - seen.prev.z};
+                // (A body only while it moves itself, not one the player walks at.)
+                if (body && shot.x * shot.x + shot.z * shot.z < 0.09f) continue;
                 // (Against the player walking on as in its last step, and
                 // standing still: an attack's lunge or a stop changes the
                 // player's motion, so the earlier meeting counts.)
@@ -5165,7 +5172,7 @@ float CampaignBot::blow_due(engine::Engine& engine, const engine::ModelCtrlManag
                     }
                 }
             }
-            if (due >= best) continue;
+            if (due >= best || body) continue;
             if (seen.prev_frame == frame - 1) {
                 const float ahead = due + kGuardLead;
                 cx2 += (seen.at.x - seen.prev.x) * ahead;
