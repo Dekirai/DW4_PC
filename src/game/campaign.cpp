@@ -681,8 +681,19 @@ std::vector<std::string> transporter_areas(engine::Engine& engine) {
 struct Protection {
     const char* stage;
     int record; // armor2
+    int kind;   // the bullet kind it spares (whose branch of the hit script takes no SQ_GUARD either)
 };
-constexpr Protection kProtections[] = {{"stag0303", 42}};
+constexpr Protection kProtections[] = {{"stag0303", 42, 70119}};
+
+// Whether the guard leaves an attack box of `kind` alone in `stage`: one a
+// kProtections branch handles (the guard does not stop it there; with the
+// accessory on it does nothing). Guarding against the stag0303 fog's boxes
+// kept a level 38 run still on the swamp floor for 1.4 million frames.
+bool unguarded_kind(const std::string& stage, int kind) {
+    for (const auto& p : kProtections)
+        if (stage == p.stage && kind == p.kind) return true;
+    return false;
+}
 constexpr int kJunkDonation = 1000;  // COUNTER[1] that opens the junk shop's first stock
 constexpr int kJunkVisits = 3;       // junk shop visits a stay in the lobby at most
 
@@ -4946,6 +4957,7 @@ float CampaignBot::blow_due(engine::Engine& engine, const engine::ModelCtrlManag
             // (A permanent body box, end 1e8, hurts on touch: no guard against
             // it, the attack goes on; only the blows of attacks count.)
             if ((group != 7 && group != 8) || box.elapsed >= box.end || box.end >= 1e7f) continue;
+            if (unguarded_kind(stage_, box.kind)) continue; // (kProtections)
             const float due = std::max(0.0f, box.delay - box.elapsed);
             if (due > horizon) continue;
             const engine::Vec3f o = box.offset;
