@@ -821,8 +821,15 @@ struct StageSetting {
 };
 constexpr StageSetting kStageSettings[] = {
     // stag0403: the floor switch order that lowers the bridge to matz00.
+    // Every step onto a maty mat toggles the button on it (maty*.lua:
+    // g_sbuttonz04 SQ_SWON / SQ_SWON01 while on, SQ_SWOF / SQ_SWOF01 or the
+    // first SQ_WAIT / SQ_WAIT01 while off) and its magnet floor; a toggle
+    // that leaves blue on minus red on at 3 opens the tower (funcCorrectDemo,
+    // flag 492), any other closes it (funcFailDemo). The order follows the
+    // buttons, not the steps taken.
     {"stag0403", "DW4_MAT_SEQUENCE", "maty07,maty00,maty04,maty03,maty02"},
     {"stag0403", "DW4_AVOID_MATS", "maty"},
+    {"stag0403", "DW4_MAT_SWITCH", "g_sbuttonz04:SQ_SWON"},
 };
 
 // Targets struck in passing from a ride (the stag0103 boat: the six factory
@@ -4894,6 +4901,24 @@ void CampaignBot::survive(engine::Engine& engine, const engine::ModelCtrlManager
                 if (disk_use_ == kGateDisk) {
                     gate_refused_at_ = stage_frame_;
                     if (trace()) std::printf("[%d] campaign: the Gate Disk is refused in %s\n", frame, stage_.c_str());
+                    // (An objective given up for that escape is taken up
+                    // again: there is no way out to train or restock, and a
+                    // given-up objective left the driver with no step at
+                    // all - a no-cheat k10 segment stood in stagBS06 with
+                    // 1540 HP and no heals while Daemon's last form had a
+                    // quarter of its HP left.)
+                    if (escape_undo_ && escape_stage_frame_ == stage_frame_) {
+                        auto restore = [&](std::map<std::string, int>& m, const std::optional<int>& v) {
+                            if (v) m[escape_undo_->objective] = *v;
+                            else m.erase(escape_undo_->objective);
+                        };
+                        restore(defeat_levels_, escape_undo_->defeat_level);
+                        restore(restock_trips_, escape_undo_->restock_trips);
+                        restore(progress_trips_, escape_undo_->progress_trips);
+                        std::printf("[%d] campaign: %s taken up again (no way out of %s)\n", frame, escape_undo_->objective.c_str(),
+                                    stage_.c_str());
+                    }
+                    escape_undo_.reset();
                 }
             }
             disk_use_ = -1;
@@ -5154,6 +5179,11 @@ void CampaignBot::survive(engine::Engine& engine, const engine::ModelCtrlManager
             // kProgressTrips times per objective.)
             if (dying && objective_now_.rfind("train", 0) != 0 && !objective_now_.empty() && escape_stage_frame_ != stage_frame_) {
                 escape_stage_frame_ = stage_frame_;
+                auto held = [&](const std::map<std::string, int>& m) -> std::optional<int> {
+                    const auto it = m.find(objective_now_);
+                    return it == m.end() ? std::nullopt : std::optional<int>(it->second);
+                };
+                escape_undo_ = EscapeUndo{objective_now_, held(defeat_levels_), held(restock_trips_), held(progress_trips_)};
                 if (new_flag_visit_ == stage_frame_ && progress_trips_[objective_now_] < kProgressTrips) {
                     ++progress_trips_[objective_now_];
                     std::printf("[%d] campaign: %s left with progress (flag %d set in this visit), back after restocking\n", frame,

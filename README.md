@@ -324,7 +324,7 @@ keeps its bits in the bank while it is out of the lobby (a defeat leaves them in
 and takes them out once per stay before the shops, recovers its bit capsule with a
 Raise Disk after a defeat and trains in the area's field below an objective's gate level (a Gate
 Disk escape raises that level like a defeat unless the visit set a story flag never seen before: then
-it restocks and comes back, at most eight times per objective; after a defeat in a field it trains in
+it restocks and comes back, at most eight times per objective; where the panel refuses the Gate Disk, stagBS01 and Daemon's stages, the objective is taken up again and the fight goes on; after a defeat in a field it trains in
 the area before while short of HP disks); with real blows it strikes the stag0103 boat's towers in
 passing, fights e_mammos off its arena's wall and Apocalymon from its dais, dodging the blast pillars,
 guards against shells in flight and turret beams (also in its aggressive windows), fights turrets
@@ -335,7 +335,7 @@ crosses a field to its exit striking only the enemies
 that come near, crosses a floor that gave way under it before (dng310f3's fading tiles) without a stop
 and keeps the spot a fall began from off its routes for a while, chases no enemy over moving platforms, holds
 waves away from pits and quicksand sinks (an enemy off the sand is walked to), takes no guard with a
-pit, quicksand or a deep drop behind it (a wall before the drop ends the push), fights Belphemon, dng412b4's knight (off its homing orbs, struck where its walk will carry it when the swing lands) and Daemon's forms by boss routines (the second form's blast rings walked off from its wind-up on, swings only; the last form struck from a spot outside the shape of its body boxes), guards shots still queued on their shooter and slow homing shots by their speed, walks away from a body after two touch guards that blocked nothing, cures poison with Cure Disks, keeps off and leaves alone structures seen blowing up where they stand (stag0401's mines), hunts the members of waves whose clearing powers or opens something even while crossing a field (stag0304's switches) and dodges Lucemon's bomb rows from their markers
+pit, quicksand or a deep drop behind it (a wall before the drop ends the push), fights Belphemon, dng412b4's knight (off its homing orbs, struck where its walk will carry it when the swing lands) and Daemon's forms by boss routines (the second form's blast rings walked off from its wind-up on, swings only; the last form struck from a spot outside the shape of its body boxes), guards shots still queued on their shooter and slow homing shots by their speed, walks away from a body after two touch guards that blocked nothing, cures poison with Cure Disks, keeps off and leaves alone structures seen blowing up where they stand (stag0401's mines), steps on stag0403's floor switches in the solution's order by the states their buttons show (one it was thrown back onto, which turned it off again, is stepped off and on once more; `DW4_MAT_SWITCH`), hunts the members of waves whose clearing powers or opens something even while crossing a field (stag0304's switches) and dodges Lucemon's bomb rows from their markers
 (omens: a blast's rings known before its boxes exist); a field step that stalls for 180000 frames leaves the field and comes
 back; with `DW4_CAMPAIGN_CHECKPOINTS=dir` it saves the game
 like a player at nine points of the story where it returns to the lobby (the save Digi-Elf in
