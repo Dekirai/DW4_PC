@@ -211,7 +211,9 @@ decoded texture is written once to `mods/dump/textures` as
 `<name>_<width>x<height>_<hash>.png`. A PNG of any size whose name ends in the
 same `_<hash>.png` anywhere below `mods/textures` (or the `[mods] textures`
 folder) replaces that texture; *Reload texture pack* applies changes while
-playing. `mods` is looked up next to the program first, then in the working
+playing. The hash of a CMPR texture is taken with its transparent texels black
+(as decoded before the GX average colour was kept there), so older packs still
+match. `mods` is looked up next to the program first, then in the working
 folder. Test runs take `DW4_TEXTURE_PACK=dir` and `DW4_DUMP_TEXTURES=dir`.
 
 `tools/verify_game.py` checks an ISO or extraction against the expected
