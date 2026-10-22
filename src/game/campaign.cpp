@@ -4722,9 +4722,16 @@ void CampaignBot::survive(engine::Engine& engine, const engine::ModelCtrlManager
     // (Not a pit's or a quicksand's respawn, which sets the HP to 1, GAMERAM
     // ADDHP absolute: dng205b3's sand counted as a blow of 859 of 860 HP, and
     // the driver gave the boss stage up at full HP for want of heals.)
+    // (In a boss stage fought with real blows the biggest blow of the visit
+    // counts as long as the visit lasts: stagBS06 Daemon's critical claw
+    // blows, ~1460 of 2990 HP, came some 4000 frames apart, and one ended a
+    // player at 1400 HP with 34 heals held.)
+    const bool boss_stage = !engine.cheats().god && !engine.cheats().one_hit &&
+                            std::any_of(std::begin(kBossFights), std::end(kBossFights), [&](const BossFight& f) { return stage_ == f.stage && f.real_blows; });
+    const auto stale = [&](int at) { return boss_stage ? at < stage_frame_ : frame - at > kBigHitFor; };
     if (last_hp_ > slot.hp && slot.hp > 1) {
         const int hit = last_hp_ - slot.hp;
-        if (hit >= big_hit_ || frame - big_hit_at_ > kBigHitFor) big_hit_ = hit, big_hit_at_ = frame;
+        if (hit >= big_hit_ || stale(big_hit_at_)) big_hit_ = hit, big_hit_at_ = frame;
     }
     last_hp_ = slot.hp;
     // A stage without the quick panels (no beNDMWPanelWazaInfo in its
@@ -4834,7 +4841,7 @@ void CampaignBot::survive(engine::Engine& engine, const engine::ModelCtrlManager
     // percent of it the next one may be the last, so that is low HP too;
     // dng101b2's Blossomon hits a level 6 Veemon of 270 HP for 70..100 and
     // 222 when critical, and at kHealBelow percent, 108 HP, one blow ended it.)
-    const bool big_hits = frame - big_hit_at_ <= kBigHitFor;
+    const bool big_hits = !stale(big_hit_at_);
     // Before a stage without heals (kNoHealStages, or seen without the quick
     // panels) the HP is topped up while an HP Disk S's worth is missing: the
     // stag0203 train was boarded with 658 of 1040 HP after the fights on the
