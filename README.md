@@ -184,14 +184,22 @@ frame-identical to the original timing. Memory card access keeps its original
 speed: it takes well under two seconds per save and the save room's messages
 follow it.
 
-| Stage change (frames from the change to the stage start) | Original | Fast |
+| Stage change (frames from the change to the stage start; 60 frames = 1 s) | Original | Fast |
 | --- | --- | --- |
 | Boot: logos / opening / title (`stagIS08` / `09` / `10`) | 234 / 62 / 118 | 15 / 15 / 15 |
+| Boot straight to the title (skip intro) | 218 | 15 |
 | Dungeon `dng101b1` (to player control) | 490 (550) | 16 (76) |
 | Field `stag0101` / `stag0204` | 769 / 797 | 16 / 16 |
 | Quest `dngQ1B1e` (to player control) | 575 (635) | 16 (76) |
 | Boss `stagBS01` | 262 | 16 |
 | Lobby `stagML11` | 516 | 15 |
+
+In the automated story run (the r25c segments, 183-185 stage changes) the
+loads take 90,913 frames (25 minutes) with the original timing and 2,825
+frames (47 seconds) with Fast. The real time a load's frames take on the PC is
+about the same either way (the same files are parsed and the same scripts
+run, 10-35 ms in the longest frame of a load), so a Fast stage change is over
+in about a third of a second.
 
 ### Online co-op
 

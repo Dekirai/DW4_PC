@@ -2026,6 +2026,8 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 }
             }
         }
+        // (The last load of the run, without player control so far.)
+        if (trace_loadtime && load_timing.serial && !load_timing.control) print_load_timing();
         if (state_test)
             std::cout << "state test: " << (state_mismatch < 0 ? "identical after loading" : "differs from frame " + std::to_string(state_mismatch))
                       << " (" << state_fingerprints.size() << " frames compared)\n";
