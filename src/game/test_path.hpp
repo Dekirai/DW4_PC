@@ -21,6 +21,10 @@ namespace dw4::game {
 std::vector<engine::Vec3f> find_walk_path(const engine::CollisionWorld& world, const engine::Vec3f& from, const engine::Vec3f& to,
                                           std::uint32_t wall_flags);
 
+// Whether floor at `p` lies in a mat that hurts or pulls: a pit's respawn
+// mat (its script ADDHP and REMOVE) or quicksand (QuickSand / QUICKSAND).
+bool perilous_floor(engine::Engine& engine, const engine::Vec3f& p);
+
 // While alive, the players' limit circle (limit_Circle, a ring of walls
 // round the players' centre that follows them) is left out of the stage
 // collision: it never stops a single player, but a route planned ahead would
@@ -166,11 +170,36 @@ public:
     // Nothing left to explore and the goal out of reach: waiting at the
     // nearest point (the campaign driver then tries another exit of a maze).
     bool exhausted() const { return closest_; }
+    // Structures (g_* models) seen healing themselves while struck (the
+    // area 3 poison plants g_poison01z03: two blows put one down and it
+    // stands up again at full HP), by model name: without the test cheats
+    // they are not fought at all. The campaign driver keeps these across its
+    // fresh ExploreBot per stage visit.
+    const std::set<std::string>& regenerating_names() const { return regenerating_names_; }
+    void set_regenerating_names(const std::set<std::string>& names) { regenerating_names_ = names; }
+    // Crossing a field to an exit (the campaign driver without the test
+    // cheats): enemies other than structures and bosses are struck when they
+    // come near (as while defending) instead of hunted, and only pickups
+    // within kTransitPick (and key items) are gone for.
+    void set_transit(bool on) { transit_ = on; }
+    // A fall into a pit began from this floor (it gave way, or a moving
+    // floor left it): no route crosses it for kFallAvoid frames.
+    void avoid_fall(const engine::Vec3f& where, int frame) {
+        fall_spots_.push_back({where, frame + kFallAvoid});
+        planned_ = -1000;
+    }
+    static constexpr int kFallAvoid = 6000;
+    // The player stands on a floor that gives way (the campaign driver's
+    // fading floors): no wait at a jump's take-off for the enemies there.
+    void set_hurry(bool on) { hurry_ = on; }
 
 private:
     enum class Gimmick { none, strike, talk, step, tech };
     void plan(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player, const std::string& goal, int frame);
     void give_up(int frame);
+    // A target seen healing itself: a structure is left alone from now on
+    // (regenerating_names), without the test cheats.
+    void note_regenerating(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& target, int frame);
     // A z-mat that moves the player to another room of the same stage
     // (its script runs trans.lua instead of funcStageChange): a maze link.
     bool portal(engine::Engine& engine, const std::string& mat);
@@ -362,6 +391,10 @@ private:
     std::map<const void*, int> fruitless_;       // attacked enemy -> attack steps since its last new low
     std::map<const void*, int> fruitless_runs_;  // enemy -> times it was left alone for taking no damage
     std::map<const void*, int> approach_;        // structure -> steps targeted without getting within reach
+    std::set<std::string> regenerating_names_;   // see regenerating_names()
+    bool transit_ = false;                       // see set_transit()
+    bool hurry_ = false;                         // see set_hurry()
+    std::vector<std::pair<engine::Vec3f, int>> fall_spots_; // see avoid_fall(): where, until
     std::set<const void*> unkillable_;           // enemies that heal themselves or took no damage thrice: left alone for the stage
     std::set<const void*> regenerating_;         // enemies seen healing back above their lowest HP
     std::set<const void*> vanished_;             // enemy RAMs seen free or defeated (a spawn into one is a new enemy)

@@ -593,6 +593,11 @@ float body_gap(const engine::ModelCtrlManager::ModelRam& e, const engine::Vec3f&
 // dngq3b2e g_d3pedstal 14.1; the levers of stag0101-0301, 10.6, and the
 // wall switches stay pressed by their origin).
 constexpr float kFarTalk = 12.0f;
+// The ground kept clear round a structure seen healing itself (plan,
+// without the test cheats): the poison plants' spit hit at up to 46.
+constexpr float kHealerKeep = 45.0f;
+// Pickups gone for while crossing a field (set_transit): within this.
+constexpr float kTransitPick = 30.0f;
 float box_reach(const engine::ModelCtrlManager::ModelRam& e) {
     if (!e.node || !e.hit || e.hit->boxes.empty()) return 0.0f;
     const auto& m = e.node->matrix;
@@ -674,6 +679,25 @@ bool ExploreBot::hazard_mat(engine::Engine& engine, const std::string& mat) {
     return hazard;
 }
 
+// A structure that heals itself while struck is left alone (no cheats).
+// The area 3 poison plants g_poison01z03 (hit_g_poison01z03.lua: -50 a blow
+// of 100 HP, at 0 SQ_DDMG and +100) spit poison at the player around them
+// (70104, about 5 % of the HP a blow) and never fall: a fresh no-cheat chain
+// took 986 such blows in stag0301/0302 at levels 33 to 37, every stage visit
+// (a fresh ExploreBot) fighting them again until its 900 fruitless frames
+// were over. A structure whose HP rises while it is fought is not fought
+// again, also in later visits (regenerating_names). (The only other such
+// hit script, the area 2 g_atcksabtnz02 devices, is the same and sets no
+// flag either: neither opens a way.)
+void ExploreBot::note_regenerating(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& target, int frame) {
+    if (engine.cheats().one_hit || engine.cheats().god || target.info_name.rfind("g_", 0) != 0) return;
+    if (regenerating_names_.insert(target.info_name).second && std::getenv("DW4_TRACE_EXPLORE"))
+        std::printf("[%d] explore: %s heals itself, left alone\n", frame, target.info_name.c_str());
+    unkillable_.insert(&target);
+    unreachable_[&target] = frame + 6000;
+    planned_ = -1000;
+}
+
 // Without the test cheats an enemy this far around a quicksand pit's guard
 // box (the sink grown by 25) is not walked to: it comes to the player, who
 // holds its waves away from the pit (see the hold in plan()). The sand pulls
@@ -684,6 +708,19 @@ bool ExploreBot::hazard_mat(engine::Engine& engine, const std::string& mat) {
 // (At most the reached sand's own clearance less 15: a small room keeps
 // enemies to fight.)
 constexpr float kSandFightMargin = 90.0f;
+
+bool perilous_floor(engine::Engine& engine, const engine::Vec3f& p) {
+    auto* mats = engine.get<engine::MatCtrlManager>();
+    if (!mats) return false;
+    for (const auto& box : mats->mat_boxes()) {
+        if (p.x < box.min.x || p.x > box.max.x || p.z < box.min.z || p.z > box.max.z || p.y < box.min.y - 5.0f || p.y > box.max.y + 10.0f) continue;
+        const std::string script = box.name + ".lua";
+        if ((engine.script_mentions(script, "ADDHP") && engine.script_mentions(script, "REMOVE")) || engine.script_mentions(script, "QuickSand") ||
+            engine.script_mentions(script, "QUICKSAND"))
+            return true;
+    }
+    return false;
+}
 
 bool ExploreBot::quicksand_mat(engine::Engine& engine, const std::string& mat) {
     const auto it = quicksands_.find(mat);
@@ -1329,6 +1366,31 @@ void ExploreBot::plan(engine::Engine& engine, const engine::ModelCtrlManager::Mo
     FireLaneCells lanes;
     for (const auto& [key, cell] : fire_cells_)
         if (frame - cell.frame <= 150) lanes[key] = {cell.lo, cell.hi};
+    // Without the test cheats the ground round a structure seen healing
+    // itself (regenerating_names: the area 3 poison plants spit at a player
+    // 20 to 46 units off, ~5 % of the HP a hit, and never fall) counts as a
+    // fire lane within kHealerKeep, and nothing there is walked to (near_healer):
+    // a no-cheat chain was defeated beside them again and again, walking to
+    // items, enemies and its own bit capsule there.
+    std::vector<engine::Vec3f> healers;
+    if (!engine.cheats().one_hit && !engine.cheats().god && !regenerating_names_.empty())
+        for (const auto& e : models->rams())
+            if (e->generated && e->node && e->category == "ENEMY" && regenerating_names_.count(e->info_name)) healers.push_back(position_of(*e));
+    for (const auto& h : healers) {
+        const int r = int(std::ceil(kHealerKeep / Grid::step));
+        const int cx = int(std::lround(h.x / Grid::step)), cz = int(std::lround(h.z / Grid::step));
+        for (int dz = -r; dz <= r; ++dz)
+            for (int dx = -r; dx <= r; ++dx) {
+                if (dx * dx + dz * dz > r * r) continue;
+                const auto [it, fresh] = lanes.try_emplace({cx + dx, cz + dz}, h.y - 15.0f, h.y + 40.0f);
+                if (!fresh) it->second = {std::min(it->second.first, h.y - 15.0f), std::max(it->second.second, h.y + 40.0f)};
+            }
+    }
+    const auto near_healer = [&](const engine::Vec3f& p) {
+        for (const auto& h : healers)
+            if (flat(h, p) < kHealerKeep && p.y > h.y - 15.0f && p.y < h.y + 40.0f) return true;
+        return false;
+    };
     const FireLanes fire_guard(lanes);
     // The moving platforms' paths (in platforms_ order; one that does not
     // keep moving sideways is plain floor where it stands).
@@ -1348,6 +1410,13 @@ void ExploreBot::plan(engine::Engine& engine, const engine::ModelCtrlManager::Mo
         }
         moving.push_back(std::move(floor));
     }
+    // Floors a fall began from lately (avoid_fall), unless the player stands
+    // on one.
+    std::erase_if(fall_spots_, [&](const auto& spot) { return frame >= spot.second; });
+    for (const auto& [p, until] : fall_spots_) {
+        const AvoidBox a{p.x - 8.0f, p.z - 8.0f, p.x + 8.0f, p.z + 8.0f, p.y - 6.0f, p.y + 6.0f};
+        if (me.x < a.min_x || me.x > a.max_x || me.z < a.min_z || me.z > a.max_z || me.y < a.min_y || me.y > a.max_y) avoid.push_back(a);
+    }
     const WalkMap map(hitland->world(), me, 700.0f, flags, avoid, hitland->delivery_width(player.info_name, player.index), moving);
     // A point's distance from the nearest quicksand pit's guard box (flat).
     const auto pit_clear = [&](const engine::Vec3f& q) {
@@ -1357,6 +1426,14 @@ void ExploreBot::plan(engine::Engine& engine, const engine::ModelCtrlManager::Mo
             clear = std::min(clear, std::hypot(dx, dz));
         }
         return clear;
+    };
+    // Whether a point stands on a quicksand mat (where the sand pulls).
+    auto on_sand = [&](const engine::Vec3f& p) {
+        for (const auto& box : boxes)
+            if (p.x >= box.min.x && p.x <= box.max.x && p.z >= box.min.z && p.z <= box.max.z && p.y >= box.min.y - 5.0f &&
+                p.y <= box.max.y + 10.0f && quicksand_mat(engine, box.name))
+                return true;
+        return false;
     };
     // How far the reached sand gets from the pits (see kSandFightMargin):
     // the enemy margin stays below it, so a small room still has enemies to
@@ -1451,7 +1528,11 @@ void ExploreBot::plan(engine::Engine& engine, const engine::ModelCtrlManager::Mo
     // The kept target counts as nearer, so two equally far ones do not take
     // turns.
     auto keep = [&](const void* target, float cost) { return target == previous ? cost * 0.6f : cost; };
-    const bool defending = frame < defend_until_;
+    // (Crossing a field to an exit, set_transit: as while defending. A no-cheat
+    // chain spent 33000 frames a crossing of stag0302 and 31000 of the swamp
+    // stag0303 hunting e_maridevi and the like, which the cheat run's one-hit
+    // blows took in passing: 12800 and 3700.)
+    const bool defending = frame < defend_until_ || transit_;
     // A started radar generator waits for a player near its base: walk
     // into its range. Before the mats only one the mat underfoot started
     // (leaving that mat would stop it again), after them any.
@@ -1594,7 +1675,10 @@ void ExploreBot::plan(engine::Engine& engine, const engine::ModelCtrlManager::Mo
             if (left_alone(e.get()) || unkillable_.count(e.get())) continue;
             const auto at = position_of(*e);
             const bool structure = e->info_name.rfind("g_", 0) == 0;
+            if (pass == 0 && structure && regenerating_names_.count(e->info_name) && !engine.cheats().one_hit && !engine.cheats().god) continue;
             const bool boss = e->info_name.rfind("f_", 0) == 0;
+            if (!boss && (pass == 0 || e->item_table != 2) && near_healer(at)) continue; // (key items are fetched all the same)
+            if (transit_ && pass == 1 && e->item_table != 2 && flat(at, me) > kTransitPick) continue;
             const bool hover = pass == 0 && hovering(*e);
             // (A structure seen firing along a lane is a turret.)
             const auto fired = shots_.find(e.get());
@@ -1613,8 +1697,16 @@ void ExploreBot::plan(engine::Engine& engine, const engine::ModelCtrlManager::Mo
             // same shells, 33 and 37.)
             if (hold && !on_hold(at)) continue;
             // Near a pit in a quicksand basin: struck only in passing (with
-            // real blows further off as well, see the hold below).
-            if (sandy && in_pit(at, std::min(kSandFightMargin, std::max(0.0f, sand_clear - 15.0f)))) {
+            // real blows further off as well, see the hold below), where the
+            // sand pulls (the enemy on a quicksand mat) or right at the pit.
+            // (An enemy off the sand is walked to: dng205b3's GENE-14 wave,
+            // eight e_mecha2 on the floor at y 35 north of the sand, some 100
+            // off the matt23 sink and staying there, was never fought; its
+            // flag 188 opens the door to Anomalocarimon, and a fresh level 21
+            // to 26 no-cheat chain gave key item 5 up ten times in 3 million
+            // frames, the wave's members respawning 1264 times meanwhile.)
+            if (sandy && in_pit(at, std::min(kSandFightMargin, std::max(0.0f, sand_clear - 15.0f))) &&
+                (in_pit(at, 15.0f) || on_sand(at))) {
                 unreachable_[e.get()] = frame + 120;
                 continue;
             }
@@ -1951,6 +2043,7 @@ void ExploreBot::plan(engine::Engine& engine, const engine::ModelCtrlManager::Mo
             if (was_tried != tried) continue;
             if (left_alone(e.get())) continue;
             const auto at = position_of(*e);
+            if (kind == Gimmick::strike && near_healer(at)) continue; // (switches are worked all the same)
             const float tolerance = gimmick_tolerance(*e, kind);
             float cost = keep(e.get(), map.cost_to(at, tolerance));
             // A wall being broken (or walked to) is finished first.
@@ -2953,8 +3046,10 @@ ExploreBot::Decision ExploreBot::update(engine::Engine& engine, const engine::Mo
             // used, then the Gate Disk out). The player waits at the take-off
             // of the first stone, out of their range; after kJumpFoeHold
             // frames it jumps anyway.
+            // (Not from a floor that gives way, set_hurry: dng310f3's fading
+            // tiles, off 60 frames after the player lands on one.)
             bool hold_jump = false;
-            if (!engine.cheats().god && !engine.cheats().one_hit && models && flat(takeoff, me) < 8.0f) {
+            if (!engine.cheats().god && !engine.cheats().one_hit && models && flat(takeoff, me) < 8.0f && !hurry_) {
                 constexpr float kJumpFoe = 25.0f, kJumpFoeWalk = 150.0f;
                 constexpr int kJumpFoeHold = 2400;
                 std::vector<engine::Vec3f> landings;
@@ -3164,7 +3259,7 @@ ExploreBot::Decision ExploreBot::update(engine::Engine& engine, const engine::Mo
         // poison vent that heals itself and turns invulnerable) is left alone
         // for a good while, for the stage when seen healing or the third time.
         auto [low, fresh] = lowest_hp_.emplace(target_, target->hp);
-        if (!fresh && target->hp > low->second) regenerating_.insert(target_);
+        if (!fresh && target->hp > low->second) regenerating_.insert(target_), note_regenerating(engine, *target, frame);
         if (fresh || target->hp < low->second) {
             low->second = target->hp;
             perch_hit_at_ = frame;
@@ -3275,7 +3370,7 @@ ExploreBot::Decision ExploreBot::update(engine::Engine& engine, const engine::Mo
                 approach_[target_] = 0;
             }
             auto [low, fresh] = lowest_hp_.emplace(target_, target->hp);
-            if (!fresh && target->hp > low->second) regenerating_.insert(target_);
+            if (!fresh && target->hp > low->second) regenerating_.insert(target_), note_regenerating(engine, *target, frame);
             if (fresh || target->hp < low->second) {
                 low->second = target->hp;
                 fruitless_[target_] = 0;
@@ -3318,10 +3413,12 @@ ExploreBot::Decision ExploreBot::update(engine::Engine& engine, const engine::Mo
         planned_ = -1000;
     }
     // Defending: strike an enemy that comes close, without chasing it.
-    if (frame < defend_until_ && !decision.attack && !decision.press_a && models)
+    // (Also while crossing a field, set_transit.)
+    if ((frame < defend_until_ || transit_) && !decision.attack && !decision.press_a && models)
         for (const auto& e : models->rams())
             if (e->generated && e->node && e->category == "ENEMY" && e->hp > 0 && flat(position_of(*e), me) < 12.0f &&
-                !(unreachable_.count(e.get()) && frame < unreachable_[e.get()]) && !unkillable_.count(e.get())) {
+                !(unreachable_.count(e.get()) && frame < unreachable_[e.get()]) && !unkillable_.count(e.get()) &&
+                !regenerating_names_.count(e->info_name)) {
                 decision.attack = frame % 20 < 3;
                 break;
             }

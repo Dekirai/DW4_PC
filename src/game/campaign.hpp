@@ -70,8 +70,8 @@ private:
                                                          int frame = 0) const;
     // One frame of a boss fight (kBossFights); false when the boss is down.
     bool boss_fight(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player, const std::string& strike,
-                    const std::string& follow, float keep, bool dodge, float arena_x, float arena_z, float arena_r, bool clear_touch, int frame,
-                    Output& out);
+                    const std::string& follow, float keep, bool dodge, float arena_x, float arena_z, float arena_r, bool clear_touch,
+                    const char* omen, int frame, Output& out);
     // A maze floor swept (ExploreBot exhausted): on to another exit.
     void maze_turn(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player, const std::string& goal, int frame);
     // Survival without god mode (campaign.cpp kSupplies): the next disk shop
@@ -84,13 +84,14 @@ private:
     int planned_spend(engine::Engine& engine) const;
     // The next device to equip at the Digi-Lab (campaign.cpp kEquipGain):
     // kind 0 the weapon in use (POWERSOCKET 0), 1 the board (MAINSLOT), 2 the
-    // accessory (SUBSLOT); device -1 when the equipment is the best held.
+    // accessory (SUBSLOT), 3 a PWR Medal into power pocket `pocket` of the
+    // weapon in use; device -1 when the equipment is the best held.
     struct EquipPick {
-        int kind = -1, device = -1;
+        int kind = -1, device = -1, pocket = -1;
     };
     EquipPick next_equip(engine::Engine& engine) const;
     double equip_value(engine::Engine& engine, const engine::ItemDevice& d) const;
-    // The stock line of a device shop (6 weapons, 7 armor) to buy, -1 none.
+    // The stock line of a device shop (6 weapons, 7 armor, 8 chips) to buy, -1 none.
     int next_gear(engine::Engine& engine, int program) const;
     // The next device to sell at the disk shop (campaign.cpp kSellFrom), -1 none.
     int next_sale(engine::Engine& engine) const;
@@ -101,7 +102,9 @@ private:
     std::optional<engine::Vec3f> touch_escape(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player, float& gap, int frame);
     void track_step(const engine::ModelCtrlManager::ModelRam& player, int frame);
     bool guard_pulse(int frame);
-    bool guard_footing(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player) const;
+    bool guard_footing(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player, bool deep = true) const;
+    // Whether player 1 stands on a floor that gave way before (fading_floors_).
+    bool on_fading_floor(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player) const;
     bool tech_target(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player, const engine::GameSystem::PlayerSlot& slot) const;
     void survive(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player, int frame, Output& out);
     Output play(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam* player, int frame);
@@ -130,6 +133,7 @@ private:
     int foe_since_{}, foe_hp_{}; // since when without losing HP, its HP then
     int foe_seen_ = -1000;       // the last frame a foe was fought
     std::map<const void*, int> foe_left_; // enemies left alone until
+    std::map<const void*, std::pair<std::uint32_t, int>> omen_seen_; // a boss fight's omen markers: sequence serial, first frame
     const void* target_ = nullptr; // the model a talk/strike step walks to
     int target_since_{};          // since when (not reached)
     std::map<const void*, int> target_skip_; // "#*" targets not reached, left alone until
@@ -192,12 +196,19 @@ private:
     int new_flag_visit_ = -1;    // the stage visit (its stage_frame_) that last set a flag never seen before
     int new_flag_ = -1;          // that flag
     std::map<std::string, int> progress_trips_; // objective -> Gate Disk trips out of it with progress (no gate raised)
+    std::map<std::string, int> restock_trips_;  // objective -> Gate Disk trips back to restock on the way to it (kRestockTrips)
+    std::string restock_pending_;               // the objective of a restocking trip started, counted back in the lobby
+    engine::Vec3f grounded_at_{};               // where the player last stood with control (a fall's start)
+    int grounded_frame_ = -1;
+    std::string grounded_floor_;                // the HitLand info of that floor (empty: the stage's own)
+    std::set<std::string> fading_floors_;       // HitLand infos of floors a fall began from: crossed without a stop
     // The equipment errand at the Digi-Lab (next_equip).
     bool equip_open_ = false;    // its lab program may be running
     int equip_kind_ = -1;        // the slot kind chosen in the lab's equipment menu
     int list_page_ = 0;          // a device list's page (lab or sale list, counted from its opening)
     int list_turn_ = 0, list_turn_at_ = -100000; // a page turn pressed (+1 / -1), when
     bool equip_folder_ = false;  // the device list was open in the last frame
+    bool equip_pockets_ = false; // Chips was chosen for the weapon in use (the pocket cursor and its menus follow)
     EquipPick equip_tried_{};    // the pick the errand began with
     int equip_since_ = -1;       // the errand's step since
     std::set<std::pair<int, int>> equip_failed_; // (kind, device record) picks the lab did not take
@@ -206,12 +217,32 @@ private:
     bool sale_confirm_ = false;  // a device was picked from the sale list (its yes follows)
     int sale_target_ = -1;       // that device
     int sale_at_ = -1;           // a device sold (the list's page follows the folder)
-    // Gear from the weapon and armor shops (next_gear).
+    // The bank (campaign.cpp kBankDust).
+    bool bank_open_ = false;     // a bank errand's program may be running
+    bool bank_deposit_ = false;  // it deposits (else withdraws)
+    bool bank_ran_ = false;      // its program was seen running
+    bool bank_withdrawn_ = false; // the bits came out in this stay in the lobby
+    int bank_tries_ = 0;         // bank visits in this stay
+    int bank_ups_ = 0;           // UP presses on the amount's top digit
+    int bank_digits_at_ = -100000; // the amount's digit cursor last seen
+    int bank_lists_ = 0;           // lists backed out of in this bank visit (two: no bank, see answer_menu)
+    int sell_tries_ = 0;           // disk shop Sell choices since the last sale
+    bool buy_confirm_ = false;     // the disk shop's count was taken: its yes to the price comes next
+    bool buy_glitch_ = false;      // Buy led to the sale's menu: Exit and talk anew
+    bool sales_off_ = false;       // no device sales this stay in the lobby (see answer_menu)
+    bool errands_off_ = false;     // no lobby errands this stay: one stalled (kErrandStall)
+    int bank_list_at_ = -100000;
+    // Gear from the weapon, armor and chip shops (next_gear).
     bool gear_open_ = false;     // a device shop program of the errand may be running
-    int gear_program_ = 6;       // its program (6 weapons, 7 armor)
+    int gear_program_ = 6;       // its program (6 weapons, 7 armor, 8 chips, 9 the junk shop)
     bool gear_buying_ = false;   // Buy was chosen: the stock list
     bool gear_ran_ = false;      // its program was seen running
-    std::array<int, 2> gear_checked_{-1, -1}; // the level each shop was last looked at
+    std::array<int, 4> gear_checked_{-1, -1, -1, -1}; // the level each shop was last looked at
+    std::array<int, 4> gear_visit_{-1, -1, -1, -1};   // the stage visit (its stage_frame_) each shop last ran and closed in
+    // The junk shop (campaign.cpp kProtections).
+    int junk_visits_ = 0;          // its visits in this stay in the lobby
+    int junk_ups_ = 0;             // UP presses on the donation's thousands digit
+    int junk_digits_at_ = -100000; // the donation's digit cursor last seen
     // Training (campaign.cpp kTraining).
     std::string objective_now_;  // the objective worked on (defeats raise its gate)
     std::map<std::string, int> defeat_levels_; // objective -> highest level a defeat (or a Gate Disk escape) at it came at
