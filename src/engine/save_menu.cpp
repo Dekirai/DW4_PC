@@ -1387,9 +1387,16 @@ void SaveCtrlManager::update(Engine& engine) {
                     if (!query(engine, "MODELCTRL", "j_chrselback", 0, "ISRUN")) next_step();
                 } else if (ram.step == 4) {
                     send(engine, "SAVEINTF_ALL", std::nullopt, -1, "SETSELECT_DATA");
+                    // 0x80378ECC..0x80378FB0: the players still in count for
+                    // NINZU; the bit capsule of each one who left is
+                    // forgotten (BKCHIPSTAGE[i] = null).
                     int joined = 0;
-                    for (const auto& p : common_.players) joined += p.joined ? 1 : 0;
-                    if (auto* sys = engine.get<GameSystem>()) sys->ninzu = joined;
+                    auto* sys = engine.get<GameSystem>();
+                    for (std::size_t i = 0; i < common_.players.size(); ++i) {
+                        if (common_.players[i].joined) ++joined;
+                        else if (sys && i < sys->bit_chips.size()) sys->bit_chips[i].stage.clear();
+                    }
+                    if (sys) sys->ninzu = joined;
                     enter(3);
                 }
             }
