@@ -909,6 +909,15 @@ struct BossFight {
     // A boss that walks past the player is struck where it will be when the
     // swing lands (boss_fight: its last step, kSwingLand).
     bool lead = false;
+    // With `dodge`: "<effect prefix>:<radius>[:<sequence>]", an effect whose
+    // boxes go out in rings from its middle up to that radius; while one is
+    // out the player walks straight away from its middle to beyond it, and
+    // already while the boss runs that sequence (its wind-up) with MUTEKI
+    // (boss_fight).
+    const char* rings = "";
+    // No technique at it (survive): swings only, where a technique does a
+    // fraction of a swing's damage and holds the player as long.
+    bool blade = false;
 };
 constexpr BossFight kBossFights[] = {
     // stagBS03 with real blows: Lucemon lays rows of five bombs across its
@@ -988,6 +997,23 @@ constexpr BossFight kBossFights[] = {
     // carry it past the player at ~1.3 a frame: struck where it stood, the
     // swing met the air, 4 swings and 2 hits in those frames, `lead`.)
     {"dng412b4", "e_ldknight", "e_ldknight", 30.0f, true, true, "", 0.0f, 0.0f, 0.0f, false, "", "|x_032eactn02a|", true},
+    // stagBS05 with real blows: Daemon's second form (f_devl22, 4041 HP)
+    // sends rings of blasts out of its middle (x_039fblst01a, 70086, ~22 %
+    // of a level 40 player's HP a box: 16 boxes a ring, live 12 frames each,
+    // 6 out at once, then 8, 14, 21, 28, 34, 40 and 50 out, 12 frames
+    // apart), some 650 frames apart. The ExploreBot guarded each ring when
+    // it went out, its guard over before the ring came: a no-cheat run went
+    // down in 5000 frames with eight heals spent. The rings go out at some
+    // 0.55 a frame, the player walks 0.7: it walks off ahead of them, out
+    // beyond the last one (`rings`), and guards one only where the floor
+    // ends.
+    // (It sends them at the end of the MUTEKI part of its SQ_FIRE, 75 frames
+    // in; a ring started from beside it reaches 11 out at once: the player
+    // walks off when the SQ_FIRE begins, comes back as the last ring is out
+    // and strikes in its SQ_WAIT. Its SEISHIN leaves Veemon's thunder some
+    // 23 HP a cast against 92 a swing: no technique, `blade`.)
+    {"stagbs05", "f_devl22|f_devl21", "f_devl22", 25.0f, true, true, "", 0.0f, 0.0f, 0.0f, false, "", "", false, "x_039fblst01a:54:SQ_FIRE",
+     true},
 };
 
 // Whether a model is named by a '|'-separated list ("<model>#<n>" names that
@@ -3814,7 +3840,7 @@ float dodge_due(const std::vector<DodgeArea>& areas, float x, float z) {
 
 bool CampaignBot::boss_fight(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player, const std::string& strike,
                              const std::string& follow, float keep, bool dodge, float arena_x, float arena_z, float arena_r, bool clear_touch,
-                             const char* omen, const char* homing, bool lead, int frame, Output& out) {
+                             const char* omen, const char* homing, bool lead, const char* rings, int frame, Output& out) {
     auto* models = engine.get<engine::ModelCtrlManager>();
     if (!models) return false;
     const auto me = position_of(player);
@@ -3904,6 +3930,47 @@ bool CampaignBot::boss_fight(engine::Engine& engine, const engine::ModelCtrlMana
     // be left in time, just before it goes live.
     std::vector<DodgeArea> areas;
     float here_due = 1e9f;
+    // `rings`: while a ring effect is out, straight away from its middle to
+    // a little beyond its last ring, where the floor goes on there (else the
+    // dodge below and the guard).
+    if (dodge && rings && *rings && player.ctrl_mode != 0 && player.control_enabled) {
+        const std::string_view spec(rings);
+        const auto colon = spec.find(':'), colon2 = spec.find(':', colon == std::string_view::npos ? colon : colon + 1);
+        const std::string prefix(spec.substr(0, colon));
+        const float radius = colon == std::string_view::npos ? 0.0f : float(std::atof(std::string(spec.substr(colon + 1)).c_str()));
+        const std::string windup = colon2 == std::string_view::npos ? std::string() : std::string(spec.substr(colon2 + 1));
+        std::vector<const engine::ModelCtrlManager::ModelRam*> sources;
+        bool ring_out = false;
+        for (const auto& e : models->rams())
+            if (e->generated && e->node && e->info_name.rfind(prefix, 0) == 0) {
+                sources.push_back(e.get());
+                ring_out = true;
+            }
+        // (The wind-up: the ring comes out of the boss's middle.)
+        if (!ring_out && !windup.empty() && boss->seq_name == windup && boss->muteki != 0.0f) sources.push_back(boss);
+        for (const auto* e : sources) {
+            bool live = e == boss;
+            for (const auto& box : e->hitboxes) live = live || ((box.kind / 10000 == 7 || box.kind / 10000 == 8) && box.elapsed < box.end);
+            const auto c = position_of(*e);
+            const float d = flat(c, me);
+            if (!live || d >= radius + 2.0f) continue;
+            const float ux = d > 0.01f ? (me.x - c.x) / d : 1.0f, uz = d > 0.01f ? (me.z - c.z) / d : 0.0f;
+            const engine::Vec3f spot{c.x + ux * (radius + 5.0f), me.y, c.z + uz * (radius + 5.0f)};
+            bool floor = true;
+            if (auto* hitland = engine.get<engine::HitLandManager>()) {
+                const auto land = hitland->world().check_land({spot.x, spot.y + 5.0f, spot.z}, 1.0f, 400.0f, 1.0f);
+                floor = land.found && std::abs(land.position.y - me.y) <= 3.0f;
+            }
+            if (!floor) break;
+            out.walk = true;
+            out.x = spot.x;
+            out.z = spot.z;
+            out.reach = 1.0f;
+            if (tracing && frame % 10 == 0)
+                std::printf("[%d] campaign boss: off the rings of %s, %.0f from its middle, to (%.0f,%.0f)\n", frame, e->info_name.c_str(), d, spot.x, spot.z);
+            return true;
+        }
+    }
     if (dodge) {
         areas = dodge_areas(engine, player, homing);
         if (omen && *omen) omen_areas(engine, player, omen, frame, omen_seen_, areas);
@@ -4946,8 +5013,9 @@ void CampaignBot::survive(engine::Engine& engine, const engine::ModelCtrlManager
     if (!engine.cheats().one_hit) {
         const float due = blow_due(engine, player, kHoldAttackLead, frame);
         // A technique at the enemy in front when the MP allows (survive).
+        // (Not in a boss fight that takes swings only, BossFight::blade.)
         if (!player.panel_open && due > kHoldAttackLead && panel && controllable && panel_ready && frame - tech_end_ >= kTechGap &&
-            !out.ride_strike && tech_target(engine, player, slot)) {
+            !out.ride_strike && blade_frame_ != frame && tech_target(engine, player, slot)) {
             tech_at_ = frame;
             tech_end_ = frame + 4 + 2 * std::clamp(int(slot.wazalist.size()) - 1, 0, 5) + 14;
             survive(engine, player, frame, out);
@@ -5887,7 +5955,8 @@ CampaignBot::Output CampaignBot::play(engine::Engine& engine, const engine::Mode
             if (stage == fight.stage && (!fight.real_blows || (!engine.cheats().one_hit && !engine.cheats().god)) &&
                 !any_alive(engine, fight.first) &&
                 boss_fight(engine, *player, fight.strike, fight.follow, fight.keep, fight.dodge, fight.arena_x, fight.arena_z, fight.arena_r,
-                           fight.clear_touch, fight.omen, fight.homing, fight.lead, frame, out)) {
+                           fight.clear_touch, fight.omen, fight.homing, fight.lead, fight.rings, frame, out)) {
+                if (fight.blade) blade_frame_ = frame;
                 last_ = me;
                 return out;
             }

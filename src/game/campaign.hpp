@@ -71,7 +71,7 @@ private:
     // One frame of a boss fight (kBossFights); false when the boss is down.
     bool boss_fight(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player, const std::string& strike,
                     const std::string& follow, float keep, bool dodge, float arena_x, float arena_z, float arena_r, bool clear_touch,
-                    const char* omen, const char* homing, bool lead, int frame, Output& out);
+                    const char* omen, const char* homing, bool lead, const char* rings, int frame, Output& out);
     // A maze floor swept (ExploreBot exhausted): on to another exit.
     void maze_turn(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player, const std::string& goal, int frame);
     // Survival without god mode (campaign.cpp kSupplies): the next disk shop
@@ -191,6 +191,7 @@ private:
     int held_presses_ = 0;       // presses of A the guard took back since the last attack
     int guard_held_ = -100000;   // the last frame a guard held an attack back
     int tech_end_ = -100000;     // the last cast's end
+    int blade_frame_ = -1;       // the last frame of a boss fight that takes swings only (BossFight::blade)
     int panel_ready_at_ = -100000; // the panel's FIRE wait after the last pick runs out (survive)
     int last_hp_ = -1;           // player 1's HP in the last frame (survive)
     int big_hit_ = 0, big_hit_at_ = -100000; // the biggest blow taken lately, when
