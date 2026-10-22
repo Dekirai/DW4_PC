@@ -2376,8 +2376,9 @@ bool GameSystem::script_call(Engine& engine, const std::string& method, std::spa
         const int slot = std::clamp(arg_int(0), 0, 3);
         const int index = std::clamp(arg_int(1), 0, 2);
         const auto& weapon = players[std::size_t(slot)].weapons[std::size_t(index)];
-        if (weapon.empty()) out = {};
-        else out = {Lua4Value::string(weapon)};
+        // 802EBA8C returns null past the POWERSOCKETNAME count; 80269ECC
+        // pushes it as one nil result (the dispatcher returns 1).
+        out = {weapon.empty() ? Lua4Value{} : Lua4Value::string(weapon)};
         return true;
     }
     if (method == "SYSgetPlayerNinzu") {
@@ -2475,11 +2476,25 @@ bool GameSystem::script_call(Engine& engine, const std::string& method, std::spa
     }
     if (method == "TXTgetCallNo") { out = {Lua4Value::number(text_call)}; return true; }
     if (method == "SYSgetLightMode") { out = {Lua4Value::number(light_mode)}; return true; }
-    if (method == "SYSgetGateStageName") { out = {Lua4Value::string(gate_stage_name)}; return true; }
+    if (method == "SYSgetGateStageName") {
+        // Dispatch 14 (0x802EA4E0): 802EBE94 reads the GATESTAGENAME string
+        // object (+0xC), 80269ECC pushes nil for a null one. start.lua of
+        // stagML11 sets 'GateOff' only on nil, which makes g_cyexit SQ_POWEROF.
+        out = {gate_stage_name ? Lua4Value::string(*gate_stage_name) : Lua4Value{}};
+        return true;
+    }
     if (method == "SYSgetGateStageNo") { out = {Lua4Value::number(gate_stage_no)}; return true; }
     if (method == "SYSsetGateStage") {
-        if (!args.empty() && args[0].type() == Lua4Type::String) gate_stage_name = std::string(args[0].as_string());
+        // Dispatch 13 (0x802EA4CC) -> 802EBCFC: GATESTAGENO first, then the
+        // name. A string argument also takes nil (binding mask 0xA = nil and
+        // string tags, 802699FC), which arrives as a null pointer and stores
+        // the empty string (r2-0x6F58, 0x802EBD68..0x802EBDE8). Other types
+        // and a missing argument (LUA_TNONE) stop the call with the binding's
+        // type error (8026A434) before 802EBCFC; not modelled (no script
+        // does that), the name is kept then.
         gate_stage_no = arg_int(1);
+        if (!args.empty() && args[0].type() == Lua4Type::Nil) gate_stage_name = std::string();
+        else if (!args.empty() && args[0].type() == Lua4Type::String) gate_stage_name = std::string(args[0].as_string());
         return true;
     }
     (void)engine;

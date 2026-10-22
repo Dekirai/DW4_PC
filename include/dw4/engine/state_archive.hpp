@@ -57,6 +57,16 @@ public:
         if (reading()) values.resize(count);
         for (auto& value : values) io(value);
     }
+    template <class T> void io(std::optional<T>& value) {
+        bool present = value.has_value();
+        io(present);
+        if (!present) {
+            value.reset();
+            return;
+        }
+        if (reading() && !value) value.emplace();
+        io(*value);
+    }
     template <class T, std::size_t N> void io(std::array<T, N>& values) {
         for (auto& value : values) io(value);
     }

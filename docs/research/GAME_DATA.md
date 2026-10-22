@@ -72,6 +72,20 @@ execute that calculation.
 | `BKCHIPDATA` | IntList | 8 |
 | `GATESTAGENAME` | String | — |
 
+The common record is built from the table at `804EA930` (type, count, name;
+types 0 Int, 1 IntList, 3 BoolList, 4 String, 5 StringList, 7 FloatList, -1
+ends it) by `8036C2B0`. GAMEDATAINIT of slot 0 (`8036CE1C`, branch
+`0x8036CE3C`) releases every common variable and builds them again, so it
+also clears `GATESTAGENAME` and `GATESTAGENO`; the title's GENERATE_TITLE
+(`803689A8`) and the character select's new or called character of player 1
+(`0x8035ECC4` / `0x8035EF58`) send it. A fresh String variable holds a null
+string object: `SYSgetGateStageName` (dispatch 14, `802EBE94`) then pushes
+nil through `80269ECC` -> `80273330`, and stagML11 `start.lua` reacts with
+`SYSsetGateStage('GateOff', -1)`, which makes the lobby exit `g_cyexit` take
+`SQ_POWEROF`. Only `802EBCFC` writes the name (`SYSsetGateStage`, the gate
+disk `803B139C` with "Player"); a nil name argument stores the empty string.
+The memory card holds neither field.
+
 | Player fields | Type | Count |
 | --- | --- | --- |
 | `UNIQUE`, `XDATA`, `BIT`, `DIGIMONNO`, `LEVEL`, `EXP` | Int | — |

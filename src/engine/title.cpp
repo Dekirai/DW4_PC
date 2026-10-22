@@ -498,9 +498,12 @@ bool LoadCtrl2Manager::command(Engine& engine, Ram& base, std::string_view comma
         auto* sys = engine.get<GameSystem>();
         if (title) {
             ram.title = true;
-            // GAMERAM GAMEDATAINIT for every slot.
-            if (sys)
+            // GAMERAM GAMEDATAINIT for every slot (803689A8, 0x80368B18..48);
+            // slot 0 also rebuilds the common record (the gate stage unset).
+            if (sys) {
                 for (auto& player : sys->players) player = GameSystem::PlayerSlot{};
+                sys->reset_gate_stage();
+            }
         } else {
             ram.title = false;
             if (sys)
