@@ -918,6 +918,10 @@ struct BossFight {
     // No technique at it (survive): swings only, where a technique does a
     // fraction of a swing's damage and holds the player as long.
     bool blade = false;
+    // With `clear_touch`: the strike spot from the body boxes' shape (each
+    // box where it stands, shaped_spot) instead of a ring round the middle,
+    // for a body whose boxes reach out unevenly.
+    bool shaped = false;
 };
 constexpr BossFight kBossFights[] = {
     // stagBS03 with real blows: Lucemon lays rows of five bombs across its
@@ -1018,6 +1022,12 @@ constexpr BossFight kBossFights[] = {
     // some 63 out with the player's body.)
     {"stagbs05", "f_devl22|f_devl21", "f_devl22", 25.0f, true, true, "", 0.0f, 0.0f, 0.0f, true, "", "", false, "x_039fblst01a:62:SQ_FIRE",
      true},
+    // stagBS06 with real blows: Daemon's last form (f_devl3, 5645 HP). Its
+    // body boxes (70000, ~12 % of a level 40 player's HP a touch) are a
+    // block 50 across round its middle, four legs 17 across 28 / 18 out and
+    // two claws 30 across 55 ahead: the ring round its middle a body box's
+    // size gives stood in a leg, `shaped`.
+    {"stagbs06", "f_devl3", "f_devl3", 25.0f, true, true, "", 0.0f, 0.0f, 0.0f, true, "", "", false, "", false, true},
 };
 
 // Whether a model is named by a '|'-separated list ("<model>#<n>" names that
@@ -3844,9 +3854,57 @@ float dodge_due(const std::vector<DodgeArea>& areas, float x, float z) {
     return due;
 }
 
+// BossFight::shaped: a strike spot next to the focus outside every body box
+// of the boss (each where its offset puts it, its authored half extents
+// grown by the player's body and kShapedSpare), from which the focus's hit
+// body lies within kShapedReach; the one nearest the player on floor at its
+// height. False without one.
+constexpr float kShapedSpare = 3.0f, kShapedReach = 7.0f;
+static bool shaped_spot(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& boss, const engine::ModelCtrlManager::ModelRam& focus,
+                 const engine::Vec3f& me, engine::Vec3f& spot) {
+    struct Rect {
+        float x0, x1, z0, z1;
+    };
+    std::vector<Rect> rects;
+    const auto& m = boss.node->matrix;
+    constexpr float body_half = 2.5f;
+    for (const auto& box : boss.hitboxes) {
+        if ((box.kind / 10000 != 7 && box.kind / 10000 != 8) || box.end < 1e7f) continue;
+        const engine::Vec3f o = box.offset;
+        const float cx = o.x * m(0, 0) + o.y * m(1, 0) + o.z * m(2, 0) + m(3, 0);
+        const float cz = o.x * m(0, 2) + o.y * m(1, 2) + o.z * m(2, 2) + m(3, 2);
+        const float hx = box.size.x * 0.5f + body_half + kShapedSpare, hz = box.size.z * 0.5f + body_half + kShapedSpare;
+        rects.push_back({cx - hx, cx + hx, cz - hz, cz + hz});
+    }
+    const auto inside = [&](float x, float z) {
+        for (const auto& r : rects)
+            if (x > r.x0 && x < r.x1 && z > r.z0 && z < r.z1) return true;
+        return false;
+    };
+    auto* hitland = engine.get<engine::HitLandManager>();
+    const auto c = position_of(focus);
+    float best = 1e30f;
+    for (int k = 0; k < 32; ++k) {
+        const float a = float(k) * 0.19634954f, ux = std::sin(a), uz = std::cos(a);
+        for (float r = 2.0f; r < 100.0f; r += 1.0f) {
+            const float x = c.x + ux * r, z = c.z + uz * r;
+            if (inside(x, z)) continue;
+            const engine::Vec3f q{x, me.y, z};
+            if (flat(nearest_hit_point(focus, q), q) > kShapedReach) break;
+            if (hitland) {
+                const auto land = hitland->world().check_land({q.x, q.y + 5.0f, q.z}, 1.0f, 400.0f, 1.0f);
+                if (!land.found || std::abs(land.position.y - me.y) > 3.0f) break;
+            }
+            if (flat(q, me) < best) best = flat(q, me), spot = q;
+            break;
+        }
+    }
+    return best < 1e29f;
+}
+
 bool CampaignBot::boss_fight(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player, const std::string& strike,
                              const std::string& follow, float keep, bool dodge, float arena_x, float arena_z, float arena_r, bool clear_touch,
-                             const char* omen, const char* homing, bool lead, const char* rings, int frame, Output& out) {
+                             const char* omen, const char* homing, bool lead, const char* rings, bool shaped, int frame, Output& out) {
     auto* models = engine.get<engine::ModelCtrlManager>();
     if (!models) return false;
     const auto me = position_of(player);
@@ -4005,6 +4063,34 @@ bool CampaignBot::boss_fight(engine::Engine& engine, const engine::ModelCtrlMana
         // and the walk to the nearest hit point brought it back into the
         // claws: a level 16 no-cheat run guarded 62 times in 10000 frames
         // and swung never.)
+        // (`shaped`: the spot from the body boxes' shape, struck from there
+        // turned to the nearest point of the hit body.)
+        engine::Vec3f shaped_at{};
+        if (clear_touch && shaped && focus && in_reach && control && shaped_spot(engine, *boss, *focus, me, shaped_at)) {
+            const float walk = flat(shaped_at, me);
+            const auto h = nearest_hit_point(*focus, me);
+            if (walk > 1.5f) {
+                out.walk = true;
+                out.x = shaped_at.x;
+                out.z = shaped_at.z;
+                out.reach = walk > 3.0f ? 1.0f : 0.25f;
+            } else {
+                const float dx = h.x - me.x, dz = h.z - me.z, dd = std::max(0.01f, std::hypot(dx, dz));
+                const float facing = (player.node->matrix(2, 0) * dx + player.node->matrix(2, 2) * dz) / dd;
+                if (facing < 0.9f) {
+                    out.walk = true;
+                    out.x = me.x + dx / dd * 2.0f;
+                    out.z = me.z + dz / dd * 2.0f;
+                    out.reach = 1.5f;
+                } else if (here_due > kSwingBusy && frame % 12 < 3) {
+                    out.buttons |= pad_button::a;
+                }
+            }
+            if (tracing && frame % 30 == 0)
+                std::printf("[%d] campaign boss: shaped strike spot (%.0f,%.0f) %.1f off, hit body %.1f off, here due %.0f\n", frame, shaped_at.x,
+                            shaped_at.z, walk, flat(h, me), here_due);
+            return true;
+        }
         if (clear_touch && focus && in_reach && control) {
             const auto c = position_of(*focus);
             float hit_half = 0.0f;
@@ -6009,7 +6095,7 @@ CampaignBot::Output CampaignBot::play(engine::Engine& engine, const engine::Mode
             if (stage == fight.stage && (!fight.real_blows || (!engine.cheats().one_hit && !engine.cheats().god)) &&
                 !any_alive(engine, fight.first) &&
                 boss_fight(engine, *player, fight.strike, fight.follow, fight.keep, fight.dodge, fight.arena_x, fight.arena_z, fight.arena_r,
-                           fight.clear_touch, fight.omen, fight.homing, fight.lead, fight.rings, frame, out)) {
+                           fight.clear_touch, fight.omen, fight.homing, fight.lead, fight.rings, fight.shaped, frame, out)) {
                 if (fight.blade) blade_frame_ = frame;
                 last_ = me;
                 return out;
