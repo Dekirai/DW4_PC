@@ -116,6 +116,17 @@ beSaveUtilInfo (`stagis12/separate/*_pack.igb`) holds beSvPlatDataGC: file
 `SaveData`, then two redundant 40960-byte copies of the game data at 0x2000
 and 0xC000 (a copy whose check fails is skipped).
 
+The only time the save carries is the card directory entry's (GCI bytes
+0x28-0x2B, `save::card_time`): CARDCreate, CARDWrite and CARDSetStatus store
+OSGetTime() / (bus clock / 4) there (0x8024B480, 0x8024BBAC, 0x8024C43C; the
+SetStatus of the save flow writes last), the seconds since 2000-01-01 on the
+console clock, which the IPL keeps in local time. The port writes the PC's
+local calendar time counted the same way (a console set to the PC's clock),
+not UTC. The game never reads it back (CARDStat.time at the status buffer
++0x24 has no load), and no game code calls OSGetTime: the records hold no
+save date or play time (UNIQUE comes from the world clock, 8035EEF0). Dolphin
+writes its emulated clock there (a movie's RTC in movie runs).
+
 ## Character record (80364AEC, big-endian, 3316 bytes; 4 per copy)
 
 A copy is the checksum word, the version word 4 and the four save boxes, each

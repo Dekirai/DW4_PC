@@ -81,7 +81,9 @@ void Messenger::remove_rows(Manager* manager) {
 }
 
 void Messenger::clear() {
-    // 803040C0 also drops the deferred record pool and the pause.
+    // A stage change reloads every module (NEXTSTAGE 80347F2C -> 8028A87C):
+    // the messenger's reset hook 803040C0 also drops the deferred record
+    // pool and the pause.
     rows_.clear();
     deferred_.clear();
     deferred_records_ = kDeferredRecords;

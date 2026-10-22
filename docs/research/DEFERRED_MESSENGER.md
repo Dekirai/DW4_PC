@@ -129,3 +129,51 @@ this module. A prepared queue test is not an original startup or gameplay frame.
 The auxiliary original buffer string at +0C remains outside the represented
 typed-packet profile. See [MODEL_PLAYER_START.md](MODEL_PLAYER_START.md) for the
 bounded caller and [VALIDATION.md](VALIDATION.md) for measured checks.
+
+## Script sends, demo records and pauses (engine `Messenger`)
+
+The Lua method `sd` has four overloads (method table `0x80424428..0x8042447C`,
+cases 29..32 of the dispatcher `802EA1FC`). The overload resolver `8026B2E8`
+matches by argument count and type masks (`802699FC`): a string slot takes a
+string or nil, a number slot only a number.
+
+| Case | Form | Handler | Effect |
+| --- | --- | --- | --- |
+| 29 | `sd(cat, name, idx, cmd, args)` | `802ECD20` | `80305344` + `80305A28`: sent at once |
+| 30 | `sd(cat, name, idx, cmd)` | `802ECDA0` | `80305ED0`: sent at once |
+| 31 | `sd(cat, name, idx, cmd, args, delay)` | `802ECDE0` | `80305F9C` + `802ECA74` + `803061BC`: posted |
+| 32 | `sd(cat, name, idx, cmd, delay)` | `802ECE80` | `8030650C` (`80305F9C` + `803061BC`): posted |
+
+`803061BC` files the message for `clock + delay * 16666666` without a case for
+0, so `be:sd(..., 0)` arrives at the next delivery pass `80304C58`, which runs
+in the following frame before the demo manager and the managers, never inside
+the script that sent it (hit_n_agumon.lua's player `SQ_WAIT`, the recorders'
+`SQ_WAIT`, bck_e_skulgrey.lua's `SQ_ATMAP`, the dng412b3 track mats'
+`SQ_R*MOVE*`). None of the four returns a value (`0x802EA7F8..0x802EA860`).
+About 220 decompiled scripts use the delay-0 form. A demo record (`DMsetSD`
+with a delay, `802F7580`) is different: `802F7EC0` posts it only for a delay
+above 0 (signed 64-bit test at `0x802F7F54..0x802F7F78`) and sends it at once
+otherwise.
+
+A delivery pass delivers the due head again and again, at most as many times
+as the pool had records when the pass began (32 from `80303C0C`, one more per
+preparation while every record is in use), so a delay-0 message that a
+delivery posts usually still arrives in the same pass.
+
+`80304FA8` pauses the queue (+0x28 = the world clock; 0 = running). While
+paused, each pass moves every posted time on by the clock's advance and
+delivers nothing. Callers: SUBWND GENERATE (`0x8034FC30`, between the
+GENERATER and SOUND `ONFREEZE` broadcasts), the program's end (`0x8034F950`,
+after the `OFFREEZE` broadcasts), SUBWND REMOVE before the program window
+exists (`0x8034FC88`: unpaused, the REMOVE is posted again with delay 1), the
+soft reset (`0x80347EB8`, after the MODELCTRL / GENERATER `ONFREEZE`) and the
+disc error freeze (`80316974`, not modelled). The STAGECTL `NEXTSTAGE` handler
+(`80347F2C`) hands the package `stagXXXX.igb` to the application loop
+(`80021018`), whose module reload (`80021944` -> `8040F570` -> `8028A87C`)
+calls every module's reset hook (vtable +0x70); the messenger's (`80304C38` ->
+`803040C0`) drops the queue, the record pool and the pause, as
+`Messenger::clear` at the stage teardown does.
+
+Dolphin (round 33b/34): dngq5b1e talk, dng204b2 SkullGreymon attack cycles,
+stag0301 recorder talk and the dng412b3 Trailmon ride match frame for frame
+with these rules; the immediate delay-0 send was one frame early.
