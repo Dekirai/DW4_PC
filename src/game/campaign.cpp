@@ -3880,12 +3880,13 @@ float dodge_due(const std::vector<DodgeArea>& areas, float x, float z) {
 // body lies within kShapedReach; the one nearest the player on floor at its
 // height. False without one.
 constexpr float kShapedSpare = 3.0f, kShapedReach = 7.0f;
-static bool shaped_spot(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& boss, const engine::ModelCtrlManager::ModelRam& focus,
-                 const engine::Vec3f& me, engine::Vec3f& spot) {
-    struct Rect {
-        float x0, x1, z0, z1;
-    };
-    std::vector<Rect> rects;
+// The boss's body boxes (permanent attack boxes) on the ground, each where
+// its offset puts it, grown by the player's body and `spare`.
+struct BodyRect {
+    float x0, x1, z0, z1;
+};
+static std::vector<BodyRect> body_rects(const engine::ModelCtrlManager::ModelRam& boss, float spare) {
+    std::vector<BodyRect> rects;
     const auto& m = boss.node->matrix;
     constexpr float body_half = 2.5f;
     for (const auto& box : boss.hitboxes) {
@@ -3893,14 +3894,47 @@ static bool shaped_spot(engine::Engine& engine, const engine::ModelCtrlManager::
         const engine::Vec3f o = box.offset;
         const float cx = o.x * m(0, 0) + o.y * m(1, 0) + o.z * m(2, 0) + m(3, 0);
         const float cz = o.x * m(0, 2) + o.y * m(1, 2) + o.z * m(2, 2) + m(3, 2);
-        const float hx = box.size.x * 0.5f + body_half + kShapedSpare, hz = box.size.z * 0.5f + body_half + kShapedSpare;
+        const float hx = box.size.x * 0.5f + body_half + spare, hz = box.size.z * 0.5f + body_half + spare;
         rects.push_back({cx - hx, cx + hx, cz - hz, cz + hz});
     }
-    const auto inside = [&](float x, float z) {
-        for (const auto& r : rects)
-            if (x > r.x0 && x < r.x1 && z > r.z0 && z < r.z1) return true;
-        return false;
-    };
+    return rects;
+}
+static bool in_rects(const std::vector<BodyRect>& rects, float x, float z) {
+    for (const auto& r : rects)
+        if (x > r.x0 && x < r.x1 && z > r.z0 && z < r.z1) return true;
+    return false;
+}
+// BossFight::shaped with nothing to strike: the spot nearest the player
+// outside every body box (kShapedKeep spare: the boss moves, its flight's
+// boxes, 70097, reach some 55 ahead of its middle), when the player stands
+// in one. False when it stands clear or there is no such spot.
+constexpr float kShapedKeep = 6.0f;
+static bool outside_spot(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& boss, const engine::Vec3f& me, engine::Vec3f& spot) {
+    const auto rects = body_rects(boss, kShapedKeep);
+    if (!in_rects(rects, me.x, me.z)) return false;
+    auto* hitland = engine.get<engine::HitLandManager>();
+    const auto c = position_of(boss);
+    float best = 1e30f;
+    for (int k = 0; k < 32; ++k) {
+        const float a = float(k) * 0.19634954f, ux = std::sin(a), uz = std::cos(a);
+        for (float r = 2.0f; r < 120.0f; r += 2.0f) {
+            const float x = c.x + ux * r, z = c.z + uz * r;
+            if (in_rects(rects, x, z)) continue;
+            if (hitland) {
+                const auto land = hitland->world().check_land({x, me.y + 5.0f, z}, 1.0f, 400.0f, 1.0f);
+                if (!land.found || std::abs(land.position.y - me.y) > 3.0f) break;
+            }
+            const engine::Vec3f q{x, me.y, z};
+            if (flat(q, me) < best) best = flat(q, me), spot = q;
+            break;
+        }
+    }
+    return best < 1e29f;
+}
+static bool shaped_spot(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& boss, const engine::ModelCtrlManager::ModelRam& focus,
+                 const engine::Vec3f& me, engine::Vec3f& spot) {
+    const auto rects = body_rects(boss, kShapedSpare);
+    const auto inside = [&](float x, float z) { return in_rects(rects, x, z); };
     auto* hitland = engine.get<engine::HitLandManager>();
     const auto c = position_of(focus);
     float best = 1e30f;
@@ -4346,13 +4380,26 @@ bool CampaignBot::boss_fight(engine::Engine& engine, const engine::ModelCtrlMana
         }
         return true;
     }
-    // Nothing to strike: near the boss, on the player's side of it.
+    // Nothing to strike: near the boss, on the player's side of it (with
+    // `shaped` out of its body boxes first: kept 25 from Daemon's middle
+    // while it flew, the player stood in its flight's boxes, ~25 % of the
+    // HP a touch).
+    engine::Vec3f clear_at{};
+    if (shaped && player.ctrl_mode != 0 && player.control_enabled && outside_spot(engine, *boss, me, clear_at)) {
+        out.walk = true;
+        out.x = clear_at.x;
+        out.z = clear_at.z;
+        out.reach = 1.0f;
+        if (tracing && frame % 30 == 0)
+            std::printf("[%d] campaign boss: out of %s's body boxes to (%.0f,%.0f)\n", frame, boss->info_name.c_str(), clear_at.x, clear_at.z);
+        return true;
+    }
     const auto b = position_of(*boss);
     const float d = flat(b, me);
     if (std::abs(d - keep) > 6.0f) {
         const float k = d > 0.01f ? keep / d : 0.0f;
         const engine::Vec3f spot{b.x + (me.x - b.x) * k, me.y, b.z + (me.z - b.z) * k};
-        walk_to(engine, player, spot, 4.0f, frame, out);
+        if (!shaped || !in_rects(body_rects(*boss, kShapedKeep), spot.x, spot.z)) walk_to(engine, player, spot, 4.0f, frame, out);
     }
     return true;
 }
