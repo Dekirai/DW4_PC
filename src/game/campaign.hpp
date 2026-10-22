@@ -112,6 +112,7 @@ private:
     std::string stage_;
     int entry_ = -1;             // the player point the current stage was entered at
     int stage_frame_{};          // the frame the current stage was requested
+    int player_traced_visit_ = -1; // the stage visit (its stage_frame_) the character was traced in
     std::string traced_;         // the last traced step
     int traced_at_{};            // the frame it began
     ExploreBot explorer_;

@@ -136,6 +136,9 @@ struct ElementNeed {
 };
 constexpr ElementNeed kElementNeeds[] = {
     {0, "P5&!K7|P5&!K8"},
+    // The scrap walls of dng412b1-b4 (hit_g_dscrap.lua) break only to a
+    // swing of thunder (a technique does nothing to them): key item 10.
+    {2, "P6&!K10"},
 };
 
 bool holds(engine::Engine& engine, std::string_view condition, int entry = -1);
@@ -393,6 +396,13 @@ constexpr Objective kObjectives[] = {
     // last three boss stages and the staff roll (stagBS06 matz01).
     {"digivolve back to Veemon (thunder for the scrap walls)", "C1|K10|P7|!S1", "stagml12", "evolve:1"},
     {"key item 9 (dng411b3 boss)", "K9|P7", "dng411b3", "explore:matz02"},
+    // Without the test cheats the thunder for dng412's scrap walls comes
+    // from a thunder PWR Medal in the weapon's pocket, in place of the fire
+    // one of area 3 (the walls take no technique, hit_g_dscrap.lua; see
+    // "Chips in the weapon's power pockets" and kElementNeeds).
+    {"a weapon with chip pockets (rank 1+, for a thunder medal)", "G|A2|R1|K10|P7", "stagml13", "gear:n_digilfm#0"},
+    {"a thunder PWR Medal from the chip shop", "G|A2|H2|K10|P7", "stagml13", "gear:n_digilfm#1"},
+    {"the thunder PWR Medal into the weapon's pocket", "G|A2|K10|P7", "stagml12", "equip:n_digilff#1"},
     {"key item 10 (dng412b4 boss)", "K10|P7", "dng412b4", "explore:matz02"},
     {"Daemon (stagBS06)", "F86|F70", "stagbs06", "explore:matz01"},
     // The return gate of stagBS06 leads to the staff roll (stagIS20
@@ -5346,7 +5356,10 @@ CampaignBot::Output CampaignBot::play(engine::Engine& engine, const engine::Mode
     if (frame == stage_frame_ + 110 && std::getenv("DW4_CAMPAIGN_REGIONS")) region_report(engine, *player);
     // The character on arriving in a stage (level, techniques' elements,
     // the attack's element: what element-locked walls need).
-    if (frame == stage_frame_ + 104 && trace())
+    // (Once a stage visit, when the player first has control: the stage loads
+    // take 400..900 frames since the simulated disc, so a fixed frame after
+    // the request came before the player.)
+    if (player_traced_visit_ != stage_frame_ && player->control_enabled && trace() && (player_traced_visit_ = stage_frame_) >= 0)
         if (auto* sys = engine.get<engine::GameSystem>()) {
             const auto& slot = sys->players[0];
             std::string techs;
