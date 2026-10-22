@@ -69,6 +69,14 @@ bool build_particles(const ObjectView& particle_attr, float time, const Mat4& mo
     // modelview (800E1A40) transforms; the sizes are view-space sizes the
     // model scale never enters (igPointSpriteExt stores 0.5 * w, h at
     // 800E3618 / 800E3650).
+    // 800E1C70's other path, for the point sprite extension's mode (+0x24)
+    // 1 (centre projected through the matrix 800E2044 builds, divided by w,
+    // sizes in projection units), is IG_GFX_SPRITE_SIZE_SCREEN_COORDINATE:
+    // the array's configure (800E0010, 0x800E0308) and draw (800E0EC0,
+    // 0x800E1130) set the mode from igParticleFormat _spriteSpace (+0x24)
+    // through the extension's vtable +0x88 (800C2E2C). All 2717 particle
+    // formats in the data have _spriteType POINTS (+0x20 = 1) and
+    // _spriteSpace WORLD_COORDINATE (0), so only this view-space path runs.
     const Vec3f right{view(0, 0), view(1, 0), view(2, 0)};
     const Vec3f up{view(0, 1), view(1, 1), view(2, 1)};
 

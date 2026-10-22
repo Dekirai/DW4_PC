@@ -618,22 +618,30 @@ void GlRenderer::render_shadow_map() {
         }
         // 801FDCCC locks (801D5190) only igLightingStateAttr, igDepthStateAttr,
         // the unit-0 igTextureStateAttr, _shadowColor and the viewport; every
-        // caster keeps its own blending. An additive one (stagBS06 f_devl31
-        // ring1 / ring2: SRC_ALPHA, ONE) adds its grey to the white map and
-        // casts nothing.
+        // caster keeps its own blending (always added, as in the main pass)
+        // and its own culling. An additive one (stagBS06 f_devl31 ring1 /
+        // ring2: SRC_ALPHA, ONE) adds its grey to the white map and casts
+        // nothing.
         const auto& s = item.state;
         if (s.blend_enabled) {
             glEnable(GL_BLEND);
             gl.BlendFuncSeparate(blend_factor(s.blend_src), blend_factor(s.blend_dst), GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
-            gl.BlendEquation(s.blend_equation == 1 ? GL_FUNC_SUBTRACT : GL_FUNC_ADD);
+            gl.BlendEquation(GL_FUNC_ADD);
         } else {
             glDisable(GL_BLEND);
+        }
+        if (s.cull_enabled) {
+            glEnable(GL_CULL_FACE);
+            glCullFace(s.cull_mode == 1 ? GL_FRONT : s.cull_mode == 2 ? GL_FRONT_AND_BACK : GL_BACK);
+        } else {
+            glDisable(GL_CULL_FACE);
         }
         gl.BindVertexArray(m->vao);
         glDrawElements(GL_TRIANGLES, m->index_count, GL_UNSIGNED_INT, nullptr);
     }
     gl.BindVertexArray(0);
     glDisable(GL_BLEND);
+    glDisable(GL_CULL_FACE);
     gl.Uniform1i(gl.u_shadow_pass, 0);
     if (static const bool trace = std::getenv("DW4_TRACE_SHADOW") != nullptr; trace && frame_ % 120 == 0) {
         std::vector<std::uint8_t> pixels(std::size_t(shadow_width_ * shadow_height_) * 4);
@@ -876,9 +884,14 @@ void GlRenderer::render(const std::vector<engine::DrawItem>& items, const engine
             gl.Uniform2f(gl.u_fog_range, s.fog_params->f0, s.fog_params->f1);
         }
         if (s.blend_enabled) {
+            // The GX visual context's blend flush 800F8EA8 calls
+            // GXSetBlendMode(enabled ? GX_BM_BLEND : GX_BM_NONE, src, dst,
+            // GX_LO_COPY): it never selects GX_BM_SUBTRACT, so every blended
+            // item adds (the igBlendFunctionAttr equation is dropped, see the
+            // blend_function case in scene_graph.cpp).
             glEnable(GL_BLEND);
             gl.BlendFuncSeparate(blend_factor(s.blend_src), blend_factor(s.blend_dst), GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
-            gl.BlendEquation(s.blend_equation == 1 ? GL_FUNC_SUBTRACT : GL_FUNC_ADD);
+            gl.BlendEquation(GL_FUNC_ADD);
         } else {
             glDisable(GL_BLEND);
         }

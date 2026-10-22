@@ -623,6 +623,7 @@ private:
     Vec3f direction_{0, -1, 0};         // the light's direction
     std::optional<Vec3f> light_;
     bool active() const { return shader_ && light_.has_value() && !casters_.empty() && !receivers_.empty(); }
+    Mat4 light_view() const; // only while active()
     void traverse(const TraversalContext& context, std::vector<DrawItem>* casters, std::vector<DrawItem>* receivers);
 };
 

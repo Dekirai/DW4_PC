@@ -968,9 +968,19 @@ void apply(const Attribute* a, RenderState& s, Mat4& model) {
         s.emission = a->emission;
         break;
     case AttrKind::blend_function:
+        // igBlendFunctionAttr apply 800BD510 hands only _src (+0xC) and _dst
+        // (+0x10) to the visual context (800F8E90 stores them at +0x48C /
+        // +0x490). _equation (+0x14; IG_GFX_BLEND_EQUATION ADD 0, SUBTRACT
+        // 1, REVERSE_SUBTRACT 2, enum 0x8048A578) goes only to an
+        // igBlendEquationExt (r13-0x241C, looked up by 800BD570), and the
+        // GameCube context has none: the class is abstract (800D5A2C) and
+        // no igGamecube* class derives from it. The blend flush 800F8EA8
+        // passes GX_BM_BLEND or GX_BM_NONE to GXSetBlendMode (80257F50), so
+        // GX_BM_SUBTRACT is never used. Every igBlendFunctionAttr in the
+        // data has equation ADD anyway (2213 in all IGB files and package
+        // members); a->e2 keeps the value.
         s.blend_src = a->e0;
         s.blend_dst = a->e1;
-        s.blend_equation = a->e2;
         break;
     case AttrKind::blend_state:
         if (!s.blend_forced) s.blend_enabled = a->enabled;
@@ -1354,8 +1364,24 @@ void visit(Node* n, TraversalContext& ctx, const Mat4& parent_model, const State
         // (80128690 at 801DD76C). Here `model` already is the world matrix.
         const Mat4 view = state.view.value_or(ctx.camera.view);
         Mat4 inverse_view;
-        if (invert(view, inverse_view))
-            model = billboard_matrix(n->billboard_mode, n->billboard_axis, n->billboard_center, model, inverse_view);
+        if (!invert(view, inverse_view)) break;
+        Mat4 base_inverse;
+        if (ctx.modelview_base && !state.view && invert(*ctx.modelview_base, base_inverse)) {
+            // Shadow caster pass: the stack top is world * light view, so
+            // the billboard starts from world * light view * inverse camera
+            // view and its children get the result * camera view, which the
+            // light view pass maps back with * inverse light view. The eye
+            // (inverse view row 3) is still the camera's, so camera view
+            // space stands in for light view space: the face turns towards
+            // the light's eye (the light view's origin), and the mode's up
+            // vector is taken in camera view coordinates (mode 0: world Y
+            // through the camera's rotation) and read in light view ones.
+            model = billboard_matrix(n->billboard_mode, n->billboard_axis, n->billboard_center,
+                                     model * *ctx.modelview_base * inverse_view, inverse_view) *
+                    view * base_inverse;
+            break;
+        }
+        model = billboard_matrix(n->billboard_mode, n->billboard_axis, n->billboard_center, model, inverse_view);
         break;
     }
     case NodeKind::lod: {
