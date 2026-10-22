@@ -828,6 +828,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
             for (std::size_t slot = 0; slot < state_slots.size(); ++slot) state_slots[slot] = read_state_file(state_path(slot));
         auto can_save = [&]() -> std::string {
             if (net.active()) return "Save states are off in online sessions.";
+            if (engine.rebooting()) return "The console is restarting.";
             const auto* snapshot = engine.stage_snapshot();
             if (!snapshot) return "No stage has loaded yet.";
             if (snapshot->stage.rfind("stagis", 0) == 0) return "Save states work after the title screens.";
