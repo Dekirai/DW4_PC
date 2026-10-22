@@ -821,8 +821,15 @@ struct StageSetting {
 };
 constexpr StageSetting kStageSettings[] = {
     // stag0403: the floor switch order that lowers the bridge to matz00.
+    // Every step onto a maty mat toggles the button on it (maty*.lua:
+    // g_sbuttonz04 SQ_SWON / SQ_SWON01 while on, SQ_SWOF / SQ_SWOF01 or the
+    // first SQ_WAIT / SQ_WAIT01 while off) and its magnet floor; a toggle
+    // that leaves blue on minus red on at 3 opens the tower (funcCorrectDemo,
+    // flag 492), any other closes it (funcFailDemo). The order follows the
+    // buttons, not the steps taken.
     {"stag0403", "DW4_MAT_SEQUENCE", "maty07,maty00,maty04,maty03,maty02"},
     {"stag0403", "DW4_AVOID_MATS", "maty"},
+    {"stag0403", "DW4_MAT_SWITCH", "g_sbuttonz04 SQ_SWON"},
 };
 
 // Targets struck in passing from a ride (the stag0103 boat: the six factory

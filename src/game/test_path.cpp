@@ -1319,7 +1319,7 @@ void ExploreBot::plan(engine::Engine& engine, const engine::ModelCtrlManager::Mo
         // Other stage change mats would open their prompt.
         const auto key = mat_key(box.name);
         const bool pit = hazard_mat(engine, box.name);
-        const bool next_in_sequence = mat_sequence_next_ < mat_sequence_.size() && mat_sequence_[mat_sequence_next_] == box.name;
+        const bool next_in_sequence = !mat_next_.empty() && mat_next_ == box.name;
         const bool avoided = !avoid_mats_.empty() && box.name.rfind(avoid_mats_, 0) == 0 && !next_in_sequence;
         if (goals.count(key) || (!exit_mat(engine, box.name) && !pit && !avoided)) continue;
         // A pit a moving platform crosses ends at the mat's top: its banks
@@ -1687,10 +1687,33 @@ void ExploreBot::plan(engine::Engine& engine, const engine::ModelCtrlManager::Mo
         go_goal();
         return;
     }
-    // The next mat of a given sequence.
-    if (mat_sequence_next_ < mat_sequence_.size())
+    // The next mat of a given sequence. One the player stands on whose
+    // switch shows off (DW4_MAT_SWITCH: thrown back onto it after the step
+    // that turned it on) is stepped off first: reached floor beyond its
+    // nearest side, then onto it again.
+    if (!mat_next_.empty())
         for (const auto& box : boxes) {
-            if (box.name != mat_sequence_[mat_sequence_next_]) continue;
+            if (box.name != mat_next_) continue;
+            if (!mat_switch_model_.empty() && player.control_enabled && me.x >= box.min.x && me.x <= box.max.x && me.z >= box.min.z &&
+                me.z <= box.max.z && me.y >= box.min.y - 2.0f && me.y <= box.max.y + 2.0f) {
+                const float cx = (box.min.x + box.max.x) * 0.5f, cz = (box.min.z + box.max.z) * 0.5f;
+                std::optional<engine::Vec3f> off;
+                float off_cost = std::numeric_limits<float>::infinity();
+                for (const auto& [px, pz] : {std::pair{box.min.x - 12.0f, cz}, std::pair{box.max.x + 12.0f, cz}, std::pair{cx, box.min.z - 12.0f},
+                                             std::pair{cx, box.max.z + 12.0f}}) {
+                    const auto q = map.nearest({px, me.y, pz}, 8.0f);
+                    if (!q || (q->x >= box.min.x - 4.0f && q->x <= box.max.x + 4.0f && q->z >= box.min.z - 4.0f && q->z <= box.max.z + 4.0f))
+                        continue;
+                    if (const float cost = map.cost_to(*q, 1.0f); cost < off_cost) {
+                        off = q;
+                        off_cost = cost;
+                    }
+                }
+                if (off) {
+                    go(*off, nullptr, "off sequence mat " + box.name);
+                    return;
+                }
+            }
             if (const auto inside = map.reached_inside(box.min.x + 1.0f, box.min.z + 1.0f, box.max.x - 1.0f, box.max.z - 1.0f);
                 inside && inside->y >= box.min.y - 5.0f && inside->y <= box.max.y + 5.0f) {
                 go(*inside, nullptr, "sequence mat " + box.name);
@@ -2689,6 +2712,16 @@ ExploreBot::Decision ExploreBot::update(engine::Engine& engine, const engine::Mo
                 at = *end ? end + 1 : end;
             }
         avoid_mats_ = std::getenv("DW4_AVOID_MATS") ? std::getenv("DW4_AVOID_MATS") : "";
+        mat_switch_model_.clear();
+        mat_switch_on_.clear();
+        mat_next_.clear();
+        if (const char* sw = std::getenv("DW4_MAT_SWITCH")) {
+            const std::string_view text(sw);
+            if (const auto space = text.find(' '); space != std::string_view::npos && space > 0 && space + 1 < text.size()) {
+                mat_switch_model_ = std::string(text.substr(0, space));
+                mat_switch_on_ = std::string(text.substr(space + 1));
+            }
+        }
         portals_taken_.clear();
         cleared_generators_.clear();
         watch_.clear();
@@ -2802,17 +2835,70 @@ ExploreBot::Decision ExploreBot::update(engine::Engine& engine, const engine::Mo
             }
             hp->second = e->hp;
         }
-    if (mat_sequence_next_ < mat_sequence_.size())
-        if (auto* mats = engine.get<engine::MatCtrlManager>())
-            for (const auto& box : mats->mat_boxes())
-                if (box.name == mat_sequence_[mat_sequence_next_] && me.x >= box.min.x && me.x <= box.max.x && me.z >= box.min.z &&
-                    me.z <= box.max.z && me.y >= box.min.y - 2.0f && me.y <= box.max.y + 2.0f) {
-                    if (std::getenv("DW4_TRACE_EXPLORE")) std::printf("[%d] explore stood on sequence mat %s\n", frame, box.name.c_str());
-                    ++mat_sequence_next_;
-                    planned_ = -1000;
-                    progress_at_ = frame;
+    if (!mat_switch_model_.empty() && !mat_sequence_.empty()) {
+        // The next mat of the sequence as the switches show it, read while
+        // the player can move: a step onto such a mat takes the control
+        // (stag0403 maty*.lua: PLAYER OFCTRL) until its switch has turned.
+        // (A guarded blow threw the player back onto stag0403's maty07 just
+        // after it had been stepped on; that step turned it off again, and
+        // the rest of the sequence then opened the tower one mat early and
+        // closed it with the last.)
+        auto* mats = engine.get<engine::MatCtrlManager>();
+        auto* models = engine.get<engine::ModelCtrlManager>();
+        if (mats && models && player.control_enabled) {
+            const auto boxes = mats->mat_boxes();
+            // The switch standing on a mat: on, off or none.
+            auto switch_on = [&](const engine::MatCtrlManager::MatBox& box) -> std::optional<bool> {
+                for (const auto& e : models->rams())
+                    if (e->generated && e->node && e->info_name == mat_switch_model_) {
+                        const auto p = position_of(*e);
+                        if (p.x >= box.min.x && p.x <= box.max.x && p.z >= box.min.z && p.z <= box.max.z)
+                            return e->seq_name.rfind(mat_switch_on_, 0) == 0;
+                    }
+                return std::nullopt;
+            };
+            auto in_sequence = [&](const std::string& name) {
+                return std::find(mat_sequence_.begin(), mat_sequence_.end(), name) != mat_sequence_.end();
+            };
+            std::string next;
+            for (const auto& box : boxes)
+                if (!avoid_mats_.empty() && box.name.rfind(avoid_mats_, 0) == 0 && !in_sequence(box.name) && switch_on(box).value_or(false)) {
+                    next = box.name;
                     break;
                 }
+            for (std::size_t i = 0; i < mat_sequence_.size() && next.empty(); ++i)
+                for (const auto& box : boxes)
+                    if (box.name == mat_sequence_[i] && !switch_on(box).value_or(false)) {
+                        next = box.name;
+                        break;
+                    }
+            if (next != mat_next_) {
+                if (std::getenv("DW4_TRACE_EXPLORE")) {
+                    std::string on;
+                    for (const auto& box : boxes)
+                        if (switch_on(box).value_or(false)) on += " " + box.name;
+                    std::printf("[%d] explore sequence mat next: %s (switches on:%s)\n", frame, next.empty() ? "none" : next.c_str(),
+                                on.empty() ? " none" : on.c_str());
+                }
+                mat_next_ = next;
+                planned_ = -1000;
+                progress_at_ = frame;
+            }
+        }
+    } else {
+        if (mat_sequence_next_ < mat_sequence_.size())
+            if (auto* mats = engine.get<engine::MatCtrlManager>())
+                for (const auto& box : mats->mat_boxes())
+                    if (box.name == mat_sequence_[mat_sequence_next_] && me.x >= box.min.x && me.x <= box.max.x && me.z >= box.min.z &&
+                        me.z <= box.max.z && me.y >= box.min.y - 2.0f && me.y <= box.max.y + 2.0f) {
+                        if (std::getenv("DW4_TRACE_EXPLORE")) std::printf("[%d] explore stood on sequence mat %s\n", frame, box.name.c_str());
+                        ++mat_sequence_next_;
+                        planned_ = -1000;
+                        progress_at_ = frame;
+                        break;
+                    }
+        mat_next_ = mat_sequence_next_ < mat_sequence_.size() ? mat_sequence_[mat_sequence_next_] : std::string();
+    }
     const auto visited_before = visited_.size();
     for (const float ox : {-8.0f, 8.0f})
         for (const float oz : {-8.0f, 8.0f}) visited_.insert(coarse(me.x + ox, me.z + oz));

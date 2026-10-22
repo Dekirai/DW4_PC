@@ -400,10 +400,19 @@ private:
     // DW4_MAT_SEQUENCE=m1,m2,...: mats stood on once each, in this order,
     // before anything but the goal (a switch puzzle's solution, given like a
     // preset); DW4_AVOID_MATS=<prefix>: the other mats of that prefix are kept
-    // away from.
+    // away from. DW4_MAT_SWITCH=<model> <on sequence prefix>: every step onto
+    // such a mat toggles the switch model standing on it, which shows the
+    // state (its sequence starts with the prefix while on): the next mat is
+    // then the first of the sequence whose switch is off, before it an
+    // avoided mat whose switch is on (stepped on by accident, e.g. thrown
+    // back onto it by a guarded blow), and a mat stood on whose switch is
+    // off is stepped off and on again. Without it each mat counts once
+    // stood on.
     std::vector<std::string> mat_sequence_;
     std::size_t mat_sequence_next_{};
     std::string avoid_mats_;
+    std::string mat_switch_model_, mat_switch_on_;
+    std::string mat_next_;                       // the sequence mat stepped on next ("": none)
 
     std::map<const void*, int> switched_;        // switch -> frame it was seen switched on
     std::map<const void*, int> health_;          // strike gimmick -> lowest HP seen
