@@ -596,6 +596,8 @@ constexpr float kFarTalk = 12.0f;
 // The ground kept clear round a structure seen healing itself (plan,
 // without the test cheats): the poison plants' spit hit at up to 46.
 constexpr float kHealerKeep = 45.0f;
+// Pickups gone for while crossing a field (set_transit): within this.
+constexpr float kTransitPick = 30.0f;
 float box_reach(const engine::ModelCtrlManager::ModelRam& e) {
     if (!e.node || !e.hit || e.hit->boxes.empty()) return 0.0f;
     const auto& m = e.node->matrix;
@@ -1519,7 +1521,11 @@ void ExploreBot::plan(engine::Engine& engine, const engine::ModelCtrlManager::Mo
     // The kept target counts as nearer, so two equally far ones do not take
     // turns.
     auto keep = [&](const void* target, float cost) { return target == previous ? cost * 0.6f : cost; };
-    const bool defending = frame < defend_until_;
+    // (Crossing a field to an exit, set_transit: as while defending. A no-cheat
+    // chain spent 33000 frames a crossing of stag0302 and 31000 of the swamp
+    // stag0303 hunting e_maridevi and the like, which the cheat run's one-hit
+    // blows took in passing: 12800 and 3700.)
+    const bool defending = frame < defend_until_ || transit_;
     // A started radar generator waits for a player near its base: walk
     // into its range. Before the mats only one the mat underfoot started
     // (leaving that mat would stop it again), after them any.
@@ -1665,6 +1671,7 @@ void ExploreBot::plan(engine::Engine& engine, const engine::ModelCtrlManager::Mo
             if (pass == 0 && structure && regenerating_names_.count(e->info_name) && !engine.cheats().one_hit && !engine.cheats().god) continue;
             const bool boss = e->info_name.rfind("f_", 0) == 0;
             if (!boss && (pass == 0 || e->item_table != 2) && near_healer(at)) continue; // (key items are fetched all the same)
+            if (transit_ && pass == 1 && e->item_table != 2 && flat(at, me) > kTransitPick) continue;
             const bool hover = pass == 0 && hovering(*e);
             // (A structure seen firing along a lane is a turret.)
             const auto fired = shots_.find(e.get());
@@ -3397,10 +3404,12 @@ ExploreBot::Decision ExploreBot::update(engine::Engine& engine, const engine::Mo
         planned_ = -1000;
     }
     // Defending: strike an enemy that comes close, without chasing it.
-    if (frame < defend_until_ && !decision.attack && !decision.press_a && models)
+    // (Also while crossing a field, set_transit.)
+    if ((frame < defend_until_ || transit_) && !decision.attack && !decision.press_a && models)
         for (const auto& e : models->rams())
             if (e->generated && e->node && e->category == "ENEMY" && e->hp > 0 && flat(position_of(*e), me) < 12.0f &&
-                !(unreachable_.count(e.get()) && frame < unreachable_[e.get()]) && !unkillable_.count(e.get())) {
+                !(unreachable_.count(e.get()) && frame < unreachable_[e.get()]) && !unkillable_.count(e.get()) &&
+                !regenerating_names_.count(e->info_name)) {
                 decision.attack = frame % 20 < 3;
                 break;
             }

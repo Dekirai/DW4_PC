@@ -1553,6 +1553,10 @@ constexpr Supply kSupplies[] = {
     // stag0301 crossing to stag0302 up three times with no heal left.
     {2, 9, 0, 1 << 30, 10000},
     {9, 3, 0, 1 << 30, 30000},
+    // (A full slot of Recovery with 20000 bits more: stag0304's cannon climb
+    // to the dng310 fortress took a level 37 Veemon some 89000 HP of heals,
+    // 9 of each HP disk and 9 Recovery.)
+    {9, 9, 0, 1 << 30, 50000},
 };
 constexpr int kRaiseDisk = 7;
 constexpr int kRaiseWalk = 1500; // frames to reach the bit capsule
@@ -4456,10 +4460,21 @@ void CampaignBot::survive(engine::Engine& engine, const engine::ModelCtrlManager
             // (A panel walk waits for a gap between the blows: a hit closes
             // the panel, 8034E1A4.)
             const float walk = float(4 + 2 * disk_ups_ + 2 * disk_line_ + 2);
+            // (Below kHealBelow percent with blows due, Y at once, whatever
+            // disk it takes: under stag0304's cannon pairs the shells (15 %
+            // of the HP each, two or three a volley from each) left no gap
+            // for the walk, and a level 36 run fell there with 7 HP Disks L
+            // and 4 Recovery held.)
+            // (Y takes the highest record held, a Recovery first: only while two
+            // of the biggest recent blows would end the player.)
             if (!disk_quick_ && blow_due(engine, player, walk, frame) <= walk) {
-                disk_use_ = -1;
-                heal_at_ = frame - kHealGap + 2;
-                return;
+                if (slot.hp * 100 < slot.max_hp * kHealBelow && big_hits && slot.hp < 2 * big_hit_) {
+                    disk_quick_ = true;
+                } else {
+                    disk_use_ = -1;
+                    heal_at_ = frame - kHealGap + 2;
+                    return;
+                }
             }
             if (trace())
                 std::printf("[%d] campaign heals at %d/%d HP with conItem %d (HP disks %d/%d/%d, Recovery %d)\n", frame, slot.hp, slot.max_hp,
@@ -4571,7 +4586,10 @@ void CampaignBot::survive(engine::Engine& engine, const engine::ModelCtrlManager
         // and stag0304 with 9 HP Disks S and 2 L and 95000 bits in the bank,
         // and gave the fortress up there.)
         // (Measured by the HP the heals held make up against a full stock of
-        // the supplies, kSupplies' highest count of each heal: below half.)
+        // the supplies the bits held and banked reach, kSupplies' highest
+        // count of each heal among the rows whose reserve they cover: below
+        // half. A level 12 chain with a few hundred bits went back twice at
+        // once, its 9 HP Disks S measured against Disks L and Recovery.)
         bool restock = false;
         if (!objective_now_.empty() && objective_now_.rfind("train", 0) != 0 && restock_trips_[objective_now_] < kRestockTrips &&
             !lobby(lower(engine.stage_name())) && planned_spend(engine) >= kGateTripBits)
@@ -4580,7 +4598,8 @@ void CampaignBot::survive(engine::Engine& engine, const engine::ModelCtrlManager
                 for (const int record : {0, 1, 2, 9}) {
                     int keep = 0;
                     for (const auto& s : kSupplies)
-                        if (s.record == record && slot.max_hp >= s.from_hp && slot.max_hp < s.to_hp) keep = std::max(keep, std::min(s.keep, 9));
+                        if (s.record == record && slot.max_hp >= s.from_hp && slot.max_hp < s.to_hp && slot.bits + slot.bank_bits >= s.reserve)
+                            keep = std::max(keep, std::min(s.keep, 9));
                     const double hp = record == 9 ? slot.max_hp : db->number("conItem", record, "HP").value_or(0);
                     held += hp * disks_held(slot, record);
                     full += hp * keep;
@@ -4846,7 +4865,7 @@ void CampaignBot::track_step(const engine::ModelCtrlManager::ModelRam& player, i
 // Frames until an enemy blow lands on player 1 (1e9: none within `horizon`):
 // an attack box (kind group 7 or 8, MODEL_HITBOX, queued with its delay when
 // the attack starts) that has not ended and meets the player's body (5 wide,
-// 17 high) grown by a margin (boxes move with their lunging owner, more so
+// as high as its HIT boxes) grown by a margin (boxes move with their lunging owner, more so
 // the further off their start; a shot's box flies further in a frame,
 // EBULLET; a box that moves is taken ahead by its last step). Permanent body
 // boxes (end 1e8) are left out. A shot in flight (a live box of a model
@@ -4867,6 +4886,24 @@ float CampaignBot::blow_due(engine::Engine& engine, const engine::ModelCtrlManag
     if (!models) return best;
     const auto me = position_of(player);
     track_step(player, frame);
+    // The body's height as the hit check meets it: the player's HIT boxes
+    // (hit_check, 8030E6A4 / 80307EAC: the centre moved by the root matrix,
+    // the half extents kept), else kBodyHeight above the feet. Veemon's is 7
+    // high: shells passing over its head were guarded against with 17 (the
+    // stag0304 cannons on the step above, their shells at 19 over the player's
+    // feet), and every guard's recoil (SQ_GUARDR) carried the player back
+    // down the ramp - 100000 frames below the cannon pair at (-90,80,150).
+    float body_lo = me.y, body_hi = me.y + kBodyHeight;
+    if (player.hit && !player.hit->boxes.empty()) {
+        body_lo = 1e30f, body_hi = -1e30f;
+        const auto& pm = player.node->matrix;
+        for (const auto& [lo, hi] : player.hit->boxes) {
+            const engine::Vec3f c{(lo.x + hi.x) * 0.5f, (lo.y + hi.y) * 0.5f, (lo.z + hi.z) * 0.5f};
+            const float wy = c.x * pm(0, 1) + c.y * pm(1, 1) + c.z * pm(2, 1) + pm(3, 1), half = (hi.y - lo.y) * 0.5f;
+            body_lo = std::min(body_lo, wy - half);
+            body_hi = std::max(body_hi, wy + half);
+        }
+    }
     for (const auto& e : models->rams()) {
         if (!e->generated || !e->node || e->is_player || e->hitboxes.empty()) continue;
         if (e->category == "ENEMY" && e->hp <= 0) continue;
@@ -4915,7 +4952,7 @@ float CampaignBot::blow_due(engine::Engine& engine, const engine::ModelCtrlManag
                     };
                     slab(cx - me.x, v.x, box.size.x * 0.5f + kBodyHalf + kShotMargin);
                     slab(cz - me.z, v.z, box.size.z * 0.5f + kBodyHalf + kShotMargin);
-                    slab(cy - (me.y + kBodyHeight * 0.5f), v.y, box.size.y * 0.5f + kBodyHeight * 0.5f + 1.0f);
+                    slab(cy - (body_lo + body_hi) * 0.5f, v.y, box.size.y * 0.5f + (body_hi - body_lo) * 0.5f + 1.0f);
                     if (t0 <= t1 && t0 < best) {
                         best = t0;
                         blow_shot_ = true;
@@ -4938,7 +4975,7 @@ float CampaignBot::blow_due(engine::Engine& engine, const engine::ModelCtrlManag
                             std::abs(me.x - cx2) - box.size.x * 0.5f - kBodyHalf, std::abs(me.z - cz) - box.size.z * 0.5f - kBodyHalf,
                             cy2 - box.size.y * 0.5f, cy2 + box.size.y * 0.5f, me.y, player.muteki, player.seq_name.c_str());
             if (std::abs(me.x - cx2) < box.size.x * 0.5f + kBodyHalf + grow && std::abs(me.z - cz) < box.size.z * 0.5f + kBodyHalf + grow &&
-                me.y + kBodyHeight + 1.0f > cy2 - box.size.y * 0.5f && me.y - 1.0f < cy2 + box.size.y * 0.5f) {
+                body_hi + 1.0f > cy2 - box.size.y * 0.5f && body_lo - 1.0f < cy2 + box.size.y * 0.5f) {
                 best = due;
                 blow_shot_ = false;
                 guard_from_ = {cx2, cy2, cz};
@@ -5391,6 +5428,10 @@ CampaignBot::Output CampaignBot::play(engine::Engine& engine, const engine::Mode
     if (step->action.rfind("explore:", 0) == 0) {
         const bool maze = std::any_of(std::begin(kMazes), std::end(kMazes), [&](const char* m) { return stage == m; });
         const std::string goal = maze && !maze_goal_.empty() ? maze_goal_ : step->action.substr(8);
+        // (Crossing a field to one of its exits without the test cheats: the
+        // enemies that come near are struck, the others not hunted, see
+        // ExploreBot::set_transit.)
+        explorer_.set_transit(!engine.cheats().one_hit && !engine.cheats().god && stage.rfind("stag0", 0) == 0 && step->action != "explore:none");
         const auto d = explorer_.update(engine, *player, goal, frame);
         if (maze && step->action != "explore:none") maze_turn(engine, *player, step->action.substr(8), frame);
         out.walk = controllable;

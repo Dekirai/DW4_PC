@@ -177,6 +177,11 @@ public:
     // fresh ExploreBot per stage visit.
     const std::set<std::string>& regenerating_names() const { return regenerating_names_; }
     void set_regenerating_names(const std::set<std::string>& names) { regenerating_names_ = names; }
+    // Crossing a field to an exit (the campaign driver without the test
+    // cheats): enemies other than structures and bosses are struck when they
+    // come near (as while defending) instead of hunted, and only pickups
+    // within kTransitPick (and key items) are gone for.
+    void set_transit(bool on) { transit_ = on; }
 
 private:
     enum class Gimmick { none, strike, talk, step, tech };
@@ -377,6 +382,7 @@ private:
     std::map<const void*, int> fruitless_runs_;  // enemy -> times it was left alone for taking no damage
     std::map<const void*, int> approach_;        // structure -> steps targeted without getting within reach
     std::set<std::string> regenerating_names_;   // see regenerating_names()
+    bool transit_ = false;                       // see set_transit()
     std::set<const void*> unkillable_;           // enemies that heal themselves or took no damage thrice: left alone for the stage
     std::set<const void*> regenerating_;         // enemies seen healing back above their lowest HP
     std::set<const void*> vanished_;             // enemy RAMs seen free or defeated (a spawn into one is a new enemy)
