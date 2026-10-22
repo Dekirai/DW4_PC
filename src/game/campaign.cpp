@@ -770,12 +770,26 @@ int protection_wanted(engine::Engine& engine) {
 // behind_gauntlet).
 constexpr const char* kGauntlets[] = {"stag0304"};
 
+// Whether the story's next objective is a heavy way: a boss (its name says
+// so, or a stagBS stage) or a stage behind a gauntlet (the dng310 fortress
+// and Lucemon past the stag0304 climb). kSupplies' heavy rows are for it.
+bool heavy_way(engine::Engine& engine);
+
 // Whether the way from the lobby to `stage` passes a gauntlet before it.
 bool behind_gauntlet(engine::Engine& engine, const std::string& stage) {
     const auto path = lobby_path(engine, stage);
     for (std::size_t i = 0; i + 1 < path.size(); ++i)
         for (const char* g : kGauntlets)
             if (path[i] == g) return true;
+    return false;
+}
+
+bool heavy_way(engine::Engine& engine) {
+    for (const auto& o : kObjectives)
+        if (!holds(engine, o.done)) {
+            const std::string_view name = o.name, stage = o.stage;
+            return name.find("boss") != std::string_view::npos || stage.rfind("stagbs", 0) == 0 || behind_gauntlet(engine, o.stage);
+        }
     return false;
 }
 
@@ -1591,6 +1605,7 @@ struct Supply {
     int keep;            // bought up to this count (a slot holds 9)
     int from_hp, to_hp;  // for a maximum HP in [from_hp, to_hp)
     int reserve = 0;     // bits that stay after the purchase
+    bool heavy = false;  // only on a heavy way (heavy_way: a boss, or past a gauntlet)
 };
 constexpr Supply kSupplies[] = {
     {0, 9, 0, 1 << 30},    // HP Disk S: 450 HP for 100 bits
@@ -1617,11 +1632,15 @@ constexpr Supply kSupplies[] = {
     // 147000 bits in the bank and 18 heals of 450 and 1800 HP, and gave the
     // stag0301 crossing to stag0302 up three times with no heal left.
     {2, 9, 0, 1 << 30, 10000},
-    {9, 3, 0, 1 << 30, 30000},
+    // (Recovery only on a heavy way, heavy_way: at the maximum HP of the
+    // late game, 2700..3100, an HP Disk L heals as much for 1200 bits, and
+    // a no-cheat chain spent the 53000 bits of its k9 save on Recovery in
+    // area 4, where it needed the bits for the restocks after its defeats.)
+    {9, 3, 0, 1 << 30, 30000, true},
     // (A full slot of Recovery with 20000 bits more: stag0304's cannon climb
     // to the dng310 fortress took a level 37 Veemon some 89000 HP of heals,
     // 9 of each HP disk and 9 Recovery.)
-    {9, 9, 0, 1 << 30, 50000},
+    {9, 9, 0, 1 << 30, 50000, true},
 };
 constexpr int kRaiseDisk = 7;
 constexpr int kCureDisk = 6;
@@ -1869,8 +1888,9 @@ CampaignBot::Purchase CampaignBot::next_purchase(engine::Engine& engine) const {
     auto* sys = engine.get<engine::GameSystem>();
     if (!sys) return {};
     const auto& slot = sys->players[0];
+    const bool heavy = heavy_way(engine);
     for (const auto& s : kSupplies) {
-        if (slot.max_hp < s.from_hp || slot.max_hp >= s.to_hp) continue;
+        if (slot.max_hp < s.from_hp || slot.max_hp >= s.to_hp || (s.heavy && !heavy)) continue;
         const auto it = prices_.find(s.record);
         if (it == prices_.end() || it->second <= 0) continue;
         const int held = disks_held(slot, s.record);
@@ -1888,8 +1908,9 @@ int CampaignBot::planned_spend(engine::Engine& engine) const {
     if (!sys) return 0;
     const auto& slot = sys->players[0];
     int bits = slot.bits + slot.bank_bits, spend = 0;
+    const bool heavy = heavy_way(engine);
     for (const auto& s : kSupplies) {
-        if (slot.max_hp < s.from_hp || slot.max_hp >= s.to_hp) continue;
+        if (slot.max_hp < s.from_hp || slot.max_hp >= s.to_hp || (s.heavy && !heavy)) continue;
         const auto it = prices_.find(s.record);
         if (it == prices_.end() || it->second <= 0) continue;
         const int count = std::min(std::min({s.keep, 9}) - disks_held(slot, s.record), std::max(0, bits - s.reserve) / it->second);
@@ -4434,10 +4455,12 @@ int CampaignBot::heal_stock_percent(engine::Engine& engine) const {
     if (!sys || !db) return 100;
     const auto& slot = sys->players[0];
     double held = 0.0, full = 0.0;
+    const bool heavy = heavy_way(engine);
     for (const int record : {0, 1, 2, 9}) {
         int keep = 0;
         for (const auto& s : kSupplies)
-            if (s.record == record && slot.max_hp >= s.from_hp && slot.max_hp < s.to_hp && slot.bits + slot.bank_bits >= s.reserve)
+            if (s.record == record && slot.max_hp >= s.from_hp && slot.max_hp < s.to_hp && slot.bits + slot.bank_bits >= s.reserve &&
+                (!s.heavy || heavy))
                 keep = std::max(keep, std::min(s.keep, 9));
         const double hp = record == 9 ? slot.max_hp : std::min(db->number("conItem", record, "HP").value_or(0), slot.max_hp);
         held += hp * disks_held(slot, record);
