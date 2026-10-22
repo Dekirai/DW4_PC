@@ -2486,13 +2486,15 @@ bool GameSystem::script_call(Engine& engine, const std::string& method, std::spa
     if (method == "SYSgetGateStageNo") { out = {Lua4Value::number(gate_stage_no)}; return true; }
     if (method == "SYSsetGateStage") {
         // Dispatch 13 (0x802EA4CC) -> 802EBCFC: GATESTAGENO first, then the
-        // name. A string argument also takes nil (binding mask 0xA, 802699FC),
-        // which arrives as a null pointer and stores the empty string
-        // (r2-0x6F58, 0x802EBD68..0x802EBDE8). Other types stop the call with
-        // the binding's type error (8026A434), not modelled.
-        if (args.empty() || args[0].type() == Lua4Type::Nil) gate_stage_name = std::string();
-        else if (args[0].type() == Lua4Type::String) gate_stage_name = std::string(args[0].as_string());
+        // name. A string argument also takes nil (binding mask 0xA = nil and
+        // string tags, 802699FC), which arrives as a null pointer and stores
+        // the empty string (r2-0x6F58, 0x802EBD68..0x802EBDE8). Other types
+        // and a missing argument (LUA_TNONE) stop the call with the binding's
+        // type error (8026A434) before 802EBCFC; not modelled (no script
+        // does that), the name is kept then.
         gate_stage_no = arg_int(1);
+        if (!args.empty() && args[0].type() == Lua4Type::Nil) gate_stage_name = std::string();
+        else if (!args.empty() && args[0].type() == Lua4Type::String) gate_stage_name = std::string(args[0].as_string());
         return true;
     }
     (void)engine;
