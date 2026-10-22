@@ -282,7 +282,9 @@ particle is a quadratic in time for position, RGBA, size and texture rectangle,
 built into camera-facing quads every frame (`DW4_TRACE_PARTICLES=1` logs the
 instances). The centres go through the full model transform; the sizes are
 view-space sizes the model scale never enters (800E3618 / 800E3650 store half
-sizes, 800E1C70 builds the corners around the transformed centre).
+sizes, 800E1C70 builds the corners around the transformed centre). 800E1C70's
+screen-space path (igParticleFormat `_spriteSpace` SCREEN_COORDINATE) is
+unused: every particle format in the data is POINTS in world coordinates.
 
 Water surfaces (`WaterPlainManager`, beWaterPlain) run the original wave
 equation on their grid: players and enemies in the height bands and the
@@ -307,7 +309,11 @@ _upVector) (801FE5E4) and an orthographic box from _left/_right/_bottom/_top
 (+-5 by default, +-100 for beShadow01's +-5). The caster pass locks only
 lighting, depth, texture unit 0, the shadow colour and the viewport, so each
 caster keeps its own blending (an additive effect ring adds its grey to the
-white map and casts nothing). The receivers multiply the map
+white map and casts nothing) and its own culling. The light view is only the
+base of the casters' modelview stack; the traversal's view stays the
+camera's, and a billboard caster (the xdataup / powerup markers, stagBS06's
+ball) starts from world * light view * inverse camera view, so it faces the
+light's eye (`TraversalContext::modelview_base`). The receivers multiply the map
 (ZERO / SOURCE_COLOR) over the opaque 3D scene, before the blended items. The
 receiver path (801FE190) sets the texture, blending and a disabled alpha test
 but no depth, cull or offset state: each receiver is drawn again on its own

@@ -230,8 +230,9 @@ struct RenderState {
     bool texture_enabled{};
     bool blend_enabled{};
     // igBlendFunctionAttr defaults (0x8055E6AC..B4, registered by 800BA89C):
-    // SRC_ALPHA, ONE_MINUS_SRC_ALPHA, ADD.
-    std::int32_t blend_src = 4, blend_dst = 5, blend_equation = 0;
+    // SRC_ALPHA, ONE_MINUS_SRC_ALPHA (and the equation ADD, which the
+    // GameCube context ignores; see the blend_function case of apply).
+    std::int32_t blend_src = 4, blend_dst = 5;
     // The original's GX alpha compare is in effect GREATER 0.1 wherever no
     // igAlphaStateAttr / igAlphaFunctionAttr says otherwise. Deferred render
     // packages record only attributes that differ from the stack defaults
@@ -349,6 +350,15 @@ struct TraversalContext {
     // Pose provider for igActor nodes (null or nullptr result: bind pose).
     std::function<const ActorPose*(const Node& actor)> actor_pose;
     Vec3f camera_position{};
+    // The base of the modelview stack when it is not the traversal's view:
+    // the shadow caster pass (801FDCCC) pushes the shader's light view (its
+    // igModelViewMatrixAttr +0x58, filled by 801FE5E4) with 801D4F14 and
+    // traverses the casters (801FE498) on the scene traversal, whose view
+    // and inverse view (+0x64 / +0xA4, set from the camera by 801DB8F0 in
+    // 8040B8C0) stay the camera's. Only the billboards use it: the casters'
+    // subtrees in the data hold no igLod or igTransformRecorder, the other
+    // nodes that read the modelview stack top.
+    std::optional<Mat4> modelview_base;
 };
 
 // igBillboard (801D5ADC + 801D53EC): the world matrix that replaces the

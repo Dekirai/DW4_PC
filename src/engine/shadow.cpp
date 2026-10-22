@@ -122,9 +122,19 @@ void ShadowManager::traverse(const TraversalContext& context, std::vector<DrawIt
     TraversalContext caster = context;
     caster.output = casters;
     caster.actor_hook = nullptr;
+    // 801FDCCC pushes the light view as the casters' modelview base; the
+    // billboards among them (the xdataup / powerup markers of every
+    // stage, stagBS06's f_devl31 ball, dngq3b2e's glow) face the light.
+    caster.modelview_base = light_view();
     for (auto* root : casters_) dw4::engine::traverse(root, caster);
     caster.output = receivers;
+    caster.modelview_base.reset();
     for (auto* root : receivers_) dw4::engine::traverse(root, caster);
+}
+
+Mat4 ShadowManager::light_view() const {
+    // 801FE5E4 (0x801FE640): lookAt(_lightPos, _lightPos + _lightDir, _upVector).
+    return look_at(*light_, *light_ + direction_, up_);
 }
 
 void ShadowManager::traverse(const TraversalContext& context) {
@@ -140,8 +150,7 @@ void ShadowManager::render(Engine& engine, const TraversalContext& context, Shad
     frame.width = width_;
     frame.height = height_;
     frame.border = shadow_border();
-    // 801FE5E4 (0x801FE640): lookAt(_lightPos, _lightPos + _lightDir, _upVector).
-    frame.light_view = look_at(*light_, *light_ + direction_, up_);
+    frame.light_view = light_view();
     // 801FE5E4 (0x801FE66C): ortho(_left, _right, _bottom, _top, near, far).
     frame.light_projection = orthographic(left_, right_, bottom_, top_, near_, far_);
     traverse(context, &frame.casters, &frame.receivers);
