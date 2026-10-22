@@ -1577,7 +1577,10 @@ constexpr int kGateTripBits = 400;
 constexpr int kTripHealStock = 4;
 // On the way to an objective (not training): back to restock while the heals
 // held make up less than kRestockBelow percent of a full stock's HP, at most
-// kRestockTrips times an objective.
+// kRestockTrips times an attempt at an objective (a defeat or a Gate Disk
+// escape there, which raises its gate level, starts the count anew: once
+// they were spent the stag0304 climb was walked into after every training
+// with what the training left, and lost again).
 constexpr int kRestockBelow = 50, kRestockTrips = 2;
 // A Gate Disk out of an objective's stage raises its gate only when the
 // visit made no progress (no story flag set for the first time): after one
@@ -4264,8 +4267,11 @@ CampaignBot::Output CampaignBot::update(engine::Engine& engine, const engine::Mo
                    }())) {
             ++deaths_;
             // (Each defeat at an objective raises its gate level, kTraining.)
-            if (!fallen_objective_.empty() && fallen_objective_.rfind("train", 0) != 0)
+            // (The restocking trips are counted per attempt, kRestockTrips.)
+            if (!fallen_objective_.empty() && fallen_objective_.rfind("train", 0) != 0) {
                 defeat_levels_[fallen_objective_] = std::max(defeat_levels_[fallen_objective_], fallen_level_);
+                restock_trips_.erase(fallen_objective_);
+            }
             // (A defeat while training: that field waits for a higher level, train_for.)
             if (fallen_objective_.rfind("train", 0) == 0)
                 train_falls_[lower(fallen_stage_)] = std::max(train_falls_[lower(fallen_stage_)], fallen_level_);
@@ -4466,9 +4472,10 @@ void CampaignBot::survive(engine::Engine& engine, const engine::ModelCtrlManager
             // for the walk, and a level 36 run fell there with 7 HP Disks L
             // and 4 Recovery held.)
             // (Y takes the highest record held, a Recovery first: only while two
-            // of the biggest recent blows would end the player.)
+            // of the biggest recent blows would end the player, or below 30 %:
+            // the poison plants' spit, 5 % a hit, comes every 13 frames.)
             if (!disk_quick_ && blow_due(engine, player, walk, frame) <= walk) {
-                if (slot.hp * 100 < slot.max_hp * kHealBelow && big_hits && slot.hp < 2 * big_hit_) {
+                if (slot.hp * 100 < slot.max_hp * kHealBelow && ((big_hits && slot.hp < 2 * big_hit_) || slot.hp * 100 < slot.max_hp * 30)) {
                     disk_quick_ = true;
                 } else {
                     disk_use_ = -1;
@@ -4635,6 +4642,7 @@ void CampaignBot::survive(engine::Engine& engine, const engine::ModelCtrlManager
                                 objective_now_.c_str(), new_flag_);
                 } else {
                 defeat_levels_[objective_now_] = std::max(defeat_levels_[objective_now_], slot.stats.level);
+                restock_trips_.erase(objective_now_);
                 std::printf("[%d] campaign: %s given up at level %d, trains first\n", frame, objective_now_.c_str(), slot.stats.level);
             }
             }
