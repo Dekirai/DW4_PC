@@ -2996,7 +2996,7 @@ bool CampaignBot::answer_menu(engine::Engine& engine, const engine::ModelCtrlMan
         !heal_open_) {
         // (The direction is the one the program was opened for: a deposit
         // done while its menus are still up is no withdrawal.)
-        if (!bank_open_) bank_ran_ = false, bank_deposit_ = step.action[0] == 'd';
+        if (!bank_open_) bank_ran_ = false, bank_deposit_ = step.action[0] == 'd', bank_lists_ = 0;
         bank_open_ = true;
     }
     if (bank_open_) {
@@ -3150,8 +3150,15 @@ bool CampaignBot::answer_menu(engine::Engine& engine, const engine::ModelCtrlMan
             // (2 lines), the amount (i_stcursor03, seven digits): the cursor
             // to the top digit, UP kBankUps times (each adds a million,
             // clamped to all that can go), A; a list is backed out of.
+            // (A list - a device shop's stock or the bank's device folder -
+            // backed out of twice: the program is no bank of bits (the
+            // stagML13 bank errand once talked to the armor shop beside it,
+            // Buy and Back round and round for 4.2 million frames): Exit, and
+            // no more bank visits this stay.)
             auto* sys = engine.get<engine::GameSystem>();
-            const bool done = !sys || (bank_deposit_ ? sys->players[0].bits < kBankDust : sys->players[0].bank_bits == 0);
+            const bool lost = bank_lists_ >= 2;
+            const bool done = lost || !sys || (bank_deposit_ ? sys->players[0].bits < kBankDust : sys->players[0].bank_bits == 0);
+            if (lost) bank_tries_ = kBankTries, bank_withdrawn_ = true;
             if (menu.name == "i_stmesscr" && menu.items >= 3) {
                 want = done ? menu.items - 1 : bank_deposit_ ? 0 : 1;
             } else if (menu.name == "i_stmesscr") {
@@ -3171,6 +3178,7 @@ bool CampaignBot::answer_menu(engine::Engine& engine, const engine::ModelCtrlMan
                 want = 0;
             } else if (menu.name.rfind("i_stcursor", 0) == 0) {
                 cancel = true;
+                if (menu.name == "i_stcursor01" && frame - bank_list_at_ > 20) ++bank_lists_, bank_list_at_ = frame;
             }
         } else if (heal_open_ && !equip_open_ && !gear_open_) { // (the lab or a device shop first: an errand that follows waits)
             // The X-Data shop: "use it?" yes (i_messcr, 2 lines), then Exit

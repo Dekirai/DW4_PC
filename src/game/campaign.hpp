@@ -225,6 +225,8 @@ private:
     int bank_tries_ = 0;         // bank visits in this stay
     int bank_ups_ = 0;           // UP presses on the amount's top digit
     int bank_digits_at_ = -100000; // the amount's digit cursor last seen
+    int bank_lists_ = 0;           // lists backed out of in this bank visit (two: no bank, see answer_menu)
+    int bank_list_at_ = -100000;
     // Gear from the weapon, armor and chip shops (next_gear).
     bool gear_open_ = false;     // a device shop program of the errand may be running
     int gear_program_ = 6;       // its program (6 weapons, 7 armor, 8 chips, 9 the junk shop)
