@@ -122,19 +122,36 @@ void ShadowManager::traverse(const TraversalContext& context, std::vector<DrawIt
     TraversalContext caster = context;
     caster.output = casters;
     caster.actor_hook = nullptr;
-    // 801FDCCC pushes the light view as the casters' modelview base; the
+    // 801FDCCC pushes the light view as the casters' modelview base and the
+    // light's projection (801D4F14 with the shader's +0x58 / +0x5C); the
     // billboards among them (the xdataup / powerup markers of every
     // stage, stagBS06's f_devl31 ball, dngq3b2e's glow) face the light.
+    // 801FE498 dispatches the casters on the scene traversal's current
+    // table; no node above the shader has a bound, so that is the cull
+    // table: a caster's bound outside the light's box is skipped (and its
+    // actor's combiner with it). The shadow map is not widened.
     caster.modelview_base = light_view();
+    caster.projection_base = light_projection();
+    caster.picture_widen = 1.0f;
+    caster.picture_cull = true;
     for (auto* root : casters_) dw4::engine::traverse(root, caster);
+    // The receivers (the shader's children, 801FE190) on the camera again.
     caster.output = receivers;
     caster.modelview_base.reset();
+    caster.projection_base.reset();
+    caster.picture_widen = context.picture_widen;
+    caster.picture_cull = context.picture_cull;
     for (auto* root : receivers_) dw4::engine::traverse(root, caster);
 }
 
 Mat4 ShadowManager::light_view() const {
     // 801FE5E4 (0x801FE640): lookAt(_lightPos, _lightPos + _lightDir, _upVector).
     return look_at(*light_, *light_ + direction_, up_);
+}
+
+Mat4 ShadowManager::light_projection() const {
+    // 801FE5E4 (0x801FE66C): ortho(_left, _right, _bottom, _top, near, far).
+    return orthographic(left_, right_, bottom_, top_, near_, far_);
 }
 
 void ShadowManager::traverse(const TraversalContext& context) {
@@ -151,8 +168,7 @@ void ShadowManager::render(Engine& engine, const TraversalContext& context, Shad
     frame.height = height_;
     frame.border = shadow_border();
     frame.light_view = light_view();
-    // 801FE5E4 (0x801FE66C): ortho(_left, _right, _bottom, _top, near, far).
-    frame.light_projection = orthographic(left_, right_, bottom_, top_, near_, far_);
+    frame.light_projection = light_projection();
     traverse(context, &frame.casters, &frame.receivers);
     if (static const bool trace = std::getenv("DW4_TRACE_SHADOW") != nullptr; trace && engine.frame() % 120 == 0) {
         const std::size_t receiving = frame.receivers.size();

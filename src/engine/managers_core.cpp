@@ -2205,19 +2205,25 @@ void ParticleCtrlManager::add_info(Engine& engine, const ObjectView& info) {
     for (auto* ram : make_rams(engine, this, info, rams_, "MODELCTRL")) {
         ram->transform = engine.scenes().node(ram->ram.ref(11));
         ram->timer = engine.scenes().node(ram->ram.ref(12));
+        // 80312190: the instances start stopped, their timers too (+0x2C).
+        if (ram->timer) {
+            ram->timer->timer.running = false;
+            ram->timer->particle_live = false;
+        }
     }
 }
 
 void ParticleCtrlManager::clear_stage(Engine&) { rams_.clear(); }
 
 void ParticleCtrlManager::stop(ParticleRam& ram) {
-    // 803123DC: the timer stops, the instance's switch bit goes and the
-    // outer switch with the last one.
+    // 803123DC: the timer stops (_timeRunning 0), the instance's switch bit
+    // goes and the outer switch with the last one.
     ram.running = false;
     ram.owner.clear();
+    ram.paused = -1;
     if (ram.timer) {
-        ram.timer->particle_start = -1;
-        ram.timer->particle_paused = -1;
+        ram.timer->timer.running = false;
+        ram.timer->particle_live = false;
     }
 }
 
@@ -2282,12 +2288,17 @@ bool ParticleCtrlManager::command(Engine& engine, Ram& base, std::string_view co
         return true;
     }
     if (command == "ONFREEZE" || command == "OFFREEZE") {
-        if (ram.running && ram.timer && ram.timer->particle_start >= 0) {
-            if (command == "ONFREEZE" && ram.timer->particle_paused < 0) ram.timer->particle_paused = engine.time();
-            if (command == "OFFREEZE" && ram.timer->particle_paused >= 0) {
-                ram.timer->particle_start += engine.time() - ram.timer->particle_paused;
-                ram.start += engine.time() - ram.timer->particle_paused;
-                ram.timer->particle_paused = -1;
+        // 0x80312914 / 0x80312930: _timeRunning 0 / 1; the effect time stands
+        // from the timer's next traversal on (its last visit's time stays).
+        if (ram.running && ram.timer && ram.timer->particle_live) {
+            if (command == "ONFREEZE" && ram.paused < 0) {
+                ram.paused = engine.time();
+                ram.timer->timer.running = false;
+            }
+            if (command == "OFFREEZE" && ram.paused >= 0) {
+                ram.start += engine.time() - ram.paused;
+                ram.paused = -1;
+                ram.timer->timer.running = true;
             }
         }
         return true;
@@ -2310,14 +2321,18 @@ void ParticleCtrlManager::update(Engine& engine) {
             if (outer && outer->kind == NodeKind::switch_node) outer->set_child_enabled(0, true);
             if (instances && instances->kind == NodeKind::switch_node) instances->set_child_enabled(std::size_t(ram.index), true);
             if (ram.timer) {
-                ram.timer->particle_start = engine.time();
-                ram.timer->particle_paused = -1;
+                // 0x80312328..0x80312340: _time -1 (the timer's next
+                // traversal is the effect's time 0), _timeRunning 1.
+                ram.timer->timer.time = -1;
+                ram.timer->timer.running = true;
+                ram.timer->particle_live = true;
             }
+            ram.paused = -1;
             ram.start = engine.time();
             ram.state = 1;
             continue;
         }
-        const bool paused = ram.timer && ram.timer->particle_paused >= 0;
+        const bool paused = ram.paused >= 0;
         if (ram.state == 1 && (paused || engine.time() - ram.start < ram.info.i64(10))) continue;
         stop(ram);
         if (instances && instances->kind == NodeKind::switch_node) {

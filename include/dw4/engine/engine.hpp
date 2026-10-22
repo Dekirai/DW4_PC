@@ -301,7 +301,14 @@ public:
     // picture the original draws must be traversed either way.
     void traverse_scene();
     // Optional host inspection camera replacing the game camera (debug only).
+    // It moves only the picture: the frustum cull and the view-dependent
+    // choices of the traversal stay with the game camera.
     std::optional<FrameCamera> debug_camera;
+    // The renderer's widescreen widening of perspective projections (the x
+    // scale it applies, 1 for 4:3): render() draws the subtrees the
+    // original's cull skips that lie inside the wider picture, without
+    // their updates. Presentation only; simulation never reads it.
+    float picture_widen = 1.0f;
     // Per-scene draw statistics for diagnostics.
     std::vector<std::string> scene_report();
 

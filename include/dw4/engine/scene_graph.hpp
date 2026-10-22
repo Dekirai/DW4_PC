@@ -107,6 +107,23 @@ struct NodeAnim {
     bool finished() const { return play_limit < played; }    // 80311674
 };
 
+// ParticleTimer (fields 802E80A0, traversal 80319F90 -> 8031A0A4): the
+// effect time of its igParticleAttr draws is _time - _timeBias, and only the
+// timer's own traversal advances it: a visit while _timeRunning moves _time
+// to the traversal time, a visit while stopped moves _timeBias along (the
+// time stands), and _time == -1 (a start, 0x80312334) makes the first visit
+// the time's origin. A timer the traversal does not reach (culled, switched
+// off) keeps its fields.
+struct ParticleTimerState {
+    bool running = true;     // _timeRunning (+0x2C, stored in the file)
+    std::int64_t bias{};     // _timeBias (+0x30, not stored: 0)
+    std::int64_t time{};     // _time (+0x38, not stored: 0)
+    // The effect time after a visit at traversal time `now` (8031A0A4).
+    std::int64_t visit(std::int64_t now);
+    // The same without changing the fields.
+    std::int64_t peek(std::int64_t now) const;
+};
+
 // igTransformSequence1_5 (time 80209B74, blend 80209578, single key 80208084)
 // and igCompressedAnimationSequenceQS (time 801E2FF0, keys 801E32B8),
 // evaluated into a local matrix.
@@ -146,6 +163,11 @@ struct Node {
     NodeKind kind = NodeKind::unknown;
     ObjectView object;
     std::string name;
+    // igNode _bound (+0xC): the igAABox the stage camera's frustum cull
+    // tests (801E9AB4). The data has no other bound volume; a node without
+    // one is never tested.
+    bool has_bound{};
+    Vec3f bound_min{}, bound_max{};
     std::vector<Node*> children;
     std::vector<const Attribute*> attributes;      // igAttrSet state attributes
     std::vector<const Attribute*> geometries;      // igGeometry payloads
@@ -198,12 +220,12 @@ struct Node {
     Node* copy_source{};
     Node* copy_actor{};
     bool copy_resolved{};
-    // ParticleTimer: its igParticleAttr list ([8]) and the time its effect
-    // started (-1: not running; beParticleCtrl2 starts and stops it); the
-    // quads rebuilt every frame.
+    // ParticleTimer: its igParticleAttr list ([8]), its timer, whether
+    // beParticleCtrl2 has started its effect (from its start to its stop;
+    // the port draws only those), and the quads rebuilt every frame.
     std::vector<ObjectView> particles;
-    std::int64_t particle_start = -1;
-    std::int64_t particle_paused = -1; // ONFREEZE: the time the timer stopped at
+    ParticleTimerState timer;
+    bool particle_live{};
     std::vector<std::shared_ptr<GeometryData>> particle_geometry;
     // igTransformRecorder: the world matrix it was last drawn with (TRC data).
     std::optional<Mat4> recorded;
@@ -348,8 +370,29 @@ struct TraversalContext {
     std::uint32_t order{};
     std::function<void(const Node&, const Mat4& model, TraversalContext&)> actor_hook;
     // Pose provider for igActor nodes (null or nullptr result: bind pose).
-    std::function<const ActorPose*(const Node& actor)> actor_pose;
+    // `traversed`: the actor's own traversal (its combiner evaluation,
+    // 801D0C14); false: a picture of an actor the original's cull skips,
+    // which changes nothing.
+    std::function<const ActorPose*(const Node& actor, bool traversed)> actor_pose;
     Vec3f camera_position{};
+    // igFrustCullTraversal (8040B3EC creates it for the stage camera, whose
+    // traversal is the whole frame: scenes, 2D layers, the shadow shader's
+    // passes): a node whose bound lies outside the frustum of the current
+    // modelview and projection is skipped with its subtree, its updates
+    // included (NodeAnim and ParticleTimer clocks, actor combiners, LOD
+    // caches, transform recorders). `cull_camera` is the game's camera; a
+    // debug camera only moves the picture.
+    bool cull{};
+    FrameCamera cull_camera;
+    // The picture's own cull (Engine::render only): the renderer widens
+    // perspective projections by 1 / picture_widen in x (widescreen), so a
+    // subtree outside the original's frustum but inside the picture is drawn
+    // without its updates; false (a debug camera) draws every such subtree.
+    bool picture_cull = true;
+    float picture_widen = 1.0f;
+    // The projection under the modelview_base of the shadow caster pass
+    // (the light's, pushed by 801FDCCC with its view).
+    std::optional<Mat4> projection_base;
     // The base of the modelview stack when it is not the traversal's view:
     // the shadow caster pass (801FDCCC) pushes the shader's light view (its
     // igModelViewMatrixAttr +0x58, filled by 801FE5E4) with 801D4F14 and
@@ -371,6 +414,14 @@ struct TraversalContext {
 // orthogonal to the eye direction first, so the face looks straight at the eye.
 Mat4 billboard_matrix(std::int32_t mode, const Vec3f& axis, const Vec3f& center, const Mat4& world,
                       const Mat4& inverse_view);
+
+// igFrustCullTraversal's box test (801E97C8: _compMat = modelview *
+// projection, 801E898C: the eight corners in clip space, 801E8BF0): 2 outside
+// (every corner behind the eye, or no corner inside one of the six planes
+// x > -w, x < w, y > -w, y < w, z > -w, z < w), 1 inside (every corner inside
+// every plane), 5 inside the frustum widened by _outerFrustCullScale 1.1
+// (x, y and z scaled by 1 / 1.1, set by 801E9BE0 in 8040B3EC), else 3.
+int frustum_cull_code(const Mat4& modelview, const Mat4& projection, const Vec3f& box_min, const Vec3f& box_max);
 
 void traverse(Node* root, TraversalContext& context);
 void traverse(Node* root, TraversalContext& context, const Mat4& model, const RenderState& state, std::int64_t time);

@@ -1310,15 +1310,23 @@ TraversalContext Engine::frame_context(std::vector<DrawItem>* out, FrameCamera& 
     clear_color = {0, 0, 0, 1};
     if (auto* bk = get<BkColorManager>()) clear_color = bk->color();
     if (auto* cam = get<CameraManager>()) cam->frame_camera(*this, camera);
-    if (debug_camera) camera = *debug_camera;
     TraversalContext context;
+    // The stage camera's igFrustCullTraversal (8040B3EC) traverses the
+    // whole frame (ROOTATTR: scenes and 2D layers) with the game's camera.
+    context.cull = true;
+    context.cull_camera = camera;
+    context.picture_cull = !debug_camera;
+    context.picture_widen = picture_widen;
+    if (debug_camera) camera = *debug_camera;
     context.cache = &scenes_;
     context.time = time_;
     context.camera = camera;
     context.output = out;
     if (auto* models = get<ModelCtrlManager>()) models->install_actor_hook(*this, context);
     if (auto* actions = get<ActionManager>())
-        context.actor_pose = [this, actions](const Node& actor) { return actions->pose_for(actor, time_, true); };
+        context.actor_pose = [this, actions](const Node& actor, bool traversed) {
+            return traversed ? actions->pose_for(actor, time_, true) : actions->peek_pose(actor, time_);
+        };
     Mat4 inverse_view;
     if (invert(camera.view, inverse_view)) context.camera_position = {inverse_view(3, 0), inverse_view(3, 1), inverse_view(3, 2)};
     return context;

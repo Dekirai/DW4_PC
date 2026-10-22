@@ -7,6 +7,7 @@
 #include <bit>
 #include <cmath>
 #include <limits>
+#include <tuple>
 #include <type_traits>
 
 namespace dw4::engine {
@@ -342,6 +343,20 @@ std::int64_t NodeAnim::time(std::int64_t now) {
     t += loop_start;
     bias = t - scaled_time(now, scale);
     return t;
+}
+
+std::int64_t ParticleTimerState::visit(std::int64_t now) {
+    // 8031A0A4 (0x8031A0D0..0x8031A150): 64-bit arithmetic that wraps.
+    const auto u = [](std::int64_t v) { return static_cast<std::uint64_t>(v); };
+    if (time == -1) bias = now;
+    if (!running) bias = static_cast<std::int64_t>(u(bias) + (u(now) - u(time)));
+    time = now;
+    return static_cast<std::int64_t>(u(time) - u(bias));
+}
+
+std::int64_t ParticleTimerState::peek(std::int64_t now) const {
+    ParticleTimerState copy = *this;
+    return copy.visit(now);
 }
 
 namespace {
@@ -775,6 +790,14 @@ Node* SceneCache::node(const IgbDocument* document, std::uint32_t reference) {
     n->object = view;
     n->name = std::string(view.str(2));
     const auto& type = view.type();
+    // igNode [3] _bound: only igAABox volumes occur (an igAABox's [2] _min
+    // and [3] _max).
+    if (view.is_a("igNode"))
+        if (const auto bound = view.ref(3); bound && bound.is_a("igAABox")) {
+            n->has_bound = true;
+            n->bound_min = bound.vec3(2).value_or(Vec3f{});
+            n->bound_max = bound.vec3(3).value_or(Vec3f{});
+        }
     auto children_from = [&](std::uint16_t slot) {
         for (const auto& child : view.list(slot))
             if (child && child.is_a("igNode")) n->children.push_back(node(child.document(), child.reference()));
@@ -784,11 +807,13 @@ Node* SceneCache::node(const IgbDocument* document, std::uint32_t reference) {
             if (item) if (const auto* a = attribute(item)) out.push_back(a);
     };
     if (type == "ParticleTimer") {
-        // An igAttrSet whose attributes are igParticleAttr draws.
+        // An igGeometry whose attributes are igParticleAttr draws; [11]
+        // _timeRunning (the only stored timer field).
         n->kind = NodeKind::particle_timer;
         children_from(7);
         for (const auto& attr : view.list(8))
             if (attr && attr.type() == "igParticleAttr") n->particles.push_back(attr);
+        n->timer.running = view.boolean(11, true);
     } else if (view.is_a("igGeometry")) {
         n->kind = NodeKind::geometry;
         std::vector<const Attribute*> attrs;
@@ -1140,6 +1165,70 @@ Mat4 billboard_matrix(std::int32_t mode, const Vec3f& axis, const Vec3f& center,
     return r;
 }
 
+int frustum_cull_code(const Mat4& modelview, const Mat4& projection, const Vec3f& box_min, const Vec3f& box_max) {
+    // 801E97C8 -> 801E8944: _compMat = modelview * projection (80128690:
+    // per element a(i,0) * b(0,j), then three fused multiply-adds).
+    Mat4 c;
+    for (int i = 0; i < 4; ++i)
+        for (int j = 0; j < 4; ++j)
+            c(i, j) = std::fma(modelview(i, 3), projection(3, j),
+                               std::fma(modelview(i, 2), projection(2, j),
+                                        std::fma(modelview(i, 1), projection(1, j), modelview(i, 0) * projection(0, j))));
+    // 801E898C: the minimum corner p = M3 + (M2 z + (M0 x + M1 y)) and the
+    // edges size.x M0, size.y M1, size.z M2 (size = max - min); a corner adds
+    // the x edge, then the y edge, then the z edge to p.
+    const float sx = box_max.x - box_min.x, sy = box_max.y - box_min.y, sz = box_max.z - box_min.z;
+    float p[4], ex[4], ey[4], ez[4];
+    for (int j = 0; j < 4; ++j) {
+        p[j] = c(3, j) + std::fma(c(2, j), box_min.z, std::fma(c(0, j), box_min.x, c(1, j) * box_min.y));
+        ex[j] = c(0, j) * sx;
+        ey[j] = c(1, j) * sy;
+        ez[j] = c(2, j) * sz;
+    }
+    float corners[8][4];
+    for (int k = 0; k < 8; ++k)
+        for (int j = 0; j < 4; ++j) {
+            float v = p[j];
+            if (k & 1) v = v + ex[j];
+            if (k & 2) v = v + ey[j];
+            if (k & 4) v = v + ez[j];
+            corners[k][j] = v;
+        }
+    // 801E8BF0: behind the eye when every w has its sign bit set.
+    bool all_behind = true;
+    for (const auto& corner : corners) all_behind = all_behind && std::signbit(corner[3]);
+    if (all_behind) return 2;
+    // Per corner the sign bits of -w - x, x + -w, -w - y, y + -w, -w - z and
+    // z + -w: bit set = inside that plane.
+    auto inside = [](float x, float y, float z, float w) {
+        const float n = -w;
+        int bits = 0;
+        if (std::signbit(n - x)) bits |= 1;
+        if (std::signbit(x + n)) bits |= 2;
+        if (std::signbit(n - y)) bits |= 4;
+        if (std::signbit(y + n)) bits |= 8;
+        if (std::signbit(n - z)) bits |= 16;
+        if (std::signbit(z + n)) bits |= 32;
+        return bits;
+    };
+    int all = 0x3F, any = 0;
+    for (const auto& corner : corners) {
+        const int bits = inside(corner[0], corner[1], corner[2], corner[3]);
+        all &= bits;
+        any |= bits;
+    }
+    if (any != 0x3F) return 2;
+    if (all == 0x3F) return 1;
+    // The second test (0x801E92B4): x, y and z scaled by the global
+    // 1 / _outerFrustCullScale (r13-0x4460; 801E9BE0 stores 1.0f / 1.1f when
+    // 8040B3EC makes the stage camera's traversal, the only one there is).
+    constexpr float kOuterScale = 1.1f; // 80462E24
+    const float scale = 1.0f / kOuterScale;
+    all = 0x3F;
+    for (const auto& corner : corners) all &= inside(corner[0] * scale, corner[1] * scale, corner[2] * scale, corner[3]);
+    return all == 0x3F ? 5 : 3;
+}
+
 namespace {
 struct ActorScope {
     const ActorPose* pose{};
@@ -1165,14 +1254,24 @@ Node* first_actor(Node* n, int depth) {
 // same matrices and times.
 struct ViewOnly {
     std::optional<Mat4> view;
+    std::optional<Mat4> projection; // the frustum cull reads it
 };
 
-// The running effect's particles as camera-facing quads (draw items only;
-// `state` takes the node's overrides as before the quads).
-void particle_items(Node* n, TraversalContext& ctx, const Mat4& model, RenderState& state) {
-    if (n->particle_start < 0 || !ctx.output) return;
-    const std::int64_t now = n->particle_paused >= 0 ? n->particle_paused : ctx.time;
-    const float seconds = float(double(now - n->particle_start) * 1e-9);
+// What the frustum cull lets a subtree do (Engine::render may draw a subtree
+// the original skips, see TraversalContext::picture_cull).
+struct CullScope {
+    bool test{};          // the original still tests bounds here (its cull table is current)
+    bool picture_test{};  // the picture's own cull still tests bounds here
+    bool simulate = true; // the original traverses this subtree: clocks, combiners, caches and recorders advance
+    bool draw = true;     // draw items
+};
+
+// The running effect's particles as camera-facing quads at effect time
+// `elapsed` (draw items only; `state` takes the node's overrides as before
+// the quads).
+void particle_items(Node* n, TraversalContext& ctx, const Mat4& model, RenderState& state, std::int64_t elapsed) {
+    if (!n->particle_live || !ctx.output) return;
+    const float seconds = float(double(elapsed) * 1e-9);
     const Mat4 view = state.view.value_or(ctx.camera.view);
     if (n->particle_geometry.size() < n->particles.size()) n->particle_geometry.resize(n->particles.size());
     apply_overrides(*n, state);
@@ -1237,8 +1336,60 @@ template <class State> void apply_all(const std::vector<const Attribute*>& attri
             if (a->kind == AttrKind::model_view_matrix) {
                 state.view = a->matrix;
                 model = Mat4{};
+            } else if (a->kind == AttrKind::projection_matrix) {
+                state.projection = a->matrix;
             }
     }
+}
+
+// 801E9AB4 for a node with a bound, then 801E994C: code 2 (outside) skips
+// the node with its subtree, 1 and 5 (inside) traverse it on the plain table
+// r13+0x7E4 (nothing below is tested), 3 traverses it with the cull table
+// still current. The original's test uses the game camera; the picture's own
+// test the picture's camera with the renderer's widened perspective. Returns
+// false when the traversal has nothing left to do below the node.
+template <class State>
+bool frustum_cull(const Node& n, const TraversalContext& ctx, const Mat4& model, const State& state, CullScope& cull) {
+    if (!n.has_bound || (!cull.test && !cull.picture_test)) return true;
+    auto classify = [&](const Mat4& view, const Mat4& projection, bool& test) {
+        const int code = frustum_cull_code(model * view, projection, n.bound_min, n.bound_max);
+        if (code == 1 || code == 5) test = false;
+        return code == 1 || code == 3 || code == 5;
+    };
+    const bool tested = cull.test;
+    bool original = true;
+    if (cull.test) {
+        const Mat4& view = state.view ? *state.view : ctx.modelview_base ? *ctx.modelview_base : ctx.cull_camera.view;
+        const Mat4& projection = state.projection ? *state.projection : ctx.projection_base ? *ctx.projection_base : ctx.cull_camera.projection;
+        original = classify(view, projection, cull.test);
+        if (!original) {
+            cull.simulate = false;
+            cull.test = false;
+        }
+    }
+    if constexpr (kPicture<State>) {
+        if (cull.picture_test) {
+            Mat4 projection = state.projection ? *state.projection : ctx.projection_base ? *ctx.projection_base : ctx.camera.projection;
+            // As GlRenderer::render: perspective projections without their
+            // own viewport widen in x.
+            const bool widened = ctx.picture_widen != 1.0f && projection(2, 3) != 0.0f && !state.viewport;
+            bool picture = original;
+            if (!tested || widened) {
+                const Mat4& view = state.view ? *state.view : ctx.modelview_base ? *ctx.modelview_base : ctx.camera.view;
+                if (widened)
+                    for (int r = 0; r < 4; ++r) projection(r, 0) *= ctx.picture_widen;
+                picture = classify(view, projection, cull.picture_test);
+            } else {
+                // The picture's camera and projection are the original's.
+                cull.picture_test = cull.test;
+            }
+            if (!picture) {
+                cull.draw = false;
+                cull.picture_test = false;
+            }
+        }
+    }
+    return cull.simulate || (kPicture<State> && cull.draw);
 }
 
 template <class State> void overrides(const Node& n, State& state) {
@@ -1247,12 +1398,18 @@ template <class State> void overrides(const Node& n, State& state) {
 
 template <class State>
 void visit(Node* n, TraversalContext& ctx, const Mat4& parent_model, const State& parent_state, std::int64_t time,
-           const ActorScope& parent_scope, int depth) {
+           const ActorScope& parent_scope, CullScope cull, int depth) {
     constexpr bool picture = kPicture<State>;
     if (!n || n->hidden || depth > 256) return;
+    // igFrustCullTraversal (801E9AB4): the bound in the parent's space, before
+    // the node's own handler runs.
+    if (!frustum_cull(*n, ctx, parent_model, parent_state, cull)) return;
     Mat4 model = parent_model;
     State state = parent_state;
     ActorScope scope = parent_scope;
+    // The camera the traversal's view-dependent choices follow (LOD,
+    // billboards): the game's, so a debug camera changes no update below.
+    const Mat4& camera_view = ctx.cull ? ctx.cull_camera.view : ctx.camera.view;
     switch (n->kind) {
     case NodeKind::attr_set:
         apply_all(n->attributes, state, model);
@@ -1298,9 +1455,14 @@ void visit(Node* n, TraversalContext& ctx, const Mat4& parent_model, const State
         model = local * model;
         break;
     }
-    case NodeKind::particle_timer:
-        if constexpr (picture) particle_items(n, ctx, model, state);
+    case NodeKind::particle_timer: {
+        // 8031A0A4: the timer advances on the traversal's time (the time
+        // stack's top) whenever the traversal reaches it, drawn or not.
+        const std::int64_t elapsed = cull.simulate ? n->timer.visit(time) : n->timer.peek(time);
+        if constexpr (picture)
+            if (cull.draw) particle_items(n, ctx, model, state, elapsed);
         break;
+    }
     case NodeKind::transform_recorder:
         // igTransformRecorder traversal 801DE9C0 (table 0x80415194): _m
         // (+0x20, vtable +0x94) = modelview stack top * the traversal's
@@ -1308,7 +1470,7 @@ void visit(Node* n, TraversalContext& ctx, const Mat4& parent_model, const State
         // +0x98) = the modelview matrix itself. One matrix each, no double
         // buffer: MOVERL JOINT (8030CD94) reads _m through the field meta
         // 805646FC (offset 0x20, registered by 801ABF70).
-        n->recorded = model;
+        if (cull.simulate) n->recorded = model;
         break;
     case NodeKind::reset_node:
         // beResetNode traversal 80312C28 (registered by 80313004 on the
@@ -1344,7 +1506,14 @@ void visit(Node* n, TraversalContext& ctx, const Mat4& parent_model, const State
         break;
     }
     case NodeKind::node_anim:
-        if (n->anim) time = n->anim->time(time);
+        if (n->anim) {
+            if (cull.simulate) {
+                time = n->anim->time(time);
+            } else {
+                NodeAnim copy = *n->anim;
+                time = copy.time(time);
+            }
+        }
         break;
     case NodeKind::model_node: {
         Mat4 local = n->matrix;
@@ -1362,7 +1531,7 @@ void visit(Node* n, TraversalContext& ctx, const Mat4& parent_model, const State
         // traversal's inverse view (+0xA4), 801D5ADC builds the billboard's
         // world matrix from it and the children get that * view (+0x64)
         // (80128690 at 801DD76C). Here `model` already is the world matrix.
-        const Mat4 view = state.view.value_or(ctx.camera.view);
+        const Mat4 view = state.view.value_or(camera_view);
         Mat4 inverse_view;
         if (!invert(view, inverse_view)) break;
         Mat4 base_inverse;
@@ -1390,25 +1559,35 @@ void visit(Node* n, TraversalContext& ctx, const Mat4& parent_model, const State
         // the SQUARED eye distance z*z + (x*x + y*y) picks the one child
         // (801F799C); the ranges are squared distances. The players'
         // [0, 0, 10000] show Kage (child 0) never, High (1) up to 100 units
-        // and Low (2) beyond; the shadow proxies draw Kage directly.
+        // and Low (2) beyond; the shadow proxies draw Kage directly. A
+        // subtree the original skips keeps the selection cache as it was.
         overrides(*n, state);
-        const Vec3f eye = transform_point(n->lod_center, model * state.view.value_or(ctx.camera.view));
-        if (Node* child = n->select_lod(eye.z * eye.z + (eye.x * eye.x + eye.y * eye.y)))
-            visit(child, ctx, model, state, time, scope, depth + 1);
+        const Vec3f eye = transform_point(n->lod_center, model * state.view.value_or(camera_view));
+        const float distance_squared = eye.z * eye.z + (eye.x * eye.x + eye.y * eye.y);
+        Node* child = nullptr;
+        if (cull.simulate) {
+            child = n->select_lod(distance_squared);
+        } else {
+            const auto kept = std::make_tuple(n->lod_child, n->lod_index, n->lod_lower, n->lod_upper);
+            child = n->select_lod(distance_squared);
+            std::tie(n->lod_child, n->lod_index, n->lod_lower, n->lod_upper) = kept;
+        }
+        if (child) visit(child, ctx, model, state, time, scope, cull, depth + 1);
         return;
     }
     case NodeKind::geometry:
         apply_all(n->attributes, state, model);
         overrides(*n, state);
-        if constexpr (picture) geometry_items(n, ctx, model, state, scope); // (no geometry decoding without)
+        if constexpr (picture)
+            if (cull.draw) geometry_items(n, ctx, model, state, scope); // (no geometry decoding without)
         break;
     case NodeKind::actor: {
-        if (ctx.actor_hook) ctx.actor_hook(*n, model, ctx);
+        if (ctx.actor_hook && cull.simulate) ctx.actor_hook(*n, model, ctx);
         overrides(*n, state);
         ActorScope actor;
         actor.actor_model = n->actor_matrix * model;
-        actor.pose = ctx.actor_pose ? ctx.actor_pose(scope.pose_actor ? *scope.pose_actor : *n) : nullptr;
-        for (auto* root : n->appearance_roots) visit(root, ctx, actor.actor_model, state, time, actor, depth + 1);
+        actor.pose = ctx.actor_pose ? ctx.actor_pose(scope.pose_actor ? *scope.pose_actor : *n, cull.simulate) : nullptr;
+        for (auto* root : n->appearance_roots) visit(root, ctx, actor.actor_model, state, time, actor, cull, depth + 1);
         scope = actor;
         break;
     }
@@ -1419,15 +1598,21 @@ void visit(Node* n, TraversalContext& ctx, const Mat4& parent_model, const State
     overrides(*n, state);
     for (std::size_t i = 0; i < n->children.size(); ++i) {
         if (!n->child_enabled(i)) continue;
-        visit(n->children[i], ctx, model, state, n->fixed_time ? *n->fixed_time : time, scope, depth + 1);
+        visit(n->children[i], ctx, model, state, n->fixed_time ? *n->fixed_time : time, scope, cull, depth + 1);
     }
 }
 } // namespace
 
 void traverse(Node* n, TraversalContext& ctx, const Mat4& parent_model, const RenderState& parent_state, std::int64_t time) {
-    // Without an output list nothing of the render state is needed but the view.
-    if (ctx.output) visit(n, ctx, parent_model, parent_state, time, ActorScope{}, 0);
-    else visit(n, ctx, parent_model, ViewOnly{parent_state.view}, time, ActorScope{}, 0);
+    // 801E87EC (vtable slot 9, at the traversal's start) makes the cull table
+    // current: every bound is tested until a node lies inside.
+    CullScope cull;
+    cull.test = ctx.cull;
+    cull.picture_test = ctx.cull && ctx.picture_cull && ctx.output;
+    // Without an output list nothing of the render state is needed but the
+    // view and the projection.
+    if (ctx.output) visit(n, ctx, parent_model, parent_state, time, ActorScope{}, cull, 0);
+    else visit(n, ctx, parent_model, ViewOnly{parent_state.view, parent_state.projection}, time, ActorScope{}, cull, 0);
 }
 
 void traverse(Node* root, TraversalContext& context) {
