@@ -707,6 +707,19 @@ void ExploreBot::note_regenerating(engine::Engine& engine, const engine::ModelCt
 // enemies to fight.)
 constexpr float kSandFightMargin = 90.0f;
 
+bool perilous_floor(engine::Engine& engine, const engine::Vec3f& p) {
+    auto* mats = engine.get<engine::MatCtrlManager>();
+    if (!mats) return false;
+    for (const auto& box : mats->mat_boxes()) {
+        if (p.x < box.min.x || p.x > box.max.x || p.z < box.min.z || p.z > box.max.z || p.y < box.min.y - 5.0f || p.y > box.max.y + 10.0f) continue;
+        const std::string script = box.name + ".lua";
+        if ((engine.script_mentions(script, "ADDHP") && engine.script_mentions(script, "REMOVE")) || engine.script_mentions(script, "QuickSand") ||
+            engine.script_mentions(script, "QUICKSAND"))
+            return true;
+    }
+    return false;
+}
+
 bool ExploreBot::quicksand_mat(engine::Engine& engine, const std::string& mat) {
     const auto it = quicksands_.find(mat);
     if (it != quicksands_.end()) return it->second;

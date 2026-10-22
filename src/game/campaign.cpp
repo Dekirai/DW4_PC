@@ -4698,7 +4698,8 @@ void CampaignBot::survive(engine::Engine& engine, const engine::ModelCtrlManager
 // on dng103f2's stepping stones a level 12 run off a stone (there 3 falls
 // instead of 5 and on to Apocalymon; in dng205b3 with kSandFightMargin 1
 // fall instead of 2 in 90000 frames).
-constexpr float kGuardDrop = 8.0f; // a step down deeper than this behind the player is a drop (a ledge's lower floor is not)
+constexpr float kGuardDrop = 8.0f;      // a step down deeper than this behind the player is a drop (a ledge's lower floor is not) ...
+constexpr float kGuardDeepDrop = 25.0f; // ... into a pit or quicksand, or deeper than this
 bool CampaignBot::guard_footing(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player) const {
     auto* hitland = engine.get<engine::HitLandManager>();
     if (!hitland || !player.node) return true;
@@ -4712,7 +4713,12 @@ bool CampaignBot::guard_footing(engine::Engine& engine, const engine::ModelCtrlM
     }
     for (const float k : {3.0f, 6.0f, 9.0f, 12.0f, 15.0f}) {
         const auto land = hitland->world().check_land({me.x + dx / d * k, me.y + 5.0f, me.z + dz / d * k}, 1.0f, 400.0f, 1.0f);
-        if (!land.found || land.position.y < me.y - kGuardDrop) return false;
+        // (A step down onto plain floor is no drop: a pit's respawn mat or
+        // quicksand down there is, and so is a deep one, kGuardDeepDrop. On
+        // stag0304's terraces, 10 units above the next, the guard was never
+        // taken against the heavy cannons' shells, 15 % of the HP each.)
+        if (!land.found) return false;
+        if (land.position.y < me.y - kGuardDrop && (land.position.y < me.y - kGuardDeepDrop || perilous_floor(engine, land.position))) return false;
     }
     return true;
 }

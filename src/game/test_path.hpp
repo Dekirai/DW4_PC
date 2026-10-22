@@ -21,6 +21,10 @@ namespace dw4::game {
 std::vector<engine::Vec3f> find_walk_path(const engine::CollisionWorld& world, const engine::Vec3f& from, const engine::Vec3f& to,
                                           std::uint32_t wall_flags);
 
+// Whether floor at `p` lies in a mat that hurts or pulls: a pit's respawn
+// mat (its script ADDHP and REMOVE) or quicksand (QuickSand / QUICKSAND).
+bool perilous_floor(engine::Engine& engine, const engine::Vec3f& p);
+
 // While alive, the players' limit circle (limit_Circle, a ring of walls
 // round the players' centre that follows them) is left out of the stage
 // collision: it never stops a single player, but a route planned ahead would
