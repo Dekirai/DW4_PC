@@ -1482,6 +1482,14 @@ constexpr Supply kSupplies[] = {
     // empty and 5 M were all a level 23 chain carried into stag0204, out of
     // heals there in 21000 frames with 25000 bits held.)
     {1, 9, 0, 1 << 30, 5000},
+    // With more bits to spare the bigger heals the shop sells as well
+    // (ShopDisk sells all ten conItem rows from the start): HP Disks L (5400
+    // HP for 1200 bits) and a few Recovery (all HP and MP, 3000 bits; the
+    // heal takes it last, Y first). A no-cheat chain went into area 3 with
+    // 147000 bits in the bank and 18 heals of 450 and 1800 HP, and gave the
+    // stag0301 crossing to stag0302 up three times with no heal left.
+    {2, 9, 0, 1 << 30, 10000},
+    {9, 3, 0, 1 << 30, 30000},
 };
 constexpr int kRaiseDisk = 7;
 constexpr int kRaiseWalk = 1500; // frames to reach the bit capsule
@@ -4000,6 +4008,7 @@ void CampaignBot::save_memory(std::ostream& out) const {
     for (const auto& [place, count] : place_visits_) out << "visits " << word(place.first) << " " << place.second << " " << count << "\n";
     for (const auto& [place, hash] : swept_) out << "swept " << word(place.first) << " " << place.second << " " << hash << "\n";
     for (const auto& [record, price] : prices_) out << "price " << record << " " << price << "\n";
+    for (const auto& name : explorer_.regenerating_names()) out << "healing " << word(name) << "\n";
     out << "timers " << heal_at_ << " " << gate_disk_at_ << " " << last_attack_ << " " << aggressive_until_ << " " << held_presses_ << " "
         << guard_held_ << " " << tech_end_ << " " << panel_ready_at_ << " " << big_hit_ << " " << big_hit_at_ << " " << train_exp_ << " "
         << train_exp_at_ << "\n";
@@ -4056,6 +4065,13 @@ void CampaignBot::load_memory(std::istream& in) {
         } else if (key == "price") {
             int record = 0, price = 0;
             if (f >> record >> price) prices_[record] = price;
+        } else if (key == "healing") {
+            std::string name;
+            if (f >> name) {
+                auto names = explorer_.regenerating_names();
+                names.insert(unword(name));
+                explorer_.set_regenerating_names(names);
+            }
         } else if (key == "timers") {
             f >> heal_at_ >> gate_disk_at_ >> last_attack_ >> aggressive_until_ >> held_presses_ >> guard_held_ >> tech_end_ >> panel_ready_at_ >>
                 big_hit_ >> big_hit_at_ >> train_exp_ >> train_exp_at_;
