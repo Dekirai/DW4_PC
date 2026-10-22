@@ -331,7 +331,7 @@ crosses a field to its exit striking only the enemies
 that come near, crosses a floor that gave way under it before (dng310f3's fading tiles) without a stop
 and keeps the spot a fall began from off its routes for a while, chases no enemy over moving platforms, holds
 waves away from pits and quicksand sinks (an enemy off the sand is walked to), takes no guard with a
-pit, quicksand or a deep drop behind it, fights Belphemon and dng412b4's spinning knight by boss routines, cures poison with Cure Disks, hunts the members of waves whose clearing powers or opens something even while crossing a field (stag0304's switches) and dodges Lucemon's bomb rows from their markers
+pit, quicksand or a deep drop behind it, fights Belphemon and dng412b4's spinning knight by boss routines, cures poison with Cure Disks, keeps off and leaves alone structures seen blowing up where they stand (stag0401's mines), hunts the members of waves whose clearing powers or opens something even while crossing a field (stag0304's switches) and dodges Lucemon's bomb rows from their markers
 (omens: a blast's rings known before its boxes exist); a field step that stalls for 180000 frames leaves the field and comes
 back; with `DW4_CAMPAIGN_CHECKPOINTS=dir` it saves the game
 like a player at nine points of the story where it returns to the lobby (the save Digi-Elf in
