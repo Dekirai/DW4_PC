@@ -487,7 +487,7 @@ private:
         std::uint32_t read{};      // sectors read so far (requests of up to 64)
         int object_chunk{-1};      // the chunk holding the start of the object buffer (the objects are made after it)
         int memory_chunk{-1};      // the chunk holding the start of the memory blocks
-        int stall{};               // fields the objects take
+        int stall{};               // milli-fields the objects take
         bool chunk_costed{};       // the booked chunk's processing is counted (wait)
         std::int64_t wait{};       // fields after its booking before the next request
         std::int64_t booked{-1};   // the frame that saw the chunk on its way booked
