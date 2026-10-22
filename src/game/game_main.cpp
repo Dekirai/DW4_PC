@@ -1558,8 +1558,22 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 rendered_serial = serial;
                 interpolator.reset();
             }
-            if (draw) engine.render(items, camera, clear, &shadow);
-            else engine.traverse_scene();
+            if (draw) {
+                // The picture's own frustum cull follows the renderer's
+                // widescreen widening (GlRenderer::render, the viewports
+                // below): subtrees the original's cull skips that lie in
+                // the wider picture are drawn without their updates.
+                int width = 0, height = 0;
+                SDL_GetWindowSizeInPixels(window, &width, &height);
+                engine.picture_widen = 1.0f;
+                if (settings.widescreen && width * 3 > height * 4 && height > 0) {
+                    const int screen_width = height * 4 / 3;
+                    engine.picture_widen = (float(screen_width) / float(height)) / (float(width) / float(height));
+                }
+                engine.render(items, camera, clear, &shadow);
+            } else {
+                engine.traverse_scene();
+            }
             if (steps > 0) {
                 if (last_step_loaded) load_step_drawn = true;
                 else if (!input_log.empty()) input_log.back().drawn = true;

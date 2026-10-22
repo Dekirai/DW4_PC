@@ -2790,6 +2790,17 @@ const ActorPose* ActionManager::pose_for(const Node& actor, std::int64_t world_t
     return &ram.pose;
 }
 
+const ActorPose* ActionManager::peek_pose(const Node& actor, std::int64_t world_time) {
+    auto found = actor_owner_.find(&actor);
+    if (found == actor_owner_.end()) return nullptr;
+    auto& ram = *found->second;
+    if (!ram.database) return nullptr;
+    if (ram.pose_time == world_time) return &ram.pose;
+    const auto time = static_cast<std::int64_t>(scaled_clock(world_time, ram.node_clock.scale) + static_cast<std::uint64_t>(ram.node_clock.bias));
+    evaluate_pose(*ram.database, ram.motion, time, ram.peek, ram.peek_locals);
+    return &ram.peek;
+}
+
 bool ActionManager::drawn(const Node* node) const {
     for (const auto& ram : rams_)
         if (ram->node == node) return !ram->switch_node || ram->switch_node->child_enabled(ram->switch_child);

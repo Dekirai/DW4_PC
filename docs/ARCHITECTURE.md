@@ -70,9 +70,30 @@ the simulation: node animation clocks (NodeAnim), the motion combiners of the
 actors (`ActionManager::pose_for`), LOD choices and the transform recorders
 advance in it, so every picture the original draws must be traversed.
 `Engine::traverse_scene` does the same traversal (shadow casters and receivers
-included) without draw items, carrying only the view matrix down instead of
-the render state; test runs without pictures, catch-up steps and save state
-replays use it.
+included) without draw items, carrying only the view and projection matrices
+down instead of the render state; test runs without pictures, catch-up steps
+and save state replays use it.
+
+The traversal culls like the stage camera's igFrustCullTraversal (created by
+8040B3EC; node test 801E9AB4, box 801E97C8 / 801E898C, clip test 801E8BF0,
+dispatch 801E994C). A node with an igNode bound (always an igAABox in the data:
+actors, ParticleTimers, many igTransform / igGeometry / igGroup nodes) is
+tested in its parent's space against the current modelview and projection
+before its own handler runs: outside (no corner inside one clip plane, or every
+corner behind the eye) skips it with its subtree, updates included, so an
+actor out of view evaluates no combiner and a recorder, LOD cache, NodeAnim or
+ParticleTimer clock below a culled bound keeps its value; inside, also inside
+the frustum widened by 1.1 (801E9BE0), stops the tests for the subtree. The
+test uses the game's camera (`TraversalContext::cull_camera`), never a debug
+camera. The shadow shader dispatches its casters on the same traversal, so
+they are culled against the light's view and box; the receivers against the
+camera. A ParticleTimer's effect time advances only when the traversal visits
+it (_timeRunning / _timeBias / _time, 8031A0A4): an effect started out of view
+begins at its first visit. `Engine::render` also tests the picture's own
+frustum (the renderer widens perspective projections for widescreen, and a
+debug camera shows everything): a subtree outside the original's frustum but
+in the picture is drawn without its updates (`ActionManager::peek_pose`, copied
+clocks and caches), so the simulation does not depend on the presentation.
 
 ## Messenger and scripts
 

@@ -462,6 +462,107 @@ void test_text_layout() {
           "A line before a final break measures to the pen");
 }
 
+void test_frustum_cull_code() {
+    // 90 degrees across the 640x448 window: at depth d the frustum spans
+    // x in (-d, d) and y in (-d * 448 / 640, d * 448 / 640).
+    const Mat4 projection = perspective_horizontal(3.14159265f / 2.0f, 640.0f / 448.0f, 10.0f, 2000.0f);
+    const Mat4 view{};
+    check(frustum_cull_code(view, projection, {-10, -10, -110}, {10, 10, -90}) == 1, "A box in the frustum is inside (1)");
+    check(frustum_cull_code(view, projection, {150, -10, -110}, {170, 10, -90}) == 2, "No corner inside x < w: outside (2)");
+    check(frustum_cull_code(view, projection, {-10, -10, 50}, {10, 10, 60}) == 2, "Every corner behind the eye: outside (2)");
+    check(frustum_cull_code(view, projection, {90, -10, -110}, {130, 10, -90}) == 3, "Across the right plane: partial (3)");
+    check(frustum_cull_code(view, projection, {95, -1, -101}, {105, 1, -99}) == 5,
+          "Over the edge but inside the 1.1 times wider frustum (5)");
+    check(frustum_cull_code(view, projection, {-10, -10, -20}, {10, 10, 5}) == 3, "Across the near plane: partial (3)");
+    // The bound moves with the modelview (row vectors: translation in row 3).
+    check(frustum_cull_code(translation(160, 0, 0), projection, {-10, -10, -110}, {10, 10, -90}) == 2,
+          "The modelview places the box before the test");
+    // The 2D layers' orthographic projection: z in the near/far range too.
+    Mat4 ortho;
+    ortho(0, 0) = 2.0f / 640.0f;
+    ortho(1, 1) = 2.0f / 480.0f;
+    ortho(2, 2) = -1.0f;
+    check(frustum_cull_code(view, ortho, {-10, -10, 0}, {10, 10, 0}) == 1, "A 2D quad on the screen is inside");
+    check(frustum_cull_code(view, ortho, {330, -10, 0}, {350, 10, 0}) == 2, "A 2D quad beyond the right edge is outside");
+}
+
+void test_particle_timer_state() {
+    ParticleTimerState timer;
+    timer.running = true;
+    timer.time = -1; // a start (0x80312334)
+    const std::int64_t t0 = 1000 * frame;
+    check(timer.visit(t0) == 0, "The first visit after a start is the effect's time 0");
+    check(timer.visit(t0 + 10) == 10, "A running timer follows the traversal time");
+    check(timer.peek(t0 + 20) == 20 && timer.time == t0 + 10, "peek changes nothing");
+    check(timer.visit(t0 + 50) == 50, "Frames without a visit still count while running");
+    timer.running = false; // ONFREEZE
+    check(timer.visit(t0 + 60) == 50, "A stopped timer keeps the time of its last visit");
+    check(timer.visit(t0 + 70) == 50, "and keeps it on every visit");
+    timer.running = true; // OFFREEZE
+    check(timer.visit(t0 + 80) == 60, "Running again: the step since the last visit counts");
+    ParticleTimerState late;
+    late.running = true;
+    late.time = -1;
+    check(late.visit(t0 + 500) == 0, "A timer started out of view begins at its first visit");
+}
+
+void test_frustum_cull_traversal() {
+    // root -> seen (bound in view) -> recorder, geometry; root -> aside
+    // (bound right of the 4:3 frustum, inside a 16:9 picture) -> recorder,
+    // ParticleTimer, geometry.
+    Node root, seen, seen_recorder, aside, aside_recorder, aside_timer, aside_geometry, seen_geometry;
+    root.kind = NodeKind::group;
+    seen.kind = aside.kind = NodeKind::group;
+    seen_recorder.kind = aside_recorder.kind = NodeKind::transform_recorder;
+    aside_timer.kind = NodeKind::particle_timer;
+    aside_geometry.kind = seen_geometry.kind = NodeKind::geometry;
+    auto quad = std::make_shared<GeometryData>();
+    quad->valid = true;
+    aside_geometry.runtime_geometry = seen_geometry.runtime_geometry = quad;
+    seen.has_bound = aside.has_bound = true;
+    seen.bound_min = {-10, -10, -110};
+    seen.bound_max = {10, 10, -90};
+    aside.bound_min = {110, -10, -110};
+    aside.bound_max = {120, 10, -90};
+    root.children = {&seen, &aside};
+    seen.children = {&seen_recorder, &seen_geometry};
+    aside.children = {&aside_recorder, &aside_timer, &aside_geometry};
+    aside_timer.timer.running = true;
+    aside_timer.timer.time = -1;
+
+    TraversalContext context;
+    context.cull = true;
+    context.time = 5000 * frame;
+    context.cull_camera.projection = perspective_horizontal(3.14159265f / 2.0f, 640.0f / 448.0f, 10.0f, 2000.0f);
+    context.camera = context.cull_camera;
+    traverse(&root, context);
+    check(seen_recorder.recorded.has_value(), "A subtree in view records its matrices");
+    check(!aside_recorder.recorded.has_value(), "A culled subtree's recorder keeps its matrix (801E994C code 2)");
+    check(aside_timer.timer.time == -1, "A culled ParticleTimer's clock does not advance");
+
+    std::vector<DrawItem> items;
+    context.output = &items;
+    traverse(&root, context);
+    check(items.size() == 1 && items[0].node == &seen_geometry, "The picture draws only the subtree in view");
+
+    // A 16:9 picture (the renderer's x scale 0.75) reaches the culled box:
+    // drawn, but its recorder and clock stay as the original leaves them.
+    items.clear();
+    context.picture_widen = 0.75f;
+    traverse(&root, context);
+    check(items.size() == 2, "The widened picture draws the subtree the original culls (not its unstarted timer)");
+    check(!aside_recorder.recorded.has_value() && aside_timer.timer.time == -1,
+          "The widened picture's extra subtree changes no state");
+
+    // A debug camera draws everything; the cull stays with the game camera.
+    items.clear();
+    context.picture_widen = 1.0f;
+    context.picture_cull = false;
+    traverse(&root, context);
+    check(items.size() == 2 && !aside_recorder.recorded.has_value(),
+          "Without the picture's cull the original's cull still decides the updates");
+}
+
 void test_particle_records() {
     // y_messcr (the menu cursor ping): one 160-byte record, no Bec terms.
     std::vector<std::uint8_t> one(160, 1);
@@ -495,6 +596,9 @@ int main() {
         test_field_time();
         test_motion_blend_tracks();
         test_text_layout();
+        test_frustum_cull_code();
+        test_particle_timer_state();
+        test_frustum_cull_traversal();
         test_particle_records();
         test_card_setting();
         test_gate_stage_name();

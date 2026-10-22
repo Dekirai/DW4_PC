@@ -514,6 +514,7 @@ private:
         bool running{};
         int state{};
         std::int64_t start{};
+        std::int64_t paused = -1; // ONFREEZE: the time the effect stopped at (-1: not stopped)
         Node* transform{};  // ram [11]
         Node* timer{};      // ram [12] ParticleTimer
         std::string owner;  // followed model (lock)
@@ -624,6 +625,7 @@ private:
     std::optional<Vec3f> light_;
     bool active() const { return shader_ && light_.has_value() && !casters_.empty() && !receivers_.empty(); }
     Mat4 light_view() const; // only while active()
+    Mat4 light_projection() const;
     void traverse(const TraversalContext& context, std::vector<DrawItem>* casters, std::vector<DrawItem>* receivers);
 };
 
@@ -1638,12 +1640,18 @@ public:
         std::int64_t pose_time = -1;
         std::vector<Mat4> locals;         // the bone locals of `pose`
         std::vector<Mat4> combiner_cache; // combiner +0x40: the last traversal's bone locals
+        ActorPose peek;                   // peek_pose's picture (no game state)
+        std::vector<Mat4> peek_locals;
     };
     // The actor's pose at `world_time`. The scene traversal (`traversal`)
     // evaluates the combiner as 801D0C14 does: its update retires finished
     // fades and its output stays in the combiner cache MOTIONSET bakes from;
     // a query (GETBONEMATRIX) only reads the pose.
     const ActorPose* pose_for(const Node& actor, std::int64_t world_time, bool traversal = false);
+    // The pose for a picture of an actor the original's frustum cull skips
+    // (drawn only in the widened widescreen picture): evaluated without the
+    // combiner update and without touching the pose or combiner caches.
+    const ActorPose* peek_pose(const Node& actor, std::int64_t world_time);
     // GETAPPEARANCELIST (802F1870): the action of a model (its igActor nodes
     // and animation database with the skeleton).
     const ActionRam* find(std::string_view name, int index) const;
