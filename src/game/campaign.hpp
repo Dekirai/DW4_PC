@@ -194,6 +194,8 @@ private:
     int new_flag_visit_ = -1;    // the stage visit (its stage_frame_) that last set a flag never seen before
     int new_flag_ = -1;          // that flag
     std::map<std::string, int> progress_trips_; // objective -> Gate Disk trips out of it with progress (no gate raised)
+    std::map<std::string, int> restock_trips_;  // objective -> Gate Disk trips back to restock on the way to it (kRestockTrips)
+    std::string restock_pending_;               // the objective of a restocking trip started, counted back in the lobby
     // The equipment errand at the Digi-Lab (next_equip).
     bool equip_open_ = false;    // its lab program may be running
     int equip_kind_ = -1;        // the slot kind chosen in the lab's equipment menu

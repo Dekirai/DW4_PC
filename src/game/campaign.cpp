@@ -1571,6 +1571,10 @@ constexpr int kGateTripBits = 400;
 // Disk of its own, a few HP and MP disks used), some 6000 frames each, a
 // third of a no-cheat run's training time at level 14.
 constexpr int kTripHealStock = 4;
+// On the way to an objective (not training): back to restock while the heals
+// held make up less than kRestockBelow percent of a full stock's HP, at most
+// kRestockTrips times an objective.
+constexpr int kRestockBelow = 50, kRestockTrips = 2;
 // A Gate Disk out of an objective's stage raises its gate only when the
 // visit made no progress (no story flag set for the first time): after one
 // that did, the player restocks and comes back, at most kProgressTrips times
@@ -4128,6 +4132,7 @@ void CampaignBot::save_memory(std::ostream& out) const {
     for (const auto& [field, level] : train_falls_) out << "trainfall " << word(field) << " " << level << "\n";
     for (const auto& stage : no_panel_stages_) out << "nopanel " << word(stage) << "\n";
     for (const auto& [objective, trips] : progress_trips_) out << "progress " << word(objective) << " " << trips << "\n";
+    for (const auto& [objective, trips] : restock_trips_) out << "restock " << word(objective) << " " << trips << "\n";
     out << "flags_seen";
     for (const int flag : flags_seen_) out << " " << flag;
     out << "\n";
@@ -4167,6 +4172,10 @@ void CampaignBot::load_memory(std::istream& in) {
             std::string objective;
             int trips = 0;
             if (f >> objective >> trips) progress_trips_[unword(objective)] = trips;
+        } else if (key == "restock") {
+            std::string objective;
+            int trips = 0;
+            if (f >> objective >> trips) restock_trips_[unword(objective)] = trips;
         } else if (key == "flags_seen") {
             for (int flag = 0; f >> flag;) flags_seen_.insert(flag);
             flags_init_ = true;
@@ -4540,23 +4549,56 @@ void CampaignBot::survive(engine::Engine& engine, const engine::ModelCtrlManager
         const bool shopping = objective_now_.rfind("train", 0) == 0 &&
                               ((planned_spend(engine) >= kGateTripBits && heal_stock <= kTripHealStock) ||
                                (slot.devices.size() >= 36 && next_sale(engine) >= 0));
-        // (The junk shop's accessory, kProtections: after the donation the
-        // dealer only says to come back later until the next trip through
-        // the lobby gate (flag 594, cleared by stagML11 gateclear.lua when a
-        // destination is chosen), so out in the field without it the player
-        // goes back for it at once.)
+        // (The junk shop's accessory, kProtections: out in the field without
+        // it the player goes back for it at once while the shop can help -
+        // also before the donation, with the bits for it: the objective
+        // after Gekomon leads from stag0302 on into stag0303. After the
+        // donation the dealer only says to come back later until the next
+        // trip through the lobby gate (flag 594, cleared by stagML11
+        // gateclear.lua when a destination is chosen).)
         bool junk = false;
-        if (const int want = protection_wanted(engine); want >= 0 && engine.counters()[1] >= kJunkDonation && !holds(engine, "F594") &&
-                                                         !lobby(lower(engine.stage_name()))) {
+        if (const int want = protection_wanted(engine);
+            want >= 0 && !lobby(lower(engine.stage_name())) &&
+            (engine.counters()[1] >= kJunkDonation ? !holds(engine, "F594") : slot.bits + slot.bank_bits >= kJunkDonation + kGearBits)) {
             junk = true;
             for (const auto& d : slot.devices) junk = junk && !(d.type == 2 && d.record == want);
         }
-        if ((dying || shopping || junk) && blow_due(engine, player, kHoldAttackLead + 8.0f, frame) > kHoldAttackLead + 8.0f) {
+        // (On the way to an objective, before its stage: back to restock
+        // while the supplies the bits buy are worth kRestockBits, at most
+        // kRestockTrips times per objective. An attempt started in a
+        // training field once the gate level was reached carries what the
+        // training left: a no-cheat chain went from stag0301 into stag0303
+        // and stag0304 with 9 HP Disks S and 2 L and 95000 bits in the bank,
+        // and gave the fortress up there.)
+        // (Measured by the HP the heals held make up against a full stock of
+        // the supplies, kSupplies' highest count of each heal: below half.)
+        bool restock = false;
+        if (!objective_now_.empty() && objective_now_.rfind("train", 0) != 0 && restock_trips_[objective_now_] < kRestockTrips &&
+            !lobby(lower(engine.stage_name())) && planned_spend(engine) >= kGateTripBits)
+            if (auto* db = engine.get<engine::DatabaseManager>()) {
+                double held = 0.0, full = 0.0;
+                for (const int record : {0, 1, 2, 9}) {
+                    int keep = 0;
+                    for (const auto& s : kSupplies)
+                        if (s.record == record && slot.max_hp >= s.from_hp && slot.max_hp < s.to_hp) keep = std::max(keep, std::min(s.keep, 9));
+                    const double hp = record == 9 ? slot.max_hp : db->number("conItem", record, "HP").value_or(0);
+                    held += hp * disks_held(slot, record);
+                    full += hp * keep;
+                }
+                if (held * 100.0 < full * kRestockBelow)
+                    for (const auto& o : kObjectives)
+                        if (objective_now_ == o.name) restock = lower(engine.stage_name()) != o.stage;
+            }
+        if ((dying || shopping || junk || restock) && blow_due(engine, player, kHoldAttackLead + 8.0f, frame) > kHoldAttackLead + 8.0f) {
             gate_disk_at_ = frame;
             heal_at_ = frame;
             start_disk(slot, kGateDisk, frame);
+            // (Counted once the trip is made, back in the lobby: a use the
+            // blows interrupt is tried again.)
+            if (restock && !dying && !shopping && !junk) restock_pending_ = objective_now_;
             std::printf("[%d] campaign: Gate Disk back to the lobby (%s, %d/%d HP, %d bits)\n", frame,
-                        dying ? "no heal left" : shopping ? "shopping" : "the junk shop", slot.hp, slot.max_hp, slot.bits);
+                        dying ? "no heal left" : shopping ? "shopping" : junk ? "the junk shop" : "restocking on the way", slot.hp, slot.max_hp,
+                        slot.bits);
             // An objective given up for want of heals raises its gate level
             // like a defeat (kGates): a boss that outlasts the supplies would
             // otherwise be walked back to again and again (s2h: dng102b3's
@@ -4985,9 +5027,18 @@ bool CampaignBot::raise_step(engine::Engine& engine, const engine::ModelCtrlMana
         if (e->generated && e->node && e->category == "PLAYER2" && e->index == 0 && e->hp != 0) capsule = e.get();
     if (!capsule) return false;
     const auto me = position_of(player), at = position_of(*capsule);
+    // (Not one beside a structure seen healing itself, whose spit reaches
+    // 45 units: the poison plants, ExploreBot::regenerating_names.)
+    for (const auto& e : models->rams())
+        if (e->generated && e->node && e->category == "ENEMY" && explorer_.regenerating_names().count(e->info_name) &&
+            flat(position_of(*e), at) < 45.0f) {
+            std::printf("[%d] campaign: bit capsule at (%.0f,%.0f,%.0f) beside %s, left\n", frame, at.x, at.y, at.z, e->info_name.c_str());
+            raise_tries_ = 99;
+            return false;
+        }
     for (const auto& e : models->rams())
         if (e->generated && e->node && e->category == "ENEMY" && e->hp > 0 && flat(position_of(*e), me) < 35.0f &&
-            engine.has_script("hit_" + e->info_name + ".lua"))
+            engine.has_script("hit_" + e->info_name + ".lua") && !explorer_.regenerating_names().count(e->info_name))
             return false; // (fought first)
     // (A capsule not reached in kRaiseWalk frames, e.g. on a ledge above the
     // route, is left for the stage.)
@@ -5026,6 +5077,9 @@ CampaignBot::Output CampaignBot::play(engine::Engine& engine, const engine::Mode
         // follows, see kBankDust.)
         if (stage.rfind("stag0", 0) == 0 || stage.rfind("dng", 0) == 0 || stage.rfind("stagbs", 0) == 0 || stage.rfind("staggf", 0) == 0)
             bank_withdrawn_ = false, bank_tries_ = 0, junk_visits_ = 0;
+        // (A restocking trip made, see kRestockTrips.)
+        if (lobby(stage) && !restock_pending_.empty()) ++restock_trips_[restock_pending_], restock_pending_.clear();
+        else if (!lobby(stage)) restock_pending_.clear();
         route_.clear();
         route_frame_ = -100000;
         waited_ = 0;

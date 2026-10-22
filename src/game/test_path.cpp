@@ -593,6 +593,9 @@ float body_gap(const engine::ModelCtrlManager::ModelRam& e, const engine::Vec3f&
 // dngq3b2e g_d3pedstal 14.1; the levers of stag0101-0301, 10.6, and the
 // wall switches stay pressed by their origin).
 constexpr float kFarTalk = 12.0f;
+// The ground kept clear round a structure seen healing itself (plan,
+// without the test cheats): the poison plants' spit hit at up to 46.
+constexpr float kHealerKeep = 45.0f;
 float box_reach(const engine::ModelCtrlManager::ModelRam& e) {
     if (!e.node || !e.hit || e.hit->boxes.empty()) return 0.0f;
     const auto& m = e.node->matrix;
@@ -1348,6 +1351,31 @@ void ExploreBot::plan(engine::Engine& engine, const engine::ModelCtrlManager::Mo
     FireLaneCells lanes;
     for (const auto& [key, cell] : fire_cells_)
         if (frame - cell.frame <= 150) lanes[key] = {cell.lo, cell.hi};
+    // Without the test cheats the ground round a structure seen healing
+    // itself (regenerating_names: the area 3 poison plants spit at a player
+    // 20 to 46 units off, ~5 % of the HP a hit, and never fall) counts as a
+    // fire lane within kHealerKeep, and nothing there is walked to (near_healer):
+    // a no-cheat chain was defeated beside them again and again, walking to
+    // items, enemies and its own bit capsule there.
+    std::vector<engine::Vec3f> healers;
+    if (!engine.cheats().one_hit && !engine.cheats().god && !regenerating_names_.empty())
+        for (const auto& e : models->rams())
+            if (e->generated && e->node && e->category == "ENEMY" && regenerating_names_.count(e->info_name)) healers.push_back(position_of(*e));
+    for (const auto& h : healers) {
+        const int r = int(std::ceil(kHealerKeep / Grid::step));
+        const int cx = int(std::lround(h.x / Grid::step)), cz = int(std::lround(h.z / Grid::step));
+        for (int dz = -r; dz <= r; ++dz)
+            for (int dx = -r; dx <= r; ++dx) {
+                if (dx * dx + dz * dz > r * r) continue;
+                const auto [it, fresh] = lanes.try_emplace({cx + dx, cz + dz}, h.y - 15.0f, h.y + 40.0f);
+                if (!fresh) it->second = {std::min(it->second.first, h.y - 15.0f), std::max(it->second.second, h.y + 40.0f)};
+            }
+    }
+    const auto near_healer = [&](const engine::Vec3f& p) {
+        for (const auto& h : healers)
+            if (flat(h, p) < kHealerKeep && p.y > h.y - 15.0f && p.y < h.y + 40.0f) return true;
+        return false;
+    };
     const FireLanes fire_guard(lanes);
     // The moving platforms' paths (in platforms_ order; one that does not
     // keep moving sideways is plain floor where it stands).
@@ -1623,6 +1651,7 @@ void ExploreBot::plan(engine::Engine& engine, const engine::ModelCtrlManager::Mo
             const bool structure = e->info_name.rfind("g_", 0) == 0;
             if (pass == 0 && structure && regenerating_names_.count(e->info_name) && !engine.cheats().one_hit && !engine.cheats().god) continue;
             const bool boss = e->info_name.rfind("f_", 0) == 0;
+            if (!boss && (pass == 0 || e->item_table != 2) && near_healer(at)) continue; // (key items are fetched all the same)
             const bool hover = pass == 0 && hovering(*e);
             // (A structure seen firing along a lane is a turret.)
             const auto fired = shots_.find(e.get());
@@ -1987,6 +2016,7 @@ void ExploreBot::plan(engine::Engine& engine, const engine::ModelCtrlManager::Mo
             if (was_tried != tried) continue;
             if (left_alone(e.get())) continue;
             const auto at = position_of(*e);
+            if (kind == Gimmick::strike && near_healer(at)) continue; // (switches are worked all the same)
             const float tolerance = gimmick_tolerance(*e, kind);
             float cost = keep(e.get(), map.cost_to(at, tolerance));
             // A wall being broken (or walked to) is finished first.
