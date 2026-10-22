@@ -253,7 +253,9 @@ ParticleTimer and switch it off after the info's duration. A ParticleTimer node
 draws its igParticleAttr arrays (`dw4/engine/particles.hpp`): each 180-byte
 particle is a quadratic in time for position, RGBA, size and texture rectangle,
 built into camera-facing quads every frame (`DW4_TRACE_PARTICLES=1` logs the
-instances).
+instances). The centres go through the full model transform; the sizes are
+view-space sizes the model scale never enters (800E3618 / 800E3650 store half
+sizes, 800E1C70 builds the corners around the transformed centre).
 
 Water surfaces (`WaterPlainManager`, beWaterPlain) run the original wave
 equation on their grid: players and enemies in the height bands and the
@@ -267,15 +269,25 @@ update) the drop cycle starts again from that moment.
 Projected shadows follow the stage's igProjectiveShadowShader (`ShadowManager`,
 beShadow01): beShadow01Info entries name casters (model switches, or
 `beCopyModelCtrl2` "Kage" proxies that copy a model instance's matrix and
-actor pose) and receivers (simplified ground meshes outside the visible scene).
+actor pose) and receivers (ground meshes: visible floor items or simplified
+copies outside the visible scene).
 `Engine::render` hands the renderer a `ShadowFrame`: the map (_shadowTexW x
 _shadowTexH, default 128, the stages ship 256) is cleared white and the casters
 are drawn in the grey _shadowFactor (801FDCCC) into an inner viewport that
 keeps a 7-texel border (801FD040 / loc_801FCBE4: ceil(6 * blur offset) + 1),
 seen from the light with lookAt(light, light + igLightAttr direction,
 _upVector) (801FE5E4) and an orthographic box from _left/_right/_bottom/_top
-(+-5 by default, +-100 for beShadow01's +-5). The receivers multiply the map
-(ZERO / SOURCE_COLOR) over the opaque 3D scene, before the blended items.
+(+-5 by default, +-100 for beShadow01's +-5). The caster pass locks only
+lighting, depth, texture unit 0, the shadow colour and the viewport, so each
+caster keeps its own blending (an additive effect ring adds its grey to the
+white map and casts nothing). The receivers multiply the map
+(ZERO / SOURCE_COLOR) over the opaque 3D scene, before the blended items. The
+receiver path (801FE190) sets the texture, blending and a disabled alpha test
+but no depth, cull or offset state: each receiver is drawn again on its own
+vertices with its own depth test, function, write and culling. A decal
+receiver drawn as a whole square so keeps the floor under it from being shaded
+twice, and a receiver's depth hides blended items under it that are drawn
+later (the centre tile of stagBS05's boss gate).
 `DW4_TRACE_SHADOW=1` logs the light, the box and the item counts.
 
 ## Collision

@@ -156,7 +156,7 @@ RgbaImage decode_indexed8_rgba8(std::span<const std::uint8_t> indices,
 RgbaImage decode_bc1(std::span<const std::uint8_t> blocks, std::uint32_t width, std::uint32_t height) {
     const auto required = bc1_size(width, height);
     require_bytes(blocks, required, "BC1 image");
-    RgbaImage result{width, height, std::vector<std::uint8_t>(output_size(width, height))};
+    RgbaImage result{width, height, std::vector<std::uint8_t>(output_size(width, height)), true};
     std::size_t block_offset = 0;
     for (std::uint32_t block_y = 0; block_y < height; block_y += 4)
         for (std::uint32_t block_x = 0; block_x < width; block_x += 4) {
@@ -173,8 +173,14 @@ RgbaImage decode_bc1(std::span<const std::uint8_t> blocks, std::uint32_t width, 
             }
             colors[2][3] = 255;
             colors[3][3] = first > second ? 255 : 0;
+            // GX CMPR's three-colour mode keeps the average (c0 + c1) / 2 in the
+            // transparent texel where BC1 has black. Bilinear filtering mixes
+            // that colour into the edge pixels that pass an alpha test
+            // (stagBS05 floor Bs0423_n: Dolphin's texture dump has c2 there).
+            if (first <= second)
+                for (std::size_t channel = 0; channel < 3; ++channel) colors[3][channel] = colors[2][channel];
             // BC1 uses little-endian endpoint words and least-significant selector
-            // bits first. Its transparent color is black, unlike GX CMPR.
+            // bits first.
             for (std::uint32_t y = 0; y < 4 && block_y + y < height; ++y)
                 for (std::uint32_t x = 0; x < 4 && block_x + x < width; ++x) {
                     const auto selector = (data[4 + y] >> (x * 2)) & 3;
