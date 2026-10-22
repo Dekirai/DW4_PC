@@ -1,4 +1,5 @@
 #include "dw4/engine/particles.hpp"
+#include "dw4/engine/gx_color.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -21,7 +22,15 @@ float quadratic(std::span<const std::uint8_t> p, std::size_t at, std::size_t ste
     return read_f32(p, at) + read_f32(p, at + step) * t + read_f32(p, at + 2 * step) * t * t;
 }
 
-std::uint8_t unit_byte(float value) { return std::uint8_t(std::clamp(value, 0.0f, 1.0f) * 255.0f + 0.5f); }
+// A colour channel (terms at +0x24 / +0x34 / +0x44 + 4 * channel) packed
+// into its vertex colour byte: (c0 + c1 t) + c2 t^2 with t^2 computed once
+// (separate fmuls / fadds, 0x800E0AAC..0x800E0B40 and 0x800E0DB0..
+// 0x800E0E44), then 8012E1D8 (rounded, gx_color.hpp).
+std::uint8_t color_byte(std::span<const std::uint8_t> p, std::size_t at, float t) {
+    const float t2 = t * t;
+    const float linear = read_f32(p, at) + read_f32(p, at + 0x10) * t;
+    return gx_round_byte(linear + read_f32(p, at + 0x20) * t2);
+}
 
 } // namespace
 
@@ -91,8 +100,7 @@ bool build_particles(const ObjectView& particle_attr, float time, const Mat4& mo
         }
         const Vec3f local{quadratic(p, 0x00, 0x0C, t), quadratic(p, 0x04, 0x0C, t), quadratic(p, 0x08, 0x0C, t)};
         const Vec3f center = transform_point(local, model);
-        const float r = quadratic(p, 0x24, 0x10, t), g = quadratic(p, 0x28, 0x10, t);
-        const float b = quadratic(p, 0x2C, 0x10, t), a = quadratic(p, 0x30, 0x10, t);
+        const float a = quadratic(p, 0x30, 0x10, t);
         const float w = quadratic(p, 0x54, 0x08, t), h = one_size ? w : quadratic(p, 0x58, 0x08, t);
         if (w <= 0.0f || h <= 0.0f || a <= 0.0f) continue;
         float u0 = read_f32(p, 0x6C), v0 = read_f32(p, 0x70), u1 = read_f32(p, 0x74), v1 = read_f32(p, 0x78);
@@ -125,8 +133,8 @@ bool build_particles(const ObjectView& particle_attr, float time, const Mat4& mo
         out.positions.push_back(center + ax + ay);
         out.positions.push_back(center + ax - ay);
         out.positions.push_back(center - ax - ay);
-        const std::uint32_t color = std::uint32_t(unit_byte(r)) | (std::uint32_t(unit_byte(g)) << 8) |
-                                    (std::uint32_t(unit_byte(b)) << 16) | (std::uint32_t(unit_byte(a)) << 24);
+        const std::uint32_t color = std::uint32_t(color_byte(p, 0x24, t)) | (std::uint32_t(color_byte(p, 0x28, t)) << 8) |
+                                    (std::uint32_t(color_byte(p, 0x2C, t)) << 16) | (std::uint32_t(color_byte(p, 0x30, t)) << 24);
         out.colors.insert(out.colors.end(), 4, color);
         out.texcoords.insert(out.texcoords.end(), {u0, v0, u1, v0, u1, v1, u0, v1});
         out.indices.insert(out.indices.end(), {index, index + 2, index + 1, index, index + 3, index + 2});

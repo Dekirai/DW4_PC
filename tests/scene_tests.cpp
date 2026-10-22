@@ -1,6 +1,7 @@
 #include "dw4/engine/math.hpp"
 #include "dw4/engine/actor.hpp"
 #include "dw4/engine/engine.hpp"
+#include "dw4/engine/gx_color.hpp"
 #include "dw4/engine/managers.hpp"
 #include "dw4/engine/particles.hpp"
 #include "dw4/engine/random.hpp"
@@ -580,8 +581,24 @@ void test_particle_records() {
     check(particle_record(bec, 1, 180).size() == 0xB4, "180-byte records are read whole");
 }
 
+void test_gx_colors() {
+    // The evolution demo's i_evowipe fade step at 127.54 / 255: igColorAttr
+    // rounds (8012E1D8) to 128, the lighting / fog / clear rule truncates.
+    const float fade = 127.54f / 255.0f;
+    check(gx_round_byte(fade) == 128 && gx_trunc_byte(fade) == 127, "A fade at 127.54 / 255 is 128 rounded, 127 truncated");
+    check(gx_round_byte(0.5f) == 128 && gx_trunc_byte(0.5f) == 127, "Half rounds up, truncation drops it");
+    check(gx_round_byte(1.0f) == 255 && gx_trunc_byte(1.0f) == 255 && gx_round_byte(0.0f) == 0, "The bounds stay 0 and 255");
+    check(gx_round_byte(1.1f) == 255 && gx_trunc_byte(1.1f) == 255, "Above 1 clamps (the lobby's 1.1 light)");
+    check(gx_round_byte(-0.25f) == 0 && gx_trunc_byte(-0.25f) == 0, "Below 0 clamps");
+    check(gx_round_byte(std::numeric_limits<float>::quiet_NaN()) == 255, "8012E1D8 clamps a NaN to the upper bound first");
+    check(gx_round(0.9f) == 230.0f / 255.0f && gx_trunc(0.9f) == 229.0f / 255.0f, "The TEXTCTL default 0.9 is 230 rounded");
+    const Vec4f c = gx_round(Vec4f{1.0f, fade, 0.1f, 0.0f});
+    check(c.x == 1.0f && c.y == 128.0f / 255.0f && c.z == 26.0f / 255.0f && c.w == 0.0f, "Each channel rounds on its own");
+}
+
 int main() {
     try {
+        test_gx_colors();
         test_lod_selection();
         test_start_and_advance();
         test_long_step();
