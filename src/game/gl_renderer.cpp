@@ -692,7 +692,10 @@ void GlRenderer::render_shadow_receivers(const engine::FrameCamera& camera) {
         // test, function, write and culling (GX has no polygon offset). A
         // decal receiver (dng307b2's boss arena emblem, 0.1 above the floor
         // and drawn first as a whole square) so writes its depth and keeps the
-        // floor receiver from shading its pixels a second time.
+        // floor receiver from shading its pixels a second time, and a blended
+        // item drawn later behind a receiver stays hidden (stagBS05's arena
+        // receiver, y 10.2-10.8, covers the boss gate's centre tile at y
+        // 10.53-10.77).
         const auto& s = item.state;
         if (s.depth_test) {
             glEnable(GL_DEPTH_TEST);
