@@ -1842,11 +1842,25 @@ public:
     // variable (common table 804EA930, type 4) whose string object stays null
     // until 802EBCFC writes it (SYSsetGateStage, the gate disk 803B139C), so
     // SYSgetGateStageName answers nil until then (80269ECC -> 80273330).
-    // GAMEDATAINIT of slot 0 (8036CE1C, 0x8036CE3C..0x8036CF70) rebuilds the
-    // common record from that table: unset again, number 0 (reset_gate_stage).
     // The memory card holds neither.
     std::optional<std::string> gate_stage_name;
     std::int32_t gate_stage_no{};
+    // GAMEDATAINIT of slot 0 (8036CE1C, 0x8036CE3C..0x8036CF70) releases the
+    // 13 common variables and makes them again from table 804EA930 (8036C2B0,
+    // {type, count, name}, jump table 804EACF0): NINZU, DIFFICULTY, CAMERAMODE
+    // and LIGHTMODE (type 0) 0; FLAG[1024] and FLAGFOLDER[12] (type 3, the
+    // byte r13-0x3AF0) and COUNTER[16] (type 1, 804EACE4) all 0; BKCHIPSTAGE[4]
+    // and BKCHIPNAME[4] (type 5) null strings, BKCHIPPOS[12] (type 7,
+    // 804EACE8) and BKCHIPDATA[8] (type 1) 0; GATESTAGENAME (type 4) a null
+    // string, GATESTAGENO 0. It runs at boot (8036D37C, slots 0-3), for
+    // LOADCTRL2 GENERATE_TITLE (slots 0-3, 0x80368B18) and when player 1 makes
+    // or calls a character in the character select or the call shop
+    // (0x8035ECC4 / 0x8035EF58). Player 1's BASE_FLAG / BASE_FLAGFOLDER /
+    // BASE_COUNTER become the common ones again only with BASE2CURRENT
+    // (link_common); LOADCTRL2 writes NINZU back when it closes, DIFFICULTY,
+    // CAMERAMODE and LIGHTMODE only in title mode (0x803687C0), so a call-shop
+    // character of player 1 leaves them 0. The memory card holds none of them.
+    void reset_common(Engine& engine);
     void reset_gate_stage() {
         gate_stage_name.reset();
         gate_stage_no = 0;

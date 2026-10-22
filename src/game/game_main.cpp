@@ -470,6 +470,9 @@ int run(const Options& options, dw4::game::Settings& settings) {
     std::optional<dw4::engine::Engine> engine_storage;
     engine_storage.emplace(options.data);
     auto& engine = *engine_storage;
+    // Steps of the engines a console reboot replaced (Engine::reboot_due):
+    // the session's step count for the online frames and the sound output.
+    std::uint64_t frame_base = 0;
     // Memory cards: --card-dir, DW4_CARD_DIR, else saves/GC/USA next to the
     // program. Dolphin's GC/USA folder works too (same GCI files).
     // settings.ini [data] cards may point at another GCI root (e.g. Dolphin's
@@ -750,7 +753,8 @@ int run(const Options& options, dw4::game::Settings& settings) {
         auto* sound = engine.get<dw4::engine::SoundManager>();
         if (!sound || (!audio && !audio_dump_path)) return;
         std::vector<std::int16_t> pcm(std::size_t(frames) * 2);
-        sound->render(pcm.data(), std::size_t(frames));
+        // A rebooting console is silent (the reset stops the DSP).
+        if (!engine.rebooting()) sound->render(pcm.data(), std::size_t(frames));
         // Master volume (settings.ini [audio] volume, percent).
         if (settings.volume < 100)
             for (auto& sample : pcm) sample = std::int16_t(int(sample) * settings.volume / 100);
@@ -842,6 +846,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
             for (std::size_t slot = 0; slot < state_slots.size(); ++slot) state_slots[slot] = read_state_file(state_path(slot));
         auto can_save = [&]() -> std::string {
             if (net.active()) return "Save states are off in online sessions.";
+            if (engine.rebooting()) return "The console is restarting.";
             const auto* snapshot = engine.stage_snapshot();
             if (!snapshot) return "No stage has loaded yet.";
             if (snapshot->stage.rfind("stagis", 0) == 0) return "Save states work after the title screens.";
@@ -931,6 +936,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
             own_card_folder = real_cards / "Card A";
             engine.set_card_root(session_cards);
             engine.request_stage(started.stage);
+            frame_base = 0;
             net_submitted = std::uint64_t(started.delay);
             input_log.clear();
             log_serial = 0;
@@ -950,6 +956,35 @@ int run(const Options& options, dw4::game::Settings& settings) {
             net.close();
             engine.set_card_root(card_root);
             apply_gameplay(engine.cheats());
+        };
+        // The console reboots (Engine::reboot_due, the reset button): a new
+        // engine boots from the disc as at power-on, with the license screen,
+        // the memory card check, the logos and the opening (straight to the
+        // title with Skip intro, not online). What is outside the console
+        // stays: the memory cards and their slots, the mods, the PC options
+        // and cheats.
+        auto reboot_console = [&] {
+            const auto cheats = engine.cheats();
+            const auto cards = engine.card_root();
+            const std::array<dw4::engine::CardSetting, 2> slots{engine.card_setting(0), engine.card_setting(1)};
+            frame_base += engine.frame();
+            engine_storage.reset();
+            engine_storage.emplace(options.data);
+            engine.set_resource_overrides(mod_folders);
+            engine.set_card_root(cards);
+            for (int slot = 0; slot < 2; ++slot) engine.set_card_setting(slot, slots[std::size_t(slot)]);
+            engine.cheats() = cheats;
+            engine.request_stage(!net.active() && !options.smoke_frames && settings.skip_intro ? "stagis10" : "stagis08");
+            input_log.clear();
+            log_serial = 0;
+            load_step_drawn = last_step_loaded = false;
+            movie_decoder.reset();
+            movie_serial = 0;
+            movie_stage.clear();
+            if (renderer) renderer->clear_cache();
+            interpolator.reset();
+            rendered_stage.clear();
+            std::cout << "console reboot at frame " << frame << std::endl;
         };
         // --load-state FILE: the run starts where that state was saved.
         if (!options.load_state.empty()) {
@@ -1207,7 +1242,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
             std::uint64_t net_frame = 0;
             for (int i = 0; i < steps; ++i) {
                 if (net.active()) {
-                    net_frame = engine.frame() + 1;
+                    net_frame = frame_base + engine.frame() + 1;
                     net.poll();
                     if (options.smoke_frames) {
                         const auto wait_until = std::chrono::steady_clock::now() + std::chrono::seconds(20);
@@ -1460,7 +1495,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     pads = net.take(net_frame);
                 }
                 engine.step(pads);
-                if (net.active() && engine.frame() % 60 == 0) net.report_fingerprint(engine.frame(), engine.fingerprint());
+                if (net.active() && (frame_base + engine.frame()) % 60 == 0) net.report_fingerprint(frame_base + engine.frame(), engine.fingerprint());
                 // The input since the running stage's load, for save states.
                 if (const auto* snapshot = engine.stage_snapshot(); snapshot && snapshot->serial != log_serial) {
                     log_serial = snapshot->serial;
@@ -1471,7 +1506,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     input_log.push_back({pads, false});
                     last_step_loaded = false;
                 }
-                mix_audio(step_samples(engine.frame()));
+                mix_audio(step_samples(frame_base + engine.frame()));
                 ++frame;
                 if (state_test) {
                     if (state_pass == 1) {
@@ -1502,6 +1537,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                                                 e->seq_name.c_str(), e->hp, e->node->matrix(3, 0), e->node->matrix(3, 1),
                                                 e->node->matrix(3, 2));
                         }
+                if (engine.reboot_due()) reboot_console();
             }
             if (steps > 0 && draw) interpolator.advance();
             // (Every stage load, also of the same stage: the texture cache is
@@ -1556,7 +1592,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     // After its end Sofdec's last picture stays up until the
                     // stage changes (the opening's end script switches a frame
                     // later).
-                    if (const auto* sound = engine.get<dw4::engine::SoundManager>(); sound && sound->movie()) {
+                    if (const auto* sound = engine.get<dw4::engine::SoundManager>(); sound && sound->movie() && !engine.rebooting()) {
                         const auto* movie = sound->movie();
                         if (!movie_decoder || movie_serial != movie->serial) {
                             movie_decoder = std::make_unique<dw4::game::MovieDecoder>(movie->video);

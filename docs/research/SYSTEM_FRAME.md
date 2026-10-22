@@ -53,9 +53,37 @@ the already admitted reset path.
 
 Those platform operations are explicit services. An unavailable sample
 preserves the already stored last byte; pending reset actions preserve all
-earlier display effects and the selected disk decision. The native port does
-not execute console hardware instructions or manufacture reset input. A
-future PC reset adapter must implement game reset, not reboot the host PC.
+earlier display effects and the selected disk decision.
+
+The native engine (`dw4::ConsoleReset`, `Engine::step`) supplies the reset
+input the way the console gets it: the GameCube controller presses the reset
+button when B, X and START (A and Y released) are held for more than three
+seconds and holds it for half a second (Dolphin's
+`CSIDevice_GCController::HandleButtonCombos` and `ResetButton_Tap`, "embedded
+in controller hardware"); OSGetResetButtonState (`802601B8`) reports the
+press from its second sample and keeps a release pressed for 40 ms. In fields:
+the tap 180 fields after the combination starts, the latched release 33 fields
+after the tap. The game's own soft reset (STAGECTL `80347BB4`, START with B
+and X for a second) runs first and only returns to the title (NEXTSTAGE
+stagIS10 at `0x80347EDC`, after PADRecalibrate). Dolphin runs
+(work/dref/r29reset): held 2 s the original reaches the title without a
+reboot (`d_reset2s`); held 3.3 s it reboots, the reset log at movie field
+~5715 (predicted 5716), the license screen 258 fields later with the cold
+boot's picture sequence (`d_reset3s`, `d_boot`). A reboot is the game's
+reset, not the host PC's: the port turns the picture black, waits
+`Engine::kRebootFields` (181) steps and starts a new engine on the boot stage
+(its fingerprints then equal a cold boot's frame for frame; the license
+screen and the memory card window follow the latched release by 258 and 422
+fields as in Dolphin). The reset enable `+5F` is cleared around memory card
+work and set again when the request ends (`80360C3C`): making and formatting
+the file in the character select and the save room (LoadIntf
+`0x8035FDF0`..`0x8035FF30` / `0x8036012C`..`0x80360268`, SaveIntf
+`0x8037BE7C` / `0x8037BF78`, `0x8037C178` / `0x8037C264`; `card_open_flow`)
+and writing the character (SaveIntf `0x8037B744`..`0x8037BA18`), so a release
+latched then waits for the card. In the call shop's character select the same
+LoadIntf steps also turn STAGECTL's soft reset off (`+0x63`, `80360CAC`), and
+the host's START that ends the character select turns it off until the next
+stage (`0x8035F8E8`..`0x8035F8F4`).
 
 On the normal path, `publish_system_frame_time` runs exactly once before
 loading. It uses the live system context, wraps the 64-bit difference,

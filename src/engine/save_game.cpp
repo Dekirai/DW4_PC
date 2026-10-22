@@ -22,6 +22,18 @@ template <std::size_t N> std::vector<int> indices(const std::array<std::int32_t,
 }
 } // namespace
 
+void GameSystem::reset_common(Engine& engine) {
+    ninzu = 0;
+    difficulty = 0;
+    camera_mode = 0;
+    light_mode = 0;
+    engine.flags().clear();
+    flag_folder.clear();
+    engine.counters().clear();
+    bit_chips = {};
+    reset_gate_stage();
+}
+
 void GameSystem::link_common(Engine& engine, int slot) {
     if (slot != 0) return;
     const auto& p = players[0];

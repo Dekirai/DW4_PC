@@ -2,6 +2,7 @@
 
 #include "dw4/engine/igb_view.hpp"
 #include "dw4/engine/scene_graph.hpp"
+#include "dw4/console_reset.hpp"
 #include "dw4/igb_document.hpp"
 #include "dw4/lua4.hpp"
 #include "dw4/packages.hpp"
@@ -263,6 +264,7 @@ struct StageSnapshot {
     std::shared_ptr<const void> system;  // GameSystem copy
     std::shared_ptr<const void> sound;        // SoundManager streams
     std::uint64_t serial{};                   // counts the snapshots of an engine
+    ConsoleReset console_reset;               // the reset button and the controller's combination
 };
 
 // Save state files: a snapshot as bytes and back (throws on damaged or
@@ -306,8 +308,26 @@ public:
     void request_stage(std::string name);
     // False after the step that took a stage change (NEXTSTAGE, 80347F2C):
     // the original presents no new picture from then on, the screen keeps
-    // the last one until the loader draws.
-    bool presenting() const { return pending_stage_.empty(); }
+    // the last one until the loader draws. A reboot presents black.
+    bool presenting() const { return rebooting_ || pending_stage_.empty(); }
+    // The console reboots (ConsoleReset): from the step beSystem saw the reset
+    // button's release on, the picture is black and nothing runs; after
+    // kRebootFields more steps the host starts a new engine on the boot stage
+    // (the disc's apploader has loaded the game again).
+    bool rebooting() const { return rebooting_; }
+    bool reboot_due() const { return rebooting_ && reboot_fields_ >= kRebootFields; }
+    // The steps the reboot stays black before the new engine starts: Dolphin
+    // shows "Licensed by Nintendo" 258 fields after the latched release
+    // (work/dref/r29reset d_reset3s: release at dframe ~5700, license
+    // dframes 5958-6115, the memory card window from 6122, the cold boot's
+    // pictures 78-235 / 242 shifted by 5880), the port's own start shows it
+    // at its frame 77 (d_boot / p_boot): the reset, the apploader loading the
+    // game from the disc again and the OS start before the first picture
+    // take the other 181. The new engine then boots as at power-on.
+    static constexpr int kRebootFields = 258 - 77;
+    // beSystem +0x5F (ConsoleReset::set_enabled).
+    void set_reset_enabled(bool enabled) { console_reset_.set_enabled(enabled); }
+    const ConsoleReset& console_reset() const { return console_reset_; }
     const std::string& stage_name() const { return stage_name_; }
     std::int64_t time() const { return time_; }
     std::uint64_t frame() const { return frame_; }
@@ -533,6 +553,9 @@ private:
     bool loader_fast_{};                     // see fast_loading()
     bool stage_active_{}; // beSystem +0x2C, see stage_active()
     bool soft_reset_allowed_{}; // stage data +63, set after first.lua outside the title stages
+    ConsoleReset console_reset_;   // beSystem +0x5F..0x62 and the controllers' reset combination
+    bool rebooting_{};             // the reset button restarted the console (rebooting())
+    int reboot_fields_{};          // steps since then
     Cheats cheats_;
     std::optional<StageSnapshot> snapshot_;
     std::uint64_t snapshot_serial_{};
