@@ -1593,6 +1593,8 @@ constexpr int kTripHealStock = 4;
 // they were spent the stag0304 climb was walked into after every training
 // with what the training left, and lost again).
 constexpr int kRestockBelow = 50, kRestockTrips = 2;
+// A lobby errand still under way after this many frames has stalled.
+constexpr int kErrandStall = 20000;
 // A Gate Disk out of an objective's stage raises its gate only when the
 // visit made no progress (no story flag set for the first time): after one
 // that did, the player restocks and comes back, at most kProgressTrips times
@@ -2098,7 +2100,7 @@ constexpr int kSellFrom = 24;
 int CampaignBot::next_sale(engine::Engine& engine) const {
     auto* sys = engine.get<engine::GameSystem>();
     auto* db = engine.get<engine::DatabaseManager>();
-    if (!sys || !db || engine.cheats().god || !db->has_column("weapon", "KAITORI")) return -1;
+    if (!sys || !db || engine.cheats().god || sales_off_ || !db->has_column("weapon", "KAITORI")) return -1;
     const auto& p = sys->players[0];
     static const char* const tables[4] = {"weapon", "armor1", "armor2", "abChip"};
     static const int sell_rank[6] = {0, 250, 750, 3000, 6000, 12000};
@@ -2820,13 +2822,15 @@ std::optional<CampaignBot::Step> CampaignBot::next_step(engine::Engine& engine) 
     static constexpr Objective kWithdrawErrand13{"bits out of the bank", "", "stagml13", "withdraw:n_digilff#4"};
     static constexpr Objective kDepositErrand12{"bits into the bank", "", "stagml12", "deposit:n_digilff#0"};
     static constexpr Objective kDepositErrand13{"bits into the bank", "", "stagml13", "deposit:n_digilff#4"};
-    const bool banking = !engine.cheats().god && lobby(here) && !holds(engine, "F1") && slot && bank_tries_ < kBankTries;
-    if (!engine.cheats().god && lobby(here) && !holds(engine, "F1") && hurt) objective = &kHealErrand;
-    else if (!engine.cheats().one_hit && lobby(here) && !holds(engine, "F1|F409") && next_equip(engine).device >= 0)
+    // (No errands in this stay once one stalled, see errands_off_.)
+    const bool errands_here = lobby(here) && !errands_off_;
+    const bool banking = !engine.cheats().god && errands_here && !holds(engine, "F1") && slot && bank_tries_ < kBankTries;
+    if (!engine.cheats().god && errands_here && !holds(engine, "F1") && hurt) objective = &kHealErrand;
+    else if (!engine.cheats().one_hit && errands_here && !holds(engine, "F1|F409") && next_equip(engine).device >= 0)
         objective = &kEquipErrand;
     else if (banking && !bank_withdrawn_ && slot->bank_bits > 0)
         objective = here == "stagml13" ? &kWithdrawErrand13 : &kWithdrawErrand12;
-    else if (!engine.cheats().god && lobby(here) && !holds(engine, "F1") &&
+    else if (!engine.cheats().god && errands_here && !holds(engine, "F1") &&
              (next_purchase(engine).record >= 0 || (slot && int(slot->devices.size()) >= kSellFrom && next_sale(engine) >= 0)))
         objective = &kShopErrand;
     // Then a look at the weapon and the armor shop (next_gear) once per level.
@@ -2844,7 +2848,7 @@ std::optional<CampaignBot::Step> CampaignBot::next_step(engine::Engine& engine) 
         junk = junk && (engine.counters()[1] >= kJunkDonation ? !holds(engine, "F594") : slot->bits >= kJunkDonation + kGearBits);
     }
     if (objective != &kHealErrand && objective != &kEquipErrand && objective != &kShopErrand && !engine.cheats().god &&
-        lobby(here) && !holds(engine, "F1") && slot && slot->bits >= kGearBits && slot->devices.size() < 36) {
+        errands_here && !holds(engine, "F1") && slot && slot->bits >= kGearBits && slot->devices.size() < 36) {
         if (junk) objective = &kJunkErrand;
         else if (gear_checked_[0] != slot->stats.level) objective = &kWeaponErrand;
         else if (gear_checked_[1] != slot->stats.level) objective = &kArmorErrand;
@@ -2979,6 +2983,9 @@ bool CampaignBot::answer_menu(engine::Engine& engine, const engine::ModelCtrlMan
             lab_leaving_ = false;
         }
     }
+    // (Errands off for this stay, see kErrandStall: an open program's menus
+    // are no errand's.)
+    if (errands_off_) shop_open_ = gear_open_ = bank_open_ = equip_open_ = heal_open_ = false;
     // A shop errand's program keeps its answers while it runs (the errand
     // ends with the last purchase, the shop's menus still need theirs).
     if (step.action.rfind("shop:", 0) == 0) {
@@ -3198,7 +3205,9 @@ bool CampaignBot::answer_menu(engine::Engine& engine, const engine::ModelCtrlMan
             // the sale list (i_stcursor01) and yes (i_stmesscr, 2 lines).
             const auto buy = next_purchase(engine);
             const int sale = next_sale(engine);
-            if (menu.name == "i_stmesscr" && menu.items >= 3) want = sale >= 0 ? 1 : buy.record >= 0 ? 0 : menu.items - 1;
+            // (Buy that led to the sale's Devices / Disks: the shop is left
+            // and talked to anew, see below.)
+            if (menu.name == "i_stmesscr" && menu.items >= 3) want = buy_glitch_ ? menu.items - 1 : sale >= 0 ? 1 : buy.record >= 0 ? 0 : menu.items - 1;
             else if (shop_selling_ && menu.name == "i_stmesscr") {
                 if (!sale_confirm_ && sale < 0) cancel = true;
             } else if (shop_selling_ && menu.name == "i_stcursor01") {
@@ -3213,10 +3222,22 @@ bool CampaignBot::answer_menu(engine::Engine& engine, const engine::ModelCtrlMan
                 else if (turn_to(sale)) return true;
                 else want = sale % 12;
             } else if (menu.name == "i_stcursor01") {
-                if (buy.record >= 0) want = buy.record;
+                // (The buy list has the ten conItem rows: any other list here is
+                // the sale's, reached by a press the menus took out of step,
+                // and is backed out of.)
+                if (buy.record >= 0 && menu.items == 10) want = buy.record;
                 else cancel = true;
             } else if (menu.name == "i_stcursor05" && buy.record >= 0) {
                 want = std::clamp(9 - buy.held - buy.count, 0, std::max(menu.items - 1, 0));
+            } else if (menu.name == "i_stmesscr" && !buy_confirm_) {
+                // (Two lines while buying and before a count: the sale's
+                // Devices / Disks, reached from Buy after a sale's menus were
+                // backed out of - the next Buy took the old choice again and
+                // again, 950000 frames once. Backed out of, and the shop is
+                // left by Exit and talked to anew. The price's yes follows
+                // the count.)
+                cancel = true;
+                buy_glitch_ = true;
             }
         } else if (equip_open_) {
             // The Digi-Lab's equipment (next_equip): "use the lab?" and
@@ -3362,11 +3383,24 @@ bool CampaignBot::answer_menu(engine::Engine& engine, const engine::ModelCtrlMan
                 }
             }
             if (shop_open_ && !equip_open_ && !heal_open_ && !gear_open_) {
+                if (menu.name == "i_stcursor05") buy_confirm_ = true; // (the price's yes comes next)
+                else if (!shop_selling_ && menu.name == "i_stmesscr" && menu.items == 2) buy_confirm_ = false;
                 if (menu.name == "i_stmesscr" && menu.items >= 3) {
+                    if (want == menu.items - 1) buy_glitch_ = false; // (Exit)
                     shop_selling_ = want == 1;
                     sale_confirm_ = false;
+                    buy_confirm_ = false;
+                    // (Sell chosen three times with no sale between: the shop
+                    // lists nothing of what next_sale picked - a message and
+                    // back to Buy / Sell / Exit, round and round for 950000
+                    // frames once - so no more sales this stay in the lobby.)
+                    if (want == 1 && ++sell_tries_ >= 3) {
+                        sales_off_ = true;
+                        std::printf("[%d] campaign: the disk shop sells nothing of the devices picked: no sales this stay\n", frame);
+                    }
                 } else if (shop_selling_ && menu.name == "i_stmesscr") {
                     if (sale_confirm_) {
+                        sell_tries_ = 0;
                         if (auto* sys = engine.get<engine::GameSystem>(); sys && trace() && sale_target_ >= 0 &&
                                                                           sale_target_ < int(sys->players[0].devices.size()))
                             if (auto* db = engine.get<engine::DatabaseManager>())
@@ -5182,7 +5216,7 @@ CampaignBot::Output CampaignBot::play(engine::Engine& engine, const engine::Mode
         // (Out of the lobby into the story's stages: a new stay in the lobby
         // follows, see kBankDust.)
         if (stage.rfind("stag0", 0) == 0 || stage.rfind("dng", 0) == 0 || stage.rfind("stagbs", 0) == 0 || stage.rfind("staggf", 0) == 0)
-            bank_withdrawn_ = false, bank_tries_ = 0, junk_visits_ = 0;
+            bank_withdrawn_ = false, bank_tries_ = 0, junk_visits_ = 0, sell_tries_ = 0, sales_off_ = false, errands_off_ = false;
         // (A restocking trip made, see kRestockTrips.)
         if (lobby(stage) && !restock_pending_.empty()) ++restock_trips_[restock_pending_], restock_pending_.clear();
         else if (!lobby(stage)) restock_pending_.clear();
@@ -5388,6 +5422,18 @@ CampaignBot::Output CampaignBot::play(engine::Engine& engine, const engine::Mode
         // A long step: the place in the log where a run stalls.
         std::printf("[%d] campaign: still %s for %d frames at (%.0f,%.0f,%.0f)\n", frame, key.c_str(), frame - traced_at_,
                     player->node->matrix(3, 0), player->node->matrix(3, 1), player->node->matrix(3, 2));
+        // A lobby errand (a shop, the bank, the X-Data shop, the lab) that
+        // has not ended in kErrandStall frames: its menus went out of step
+        // (the disk shop's Sell, then its Buy list, answered round and round
+        // for 950000 frames once). No more errands this stay; the open
+        // program's menus are left as no errand's (backed out of, Exit).
+        static constexpr const char* kErrands[] = {"shop:", "gear:", "deposit:", "withdraw:", "heal:", "equip:"};
+        if (step && lobby(stage_) && frame - traced_at_ >= kErrandStall &&
+            std::any_of(std::begin(kErrands), std::end(kErrands), [&](const char* e) { return step->action.rfind(e, 0) == 0; })) {
+            errands_off_ = true;
+            shop_open_ = gear_open_ = bank_open_ = equip_open_ = heal_open_ = false;
+            std::printf("[%d] campaign: the errand %s stalled: no more errands this stay\n", frame, step->action.c_str());
+        }
         // DW4_CAMPAIGN_STALL_DUMP=1 (research, prints only): from 20000 frames
         // on, the state of every model RAM (category, control, freeze, HP,
         // sequence) and the running demo-message chains.

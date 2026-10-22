@@ -226,6 +226,11 @@ private:
     int bank_ups_ = 0;           // UP presses on the amount's top digit
     int bank_digits_at_ = -100000; // the amount's digit cursor last seen
     int bank_lists_ = 0;           // lists backed out of in this bank visit (two: no bank, see answer_menu)
+    int sell_tries_ = 0;           // disk shop Sell choices since the last sale
+    bool buy_confirm_ = false;     // the disk shop's count was taken: its yes to the price comes next
+    bool buy_glitch_ = false;      // Buy led to the sale's menu: Exit and talk anew
+    bool sales_off_ = false;       // no device sales this stay in the lobby (see answer_menu)
+    bool errands_off_ = false;     // no lobby errands this stay: one stalled (kErrandStall)
     int bank_list_at_ = -100000;
     // Gear from the weapon, armor and chip shops (next_gear).
     bool gear_open_ = false;     // a device shop program of the errand may be running
