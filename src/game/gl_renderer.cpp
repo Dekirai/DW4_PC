@@ -95,12 +95,25 @@ void main() {
     vec4 local = vec4(a_pos, 1.0);
     vec3 normal = a_normal;
     if (u_skinned != 0) {
+        // A blended igVertexArray (visual context flag 0x10, 0x800FAD00) is
+        // skinned on the CPU in the immediate draw 0x800EDD24. Positions sum
+        // w_k * (p * M[i_k]) over the weights up to the first zero weight
+        // (0x800F00FC..0x800F01B4; one weight per vertex: p * M[i0] alone,
+        // 0x800F01BC, Mesh sets that weight to 1). The normal (flag 0x20,
+        // 0x800F03D8..0x800F044C) goes through the 3x3 of the FIRST blend
+        // index only (lbzx at 0x800F03FC), unweighted and not normalised; so
+        // do the NBT vectors (flag 0x200, 0x800F045C..0x800F0588) and the
+        // pre-blended buffer path (0x800FA968, normals through 0x800ED4A0).
+        // A vertex between two bones keeps the first bone's shading
+        // (s_weregaru's shoulders and tail, the wings of s_impdrafm/pm).
         int i0 = int(a_indices.x + 0.5), i1 = int(a_indices.y + 0.5);
-        vec4 p = u_palette[i0] * local * a_weights.x;
-        vec3 nn = mat3(u_palette[i0]) * a_normal * a_weights.x;
-        if (a_weights.y > 0.0) { p += u_palette[i1] * local * a_weights.y; nn += mat3(u_palette[i1]) * a_normal * a_weights.y; }
+        vec4 p = vec4(0.0);
+        if (a_weights.x != 0.0) {
+            p = u_palette[i0] * local * a_weights.x;
+            if (a_weights.y != 0.0) p += u_palette[i1] * local * a_weights.y;
+        }
         local = vec4(p.xyz, 1.0);
-        normal = nn;
+        normal = mat3(u_palette[i0]) * a_normal;
     }
     vec4 world = u_model * local;
     v_shadow = u_shadow_matrix * world;
@@ -439,6 +452,9 @@ const GlRenderer::Mesh* GlRenderer::mesh(const engine::GeometryData* g) {
             weights[k] = g->weights[i * wc + k];
             indices[k] = float(g->blend_indices[i * wc + k]);
         }
+        // One weight per vertex: 0x800F01BC transforms by the bone without
+        // reading the weight.
+        if (wc == 1) weights[0] = 1.0f;
         std::memcpy(p + 36, weights, 8);
         std::memcpy(p + 44, indices, 8);
     }
