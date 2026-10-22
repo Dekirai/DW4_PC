@@ -1012,7 +1012,11 @@ constexpr BossFight kBossFights[] = {
     // walks off when the SQ_FIRE begins, comes back as the last ring is out
     // and strikes in its SQ_WAIT. Its SEISHIN leaves Veemon's thunder some
     // 23 HP a cast against 92 a swing: no technique, `blade`.)
-    {"stagbs05", "f_devl22|f_devl21", "f_devl22", 25.0f, true, true, "", 0.0f, 0.0f, 0.0f, false, "", "", false, "x_039fblst01a:54:SQ_FIRE",
+    // (Its body box, 70000, 22 across, reaches past its hit body: struck
+    // from beside it the player guarded its touch through the whole SQ_WAIT,
+    // `clear_touch`. The last ring's boxes, 50 out and up to 20 wide, reach
+    // some 63 out with the player's body.)
+    {"stagbs05", "f_devl22|f_devl21", "f_devl22", 25.0f, true, true, "", 0.0f, 0.0f, 0.0f, true, "", "", false, "x_039fblst01a:62:SQ_FIRE",
      true},
 };
 
@@ -3751,6 +3755,8 @@ constexpr float kSwingBusy = 32.0f;
 // A swing's boxes go live some 10 frames after A (SQ_ATCK1), A is read
 // within a frame or two of its press.
 constexpr float kSwingLand = 12.0f;
+// BossFight::rings: the floor kept beyond the spot walked to.
+constexpr float kRingRim = 16.0f;
 struct DodgeArea {
     float x0, x1, z0, z1, due, end;
 };
@@ -3955,13 +3961,23 @@ bool CampaignBot::boss_fight(engine::Engine& engine, const engine::ModelCtrlMana
             const float d = flat(c, me);
             if (!live || d >= radius + 2.0f) continue;
             const float ux = d > 0.01f ? (me.x - c.x) / d : 1.0f, uz = d > 0.01f ? (me.z - c.z) / d : 0.0f;
-            const engine::Vec3f spot{c.x + ux * (radius + 5.0f), me.y, c.z + uz * (radius + 5.0f)};
-            bool floor = true;
+            // (Short of the rim by kRingRim: a guard there, against a ring the
+            // walk did not outrun or against a shot, throws the player back
+            // some 15, guard_footing; at the rim no guard was taken and
+            // Daemon's homing drill shots, ~20 % of the HP, struck.)
+            float out_to = 0.0f;
             if (auto* hitland = engine.get<engine::HitLandManager>()) {
-                const auto land = hitland->world().check_land({spot.x, spot.y + 5.0f, spot.z}, 1.0f, 400.0f, 1.0f);
-                floor = land.found && std::abs(land.position.y - me.y) <= 3.0f;
+                const auto floor_at = [&](float k) {
+                    const auto land = hitland->world().check_land({c.x + ux * k, me.y + 5.0f, c.z + uz * k}, 1.0f, 400.0f, 1.0f);
+                    return land.found && std::abs(land.position.y - me.y) <= 3.0f;
+                };
+                for (float k = radius + 5.0f; k > d + 2.0f && out_to == 0.0f; k -= 2.0f)
+                    if (floor_at(k) && floor_at(k + kRingRim)) out_to = k;
+            } else {
+                out_to = radius + 5.0f;
             }
-            if (!floor) break;
+            if (out_to == 0.0f) break;
+            const engine::Vec3f spot{c.x + ux * out_to, me.y, c.z + uz * out_to};
             out.walk = true;
             out.x = spot.x;
             out.z = spot.z;
@@ -3993,7 +4009,9 @@ bool CampaignBot::boss_fight(engine::Engine& engine, const engine::ModelCtrlMana
             const auto c = position_of(*focus);
             float hit_half = 0.0f;
             for (const auto& [lo, hi] : focus->hit->boxes) hit_half = std::max({hit_half, (hi.x - lo.x) * 0.5f, (hi.z - lo.z) * 0.5f});
-            const float ring = hit_half + std::max(2.5f, touch_reach(*focus) + body_half + 0.5f) + 2.0f;
+            // (3 beyond the body box with the player's body: a swing's lunge
+            // carries the player some 2.5 in.)
+            const float ring = hit_half + std::max(2.5f, touch_reach(*focus) + body_half + 0.5f) + 3.0f;
             auto* hitland = engine.get<engine::HitLandManager>();
             float best_walk = 1e30f;
             engine::Vec3f spot{};
@@ -4018,11 +4036,15 @@ bool CampaignBot::boss_fight(engine::Engine& engine, const engine::ModelCtrlMana
                 spot = q;
             }
             if (best_walk < 1e29f) {
-                if (best_walk > 2.0f) {
+                // (Turned to the focus only from the ring or beyond it: a
+                // swing's lunge carries the player some 2 in, and the step
+                // that turns it took it into stagBS05 Daemon's body box,
+                // 24 of 60 hits of a no-cheat test.)
+                if (best_walk > 2.0f || flat(c, me) < ring - 0.75f) {
                     out.walk = true;
                     out.x = spot.x;
                     out.z = spot.z;
-                    out.reach = 1.0f;
+                    out.reach = best_walk > 2.0f ? 1.0f : 0.25f;
                 } else {
                     const float dx = c.x - me.x, dz = c.z - me.z, dd = std::max(0.01f, std::hypot(dx, dz));
                     const float facing = (player.node->matrix(2, 0) * dx + player.node->matrix(2, 2) * dz) / dd;
@@ -5095,7 +5117,20 @@ bool CampaignBot::guard_footing(engine::Engine& engine, const engine::ModelCtrlM
         dx = -player.node->matrix(2, 0), dz = -player.node->matrix(2, 2);
         d = std::max(0.01f, std::hypot(dx, dz));
     }
+    // (A wall before a drop ends the push there: the guard is taken. At the
+    // fence of stagBS05's arena, the floor ending beyond it, no guard was
+    // taken and Daemon's homing drills struck, 20 % of the HP each.)
+    const auto flags = hitland->delivery_flags(player.info_name, player.index);
+    const float width = hitland->delivery_width(player.info_name, player.index);
+    const engine::Vec3f dir{dx / d, 0.0f, dz / d};
+    float walled = 1e9f;
+    for (float t = 0.0f; t < 15.0f; t += 1.5f)
+        if (hitland->world().check_wall({me.x + dir.x * (t + 0.75f), me.y, me.z + dir.z * (t + 0.75f)}, dir, width, 4.0f, flags, false).hit) {
+            walled = t;
+            break;
+        }
     for (const float k : {3.0f, 6.0f, 9.0f, 12.0f, 15.0f}) {
+        if (k > walled + 1.5f) return true;
         auto land = hitland->world().check_land({me.x + dx / d * k, me.y + 5.0f, me.z + dz / d * k}, 1.0f, 400.0f, 1.0f);
         // (A probe on a seam between two floor triangles finds none: the
         // floor beside it counts. stag0304's cannon nest plateau has such
@@ -5366,8 +5401,13 @@ float CampaignBot::blow_due(engine::Engine& engine, const engine::ModelCtrlManag
                         t0 = std::max(t0, a);
                         t1 = std::min(t1, b);
                     };
-                    slab(cx - me.x, v.x, box.size.x * 0.5f + kBodyHalf + kShotMargin);
-                    slab(cz - me.z, v.z, box.size.z * 0.5f + kBodyHalf + kShotMargin);
+                    // (The margin by the shot's speed: a slow homing shot,
+                    // stagBS05 Daemon's drills at ~0.6 a frame, met the full
+                    // margin some 13 frames before its box and the guard was
+                    // over when it came.)
+                    const float margin = std::clamp(std::hypot(v.x, v.z) * 2.0f, 1.0f, kShotMargin);
+                    slab(cx - me.x, v.x, box.size.x * 0.5f + kBodyHalf + margin);
+                    slab(cz - me.z, v.z, box.size.z * 0.5f + kBodyHalf + margin);
                     slab(cy - (body_lo + body_hi) * 0.5f, v.y, box.size.y * 0.5f + (body_hi - body_lo) * 0.5f + 1.0f);
                     if (t0 <= t1 && t0 < best) {
                         best = t0;
@@ -5386,7 +5426,21 @@ float CampaignBot::blow_due(engine::Engine& engine, const engine::ModelCtrlManag
                 cy2 += (seen.at.y - seen.prev.y) * ahead;
                 cz += (seen.at.z - seen.prev.z) * ahead;
             }
-            const float grow = e->category == "EBULLET" ? 9.0f + due * 2.0f : 3.0f + due * 0.25f;
+            // (A bullet that flies: grown by what it covers in some 4.5 frames,
+            // up to 9; stagBS05 Daemon's homing drills, ~0.6 a frame, were
+            // guarded 15 frames early and struck as the guard ran out.)
+            float bullet = 9.0f;
+            if (seen.prev_frame == frame - 1)
+                bullet = std::clamp(std::hypot(seen.at.x - seen.prev.x, seen.at.z - seen.prev.z) * 4.5f, 3.0f, 9.0f);
+            // (A live box that stands still, a blast's: grown by 0.5 only. The
+            // rings of stagBS05 Daemon's blasts, squares on a circle, met the
+            // player grown by 3 where they passed it on the diagonal, and the
+            // guard taken then was over when the next ring came.)
+            float still = 3.0f;
+            if (e->category != "ENEMY" && due == 0.0f && seen.prev_frame == frame - 1 &&
+                std::abs(seen.at.x - seen.prev.x) + std::abs(seen.at.z - seen.prev.z) < 0.05f)
+                still = 0.5f;
+            const float grow = e->category == "EBULLET" ? bullet + due * 2.0f : still + due * 0.25f;
             if (static const bool t = std::getenv("DW4_TRACE_GUARD") != nullptr; t)
                 std::printf("guard? %s#%d %s %s owner %s kind %d due %.0f el %.0f end %.0f gap x %.1f z %.1f y %.1f..%.1f me y %.1f mu %.0f seq %s\n",
                             e->info_name.c_str(), e->index, e->seq_name.c_str(), e->category.c_str(), e->owner_name.c_str(), box.kind, due, box.elapsed, box.end,
