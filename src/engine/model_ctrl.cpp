@@ -1991,7 +1991,26 @@ void ModelCtrlManager::update_effects(Engine& engine, ModelRam& ram, std::size_t
         Packet find;
         engine.messenger().send(engine, "MODELCTRL", effect.model, -1, "FIND_SPACE", find);
         if (find.ints.empty()) {
-            engine.note("effect model " + effect.model);
+            // The messenger answers FIND_SPACE itself (0x80305C44..0x80305CF4):
+            // the first row of the info whose +0x14 (generated: GENERATE sets
+            // it, REMOVE clears it, a row in SQ_ERAS is still taken) is clear.
+            // With every row of the effect model in use nothing answers,
+            // 80310340 returns 0 (0x8031038C) and 803107E0 drops the entry,
+            // so the original does not start that effect either (the four
+            // x_029eblst01a rows while three e_mecha5 fire, the three
+            // x_bossgurd01a rows when f_devl22's SQ_GUARD comes again before
+            // the last guard's effects are removed). Only a model without
+            // rows would be a gap of the port.
+            if (engine.messenger().count("MODELCTRL", effect.model, -1) == 0) engine.note("effect model without MODELCTRL rows " + effect.model);
+            // DW4_TRACE_EFFECT: who asked, and the rows of that model (all generated, or none).
+            if (static const bool trace = std::getenv("DW4_TRACE_EFFECT") != nullptr; trace) {
+                std::string rows;
+                for (const auto& other : rams_)
+                    if (other->info_name == effect.model)
+                        rows += " #" + std::to_string(other->index) + (other->generated ? " " + other->seq_name : std::string(" free"));
+                engine.log("effect " + effect.model + " not started for " + ram.info_name + "#" + std::to_string(ram.index) + " " + ram.seq_name +
+                           ": no free MODELCTRL row" + (rows.empty() ? std::string(" (no beModelCtrl rows)") : ";" + rows));
+            }
             ram.effects.erase(ram.effects.begin() + std::ptrdiff_t(i));
             --count;
             continue;
@@ -2770,7 +2789,7 @@ const ActionManager::ActionRam* ActionManager::find(std::string_view name, int i
     return nullptr;
 }
 
-const ActorPose* ActionManager::pose_for(const Node& actor, std::int64_t world_time, bool traversal) {
+const ActorPose* ActionManager::pose_for(const Node& actor, std::int64_t world_time) {
     auto found = actor_owner_.find(&actor);
     if (found == actor_owner_.end()) return nullptr;
     auto& ram = *found->second;
@@ -2779,14 +2798,17 @@ const ActorPose* ActionManager::pose_for(const Node& actor, std::int64_t world_t
     // The traversal's combiner evaluation (801D0C14) updates the combiner
     // first (801CFFB4 at 0x801D0CB8): a fade whose weight reached 1 retires
     // the states before it. That leaves the pose at this time as it is.
-    if (traversal) ram.motion.update(time);
+    ram.motion.update(time);
     if (ram.pose_time != world_time) {
         evaluate_pose(*ram.database, ram.motion, time, ram.pose, ram.locals);
         ram.pose_time = world_time;
     }
     // The evaluated bone locals stay in the combiner (+0x40) until the next
-    // evaluation; GETBONEMATRIX (802F18A4) reads matrices without one.
-    if (traversal && !ram.locals.empty()) ram.combiner_cache = ram.locals;
+    // evaluation, the bone matrices in +0x54: MOTIONSET bakes from the one,
+    // GETBONEMATRIX (802F18A4) reads the other, neither evaluates.
+    if (!ram.locals.empty()) ram.combiner_cache = ram.locals;
+    ram.traversed = ram.pose;
+    ram.traversed_time = world_time;
     return &ram.pose;
 }
 
@@ -3064,11 +3086,32 @@ bool ActionManager::command(Engine& engine, Ram& base, std::string_view command,
     auto& ram = static_cast<ActionRam&>(base);
     if (command == "GETBONEMATRIX") {
         // 802F18A4: the named joint (igSkeleton lookup, an unnamed root
-        // joint for "") in the model's space from the current pose.
+        // joint for "") of the first actor in the model's space, read from
+        // the bone array the last traversal of the model's actors filled
+        // (actor +0x24 with +0x79, else combiner vtable +0x70 = 80215C38:
+        // combiner +0x54 + i * 64) without evaluating the combiner. The
+        // traversal comes after the updates, so the matrix is the last
+        // picture's, and while no actor of the model is traversed (culled,
+        // hidden) it stays as old as the last visit. Before the first
+        // traversal the array holds 801D13DC's identities.
         const std::string bone(packet.string(0));
         const Node* actor = ram.actors.empty() ? nullptr : ram.actors.front();
-        const ActorPose* pose = actor ? pose_for(*actor, engine.time()) : nullptr;
+        if (actor && !ram.traversed.skeleton && ram.database) {
+            const auto& names = ram.database->skeleton().names;
+            for (std::size_t i = 0; i < names.size(); ++i)
+                if (names[i] == bone) {
+                    packet.matrices.push_back(Mat4{});
+                    return true;
+                }
+        }
+        const ActorPose* pose = actor && ram.traversed.skeleton ? &ram.traversed : nullptr;
         if (!pose && std::getenv("DW4_TRACE_BONES")) engine.log("GETBONEMATRIX " + ram.info_name + ": no pose");
+        // DW4_TRACE_FOLLOW=2: every query on matrices older than the last frame's traversal.
+        if (static const char* trace = std::getenv("DW4_TRACE_FOLLOW"); trace && std::string_view(trace) == "2" &&
+            (ram.traversed_time < 0 || engine.time() - ram.traversed_time > 20000000))
+            engine.log("GETBONEMATRIX " + ram.info_name + "#" + std::to_string(ram.index) + " '" + bone + "' from " +
+                       (ram.traversed_time < 0 ? std::string("no traversal yet")
+                                               : "a traversal " + std::to_string((engine.time() - ram.traversed_time) / 1000000) + " ms ago"));
         if (pose && pose->skeleton) {
             const auto& names = pose->skeleton->names;
             if (std::getenv("DW4_TRACE_BONES") && engine.frame() % 60 == 0) {

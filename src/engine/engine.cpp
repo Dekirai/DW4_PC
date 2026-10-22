@@ -1347,7 +1347,7 @@ TraversalContext Engine::frame_context(std::vector<DrawItem>* out, FrameCamera& 
     if (auto* models = get<ModelCtrlManager>()) models->install_actor_hook(*this, context);
     if (auto* actions = get<ActionManager>())
         context.actor_pose = [this, actions](const Node& actor, bool traversed) {
-            return traversed ? actions->pose_for(actor, time_, true) : actions->peek_pose(actor, time_);
+            return traversed ? actions->pose_for(actor, time_) : actions->peek_pose(actor, time_);
         };
     Mat4 inverse_view;
     if (invert(camera.view, inverse_view)) context.camera_position = {inverse_view(3, 0), inverse_view(3, 1), inverse_view(3, 2)};

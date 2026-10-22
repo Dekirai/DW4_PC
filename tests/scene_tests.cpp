@@ -502,8 +502,20 @@ void test_particle_timer_state() {
     check(timer.visit(t0 + 80) == 60, "Running again: the step since the last visit counts");
     ParticleTimerState late;
     late.running = true;
-    late.time = -1;
-    check(late.visit(t0 + 500) == 0, "A timer started out of view begins at its first visit");
+    late.bias = t0; // its last visit
+    late.time = -1; // a start out of view (0x80312334 leaves _timeBias)
+    check(late.bias == t0, "A start keeps the last visit's _timeBias");
+    // 80312268 state 1 tests now - _timeBias against the lifetime, so until
+    // the first visit such an effect looks as old as that visit and is
+    // usually stopped before it is drawn.
+    check(late.visit(t0 + 500) == 0 && late.bias == t0 + 500, "Its effect time and the lifetime test count from its first visit");
+    ParticleTimerState frozen;
+    frozen.running = true;
+    frozen.time = -1;
+    frozen.visit(t0);
+    frozen.running = false; // ONFREEZE, then culled: no visit moves the bias
+    check(frozen.bias == t0, "A frozen timer out of view keeps its bias (the effect ages on)");
+    check(frozen.visit(t0 + 300) == 0 && frozen.bias == t0 + 300, "A visit while stopped moves the bias along");
 }
 
 void test_frustum_cull_traversal() {
