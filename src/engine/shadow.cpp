@@ -123,7 +123,7 @@ void ShadowManager::traverse(const TraversalContext& context, std::vector<DrawIt
     caster.output = casters;
     caster.actor_hook = nullptr;
     // 801FDCCC pushes the light view as the casters' modelview base; the
-    // billboards among them (the item markers xdataup / powerup of every
+    // billboards among them (the xdataup / powerup markers of every
     // stage, stagBS06's f_devl31 ball, dngq3b2e's glow) face the light.
     caster.modelview_base = light_view();
     for (auto* root : casters_) dw4::engine::traverse(root, caster);
