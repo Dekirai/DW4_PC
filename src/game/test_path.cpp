@@ -569,6 +569,7 @@ bool switched_on(const engine::ModelCtrlManager::ModelRam& ram) {
     const auto label = ram.labels.find(ram.seq_name);
     return label != ram.labels.end() && label->second == "ON";
 }
+} // namespace
 // The flat distance from p to a model's body boxes (80307EAC: the root
 // matrix moves the box centre, the authored half extents stay).
 float body_gap(const engine::ModelCtrlManager::ModelRam& e, const engine::Vec3f& p) {
@@ -586,6 +587,7 @@ float body_gap(const engine::ModelCtrlManager::ModelRam& e, const engine::Vec3f&
     }
     return gap;
 }
+namespace {
 // How far a model's body boxes reach out of its origin (flat, the farthest
 // box corner as body_gap places the boxes); 0 without boxes.
 // A talk box reaching further than kFarTalk is walked to and pressed by its
@@ -696,6 +698,50 @@ void ExploreBot::note_regenerating(engine::Engine& engine, const engine::ModelCt
     unkillable_.insert(&target);
     unreachable_[&target] = frame + 6000;
     planned_ = -1000;
+}
+
+// A structure that blows up where it stands (no cheats): an effect with an
+// enemy attack box (no permanent body box) that it owns stands on it, still,
+// for kBlastStill frames - a mine's countdown and blast, not a shot leaving
+// a turret. stag0401's mines (g_minez04, put out by its matb00 / matb02;
+// gimmicks with an AIM map, live once their label is ON) set off their effect
+// x_minez04 when a player comes near; it counts down some 18 frames and
+// blasts, 70105, ~38 % of the maximum HP, twice. The bot walked and jumped
+// back into such blasts, airborne where no guard is taken, and a no-cheat
+// chain was defeated by them four times in a row with heals in hand. Such a
+// structure is not struck from then on, also in later visits
+// (exploding_names), and the ground round the live ones costs extra to the
+// routes (plan: kBlastKeep).
+constexpr float kBlastReach = 40.0f;
+constexpr int kBlastStill = 8;
+void ExploreBot::note_explosions(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player, int frame) {
+    auto* models = engine.get<engine::ModelCtrlManager>();
+    if (engine.cheats().one_hit || engine.cheats().god || !models) return;
+    const auto me = position_of(player);
+    for (const auto& e : models->rams()) {
+        if (!e->generated || !e->node || e->is_player || e->category == "ENEMY" || e->hitboxes.empty() || e->owner_name.empty() ||
+            flat(position_of(*e), me) > kBlastReach) {
+            born_at_.erase(e.get());
+            continue;
+        }
+        bool blow = false;
+        for (const auto& h : e->hitboxes) blow = blow || ((h.kind / 10000 == 7 || h.kind / 10000 == 8) && h.end < 1e7f);
+        const auto* owner = models->find(e->owner_name, e->owner_index);
+        if (!blow || !owner || !owner->node || owner->category == "ITEM" || owner->category == "ENEMY" || owner->info_name.rfind("g_", 0) != 0 ||
+            flat(position_of(*e), position_of(*owner)) > 8.0f) {
+            born_at_.erase(e.get());
+            continue;
+        }
+        const auto [seen, fresh] = born_at_.try_emplace(e.get(), frame, position_of(*e));
+        if (fresh || flat(seen->second.second, position_of(*e)) > 2.0f) {
+            seen->second = {frame, position_of(*e)};
+            continue;
+        }
+        if (frame - seen->second.first >= kBlastStill && exploding_names_.insert(owner->info_name).second) {
+            std::printf("[%d] explore: %s blows up where it stands: not struck, kept off from now on\n", frame, owner->info_name.c_str());
+            planned_ = -1000;
+        }
+    }
 }
 
 // Without the test cheats an enemy this far around a quicksand pit's guard
@@ -1386,6 +1432,23 @@ void ExploreBot::plan(engine::Engine& engine, const engine::ModelCtrlManager::Mo
                 if (!fresh) it->second = {std::min(it->second.first, h.y - 15.0f), std::max(it->second.second, h.y + 40.0f)};
             }
     }
+    // Likewise the ground within kBlastKeep of a structure seen blowing up
+    // where it stands (exploding_names: stag0401's mines go off as a player
+    // comes near).
+    constexpr float kBlastKeep = 18.0f;
+    if (!engine.cheats().one_hit && !engine.cheats().god && !exploding_names_.empty())
+        for (const auto& e : models->rams()) {
+            if (!e->generated || !e->node || e->hp <= 0 || !exploding_names_.count(e->info_name)) continue;
+            const auto b = position_of(*e);
+            const int r = int(std::ceil(kBlastKeep / Grid::step));
+            const int cx = int(std::lround(b.x / Grid::step)), cz = int(std::lround(b.z / Grid::step));
+            for (int dz = -r; dz <= r; ++dz)
+                for (int dx = -r; dx <= r; ++dx) {
+                    if (dx * dx + dz * dz > r * r) continue;
+                    const auto [it, fresh] = lanes.try_emplace({cx + dx, cz + dz}, b.y - 25.0f, b.y + 25.0f);
+                    if (!fresh) it->second = {std::min(it->second.first, b.y - 25.0f), std::max(it->second.second, b.y + 25.0f)};
+                }
+        }
     const auto near_healer = [&](const engine::Vec3f& p) {
         for (const auto& h : healers)
             if (flat(h, p) < kHealerKeep && p.y > h.y - 15.0f && p.y < h.y + 40.0f) return true;
@@ -1652,6 +1715,116 @@ void ExploreBot::plan(engine::Engine& engine, const engine::ModelCtrlManager::Mo
         return land.found && land.info == p.info && land.child == p.child;
     };
     std::set<const void*> off_ride;
+    // The objective's gimmicks (set_wanted), without the test cheats: one not
+    // used yet that a route reaches is gone for first; for one that no route
+    // reaches the way is opened first. (Three of the seven stag0301 levers
+    // stand in narrow ways that a poison plant's body fills - g_poison01z03
+    // #0, #1 and #4, 44 to 53 off levers #0, #4 and #6 - and the bot, which
+    // leaves such a plant alone once it was seen healing, never got there:
+    // flag 56 needs all seven in one visit and a loaded save clears it, so a
+    // segment from the k7 save stalled 1.8 million frames on the levers. Two
+    // blows put a plant into SQ_DDMG, whose DEAD01 takes its body out of the
+    // way for some 1900 frames, and the lever is pressed meanwhile; the
+    // cheat runs' plants go down the same way, at once.)
+    if (!wanted_.empty() && !engine.cheats().one_hit && !engine.cheats().god) {
+        const std::string list = "|" + wanted_ + "|";
+        const auto is_wanted = [&](const engine::ModelCtrlManager::ModelRam& e) {
+            for (std::size_t at = 1; at < list.size();) {
+                const auto bar = list.find('|', at);
+                if (bar == std::string::npos) break;
+                if (bar > at && e.info_name.rfind(list.substr(at, bar - at), 0) == 0) return true;
+                at = bar + 1;
+            }
+            return false;
+        };
+        const auto tolerance_of = [](const engine::ModelCtrlManager::ModelRam& e) {
+            return e.hit->player_talk && box_reach(e) > kFarTalk ? box_reach(e) + 10.0f : 20.0f;
+        };
+        const engine::ModelCtrlManager::ModelRam* reached = nullptr;
+        float reached_cost = std::numeric_limits<float>::infinity();
+        std::vector<const engine::ModelCtrlManager::ModelRam*> shut;
+        for (const auto& e : models->rams()) {
+            if (!e->generated || !e->node || e->hp <= 0 || !e->hit || e->hit->boxes.empty() || !is_wanted(*e)) continue;
+            if (e->hit->player_talk ? switched_on(*e) : !e->hit->player_bullet) continue;
+            const float cost = keep(e.get(), map.cost_to(position_of(*e), tolerance_of(*e)));
+            if (!std::isfinite(cost)) shut.push_back(e.get());
+            else if (cost < reached_cost) reached_cost = cost, reached = e.get();
+        }
+        if (reached) {
+            const bool talk = reached->hit->player_talk;
+            go(position_of(*reached), reached, std::string(talk ? "press " : "strike ") + reached->info_name + "#" + std::to_string(reached->index) + " (wanted)");
+            route_ = map.route_to(position_of(*reached), tolerance_of(*reached));
+            gimmick_ = talk ? Gimmick::talk : Gimmick::strike;
+            return;
+        }
+        // The way to a shut one: a structure seen healing itself within
+        // kOpenHealer of it (one that gates it) that is not down already
+        // (SQ_DDMG), else a breakable gimmick within kOpenBreak of it or of
+        // a structure gating it (the stag0301 plants stand in pockets of
+        // bushes that the healers' keep leaves standing otherwise,
+        // pick_gimmick); the cheapest walk, the nearer the better.
+        constexpr float kOpenHealer = 60.0f, kOpenBreak = 40.0f;
+        const engine::ModelCtrlManager::ModelRam* opener = nullptr;
+        const engine::ModelCtrlManager::ModelRam* behind = nullptr;
+        bool opener_healer = false;
+        float open_score = std::numeric_limits<float>::infinity();
+        for (const auto* w : shut) {
+            std::vector<engine::Vec3f> gates;
+            for (const auto& e : models->rams())
+                if (e->generated && e->node && e->category == "ENEMY" && regenerating_names_.count(e->info_name) &&
+                    flat(position_of(*e), position_of(*w)) <= kOpenHealer)
+                    gates.push_back(position_of(*e));
+            for (const auto& e : models->rams()) {
+                if (!e->generated || !e->node || e->hp <= 0 || e.get() == w || !e->hit || e->hit->boxes.empty()) continue;
+                if (!engine.has_script("hit_" + e->info_name + ".lua")) continue;
+                const auto at = position_of(*e);
+                const bool healer = e->category == "ENEMY" && regenerating_names_.count(e->info_name) > 0;
+                const bool breakable = !healer && e->info_name.rfind("g_", 0) == 0 && e->category != "ENEMY" && e->category != "ITEM" &&
+                                       e->hit->player_bullet && !e->hit->player_talk && !is_wanted(*e) && !(e->ai_maps && !e->ai_maps->empty());
+                if ((!healer && !breakable) || (healer && e->seq_name == "SQ_DDMG")) continue;
+                // (A gimmick that took its budget of blows unbroken is no way.)
+                if (const auto spent = struck_.find(e.get()); breakable && spent != struck_.end() && spent->second >= 240) continue;
+                float d = flat(at, position_of(*w));
+                if (breakable)
+                    for (const auto& g : gates) d = std::min(d, flat(at, g));
+                if (d > (healer ? kOpenHealer : kOpenBreak)) continue;
+                const float cost = map.cost_to(at, healer ? 30.0f : 20.0f);
+                if (static const char* traced = std::getenv("DW4_TRACE_GIMMICK"); traced && frame % 300 < 30)
+                    std::printf("[%d] wanted %s#%d shut: %s#%d %s %.0f off, cost %.0f\n", frame, w->info_name.c_str(), w->index, e->info_name.c_str(),
+                                e->index, healer ? "healer" : "breakable", d, cost);
+                if (!std::isfinite(cost)) continue;
+                const float score = cost + 2.0f * d + (healer ? 0.0f : 50.0f);
+                if (score < open_score) open_score = score, opener = e.get(), behind = w, opener_healer = healer;
+            }
+        }
+        if (opener) {
+            go(position_of(*opener), opener,
+               "open the way to " + behind->info_name + "#" + std::to_string(behind->index) + ": strike " + opener->info_name + "#" +
+                   std::to_string(opener->index));
+            route_ = map.route_to(position_of(*opener), opener_healer ? 30.0f : 20.0f);
+            gimmick_ = opener_healer ? Gimmick::none : Gimmick::strike;
+            waiting_since_ = -1;
+            return;
+        }
+    }
+    // Members of a key wave (a started generator whose clear script powers
+    // something on, opens a wall or sets a flag: gene<NN>.lua with POWERON,
+    // OFFHIT or FLGset) are hunted while crossing a field too: stag0304's
+    // switches before its boss gate go on only once its GENE-21 and GENE-31
+    // waves are cleared (gene21.lua / gene31.lua), and a no-cheat run that
+    // left the last e_mecha1 of GENE-21 alone walked the stage for 20000
+    // frames to no end and spent its heals there.
+    std::set<std::pair<std::string, int>> key_wave;
+    if (transit_)
+        if (auto* generators = engine.get<engine::GeneraterManager>())
+            for (const auto& wave : generators->waves()) {
+                if (wave.name.rfind("GENE-", 0) != 0 || wave.members.empty()) continue;
+                std::string script = "gene" + wave.name.substr(5) + ".lua";
+                std::transform(script.begin(), script.end(), script.begin(), [](unsigned char c) { return char(std::tolower(c)); });
+                if (!engine.script_mentions(script, "POWERON") && !engine.script_mentions(script, "OFFHIT") && !engine.script_mentions(script, "FLGset"))
+                    continue;
+                for (const int member : wave.members) key_wave.insert({wave.enemy, member});
+            }
     // Live enemies (structures such as towers first), then pickups: the
     // cheapest to walk to. While defending enemies are only struck in
     // passing (update), except structures.
@@ -1675,7 +1848,9 @@ void ExploreBot::plan(engine::Engine& engine, const engine::ModelCtrlManager::Mo
             if (left_alone(e.get()) || unkillable_.count(e.get())) continue;
             const auto at = position_of(*e);
             const bool structure = e->info_name.rfind("g_", 0) == 0;
-            if (pass == 0 && structure && regenerating_names_.count(e->info_name) && !engine.cheats().one_hit && !engine.cheats().god) continue;
+            if (pass == 0 && structure && (regenerating_names_.count(e->info_name) || exploding_names_.count(e->info_name)) && !engine.cheats().one_hit &&
+                !engine.cheats().god)
+                continue;
             const bool boss = e->info_name.rfind("f_", 0) == 0;
             if (!boss && (pass == 0 || e->item_table != 2) && near_healer(at)) continue; // (key items are fetched all the same)
             if (transit_ && pass == 1 && e->item_table != 2 && flat(at, me) > kTransitPick) continue;
@@ -1683,7 +1858,7 @@ void ExploreBot::plan(engine::Engine& engine, const engine::ModelCtrlManager::Mo
             // (A structure seen firing along a lane is a turret.)
             const auto fired = shots_.find(e.get());
             const bool turret = pass == 0 && structure && fired != shots_.end() && !fired->second.empty();
-            if (pass == 0 && defending && !structure && !boss && !hover) continue;
+            if (pass == 0 && defending && !structure && !boss && !hover && !key_wave.count({e->info_name, e->index})) continue;
             // (Turrets are fought with real blows too. Leaving them alone
             // until the stage was explored to the end kept the way shut where
             // their bodies fill it - stag0201's g_cannon01 pair before the
@@ -2011,6 +2186,8 @@ void ExploreBot::plan(engine::Engine& engine, const engine::ModelCtrlManager::Mo
             } else {
                 continue;
             }
+            // (Nor one seen blowing up as it went down, exploding_names.)
+            if (kind == Gimmick::strike && exploding_names_.count(e->info_name) && !engine.cheats().one_hit && !engine.cheats().god) continue;
             // Without the test cheats a wall that stopped a live turret's
             // shots is left standing (shields_): the player fights on
             // behind it.
@@ -2019,15 +2196,23 @@ void ExploreBot::plan(engine::Engine& engine, const engine::ModelCtrlManager::Mo
                     const auto* turret = static_cast<const engine::ModelCtrlManager::ModelRam*>(shield->second);
                     if (turret->generated && turret->hp > 0) continue;
                 }
+            // DW4_TRACE_GIMMICK=<prefix> (research): why such a gimmick is or
+            // is not picked, a few plans every five seconds.
+            static const char* traced = std::getenv("DW4_TRACE_GIMMICK");
+            const bool tracing = traced && e->info_name.rfind(traced, 0) == 0 && frame % 300 < 30;
             // A switch seen switched on is done for a long while (pairs that
             // power each other back on would otherwise take turns forever).
             if (kind != Gimmick::strike) {
-                if (switches_done_.count(e.get())) continue;
+                if (switches_done_.count(e.get())) {
+                    if (tracing) std::printf("[%d] gimmick %s#%d done\n", frame, e->info_name.c_str(), e->index);
+                    continue;
+                }
                 if (const auto on = switched_.find(e.get()); on != switched_.end() && frame - on->second < 6000) continue;
             }
             const int budget = kind == Gimmick::strike ? 240 : kind == Gimmick::talk ? 12 : kind == Gimmick::tech ? 3 : 60;
             const auto spent = struck_.find(e.get());
             if (spent != struck_.end() && spent->second >= budget) {
+                if (tracing) std::printf("[%d] gimmick %s#%d budget spent %d\n", frame, e->info_name.c_str(), e->index, spent->second);
                 if (kind == Gimmick::strike || kind == Gimmick::tech || frame - struck_at_[e.get()] < 900) continue;
                 // A wall switch that went on before and now takes its presses
                 // without going on again (its script ignores it once its flag
@@ -2041,11 +2226,17 @@ void ExploreBot::plan(engine::Engine& engine, const engine::ModelCtrlManager::Mo
             // A wall that was started on is finished first (it takes several hits).
             const bool was_tried = kind != Gimmick::strike && struck_.count(e.get()) && struck_[e.get()] > 0 && e.get() != previous;
             if (was_tried != tried) continue;
-            if (left_alone(e.get())) continue;
+            if (left_alone(e.get())) {
+                if (tracing) std::printf("[%d] gimmick %s#%d left alone\n", frame, e->info_name.c_str(), e->index);
+                continue;
+            }
             const auto at = position_of(*e);
             if (kind == Gimmick::strike && near_healer(at)) continue; // (switches are worked all the same)
             const float tolerance = gimmick_tolerance(*e, kind);
             float cost = keep(e.get(), map.cost_to(at, tolerance));
+            if (tracing)
+                std::printf("[%d] gimmick %s#%d kind %d cost %.0f (tried %d, spent %d) near healer %d\n", frame, e->info_name.c_str(), e->index, int(kind),
+                            cost, int(tried), spent == struck_.end() ? -1 : spent->second, int(near_healer(at)));
             // A wall being broken (or walked to) is finished first.
             if (kind == Gimmick::strike && (struck_.count(e.get()) || e.get() == previous)) cost *= 0.3f;
             // A switch whose script also switches walls back on may lock a
@@ -2526,6 +2717,7 @@ ExploreBot::Decision ExploreBot::update(engine::Engine& engine, const engine::Mo
         hop_spots_for_ = {1e30f, 0.0f, 1e30f};
         hop_wait_for_ = {1e30f, 0.0f, 1e30f};
     }
+    note_explosions(engine, player, frame);
     track_fire(engine, frame);
     track_platforms(engine, me, frame);
     // Moved to another room of the stage (a maze link): a fresh start there.
@@ -3418,7 +3610,7 @@ ExploreBot::Decision ExploreBot::update(engine::Engine& engine, const engine::Mo
         for (const auto& e : models->rams())
             if (e->generated && e->node && e->category == "ENEMY" && e->hp > 0 && flat(position_of(*e), me) < 12.0f &&
                 !(unreachable_.count(e.get()) && frame < unreachable_[e.get()]) && !unkillable_.count(e.get()) &&
-                !regenerating_names_.count(e->info_name)) {
+                !regenerating_names_.count(e->info_name) && !exploding_names_.count(e->info_name)) {
                 decision.attack = frame % 20 < 3;
                 break;
             }

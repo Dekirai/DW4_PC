@@ -136,6 +136,14 @@ struct ElementNeed {
 };
 constexpr ElementNeed kElementNeeds[] = {
     {0, "P5&!K7|P5&!K8"},
+    // The scrap walls of dng412b1-b4 (hit_g_dscrap.lua) break only to a
+    // swing of thunder (a technique does nothing to them): key item 10.
+    {2, "P6&!K10"},
+    // (Not dark for Daemon, though its last form resists dark 250 of 1000
+    // against thunder 800: its first two forms, which come before it with no
+    // lobby between, resist dark 800 and thunder 250 / 650, and two no-cheat
+    // chains with a dark medal spent all their heals on them; with thunder
+    // they reached the last form.)
 };
 
 bool holds(engine::Engine& engine, std::string_view condition, int entry = -1);
@@ -247,6 +255,10 @@ struct Objective {
     // On a maze floor (kMazeRegions): the stage counts when the region
     // entered reaches this region over the open links.
     const char* region = nullptr;
+    // Gimmicks the objective needs ('|'-separated model name prefixes): the
+    // ExploreBot goes for each one not used yet first and opens the way to
+    // one it cannot reach (ExploreBot::set_wanted; without the test cheats).
+    const char* wanted = nullptr;
 };
 constexpr Objective kObjectives[] = {
     // Phase 1. The Digi-Elf sends the new member to the Commander Room;
@@ -346,8 +358,10 @@ constexpr Objective kObjectives[] = {
     // finds: it plays the whole field until the flag is set. (The full runs
     // so far had it pull them all in passing on the way to dng307 or
     // stag0302; a run that did not stalled 970000 frames on strike:#0, and
-    // strike:#* also pulled none in 260000 frames among the frogs.)
-    {"lever (stag0301)", "F56|K8|P6", "stag0301", "explore:none"},
+    // strike:#* also pulled none in 260000 frames among the frogs.) Without
+    // the test cheats three of them stand behind poison plants, whose bodies
+    // fill the ways there (see ExploreBot::set_wanted): they are wanted.
+    {"lever (stag0301)", "F56|K8|P6", "stag0301", "explore:none", -1, nullptr, "g_lever01z03"},
     {"console (stag0302)", "F57|K8|P6", "stag0302", "strike:g_consolez03#0"},
     {"key item 8 (dng309b4 boss)", "K8|P6", "dng309b4", "explore:matz02"},
     {"Gekomon (stag0302, flag 333)", "F333|P6", "stag0302", "talk:n_gekoa#0"},
@@ -387,6 +401,13 @@ constexpr Objective kObjectives[] = {
     // last three boss stages and the staff roll (stagBS06 matz01).
     {"digivolve back to Veemon (thunder for the scrap walls)", "C1|K10|P7|!S1", "stagml12", "evolve:1"},
     {"key item 9 (dng411b3 boss)", "K9|P7", "dng411b3", "explore:matz02"},
+    // Without the test cheats the thunder for dng412's scrap walls comes
+    // from a thunder PWR Medal in the weapon's pocket, in place of the fire
+    // one of area 3 (the walls take no technique, hit_g_dscrap.lua; see
+    // "Chips in the weapon's power pockets" and kElementNeeds).
+    {"a weapon with chip pockets (rank 1+, for a thunder medal)", "G|A2|R1|K10|P7", "stagml13", "gear:n_digilfm#0"},
+    {"a thunder PWR Medal from the chip shop", "G|A2|H2|K10|P7", "stagml13", "gear:n_digilfm#1"},
+    {"the thunder PWR Medal into the weapon's pocket", "G|A2|K10|P7", "stagml12", "equip:n_digilff#1"},
     {"key item 10 (dng412b4 boss)", "K10|P7", "dng412b4", "explore:matz02"},
     {"Daemon (stagBS06)", "F86|F70", "stagbs06", "explore:matz01"},
     // The return gate of stagBS06 leads to the staff roll (stagIS20
@@ -696,6 +717,7 @@ bool unguarded_kind(const std::string& stage, int kind) {
 }
 constexpr int kJunkDonation = 1000;  // COUNTER[1] that opens the junk shop's first stock
 constexpr int kJunkVisits = 3;       // junk shop visits a stay in the lobby at most
+constexpr int kJunkBoardSpare = 1000; // bits beyond the accessory's HANBAI for a trip to buy it (survive)
 
 bool protection_device(int type, int record) {
     if (type != 2) return false;
@@ -704,20 +726,10 @@ bool protection_device(int type, int record) {
     return false;
 }
 
-// The armor2 record kProtections wants worn on the way to the story's next
-// objective (the fewest stage changes from the lobby over the exits usable
-// now, kExits; the points they lead to left aside), else -1. Never in god
-// mode: nothing hurts there.
-int protection_wanted(engine::Engine& engine) {
-    if (engine.cheats().god) return -1;
-    const Objective* objective = nullptr;
-    for (const auto& o : kObjectives)
-        if (!holds(engine, o.done)) {
-            objective = &o;
-            break;
-        }
-    if (!objective || !objective->stage[0]) return -1;
-    const std::string target = objective->stage;
+// The stages from the lobby (stagML11) to `target`, both included: the
+// fewest stage changes over the exits usable now (kExits; the points they
+// lead to left aside); empty when there is no way.
+std::vector<std::string> lobby_path(engine::Engine& engine, const std::string& target) {
     const auto areas = transporter_areas(engine);
     std::map<std::string, std::string> parent{{"stagml11", ""}};
     std::vector<std::string> open{"stagml11"};
@@ -731,11 +743,73 @@ int protection_wanted(engine::Engine& engine) {
             parent[exit.target] = open[at];
             open.push_back(exit.target);
         }
-    if (!parent.count(target)) return -1;
-    for (std::string stage = target; !stage.empty(); stage = parent[stage])
+    std::vector<std::string> path;
+    if (!parent.count(target)) return path;
+    for (std::string stage = target; !stage.empty(); stage = parent[stage]) path.insert(path.begin(), stage);
+    return path;
+}
+
+// The armor2 record kProtections wants worn on the way to the story's next
+// objective (lobby_path), else -1. Never in god mode: nothing hurts there.
+int protection_wanted(engine::Engine& engine) {
+    if (engine.cheats().god) return -1;
+    const Objective* objective = nullptr;
+    for (const auto& o : kObjectives)
+        if (!holds(engine, o.done)) {
+            objective = &o;
+            break;
+        }
+    if (!objective || !objective->stage[0]) return -1;
+    for (const auto& stage : lobby_path(engine, objective->stage))
         for (const auto& p : kProtections)
             if (stage == p.stage) return p.record;
     return -1;
+}
+
+// Stages whose crossing costs a full stock of heals: the stag0304 cannon
+// climb to the dng310 fortress (g_cannon02 shells of 14 %, g_cannon03z03
+// beams of 22 % of the maximum HP; the cannons stand again on every visit),
+// some 35000 to 40000 HP of heals for a level 38 Veemon. A stage reached
+// only through one is left by a Gate Disk only with no heal left: a
+// restocking trip out of the fortress walked the climb again (see
+// behind_gauntlet).
+constexpr const char* kGauntlets[] = {"stag0304"};
+
+// Whether the story's next objective is a heavy way: a boss stage (stagBS)
+// or a stage behind a gauntlet (the dng310 fortress past the stag0304
+// climb). kSupplies' heavy rows are for it. (Not the key item bosses of the
+// dungeons: the whole dungeon trip has them as its objective.)
+bool heavy_way(engine::Engine& engine);
+
+// Whether the way from the lobby to `stage` passes a gauntlet before it.
+bool behind_gauntlet(engine::Engine& engine, const std::string& stage) {
+    const auto path = lobby_path(engine, stage);
+    for (std::size_t i = 0; i + 1 < path.size(); ++i)
+        for (const char* g : kGauntlets)
+            if (path[i] == g) return true;
+    return false;
+}
+
+bool heavy_way(engine::Engine& engine) {
+    for (const auto& o : kObjectives)
+        if (!holds(engine, o.done)) {
+            const std::string_view stage = o.stage;
+            return stage.rfind("stagbs", 0) == 0 || behind_gauntlet(engine, o.stage);
+        }
+    return false;
+}
+
+// Whether the story's next objective is the last boss (kLastBoss): the
+// supplies are bought with no bits kept back (Supply::reserve), there is no
+// restock after it. (A no-cheat chain went into Daemon's three stages with 4
+// HP Disks L and one Recovery and 30954 bits in the bank, and its heals ran
+// out at the last form.)
+constexpr const char* kLastBoss = "stagbs06";
+bool last_stand(engine::Engine& engine) {
+    if (engine.cheats().god) return false;
+    for (const auto& o : kObjectives)
+        if (!holds(engine, o.done)) return std::string_view(o.stage) == kLastBoss;
+    return false;
 }
 
 // Per-stage settings the ExploreBot reads from the environment at a stage
@@ -847,6 +921,25 @@ struct BossFight {
     // With `dodge`: markers that show where blasts will come before their
     // boxes exist (omen_areas).
     const char* omen = "";
+    // With `dodge`: effect models ('|'-separated prefixes) whose live boxes
+    // drift after the player: kept off by kHomingKeep more (dodge_areas).
+    const char* homing = "";
+    // A boss that walks past the player is struck where it will be when the
+    // swing lands (boss_fight: its last step, kSwingLand).
+    bool lead = false;
+    // With `dodge`: "<effect prefix>:<radius>[:<sequence>]", an effect whose
+    // boxes go out in rings from its middle up to that radius; while one is
+    // out the player walks straight away from its middle to beyond it, and
+    // already while the boss runs that sequence (its wind-up) with MUTEKI
+    // (boss_fight).
+    const char* rings = "";
+    // No technique at it (survive): swings only, where a technique does a
+    // fraction of a swing's damage and holds the player as long.
+    bool blade = false;
+    // With `clear_touch`: the strike spot from the body boxes' shape (each
+    // box where it stands, shaped_spot) instead of a ring round the middle,
+    // for a body whose boxes reach out unevenly.
+    bool shaped = false;
 };
 constexpr BossFight kBossFights[] = {
     // stagBS03 with real blows: Lucemon lays rows of five bombs across its
@@ -910,6 +1003,49 @@ constexpr BossFight kBossFights[] = {
     // middle, its hit body 8: struck from 2.5 off the hit body the player
     // stood in it, `clear_touch`.)
     {"stagbs02", "f_belvam", "f_belvam", 25.0f, true, true, "", 0.0f, 0.0f, 0.0f, true},
+    // dng412b4 with real blows: the knight of its GENE-21 wave (e_ldknight,
+    // 2200 HP, the key item 10 boss) spends most of the fight in SQ_TURN2 /
+    // SQ_TURN3, 190 frames of MUTEKI spinning about the arena (70064, ~8 %
+    // of the HP a hit), and can be struck only while it walks, waits or
+    // swings (SQ_WALK, SQ_WAIT, SQ_ATCK3). The ExploreBot chased it through
+    // its spins: a level 41 no-cheat run struck it twice in 110000 frames
+    // and spent a full stock of heals there, three times.
+    // (Most of its damage came from its orbs, x_032eactn02a, 70064, ~9 % of
+    // a level 40 player's HP: some ten of them come out one after another as
+    // it turns away from the player, live for 125 frames each and drift
+    // after the player at ~0.12 a frame. Guarded where it stood, the player
+    // took them in the gaps between the guards: 28 of 35 hits in 13000
+    // frames of a no-cheat test; walked off, they never reach it. Its walks
+    // carry it past the player at ~1.3 a frame: struck where it stood, the
+    // swing met the air, 4 swings and 2 hits in those frames, `lead`.)
+    {"dng412b4", "e_ldknight", "e_ldknight", 30.0f, true, true, "", 0.0f, 0.0f, 0.0f, false, "", "|x_032eactn02a|", true},
+    // stagBS05 with real blows: Daemon's second form (f_devl22, 4041 HP)
+    // sends rings of blasts out of its middle (x_039fblst01a, 70086, ~22 %
+    // of a level 40 player's HP a box: 16 boxes a ring, live 12 frames each,
+    // 6 out at once, then 8, 14, 21, 28, 34, 40 and 50 out, 12 frames
+    // apart), some 650 frames apart. The ExploreBot guarded each ring when
+    // it went out, its guard over before the ring came: a no-cheat run went
+    // down in 5000 frames with eight heals spent. The rings go out at some
+    // 0.55 a frame, the player walks 0.7: it walks off ahead of them, out
+    // beyond the last one (`rings`), and guards one only where the floor
+    // ends.
+    // (It sends them at the end of the MUTEKI part of its SQ_FIRE, 75 frames
+    // in; a ring started from beside it reaches 11 out at once: the player
+    // walks off when the SQ_FIRE begins, comes back as the last ring is out
+    // and strikes in its SQ_WAIT. Its SEISHIN leaves Veemon's thunder some
+    // 23 HP a cast against 92 a swing: no technique, `blade`.)
+    // (Its body box, 70000, 22 across, reaches past its hit body: struck
+    // from beside it the player guarded its touch through the whole SQ_WAIT,
+    // `clear_touch`. The last ring's boxes, 50 out and up to 20 wide, reach
+    // some 63 out with the player's body.)
+    {"stagbs05", "f_devl22|f_devl21", "f_devl22", 25.0f, true, true, "", 0.0f, 0.0f, 0.0f, true, "", "", false, "x_039fblst01a:62:SQ_FIRE",
+     true},
+    // stagBS06 with real blows: Daemon's last form (f_devl3, 5645 HP). Its
+    // body boxes (70000, ~12 % of a level 40 player's HP a touch) are a
+    // block 50 across round its middle, four legs 17 across 28 / 18 out and
+    // two claws 30 across 55 ahead: the ring round its middle a body box's
+    // size gives stood in a leg, `shaped`.
+    {"stagbs06", "f_devl3", "f_devl3", 25.0f, true, true, "", 0.0f, 0.0f, 0.0f, true, "", "", false, "", false, true},
 };
 
 // Whether a model is named by a '|'-separated list ("<model>#<n>" names that
@@ -1511,12 +1647,17 @@ constexpr int kHealBelow = 40; // percent of the maximum HP
 constexpr const char* kNoHealStages[] = {"stag0203"};
 constexpr int kHealGap = 90;   // frames between two emergency heals
 constexpr int kHealQuickBelow = 20; // percent: Y (whatever disk it takes) instead of the panel
+constexpr int kHealSlack = 10;      // percent of the maximum HP a heal may leave missing (the smaller disk)
 // Also low HP: below kBigHitMargin percent of the biggest blow taken within
 // kBigHitFor frames (survive).
 constexpr int kBigHitMargin = 130, kBigHitFor = 3600;
 // The guard (survive): no attack is started while an enemy blow lands within
 // kHoldAttackLead frames; B goes in kGuardLead frames before it.
 constexpr float kHoldAttackLead = 24.0f, kGuardLead = 3.0f;
+// A swing lands some 12 frames after A (SQ_ATCK1 boxes from 10 frames in):
+// a shot still queued on a shooter within the swing's reach (its body boxes
+// kQueuedSwing off) for longer is cut off by the blow.
+constexpr float kQueuedBeat = 12.0f, kQueuedSwing = 8.0f;
 // No attack (SQ_ATCK*, SQ_WAZA) for kAggressAfter frames, the guard holding
 // it back from an enemy that attacks without pause (stag0101 goburi packs,
 // the dng102b3 boss e_mammos): kAggressFor frames without guarding.
@@ -1542,6 +1683,7 @@ struct Supply {
     int keep;            // bought up to this count (a slot holds 9)
     int from_hp, to_hp;  // for a maximum HP in [from_hp, to_hp)
     int reserve = 0;     // bits that stay after the purchase
+    bool heavy = false;  // only on a heavy way (heavy_way: a boss, or past a gauntlet)
 };
 constexpr Supply kSupplies[] = {
     {0, 9, 0, 1 << 30},    // HP Disk S: 450 HP for 100 bits
@@ -1549,6 +1691,11 @@ constexpr Supply kSupplies[] = {
     {3, 6, 0, 1 << 30},    // MP Disk S: 400 MP for 160 bits (techniques, kTechReach)
     {7, 1, 0, 1 << 30},    // Raise Disk (200 bits): the bit capsule after a defeat
     {8, 2, 0, 1 << 30},    // Gate Disk (120 bits): back to the lobby (kGateTrip)
+    // Cure Disks (150 bits): poison (kCureTicks). The dng412b4 knight's spins
+    // (eneatk 64: doku, KOUKARANK 3, KOUKATIME 2700) poison for 23 ticks of
+    // 3 % of the maximum HP, as much as their blows took: a level 41 run's
+    // heals went half to the poison there.
+    {6, 4, 0, 1 << 30},
     // A full second slot of heals with 5000 bits to spare (a slot holds 9 of
     // one record: 9 HP Disks S were all a no-cheat run at level 17 took into
     // dng204b2's minotaur waves, twice given up with no heal left and 40000
@@ -1563,13 +1710,19 @@ constexpr Supply kSupplies[] = {
     // 147000 bits in the bank and 18 heals of 450 and 1800 HP, and gave the
     // stag0301 crossing to stag0302 up three times with no heal left.
     {2, 9, 0, 1 << 30, 10000},
-    {9, 3, 0, 1 << 30, 30000},
+    // (Recovery only on a heavy way, heavy_way: at the maximum HP of the
+    // late game, 2700..3100, an HP Disk L heals as much for 1200 bits, and
+    // a no-cheat chain spent the 53000 bits of its k9 save on Recovery in
+    // area 4, where it needed the bits for the restocks after its defeats.)
+    {9, 3, 0, 1 << 30, 30000, true},
     // (A full slot of Recovery with 20000 bits more: stag0304's cannon climb
     // to the dng310 fortress took a level 37 Veemon some 89000 HP of heals,
     // 9 of each HP disk and 9 Recovery.)
-    {9, 9, 0, 1 << 30, 50000},
+    {9, 9, 0, 1 << 30, 50000, true},
 };
 constexpr int kRaiseDisk = 7;
+constexpr int kCureDisk = 6;
+constexpr int kCureTicks = 4; // poison ticks still to come that are worth a Cure Disk
 constexpr int kRaiseWalk = 1500; // frames to reach the bit capsule
 constexpr int kLobbyHealBelow = 90; // percent of HP or MP: refilled at the X-Data shop in the lobby
 // The Gate Disk (conItem 8, 803B1390 -> gatedisc.lua: every player back to
@@ -1593,8 +1746,10 @@ constexpr int kTripHealStock = 4;
 // they were spent the stag0304 climb was walked into after every training
 // with what the training left, and lost again).
 constexpr int kRestockBelow = 50, kRestockTrips = 2;
-// A lobby errand still under way after this many frames has stalled.
-constexpr int kErrandStall = 20000;
+// A lobby errand still under way after this many frames has stalled: it is
+// left until the next lobby room (a stage change), and after kErrandStalls
+// stalls for the rest of the stay in the lobby; the other errands go on.
+constexpr int kErrandStall = 20000, kErrandStalls = 2;
 // A Gate Disk out of an objective's stage raises its gate only when the
 // visit made no progress (no story flag set for the first time): after one
 // that did, the player restocks and comes back, at most kProgressTrips times
@@ -1796,19 +1951,29 @@ std::string game_summary(engine::Engine& engine) {
 
 } // namespace
 
+// Whether a lobby errand of this kind (shop, gear, bank, heal, equip) is
+// left for now: it stalled in this lobby room, or kErrandStalls times in
+// this stay (kErrandStall).
+bool CampaignBot::errand_off(const std::string& kind) const {
+    if (errands_paused_.count(kind)) return true;
+    const auto it = errand_stalls_.find(kind);
+    return it != errand_stalls_.end() && it->second >= kErrandStalls;
+}
+
 // The next purchase at the disk shop (kSupplies): record -1 when nothing is
 // wanted or the bits do not go that far. `prices` are the HANBAI prices seen.
 CampaignBot::Purchase CampaignBot::next_purchase(engine::Engine& engine) const {
     auto* sys = engine.get<engine::GameSystem>();
     if (!sys) return {};
     const auto& slot = sys->players[0];
+    const bool heavy = heavy_way(engine), last = last_stand(engine);
     for (const auto& s : kSupplies) {
-        if (slot.max_hp < s.from_hp || slot.max_hp >= s.to_hp) continue;
+        if (slot.max_hp < s.from_hp || slot.max_hp >= s.to_hp || (s.heavy && !heavy)) continue;
         const auto it = prices_.find(s.record);
         if (it == prices_.end() || it->second <= 0) continue;
         const int held = disks_held(slot, s.record);
         const int want = std::min({s.keep, 9}) - held;
-        const int count = std::min(want, std::max(0, slot.bits - s.reserve) / it->second);
+        const int count = std::min(want, std::max(0, slot.bits - (last ? 0 : s.reserve)) / it->second);
         if (count > 0) return {s.record, count, held};
     }
     return {};
@@ -1821,11 +1986,13 @@ int CampaignBot::planned_spend(engine::Engine& engine) const {
     if (!sys) return 0;
     const auto& slot = sys->players[0];
     int bits = slot.bits + slot.bank_bits, spend = 0;
+    const bool heavy = heavy_way(engine), last = last_stand(engine);
     for (const auto& s : kSupplies) {
-        if (slot.max_hp < s.from_hp || slot.max_hp >= s.to_hp) continue;
+        if (slot.max_hp < s.from_hp || slot.max_hp >= s.to_hp || (s.heavy && !heavy)) continue;
         const auto it = prices_.find(s.record);
         if (it == prices_.end() || it->second <= 0) continue;
-        const int count = std::min(std::min({s.keep, 9}) - disks_held(slot, s.record), std::max(0, bits - s.reserve) / it->second);
+        const int count =
+            std::min(std::min({s.keep, 9}) - disks_held(slot, s.record), std::max(0, bits - (last ? 0 : s.reserve)) / it->second);
         if (count <= 0) continue;
         bits -= count * it->second;
         spend += count * it->second;
@@ -2002,6 +2169,7 @@ CampaignBot::EquipPick CampaignBot::next_equip(engine::Engine& engine) const {
 // pockets; the strongest the bits buy beyond the medal's 1000) and the chip
 // shop (program 8) for the cheapest PWR Medal of that element.
 constexpr int kGearBits = 900, kGearReserve = 600, kGearGain = 8, kMedalBits = 1000;
+constexpr int kGearRestocks = 6; // fresh-stock trips a level for a gear objective (next_step)
 
 // The bank (stagML12 n_digilff#0 and stagML13 n_digilff#4: bML01005.lua
 // "use the bank?" yes -> bankshop.lua -> SUBWND BANK, beNDMWShopCtrl30
@@ -2100,7 +2268,7 @@ constexpr int kSellFrom = 24;
 int CampaignBot::next_sale(engine::Engine& engine) const {
     auto* sys = engine.get<engine::GameSystem>();
     auto* db = engine.get<engine::DatabaseManager>();
-    if (!sys || !db || engine.cheats().god || sales_off_ || !db->has_column("weapon", "KAITORI")) return -1;
+    if (!sys || !db || engine.cheats().god || !db->has_column("weapon", "KAITORI")) return -1;
     const auto& p = sys->players[0];
     static const char* const tables[4] = {"weapon", "armor1", "armor2", "abChip"};
     static const int sell_rank[6] = {0, 250, 750, 3000, 6000, 12000};
@@ -2793,7 +2961,20 @@ std::optional<CampaignBot::Step> CampaignBot::next_step(engine::Engine& engine) 
     // (a stage change empties it), so the player steps out to stagML12 and
     // comes back.
     static constexpr Objective kRestockErrand{"a fresh shop stock: out and back in", "", "stagml12", "wait"};
-    if (std::string_view(objective->action).rfind("gear:", 0) == 0 && here == objective->stage) {
+    // (At most kGearRestocks such trips a level, gear_restocks_: the bits
+    // may not reach what the shop has, and only training brings bits and
+    // the next level row of the stock; then the player trains a level in the
+    // field of the next combat objective's area first.)
+    const auto restocks = gear_restocks_.find(objective->name);
+    const int level_now = engine.get<engine::GameSystem>() ? engine.get<engine::GameSystem>()->players[0].stats.level : 0;
+    const bool restocks_spent = restocks != gear_restocks_.end() && restocks->second.first == level_now && restocks->second.second >= kGearRestocks;
+    if (std::string_view(objective->action).rfind("gear:", 0) == 0 && restocks_spent && !engine.cheats().god) {
+        for (const auto* o = objective + 1; o < std::end(kObjectives); ++o)
+            if (!lobby(o->stage) && (std::string_view(o->stage).rfind("stag", 0) == 0 || std::string_view(o->stage).rfind("dng", 0) == 0)) {
+                if (const auto* training = train_for(engine, *o, {{o->name, level_now}}, train_falls_)) objective = training;
+                break;
+            }
+    } else if (std::string_view(objective->action).rfind("gear:", 0) == 0 && here == objective->stage) {
         const std::string_view action = objective->action;
         const int program = action.find("n_digilff") != std::string_view::npos ? 7 : action.find("n_digilfm#1") != std::string_view::npos ? 8 : 6;
         if (gear_visit_[std::size_t(program - 6)] == stage_frame_) objective = &kRestockErrand;
@@ -2822,15 +3003,15 @@ std::optional<CampaignBot::Step> CampaignBot::next_step(engine::Engine& engine) 
     static constexpr Objective kWithdrawErrand13{"bits out of the bank", "", "stagml13", "withdraw:n_digilff#4"};
     static constexpr Objective kDepositErrand12{"bits into the bank", "", "stagml12", "deposit:n_digilff#0"};
     static constexpr Objective kDepositErrand13{"bits into the bank", "", "stagml13", "deposit:n_digilff#4"};
-    // (No errands in this stay once one stalled, see errands_off_.)
-    const bool errands_here = lobby(here) && !errands_off_;
-    const bool banking = !engine.cheats().god && errands_here && !holds(engine, "F1") && slot && bank_tries_ < kBankTries;
-    if (!engine.cheats().god && errands_here && !holds(engine, "F1") && hurt) objective = &kHealErrand;
-    else if (!engine.cheats().one_hit && errands_here && !holds(engine, "F1|F409") && next_equip(engine).device >= 0)
+    // (An errand that stalled is left for a while, see errand_off.)
+    const bool errands_here = lobby(here);
+    const bool banking = !engine.cheats().god && errands_here && !errand_off("bank") && !holds(engine, "F1") && slot && bank_tries_ < kBankTries;
+    if (!engine.cheats().god && errands_here && !errand_off("heal") && !holds(engine, "F1") && hurt) objective = &kHealErrand;
+    else if (!engine.cheats().one_hit && errands_here && !errand_off("equip") && !holds(engine, "F1|F409") && next_equip(engine).device >= 0)
         objective = &kEquipErrand;
     else if (banking && !bank_withdrawn_ && slot->bank_bits > 0)
         objective = here == "stagml13" ? &kWithdrawErrand13 : &kWithdrawErrand12;
-    else if (!engine.cheats().god && errands_here && !holds(engine, "F1") &&
+    else if (!engine.cheats().god && errands_here && !errand_off("shop") && !holds(engine, "F1") &&
              (next_purchase(engine).record >= 0 || (slot && int(slot->devices.size()) >= kSellFrom && next_sale(engine) >= 0)))
         objective = &kShopErrand;
     // Then a look at the weapon and the armor shop (next_gear) once per level.
@@ -2848,7 +3029,7 @@ std::optional<CampaignBot::Step> CampaignBot::next_step(engine::Engine& engine) 
         junk = junk && (engine.counters()[1] >= kJunkDonation ? !holds(engine, "F594") : slot->bits >= kJunkDonation + kGearBits);
     }
     if (objective != &kHealErrand && objective != &kEquipErrand && objective != &kShopErrand && !engine.cheats().god &&
-        errands_here && !holds(engine, "F1") && slot && slot->bits >= kGearBits && slot->devices.size() < 36) {
+        errands_here && !errand_off("gear") && !holds(engine, "F1") && slot && slot->bits >= kGearBits && slot->devices.size() < 36) {
         if (junk) objective = &kJunkErrand;
         else if (gear_checked_[0] != slot->stats.level) objective = &kWeaponErrand;
         else if (gear_checked_[1] != slot->stats.level) objective = &kArmorErrand;
@@ -2983,28 +3164,35 @@ bool CampaignBot::answer_menu(engine::Engine& engine, const engine::ModelCtrlMan
             lab_leaving_ = false;
         }
     }
-    // (Errands off for this stay, see kErrandStall: an open program's menus
-    // are no errand's.)
-    if (errands_off_) shop_open_ = gear_open_ = bank_open_ = equip_open_ = heal_open_ = false;
-    // A shop errand's program keeps its answers while it runs (the errand
-    // ends with the last purchase, the shop's menus still need theirs).
-    if (step.action.rfind("shop:", 0) == 0) {
-        shop_open_ = true;
-    } else if (shop_open_) {
+    // Each lobby errand answers the menus of the SUBWND program it opens (a
+    // shop, the bank, the X-Data shop, the lab): its flag below is raised
+    // while its step lasts and stays up while the program runs (the errand
+    // ends with its last purchase, the program's closing menus still need
+    // their answers). A new errand takes over only once no SUBWND program
+    // runs (ISRUN off) and no other errand's flag is up: the program still
+    // running is the last errand's, whatever the next step is. (A bank
+    // withdrawal ends the moment the bits are out, bank_bits 0, and the
+    // disk shop errand came next while the bank's menus were still up: they
+    // were answered as the shop's - the bank's Withdraw taken for Sell, its
+    // Devices / Bits for the sale's Devices / Disks, the empty device store
+    // for a sale list - round and round for 950000 frames once.)
+    const bool program_running = [&] {
         engine::Packet running;
         engine.messenger().send(engine, "SUBWND", std::nullopt, -1, "ISRUN", running);
-        if (running.bools.empty() || !running.bools[0]) shop_open_ = false;
-    }
+        return !running.bools.empty() && running.bools[0];
+    }();
+    const auto take = [&](bool& own) {
+        if (!own && !program_running && !shop_open_ && !heal_open_ && !bank_open_ && !equip_open_ && !gear_open_) own = true;
+        return own;
+    };
+    if (step.action.rfind("shop:", 0) == 0) take(shop_open_);
+    else if (shop_open_ && !program_running) shop_open_ = false;
     // The bank errand's program likewise; once it has run and closed it
     // counts as a visit (and a withdrawal as done for this stay).
-    // (Not while another errand's program still runs: the lab's menus left
-    // open after its last pick were answered as the bank's, round and round.)
-    if ((step.action.rfind("deposit:", 0) == 0 || step.action.rfind("withdraw:", 0) == 0) && !shop_open_ && !equip_open_ && !gear_open_ &&
-        !heal_open_) {
+    if (step.action.rfind("deposit:", 0) == 0 || step.action.rfind("withdraw:", 0) == 0) {
         // (The direction is the one the program was opened for: a deposit
         // done while its menus are still up is no withdrawal.)
-        if (!bank_open_) bank_ran_ = false, bank_deposit_ = step.action[0] == 'd', bank_lists_ = 0;
-        bank_open_ = true;
+        if (!bank_open_ && take(bank_open_)) bank_ran_ = false, bank_deposit_ = step.action[0] == 'd', bank_lists_ = 0;
     }
     if (bank_open_) {
         engine::Packet running;
@@ -3024,39 +3212,23 @@ bool CampaignBot::answer_menu(engine::Engine& engine, const engine::ModelCtrlMan
             bank_open_ = bank_ran_ = false;
         }
     }
-    if (step.action.rfind("heal:", 0) == 0) {
-        heal_open_ = true;
-    } else if (heal_open_) {
-        engine::Packet running;
-        engine.messenger().send(engine, "SUBWND", std::nullopt, -1, "ISRUN", running);
-        if (running.bools.empty() || !running.bools[0]) heal_open_ = false;
-    }
-    // The equipment errand's lab program likewise (next_equip).
-    // (Neither it nor the gear errand takes over while the disk shop's
-    // program still runs: the errand that follows the restock began while
-    // the shop's sale menus were up, and the gear branch answered the shop's
-    // Devices / Disks menu (2 lines) with A and its sale list with B, round
-    // and round - 44000 frames in stagML13 on a level 21 test with a full
-    // device folder. The shop branch backs out of them first.)
-    if (step.action.rfind("equip:", 0) == 0 && !shop_open_) {
-        equip_open_ = true;
-    } else if (equip_open_) {
-        engine::Packet running;
-        engine.messenger().send(engine, "SUBWND", std::nullopt, -1, "ISRUN", running);
-        if (running.bools.empty() || !running.bools[0]) equip_open_ = false;
-    }
+    if (step.action.rfind("heal:", 0) == 0) take(heal_open_);
+    else if (heal_open_ && !program_running) heal_open_ = false;
+    // The equipment errand's lab program likewise (next_equip). (The errand
+    // that followed a restock once began while the disk shop's sale menus
+    // were up, and the lab branch answered them, 44000 frames in stagML13.)
+    if (step.action.rfind("equip:", 0) == 0) take(equip_open_);
+    else if (equip_open_ && !program_running) equip_open_ = false;
     if (!equip_open_) equip_pockets_ = false;
     // The gear errand's shop program likewise; once it has run and closed the
     // shop is looked at for this level (next_gear).
     // (stagML13: n_digilfm#0 the weapon shop, n_digilff#1 the armor shop,
-    // n_digilfm#1 the chip shop.)
-    if (step.action.rfind("gear:", 0) == 0 && !shop_open_) {
-        gear_open_ = true;
+    // n_digilfm#1 the chip shop; the program is the one the errand opened.)
+    if (step.action.rfind("gear:", 0) == 0 && !gear_open_ && take(gear_open_))
         gear_program_ = step.action.find("n_digilff") != std::string::npos     ? 7
                         : step.action.find("n_digilfm#1") != std::string::npos ? 8
                         : step.action.find("n_metete") != std::string::npos    ? 9
                                                                                : 6;
-    }
     if (gear_open_) {
         engine::Packet running;
         engine.messenger().send(engine, "SUBWND", std::nullopt, -1, "ISRUN", running);
@@ -3157,11 +3329,12 @@ bool CampaignBot::answer_menu(engine::Engine& engine, const engine::ModelCtrlMan
             // (2 lines), the amount (i_stcursor03, seven digits): the cursor
             // to the top digit, UP kBankUps times (each adds a million,
             // clamped to all that can go), A; a list is backed out of.
-            // (A list - a device shop's stock or the bank's device folder -
-            // backed out of twice: the program is no bank of bits (the
-            // stagML13 bank errand once talked to the armor shop beside it,
-            // Buy and Back round and round for 4.2 million frames): Exit, and
-            // no more bank visits this stay.)
+            // (A list - a device shop's stock or the bank's device store -
+            // backed out of twice in one visit: these are no bank menus of
+            // bits, Exit, and no more bank visits this stay. A safety net:
+            // before the errands waited for each other's programs, see the
+            // top, the stagML13 bank errand answered another program's
+            // menus round and round for 4.2 million frames.)
             auto* sys = engine.get<engine::GameSystem>();
             const bool lost = bank_lists_ >= 2;
             const bool done = lost || !sys || (bank_deposit_ ? sys->players[0].bits < kBankDust : sys->players[0].bank_bits == 0);
@@ -3205,9 +3378,7 @@ bool CampaignBot::answer_menu(engine::Engine& engine, const engine::ModelCtrlMan
             // the sale list (i_stcursor01) and yes (i_stmesscr, 2 lines).
             const auto buy = next_purchase(engine);
             const int sale = next_sale(engine);
-            // (Buy that led to the sale's Devices / Disks: the shop is left
-            // and talked to anew, see below.)
-            if (menu.name == "i_stmesscr" && menu.items >= 3) want = buy_glitch_ ? menu.items - 1 : sale >= 0 ? 1 : buy.record >= 0 ? 0 : menu.items - 1;
+            if (menu.name == "i_stmesscr" && menu.items >= 3) want = sale >= 0 ? 1 : buy.record >= 0 ? 0 : menu.items - 1;
             else if (shop_selling_ && menu.name == "i_stmesscr") {
                 if (!sale_confirm_ && sale < 0) cancel = true;
             } else if (shop_selling_ && menu.name == "i_stcursor01") {
@@ -3222,22 +3393,10 @@ bool CampaignBot::answer_menu(engine::Engine& engine, const engine::ModelCtrlMan
                 else if (turn_to(sale)) return true;
                 else want = sale % 12;
             } else if (menu.name == "i_stcursor01") {
-                // (The buy list has the ten conItem rows: any other list here is
-                // the sale's, reached by a press the menus took out of step,
-                // and is backed out of.)
-                if (buy.record >= 0 && menu.items == 10) want = buy.record;
+                if (buy.record >= 0) want = buy.record;
                 else cancel = true;
             } else if (menu.name == "i_stcursor05" && buy.record >= 0) {
                 want = std::clamp(9 - buy.held - buy.count, 0, std::max(menu.items - 1, 0));
-            } else if (menu.name == "i_stmesscr" && !buy_confirm_) {
-                // (Two lines while buying and before a count: the sale's
-                // Devices / Disks, reached from Buy after a sale's menus were
-                // backed out of - the next Buy took the old choice again and
-                // again, 950000 frames once. Backed out of, and the shop is
-                // left by Exit and talked to anew. The price's yes follows
-                // the count.)
-                cancel = true;
-                buy_glitch_ = true;
             }
         } else if (equip_open_) {
             // The Digi-Lab's equipment (next_equip): "use the lab?" and
@@ -3383,24 +3542,11 @@ bool CampaignBot::answer_menu(engine::Engine& engine, const engine::ModelCtrlMan
                 }
             }
             if (shop_open_ && !equip_open_ && !heal_open_ && !gear_open_) {
-                if (menu.name == "i_stcursor05") buy_confirm_ = true; // (the price's yes comes next)
-                else if (!shop_selling_ && menu.name == "i_stmesscr" && menu.items == 2) buy_confirm_ = false;
                 if (menu.name == "i_stmesscr" && menu.items >= 3) {
-                    if (want == menu.items - 1) buy_glitch_ = false; // (Exit)
                     shop_selling_ = want == 1;
                     sale_confirm_ = false;
-                    buy_confirm_ = false;
-                    // (Sell chosen three times with no sale between: the shop
-                    // lists nothing of what next_sale picked - a message and
-                    // back to Buy / Sell / Exit, round and round for 950000
-                    // frames once - so no more sales this stay in the lobby.)
-                    if (want == 1 && ++sell_tries_ >= 3) {
-                        sales_off_ = true;
-                        std::printf("[%d] campaign: the disk shop sells nothing of the devices picked: no sales this stay\n", frame);
-                    }
                 } else if (shop_selling_ && menu.name == "i_stmesscr") {
                     if (sale_confirm_) {
-                        sell_tries_ = 0;
                         if (auto* sys = engine.get<engine::GameSystem>(); sys && trace() && sale_target_ >= 0 &&
                                                                           sale_target_ < int(sys->players[0].devices.size()))
                             if (auto* db = engine.get<engine::DatabaseManager>())
@@ -3630,12 +3776,21 @@ void reach_report(engine::Engine& engine, const engine::ModelCtrlManager::ModelR
 // (Apocalymon's SQ_MAGIC makes all its pillars at the cast, live 24..84
 // frames later: the horizon sees them all.)
 constexpr float kDodgeHorizon = 100.0f, kDodgeMargin = 1.5f;
+// The ground round a live box of a homing effect (BossFight::homing) kept
+// off, as if it went live kHomingDue frames on (some 0.12 a frame: 10 in
+// 80 frames; due within a swing, no swing starts there).
+constexpr float kHomingKeep = 10.0f, kHomingDue = 30.0f;
 // A swing takes some 30 frames in which the player cannot leave (SQ_ATCK1).
 constexpr float kSwingBusy = 32.0f;
+// A swing's boxes go live some 10 frames after A (SQ_ATCK1), A is read
+// within a frame or two of its press.
+constexpr float kSwingLand = 12.0f;
+// BossFight::rings: the floor kept beyond the spot walked to.
+constexpr float kRingRim = 16.0f;
 struct DodgeArea {
     float x0, x1, z0, z1, due, end;
 };
-std::vector<DodgeArea> dodge_areas(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player) {
+std::vector<DodgeArea> dodge_areas(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player, const char* homing) {
     std::vector<DodgeArea> areas;
     auto* models = engine.get<engine::ModelCtrlManager>();
     if (!models || !player.node) return areas;
@@ -3657,6 +3812,12 @@ std::vector<DodgeArea> dodge_areas(engine::Engine& engine, const engine::ModelCt
             if (me.y + body_height + 1.0f <= cy - box.size.y * 0.5f || me.y - 1.0f >= cy + box.size.y * 0.5f) continue;
             const float gx = box.size.x * 0.5f + body_half + kDodgeMargin, gz = box.size.z * 0.5f + body_half + kDodgeMargin;
             areas.push_back({cx - gx, cx + gx, cz - gz, cz + gz, due, std::max(0.0f, box.end - box.elapsed)});
+            // (A homing effect's box: the ground kHomingKeep round it as well,
+            // due kHomingDue frames on, so the player walks off before it
+            // comes; inside the box itself only a guard is left.)
+            if (homing && *homing && e->category != "ENEMY" && listed_in(homing, *e))
+                areas.push_back({cx - gx - kHomingKeep, cx + gx + kHomingKeep, cz - gz - kHomingKeep, cz + gz + kHomingKeep, std::max(due, kHomingDue),
+                                 std::max(0.0f, box.end - box.elapsed)});
         }
     }
     return areas;
@@ -3713,9 +3874,96 @@ float dodge_due(const std::vector<DodgeArea>& areas, float x, float z) {
     return due;
 }
 
+// BossFight::shaped: a strike spot next to the focus outside every body box
+// of the boss (each where its offset puts it, its authored half extents
+// grown by the player's body and kShapedSpare), from which the focus's hit
+// body lies within kShapedReach; the one nearest the player on floor at its
+// height. False without one.
+constexpr float kShapedSpare = 3.0f, kShapedReach = 7.0f;
+// The boss's body boxes (permanent attack boxes) on the ground, each where
+// its offset puts it, grown by the player's body and `spare`.
+struct BodyRect {
+    float x0, x1, z0, z1;
+};
+static std::vector<BodyRect> body_rects(const engine::ModelCtrlManager::ModelRam& boss, float spare) {
+    std::vector<BodyRect> rects;
+    const auto& m = boss.node->matrix;
+    constexpr float body_half = 2.5f;
+    for (const auto& box : boss.hitboxes) {
+        if ((box.kind / 10000 != 7 && box.kind / 10000 != 8) || box.end < 1e7f) continue;
+        const engine::Vec3f o = box.offset;
+        const float cx = o.x * m(0, 0) + o.y * m(1, 0) + o.z * m(2, 0) + m(3, 0);
+        const float cz = o.x * m(0, 2) + o.y * m(1, 2) + o.z * m(2, 2) + m(3, 2);
+        const float hx = box.size.x * 0.5f + body_half + spare, hz = box.size.z * 0.5f + body_half + spare;
+        rects.push_back({cx - hx, cx + hx, cz - hz, cz + hz});
+    }
+    return rects;
+}
+static bool in_rects(const std::vector<BodyRect>& rects, float x, float z) {
+    for (const auto& r : rects)
+        if (x > r.x0 && x < r.x1 && z > r.z0 && z < r.z1) return true;
+    return false;
+}
+// BossFight::shaped with nothing to strike: the spot nearest the player
+// outside every body box (kShapedKeep spare: the boss moves, its flight's
+// boxes, 70097, reach some 55 ahead of its middle), when the player stands
+// in one. False when it stands clear or there is no such spot.
+constexpr float kShapedKeep = 6.0f;
+static bool outside_spot(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& boss, const engine::Vec3f& me, engine::Vec3f& spot) {
+    const auto rects = body_rects(boss, kShapedKeep);
+    if (!in_rects(rects, me.x, me.z)) return false;
+    auto* hitland = engine.get<engine::HitLandManager>();
+    const auto c = position_of(boss);
+    float best = 1e30f;
+    for (int k = 0; k < 32; ++k) {
+        const float a = float(k) * 0.19634954f, ux = std::sin(a), uz = std::cos(a);
+        for (float r = 2.0f; r < 120.0f; r += 2.0f) {
+            const float x = c.x + ux * r, z = c.z + uz * r;
+            if (in_rects(rects, x, z)) continue;
+            if (hitland) {
+                const auto land = hitland->world().check_land({x, me.y + 5.0f, z}, 1.0f, 400.0f, 1.0f);
+                if (!land.found || std::abs(land.position.y - me.y) > 3.0f) break;
+            }
+            const engine::Vec3f q{x, me.y, z};
+            if (flat(q, me) < best) best = flat(q, me), spot = q;
+            break;
+        }
+    }
+    return best < 1e29f;
+}
+static bool shaped_spot(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& boss, const engine::ModelCtrlManager::ModelRam& focus,
+                 const engine::Vec3f& me, engine::Vec3f& spot) {
+    const auto rects = body_rects(boss, kShapedSpare);
+    const auto inside = [&](float x, float z) { return in_rects(rects, x, z); };
+    auto* hitland = engine.get<engine::HitLandManager>();
+    const auto c = position_of(focus);
+    float best = 1e30f;
+    for (int k = 0; k < 32; ++k) {
+        const float a = float(k) * 0.19634954f, ux = std::sin(a), uz = std::cos(a);
+        for (float r = 2.0f; r < 100.0f; r += 1.0f) {
+            const float x = c.x + ux * r, z = c.z + uz * r;
+            if (inside(x, z)) continue;
+            const engine::Vec3f q{x, me.y, z};
+            if (flat(nearest_hit_point(focus, q), q) > kShapedReach) break;
+            if (hitland) {
+                const auto land = hitland->world().check_land({q.x, q.y + 5.0f, q.z}, 1.0f, 400.0f, 1.0f);
+                if (!land.found || std::abs(land.position.y - me.y) > 3.0f) break;
+            }
+            // (The straight way there outside the boxes too, else the way
+            // round costs: a walk across the body took the touches.)
+            float cost = flat(q, me);
+            for (float t = 0.2f; t < 1.0f; t += 0.2f)
+                if (inside(me.x + (q.x - me.x) * t, me.z + (q.z - me.z) * t)) cost += 40.0f;
+            if (cost < best) best = cost, spot = q;
+            break;
+        }
+    }
+    return best < 1e29f;
+}
+
 bool CampaignBot::boss_fight(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player, const std::string& strike,
                              const std::string& follow, float keep, bool dodge, float arena_x, float arena_z, float arena_r, bool clear_touch,
-                             const char* omen, int frame, Output& out) {
+                             const char* omen, const char* homing, bool lead, const char* rings, bool shaped, int frame, Output& out) {
     auto* models = engine.get<engine::ModelCtrlManager>();
     if (!models) return false;
     const auto me = position_of(player);
@@ -3805,8 +4053,59 @@ bool CampaignBot::boss_fight(engine::Engine& engine, const engine::ModelCtrlMana
     // be left in time, just before it goes live.
     std::vector<DodgeArea> areas;
     float here_due = 1e9f;
+    // `rings`: while a ring effect is out, straight away from its middle to
+    // a little beyond its last ring, where the floor goes on there (else the
+    // dodge below and the guard).
+    if (dodge && rings && *rings && player.ctrl_mode != 0 && player.control_enabled) {
+        const std::string_view spec(rings);
+        const auto colon = spec.find(':'), colon2 = spec.find(':', colon == std::string_view::npos ? colon : colon + 1);
+        const std::string prefix(spec.substr(0, colon));
+        const float radius = colon == std::string_view::npos ? 0.0f : float(std::atof(std::string(spec.substr(colon + 1)).c_str()));
+        const std::string windup = colon2 == std::string_view::npos ? std::string() : std::string(spec.substr(colon2 + 1));
+        std::vector<const engine::ModelCtrlManager::ModelRam*> sources;
+        bool ring_out = false;
+        for (const auto& e : models->rams())
+            if (e->generated && e->node && e->info_name.rfind(prefix, 0) == 0) {
+                sources.push_back(e.get());
+                ring_out = true;
+            }
+        // (The wind-up: the ring comes out of the boss's middle.)
+        if (!ring_out && !windup.empty() && boss->seq_name == windup && boss->muteki != 0.0f) sources.push_back(boss);
+        for (const auto* e : sources) {
+            bool live = e == boss;
+            for (const auto& box : e->hitboxes) live = live || ((box.kind / 10000 == 7 || box.kind / 10000 == 8) && box.elapsed < box.end);
+            const auto c = position_of(*e);
+            const float d = flat(c, me);
+            if (!live || d >= radius + 2.0f) continue;
+            const float ux = d > 0.01f ? (me.x - c.x) / d : 1.0f, uz = d > 0.01f ? (me.z - c.z) / d : 0.0f;
+            // (Short of the rim by kRingRim: a guard there, against a ring the
+            // walk did not outrun or against a shot, throws the player back
+            // some 15, guard_footing; at the rim no guard was taken and
+            // Daemon's homing drill shots, ~20 % of the HP, struck.)
+            float out_to = 0.0f;
+            if (auto* hitland = engine.get<engine::HitLandManager>()) {
+                const auto floor_at = [&](float k) {
+                    const auto land = hitland->world().check_land({c.x + ux * k, me.y + 5.0f, c.z + uz * k}, 1.0f, 400.0f, 1.0f);
+                    return land.found && std::abs(land.position.y - me.y) <= 3.0f;
+                };
+                for (float k = radius + 5.0f; k > d + 2.0f && out_to == 0.0f; k -= 2.0f)
+                    if (floor_at(k) && floor_at(k + kRingRim)) out_to = k;
+            } else {
+                out_to = radius + 5.0f;
+            }
+            if (out_to == 0.0f) break;
+            const engine::Vec3f spot{c.x + ux * out_to, me.y, c.z + uz * out_to};
+            out.walk = true;
+            out.x = spot.x;
+            out.z = spot.z;
+            out.reach = 1.0f;
+            if (tracing && frame % 10 == 0)
+                std::printf("[%d] campaign boss: off the rings of %s, %.0f from its middle, to (%.0f,%.0f)\n", frame, e->info_name.c_str(), d, spot.x, spot.z);
+            return true;
+        }
+    }
     if (dodge) {
-        areas = dodge_areas(engine, player);
+        areas = dodge_areas(engine, player, homing);
         if (omen && *omen) omen_areas(engine, player, omen, frame, omen_seen_, areas);
         here_due = dodge_due(areas, me.x, me.z);
         // (A box about to go live within 20 of the player: no heal now that
@@ -3823,11 +4122,41 @@ bool CampaignBot::boss_fight(engine::Engine& engine, const engine::ModelCtrlMana
         // and the walk to the nearest hit point brought it back into the
         // claws: a level 16 no-cheat run guarded 62 times in 10000 frames
         // and swung never.)
+        // (`shaped`: the spot from the body boxes' shape, struck from there
+        // turned to the nearest point of the hit body.)
+        engine::Vec3f shaped_at{};
+        if (clear_touch && shaped && focus && in_reach && control && shaped_spot(engine, *boss, *focus, me, shaped_at)) {
+            const float walk = flat(shaped_at, me);
+            const auto h = nearest_hit_point(*focus, me);
+            if (walk > 1.5f) {
+                out.walk = true;
+                out.x = shaped_at.x;
+                out.z = shaped_at.z;
+                out.reach = walk > 3.0f ? 1.0f : 0.25f;
+            } else {
+                const float dx = h.x - me.x, dz = h.z - me.z, dd = std::max(0.01f, std::hypot(dx, dz));
+                const float facing = (player.node->matrix(2, 0) * dx + player.node->matrix(2, 2) * dz) / dd;
+                if (facing < 0.9f) {
+                    out.walk = true;
+                    out.x = me.x + dx / dd * 2.0f;
+                    out.z = me.z + dz / dd * 2.0f;
+                    out.reach = 1.5f;
+                } else if (here_due > kSwingBusy && frame % 12 < 3) {
+                    out.buttons |= pad_button::a;
+                }
+            }
+            if (tracing && frame % 30 == 0)
+                std::printf("[%d] campaign boss: shaped strike spot (%.0f,%.0f) %.1f off, hit body %.1f off, here due %.0f\n", frame, shaped_at.x,
+                            shaped_at.z, walk, flat(h, me), here_due);
+            return true;
+        }
         if (clear_touch && focus && in_reach && control) {
             const auto c = position_of(*focus);
             float hit_half = 0.0f;
             for (const auto& [lo, hi] : focus->hit->boxes) hit_half = std::max({hit_half, (hi.x - lo.x) * 0.5f, (hi.z - lo.z) * 0.5f});
-            const float ring = hit_half + std::max(2.5f, touch_reach(*focus) + body_half + 0.5f) + 2.0f;
+            // (3 beyond the body box with the player's body: a swing's lunge
+            // carries the player some 2.5 in.)
+            const float ring = hit_half + std::max(2.5f, touch_reach(*focus) + body_half + 0.5f) + 3.0f;
             auto* hitland = engine.get<engine::HitLandManager>();
             float best_walk = 1e30f;
             engine::Vec3f spot{};
@@ -3852,11 +4181,15 @@ bool CampaignBot::boss_fight(engine::Engine& engine, const engine::ModelCtrlMana
                 spot = q;
             }
             if (best_walk < 1e29f) {
-                if (best_walk > 2.0f) {
+                // (Turned to the focus only from the ring or beyond it: a
+                // swing's lunge carries the player some 2 in, and the step
+                // that turns it took it into stagBS05 Daemon's body box,
+                // 24 of 60 hits of a no-cheat test.)
+                if (best_walk > 2.0f || flat(c, me) < ring - 0.75f) {
                     out.walk = true;
                     out.x = spot.x;
                     out.z = spot.z;
-                    out.reach = 1.0f;
+                    out.reach = best_walk > 2.0f ? 1.0f : 0.25f;
                 } else {
                     const float dx = c.x - me.x, dz = c.z - me.z, dd = std::max(0.01f, std::hypot(dx, dz));
                     const float facing = (player.node->matrix(2, 0) * dx + player.node->matrix(2, 2) * dz) / dd;
@@ -4008,6 +4341,31 @@ bool CampaignBot::boss_fight(engine::Engine& engine, const engine::ModelCtrlMana
         }
         // (clear_touch: from outside the focus's body box, touch_reach.)
         const float near = clear_touch ? std::max(2.5f, touch_reach(*focus) + body_half + 0.5f) : 2.5f;
+        // `lead`: where the focus will be when the swing lands, from its
+        // step in the last frame (focus_seen_); walking at the player it is
+        // waited for, and struck as it comes into reach.
+        if (lead) {
+            const auto c = position_of(*focus);
+            const bool seen = focus_seen_ == focus && focus_frame_ == frame - 1;
+            const engine::Vec3f step = seen ? engine::Vec3f{c.x - focus_at_.x, 0.0f, c.z - focus_at_.z} : engine::Vec3f{};
+            focus_seen_ = focus;
+            focus_at_ = c;
+            focus_frame_ = frame;
+            if (std::hypot(step.x, step.z) > 0.3f) {
+                const engine::Vec3f then{at.x + step.x * kSwingLand, at.y, at.z + step.z * kSwingLand};
+                const float ahead = flat(then, me);
+                if (tracing && frame % 10 == 0)
+                    std::printf("[%d] campaign boss lead: %.0f off now, %.0f when the swing lands\n", frame, best, ahead);
+                if (ahead <= near + 4.0f) {
+                    if (safe && frame % 4 < 2) out.buttons |= pad_button::a;
+                    return true;
+                }
+                // (Coming at the player: waited for where the player stands.)
+                if (ahead < best - 2.0f && best < 40.0f) return true;
+                if (way_clear) walk_to(engine, player, then, near + 2.5f, frame, out);
+                return true;
+            }
+        }
         if (best > near + 4.0f) {
             if (way_clear) walk_to(engine, player, at, near + 2.5f, frame, out);
         } else if (best < near) {
@@ -4022,13 +4380,26 @@ bool CampaignBot::boss_fight(engine::Engine& engine, const engine::ModelCtrlMana
         }
         return true;
     }
-    // Nothing to strike: near the boss, on the player's side of it.
+    // Nothing to strike: near the boss, on the player's side of it (with
+    // `shaped` out of its body boxes first: kept 25 from Daemon's middle
+    // while it flew, the player stood in its flight's boxes, ~25 % of the
+    // HP a touch).
+    engine::Vec3f clear_at{};
+    if (shaped && player.ctrl_mode != 0 && player.control_enabled && outside_spot(engine, *boss, me, clear_at)) {
+        out.walk = true;
+        out.x = clear_at.x;
+        out.z = clear_at.z;
+        out.reach = 1.0f;
+        if (tracing && frame % 30 == 0)
+            std::printf("[%d] campaign boss: out of %s's body boxes to (%.0f,%.0f)\n", frame, boss->info_name.c_str(), clear_at.x, clear_at.z);
+        return true;
+    }
     const auto b = position_of(*boss);
     const float d = flat(b, me);
     if (std::abs(d - keep) > 6.0f) {
         const float k = d > 0.01f ? keep / d : 0.0f;
         const engine::Vec3f spot{b.x + (me.x - b.x) * k, me.y, b.z + (me.z - b.z) * k};
-        walk_to(engine, player, spot, 4.0f, frame, out);
+        if (!shaped || !in_rects(body_rects(*boss, kShapedKeep), spot.x, spot.z)) walk_to(engine, player, spot, 4.0f, frame, out);
     }
     return true;
 }
@@ -4203,6 +4574,9 @@ void CampaignBot::save_memory(std::ostream& out) const {
     for (const auto& [place, hash] : swept_) out << "swept " << word(place.first) << " " << place.second << " " << hash << "\n";
     for (const auto& [record, price] : prices_) out << "price " << record << " " << price << "\n";
     for (const auto& name : explorer_.regenerating_names()) out << "healing " << word(name) << "\n";
+    for (const auto& floor : fading_floors_) out << "fading " << word(floor) << "\n";
+    for (const auto& name : explorer_.exploding_names()) out << "exploding " << word(name) << "\n";
+    for (const auto& [objective, count] : gear_restocks_) out << "gear_restocks " << word(objective) << " " << count.first << " " << count.second << "\n";
     out << "timers " << heal_at_ << " " << gate_disk_at_ << " " << last_attack_ << " " << aggressive_until_ << " " << held_presses_ << " "
         << guard_held_ << " " << tech_end_ << " " << panel_ready_at_ << " " << big_hit_ << " " << big_hit_at_ << " " << train_exp_ << " "
         << train_exp_at_ << "\n";
@@ -4270,6 +4644,20 @@ void CampaignBot::load_memory(std::istream& in) {
                 names.insert(unword(name));
                 explorer_.set_regenerating_names(names);
             }
+        } else if (key == "exploding") {
+            std::string name;
+            if (f >> name) {
+                auto names = explorer_.exploding_names();
+                names.insert(unword(name));
+                explorer_.set_exploding_names(names);
+            }
+        } else if (key == "fading") {
+            std::string floor;
+            if (f >> floor) fading_floors_.insert(unword(floor));
+        } else if (key == "gear_restocks") {
+            std::string objective;
+            int level = 0, count = 0;
+            if (f >> objective >> level >> count) gear_restocks_[unword(objective)] = {level, count};
         } else if (key == "timers") {
             f >> heal_at_ >> gate_disk_at_ >> last_attack_ >> aggressive_until_ >> held_presses_ >> guard_held_ >> tech_end_ >> panel_ready_at_ >>
                 big_hit_ >> big_hit_at_ >> train_exp_ >> train_exp_at_;
@@ -4318,7 +4706,7 @@ CampaignBot::Output CampaignBot::update(engine::Engine& engine, const engine::Mo
             // that fades some time after it is stepped on - dng310f3's
             // g_dfadescaffold tiles, off 60 frames after a player lands on one
             // - is crossed from then on without a stop for a guard or a blow.)
-            if (!engine.cheats().god && !grounded_floor_.empty() && fading_floors_.insert(grounded_floor_).second)
+            if (!engine.cheats().god && !grounded_floor_.empty() && fading_floors_.insert(stage_ + " " + grounded_floor_).second)
                 std::printf("[%d] campaign: the floor %s gave way: crossed without a stop from now on\n", frame, grounded_floor_.c_str());
         } else if (fallen_at_ >= 0 && (frame - fallen_at_ > kFallBack || engine.stage_name() != fallen_stage_ || [&] {
                        // (The defeated player leaves its bit capsule, PLAYER2;
@@ -4361,6 +4749,30 @@ CampaignBot::Output CampaignBot::update(engine::Engine& engine, const engine::Mo
     return out;
 }
 
+// The HP the heals held make up against a full stock (kRestockBelow), in
+// percent: each heal at what it can give (an HP disk at most the maximum HP,
+// a Recovery the maximum HP), the full stock kSupplies' highest count of each
+// heal among the rows whose reserve the bits held and banked cover.
+int CampaignBot::heal_stock_percent(engine::Engine& engine) const {
+    auto* sys = engine.get<engine::GameSystem>();
+    auto* db = engine.get<engine::DatabaseManager>();
+    if (!sys || !db) return 100;
+    const auto& slot = sys->players[0];
+    double held = 0.0, full = 0.0;
+    const bool heavy = heavy_way(engine);
+    for (const int record : {0, 1, 2, 9}) {
+        int keep = 0;
+        for (const auto& s : kSupplies)
+            if (s.record == record && slot.max_hp >= s.from_hp && slot.max_hp < s.to_hp && slot.bits + slot.bank_bits >= s.reserve &&
+                (!s.heavy || heavy))
+                keep = std::max(keep, std::min(s.keep, 9));
+        const double hp = record == 9 ? slot.max_hp : std::min(db->number("conItem", record, "HP").value_or(0), slot.max_hp);
+        held += hp * disks_held(slot, record);
+        full += hp * keep;
+    }
+    return full <= 0.0 ? 100 : int(held * 100.0 / full);
+}
+
 // Disks used from the L panel (heals, the Raise Disk) and the upkeep of
 // panels the driver opened, laid over the frame's output (see kHealBelow).
 // A disk use: L opens the disk panel (GENERATEITEM, needs the player's
@@ -4376,13 +4788,22 @@ void CampaignBot::survive(engine::Engine& engine, const engine::ModelCtrlManager
         return;
     }
     const auto& slot = sys->players[0];
+    // The heal stock when this stage visit began (restocking trips).
+    if (stock_at_entry_ < 0 || stock_visit_ != stage_frame_) stock_at_entry_ = heal_stock_percent(engine), stock_visit_ = stage_frame_;
     // The biggest blow taken within kBigHitFor frames (the heals' threshold).
     // (Not a pit's or a quicksand's respawn, which sets the HP to 1, GAMERAM
     // ADDHP absolute: dng205b3's sand counted as a blow of 859 of 860 HP, and
     // the driver gave the boss stage up at full HP for want of heals.)
+    // (In a boss stage fought with real blows the biggest blow of the visit
+    // counts as long as the visit lasts: stagBS06 Daemon's critical claw
+    // blows, ~1460 of 2990 HP, came some 4000 frames apart, and one ended a
+    // player at 1400 HP with 34 heals held.)
+    const bool boss_stage = !engine.cheats().god && !engine.cheats().one_hit &&
+                            std::any_of(std::begin(kBossFights), std::end(kBossFights), [&](const BossFight& f) { return stage_ == f.stage && f.real_blows; });
+    const auto stale = [&](int at) { return boss_stage ? at < stage_frame_ : frame - at > kBigHitFor; };
     if (last_hp_ > slot.hp && slot.hp > 1) {
         const int hit = last_hp_ - slot.hp;
-        if (hit >= big_hit_ || frame - big_hit_at_ > kBigHitFor) big_hit_ = hit, big_hit_at_ = frame;
+        if (hit >= big_hit_ || stale(big_hit_at_)) big_hit_ = hit, big_hit_at_ = frame;
     }
     last_hp_ = slot.hp;
     // A stage without the quick panels (no beNDMWPanelWazaInfo in its
@@ -4443,7 +4864,9 @@ void CampaignBot::survive(engine::Engine& engine, const engine::ModelCtrlManager
             // A hit closed the panel (the damage sequences REMOVE it,
             // 8034E1A4): tried again as soon as the player can.
             if (trace()) std::printf("[%d] campaign disk use interrupted (frame %d of it)\n", frame, t);
-            if (disk_use_ == kGateDisk) gate_disk_at_ = -100000; // (its wait is for a trip made)
+            // (Its wait is for a trip made; a use the panel did not even open
+            // for is tried again some frames later, not every fourth frame.)
+            if (disk_use_ == kGateDisk) gate_disk_at_ = t <= 3 ? frame - 3000 + 30 : -100000;
             disk_use_ = -1;
             if (heal_at_ == disk_use_at_) heal_at_ = frame - kHealGap + 4;
             return;
@@ -4490,7 +4913,7 @@ void CampaignBot::survive(engine::Engine& engine, const engine::ModelCtrlManager
     // percent of it the next one may be the last, so that is low HP too;
     // dng101b2's Blossomon hits a level 6 Veemon of 270 HP for 70..100 and
     // 222 when critical, and at kHealBelow percent, 108 HP, one blow ended it.)
-    const bool big_hits = frame - big_hit_at_ <= kBigHitFor;
+    const bool big_hits = !stale(big_hit_at_);
     // Before a stage without heals (kNoHealStages, or seen without the quick
     // panels) the HP is topped up while an HP Disk S's worth is missing: the
     // stag0203 train was boarded with 658 of 1040 HP after the fights on the
@@ -4512,12 +4935,15 @@ void CampaignBot::survive(engine::Engine& engine, const engine::ModelCtrlManager
     const bool dodging = dodge_frame_ >= frame - 1 && slot.hp * 100 >= slot.max_hp * 25 && (!big_hits || slot.hp > 2 * big_hit_);
     if (!engine.cheats().god && panel && slot.hp > 0 && low_hp && !dodging && frame - heal_at_ >= kHealGap && controllable && !player.panel_open &&
         panel_ready) {
+        // (Made up within kHealSlack percent of the maximum HP: an HP Disk L,
+        // 5400, went for 1831 missing where an M, 1800, nearly did it, and a
+        // chain spent all 9 L of its last stock on stag0404's climb.)
         int pick = -1;
         auto* db = engine.get<engine::DatabaseManager>();
         for (const int record : {0, 1, 2})
             if (disks_held(slot, record) > 0) {
                 pick = record;
-                if (db && db->number("conItem", record, "HP").value_or(0) >= slot.max_hp - slot.hp) break;
+                if (db && db->number("conItem", record, "HP").value_or(0) * 100 >= (slot.max_hp - slot.hp) * 100 - slot.max_hp * kHealSlack) break;
             }
         if (pick < 0 && disks_held(slot, 9) > 0) pick = 9;
         if (pick >= 0) {
@@ -4541,8 +4967,14 @@ void CampaignBot::survive(engine::Engine& engine, const engine::ModelCtrlManager
             // (Y takes the highest record held, a Recovery first: only while two
             // of the biggest recent blows would end the player, or below 30 %:
             // the poison plants' spit, 5 % a hit, comes every 13 frames.)
+            // (Recovery is kept for the boss stages: Y takes it first, and a
+            // chain with 9 for Daemon's stages spent 5 on stag0401's mines.
+            // Outside them Y is taken over a held Recovery only below
+            // kHealQuickBelow percent.)
+            const bool keep_recovery = !boss_stage && pick != 9 && disks_held(slot, 9) > 0 && slot.hp * 100 >= slot.max_hp * kHealQuickBelow;
             if (!disk_quick_ && blow_due(engine, player, walk, frame) <= walk) {
-                if (slot.hp * 100 < slot.max_hp * kHealBelow && ((big_hits && slot.hp < 2 * big_hit_) || slot.hp * 100 < slot.max_hp * 30)) {
+                if (!keep_recovery && slot.hp * 100 < slot.max_hp * kHealBelow &&
+                    ((big_hits && slot.hp < 2 * big_hit_) || slot.hp * 100 < slot.max_hp * 30)) {
                     disk_quick_ = true;
                 } else {
                     disk_use_ = -1;
@@ -4579,9 +5011,30 @@ void CampaignBot::survive(engine::Engine& engine, const engine::ModelCtrlManager
         if (trace()) std::printf("[%d] campaign: no attack for %d frames, %d frames without guarding\n", frame, kAggressAfter, kAggressFor);
     }
     const bool guarding = !engine.cheats().god && frame >= aggressive_until_;
+    // Guards that blocked nothing: SQ_GUARD ran out into SQ_GUARD2 without a
+    // SQ_GUARDR (touch guards against a body that does not strike).
+    if (player.seq_name != guard_seq_) {
+        if (player.seq_name == "SQ_GUARD2" && guard_seq_ == "SQ_GUARD") ++idle_guards_;
+        else if (player.seq_name == "SQ_GUARDR") idle_guards_ = 0;
+        guard_seq_ = player.seq_name;
+    }
     if (guarding && !engine.cheats().one_hit && player.control_enabled && player.node) {
         float gap = 0.0f;
-        if (const auto away = touch_escape(engine, player, gap, frame)) {
+        const auto away = touch_escape(engine, player, gap, frame);
+        if (!away) idle_guards_ = 0;
+        // (Two touch guards in a row that blocked nothing: away from the body
+        // instead of a third. dng412b2's e_rare pair stand firing in place,
+        // their body boxes reaching some 10 out, and a no-cheat run guarded
+        // their touch beside them, guard after guard, for 160000 frames.)
+        if (away && idle_guards_ >= 2 && controllable && !fading) {
+            out.walk = true;
+            out.x = away->x;
+            out.z = away->z;
+            out.reach = 0.25f;
+            out.buttons &= ~(pad_button::a | pad_button::b);
+            return;
+        }
+        if (away) {
             if (static const bool t = std::getenv("DW4_TRACE_GUARD") != nullptr; t)
                 std::printf("[%d] touch gap %.1f muteki %.0f controllable %d panel %d seq %s\n", frame, gap, player.muteki, controllable,
                             player.panel_open, player.seq_name.c_str());
@@ -4645,10 +5098,15 @@ void CampaignBot::survive(engine::Engine& engine, const engine::ModelCtrlManager
         // donation the dealer only says to come back later until the next
         // trip through the lobby gate (flag 594, cleared by stagML11
         // gateclear.lua when a destination is chosen).)
+        // (After the donation only with the bits for the accessory: its
+        // HANBAI, kJunkBoardSpare more for the value the stock rolls.)
         bool junk = false;
+        auto* junk_db = engine.get<engine::DatabaseManager>();
         if (const int want = protection_wanted(engine);
-            want >= 0 && !lobby(lower(engine.stage_name())) &&
-            (engine.counters()[1] >= kJunkDonation ? !holds(engine, "F594") : slot.bits + slot.bank_bits >= kJunkDonation + kGearBits)) {
+            want >= 0 && junk_db && !lobby(lower(engine.stage_name())) &&
+            (engine.counters()[1] >= kJunkDonation
+                 ? !holds(engine, "F594") && slot.bits + slot.bank_bits >= junk_db->number("armor2", want, "HANBAI").value_or(0) + kJunkBoardSpare
+                 : slot.bits + slot.bank_bits >= kJunkDonation + kGearBits)) {
             junk = true;
             for (const auto& d : slot.devices) junk = junk && !(d.type == 2 && d.record == want);
         }
@@ -4664,24 +5122,17 @@ void CampaignBot::survive(engine::Engine& engine, const engine::ModelCtrlManager
         // count of each heal among the rows whose reserve they cover: below
         // half. A level 12 chain with a few hundred bits went back twice at
         // once, its 9 HP Disks S measured against Disks L and Recovery.)
+        // (Only with the stock already below half when the stage visit
+        // began, stock_at_entry_: one spent in this stage is the price of
+        // crossing it, and a trip out of it gives up what the stage cost so
+        // far - a level 38 chain left stag0304 with half a stock after its
+        // ramp and its cannon nest, to walk them again after the restock.)
         bool restock = false;
         if (!objective_now_.empty() && objective_now_.rfind("train", 0) != 0 && restock_trips_[objective_now_] < kRestockTrips &&
-            !lobby(lower(engine.stage_name())) && planned_spend(engine) >= kGateTripBits)
-            if (auto* db = engine.get<engine::DatabaseManager>()) {
-                double held = 0.0, full = 0.0;
-                for (const int record : {0, 1, 2, 9}) {
-                    int keep = 0;
-                    for (const auto& s : kSupplies)
-                        if (s.record == record && slot.max_hp >= s.from_hp && slot.max_hp < s.to_hp && slot.bits + slot.bank_bits >= s.reserve)
-                            keep = std::max(keep, std::min(s.keep, 9));
-                    const double hp = record == 9 ? slot.max_hp : db->number("conItem", record, "HP").value_or(0);
-                    held += hp * disks_held(slot, record);
-                    full += hp * keep;
-                }
-                if (held * 100.0 < full * kRestockBelow)
-                    for (const auto& o : kObjectives)
-                        if (objective_now_ == o.name) restock = lower(engine.stage_name()) != o.stage;
-            }
+            !lobby(lower(engine.stage_name())) && planned_spend(engine) >= kGateTripBits && stock_at_entry_ >= 0 &&
+            stock_at_entry_ < kRestockBelow && heal_stock_percent(engine) < kRestockBelow && !behind_gauntlet(engine, lower(engine.stage_name())))
+            for (const auto& o : kObjectives)
+                if (objective_now_ == o.name) restock = lower(engine.stage_name()) != o.stage;
         if ((dying || shopping || junk || restock) && blow_due(engine, player, kHoldAttackLead + 8.0f, frame) > kHoldAttackLead + 8.0f) {
             gate_disk_at_ = frame;
             heal_at_ = frame;
@@ -4717,6 +5168,19 @@ void CampaignBot::survive(engine::Engine& engine, const engine::ModelCtrlManager
             return;
         }
     }
+    // A Cure Disk against poison (not in god mode): conItem 6 ends it when
+    // 8 - the poison's GEDOKU reaches a roll of ten (803B1288), while some
+    // kCureTicks of its 2-second ticks (each its DAMAGE share of the maximum
+    // HP) are still to come and no blow is due.
+    if (!engine.cheats().god && panel && controllable && !player.panel_open && panel_ready && frame - heal_at_ >= kHealGap && player.status &&
+        player.status->timer[0] >= kCureTicks && disks_held(slot, kCureDisk) > 0 &&
+        blow_due(engine, player, kHoldAttackLead, frame) > kHoldAttackLead) {
+        heal_at_ = frame;
+        start_disk(slot, kCureDisk, frame);
+        if (trace()) std::printf("[%d] campaign cures the poison (%d ticks left, %d Cure Disks)\n", frame, player.status->timer[0], disks_held(slot, kCureDisk));
+        survive(engine, player, frame, out);
+        return;
+    }
     // MP for the techniques (not with the one-hit cheat): below the first
     // technique's cost an MP disk is used (the smallest held), when no blow
     // is due.
@@ -4745,8 +5209,9 @@ void CampaignBot::survive(engine::Engine& engine, const engine::ModelCtrlManager
     if (!engine.cheats().one_hit) {
         const float due = blow_due(engine, player, kHoldAttackLead, frame);
         // A technique at the enemy in front when the MP allows (survive).
+        // (Not in a boss fight that takes swings only, BossFight::blade.)
         if (!player.panel_open && due > kHoldAttackLead && panel && controllable && panel_ready && frame - tech_end_ >= kTechGap &&
-            !out.ride_strike && tech_target(engine, player, slot)) {
+            !out.ride_strike && blade_frame_ != frame && tech_target(engine, player, slot)) {
             tech_at_ = frame;
             tech_end_ = frame + 4 + 2 * std::clamp(int(slot.wazalist.size()) - 1, 0, 5) + 14;
             survive(engine, player, frame, out);
@@ -4754,11 +5219,17 @@ void CampaignBot::survive(engine::Engine& engine, const engine::ModelCtrlManager
         }
         // (A shot in flight is guarded against in an aggressive window too:
         // that window is for an enemy whose blows never pause, and one
-        // stag0204 cannon shell takes 15 % of the maximum HP.)
-        const bool guard_it = guarding || (!engine.cheats().god && blow_shot_);
+        // stag0204 cannon shell takes 15 % of the maximum HP. So is any blow
+        // of an effect, a turret's shell or beam: the stag0304 g_cannon03z03
+        // beams, 22 % of the maximum HP, stand along their line for some 80
+        // frames, and the guard against them held the attacks back until the
+        // window came: the bot then walked into the live beam unguarded.)
+        const bool guard_it = guarding || (!engine.cheats().god && (blow_shot_ || blow_effect_));
         // (A swing at a ride's target passing by goes in all the same: it
         // passes once, and the blow costs the boat no more than the hit.)
-        if (guard_it && due <= kHoldAttackLead && !out.ride_strike) {
+        // (A shot still queued on its shooter only holds back a swing that
+        // would not land first: the blow interrupts the shooter, kQueuedBeat.)
+        if (guard_it && due <= (blow_queued_ ? kQueuedBeat : kHoldAttackLead) && !out.ride_strike) {
             if (out.buttons & pad_button::a) ++held_presses_;
             out.buttons &= ~pad_button::a;
             guard_held_ = frame;
@@ -4805,7 +5276,8 @@ bool CampaignBot::on_fading_floor(engine::Engine& engine, const engine::ModelCtr
     if (!hitland) return false;
     const auto me = position_of(player);
     const auto land = hitland->world().check_land({me.x, me.y + 5.0f, me.z}, 1.0f, 400.0f, 1.0f);
-    return land.found && land.info != 0xFFFF && land.position.y > me.y - 3.0f && fading_floors_.count(hitland->world().info_name(land.info)) > 0;
+    return land.found && land.info != 0xFFFF && land.position.y > me.y - 3.0f &&
+           fading_floors_.count(stage_ + " " + hitland->world().info_name(land.info)) > 0;
 }
 
 bool CampaignBot::guard_footing(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player, bool deep) const {
@@ -4819,7 +5291,20 @@ bool CampaignBot::guard_footing(engine::Engine& engine, const engine::ModelCtrlM
         dx = -player.node->matrix(2, 0), dz = -player.node->matrix(2, 2);
         d = std::max(0.01f, std::hypot(dx, dz));
     }
+    // (A wall before a drop ends the push there: the guard is taken. At the
+    // fence of stagBS05's arena, the floor ending beyond it, no guard was
+    // taken and Daemon's homing drills struck, 20 % of the HP each.)
+    const auto flags = hitland->delivery_flags(player.info_name, player.index);
+    const float width = hitland->delivery_width(player.info_name, player.index);
+    const engine::Vec3f dir{dx / d, 0.0f, dz / d};
+    float walled = 1e9f;
+    for (float t = 0.0f; t < 15.0f; t += 1.5f)
+        if (hitland->world().check_wall({me.x + dir.x * (t + 0.75f), me.y, me.z + dir.z * (t + 0.75f)}, dir, width, 4.0f, flags, false).hit) {
+            walled = t;
+            break;
+        }
     for (const float k : {3.0f, 6.0f, 9.0f, 12.0f, 15.0f}) {
+        if (k > walled + 1.5f) return true;
         auto land = hitland->world().check_land({me.x + dx / d * k, me.y + 5.0f, me.z + dz / d * k}, 1.0f, 400.0f, 1.0f);
         // (A probe on a seam between two floor triangles finds none: the
         // floor beside it counts. stag0304's cannon nest plateau has such
@@ -4977,6 +5462,8 @@ float CampaignBot::blow_due(engine::Engine& engine, const engine::ModelCtrlManag
     constexpr float kBodyHalf = 2.5f, kBodyHeight = 17.0f, kShotMargin = 4.0f;
     float best = 1e9f;
     blow_shot_ = false;
+    blow_effect_ = false;
+    blow_queued_ = false;
     if (!player.node) return best;
     auto* models = engine.get<engine::ModelCtrlManager>();
     if (!models) return best;
@@ -5000,6 +5487,40 @@ float CampaignBot::blow_due(engine::Engine& engine, const engine::ModelCtrlManag
             body_hi = std::max(body_hi, wy + half);
         }
     }
+    // A shot still queued on its shooter (an effect subcommand waiting for its
+    // delay, 80310754) of an effect model seen hurting before (hurting_effects_:
+    // an effect with an enemy attack box), the shooter within kQueuedReach and
+    // facing the player: due when its delay runs out. (dng412b4's e_mecha5
+    // fire x_029eblst01a, ~5.6 % of the maximum HP, whose box meets a player
+    // 18 off a frame or two after it comes out: no guard was ever in time, 74
+    // hits in one visit of a no-cheat run, and its attacks walked into them.)
+    constexpr float kQueuedReach = 45.0f, kQueuedFacing = 0.87f;
+    for (const auto& e : models->rams()) {
+        if (!e->generated || !e->node || e->is_player) continue;
+        // (A shot's box lasts as long as the shot, end 1e8: x_029eblst01a.)
+        if (e->category != "ENEMY") {
+            for (const auto& h : e->hitboxes)
+                if (h.kind / 10000 == 7 || h.kind / 10000 == 8) hurting_effects_.insert(e->info_name);
+            continue;
+        }
+        // (Not a turret, g_*: its shots are cut short by striking it, see the
+        // turret taps in play.)
+        if (e->hp <= 0 || e->effects.empty() || e->info_name.rfind("g_", 0) == 0 || flat(position_of(*e), me) > kQueuedReach) continue;
+        const auto& m = e->node->matrix;
+        const float fl = std::hypot(m(2, 0), m(2, 2)), d = flat(position_of(*e), me);
+        if (fl < 0.1f || d < 0.5f || ((me.x - m(3, 0)) * m(2, 0) + (me.z - m(3, 2)) * m(2, 2)) / (fl * d) < kQueuedFacing) continue;
+        for (const auto& q : e->effects) {
+            if (q.started || !hurting_effects_.count(q.model)) continue;
+            const float due = std::max(0.0f, q.delay - q.elapsed);
+            if (due > horizon || due >= best) continue;
+            best = due;
+            blow_shot_ = false;
+            blow_effect_ = true;
+            guard_from_ = position_of(*e);
+            guard_what_ = e->info_name + " " + q.model + " (queued)";
+            blow_queued_ = body_gap(*e, me) <= kQueuedSwing;
+        }
+    }
     for (const auto& e : models->rams()) {
         if (!e->generated || !e->node || e->is_player || e->hitboxes.empty()) continue;
         if (e->category == "ENEMY" && e->hp <= 0) continue;
@@ -5009,8 +5530,13 @@ float CampaignBot::blow_due(engine::Engine& engine, const engine::ModelCtrlManag
             const auto& box = e->hitboxes[index];
             const int group = box.kind / 10000;
             // (A permanent body box, end 1e8, hurts on touch: no guard against
-            // it, the attack goes on; only the blows of attacks count.)
-            if ((group != 7 && group != 8) || box.elapsed >= box.end || box.end >= 1e7f) continue;
+            // it, the attack goes on; only the blows of attacks count. But a
+            // gimmick's body that runs at the player counts as a shot: the
+            // dng412b3 / b4 trains, g_dtrailmon, whose body box 70118 takes
+            // 20 % of the maximum HP, ran a no-cheat run down 30 times in one
+            // visit; the player's hit script takes no damage in SQ_GUARD.)
+            const bool body = box.end >= 1e7f;
+            if ((group != 7 && group != 8) || box.elapsed >= box.end || (body && e->category == "ENEMY")) continue;
             if (unguarded_kind(stage_, box.kind)) continue; // (kProtections)
             const float due = std::max(0.0f, box.delay - box.elapsed);
             if (due > horizon) continue;
@@ -5030,6 +5556,8 @@ float CampaignBot::blow_due(engine::Engine& engine, const engine::ModelCtrlManag
             }
             if (e->category != "ENEMY" && due == 0.0f && seen.prev_frame == frame - 1) {
                 const engine::Vec3f shot{seen.at.x - seen.prev.x, seen.at.y - seen.prev.y, seen.at.z - seen.prev.z};
+                // (A body only while it moves itself, not one the player walks at.)
+                if (body && shot.x * shot.x + shot.z * shot.z < 0.09f) continue;
                 // (Against the player walking on as in its last step, and
                 // standing still: an attack's lunge or a stop changes the
                 // player's motion, so the earlier meeting counts.)
@@ -5047,25 +5575,46 @@ float CampaignBot::blow_due(engine::Engine& engine, const engine::ModelCtrlManag
                         t0 = std::max(t0, a);
                         t1 = std::min(t1, b);
                     };
-                    slab(cx - me.x, v.x, box.size.x * 0.5f + kBodyHalf + kShotMargin);
-                    slab(cz - me.z, v.z, box.size.z * 0.5f + kBodyHalf + kShotMargin);
+                    // (The margin by the shot's speed: a slow homing shot,
+                    // stagBS05 Daemon's drills at ~0.6 a frame, met the full
+                    // margin some 13 frames before its box and the guard was
+                    // over when it came.)
+                    const float margin = std::clamp(std::hypot(v.x, v.z) * 2.0f, 1.0f, kShotMargin);
+                    slab(cx - me.x, v.x, box.size.x * 0.5f + kBodyHalf + margin);
+                    slab(cz - me.z, v.z, box.size.z * 0.5f + kBodyHalf + margin);
                     slab(cy - (body_lo + body_hi) * 0.5f, v.y, box.size.y * 0.5f + (body_hi - body_lo) * 0.5f + 1.0f);
                     if (t0 <= t1 && t0 < best) {
                         best = t0;
                         blow_shot_ = true;
+                        blow_queued_ = false;
+                        blow_effect_ = true;
                         guard_from_ = {cx, cy, cz};
                         guard_what_ = e->info_name + " " + std::to_string(box.kind);
                     }
                 }
             }
-            if (due >= best) continue;
+            if (due >= best || body) continue;
             if (seen.prev_frame == frame - 1) {
                 const float ahead = due + kGuardLead;
                 cx2 += (seen.at.x - seen.prev.x) * ahead;
                 cy2 += (seen.at.y - seen.prev.y) * ahead;
                 cz += (seen.at.z - seen.prev.z) * ahead;
             }
-            const float grow = e->category == "EBULLET" ? 9.0f + due * 2.0f : 3.0f + due * 0.25f;
+            // (A bullet that flies: grown by what it covers in some 4.5 frames,
+            // up to 9; stagBS05 Daemon's homing drills, ~0.6 a frame, were
+            // guarded 15 frames early and struck as the guard ran out.)
+            float bullet = 9.0f;
+            if (seen.prev_frame == frame - 1)
+                bullet = std::clamp(std::hypot(seen.at.x - seen.prev.x, seen.at.z - seen.prev.z) * 4.5f, 3.0f, 9.0f);
+            // (A live box that stands still, a blast's: grown by 0.5 only. The
+            // rings of stagBS05 Daemon's blasts, squares on a circle, met the
+            // player grown by 3 where they passed it on the diagonal, and the
+            // guard taken then was over when the next ring came.)
+            float still = 3.0f;
+            if (e->category != "ENEMY" && due == 0.0f && seen.prev_frame == frame - 1 &&
+                std::abs(seen.at.x - seen.prev.x) + std::abs(seen.at.z - seen.prev.z) < 0.05f)
+                still = 0.5f;
+            const float grow = e->category == "EBULLET" ? bullet + due * 2.0f : still + due * 0.25f;
             if (static const bool t = std::getenv("DW4_TRACE_GUARD") != nullptr; t)
                 std::printf("guard? %s#%d %s %s owner %s kind %d due %.0f el %.0f end %.0f gap x %.1f z %.1f y %.1f..%.1f me y %.1f mu %.0f seq %s\n",
                             e->info_name.c_str(), e->index, e->seq_name.c_str(), e->category.c_str(), e->owner_name.c_str(), box.kind, due, box.elapsed, box.end,
@@ -5075,6 +5624,8 @@ float CampaignBot::blow_due(engine::Engine& engine, const engine::ModelCtrlManag
                 body_hi + 1.0f > cy2 - box.size.y * 0.5f && body_lo - 1.0f < cy2 + box.size.y * 0.5f) {
                 best = due;
                 blow_shot_ = false;
+                blow_effect_ = e->category != "ENEMY";
+                blow_queued_ = false;
                 guard_from_ = {cx2, cy2, cz};
                 guard_what_ = e->info_name + " " + std::to_string(box.kind);
             }
@@ -5216,7 +5767,10 @@ CampaignBot::Output CampaignBot::play(engine::Engine& engine, const engine::Mode
         // (Out of the lobby into the story's stages: a new stay in the lobby
         // follows, see kBankDust.)
         if (stage.rfind("stag0", 0) == 0 || stage.rfind("dng", 0) == 0 || stage.rfind("stagbs", 0) == 0 || stage.rfind("staggf", 0) == 0)
-            bank_withdrawn_ = false, bank_tries_ = 0, junk_visits_ = 0, sell_tries_ = 0, sales_off_ = false, errands_off_ = false;
+            bank_withdrawn_ = false, bank_tries_ = 0, junk_visits_ = 0, errand_stalls_.clear();
+        // (An errand that stalled once waits for the next lobby room, see
+        // errand_off.)
+        errands_paused_.clear();
         // (A restocking trip made, see kRestockTrips.)
         if (lobby(stage) && !restock_pending_.empty()) ++restock_trips_[restock_pending_], restock_pending_.clear();
         else if (!lobby(stage)) restock_pending_.clear();
@@ -5241,8 +5795,10 @@ CampaignBot::Output CampaignBot::play(engine::Engine& engine, const engine::Mode
         // ExploreBot::regenerating_names.)
         if (!engine.cheats().one_hit) {
             const auto healing = explorer_.regenerating_names();
+            const auto exploding = explorer_.exploding_names();
             explorer_ = ExploreBot{};
             explorer_.set_regenerating_names(healing);
+            explorer_.set_exploding_names(exploding);
             foe_left_.clear();
             target_skip_.clear();
             foe_ = nullptr;
@@ -5283,7 +5839,10 @@ CampaignBot::Output CampaignBot::play(engine::Engine& engine, const engine::Mode
     if (frame == stage_frame_ + 110 && std::getenv("DW4_CAMPAIGN_REGIONS")) region_report(engine, *player);
     // The character on arriving in a stage (level, techniques' elements,
     // the attack's element: what element-locked walls need).
-    if (frame == stage_frame_ + 104 && trace())
+    // (Once a stage visit, when the player first has control: the stage loads
+    // take 400..900 frames since the simulated disc, so a fixed frame after
+    // the request came before the player.)
+    if (player_traced_visit_ != stage_frame_ && player->control_enabled && trace() && (player_traced_visit_ = stage_frame_) >= 0)
         if (auto* sys = engine.get<engine::GameSystem>()) {
             const auto& slot = sys->players[0];
             std::string techs;
@@ -5305,7 +5864,8 @@ CampaignBot::Output CampaignBot::play(engine::Engine& engine, const engine::Mode
                                                                   std::string_view(std::getenv("DW4_TRACE_CAMPAIGN")) == "2") {
                 static const char* tables[4] = {"weapon", "armor1", "armor2", "abChip"};
                 const auto& st = slot.stats;
-                std::printf("      stats STR %d DEF %d WIS %d SPI %d SPD %d skills", st.tsuyosa, st.mamori, st.kashikosa, st.seishin, st.subayasa);
+                std::printf("      stats STR %d DEF %d WIS %d SPI %d SPD %d HIT %d weapon skill %d skills", st.tsuyosa, st.mamori, st.kashikosa, st.seishin, st.subayasa,
+                            st.meichuritsu, st.weapon_skill_no);
                 for (const int s : st.skill) std::printf(" %d", s);
                 std::printf("\n");
                 for (std::size_t i = 0; i < slot.devices.size(); ++i) {
@@ -5337,6 +5897,76 @@ CampaignBot::Output CampaignBot::play(engine::Engine& engine, const engine::Mode
                             box.offset.y, box.offset.z, box.size.x, box.size.y, box.size.z, box.delay, box.end, box.elapsed);
         }
     }
+    // DW4_TRACE_MODELS=<prefix> (research): the models of that name prefix
+    // every ten seconds with their state (what a gimmick objective sees).
+    if (static const char* prefix = std::getenv("DW4_TRACE_MODELS"); prefix && (frame - stage_frame_) % 600 == 120)
+        for (const auto& e : engine.get<engine::ModelCtrlManager>()->rams()) {
+            if (!e->node || e->info_name.rfind(prefix, 0) != 0) continue;
+            const auto at = position_of(*e);
+            const auto label = e->labels.find(e->seq_name);
+            std::printf("[%d] model %s#%d %s gen %d ctrl %d mode %d hp %d %s/%s%s%s%s boxes %zu at (%.1f,%.1f,%.1f) %.0f off\n", frame,
+                        e->info_name.c_str(), e->index, e->category.c_str(), e->generated, e->control_enabled, e->ctrl_mode, e->hp, e->seq_name.c_str(),
+                        label == e->labels.end() ? "-" : label->second.c_str(),
+                        e->hit && e->hit->player_bullet ? " bullet" : "", e->hit && e->hit->player_talk ? " talk" : "",
+                        e->ai_maps && !e->ai_maps->empty() ? " aim" : "", e->hit ? e->hit->boxes.size() : std::size_t(0), at.x, at.y, at.z,
+                        flat(at, position_of(*player)));
+        }
+    // DW4_TRACE_NEAR=<from>-<to> (research): every frame of that span the
+    // player's state and the enemies within 40 (sequence, HP, MUTEKI).
+    if (static const char* span = std::getenv("DW4_TRACE_NEAR"); span) {
+        int from = 0, to = 0;
+        if (std::sscanf(span, "%d-%d", &from, &to) == 2 && frame >= from && frame <= to) {
+            const auto me = position_of(*player);
+            auto* sys = engine.get<engine::GameSystem>();
+            // DW4_TRACE_DB=table:row:column[,...] (research): those cells and
+            // the player's resistances, once, on the span's first frame.
+            if (auto* db = engine.get<engine::DatabaseManager>(); db && sys && frame == from) {
+                const std::string cells = std::getenv("DW4_TRACE_DB") ? std::getenv("DW4_TRACE_DB") : "";
+                for (std::size_t at = 0; at < cells.size();) {
+                    const auto comma = std::min(cells.find(',', at), cells.size());
+                    const std::string cell = cells.substr(at, comma - at);
+                    at = comma + 1;
+                    const auto c1 = cell.find(':'), c2 = cell.find(':', c1 + 1);
+                    if (c1 == std::string::npos || c2 == std::string::npos) continue;
+                    const std::string table = cell.substr(0, c1), column = cell.substr(c2 + 1);
+                    const int row = std::atoi(cell.c_str() + c1 + 1);
+                    std::printf("db %s %d %s = %d '%s'\n", table.c_str(), row, column.c_str(), db->number(table, row, column).value_or(-1),
+                                db->text(table, row, column).c_str());
+                }
+                const auto& st = sys->players[0].stats;
+                std::printf("player resist %d %d %d %d poison %d\n", st.resist[0], st.resist[1], st.resist[2], st.resist[3], st.dokuteikou);
+            }
+            std::string near;
+            for (const auto& e : engine.get<engine::ModelCtrlManager>()->rams()) {
+                if (!e->generated || !e->node || e->is_player || flat(position_of(*e), me) >= 60.0f) continue;
+                bool blow = false;
+                for (const auto& h : e->hitboxes) blow = blow || ((h.kind / 10000 == 7 || h.kind / 10000 == 8) && h.end < 1e7f);
+                if (e->category == "ENEMY" ? e->hp <= 0 : !blow) continue;
+                const auto p = position_of(*e);
+                near += " " + e->info_name + "#" + std::to_string(e->index) + ":" + e->seq_name + "/" + std::to_string(e->hp) + "/" +
+                        std::to_string(int(e->muteki)) + "@" + std::to_string(int(flat(p, me)));
+                if (e->category == "ENEMY")
+                    for (const auto& q : e->effects)
+                        if (!q.started) near += "{" + q.model + ":" + std::to_string(int(q.delay - q.elapsed)) + "}";
+                if (e->category != "ENEMY") {
+                    near += "(" + std::to_string(int(p.x)) + "," + std::to_string(int(p.y)) + "," + std::to_string(int(p.z)) + ")<" + e->owner_name + "#" +
+                            std::to_string(e->owner_index) + "/" + e->attach_name + ">";
+                    const auto& m = e->node->matrix;
+                    for (const auto& h : e->hitboxes) {
+                        const engine::Vec3f o = h.offset;
+                        char box[160];
+                        std::snprintf(box, sizeof box, "[%s k%d el%.0f/%.0f-%.0f c(%.1f,%.1f,%.1f) s(%.0f,%.0f,%.0f)]", e->category.c_str(), h.kind, h.elapsed,
+                                      h.delay, h.end, o.x * m(0, 0) + o.y * m(1, 0) + o.z * m(2, 0) + m(3, 0),
+                                      o.x * m(0, 1) + o.y * m(1, 1) + o.z * m(2, 1) + m(3, 1), o.x * m(0, 2) + o.y * m(1, 2) + o.z * m(2, 2) + m(3, 2),
+                                      h.size.x, h.size.y, h.size.z);
+                        near += box;
+                    }
+                }
+            }
+            std::printf("[%d] near me (%.1f,%.1f,%.1f) %s hp %d mu %.0f ctrl %d |%s\n", frame, me.x, me.y, me.z, player->seq_name.c_str(),
+                        sys ? sys->players[0].hp : -1, player->muteki, player->ctrl_mode, near.c_str());
+        }
+    }
     // On a maze floor: the region the player is in, every ten seconds.
     if (maze_floor(stage) && player->control_enabled && frame - region_check_ >= 600) {
         region_check_ = frame;
@@ -5351,6 +5981,17 @@ CampaignBot::Output CampaignBot::play(engine::Engine& engine, const engine::Mode
         step = next_step(engine);
     }
     if (step) objective_now_ = step->why;
+    // (Fresh-stock trips for a gear objective, counted per level: see
+    // kGearRestocks in next_step.)
+    if (step && step->why == "a fresh shop stock: out and back in" && traced_.find("(a fresh shop stock") == std::string::npos)
+        if (auto* sys = engine.get<engine::GameSystem>())
+            for (const auto& o : kObjectives)
+                if (!holds(engine, o.done)) {
+                    auto& count = gear_restocks_[o.name];
+                    if (count.first != sys->players[0].stats.level) count = {sys->players[0].stats.level, 0};
+                    ++count.second;
+                    break;
+                }
     // The equipment errand: the device it is for (traced); a pick the lab has
     // not taken within kEquipWalk frames is left out from then on.
     if (step && step->action.rfind("equip:", 0) == 0) {
@@ -5423,17 +6064,20 @@ CampaignBot::Output CampaignBot::play(engine::Engine& engine, const engine::Mode
         std::printf("[%d] campaign: still %s for %d frames at (%.0f,%.0f,%.0f)\n", frame, key.c_str(), frame - traced_at_,
                     player->node->matrix(3, 0), player->node->matrix(3, 1), player->node->matrix(3, 2));
         // A lobby errand (a shop, the bank, the X-Data shop, the lab) that
-        // has not ended in kErrandStall frames: its menus went out of step
-        // (the disk shop's Sell, then its Buy list, answered round and round
-        // for 950000 frames once). No more errands this stay; the open
-        // program's menus are left as no errand's (backed out of, Exit).
-        static constexpr const char* kErrands[] = {"shop:", "gear:", "deposit:", "withdraw:", "heal:", "equip:"};
-        if (step && lobby(stage_) && frame - traced_at_ >= kErrandStall &&
-            std::any_of(std::begin(kErrands), std::end(kErrands), [&](const char* e) { return step->action.rfind(e, 0) == 0; })) {
-            errands_off_ = true;
-            shop_open_ = gear_open_ = bank_open_ = equip_open_ = heal_open_ = false;
-            std::printf("[%d] campaign: the errand %s stalled: no more errands this stay\n", frame, step->action.c_str());
-        }
+        // has not ended in kErrandStall frames has stalled (its menus out of
+        // step): that errand is left (errand_off), the others go on, and the
+        // open program's menus are left as no errand's (backed out of, Exit).
+        static constexpr std::pair<const char*, const char*> kErrands[] = {{"shop:", "shop"},       {"gear:", "gear"}, {"deposit:", "bank"},
+                                                                           {"withdraw:", "bank"}, {"heal:", "heal"}, {"equip:", "equip"}};
+        if (step && lobby(stage_) && frame - traced_at_ >= kErrandStall)
+            for (const auto& [prefix, kind] : kErrands)
+                if (step->action.rfind(prefix, 0) == 0) {
+                    errands_paused_.insert(kind);
+                    ++errand_stalls_[kind];
+                    shop_open_ = gear_open_ = bank_open_ = equip_open_ = heal_open_ = false;
+                    std::printf("[%d] campaign: the errand %s stalled (%d this stay): %s\n", frame, step->action.c_str(), errand_stalls_[kind],
+                                errand_stalls_[kind] >= kErrandStalls ? "left for this stay" : "left until the next lobby room");
+                }
         // DW4_CAMPAIGN_STALL_DUMP=1 (research, prints only): from 20000 frames
         // on, the state of every model RAM (category, control, freeze, HP,
         // sequence) and the running demo-message chains.
@@ -5474,7 +6118,8 @@ CampaignBot::Output CampaignBot::play(engine::Engine& engine, const engine::Mode
                                  " STR " + std::to_string(db->number("enemy", e->record, "TSUYOSA").value_or(-1)) + " DEF " +
                                  std::to_string(db->number("enemy", e->record, "MAMORI").value_or(-1)) + " HPMAX " +
                                  std::to_string(db->number("enemy", e->record, "HPMAX").value_or(-1)) + " EXP " +
-                                 std::to_string(db->number("enemy", e->record, "EXP").value_or(-1)) + " SPI " +
+                                 std::to_string(db->number("enemy", e->record, "EXP").value_or(-1)) + " SPD " +
+                                 std::to_string(db->number("enemy", e->record, "SUBAYASA").value_or(-1)) + " SPI " +
                                  std::to_string(db->number("enemy", e->record, "SEISHIN").value_or(-1)) + " RES " +
                                  std::to_string(db->number("enemy", e->record, "RES_FIRE").value_or(-1)) + "/" +
                                  std::to_string(db->number("enemy", e->record, "RES_ICE").value_or(-1)) + "/" +
@@ -5538,7 +6183,8 @@ CampaignBot::Output CampaignBot::play(engine::Engine& engine, const engine::Mode
             if (stage == fight.stage && (!fight.real_blows || (!engine.cheats().one_hit && !engine.cheats().god)) &&
                 !any_alive(engine, fight.first) &&
                 boss_fight(engine, *player, fight.strike, fight.follow, fight.keep, fight.dodge, fight.arena_x, fight.arena_z, fight.arena_r,
-                           fight.clear_touch, fight.omen, frame, out)) {
+                           fight.clear_touch, fight.omen, fight.homing, fight.lead, fight.rings, fight.shaped, frame, out)) {
+                if (fight.blade) blade_frame_ = frame;
                 last_ = me;
                 return out;
             }
@@ -5553,6 +6199,12 @@ CampaignBot::Output CampaignBot::play(engine::Engine& engine, const engine::Mode
         explorer_.set_transit(!engine.cheats().one_hit && !engine.cheats().god && stage.rfind("stag0", 0) == 0 && step->action != "explore:none");
         const bool fading = on_fading_floor(engine, *player);
         explorer_.set_hurry(fading);
+        // (The objective's gimmicks, Objective::wanted: without the test cheats.)
+        std::string wanted;
+        if (!engine.cheats().one_hit && !engine.cheats().god && step->stage == stage_)
+            for (const auto& o : kObjectives)
+                if (o.wanted && step->why == o.name && std::string_view(o.stage) == stage_) wanted = o.wanted;
+        explorer_.set_wanted(wanted);
         const auto d = explorer_.update(engine, *player, goal, frame);
         if (maze && step->action != "explore:none") maze_turn(engine, *player, step->action.substr(8), frame);
         out.walk = controllable;
@@ -5564,6 +6216,17 @@ CampaignBot::Output CampaignBot::play(engine::Engine& engine, const engine::Mode
             if (d.jump_attack) {
                 if (frame % 40 < 3) out.buttons |= pad_button::x;
                 else if (frame % 40 >= 10 && frame % 40 < 13) out.buttons |= pad_button::a;
+            } else if (d.fast_attack && !engine.cheats().one_hit) {
+                // A turret with real blows: tapped every other frame, so the
+                // next swing starts the moment the last one ends. A turret's
+                // hit reaction (SQ_SDMG, MUTEKI 18) lasts some 29 frames and
+                // it fires as it ends (stag0304 g_cannon03z03 charges its
+                // beam for 10 frames, g_cannon02 shoots at once); a swing
+                // lands 10 frames after it starts and lasts 31, so with A
+                // every tenth frame the next blow came 38..43 frames after
+                // the last, the charge was over, and the beam (22 % of the
+                // maximum HP) met the player in its swing.
+                if (frame % 2 == 0) out.buttons |= pad_button::a;
             } else if (frame % (d.fast_attack ? 10 : 20) < 3) {
                 out.buttons |= pad_button::a;
             }

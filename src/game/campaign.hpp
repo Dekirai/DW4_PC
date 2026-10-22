@@ -71,7 +71,7 @@ private:
     // One frame of a boss fight (kBossFights); false when the boss is down.
     bool boss_fight(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player, const std::string& strike,
                     const std::string& follow, float keep, bool dodge, float arena_x, float arena_z, float arena_r, bool clear_touch,
-                    const char* omen, int frame, Output& out);
+                    const char* omen, const char* homing, bool lead, const char* rings, bool shaped, int frame, Output& out);
     // A maze floor swept (ExploreBot exhausted): on to another exit.
     void maze_turn(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player, const std::string& goal, int frame);
     // Survival without god mode (campaign.cpp kSupplies): the next disk shop
@@ -112,6 +112,7 @@ private:
     std::string stage_;
     int entry_ = -1;             // the player point the current stage was entered at
     int stage_frame_{};          // the frame the current stage was requested
+    int player_traced_visit_ = -1; // the stage visit (its stage_frame_) the character was traced in
     std::string traced_;         // the last traced step
     int traced_at_{};            // the frame it began
     ExploreBot explorer_;
@@ -172,6 +173,11 @@ private:
     };
     std::map<std::pair<const void*, int>, BoxSeen> boxes_seen_; // attack boxes' world centres (their motion)
     bool blow_shot_ = false;     // the blow blow_due found last is a shot in flight
+    bool blow_effect_ = false;   // ... or a box of an effect (no enemy's own body: a turret's shell or beam)
+    std::set<std::string> hurting_effects_; // effect models seen with an enemy attack box (blow_due: shots still queued)
+    std::string guard_seq_;      // player 1's sequence in the last frame (survive: idle guards)
+    int idle_guards_ = 0;        // guards in a row that blocked nothing while touched
+    bool blow_queued_ = false;   // the blow blow_due found last is a shot still queued on a shooter within a swing
     engine::Vec3f me_seen_{}, me_step_{}; // player 1's position when blow_due last ran, its step in the frame before
     int me_seen_frame_ = -1;
     int guard_pulse_from_ = -100, guard_pulse_last_ = -100; // the B pulse of survive's guards (guard_pulse)
@@ -185,9 +191,13 @@ private:
     int held_presses_ = 0;       // presses of A the guard took back since the last attack
     int guard_held_ = -100000;   // the last frame a guard held an attack back
     int tech_end_ = -100000;     // the last cast's end
+    int blade_frame_ = -1;       // the last frame of a boss fight that takes swings only (BossFight::blade)
     int panel_ready_at_ = -100000; // the panel's FIRE wait after the last pick runs out (survive)
     int last_hp_ = -1;           // player 1's HP in the last frame (survive)
     int big_hit_ = 0, big_hit_at_ = -100000; // the biggest blow taken lately, when
+    const void* focus_seen_ = nullptr; // a boss fight's focus in the last frame (BossFight::lead) ...
+    engine::Vec3f focus_at_{};   // ... where it stood ...
+    int focus_frame_ = -1;       // ... and when
     int dodge_frame_ = -1;       // the last frame a boss fight's dodge saw a box about to meet the player (survive: no slow heal)
     std::string exit_to_;        // the stage the current step's exit mat leads to (kExits; survive tops the HP up before a stage without heals)
     std::set<std::string> no_panel_stages_; // stages seen without the quick panels (survive), beside kNoHealStages
@@ -198,6 +208,9 @@ private:
     std::map<std::string, int> progress_trips_; // objective -> Gate Disk trips out of it with progress (no gate raised)
     std::map<std::string, int> restock_trips_;  // objective -> Gate Disk trips back to restock on the way to it (kRestockTrips)
     std::string restock_pending_;               // the objective of a restocking trip started, counted back in the lobby
+    int heal_stock_percent(engine::Engine& engine) const; // the heals held against a full stock (kRestockBelow)
+    int stock_at_entry_ = -1;                   // heal_stock_percent when the stage visit stock_visit_ began
+    int stock_visit_ = -1;
     engine::Vec3f grounded_at_{};               // where the player last stood with control (a fall's start)
     int grounded_frame_ = -1;
     std::string grounded_floor_;                // the HitLand info of that floor (empty: the stage's own)
@@ -226,11 +239,11 @@ private:
     int bank_ups_ = 0;           // UP presses on the amount's top digit
     int bank_digits_at_ = -100000; // the amount's digit cursor last seen
     int bank_lists_ = 0;           // lists backed out of in this bank visit (two: no bank, see answer_menu)
-    int sell_tries_ = 0;           // disk shop Sell choices since the last sale
-    bool buy_confirm_ = false;     // the disk shop's count was taken: its yes to the price comes next
-    bool buy_glitch_ = false;      // Buy led to the sale's menu: Exit and talk anew
-    bool sales_off_ = false;       // no device sales this stay in the lobby (see answer_menu)
-    bool errands_off_ = false;     // no lobby errands this stay: one stalled (kErrandStall)
+    // Lobby errands that stalled (kErrandStall): kinds left until the next
+    // lobby room, and the stalls per kind in this stay.
+    std::set<std::string> errands_paused_;
+    std::map<std::string, int> errand_stalls_;
+    bool errand_off(const std::string& kind) const;
     int bank_list_at_ = -100000;
     // Gear from the weapon, armor and chip shops (next_gear).
     bool gear_open_ = false;     // a device shop program of the errand may be running
@@ -239,6 +252,7 @@ private:
     bool gear_ran_ = false;      // its program was seen running
     std::array<int, 4> gear_checked_{-1, -1, -1, -1}; // the level each shop was last looked at
     std::array<int, 4> gear_visit_{-1, -1, -1, -1};   // the stage visit (its stage_frame_) each shop last ran and closed in
+    std::map<std::string, std::pair<int, int>> gear_restocks_; // gear objective -> (level, fresh-stock trips at it), kGearRestocks
     // The junk shop (campaign.cpp kProtections).
     int junk_visits_ = 0;          // its visits in this stay in the lobby
     int junk_ups_ = 0;             // UP presses on the donation's thousands digit

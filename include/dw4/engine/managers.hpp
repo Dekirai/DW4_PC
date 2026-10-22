@@ -1017,6 +1017,18 @@ public:
                                ram->work && ram->state == 3, int(ram->enemies.size())});
         return out;
     }
+    // The enemies each started, unfinished generator has out (model name,
+    // RAM numbers, work +14), by generator name (test bot).
+    struct Wave {
+        std::string name, enemy;
+        std::vector<int> members;
+    };
+    std::vector<Wave> waves() const {
+        std::vector<Wave> out;
+        for (const auto& ram : rams_)
+            if (ram->data && ram->started && !ram->done && ram->work) out.push_back({std::string(ram->data.str(2)), ram->enemy_name, ram->enemies});
+        return out;
+    }
     // Started "radar" generators still waiting for a player within reach of
     // their base (test bot).
     struct Radar {

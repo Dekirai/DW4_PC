@@ -305,14 +305,21 @@ casts its first technique while the MP lasts (MP disks when it runs out) and put
 devices found on at the Digi-Lab (PWR Medals into the chip pockets of a weapon of rank 1+), and
 without `DW4_GOD` it
 also guards against enemy blows and touches (measured against the body's real height, its HIT
-boxes), heals with HP disks from the L panel (with Y at once while blows leave no gap), uses heal gates,
+boxes), heals with HP disks from the L panel (the smallest disk that makes the missing HP up within
+10 % of the maximum; with Y at once while blows leave no gap, outside the boss stages only below 20 % while
+it holds a Recovery, which Y takes first; in a boss stage the biggest blow of the visit keeps the heals
+early), uses heal gates,
 the X-Data shop's refill and Gate Disks, sells the weaker devices and restocks at the disk shop (HP
-Disks L and Recovery too with bits to spare), goes back to restock on the way to an objective when
-its heals are down to half a stock (twice an objective), donates at the junk shop and wears the
+Disks L and Recovery too with bits to spare, every bit's worth before the last boss, Daemon's three stages
+with no lobby between them; each lobby errand waits until no other errand's shop or
+bank program runs, and one that stalls is left until the next lobby room), goes back to restock on the
+way to an objective when its heals were down to half a stock already as it entered the stage (twice an
+objective; never from a stage behind the stag0304 cannon climb, `kGauntlets`), donates at the junk shop and wears the
 Filter Board it then sells while the way ahead crosses stag0303's swamp fog (`kProtections`),
 buys stronger devices at the weapon and armor shops, takes the fire the dng308 / dng309 cell walls
 need from a fire PWR Medal (stagML13 chip shop) in the pocket of a rank 1+ weapon (weapon shop,
 whose stock is rolled anew on each visit) instead of the Guilmon form, which begins at level 1,
+and the thunder dng412's scrap walls need from a thunder PWR Medal in its place,
 keeps its bits in the bank while it is out of the lobby (a defeat leaves them in the bit capsule)
 and takes them out once per stay before the shops, recovers its bit capsule with a
 Raise Disk after a defeat and trains in the area's field below an objective's gate level (a Gate
@@ -320,12 +327,15 @@ Disk escape raises that level like a defeat unless the visit set a story flag ne
 it restocks and comes back, at most eight times per objective; after a defeat in a field it trains in
 the area before while short of HP disks); with real blows it strikes the stag0103 boat's towers in
 passing, fights e_mammos off its arena's wall and Apocalymon from its dais, dodging the blast pillars,
-guards against shells in flight, fights turrets, leaves structures that heal themselves (the area 3
-poison plants) and the ground round them alone, crosses a field to its exit striking only the enemies
+guards against shells in flight and turret beams (also in its aggressive windows), fights turrets
+(a swing the moment the last one ends, inside their hit reaction), leaves structures that heal themselves (the area 3
+poison plants) and the ground round them alone unless an objective's gimmick stands behind them (the
+stag0301 levers: the plant struck down for the moment its body leaves the way, `Objective::wanted`),
+crosses a field to its exit striking only the enemies
 that come near, crosses a floor that gave way under it before (dng310f3's fading tiles) without a stop
 and keeps the spot a fall began from off its routes for a while, chases no enemy over moving platforms, holds
 waves away from pits and quicksand sinks (an enemy off the sand is walked to), takes no guard with a
-pit, quicksand or a deep drop behind it, fights Belphemon by a boss routine and dodges Lucemon's bomb rows from their markers
+pit, quicksand or a deep drop behind it (a wall before the drop ends the push), fights Belphemon, dng412b4's knight (off its homing orbs, struck where its walk will carry it when the swing lands) and Daemon's forms by boss routines (the second form's blast rings walked off from its wind-up on, swings only; the last form struck from a spot outside the shape of its body boxes), guards shots still queued on their shooter and slow homing shots by their speed, walks away from a body after two touch guards that blocked nothing, cures poison with Cure Disks, keeps off and leaves alone structures seen blowing up where they stand (stag0401's mines), hunts the members of waves whose clearing powers or opens something even while crossing a field (stag0304's switches) and dodges Lucemon's bomb rows from their markers
 (omens: a blast's rings known before its boxes exist); a field step that stalls for 180000 frames leaves the field and comes
 back; with `DW4_CAMPAIGN_CHECKPOINTS=dir` it saves the game
 like a player at nine points of the story where it returns to the lobby (the save Digi-Elf in

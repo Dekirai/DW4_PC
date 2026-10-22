@@ -25,6 +25,10 @@ std::vector<engine::Vec3f> find_walk_path(const engine::CollisionWorld& world, c
 // mat (its script ADDHP and REMOVE) or quicksand (QuickSand / QUICKSAND).
 bool perilous_floor(engine::Engine& engine, const engine::Vec3f& p);
 
+// The flat distance from p to a model's body boxes (80307EAC: the root
+// matrix moves the box centre, the authored half extents stay).
+float body_gap(const engine::ModelCtrlManager::ModelRam& e, const engine::Vec3f& p);
+
 // While alive, the players' limit circle (limit_Circle, a ring of walls
 // round the players' centre that follows them) is left out of the stage
 // collision: it never stops a single player, but a route planned ahead would
@@ -177,6 +181,11 @@ public:
     // fresh ExploreBot per stage visit.
     const std::set<std::string>& regenerating_names() const { return regenerating_names_; }
     void set_regenerating_names(const std::set<std::string>& names) { regenerating_names_ = names; }
+    // Structures (g_* models) seen blowing up beside the player as they went
+    // down (stag0401's mines): without the test cheats they are not struck.
+    // Kept across stage visits like regenerating_names.
+    const std::set<std::string>& exploding_names() const { return exploding_names_; }
+    void set_exploding_names(const std::set<std::string>& names) { exploding_names_ = names; }
     // Crossing a field to an exit (the campaign driver without the test
     // cheats): enemies other than structures and bosses are struck when they
     // come near (as while defending) instead of hunted, and only pickups
@@ -192,6 +201,17 @@ public:
     // The player stands on a floor that gives way (the campaign driver's
     // fading floors): no wait at a jump's take-off for the enemies there.
     void set_hurry(bool on) { hurry_ = on; }
+    // Gimmicks the objective needs (the campaign driver without the test
+    // cheats; '|'-separated model name prefixes, e.g. the stag0301 levers):
+    // each one not used yet is gone for before anything else once a route
+    // reaches it, and one no route reaches is opened first - a structure
+    // that heals itself standing next to it is struck down (its SQ_DDMG
+    // takes its body out of the way for a while), else a breakable gimmick
+    // next to it is struck even within a healer's keep (kHealerKeep).
+    void set_wanted(const std::string& prefixes) {
+        if (prefixes != wanted_) planned_ = -1000;
+        wanted_ = prefixes;
+    }
 
 private:
     enum class Gimmick { none, strike, talk, step, tech };
@@ -392,8 +412,12 @@ private:
     std::map<const void*, int> fruitless_runs_;  // enemy -> times it was left alone for taking no damage
     std::map<const void*, int> approach_;        // structure -> steps targeted without getting within reach
     std::set<std::string> regenerating_names_;   // see regenerating_names()
+    std::set<std::string> exploding_names_;      // see exploding_names()
+    std::map<const void*, std::pair<int, engine::Vec3f>> born_at_; // effects on their owner: since when, where (note_explosions)
+    void note_explosions(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player, int frame);
     bool transit_ = false;                       // see set_transit()
     bool hurry_ = false;                         // see set_hurry()
+    std::string wanted_;                         // see set_wanted()
     std::vector<std::pair<engine::Vec3f, int>> fall_spots_; // see avoid_fall(): where, until
     std::set<const void*> unkillable_;           // enemies that heal themselves or took no damage thrice: left alone for the stage
     std::set<const void*> regenerating_;         // enemies seen healing back above their lowest HP
