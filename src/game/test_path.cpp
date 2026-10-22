@@ -2717,9 +2717,9 @@ ExploreBot::Decision ExploreBot::update(engine::Engine& engine, const engine::Mo
         mat_next_.clear();
         if (const char* sw = std::getenv("DW4_MAT_SWITCH")) {
             const std::string_view text(sw);
-            if (const auto space = text.find(' '); space != std::string_view::npos && space > 0 && space + 1 < text.size()) {
-                mat_switch_model_ = std::string(text.substr(0, space));
-                mat_switch_on_ = std::string(text.substr(space + 1));
+            if (const auto colon = text.find(':'); colon != std::string_view::npos && colon > 0 && colon + 1 < text.size()) {
+                mat_switch_model_ = std::string(text.substr(0, colon));
+                mat_switch_on_ = std::string(text.substr(colon + 1));
             }
         }
         portals_taken_.clear();

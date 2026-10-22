@@ -829,7 +829,7 @@ constexpr StageSetting kStageSettings[] = {
     // buttons, not the steps taken.
     {"stag0403", "DW4_MAT_SEQUENCE", "maty07,maty00,maty04,maty03,maty02"},
     {"stag0403", "DW4_AVOID_MATS", "maty"},
-    {"stag0403", "DW4_MAT_SWITCH", "g_sbuttonz04 SQ_SWON"},
+    {"stag0403", "DW4_MAT_SWITCH", "g_sbuttonz04:SQ_SWON"},
 };
 
 // Targets struck in passing from a ride (the stag0103 boat: the six factory

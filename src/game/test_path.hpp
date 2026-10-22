@@ -400,7 +400,7 @@ private:
     // DW4_MAT_SEQUENCE=m1,m2,...: mats stood on once each, in this order,
     // before anything but the goal (a switch puzzle's solution, given like a
     // preset); DW4_AVOID_MATS=<prefix>: the other mats of that prefix are kept
-    // away from. DW4_MAT_SWITCH=<model> <on sequence prefix>: every step onto
+    // away from. DW4_MAT_SWITCH=<model>:<on sequence prefix>: every step onto
     // such a mat toggles the switch model standing on it, which shows the
     // state (its sequence starts with the prefix while on): the next mat is
     // then the first of the sequence whose switch is off, before it an
