@@ -1581,6 +1581,10 @@ constexpr int kBigHitMargin = 130, kBigHitFor = 3600;
 // The guard (survive): no attack is started while an enemy blow lands within
 // kHoldAttackLead frames; B goes in kGuardLead frames before it.
 constexpr float kHoldAttackLead = 24.0f, kGuardLead = 3.0f;
+// A swing lands some 12 frames after A (SQ_ATCK1 boxes from 10 frames in):
+// a shot still queued on a shooter within the swing's reach (its body boxes
+// kQueuedSwing off) for longer is cut off by the blow.
+constexpr float kQueuedBeat = 12.0f, kQueuedSwing = 8.0f;
 // No attack (SQ_ATCK*, SQ_WAZA) for kAggressAfter frames, the guard holding
 // it back from an enemy that attacks without pause (stag0101 goburi packs,
 // the dng102b3 boss e_mammos): kAggressFor frames without guarding.
@@ -4692,9 +4696,30 @@ void CampaignBot::survive(engine::Engine& engine, const engine::ModelCtrlManager
         if (trace()) std::printf("[%d] campaign: no attack for %d frames, %d frames without guarding\n", frame, kAggressAfter, kAggressFor);
     }
     const bool guarding = !engine.cheats().god && frame >= aggressive_until_;
+    // Guards that blocked nothing: SQ_GUARD ran out into SQ_GUARD2 without a
+    // SQ_GUARDR (touch guards against a body that does not strike).
+    if (player.seq_name != guard_seq_) {
+        if (player.seq_name == "SQ_GUARD2" && guard_seq_ == "SQ_GUARD") ++idle_guards_;
+        else if (player.seq_name == "SQ_GUARDR") idle_guards_ = 0;
+        guard_seq_ = player.seq_name;
+    }
     if (guarding && !engine.cheats().one_hit && player.control_enabled && player.node) {
         float gap = 0.0f;
-        if (const auto away = touch_escape(engine, player, gap, frame)) {
+        const auto away = touch_escape(engine, player, gap, frame);
+        if (!away) idle_guards_ = 0;
+        // (Two touch guards in a row that blocked nothing: away from the body
+        // instead of a third. dng412b2's e_rare pair stand firing in place,
+        // their body boxes reaching some 10 out, and a no-cheat run guarded
+        // their touch beside them, guard after guard, for 160000 frames.)
+        if (away && idle_guards_ >= 2 && controllable && !fading) {
+            out.walk = true;
+            out.x = away->x;
+            out.z = away->z;
+            out.reach = 0.25f;
+            out.buttons &= ~(pad_button::a | pad_button::b);
+            return;
+        }
+        if (away) {
             if (static const bool t = std::getenv("DW4_TRACE_GUARD") != nullptr; t)
                 std::printf("[%d] touch gap %.1f muteki %.0f controllable %d panel %d seq %s\n", frame, gap, player.muteki, controllable,
                             player.panel_open, player.seq_name.c_str());
@@ -4886,7 +4911,9 @@ void CampaignBot::survive(engine::Engine& engine, const engine::ModelCtrlManager
         const bool guard_it = guarding || (!engine.cheats().god && (blow_shot_ || blow_effect_));
         // (A swing at a ride's target passing by goes in all the same: it
         // passes once, and the blow costs the boat no more than the hit.)
-        if (guard_it && due <= kHoldAttackLead && !out.ride_strike) {
+        // (A shot still queued on its shooter only holds back a swing that
+        // would not land first: the blow interrupts the shooter, kQueuedBeat.)
+        if (guard_it && due <= (blow_queued_ ? kQueuedBeat : kHoldAttackLead) && !out.ride_strike) {
             if (out.buttons & pad_button::a) ++held_presses_;
             out.buttons &= ~pad_button::a;
             guard_held_ = frame;
@@ -5107,6 +5134,7 @@ float CampaignBot::blow_due(engine::Engine& engine, const engine::ModelCtrlManag
     float best = 1e9f;
     blow_shot_ = false;
     blow_effect_ = false;
+    blow_queued_ = false;
     if (!player.node) return best;
     auto* models = engine.get<engine::ModelCtrlManager>();
     if (!models) return best;
@@ -5128,6 +5156,40 @@ float CampaignBot::blow_due(engine::Engine& engine, const engine::ModelCtrlManag
             const float wy = c.x * pm(0, 1) + c.y * pm(1, 1) + c.z * pm(2, 1) + pm(3, 1), half = (hi.y - lo.y) * 0.5f;
             body_lo = std::min(body_lo, wy - half);
             body_hi = std::max(body_hi, wy + half);
+        }
+    }
+    // A shot still queued on its shooter (an effect subcommand waiting for its
+    // delay, 80310754) of an effect model seen hurting before (hurting_effects_:
+    // an effect with an enemy attack box), the shooter within kQueuedReach and
+    // facing the player: due when its delay runs out. (dng412b4's e_mecha5
+    // fire x_029eblst01a, ~5.6 % of the maximum HP, whose box meets a player
+    // 18 off a frame or two after it comes out: no guard was ever in time, 74
+    // hits in one visit of a no-cheat run, and its attacks walked into them.)
+    constexpr float kQueuedReach = 45.0f, kQueuedFacing = 0.87f;
+    for (const auto& e : models->rams()) {
+        if (!e->generated || !e->node || e->is_player) continue;
+        // (A shot's box lasts as long as the shot, end 1e8: x_029eblst01a.)
+        if (e->category != "ENEMY") {
+            for (const auto& h : e->hitboxes)
+                if (h.kind / 10000 == 7 || h.kind / 10000 == 8) hurting_effects_.insert(e->info_name);
+            continue;
+        }
+        // (Not a turret, g_*: its shots are cut short by striking it, see the
+        // turret taps in play.)
+        if (e->hp <= 0 || e->effects.empty() || e->info_name.rfind("g_", 0) == 0 || flat(position_of(*e), me) > kQueuedReach) continue;
+        const auto& m = e->node->matrix;
+        const float fl = std::hypot(m(2, 0), m(2, 2)), d = flat(position_of(*e), me);
+        if (fl < 0.1f || d < 0.5f || ((me.x - m(3, 0)) * m(2, 0) + (me.z - m(3, 2)) * m(2, 2)) / (fl * d) < kQueuedFacing) continue;
+        for (const auto& q : e->effects) {
+            if (q.started || !hurting_effects_.count(q.model)) continue;
+            const float due = std::max(0.0f, q.delay - q.elapsed);
+            if (due > horizon || due >= best) continue;
+            best = due;
+            blow_shot_ = false;
+            blow_effect_ = true;
+            guard_from_ = position_of(*e);
+            guard_what_ = e->info_name + " " + q.model + " (queued)";
+            blow_queued_ = body_gap(*e, me) <= kQueuedSwing;
         }
     }
     for (const auto& e : models->rams()) {
@@ -5190,6 +5252,7 @@ float CampaignBot::blow_due(engine::Engine& engine, const engine::ModelCtrlManag
                     if (t0 <= t1 && t0 < best) {
                         best = t0;
                         blow_shot_ = true;
+                        blow_queued_ = false;
                         blow_effect_ = true;
                         guard_from_ = {cx, cy, cz};
                         guard_what_ = e->info_name + " " + std::to_string(box.kind);
@@ -5214,6 +5277,7 @@ float CampaignBot::blow_due(engine::Engine& engine, const engine::ModelCtrlManag
                 best = due;
                 blow_shot_ = false;
                 blow_effect_ = e->category != "ENEMY";
+                blow_queued_ = false;
                 guard_from_ = {cx2, cy2, cz};
                 guard_what_ = e->info_name + " " + std::to_string(box.kind);
             }
@@ -5533,6 +5597,9 @@ CampaignBot::Output CampaignBot::play(engine::Engine& engine, const engine::Mode
                 const auto p = position_of(*e);
                 near += " " + e->info_name + "#" + std::to_string(e->index) + ":" + e->seq_name + "/" + std::to_string(e->hp) + "/" +
                         std::to_string(int(e->muteki)) + "@" + std::to_string(int(flat(p, me)));
+                if (e->category == "ENEMY")
+                    for (const auto& q : e->effects)
+                        if (!q.started) near += "{" + q.model + ":" + std::to_string(int(q.delay - q.elapsed)) + "}";
                 if (e->category != "ENEMY") {
                     near += "(" + std::to_string(int(p.x)) + "," + std::to_string(int(p.y)) + "," + std::to_string(int(p.z)) + ")<" + e->owner_name + "#" +
                             std::to_string(e->owner_index) + "/" + e->attach_name + ">";

@@ -174,6 +174,10 @@ private:
     std::map<std::pair<const void*, int>, BoxSeen> boxes_seen_; // attack boxes' world centres (their motion)
     bool blow_shot_ = false;     // the blow blow_due found last is a shot in flight
     bool blow_effect_ = false;   // ... or a box of an effect (no enemy's own body: a turret's shell or beam)
+    std::set<std::string> hurting_effects_; // effect models seen with an enemy attack box (blow_due: shots still queued)
+    std::string guard_seq_;      // player 1's sequence in the last frame (survive: idle guards)
+    int idle_guards_ = 0;        // guards in a row that blocked nothing while touched
+    bool blow_queued_ = false;   // the blow blow_due found last is a shot still queued on a shooter within a swing
     engine::Vec3f me_seen_{}, me_step_{}; // player 1's position when blow_due last ran, its step in the frame before
     int me_seen_frame_ = -1;
     int guard_pulse_from_ = -100, guard_pulse_last_ = -100; // the B pulse of survive's guards (guard_pulse)

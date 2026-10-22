@@ -569,6 +569,7 @@ bool switched_on(const engine::ModelCtrlManager::ModelRam& ram) {
     const auto label = ram.labels.find(ram.seq_name);
     return label != ram.labels.end() && label->second == "ON";
 }
+} // namespace
 // The flat distance from p to a model's body boxes (80307EAC: the root
 // matrix moves the box centre, the authored half extents stay).
 float body_gap(const engine::ModelCtrlManager::ModelRam& e, const engine::Vec3f& p) {
@@ -586,6 +587,7 @@ float body_gap(const engine::ModelCtrlManager::ModelRam& e, const engine::Vec3f&
     }
     return gap;
 }
+namespace {
 // How far a model's body boxes reach out of its origin (flat, the farthest
 // box corner as body_gap places the boxes); 0 without boxes.
 // A talk box reaching further than kFarTalk is walked to and pressed by its

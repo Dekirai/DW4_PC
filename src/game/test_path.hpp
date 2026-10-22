@@ -25,6 +25,10 @@ std::vector<engine::Vec3f> find_walk_path(const engine::CollisionWorld& world, c
 // mat (its script ADDHP and REMOVE) or quicksand (QuickSand / QUICKSAND).
 bool perilous_floor(engine::Engine& engine, const engine::Vec3f& p);
 
+// The flat distance from p to a model's body boxes (80307EAC: the root
+// matrix moves the box centre, the authored half extents stay).
+float body_gap(const engine::ModelCtrlManager::ModelRam& e, const engine::Vec3f& p);
+
 // While alive, the players' limit circle (limit_Circle, a ring of walls
 // round the players' centre that follows them) is left out of the stage
 // collision: it never stops a single player, but a route planned ahead would
