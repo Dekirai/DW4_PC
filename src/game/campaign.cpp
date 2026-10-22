@@ -4522,7 +4522,9 @@ void CampaignBot::survive(engine::Engine& engine, const engine::ModelCtrlManager
             // A hit closed the panel (the damage sequences REMOVE it,
             // 8034E1A4): tried again as soon as the player can.
             if (trace()) std::printf("[%d] campaign disk use interrupted (frame %d of it)\n", frame, t);
-            if (disk_use_ == kGateDisk) gate_disk_at_ = -100000; // (its wait is for a trip made)
+            // (Its wait is for a trip made; a use the panel did not even open
+            // for is tried again some frames later, not every fourth frame.)
+            if (disk_use_ == kGateDisk) gate_disk_at_ = t <= 3 ? frame - 3000 + 30 : -100000;
             disk_use_ = -1;
             if (heal_at_ == disk_use_at_) heal_at_ = frame - kHealGap + 4;
             return;
