@@ -208,6 +208,33 @@ PLAYING, stream start, fade stop and ISREADY / ISALLREADY change,
 `DW4_DISC_CLOCK=<ticks>` replaces the drive's clock offset to line a run up
 with a capture.
 
+Fast loading (`Cheats::fast_loading`, the F1 menu's *Loading: Fast*, a PC
+option and not the original timing) is a separate switch around that model:
+`begin_stage_load` latches it for the load and the stage it starts
+(`Engine::fast_loading`), so a change in the menu applies from the next load
+on and a save state's replay sees the value its snapshot holds. With it the
+loader runs every state in the original order, one state per update, but
+`loader_request` hands the file over at once (no `read_entry` on the loader's
+CRI stream, no chunk processing or post-processing fields), the update costs
+(teardown, routing, state 5, start.lua) cover no retraces, the boot's timing
+reads are skipped, state 4 does not wait for the loading screen's minimum
+time (it still sets the lock time), and the queue states take several files
+per update (`loader_queue_fast`: parsed and routed in order while the files of
+the update stay within `kFastLoadBytes`, 1 MiB; a larger file has an update
+of its own). The sound driver sets `DiscDrive::instant` from the latched value
+before each tick: a read takes no time and ends at the next tick, still one
+read at a time, so ADX streams become PLAYING a few fields after they start
+and ISALLREADY waits in the stage scripts end almost at once. A stage change
+takes 15-16 fields from NEXTSTAGE to first.lua (boot included) instead of
+60-900; the stage's fades, demos and the scripts' own waits are unchanged.
+Memory card access (card_timing.hpp) keeps its timing: it is not part of a
+stage load, takes under two seconds per save and paces the save room's
+messages. With the option off nothing of this runs and the frames are those of
+the original timing. The value is part of the snapshot's cheats (snapshot 27)
+and of the online start message (protocol 27, the host's choice for every
+machine). `DW4_TRACE_LOADTIME=1` prints the fields and real time of every load
+(`=2` every update of it).
+
 Each manager documents the addresses it follows in its header comment. Shared
 helpers such as COMMDLCTRL (`CommonModelControl`), MESWIN (`MessageWindow`)
 and DEGISTATECTRL (`StatusWindow`) are separate classes.

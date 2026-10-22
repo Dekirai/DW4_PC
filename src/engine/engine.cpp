@@ -438,6 +438,10 @@ void Engine::begin_stage_load(const StageSnapshot* restoring) {
     loader_skip_ = 0;
     loader_cost_ = 0;
     loader_processing_ = 0;
+    // The load timing of this load and the stage it starts (a save state's
+    // cheats are in place by now).
+    loader_fast_ = cheats_.fast_loading;
+    if (loader_fast_ && std::getenv("DW4_TRACE_LOADER")) log("loader: fast loading");
     // What survives into this stage, for save states.
     StageSnapshot snapshot;
     snapshot.stage = next;
@@ -794,12 +798,29 @@ void Engine::loader_request(const LoaderItem& item) {
             std::to_string(loader_file_.document ? loader_file_.document->objects.size() : 0) + " object data " +
             "chunk " + std::to_string(loader_file_.object_chunk) + " / memory chunk " + std::to_string(loader_file_.memory_chunk) + ", stall " + std::to_string(loader_file_.stall) + " parse " +
             std::to_string(loader_file_.parse) + " route " + std::to_string(loader_file_.route_cost));
+    // Fast loading: the file is there as soon as it is asked for.
+    if (loader_fast_) {
+        loader_file_.issued = true;
+        loader_file_.read = loader_file_.sectors;
+    }
+}
+
+// The size of a queued file on the disc (fast loading's budget).
+std::size_t Engine::loader_item_bytes(const LoaderItem& item) const {
+    if (item.timing_only) return 0; // not parsed
+    std::optional<ResourceLocation> location;
+    if (item.member >= 0 && std::size_t(item.member) < loader_members_.size()) location = loader_members_[std::size_t(item.member)].location;
+    else if (const auto* record = resources_.catalog().find(item.name)) location = record->location;
+    if (!location || location->archive_index >= resources_.archives().size()) return 0;
+    const auto& entries = resources_.archives()[location->archive_index].entries();
+    return location->entry_index < entries.size() ? entries[location->entry_index].size : 0;
 }
 
 // 80070130 for the pending directory: its last chunk was booked and the
 // original processed it.
 bool Engine::loader_ready() const {
     if (!loader_file_.active || !loader_file_.issued) return false;
+    if (loader_fast_) return true;
     if (loader_file_.sectors == 0 || !get<SoundManager>()) return true;
     if (loader_file_.read < loader_file_.sectors) return false;
     return loader_file_.booked >= 0 && std::int64_t(frame_) >= loader_file_.booked + 1 + loader_file_.parse;
@@ -827,6 +848,7 @@ void Engine::loader_route(const LoaderItem& item, int kind) {
 // One call of 802F9E98 over the current queue: true once every file is
 // routed; otherwise requests the next file or routes the pending one.
 bool Engine::loader_queue_step(int kind) {
+    if (loader_fast_) return loader_queue_fast(kind);
     if (loader_index_ >= loader_queue_.size()) return true;
     if (!loader_file_.active) {
         loader_request(loader_queue_[loader_index_]);
@@ -841,8 +863,36 @@ bool Engine::loader_queue_step(int kind) {
     return false;
 }
 
+// Fast loading's 802F9E98: the queue's files in their order, each asked for
+// (parsed) and routed in the same update, more of them while the files this
+// update took stay within kFastLoadBytes; true once every file is routed
+// (in the update that routes the last one).
+bool Engine::loader_queue_fast(int kind) {
+    std::size_t bytes = 0;
+    while (loader_index_ < loader_queue_.size()) {
+        const std::size_t size = loader_item_bytes(loader_queue_[loader_index_]);
+        if (bytes > 0 && bytes + size > kFastLoadBytes) return false;
+        bytes += size;
+        loader_request(loader_queue_[loader_index_]);
+        if (trace_loader()) log("loader R " + loader_file_.item.name);
+        loader_route(loader_file_.item, kind);
+        loader_file_ = {};
+        ++loader_index_;
+    }
+    return true;
+}
+
 void Engine::process_stage_loader() {
     if (loader_state_ == -1) return;
+    // Fast loading: an update every field, nothing waits for the drive.
+    if (loader_fast_) {
+        loader_skip_ = 0;
+        loader_cost_ = 0;
+        const int before = loader_state_;
+        loader_update();
+        if (trace_loader() && loader_state_ != before) log("loader state " + std::to_string(loader_state_));
+        return;
+    }
     auto* sound = get<SoundManager>();
     // The read on its way: the frame that first sees its last chunk booked
     // (the driver tick after the previous step's update booked it).
@@ -911,6 +961,8 @@ void Engine::loader_update() {
         static constexpr BootRead kBoot[] = {{nullptr, 0, 5},       {"ndmw.afs", 4, 0}, {"ndmw.afs", 5, 0}, {"ndmw.afs", 6, 0},
                                              {"ndmw.afs", 7, 1},    {"area.afs", 0, 0}, {"area.afs", 1, 0}, {"area.afs", 2, 0},
                                              {"area.afs", 3, 0},    {"area.afs", 4, 0}, {"area.afs", 5, 3}};
+        // Fast loading: these reads (timing only) take no time.
+        if (loader_fast_) loader_boot_step_ = int(std::size(kBoot));
         if (loader_file_.active) {
             if (!loader_ready()) return;
             loader_file_ = {};
@@ -1047,10 +1099,10 @@ void Engine::loader_update() {
         return;
     case 4: {
         // State 4 (802F973C) ends once the queued files are routed (802F9E98)
-        // and the loading screen played its minimum time (80311674); then it
-        // holds its lock time (80311660).
+        // and the loading screen played its minimum time (80311674; not with
+        // fast loading); then it holds its lock time (80311660).
         const bool queued = loader_queue_step(2);
-        const bool finished = !loading_node_ || loading_node_->anim->finished();
+        const bool finished = !loading_node_ || loader_fast_ || loading_node_->anim->finished();
         if (!queued || !finished) return;
         if (loading_node_) loading_node_->anim->fixed = loading_node_->anim->lock;
         loader_state_ = 20;

@@ -1710,6 +1710,9 @@ void SoundManager::update_driver(Engine& engine) {
     const std::int64_t done_before = cri_.inflight.done;
     std::array<bool, CriStreams::kSlots> playing_before{};
     for (int slot = 0; slot < CriStreams::kSlots; ++slot) playing_before[std::size_t(slot)] = cri_.playing(slot);
+    // Fast loading (a PC option, latched by the running stage's load): the
+    // drive's reads take no time.
+    cri_.drive.instant = engine.fast_loading();
     cri_.tick(cri_ticks(engine.time()));
     if (trace) trace_cri(engine, inflight_before, done_before, playing_before);
     // 802F53B8 over every entry holding a sound (serial set): a running one

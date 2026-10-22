@@ -7,6 +7,7 @@
 #include "dw4/engine/scene_graph.hpp"
 
 #include <cmath>
+#include <cstring>
 #include <iostream>
 #include <limits>
 #include <sstream>
@@ -400,6 +401,39 @@ void test_gate_stage_name() {
     check(!system.gate_stage_name && system.gate_stage_no == 0, "GAMEDATAINIT of slot 0 unsets the gate stage");
 }
 
+// The PC fast loading option changes the frames of a load, so a save state
+// keeps it with the other gameplay options; off is the original game.
+void test_fast_loading_snapshot() {
+    dw4::engine::Cheats cheats;
+    check(!cheats.fast_loading && cheats.original(), "Fast loading is off by default (the original timing)");
+    cheats.fast_loading = true;
+    check(!cheats.original(), "Fast loading is not the original game");
+    for (const bool fast : {false, true}) {
+        dw4::engine::StageSnapshot snapshot;
+        snapshot.stage = "dng101b1";
+        snapshot.cheats.fast_loading = fast;
+        snapshot.cheats.exp_rate = 150;
+        const auto back = dw4::engine::decode_snapshot(dw4::engine::encode_snapshot(snapshot));
+        check(back.cheats.fast_loading == fast && back.cheats.exp_rate == 150 && back.stage == "dng101b1",
+              "A save state keeps the load timing it was made with");
+    }
+    // A save state of the version before the option is refused.
+    dw4::engine::StageSnapshot snapshot;
+    auto bytes = dw4::engine::encode_snapshot(snapshot);
+    check(bytes.size() >= 4, "A snapshot starts with its version");
+    std::uint32_t version = 0;
+    std::memcpy(&version, bytes.data(), sizeof version);
+    --version;
+    std::memcpy(bytes.data(), &version, sizeof version);
+    bool refused = false;
+    try {
+        (void)dw4::engine::decode_snapshot(bytes);
+    } catch (const std::exception&) {
+        refused = true;
+    }
+    check(refused, "A save state of an older version is refused");
+}
+
 void test_text_layout() {
     // NORMAL metrics of bectext.igb: digits advance past their right edge,
     // '!' has an x offset.
@@ -464,6 +498,7 @@ int main() {
         test_particle_records();
         test_card_setting();
         test_gate_stage_name();
+        test_fast_loading_snapshot();
     } catch (const std::exception& error) {
         std::cerr << "scene tests failed: " << error.what() << '\n';
         return 1;

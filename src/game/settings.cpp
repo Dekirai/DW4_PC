@@ -6,6 +6,7 @@
 #include <SDL3/SDL_keyboard.h>
 
 #include <algorithm>
+#include <cctype>
 #include <string>
 
 namespace dw4::game {
@@ -129,6 +130,11 @@ Settings Settings::load() {
     settings.damage_dealt = std::clamp(ini.get_int("gameplay", "damage_dealt", settings.damage_dealt), 10, 1000);
     settings.damage_taken = std::clamp(ini.get_int("gameplay", "damage_taken", settings.damage_taken), 10, 1000);
     settings.drop_seed = std::uint32_t(std::max(0, ini.get_int("gameplay", "drop_seed", 0)));
+    {
+        std::string loading = ini.get_or("gameplay", "loading", "original");
+        for (auto& c : loading) c = char(std::tolower(static_cast<unsigned char>(c)));
+        settings.fast_loading = loading == "fast";
+    }
     for (std::size_t i = 0; i < kPadKeyCount; ++i) {
         const auto value = ini.get("keyboard", kKeys[i].ini);
         if (!value) continue;
@@ -195,6 +201,7 @@ bool Settings::save() {
     ini_.set_int("gameplay", "damage_dealt", damage_dealt);
     ini_.set_int("gameplay", "damage_taken", damage_taken);
     ini_.set_int("gameplay", "drop_seed", int(drop_seed & 0x7FFFFFFF));
+    ini_.set("gameplay", "loading", fast_loading ? "fast" : "original");
     for (std::size_t i = 0; i < kPadKeyCount; ++i) {
         std::string value;
         for (const auto code : keys[i]) {

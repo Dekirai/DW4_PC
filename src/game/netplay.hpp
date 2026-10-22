@@ -34,6 +34,7 @@ struct SessionStart {
     std::uint8_t cheats{};    // bit 0 god, 1 infinite MP, 2 one hit
     int exp_rate = 100, damage_dealt = 100, damage_taken = 100; // rebalancing
     std::uint32_t drop_seed{};                                  // randomizer
+    bool fast_loading{};                                        // PC fast loading (Cheats::fast_loading)
     std::vector<CardFile> card_a, card_b;
 };
 
