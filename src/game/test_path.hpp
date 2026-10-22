@@ -165,11 +165,21 @@ public:
     // Nothing left to explore and the goal out of reach: waiting at the
     // nearest point (the campaign driver then tries another exit of a maze).
     bool exhausted() const { return closest_; }
+    // Structures (g_* models) seen healing themselves while struck (the
+    // area 3 poison plants g_poison01z03: two blows put one down and it
+    // stands up again at full HP), by model name: without the test cheats
+    // they are not fought at all. The campaign driver keeps these across its
+    // fresh ExploreBot per stage visit.
+    const std::set<std::string>& regenerating_names() const { return regenerating_names_; }
+    void set_regenerating_names(const std::set<std::string>& names) { regenerating_names_ = names; }
 
 private:
     enum class Gimmick { none, strike, talk, step, tech };
     void plan(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player, const std::string& goal, int frame);
     void give_up(int frame);
+    // A target seen healing itself: a structure is left alone from now on
+    // (regenerating_names), without the test cheats.
+    void note_regenerating(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& target, int frame);
     // A z-mat that moves the player to another room of the same stage
     // (its script runs trans.lua instead of funcStageChange): a maze link.
     bool portal(engine::Engine& engine, const std::string& mat);
@@ -360,6 +370,7 @@ private:
     std::map<const void*, int> fruitless_;       // attacked enemy -> attack steps since its last new low
     std::map<const void*, int> fruitless_runs_;  // enemy -> times it was left alone for taking no damage
     std::map<const void*, int> approach_;        // structure -> steps targeted without getting within reach
+    std::set<std::string> regenerating_names_;   // see regenerating_names()
     std::set<const void*> unkillable_;           // enemies that heal themselves or took no damage thrice: left alone for the stage
     std::set<const void*> regenerating_;         // enemies seen healing back above their lowest HP
     std::set<const void*> vanished_;             // enemy RAMs seen free or defeated (a spawn into one is a new enemy)

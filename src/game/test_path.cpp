@@ -673,6 +673,25 @@ bool ExploreBot::hazard_mat(engine::Engine& engine, const std::string& mat) {
     return hazard;
 }
 
+// A structure that heals itself while struck is left alone (no cheats).
+// The area 3 poison plants g_poison01z03 (hit_g_poison01z03.lua: -50 a blow
+// of 100 HP, at 0 SQ_DDMG and +100) spit poison at the player around them
+// (70104, about 5 % of the HP a blow) and never fall: a fresh no-cheat chain
+// took 986 such blows in stag0301/0302 at levels 33 to 37, every stage visit
+// (a fresh ExploreBot) fighting them again until its 900 fruitless frames
+// were over. A structure whose HP rises while it is fought is not fought
+// again, also in later visits (regenerating_names). (The only other such
+// hit script, the area 2 g_atcksabtnz02 devices, is the same and sets no
+// flag either: neither opens a way.)
+void ExploreBot::note_regenerating(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& target, int frame) {
+    if (engine.cheats().one_hit || engine.cheats().god || target.info_name.rfind("g_", 0) != 0) return;
+    if (regenerating_names_.insert(target.info_name).second && std::getenv("DW4_TRACE_EXPLORE"))
+        std::printf("[%d] explore: %s heals itself, left alone\n", frame, target.info_name.c_str());
+    unkillable_.insert(&target);
+    unreachable_[&target] = frame + 6000;
+    planned_ = -1000;
+}
+
 // Without the test cheats an enemy this far around a quicksand pit's guard
 // box (the sink grown by 25) is not walked to: it comes to the player, who
 // holds its waves away from the pit (see the hold in plan()). The sand pulls
@@ -1581,6 +1600,7 @@ void ExploreBot::plan(engine::Engine& engine, const engine::ModelCtrlManager::Mo
             if (left_alone(e.get()) || unkillable_.count(e.get())) continue;
             const auto at = position_of(*e);
             const bool structure = e->info_name.rfind("g_", 0) == 0;
+            if (pass == 0 && structure && regenerating_names_.count(e->info_name) && !engine.cheats().one_hit && !engine.cheats().god) continue;
             const bool boss = e->info_name.rfind("f_", 0) == 0;
             const bool hover = pass == 0 && hovering(*e);
             // (A structure seen firing along a lane is a turret.)
@@ -3133,7 +3153,7 @@ ExploreBot::Decision ExploreBot::update(engine::Engine& engine, const engine::Mo
         // poison vent that heals itself and turns invulnerable) is left alone
         // for a good while, for the stage when seen healing or the third time.
         auto [low, fresh] = lowest_hp_.emplace(target_, target->hp);
-        if (!fresh && target->hp > low->second) regenerating_.insert(target_);
+        if (!fresh && target->hp > low->second) regenerating_.insert(target_), note_regenerating(engine, *target, frame);
         if (fresh || target->hp < low->second) {
             low->second = target->hp;
             perch_hit_at_ = frame;
@@ -3244,7 +3264,7 @@ ExploreBot::Decision ExploreBot::update(engine::Engine& engine, const engine::Mo
                 approach_[target_] = 0;
             }
             auto [low, fresh] = lowest_hp_.emplace(target_, target->hp);
-            if (!fresh && target->hp > low->second) regenerating_.insert(target_);
+            if (!fresh && target->hp > low->second) regenerating_.insert(target_), note_regenerating(engine, *target, frame);
             if (fresh || target->hp < low->second) {
                 low->second = target->hp;
                 fruitless_[target_] = 0;

@@ -4874,8 +4874,12 @@ CampaignBot::Output CampaignBot::play(engine::Engine& engine, const engine::Mode
         // (Not with the one-hit cheat: the recorded runs keep their path.)
         // A training run of the no-cheat driver wandered 160000 frames in
         // stag0101 without taking matz02 that way (s2i).
+        // (What it learnt of self-healing structures stays, see
+        // ExploreBot::regenerating_names.)
         if (!engine.cheats().one_hit) {
+            const auto healing = explorer_.regenerating_names();
             explorer_ = ExploreBot{};
+            explorer_.set_regenerating_names(healing);
             foe_left_.clear();
             target_skip_.clear();
             foe_ = nullptr;
