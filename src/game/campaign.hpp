@@ -103,6 +103,8 @@ private:
     void track_step(const engine::ModelCtrlManager::ModelRam& player, int frame);
     bool guard_pulse(int frame);
     bool guard_footing(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player) const;
+    // Whether player 1 stands on a floor that gave way before (fading_floors_).
+    bool on_fading_floor(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player) const;
     bool tech_target(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player, const engine::GameSystem::PlayerSlot& slot) const;
     void survive(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player, int frame, Output& out);
     Output play(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam* player, int frame);
@@ -196,6 +198,10 @@ private:
     std::map<std::string, int> progress_trips_; // objective -> Gate Disk trips out of it with progress (no gate raised)
     std::map<std::string, int> restock_trips_;  // objective -> Gate Disk trips back to restock on the way to it (kRestockTrips)
     std::string restock_pending_;               // the objective of a restocking trip started, counted back in the lobby
+    engine::Vec3f grounded_at_{};               // where the player last stood with control (a fall's start)
+    int grounded_frame_ = -1;
+    std::string grounded_floor_;                // the HitLand info of that floor (empty: the stage's own)
+    std::set<std::string> fading_floors_;       // HitLand infos of floors a fall began from: crossed without a stop
     // The equipment errand at the Digi-Lab (next_equip).
     bool equip_open_ = false;    // its lab program may be running
     int equip_kind_ = -1;        // the slot kind chosen in the lab's equipment menu

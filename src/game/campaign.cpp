@@ -4256,6 +4256,17 @@ CampaignBot::Output CampaignBot::update(engine::Engine& engine, const engine::Mo
         if (fallen_at_ >= 0 && slot.hp > 0 && engine.stage_name() == fallen_stage_) {
             std::printf("[%d] campaign: fell in %s and is back with %d HP (no defeat)\n", frame, fallen_stage_.c_str(), slot.hp);
             fallen_at_ = -1;
+            // (Without the test cheats the floor the fall began from is kept
+            // off for a while, ExploreBot::avoid_fall: in dng310f3's centre a
+            // level 38 run walked 35 times onto the cell bridge at x -40 that
+            // the moving cells leave, each fall back with 1 HP and a heal.)
+            if (!engine.cheats().god && grounded_frame_ >= 0) explorer_.avoid_fall(grounded_at_, frame);
+            // (A floor of its own, a model's HitLand info, that gave way: one
+            // that fades some time after it is stepped on - dng310f3's
+            // g_dfadescaffold tiles, off 60 frames after a player lands on one
+            // - is crossed from then on without a stop for a guard or a blow.)
+            if (!engine.cheats().god && !grounded_floor_.empty() && fading_floors_.insert(grounded_floor_).second)
+                std::printf("[%d] campaign: the floor %s gave way: crossed without a stop from now on\n", frame, grounded_floor_.c_str());
         } else if (fallen_at_ >= 0 && (frame - fallen_at_ > kFallBack || engine.stage_name() != fallen_stage_ || [&] {
                        // (The defeated player leaves its bit capsule, PLAYER2;
                        // a pit regenerates the player without one.)
@@ -4416,6 +4427,9 @@ void CampaignBot::survive(engine::Engine& engine, const engine::ModelCtrlManager
     }
     const bool controllable = player.control_enabled && player.ctrl_mode != 0 && player.seq_name.rfind("SQ_DEMO", 0) != 0 &&
                               player.seq_name != "SQ_JUMP" && player.seq_name != "SQ_FALL";
+    // On a floor that gave way before (fading_floors_): no stop for a guard
+    // or a blow there, the walk goes on.
+    const bool fading = on_fading_floor(engine, player);
     // (The panel takes no cursor press, A or Y while its FIRE wait from the
     // last pick runs, kPanelFire: a walk started then picks the wrong line.)
     const bool panel_ready = frame + 3 >= panel_ready_at_;
@@ -4523,11 +4537,11 @@ void CampaignBot::survive(engine::Engine& engine, const engine::ModelCtrlManager
             // (With a drop behind the player the guard's recoil would throw
             // it down: the touching enemy, in front of it, is struck
             // instead, see guard_footing.)
-            if (gap <= kTouchGuard && player.muteki == 0.0f && controllable && !guard_footing(engine, player)) {
+            if (gap <= kTouchGuard && player.muteki == 0.0f && controllable && !fading && !guard_footing(engine, player)) {
                 out.buttons = frame % 10 < 3 ? pad_button::a : 0;
                 return;
             }
-            if (gap <= kTouchGuard && player.muteki == 0.0f && controllable) {
+            if (gap <= kTouchGuard && player.muteki == 0.0f && controllable && !fading) {
                 if (out.buttons & pad_button::a) ++held_presses_;
                 out.buttons = guard_pulse(frame) ? pad_button::b : 0;
                 guard_held_ = frame;
@@ -4696,7 +4710,7 @@ void CampaignBot::survive(engine::Engine& engine, const engine::ModelCtrlManager
             out.buttons &= ~pad_button::a;
             guard_held_ = frame;
         }
-        if (guard_it && due <= kGuardLead && player.muteki <= due + 1.0f && controllable && guard_footing(engine, player)) {
+        if (guard_it && due <= kGuardLead && player.muteki <= due + 1.0f && controllable && !fading && guard_footing(engine, player)) {
             if (guard_pulse(frame)) out.buttons |= pad_button::b;
             if (trace() && frame - guard_traced_ >= 600) {
                 guard_traced_ = frame;
@@ -4727,6 +4741,15 @@ void CampaignBot::survive(engine::Engine& engine, const engine::ModelCtrlManager
 // fall instead of 2 in 90000 frames).
 constexpr float kGuardDrop = 8.0f;      // a step down deeper than this behind the player is a drop (a ledge's lower floor is not) ...
 constexpr float kGuardDeepDrop = 25.0f; // ... into a pit or quicksand, or deeper than this
+bool CampaignBot::on_fading_floor(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player) const {
+    if (fading_floors_.empty() || !player.node) return false;
+    auto* hitland = engine.get<engine::HitLandManager>();
+    if (!hitland) return false;
+    const auto me = position_of(player);
+    const auto land = hitland->world().check_land({me.x, me.y + 5.0f, me.z}, 1.0f, 400.0f, 1.0f);
+    return land.found && land.info != 0xFFFF && land.position.y > me.y - 3.0f && fading_floors_.count(hitland->world().info_name(land.info)) > 0;
+}
+
 bool CampaignBot::guard_footing(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player) const {
     auto* hitland = engine.get<engine::HitLandManager>();
     if (!hitland || !player.node) return true;
@@ -5350,6 +5373,16 @@ CampaignBot::Output CampaignBot::play(engine::Engine& engine, const engine::Mode
     if (frame % 10000 == 0) std::fflush(stdout); // (a long run's log shows where it is)
     const auto me = position_of(*player);
     const bool controllable = player->control_enabled && player->seq_name.rfind("SQ_DEMO", 0) != 0;
+    // Where the player last stood with control (a fall's start, see avoid_fall).
+    if (auto* sys = engine.get<engine::GameSystem>();
+        controllable && player->seq_name != "SQ_FALL" && player->seq_name != "SQ_JUMP" && sys && sys->players[0].hp > 0) {
+        grounded_at_ = me;
+        grounded_frame_ = frame;
+        grounded_floor_.clear();
+        if (auto* hitland = engine.get<engine::HitLandManager>(); hitland && !engine.cheats().god)
+            if (const auto land = hitland->world().check_land({me.x, me.y + 5.0f, me.z}, 1.0f, 400.0f, 1.0f); land.found && land.info != 0xFFFF)
+                grounded_floor_ = hitland->world().info_name(land.info);
+    }
     // DW4_TRACE_CAMPAIGN=2: the models around the player every 300 frames.
     if (frame % 300 == 0 && std::getenv("DW4_TRACE_CAMPAIGN") && std::string_view(std::getenv("DW4_TRACE_CAMPAIGN")) == "2")
         if (auto* models = engine.get<engine::ModelCtrlManager>()) {
@@ -5440,13 +5473,16 @@ CampaignBot::Output CampaignBot::play(engine::Engine& engine, const engine::Mode
         // enemies that come near are struck, the others not hunted, see
         // ExploreBot::set_transit.)
         explorer_.set_transit(!engine.cheats().one_hit && !engine.cheats().god && stage.rfind("stag0", 0) == 0 && step->action != "explore:none");
+        const bool fading = on_fading_floor(engine, *player);
+        explorer_.set_hurry(fading);
         const auto d = explorer_.update(engine, *player, goal, frame);
         if (maze && step->action != "explore:none") maze_turn(engine, *player, step->action.substr(8), frame);
         out.walk = controllable;
         out.x = d.x;
         out.z = d.z;
         out.reach = d.reach;
-        if (d.attack) {
+        // (No blow on a floor that gave way before, see fading_floors_.)
+        if (d.attack && !fading) {
             if (d.jump_attack) {
                 if (frame % 40 < 3) out.buttons |= pad_button::x;
                 else if (frame % 40 >= 10 && frame % 40 < 13) out.buttons |= pad_button::a;

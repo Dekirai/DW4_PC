@@ -1410,6 +1410,13 @@ void ExploreBot::plan(engine::Engine& engine, const engine::ModelCtrlManager::Mo
         }
         moving.push_back(std::move(floor));
     }
+    // Floors a fall began from lately (avoid_fall), unless the player stands
+    // on one.
+    std::erase_if(fall_spots_, [&](const auto& spot) { return frame >= spot.second; });
+    for (const auto& [p, until] : fall_spots_) {
+        const AvoidBox a{p.x - 8.0f, p.z - 8.0f, p.x + 8.0f, p.z + 8.0f, p.y - 6.0f, p.y + 6.0f};
+        if (me.x < a.min_x || me.x > a.max_x || me.z < a.min_z || me.z > a.max_z || me.y < a.min_y || me.y > a.max_y) avoid.push_back(a);
+    }
     const WalkMap map(hitland->world(), me, 700.0f, flags, avoid, hitland->delivery_width(player.info_name, player.index), moving);
     // A point's distance from the nearest quicksand pit's guard box (flat).
     const auto pit_clear = [&](const engine::Vec3f& q) {
@@ -3039,8 +3046,10 @@ ExploreBot::Decision ExploreBot::update(engine::Engine& engine, const engine::Mo
             // used, then the Gate Disk out). The player waits at the take-off
             // of the first stone, out of their range; after kJumpFoeHold
             // frames it jumps anyway.
+            // (Not from a floor that gives way, set_hurry: dng310f3's fading
+            // tiles, off 60 frames after the player lands on one.)
             bool hold_jump = false;
-            if (!engine.cheats().god && !engine.cheats().one_hit && models && flat(takeoff, me) < 8.0f) {
+            if (!engine.cheats().god && !engine.cheats().one_hit && models && flat(takeoff, me) < 8.0f && !hurry_) {
                 constexpr float kJumpFoe = 25.0f, kJumpFoeWalk = 150.0f;
                 constexpr int kJumpFoeHold = 2400;
                 std::vector<engine::Vec3f> landings;

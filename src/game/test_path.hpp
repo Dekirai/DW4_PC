@@ -182,6 +182,16 @@ public:
     // come near (as while defending) instead of hunted, and only pickups
     // within kTransitPick (and key items) are gone for.
     void set_transit(bool on) { transit_ = on; }
+    // A fall into a pit began from this floor (it gave way, or a moving
+    // floor left it): no route crosses it for kFallAvoid frames.
+    void avoid_fall(const engine::Vec3f& where, int frame) {
+        fall_spots_.push_back({where, frame + kFallAvoid});
+        planned_ = -1000;
+    }
+    static constexpr int kFallAvoid = 6000;
+    // The player stands on a floor that gives way (the campaign driver's
+    // fading floors): no wait at a jump's take-off for the enemies there.
+    void set_hurry(bool on) { hurry_ = on; }
 
 private:
     enum class Gimmick { none, strike, talk, step, tech };
@@ -383,6 +393,8 @@ private:
     std::map<const void*, int> approach_;        // structure -> steps targeted without getting within reach
     std::set<std::string> regenerating_names_;   // see regenerating_names()
     bool transit_ = false;                       // see set_transit()
+    bool hurry_ = false;                         // see set_hurry()
+    std::vector<std::pair<engine::Vec3f, int>> fall_spots_; // see avoid_fall(): where, until
     std::set<const void*> unkillable_;           // enemies that heal themselves or took no damage thrice: left alone for the stage
     std::set<const void*> regenerating_;         // enemies seen healing back above their lowest HP
     std::set<const void*> vanished_;             // enemy RAMs seen free or defeated (a spawn into one is a new enemy)
