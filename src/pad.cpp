@@ -73,6 +73,35 @@ std::uint32_t gamecube_buttons(std::uint16_t raw_buttons) noexcept {
     return result;
 }
 
+void merge(HostPadInput& into, const HostPadInput& other) noexcept {
+    into.buttons |= other.buttons;
+    into.stick_directions |= other.stick_directions;
+    into.c_stick_directions |= other.c_stick_directions;
+    if (other.stick.x != 0.0f || other.stick.y != 0.0f) into.stick = other.stick;
+    if (other.c_stick.x != 0.0f || other.c_stick.y != 0.0f) into.c_stick = other.c_stick;
+}
+
+PadSample host_pad_sample(const HostPadInput& input) noexcept {
+    auto stick = [](PadStick analog, std::uint32_t directions, float full) {
+        if (analog.x == 0.0f && analog.y == 0.0f) {
+            // Opposite directions held together: right beats left and down
+            // beats up, as the port's direction buttons always did.
+            if (directions & pad_direction::negative_x) analog.x = -1.0f;
+            if (directions & pad_direction::positive_x) analog.x = 1.0f;
+            if (directions & pad_direction::positive_y) analog.y = 1.0f;
+            if (directions & pad_direction::negative_y) analog.y = -1.0f;
+        }
+        const auto axis = [full](float v) { return std::isfinite(v) ? std::clamp(v, -1.0f, 1.0f) * full : 0.0f; };
+        return PadStick{axis(analog.x), axis(analog.y)};
+    };
+    PadSample sample;
+    sample.connected = true;
+    sample.buttons = input.buttons;
+    sample.left = stick(input.stick, input.stick_directions, 72.0f / 74.0f);
+    sample.right = stick(input.c_stick, input.c_stick_directions, 59.0f / 74.0f);
+    return sample;
+}
+
 PadStick gamecube_stick(std::int8_t x, std::int8_t y, bool c_stick) noexcept {
     const int sign_x = x < 0 ? -1 : 1;
     const int sign_y = y < 0 ? -1 : 1;

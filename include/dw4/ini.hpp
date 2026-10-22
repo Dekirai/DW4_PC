@@ -27,6 +27,8 @@ public:
     void set(std::string_view section, std::string_view key, std::string_view value);
     void set_int(std::string_view section, std::string_view key, int value);
     void set_bool(std::string_view section, std::string_view key, bool value);
+    // Drops every line of the key in the section; true when one was there.
+    bool remove(std::string_view section, std::string_view key);
 
 private:
     struct Line {

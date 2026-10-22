@@ -4,6 +4,7 @@
 // level, keyboard bindings and the extracted game data folder. The F1 menu
 // edits them while playing and writes them back.
 #include "dw4/ini.hpp"
+#include "dw4/pad.hpp"
 
 #include <SDL3/SDL_gamepad.h>
 #include <SDL3/SDL_scancode.h>
@@ -17,15 +18,30 @@
 
 namespace dw4::game {
 
-// The GameCube controller buttons a key can stand for.
-enum class PadKey { a, b, x, y, start, up, down, left, right, l, r, z, count };
+// The GameCube controls a key or controller input can stand for: the
+// buttons, the D-pad and the digital directions of the main stick and the
+// C-stick. Like on a GameCube pad the three direction groups are separate
+// inputs: the main stick walks, the D-pad and the C-stick move the quick
+// panels' cursor (the D-pad and the main stick move menu cursors).
+enum class PadKey {
+    a, b, x, y, start, l, r, z,
+    stick_up, stick_down, stick_left, stick_right,
+    dpad_up, dpad_down, dpad_left, dpad_right,
+    cstick_up, cstick_down, cstick_left, cstick_right,
+    count
+};
 constexpr std::size_t kPadKeyCount = std::size_t(PadKey::count);
-const char* pad_key_name(PadKey key);      // "A", "Start", "Up", ...
-const char* pad_key_ini_name(PadKey key);  // "a", "start", "up", ...
-std::uint32_t pad_key_bit(PadKey key);     // dw4::pad_button bit
+enum class PadGroup { buttons, stick, dpad, c_stick };
+const char* pad_key_name(PadKey key);      // "A", "Start", "Stick up", "D-pad up", "C-stick up", ...
+const char* pad_key_ini_name(PadKey key);  // "a", "start", "stick_up", "dpad_up", "cstick_up", ...
+PadGroup pad_key_group(PadKey key);
+const char* pad_group_name(PadGroup group); // the F1 menu's section line
+// Adds the control to a pad's host input (button bit or stick direction).
+void press(PadKey key, HostPadInput& input);
 
-// A controller input bound to a GameCube button: a gamepad button or a
-// trigger axis pulled past half way.
+// A controller input bound to a GameCube control: a gamepad button or a
+// trigger axis pulled past half way. (A controller's left and right stick
+// are always the main stick and the C-stick.)
 struct PadInput {
     enum class Kind : std::uint8_t { none, button, axis } kind{};
     int code{}; // SDL_GamepadButton or SDL_GamepadAxis
@@ -56,10 +72,10 @@ struct Settings {
     // [gameplay] loading = original / fast: stage loads with the GameCube's
     // disc and loading-thread time, or without it (engine::Cheats::fast_loading).
     bool fast_loading = false;
-    // [keyboard]: up to three keys per button.
+    // [keyboard]: up to three keys per control (PadKey).
     static constexpr std::size_t kKeysPerButton = 3;
     std::array<std::array<SDL_Scancode, kKeysPerButton>, kPadKeyCount> keys{};
-    // [gamepad]: up to three controller inputs per button, for every controller.
+    // [gamepad]: up to three controller inputs per control, for every controller.
     std::array<std::array<PadInput, kKeysPerButton>, kPadKeyCount> pad{};
     // [mods]
     std::filesystem::path texture_pack; // replacement PNGs (default mods/textures)
@@ -80,7 +96,14 @@ struct Settings {
     // local/settings.ini or settings.ini in the working directory, else
     // settings.ini next to the program.
     static Settings load();
+    // The settings of a document (load() without the file search). Bindings
+    // from before the separate D-pad and C-stick inputs (keyboard / gamepad
+    // "up", "down", "left", "right") are migrated, see settings.cpp.
+    static Settings parse(IniFile ini);
+    // Writes the values into the document (the next save() writes the file).
+    void store();
     bool save();
+    const IniFile& ini() const { return ini_; }
 
 private:
     IniFile ini_;

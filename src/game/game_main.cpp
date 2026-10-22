@@ -7,6 +7,7 @@
 #include "movie_decoder.hpp"
 #include "rvz.hpp"
 #include "settings.hpp"
+#include "controls.hpp"
 #include "campaign.hpp"
 #include "test_path.hpp"
 #include "texture_pack.hpp"
@@ -86,8 +87,11 @@ void write_bmp(const std::string& path, int width, int height, const std::vector
 }
 
 // Scripted input for automated runs: lines "frame button [duration [player]]"
-// (button: A,B,X,Y,START,UP,DOWN,LEFT,RIGHT,Z,L,R or STICK:x,y with raw stick
-// values, several joined by '+'; player 1-4, default 1) and "frame GOTO x z [duration]",
+// (button: A,B,X,Y,START,Z,L,R, UP,DOWN,LEFT,RIGHT (the D-pad bit and the main
+// stick pushed fully: the scripts' combined direction), DPAD_UP,DPAD_DOWN,
+// DPAD_LEFT,DPAD_RIGHT (the D-pad only), STICK:x,y / CSTICK:x,y (main stick /
+// C-stick at raw device values), several joined by '+'; player 1-4, default 1)
+// and "frame GOTO x z [duration]",
 // which steers player 1's stick toward world (x, z) relative to the camera, and
 // "frame SEEK duration [target]", which walks to the nearest pickup or live
 // enemy and presses A next to it (target: a model prefix first, mat:<name> a
@@ -128,30 +132,41 @@ struct ScriptedInput {
             }
             int player = 1;
             fields >> duration >> player;
-            // The button may join several with '+'; STICK:x,y holds the main
-            // stick at the raw device values x,y (-128..127, y up, as
-            // work/dref's dtm.py records them), which the SDK clamp turns into
-            // the stick the game reads (gamecube_stick). It replaces the
-            // direction buttons' full deflection.
+            // The button may join several with '+'. UP / DOWN / LEFT / RIGHT
+            // keep their meaning from before the separate D-pad (scripts,
+            // determinism references and the campaign checkpoints rely on
+            // it): the D-pad bit, and the main stick pushed fully unless a
+            // GOTO / SEEK steers or a STICK holds it. DPAD_* is the D-pad
+            // alone. STICK:x,y / CSTICK:x,y hold the main stick / C-stick at
+            // the raw device values x,y (-128..127, y up, as work/dref's
+            // dtm.py / dtm2.py record them), which the SDK clamp turns into
+            // the stick the game reads (gamecube_stick).
             Press press{frame, 0, duration, std::clamp(player - 1, 0, 3)};
             for (std::size_t begin = 0; begin <= name.size();) {
                 const std::size_t end = std::min(name.find('+', begin), name.size());
                 const std::string part = name.substr(begin, end - begin);
                 begin = end + 1;
                 namespace b = dw4::pad_button;
+                namespace d = dw4::pad_direction;
                 int x = 0, y = 0;
-                if (part.rfind("STICK:", 0) == 0 && std::sscanf(part.c_str() + 6, "%d,%d", &x, &y) == 2)
-                    press.stick = dw4::gamecube_stick(std::int8_t(std::clamp(x, -128, 127)),
-                                                      std::int8_t(std::clamp(y, -128, 127)));
+                auto raw = [&](bool c_stick) {
+                    return dw4::gamecube_stick(std::int8_t(std::clamp(x, -128, 127)), std::int8_t(std::clamp(y, -128, 127)), c_stick);
+                };
+                if (part.rfind("STICK:", 0) == 0 && std::sscanf(part.c_str() + 6, "%d,%d", &x, &y) == 2) press.stick = raw(false);
+                else if (part.rfind("CSTICK:", 0) == 0 && std::sscanf(part.c_str() + 7, "%d,%d", &x, &y) == 2) press.c_stick = raw(true);
                 else if (part == "A") press.bit |= b::a;
                 else if (part == "B") press.bit |= b::b;
                 else if (part == "X") press.bit |= b::x;
                 else if (part == "Y") press.bit |= b::y;
                 else if (part == "START") press.bit |= b::start;
-                else if (part == "UP") press.bit |= b::up;
-                else if (part == "DOWN") press.bit |= b::down;
-                else if (part == "LEFT") press.bit |= b::left;
-                else if (part == "RIGHT") press.bit |= b::right;
+                else if (part == "UP") press.bit |= b::up, press.push |= d::positive_y;
+                else if (part == "DOWN") press.bit |= b::down, press.push |= d::negative_y;
+                else if (part == "LEFT") press.bit |= b::left, press.push |= d::negative_x;
+                else if (part == "RIGHT") press.bit |= b::right, press.push |= d::positive_x;
+                else if (part == "DPAD_UP") press.bit |= b::up;
+                else if (part == "DPAD_DOWN") press.bit |= b::down;
+                else if (part == "DPAD_LEFT") press.bit |= b::left;
+                else if (part == "DPAD_RIGHT") press.bit |= b::right;
                 else if (part == "Z") press.bit |= b::z;
                 else if (part == "L") press.bit |= b::l;
                 else if (part == "R") press.bit |= b::r;
@@ -161,14 +176,29 @@ struct ScriptedInput {
     }
     struct Send { int frame; std::string category, command, argument; int row = -1; };
     std::vector<Send> sends;
-    struct Press { int frame; std::uint32_t bit; int duration; int slot; std::optional<dw4::PadStick> stick; };
+    struct Press {
+        int frame;
+        std::uint32_t bit; // pad_button bits
+        int duration;
+        int slot;
+        std::optional<dw4::PadStick> stick{}, c_stick{};
+        std::uint32_t push{}; // pad_direction bits pushing the main stick (UP / DOWN / LEFT / RIGHT)
+    };
     std::vector<Press> presses;
-    // The STICK of the last press holding one at this frame on the slot.
-    std::optional<dw4::PadStick> stick(int frame, int slot = 0) const {
+    // The STICK (CSTICK) of the last press holding one at this frame on the slot.
+    std::optional<dw4::PadStick> stick(int frame, int slot = 0, bool c_stick = false) const {
         std::optional<dw4::PadStick> result;
         for (const auto& p : presses)
-            if (p.stick && p.slot == slot && frame >= p.frame && frame < p.frame + p.duration) result = p.stick;
+            if (p.slot == slot && frame >= p.frame && frame < p.frame + p.duration)
+                if (const auto& held = c_stick ? p.c_stick : p.stick) result = held;
         return result;
+    }
+    // The main stick directions the slot's combined direction presses push.
+    std::uint32_t pushed(int frame, int slot = 0) const {
+        std::uint32_t directions = 0;
+        for (const auto& p : presses)
+            if (p.slot == slot && frame >= p.frame && frame < p.frame + p.duration) directions |= p.push;
+        return directions;
     }
     // SEEK may name a model prefix to go for first (e.g. g_b01cpole).
     struct Goto { int frame; float x, z; int duration; bool seek = false; std::string target; };
@@ -1096,32 +1126,12 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 }
             }
             // Input: player 1 is the keyboard and the first gamepad, players 2-4
-            // the further gamepads, each on its own controller slot.
-            std::uint32_t held = 0;
-            float sx = 0, sy = 0;
-            std::array<std::uint32_t, 4> slot_held{};
-            std::array<dw4::PadStick, 4> slot_left{}, slot_right{};
-            // GameCube layout: L / R on the triggers (and L on the left
-            // shoulder), Z on the right shoulder, the C stick on the right stick.
-            // Controller buttons from settings.ini [gamepad] (the GameCube
-            // layout by default), sticks fixed: left stick moves, the right
-            // stick is the C stick.
-            auto read_gamepad = [&settings](SDL_Gamepad* pad, std::uint32_t& buttons, dw4::PadStick& left, dw4::PadStick& right) {
-                for (std::size_t b = 0; b < settings.pad.size(); ++b)
-                    for (const auto& input : settings.pad[b]) {
-                        const bool down =
-                            input.kind == dw4::game::PadInput::Kind::button
-                                ? SDL_GetGamepadButton(pad, SDL_GamepadButton(input.code))
-                                : input.kind == dw4::game::PadInput::Kind::axis && SDL_GetGamepadAxis(pad, SDL_GamepadAxis(input.code)) > 16000;
-                        if (down) buttons |= dw4::game::pad_key_bit(dw4::game::PadKey(b));
-                    }
-                auto axis = [&](SDL_GamepadAxis a, float sign) {
-                    const float v = sign * SDL_GetGamepadAxis(pad, a) / 32767.0f;
-                    return std::abs(v) > 0.2f ? v : 0.0f;
-                };
-                left = {axis(SDL_GAMEPAD_AXIS_LEFTX, 1.0f), axis(SDL_GAMEPAD_AXIS_LEFTY, -1.0f)};
-                right = {axis(SDL_GAMEPAD_AXIS_RIGHTX, 1.0f), axis(SDL_GAMEPAD_AXIS_RIGHTY, -1.0f)};
-            };
+            // the further gamepads, each on its own controller slot. The main
+            // stick, the D-pad and the C-stick stay separate inputs like on a
+            // GameCube pad (controls.hpp): movement keys and a left stick walk,
+            // D-pad keys and buttons only set D-pad bits, C-stick keys and a
+            // right stick move the C-stick.
+            std::array<dw4::HostPadInput, 4> live{};
             if (free_camera) {
                 const bool* keys = SDL_GetKeyboardState(nullptr);
                 const dw4::engine::Vec3f forward{std::sin(free_yaw) * std::cos(free_pitch), std::sin(free_pitch), std::cos(free_yaw) * std::cos(free_pitch)};
@@ -1135,21 +1145,14 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 if (keys[SDL_SCANCODE_Q]) free_eye.y -= speed;
                 engine.debug_camera = make_camera(free_eye, free_eye + forward);
             } else if (!show_menu) {
-                // Keyboard: the bound keys of settings.ini [keyboard]; the
-                // direction keys also push the stick fully.
-                const bool* keys = SDL_GetKeyboardState(nullptr);
-                for (std::size_t b = 0; b < settings.keys.size(); ++b)
-                    for (const SDL_Scancode code : settings.keys[b])
-                        if (code != SDL_SCANCODE_UNKNOWN && keys[code]) held |= dw4::game::pad_key_bit(dw4::game::PadKey(b));
-                if (held & dw4::pad_button::up) sy = 1;
-                if (held & dw4::pad_button::down) sy = -1;
-                if (held & dw4::pad_button::left) sx = -1;
-                if (held & dw4::pad_button::right) sx = 1;
-                for (std::size_t i = 0; i < gamepads.size() && i < 4; ++i)
-                    read_gamepad(gamepads[i], slot_held[i], slot_left[i], slot_right[i]);
-                held |= slot_held[0];
-                if (slot_left[0].x != 0.0f) sx = slot_left[0].x;
-                if (slot_left[0].y != 0.0f) sy = slot_left[0].y;
+                // Keyboard: the bound keys of settings.ini [keyboard];
+                // controllers: [gamepad] and the sticks.
+                live[0] = dw4::game::keyboard_input(settings, SDL_GetKeyboardState(nullptr));
+                for (std::size_t i = 0; i < gamepads.size() && i < 4; ++i) {
+                    const auto pad = dw4::game::gamepad_input(settings, dw4::game::read_gamepad(gamepads[i]));
+                    if (i == 0) dw4::merge(live[0], pad);
+                    else live[i] = pad;
+                }
             }
             // Fixed-step simulation at the NTSC field rate (59.94 Hz, one
             // original frame per field; Engine::step adds a field of time).
@@ -1237,8 +1240,20 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     if (!send.argument.empty()) dw4::engine::parse_packet_arguments(send.argument, packet);
                     engine.messenger().send(engine, send.category, std::nullopt, send.row, send.command, packet);
                 }
-                std::uint32_t input = held | scripted.held(frame);
-                float stick_x = sx, stick_y = sy;
+                // Player 1: the live devices, the script's presses and the
+                // bots. stick_x / stick_y are the main stick in host units
+                // (a live analog stick or movement keys, else a bot's
+                // steering); the bots steer only while it is centred.
+                std::uint32_t input = live[0].buttons | scripted.held(frame);
+                float stick_x = live[0].stick.x, stick_y = live[0].stick.y;
+                if (stick_x == 0 && stick_y == 0) {
+                    const auto keys = live[0].stick_directions;
+                    if (keys & dw4::pad_direction::negative_x) stick_x = -1;
+                    if (keys & dw4::pad_direction::positive_x) stick_x = 1;
+                    if (keys & dw4::pad_direction::positive_y) stick_y = 1;
+                    if (keys & dw4::pad_direction::negative_y) stick_y = -1;
+                }
+                const std::uint32_t before_bots = input;
                 if (const auto* g = scripted.active_goto(frame); g && g->seek && g->target == "campaign" && stick_x == 0 && stick_y == 0) {
                     // SEEK campaign: the story from a new game (src/game/campaign.cpp).
                     static dw4::game::CampaignBot campaign;
@@ -1418,36 +1433,30 @@ int run(const Options& options, dw4::game::Settings& settings) {
                         }
                     }
                 }
-                if (stick_x == 0 && stick_y == 0) {
-                    if (input & dw4::pad_button::left) stick_x = -1;
-                    if (input & dw4::pad_button::right) stick_x = 1;
-                    if (input & dw4::pad_button::up) stick_y = 1;
-                    if (input & dw4::pad_button::down) stick_y = -1;
-                }
-                // Original device: full deflection is 72/74 after the SDK clamp.
-                auto scale = [](dw4::PadStick stick) {
-                    return dw4::PadStick{std::clamp(stick.x, -1.0f, 1.0f) * (72.0f / 74.0f),
-                                                 std::clamp(stick.y, -1.0f, 1.0f) * (72.0f / 74.0f)};
-                };
-                pads[0].connected = true;
-                pads[0].buttons = input;
-                pads[0].left = scale({stick_x, stick_y});
+                // The scripts' combined directions (UP / DOWN / LEFT / RIGHT)
+                // and the bots' direction presses push a centred main stick
+                // as well as setting the D-pad bit; live D-pad input and the
+                // scripts' DPAD_* never move the stick.
+                const std::uint32_t bot_bits = input & ~before_bots;
+                std::uint32_t push = scripted.pushed(frame);
+                if (bot_bits & dw4::pad_button::up) push |= dw4::pad_direction::positive_y;
+                if (bot_bits & dw4::pad_button::down) push |= dw4::pad_direction::negative_y;
+                if (bot_bits & dw4::pad_button::left) push |= dw4::pad_direction::negative_x;
+                if (bot_bits & dw4::pad_button::right) push |= dw4::pad_direction::positive_x;
+                // The original device's sample (host_pad_sample: full
+                // deflection 72/74 main stick, 59/74 C-stick after the SDK
+                // clamp); STICK / CSTICK hold raw device values.
+                pads[0] = dw4::host_pad_sample({input, push, live[0].c_stick_directions, {stick_x, stick_y}, live[0].c_stick});
                 if (const auto stick = scripted.stick(frame)) pads[0].left = *stick;
-                pads[0].right = scale(slot_right[0]);
+                if (const auto stick = scripted.stick(frame, 0, true)) pads[0].right = *stick;
                 for (std::size_t i = 1; i < 4; ++i) {
+                    auto in = live[i];
+                    in.buttons |= scripted.held(frame, int(i));
+                    in.stick_directions |= scripted.pushed(frame, int(i));
+                    pads[i] = dw4::host_pad_sample(in);
                     pads[i].connected = i < gamepads.size() || scripted.uses_slot(int(i));
-                    dw4::PadStick left = slot_left[i];
-                    const std::uint32_t buttons = slot_held[i] | scripted.held(frame, int(i));
-                    if (left.x == 0.0f && left.y == 0.0f) {
-                        if (buttons & dw4::pad_button::left) left.x = -1;
-                        if (buttons & dw4::pad_button::right) left.x = 1;
-                        if (buttons & dw4::pad_button::up) left.y = 1;
-                        if (buttons & dw4::pad_button::down) left.y = -1;
-                    }
-                    pads[i].buttons = buttons;
-                    pads[i].left = scale(left);
                     if (const auto stick = scripted.stick(frame, int(i))) pads[i].left = *stick;
-                    pads[i].right = scale(slot_right[i]);
+                    if (const auto stick = scripted.stick(frame, int(i), true)) pads[i].right = *stick;
                 }
                 if (net.active()) {
                     // This machine's controller plays its slot; the others
@@ -1697,8 +1706,13 @@ int run(const Options& options, dw4::game::Settings& settings) {
                         }
                         if (ImGui::CollapsingHeader("Keyboard (player 1)", ImGuiTreeNodeFlags_DefaultOpen)) {
                             ImGui::TextDisabled("Click a key to change it, right-click to clear it.");
-                            if (ImGui::BeginTable("keys", 4, ImGuiTableFlags_SizingStretchSame)) {
+                            ImGui::TextDisabled("As on the GameCube the main stick walks, the D-pad and the C-stick move the");
+                            ImGui::TextDisabled("quick panels' cursor (L / R), the main stick and the D-pad move menu cursors.");
+                            for (int group = 0; group < 4; ++group) {
+                                ImGui::SeparatorText(dw4::game::pad_group_name(dw4::game::PadGroup(group)));
+                                if (!ImGui::BeginTable(("keys" + std::to_string(group)).c_str(), 4, ImGuiTableFlags_SizingStretchSame)) continue;
                                 for (std::size_t b = 0; b < settings.keys.size(); ++b) {
+                                    if (dw4::game::pad_key_group(dw4::game::PadKey(b)) != dw4::game::PadGroup(group)) continue;
                                     ImGui::TableNextRow();
                                     ImGui::TableNextColumn();
                                     ImGui::TextUnformatted(dw4::game::pad_key_name(dw4::game::PadKey(b)));
@@ -1733,9 +1747,12 @@ int run(const Options& options, dw4::game::Settings& settings) {
                                 ImGui::BulletText("Player %zu: %s", i + 1, name ? name : "controller");
                             }
                             ImGui::TextDisabled("Click an input and press a controller button or trigger; right-click clears.");
-                            ImGui::TextDisabled("The left stick moves, the right stick is the C stick.");
-                            if (ImGui::BeginTable("pad", 4, ImGuiTableFlags_SizingStretchSame)) {
+                            ImGui::TextDisabled("The left stick is the main stick (walks), the right stick the C-stick.");
+                            for (int group = 0; group < 4; ++group) {
+                                ImGui::SeparatorText(dw4::game::pad_group_name(dw4::game::PadGroup(group)));
+                                if (!ImGui::BeginTable(("pad" + std::to_string(group)).c_str(), 4, ImGuiTableFlags_SizingStretchSame)) continue;
                                 for (std::size_t b = 0; b < settings.pad.size(); ++b) {
+                                    if (dw4::game::pad_key_group(dw4::game::PadKey(b)) != dw4::game::PadGroup(group)) continue;
                                     ImGui::TableNextRow();
                                     ImGui::TableNextColumn();
                                     ImGui::TextUnformatted(dw4::game::pad_key_name(dw4::game::PadKey(b)));
