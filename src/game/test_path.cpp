@@ -698,6 +698,50 @@ void ExploreBot::note_regenerating(engine::Engine& engine, const engine::ModelCt
     planned_ = -1000;
 }
 
+// A structure that blows up where it stands (no cheats): an effect with an
+// enemy attack box (no permanent body box) that it owns stands on it, still,
+// for kBlastStill frames - a mine's countdown and blast, not a shot leaving
+// a turret. stag0401's mines (g_minez04, put out by its matb00 / matb02;
+// gimmicks with an AIM map, live once their label is ON) set off their effect
+// x_minez04 when a player comes near; it counts down some 18 frames and
+// blasts, 70105, ~38 % of the maximum HP, twice. The bot walked and jumped
+// back into such blasts, airborne where no guard is taken, and a no-cheat
+// chain was defeated by them four times in a row with heals in hand. Such a
+// structure is not struck from then on, also in later visits
+// (exploding_names), and the ground round the live ones costs extra to the
+// routes (plan: kBlastKeep).
+constexpr float kBlastReach = 40.0f;
+constexpr int kBlastStill = 8;
+void ExploreBot::note_explosions(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player, int frame) {
+    auto* models = engine.get<engine::ModelCtrlManager>();
+    if (engine.cheats().one_hit || engine.cheats().god || !models) return;
+    const auto me = position_of(player);
+    for (const auto& e : models->rams()) {
+        if (!e->generated || !e->node || e->is_player || e->category == "ENEMY" || e->hitboxes.empty() || e->owner_name.empty() ||
+            flat(position_of(*e), me) > kBlastReach) {
+            born_at_.erase(e.get());
+            continue;
+        }
+        bool blow = false;
+        for (const auto& h : e->hitboxes) blow = blow || ((h.kind / 10000 == 7 || h.kind / 10000 == 8) && h.end < 1e7f);
+        const auto* owner = models->find(e->owner_name, e->owner_index);
+        if (!blow || !owner || !owner->node || owner->category == "ITEM" || owner->category == "ENEMY" || owner->info_name.rfind("g_", 0) != 0 ||
+            flat(position_of(*e), position_of(*owner)) > 8.0f) {
+            born_at_.erase(e.get());
+            continue;
+        }
+        const auto [seen, fresh] = born_at_.try_emplace(e.get(), frame, position_of(*e));
+        if (fresh || flat(seen->second.second, position_of(*e)) > 2.0f) {
+            seen->second = {frame, position_of(*e)};
+            continue;
+        }
+        if (frame - seen->second.first >= kBlastStill && exploding_names_.insert(owner->info_name).second) {
+            std::printf("[%d] explore: %s blows up where it stands: not struck, kept off from now on\n", frame, owner->info_name.c_str());
+            planned_ = -1000;
+        }
+    }
+}
+
 // Without the test cheats an enemy this far around a quicksand pit's guard
 // box (the sink grown by 25) is not walked to: it comes to the player, who
 // holds its waves away from the pit (see the hold in plan()). The sand pulls
@@ -1386,6 +1430,23 @@ void ExploreBot::plan(engine::Engine& engine, const engine::ModelCtrlManager::Mo
                 if (!fresh) it->second = {std::min(it->second.first, h.y - 15.0f), std::max(it->second.second, h.y + 40.0f)};
             }
     }
+    // Likewise the ground within kBlastKeep of a structure seen blowing up
+    // where it stands (exploding_names: stag0401's mines go off as a player
+    // comes near).
+    constexpr float kBlastKeep = 18.0f;
+    if (!engine.cheats().one_hit && !engine.cheats().god && !exploding_names_.empty())
+        for (const auto& e : models->rams()) {
+            if (!e->generated || !e->node || e->hp <= 0 || !exploding_names_.count(e->info_name)) continue;
+            const auto b = position_of(*e);
+            const int r = int(std::ceil(kBlastKeep / Grid::step));
+            const int cx = int(std::lround(b.x / Grid::step)), cz = int(std::lround(b.z / Grid::step));
+            for (int dz = -r; dz <= r; ++dz)
+                for (int dx = -r; dx <= r; ++dx) {
+                    if (dx * dx + dz * dz > r * r) continue;
+                    const auto [it, fresh] = lanes.try_emplace({cx + dx, cz + dz}, b.y - 25.0f, b.y + 25.0f);
+                    if (!fresh) it->second = {std::min(it->second.first, b.y - 25.0f), std::max(it->second.second, b.y + 25.0f)};
+                }
+        }
     const auto near_healer = [&](const engine::Vec3f& p) {
         for (const auto& h : healers)
             if (flat(h, p) < kHealerKeep && p.y > h.y - 15.0f && p.y < h.y + 40.0f) return true;
@@ -1785,7 +1846,9 @@ void ExploreBot::plan(engine::Engine& engine, const engine::ModelCtrlManager::Mo
             if (left_alone(e.get()) || unkillable_.count(e.get())) continue;
             const auto at = position_of(*e);
             const bool structure = e->info_name.rfind("g_", 0) == 0;
-            if (pass == 0 && structure && regenerating_names_.count(e->info_name) && !engine.cheats().one_hit && !engine.cheats().god) continue;
+            if (pass == 0 && structure && (regenerating_names_.count(e->info_name) || exploding_names_.count(e->info_name)) && !engine.cheats().one_hit &&
+                !engine.cheats().god)
+                continue;
             const bool boss = e->info_name.rfind("f_", 0) == 0;
             if (!boss && (pass == 0 || e->item_table != 2) && near_healer(at)) continue; // (key items are fetched all the same)
             if (transit_ && pass == 1 && e->item_table != 2 && flat(at, me) > kTransitPick) continue;
@@ -2121,6 +2184,8 @@ void ExploreBot::plan(engine::Engine& engine, const engine::ModelCtrlManager::Mo
             } else {
                 continue;
             }
+            // (Nor one seen blowing up as it went down, exploding_names.)
+            if (kind == Gimmick::strike && exploding_names_.count(e->info_name) && !engine.cheats().one_hit && !engine.cheats().god) continue;
             // Without the test cheats a wall that stopped a live turret's
             // shots is left standing (shields_): the player fights on
             // behind it.
@@ -2650,6 +2715,7 @@ ExploreBot::Decision ExploreBot::update(engine::Engine& engine, const engine::Mo
         hop_spots_for_ = {1e30f, 0.0f, 1e30f};
         hop_wait_for_ = {1e30f, 0.0f, 1e30f};
     }
+    note_explosions(engine, player, frame);
     track_fire(engine, frame);
     track_platforms(engine, me, frame);
     // Moved to another room of the stage (a maze link): a fresh start there.
@@ -3542,7 +3608,7 @@ ExploreBot::Decision ExploreBot::update(engine::Engine& engine, const engine::Mo
         for (const auto& e : models->rams())
             if (e->generated && e->node && e->category == "ENEMY" && e->hp > 0 && flat(position_of(*e), me) < 12.0f &&
                 !(unreachable_.count(e.get()) && frame < unreachable_[e.get()]) && !unkillable_.count(e.get()) &&
-                !regenerating_names_.count(e->info_name)) {
+                !regenerating_names_.count(e->info_name) && !exploding_names_.count(e->info_name)) {
                 decision.attack = frame % 20 < 3;
                 break;
             }

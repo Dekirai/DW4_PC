@@ -4250,6 +4250,7 @@ void CampaignBot::save_memory(std::ostream& out) const {
     for (const auto& [record, price] : prices_) out << "price " << record << " " << price << "\n";
     for (const auto& name : explorer_.regenerating_names()) out << "healing " << word(name) << "\n";
     for (const auto& floor : fading_floors_) out << "fading " << word(floor) << "\n";
+    for (const auto& name : explorer_.exploding_names()) out << "exploding " << word(name) << "\n";
     for (const auto& [objective, count] : gear_restocks_) out << "gear_restocks " << word(objective) << " " << count.first << " " << count.second << "\n";
     out << "timers " << heal_at_ << " " << gate_disk_at_ << " " << last_attack_ << " " << aggressive_until_ << " " << held_presses_ << " "
         << guard_held_ << " " << tech_end_ << " " << panel_ready_at_ << " " << big_hit_ << " " << big_hit_at_ << " " << train_exp_ << " "
@@ -4317,6 +4318,13 @@ void CampaignBot::load_memory(std::istream& in) {
                 auto names = explorer_.regenerating_names();
                 names.insert(unword(name));
                 explorer_.set_regenerating_names(names);
+            }
+        } else if (key == "exploding") {
+            std::string name;
+            if (f >> name) {
+                auto names = explorer_.exploding_names();
+                names.insert(unword(name));
+                explorer_.set_exploding_names(names);
             }
         } else if (key == "fading") {
             std::string floor;
@@ -5344,8 +5352,10 @@ CampaignBot::Output CampaignBot::play(engine::Engine& engine, const engine::Mode
         // ExploreBot::regenerating_names.)
         if (!engine.cheats().one_hit) {
             const auto healing = explorer_.regenerating_names();
+            const auto exploding = explorer_.exploding_names();
             explorer_ = ExploreBot{};
             explorer_.set_regenerating_names(healing);
+            explorer_.set_exploding_names(exploding);
             foe_left_.clear();
             target_skip_.clear();
             foe_ = nullptr;
@@ -5493,7 +5503,8 @@ CampaignBot::Output CampaignBot::play(engine::Engine& engine, const engine::Mode
                 near += " " + e->info_name + "#" + std::to_string(e->index) + ":" + e->seq_name + "/" + std::to_string(e->hp) + "/" +
                         std::to_string(int(e->muteki)) + "@" + std::to_string(int(flat(p, me)));
                 if (e->category != "ENEMY") {
-                    near += "(" + std::to_string(int(p.x)) + "," + std::to_string(int(p.y)) + "," + std::to_string(int(p.z)) + ")";
+                    near += "(" + std::to_string(int(p.x)) + "," + std::to_string(int(p.y)) + "," + std::to_string(int(p.z)) + ")<" + e->owner_name + "#" +
+                            std::to_string(e->owner_index) + "/" + e->attach_name + ">";
                     const auto& m = e->node->matrix;
                     for (const auto& h : e->hitboxes) {
                         const engine::Vec3f o = h.offset;

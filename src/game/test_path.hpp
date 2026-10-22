@@ -177,6 +177,11 @@ public:
     // fresh ExploreBot per stage visit.
     const std::set<std::string>& regenerating_names() const { return regenerating_names_; }
     void set_regenerating_names(const std::set<std::string>& names) { regenerating_names_ = names; }
+    // Structures (g_* models) seen blowing up beside the player as they went
+    // down (stag0401's mines): without the test cheats they are not struck.
+    // Kept across stage visits like regenerating_names.
+    const std::set<std::string>& exploding_names() const { return exploding_names_; }
+    void set_exploding_names(const std::set<std::string>& names) { exploding_names_ = names; }
     // Crossing a field to an exit (the campaign driver without the test
     // cheats): enemies other than structures and bosses are struck when they
     // come near (as while defending) instead of hunted, and only pickups
@@ -403,6 +408,9 @@ private:
     std::map<const void*, int> fruitless_runs_;  // enemy -> times it was left alone for taking no damage
     std::map<const void*, int> approach_;        // structure -> steps targeted without getting within reach
     std::set<std::string> regenerating_names_;   // see regenerating_names()
+    std::set<std::string> exploding_names_;      // see exploding_names()
+    std::map<const void*, std::pair<int, engine::Vec3f>> born_at_; // effects on their owner: since when, where (note_explosions)
+    void note_explosions(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player, int frame);
     bool transit_ = false;                       // see set_transit()
     bool hurry_ = false;                         // see set_hurry()
     std::string wanted_;                         // see set_wanted()
