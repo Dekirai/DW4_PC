@@ -132,6 +132,21 @@ int CriFade::step(int volume, int base) {
     return result;
 }
 
+// 8031DDB8: the table step of 8031DC38, then 127 * level and 127 * to
+// truncated (fctiwz); the fade ends when the volume is at or below the
+// target's (in either direction: only fades down reach sfp entries).
+int CriFade::step_seq() {
+    position += increment;
+    const int index = std::clamp(int(position), 0, 59);
+    const float level = from >= to ? kFadeDown[index] : kFadeUp[index];
+    int result = int(127.0f * level);
+    if (result <= int(127.0f * to)) {
+        running = false;
+        if (to == 0.0f) result = 0;
+    }
+    return result;
+}
+
 double DiscDrive::seek_time(std::uint64_t from, std::uint64_t to) {
     const double distance = std::fabs(position(from) - position(to));
     if (distance < kShortSeekMaxDistance) return distance * kShortSeekVelocityInverse + kShortSeekConstant;
