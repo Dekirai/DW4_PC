@@ -202,6 +202,27 @@ CollisionWorld::StillMemo* CollisionWorld::still_memo() const {
 
 namespace {
 std::uint32_t bits(float value) { return std::bit_cast<std::uint32_t>(value); }
+
+// 8012CB74: each component's first product fused with the second one,
+// which is rounded first (fmsubs): x = a.y * b.z - (a.z * b.y).
+Vec3f fused_cross(const Vec3f& a, const Vec3f& b) {
+    return {std::fma(a.y, b.z, -(a.z * b.y)), std::fma(a.z, b.x, -(a.x * b.z)), std::fma(a.x, b.y, -(a.y * b.x))};
+}
+
+// The dot products of 801238E8: y * y rounded, x * x and z * z fused onto it.
+float fused_dot(const Vec3f& a, const Vec3f& b) { return std::fma(a.z, b.z, std::fma(a.x, b.x, a.y * b.y)); }
+
+// 801238E8 (0x80123910..0x80123A28) makes the face normal at every test:
+// (b - a) x (c - a) through 8012CB74, its length from (x*x + y*y) + z*z
+// (frsqrte and three double Newton steps: the float square root), then each
+// component times 1.0 / length. The triangles keep it.
+Vec3f triangle_normal(const Vec3f& a, const Vec3f& b, const Vec3f& c) {
+    const Vec3f n = fused_cross(b - a, c - a);
+    const float squared = dot(n, n);
+    if (!(squared > 0.0f)) return n;
+    const float inverse = 1.0f / std::sqrt(squared);
+    return {n.x * inverse, n.y * inverse, n.z * inverse};
+}
 } // namespace
 
 LandResult CollisionWorld::check_land(const Vec3f& p, float width, float up, float down) const {
@@ -234,9 +255,9 @@ void CollisionWorld::dynamic_near(const Vec3f& p, float reach, const Vec3f& mini
                 t.a = transform_point(local.a, matrix);
                 t.b = transform_point(local.b, matrix);
                 t.c = transform_point(local.c, matrix);
-                const Vec3f n = cross(t.b - t.a, t.c - t.a);
+                const Vec3f n = fused_cross(t.b - t.a, t.c - t.a);
                 if (length(n) < 1e-8f) continue;
-                t.normal = normalize(n);
+                t.normal = triangle_normal(t.a, t.b, t.c);
                 t.group = UINT32_MAX; // checked above
                 d.placed.push_back(t);
             }
@@ -319,9 +340,9 @@ void CollisionWorld::add_node(const ObjectView& node, const Mat4& parent, int de
                 t.a = transform_point(data.positions[data.indices[i]], model);
                 t.b = transform_point(data.positions[data.indices[i + 1]], model);
                 t.c = transform_point(data.positions[data.indices[i + 2]], model);
-                const Vec3f n = cross(t.b - t.a, t.c - t.a);
+                const Vec3f n = fused_cross(t.b - t.a, t.c - t.a);
                 if (length(n) < 1e-8f) continue;
-                t.normal = normalize(n);
+                t.normal = triangle_normal(t.a, t.b, t.c);
                 t.kind = kind;
                 t.group = group;
                 if (into) {
@@ -341,18 +362,23 @@ namespace {
 // 801238E8 with side 0: the unit normal of (b - a) x (c - a) must face the
 // segment (dot < 0, beyond the 805669E4 epsilon); the plane hit must lie on
 // the segment and inside the triangle (the three edge products share a sign).
-// Returns the distance, or a negative rejection.
+// Returns the distance, or a negative rejection. Its dot products fuse (y
+// product rounded, then x and z fused onto it: 0x80123A48 / 0x80123AF4 /
+// 0x80123C18..), the hit point is origin + t * direction fused
+// (0x80123B3C..0x80123B74) and the edge products are 8012CB74's fused cross
+// products, so a hit lands on the original's bits.
 float triangle_hit(const HitSegment& segment, const CollisionTriangle& t, Vec3f& position) {
     const Vec3f& n = t.normal;
-    const float facing = dot(n, segment.direction);
+    const float facing = fused_dot(n, segment.direction);
     constexpr float epsilon = 5.0000001e-7f; // 0x350637BD
     if (!std::signbit(facing)) return -2.0f;
     if (facing >= -epsilon) return -2.0f;
-    const float distance = -dot(n, segment.origin - t.a) / facing;
+    const float distance = -fused_dot(n, segment.origin - t.a) / facing;
     if (std::signbit(distance) || distance > segment.length) return -3.0f;
-    position = segment.origin + segment.direction * distance;
+    position = {std::fma(distance, segment.direction.x, segment.origin.x), std::fma(distance, segment.direction.y, segment.origin.y),
+                std::fma(distance, segment.direction.z, segment.origin.z)};
     const Vec3f pa = t.a - position, pb = t.b - position, pc = t.c - position;
-    const float x = dot(cross(pb, pc), n), y = dot(cross(pa, pb), n), z = dot(cross(pc, pa), n);
+    const float x = fused_dot(fused_cross(pb, pc), n), y = fused_dot(fused_cross(pa, pb), n), z = fused_dot(fused_cross(pc, pa), n);
     return std::signbit(x) == std::signbit(y) && std::signbit(y) == std::signbit(z) ? distance : -4.0f;
 }
 
@@ -550,8 +576,11 @@ WallResult CollisionWorld::wall_query(const Vec3f& position, const Vec3f& direct
             std::size_t selected = 0;
             for (std::size_t i = 1; i < hits.size(); ++i)
                 if (hits[i].distance < hits[selected].distance) selected = i;
+            // 0x802FF170..0x802FF1A0: -(2H - distance) times the direction,
+            // fused onto the position (fmadds).
             const float scale = -((radius + radius) - hits[selected].distance);
-            result.position = result.position + direction * scale;
+            result.position = {std::fma(scale, direction.x, result.position.x), std::fma(scale, direction.y, result.position.y),
+                               std::fma(scale, direction.z, result.position.z)};
             result.hits.push_back(hits[selected]);
             result.hit = true;
         }
@@ -561,8 +590,12 @@ WallResult CollisionWorld::wall_query(const Vec3f& position, const Vec3f& direct
         hits.clear();
         const Vec3f raised{result.position.x, down + result.position.y, result.position.z};
         const Vec3f center = raised + direction * (3.0f * radius * 0.25f);
-        const std::array<HitSegment, 2> segments{HitSegment::between(center, center + side * radius),
-                                                 HitSegment::between(center, center + side * -radius)};
+        // 0x802FF23C..0x802FF24C / 0x802FF2B4..0x802FF2C0: the ends are
+        // +-H times the side fused onto the centre.
+        const auto end = [&](float h) {
+            return Vec3f{std::fma(h, side.x, center.x), std::fma(h, side.y, center.y), std::fma(h, side.z, center.z)};
+        };
+        const std::array<HitSegment, 2> segments{HitSegment::between(center, end(radius)), HitSegment::between(center, end(-radius))};
         bounds(segments, lo, hi);
         query(segments, lo, hi, flags, hits);
         if (!hits.empty()) {
@@ -574,7 +607,9 @@ WallResult CollisionWorld::wall_query(const Vec3f& position, const Vec3f& direct
             const float squared = dot(normal, normal);
             const float ratio = std::min(1.0f, squared / (std::sqrt(squared) * std::sqrt(squared)));
             const float scale = (radius - hits[selected].distance) * ratio;
-            result.position = result.position + normal * scale;
+            // 0x802FF680..0x802FF690: fused onto the position (fmadds).
+            result.position = {std::fma(scale, normal.x, result.position.x), std::fma(scale, normal.y, result.position.y),
+                               std::fma(scale, normal.z, result.position.z)};
             result.hits.push_back(hits[selected]);
             result.hit = true;
         }

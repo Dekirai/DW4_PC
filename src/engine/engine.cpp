@@ -217,6 +217,9 @@ void Messenger::post(std::int64_t time, std::string category, std::optional<std:
     // 80305F9C prepares the message in the pool's last record and makes a new
     // one when that record is still in use.
     if (deferred_.size() >= deferred_records_) ++deferred_records_;
+    // DW4_TRACE_POSTS=1: every posted message with its delivery time.
+    if (static const bool trace = std::getenv("DW4_TRACE_POSTS") != nullptr; trace)
+        std::printf("post %s %s %s for %lld\n", category.c_str(), name ? name->c_str() : "-", command.c_str(), static_cast<long long>(time));
     DeferredMessage message{time, std::move(category), std::move(name), index, std::move(command), std::move(arguments)};
     auto it = std::upper_bound(deferred_.begin(), deferred_.end(), message.time,
                                [](std::int64_t t, const DeferredMessage& m) { return t < m.time; });
@@ -243,6 +246,9 @@ void Messenger::update(Engine& engine) {
         deferred_.erase(deferred_.begin());
         std::optional<std::string_view> name;
         if (message.name) name = *message.name;
+        if (static const bool trace = std::getenv("DW4_TRACE_POSTS") != nullptr; trace)
+            std::printf("[%llu] deliver %s %s (due %lld, now %lld)\n", static_cast<unsigned long long>(engine.frame()),
+                        message.category.c_str(), message.command.c_str(), static_cast<long long>(message.time), static_cast<long long>(now));
         send(engine, message.category, name, message.index, message.command, message.arguments);
     }
 }
