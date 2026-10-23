@@ -1643,10 +1643,10 @@ public:
         std::vector<Mat4> combiner_cache; // combiner +0x40: the last traversal's bone locals
         // Combiner +0x54: the bone matrices the last traversal of the model's
         // actors computed (801DCF30, skeleton vtable +0x5C), which
-        // GETBONEMATRIX reads (802F18A4). Stays as it is while no actor of
-        // the model is traversed (culled, switched off, before the first
-        // picture); null skeleton until the first traversal (801D13DC
-        // allocates identities).
+        // GETBONEMATRIX reads (802F18A4, answered only while action_active).
+        // Stays as it is while no actor of the model is traversed (culled,
+        // switched off, before the first picture); null skeleton until the
+        // first traversal (801D13DC allocates identities).
         ActorPose traversed;
         std::int64_t traversed_time = -1; // the world time of that traversal (traces)
         ActorPose peek;                   // peek_pose's picture (no game state)
