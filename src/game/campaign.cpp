@@ -1722,6 +1722,7 @@ struct Supply {
     int from_hp, to_hp;  // for a maximum HP in [from_hp, to_hp)
     int reserve = 0;     // bits that stay after the purchase
     bool heavy = false;  // only on a heavy way (heavy_way: a boss, or past a gauntlet)
+    bool last = false;   // only at the last stand (last_stand)
 };
 constexpr Supply kSupplies[] = {
     {0, 9, 0, 1 << 30},    // HP Disk S: 450 HP for 100 bits
@@ -1734,13 +1735,13 @@ constexpr Supply kSupplies[] = {
     // 3 % of the maximum HP, as much as their blows took: a level 41 run's
     // heals went half to the poison there.
     {6, 4, 0, 1 << 30},
-    // (A full slot on a heavy way: stagBS05 Daemon's second form poisons
+    // (A full slot at the last stand: stagBS05 Daemon's second form poisons
     // for some 22 ticks of 6 % of the maximum HP, more than the whole HP, a
     // Cure Disk takes only now and then (three in a row for one poison), and
     // with the four spent a no-cheat chain healed with Recovery after
     // Recovery while the poison took each back within nine ticks - seven of
     // its nine in 12000 frames.)
-    {6, 9, 0, 1 << 30, 0, true},
+    {6, 9, 0, 1 << 30, 0, true, true},
     // A full second slot of heals with 5000 bits to spare (a slot holds 9 of
     // one record: 9 HP Disks S were all a no-cheat run at level 17 took into
     // dng204b2's minotaur waves, twice given up with no heal left and 40000
@@ -2035,7 +2036,7 @@ CampaignBot::Purchase CampaignBot::next_purchase(engine::Engine& engine) const {
     const auto& slot = sys->players[0];
     const bool heavy = heavy_way(engine), last = last_stand(engine);
     for (const auto& s : kSupplies) {
-        if (slot.max_hp < s.from_hp || slot.max_hp >= s.to_hp || (s.heavy && !heavy)) continue;
+        if (slot.max_hp < s.from_hp || slot.max_hp >= s.to_hp || (s.heavy && !heavy) || (s.last && !last)) continue;
         const auto it = prices_.find(s.record);
         if (it == prices_.end() || it->second <= 0) continue;
         const int held = disks_held(slot, s.record);
@@ -2052,10 +2053,11 @@ int CampaignBot::stock_cost(engine::Engine& engine) const {
     auto* sys = engine.get<engine::GameSystem>();
     if (!sys) return 0;
     const auto& slot = sys->players[0];
-    const bool heavy = heavy_way(engine);
+    const bool heavy = heavy_way(engine), last = last_stand(engine);
     std::map<int, int> keep;
     for (const auto& s : kSupplies)
-        if (slot.max_hp >= s.from_hp && slot.max_hp < s.to_hp && (!s.heavy || heavy)) keep[s.record] = std::max(keep[s.record], std::min(s.keep, 9));
+        if (slot.max_hp >= s.from_hp && slot.max_hp < s.to_hp && (!s.heavy || heavy) && (!s.last || last))
+            keep[s.record] = std::max(keep[s.record], std::min(s.keep, 9));
     int cost = 0;
     for (const auto& [record, count] : keep)
         if (const auto it = prices_.find(record); it != prices_.end()) cost += std::max(0, count - disks_held(slot, record)) * it->second;
@@ -2069,7 +2071,7 @@ int CampaignBot::planned_spend(engine::Engine& engine) const {
     int bits = slot.bits + slot.bank_bits, spend = 0;
     const bool heavy = heavy_way(engine), last = last_stand(engine);
     for (const auto& s : kSupplies) {
-        if (slot.max_hp < s.from_hp || slot.max_hp >= s.to_hp || (s.heavy && !heavy)) continue;
+        if (slot.max_hp < s.from_hp || slot.max_hp >= s.to_hp || (s.heavy && !heavy) || (s.last && !last)) continue;
         const auto it = prices_.find(s.record);
         if (it == prices_.end() || it->second <= 0) continue;
         const int count =
@@ -3916,7 +3918,8 @@ constexpr float kRingRim = 16.0f;
 struct DodgeArea {
     float x0, x1, z0, z1, due, end;
 };
-std::vector<DodgeArea> dodge_areas(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player, const char* homing) {
+std::vector<DodgeArea> dodge_areas(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player, const char* homing,
+                                   bool owned_bodies = false) {
     std::vector<DodgeArea> areas;
     auto* models = engine.get<engine::ModelCtrlManager>();
     if (!models || !player.node) return areas;
@@ -3928,14 +3931,17 @@ std::vector<DodgeArea> dodge_areas(engine::Engine& engine, const engine::ModelCt
         const auto& m = e->node->matrix;
         for (const auto& box : e->hitboxes) {
             const int group = box.kind / 10000;
-            // (A permanent box of a model that is no enemy counts too: stagBS06
+            // (With `owned_bodies`, the fight of a boss with BossFight::lane, a
+            // permanent box of a model that is no enemy counts too: stagBS06
             // Daemon's orbs, f_devl31 (MODELCTRL), come up beside the player
             // with a 12-wide box of 70090 (~30 % of a level 40 player's HP)
             // that goes live 20 frames on and stays: 10 of 33 blows a no-cheat
             // test took there. Only such a model an enemy made, its owner:
             // gimmicks with a body of their own, the dng412 trains, stay
-            // out.)
-            if ((group != 7 && group != 8) || (box.end >= 1e7f && (e->category == "ENEMY" || e->owner_name.empty())) || box.elapsed >= box.end)
+            // out. Not in the other boss fights: the no-cheat segments
+            // through stagBS01..03 played other ways with it.)
+            if ((group != 7 && group != 8) || (box.end >= 1e7f && (!owned_bodies || e->category == "ENEMY" || e->owner_name.empty())) ||
+                box.elapsed >= box.end)
                 continue;
             const float due = std::max(0.0f, box.delay - box.elapsed);
             if (due > kDodgeHorizon) continue;
@@ -4197,7 +4203,7 @@ bool CampaignBot::lane_step(engine::Engine& engine, const engine::ModelCtrlManag
     const auto all = sweeps_for(false);
     // The other boxes about to go live (dodge_areas: Daemon's orbs come up
     // beside a player waiting out a flight) are kept off as well.
-    const auto areas = dodge_areas(engine, player, "");
+    const auto areas = dodge_areas(engine, player, "", true);
     const float here_due = dodge_due(areas, me.x, me.z);
     const bool in_danger = in_way(me.x, me.z, all) || here_due <= kLaneHazard;
     const bool tracing = std::getenv("DW4_TRACE_CAMPAIGN") && std::string_view(std::getenv("DW4_TRACE_CAMPAIGN")) == "2";
@@ -4433,7 +4439,7 @@ bool CampaignBot::boss_fight(engine::Engine& engine, const engine::ModelCtrlMana
         }
     }
     if (dodge) {
-        areas = dodge_areas(engine, player, homing);
+        areas = dodge_areas(engine, player, homing, lane && *lane);
         if (omen && *omen) omen_areas(engine, player, omen, frame, omen_seen_, areas);
         here_due = dodge_due(areas, me.x, me.z);
         // (A box about to go live within 20 of the player: no heal now that
@@ -5098,12 +5104,12 @@ int CampaignBot::heal_stock_percent(engine::Engine& engine) const {
     if (!sys || !db) return 100;
     const auto& slot = sys->players[0];
     double held = 0.0, full = 0.0;
-    const bool heavy = heavy_way(engine);
+    const bool heavy = heavy_way(engine), last = last_stand(engine);
     for (const int record : {0, 1, 2, 9}) {
         int keep = 0;
         for (const auto& s : kSupplies)
             if (s.record == record && slot.max_hp >= s.from_hp && slot.max_hp < s.to_hp && slot.bits + slot.bank_bits >= s.reserve &&
-                (!s.heavy || heavy))
+                (!s.heavy || heavy) && (!s.last || last))
                 keep = std::max(keep, std::min(s.keep, 9));
         const double hp = record == 9 ? slot.max_hp : std::min(db->number("conItem", record, "HP").value_or(0), slot.max_hp);
         held += hp * disks_held(slot, record);
@@ -6018,10 +6024,10 @@ float CampaignBot::blow_due(engine::Engine& engine, const engine::ModelCtrlManag
                     }
                 }
             }
-            // (A permanent box an enemy's model sets out that is still to go
-            // live counts as a blow due then: stagBS06 Daemon's orbs, see
-            // dodge_areas.)
-            if (due >= best || (body && (due <= 0.0f || e->category == "ENEMY" || e->owner_name.empty()))) continue;
+            // (In the last boss stage a permanent box an enemy's model sets
+            // out that is still to go live counts as a blow due then:
+            // stagBS06 Daemon's orbs, see dodge_areas.)
+            if (due >= best || (body && (due <= 0.0f || e->category == "ENEMY" || e->owner_name.empty() || stage_ != kLastBoss))) continue;
             if (seen.prev_frame == frame - 1) {
                 const float ahead = due + kGuardLead;
                 cx2 += (seen.at.x - seen.prev.x) * ahead;
