@@ -2173,7 +2173,8 @@ int run(const Options& options, dw4::game::Settings& settings) {
             wav.write(reinterpret_cast<const char*>(audio_dump.data()), std::streamsize(bytes));
             std::cout << "audio dump " << audio_dump_path << " (" << audio_dump.size() / 2 << " frames)\n";
         }
-        std::cout << "unimplemented:\n";
+        // The session's notes of original behaviour the port lacks (none: no list).
+        if (!engine.notes().empty()) std::cout << "unimplemented:\n";
         for (const auto& note : engine.notes()) std::cout << "  " << note.text << " x" << note.count << '\n';
         for (auto* pad : gamepads) SDL_CloseGamepad(pad);
     }

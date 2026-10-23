@@ -9,8 +9,10 @@
 #include "dw4/engine/random.hpp"
 #include "dw4/motion.hpp"
 #include "dw4/sfp.hpp"
+#include "dw4/sndf.hpp"
 
 #include <array>
+#include <limits>
 #include <random>
 #include <map>
 #include <memory>
@@ -312,6 +314,8 @@ public:
     // BGM entry holding that id, else the ambience's, else every sound effect
     // entry holding it fades from `from` to `to` over `frames`.
     void fade_id(std::uint64_t id, float from, float to, float frames);
+    // The SNDF as the game sees it (tests and traces).
+    const sndf::Driver& driver() const { return driver_; }
     // The movie playing (MOVIE PLAY: the Alchemy movie plugin's
     // igCriMovieCodec over CRI Sofdec, see play_movie): its video stream,
     // the player's state and the picture on the screen.
@@ -386,6 +390,7 @@ private:
         std::string file;                // "[archive.entry]" it was opened from
         std::uint64_t serial{};          // entry +24: nonzero while the entry holds a sound
         int priority{};                  // entry +34: beSoundData [9] of the sound started last
+        int type{};                      // entry +32: beSoundData [4] of the sound started last
         int volume{};                    // fade object +12: the sound's volume, 0.1 dB (beSoundData [8])
         int out_volume{-999};            // ADXT_SetOutVol (0.1 dB): volume + base, then the fade's steps
         Fade fade;
@@ -398,47 +403,25 @@ private:
     // A loaded sfp bank with its samples decoded once.
     struct SeBank {
         std::string name; // lower-case file name
-        std::unique_ptr<sfp::Bank> bank;
-        std::vector<std::vector<std::int16_t>> pcm;
-        std::vector<std::uint32_t> loop_start;
+        std::shared_ptr<sndf::BankData> data;
         bool common{};
     };
-    // A running request sequence (803C49F4, one of 16 tracks). `id` is the
-    // play id (the serial) of the Cri sound entry that started it.
-    struct SeTrack {
-        std::shared_ptr<SeBank> bank;
-        sfp::Sequence sequence;
-        std::string name;
-        std::uint64_t id{};
-        float gain = 1.0f;
-        double wait_ms{};
-    };
-    // A playing split sample (of the entry with play id `id`).
-    struct SeVoice {
-        std::shared_ptr<SeBank> bank;
-        int sample{};
-        std::string name;
-        std::uint64_t id{};
-        std::size_t position{};
-        double phase{};
-        double pitch = 1.0; // random detune
-        float left = 1.0f, right = 1.0f;
-        float level = 1.0f; // the entry's SEQ volume / 127 (a VOLUMECTL fade)
-        // The level the AX mixer ramps across the running AX frame: a change
-        // of `level` takes effect at the next frame (begin_ax_frame).
-        float level_from = 1.0f, level_to = 1.0f;
-        float aux_left{}, aux_right{}; // the AUX A send (803BA5B4)
-        bool loop{};
-    };
-    // A fade of an sfp sound entry (VOLUMECTL with its play id): 802F53B8
-    // steps it once per field with 8031DDB8, the level as the SEQ volume
-    // 0..127 (SNDF command 4, 8031CF94), and stops the entry once a fade to
-    // 0.0 reaches 12 or less.
-    struct SeqFade {
-        std::uint64_t id{};
+    // One of the Cri SE list's 48 sfp entries (802F66C8: 8031C99C(sound, -1)
+    // after the four ADX entries). Entry i is SE list index 4 + i, the SNDF
+    // sequence number its requests play on (8031CCFC).
+    struct SfpEntry {
+        std::uint64_t serial{};  // +24: the play id (0: free)
+        int type{};              // +32: beSoundData [4]
+        int priority{};          // +34: beSoundData [9]
+        std::string name;        // +8
+        int seq{};               // sound object +12 -> +8: the sequence (0: none)
+        std::uint32_t request{}; // ... +20
+        bool seen{};             // ... +24: GETSTATUS saw the sequence play
+        int volume{};            // fade object +12: beSoundData [8]
         Fade fade;
-        int volume = 127;
     };
+    static constexpr std::size_t kSfpEntries = 48;
+    static constexpr int kSfpFirstSeq = 4;
     // SOUND PLAY <name> (80314FC8): the play id (the Cri serial of the
     // started sound, 0 if nothing started).
     std::uint64_t play(Engine& engine, const std::string& name);
@@ -447,12 +430,39 @@ private:
     std::uint64_t start_bgm_env(Engine& engine, const std::string& name, const SoundData& data);
     // 802F5A04: a sound effect, an sfp request or an ADX file on an SE stream channel.
     std::uint64_t start_effect(Engine& engine, const std::string& name, const SoundData& data);
-    // The sfp request (8031CCFC SEQ_PLAY); false: nothing started.
-    bool play_request(Engine& engine, const std::string& name, const SoundData& data, std::uint64_t id);
-    // The sfp entry with that play id stops (its tracks and voices; 0: all).
-    void stop_effects(std::uint64_t id);
-    // 802F53B8 for the sfp entries: their fades step once per field.
-    void step_seq_fades();
+    // 802F5B64: an sfp request on an entry of the SE list (802F56B0), its
+    // sequence set and played (8031CCFC) at SEQ volume 127; the play id or 0.
+    std::uint64_t start_sfp(Engine& engine, const std::string& name, const SoundData& data);
+    // 802F56B0 for the sfp entries: the first free one, else the one with
+    // the oldest serial among those whose priority does not exceed the
+    // sound's (stopped first); -1: none.
+    int choose_sfp_entry(int priority, std::int64_t now);
+    // 802F5F98 for an sfp entry: serial and name cleared, the fade reset,
+    // SEQ volume 0 and, while the driver still reports the sequence, its
+    // stop (8031CF94, 8031CE14).
+    void stop_sfp(std::size_t index, std::int64_t now);
+    // 8031D0F0 for an sfp entry: 1 while GETSTATUS reports the sequence's
+    // track or its voices alone (remembered as seen), else 0 once it was
+    // seen and 1 before.
+    int sfp_status(SfpEntry& entry);
+    // 8031CF94 for an sfp entry: the SEQ volume (SNDF command 4).
+    void sfp_volume(const SfpEntry& entry, int volume, std::int64_t now);
+    // The driver the game sees, ticked for the AX frames that began before
+    // `ticks` (CPU ticks of the world clock).
+    void advance_driver(std::int64_t ticks);
+    // When the frame's sound commands reach the SNDF's ring: the world time of
+    // the update plus 0.6 ms (Dolphin's dng102b1 onsets: a request less than
+    // 0.57 ms before an AX frame boundary is run a frame later, one 0.65 ms or
+    // more before it at that boundary; the game's update before its sound
+    // requests).
+    static constexpr std::int64_t kCommandTicks = 291600;
+    std::int64_t command_ticks(Engine& engine) const;
+    std::int64_t ax_frame_ticks(std::int64_t frame) const { return cri_.ax_phase + frame * CriStreams::kAxFrameTicks; }
+    sndf::Driver::Banks driver_banks() const;
+    // 802F68D0 (SOUND ONFREEZE / OFFREEZE): every running type 4 entry goes
+    // silent (an sfp entry's SEQ volume 0, an ADX entry's output volume
+    // -999) or back (127 / 0 dB).
+    void freeze(Engine& engine, bool off);
     // 802F5828 / 802F5A04 after the entry is chosen: pause, SetOutVol,
     // ADXT_StartAfs, the PLAYatPAUSE flag, the serial (0: not started).
     std::uint64_t start_stream(Engine& engine, int channel, const std::string& name, const SoundData& data);
@@ -468,6 +478,14 @@ private:
     // 802F61F8 / 802F6334: the BGM entry of that name, else the ambience's,
     // else every SE stream entry of that name.
     template <class F> void for_named(std::string_view name, F&& f);
+    // 802F6334: a fade of the BGM entry of that name, else the ambience's,
+    // else of every SE list entry of that name (the sfp entries too).
+    void fade_named(std::string_view name, float from, float to, float frames);
+    // DW4_TRACE_SOUND: the SNDF voices that started and ended (the game's driver).
+    void trace_voices(Engine& engine);
+    std::vector<std::uint32_t> traced_voices_;
+    bool trace_audio_{};                   // render() notes the streams' audio starts for the next update's trace
+    std::vector<std::string> audio_trace_;
     // 8031D294 (ADXT_Pause) on a channel's handle.
     void pause_channel(Engine& engine, int channel, bool paused);
     // 802F7244: the SNDF master volume, set once (803C2734).
@@ -480,13 +498,13 @@ private:
     void play_movie(Engine& engine, const Ram& ram, const std::string& name);
     // One stream resampled into the mix at the rate the AX voice plays it
     // (`sofdec`: the movie's handle, RNA mode 1).
-    void mix_stream(Stream& stream, float gain, bool sofdec, float* mix, std::size_t frames);
+    // The gain ramps linearly from `gain_from` to `gain_to` across the frames.
+    void mix_stream(Stream& stream, float gain_from, float gain_to, bool sofdec, float* mix, std::size_t frames);
     void add_bank(Engine& engine, const ObjectView& data, bool common);
-    void run_track(SeTrack& track);
-    // The effect voices into `mix` and, while the AUX A bus is on, their
-    // AUX A sends into `aux` (both interleaved stereo); `at` is the first
-    // sample's place in the running AX frame (the level ramp).
-    void mix_voices(float* mix, std::size_t frames, std::size_t at, float* aux = nullptr);
+    // The effect voices of `driver` (an audio copy) into `mix` (interleaved
+    // stereo) for output samples from CPU tick `ticks` on, in AX frame
+    // `frame` (the MIX ramp of the frame).
+    void mix_voices(const sndf::Driver& driver, float* mix, std::size_t frames, std::int64_t ticks, std::int64_t frame);
     // _common/sbiallse.igb's banks (allse.sfp is the SNDF's bank 0), loaded
     // once at boot by the original (802F902C).
     void load_common_banks(Engine& engine);
@@ -496,10 +514,10 @@ private:
     void select_effect(Engine& engine, std::string_view name);
     // 803BF698: the AUX effects of a bank's effect preset (0x7F: off).
     void sndf_effect(Engine& engine, int bank, int preset);
-    // render() in AX frames: the frame interrupt (the AUX A callback, the
-    // return the DSP adds in the frame) and the frame's end (its sends).
-    void begin_ax_frame();
-    void end_ax_frame();
+    // render() at the start of AX frame `frame`: the streams' MIX ramps, the
+    // AUX A callback and the return the DSP adds in the frame, the frame's
+    // AUX A sends at the DSP rate.
+    void begin_ax_frame(const sndf::Driver& driver, std::int64_t frame);
     // 802F5F98: the entry stops (serial, name and fade cleared, ADXT_Stop).
     void stop(int channel);
     std::vector<std::unique_ptr<Ram>> rams_;
@@ -515,16 +533,18 @@ private:
     std::map<std::string, std::int64_t, std::less<>> se_recent_;
     std::vector<std::shared_ptr<SeBank>> banks_;
     bool common_loaded_{};
-    std::vector<SeTrack> tracks_;
-    std::vector<SeVoice> voices_;
-    std::vector<SeqFade> seq_fades_;
+    std::array<SfpEntry, kSfpEntries> sfp_{};
+    sndf::Driver driver_;              // the SNDF as the game sees it
+    std::int64_t driver_frame_{-1};    // the last AX frame it ticked
     // beSeInfoData: per model name, action -> sound after [4] frames.
     struct SeCue {
         std::string action, sound;
         int delay{};
     };
     std::map<std::string, std::vector<SeCue>, std::less<>> se_sets_;
-    std::uint32_t random_ = 0x12345678u;
+    // The C library's rand() state (8009C1CC, r13 -0x7110: 1 at boot); the
+    // SNDF's random detune is its only user (no script calls math.random).
+    std::uint32_t random_ = 1;
     std::string current_bgm_;       // RAM +0x24 (set by a started BGM PLAY; BGMSTOP and a new stage's RAM clear it)
     int se_volume_{};               // Cri +0x38: SNDF master 1..127 (beSoundInfo [10] / SNDFVOLUME), 0 unset
     int base_volume_{};             // Cri +0x34: beSoundInfo [9] _baseVolume, 0.1 dB
@@ -554,14 +574,29 @@ private:
     axfx::ReverbStd reverb_a_;             // 80537748, AXRegisterAuxACallback 8023D07C
     bool aux_a_callback_{};
     axfx::AuxBus aux_a_;
-    // The AX frame render() is in: one frame is 240 output samples (160 at
-    // the DSP's 32 kHz); its AUX A sends and the return the DSP adds in it
-    // (48 kHz, interleaved), the last returned sample.
-    static constexpr std::size_t kAxFrameOutput = 240;
-    std::size_t ax_fill_{};
+    // The audio clock: output sample s of render() stands for CPU tick
+    // s * 10125 + one field + clock_offset_ (the chunk rendered after the
+    // game update at t holds the audio from t on).
+    static constexpr std::int64_t kSampleTicks = 10125;    // 486 MHz / 48 kHz
+    static constexpr std::int64_t kDspSampleTicks = 15174; // 486 MHz / 32028.5 Hz (160 per AX frame)
+    std::uint64_t rendered_{};
+    std::int64_t clock_offset_{};
+    std::int64_t render_frame_{std::numeric_limits<std::int64_t>::min()}; // the AX frame render() is in
+    // MIXUpdateSettings for the streams: a stream's output volume reaches
+    // the mix at the next AX frame and ramps across it (802A6B8C ->
+    // MIXSetInput); a stream that starts plays at once at its level.
+    struct StreamMix {
+        float from{}, to{};
+        bool on{};
+        std::uint64_t serial{}; // the sound the ramp belongs to
+    };
+    bool stream_on(std::size_t channel) const;
+    std::array<StreamMix, 2 + kSeStreams> stream_mix_{};
+    // The AUX A return the DSP adds in the running frame (DSP rate, per
+    // channel) and the first sample of the next frame's.
     bool aux_emit_{};
-    std::array<float, 2 * kAxFrameOutput> aux_sends_{}, aux_return_{};
-    std::array<float, 2> aux_last_{};
+    std::array<std::array<float, axfx::kFrameSamples>, 2> aux_return_{};
+    std::array<float, 2> aux_next_{};
 };
 
 // beTextureCtrl (80324B30 / 80324C54): binds named pack textures to the

@@ -1,5 +1,6 @@
 #include "dw4/axfx.hpp"
 #include "dw4/sfp.hpp"
+#include "dw4/sndf.hpp"
 
 #include <algorithm>
 #include <cstdint>
@@ -7,6 +8,7 @@
 #include <functional>
 #include <iostream>
 #include <limits>
+#include <memory>
 #include <stdexcept>
 #include <vector>
 
@@ -261,6 +263,100 @@ void malformed() {
         sfp::Bank b(std::move(d));
     });
 }
+
+// The SNDF driver and the AX voice pool (src/sndf.cpp).
+std::shared_ptr<const sndf::BankData> driver_bank() {
+    auto data = std::make_shared<sndf::BankData>();
+    data->bank = std::make_unique<sfp::Bank>(bank());
+    for (std::size_t i = 0; i < data->bank->sample_count(); ++i) {
+        std::uint32_t loop = 0;
+        data->pcm.push_back(data->bank->decode(i, &loop));
+        data->loop_start.push_back(loop);
+    }
+    return data;
+}
+
+void pitch() {
+    // 8024583C / 8023F53C against the DOL's table at 804C4A98.
+    const std::pair<int, std::uint32_t> ratios[] = {{-498, 49153}, {-499, 49124}, {-501, 49068}, {701, 98249}, {0, 65536},
+                                                    {2400, 262144}, {2500, 262144}, {-2400, 16384}, {-1, 65498}, {-62, 63230}};
+    for (const auto& [cents, ratio] : ratios) check(sndf::src_ratio(sndf::cents_ratio(cents)) == ratio, "SRC ratio of cents");
+    check(sndf::cents_ratio(-2400) == 0.25f && sndf::cents_ratio(1200) == 2.0f, "Octaves are exact");
+    // Split tuning: -5 semitones + 1/64 (803B9F14: 100 * semitones + 1.5625 * fine).
+    const auto b = sfp::Bank(bank());
+    check(b.split_at(0)->semitones == -5 && b.split_at(0)->cents == 1 && b.split_at(2) == nullptr, "Split by index");
+}
+
+void driver() {
+    const auto data = driver_bank();
+    const sndf::Driver::Banks banks{data};
+    std::uint32_t random = 1;
+    sndf::Driver d;
+    d.ax().set_reserved(8);
+    // SEQ_SET and SEQ_PLAY queue the request; GETSTATUS sees nothing until a tick runs it.
+    check(d.seq_set(4, 0xa9050000u, 100) && d.seq_play(4, 100), "Request queued");
+    check(d.status(4) == 0 && d.seqs()[4].state == 1, "Nothing runs before the tick");
+    d.tick(0, 50, banks, random, 5.0); // earlier than the request
+    check(d.status(4) == 0, "A tick before the request's time leaves it queued");
+    d.seq_volume(4, 127, 100);
+    d.tick(1, 100, banks, random, 5.0);
+    // The one-shot sequence ended in the tick (state 3), its voice sounds.
+    check(d.status(4) == 1 && d.seqs()[4].state == 3 && d.seqs()[4].voices == 1, "Voice of the sequence");
+    const auto& v = d.voices()[0];
+    check(v.used && v.seq == 4 && v.priority == 11 && v.ratio == 49153 && v.loop && v.start == 1,
+          "Voice record: split 0 (sample 1, a loop), -498 cents");
+    check(v.gain_from == v.gain_to && v.gain_to > 0.0f, "A new voice starts at its level");
+    // A loop sounds until its sequence stops: 0xB035 keys it off, the release (0: at once) reaches -96 dB at the service,
+    // the next tick frees it and its sequence (state 1).
+    check(d.seq_stop(4, 200), "Stop queued");
+    d.tick(2, 200, banks, random, 5.0);
+    check(d.voices()[0].used && d.voices()[0].key == 2 && d.voices()[0].gain_to == 0.0f && d.voices()[0].gain_from > 0.0f,
+          "Key off ramps to silence across the next frame");
+    check(d.voices()[0].priority == 10, "Key off lowers the AX priority");
+    d.tick(3, 300, banks, random, 5.0);
+    check(!d.voices()[0].used && d.status(4) == 0 && d.seqs()[4].state == 1, "Released voice freed");
+
+    // Request 1: key 1 (split 1: a one-shot with a random detune of +-40/64 semitone from rand()), then after 258 ms key 0.
+    sndf::Driver e;
+    std::uint32_t rnd = 1;
+    e.seq_set(5, 0xa9050100u, 0);
+    e.seq_play(5, 0);
+    e.tick(0, 0, banks, rnd, 5.0);
+    check(rnd == 1103527590u, "rand() advanced once (8009C1CC)");
+    // (16838 % 80) - 40 = -2: fine 1 - 2 = -1, -500 - 1.5625 = -501 cents.
+    check(e.voices()[0].used && e.voices()[0].ratio == 49068 && !e.voices()[0].loop, "Detuned one-shot");
+    check(e.status(5) == 3, "Track waiting and voice: both bits");
+    // 28 samples at 0.749 run out in the first frame: freed at the next tick.
+    check(e.voices()[0].end == 0, "One-shot runs out in its first frame");
+    e.tick(1, 1, banks, rnd, 5.0);
+    check(!e.voices()[0].used && e.status(5) == 2, "Ran out: freed; the track still waits");
+    for (int f = 2; f < 60 && e.status(5) == 2; ++f) e.tick(f, f, banks, rnd, 5.0);
+    check(e.voices()[0].used && e.voices()[0].loop && e.seqs()[5].state == 3, "Second note after the wait");
+
+    // AX pool: two voices left; a key-on voice is never taken by an equal priority, a key-off one is (drop callback).
+    sndf::Driver f;
+    std::uint32_t r3 = 1;
+    f.ax().set_reserved(62);
+    for (int s = 1; s <= 3; ++s) {
+        f.seq_set(s, 0xa9050000u, 0);
+        f.seq_play(s, 0);
+    }
+    f.tick(0, 0, banks, r3, 5.0);
+    check(f.ax().in_use() == 64 && f.status(3) == 0 && f.seqs()[3].state == 3, "No voice for the third request");
+    f.seq_stop(1, 1);
+    f.tick(1, 1, banks, r3, 5.0);
+    f.seq_set(3, 0xa9050000u, 2);
+    f.seq_play(3, 2);
+    f.tick(2, 2, banks, r3, 5.0); // the key-off voice of sequence 1 is freed first (released at once)
+    check(f.status(3) == 1 && f.ax().in_use() == 64, "Freed voice reused");
+    // A dropped record keeps its sequence for GETSTATUS (803C0B44).
+    sndf::AxPool pool;
+    pool.set_reserved(63);
+    std::int64_t dropped = -1;
+    const int a = pool.acquire(19, 7, dropped);
+    check(a >= 0 && dropped == -1 && pool.acquire(19, 8, dropped) == -1, "Equal priority is not taken");
+    check(pool.acquire(20, 9, dropped) == a && dropped == 7, "Lower priority taken, owner dropped");
+}
 } // namespace
 
 int main() {
@@ -272,6 +368,8 @@ int main() {
         sequences();
         adpcm();
         malformed();
+        pitch();
+        driver();
     } catch (const std::exception& error) {
         std::cerr << "FAILED: " << error.what() << '\n';
         return 1;

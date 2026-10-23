@@ -237,7 +237,11 @@ void ModelCtrlManager::add_info(Engine& engine, const ObjectView& info) {
         // beNDMWMdlItem registration (803AAAC4): pickups answer DROPITEM.
         if (category == "ITEM") engine.messenger().add_row("DROPITEM", ram->info_name, ram->index, ram.get());
         ram->hit = hit;
-        if (hit && !hit->boxes.empty()) {
+        // 803083CC registers the HIT categories by the HIT record's flags
+        // (+0x10 / +0x18 / +0x11) alone, also for a record without boxes
+        // (stagBS06's x_042fmagc01a): such a target takes CHKBULLET and,
+        // with nothing to overlap, never answers.
+        if (hit) {
             if (hit->player_bullet) engine.messenger().add_row("HITPLAYERBULLET", ram->info_name, ram->index, ram.get());
             if (hit->player_talk) engine.messenger().add_row("HITPLAYERTALK", ram->info_name, ram->index, ram.get());
             if (hit->enemy_bullet) engine.messenger().add_row("HITENEMYBULLET", ram->info_name, ram->index, ram.get());

@@ -89,6 +89,7 @@ void Messenger::clear() {
     deferred_records_ = kDeferredRecords;
     paused_at_ = 0;
     by_category_stale_ = true;
+    traced_no_recipient_.clear();
 }
 
 template <class Visit>
@@ -175,8 +176,24 @@ std::size_t Messenger::send(Engine& engine, std::string_view category, std::opti
         });
     }
     if (recipients.empty()) {
-        engine.note("no recipient: " + std::string(category) + " " + std::string(command) +
-                    (name ? " (" + std::string(*name) + ")" : std::string()));
+        // 80305A28 calls no handler when no row fits: the message is
+        // dropped, its reply lists stay empty and the sender reads "no
+        // answer" (8030690C / 80306A30 = 0); sd returns nothing to a script
+        // either way. Every such message of the story, the exit survey (1-4
+        // players) and the stage loads is the original's too: the stage has
+        // no info, child or RAM index of that name (scripts shared between
+        // stages, more GENERATEs than RAMs, typos such as g_bush02z, the
+        // lobby's HUD without i_stpnl05, stag0103's boat meter instead of
+        // hpmt / hpnm, stag0203 without g_000bcaps or weapon packages), or a
+        // fixed sender meets a stage without that manager (the loader's
+        // TEXTCTL INITIALIZE 0x802F9B0C, the quick panel's SUBWND ISRUN
+        // 0x8034B28C, the SUBWND programs' GENERATER ONFREEZE 0x8034FC1C).
+        // DW4_TRACE_NO_RECIPIENT=1 lists each once per stage.
+        static const bool trace = std::getenv("DW4_TRACE_NO_RECIPIENT") != nullptr;
+        if (trace) {
+            std::string text = std::string(category) + " " + std::string(command) + (name ? " (" + std::string(*name) + ")" : std::string());
+            if (traced_no_recipient_.insert(text).second) engine.log("no recipient: " + text);
+        }
         return 0;
     }
     for (auto* ram : recipients) {
@@ -622,10 +639,27 @@ bool Engine::load_common_now(const std::string& logical_path) {
     return files_.size() != before;
 }
 
+// DW4_TRACE_INFOS=1 logs every registered info (type, name, RAM count and the
+// manager that took it).
 void Engine::register_info(const ObjectView& info) {
+    static const bool trace = std::getenv("DW4_TRACE_INFOS") != nullptr;
+    // 8028A7DC offers the info to every module's +0x6C (802F251C) until one
+    // takes it; a module takes only infos whose meta is exactly its own
+    // (+0x80 == the info's +0x58). No module has the plain igInfo meta (its
+    // pointer r13-0x3508 is read only by igInfo's own class functions
+    // 8002E9C0 / 8002EB4C and the loader), so a plain igInfo (the nameless
+    // one without RAMs in stagIS08 / 10 / 12 / 13) is dropped: no rows, no
+    // scheduled module.
+    if (info.type() == "igInfo") {
+        if (trace) log("info igInfo " + std::string(info.str(2)) + " taken by no module");
+        return;
+    }
     bool accepted = false;
     for (auto& m : managers_) {
         if (m->accepts(info)) {
+            if (trace)
+                log("info " + info.type() + " " + std::string(info.str(2)) + " (" + std::to_string(info.list(6).size()) +
+                    " RAMs) -> " + m->type_name());
             m->add_info(*this, info);
             // 802F251C: an accepted info schedules its manager (8028A398);
             // the scheduler appends it unless it is already active (80041E40
