@@ -2631,7 +2631,8 @@ bool LightCtrlManager::command(Engine& engine, Ram&, std::string_view command, P
 // ---------------------------------------------------------------------------
 bool PassiveManager::accepts(const ObjectView& info) const {
     const auto& t = info.type();
-    return t.starts_with("be") || t == "ParticleInfo" || t == "igInfo" || t == "igAnimationDatabase";
+    // (A plain igInfo never gets here: no module takes it, Engine::register_info.)
+    return t.starts_with("be") || t == "ParticleInfo" || t == "igAnimationDatabase";
 }
 void PassiveManager::add_info(Engine& engine, const ObjectView& info) {
     // Build metadata (beOptInfo, e.g. "beCameraOPT.ini" with its dates) and

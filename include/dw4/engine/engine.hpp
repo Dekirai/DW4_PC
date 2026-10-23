@@ -145,6 +145,10 @@ private:
     };
     mutable std::unordered_map<std::string, CategoryRows, TextHash, std::equal_to<>> by_category_;
     mutable bool by_category_stale_ = true;
+    // DW4_TRACE_NO_RECIPIENT: the (category, command, name) of the stage's
+    // messages that found no row, each logged once per stage (diagnostics
+    // only, not part of the simulated state).
+    std::set<std::string> traced_no_recipient_;
     // Calls `visit(row)` for the rows of `category` that a selection by
     // `name` (any when empty) can take, in row order, until it returns false.
     template <class Visit>

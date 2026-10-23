@@ -70,10 +70,13 @@ bool PanelManager::command(Engine& engine, Ram& base, std::string_view command, 
     for (int i = 0; i < 11; ++i)
         if (command == names[i]) id = i;
     if (id < 0) return false;
-    // Opening waits while the status window (SUBWND) runs.
+    // Opening waits while the status window (SUBWND) runs: 8034AF60 asks
+    // SUBWND RAM 0 (0x8034B284..0x8034B28C: no name, index 0); a stage
+    // without the status window (stag0001, stag0203) gives no answer, which
+    // counts as not running (0x8034B294).
     if (id < 4) {
         Packet run;
-        engine.messenger().send(engine, "SUBWND", std::nullopt, -1, "ISRUN", run);
+        engine.messenger().send(engine, "SUBWND", std::nullopt, 0, "ISRUN", run);
         if (!run.bools.empty() && run.bools[0]) return true;
     }
     switch (id) {
