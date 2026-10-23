@@ -19,8 +19,9 @@
 // owner learns it through the drop callback 803C0B44).
 //
 // Driver is plain state: the sound manager keeps the one the game sees and
-// renders audio from copies of it, so what the game observes never depends
-// on whether or when audio is rendered.
+// renders audio from a mirror of it (Mirror: a copy ticked on the audio's own
+// frames with the game's calls replayed), so what the game observes never
+// depends on whether or when audio is rendered.
 #include "dw4/sfp.hpp"
 
 #include <array>

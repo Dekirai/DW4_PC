@@ -1516,6 +1516,23 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     last_step_loaded = false;
                 }
                 mix_audio(step_samples(frame_base + engine.frame()));
+                // Test tool: DW4_AUDIO_TOPUP=FRAME:SAMPLES[,FRAME:SAMPLES...]
+                // renders SAMPLES more after the step of FRAME, as the queue
+                // top-up of interactive play does (smoke tests with a dump).
+                static const auto topups = [] {
+                    std::vector<std::pair<std::uint64_t, int>> list;
+                    if (const char* spec = std::getenv("DW4_AUDIO_TOPUP"))
+                        for (std::istringstream items(spec); items.good();) {
+                            std::string item;
+                            std::getline(items, item, ',');
+                            unsigned long long at = 0;
+                            int samples = 0;
+                            if (std::sscanf(item.c_str(), "%llu:%d", &at, &samples) == 2 && samples > 0) list.emplace_back(at, samples);
+                        }
+                    return list;
+                }();
+                for (const auto& [at, samples] : topups)
+                    if (options.smoke_frames && at == frame_base + engine.frame()) mix_audio(samples);
                 ++frame;
                 if (state_test) {
                     if (state_pass == 1) {
