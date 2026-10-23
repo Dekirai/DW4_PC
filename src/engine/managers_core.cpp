@@ -1690,7 +1690,7 @@ void SoundManager::stop_movie(Engine& engine) {
 }
 
 void SoundManager::update_held(Engine& engine) {
-    update_driver(engine);
+    update_driver(engine, false);
     if (!movie_ || !movie_->codec) return;
     auto& movie = *movie_;
     static const bool trace = std::getenv("DW4_TRACE_SOUND") != nullptr;
@@ -2070,7 +2070,7 @@ void SoundManager::serialize_persistent(StateArchive& a, std::shared_ptr<const v
 
 // The driver side (beCri, a module outside the managers' gate): it keeps
 // running during stage loads.
-void SoundManager::update_driver(Engine& engine) {
+void SoundManager::update_driver(Engine& engine, bool frame) {
     // One field of the CRI servers: the stream reads on the simulated drive,
     // decoding, PLAYING (disc_timing.hpp). The port's driver tick follows the
     // frame's game update, as the original's servers follow the previous one.
@@ -2093,6 +2093,16 @@ void SoundManager::update_driver(Engine& engine) {
     cri_.drive.instant = engine.fast_loading();
     cri_.tick(cri_ticks(engine.vi_time()));
     if (trace) trace_cri(engine, inflight_before, done_before, playing_before);
+    if (frame) update_entries(engine);
+    for (auto& track : tracks_) {
+        track.wait_ms -= double(engine.frame_delta()) / 1e6; // OSGetTick milliseconds of one field
+        run_track(track);
+    }
+    std::erase_if(tracks_, [](const SeTrack& track) { return track.sequence.finished(); });
+}
+
+void SoundManager::update_entries(Engine& engine) {
+    static const bool trace = std::getenv("DW4_TRACE_SOUND") != nullptr;
     // 802F53B8 over every entry holding a sound (serial set): a running one
     // (8031D0F0 == 1) steps its fade while the handle is not paused (8031D33C)
     // and sets the output volume; a fade to 0.0 stops the entry once the
@@ -2118,11 +2128,6 @@ void SoundManager::update_driver(Engine& engine) {
         }
     }
     step_seq_fades();
-    for (auto& track : tracks_) {
-        track.wait_ms -= double(engine.frame_delta()) / 1e6; // OSGetTick milliseconds of one field
-        run_track(track);
-    }
-    std::erase_if(tracks_, [](const SeTrack& track) { return track.sequence.finished(); });
 }
 
 void SoundManager::trace_cri(Engine& engine, int inflight_before, std::int64_t done_before,

@@ -362,7 +362,14 @@ public:
     std::uint64_t archive_offset(Engine& engine, unsigned archive) const { return disc_extent(engine, archive, ~0u).first; }
 
 private:
-    void update_driver(Engine& engine);
+    // `frame`: the Cri module's own update (802F53B8: a server pass, then the
+    // entries' fades) as well; without it (a field the frame's update covers)
+    // only the server pass the frame's wait makes (8029D6F0 after the codec's
+    // or the open's VIWaitForRetrace) and the SNDF's AX-frame sequencer
+    // (802A8F7C, an AX callback).
+    void update_driver(Engine& engine, bool frame = true);
+    // 802F53B8's entry pass: stream fades and volumes, sfp entries' SEQ fades.
+    void update_entries(Engine& engine);
     // beSoundData: [4] type (1 BGM, 2 ambience, 3/4 sound effects), [5] file
     // list index, [6] SE request id (-1: an ADX file), [8] volume in 0.1 dB,
     // [9] priority of an ADX sound effect on the SE stream channels.
