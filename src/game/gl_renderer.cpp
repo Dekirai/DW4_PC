@@ -1,6 +1,7 @@
 #include "gl_renderer.hpp"
 #include "texture_pack.hpp"
 
+#include "dw4/engine/gx_color.hpp"
 #include "dw4/textures.hpp"
 
 #include <SDL3/SDL.h>
@@ -95,12 +96,25 @@ void main() {
     vec4 local = vec4(a_pos, 1.0);
     vec3 normal = a_normal;
     if (u_skinned != 0) {
+        // A blended igVertexArray (visual context flag 0x10, 0x800FAD00) is
+        // skinned on the CPU in the immediate draw 0x800EDD24. Positions sum
+        // w_k * (p * M[i_k]) over the weights up to the first zero weight
+        // (0x800F00FC..0x800F01B4; one weight per vertex: p * M[i0] alone,
+        // 0x800F01BC, Mesh sets that weight to 1). The normal (flag 0x20,
+        // 0x800F03D8..0x800F044C) goes through the 3x3 of the FIRST blend
+        // index only (lbzx at 0x800F03FC), unweighted and not normalised; so
+        // do the NBT vectors (flag 0x200, 0x800F045C..0x800F0588) and the
+        // pre-blended buffer path (0x800FA968, normals through 0x800ED4A0).
+        // A vertex between two bones keeps the first bone's shading
+        // (s_weregaru's shoulders and tail, the wings of s_impdrafm/pm).
         int i0 = int(a_indices.x + 0.5), i1 = int(a_indices.y + 0.5);
-        vec4 p = u_palette[i0] * local * a_weights.x;
-        vec3 nn = mat3(u_palette[i0]) * a_normal * a_weights.x;
-        if (a_weights.y > 0.0) { p += u_palette[i1] * local * a_weights.y; nn += mat3(u_palette[i1]) * a_normal * a_weights.y; }
+        vec4 p = vec4(0.0);
+        if (a_weights.x != 0.0) {
+            p = u_palette[i0] * local * a_weights.x;
+            if (a_weights.y != 0.0) p += u_palette[i1] * local * a_weights.y;
+        }
         local = vec4(p.xyz, 1.0);
-        normal = nn;
+        normal = mat3(u_palette[i0]) * a_normal;
     }
     vec4 world = u_model * local;
     v_shadow = u_shadow_matrix * world;
@@ -439,6 +453,9 @@ const GlRenderer::Mesh* GlRenderer::mesh(const engine::GeometryData* g) {
             weights[k] = g->weights[i * wc + k];
             indices[k] = float(g->blend_indices[i * wc + k]);
         }
+        // One weight per vertex: 0x800F01BC transforms by the bone without
+        // reading the weight.
+        if (wc == 1) weights[0] = 1.0f;
         std::memcpy(p + 36, weights, 8);
         std::memcpy(p + 44, indices, 8);
     }
@@ -598,8 +615,10 @@ void GlRenderer::render_shadow_map() {
     gl.Uniform1i(gl.u_alpha_func, 7);
     // 801FDCCC (0x801FDD10..0x801FDD3C): _shadowColor = (f, f, f, 1) with
     // f = _shadowFactor, pushed while _useShadowFactor (default 1, never
-    // serialized) is set.
-    gl.Uniform4f(gl.u_modulate, shadow_->factor, shadow_->factor, shadow_->factor, 1);
+    // serialized) is set; it is an igColorAttr (setColor, vtable +0x80), so
+    // GX gets f rounded to 8 bits.
+    const float shadow_grey = engine::gx_round(shadow_->factor);
+    gl.Uniform4f(gl.u_modulate, shadow_grey, shadow_grey, shadow_grey, 1);
     gl.UniformMatrix4fv(gl.u_view, 1, GL_FALSE, shadow_->light_view.m.data());
     gl.UniformMatrix4fv(gl.u_proj, 1, GL_FALSE, shadow_->light_projection.m.data());
     const engine::Mat4 identity{};
@@ -767,7 +786,13 @@ void GlRenderer::render(const std::vector<engine::DrawItem>& items, const engine
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     glEnable(GL_SCISSOR_TEST);
     glScissor(wide.x, wide.y, wide.width, wide.height);
-    glClearColor(clear.x, clear.y, clear.z, 1);
+    // The GX copy clear colour each picture starts from is igClearAttr's
+    // packed colour (apply 800BD7D0 -> 800EC01C), which the attribute packs
+    // with 8012E1D8 (0x800BD8DC / 0x800BD924): rounded. beBkColor's float
+    // setClearColor (802F29E8 -> 800EBF28) would truncate, but the clear
+    // Dolphin shows is the rounded one: stagML14's 0.031 / 0.117 / 0.031
+    // background is 8 / 30 / 8, not 7 / 29 / 7.
+    glClearColor(engine::gx_round(clear.x), engine::gx_round(clear.y), engine::gx_round(clear.z), 1);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     gl.UseProgram(program_);
     gl.Uniform1i(gl.u_tex, 0);
@@ -831,8 +856,13 @@ void GlRenderer::render(const std::vector<engine::DrawItem>& items, const engine
         }
         gl.UniformMatrix4fv(gl.u_view, 1, GL_FALSE, view.m.data());
         gl.UniformMatrix4fv(gl.u_proj, 1, GL_FALSE, proj.m.data());
-        gl.Uniform4f(gl.u_color, s.color.x, s.color.y, s.color.z, s.color.w);
-        const auto mod = s.modulate.value_or(engine::Vec4f{1, 1, 1, 1});
+        // Constant colours reach GX as 8-bit register values (gx_color.hpp):
+        // igColorAttr colours, the FADESET / FLASHSET override among them,
+        // rounded like igColorAttr::setColor packs them (8012E1D8). A fade
+        // at 127.54 / 255 is drawn at 128 / 255 as in the original.
+        const auto color = engine::gx_round(s.color);
+        gl.Uniform4f(gl.u_color, color.x, color.y, color.z, color.w);
+        const auto mod = engine::gx_round(s.modulate.value_or(engine::Vec4f{1, 1, 1, 1}));
         gl.Uniform4f(gl.u_modulate, mod.x, mod.y, mod.z, mod.w);
         gl.Uniform1i(gl.u_use_vcol, m->has_colors ? 1 : 0);
         const Texture* tex = (s.texture_enabled && (m->has_uvs || texgen)) ? texture(s.texture) : nullptr;
@@ -844,13 +874,14 @@ void GlRenderer::render(const std::vector<engine::DrawItem>& items, const engine
         gl.Uniform1i(gl.u_lighting, lighting ? 1 : 0);
         if (lighting) {
             // 800F6DC0 builds the GX registers in 8 bits: the ambient register
-            // is emission + sum(light ambient * material ambient), a light's
-            // colour is light diffuse, times the material diffuse unless the
-            // material colour comes from the vertices (modes 2/3, mat_src
-            // VTX); each channel is clamped to 1 and truncated (fctiwz of
-            // c * 255 at 0x800F7228..0x800F727C, 0x800F7604..0x800F7678).
-            // A light diffuse above 1 (the lobby's 1.1) adds no more than 1.
-            auto reg = [](float v) { return std::floor(std::clamp(v, 0.0f, 1.0f) * 255.0f) / 255.0f; };
+            // is emission + sum(light ambient * material ambient) (fmadds,
+            // 0x800F6F30..0x800F6F40), a light's colour is light diffuse,
+            // times the material diffuse unless the material colour comes
+            // from the vertices (modes 2/3, mat_src VTX); each channel is
+            // clamped to 1 and truncated (gx_trunc: fctiwz of c * 255 at
+            // 0x800F7228..0x800F727C, 0x800F7604..0x800F7678). A light
+            // diffuse above 1 (the lobby's 1.1) adds no more than 1.
+            const auto reg = [](float v) { return engine::gx_trunc(v); };
             const engine::Vec4f tint = m->has_colors ? engine::Vec4f{1, 1, 1, 1} : s.diffuse;
             float dirs[12]{}, cols[12]{};
             engine::Vec3f ambient{s.emission.x, s.emission.y, s.emission.z};
@@ -859,9 +890,9 @@ void GlRenderer::render(const std::vector<engine::DrawItem>& items, const engine
                 if (count >= 4) break;
                 const engine::Attribute* attr = light;
                 if (light->kind == engine::AttrKind::light_state) continue;
-                ambient.x += attr->ambient.x * s.ambient.x;
-                ambient.y += attr->ambient.y * s.ambient.y;
-                ambient.z += attr->ambient.z * s.ambient.z;
+                ambient.x = std::fma(attr->ambient.x, s.ambient.x, ambient.x);
+                ambient.y = std::fma(attr->ambient.y, s.ambient.y, ambient.y);
+                ambient.z = std::fma(attr->ambient.z, s.ambient.z, ambient.z);
                 dirs[count * 3] = attr->matrix(0, 0);
                 dirs[count * 3 + 1] = attr->matrix(0, 1);
                 dirs[count * 3 + 2] = attr->matrix(0, 2);
@@ -875,12 +906,19 @@ void GlRenderer::render(const std::vector<engine::DrawItem>& items, const engine
             gl.Uniform3fv(gl.u_light_col, 4, cols);
             gl.Uniform3fv(gl.u_light_ambient, 1, ambient_reg);
             gl.Uniform1i(gl.u_light_count, count);
-            gl.Uniform4f(gl.u_diffuse, s.diffuse.x, s.diffuse.y, s.diffuse.z, s.diffuse.w);
+            // The material colour channels as the flush converts them, each
+            // clamped to 1 and truncated (0x800F76E0..0x800F7780; the alpha
+            // goes into the ALPHA0 registers, 0x800F7788..0x800F77F0).
+            const auto diffuse = engine::gx_trunc(s.diffuse);
+            gl.Uniform4f(gl.u_diffuse, diffuse.x, diffuse.y, diffuse.z, diffuse.w);
         }
         const bool fog = s.fog && s.fog_params && !s.projection;
         gl.Uniform1i(gl.u_fog, fog ? 1 : 0);
         if (fog) {
-            gl.Uniform4f(gl.u_fog_color, s.fog_params->color.x, s.fog_params->color.y, s.fog_params->color.z, 1);
+            // The fog flush 800F9604 hands GXSetFog the colour as fctiwz of
+            // 255 * c (0x800F9638..0x800F966C): truncated to 8 bits.
+            const auto& f = s.fog_params->color;
+            gl.Uniform4f(gl.u_fog_color, engine::gx_trunc(f.x), engine::gx_trunc(f.y), engine::gx_trunc(f.z), 1);
             gl.Uniform2f(gl.u_fog_range, s.fog_params->f0, s.fog_params->f1);
         }
         if (s.blend_enabled) {

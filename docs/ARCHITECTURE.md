@@ -304,6 +304,14 @@ change nodes through overrides (switch masks, colours, runtime text geometry,
 actor poses). Matrices are row-vector and share the column-major memory layout
 of the original. The GL renderer maps IGB attributes to fixed-function-like
 state in one shader (lighting, fog, alpha test, skinning palette of 64).
+Skinning follows the original's CPU blend in the igVertexArray immediate
+draw (0x800EDD24): positions sum the weighted bone transforms up to the first
+zero weight, normals go through the first blend index's 3x3 alone. Constant
+colours reach the GPU as the 8-bit values GX holds
+(`include/dw4/engine/gx_color.hpp`): igColorAttr colours (IGB attributes,
+the FADESET / FLASHSET overrides, text line colours, the shadow grey),
+igClearAttr's clear and particle vertex colours rounded like 8012E1D8; the
+lighting registers and the fog colour truncated.
 Lighting is on unless an igLightingStateAttr turns it off (the Alchemy
 default); the stage root "ROOTATTR" igLightStateSet switches its light sets on
 for the scene, and each lit vertex gets the lights' ambient times the material
