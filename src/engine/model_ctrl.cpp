@@ -2,6 +2,7 @@
 #include "dw4/motion.hpp"
 
 #include <algorithm>
+#include <bit>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -1242,6 +1243,12 @@ void ModelCtrlManager::update_player(Engine& engine, ModelRam& ram) {
         if (invert(camera.view, inverse)) {
             const Vec3f forward{inverse(2, 0), inverse(2, 1), inverse(2, 2)};
             ram.desired[1] = std::atan2(forward.x, forward.z) + std::atan2(sx, -sy);
+            // DW4_TRACE_STICK: the stick and the wanted yaw as float bits, in
+            // the format of the Dolphin M log (hook 0x8034C6B8).
+            if (static const bool trace = std::getenv("DW4_TRACE_STICK") != nullptr; trace)
+                std::printf("[%llu] M %08x %08x %08x\n", static_cast<unsigned long long>(engine.frame()),
+                            std::bit_cast<std::uint32_t>(sx), std::bit_cast<std::uint32_t>(sy),
+                            std::bit_cast<std::uint32_t>(ram.desired[1]));
         }
     }
     // 8034C4E8: while a direction is held, its octant counter restarts at 30

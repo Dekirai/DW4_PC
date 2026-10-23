@@ -90,6 +90,9 @@ void Messenger::clear() {
     paused_at_ = 0;
     by_category_stale_ = true;
     traced_no_recipient_.clear();
+    // 803040C0 releases the reply object (+0x10) and clears the made flag
+    // (+0x30): the next send makes new lists (80303C0C).
+    stale_bool_ = 0;
 }
 
 template <class Visit>
@@ -143,10 +146,15 @@ std::size_t Messenger::count(std::string_view category, std::optional<std::strin
 
 std::size_t Messenger::send(Engine& engine, std::string_view category, std::optional<std::string_view> name,
                             std::int32_t index, std::string_view command, Packet& packet) {
+    // The argument bools go into the shared object's list before the send
+    // (80306964), the answers after them (see stale_bool()).
+    const std::size_t arguments = packet.bools.size();
+    if (arguments != 0) stale_bool_ = packet.bools[0];
     if (command == "SEARCH") {
         const auto n = count(category, name, index);
         packet.bools.push_back(n != 0);
         packet.ints.push_back(static_cast<std::int32_t>(n));
+        if (arguments == 0) stale_bool_ = packet.bools[0];
         return n;
     }
     // Capture the matching recipients first; handlers may register or send.
@@ -200,6 +208,7 @@ std::size_t Messenger::send(Engine& engine, std::string_view category, std::opti
         if (!ram || !ram->manager) continue;
         if (!ram->manager->command(engine, *ram, command, packet)) ram->manager->fallback(engine, *ram, command, packet);
     }
+    if (arguments == 0 && !packet.bools.empty()) stale_bool_ = packet.bools[0];
     return recipients.size();
 }
 

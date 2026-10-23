@@ -709,9 +709,18 @@ void StageCtlManager::update(Engine& engine) {
         messenger.send(engine, category, std::nullopt, -1, command, packet);
         return packet;
     };
+    // 0x80347D9C..0x80347DA4 / 0x80347E4C..0x80347E54: bools[0] of the
+    // answer is read without the count check (8030690C), so without a status
+    // window (stag0001, stag0203) the soft reset reads the first bool the
+    // shared message object kept from an earlier send (Messenger::
+    // stale_bool). Dolphin (r41resid, ISRUN read hook): in stag0001 it is 0
+    // there and the reset returns to the title like everywhere else; in
+    // stag0203 a model's ACTION ISCOMEND (8030BEF4) left 1, so state 1 removes
+    // the (missing) status window and hides all layers, and state 2 waits
+    // for it for good - the picture stays black with the sound stopped.
     auto subwnd_running = [&] {
         Packet run = send("SUBWND", "ISRUN");
-        return run.boolean(0);
+        return run.bools.empty() ? messenger.stale_bool() != 0 : run.boolean(0);
     };
     switch (reset_state_) {
     case 0:
@@ -731,6 +740,10 @@ void StageCtlManager::update(Engine& engine) {
         send("SOUND", "SESTOP");
         if (subwnd_running()) {
             send("SUBWND", "REMOVE");
+            // 0x80347DC0..0x80347DE8: system +0x14 -> vtable +0x98 (the
+            // visual context) -> +0x2C8 (0xFF000000): the clear colour
+            // turns black.
+            if (auto* background = engine.get<BkColorManager>()) background->set_color({0, 0, 0, 1});
             send("LAYERCTL", "SWITCH", {"ALL", "DISPOFF"});
         }
         reset_state_ = 2;
@@ -757,8 +770,11 @@ void StageCtlManager::update(Engine& engine) {
 }
 bool StageCtlManager::command(Engine& engine, Ram&, std::string_view command, Packet& packet) {
     if (command == "NEXTSTAGE") {
-        // 80347F94: the sound effects and the ambience stop at once.
+        // 80347F94: the clear colour turns black (0x80347FF4..0x8034801C,
+        // as in the soft reset), the sound effects and the ambience stop at
+        // once.
         if (!packet.strings.empty()) {
+            if (auto* background = engine.get<BkColorManager>()) background->set_color({0, 0, 0, 1});
             Packet stop;
             engine.messenger().send(engine, "SOUND", std::nullopt, -1, "SESTOP", stop);
             engine.messenger().send(engine, "SOUND", std::nullopt, -1, "ENVSTOP", stop);
@@ -2470,6 +2486,16 @@ bool HitLandManager::query(Engine& engine, std::string_view command, Packet& pac
         if (packet.ints.size() < 2 || packet.vectors.size() < 2) return true;
         result = world_.check_wall(packet.vectors[0], packet.vectors[1], packet.floats[0], packet.floats[2],
                                    std::uint32_t(packet.ints[0]), packet.ints[1] != 0);
+        // DW4_TRACE_WALLBITS: the query and its answer as float bits, in the
+        // format of the Dolphin K / L log (hooks 0x802FE93C / 0x802FF6B8).
+        if (static const bool trace = std::getenv("DW4_TRACE_WALLBITS") != nullptr; trace) {
+            auto b = [](float v) { return std::bit_cast<std::uint32_t>(v); };
+            std::printf("[%llu] K %08x %08x %08x %08x %08x\n[%llu] L %08x %08x %d\n",
+                        static_cast<unsigned long long>(engine.frame()), b(packet.vectors[0].x), b(packet.vectors[0].z),
+                        b(packet.vectors[1].x), b(packet.vectors[1].z), b(packet.floats[0]),
+                        static_cast<unsigned long long>(engine.frame()), b(result.position.x), b(result.position.z),
+                        result.hit ? 1 : 0);
+        }
     }
     packet.ints.clear();
     for (const auto& hit : result.hits) {
@@ -2501,8 +2527,16 @@ bool HitLandManager::deliver(Engine& engine, DelivRam& ram, std::string_view com
             if (full) {
                 answer.vectors.push_back(current);
             } else {
+                // 0x802FDAF0..0x802FDC0C: the squared length is dx * dx fused
+                // onto 0 * 0 (the zero dy, 0x804260C0) and dz * dz fused onto
+                // that (two fmadds, one rounding each); its root comes from
+                // frsqrte and three double Newton steps (the float square
+                // root), then each component times 1.0 / length (fdivs).
+                // Separate products and sums put the direction one bit off
+                // now and then, which a wall slide carries on (Dolphin
+                // CHECKWALL log, stag0204).
                 Vec3f direction{current.x - ram.previous.x, 0.0f, current.z - ram.previous.z};
-                const float length = std::sqrt(direction.x * direction.x + direction.z * direction.z);
+                const float length = std::sqrt(std::fma(direction.z, direction.z, std::fma(direction.x, direction.x, 0.0f)));
                 direction = direction * (1.0f / length);
                 answer.vectors.push_back(direction);
             }

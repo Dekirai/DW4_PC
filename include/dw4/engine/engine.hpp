@@ -121,6 +121,13 @@ public:
     std::size_t count(std::string_view category, std::optional<std::string_view> name, std::int32_t index) const;
     const std::vector<MessengerRow>& rows() const { return rows_; }
     void clear_deferred() { deferred_.clear(); }
+    // The first entry of the shared message object's bool list (80306A1C
+    // reads it without the count check 8030690C): every module sends through
+    // one message object (all module +0x14, 808413E0 in Dolphin), whose
+    // select 80305344 only resets the list's count (80304618) and whose
+    // shrink to four entries keeps them (8004155C), so the entry holds the
+    // first bool of the last send that wrote one (an argument or an answer).
+    std::uint8_t stale_bool() const { return stale_bool_; }
 
 private:
     // 80303C0C makes 32 deferred records; preparing a post grows the pool by
@@ -133,6 +140,10 @@ private:
     // beMessenger +0x28: the world time of the pause or of the last paused
     // pass; 0 = running (also when paused at time 0, as the original).
     std::int64_t paused_at_ = 0;
+    // See stale_bool(); a stage change releases the reply object (803040C0)
+    // and the first send makes a new one, whose content before its first bool
+    // is not modelled (0).
+    std::uint8_t stale_bool_ = 0;
     // The rows of each category, all and by name, as row numbers in row
     // order (selection reads only these; rebuilt after the rows change).
     struct TextHash {

@@ -117,6 +117,10 @@ public:
     void clear_stage(Engine& engine) override;
     bool command(Engine& engine, Ram& ram, std::string_view command, Packet& packet) override;
     Vec4f color() const { return color_; }
+    // The visual context's clear colour from elsewhere (vtable +0x2C8 with
+    // 0xFF000000: the soft reset 0x80347DE8 and NEXTSTAGE 0x8034801C set it
+    // black; this manager sets it once, at its first update, 0x802F2A40).
+    void set_color(const Vec4f& color) { color_ = color; }
 
 private:
     std::vector<std::unique_ptr<Ram>> rams_;
