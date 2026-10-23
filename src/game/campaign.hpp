@@ -209,6 +209,9 @@ private:
     int lane_frame_ = -1;        // ... and when
     engine::Vec3f lane_step_{};  // its last step
     int lane_escape_ = -1;       // the last frame lane_step walked the player out of the way (survive: no guard then)
+    int chain_hp_visit_ = -1;    // the stage visit chain_enemy_hp_ belongs to (survive: kChainStageStall)
+    int chain_enemy_hp_ = 0;     // the enemies' HP in the last frame
+    int chain_progress_ = 0;     // the last frame an enemy lost HP (or the visit began)
     int dodge_frame_ = -1;       // the last frame a boss fight's dodge saw a box about to meet the player (survive: no slow heal)
     std::string exit_to_;        // the stage the current step's exit mat leads to (kExits; survive tops the HP up before a stage without heals)
     std::set<std::string> no_panel_stages_; // stages seen without the quick panels (survive), beside kNoHealStages

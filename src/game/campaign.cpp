@@ -816,6 +816,12 @@ constexpr const char* kWaveFields[] = {"stag0404"};
 // The stages of the last boss's chain a restocking trip is not made from
 // (survive): left, the chain begins again at stag0401.
 constexpr const char* kChainStages[] = {"stag0404", "stagbs04", "stagbs05", "stagbs06"};
+// A boss stage of that chain in which no enemy has lost HP for this many
+// frames is stalled (survive): stagBS04's first form once warped from
+// island to island out of reach for 320000 frames, the mechas that bring
+// it down not coming again (GENE-10 had not spawned its third mecha for
+// cal_f_devl1.lua's count of three) - no Gate Disk works there.
+constexpr int kChainStageStall = 60000;
 bool last_stand(engine::Engine& engine) {
     if (engine.cheats().god) return false;
     for (const auto& o : kObjectives)
@@ -1728,6 +1734,13 @@ constexpr Supply kSupplies[] = {
     // 3 % of the maximum HP, as much as their blows took: a level 41 run's
     // heals went half to the poison there.
     {6, 4, 0, 1 << 30},
+    // (A full slot on a heavy way: stagBS05 Daemon's second form poisons
+    // for some 22 ticks of 6 % of the maximum HP, more than the whole HP, a
+    // Cure Disk takes only now and then (three in a row for one poison), and
+    // with the four spent a no-cheat chain healed with Recovery after
+    // Recovery while the poison took each back within nine ticks - seven of
+    // its nine in 12000 frames.)
+    {6, 9, 0, 1 << 30, 0, true},
     // A full second slot of heals with 5000 bits to spare (a slot holds 9 of
     // one record: 9 HP Disks S were all a no-cheat run at level 17 took into
     // dng204b2's minotaur waves, twice given up with no heal left and 40000
@@ -3888,6 +3901,7 @@ void reach_report(engine::Engine& engine, const engine::ModelCtrlManager::ModelR
 // (Apocalymon's SQ_MAGIC makes all its pillars at the cast, live 24..84
 // frames later: the horizon sees them all.)
 constexpr float kDodgeHorizon = 100.0f, kDodgeMargin = 1.5f;
+constexpr float kRisingKeep = 8.0f, kRisingDue = 20.0f; // (dodge_areas: an owned box below the floor)
 // The ground round a live box of a homing effect (BossFight::homing) kept
 // off, as if it went live kHomingDue frames on (some 0.12 a frame: 10 in
 // 80 frames; due within a swing, no swing starts there).
@@ -3929,9 +3943,15 @@ std::vector<DodgeArea> dodge_areas(engine::Engine& engine, const engine::ModelCt
             const float cx = o.x * m(0, 0) + o.y * m(1, 0) + o.z * m(2, 0) + m(3, 0);
             const float cy = o.x * m(0, 1) + o.y * m(1, 1) + o.z * m(2, 1) + m(3, 1);
             const float cz = o.x * m(0, 2) + o.y * m(1, 2) + o.z * m(2, 2) + m(3, 2);
-            if (me.y + body_height + 1.0f <= cy - box.size.y * 0.5f || me.y - 1.0f >= cy + box.size.y * 0.5f) continue;
-            const float gx = box.size.x * 0.5f + body_half + kDodgeMargin, gz = box.size.z * 0.5f + body_half + kDodgeMargin;
-            areas.push_back({cx - gx, cx + gx, cz - gz, cz + gz, due, std::max(0.0f, box.end - box.elapsed)});
+            // (Such an owned permanent box below the floor counts too, grown
+            // by kRisingKeep: Daemon's orbs sink, cross under the floor at
+            // some 0.37 a frame toward the player and come up under it.)
+            const bool owned = box.end >= 1e7f && e->category != "ENEMY";
+            const bool rising = owned && cy + box.size.y * 0.5f < me.y;
+            if (!rising && (me.y + body_height + 1.0f <= cy - box.size.y * 0.5f || me.y - 1.0f >= cy + box.size.y * 0.5f)) continue;
+            const float grow = rising ? kRisingKeep : 0.0f;
+            const float gx = box.size.x * 0.5f + body_half + kDodgeMargin + grow, gz = box.size.z * 0.5f + body_half + kDodgeMargin + grow;
+            areas.push_back({cx - gx, cx + gx, cz - gz, cz + gz, rising ? std::max(due, kRisingDue) : due, std::max(0.0f, box.end - box.elapsed)});
             // (A homing effect's box: the ground kHomingKeep round it as well,
             // due kHomingDue frames on, so the player walks off before it
             // comes; inside the box itself only a guard is left.)
@@ -5107,6 +5127,28 @@ void CampaignBot::survive(engine::Engine& engine, const engine::ModelCtrlManager
         return;
     }
     const auto& slot = sys->players[0];
+    // A stalled stage of the last boss's chain (kChainStageStall): no guard,
+    // no heal any more, the defeat that follows sends the player back to the
+    // lobby, and the chain begins anew (no Gate Disk there).
+    {
+        int enemy_hp = 0;
+        if (auto* models = engine.get<engine::ModelCtrlManager>())
+            for (const auto& e : models->rams())
+                if (e->generated && e->category == "ENEMY" && e->hp > 0) enemy_hp += e->hp;
+        if (chain_hp_visit_ != stage_frame_ || enemy_hp < chain_enemy_hp_) chain_progress_ = frame;
+        chain_hp_visit_ = stage_frame_;
+        chain_enemy_hp_ = enemy_hp;
+        const bool boss_chain = stage_.rfind("stagbs", 0) == 0 &&
+                                std::any_of(std::begin(kChainStages), std::end(kChainStages), [&](const char* c) { return stage_ == c; });
+        if (boss_chain && !engine.cheats().god && frame - chain_progress_ > kChainStageStall) {
+            if (frame - chain_progress_ == kChainStageStall + 1)
+                std::printf("[%d] campaign: %s stalled for %d frames without a blow on an enemy: no guard and no heal from now on (a defeat "
+                            "starts the chain anew)\n",
+                            frame, stage_.c_str(), kChainStageStall);
+            disk_use_ = -1;
+            return;
+        }
+    }
     // The heal stock when this stage visit began (restocking trips).
     if (stock_at_entry_ < 0 || stock_visit_ != stage_frame_) stock_at_entry_ = heal_stock_percent(engine), stock_visit_ = stage_frame_;
     // The biggest blow taken within kBigHitFor frames (the heals' threshold).
