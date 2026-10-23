@@ -185,25 +185,67 @@ stage's base volume (beSoundInfo [9], -30, ADXT_SetOutVol), VOLUMECTL2 and a
 replaced BGM's fade-out step through the original's fade tables (8031D5D0 /
 8031DCB0, `dw4::CriFade`) only while the stream runs unpaused, and an entry
 that stopped or played out is freed at once (802F53B8). beSeInfo holds each
-model's SE set: the sounds an ACTION2 action plays after a frame delay (through
-the PLAY handler, 803105DC); a looping sound (type 4) stops at the model's next
-action. The SE sets hear the action through ACTION_BROADCAST (803130D4 sends
-MODELCTRL SETSOUND), which an action start sends after its first commands ran
-and only when the action changes (802F1794, 80305ED0 at 0x802F21D8), so the
-same action given again plays nothing. Levels follow the
+model's SE set: the sounds an ACTION2 action plays after a frame delay. The SE
+sets hear the action through ACTION_BROADCAST (803130D4 sends MODELCTRL
+SETSOUND), which an action start sends after its first commands ran and only
+when the action changes (802F1794, 80305ED0 at 0x802F21D8), so the same action
+given again plays nothing. SETSOUND only queues a sound subcommand on the
+model (8030DE1C -> 80310FAC, beside its effect and hitbox subcommands); the
+model's subcommand pass (803107E0 at 0x8030D008, in its update) adds the
+system step and then starts it once the delay is reached (80310754: SOUND
+PLAY, 803105DC). An action of the model's own update starts a delay-0 sound
+in that frame and a delay of d frames d - 1 frames later; an action another
+manager or model starts after the model's update (a window a menu opens, an
+effect another model generates, a damage reaction) is heard a frame later -
+the reference captures' sound subcommand log (append vs start counter) shows
+both. A started type 4 sound keeps its subcommand with the play id, and the
+subcommand cleanup of the model's next sequence start or REMOVE fades it out
+(803106C0: VOLUMECTL DOWN, 1.0 -> 0.0 over 10 frames; an SFP entry steps
+8031DDB8 to SEQ volumes that reach its sounding voices, 803BC708, and stops at
+12 or less; the AX mixer ramps each new level linearly across the next AX
+frame, MIXUpdateSettings 8025A530). Levels follow the
 AX mixer (MIXInitChannel 80259334): the left side is attenuated by the pan
 table at the pan and the right side by the table at 127 - pan, so effect
 voices (split pan through the 8045D130 curve; every shipped split is centred)
 and mono streams play at -3 dB per side while stereo streams keep each channel
-at full level on its own side (802A7F34). `render()` mixes the
-streams and effect voices as 48 kHz stereo PCM that `dw4_game` queues on an
-SDL3 audio stream (`DW4_AUDIO_DUMP=FILE.wav` records it, `DW4_TRACE_SOUND=1`
-logs the effects). MOVIE PLAY (8031EDFC) looks up the beMovieInfoData of the
+at full level on its own side (802A7F34). The RNA renderer sets each ADX
+voice's sample-rate converter to rate / 32000 (802A6C38, mode 0) while the DSP
+outputs 54 MHz / 1686 = 32000 * 1125 / 1124 samples per second, so the beCri
+streams play 1125 / 1124 fast (48042.7 Hz, the 240 samples per AX frame
+CriStreams counts); only Sofdec's handle takes the corrected mode 1
+(1124 (rate + 1) / 1125, 48000.2 Hz). Effect voices also feed the AX
+AUX A bus, where the SNDF runs a reverb: every stage's first beCriFxInfo is
+named REVERB, and the SOUND RAM's first update sends its _reverb (bank << 8 |
+preset) to the SNDF (802F6F10), the Cri's stage end turns the effects off
+again (802F523C). The SNDF (803BF698) sets up that preset of the bank with
+id 0 (allse.sfp, DTPK +0x4D; its effect table at TBLD +0x70 holds five
+ReverbStd presets: time, pre-delay, damping, coloration and mix in
+thousandths; the boot stages use preset 4, dng102b1 preset 1, stagBS03
+preset 3) as AXFX ReverbStd (`dw4::axfx`, 80242848 / 80242CC4: per channel
+a pre-delay, two combs, an all-pass, a low-pass and a second all-pass in
+single precision at 32 kHz). A voice sends at its split's AUX A level
+(+0x17: 20 log10(level / 127) after the fader, 64 = -5.9 dB in almost every
+split, 0 = none) relative to its main level, so a voice started by a sound
+subcommand sends like any other and an entry's SEQ volume fade (the voice's
+volume articulator, upstream of the MIX buses) lowers its send with it; the
+streams and the movie send nothing (the RNA's AUX levels stay at -99.9 dB,
+802A7B5C). `render()` runs the effect voices and the bus in AX frames of 240
+output samples (160 at 32 kHz) with the AX library's three rotating AUX
+buffers (8023CE40), so a send comes back two frames later. `render()` mixes
+the streams at those rates and the effect voices with the AUX A return as
+48 kHz stereo PCM, saturated at 16 bits like the AX output (no compressor),
+that `dw4_game` queues on an SDL3 audio stream (`DW4_AUDIO_DUMP=FILE.wav`
+records it, `DW4_TRACE_SOUND=1` logs the effects and sound subcommands).
+MOVIE PLAY (8031EDFC) looks up the beMovieInfoData of the
 file ([5] end script), splits the Sofdec program stream with `dw4::sfd`
 (MPEG-1 video 0xE0, ADX sound 0xC0) and plays the sound on a movie channel;
 the host decodes the video with pl_mpeg and draws the picture for the time
-since start over the screen. The movie ends after its last picture or on A or
-START from player 1 (8031EC10), then runs its end script.
+since the first picture over the screen. Sofdec starts in its prep state
+(803E3D1C creates the sound's ADXT paused): the captures unpause it 29 fields
+after MOVIE PLAY (803E38C4, after mwPlyStart's 8-field update and ten 2-field
+updates of the 30 Hz movie loop) and show picture k at MOVIE PLAY + 37 + 2k
+fields. The movie ends after its last picture or on A or START from player 1
+(8031EC10), then runs its end script.
 
 When a stream is ready matters to the scripts: demos wait with
 `DMchkSD SOUND ISALLREADY` / `ISREADY`, which test ADXT status 3 (PLAYING,

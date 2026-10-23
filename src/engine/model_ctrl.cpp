@@ -301,7 +301,9 @@ void trace_unlock(Engine& engine, const ModelCtrlManager::ModelRam& ram, std::st
 // of REMOVE: each entry of the ctrl's list (+0xE4) gets its end call (vtable
 // +0x64) in list order, an effect entry (meta 80534C20) only when it is tied
 // to the sequence (+0x38); a started one erases its effect RAM with SQ_ERAS,
-// a hitbox's end call is empty. Then every entry is released and the count
+// a hitbox's end call is empty, a sound's (803106C0) fades the sound its
+// start kept the play id of (SOUND VOLUMECTL DOWN, 1.0 -> 0.0 over 10
+// frames: 80315340 -> 802F64F0). Then every entry is released and the count
 // set to 0 (0x80310984..0x80310A50).
 void ModelCtrlManager::release_subcommands(Engine& engine, ModelRam& ram) {
     for (const auto& effect : ram.effects)
@@ -309,8 +311,12 @@ void ModelCtrlManager::release_subcommands(Engine& engine, ModelRam& ram) {
             Packet erase;
             engine.messenger().send(engine, "MODELCTRL", effect.model, effect.ram, "SQ_ERAS", erase);
         }
+    if (auto* sound = engine.get<SoundManager>())
+        for (const auto& entry : ram.sounds)
+            if (entry.id) sound->fade_id(entry.id, 1.0f, 0.0f, 10.0f);
     ram.effects.clear();
     ram.hitboxes.clear();
+    ram.sounds.clear();
     ++ram.hitbox_generation;
 }
 
@@ -790,6 +796,7 @@ bool ModelCtrlManager::command(Engine& engine, Ram& base, std::string_view comma
         ram.label.clear();
         ram.effects.clear();
         ram.hitboxes.clear();
+        ram.sounds.clear();
         ++ram.hitbox_generation;
         // beNDMWMdlPEBaseInfoWork (players and enemies, 803398B0) holds the
         // status work: _dispRamNoList, _dispPosNoList, _timerList,
@@ -1172,8 +1179,24 @@ bool ModelCtrlManager::command(Engine& engine, Ram& base, std::string_view comma
         if (ram.trace) packet.objects.push_back(ram.trace);
         return true;
     }
-    if (command == "SETSOUND" ||
-        command == "ACTION1" || command == "ONHITBULLETBOX" || command == "OFHITBULLETBOX") {
+    if (command == "SETSOUND") {
+        // 8030DE1C (8030D910 case 9): a generated model appends a sound
+        // subcommand (80310FAC: the name, the delay as a float, elapsed 0);
+        // nothing starts here. Each subcommand pass adds the system step
+        // before it compares (80310754), so a delay of d >= 1 frames starts
+        // in the d-th pass after the append and a delay of 0 in the first:
+        // for an action its own sequence started, the pass of that frame.
+        if (!ram.generated || packet.strings.empty()) return true;
+        ModelRam::Sound sound;
+        sound.name = std::string(packet.string(0));
+        sound.delay = packet.real(0);
+        if (static const bool trace = std::getenv("DW4_TRACE_SOUND") != nullptr; trace)
+            engine.log("sound subcommand queued " + sound.name + " of " + ram.info_name + "#" + std::to_string(ram.index) + " (delay " +
+                       std::to_string(sound.delay) + ") frame " + std::to_string(engine.frame()));
+        ram.sounds.push_back(std::move(sound));
+        return true;
+    }
+    if (command == "ACTION1" || command == "ONHITBULLETBOX" || command == "OFHITBULLETBOX") {
         engine.note("MODELCTRL " + std::string(command));
         return true;
     }
@@ -1798,6 +1821,7 @@ void ModelCtrlManager::update_slot(Engine& engine, int slot) {
         // runs the hitboxes first.)
         const auto generation = ram.hitbox_generation;
         const std::size_t effects = ram.effects.size();
+        const std::size_t sounds = ram.sounds.size();
         if (!ram.hitboxes.empty()) update_hitboxes(engine, ram);
         if (static const bool trace = std::getenv("DW4_TRACE_EFFECT") != nullptr;
             trace && ram.generated && ram.effects.size() > (ram.hitbox_generation == generation ? effects : 0))
@@ -1805,6 +1829,8 @@ void ModelCtrlManager::update_slot(Engine& engine, int slot) {
                        std::to_string(ram.effects.size() - (ram.hitbox_generation == generation ? effects : 0)) +
                        " effect(s) queued during the hitbox pass wait");
         if (effects && ram.generated && ram.hitbox_generation == generation) update_effects(engine, ram, effects);
+        // (The sounds after the effects: their starts change no model.)
+        if (sounds && ram.generated && ram.hitbox_generation == generation) update_sounds(engine, ram, sounds);
         // 8030D00C..8030D028: walls and floors while +78 is set.
         if (ram.translated && ram.generated) {
             if (ram.pos_lock && trace_lock() && engine.messenger().count("HITLANDDELIVER", ram.info_name, ram.index))
@@ -2046,6 +2072,38 @@ void ModelCtrlManager::update_effects(Engine& engine, ModelRam& ram, std::size_t
         engine.messenger().send(engine, "MODELCTRL", model, target, "GENERATE", generate);
         // A sequence start (or REMOVE) the new effect caused emptied the list.
         if (!ram.generated || ram.hitbox_generation != generation) return;
+    }
+}
+
+// Sound subcommands (80310754 on a beModelCtrlSCSound, vtable 804DEF48): the
+// delay counts the system frame step like the effects'; the start (+0x5C,
+// 803105DC) sends SOUND PLAY of the name and keeps the entry only for a
+// sound of type 4 that started (play id neither 0 nor -1), with its id for
+// the end call; the update of a kept entry (+0x60, 802E93AC) keeps it.
+void ModelCtrlManager::update_sounds(Engine& engine, ModelRam& ram, std::size_t count) {
+    const float step = engine.system_step();
+    auto* sound = engine.get<SoundManager>();
+    static const bool trace = std::getenv("DW4_TRACE_SOUND") != nullptr;
+    for (std::size_t i = 0; i < count && i < ram.sounds.size();) {
+        auto& entry = ram.sounds[i];
+        entry.elapsed += step;
+        if (entry.started || entry.elapsed < entry.delay) {
+            ++i;
+            continue;
+        }
+        entry.started = true;
+        int type = 0;
+        const std::uint64_t id = sound ? sound->play_model_sound(engine, entry.name, type) : 0;
+        if (trace)
+            engine.log("sound subcommand " + entry.name + " of " + ram.info_name + "#" + std::to_string(ram.index) + " (delay " +
+                       std::to_string(entry.delay) + ") play id " + std::to_string(id) + " frame " + std::to_string(engine.frame()));
+        if (id && type == 4) {
+            entry.id = id;
+            ++i;
+            continue;
+        }
+        ram.sounds.erase(ram.sounds.begin() + std::ptrdiff_t(i));
+        --count;
     }
 }
 

@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstdlib>
 #include <iostream>
 #include <stdexcept>
@@ -509,6 +510,62 @@ void test_fades() {
         check(!fade.running && v == int(std::fabs(-210.0f * 0.49000001f)) - 240, "A partial fade ends at the target's level");
     }
 }
+// The fade of an sfp entry (8031DDB8, VOLUMECTL DOWN of a sound
+// subcommand's end call): the down table's level as the SEQ volume
+// int(127 * level), the fade ends once that is at or below int(127 * to).
+void test_seq_fades() {
+    // 1.0 -> 0.0 over 10 frames (803106C0): table indices 5, 11, 17, ...
+    // 53; a fade to 0.0 ends with 0. The driver (802F53B8) stops the entry
+    // at 12 or less, after the seventh field.
+    {
+        dw4::CriFade fade;
+        fade.start(1.0f, 0.0f, 10.0f);
+        const int want[] = {102, 81, 62, 45, 31, 19, 10, 3};
+        bool same = true;
+        for (const int v : want) same = same && fade.step_seq() == v && fade.running;
+        check(same, "The sfp fade's SEQ volumes follow the table 804E05C8");
+        check(fade.step_seq() == 0 && !fade.running, "An sfp fade to 0.0 ends with 0");
+        dw4::CriFade again;
+        again.start(1.0f, 0.0f, 10.0f);
+        int fields = 0;
+        while (again.step_seq() > 12) ++fields;
+        check(fields + 1 == 7, "The entry stops in the seventh field");
+    }
+    // 1.0 -> 0.5: it ends on the first SEQ volume at or below int(127 *
+    // 0.5) = 63 and keeps it (0.49 of the table: 62).
+    {
+        dw4::CriFade fade;
+        fade.start(1.0f, 0.5f, 10.0f);
+        int v = 0, steps = 0, before = 127;
+        while (fade.running && steps < 100) {
+            before = v ? v : before;
+            v = fade.step_seq();
+            ++steps;
+        }
+        check(!fade.running && v == 62 && before > 63, "A partial sfp fade ends at the first volume at or below the target's");
+    }
+    // 8031DDB8 compares only downwards: a fade up ends at its first step.
+    {
+        dw4::CriFade fade;
+        fade.start(0.0f, 1.0f, 10.0f);
+        check(fade.step_seq() == 24 && !fade.running, "An sfp fade up ends at once (0.19 of the up table)");
+    }
+}
+
+// The rate the AX voice plays a stream at (802A6C38): the 16.16 ratio of
+// rate / 32000 (mode 0) or 1124 (rate + 1) / 1125 / 32000 (mode 1, Sofdec)
+// at the DSP's 54 MHz / 1686 output rate.
+void test_rna_rate() {
+    check(dw4::rna_src_ratio(48000, false) == 0x18000u && std::fabs(dw4::rna_rate(48000, false) - 48042.70) < 0.01,
+          "A 48 kHz beCri stream plays at 48042.7 Hz");
+    check(dw4::rna_src_ratio(24000, false) == 0xC000u && std::fabs(dw4::rna_rate(24000, false) - 24021.35) < 0.01,
+          "A 24 kHz beCri stream plays at 24021.35 Hz");
+    check(dw4::rna_src_ratio(48000, true) == 0x17FA9u && std::fabs(dw4::rna_rate(48000, true) - 48000.18) < 0.01,
+          "The movie's 48 kHz sound plays at 48000.18 Hz");
+    check(dw4::rna_src_ratio(32000, false) == 0x10000u && dw4::rna_src_ratio(44100, false) == 0x160CCu,
+          "The ratio's integer part and its fraction (f << 8) / 125");
+}
+
 // The r22 captures (fix_r22load2, dngQ6B01 after the title): the descriptor
 // read, the BGM refill, the loading card, the next refill and the first chunk
 // of the preliminary member, each after a seek read. Dolphin's clock runs
@@ -591,6 +648,8 @@ int main() {
         test_rotation_clock();
         test_instant_drive();
         test_fades();
+        test_seq_fades();
+        test_rna_rate();
     } catch (const std::exception& error) {
         std::cerr << "disc tests failed: " << error.what() << '\n';
         return 1;

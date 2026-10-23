@@ -1,8 +1,12 @@
+#include "dw4/axfx.hpp"
 #include "dw4/sfp.hpp"
 
+#include <algorithm>
+#include <cstdint>
 #include <cstring>
 #include <functional>
 #include <iostream>
+#include <limits>
 #include <stdexcept>
 #include <vector>
 
@@ -74,6 +78,25 @@ std::vector<std::uint8_t> bank() {
     return d;
 }
 
+// The bank above as allse.sfp has it: bank id 0, an effect table and AUX
+// sends on the splits.
+std::vector<std::uint8_t> effect_bank() {
+    auto d = bank();
+    d[0x4c] = 0xff;
+    d[0x4d] = 0;
+    put32(d, 0x70, 0x600);
+    put32(d, 0x600, 1); // last preset
+    put32(d, 0x604, 0x0c);
+    put32(d, 0x608, 0x24);
+    put32(d, 0x60c, 0x00ff0000); // ReverbStd on AUX A
+    for (std::size_t i = 0; i < 5; ++i) put32(d, 0x610 + i * 4, std::uint32_t(i == 0 ? 1400 : i == 1 ? 20 : i == 4 ? 1000 : 400));
+    put32(d, 0x624, 0x02000000); // Chorus on A (3 words), ReverbStd on B
+    for (std::size_t i = 0; i < 8; ++i) put32(d, 0x628 + i * 4, std::uint32_t(100 + i));
+    put(d, 0x2b0 + 0x15, {0x00, 0x02, 0x40, 0x7f});
+    d[0x2f0 + 0x15] = 1;
+    return d;
+}
+
 void tables() {
     const sfp::Bank b(bank());
     check(b.sample_count() == 2 && b.sample(1).loop && !b.sample(0).loop, "Sample records");
@@ -85,6 +108,109 @@ void tables() {
     check(b.level(0) == 1 && b.level(127) == 255, "Velocity curve");
     check(b.has_group(0xa9050100) && !b.has_group(0xa9060000), "Request groups");
     check(b.sequence(0xa9060000).empty() && b.sequence(0xa9050200).empty(), "Missing requests");
+}
+
+void effects() {
+    const sfp::Bank plain(bank());
+    check(plain.id() == 0 && !plain.effect(0) && plain.program_type() == 0, "Bank without an effect table");
+    auto d = bank();
+    d[0x4d] = 0xff;
+    check(sfp::Bank(d).id() == 0xff, "Bank id");
+    const sfp::Bank b(effect_bank());
+    const auto first = b.effect(0);
+    check(first && first->type_a == 0 && first->type_b == 0xff && first->b.empty(), "ReverbStd preset types");
+    check(first->a == std::vector<std::uint32_t>{1400, 20, 400, 400, 1000}, "ReverbStd preset parameters");
+    const auto second = b.effect(1);
+    check(second && second->type_a == 2 && second->a == std::vector<std::uint32_t>{100, 101, 102}, "AUX A words by type");
+    check(second->type_b == 0 && second->b == std::vector<std::uint32_t>{103, 104, 105, 106, 107}, "AUX B after AUX A");
+    check(!b.effect(2) && !b.effect(-1), "Past the last preset");
+    check(b.split(0)->aux_a == 0x40 && b.split(0)->aux_mode == 2 && b.split(0)->aux_b == 0x7f && !b.split(0)->channel_aux,
+          "Split AUX sends");
+    check(b.split(1)->channel_aux && !b.split(1)->aux_a, "Channel AUX sends");
+}
+
+// AXFX ReverbStd (80242848 / 80242CC4) with allse.sfp preset 1.
+void reverb() {
+    axfx::ReverbStd r;
+    check(!r.init(0.4f, 0.005f, 1.0f, 0.4f, 0.02f) && !r.active(), "Reverb time below 10 ms");
+    check(!r.init(0.4f, 1.4f, 1.0f, 0.4f, 0.2f) && !r.init(1.5f, 1.4f, 1.0f, 0.4f, 0.0f), "Reverb ranges");
+    check(r.init(0.4f, 1.4f, 1.0f, 0.4f, 20.0f / 1000.0f) && r.active(), "Reverb init");
+    // An impulse: 640 pre-delay samples delay by 639 (the ring wraps at its
+    // last element), the 1789-sample comb answers first; then all-pass
+    // -0.4, low-pass 0.3, all-pass -0.4 again and the 0.6 output level:
+    // 10000 -> -4000 -> -1200 -> 480 -> 288.
+    std::vector<std::int32_t> left;
+    for (int frame = 0; frame < 20; ++frame) {
+        axfx::AuxFrame data{};
+        if (frame == 0) data[0] = 10000;
+        r.process(data);
+        for (std::size_t i = 0; i < axfx::kFrameSamples; ++i) {
+            left.push_back(data[i]);
+            check(data[axfx::kFrameSamples + i] == 0 && data[2 * axfx::kFrameSamples + i] == 0, "Channels stay apart");
+        }
+    }
+    bool silent = true;
+    for (std::size_t i = 0; i < 2428; ++i) silent = silent && left[i] == 0;
+    check(silent && left[2428] == 288, "Reverb impulse response");
+    // The low-pass state, the second all-pass (its read comes a step after
+    // the write: 150 samples) and the second comb (1999).
+    check(left[2429] == 181 && left[2577] == 0 && left[2578] == -604 && left[2638] == 288, "Reverb tail");
+    long long total = 0;
+    for (const auto value : left) total += value < 0 ? -value : value;
+    check(total == 14775, "Reverb impulse energy");
+    // Mix 0 without pre-delay: 0.6 of the input, truncated.
+    check(r.init(0.4f, 1.4f, 0.0f, 0.4f, 0.0f), "Dry init");
+    axfx::AuxFrame dry{};
+    dry[3] = 10000;
+    dry[4] = -10001;
+    r.process(dry);
+    check(dry[3] == 6000 && dry[4] == -6000, "Dry level");
+    r.shutdown();
+    dry[3] = 1234;
+    r.process(dry);
+    check(!r.active() && dry[3] == 1234, "Shut down");
+    // The damping below 0.05 becomes 0.05 (80242BA8..80242BB8: fcmpo + bge),
+    // a NaN too: it passes the range checks and then answers like 0.0.
+    auto impulse = [](float damping) {
+        axfx::ReverbStd effect;
+        std::vector<std::int32_t> out;
+        if (!effect.init(0.4f, 1.4f, 1.0f, damping, 0.0f)) return out;
+        for (int frame = 0; frame < 40; ++frame) {
+            axfx::AuxFrame data{};
+            if (frame == 0) data[0] = 10000;
+            effect.process(data);
+            out.insert(out.end(), data.begin(), data.begin() + axfx::kFrameSamples);
+        }
+        return out;
+    };
+    const auto low = impulse(0.0f), clamped = impulse(0.05f), nan = impulse(std::numeric_limits<float>::quiet_NaN());
+    check(!low.empty() && low == clamped && low != impulse(0.4f), "Damping below 0.05 takes 0.05");
+    check(nan == low && std::none_of(nan.begin(), nan.end(), [](std::int32_t v) { return v == std::numeric_limits<std::int32_t>::min(); }),
+          "A NaN damping takes 0.05");
+}
+
+// The AUX bus: a send comes back two frames later, after the callback.
+void aux_bus() {
+    axfx::ReverbStd dry;
+    dry.init(0.4f, 1.4f, 0.0f, 0.4f, 0.0f);
+    axfx::AuxBus bus;
+    std::array<std::int32_t, 2 * axfx::kFrameSamples> sends{};
+    check(bus.begin_frame(nullptr) == nullptr, "No callback, no AUX command");
+    bus.end_frame(sends);
+    std::vector<std::int32_t> back;
+    for (int frame = 0; frame < 4; ++frame) {
+        const auto* returned = bus.begin_frame(&dry);
+        check(returned != nullptr, "AUX command with a callback");
+        back.push_back((*returned)[5]);
+        back.push_back((*returned)[axfx::kFrameSamples + 5]);
+        sends.fill(0);
+        if (frame == 0) {
+            sends[10] = 10000; // left sample 5
+            sends[11] = 5000;  // right sample 5
+        }
+        bus.end_frame(sends);
+    }
+    check(back == std::vector<std::int32_t>{0, 0, 0, 0, 6000, 3000, 0, 0}, "Two frames of AUX latency");
 }
 
 void sequences() {
@@ -140,6 +266,9 @@ void malformed() {
 int main() {
     try {
         tables();
+        effects();
+        reverb();
+        aux_bus();
         sequences();
         adpcm();
         malformed();

@@ -132,6 +132,32 @@ int CriFade::step(int volume, int base) {
     return result;
 }
 
+std::uint32_t rna_src_ratio(std::uint32_t rate, bool sofdec) {
+    // 802A6CFC..802A6D1C: mode 1 through the multiply by 0x7482296B (/ 1125).
+    const std::uint32_t f = sofdec ? std::uint32_t(1124ull * (std::uint64_t(rate) + 1) / 1125) : rate;
+    // mulhw 0x10624DD3 >> 11 (/ 32000) and (f << 8) / 125, its low half.
+    return ((f / 32000u) << 16) | (((f << 8) / 125u) & 0xFFFFu);
+}
+
+double rna_rate(std::uint32_t rate, bool sofdec) {
+    return double(rna_src_ratio(rate, sofdec)) / 65536.0 * 54.0e6 / 1686.0;
+}
+
+// 8031DDB8: the table step of 8031DC38, then 127 * level and 127 * to
+// truncated (fctiwz); the fade ends when the volume is at or below the
+// target's (in either direction: only fades down reach sfp entries).
+int CriFade::step_seq() {
+    position += increment;
+    const int index = std::clamp(int(position), 0, 59);
+    const float level = from >= to ? kFadeDown[index] : kFadeUp[index];
+    int result = int(127.0f * level);
+    if (result <= int(127.0f * to)) {
+        running = false;
+        if (to == 0.0f) result = 0;
+    }
+    return result;
+}
+
 double DiscDrive::seek_time(std::uint64_t from, std::uint64_t to) {
     const double distance = std::fabs(position(from) - position(to));
     if (distance < kShortSeekMaxDistance) return distance * kShortSeekVelocityInverse + kShortSeekConstant;
