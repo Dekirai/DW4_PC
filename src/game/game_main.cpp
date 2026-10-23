@@ -2183,7 +2183,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
             // Everything mixed.
             write_wav(audio_dump_path, audio_dump);
             std::cout << "audio dump " << audio_dump_path << " (" << audio_dump.size() / 2 << " frames)\n";
-            // Test tool: DW4_AUDIO_DUMP_STREAMS=FILE.wav, the streams' part of it.
+            // Test tool: DW4_AUDIO_DUMP_STREAMS=FILE.wav, the streams' part of it (SoundManager::stream_part).
             if (const char* part_path = std::getenv("DW4_AUDIO_DUMP_STREAMS"))
                 if (const auto* sound = engine.get<dw4::engine::SoundManager>()) write_wav(part_path, sound->stream_part());
         }

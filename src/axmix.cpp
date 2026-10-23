@@ -78,7 +78,7 @@ double bessel_i0(double x) {
 } // namespace
 
 Resampler::Resampler() : taps_(std::size_t(kPhases) * (2 * kHalfTaps)) {
-    constexpr double kCutoff = 15270.0 / kDspRate; // cycles per DSP sample
+    constexpr double kCutoff = 15600.0 / kDspRate; // cycles per DSP sample
     constexpr double kBeta = 6.755;
     const double i0_beta = bessel_i0(kBeta);
     for (int p = 0; p < kPhases; ++p) {

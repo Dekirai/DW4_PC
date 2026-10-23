@@ -1534,23 +1534,30 @@ void SoundManager::mix_frame(std::int64_t frame, axmix::Output::Frame& out, axmi
             input = {source[0], stereo ? source[1] : source[0]};
             return true;
         };
+        // (DW4_AUDIO_DUMP_STREAMS: the share of the channels it names.)
+        static const unsigned part_channels = [] {
+            const char* list = std::getenv("DW4_AUDIO_STREAMS_CHANNELS");
+            unsigned mask = 0;
+            for (const char* c = list ? list : "01"; *c; ++c)
+                if (*c >= '0' && *c <= '6') mask |= 1u << (*c - '0');
+            return mask;
+        }();
+        const bool share = part && ((part_channels >> channel) & 1u);
         for (int j = 0; j < n; ++j) {
             const auto x = stream.src.next(fetch);
             const float gain = m.from + (m.to - m.from) * float(j) / float(n);
-            if (stereo) {
-                main[std::size_t(2 * j)] += float(x[0]) * gain;
-                main[std::size_t(2 * j + 1)] += float(x[1]) * gain;
-            } else {
-                main[std::size_t(2 * j)] += float(x[0]) * gain * centre_left;
-                main[std::size_t(2 * j + 1)] += float(x[0]) * gain * centre_right;
+            const float left = stereo ? float(x[0]) * gain : float(x[0]) * gain * centre_left;
+            const float right = stereo ? float(x[1]) * gain : float(x[0]) * gain * centre_right;
+            main[std::size_t(2 * j)] += left;
+            main[std::size_t(2 * j + 1)] += right;
+            if (share) {
+                (*part)[std::size_t(j)][0] += left;
+                (*part)[std::size_t(j)][1] += right;
             }
         }
         // (A one-shot that ran out falls silent; the game never reads the decoder.)
         if (ended) stream.decoder.reset();
     }
-    if (part)
-        for (int j = 0; j < n; ++j) (*part)[std::size_t(j)] = {main[std::size_t(2 * j)], main[std::size_t(2 * j + 1)]};
-
     // The effect voices of the audio's SNDF: the sample through the linear
     // SRC from the voice's first frame on, the level ramping across the frame
     // from the last frame's (MIXUpdateSettings), into the main bus and, at the

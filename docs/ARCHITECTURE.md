@@ -292,16 +292,17 @@ note sounds from the frame after the SNDF callback that started it (the
 callback's PB changes reach the DSP a frame later, 802A8F7C -> 803C325C), so
 a stream leads an effect of the same update by an AX frame, as in the
 captures. The DSP's output is resampled to 48 kHz (562 / 375 exactly) by a
-96-tap Kaiser-windowed sinc (passes up to about 14.5 kHz, the DSP's images
-from 16 kHz on about 70 dB down): output sample s plays the DSP at CPU tick
+96-tap Kaiser-windowed sinc (flat to 15 kHz, the DSP's images about 80 dB
+down from 16.5 kHz on): output sample s plays the DSP at CPU tick
 s * 10125 plus one field minus the filter's 1.5 ms (the chunk rendered after
 the update at t holds the audio from t on); the audio's AX frames map to the
 game's by whole frames, a mapping that moves only when the audio runs more
 than half a field off the world clock (a host topping up its queue, a clock
 file's jump, a restore), so the mix itself never repeats or skips anything.
 `dw4_game` queues the output on an SDL3 audio stream (`DW4_AUDIO_DUMP=FILE.wav`
-records it, `DW4_AUDIO_DUMP_STREAMS=FILE.wav` the streams' part of the same
-mix, `DW4_AUDIO_TOPUP=FRAME:SAMPLES` renders extra audio after a frame like
+records it, `DW4_AUDIO_DUMP_STREAMS=FILE.wav` the part of the same mix of the
+stream channels `DW4_AUDIO_STREAMS_CHANNELS` names (default BGM and
+ambience), `DW4_AUDIO_TOPUP=FRAME:SAMPLES` renders extra audio after a frame like
 the host's queue top-up, `DW4_AX_COMPRESSOR=0` leaves the compressor out,
 `DW4_TRACE_SOUND=1` logs the effects and sound subcommands, the SNDF voices
 and where each stream's audio begins in the dump).

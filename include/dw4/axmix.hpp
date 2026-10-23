@@ -98,9 +98,9 @@ private:
 
 // The host's output: the DSP's 32028.5 Hz samples resampled to 48000 Hz
 // (48000 / 32028.5 = 562 / 375 exactly) through a Kaiser-windowed sinc
-// low-pass of 2 * kHalfTaps taps (beta 6.76, about 70 dB; cut off at 15.27
-// kHz, so the band up to about 14.5 kHz passes and the DSP's images, from 16.0
-// kHz on, are suppressed), kept as 562 phases.
+// low-pass of 2 * kHalfTaps taps (beta 6.76; cut off at 15.6 kHz: flat to
+// 15 kHz, -4 dB at 15.5, -23 dB at 16, the DSP's images about 80 dB down from
+// 16.5 kHz on), kept as 562 phases.
 class Resampler {
 public:
     static constexpr int kHalfTaps = 48, kPhases = 562;

@@ -304,9 +304,11 @@ public:
     // begins under the current mapping (tests, traces).
     double audio_frame_sample(std::int64_t frame) const;
     // Test tool: with DW4_AUDIO_DUMP_STREAMS set, render() also keeps the
-    // streams' and the movie's part of the same mix (before the compressor,
-    // through the same resampler), so the output minus it is the effect
-    // voices' part as the full mix has it.
+    // part of the same mix (before the compressor, through the same
+    // resampler) of the stream channels DW4_AUDIO_STREAMS_CHANNELS names
+    // (digits, 0 BGM, 1 ambience, 2-5 the SE streams, 6 the movie; default
+    // 01), so the output minus it is the rest as the full mix has it, like the
+    // reference captures' residuals.
     const std::vector<std::int16_t>& stream_part() const { return stream_part_; }
     // An ACTION2 action started on a model (ACTION_BROADCAST, 803130D4): the
     // model's SE set (beSeInfo) sends it MODELCTRL SETSOUND for each sound of
@@ -570,7 +572,7 @@ private:
     // One AX frame of the DSP (the command list of __AXNextFrame 8023D0D8):
     // the audio SNDF's callback of the frame before, the streams, the effect
     // voices with their AUX A sends, the AUX A return, the compressor, 16-bit
-    // saturation (`part`: DW4_AUDIO_DUMP_STREAMS, the streams' share).
+    // saturation (`part`: DW4_AUDIO_DUMP_STREAMS, the named channels' share).
     void mix_frame(std::int64_t frame, axmix::Output::Frame& out, axmix::Output::Part* part);
     std::vector<std::int16_t> stream_part_;
     axmix::Compressor compressor_;
