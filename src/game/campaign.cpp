@@ -5845,11 +5845,11 @@ CampaignBot::Output CampaignBot::play(engine::Engine& engine, const engine::Mode
 #endif
         }
     }
-    if (entry_ < 0) {
+    if (entry_ < 0 && engine.messenger().count("PLAYERPOINT", std::nullopt, -1) != 0) {
         // The player point this stage was entered at (PLAYERPOINT
         // GETGENERATEPOS, what first.lua's PLAYERgetPos reads), asked once
-        // the stage's PLAYERPOINT row answers (not yet on the frame the
-        // stage changes); an exit's SETGENERATEPOS later is for the next.
+        // the stage's PLAYERPOINT row exists (not yet on the frame the stage
+        // changes); an exit's SETGENERATEPOS later is for the next.
         engine::Packet packet;
         engine.messenger().send(engine, "PLAYERPOINT", std::nullopt, -1, "GETGENERATEPOS", packet);
         if (!packet.ints.empty()) {

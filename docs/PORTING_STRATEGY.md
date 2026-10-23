@@ -5,7 +5,12 @@
 1. **Follow the data.** Stage packages list the `be*Info` objects a stage
    needs; `first.lua`, `start.lua` and the other embedded scripts show which
    manager commands the game sends in which order. A missing manager shows up
-   in the F1 notes as "runtime for ..." or "no recipient: CATEGORY COMMAND".
+   in the F1 notes as "runtime for ..." or "info type ...". A message no row
+   takes is dropped like the original's messenger does (80305A28), so it is
+   no note: `DW4_TRACE_NO_RECIPIENT=1` lists them once per stage, and
+   `DW4_TRACE_INFOS=1` the infos each stage registers, to tell a stage
+   without that info (the original drops the message too) from a manager the
+   port lacks.
 2. **Recover the manager from `main.dol`.** Locate its vtable, command table
    and update routine in IDA and rebuild the state machine one to one: the same
    states, sub-steps, waits, messages and data fields. Keep original names
