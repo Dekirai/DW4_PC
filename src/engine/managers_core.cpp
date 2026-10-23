@@ -10,6 +10,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <numbers>
 #include <stdexcept>
 
@@ -894,6 +895,10 @@ void SoundManager::clear_stage(Engine& engine) {
                                         [&](const auto& bank) { return bank->common && bank->data.get() == voice.bank.get(); });
         if (!common) driver_.free_voice(i);
     }
+    sndf::Mirror::Call call{sndf::Mirror::Call::Kind::free_loops};
+    for (const auto& bank : banks_)
+        if (!bank->common) call.banks.push_back(bank->data);
+    record(std::move(call));
     std::erase_if(banks_, [](const auto& bank) { return !bank->common; });
     se_sets_.clear();
 }
@@ -980,9 +985,11 @@ float out_gain(int volume) {
 
 using sndf::mix_level;
 using sndf::mix_pan;
-// An AX frame (160 samples at 54 MHz / 1686) in milliseconds: the SNDF
-// tick's elapsed time for its tracks.
-constexpr double kAxFrameMs = double(CriStreams::kAxFrameTicks) / 486000.0;
+
+std::int64_t floor_div(std::int64_t a, std::int64_t b) {
+    const std::int64_t q = a / b;
+    return (a % b != 0 && ((a < 0) != (b < 0))) ? q - 1 : q;
+}
 } // namespace
 
 // 802F56B0 for the sfp entries (kind 0: an entry with an SFP sound object):
@@ -1021,7 +1028,7 @@ void SoundManager::stop_sfp(std::size_t index, std::int64_t now) {
     entry.fade = Fade{};
     entry.volume = 0;
     sfp_volume(entry, 0, now);
-    if (entry.seq && driver_.status(entry.seq) > 0) driver_.seq_stop(entry.seq, now);
+    if (entry.seq && driver_.status(entry.seq) > 0) seq_stop(entry.seq, now);
     entry.seq = 0;
     entry.request = 0;
     entry.name.clear();
@@ -1042,7 +1049,32 @@ int SoundManager::sfp_status(SfpEntry& entry) {
 }
 
 void SoundManager::sfp_volume(const SfpEntry& entry, int volume, std::int64_t now) {
-    if (entry.seq && driver_.status(entry.seq) >= 0) driver_.seq_volume(entry.seq, volume, now);
+    if (entry.seq && driver_.status(entry.seq) >= 0) seq_volume(entry.seq, volume, now);
+}
+
+// The game's SNDF calls (803C2AC4), each also noted for the audio's copy.
+bool SoundManager::seq_set(int seq, std::uint32_t request, std::int64_t time) {
+    record({sndf::Mirror::Call::Kind::set, 0, seq, 0, request, time});
+    return driver_.seq_set(seq, request, time);
+}
+bool SoundManager::seq_play(int seq, std::int64_t time) {
+    record({sndf::Mirror::Call::Kind::play, 0, seq, 0, 0, time});
+    return driver_.seq_play(seq, time);
+}
+bool SoundManager::seq_stop(int seq, std::int64_t time) {
+    record({sndf::Mirror::Call::Kind::stop, 0, seq, 0, 0, time});
+    return driver_.seq_stop(seq, time);
+}
+void SoundManager::seq_volume(int seq, int volume, std::int64_t time) {
+    record({sndf::Mirror::Call::Kind::volume, 0, seq, volume, 0, time});
+    driver_.seq_volume(seq, volume, time);
+}
+
+// A call the game made after its driver's last tick, for the audio's copy
+// (only while the audio has one; a host that renders nothing keeps none).
+void SoundManager::record(sndf::Mirror::Call call) {
+    call.after = driver_frame_;
+    mirror_.record(std::move(call));
 }
 
 std::int64_t SoundManager::command_ticks(Engine& engine) const { return cri_ticks(engine.time()) + kCommandTicks; }
@@ -1058,8 +1090,18 @@ sndf::Driver::Banks SoundManager::driver_banks() const {
 // voices the CRI renderer holds (the six beCri handles: four mono, two
 // stereo; a movie's stereo handle while it exists) go first.
 void SoundManager::advance_driver(std::int64_t ticks) {
-    driver_.set_master(float(se_volume_ ? se_volume_ : 127) / 127.0f);
-    driver_.ax().set_reserved(int(kSeStreams) + 4 + (movie_ ? 2 : 0));
+    const float master = float(se_volume_ ? se_volume_ : 127) / 127.0f;
+    const int reserved = int(kSeStreams) + 4 + (movie_ ? 2 : 0);
+    driver_.set_master(master);
+    driver_.ax().set_reserved(reserved);
+    if (master != recorded_master_) {
+        recorded_master_ = master;
+        record({sndf::Mirror::Call::Kind::master, 0, 0, 0, 0, 0, master});
+    }
+    if (reserved != recorded_reserved_) {
+        recorded_reserved_ = reserved;
+        record({sndf::Mirror::Call::Kind::reserved, 0, 0, reserved});
+    }
     const std::int64_t rel = ticks - cri_.ax_phase;
     const std::int64_t last = (rel > 0 ? (rel - 1) / CriStreams::kAxFrameTicks : -((-rel) / CriStreams::kAxFrameTicks) - 1);
     // (A fresh or restored manager starts at the current frame.)
@@ -1067,7 +1109,7 @@ void SoundManager::advance_driver(std::int64_t ticks) {
     const auto banks = driver_banks();
     while (driver_frame_ < last) {
         ++driver_frame_;
-        driver_.tick(driver_frame_, ax_frame_ticks(driver_frame_), banks, random_, kAxFrameMs);
+        driver_.tick(driver_frame_, ax_frame_ticks(driver_frame_), banks, random_);
     }
 }
 
@@ -1240,8 +1282,6 @@ bool SoundManager::open_stream(Engine& engine, Stream& stream, const std::string
     // ADXT_StartAfs on the channel's handle: the stream is ready once its
     // first block came off the (simulated) disc and was decoded.
     cri_.start(int(&stream - streams_.data()), stream_file(engine, archive, entry, stream.decoder->header()));
-    stream.phase = 1.0;
-    stream.previous = stream.next = {};
     return true;
 }
 
@@ -1345,7 +1385,7 @@ std::uint64_t SoundManager::start_sfp(Engine& engine, const std::string& name, c
     // (802F5E94). (Every request takes a new entry, a type 4 sound that
     // sounds already too: 802F5DD4..802F5E94 have no such test.)
     const int seq = kSfpFirstSeq + index;
-    const bool started = driver_.seq_set(seq, data.request, now) && driver_.seq_play(seq, now);
+    const bool started = seq_set(seq, data.request, now) && seq_play(seq, now);
     if (started) {
         entry.seq = seq;
         entry.request = data.request;
@@ -1364,42 +1404,6 @@ std::uint64_t SoundManager::start_sfp(Engine& engine, const std::string& name, c
         engine.log("sound effect " + name + " from " + bank->name + " at frame " + std::to_string(engine.frame()) + " (entry " +
                    std::to_string(seq) + ")");
     return entry.serial;
-}
-
-// The effect voices at the output rate: a voice's sample position is the
-// DSP time since its start times its SRC ratio (16.16), read linearly
-// between two samples (AX SRC type 1, the split's +0x2F of every bank: the
-// linear SRC); the level ramps across the AX frame from the last frame's
-// (MIXUpdateSettings).
-void SoundManager::mix_voices(const sndf::Driver& driver, float* mix, std::size_t frames, std::int64_t ticks, std::int64_t frame) {
-    const std::int64_t frame_start = ax_frame_ticks(frame);
-    for (const auto& voice : driver.voices()) {
-        if (!voice.used || !voice.bank || std::size_t(voice.sample) >= voice.bank->pcm.size()) continue;
-        const auto& pcm = voice.bank->pcm[std::size_t(voice.sample)];
-        const std::size_t length = pcm.size();
-        const std::size_t loop = voice.bank->loop_start[std::size_t(voice.sample)];
-        const bool loops = voice.loop && loop < length;
-        const std::int64_t start = ax_frame_ticks(voice.start);
-        for (std::size_t i = 0; i < frames; ++i) {
-            const std::int64_t t = ticks + std::int64_t(i) * kSampleTicks;
-            if (t < start) continue;
-            const double position = double(t - start) / double(kDspSampleTicks) * double(voice.ratio) / 65536.0;
-            std::size_t index = std::size_t(position);
-            const float fraction = float(position - double(index));
-            if (index >= length) {
-                if (!loops) break;
-                index = loop + (index - loop) % (length - loop);
-            }
-            std::size_t next = index + 1;
-            if (next >= length) next = loops ? loop : index;
-            const float a = float(pcm[index]);
-            const float x = std::clamp(float(double(t - frame_start) / double(kDspSampleTicks)), 0.0f, 160.0f);
-            const float gain = voice.gain_from + (voice.gain_to - voice.gain_from) * x / 160.0f;
-            const float value = (a + (float(pcm[next]) - a) * fraction) * gain;
-            mix[i * 2] += value * voice.left;
-            mix[i * 2 + 1] += value * voice.right;
-        }
-    }
 }
 
 // 802F5F98: the entry stops: serial, type and name cleared, the fade object
@@ -1453,111 +1457,165 @@ bool SoundManager::ready(std::string_view name) const {
     return true;
 }
 
+// ---------------------------------------------------------------------------
+// render(): the AX mix of the audio timeline at the DSP rate, frame by frame
+// (axmix::Output mixes every frame once, in order, when the output first
+// needs it: a frame's inputs are all known by its start, the game's update
+// before it), resampled to the output rate.
+namespace {
+const bool kStreamPart = std::getenv("DW4_AUDIO_DUMP_STREAMS") != nullptr;
+} // namespace
+
+double SoundManager::audio_frame_sample(std::int64_t frame) const { return output_.frame_sample(frame + audio_delta_); }
+
 void SoundManager::render(std::int16_t* out, std::size_t frames) {
-    std::vector<float> mix(frames * 2, 0.0f);
-    // The movie's sound has no base volume; it plays once Sofdec unpaused it.
-    // Neither the streams nor the movie send to AUX A (the RNA's AUX levels
-    // stay at -99.9 dB, 802A7B5C).
-    if (movie_ && movie_->sound_on) mix_stream(movie_stream_, 1.0f, 1.0f, true, mix.data(), frames);
-    // AX frame by AX frame on the audio clock: the streams with their MIX
-    // ramps, the effect voices of a copy of the SNDF the game sees, ticked on
-    // through the chunk's frames (so nothing the game observes depends on
-    // rendering), and the AUX A bus.
-    sndf::Driver driver = driver_;
-    std::uint32_t random = random_;
-    std::int64_t ticked = driver_frame_;
-    const auto banks = driver_banks();
-    constexpr double kDspPerSample = double(kSampleTicks) / double(kDspSampleTicks);
-    for (std::size_t done = 0; done < frames;) {
-        const std::int64_t ticks = std::int64_t(rendered_ + done) * kSampleTicks + CriStreams::kFieldTicks + clock_offset_;
-        const std::int64_t rel = ticks - cri_.ax_phase;
-        const std::int64_t frame = rel >= 0 ? rel / CriStreams::kAxFrameTicks : -((-rel + CriStreams::kAxFrameTicks - 1) / CriStreams::kAxFrameTicks);
-        if (frame > render_frame_) {
-            while (ticked < frame) {
-                ++ticked;
-                driver.tick(ticked, ax_frame_ticks(ticked), banks, random, kAxFrameMs);
-            }
-            begin_ax_frame(driver, frame);
-            render_frame_ = frame;
-        }
-        const std::int64_t frame_start = ax_frame_ticks(render_frame_);
-        const std::int64_t next = frame_start + CriStreams::kAxFrameTicks;
-        const std::size_t count =
-            next > ticks ? std::min(frames - done, std::size_t((next - ticks + kSampleTicks - 1) / kSampleTicks)) : 1;
-        float* const part = mix.data() + done * 2;
-        const double x0 = double(ticks - frame_start) / double(kDspSampleTicks);
-        for (std::size_t channel = 0; channel < streams_.size(); ++channel) {
-            const auto& m = stream_mix_[channel];
-            // (A stream the game replaced or paused since the frame began
-            // waits for the next frame.)
-            if (!m.on || !stream_on(channel) || streams_[channel].serial != m.serial) continue;
-            const auto ramp = [&](double x) { return m.from + (m.to - m.from) * float(std::clamp(x, 0.0, 160.0) / 160.0); };
-            mix_stream(streams_[channel], ramp(x0), ramp(x0 + kDspPerSample * double(count)), false, part, count);
-        }
-        mix_voices(driver, part, count, ticks, render_frame_);
-        // The AUX A return the DSP adds sample for sample (DSP rate, read
-        // linearly at the output's DSP times).
-        if (aux_emit_)
-            for (std::size_t i = 0; i < count; ++i) {
-                const double x = std::clamp(x0 + kDspPerSample * double(i), 0.0, 159.999);
-                const std::size_t k = std::size_t(x);
-                const float f = float(x - double(k));
-                for (std::size_t c = 0; c < 2; ++c) {
-                    const float a = aux_return_[c][k];
-                    const float b = k + 1 < axfx::kFrameSamples ? aux_return_[c][k + 1] : aux_next_[c];
-                    part[i * 2 + c] += a + (b - a) * f;
-                }
-            }
-        done += count;
+    if (!output_.started()) {
+        // The first render: output sample 0 at one field of the render
+        // timeline, and the game's AX frame of the first output sample (whole
+        // frames; 0 when the game's clock stands at that field, as after the
+        // first step of a boot).
+        output_.start(CriStreams::kFieldTicks, cri_.ax_phase, 0);
+        const std::int64_t lead = updated_ ? CriStreams::kFieldTicks - last_update_ticks_ : 0;
+        audio_delta_ = floor_div(lead + CriStreams::kAxFrameTicks / 2, CriStreams::kAxFrameTicks);
     }
-    rendered_ += frames;
-    // The AX mix has no compressor: the output saturates at 16 bits (the
-    // DSP's saturating accumulator; Dolphin's dumps keep peaks up to 32729
-    // unchanged and clip only sums above full scale).
-    for (std::size_t i = 0; i < frames * 2; ++i) out[i] = static_cast<std::int16_t>(std::clamp(mix[i], -32768.0f, 32767.0f));
+    output_.render(out, frames, [&](std::int64_t frame, axmix::Output::Frame& samples, axmix::Output::Part* part) {
+        mix_frame(frame, samples, part);
+    }, kStreamPart ? &stream_part_ : nullptr);
 }
 
-// One stream resampled into the mix (audio only: the game never reads the
-// decoder; a one-shot that runs out just falls silent).
-void SoundManager::mix_stream(Stream& stream, float gain_from, float gain_to, bool sofdec, float* mix, std::size_t frames) {
-    if (!stream.decoder) return;
-    const auto& header = stream.decoder->header();
-    const std::uint32_t channels = header.channels;
-    // 802A7F34: a stereo stream's channels sit hard left and right (pan
-    // 0 / 127, full level on their side), a mono stream in the centre.
+void SoundManager::mix_frame(std::int64_t frame, axmix::Output::Frame& out, axmix::Output::Part* part) {
+    constexpr int n = axmix::kFrameSamples;
+    const std::int64_t game = frame - audio_delta_;
+    // The audio's SNDF up to the AX callback of the frame before.
+    if (!mirror_.live()) mirror_.start(driver_, random_, driver_frame_ + audio_delta_);
+    if (mirror_.ticked() < frame - 1)
+        mirror_.advance(frame - 1, audio_delta_, driver_banks(), [&](std::int64_t g) { return ax_frame_ticks(g); });
+    std::array<float, 2 * n> main{};
+    std::array<float, 2 * n> sends{};
+    // The streams and the movie's sound. The state the game's last update
+    // left reaches the first frame at or after the update's command time (its
+    // ADXT calls reach the RNA's voices at the next AX frame, 8029A480 ->
+    // 802A7534); a frame before that keeps the earlier state (a stream the
+    // update stopped or replaced is gone already and stays silent).
+    const bool due = ax_frame_ticks(game) >= last_update_ticks_ + kCommandTicks;
     const auto [centre_left, centre_right] = mix_pan(64);
-    std::int16_t source[16];
-    auto fetch = [&](std::array<float, 2>& frame) {
-        if (stream.decoder->read(source, 1) == 0) return false;
-        ++stream.frames_read;
-        if (channels > 1) {
-            frame[0] = float(source[0]);
-            frame[1] = float(source[1]);
-        } else {
-            frame[0] = float(source[0]) * centre_left;
-            frame[1] = float(source[0]) * centre_right;
-        }
-        return true;
-    };
-    const double step = rna_rate(header.sample_rate, sofdec) / double(kOutputRate);
-    bool ended = false;
-    for (std::size_t i = 0; i < frames && !ended; ++i) {
-        while (stream.phase >= 1.0) {
-            stream.previous = stream.next;
-            if (!fetch(stream.next)) {
-                ended = true;
-                break;
+    for (std::size_t channel = 0; channel <= streams_.size(); ++channel) {
+        const bool movie = channel == streams_.size();
+        auto& stream = movie ? movie_stream_ : streams_[channel];
+        auto& m = movie ? movie_mix_ : stream_mix_[channel];
+        if (due) {
+            // The movie's sound has no base volume; it plays once Sofdec
+            // unpaused it. Neither the streams nor the movie send to AUX A
+            // (the RNA's AUX levels stay at -99.9 dB, 802A7B5C).
+            const bool on = movie ? movie_ && movie_->sound_on && stream.decoder : stream_on(channel);
+            const std::uint64_t serial = movie ? (movie_ ? movie_->serial : 0) : stream.serial;
+            const float level = movie ? 1.0f : out_gain(stream.out_volume);
+            if (on && m.on && m.serial != serial) m.on = false; // another sound on the channel starts afresh
+            if (on && m.on) {
+                m.from = m.to;
+                m.to = level;
+            } else {
+                m.from = m.to = level;
             }
-            stream.phase -= 1.0;
+            if (on && !m.on) {
+                // The RNA (re)starts the voice: a fresh SRC at the stream's
+                // ratio (802A6C38; Sofdec's handle mode 1).
+                stream.src.reset(rna_src_ratio(stream.decoder->header().sample_rate, movie));
+                // DW4_TRACE_SOUND: where the stream's audio begins in the dump
+                // (port field of the frame's first sample: output sample / 800.8 + 1).
+                if (trace_audio_ && !movie) {
+                    char line[160];
+                    std::snprintf(line, sizeof line, "stream audio slot %zu %s from port field %.4f", channel, stream.name.c_str(),
+                                  audio_frame_sample(game) / 800.8 + 1.0);
+                    audio_trace_.emplace_back(line);
+                }
+            }
+            m.on = on;
+            m.serial = serial;
+        } else {
+            m.from = m.to;
         }
-        if (ended) break;
-        const float t = float(stream.phase);
-        const float gain = gain_from + (gain_to - gain_from) * float(i) / float(frames);
-        mix[i * 2] += (stream.previous[0] + (stream.next[0] - stream.previous[0]) * t) * gain;
-        mix[i * 2 + 1] += (stream.previous[1] + (stream.next[1] - stream.previous[1]) * t) * gain;
-        stream.phase += step;
+        if (!m.on || !stream.decoder || (!movie && stream.serial != m.serial)) continue;
+        // 802A7F34: a stereo stream's channels sit hard left and right (pan
+        // 0 / 127, full level on their side), a mono stream in the centre.
+        const bool stereo = stream.decoder->header().channels > 1;
+        std::int16_t source[16];
+        bool ended = false;
+        auto fetch = [&](std::array<std::int16_t, 2>& input) {
+            if (ended || stream.decoder->read(source, 1) == 0) {
+                ended = true;
+                return false;
+            }
+            ++stream.frames_read;
+            input = {source[0], stereo ? source[1] : source[0]};
+            return true;
+        };
+        // (DW4_AUDIO_DUMP_STREAMS: the share of the channels it names.)
+        static const unsigned part_channels = [] {
+            const char* list = std::getenv("DW4_AUDIO_STREAMS_CHANNELS");
+            unsigned mask = 0;
+            for (const char* c = list ? list : "01"; *c; ++c)
+                if (*c >= '0' && *c <= '6') mask |= 1u << (*c - '0');
+            return mask;
+        }();
+        const bool share = part && ((part_channels >> channel) & 1u);
+        for (int j = 0; j < n; ++j) {
+            const auto x = stream.src.next(fetch);
+            const float gain = m.from + (m.to - m.from) * float(j) / float(n);
+            const float left = stereo ? float(x[0]) * gain : float(x[0]) * gain * centre_left;
+            const float right = stereo ? float(x[1]) * gain : float(x[0]) * gain * centre_right;
+            main[std::size_t(2 * j)] += left;
+            main[std::size_t(2 * j + 1)] += right;
+            if (share) {
+                (*part)[std::size_t(j)][0] += left;
+                (*part)[std::size_t(j)][1] += right;
+            }
+        }
+        // (A one-shot that ran out falls silent; the game never reads the decoder.)
+        if (ended) stream.decoder.reset();
     }
-    if (ended) stream.decoder.reset();
+    // The effect voices of the audio's SNDF: the sample through the linear
+    // SRC from the voice's first frame on, the level ramping across the frame
+    // from the last frame's (MIXUpdateSettings), into the main bus and, at the
+    // split's send level, the AUX A bus.
+    for (const auto& voice : mirror_.driver().voices()) {
+        if (!voice.used || !voice.bank || std::size_t(voice.sample) >= voice.bank->pcm.size()) continue;
+        const std::int64_t first = (frame - (voice.start + 1)) * n;
+        if (first < 0) continue;
+        const auto& pcm = voice.bank->pcm[std::size_t(voice.sample)];
+        const std::size_t loop = voice.bank->loop_start[std::size_t(voice.sample)];
+        const bool aux = voice.aux_left != 0.0f || voice.aux_right != 0.0f;
+        for (int j = 0; j < n; ++j) {
+            const float x = float(axmix::voice_sample(pcm.data(), pcm.size(), loop, voice.loop, std::uint64_t(first + j), voice.ratio));
+            const float value = x * (voice.gain_from + (voice.gain_to - voice.gain_from) * float(j) / float(n));
+            main[std::size_t(2 * j)] += value * voice.left;
+            main[std::size_t(2 * j + 1)] += value * voice.right;
+            if (aux) {
+                sends[std::size_t(2 * j)] += value * voice.aux_left;
+                sends[std::size_t(2 * j + 1)] += value * voice.aux_right;
+            }
+        }
+    }
+
+    // AUX A: the callback ran on the buffer of the frame before (the frame
+    // interrupt), the DSP adds the buffer it processed then (a send comes
+    // back two frames later) and stores this frame's sends.
+    if (const auto* back = aux_a_.begin_frame(aux_a_callback_ ? &reverb_a_ : nullptr)) {
+        for (int j = 0; j < n; ++j)
+            for (int c = 0; c < 2; ++c) main[std::size_t(2 * j + c)] += float(back->data()[std::size_t(c * n + j)]);
+        std::array<std::int32_t, 2 * n> words{};
+        for (std::size_t i = 0; i < words.size(); ++i) words[i] = std::int32_t(std::floor(sends[i] + 0.5f));
+        aux_a_.end_frame(words);
+    }
+
+    // (Test tool: DW4_AX_COMPRESSOR=0 leaves the compressor out.)
+    static const bool compress = [] {
+        const char* value = std::getenv("DW4_AX_COMPRESSOR");
+        return !value || std::strcmp(value, "0") != 0;
+    }();
+    if (compress) compressor_.process(main.data());
+    for (int j = 0; j < n; ++j)
+        out[std::size_t(j)] = {axmix::Output::saturate(main[std::size_t(2 * j)]), axmix::Output::saturate(main[std::size_t(2 * j + 1)])};
 }
 
 // 802F6F10 (the SOUND RAM's first update 80314E78 with "REVERB", the Cri's
@@ -1633,85 +1691,6 @@ bool SoundManager::stream_on(std::size_t channel) const {
     return stream.serial && stream.decoder && (status == 3 || status == 4) && !cri_.handles[channel].paused;
 }
 
-// The start of an AX frame in render(). MIXUpdateSettings (8025A530, the AX
-// frame callback): a stream channel whose input changed (ADXT_SetOutVol ->
-// 802A6B8C -> MIXSetInput) keeps its old level as the current one and gives
-// the DSP the new one as a ramp ((new - current) / 160 per sample, the ramp
-// flags 8025B138..), so a volume step reaches the output at the next AX
-// frame, linearly across it; a stream that starts (MIXInitChannel) plays at
-// its level at once. The effect voices ramp the same way (their levels from
-// the SNDF's articulation service). Then the AUX A callback runs and the
-// buffer the DSP adds in this frame (two frames old) is the return; the
-// frame's AUX A sends are the voices at the DSP rate, the main bus's level
-// moved by each split's send level.
-void SoundManager::begin_ax_frame(const sndf::Driver& driver, std::int64_t frame) {
-    for (std::size_t channel = 0; channel < streams_.size(); ++channel) {
-        const auto& stream = streams_[channel];
-        const bool on = stream_on(channel);
-        auto& m = stream_mix_[channel];
-        if (on && m.on && m.serial != stream.serial) m.on = false; // another sound on the channel starts afresh
-        const float level = out_gain(stream.out_volume);
-        if (on && m.on) {
-            m.from = m.to;
-            m.to = level;
-        } else {
-            m.from = m.to = level;
-        }
-        // DW4_TRACE_SOUND: where a stream's audio begins in the dump (port
-        // field of the frame's first sample: output sample / 800.8 + 1).
-        if (on && !m.on && trace_audio_) {
-            char line[160];
-            const double field = double((ax_frame_ticks(frame) - CriStreams::kFieldTicks - clock_offset_)) / double(kSampleTicks) / 800.8 + 1.0;
-            std::snprintf(line, sizeof line, "stream audio slot %zu %s from port field %.4f", channel, stream.name.c_str(), field);
-            audio_trace_.emplace_back(line);
-        }
-        m.on = on;
-        m.serial = stream.serial;
-    }
-    const auto* back = aux_a_.begin_frame(aux_a_callback_ ? &reverb_a_ : nullptr);
-    aux_emit_ = back != nullptr;
-    if (!back) {
-        for (auto& channel : aux_return_) channel.fill(0.0f);
-        aux_next_ = {};
-        return;
-    }
-    constexpr std::size_t n = axfx::kFrameSamples;
-    for (std::size_t c = 0; c < 2; ++c) {
-        for (std::size_t i = 0; i < n; ++i) aux_return_[c][i] = float(back->data()[c * n + i]);
-        aux_next_[c] = float(aux_a_.next_return()[c * n]);
-    }
-    std::array<float, 2 * n> sends{};
-    for (const auto& voice : driver.voices()) {
-        if (!voice.used || !voice.bank || (voice.aux_left == 0.0f && voice.aux_right == 0.0f)) continue;
-        if (std::size_t(voice.sample) >= voice.bank->pcm.size()) continue;
-        const auto& pcm = voice.bank->pcm[std::size_t(voice.sample)];
-        const std::size_t length = pcm.size();
-        const std::size_t loop = voice.bank->loop_start[std::size_t(voice.sample)];
-        const bool loops = voice.loop && loop < length;
-        for (std::size_t j = 0; j < n; ++j) {
-            const std::int64_t elapsed = (frame - voice.start) * std::int64_t(n) + std::int64_t(j);
-            if (elapsed < 0) continue;
-            const std::uint64_t position = std::uint64_t(elapsed) * voice.ratio;
-            std::size_t index = std::size_t(position >> 16);
-            const float fraction = float(position & 0xFFFF) / 65536.0f;
-            if (index >= length) {
-                if (!loops) break;
-                index = loop + (index - loop) % (length - loop);
-            }
-            std::size_t next = index + 1;
-            if (next >= length) next = loops ? loop : index;
-            const float a = float(pcm[index]);
-            const float gain = voice.gain_from + (voice.gain_to - voice.gain_from) * float(j) / float(n);
-            const float value = (a + (float(pcm[next]) - a) * fraction) * gain;
-            sends[j * 2] += value * voice.aux_left;
-            sends[j * 2 + 1] += value * voice.aux_right;
-        }
-    }
-    std::array<std::int32_t, 2 * n> words{};
-    for (std::size_t i = 0; i < 2 * n; ++i) words[i] = std::int32_t(std::floor(sends[i] + 0.5f));
-    aux_a_.end_frame(words);
-}
-
 // 8031EDFC: MOVIE PLAY finds the movie's beMovieInfoData and starts the
 // Sofdec player on the file (video stream 0xE0, ADX sound in 0xC0).
 void SoundManager::play_movie(Engine& engine, const Ram& ram, const std::string& name) {
@@ -1736,8 +1715,6 @@ void SoundManager::play_movie(Engine& engine, const Ram& ram, const std::string&
         if (!streams.audio.empty()) {
             movie_stream_.decoder = std::make_unique<adx::Decoder>(std::move(streams.audio));
             movie_stream_.name = name;
-            movie_stream_.phase = 1.0;
-            movie_stream_.previous = movie_stream_.next = {};
         }
     } catch (const std::exception& error) {
         engine.note("movie " + name + ": " + error.what());
@@ -1891,7 +1868,7 @@ namespace {
 struct StreamState {
     std::string name, file;
     std::uint64_t frames_read{}, serial{};
-    int priority{}, volume{}, out_volume{-999};
+    int priority{}, type{}, volume{}, out_volume{-999};
     SoundManager::Fade fade;
 };
 struct SoundState {
@@ -1916,6 +1893,7 @@ std::shared_ptr<const void> SoundManager::persistent() const {
         }
         s.serial = stream.serial;
         s.priority = stream.priority;
+        s.type = stream.type;
         s.volume = stream.volume;
         s.out_volume = stream.out_volume;
         s.fade = stream.fade;
@@ -1964,6 +1942,7 @@ void SoundManager::restore(Engine& engine, const std::shared_ptr<const void>& op
         stream.name = s.name;
         stream.serial = s.serial;
         stream.priority = s.priority;
+        stream.type = s.type;
         stream.volume = s.volume;
         stream.out_volume = s.out_volume;
         stream.fade = s.fade;
@@ -1994,6 +1973,7 @@ void SoundManager::serialize_persistent(StateArchive& a, std::shared_ptr<const v
         a.io(s.frames_read);
         a.io(s.serial);
         a.io(s.priority);
+        a.io(s.type);
         a.io(s.volume);
         a.io(s.out_volume);
         a.io(s.fade.running);
@@ -2092,12 +2072,21 @@ void SoundManager::update_driver(Engine& engine) {
     cri_.drive.instant = engine.fast_loading();
     cri_.tick(cri_ticks(engine.time()));
     if (trace) trace_cri(engine, inflight_before, done_before, playing_before);
-    // The SNDF's AX frames up to now, and the audio clock kept on the world
-    // clock (it only moves when a clock file or a restore jumps the time).
+    // The SNDF's AX frames up to now. The audio's mapping to the game's AX
+    // frames moves by whole frames when the audio to come stands more than
+    // half a field off the world clock (a host that topped its queue up, a
+    // clock file or a restore that jumped the time): later requests sound
+    // that much later or earlier, nothing already mixed changes.
     const std::int64_t now = cri_ticks(engine.time());
     advance_driver(now);
-    const std::int64_t audio = std::int64_t(rendered_) * kSampleTicks + CriStreams::kFieldTicks + clock_offset_;
-    if (std::llabs(audio - now) > CriStreams::kFieldTicks / 2) clock_offset_ += now - audio;
+    last_update_ticks_ = now;
+    updated_ = true;
+    if (output_.started()) {
+        const std::int64_t lead = std::int64_t(output_.sample()) * kSampleTicks + CriStreams::kFieldTicks -
+                                  audio_delta_ * CriStreams::kAxFrameTicks - now;
+        if (std::llabs(lead) > CriStreams::kFieldTicks / 2)
+            audio_delta_ += floor_div(lead + CriStreams::kAxFrameTicks / 2, CriStreams::kAxFrameTicks);
+    }
     if (trace) {
         trace_audio_ = true;
         trace_voices(engine);
@@ -2154,10 +2143,14 @@ void SoundManager::trace_voices(Engine& engine) {
         const auto& v = driver_.voices()[i];
         if (!v.used) continue;
         now.push_back(v.id);
-        if (std::find(traced_voices_.begin(), traced_voices_.end(), v.id) == traced_voices_.end())
+        if (std::find(traced_voices_.begin(), traced_voices_.end(), v.id) == traced_voices_.end()) {
+            // (Where it sounds in the dump: the audio frame after the callback, port field = output sample / 800.8 + 1.)
+            char at[48] = "";
+            if (output_.started()) std::snprintf(at, sizeof at, " (port field %.4f)", audio_frame_sample(v.start + 1) / 800.8 + 1.0);
             engine.log("sfp voice " + std::to_string(i) + " id " + std::to_string(v.id) + " seq " + std::to_string(v.seq) + " sample " +
-                       std::to_string(v.sample) + " ratio " + std::to_string(v.ratio) + " from AX frame " + std::to_string(v.start) +
+                       std::to_string(v.sample) + " ratio " + std::to_string(v.ratio) + " from AX frame " + std::to_string(v.start) + at +
                        ", frame " + std::to_string(engine.frame()));
+        }
     }
     for (const auto id : traced_voices_)
         if (std::find(now.begin(), now.end(), id) == now.end())

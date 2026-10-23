@@ -63,6 +63,7 @@ Event Sequence::next() {
         }
     }
     if (!no_wait) {
+        event.has_wait = true;
         std::uint32_t wait = read();
         if (wait & 0x80) wait = (read() & 0x7fu) | ((wait << 7) & 0x3f80u);
         event.wait_ms = wait;
