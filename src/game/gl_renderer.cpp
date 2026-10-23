@@ -878,10 +878,12 @@ void GlRenderer::render(const std::vector<engine::DrawItem>& items, const engine
             // 0x800F6F30..0x800F6F40), a light's colour is light diffuse,
             // times the material diffuse unless the material colour comes
             // from the vertices (modes 2/3, mat_src VTX); each channel is
-            // clamped to 1 and truncated (gx_trunc: fctiwz of c * 255 at
-            // 0x800F7228..0x800F727C, 0x800F7604..0x800F7678). A light
-            // diffuse above 1 (the lobby's 1.1) adds no more than 1.
+            // clamped to 1 and truncated (fctiwz of c * 255: the light
+            // colours at 0x800F7228..0x800F727C, gx_trunc_light; the ambient
+            // register at 0x800F7604..0x800F7678, gx_trunc). A light diffuse
+            // above 1 (the lobby's 1.1) adds no more than 1.
             const auto reg = [](float v) { return engine::gx_trunc(v); };
+            const auto light_reg = [](float v) { return engine::gx_trunc_light(v); };
             const engine::Vec4f tint = m->has_colors ? engine::Vec4f{1, 1, 1, 1} : s.diffuse;
             float dirs[12]{}, cols[12]{};
             engine::Vec3f ambient{s.emission.x, s.emission.y, s.emission.z};
@@ -896,9 +898,9 @@ void GlRenderer::render(const std::vector<engine::DrawItem>& items, const engine
                 dirs[count * 3] = attr->matrix(0, 0);
                 dirs[count * 3 + 1] = attr->matrix(0, 1);
                 dirs[count * 3 + 2] = attr->matrix(0, 2);
-                cols[count * 3] = reg(attr->color.x * tint.x);
-                cols[count * 3 + 1] = reg(attr->color.y * tint.y);
-                cols[count * 3 + 2] = reg(attr->color.z * tint.z);
+                cols[count * 3] = light_reg(attr->color.x * tint.x);
+                cols[count * 3 + 1] = light_reg(attr->color.y * tint.y);
+                cols[count * 3 + 2] = light_reg(attr->color.z * tint.z);
                 ++count;
             }
             const float ambient_reg[3] = {reg(ambient.x), reg(ambient.y), reg(ambient.z)};
@@ -918,7 +920,7 @@ void GlRenderer::render(const std::vector<engine::DrawItem>& items, const engine
             // The fog flush 800F9604 hands GXSetFog the colour as fctiwz of
             // 255 * c (0x800F9638..0x800F966C): truncated to 8 bits.
             const auto& f = s.fog_params->color;
-            gl.Uniform4f(gl.u_fog_color, engine::gx_trunc(f.x), engine::gx_trunc(f.y), engine::gx_trunc(f.z), 1);
+            gl.Uniform4f(gl.u_fog_color, engine::gx_trunc_light(f.x), engine::gx_trunc_light(f.y), engine::gx_trunc_light(f.z), 1);
             gl.Uniform2f(gl.u_fog_range, s.fog_params->f0, s.fog_params->f1);
         }
         if (s.blend_enabled) {

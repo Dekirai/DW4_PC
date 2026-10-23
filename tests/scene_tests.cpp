@@ -602,7 +602,11 @@ void test_gx_colors() {
     check(gx_round_byte(1.0f) == 255 && gx_trunc_byte(1.0f) == 255 && gx_round_byte(0.0f) == 0, "The bounds stay 0 and 255");
     check(gx_round_byte(1.1f) == 255 && gx_trunc_byte(1.1f) == 255, "Above 1 clamps (the lobby's 1.1 light)");
     check(gx_round_byte(-0.25f) == 0 && gx_trunc_byte(-0.25f) == 0, "Below 0 clamps");
-    check(gx_round_byte(std::numeric_limits<float>::quiet_NaN()) == 255, "8012E1D8 clamps a NaN to the upper bound first");
+    const float nan = std::numeric_limits<float>::quiet_NaN();
+    check(gx_round_byte(nan) == 0, "8012E1D8 does not clamp a NaN: fctiwz gives 0x80000000, a 0 byte");
+    check(gx_trunc_byte(nan) == 255, "The ambient / material clamp (fcmpo + bge) takes a NaN to 1");
+    check(gx_trunc_light_byte(nan) == 0 && gx_trunc_light_byte(1.1f) == 255 && gx_trunc_light_byte(fade) == 127,
+          "The light colour clamp (fcmpo + ble) lets a NaN through to fctiwz: 0");
     check(gx_round(0.9f) == 230.0f / 255.0f && gx_trunc(0.9f) == 229.0f / 255.0f, "The TEXTCTL default 0.9 is 230 rounded");
     const Vec4f c = gx_round(Vec4f{1.0f, fade, 0.1f, 0.0f});
     check(c.x == 1.0f && c.y == 128.0f / 255.0f && c.z == 26.0f / 255.0f && c.w == 0.0f, "Each channel rounds on its own");
