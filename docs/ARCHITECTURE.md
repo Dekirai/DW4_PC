@@ -195,7 +195,22 @@ AX mixer (MIXInitChannel 80259334): the left side is attenuated by the pan
 table at the pan and the right side by the table at 127 - pan, so effect
 voices (split pan through the 8045D130 curve; every shipped split is centred)
 and mono streams play at -3 dB per side while stereo streams keep each channel
-at full level on its own side (802A7F34). `render()` mixes the
+at full level on its own side (802A7F34). Effect voices also feed the AX
+AUX A bus, where the SNDF runs a reverb: every stage's first beCriFxInfo is
+named REVERB, and the SOUND RAM's first update sends its _reverb (bank << 8 |
+preset) to the SNDF (802F6F10), the Cri's stage end turns the effects off
+again (802F523C). The SNDF (803BF698) sets up that preset of the bank with
+id 0 (allse.sfp, DTPK +0x4D; its effect table at TBLD +0x70 holds five
+ReverbStd presets: time, pre-delay, damping, coloration and mix in
+thousandths; the boot stages use preset 4, dng102b1 preset 1, stagBS03
+preset 3) as AXFX ReverbStd (`dw4::axfx`, 80242848 / 80242CC4: per channel
+a pre-delay, two combs, an all-pass, a low-pass and a second all-pass in
+single precision at 32 kHz). A voice sends at its split's AUX A level
+(+0x17: 20 log10(level / 127) after the fader, 64 = -5.9 dB in almost every
+split, 0 = none); streams send nothing (the RNA's AUX levels stay at
+-99.9 dB, 802A7B5C). `render()` runs the bus in AX frames of 240 output
+samples (160 at 32 kHz) with the AX library's three rotating AUX buffers
+(8023CE40), so a send comes back two frames later. `render()` mixes the
 streams and effect voices as 48 kHz stereo PCM that `dw4_game` queues on an
 SDL3 audio stream (`DW4_AUDIO_DUMP=FILE.wav` records it, `DW4_TRACE_SOUND=1`
 logs the effects). MOVIE PLAY (8031EDFC) looks up the beMovieInfoData of the
