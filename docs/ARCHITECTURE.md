@@ -175,6 +175,39 @@ allse.sfp (_common/sbiallse.igb) or a stage bank from beStaticInfo. The bank's
 request table leads to a short sequence (803C49F4, millisecond delta times)
 whose notes play drum-program splits, each a DSP ADPCM sample, at SEQ volume
 127 under the SNDF master volume (beSoundInfo [10], 75, set once, 802F7244).
+A request takes one of the Cri SE list's 48 sfp entries (802F66C8): the first
+free one, else the one with the oldest serial among those whose priority
+(beSoundData [9]) does not exceed the sound's, stopped first (802F56B0); its
+SE list index is the SNDF sequence it plays on (8031CCFC: SEQ_SET, SEQ_PLAY,
+then SEQ volume 127). `dw4::sndf` (include/dw4/sndf.hpp, in the core) is the
+SNDF the entries talk to (803C2AC4 commands into its ring; GETSTATUS at once)
+and its AX frame callback (802A8F7C: the driver tick 803C325C, the AXART
+service, MIXUpdateSettings): the tick frees voice records whose AX voice ran
+out or whose release reached -96 dB, runs the queued messages (a request
+starts one of 16 tracks, 803C5188, whose notes reach the drum note-on
+803B9BFC; 0xB035 keys the sequence's voices off, 0xB037 sets its SEQ volume)
+and the tracks; a note takes an AX voice at the split's priority (+0x1D + 11)
+from the pool of 64 minus the CRI renderer's (AXAcquireVoice 8023C9D8: a
+voice of a lower priority, such as a keyed-off one, is taken through the drop
+callback 803C0B44) and the first free of 64 voice records (803C0CC0); its
+pitch is fctiwz(100 * semitones + 1.5625 * fine) cents, the fine tuning
+(+0x0B) and a random detune (+0x14, the C library's rand() 8009C1CC, seed 1)
+in 64ths of a semitone, its SRC ratio the cents through the table 804C4A98
+(8024583C, 16.16 truncated; every 24 kHz split: -498 cents, 0.750015 at the
+DSP's 32028.5 Hz); its volume envelope has an attack from -96 dB (+0x0C,
+stage ambience loops only), decay and sustain and a release on key off
+(+0x12, 803BBA80). The Cri's per-field update frees an entry once 8031D0F0
+reports its sequence gone (GETSTATUS: a one-shot track or any voice record of
+the sequence; an entry the driver never reported playing stays) and stops a
+fade to 0.0 at 12 or less; a stop (802F5F98) sets SEQ volume 0 and sends the
+SNDF stop only while GETSTATUS still reports the sequence. SOUND ONFREEZE /
+OFFREEZE (the SUBWND programs, 80315784 -> 802F68D0) set every running type 4
+entry to SEQ volume 0 / 127 (an ADX one to -99.9 dB / 0 dB). The game's
+SNDF runs in game time (the AX frames before each update; the update's
+commands reach its ring 0.6 ms after the frame's world time, as Dolphin's
+onsets step by an AX frame for requests 0.57 / 0.65 ms before a boundary),
+and `render()` plays copies of it ticked on through the chunk's frames, so
+nothing the game sees depends on whether audio is rendered.
 Effects without a request id are ADX files on four SE stream channels, each
 start taking a free one or else the oldest of lower or equal priority
 (beSoundData [9], 802F56B0). The PLAY handler (80314FC8) ignores a sound effect
@@ -229,13 +262,23 @@ split, 0 = none) relative to its main level, so a voice started by a sound
 subcommand sends like any other and an entry's SEQ volume fade (the voice's
 volume articulator, upstream of the MIX buses) lowers its send with it; the
 streams and the movie send nothing (the RNA's AUX levels stay at -99.9 dB,
-802A7B5C). `render()` runs the effect voices and the bus in AX frames of 240
-output samples (160 at 32 kHz) with the AX library's three rotating AUX
-buffers (8023CE40), so a send comes back two frames later. `render()` mixes
-the streams at those rates and the effect voices with the AUX A return as
-48 kHz stereo PCM, saturated at 16 bits like the AX output (no compressor),
+802A7B5C). `render()` runs in the CRI model's AX frames (160 DSP samples,
+2427840 CPU ticks, on the grid CriStreams uses) on an audio clock that keeps
+output sample s at CPU tick s * 10125 plus one field (the chunk rendered after
+the update at t holds the audio from t on): the effect voices read their
+samples linearly at their SRC position (AX SRC type 1, every split) at the
+output's DSP times, their AUX A sends are made at the DSP rate for the AX
+library's three rotating AUX buffers (8023CE40, so a send comes back two
+frames later) and the return is added sample for sample; a level change of a
+voice or a stream (ADXT_SetOutVol -> 802A6B8C -> MIXSetInput) reaches the mix
+at the next AX frame and ramps across it (MIXUpdateSettings 8025A420), while a
+voice or stream that starts plays at its level at once (Dolphin's onsets show
+no fade-in). `render()` mixes the streams at those rates and the effect voices
+with the AUX A return as 48 kHz stereo PCM, saturated at 16 bits like the AX
+output (no compressor),
 that `dw4_game` queues on an SDL3 audio stream (`DW4_AUDIO_DUMP=FILE.wav`
-records it, `DW4_TRACE_SOUND=1` logs the effects and sound subcommands).
+records it, `DW4_TRACE_SOUND=1` logs the effects and sound subcommands, the
+SNDF voices and where each stream's audio begins in the dump).
 MOVIE PLAY (8031EDFC) looks up the beMovieInfoData of the
 file ([5] end script), splits the Sofdec program stream with `dw4::sfd`
 (MPEG-1 video 0xE0, ADX sound 0xC0) and plays the sound on a movie channel;
