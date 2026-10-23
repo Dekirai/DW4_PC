@@ -318,6 +318,13 @@ Lighting is on unless an igLightingStateAttr turns it off (the Alchemy
 default); the stage root "ROOTATTR" igLightStateSet switches its light sets on
 for the scene, and each lit vertex gets the lights' ambient times the material
 ambient plus their diffuse, over the material or vertex colour (GX channel).
+The normal goes through the normal matrix the modelview flush loads (800F805C:
+the transpose of the modelview's inverse, PSMTXInverse / PSMTXTranspose, a
+singular matrix keeps the previous one) and is normalised for the lighting
+like Dolphin's XF emulation, so a uniform scale changes nothing and a
+non-uniform one (the dng103f1 arrow shooter's bow while it draws) tilts the
+normals the inverse way. Texgen source 2 uses the plain modelview rotation
+with GXSetTexCoordGen2's normalise flag (0x800FD4DC).
 LIGHTCTRL SETCOLOR (beLightCtrl, 803248AC) recolours a light set per room.
 
 An igBillboard (traversal 801DD62C, matrix 801D5ADC, basis 801D53EC) replaces
