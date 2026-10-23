@@ -3094,7 +3094,18 @@ bool ActionManager::command(Engine& engine, Ram& base, std::string_view command,
         // picture's, and while no actor of the model is traversed (culled,
         // hidden) it stays as old as the last visit. Before the first
         // traversal the array holds 801D13DC's identities.
+        // The case answers only while the action runs (0x802F18A4..0x802F18AC:
+        // RAM +0x14, which an action start sets at 0x802F1EA8 and NDSP clears
+        // at 0x802F1CD4, else straight to the exit 0x802F21DC): after NDSP,
+        // or before the first action, there is no answer and a bone follower
+        // (8030CDD0 wants exactly one) keeps the matrix it last had.
         const std::string bone(packet.string(0));
+        if (!ram.action_active) {
+            if (static const bool trace = std::getenv("DW4_TRACE_FOLLOW") != nullptr; trace)
+                engine.log("GETBONEMATRIX " + ram.info_name + "#" + std::to_string(ram.index) + " '" + bone +
+                           "': no answer, the action is not running");
+            return true;
+        }
         const Node* actor = ram.actors.empty() ? nullptr : ram.actors.front();
         if (actor && !ram.traversed.skeleton && ram.database) {
             const auto& names = ram.database->skeleton().names;

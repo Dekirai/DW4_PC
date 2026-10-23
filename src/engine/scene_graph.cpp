@@ -1049,19 +1049,26 @@ void apply(const Attribute* a, RenderState& s, Mat4& model) {
 
 // Runtime ACTION2 attributes. FADESET / FLASHSET append theirs to the
 // beModelCtrlNode2 attribute list (+0x88), which the node's traversal
-// (8030FAA4) pushes as overrides (801D5190: the stack keeps the outermost
-// override as its effective top), so deeper igTextureStateAttr /
+// (8030FAA4) pushes as overrides, so deeper igTextureStateAttr /
 // igLightingStateAttr / igBlendStateAttr in the skin graphs cannot undo
 // them: the 4-frame FLASH draws the model untextured and unlit, white.
+// The override push 801D5190 sets the attribute stack's base index (+0x18)
+// only at the first override (when it is still -1), and the effective
+// attribute the flush reads is the one at that index (801D43C8, 801D456C,
+// 801D4EB0; the top of the stack only while no override is pushed): the
+// OUTERMOST override wins, for igColorAttr too. A model inside another
+// model's faded node keeps the outer fade's colour, its own FADESET does not
+// multiply into it (and the 8-bit rounding applies to that one colour).
+// FADESET and FLASHSET share one igColorAttr per RAM (the action work's
+// +0x50: 802EFF9C, 0x802F08A0), so one model never stacks two colour
+// overrides; a nested one needs a model node inside another's subtree, which
+// the story never builds (a traversal trace over the r25c segments found none).
 // FADESET (802F0800) adds only igColorAttr, igBlendStateAttr (on) and
 // igLightingStateAttr (off), no igBlendFunctionAttr: the function stays the
 // model's own (the warp beam x_099etrns01a keeps its additive SRC_ALPHA/ONE)
 // or the default SRC_ALPHA/ONE_MINUS_SRC_ALPHA.
 void apply_overrides(const Node& n, RenderState& s) {
-    if (n.color_override) {
-        const auto c = *n.color_override;
-        s.modulate = s.modulate ? Vec4f{s.modulate->x * c.x, s.modulate->y * c.y, s.modulate->z * c.z, s.modulate->w * c.w} : c;
-    }
+    if (n.color_override && !s.modulate) s.modulate = *n.color_override;
     if (n.blend_override && !s.blend_forced) {
         s.blend_enabled = *n.blend_override;
         s.blend_forced = true;

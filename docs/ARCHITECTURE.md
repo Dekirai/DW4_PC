@@ -96,7 +96,9 @@ before it is ever drawn, and a frozen effect out of view keeps ageing. The bone
 matrices GETBONEMATRIX reads (802F18A4) are the ones the last traversal of the
 model's actors left (`ActionManager::ActionRam::traversed`): the updates run
 before the traversal, so a bone follower is a frame behind its bone, and it
-stays put while its actor is culled or hidden. `Engine::render` also tests the picture's own
+stays put while its actor is culled or switched off. GETBONEMATRIX answers only
+while the model's action runs (RAM +0x14, `action_active`): after NDSP the
+follower gets no answer and keeps its last matrix. `Engine::render` also tests the picture's own
 frustum (the renderer widens perspective projections for widescreen, and a
 debug camera shows everything): a subtree outside the original's frustum but
 in the picture is drawn without its updates (`ActionManager::peek_pose`, copied
@@ -316,6 +318,13 @@ Lighting is on unless an igLightingStateAttr turns it off (the Alchemy
 default); the stage root "ROOTATTR" igLightStateSet switches its light sets on
 for the scene, and each lit vertex gets the lights' ambient times the material
 ambient plus their diffuse, over the material or vertex colour (GX channel).
+The normal goes through the normal matrix the modelview flush loads (800F805C:
+the transpose of the modelview's inverse, PSMTXInverse / PSMTXTranspose, a
+singular matrix keeps the previous one) and is normalised for the lighting
+like Dolphin's XF emulation, so a uniform scale changes nothing and a
+non-uniform one (the dng103f1 arrow shooter's bow while it draws) tilts the
+normals the inverse way. Texgen source 2 uses the plain modelview rotation
+with GXSetTexCoordGen2's normalise flag (0x800FD4DC).
 LIGHTCTRL SETCOLOR (beLightCtrl, 803248AC) recolours a light set per room.
 
 An igBillboard (traversal 801DD62C, matrix 801D5ADC, basis 801D53EC) replaces

@@ -53,7 +53,7 @@ struct GlRenderer::Impl {
     int u_light_ambient{};
     int u_fog{}, u_fog_color{}, u_fog_range{}, u_skinned{}, u_palette{}, u_tex_matrix{};
     int u_shadow_matrix{}, u_shadow_tex{}, u_shadow_pass{};
-    int u_texgen{}, u_pixel_center{};
+    int u_texgen{}, u_pixel_center{}, u_normal{};
     PFNGLUNIFORM2FPROC Uniform2f{};
     // GX samples a pixel at 7/12 of its width and height instead of GL's 1/2
     // (unless antialiasing); Dolphin's VertexShaderManager compensates with
@@ -74,6 +74,7 @@ layout(location=3) in vec2 a_uv;
 layout(location=4) in vec2 a_weights;
 layout(location=5) in vec2 a_indices;
 uniform mat4 u_model, u_view, u_proj;
+uniform mat4 u_normal;
 uniform int u_skinned;
 uniform mat4 u_palette[64];
 uniform mat4 u_tex_matrix;
@@ -102,9 +103,11 @@ void main() {
         // (0x800F00FC..0x800F01B4; one weight per vertex: p * M[i0] alone,
         // 0x800F01BC, Mesh sets that weight to 1). The normal (flag 0x20,
         // 0x800F03D8..0x800F044C) goes through the 3x3 of the FIRST blend
-        // index only (lbzx at 0x800F03FC), unweighted and not normalised; so
-        // do the NBT vectors (flag 0x200, 0x800F045C..0x800F0588) and the
-        // pre-blended buffer path (0x800FA968, normals through 0x800ED4A0).
+        // index only (lbzx at 0x800F03FC), unweighted and not normalised on
+        // the CPU (the XF's normal matrix and normalisation follow, see the
+        // lighting below); so do the NBT vectors (flag 0x200,
+        // 0x800F045C..0x800F0588) and the pre-blended buffer path
+        // (0x800FA968, normals through 0x800ED4A0).
         // A vertex between two bones keeps the first bone's shading
         // (s_weregaru's shoulders and tail, the wings of s_impdrafm/pm).
         int i0 = int(a_indices.x + 0.5), i1 = int(a_indices.y + 0.5);
@@ -128,7 +131,13 @@ void main() {
         // GX channel as Alchemy sets it up (800F6DC0): the material colour
         // times the clamped sum of the ambient register and each light's
         // colour times its diffuse term (the registers come in prepared).
-        vec3 n = normalize(mat3(u_model) * normal);
+        // The normal goes through the normal matrix the modelview flush
+        // loads (u_normal, see the draw loop) and is normalised before the
+        // lighting, as in Dolphin's vertex shader (_normal = normalize(N *
+        // rawnormal): the lighting needs the unit normal, only the emboss
+        // texgen sees the matrix's scale). A uniformly scaled model is lit
+        // like an unscaled one.
+        vec3 n = normalize(mat3(u_normal) * normal);
         vec3 lit = u_light_ambient;
         for (int i = 0; i < u_light_count; ++i)
             lit += u_light_col[i] * max(dot(n, -normalize(u_light_dir[i])), 0.0);
@@ -282,8 +291,12 @@ GlRenderer::GlRenderer() : gl_(std::make_unique<Impl>()) {
     U(model) U(view) U(proj) U(color) U(modulate) U(use_vcol) U(use_tex) U(alpha_func) U(alpha_ref)
     U(lighting) U(light_dir) U(light_col) U(light_count) U(diffuse) U(tex) U(light_ambient)
     U(fog) U(fog_color) U(fog_range) U(skinned) U(palette) U(tex_matrix)
-    U(shadow_matrix) U(shadow_tex) U(shadow_pass) U(texgen) U(pixel_center)
+    U(shadow_matrix) U(shadow_tex) U(shadow_pass) U(texgen) U(pixel_center) U(normal)
 #undef U
+    gl.UseProgram(program_);
+    const engine::Mat4 identity{};
+    gl.UniformMatrix4fv(gl.u_normal, 1, GL_FALSE, identity.m.data());
+    gl.UseProgram(0);
     gl.Uniform2f = reinterpret_cast<PFNGLUNIFORM2FPROC>(SDL_GL_GetProcAddress("glUniform2f"));
     glGenTextures(1, &white_texture_);
     glBindTexture(GL_TEXTURE_2D, white_texture_);
@@ -843,6 +856,22 @@ void GlRenderer::render(const std::vector<engine::DrawItem>& items, const engine
         if (proj(2, 3) == 0.0f && proj(3, 3) == 1.0f) glEnable(GL_DEPTH_CLAMP);
         else glDisable(GL_DEPTH_CLAMP);
         gl.UniformMatrix4fv(gl.u_model, 1, GL_FALSE, item.model.m.data());
+        // The modelview flush 800F805C (via 800F84EC) loads the position
+        // matrix and, as the normal matrix, the transpose of its inverse:
+        // PSMTXInverse 8025B5E4, PSMTXTranspose 8025B594, GXLoadNrmMtxImm
+        // 802585D0. With a rotation and a uniform scale that is the
+        // model's own rotation; a non-uniform scale (stage props such as
+        // tower_insideShape2 at 1.5 / 1 / 1.5, or 0.84 / 0.84 / 1) tilts the
+        // normals the other way than the plain matrix would. The view is a
+        // rotation, so the world matrix stands in for the modelview. A
+        // singular matrix fails the inverse (it returns 0 at 0x8025B650) and
+        // the load is skipped: the previous normal matrix stays.
+        if (engine::Mat4 inverse; engine::invert(item.model, inverse)) {
+            engine::Mat4 normal;
+            for (int r = 0; r < 3; ++r)
+                for (int c = 0; c < 3; ++c) normal(r, c) = inverse(c, r);
+            gl.UniformMatrix4fv(gl.u_normal, 1, GL_FALSE, normal.m.data());
+        }
         const auto tex_matrix = s.texture_matrix.value_or(dw4::engine::Mat4{});
         gl.UniformMatrix4fv(gl.u_tex_matrix, 1, GL_FALSE, tex_matrix.m.data());
         const int texgen = s.texcoord_source == 2 && m->has_normals ? 2 : 0;
@@ -878,10 +907,12 @@ void GlRenderer::render(const std::vector<engine::DrawItem>& items, const engine
             // 0x800F6F30..0x800F6F40), a light's colour is light diffuse,
             // times the material diffuse unless the material colour comes
             // from the vertices (modes 2/3, mat_src VTX); each channel is
-            // clamped to 1 and truncated (gx_trunc: fctiwz of c * 255 at
-            // 0x800F7228..0x800F727C, 0x800F7604..0x800F7678). A light
-            // diffuse above 1 (the lobby's 1.1) adds no more than 1.
+            // clamped to 1 and truncated (fctiwz of c * 255: the light
+            // colours at 0x800F7228..0x800F727C, gx_trunc_light; the ambient
+            // register at 0x800F7604..0x800F7678, gx_trunc). A light diffuse
+            // above 1 (the lobby's 1.1) adds no more than 1.
             const auto reg = [](float v) { return engine::gx_trunc(v); };
+            const auto light_reg = [](float v) { return engine::gx_trunc_light(v); };
             const engine::Vec4f tint = m->has_colors ? engine::Vec4f{1, 1, 1, 1} : s.diffuse;
             float dirs[12]{}, cols[12]{};
             engine::Vec3f ambient{s.emission.x, s.emission.y, s.emission.z};
@@ -896,9 +927,9 @@ void GlRenderer::render(const std::vector<engine::DrawItem>& items, const engine
                 dirs[count * 3] = attr->matrix(0, 0);
                 dirs[count * 3 + 1] = attr->matrix(0, 1);
                 dirs[count * 3 + 2] = attr->matrix(0, 2);
-                cols[count * 3] = reg(attr->color.x * tint.x);
-                cols[count * 3 + 1] = reg(attr->color.y * tint.y);
-                cols[count * 3 + 2] = reg(attr->color.z * tint.z);
+                cols[count * 3] = light_reg(attr->color.x * tint.x);
+                cols[count * 3 + 1] = light_reg(attr->color.y * tint.y);
+                cols[count * 3 + 2] = light_reg(attr->color.z * tint.z);
                 ++count;
             }
             const float ambient_reg[3] = {reg(ambient.x), reg(ambient.y), reg(ambient.z)};
@@ -918,7 +949,7 @@ void GlRenderer::render(const std::vector<engine::DrawItem>& items, const engine
             // The fog flush 800F9604 hands GXSetFog the colour as fctiwz of
             // 255 * c (0x800F9638..0x800F966C): truncated to 8 bits.
             const auto& f = s.fog_params->color;
-            gl.Uniform4f(gl.u_fog_color, engine::gx_trunc(f.x), engine::gx_trunc(f.y), engine::gx_trunc(f.z), 1);
+            gl.Uniform4f(gl.u_fog_color, engine::gx_trunc_light(f.x), engine::gx_trunc_light(f.y), engine::gx_trunc_light(f.z), 1);
             gl.Uniform2f(gl.u_fog_range, s.fog_params->f0, s.fog_params->f1);
         }
         if (s.blend_enabled) {
