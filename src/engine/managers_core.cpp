@@ -2127,10 +2127,14 @@ void SoundManager::trace_voices(Engine& engine) {
         const auto& v = driver_.voices()[i];
         if (!v.used) continue;
         now.push_back(v.id);
-        if (std::find(traced_voices_.begin(), traced_voices_.end(), v.id) == traced_voices_.end())
+        if (std::find(traced_voices_.begin(), traced_voices_.end(), v.id) == traced_voices_.end()) {
+            // (Where it sounds in the dump: the audio frame after the callback, port field = output sample / 800.8 + 1.)
+            char at[48] = "";
+            if (output_.started()) std::snprintf(at, sizeof at, " (port field %.4f)", audio_frame_sample(v.start + 1) / 800.8 + 1.0);
             engine.log("sfp voice " + std::to_string(i) + " id " + std::to_string(v.id) + " seq " + std::to_string(v.seq) + " sample " +
-                       std::to_string(v.sample) + " ratio " + std::to_string(v.ratio) + " from AX frame " + std::to_string(v.start) +
+                       std::to_string(v.sample) + " ratio " + std::to_string(v.ratio) + " from AX frame " + std::to_string(v.start) + at +
                        ", frame " + std::to_string(engine.frame()));
+        }
     }
     for (const auto id : traced_voices_)
         if (std::find(now.begin(), now.end(), id) == now.end())
