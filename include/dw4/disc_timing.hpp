@@ -79,6 +79,10 @@ struct CriFade {
     // One step: the output volume; once the target is reached the fade ends,
     // a fade to silence then returns -999.
     int step(int volume, int base);
+    // One step of an sfp entry's fade (8031DDB8): the level as the SEQ
+    // volume (int)(127 * level); once it is at or below the target's the fade
+    // ends, a fade to 0.0 then returns 0.
+    int step_seq();
 };
 
 class CriStreams {

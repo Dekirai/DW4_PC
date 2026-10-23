@@ -292,18 +292,28 @@ public:
     // Interleaved stereo 16-bit PCM at kOutputRate of the running streams.
     void render(std::int16_t* out, std::size_t frames);
     static constexpr int kOutputRate = 48000;
-    // An ACTION2 action started on a model: the model's SE set (beSeInfo)
-    // plays the action's sounds after their delays; a looping sound of the
-    // model's previous action stops.
+    // An ACTION2 action started on a model (ACTION_BROADCAST, 803130D4): the
+    // model's SE set (beSeInfo) sends it MODELCTRL SETSOUND for each sound of
+    // the action, which the model queues as a sound subcommand.
     void action_started(Engine& engine, const std::string& model, int index, std::string_view action);
+    // SOUND PLAY of a model's sound subcommand (803105DC): the play id (0:
+    // nothing started) and the sound's type (beSoundData [4]; only a type 4
+    // sound keeps its subcommand, for the end call).
+    std::uint64_t play_model_sound(Engine& engine, const std::string& name, int& type);
+    // SOUND VOLUMECTL UP / DOWN with a play id (80315340 -> 802F64F0): the
+    // BGM entry holding that id, else the ambience's, else every sound effect
+    // entry holding it fades from `from` to `to` over `frames`.
+    void fade_id(std::uint64_t id, float from, float to, float frames);
     // The movie playing: its video stream, picture rate and count; the
-    // picture shown is the time since start at that rate.
+    // picture shown is the time since its first picture at that rate.
     struct Movie {
         std::string name, script; // beMovieInfoData [2] file, [5] end script
         std::vector<std::uint8_t> video;
         double frame_rate = 30000.0 / 1001.0;
         std::size_t pictures{};
-        std::int64_t start{};
+        std::int64_t start{};       // world time picture 0 is shown (picture_at)
+        std::int64_t sound_start{}; // world time the sound's ADXT leaves its pause
+        bool sound_on{};            // the sound plays (render mixes it)
         std::uint32_t serial{}; // changes with every PLAY
         // Picture shown at world time `now`. Fields and pictures are both
         // NTSC rates (two fields per picture at 29.97); the small bias keeps
@@ -370,38 +380,52 @@ private:
         std::vector<std::uint32_t> loop_start;
         bool common{};
     };
-    // A running request sequence (803C49F4, one of 16 tracks).
+    // A running request sequence (803C49F4, one of 16 tracks). `id` is the
+    // play id (the serial) of the Cri sound entry that started it.
     struct SeTrack {
         std::shared_ptr<SeBank> bank;
         sfp::Sequence sequence;
-        std::string name, owner;
+        std::string name;
+        std::uint64_t id{};
         float gain = 1.0f;
         double wait_ms{};
     };
-    // A playing split sample.
+    // A playing split sample (of the entry with play id `id`).
     struct SeVoice {
         std::shared_ptr<SeBank> bank;
         int sample{};
-        std::string name, owner;
+        std::string name;
+        std::uint64_t id{};
         std::size_t position{};
         double phase{};
         double pitch = 1.0; // random detune
         float left = 1.0f, right = 1.0f;
+        float level = 1.0f; // the entry's SEQ volume / 127 (a VOLUMECTL fade)
         bool loop{};
     };
+    // A fade of an sfp sound entry (VOLUMECTL with its play id): 802F53B8
+    // steps it once per field with 8031DDB8, the level as the SEQ volume
+    // 0..127 (SNDF command 4, 8031CF94), and stops the entry once a fade to
+    // 0.0 reaches 12 or less.
+    struct SeqFade {
+        std::uint64_t id{};
+        Fade fade;
+        int volume = 127;
+    };
     // SOUND PLAY <name> (80314FC8): the play id (the Cri serial of the
-    // started sound, 0 if nothing started). `owner` tags the voices of a
-    // model's sound effect (its action cue).
-    std::uint64_t play(Engine& engine, const std::string& name, const std::string& owner = {});
+    // started sound, 0 if nothing started).
+    std::uint64_t play(Engine& engine, const std::string& name);
     // 802F5828: a BGM or ambience start on its channel (0 while the channel
     // still runs: it fades out first).
     std::uint64_t start_bgm_env(Engine& engine, const std::string& name, const SoundData& data);
     // 802F5A04: a sound effect, an sfp request or an ADX file on an SE stream channel.
-    std::uint64_t start_effect(Engine& engine, const std::string& name, const SoundData& data, const std::string& owner);
+    std::uint64_t start_effect(Engine& engine, const std::string& name, const SoundData& data);
     // The sfp request (8031CCFC SEQ_PLAY); false: nothing started.
-    bool play_request(Engine& engine, const std::string& name, const SoundData& data, const std::string& owner = {});
-    void play_cue(Engine& engine, const std::string& sound, const std::string& owner);
-    void stop_effects(const std::string& name, const std::string& owner);
+    bool play_request(Engine& engine, const std::string& name, const SoundData& data, std::uint64_t id);
+    // The sfp entry with that play id stops (its tracks and voices; 0: all).
+    void stop_effects(std::uint64_t id);
+    // 802F53B8 for the sfp entries: their fades step once per field.
+    void step_seq_fades();
     // 802F5828 / 802F5A04 after the entry is chosen: pause, SetOutVol,
     // ADXT_StartAfs, the PLAYatPAUSE flag, the serial (0: not started).
     std::uint64_t start_stream(Engine& engine, int channel, const std::string& name, const SoundData& data);
@@ -428,7 +452,9 @@ private:
     void trace_cri(Engine& engine, int inflight_before, std::int64_t done_before, const std::array<bool, CriStreams::kSlots>& playing_before);
     void play_movie(Engine& engine, const Ram& ram, const std::string& name);
     void end_movie(Engine& engine);
-    void mix_stream(Stream& stream, float gain, float* mix, std::size_t frames);
+    // One stream resampled into the mix at the rate the AX voice plays it
+    // (`sofdec`: the movie's handle, RNA mode 1).
+    void mix_stream(Stream& stream, float gain, bool sofdec, float* mix, std::size_t frames);
     void add_bank(Engine& engine, const ObjectView& data, bool common);
     void run_track(SeTrack& track);
     void mix_voices(float* mix, std::size_t frames);
@@ -449,24 +475,13 @@ private:
     bool common_loaded_{};
     std::vector<SeTrack> tracks_;
     std::vector<SeVoice> voices_;
+    std::vector<SeqFade> seq_fades_;
     // beSeInfoData: per model name, action -> sound after [4] frames.
     struct SeCue {
         std::string action, sound;
         int delay{};
     };
     std::map<std::string, std::vector<SeCue>, std::less<>> se_sets_;
-    struct PendingCue {
-        std::string sound, owner;
-        int frames{};
-    };
-    std::vector<PendingCue> cues_;
-    // "model#index" -> its looping sound and that sound's play id (803105DC
-    // keeps the id of a type 4 sound; the next action stops it).
-    struct OwnerLoop {
-        std::string sound;
-        std::uint64_t id{};
-    };
-    std::map<std::string, OwnerLoop, std::less<>> owner_loops_;
     std::uint32_t random_ = 0x12345678u;
     std::string current_bgm_;       // RAM +0x24 (set by a started BGM PLAY; BGMSTOP and a new stage's RAM clear it)
     int se_volume_{};               // Cri +0x38: SNDF master 1..127 (beSoundInfo [10] / SNDFVOLUME), 0 unset
@@ -474,6 +489,10 @@ private:
     std::optional<Movie> movie_;
     Stream movie_stream_;
     std::uint32_t movie_serial_{};
+    // Sofdec's start after MOVIE PLAY (play_movie): the sound's unpause 29
+    // and the first picture 37 NTSC fields later.
+    static constexpr std::int64_t kMovieSoundNs = 483816667;   // 29 * 1001/60 ms
+    static constexpr std::int64_t kMoviePictureNs = 617283333; // 37 * 1001/60 ms
 };
 
 // beTextureCtrl (80324B30 / 80324C54): binds named pack textures to the
@@ -1311,6 +1330,16 @@ public:
             int ram = -1;
         };
         std::vector<Effect> effects;
+        // Sound subcommands (SETSOUND 8030DE1C -> 80310FAC: the sound name,
+        // the delay as a float, elapsed 0). A started type 4 sound keeps its
+        // entry with the play id until the end call (803106C0).
+        struct Sound {
+            std::string name;
+            float delay{}, elapsed{};
+            bool started{};
+            std::uint64_t id{};
+        };
+        std::vector<Sound> sounds;
         // An effect placed on its source model (GENERATE effect form: string0/int0).
         std::string attach_name;
         int attach_index = -1;
@@ -1427,6 +1456,7 @@ private:
     void item_sequence_hook(Engine& engine, ModelRam& ram);
     bool pick_item(Engine& engine, ModelRam& ram, int player);
     void update_effects(Engine& engine, ModelRam& ram, std::size_t count);
+    void update_sounds(Engine& engine, ModelRam& ram, std::size_t count);
     void place_attached(ModelRam& ram);
     void place_locked(Engine& engine, ModelRam& ram);
     void player_erase_hook(Engine& engine, ModelRam& ram);
