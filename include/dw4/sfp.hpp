@@ -30,19 +30,28 @@ struct Sample {
 };
 
 // A split of the drum program (TBLD +0x68): the sample a key plays. Its
-// tuning (+0x0a semitones, +0x0b cents) is relative to the 32 kHz DSP; every
-// split in the game tunes its 24 kHz sample to its own rate (-5 st +1 ct).
+// tuning (+0x0a semitones, +0x0b 64ths of a semitone) is relative to the
+// 32 kHz DSP; every split in the game tunes its 24 kHz sample to its own
+// rate (-5 st +1/64: -498 cents, an SRC ratio of 0.750015).
 struct Split {
     std::uint8_t key{};
     std::uint8_t sample{};  // +2: 0x100 + index
     std::uint8_t pan{};     // 0x40 centre
     std::int8_t semitones{}, cents{};
-    std::uint8_t detune{};  // +0x14: random pitch range in cents (803B9E88)
+    std::uint8_t detune{};  // +0x14: random pitch range, 64ths of a semitone (803B9E88)
     // The AUX sends of the drum voice (803BA5B4): +0x15 nonzero takes the
     // channel's sends instead; +0x16 bit 0 / bit 1: AUX A / B before the
     // fader; +0x17 / +0x18: the AUX A / B level 0..127 (0: off).
     bool channel_aux{};
     std::uint8_t aux_mode{}, aux_a{}, aux_b{};
+    // +0x02: 0x100 + the sample (0: the split plays nothing, 803B9DD0).
+    std::uint16_t sample_word{};
+    // The voice's volume envelope (803B9BFC, 803C325C, 803BBA80; 0.1 dB per
+    // AX frame): +0x0C attack (0: none, else from -96 dB at that rate),
+    // +0x0E / +0x10 decay rate and sustain level, +0x12 release rate (0:
+    // at once).
+    std::int16_t attack{}, decay{}, sustain{}, release{};
+    std::uint8_t priority{}; // +0x1D: the AX priority - 11
 };
 
 // A preset of a bank's effect table (TBLD +0x70, 803BF7E8): the effect types
@@ -89,6 +98,11 @@ public:
     bool has_group(std::uint32_t request) const;
     // The split playing `key`: an exact key match, else the nearest lower.
     const Split* split(int key) const;
+    // The drum note-on's split of a type 2 program (803B9D00): split
+    // `index` of the layer (the note's key), or null past its last.
+    const Split* split_at(int index) const {
+        return index >= 0 && std::size_t(index) < splits_.size() ? &splits_[std::size_t(index)] : nullptr;
+    }
     std::size_t sample_count() const { return samples_.size(); }
     const Sample& sample(std::size_t index) const { return samples_.at(index); }
     // The velocity curve (TBLD +0x60): 0..255 for velocity 0..127.

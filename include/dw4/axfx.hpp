@@ -72,6 +72,9 @@ public:
     // buffer filled in the last frame, the buffers rotate. Returns the buffer
     // the DSP adds to the main bus in this frame, or null without a callback.
     const AuxFrame* begin_frame(ReverbStd* callback);
+    // After begin_frame: the buffer the DSP adds in the next frame (the one
+    // the callback just processed).
+    const AuxFrame& next_return() const { return buffers_[std::size_t(read_)]; }
     // The end of the frame: with the AUX command, the DSP stores the frame's
     // sends (left and right interleaved; the surround send is 0).
     void end_frame(const std::array<std::int32_t, 2 * kFrameSamples>& sends);

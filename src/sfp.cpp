@@ -102,6 +102,12 @@ Bank::Bank(std::vector<std::uint8_t> data) : data_(std::move(data)) {
         split.aux_mode = byte_at(d, at + 0x16);
         split.aux_a = byte_at(d, at + 0x17);
         split.aux_b = byte_at(d, at + 0x18);
+        split.sample_word = be16(d, at + 2);
+        split.attack = std::int16_t(be16(d, at + 0x0c));
+        split.decay = std::int16_t(be16(d, at + 0x0e));
+        split.sustain = std::int16_t(be16(d, at + 0x10));
+        split.release = std::int16_t(be16(d, at + 0x12));
+        split.priority = byte_at(d, at + 0x1d);
         splits_.push_back(split);
     }
 
