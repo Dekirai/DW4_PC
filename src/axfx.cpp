@@ -56,7 +56,9 @@ bool ReverbStd::init(float coloration, float time, float mix, float damping, flo
     }
     all_pass_coeff_ = coloration;
     level_ = mix;
-    damping_ = damping < 0.05f ? 0.05f : damping;
+    // 80242BA8..80242BB8: fcmpo + bge keeps only a damping of at least
+    // 0.05; anything else, a NaN too, becomes 0.05.
+    damping_ = !(damping >= 0.05f) ? 0.05f : damping;
     damping_ = 1.0f - (0.05f + 0.8f * damping_);
     if (pre_delay != 0.0f) {
         pre_delay_time_ = to_int(32000.0f * pre_delay);

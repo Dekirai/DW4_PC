@@ -85,6 +85,20 @@ struct CriFade {
     int step_seq();
 };
 
+// The rate the AX voice plays a CRI stream of `rate` Hz at. The RNA
+// renderer gives the voice the sample-rate converter ratio (802A6C38, 16.16)
+// rate / 32000 in mode 0: the integer part rate / 32000 and the fraction
+// (rate << 8) / 125 (48000 Hz: 0x18000); in mode 1 (`sofdec`: only Sofdec's
+// ADXT sets it, 803E3DC4 -> 8029D814 -> 8029D838 -> 802A6AA8) the same of
+// 1124 (rate + 1) / 1125 (0x17FA9). Every other handle takes mode 0 at its
+// create (802A7E48 from 0x80532198, which nothing writes).
+std::uint32_t rna_src_ratio(std::uint32_t rate, bool sofdec);
+// The output rate of that ratio: the DSP renders 54 MHz / 1686 = 32000 *
+// 1125 / 1124 samples per second, so the beCri streams play 1125 / 1124 fast
+// (48042.7 Hz, as CriStreams counts 240 samples per AX frame) and the
+// movie's sound at 48000.2 Hz.
+double rna_rate(std::uint32_t rate, bool sofdec);
+
 class CriStreams {
 public:
     static constexpr int kSlots = 6;

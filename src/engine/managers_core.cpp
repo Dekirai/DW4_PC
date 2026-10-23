@@ -1433,24 +1433,6 @@ void SoundManager::render(std::int16_t* out, std::size_t frames) {
     for (std::size_t i = 0; i < frames * 2; ++i) out[i] = static_cast<std::int16_t>(std::clamp(mix[i], -32768.0f, 32767.0f));
 }
 
-namespace {
-// The rate a stream of `rate` Hz plays at. The RNA renderer gives the AX
-// voice the sample-rate converter ratio (802A6C38, 16.16) rate / 32000 in
-// mode 0, the integer part (r29) and the fraction (rate << 8) / 125 (48000
-// Hz: 0x1.8000), and in mode 1 the same of 1124 (rate + 1) / 1125 (0x1.7FA9).
-// Only Sofdec's ADXT sets mode 1 (803E3DC4 -> 8029D814 -> 8029D838 ->
-// 802A6AA8); every other handle takes mode 0 at its create (802A7E48 from
-// 0x80532198, which nothing writes). The DSP outputs 54 MHz / 1686 =
-// 32000 * 1125 / 1124 samples per second, so the beCri streams play 1125 /
-// 1124 fast (48042.7 Hz, as CriStreams counts 240 samples per AX frame)
-// and the movie's sound 48000.2 Hz.
-double rna_rate(std::uint32_t rate, bool sofdec) {
-    const std::uint32_t f = sofdec ? std::uint32_t(1124ull * (std::uint64_t(rate) + 1) / 1125) : rate;
-    const std::uint32_t ratio = ((f / 32000u) << 16) | (((f << 8) / 125u) & 0xFFFFu);
-    return double(ratio) / 65536.0 * 54.0e6 / 1686.0;
-}
-} // namespace
-
 // One stream resampled into the mix (audio only: the game never reads the
 // decoder; a one-shot that runs out just falls silent).
 void SoundManager::mix_stream(Stream& stream, float gain, bool sofdec, float* mix, std::size_t frames) {

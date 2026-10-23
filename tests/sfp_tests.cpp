@@ -1,9 +1,12 @@
 #include "dw4/axfx.hpp"
 #include "dw4/sfp.hpp"
 
+#include <algorithm>
+#include <cstdint>
 #include <cstring>
 #include <functional>
 #include <iostream>
+#include <limits>
 #include <stdexcept>
 #include <vector>
 
@@ -166,6 +169,24 @@ void reverb() {
     dry[3] = 1234;
     r.process(dry);
     check(!r.active() && dry[3] == 1234, "Shut down");
+    // The damping below 0.05 becomes 0.05 (80242BA8..80242BB8: fcmpo + bge),
+    // a NaN too: it passes the range checks and then answers like 0.0.
+    auto impulse = [](float damping) {
+        axfx::ReverbStd effect;
+        std::vector<std::int32_t> out;
+        if (!effect.init(0.4f, 1.4f, 1.0f, damping, 0.0f)) return out;
+        for (int frame = 0; frame < 40; ++frame) {
+            axfx::AuxFrame data{};
+            if (frame == 0) data[0] = 10000;
+            effect.process(data);
+            out.insert(out.end(), data.begin(), data.begin() + axfx::kFrameSamples);
+        }
+        return out;
+    };
+    const auto low = impulse(0.0f), clamped = impulse(0.05f), nan = impulse(std::numeric_limits<float>::quiet_NaN());
+    check(!low.empty() && low == clamped && low != impulse(0.4f), "Damping below 0.05 takes 0.05");
+    check(nan == low && std::none_of(nan.begin(), nan.end(), [](std::int32_t v) { return v == std::numeric_limits<std::int32_t>::min(); }),
+          "A NaN damping takes 0.05");
 }
 
 // The AUX bus: a send comes back two frames later, after the callback.
