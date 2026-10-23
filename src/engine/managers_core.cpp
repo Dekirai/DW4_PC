@@ -1661,9 +1661,18 @@ void SoundManager::play_movie(Engine& engine, const Ram& ram, const std::string&
         offset = disc;
         sectors = (size + 2047) / 2048;
     }
+    movie.serial = ++movie_serial_;
+    if (movie.pictures == 0 || sectors == 0) {
+        // A file the codec cannot open or play (802ADC8C fails, the movie
+        // manager keeps no codec): beMovie finds no movie, state 2, and runs
+        // the end script (8031EC10, 802B1338).
+        movie.phase = Movie::Phase::end;
+        movie.codec = false;
+        movie_ = std::move(movie);
+        return;
+    }
     cri_.movie_open(offset, sectors);
     engine.hold_update(1);
-    movie.serial = ++movie_serial_;
     movie_ = std::move(movie);
     if (static const bool trace = std::getenv("DW4_TRACE_SOUND") != nullptr; trace)
         engine.log("movie " + name + " PLAY: open reads 10 sectors at disc " + std::to_string(offset) + ", frame " +
@@ -1682,7 +1691,7 @@ void SoundManager::stop_movie(Engine& engine) {
 
 void SoundManager::update_held(Engine& engine) {
     update_driver(engine);
-    if (!movie_) return;
+    if (!movie_ || !movie_->codec) return;
     auto& movie = *movie_;
     static const bool trace = std::getenv("DW4_TRACE_SOUND") != nullptr;
     if (movie.phase == Movie::Phase::open) {
@@ -1708,7 +1717,7 @@ void SoundManager::update_held(Engine& engine) {
 
 // The codec update of the playing movie (802AE8B8), after every manager.
 void SoundManager::update_movie_player(Engine& engine) {
-    if (!movie_ || movie_->phase == Movie::Phase::open) return;
+    if (!movie_ || !movie_->codec || movie_->phase == Movie::Phase::open) return;
     auto& movie = *movie_;
     static const bool trace = std::getenv("DW4_TRACE_SOUND") != nullptr;
     // 0x802AE93C: VIWaitForRetrace (unless paused, state 1): this frame takes

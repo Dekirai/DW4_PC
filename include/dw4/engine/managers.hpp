@@ -336,6 +336,7 @@ public:
         int skipped{};            // pictures Sofdec dropped as late
         bool sound_on{};          // the sound plays (render mixes it)
         bool ended_script{};      // beMovie ran the end script (8031EC10)
+        bool codec{true};         // the codec plays it (false: the file could not be opened)
         std::uint32_t serial{};   // changes with every PLAY
     };
     const Movie* movie() const { return movie_ ? &*movie_ : nullptr; }
