@@ -1326,12 +1326,13 @@ void SoundManager::run_track(SeTrack& track) {
             voice.aux_left = voice.left * aux;
             voice.aux_right = voice.right * aux;
         }
+        voice.level_from = voice.level_to = voice.level; // (a new channel starts without a ramp)
         voices_.push_back(std::move(voice));
         if (voices_.size() > kMaxVoices) voices_.erase(voices_.begin());
     }
 }
 
-void SoundManager::mix_voices(float* mix, std::size_t frames, float* aux) {
+void SoundManager::mix_voices(float* mix, std::size_t frames, std::size_t at, float* aux) {
     for (auto& voice : voices_) {
         const auto& pcm = voice.bank->pcm[std::size_t(voice.sample)];
         const auto& sample = voice.bank->bank->sample(std::size_t(voice.sample));
@@ -1342,7 +1343,8 @@ void SoundManager::mix_voices(float* mix, std::size_t frames, float* aux) {
             std::size_t after = voice.position + 1;
             if (after >= pcm.size()) after = voice.loop && loop < pcm.size() ? loop : voice.position;
             const float a = float(pcm[voice.position]);
-            const float value = (a + (float(pcm[after]) - a) * float(voice.phase)) * voice.level;
+            const float level = voice.level_from + (voice.level_to - voice.level_from) * float(at + i) / float(kAxFrameOutput);
+            const float value = (a + (float(pcm[after]) - a) * float(voice.phase)) * level;
             mix[i * 2] += value * voice.left;
             mix[i * 2 + 1] += value * voice.right;
             if (sends) {
@@ -1417,7 +1419,7 @@ void SoundManager::render(std::int16_t* out, std::size_t frames) {
         if (ax_fill_ == 0) begin_ax_frame();
         const std::size_t count = std::min(frames - done, kAxFrameOutput - ax_fill_);
         float* const part = mix.data() + done * 2;
-        mix_voices(part, count, aux_emit_ ? aux_sends_.data() + ax_fill_ * 2 : nullptr);
+        mix_voices(part, count, ax_fill_, aux_emit_ ? aux_sends_.data() + ax_fill_ * 2 : nullptr);
         if (aux_emit_)
             for (std::size_t i = 0; i < count * 2; ++i) part[i] += aux_return_[ax_fill_ * 2 + i];
         ax_fill_ += count;
@@ -1544,6 +1546,17 @@ void SoundManager::sndf_effect(Engine& engine, int bank, int preset) {
 // in this frame (two frames old) is resampled from 32 kHz to the output rate,
 // linearly from the last returned sample (a third of a DSP sample late).
 void SoundManager::begin_ax_frame() {
+    // MIXUpdateSettings (8025A530, the AX frame callback): a channel whose
+    // input changed (the SEQ volume of a VOLUMECTL fade reaches the voice's
+    // volume articulator, 803B8F28 -> AXART 802450BC -> MIX) keeps its old
+    // level as the current one and gives the DSP the new one as a ramp,
+    // (new - current) / 160 per sample with the ramp flags (8025B138..: PB
+    // VE +0x19C / +0x19E, the bus volumes and their deltas), so a fade step
+    // reaches the output at the next AX frame, linearly across it.
+    for (auto& voice : voices_) {
+        voice.level_from = voice.level_to;
+        voice.level_to = voice.level;
+    }
     const auto* back = aux_a_.begin_frame(aux_a_callback_ ? &reverb_a_ : nullptr);
     aux_emit_ = back != nullptr;
     aux_sends_.fill(0.0f);

@@ -402,6 +402,9 @@ private:
         double pitch = 1.0; // random detune
         float left = 1.0f, right = 1.0f;
         float level = 1.0f; // the entry's SEQ volume / 127 (a VOLUMECTL fade)
+        // The level the AX mixer ramps across the running AX frame: a change
+        // of `level` takes effect at the next frame (begin_ax_frame).
+        float level_from = 1.0f, level_to = 1.0f;
         float aux_left{}, aux_right{}; // the AUX A send (803BA5B4)
         bool loop{};
     };
@@ -460,8 +463,9 @@ private:
     void add_bank(Engine& engine, const ObjectView& data, bool common);
     void run_track(SeTrack& track);
     // The effect voices into `mix` and, while the AUX A bus is on, their
-    // AUX A sends into `aux` (both interleaved stereo).
-    void mix_voices(float* mix, std::size_t frames, float* aux = nullptr);
+    // AUX A sends into `aux` (both interleaved stereo); `at` is the first
+    // sample's place in the running AX frame (the level ramp).
+    void mix_voices(float* mix, std::size_t frames, std::size_t at, float* aux = nullptr);
     // _common/sbiallse.igb's banks (allse.sfp is the SNDF's bank 0), loaded
     // once at boot by the original (802F902C).
     void load_common_banks(Engine& engine);

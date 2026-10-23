@@ -202,7 +202,8 @@ both. A started type 4 sound keeps its subcommand with the play id, and the
 subcommand cleanup of the model's next sequence start or REMOVE fades it out
 (803106C0: VOLUMECTL DOWN, 1.0 -> 0.0 over 10 frames; an SFP entry steps
 8031DDB8 to SEQ volumes that reach its sounding voices, 803BC708, and stops at
-12 or less). Levels follow the
+12 or less; the AX mixer ramps each new level linearly across the next AX
+frame, MIXUpdateSettings 8025A530). Levels follow the
 AX mixer (MIXInitChannel 80259334): the left side is attenuated by the pan
 table at the pan and the right side by the table at 127 - pan, so effect
 voices (split pan through the 8045D130 curve; every shipped split is centred)
