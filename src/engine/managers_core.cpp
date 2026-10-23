@@ -866,7 +866,7 @@ void SoundManager::clear_stage(Engine& engine) {
     // stage change, and only PLAY / BGMSTOP / VOLUMECTL write it.
     se_recent_.clear();
     // The teardown stops the movie (its codec waits end with it).
-    stop_movie();
+    stop_movie(engine);
     // The stage's banks go; one-shot effects finish, loops end.
     std::erase_if(banks_, [](const auto& bank) { return !bank->common; });
     std::erase_if(voices_, [](const SeVoice& voice) { return voice.loop; });
@@ -1673,7 +1673,8 @@ void SoundManager::play_movie(Engine& engine, const Ram& ram, const std::string&
 // The codec stops and closes (igMovieManager stop 802AF388: 802AE6D0 with
 // state 1, 802AE530) and the stream ends; the picture of the movie layer
 // stays until the stage changes.
-void SoundManager::stop_movie() {
+void SoundManager::stop_movie(Engine& engine) {
+    if (movie_) engine.set_clock_lateness(0);
     movie_.reset();
     movie_stream_.decoder.reset();
     cri_.movie_close();
@@ -1729,7 +1730,12 @@ void SoundManager::update_movie_player(Engine& engine) {
         // PREP ends kMoviePrep passes after the one that first had the
         // stream's data; the sound handler's start (803E38C4) follows the
         // pass by kMovieStartNs.
-        if (movie.ready_frame < 0 && cri_.movie_written() > 0) movie.ready_frame = movie.frames;
+        if (movie.ready_frame < 0 && cri_.movie_written() > 0) {
+            // From the data on, the decoder works on every retrace before
+            // the next frame starts (Engine::set_clock_lateness).
+            movie.ready_frame = movie.frames;
+            engine.set_clock_lateness(kMovieDecodeLateNs);
+        }
         if (movie.ready_frame >= 0 && movie.frames >= movie.ready_frame + kMoviePrep) {
             movie.phase = Movie::Phase::play;
             movie.start = pass + kMovieStartNs;
@@ -2179,7 +2185,7 @@ void SoundManager::update(Engine& engine) {
         const auto& pad = engine.pads()[0];
         const bool skip = (pad.buttons.trigger & (pad_button::a | pad_button::start)) != 0;
         const std::string script = movie_->script;
-        if (skip) stop_movie();
+        if (skip) stop_movie(engine);
         if (skip || movie_->phase == Movie::Phase::end) {
             if (movie_) movie_->ended_script = true;
             if (static const bool trace = std::getenv("DW4_TRACE_SOUND") != nullptr; trace)

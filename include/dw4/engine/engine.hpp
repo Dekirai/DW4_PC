@@ -266,6 +266,7 @@ struct Cheats {
 struct StageSnapshot {
     std::string stage;
     std::int64_t time{};
+    std::int64_t clock_lateness{};       // the lateness in that update's world clock sample (Engine::set_clock_lateness)
     std::uint64_t frame{};
     std::map<std::int32_t, std::uint8_t> flags;
     std::map<std::int32_t, std::int32_t> counters;
@@ -364,9 +365,15 @@ public:
     void hold_update(int fields) { hold_fields_ = std::max(hold_fields_, fields); }
     // The last step was such a covered field (no update ran in it).
     bool held() const { return held_; }
-    // The fields since the last update's world clock sample: the VI clock of
-    // the per-field work (the same as time() in a step that updated).
-    std::int64_t vi_time() const { return time_ + field_time(frame_) - field_time(update_frame_); }
+    // The frame starts late (ns after its retrace; 0 by default) from the next
+    // update on: a higher-priority thread's work on every retrace, Sofdec's
+    // decoder while a movie plays (SoundManager), takes the CPU first, so
+    // the update samples the world clock later (Dolphin: 0.005..0.022
+    // field, 0.011 on average, then on time again after the movie stops).
+    void set_clock_lateness(std::int64_t ns) { clock_lateness_ = ns; }
+    // The retrace of the last update plus the fields since: the VI clock of
+    // the per-field work (time() without the frame's lateness).
+    std::int64_t vi_time() const { return time_ - applied_lateness_ + field_time(frame_) - field_time(update_frame_); }
     // World time added by the last step (one NTSC field).
     std::int64_t frame_delta() const { return field_time(frame_) - field_time(frame_ ? frame_ - 1 : 0); }
     // beSystem's frame step (80316258, 0x80316320..0x8031635C): the world
@@ -601,6 +608,8 @@ private:
     std::uint64_t update_frame_{};        // frame_ of the last step that updated (vi_time)
     int hold_fields_{};                   // fields the running update still covers (hold_update)
     bool held_{};                         // the last step was one of them (held())
+    std::int64_t clock_lateness_{};       // set_clock_lateness: for the next updates
+    std::int64_t applied_lateness_{};     // ... and in time_ now
     std::int64_t world_delta_ = 16683333; // world time added by the last step (system_step)
     bool pad_input_enabled_{};
     std::map<std::int32_t, std::uint8_t> flags_;

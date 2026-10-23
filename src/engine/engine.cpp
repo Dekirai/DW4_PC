@@ -468,6 +468,7 @@ void Engine::begin_stage_load(const StageSnapshot* restoring) {
     StageSnapshot snapshot;
     snapshot.stage = next;
     snapshot.time = time_;
+    snapshot.clock_lateness = applied_lateness_;
     snapshot.frame = frame_;
     snapshot.flags = flags_;
     snapshot.counters = counters_;
@@ -496,6 +497,8 @@ void Engine::restore(const StageSnapshot& snapshot) {
     update_frame_ = frame_; // (a stage load starts in a step that updated)
     hold_fields_ = 0;
     held_ = false;
+    applied_lateness_ = snapshot.clock_lateness;
+    clock_lateness_ = 0;
     world_delta_ = frame_delta(); // the field that step added (no stage is active in it)
     flags_ = snapshot.flags;
     counters_ = snapshot.counters;
@@ -1273,7 +1276,8 @@ void Engine::step(const std::array<PadSample, 4>& samples) {
     // One NTSC field of world time (8028AF84), see field_time.
     // (After covered fields the sample has moved on by all of them.)
     const auto before = time_;
-    time_ += field_time(frame_ + 1) - field_time(update_frame_);
+    time_ += field_time(frame_ + 1) - field_time(update_frame_) + clock_lateness_ - applied_lateness_;
+    applied_lateness_ = clock_lateness_;
     ++frame_;
     update_frame_ = frame_;
     if (const auto& clock = clock_file(); !clock.empty())

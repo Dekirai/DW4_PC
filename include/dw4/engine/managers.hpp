@@ -523,12 +523,18 @@ private:
     std::optional<Movie> movie_;
     Stream movie_stream_;
     std::uint32_t movie_serial_{};
-    void stop_movie();
+    void stop_movie(Engine& engine);
     // Sofdec leaves PREP this many codec server passes after the one that
     // first had the stream's data, and its sound handler starts 56,539 bus
     // ticks (0.084 field) after that pass (Dolphin, both opening movies).
     static constexpr int kMoviePrep = 2;
     static constexpr std::int64_t kMovieStartNs = 1396025;
+    // While Sofdec decodes, every frame starts 0.011 field after its retrace
+    // (Dolphin d_skip1500u: the frame start after the retrace, 0.0047..0.0220
+    // field over 300 frames of the opening, 0.0007 before the first data,
+    // 0.0001 after the skip): the skip's NEXTSTAGE, posted for one nominal
+    // frame later, arrives two updates after it.
+    static constexpr std::int64_t kMovieDecodeLateNs = 183517;
     // The stage's beCriFxInfo in acceptance order (Cri +0x2C, 802F51C4):
     // name and _reverb (slot 6).
     std::vector<std::pair<std::string, int>> fx_infos_;

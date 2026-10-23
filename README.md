@@ -67,9 +67,11 @@ the game. Builds and tests run locally; GitHub Actions is disabled.
   their minimum play time, and the box camera: the camera pivot follows the
   players' centre and each camera box of the stage turns and distances the
   camera, blended in as the players cross into it; camera shakes.
-- The opening movie after the logos: the Sofdec file's program stream is
-  split natively; its MPEG-1 video is decoded with pl_mpeg and its ADX sound
-  plays through the sound mixer; A or START skips it.
+- The opening movie after the logos and in the title's attract mode: the
+  Sofdec file's program stream is split natively; its MPEG-1 video is
+  decoded with pl_mpeg and its ADX sound plays through the sound mixer, with
+  the original's 30 Hz movie frames, Sofdec's start and end and its disc
+  reads; A or START skips it.
 - Music and ambience: the stage sound lists' BGM and ambience streams are
   the CRI ADX files of ndmw.afs, decoded natively (loop points, volume, the
   fade-out before a change) and played through SDL3 audio.
