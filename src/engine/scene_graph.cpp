@@ -1059,6 +1059,10 @@ void apply(const Attribute* a, RenderState& s, Mat4& model) {
 // OUTERMOST override wins, for igColorAttr too. A model inside another
 // model's faded node keeps the outer fade's colour, its own FADESET does not
 // multiply into it (and the 8-bit rounding applies to that one colour).
+// FADESET and FLASHSET share one igColorAttr per RAM (the action work's
+// +0x50: 802EFF9C, 0x802F08A0), so one model never stacks two colour
+// overrides; a nested one needs a model node inside another's subtree, which
+// the story never builds (a traversal trace over the r25c segments found none).
 // FADESET (802F0800) adds only igColorAttr, igBlendStateAttr (on) and
 // igLightingStateAttr (off), no igBlendFunctionAttr: the function stays the
 // model's own (the warp beam x_099etrns01a keeps its additive SRC_ALPHA/ONE)
