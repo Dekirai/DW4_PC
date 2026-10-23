@@ -1029,6 +1029,8 @@ void SoundManager::sfp_volume(const SfpEntry& entry, int volume, std::int64_t no
     if (entry.seq && driver_.status(entry.seq) >= 0) driver_.seq_volume(entry.seq, volume, now);
 }
 
+std::int64_t SoundManager::command_ticks(Engine& engine) const { return cri_ticks(engine.time()) + kCommandTicks; }
+
 sndf::Driver::Banks SoundManager::driver_banks() const {
     sndf::Driver::Banks banks;
     for (const auto& bank : banks_) banks.push_back(bank->data);
@@ -1058,7 +1060,7 @@ void SoundManager::advance_driver(std::int64_t ticks) {
 // volume 0, an ADX sound's output volume -999), OFFREEZE turns it back on
 // (127; an ADX sound at 0 dB, not its own volume).
 void SoundManager::freeze(Engine& engine, bool off) {
-    const std::int64_t now = cri_ticks(engine.time());
+    const std::int64_t now = command_ticks(engine);
     for (std::size_t channel = 2; channel < streams_.size(); ++channel) {
         auto& stream = streams_[channel];
         if (stream.serial && stream.type == 4 && busy(int(channel)) == 1) stream.out_volume = off ? 0 : -999;
@@ -1317,7 +1319,7 @@ std::uint64_t SoundManager::start_sfp(Engine& engine, const std::string& name, c
     }
     // 802F5DE4: an entry (802F56B0 with the sound's priority [9]); none:
     // nothing plays.
-    const std::int64_t now = cri_ticks(engine.time());
+    const std::int64_t now = command_ticks(engine);
     const int index = choose_sfp_entry(data.priority, now);
     if (index < 0) return 0;
     auto& entry = sfp_[std::size_t(index)];
@@ -1470,7 +1472,9 @@ void SoundManager::render(std::int16_t* out, std::size_t frames) {
         const double x0 = double(ticks - frame_start) / double(kDspSampleTicks);
         for (std::size_t channel = 0; channel < streams_.size(); ++channel) {
             const auto& m = stream_mix_[channel];
-            if (!m.on) continue;
+            // (A stream the game replaced or paused since the frame began
+            // waits for the next frame.)
+            if (!m.on || !stream_on(channel) || streams_[channel].serial != m.serial) continue;
             const auto ramp = [&](double x) { return m.from + (m.to - m.from) * float(std::clamp(x, 0.0, 160.0) / 160.0); };
             mix_stream(streams_[channel], ramp(x0), ramp(x0 + kDspPerSample * double(count)), false, part, count);
         }
@@ -1605,6 +1609,14 @@ void SoundManager::sndf_effect(Engine& engine, int bank, int preset) {
     if (fx_type_b_ != 0xff) engine.note("audio AUX B effect type " + std::to_string(fx_type_b_) + " (not implemented)");
 }
 
+// The DSP plays a handle's ARAM ring from PLAYING until it played out
+// (status 3 and 4), not while the handle is paused.
+bool SoundManager::stream_on(std::size_t channel) const {
+    const auto& stream = streams_[channel];
+    const int status = cri_.status(int(channel));
+    return stream.serial && stream.decoder && (status == 3 || status == 4) && !cri_.handles[channel].paused;
+}
+
 // The start of an AX frame in render(). MIXUpdateSettings (8025A530, the AX
 // frame callback): a stream channel whose input changed (ADXT_SetOutVol ->
 // 802A6B8C -> MIXSetInput) keeps its old level as the current one and gives
@@ -1619,12 +1631,9 @@ void SoundManager::sndf_effect(Engine& engine, int bank, int preset) {
 void SoundManager::begin_ax_frame(const sndf::Driver& driver, std::int64_t frame) {
     for (std::size_t channel = 0; channel < streams_.size(); ++channel) {
         const auto& stream = streams_[channel];
-        const auto& h = cri_.handles[channel];
-        const int status = cri_.status(int(channel));
-        // The DSP plays a handle's ARAM ring from PLAYING until it played out
-        // (status 3 and 4), not while the handle is paused.
-        const bool on = stream.serial && stream.decoder && (status == 3 || status == 4) && !h.paused;
+        const bool on = stream_on(channel);
         auto& m = stream_mix_[channel];
+        if (on && m.on && m.serial != stream.serial) m.on = false; // another sound on the channel starts afresh
         const float level = out_gain(stream.out_volume);
         if (on && m.on) {
             m.from = m.to;
@@ -1641,6 +1650,7 @@ void SoundManager::begin_ax_frame(const sndf::Driver& driver, std::int64_t frame
             audio_trace_.emplace_back(line);
         }
         m.on = on;
+        m.serial = stream.serial;
     }
     const auto* back = aux_a_.begin_frame(aux_a_callback_ ? &reverb_a_ : nullptr);
     aux_emit_ = back != nullptr;
@@ -1793,7 +1803,7 @@ bool SoundManager::command(Engine& engine, Ram& ram, std::string_view command, P
         if (command == "SESTOP") {
             for (std::size_t channel = 2; channel < streams_.size(); ++channel) stop(int(channel));
             for (std::size_t i = 0; i < kSfpEntries; ++i)
-                if (sfp_[i].serial) stop_sfp(i, cri_ticks(engine.time()));
+                if (sfp_[i].serial) stop_sfp(i, command_ticks(engine));
             return true;
         }
         if (command == "VOLUMECTL") {
@@ -1822,7 +1832,7 @@ bool SoundManager::command(Engine& engine, Ram& ram, std::string_view command, P
                     for (std::size_t channel = 2; channel < streams_.size(); ++channel)
                         if (streams_[channel].serial == id) stop(int(channel));
                     for (std::size_t i = 0; i < kSfpEntries; ++i)
-                        if (sfp_[i].serial == id) stop_sfp(i, cri_ticks(engine.time()));
+                        if (sfp_[i].serial == id) stop_sfp(i, command_ticks(engine));
                 }
             }
             return true;
@@ -2106,6 +2116,7 @@ void SoundManager::update_driver(Engine& engine) {
     // (8031D0F0 == 1) steps its fade (8031DDB8; an sfp sound never pauses)
     // and sets the level as its SEQ volume, a fade to 0.0 stopping it at 12
     // or less; one whose sequence ended (0) or failed (-1) stops.
+    const std::int64_t command = command_ticks(engine);
     for (std::size_t i = 0; i < kSfpEntries; ++i) {
         auto& entry = sfp_[i];
         if (!entry.serial) continue;
@@ -2113,10 +2124,10 @@ void SoundManager::update_driver(Engine& engine) {
         if (status == 1) {
             if (!entry.fade.running) continue;
             const int volume = entry.fade.step_seq();
-            sfp_volume(entry, volume, now);
-            if (entry.fade.to == 0.0f && volume <= 12) stop_sfp(i, now);
+            sfp_volume(entry, volume, command);
+            if (entry.fade.to == 0.0f && volume <= 12) stop_sfp(i, command);
         } else if (status <= 0 && status >= -1) {
-            stop_sfp(i, now);
+            stop_sfp(i, command);
         }
     }
 }

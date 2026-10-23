@@ -428,6 +428,13 @@ private:
     // The driver the game sees, ticked for the AX frames that began before
     // `ticks` (CPU ticks of the world clock).
     void advance_driver(std::int64_t ticks);
+    // When the frame's sound commands reach the SNDF's ring: the world time of
+    // the update plus 0.6 ms (Dolphin's dng102b1 onsets: a request less than
+    // 0.57 ms before an AX frame boundary is run a frame later, one 0.65 ms or
+    // more before it at that boundary; the game's update before its sound
+    // requests).
+    static constexpr std::int64_t kCommandTicks = 291600;
+    std::int64_t command_ticks(Engine& engine) const;
     std::int64_t ax_frame_ticks(std::int64_t frame) const { return cri_.ax_phase + frame * CriStreams::kAxFrameTicks; }
     sndf::Driver::Banks driver_banks() const;
     // 802F68D0 (SOUND ONFREEZE / OFFREEZE): every running type 4 entry goes
@@ -552,7 +559,9 @@ private:
     struct StreamMix {
         float from{}, to{};
         bool on{};
+        std::uint64_t serial{}; // the sound the ramp belongs to
     };
+    bool stream_on(std::size_t channel) const;
     std::array<StreamMix, 2 + kSeStreams> stream_mix_{};
     // The AUX A return the DSP adds in the running frame (DSP rate, per
     // channel) and the first sample of the next frame's.
