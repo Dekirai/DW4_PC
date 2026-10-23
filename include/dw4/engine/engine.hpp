@@ -334,10 +334,13 @@ public:
     std::vector<std::string> scene_report();
 
     void request_stage(std::string name);
-    // False after the step that took a stage change (NEXTSTAGE, 80347F2C):
-    // the original presents no new picture from then on, the screen keeps
-    // the last one until the loader draws. A reboot presents black.
-    bool presenting() const { return rebooting_ || pending_stage_.empty(); }
+    // False after the step that took a stage change (NEXTSTAGE, 80347F2C)
+    // and in the step that tears the stage down: the original presents no
+    // new picture from then on, the screen keeps the last one until the
+    // loader draws (Dolphin: the XFB of the teardown's frame still holds the
+    // opening's last picture, after its end and after a skip; black from the
+    // frame after it). A reboot presents black.
+    bool presenting() const { return rebooting_ || (pending_stage_.empty() && !torn_down_); }
     // The console reboots (ConsoleReset): from the step beSystem saw the reset
     // button's release on, the picture is black and nothing runs; after
     // kRebootFields more steps the host starts a new engine on the boot stage
@@ -609,6 +612,7 @@ private:
     bool soft_reset_allowed_{}; // stage data +63, set after first.lua outside the title stages
     ConsoleReset console_reset_;   // beSystem +0x5F..0x62 and the controllers' reset combination
     bool rebooting_{};             // the reset button restarted the console (rebooting())
+    bool torn_down_{};             // this step tore the stage down (presenting(); the host's picture only)
     int reboot_fields_{};          // steps since then
     Cheats cheats_;
     std::optional<StageSnapshot> snapshot_;

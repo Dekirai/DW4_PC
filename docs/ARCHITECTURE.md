@@ -27,7 +27,10 @@ nominal 16,666,666 ns frame (`kFrameNs`), so an n-frame wait ends after
 exactly n steps. In order:
 
 1. Pads: `dw4::OriginalPads` computes trigger/repeat masks from the host
-   samples (disabled while STAGECTL `PADINPUT DISABLE` is active).
+   samples every frame (bePadManager 80311F84); while STAGECTL
+   `PADINPUT DISABLE` is active the readers get the fifth, never updated pad
+   instead (the getter 80312138, `Engine::pads`), so a press read in the
+   frame of the ENABLE counts and a button held across it gives no trigger.
 2. The frame clock advances, so updates and the following render observe the
    same time.
    beSystem's update (80316258) then reads the console's reset button
@@ -280,7 +283,8 @@ that `dw4_game` queues on an SDL3 audio stream (`DW4_AUDIO_DUMP=FILE.wav`
 records it, `DW4_TRACE_SOUND=1` logs the effects and sound subcommands, the
 SNDF voices and where each stream's audio begins in the dump).
 MOVIE PLAY (8031EDFC) looks up the beMovieInfoData of the
-file ([5] end script), splits the Sofdec program stream with `dw4::sfd`
+file (strcmp; [5] end script; a name the list lacks plays nothing, and a PLAY
+while the beMovie name is still set is refused), splits the Sofdec program stream with `dw4::sfd`
 (MPEG-1 video 0xE0, ADX sound 0xC0) and plays the sound on a movie channel;
 the host decodes the video with pl_mpeg and draws the picture the player
 took over the screen. The only movie is the opening (stagIS09 first.lua,
@@ -296,15 +300,26 @@ waits for a retrace itself before its ADX server pass and mwPlyGetCurFrm, so
 every frame of a movie takes two fields: the game runs at 30 Hz until the
 stage's teardown stops the movie (`Engine::hold_update`: the covered fields
 run no update, keep the picture and the input, and only tick the CRI
-servers; `Engine::held`, `Engine::vi_time`). Its first server pass starts
+servers and the SNDF's AX frames; `Engine::held`, `Engine::vi_time`). The
+port's driver tick of a step stands for the servers on the retrace after it,
+so the MOVIE PLAY step's tick is the open loop's first pass (the header read)
+and the tick of the step before a covered field is the pass that field's
+loop iteration checks: the field whose pass booked the header runs
+mwPlyStart and ends the frame. The first codec update's pass starts
 Sofdec's stream (a 365-sector ring on the simulated drive, CriStreams
 `movie_*`); the player leaves prep two passes after the first with data
 (803E38C4 unpauses the sound 0.084 field after that pass), takes picture k
-in the codec update after the next k ones and reads PLAYEND two updates
-after the last picture; the codec then stops with state 2 and the next
-beMovie update (8031EC10) runs the end script, while the codec keeps the
-30 Hz frames going until the teardown. A or START from player 1 stops the
-movie at once (802AF560) and runs the end script in the same update. While
+in the codec update after the next k ones (update 12 + k) and reads
+PLAYEND two updates after the last picture; the XFB of a frame shows the
+picture of the codec update before its own (Dolphin: the frame taking k
+still shows k - 1), so the port's covered field shows that one. The codec
+then stops with state 2 and the next beMovie update (8031EC10) runs the end
+script and clears the name (a later PLAY is taken; the ended codec stays
+and waits its retrace in every frame), while the codec keeps the 30 Hz
+frames going until the teardown. A or START from player 1 (read through the
+pad getter, so a press in the frame of the PADINPUT ENABLE 120 frames after
+MOVIE PLAY counts) stops every movie at once (802AF560) and runs the end
+script in the same update. While
 Sofdec decodes, the frames start 0.011 field after their retraces
 (`Engine::set_clock_lateness`), so the skip's NEXTSTAGE, posted for one
 nominal frame later, arrives two updates after it. (Dolphin captures of a

@@ -3426,6 +3426,12 @@ bool CampaignBot::answer_menu(engine::Engine& engine, const engine::ModelCtrlMan
             if (menu.name == "i_messcr") {
                 want = menu.items >= 3 ? (pick.device >= 0 ? 1 : menu.items - 1) : 0;
             } else if (menu.name == "i_stcursor02") {
+                // (Back at the slot kinds: a medal's pocket path is over. Its
+                // flag left set made the next pick's slot cursor back out
+                // round and round: the board after a PWR Medal "not
+                // equipped" one device after another, then the errand
+                // stalled in the open lab, nc1 'new' on dref-r40movie.)
+                equip_pockets_ = false;
                 if (pick.device >= 0) want = pick_kind;
                 else cancel = true;
             } else if (menu.name == "i_stcursor01" && device_list) {
@@ -3496,8 +3502,14 @@ bool CampaignBot::answer_menu(engine::Engine& engine, const engine::ModelCtrlMan
             // and its first line was picked again and again ("Not enough
             // BITS"; 430000 frames in stagML13 on main 51c7572, level 5 with
             // 1125 bits).
+            // The Digi-Lab's own menus too (an equip errand that stalled with
+            // the lab open): Exit of its menu (i_messcr, 3 lines) and yes to
+            // "leave the lab?" (2 lines). Its first line, Digivolve, opened
+            // the forms list, which was backed out of round and round (5.6
+            // million frames in stagML12, nc1 'new' on dref-r40movie).
             if (menu.name.rfind("i_stcursor", 0) == 0) cancel = true;
             else if (menu.name == "i_stmesscr" && menu.items >= 3) want = menu.items - 1;
+            else if (menu.name == "i_messcr") want = menu.items >= 3 ? menu.items - 1 : 0;
         } else if (lab_target_ >= 0) {
             // The Digi-Lab (bML01004.lua, beNDMWShopCtrl20 / ShopCtrlEvolve):
             // "use the lab?" and later "equip now?" (2 lines, i_messcr), the

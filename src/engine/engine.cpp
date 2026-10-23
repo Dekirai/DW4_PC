@@ -1282,6 +1282,7 @@ const std::map<std::uint64_t, std::int64_t>& clock_file() {
 } // namespace
 
 void Engine::step(const std::array<PadSample, 4>& samples) {
+    torn_down_ = false;
     // The console reloads the game (rebooting): nothing of the old one runs.
     if (rebooting_) {
         ++frame_;
@@ -1327,7 +1328,10 @@ void Engine::step(const std::array<PadSample, 4>& samples) {
         log("reset button: the console reboots");
         return;
     }
-    if (!pending_stage_.empty()) begin_stage_load();
+    if (!pending_stage_.empty()) {
+        begin_stage_load();
+        torn_down_ = true;
+    }
     process_stage_loader();
     // The current camera viewer (802F4268, a scheduled module ahead of the
     // demo, the messenger and the managers) sets the frame's camera before
