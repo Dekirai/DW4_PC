@@ -20,7 +20,7 @@ include(CTest)
 add_library(dw4_core
   src/assets.cpp src/igb.cpp src/igb_document.cpp src/resources.cpp src/packages.cpp src/scripts.cpp
   src/lua4.cpp src/pad.cpp src/textures.cpp src/meshes.cpp src/skinning.cpp src/animation_math.cpp
-  src/enbaya.cpp src/motion.cpp src/motion_timer.cpp src/adx.cpp src/axfx.cpp src/save_data.cpp src/sfp.cpp src/sndf.cpp src/sfd.cpp src/ini.cpp src/disc.cpp src/disc_timing.cpp src/card_timing.cpp)
+  src/enbaya.cpp src/motion.cpp src/motion_timer.cpp src/adx.cpp src/axfx.cpp src/axmix.cpp src/save_data.cpp src/sfp.cpp src/sndf.cpp src/sfd.cpp src/ini.cpp src/disc.cpp src/disc_timing.cpp src/card_timing.cpp)
 target_include_directories(dw4_core PUBLIC include)
 # Recovered scalar operations round separately; explicit std::fma remains
 # fused. Preserve IEEE zero-frame infinity/NaN behavior.

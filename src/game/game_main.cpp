@@ -2141,11 +2141,11 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 }
             }
         }
-        if (audio_dump_path) {
-            // 16-bit stereo PCM WAV of everything mixed.
-            std::ofstream wav(audio_dump_path, std::ios::binary);
+        // 16-bit stereo PCM WAV at the output rate.
+        auto write_wav = [](const char* path, const std::vector<std::int16_t>& samples) {
+            std::ofstream wav(path, std::ios::binary);
             const std::uint32_t rate = dw4::engine::SoundManager::kOutputRate;
-            const std::uint32_t bytes = std::uint32_t(audio_dump.size() * sizeof(std::int16_t));
+            const std::uint32_t bytes = std::uint32_t(samples.size() * sizeof(std::int16_t));
             auto u32 = [&](std::uint32_t v) { wav.write(reinterpret_cast<const char*>(&v), 4); };
             auto u16 = [&](std::uint16_t v) { wav.write(reinterpret_cast<const char*>(&v), 2); };
             wav.write("RIFF", 4);
@@ -2160,8 +2160,15 @@ int run(const Options& options, dw4::game::Settings& settings) {
             u16(16);
             wav.write("data", 4);
             u32(bytes);
-            wav.write(reinterpret_cast<const char*>(audio_dump.data()), std::streamsize(bytes));
+            wav.write(reinterpret_cast<const char*>(samples.data()), std::streamsize(bytes));
+        };
+        if (audio_dump_path) {
+            // Everything mixed.
+            write_wav(audio_dump_path, audio_dump);
             std::cout << "audio dump " << audio_dump_path << " (" << audio_dump.size() / 2 << " frames)\n";
+            // Test tool: DW4_AUDIO_DUMP_STREAMS=FILE.wav, the streams' part of it.
+            if (const char* part_path = std::getenv("DW4_AUDIO_DUMP_STREAMS"))
+                if (const auto* sound = engine.get<dw4::engine::SoundManager>()) write_wav(part_path, sound->stream_part());
         }
         // The session's notes of original behaviour the port lacks (none: no list).
         if (!engine.notes().empty()) std::cout << "unimplemented:\n";

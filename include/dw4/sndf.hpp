@@ -35,6 +35,11 @@ namespace dw4::sndf {
 
 // One AX frame: 160 samples at the DSP's 54 MHz / 1686 = 32028.5 Hz.
 inline constexpr int kFrameSamples = 160;
+// The milliseconds a tick moves the tracks' waits on: 803C325C measures the
+// time since its last tick on the CPU timer (OSGetTick, microseconds) and
+// takes floor(0.5 + us / 1000.0) whole milliseconds (800A2650 / 800A3880),
+// dropping the rest: 5 for every AX frame of 4995.5 us.
+inline constexpr int kTickMs = 5;
 
 // The AX mixer's levels (MIX, 80259334): 0.1 dB as a linear gain (-90.4 dB
 // and below silent, +6 dB the ceiling); MIXInitChannel's stereo pan (the
@@ -106,7 +111,7 @@ public:
         std::uint8_t priority{};     // +0x08: the AX priority (split +0x1D + 11)
         std::uint8_t phase{};        // +0x14: volume envelope 0 attack, 1 decay, 2 release
         std::uint8_t seq{};          // +0x2C: the sequence (kept by a drop)
-        std::uint32_t id{};          // +0x2C (6460): the allocation counter, the drop callback's key
+        std::uint32_t id{};          // +0x24 (6460 = 0x1918 + 0x24): the allocation counter, the drop callback's key
         int ax = -1;                 // +0x30: the AX voice
         // AXART volume envelope (+0xB4..: delta, target, attenuation; 0.1 dB in 16.16).
         std::int32_t env_delta{}, env_target{}, env{};
@@ -131,7 +136,7 @@ public:
         std::uint8_t seq_flags{};    // +0x01: the sequence's first byte (0x80 a one-shot sound effect)
         std::uint8_t channel{};      // +0x02: the bank slot
         std::uint32_t id{};          // +0x08: request | sequence
-        double wait{};               // +0x0C: ms until the next event (tempo 1.0)
+        std::int32_t wait{};         // +0x0C: ms until the next event, 16.16 (tempo 1.0)
         std::shared_ptr<const BankData> bank;
         sfp::Sequence sequence;
     };
@@ -155,8 +160,9 @@ public:
 
     // The AX frame callback of frame `frame` at `time`: the driver tick and
     // the articulation service. `random` is the C library rand() state
-    // (8009C1CC, the random detune), `ms` the frame's duration.
-    void tick(std::int64_t frame, std::int64_t time, const Banks& banks, std::uint32_t& random, double ms);
+    // (8009C1CC, the random detune), `ms` the whole milliseconds the tick
+    // takes off the tracks' waits (kTickMs).
+    void tick(std::int64_t frame, std::int64_t time, const Banks& banks, std::uint32_t& random, int ms = kTickMs);
 
     // A voice the game stops behind the driver's back (stage clear of a
     // bank's loops): freed like the driver frees it.
@@ -197,6 +203,57 @@ private:
     AxPool ax_;
     std::uint32_t counter_{};   // +0x84C: voice allocations
     float master_ = 1.0f;
+};
+
+// The driver the audio hears (SoundManager::render): a copy of the game's
+// driver that the audio ticks once per AX frame of its own timeline and that
+// gets the game's calls between the same ticks. A call the game made after
+// its tick of frame g (`after`) reaches the copy before the copy's tick of the
+// audio frame that plays game frame g + 1, or at its next tick when the audio
+// already ran past that frame (a host that filled its queue ahead): such a
+// request just sounds later, nothing is played twice. While the audio keeps
+// pace with the game the copy goes through exactly the game driver's states.
+class Mirror {
+public:
+    struct Call {
+        enum class Kind { set, play, stop, volume, free_loops, master, reserved } kind{};
+        std::int64_t after{};   // the game driver's last tick when the call was made
+        int seq{}, value{};
+        std::uint32_t request{};
+        std::int64_t time{};
+        float gain{};
+        std::vector<std::shared_ptr<const BankData>> banks; // free_loops: the loops of these banks go
+    };
+    bool live() const { return live_; }
+    // The copy of `game` (its rand() state `random`), whose last tick
+    // stands for audio frame `ticked`.
+    void start(const Driver& game, std::uint32_t random, std::int64_t ticked);
+    // Calls are kept only while live; a long run without ticks (a host that
+    // stopped rendering) drops the copy, made afresh at the next start.
+    void record(Call call);
+    // The callbacks up to audio frame `frame`: audio frame f plays game frame
+    // f - `delta`, its callback runs at frame_time(f - delta) (CPU ticks)
+    // after the game's calls made before the game's tick of that frame.
+    template <class FrameTime> void advance(std::int64_t frame, std::int64_t delta, const Driver::Banks& banks, FrameTime&& frame_time) {
+        while (ticked_ < frame) {
+            ++ticked_;
+            const std::int64_t game = ticked_ - delta;
+            replay(game);
+            driver_.tick(ticked_, frame_time(game), banks, random_);
+        }
+    }
+    const Driver& driver() const { return driver_; }
+    std::int64_t ticked() const { return ticked_; }
+    std::uint32_t random() const { return random_; }
+    std::size_t pending() const { return calls_.size(); }
+
+private:
+    void replay(std::int64_t game);
+    Driver driver_;
+    std::uint32_t random_{};
+    std::int64_t ticked_{};
+    bool live_{};
+    std::vector<Call> calls_;
 };
 
 } // namespace dw4::sndf
