@@ -203,9 +203,11 @@ fade to 0.0 at 12 or less; a stop (802F5F98) sets SEQ volume 0 and sends the
 SNDF stop only while GETSTATUS still reports the sequence. SOUND ONFREEZE /
 OFFREEZE (the SUBWND programs, 80315784 -> 802F68D0) set every running type 4
 entry to SEQ volume 0 / 127 (an ADX one to -99.9 dB / 0 dB). The game's
-SNDF runs in game time (the AX frames before each update), and `render()`
-plays copies of it ticked on through the chunk's frames, so nothing the game
-sees depends on whether audio is rendered.
+SNDF runs in game time (the AX frames before each update; the update's
+commands reach its ring 0.6 ms after the frame's world time, as Dolphin's
+onsets step by an AX frame for requests 0.57 / 0.65 ms before a boundary),
+and `render()` plays copies of it ticked on through the chunk's frames, so
+nothing the game sees depends on whether audio is rendered.
 Effects without a request id are ADX files on four SE stream channels, each
 start taking a free one or else the oldest of lower or equal priority
 (beSoundData [9], 802F56B0). The PLAY handler (80314FC8) ignores a sound effect
