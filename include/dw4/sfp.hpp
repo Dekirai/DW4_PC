@@ -11,6 +11,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <span>
 #include <vector>
 
@@ -37,6 +38,20 @@ struct Split {
     std::uint8_t pan{};     // 0x40 centre
     std::int8_t semitones{}, cents{};
     std::uint8_t detune{};  // +0x14: random pitch range in cents (803B9E88)
+    // The AUX sends of the drum voice (803BA5B4): +0x15 nonzero takes the
+    // channel's sends instead; +0x16 bit 0 / bit 1: AUX A / B before the
+    // fader; +0x17 / +0x18: the AUX A / B level 0..127 (0: off).
+    bool channel_aux{};
+    std::uint8_t aux_mode{}, aux_a{}, aux_b{};
+};
+
+// A preset of a bank's effect table (TBLD +0x70, 803BF7E8): the effect types
+// of AUX A and AUX B (0 ReverbStd, 1 ReverbHi, 2 Chorus, 3 Delay, 4 a fifth
+// type, 0xFF none) and their parameter words (thousandths). Only allse.sfp
+// has a table: five ReverbStd presets on AUX A.
+struct EffectPreset {
+    std::uint8_t type_a{0xff}, type_b{0xff};
+    std::vector<std::uint32_t> a, b;
 };
 
 // One event of a sound-effect sequence.
@@ -78,12 +93,22 @@ public:
     const Sample& sample(std::size_t index) const { return samples_.at(index); }
     // The velocity curve (TBLD +0x60): 0..255 for velocity 0..127.
     std::uint8_t level(int velocity) const;
+    // The bank's id in the SNDF bank list (DTPK +0x4D, stored by 803C2598):
+    // 0 for allse.sfp, 0xFF for every other bank of the game.
+    std::uint8_t id() const { return data_[0x4d]; }
+    // The drum program's type (its first byte, 803B9C60; 2 in every bank:
+    // the split is the key's).
+    std::uint8_t program_type() const { return program_type_; }
+    // Preset `preset` of the effect table; nothing without a table or past
+    // its last preset.
+    std::optional<EffectPreset> effect(int preset) const;
     // A whole sample as 16-bit PCM; the loop start in samples.
     std::vector<std::int16_t> decode(std::size_t index, std::uint32_t* loop_start = nullptr) const;
 
 private:
     std::vector<std::uint8_t> data_;
-    std::uint32_t requests_{}, curve_{}, pcm_offset_{}, pcm_size_{};
+    std::uint32_t requests_{}, curve_{}, pcm_offset_{}, pcm_size_{}, effects_{};
+    std::uint8_t program_type_{};
     std::vector<Split> splits_;
     std::vector<Sample> samples_;
 };

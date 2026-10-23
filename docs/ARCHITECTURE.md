@@ -212,12 +212,31 @@ voice's sample-rate converter to rate / 32000 (802A6C38, mode 0) while the DSP
 outputs 54 MHz / 1686 = 32000 * 1125 / 1124 samples per second, so the beCri
 streams play 1125 / 1124 fast (48042.7 Hz, the 240 samples per AX frame
 CriStreams counts); only Sofdec's handle takes the corrected mode 1
-(1124 (rate + 1) / 1125, 48000.2 Hz). `render()` mixes the streams at those
-rates and the effect voices as 48 kHz stereo PCM, saturated at 16 bits like
-the AX output (no compressor), that `dw4_game` queues on an SDL3 audio stream
-(`DW4_AUDIO_DUMP=FILE.wav` records it, `DW4_TRACE_SOUND=1` logs the effects
-and sound subcommands). MOVIE PLAY (8031EDFC) looks up the beMovieInfoData of
-the file ([5] end script), splits the Sofdec program stream with `dw4::sfd`
+(1124 (rate + 1) / 1125, 48000.2 Hz). Effect voices also feed the AX
+AUX A bus, where the SNDF runs a reverb: every stage's first beCriFxInfo is
+named REVERB, and the SOUND RAM's first update sends its _reverb (bank << 8 |
+preset) to the SNDF (802F6F10), the Cri's stage end turns the effects off
+again (802F523C). The SNDF (803BF698) sets up that preset of the bank with
+id 0 (allse.sfp, DTPK +0x4D; its effect table at TBLD +0x70 holds five
+ReverbStd presets: time, pre-delay, damping, coloration and mix in
+thousandths; the boot stages use preset 4, dng102b1 preset 1, stagBS03
+preset 3) as AXFX ReverbStd (`dw4::axfx`, 80242848 / 80242CC4: per channel
+a pre-delay, two combs, an all-pass, a low-pass and a second all-pass in
+single precision at 32 kHz). A voice sends at its split's AUX A level
+(+0x17: 20 log10(level / 127) after the fader, 64 = -5.9 dB in almost every
+split, 0 = none) relative to its main level, so a voice started by a sound
+subcommand sends like any other and an entry's SEQ volume fade (the voice's
+volume articulator, upstream of the MIX buses) lowers its send with it; the
+streams and the movie send nothing (the RNA's AUX levels stay at -99.9 dB,
+802A7B5C). `render()` runs the effect voices and the bus in AX frames of 240
+output samples (160 at 32 kHz) with the AX library's three rotating AUX
+buffers (8023CE40), so a send comes back two frames later. `render()` mixes
+the streams at those rates and the effect voices with the AUX A return as
+48 kHz stereo PCM, saturated at 16 bits like the AX output (no compressor),
+that `dw4_game` queues on an SDL3 audio stream (`DW4_AUDIO_DUMP=FILE.wav`
+records it, `DW4_TRACE_SOUND=1` logs the effects and sound subcommands).
+MOVIE PLAY (8031EDFC) looks up the beMovieInfoData of the
+file ([5] end script), splits the Sofdec program stream with `dw4::sfd`
 (MPEG-1 video 0xE0, ADX sound 0xC0) and plays the sound on a movie channel;
 the host decodes the video with pl_mpeg and draws the picture for the time
 since the first picture over the screen. Sofdec starts in its prep state

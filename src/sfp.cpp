@@ -81,8 +81,10 @@ Bank::Bank(std::vector<std::uint8_t> data) : data_(std::move(data)) {
     curve_ = be32(d, 0x60) + 4;
     requests_ = be32(d, 0x64);
     const std::uint32_t drum = be32(d, 0x68), sample_table = be32(d, 0x78);
+    effects_ = be32(d, 0x70);
     if (curve_ + 128 > d.size() || !requests_ || !drum || !sample_table) throw std::runtime_error("SFP bank tables");
     byte_at(d, requests_);
+    program_type_ = byte_at(d, drum);
 
     // The drum program's first layer: split count - 1, the splits from +0x20.
     const std::uint32_t layer = drum + be16(d, drum + 8);
@@ -96,6 +98,10 @@ Bank::Bank(std::vector<std::uint8_t> data) : data_(std::move(data)) {
         split.semitones = std::int8_t(byte_at(d, at + 0x0a));
         split.cents = std::int8_t(byte_at(d, at + 0x0b));
         split.detune = byte_at(d, at + 0x14);
+        split.channel_aux = byte_at(d, at + 0x15) != 0;
+        split.aux_mode = byte_at(d, at + 0x16);
+        split.aux_a = byte_at(d, at + 0x17);
+        split.aux_b = byte_at(d, at + 0x18);
         splits_.push_back(split);
     }
 
@@ -155,6 +161,34 @@ const Split* Bank::split(int key) const {
 }
 
 std::uint8_t Bank::level(int velocity) const { return data_[curve_ + std::size_t(std::clamp(velocity, 0, 127))]; }
+
+std::optional<EffectPreset> Bank::effect(int preset) const {
+    // 803BF7E8: the table's first word is the last preset's index, then the
+    // presets' offsets from the table; a preset is the types word (AUX A in
+    // bits 24..31, AUX B in 16..23), then AUX A's and AUX B's parameter
+    // words, as many as the type takes (803BFAE8 and on).
+    if (!effects_ || preset < 0) return std::nullopt;
+    const std::span<const std::uint8_t> d(data_);
+    try {
+        if (be32(d, effects_) < std::uint32_t(preset)) return std::nullopt;
+        std::size_t at = effects_ + std::size_t(be32(d, effects_ + 4 + 4 * std::size_t(preset)));
+        const std::uint32_t types = be32(d, at);
+        EffectPreset result;
+        result.type_a = std::uint8_t(types >> 24);
+        result.type_b = std::uint8_t(types >> 16);
+        // Parameter words: ReverbStd 5, ReverbHi 6, Chorus 3, Delay 9, type 4: 5.
+        auto words = [](std::uint8_t type) -> std::size_t {
+            constexpr std::size_t kWords[5] = {5, 6, 3, 9, 5};
+            return type < 5 ? kWords[type] : 0;
+        };
+        at += 4;
+        for (std::size_t i = 0; i < words(result.type_a); ++i, at += 4) result.a.push_back(be32(d, at));
+        for (std::size_t i = 0; i < words(result.type_b); ++i, at += 4) result.b.push_back(be32(d, at));
+        return result;
+    } catch (const std::runtime_error&) {
+        return std::nullopt;
+    }
+}
 
 std::vector<std::int16_t> Bank::decode(std::size_t index, std::uint32_t* loop_start) const {
     const auto& s = samples_.at(index);

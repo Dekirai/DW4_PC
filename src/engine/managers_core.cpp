@@ -825,7 +825,16 @@ void SoundManager::add_info(Engine& engine, const ObjectView& info) {
             if (data && data.type() == "beCriSfpData") add_bank(engine, data, false);
         return;
     }
+    if (t == "beCriFxInfo") {
+        // 802F51C4: the Cri appends every beCriFxInfo to its info list
+        // (+0x2C); every stage's first is named REVERB, its _reverb (slot 6)
+        // is the effect's bank << 8 | preset.
+        fx_infos_.emplace_back(std::string(info.str(2)), info.i32(6));
+        return;
+    }
     if (t != "beSoundInfo") return;
+    // The SOUND RAM's first update (80314C00 state 0) selects REVERB.
+    fx_due_ = true;
     // The stage's sounds ([5] beSoundData) and the files they index ([7]).
     for (const auto& data : info.list(5))
         if (data)
@@ -839,7 +848,13 @@ void SoundManager::add_info(Engine& engine, const ObjectView& info) {
     base_volume_ = info.i16(9);
     set_sndf_volume(info.i16(10));
 }
-void SoundManager::clear_stage(Engine&) {
+void SoundManager::clear_stage(Engine& engine) {
+    // The Cri's stage end (802F523C): the effect of the first beCriFxInfo
+    // if it were named NONE, in practice effects off (the reverb's delay
+    // lines go); then the info list empties.
+    select_effect(engine, "NONE");
+    fx_infos_.clear();
+    fx_due_ = false;
     // The streams keep playing into the next stage (its scripts stop or
     // replace them); only the stage's sound list goes.
     rams_.clear();
@@ -1224,19 +1239,21 @@ CriStreams::File SoundManager::stream_file(Engine& engine, unsigned archive, uns
 // 127 (802F5E94: SetOutVol 127; the sound's own volume [8] only goes into
 // the entry), under the SNDF master volume (802F7244, 75 in the game). Once
 // the bank is found the Cri's pause flag is used up (802F5E98), started or not.
-bool SoundManager::play_request(Engine& engine, const std::string& name, const SoundData& data, std::uint64_t id) {
-    if (!common_loaded_) {
-        // Loaded once at boot by the original (802F902C).
-        common_loaded_ = true;
-        try {
-            const auto document = read_igb_document(engine.resources().read("_common/sbiallse.igb"));
-            for (const auto& object : document.objects)
-                if (document.metadata.object_types[object.type_index].name == "beCriSfpData")
-                    add_bank(engine, ObjectView(&document, object.reference_index), true);
-        } catch (const std::exception& error) {
-            engine.note(std::string("audio _common/sbiallse.igb: ") + error.what());
-        }
+void SoundManager::load_common_banks(Engine& engine) {
+    if (common_loaded_) return;
+    common_loaded_ = true;
+    try {
+        const auto document = read_igb_document(engine.resources().read("_common/sbiallse.igb"));
+        for (const auto& object : document.objects)
+            if (document.metadata.object_types[object.type_index].name == "beCriSfpData")
+                add_bank(engine, ObjectView(&document, object.reference_index), true);
+    } catch (const std::exception& error) {
+        engine.note(std::string("audio _common/sbiallse.igb: ") + error.what());
     }
+}
+
+bool SoundManager::play_request(Engine& engine, const std::string& name, const SoundData& data, std::uint64_t id) {
+    load_common_banks(engine);
     std::string file = data.file >= 0 && data.file < int(files_.size()) ? files_[std::size_t(data.file)] : std::string();
     file = file.substr(file.find_last_of('/') + 1);
     for (auto& c : file) c = char(std::tolower(static_cast<unsigned char>(c)));
@@ -1294,17 +1311,33 @@ void SoundManager::run_track(SeTrack& track) {
         const auto [left, right] = mix_pan(kSfpPan[std::min<std::size_t>(split->pan, 127)]);
         voice.left = gain * left;
         voice.right = gain * right;
+        // The AUX A send (803BA5B4): the split's level 1..127 as
+        // 10 * 20 log10(level / 127), truncated (0.1 dB), the voice's
+        // AUXA_VOLUME articulator; 0 is off (-90.4 dB). MIX sends it after
+        // the fader with the pan and input of the main bus (80259918: fader
+        // + auxA + pan + span), so the send is the main level moved by that
+        // much (every split of the game: fader index 15 = 0 dB, AUX A after
+        // the fader, level 64 = -5.9 dB or 0). A split that takes the
+        // channel's sends (+0x15, or a type 0 program) is never shipped and
+        // stays dry here.
+        if (!split->channel_aux && track.bank->bank->program_type() != 0 && split->aux_a) {
+            const double ratio = double(float(split->aux_a) / 127.0f);
+            const float aux = mix_level(int(10.0 * (20.0 * std::log10(ratio))));
+            voice.aux_left = voice.left * aux;
+            voice.aux_right = voice.right * aux;
+        }
         voices_.push_back(std::move(voice));
         if (voices_.size() > kMaxVoices) voices_.erase(voices_.begin());
     }
 }
 
-void SoundManager::mix_voices(float* mix, std::size_t frames) {
+void SoundManager::mix_voices(float* mix, std::size_t frames, float* aux) {
     for (auto& voice : voices_) {
         const auto& pcm = voice.bank->pcm[std::size_t(voice.sample)];
         const auto& sample = voice.bank->bank->sample(std::size_t(voice.sample));
         const std::size_t loop = voice.bank->loop_start[std::size_t(voice.sample)];
         const double step = double(sample.rate) * voice.pitch / double(kOutputRate);
+        float* const sends = voice.aux_left != 0.0f || voice.aux_right != 0.0f ? aux : nullptr;
         for (std::size_t i = 0; i < frames && voice.position < pcm.size(); ++i) {
             std::size_t after = voice.position + 1;
             if (after >= pcm.size()) after = voice.loop && loop < pcm.size() ? loop : voice.position;
@@ -1312,6 +1345,10 @@ void SoundManager::mix_voices(float* mix, std::size_t frames) {
             const float value = (a + (float(pcm[after]) - a) * float(voice.phase)) * voice.level;
             mix[i * 2] += value * voice.left;
             mix[i * 2 + 1] += value * voice.right;
+            if (sends) {
+                sends[i * 2] += value * voice.aux_left;
+                sends[i * 2 + 1] += value * voice.aux_right;
+            }
             voice.phase += step;
             while (voice.phase >= 1.0 && voice.position < pcm.size()) {
                 voice.phase -= 1.0;
@@ -1372,8 +1409,24 @@ void SoundManager::render(std::int16_t* out, std::size_t frames) {
             mix_stream(streams_[channel], out_gain(streams_[channel].out_volume), false, mix.data(), frames);
     }
     // The movie's sound has no base volume; it plays once Sofdec unpaused it.
+    // Neither the streams nor the movie send to AUX A (the RNA's AUX levels
+    // stay at -99.9 dB, 802A7B5C).
     if (movie_ && movie_->sound_on) mix_stream(movie_stream_, 1.0f, true, mix.data(), frames);
-    mix_voices(mix.data(), frames);
+    // The effect voices and the AUX A bus, AX frame by AX frame.
+    for (std::size_t done = 0; done < frames;) {
+        if (ax_fill_ == 0) begin_ax_frame();
+        const std::size_t count = std::min(frames - done, kAxFrameOutput - ax_fill_);
+        float* const part = mix.data() + done * 2;
+        mix_voices(part, count, aux_emit_ ? aux_sends_.data() + ax_fill_ * 2 : nullptr);
+        if (aux_emit_)
+            for (std::size_t i = 0; i < count * 2; ++i) part[i] += aux_return_[ax_fill_ * 2 + i];
+        ax_fill_ += count;
+        done += count;
+        if (ax_fill_ == kAxFrameOutput) {
+            end_ax_frame();
+            ax_fill_ = 0;
+        }
+    }
     // The AX mix has no compressor: the output saturates at 16 bits (the
     // DSP's saturating accumulator; Dolphin's dumps keep peaks up to 32729
     // unchanged and clip only sums above full scale).
@@ -1438,6 +1491,111 @@ void SoundManager::mix_stream(Stream& stream, float gain, bool sofdec, float* mi
         stream.phase += step;
     }
     if (ended) stream.decoder.reset();
+}
+
+// 802F6F10 (the SOUND RAM's first update 80314E78 with "REVERB", the Cri's
+// stage end 802F523C with "NONE"): only the first info of the Cri's list
+// counts; its _reverb goes to the SNDF as 0xA470hh00 (bank hh, SNDF +0x984)
+// and 0xA400ll00 (preset ll, 803BC448 -> 803BF698), 0x7F turns the effects
+// off. The SNDF runs the commands at its next tick, here at once.
+void SoundManager::select_effect(Engine& engine, std::string_view name) {
+    int value = 0x7f;
+    if (!fx_infos_.empty() && fx_infos_.front().first == name) value = fx_infos_.front().second;
+    fx_bank_select_ = std::uint8_t((value >> 8) & 0x7f);
+    sndf_effect(engine, fx_bank_select_, value & 0x7f);
+}
+
+// 803BF698: bank 0xFF only with preset 0x7F, preset 0xFF does nothing,
+// preset 0x7F shuts both AUX effects down. Otherwise the bank with that id
+// (allse.sfp is bank 0) and a preset it has, unless that pair is already set
+// up: the running AUX A / B effects shut down and lose their callbacks, the
+// preset's effects start (AXFXReverbStdInit with time, pre-delay, damping,
+// coloration and mix, each word / 1000) and AUX A's callback is registered.
+// (The original first checks the effect's memory, 0xCD38 + 0x180 per ms of
+// pre-delay, against its heap; the port always has it.)
+void SoundManager::sndf_effect(Engine& engine, int bank, int preset) {
+    bank &= 0xff;
+    preset &= 0xff;
+    if ((bank == 0xff && preset != 0x7f) || preset == 0xff) return;
+    static const bool trace = std::getenv("DW4_TRACE_SOUND") != nullptr;
+    auto shut_down = [&] {
+        if (fx_type_a_ == 0) reverb_a_.shutdown();
+        aux_a_callback_ = false; // AXRegisterAuxACallback(NULL)
+        // (AUX B never has an effect: no preset of the game uses it.)
+    };
+    if (preset == 0x7f) {
+        if (trace && fx_type_a_ != 0xff) engine.log("sound effects off, frame " + std::to_string(engine.frame()));
+        shut_down();
+        fx_type_a_ = fx_type_b_ = fx_bank_ = fx_preset_ = 0xff;
+        return;
+    }
+    load_common_banks(engine);
+    const SeBank* found = nullptr;
+    for (const auto& candidate : banks_)
+        if (candidate->bank->id() == bank) {
+            found = candidate.get();
+            break;
+        }
+    if (!found || (fx_bank_ == bank && fx_preset_ == preset)) return;
+    const auto effect = found->bank->effect(preset);
+    if (!effect) return;
+    shut_down();
+    fx_type_a_ = effect->type_a;
+    fx_type_b_ = effect->type_b;
+    fx_bank_ = std::uint8_t(bank);
+    fx_preset_ = std::uint8_t(preset);
+    if (fx_type_a_ == 0 && effect->a.size() == 5) {
+        const auto param = [&](std::size_t i) { return float(effect->a[i]) / 1000.0f; };
+        aux_a_callback_ = reverb_a_.init(param(3), param(0), param(4), param(2), param(1));
+        if (trace)
+            engine.log("sound effect AUX A ReverbStd (bank " + std::to_string(bank) + " preset " + std::to_string(preset) + ": time " +
+                       std::to_string(param(0)) + " pre-delay " + std::to_string(param(1)) + " damping " +
+                       std::to_string(param(2)) + " coloration " + std::to_string(param(3)) + " mix " + std::to_string(param(4)) +
+                       (aux_a_callback_ ? "" : ", rejected") + "), frame " + std::to_string(engine.frame()));
+    } else if (fx_type_a_ != 0xff) {
+        engine.note("audio AUX A effect type " + std::to_string(fx_type_a_) + " (not implemented)");
+    }
+    if (fx_type_b_ != 0xff) engine.note("audio AUX B effect type " + std::to_string(fx_type_b_) + " (not implemented)");
+}
+
+// The AX frame interrupt: the AUX A callback runs and the buffer the DSP adds
+// in this frame (two frames old) is resampled from 32 kHz to the output rate,
+// linearly from the last returned sample (a third of a DSP sample late).
+void SoundManager::begin_ax_frame() {
+    const auto* back = aux_a_.begin_frame(aux_a_callback_ ? &reverb_a_ : nullptr);
+    aux_emit_ = back != nullptr;
+    aux_sends_.fill(0.0f);
+    if (!back) {
+        aux_return_.fill(0.0f);
+        aux_last_ = {};
+        return;
+    }
+    constexpr std::size_t n = axfx::kFrameSamples;
+    for (std::size_t c = 0; c < 2; ++c) {
+        const std::int32_t* in = back->data() + c * n;
+        auto at = [&](std::size_t j) { return j == 0 ? aux_last_[c] : float(in[j - 1]); };
+        for (std::size_t i = 0; i < kAxFrameOutput; ++i) {
+            const std::size_t position = (i + 1) * 2; // in thirds of a DSP sample
+            const std::size_t j = position / 3;
+            const float a = at(j);
+            aux_return_[i * 2 + c] = position % 3 == 0 ? a : a + (at(j + 1) - a) * float(position % 3) / 3.0f;
+        }
+        aux_last_[c] = float(in[n - 1]);
+    }
+}
+
+// The end of the AX frame: the DSP stores the frame's AUX A sends (32 kHz
+// from the output rate, every second sample between two).
+void SoundManager::end_ax_frame() {
+    if (!aux_emit_) return;
+    std::array<std::int32_t, 2 * axfx::kFrameSamples> sends{};
+    for (std::size_t j = 0; j < axfx::kFrameSamples; ++j)
+        for (std::size_t c = 0; c < 2; ++c) {
+            const std::size_t i = j * 3 / 2;
+            const float value = j % 2 == 0 ? aux_sends_[i * 2 + c] : (aux_sends_[i * 2 + c] + aux_sends_[(i + 1) * 2 + c]) * 0.5f;
+            sends[j * 2 + c] = std::int32_t(std::floor(value + 0.5f));
+        }
+    aux_a_.end_frame(sends);
 }
 
 // 8031EDFC: MOVIE PLAY finds the movie's beMovieInfoData and starts the
@@ -1889,6 +2047,10 @@ void SoundManager::trace_cri(Engine& engine, int inflight_before, std::int64_t d
 
 void SoundManager::update(Engine& engine) {
     update_driver(engine);
+    if (fx_due_) {
+        fx_due_ = false;
+        select_effect(engine, "REVERB");
+    }
     if (movie_) {
         // (Half a field early: the world clock's rounding.)
         if (!movie_->sound_on && engine.time() >= movie_->sound_start - kFrameNs / 2) movie_->sound_on = true;

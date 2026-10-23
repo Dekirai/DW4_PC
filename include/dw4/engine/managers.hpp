@@ -1,6 +1,7 @@
 #pragma once
 
 #include "dw4/adx.hpp"
+#include "dw4/axfx.hpp"
 #include "dw4/card_timing.hpp"
 #include "dw4/disc_timing.hpp"
 #include "dw4/engine/collision.hpp"
@@ -401,6 +402,7 @@ private:
         double pitch = 1.0; // random detune
         float left = 1.0f, right = 1.0f;
         float level = 1.0f; // the entry's SEQ volume / 127 (a VOLUMECTL fade)
+        float aux_left{}, aux_right{}; // the AUX A send (803BA5B4)
         bool loop{};
     };
     // A fade of an sfp sound entry (VOLUMECTL with its play id): 802F53B8
@@ -457,7 +459,22 @@ private:
     void mix_stream(Stream& stream, float gain, bool sofdec, float* mix, std::size_t frames);
     void add_bank(Engine& engine, const ObjectView& data, bool common);
     void run_track(SeTrack& track);
-    void mix_voices(float* mix, std::size_t frames);
+    // The effect voices into `mix` and, while the AUX A bus is on, their
+    // AUX A sends into `aux` (both interleaved stereo).
+    void mix_voices(float* mix, std::size_t frames, float* aux = nullptr);
+    // _common/sbiallse.igb's banks (allse.sfp is the SNDF's bank 0), loaded
+    // once at boot by the original (802F902C).
+    void load_common_banks(Engine& engine);
+    // 802F6F10: the effect of the stage's first beCriFxInfo (Cri +0x2C) if
+    // it has that name (its _reverb: bank << 8 | preset), else effects off
+    // (0x7F), sent as the SNDF commands 0xA470hh00 / 0xA400ll00 (803C1A94).
+    void select_effect(Engine& engine, std::string_view name);
+    // 803BF698: the AUX effects of a bank's effect preset (0x7F: off).
+    void sndf_effect(Engine& engine, int bank, int preset);
+    // render() in AX frames: the frame interrupt (the AUX A callback, the
+    // return the DSP adds in the frame) and the frame's end (its sends).
+    void begin_ax_frame();
+    void end_ax_frame();
     // 802F5F98: the entry stops (serial, name and fade cleared, ADXT_Stop).
     void stop(int channel);
     std::vector<std::unique_ptr<Ram>> rams_;
@@ -493,6 +510,25 @@ private:
     // and the first picture 37 NTSC fields later.
     static constexpr std::int64_t kMovieSoundNs = 483816667;   // 29 * 1001/60 ms
     static constexpr std::int64_t kMoviePictureNs = 617283333; // 37 * 1001/60 ms
+    // The stage's beCriFxInfo in acceptance order (Cri +0x2C, 802F51C4):
+    // name and _reverb (slot 6).
+    std::vector<std::pair<std::string, int>> fx_infos_;
+    bool fx_due_{};                        // the SOUND RAM's first update (80314C00 state 0) selects REVERB
+    // The SNDF's effect state: AUX A / B effect types (+0x980 / +0x981,
+    // 0xFF none), the bank and preset set up (+0x982 / +0x983), the bank of
+    // the next preset command (+0x984).
+    std::uint8_t fx_type_a_{0xff}, fx_type_b_{0xff}, fx_bank_{0xff}, fx_preset_{0xff}, fx_bank_select_{};
+    axfx::ReverbStd reverb_a_;             // 80537748, AXRegisterAuxACallback 8023D07C
+    bool aux_a_callback_{};
+    axfx::AuxBus aux_a_;
+    // The AX frame render() is in: one frame is 240 output samples (160 at
+    // the DSP's 32 kHz); its AUX A sends and the return the DSP adds in it
+    // (48 kHz, interleaved), the last returned sample.
+    static constexpr std::size_t kAxFrameOutput = 240;
+    std::size_t ax_fill_{};
+    bool aux_emit_{};
+    std::array<float, 2 * kAxFrameOutput> aux_sends_{}, aux_return_{};
+    std::array<float, 2> aux_last_{};
 };
 
 // beTextureCtrl (80324B30 / 80324C54): binds named pack textures to the
