@@ -280,7 +280,7 @@ struct RenderState {
     std::int32_t cull_mode = 0; // IG_GFX_CULL_FACE_MODE_BACK
     bool lighting = true; // Alchemy default: only igLightingStateAttr turns it off
     Vec4f color{1, 1, 1, 1};
-    std::optional<Vec4f> modulate; // runtime ACTION2 color (multiplied)
+    std::optional<Vec4f> modulate; // runtime ACTION2 color: the outermost override (801D5190)
     // Set by runtime ACTION2 overrides: deeper attributes of the kind no
     // longer change the value (override push, 801D5190).
     bool texture_forced{}, lighting_forced{}, blend_forced{};
