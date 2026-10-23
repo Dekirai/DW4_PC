@@ -322,8 +322,10 @@ MOVIE PLAY counts) stops every movie at once (802AF560) and runs the end
 script in the same update. While
 Sofdec decodes, the frames start 0.011 field after their retraces
 (`Engine::set_clock_lateness`), so the skip's NEXTSTAGE, posted for one
-nominal frame later, arrives two updates after it. (Dolphin captures of a
-boot with both movies and of skips: work/dref r40movie runs with OSReport
+nominal frame later, arrives two updates after it. The movie's last picture
+stays on the screen through the frame that tears the stage down, after the
+end and after a skip (`Engine::presenting`). (Dolphin captures of a
+boot with both movies and of skips: work/dref r40movie / r41movie runs with OSReport
 hooks on these functions.)
 
 When a stream is ready matters to the scripts: demos wait with
