@@ -455,6 +455,8 @@ private:
     // DW4_TRACE_SOUND: the SNDF voices that started and ended (the game's driver).
     void trace_voices(Engine& engine);
     std::vector<std::uint32_t> traced_voices_;
+    bool trace_audio_{};                   // render() notes the streams' audio starts for the next update's trace
+    std::vector<std::string> audio_trace_;
     // 8031D294 (ADXT_Pause) on a channel's handle.
     void pause_channel(Engine& engine, int channel, bool paused);
     // 802F7244: the SNDF master volume, set once (803C2734).

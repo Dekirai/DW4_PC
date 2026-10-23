@@ -1632,6 +1632,14 @@ void SoundManager::begin_ax_frame(const sndf::Driver& driver, std::int64_t frame
         } else {
             m.from = m.to = level;
         }
+        // DW4_TRACE_SOUND: where a stream's audio begins in the dump (port
+        // field of the frame's first sample: output sample / 800.8 + 1).
+        if (on && !m.on && trace_audio_) {
+            char line[160];
+            const double field = double((ax_frame_ticks(frame) - CriStreams::kFieldTicks - clock_offset_)) / double(kSampleTicks) / 800.8 + 1.0;
+            std::snprintf(line, sizeof line, "stream audio slot %zu %s from port field %.4f", channel, stream.name.c_str(), field);
+            audio_trace_.emplace_back(line);
+        }
         m.on = on;
     }
     const auto* back = aux_a_.begin_frame(aux_a_callback_ ? &reverb_a_ : nullptr);
@@ -2064,7 +2072,12 @@ void SoundManager::update_driver(Engine& engine) {
     advance_driver(now);
     const std::int64_t audio = std::int64_t(rendered_) * kSampleTicks + CriStreams::kFieldTicks + clock_offset_;
     if (std::llabs(audio - now) > CriStreams::kFieldTicks / 2) clock_offset_ += now - audio;
-    if (static const bool voices = std::getenv("DW4_TRACE_SOUND") != nullptr; voices) trace_voices(engine);
+    if (trace) {
+        trace_audio_ = true;
+        trace_voices(engine);
+        for (const auto& line : audio_trace_) engine.log(line);
+        audio_trace_.clear();
+    }
     // 802F53B8 over every entry holding a sound (serial set): a running one
     // (8031D0F0 == 1) steps its fade while the handle is not paused (8031D33C)
     // and sets the output volume; a fade to 0.0 stops the entry once the
