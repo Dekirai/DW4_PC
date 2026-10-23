@@ -2,6 +2,7 @@
 
 #include "dw4/adx.hpp"
 #include "dw4/axfx.hpp"
+#include "dw4/axmix.hpp"
 #include "dw4/card_timing.hpp"
 #include "dw4/disc_timing.hpp"
 #include "dw4/engine/collision.hpp"
@@ -12,6 +13,7 @@
 #include "dw4/sndf.hpp"
 
 #include <array>
+#include <deque>
 #include <limits>
 #include <random>
 #include <map>
@@ -292,9 +294,22 @@ public:
     // The CRI driver part (stream ramps and fades, SE sequences) also runs
     // while the stage is not active; the cues and the movie are RAM work.
     void update_inactive(Engine& engine) override { update_driver(engine); }
-    // Interleaved stereo 16-bit PCM at kOutputRate of the running streams.
+    // Interleaved stereo 16-bit PCM at kOutputRate: the AX mix at the DSP
+    // rate, resampled. Successive calls continue the audio seamlessly,
+    // whatever their sizes and however they run ahead of or fall behind the
+    // game (a host keeping its queue filled).
     void render(std::int16_t* out, std::size_t frames);
     static constexpr int kOutputRate = 48000;
+    // The output sample at which the audio of the game's AX frame `frame`
+    // begins under the current mapping (tests, traces).
+    double audio_frame_sample(std::int64_t frame) const;
+    // Test tool: with DW4_AUDIO_DUMP_STREAMS set, render() also keeps the
+    // part of the same mix (before the compressor, through the same
+    // resampler) of the stream channels DW4_AUDIO_STREAMS_CHANNELS names
+    // (digits, 0 BGM, 1 ambience, 2-5 the SE streams, 6 the movie; default
+    // 01), so the output minus it is the rest as the full mix has it, like the
+    // reference captures' residuals.
+    const std::vector<std::int16_t>& stream_part() const { return stream_part_; }
     // An ACTION2 action started on a model (ACTION_BROADCAST, 803130D4): the
     // model's SE set (beSeInfo) sends it MODELCTRL SETSOUND for each sound of
     // the action, which the model queues as a sound subcommand.
@@ -372,11 +387,11 @@ private:
         int volume{};                    // fade object +12: the sound's volume, 0.1 dB (beSoundData [8])
         int out_volume{-999};            // ADXT_SetOutVol (0.1 dB): volume + base, then the fade's steps
         Fade fade;
-        // Audio only (never consulted by the game): the decoder the host mixes.
+        // Audio only (never consulted by the game): the decoder the host mixes
+        // and its AX voice's sample-rate converter.
         std::uint64_t frames_read{};     // source frames decoded so far
         std::unique_ptr<adx::Decoder> decoder;
-        double phase = 1.0;
-        std::array<float, 2> previous{}, next{};
+        axmix::LinearSrc src;
     };
     // A loaded sfp bank with its samples decoded once.
     struct SeBank {
@@ -459,6 +474,12 @@ private:
     // 802F6334: a fade of the BGM entry of that name, else the ambience's,
     // else of every SE list entry of that name (the sfp entries too).
     void fade_named(std::string_view name, float from, float to, float frames);
+    // The game's calls into its SNDF (driver_), also replayed on the audio's
+    // copy (audio_driver_) between the same ticks.
+    bool seq_set(int seq, std::uint32_t request, std::int64_t time);
+    bool seq_play(int seq, std::int64_t time);
+    bool seq_stop(int seq, std::int64_t time);
+    void seq_volume(int seq, int volume, std::int64_t time);
     // DW4_TRACE_SOUND: the SNDF voices that started and ended (the game's driver).
     void trace_voices(Engine& engine);
     std::vector<std::uint32_t> traced_voices_;
@@ -475,15 +496,7 @@ private:
     void trace_cri(Engine& engine, int inflight_before, std::int64_t done_before, const std::array<bool, CriStreams::kSlots>& playing_before);
     void play_movie(Engine& engine, const Ram& ram, const std::string& name);
     void end_movie(Engine& engine);
-    // One stream resampled into the mix at the rate the AX voice plays it
-    // (`sofdec`: the movie's handle, RNA mode 1).
-    // The gain ramps linearly from `gain_from` to `gain_to` across the frames.
-    void mix_stream(Stream& stream, float gain_from, float gain_to, bool sofdec, float* mix, std::size_t frames);
     void add_bank(Engine& engine, const ObjectView& data, bool common);
-    // The effect voices of `driver` (an audio copy) into `mix` (interleaved
-    // stereo) for output samples from CPU tick `ticks` on, in AX frame
-    // `frame` (the MIX ramp of the frame).
-    void mix_voices(const sndf::Driver& driver, float* mix, std::size_t frames, std::int64_t ticks, std::int64_t frame);
     // _common/sbiallse.igb's banks (allse.sfp is the SNDF's bank 0), loaded
     // once at boot by the original (802F902C).
     void load_common_banks(Engine& engine);
@@ -493,10 +506,6 @@ private:
     void select_effect(Engine& engine, std::string_view name);
     // 803BF698: the AUX effects of a bank's effect preset (0x7F: off).
     void sndf_effect(Engine& engine, int bank, int preset);
-    // render() at the start of AX frame `frame`: the streams' MIX ramps, the
-    // AUX A callback and the return the DSP adds in the frame, the frame's
-    // AUX A sends at the DSP rate.
-    void begin_ax_frame(const sndf::Driver& driver, std::int64_t frame);
     // 802F5F98: the entry stops (serial, name and fade cleared, ADXT_Stop).
     void stop(int channel);
     std::vector<std::unique_ptr<Ram>> rams_;
@@ -545,17 +554,42 @@ private:
     axfx::ReverbStd reverb_a_;             // 80537748, AXRegisterAuxACallback 8023D07C
     bool aux_a_callback_{};
     axfx::AuxBus aux_a_;
-    // The audio clock: output sample s of render() stands for CPU tick
-    // s * 10125 + one field + clock_offset_ (the chunk rendered after the
-    // game update at t holds the audio from t on).
-    static constexpr std::int64_t kSampleTicks = 10125;    // 486 MHz / 48 kHz
-    static constexpr std::int64_t kDspSampleTicks = 15174; // 486 MHz / 32028.5 Hz (160 per AX frame)
-    std::uint64_t rendered_{};
-    std::int64_t clock_offset_{};
-    std::int64_t render_frame_{std::numeric_limits<std::int64_t>::min()}; // the AX frame render() is in
+
+    // ---- Audio: render() and its state (nothing here reaches the game) ----
+    // The audio timeline (axmix::Output): output sample s plays the DSP at
+    // render tick s * kSampleTicks + one field - the resampler's delay (the
+    // chunk rendered after the game update at t holds the audio from t on);
+    // the DSP's AX frame a starts at render tick ax_phase + a * kAxFrameTicks
+    // and plays the game's AX frame a - audio_delta_. The mapping moves by
+    // whole frames only when the audio runs more than half a field ahead of
+    // or behind the game's clock (a host topping up its queue, a clock file's
+    // jump, a restore); the mix itself never repeats or skips a frame.
+    static constexpr std::int64_t kSampleTicks = axmix::Output::kSampleTicks;
+    axmix::Output output_;
+    std::int64_t audio_delta_{};
+    std::int64_t last_update_ticks_{};  // the world clock (CPU ticks) of the last driver update
+    bool updated_{};
+    // One AX frame of the DSP (the command list of __AXNextFrame 8023D0D8):
+    // the audio SNDF's callback of the frame before, the streams, the effect
+    // voices with their AUX A sends, the AUX A return, the compressor, 16-bit
+    // saturation (`part`: DW4_AUDIO_DUMP_STREAMS, the named channels' share).
+    void mix_frame(std::int64_t frame, axmix::Output::Frame& out, axmix::Output::Part* part);
+    std::vector<std::int16_t> stream_part_;
+    axmix::Compressor compressor_;
+    // The SNDF the audio hears (sndf::Mirror): a copy of the game's driver_
+    // ticked once per AX frame of the audio timeline and given the game's
+    // calls between the same ticks. An SFP voice sounds from the AX frame
+    // after the callback that started it (the callback's PB changes reach the
+    // DSP at the next frame, 802A8F7C -> 803C325C).
+    void record(sndf::Mirror::Call call);
+    sndf::Mirror mirror_;
+    float recorded_master_{-1.0f};
+    int recorded_reserved_{-1};
     // MIXUpdateSettings for the streams: a stream's output volume reaches
     // the mix at the next AX frame and ramps across it (802A6B8C ->
-    // MIXSetInput); a stream that starts plays at once at its level.
+    // MIXSetInput); a stream that starts plays at once at its level. A change
+    // of the game's update reaches the first AX frame at or after the
+    // update's command time (kCommandTicks).
     struct StreamMix {
         float from{}, to{};
         bool on{};
@@ -563,11 +597,7 @@ private:
     };
     bool stream_on(std::size_t channel) const;
     std::array<StreamMix, 2 + kSeStreams> stream_mix_{};
-    // The AUX A return the DSP adds in the running frame (DSP rate, per
-    // channel) and the first sample of the next frame's.
-    bool aux_emit_{};
-    std::array<std::array<float, axfx::kFrameSamples>, 2> aux_return_{};
-    std::array<float, 2> aux_next_{};
+    StreamMix movie_mix_{};
 };
 
 // beTextureCtrl (80324B30 / 80324C54): binds named pack textures to the

@@ -68,6 +68,9 @@ struct Event {
     enum class Kind { note, other, end } kind{Kind::end};
     std::uint8_t status{};     // MIDI status after the 0xDn remap
     std::uint8_t key{}, velocity{};
+    // The delta after the event: bit 7 of its last data byte clear (also a
+    // delta of 0; 803C49F4 ends the track's pass after any event with one).
+    bool has_wait{};
     std::uint32_t wait_ms{};   // delay before the next event (tempo 0x10000)
 };
 

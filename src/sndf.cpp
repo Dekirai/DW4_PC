@@ -213,10 +213,11 @@ bool Driver::idle() const {
 }
 
 // The AX frame callback (802A8F7C).
-void Driver::tick(std::int64_t frame, std::int64_t time, const Banks& banks, std::uint32_t& random, double ms) {
-    // 803C325C: the tracks' waits move on by the time since the last tick.
+void Driver::tick(std::int64_t frame, std::int64_t time, const Banks& banks, std::uint32_t& random, int ms) {
+    // 803C325C: the tracks' waits (16.16 ms) move on by the tempo (+0x04,
+    // 1.0 here) times the whole milliseconds since the last tick.
     for (auto& t : tracks_)
-        if (t.flags && !(t.flags & 1)) t.wait -= ms;
+        if (t.flags && !(t.flags & 1)) t.wait -= std::int32_t(ms) << 16;
     // The voice records: an AX voice that ran out (its PB stopped in the
     // last frame, VPB +0x146 as AX synced it) is freed; a key-on voice whose
     // attack reached 0 dB goes to its decay and sustain level; a key-off
@@ -355,7 +356,7 @@ void Driver::start_track(std::uint32_t message, std::int64_t frame, const Banks&
     t.id = message;
     const int seq = int(message & 0xFF);
     if (seq) seqs_[std::size_t(seq)].state = 2;
-    t.wait = 0.0;
+    t.wait = 0;
     t.seq_flags = flags;
     t.flags = 0x80;
     t.bank = bank;
@@ -363,13 +364,15 @@ void Driver::start_track(std::uint32_t message, std::int64_t frame, const Banks&
     run_tracks(frame, random);
 }
 
-// 803C49F4: every running track whose wait is over plays its events until
-// one waits; a note goes to the drum note-on of the track's channel (the
-// channel's program: the bank's drum program, 803C06C4), the end stops the
-// track (its sequence: state 3).
+// 803C49F4: every running track whose wait is over (its whole milliseconds,
+// wait >> 16, at most 0) plays its events up to the first one with a delta,
+// which adds the delta to the wait and ends the track's pass, also a delta of
+// 0 (the next tick's pass goes on); a note goes to the drum note-on of the
+// track's channel (the channel's program: the bank's drum program, 803C06C4),
+// the end stops the track (its sequence: state 3).
 void Driver::run_tracks(std::int64_t frame, std::uint32_t& random) {
     for (auto& t : tracks_) {
-        if (!t.flags || t.wait > 0.0) continue;
+        if (!t.flags || (t.wait >> 16) > 0) continue;
         while (t.flags) {
             const auto event = t.sequence.next();
             if (event.kind == sfp::Event::Kind::end) {
@@ -381,9 +384,9 @@ void Driver::run_tracks(std::int64_t frame, std::uint32_t& random) {
             }
             if (event.kind == sfp::Event::Kind::note && event.velocity && t.bank)
                 note_on(t.channel, *t.bank, t.bank, event.key, event.velocity, int(t.id & 0xFF), frame, random);
-            if (event.wait_ms) {
-                t.wait += double(event.wait_ms);
-                if (t.wait > 0.0) break;
+            if (event.has_wait) {
+                t.wait += std::int32_t(event.wait_ms) << 16;
+                break;
             }
         }
     }
@@ -397,6 +400,15 @@ void Driver::run_tracks(std::int64_t frame, std::uint32_t& random) {
 // (803C0CC0), the volume (803B936C: master, velocity curve, SEQ volume),
 // pan and AUX A send, the volume envelope (an attack starts at -96 dB) and
 // the SRC ratio of the pitch (AXART on a 32000 Hz sound: 8024583C).
+// Not modelled, because none of the 86 shipped banks (600 splits, 599
+// sequences) and none of the game's SNDF commands use them: the exclusive
+// groups / key cut of split +0x1B (803B9700, modes 0x80 / 0x81 / 0x82 / 0x84 /
+// 0x88; +0x1B is 0 in every split), velocity ranges of several layers (every
+// program has one layer for velocities 0..127), the key - 60 of a type 0
+// program (every program is type 2), the channel and sequence transposes
+// (SNDF +0xAA6 / +0xAA7, sequence +8 / +9: commands 5 / 6 / 8 are never
+// sent), the pitch bend (803C03E4) and the priority 10 -> 11 special case
+// (803B9DEC: every split's +0x1D is 9).
 void Driver::note_on(int channel, const BankData& bank, const std::shared_ptr<const BankData>& owner, int key,
                      int velocity, int seq, std::int64_t frame, std::uint32_t& random) {
     const auto* split = bank.bank->program_type() == 2 ? bank.bank->split_at(key) : bank.bank->split(key);
@@ -532,6 +544,48 @@ void Driver::drop(std::uint32_t id) {
 void Driver::update_volume(int index) {
     auto& v = voices_[std::size_t(index)];
     if (v.used && v.seq) v.seq_volume = seqs_[std::size_t(v.seq)].volume;
+}
+
+// ---------------------------------------------------------------------------
+void Mirror::start(const Driver& game, std::uint32_t random, std::int64_t ticked) {
+    driver_ = game;
+    random_ = random;
+    ticked_ = ticked;
+    calls_.clear();
+    live_ = true;
+}
+
+void Mirror::record(Call call) {
+    if (!live_) return;
+    calls_.push_back(std::move(call));
+    if (calls_.size() > 65536) {
+        calls_.clear();
+        live_ = false;
+    }
+}
+
+void Mirror::replay(std::int64_t game) {
+    std::size_t used = 0;
+    for (; used < calls_.size() && calls_[used].after < game; ++used) {
+        const auto& call = calls_[used];
+        switch (call.kind) {
+        case Call::Kind::set: driver_.seq_set(call.seq, call.request, call.time); break;
+        case Call::Kind::play: driver_.seq_play(call.seq, call.time); break;
+        case Call::Kind::stop: driver_.seq_stop(call.seq, call.time); break;
+        case Call::Kind::volume: driver_.seq_volume(call.seq, call.value, call.time); break;
+        case Call::Kind::master: driver_.set_master(call.gain); break;
+        case Call::Kind::reserved: driver_.ax().set_reserved(call.value); break;
+        case Call::Kind::free_loops:
+            for (int v = 0; v < Driver::kVoices; ++v) {
+                const auto& voice = driver_.voices()[std::size_t(v)];
+                if (voice.used && voice.loop &&
+                    std::any_of(call.banks.begin(), call.banks.end(), [&](const auto& b) { return b.get() == voice.bank.get(); }))
+                    driver_.free_voice(v);
+            }
+            break;
+        }
+    }
+    calls_.erase(calls_.begin(), calls_.begin() + std::ptrdiff_t(used));
 }
 
 } // namespace dw4::sndf

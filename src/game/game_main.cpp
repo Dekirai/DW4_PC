@@ -1516,6 +1516,23 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     last_step_loaded = false;
                 }
                 mix_audio(step_samples(frame_base + engine.frame()));
+                // Test tool: DW4_AUDIO_TOPUP=FRAME:SAMPLES[,FRAME:SAMPLES...]
+                // renders SAMPLES more after the step of FRAME, as the queue
+                // top-up of interactive play does (smoke tests with a dump).
+                static const auto topups = [] {
+                    std::vector<std::pair<std::uint64_t, int>> list;
+                    if (const char* spec = std::getenv("DW4_AUDIO_TOPUP"))
+                        for (std::istringstream items(spec); items.good();) {
+                            std::string item;
+                            std::getline(items, item, ',');
+                            unsigned long long at = 0;
+                            int samples = 0;
+                            if (std::sscanf(item.c_str(), "%llu:%d", &at, &samples) == 2 && samples > 0) list.emplace_back(at, samples);
+                        }
+                    return list;
+                }();
+                for (const auto& [at, samples] : topups)
+                    if (options.smoke_frames && at == frame_base + engine.frame()) mix_audio(samples);
                 ++frame;
                 if (state_test) {
                     if (state_pass == 1) {
@@ -2141,11 +2158,11 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 }
             }
         }
-        if (audio_dump_path) {
-            // 16-bit stereo PCM WAV of everything mixed.
-            std::ofstream wav(audio_dump_path, std::ios::binary);
+        // 16-bit stereo PCM WAV at the output rate.
+        auto write_wav = [](const char* path, const std::vector<std::int16_t>& samples) {
+            std::ofstream wav(path, std::ios::binary);
             const std::uint32_t rate = dw4::engine::SoundManager::kOutputRate;
-            const std::uint32_t bytes = std::uint32_t(audio_dump.size() * sizeof(std::int16_t));
+            const std::uint32_t bytes = std::uint32_t(samples.size() * sizeof(std::int16_t));
             auto u32 = [&](std::uint32_t v) { wav.write(reinterpret_cast<const char*>(&v), 4); };
             auto u16 = [&](std::uint16_t v) { wav.write(reinterpret_cast<const char*>(&v), 2); };
             wav.write("RIFF", 4);
@@ -2160,8 +2177,15 @@ int run(const Options& options, dw4::game::Settings& settings) {
             u16(16);
             wav.write("data", 4);
             u32(bytes);
-            wav.write(reinterpret_cast<const char*>(audio_dump.data()), std::streamsize(bytes));
+            wav.write(reinterpret_cast<const char*>(samples.data()), std::streamsize(bytes));
+        };
+        if (audio_dump_path) {
+            // Everything mixed.
+            write_wav(audio_dump_path, audio_dump);
             std::cout << "audio dump " << audio_dump_path << " (" << audio_dump.size() / 2 << " frames)\n";
+            // Test tool: DW4_AUDIO_DUMP_STREAMS=FILE.wav, the streams' part of it (SoundManager::stream_part).
+            if (const char* part_path = std::getenv("DW4_AUDIO_DUMP_STREAMS"))
+                if (const auto* sound = engine.get<dw4::engine::SoundManager>()) write_wav(part_path, sound->stream_part());
         }
         // The session's notes of original behaviour the port lacks (none: no list).
         if (!engine.notes().empty()) std::cout << "unimplemented:\n";

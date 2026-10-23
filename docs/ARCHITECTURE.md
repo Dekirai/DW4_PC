@@ -205,9 +205,14 @@ OFFREEZE (the SUBWND programs, 80315784 -> 802F68D0) set every running type 4
 entry to SEQ volume 0 / 127 (an ADX one to -99.9 dB / 0 dB). The game's
 SNDF runs in game time (the AX frames before each update; the update's
 commands reach its ring 0.6 ms after the frame's world time, as Dolphin's
-onsets step by an AX frame for requests 0.57 / 0.65 ms before a boundary),
-and `render()` plays copies of it ticked on through the chunk's frames, so
-nothing the game sees depends on whether audio is rendered.
+onsets step by an AX frame for requests 0.57 / 0.65 ms before a boundary);
+its tick takes whole milliseconds off the tracks' waits (803C325C: round(us
+/ 1000) of the CPU timer, 5 per AX frame) and a track's pass ends after any
+event with a delta, also 0 (803C49F4). The audio hears a mirror of it
+(`sndf::Mirror`): a copy ticked once per AX frame of the audio timeline that
+gets the game's calls between the same ticks, so nothing the game sees
+depends on whether audio is rendered, and a host that renders ahead of the
+game only hears a request a frame or two later, never twice.
 Effects without a request id are ADX files on four SE stream channels, each
 start taking a free one or else the oldest of lower or equal priority
 (beSoundData [9], 802F56B0). The PLAY handler (80314FC8) ignores a sound effect
@@ -262,23 +267,45 @@ split, 0 = none) relative to its main level, so a voice started by a sound
 subcommand sends like any other and an entry's SEQ volume fade (the voice's
 volume articulator, upstream of the MIX buses) lowers its send with it; the
 streams and the movie send nothing (the RNA's AUX levels stay at -99.9 dB,
-802A7B5C). `render()` runs in the CRI model's AX frames (160 DSP samples,
-2427840 CPU ticks, on the grid CriStreams uses) on an audio clock that keeps
-output sample s at CPU tick s * 10125 plus one field (the chunk rendered after
-the update at t holds the audio from t on): the effect voices read their
-samples linearly at their SRC position (AX SRC type 1, every split) at the
-output's DSP times, their AUX A sends are made at the DSP rate for the AX
-library's three rotating AUX buffers (8023CE40, so a send comes back two
-frames later) and the return is added sample for sample; a level change of a
-voice or a stream (ADXT_SetOutVol -> 802A6B8C -> MIXSetInput) reaches the mix
-at the next AX frame and ramps across it (MIXUpdateSettings 8025A420), while a
-voice or stream that starts plays at its level at once (Dolphin's onsets show
-no fade-in). `render()` mixes the streams at those rates and the effect voices
-with the AUX A return as 48 kHz stereo PCM, saturated at 16 bits like the AX
-output (no compressor),
-that `dw4_game` queues on an SDL3 audio stream (`DW4_AUDIO_DUMP=FILE.wav`
-records it, `DW4_TRACE_SOUND=1` logs the effects and sound subcommands, the
-SNDF voices and where each stream's audio begins in the dump).
+802A7B5C). `render()` mixes the whole AX output at the DSP rate the way the
+AX command list of each frame has the DSP do it (`dw4::axmix`, __AXNextFrame
+8023D0D8; AIInit 8023C0D4 sets the AI's DSP rate to 32 kHz, 54 MHz / 1686 =
+32028.5 Hz): frame by frame (160 DSP samples, 2427840 CPU ticks, on the grid
+CriStreams uses), every frame once and in order when the output first needs
+it. Streams and effect voices run through the AX linear SRC (type 1 for every
+split and the RNA's voices: the 16.16 ratio steps a four-sample history and
+the output interpolates its two oldest samples, as Dolphin's AX emulation),
+their levels ramp across the frame (a level change of a voice or a stream,
+ADXT_SetOutVol -> 802A6B8C -> MIXSetInput, reaches the next AX frame,
+MIXUpdateSettings 8025A420; a voice or stream that starts plays at its level
+at once, as Dolphin's onsets show no fade-in), the effect voices' AUX A sends
+go to the AX library's three rotating AUX buffers (8023CE40, so a send comes
+back two frames later) and the return is added; then the AX ucode's
+compressor (command 0x12, which __AXNextFrame sends while __AXClInit 8023D788's
+flag is set, and nothing clears it: a frame whose main bus exceeds 0x8000 is
+scaled by an attack ramp down to -4 dB within the frame, then released by
+0.4 dB per frame over ten frames, the ramps of 804C0820) and the 16-bit
+saturation. A stream's start, pause and volume change from the game's update
+reach the first AX frame at or after the update's command time (the ADXT
+call reaches the RNA's voice at the next frame, 8029A480 -> 802A7534), an SFP
+note sounds from the frame after the SNDF callback that started it (the
+callback's PB changes reach the DSP a frame later, 802A8F7C -> 803C325C), so
+a stream leads an effect of the same update by an AX frame, as in the
+captures. The DSP's output is resampled to 48 kHz (562 / 375 exactly) by a
+96-tap Kaiser-windowed sinc (flat to 15 kHz, the DSP's images about 80 dB
+down from 16.5 kHz on): output sample s plays the DSP at CPU tick
+s * 10125 plus one field minus the filter's 1.5 ms (the chunk rendered after
+the update at t holds the audio from t on); the audio's AX frames map to the
+game's by whole frames, a mapping that moves only when the audio runs more
+than half a field off the world clock (a host topping up its queue, a clock
+file's jump, a restore), so the mix itself never repeats or skips anything.
+`dw4_game` queues the output on an SDL3 audio stream (`DW4_AUDIO_DUMP=FILE.wav`
+records it, `DW4_AUDIO_DUMP_STREAMS=FILE.wav` the part of the same mix of the
+stream channels `DW4_AUDIO_STREAMS_CHANNELS` names (default BGM and
+ambience), `DW4_AUDIO_TOPUP=FRAME:SAMPLES` renders extra audio after a frame like
+the host's queue top-up, `DW4_AX_COMPRESSOR=0` leaves the compressor out,
+`DW4_TRACE_SOUND=1` logs the effects and sound subcommands, the SNDF voices
+and where each stream's audio begins in the dump).
 MOVIE PLAY (8031EDFC) looks up the beMovieInfoData of the
 file ([5] end script), splits the Sofdec program stream with `dw4::sfd`
 (MPEG-1 video 0xE0, ADX sound 0xC0) and plays the sound on a movie channel;
