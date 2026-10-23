@@ -320,7 +320,7 @@ public:
     // igCriMovieCodec over CRI Sofdec, see play_movie): its video stream,
     // the player's state and the picture on the screen.
     struct Movie {
-        std::string name, script; // beMovieInfoData [2] file, [5] end script
+        std::string name; // beMovieInfoData [2] file
         std::vector<std::uint8_t> video;
         double frame_rate = 30000.0 / 1001.0;
         std::size_t pictures{};
@@ -335,11 +335,15 @@ public:
         int ready_frame{-1};      // the codec update whose server pass had the stream's first read
         std::int64_t start{};     // VI time playback started (803E38C4: the sound's ADXT unpaused)
         int taken{-1};            // last picture mwPlyGetCurFrm returned (803F994C)
-        int visible{-1};          // picture on the screen: from the field after the update that took it
+        int previous{-1};         // the picture taken before the last codec update
+        // The picture on the screen: the XFB of the frame whose codec update
+        // takes picture k still shows k - 1 (Dolphin), so each frame shows
+        // the picture of the codec update before its own, from its covered
+        // field on (none before the first).
+        int visible{-1};
         int after_last{};         // codec updates since the last picture was taken
         int skipped{};            // pictures Sofdec dropped as late
         bool sound_on{};          // the sound plays (render mixes it)
-        bool ended_script{};      // beMovie ran the end script (8031EC10)
         bool codec{true};         // the codec plays it (false: the file could not be opened)
         std::uint32_t serial{};   // changes with every PLAY
     };
@@ -551,6 +555,17 @@ private:
     std::optional<Movie> movie_;
     Stream movie_stream_;
     std::uint32_t movie_serial_{};
+    // The beMovie RAM's name is set (+0x24: MOVIE PLAY of a name its
+    // beMovieInfoData list has; cleared after the end script, 0x8031EDE4)
+    // and that data's end script.
+    bool movie_named_{};
+    std::string movie_script_;
+    // Codecs of movies that ended (state 2) and whose name beMovie cleared,
+    // left in the movie manager by a newer MOVIE PLAY: each still waits a
+    // retrace in every frame (802AE8B8) until a stop takes every movie
+    // (802AF560, the teardown). The retail scripts play one movie per stage.
+    int ended_codecs_{};
+    // 802AF560 (the skip and the teardown): every movie stops.
     void stop_movie(Engine& engine);
     // Sofdec leaves PREP this many codec server passes after the one that
     // first had the stream's data, and its sound handler starts 56,539 bus

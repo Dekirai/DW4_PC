@@ -865,8 +865,11 @@ void SoundManager::clear_stage(Engine& engine) {
     // once by the engine plugin (80318A24 -> 80318EE8): it survives the
     // stage change, and only PLAY / BGMSTOP / VOLUMECTL write it.
     se_recent_.clear();
-    // The teardown stops the movie (its codec waits end with it).
+    // The teardown stops every movie (their codec waits end with them); the
+    // beMovie RAM goes with the stage.
     stop_movie(engine);
+    movie_named_ = false;
+    movie_script_.clear();
     // The stage's banks go (802F6BAC -> 803C1CC4 unloads their SNDF slots).
     // The original's voices of those banks play on from the ARAM the next
     // stage's banks overwrite; the port frees the loops among them (their
@@ -1710,6 +1713,12 @@ void SoundManager::begin_ax_frame(const sndf::Driver& driver, std::int64_t frame
 // mwPlyGetCurFrm, so every frame of a movie takes two fields: the game runs
 // at 30 Hz until the stage's teardown stops the movie.
 //
+// The port's driver tick of a step stands for the servers of the retrace
+// after it (the CRI servers run on the retrace, before the next update;
+// DiscDrive::kDolphinClockOffset): the tick of the MOVIE PLAY step is the
+// pass after the open's first VIWaitForRetrace, and the tick of a codec
+// update's step the pass after the codec's wait.
+//
 // Dolphin captures of both opening movies of a boot (work/dref r40movie
 // d_boot1 / d_boot2: OSReport hooks on the codec, the Sofdec sound handler,
 // ADXT_Pause, the ADXSTM reads and every frame's endScene) show:
@@ -1718,27 +1727,41 @@ void SoundManager::begin_ax_frame(const sndf::Driver& driver, std::int64_t frame
 //   whose pass has them (1123; 7354 after MOVIE PLAY at 7346 in attract
 //   mode), so that frame takes 8 or 9 fields;
 // - the first codec update's server pass starts Sofdec's stream (ADXSTM
-//   8051AE70): one 365-sector read from the file's start, then refills;
+//   8051AE70): one 365-sector read from the file's start (retrace 1125),
+//   then refills;
 // - the player leaves PREP (803E38C4: ADXT_Pause 0, the sound starts) 0.084
 //   field after the pass of the eleventh codec update (both movies), and
-//   mwPlyGetCurFrm returns picture k in the codec update 11 + k (none dropped);
+//   mwPlyGetCurFrm returns picture k in the codec update 12 + k (none
+//   dropped); the XFB of that frame still shows picture k - 1;
 // - after the last picture, the second codec update reads PLAYEND
 //   (mwPlyGetStat 3) and stops the codec with state 2 (802AE6D0); the next
 //   beMovie update (8031EC10, state 2 from 802B1338) runs the end script.
 void SoundManager::play_movie(Engine& engine, const Ram& ram, const std::string& name) {
-    // 0x8031EE64: a movie name still set (the last one not finished) refuses.
-    if (movie_) return;
-    Movie movie;
-    movie.name = name;
+    // 0x8031EE64: while the beMovie name is set (a movie whose end script has
+    // not run) PLAY is refused; the end script's update clears it. The name
+    // must be one of the info's beMovieInfoData (strcmp 8009D5D8), whose name
+    // the RAM keeps (0x8031F308); any other plays nothing.
+    if (movie_named_) return;
+    const ObjectView* found = nullptr;
+    const auto list = ram.info.list(5);
+    for (const auto& data : list)
+        if (data && data.str(2) == name) {
+            found = &data;
+            break;
+        }
+    if (!found) return;
+    movie_named_ = true;
+    movie_script_ = std::string(found->str(5));
     auto lower = [](std::string text) {
         std::transform(text.begin(), text.end(), text.begin(), [](unsigned char c) { return char(std::tolower(c)); });
         return text;
     };
-    for (const auto& data : ram.info.list(5))
-        if (data && lower(std::string(data.str(2))) == lower(name)) {
-            movie.script = std::string(data.str(5));
-            break;
-        }
+    // A movie whose end script ran stays in the movie manager (its codec in
+    // state 2 waits on); the port keeps only the new one and counts the old
+    // codec's retrace wait.
+    if (movie_ && movie_->codec) ++ended_codecs_;
+    Movie movie;
+    movie.name = name;
     movie_stream_.decoder.reset();
     try {
         auto streams = sfd::demux(engine.resources().read(lower(name), 512u * 1024u * 1024u));
@@ -1756,7 +1779,9 @@ void SoundManager::play_movie(Engine& engine, const Ram& ram, const std::string&
     } catch (const std::exception& error) {
         engine.note("movie " + name + ": " + error.what());
     }
-    // The open's header read, then its retrace waits.
+    // The open's ADXF_ReadNw of the first ten sectors: the read goes on the
+    // drive in the server pass after this field (this step's driver tick);
+    // the frame waits for it in the fields after (update_held).
     std::uint64_t offset = 0;
     std::uint32_t sectors = 0;
     if (const auto* record = engine.resources().catalog().find(lower(name)); record && record->location) {
@@ -1782,34 +1807,40 @@ void SoundManager::play_movie(Engine& engine, const Ram& ram, const std::string&
                    std::to_string(engine.frame()));
 }
 
-// The codec stops and closes (igMovieManager stop 802AF388: 802AE6D0 with
-// state 1, 802AE530) and the stream ends; the picture of the movie layer
-// stays until the stage changes.
+// Every codec stops and closes (802AF560 -> igMovieManager stop 802AF388:
+// 802AE6D0 with state 1, 802AE530) and the stream ends; the picture of the
+// movie layer stays until the stage changes.
 void SoundManager::stop_movie(Engine& engine) {
-    if (movie_) engine.set_clock_lateness(0);
+    if (movie_ || ended_codecs_) engine.set_clock_lateness(0);
     movie_.reset();
+    ended_codecs_ = 0;
     movie_stream_.decoder.reset();
     cri_.movie_close();
 }
 
 void SoundManager::update_held(Engine& engine) {
-    update_driver(engine, false);
-    if (!movie_ || !movie_->codec) return;
-    auto& movie = *movie_;
     static const bool trace = std::getenv("DW4_TRACE_SOUND") != nullptr;
-    if (movie.phase == Movie::Phase::open) {
-        // The open's loop (802ADC8C): VIWaitForRetrace, the ADX server, ADXF's
-        // status; the pass that books the header ends it, and the rest of
-        // the update (the player's create and start) runs in this field.
-        engine.hold_update(1);
+    if (movie_ && movie_->codec && movie_->phase == Movie::Phase::open) {
+        // The open's loop (802ADC8C) in this field: VIWaitForRetrace, the ADX
+        // server's pass on this field's retrace (the last step's driver
+        // tick), ADXF_GetStat. Until the pass has booked the header the loop
+        // waits another retrace; in the field whose pass booked it the open
+        // returns, the player is made and started (802AE600, mwPlyStartAfs)
+        // and the rest of the update runs, the movies that ended before it
+        // waiting their retraces at its end (802B11BC).
         if (cri_.movie_header_read()) {
-            movie.phase = Movie::Phase::prep;
-            if (trace) engine.log("movie " + movie.name + " open done, mwPlyStart, frame " + std::to_string(engine.frame()));
+            movie_->phase = Movie::Phase::prep;
+            if (ended_codecs_) engine.hold_update(ended_codecs_);
+            if (trace) engine.log("movie " + movie_->name + " open done, mwPlyStart, frame " + std::to_string(engine.frame()));
+        } else {
+            engine.hold_update(1);
         }
-        return;
     }
-    // The XFB of the frame that took a picture shows from its second field.
-    if (movie.visible != movie.taken) movie.visible = movie.taken;
+    update_driver(engine, false);
+    if (!movie_ || !movie_->codec || movie_->phase == Movie::Phase::open) return;
+    auto& movie = *movie_;
+    // The frame shows the picture the codec update before its own took.
+    movie.visible = movie.previous;
     // The sound's ADXT leaves its pause in this field (803E38C4).
     if (movie.phase != Movie::Phase::prep && !movie.sound_on &&
         movie.start < engine.vi_time() + (field_time(engine.frame() + 1) - field_time(engine.frame()))) {
@@ -1818,24 +1849,35 @@ void SoundManager::update_held(Engine& engine) {
     }
 }
 
-// The codec update of the playing movie (802AE8B8), after every manager.
+// The movie manager's update (802B11BC) after every manager: each movie's
+// codec update (802AE8B8), the ended ones first.
 void SoundManager::update_movie_player(Engine& engine) {
-    if (!movie_ || !movie_->codec || movie_->phase == Movie::Phase::open) return;
+    // (The frame of an open: the ended codecs wait after it, update_held.)
+    if (movie_ && movie_->codec && movie_->phase == Movie::Phase::open) return;
+    const bool playing = movie_ && movie_->codec;
+    // 0x802AE93C: every codec not stopped (state 1) waits a retrace
+    // (VIWaitForRetrace), so the frame takes as many more fields; the ADX
+    // server pass and the picture follow each wait.
+    const int waits = ended_codecs_ + (playing ? 1 : 0);
+    if (waits) engine.hold_update(waits);
+    if (!playing) return;
     auto& movie = *movie_;
     static const bool trace = std::getenv("DW4_TRACE_SOUND") != nullptr;
-    // 0x802AE93C: VIWaitForRetrace (unless paused, state 1): this frame takes
-    // another field; the ADX server pass and the picture follow in it.
-    engine.hold_update(1);
     ++movie.frames;
-    const std::int64_t field = field_time(engine.frame() + 1) - field_time(engine.frame());
-    const std::int64_t pass = engine.vi_time() + field;
-    // The first pass after mwPlyStart starts the stream (it asks for its
-    // first read in the same pass; this step's driver tick stands for it).
+    movie.previous = movie.taken;
+    // This codec's wait ends on the retrace after the ended codecs' waits:
+    // its pass runs on the servers of that field's retrace (the time of this
+    // step's driver tick stands for the first retrace after this field).
+    const std::int64_t pass_vi = engine.vi_time() + field_time(engine.frame() + std::uint64_t(ended_codecs_)) - field_time(engine.frame());
+    const std::int64_t pass = pass_vi + field_time(engine.frame() + 1) - field_time(engine.frame());
+    // The first pass after mwPlyStart starts the stream, which asks for its
+    // first read in the same pass (the explicit server call 0x802AE940 after
+    // the wait).
     if (movie.frames == 1) {
-        cri_.movie_stream(cri_ticks(engine.vi_time()));
+        cri_.movie_stream(cri_ticks(pass_vi));
         if (trace && cri_.inflight.slot == CriStreams::kMovieSlot)
             engine.log("stream read movie " + std::to_string(cri_.movie.request) + " sectors, " +
-                       std::to_string(double(cri_.inflight.done - cri_ticks(engine.vi_time())) / double(CriStreams::kFieldTicks)) +
+                       std::to_string(double(cri_.inflight.done - cri_ticks(pass_vi)) / double(CriStreams::kFieldTicks)) +
                        " fields, frame " + std::to_string(engine.frame()));
     }
     if (movie.phase == Movie::Phase::prep) {
@@ -2167,8 +2209,29 @@ void SoundManager::serialize_persistent(StateArchive& a, std::shared_ptr<const v
     a.io(cri.loader.sectors);
     a.io(cri.loader.pos);
     a.io(cri.loader.request);
-    if (a.reading() && (cri.inflight.slot < -1 || cri.inflight.slot > CriStreams::kLoaderSlot))
+    // The movie's reader: a stage snapshot comes after the teardown closed
+    // it, so at most its last read is still on the drive (stopping).
+    auto& movie = cri.movie;
+    a.io(movie.header);
+    a.io(movie.header_busy);
+    a.io(movie.header_done);
+    a.io(movie.header_booked);
+    a.io(movie.active);
+    a.io(movie.busy);
+    a.io(movie.done);
+    a.io(movie.stopping);
+    a.io(movie.disc_offset);
+    a.io(movie.sectors);
+    a.io(movie.pos);
+    a.io(movie.request);
+    a.io(movie.write_pos);
+    a.io(movie.written);
+    a.io(movie.consumed);
+    if (a.reading() && (cri.inflight.slot < -1 || cri.inflight.slot > CriStreams::kMovieHeaderSlot))
         throw std::runtime_error("save state holds an invalid stream read");
+    if (a.reading() && (movie.pos > movie.sectors || movie.request > CriStreams::kMovieRingSectors ||
+                        movie.write_pos >= CriStreams::kMovieRingSectors * 2048u || movie.consumed > movie.written))
+        throw std::runtime_error("save state holds an invalid movie read");
     // (A decoding handle divides by its channel count, 18 bytes per frame.)
     if (a.reading())
         for (const auto& h : cri.handles)
@@ -2347,20 +2410,22 @@ void SoundManager::update(Engine& engine) {
         fx_due_ = false;
         select_effect(engine, "REVERB");
     }
-    if (movie_ && !movie_->ended_script) {
-        // 8031EC10 (beMovie RAM): player 1's A or START stops every movie
-        // (802AF560), then a movie whose state is 2 (ended, or gone: 802B1338)
-        // runs its end script, once (the name is cleared).
+    if (movie_named_) {
+        // 8031EC10 (beMovie RAM, while its name is set): player 1's A or
+        // START (pad getter 80312138, button trigger +0x48) stops every movie
+        // (802AF560); then, when the movie's state is 2 (ended, or gone:
+        // 802B1338), the end script of its data runs (80301FA4 at 0x8031ED58)
+        // and the name is cleared (0x8031EDE4), so a later PLAY is taken.
         const auto& pad = engine.pads()[0];
         const bool skip = (pad.buttons.trigger & (pad_button::a | pad_button::start)) != 0;
-        const std::string script = movie_->script;
         if (skip) stop_movie(engine);
-        if (skip || movie_->phase == Movie::Phase::end) {
-            if (movie_) movie_->ended_script = true;
+        if (!movie_ || movie_->phase == Movie::Phase::end) {
+            const std::string script = movie_script_;
             if (static const bool trace = std::getenv("DW4_TRACE_SOUND") != nullptr; trace)
                 engine.log(std::string("movie ") + (skip ? "skipped" : "ended") + ", end script " + script + ", frame " +
                            std::to_string(engine.frame()));
             if (!script.empty()) engine.run_script(script);
+            movie_named_ = false;
         }
     }
 }

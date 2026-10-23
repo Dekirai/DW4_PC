@@ -400,7 +400,13 @@ public:
     // What the slots hold (0 = A, 1 = B).
     void set_card_setting(int slot, const CardSetting& setting) { card_settings_[std::size_t(slot & 1)] = setting; }
     const CardSetting& card_setting(int slot) const { return card_settings_[std::size_t(slot & 1)]; }
-    const std::array<PadState, 4>& pads() const { return pads_.states(); }
+    // The pads as the game's readers get them (bePadManager's getter
+    // 80312138): while STAGECTL PADINPUT DISABLE has set the manager's
+    // redirect byte (+0x1D) every reader gets the fifth pad, which no device
+    // updates (disconnected, no input). The four slots themselves update
+    // every frame (80311F84), so a press read in the frame of the ENABLE
+    // counts and a button held across it gives no trigger.
+    const std::array<PadState, 4>& pads() const { return pad_input_enabled_ ? pads_.states() : kFifthPads; }
 
     // Script execution (beLua::call 80301FA4): first matching name per info.
     bool run_script(std::string_view name);
@@ -560,6 +566,7 @@ private:
     std::map<std::pair<const void*, std::uint32_t>, Lua4Program> lua_programs_;
     int script_depth_{};
     dw4::OriginalPads pads_;
+    static inline const std::array<PadState, 4> kFifthPads{};
     Node global_root_;
     std::vector<Node*> attached_roots_;
 
