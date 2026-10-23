@@ -352,8 +352,21 @@ public:
     void set_reset_enabled(bool enabled) { console_reset_.set_enabled(enabled); }
     const ConsoleReset& console_reset() const { return console_reset_; }
     const std::string& stage_name() const { return stage_name_; }
+    // The world clock as the last update sampled it (8028AF84 at the start of
+    // each frame): it stays while the update covers more fields (held()).
     std::int64_t time() const { return time_; }
     std::uint64_t frame() const { return frame_; }
+    // An update that waits for retraces inside it (VIWaitForRetrace: Sofdec's
+    // open 802ADC8C reads the movie's header, the movie codec 802AE8B8 waits
+    // once in every frame of a movie) covers more fields: the next `fields`
+    // steps run no update, the game's picture and input stay, only the
+    // per-field work goes on (the CRI servers, Manager::update_held).
+    void hold_update(int fields) { hold_fields_ = std::max(hold_fields_, fields); }
+    // The last step was such a covered field (no update ran in it).
+    bool held() const { return held_; }
+    // The fields since the last update's world clock sample: the VI clock of
+    // the per-field work (the same as time() in a step that updated).
+    std::int64_t vi_time() const { return time_ + field_time(frame_) - field_time(update_frame_); }
     // World time added by the last step (one NTSC field).
     std::int64_t frame_delta() const { return field_time(frame_) - field_time(frame_ ? frame_ - 1 : 0); }
     // beSystem's frame step (80316258, 0x80316320..0x8031635C): the world
@@ -585,6 +598,9 @@ private:
     Node* loading_node_{}; // the loading screen's beLoadingNode
     std::int64_t time_{};
     std::uint64_t frame_{};
+    std::uint64_t update_frame_{};        // frame_ of the last step that updated (vi_time)
+    int hold_fields_{};                   // fields the running update still covers (hold_update)
+    bool held_{};                         // the last step was one of them (held())
     std::int64_t world_delta_ = 16683333; // world time added by the last step (system_step)
     bool pad_input_enabled_{};
     std::map<std::int32_t, std::uint8_t> flags_;
@@ -609,6 +625,9 @@ public:
     // the original skips every manager's RAM updates then (802F28F8); only
     // what it runs outside them goes on (the sound driver).
     virtual void update_inactive(Engine& engine) { (void)engine; }
+    // A field the running update covers (Engine::hold_update): only what runs
+    // on the retraces themselves goes on (the CRI servers).
+    virtual void update_held(Engine& engine) { (void)engine; }
     // Scheduled when the plugin registers it (+5C -> 8028A398), so it runs
     // before every manager an info schedules and stays scheduled across
     // stage clears (beSystem, bePadManager, beMessenger, ...).

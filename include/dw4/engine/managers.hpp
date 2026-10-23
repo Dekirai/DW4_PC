@@ -290,6 +290,13 @@ public:
     // The CRI driver part (stream ramps and fades, SE sequences) also runs
     // while the stage is not active; the cues and the movie are RAM work.
     void update_inactive(Engine& engine) override { update_driver(engine); }
+    // The CRI servers run on every retrace, also in the fields an update
+    // covers (the movie's open and codec waits, Engine::hold_update).
+    void update_held(Engine& engine) override;
+    // The movie player module (igMovieManager 802B11BC, scheduled by MOVIE
+    // PLAY after every manager): the codec update 802AE8B8 of the playing
+    // movie, from the frame after its open on (Engine::update_managers).
+    void update_movie_player(Engine& engine);
     // Interleaved stereo 16-bit PCM at kOutputRate of the running streams.
     void render(std::int16_t* out, std::size_t frames);
     static constexpr int kOutputRate = 48000;
@@ -305,24 +312,31 @@ public:
     // BGM entry holding that id, else the ambience's, else every sound effect
     // entry holding it fades from `from` to `to` over `frames`.
     void fade_id(std::uint64_t id, float from, float to, float frames);
-    // The movie playing: its video stream, picture rate and count; the
-    // picture shown is the time since its first picture at that rate.
+    // The movie playing (MOVIE PLAY: the Alchemy movie plugin's
+    // igCriMovieCodec over CRI Sofdec, see play_movie): its video stream,
+    // the player's state and the picture on the screen.
     struct Movie {
         std::string name, script; // beMovieInfoData [2] file, [5] end script
         std::vector<std::uint8_t> video;
         double frame_rate = 30000.0 / 1001.0;
         std::size_t pictures{};
-        std::int64_t start{};       // world time picture 0 is shown (picture_at)
-        std::int64_t sound_start{}; // world time the sound's ADXT leaves its pause
-        bool sound_on{};            // the sound plays (render mixes it)
-        std::uint32_t serial{}; // changes with every PLAY
-        // Picture shown at world time `now`. Fields and pictures are both
-        // NTSC rates (two fields per picture at 29.97); the small bias keeps
-        // the nanosecond rounding of field times from landing a field early.
-        std::size_t picture_at(std::int64_t now) const {
-            const double seconds = double(now - start) / 1e9;
-            return seconds > 0.0 ? static_cast<std::size_t>(seconds * frame_rate + 1e-6) : 0;
-        }
+        std::vector<std::uint32_t> picture_ends; // sfd::Streams::picture_file_ends
+        // open: the open's header read (the frame of MOVIE PLAY waits for it);
+        // prep: mwPlyStart was called, the MW player prepares (status PREP);
+        // play: it plays (status PLAYING); end: PLAYEND, the codec keeps
+        // running until the stage's teardown stops it.
+        enum class Phase : std::uint8_t { open, prep, play, end };
+        Phase phase{Phase::open};
+        int frames{};             // codec updates so far (802AE8B8)
+        int ready_frame{-1};      // the codec update whose server pass had the stream's first read
+        std::int64_t start{};     // VI time playback started (803E38C4: the sound's ADXT unpaused)
+        int taken{-1};            // last picture mwPlyGetCurFrm returned (803F994C)
+        int visible{-1};          // picture on the screen: from the field after the update that took it
+        int after_last{};         // codec updates since the last picture was taken
+        int skipped{};            // pictures Sofdec dropped as late
+        bool sound_on{};          // the sound plays (render mixes it)
+        bool ended_script{};      // beMovie ran the end script (8031EC10)
+        std::uint32_t serial{};   // changes with every PLAY
     };
     const Movie* movie() const { return movie_ ? &*movie_ : nullptr; }
     // Save states: the streams that play on into the next stage, and back.
@@ -456,7 +470,6 @@ private:
     std::pair<std::uint64_t, std::uint32_t> disc_extent(Engine& engine, unsigned archive, unsigned entry) const;
     void trace_cri(Engine& engine, int inflight_before, std::int64_t done_before, const std::array<bool, CriStreams::kSlots>& playing_before);
     void play_movie(Engine& engine, const Ram& ram, const std::string& name);
-    void end_movie(Engine& engine);
     // One stream resampled into the mix at the rate the AX voice plays it
     // (`sofdec`: the movie's handle, RNA mode 1).
     void mix_stream(Stream& stream, float gain, bool sofdec, float* mix, std::size_t frames);
@@ -510,10 +523,12 @@ private:
     std::optional<Movie> movie_;
     Stream movie_stream_;
     std::uint32_t movie_serial_{};
-    // Sofdec's start after MOVIE PLAY (play_movie): the sound's unpause 29
-    // and the first picture 37 NTSC fields later.
-    static constexpr std::int64_t kMovieSoundNs = 483816667;   // 29 * 1001/60 ms
-    static constexpr std::int64_t kMoviePictureNs = 617283333; // 37 * 1001/60 ms
+    void stop_movie();
+    // Sofdec leaves PREP this many codec server passes after the one that
+    // first had the stream's data, and its sound handler starts 56,539 bus
+    // ticks (0.084 field) after that pass (Dolphin, both opening movies).
+    static constexpr int kMoviePrep = 2;
+    static constexpr std::int64_t kMovieStartNs = 1396025;
     // The stage's beCriFxInfo in acceptance order (Cri +0x2C, 802F51C4):
     // name and _reverb (slot 6).
     std::vector<std::pair<std::string, int>> fx_infos_;

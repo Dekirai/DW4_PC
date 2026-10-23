@@ -493,6 +493,9 @@ void Engine::begin_stage_load(const StageSnapshot* restoring) {
 void Engine::restore(const StageSnapshot& snapshot) {
     time_ = snapshot.time;
     frame_ = snapshot.frame;
+    update_frame_ = frame_; // (a stage load starts in a step that updated)
+    hold_fields_ = 0;
+    held_ = false;
     world_delta_ = frame_delta(); // the field that step added (no stage is active in it)
     flags_ = snapshot.flags;
     counters_ = snapshot.counters;
@@ -1245,7 +1248,19 @@ void Engine::step(const std::array<PadSample, 4>& samples) {
     // The console reloads the game (rebooting): nothing of the old one runs.
     if (rebooting_) {
         ++frame_;
+        ++update_frame_;
         ++reboot_fields_;
+        return;
+    }
+    // The original's update of this frame is still running (hold_update): no
+    // world clock sample, no input read, no update; the controllers' own
+    // reset combination and the work on the retraces (the CRI servers) go on.
+    held_ = hold_fields_ > 0;
+    if (held_) {
+        --hold_fields_;
+        ++frame_;
+        console_reset_.hold(samples);
+        for (auto& m : managers_) m->update_held(*this);
         return;
     }
     auto input = samples;
@@ -1256,9 +1271,11 @@ void Engine::step(const std::array<PadSample, 4>& samples) {
     // The frame clock advances first so updates and the following render
     // observe the same time (joint clamps and fades end exactly on a key).
     // One NTSC field of world time (8028AF84), see field_time.
+    // (After covered fields the sample has moved on by all of them.)
     const auto before = time_;
-    time_ += field_time(frame_ + 1) - field_time(frame_);
+    time_ += field_time(frame_ + 1) - field_time(update_frame_);
     ++frame_;
+    update_frame_ = frame_;
     if (const auto& clock = clock_file(); !clock.empty())
         if (const auto it = clock.find(frame_); it != clock.end()) time_ = it->second;
     // 80316258 keeps the world time of its last update (+0x18) and stores the
@@ -1306,9 +1323,14 @@ void Engine::step(const std::array<PadSample, 4>& samples) {
 void Engine::update_managers() {
     for (auto& m : managers_)
         if (m->scheduled_at_registration()) m->update(*this);
+    // The movie player (igMovieManager, 802B11BC) is a module MOVIE PLAY
+    // appends to the scheduler (8028A398 at 0x802AF254): it runs after
+    // everything scheduled before it, whether or not the stage is active.
+    auto* sound = get<SoundManager>();
     if (!stage_active_) {
         for (auto& m : managers_)
             if (!m->scheduled_at_registration()) m->update_inactive(*this);
+        if (sound) sound->update_movie_player(*this);
         return;
     }
     // 8028B7B0 walks a copy, so a manager scheduled during the run (a file
@@ -1320,6 +1342,7 @@ void Engine::update_managers() {
         if (!m->scheduled_at_registration() &&
             std::none_of(schedule_run_.begin(), schedule_run_.end(), [&](const Scheduled& e) { return e.manager == m.get(); }))
             m->update(*this);
+    if (sound) sound->update_movie_player(*this);
 }
 
 bool Engine::main_lobby() const {

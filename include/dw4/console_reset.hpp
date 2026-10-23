@@ -57,6 +57,18 @@ public:
     // combination is the controller's). True when beSystem reboots in this
     // frame.
     bool update(const std::array<PadSample, 4>& pads) {
+        hold(pads);
+        // 80316258: OSGetResetButtonState only while the release is not latched.
+        if (!latched_) {
+            previous_ = current_;
+            current_ = read_button();
+            latched_ = previous_ && !current_;
+        }
+        return enabled_ && latched_;
+    }
+    // A field without a game update (Engine::hold_update): only the
+    // controllers' combination and the button's tap time go on.
+    void hold(const std::array<PadSample, 4>& pads) {
         if (button_fields_ > 0 && --button_fields_ == 0) button_down_ = false;
         for (std::size_t i = 0; i < pads.size(); ++i) {
             const bool held = pads[i].connected && (pads[i].buttons & kComboMask) == kCombo;
@@ -69,13 +81,6 @@ public:
                 tap();
             }
         }
-        // 80316258: OSGetResetButtonState only while the release is not latched.
-        if (!latched_) {
-            previous_ = current_;
-            current_ = read_button();
-            latched_ = previous_ && !current_;
-        }
-        return enabled_ && latched_;
     }
     // beSystem +0x5F.
     void set_enabled(bool enabled) { enabled_ = enabled; }
