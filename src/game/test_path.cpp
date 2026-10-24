@@ -1687,6 +1687,17 @@ void ExploreBot::plan(engine::Engine& engine, const engine::ModelCtrlManager::Mo
         go_goal();
         return;
     }
+    // A vehicle being boarded (the ride below) stays the target until its
+    // ride moves the player (update) or kRideTry frames have passed.
+    if (ride_target_ && frame < ride_until_ && !goal_inside)
+        for (const auto& e : models->rams())
+            if (e.get() == ride_target_ && e->generated && e->node) {
+                go(position_of(*e), e.get(), "ride " + e->info_name + "#" + std::to_string(e->index));
+                route_ = map.route_to(position_of(*e), 20.0f);
+                gimmick_ = Gimmick::talk;
+                return;
+            }
+    ride_target_ = nullptr;
     // The next mat of a given sequence. One the player stands on whose
     // switch shows off (DW4_MAT_SWITCH: thrown back onto it after the step
     // that turned it on) is stepped off first: reached floor beyond its
@@ -2365,6 +2376,39 @@ void ExploreBot::plan(engine::Engine& engine, const engine::ModelCtrlManager::Mo
             target_portal_ = best_link->name;
             return;
         }
+        // A room only a vehicle leaves: dng412b3 / b4's trains (g_dtrailmon)
+        // run down a player who stands in their way at a station, and the
+        // ride script that follows (rid_g_dtrailmon.lua: the player is asked
+        // and rides) can end at a terminal of the rail, a room of its own
+        // (r25c k9 on the r42movie trajectory: 380000 frames at the west
+        // terminal of dng412b4, beside the goal's nearest point, the waves
+        // that drop the boss key left behind). Talked to there, once the
+        // terminal's mat (matt20 / matt21) was stood on, the train takes the
+        // player back. So after kRideAfter frames of waiting at the goal's
+        // nearest point the reachable vehicle - a model with a ride script -
+        // is talked to.
+        if (closest_frames_ >= kRideAfter) {
+            const engine::ModelCtrlManager::ModelRam* ride = nullptr;
+            float ride_cost = std::numeric_limits<float>::infinity();
+            for (const auto& e : models->rams()) {
+                if (!e->generated || !e->node || !engine.has_script("rid_" + e->info_name + ".lua")) continue;
+                if (const auto it = ridden_.find(e.get()); it != ridden_.end() && frame - it->second < kRideAgain) continue;
+                const float cost = map.cost_to(position_of(*e), 20.0f);
+                if (cost < ride_cost) {
+                    ride_cost = cost;
+                    ride = e.get();
+                }
+            }
+            if (ride) {
+                closest_frames_ = 0;
+                ride_target_ = ride;
+                ride_until_ = frame + kRideTry;
+                go(position_of(*ride), ride, "ride " + ride->info_name + "#" + std::to_string(ride->index));
+                route_ = map.route_to(position_of(*ride), 20.0f);
+                gimmick_ = Gimmick::talk;
+                return;
+            }
+        }
     }
     // Everything seen: forget the visited ground and mats once in a while, so
     // waves stopped by leaving their mat are started again and opened doors
@@ -2399,6 +2443,14 @@ void ExploreBot::plan(engine::Engine& engine, const engine::ModelCtrlManager::Mo
         go(*goal_centre, nullptr, "goal " + goal + " (closest)");
         goal_point_ = route_.empty() ? me : route_.back().point;
         closest_ = true;
+        // (Plans come every 45 frames or so; a long gap is no wait. A switch
+        // turned on or a wave first cleared since, world_change_, starts the
+        // count again: the wait then is for that.)
+        if (closest_counted_ >= 0 && closest_counted_ > world_change_) closest_frames_ += std::min(frame - closest_counted_, 45);
+        else closest_frames_ = 0;
+        closest_counted_ = frame;
+    } else {
+        closest_counted_ = -1;
     }
     // Nothing left to explore: what stops the walk (DW4_TRACE_EXPLORE).
     if (std::getenv("DW4_TRACE_EXPLORE") && frame % 600 < 45) {
@@ -2753,6 +2805,19 @@ ExploreBot::Decision ExploreBot::update(engine::Engine& engine, const engine::Mo
     note_explosions(engine, player, frame);
     track_fire(engine, frame);
     track_platforms(engine, me, frame);
+    // A vehicle talked to took the player away (its ride script moved the
+    // player, MOVETRANS): done with it; it is not talked to again at once
+    // (back at a station it could take the player out once more).
+    if (flat(me, last_) > 100.0f && frame > 1 && target_ && what_.rfind("ride ", 0) == 0) {
+        ridden_[target_] = frame;
+        if (std::getenv("DW4_TRACE_EXPLORE")) std::printf("[%d] explore: the %s took the player to (%.0f,%.0f)\n", frame, what_.c_str(), me.x, me.z);
+        target_ = nullptr;
+        ride_target_ = nullptr;
+        gimmick_ = Gimmick::none;
+        route_.clear();
+        frontier_.reset();
+        planned_ = -1000;
+    }
     // Moved to another room of the stage (a maze link): a fresh start there.
     // (A fall respawn keeps what was done.)
     if (flat(me, last_) > 100.0f && frame > 1 && !target_portal_.empty()) {
@@ -3070,6 +3135,31 @@ ExploreBot::Decision ExploreBot::update(engine::Engine& engine, const engine::Mo
         stalled_ = 0;
         escape_until_ = -1;
         if (!player.control_enabled) decision.jump = decision.attack = false;
+        return decision;
+    }
+    // Boarding a vehicle (plan: "ride"): next to it, a jump onto the middle
+    // of its body - the landing on top runs its ride script (the ride-on
+    // hook, rid_<model>.lua; the train that ran the player down at a station
+    // threw the player onto its roof) - and A answers the script's question
+    // (its first line, ride) while the player is held.
+    if (target && what_.rfind("ride ", 0) == 0 && body_gap(*target, me) <= 12.0f) {
+        engine::Vec3f top = aim;
+        if (target->hit && !target->hit->boxes.empty()) {
+            const auto& m = target->node->matrix;
+            const auto& [lo, hi] = target->hit->boxes.front();
+            const engine::Vec3f c{(lo.x + hi.x) * 0.5f, (lo.y + hi.y) * 0.5f, (lo.z + hi.z) * 0.5f};
+            top = {c.x * m(0, 0) + c.y * m(1, 0) + c.z * m(2, 0) + m(3, 0), body_top(*target),
+                   c.x * m(0, 2) + c.y * m(1, 2) + c.z * m(2, 2) + m(3, 2)};
+        }
+        decision.x = top.x;
+        decision.z = top.z;
+        decision.reach = 0.25f;
+        if (player.control_enabled) {
+            decision.jump = !airborne && frame % 40 == 0;
+        } else {
+            decision.press_a = frame % 35 < 3;
+            watch.since = frame;
+        }
         return decision;
     }
     const float close = !target ? 8.0f : (perching && !on_perch) ? 0.0f : gimmick_ == Gimmick::step ? 3.0f : (gimmick_ == Gimmick::talk || gimmick_ == Gimmick::tech) ? 12.0f : 25.0f;

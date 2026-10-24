@@ -462,6 +462,17 @@ private:
     int platform_wait_since_ = -1; // waiting at a take-off for a moving platform since
     int jump_hold_since_ = -1;     // a row of jumps waits for the enemies by its landings since
     bool closest_{};         // the goal cannot be reached: wait at the nearest point
+    // Frames spent waiting at the goal's nearest point with nothing left to
+    // do (counted from the plans; a ride, see plan, starts the count again)
+    // and the last plan that counted.
+    int closest_frames_{};
+    int closest_counted_ = -1;
+    static constexpr int kRideAfter = 6000;
+    std::map<const void*, int> ridden_; // vehicle -> the frame its ride moved the player (not boarded again for kRideAgain)
+    static constexpr int kRideAgain = 20000;
+    const void* ride_target_{};         // the vehicle being boarded, until ride_until_
+    int ride_until_ = -1;
+    static constexpr int kRideTry = 1500;
     std::vector<Platform> platforms_;                  // in the order first seen (the walking map's moving floors)
     std::map<const void*, engine::Vec3f> stirring_;    // other models' positions one step ago (platform candidates)
     std::set<const void*> not_platforms_;              // moved, but their floor is not their own
