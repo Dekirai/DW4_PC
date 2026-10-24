@@ -27,10 +27,13 @@ nominal 16,666,666 ns frame (`kFrameNs`), so an n-frame wait ends after
 exactly n steps. In order:
 
 1. Pads: `dw4::OriginalPads` computes trigger/repeat masks from the host
-   samples every frame (bePadManager 80311F84); while STAGECTL
-   `PADINPUT DISABLE` is active the readers get the fifth, never updated pad
-   instead (the getter 80312138, `Engine::pads`), so a press read in the
-   frame of the ENABLE counts and a button held across it gives no trigger.
+   samples every frame (bePadManager 80311F84). STAGECTL `PADINPUT DISABLE`
+   (+0x1D of the pad module, 0x80348108..0x803481A8) only changes what the
+   module's getter 80312138 hands out: while it holds, `Engine::pads()` gives
+   the fifth pad, which the update never touches (no input, not connected),
+   checked at each read, so an ENABLE sent by this frame's demo already
+   counts for the managers that read after it, a press read in the frame of
+   the ENABLE counts and a button held across it gives no trigger.
 2. The frame clock advances, so updates and the following render observe the
    same time.
    beSystem's update (80316258) then reads the console's reset button
@@ -44,7 +47,13 @@ exactly n steps. In order:
    members, `func.lua` / `boot.lua`, common files queued with `CFLsetName`,
    the wait for the loading screen's minimum play time (its beLoadingNode
    then holds its lock time on the LOADING layer until the scripts remove
-   it), info registration, `start.lua`, `first.lua`.
+   it), info registration, `start.lua`, `first.lua`. Then the CRI servers'
+   field (`SoundManager::server_tick`; the original's ADXT server 8029A60C
+   and file server 80296904 run after the loader's update and before the
+   messenger, the demo and the managers): stream reads on the simulated
+   drive, decoding, PLAYING (see the sound section below). A field a
+   movie frame covers runs only these servers and the SNDF's AX frames
+   (`Engine::hold_update`, see the movie below).
 4. Deferred messenger sends (80304C58: every `sd(..., delay)`, also a delay
    of 0, and the engine's own posts arrive here, in a later frame than they
    were sent; none while a SUBWND program or the soft reset pauses the queue,
@@ -337,11 +346,16 @@ waits for a retrace itself before its ADX server pass and mwPlyGetCurFrm, so
 every frame of a movie takes two fields: the game runs at 30 Hz until the
 stage's teardown stops the movie (`Engine::hold_update`: the covered fields
 run no update, keep the picture and the input, and only tick the CRI
-servers and the SNDF's AX frames; `Engine::held`, `Engine::vi_time`). The
-port's driver tick of a step stands for the servers on the retrace after it,
-so the MOVIE PLAY step's tick is the open loop's first pass (the header read)
-and the tick of the step before a covered field is the pass that field's
-loop iteration checks: the field whose pass booked the header runs
+servers and the SNDF's AX frames, `SoundManager::update_held`; `Engine::held`,
+`Engine::vi_time`). Every field ticks the servers once
+(`SoundManager::server_tick`, on the field's VI time): a frame that updates
+after the loader's update, a covered field after the open's check. In the
+drive model's clock a tick stands for the servers on the retrace after it
+(`DiscDrive::kDolphinClockOffset`), so the tick of the MOVIE PLAY step (the
+stage's first.lua runs in the loader's update, before it) is the open loop's
+first pass (the header read) and the tick of the step before a covered field
+is the pass that field's loop iteration checks: the field whose pass booked
+the header runs
 mwPlyStart and ends the frame. The first codec update's pass starts
 Sofdec's stream (a 365-sector ring on the simulated drive, CriStreams
 `movie_*`); the player leaves prep two passes after the first with data
@@ -375,8 +389,13 @@ When a stream is ready matters to the scripts: demos wait with
 `DMchkSD SOUND ISALLREADY` / `ISREADY`, which test ADXT status 3 (PLAYING,
 802F6FB0), and the original only gets there after the stream's first block
 came off the disc. `dw4::CriStreams` (include/dw4/disc_timing.hpp, in the
-core) models that on the engine clock, once per field from the sound driver
-tick (also during loads): the six beCri ADXT handles (two stereo 48 kHz for
+core) models that on the engine clock, once per field from the CRI server
+tick (also during loads), which the frame step runs where the original runs
+its servers: after the stage loader, before the messenger, the demo and the
+managers, so a stream started in a frame's update is first served in the
+next field and a PLAYING reached in a field counts for that frame's
+ISALLREADY (Dolphin, stagBS01 1P and 2P: the last stream PLAYING and
+ISALLREADY 1 49 fields after the stage start in both): the six beCri ADXT handles (two stereo 48 kHz for
 BGM and ambience with a 53-sector input ring, four mono with 13 sectors),
 their ADXSTM readers (one DVD read at a time through gcCi, the lowest handle
 first, 25 sectors before the header is parsed, refills below 85 %), the
@@ -579,6 +598,30 @@ out of it and be skipped there. A check-switch child
 that is a transform follows that transform's scene node (the limit circle
 under the beChangePosTransform, which `ChangePosManager` keeps at the players'
 centre while everyone is within 40 units, so players cannot leave each other).
+Static geometry sits under no transform (none in the stages checked, so the
+HitLand traversal's matrix stack holds only its identity and 801F6050 tests
+the triangles where the file puts them); a moving child's transform is pushed onto that identity (8021B044 +
+80128774), and 801F6050 then tests the child in its own vertex space: each
+segment goes through the inverse (8012A92C, 801252D0), a local hit comes back
+through the matrix (8012D498), its distance is measured from the original
+segment's origin (801F63BC) and the normal turns with the matrix (8012D434,
+not normalized again).
+
+The ray tests, the camera and the player input round like the Gekko
+(`gekko_math.hpp`, compiled without contraction): fmadds-style fused
+multiply-adds round once to single, square roots are frsqrte plus Newton
+steps, and sin / cos / atan2 / asin / acos are the DOL's MSL (fdlibm with
+CodeWarrior's fused multiply-adds), each in the original's operation order:
+the face normal from 8012CB74's cross product (801238E8), the fused facing,
+plane and hit-point arithmetic, CHECKWALL's side axis through the
+HitLandModel's Euler (0, pi/2, 0) matrix (its cosine is -4.37e-8, not 0) and
+its cos(acos()) push ratio, the camera's path product 80128774, Euler round
+trip 8012947C / 80129134 and view inverse 8012A860, the input's general
+inverse 8012A92C and wanted heading (frsp(atan2) sums, 8034C65C). Fed with
+Dolphin's stick reads and world clock, the stag0204 cannon scene then matches
+Dolphin's wall queries and answers, stick headings and box camera bit for bit
+over the whole scene, and a 2-player dng101b1 stretch matches all 1462 of
+its wall query and answer lines, enemies included.
 
 The test bots' route planning runs its walking maps inside a
 `CollisionWorld::Still` scope: nothing moves meanwhile, so the enabled moving
@@ -603,7 +646,13 @@ Rides (ctrl work +CC, beModelCtrlInfoRideOn): landing from a fall on a named
 HitLand info (a model's collision such as a boat, train, box or moving
 scaffold) rides that model (MODELCTRL name child GETMATRIX); an unnamed floor
 ends the ride. Each frame (8030CEB0, before the wait check) the model keeps its
-place relative to the ridden matrix of the last frame. The stage scripts'
+place relative to the ridden matrix of the last frame: last frame's rotation
+inverted in place (8012A92C), the model's matrix with its offset as the
+translation times that, times the current matrix (the paired-single 80128690
+twice; the stag0203 train matches Dolphin's 61 ride steps bit for bit). The
+ridden car follows a recorder there (MOVERL JOINT), whose matrix the original
+takes from its traversal as modelview times the inverse view (801DE9C0), so
+it carries rounding the port's world matrix lacks (open). The stage scripts'
 floor effects use the same slot: SETCONVEYOR (a fixed step per frame),
 SETQUICKSAND (a pull towards a centre, faster inside the inner radius) and
 SETSLIPPEDFLOOR (the model's own steps blend into a sliding velocity). While

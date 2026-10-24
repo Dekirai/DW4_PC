@@ -35,7 +35,7 @@ endif()
 
 # Native engine runtime: reconstructed original managers, scene graph and
 # stage flow on top of dw4_core. No SDL/ImGui dependency.
-add_library(dw4_engine src/engine/math.cpp src/engine/igb_view.cpp src/engine/scene_graph.cpp
+add_library(dw4_engine src/engine/math.cpp src/engine/gekko_math.cpp src/engine/igb_view.cpp src/engine/scene_graph.cpp
   src/engine/engine.cpp src/engine/lua_host.cpp src/engine/managers_core.cpp src/engine/model_ctrl.cpp
   src/engine/actor.cpp src/engine/collision.cpp src/engine/ui.cpp src/engine/title.cpp src/engine/load_intf.cpp
   src/engine/mat_ctrl.cpp src/engine/generater.cpp src/engine/combat.cpp src/engine/status.cpp src/engine/save_game.cpp src/engine/save_util.cpp src/engine/save_menu.cpp src/engine/menu_text.cpp src/engine/shadow.cpp src/engine/particles.cpp src/engine/water.cpp src/engine/change_pos.cpp
@@ -43,8 +43,12 @@ add_library(dw4_engine src/engine/math.cpp src/engine/igb_view.cpp src/engine/sc
   src/engine/subwnd.cpp src/engine/subwnd_folder.cpp src/engine/subwnd_skill.cpp
   src/engine/subwnd_shop.cpp src/engine/save_state.cpp)
 target_link_libraries(dw4_engine PUBLIC dw4_core)
+# The Gekko arithmetic rounds only where the original rounds (no contraction).
 if(MSVC)
   target_compile_options(dw4_engine PRIVATE /W3 /permissive- /utf-8)
+  set_source_files_properties(src/engine/gekko_math.cpp PROPERTIES COMPILE_OPTIONS /fp:strict)
+else()
+  set_source_files_properties(src/engine/gekko_math.cpp PROPERTIES COMPILE_OPTIONS "-fno-fast-math;-ffp-contract=off")
 endif()
 
 # Development tools: IGB inspection and logical resource catalog.
@@ -62,6 +66,11 @@ if(BUILD_TESTING)
   add_executable(dw4_scene_tests tests/scene_tests.cpp)
   target_link_libraries(dw4_scene_tests PRIVATE dw4_engine)
   add_test(NAME scene COMMAND dw4_scene_tests)
+  foreach(suite gekko_math messenger)
+    add_executable(dw4_${suite}_tests tests/${suite}_tests.cpp)
+    target_link_libraries(dw4_${suite}_tests PRIVATE dw4_engine)
+    add_test(NAME ${suite} COMMAND dw4_${suite}_tests)
+  endforeach()
   add_executable(dw4_interpolation_tests tests/interpolation_tests.cpp src/game/interpolation.cpp)
   target_link_libraries(dw4_interpolation_tests PRIVATE dw4_engine)
   add_test(NAME interpolation COMMAND dw4_interpolation_tests)

@@ -177,3 +177,57 @@ calls every module's reset hook (vtable +0x70); the messenger's (`80304C38` ->
 Dolphin (round 33b/34): dngq5b1e talk, dng204b2 SkullGreymon attack cycles,
 stag0301 recorder talk and the dng412b3 Trailmon ride match frame for frame
 with these rules; the immediate delay-0 send was one frame early.
+
+## Message objects and the unchecked bool (engine `MessageObjects`)
+
+Every module reaches the messenger through its +0x14 (one beMessenger,
+808413E0 in Dolphin). Its message objects hold the typed lists a send fills
+and a dispatch answers into: the current one at +0x10 and one in each
+deferred record at +0x28. `80303C0C` makes them at the first select or post of
+a stage (made flag +0x30): the current object and 32 records with their own.
+A select (`80305344`) and a post's preparation (`80305F9C`) reset the current
+object's counts through `80304618`, the sender's arguments go in (`80306964`
+for a bool), and the dispatch (`80305A28`) appends the answers; SEARCH answers
+its found bool itself (`0x80305AE0..0x80305C40`). A reset only zeroes the
+counts and the shrink to four entries keeps the data (`8004155C`), so a list's
+first entry stays what the last bool written at index 0 left.
+
+The objects change identity:
+
+- A post's commit (`803061BC`, `0x803062A0..0x8030632C`) swaps the current
+  object with the record's: the record takes the filled object, the record's
+  old object becomes current. A new record (`802CF068`) brings a new object.
+- A delivery (`80304C58`) selects (`0x80304D78`), swaps the record's object in
+  for the dispatch (`0x80304DCC..0x80304E58`) and never swaps back: the record
+  (`80304A04` resets its counts) goes to the end of the record list with the
+  previous current object, and the next post takes the last record.
+- Every pass of a made messenger ends with `80304618` on the current object
+  (`0x80304F8C`), a paused pass too.
+- The stage change's `803040C0` releases them all.
+
+`80306A1C` reads a bool without the count check `8030690C` where a caller skips
+it. The soft reset does (`80347BB4`: SUBWND ISRUN, then `0x80347DA4` /
+`0x80347E54`): in a stage without a status window nothing answers, and the
+read gets the first entry of whatever object is current - often a bool another
+message left. `Messenger::stale_bool()` models exactly that: `MessageObjects`
+keeps the identities, the swaps, the bool counts and each object's first
+entry (0 for an object before its first bool, as every fresh object in the
+Dolphin logs below holds). The port's own sends - the campaign bot's SUBWND ISRUN and
+PLAYERPOINT queries and the input scripts' SEND lines - run inside a
+`Messenger::PortOnly` scope: they touch no object, and their posts hold no
+record (neither counted when a post decides to grow the pool nor spending a
+pass's deliveries). The stage loader sends SOUND SEARCH / MAKEBINLIST /
+ISDONETRANS (states 100 / 101, `0x802F9518..0x802F957C`) and DMgetCount falls
+back to SUBWND ISRUN when no demo work runs (`802ED4B0`, -1 for a running
+status window), both through the messenger like the original.
+
+Dolphin (round 42, hidden soft resets; hooks M `0x80303C18`, S `0x803062E4`,
+D `0x80304E10`, Z `0x80304F8C`, I / J `0x80347DA8` / `0x80347E58`): in stag0001
+(read 0: back to the title), stag0101 (0), stag0203 (1: a model's ACTION
+ISCOMEND, the reset hides everything and waits for good), dng101b1 (0) and
+the lobby stagML11 (0) every swap of the run - boot, title, character
+select, stage - comes in the same order on the same objects, and the reset
+reads the same value. The objects' first entries at the pass ends agree
+except where a single send comes in another frame (the title flow, the stage
+start's scripts, the stage load's length): the model, not those timings, is
+what this checks.

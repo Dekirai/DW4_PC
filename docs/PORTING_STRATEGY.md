@@ -20,6 +20,18 @@
 4. **Verify in the running game.** Hidden smoke tests with scripted input and
    screenshots compare the result against the original screens; regressions of
    earlier flows (title, character select, lobby intro) are rechecked.
+   Against a Dolphin run, a scene can only match when the port sees the
+   original's inputs and clock: a stick sample of the movie may reach the game
+   a frame earlier or later than the script line says (two polls per field,
+   the frame start jitters against the retrace), and the original's world
+   clock steps 16.44 to 16.82 ms (the RAM timers quantise it to 2^18 ns, so a
+   one-frame WAITCHECK ends after one or two frames). Feed the port the
+   original's stick reads (an OSReport hook on 0x8034C6B8 logs them; the port's
+   `DW4_TRACE_STICK=1` prints the same values) and its clock
+   (`DW4_CLOCK_FILE`) before calling a difference a port bug; the stag0204
+   cannon scene then matches frame for frame. `DW4_TRACE_WALLBITS=1` prints the
+   HITLANDMODEL CHECKWALL queries and answers as float bits (the Dolphin hooks
+   0x802FE93C / 0x802FF6B8 give the same lines).
 
 Host approximations are allowed only where the original behaviour is not yet
 recovered, and they are labelled as provisional (currently the follow camera

@@ -119,6 +119,10 @@ public:
     void clear_stage(Engine& engine) override;
     bool command(Engine& engine, Ram& ram, std::string_view command, Packet& packet) override;
     Vec4f color() const { return color_; }
+    // The visual context's clear colour from elsewhere (vtable +0x2C8 with
+    // 0xFF000000: the soft reset 0x80347DE8 and NEXTSTAGE 0x8034801C set it
+    // black; this manager sets it once, at its first update, 0x802F2A40).
+    void set_color(const Vec4f& color) { color_ = color; }
 
 private:
     std::vector<std::unique_ptr<Ram>> rams_;
@@ -294,6 +298,12 @@ public:
     // The CRI driver part (stream ramps and fades, SE sequences) also runs
     // while the stage is not active; the cues and the movie are RAM work.
     void update_inactive(Engine& engine) override { update_driver(engine); }
+    // One field of the CRI servers (the stream reads on the simulated drive,
+    // decoding, PLAYING; disc_timing.hpp), at the field's VI time (outside a
+    // movie the frame's world time): the engine runs it after the stage
+    // loader's update and before the messenger, the demo and the managers
+    // (Engine::step); in a field an update covers update_held runs it.
+    void server_tick(Engine& engine);
     // The CRI servers run on every retrace, also in the fields an update
     // covers (the movie's open and codec waits, Engine::hold_update).
     void update_held(Engine& engine) override;
@@ -394,11 +404,11 @@ public:
     std::uint64_t archive_offset(Engine& engine, unsigned archive) const { return disc_extent(engine, archive, ~0u).first; }
 
 private:
-    // `frame`: the Cri module's own update (802F53B8: a server pass, then the
-    // entries' fades) as well; without it (a field the frame's update covers)
-    // only the server pass the frame's wait makes (8029D6F0 after the codec's
-    // or the open's VIWaitForRetrace) and the SNDF's AX-frame sequencer
-    // (802A8F7C, an AX callback).
+    // The SNDF's AX-frame sequencer (802A8F7C, an AX callback) up to the
+    // frame's world time and, with `frame`, the entries' fades of the Cri
+    // module's update (802F53B8; its server pass is server_tick); without it
+    // (a field the frame's update covers, after that field's server_tick)
+    // only the AX frames, up to the retrace's VI time.
     void update_driver(Engine& engine, bool frame = true);
     // 802F53B8's entry pass: stream fades and volumes, sfp entries' SEQ fades.
     void update_entries(Engine& engine);

@@ -1,7 +1,9 @@
 #include "dw4/engine/managers.hpp"
+#include "dw4/engine/gekko_math.hpp"
 #include "dw4/motion.hpp"
 
 #include <algorithm>
+#include <bit>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -1235,13 +1237,33 @@ void ModelCtrlManager::update_player(Engine& engine, ModelRam& ram) {
     // stick at 0.3 neither steps nor turns. There is no other magnitude test.
     ram.key_input = ram.control_enabled && pad.left_directions.held != 0;
     if (ram.key_input) {
-        // 8034C67C..8034C6B8: desired heading from the inverse camera matrix and stick.
+        // 8034C65C..8034C6B8: the desired heading. The inverse of the
+        // viewer's view matrix (8012A92C into an identity, its status
+        // ignored) turns +Z (8012D434, 804F8B10) into the camera's forward
+        // direction; heading = frsp(atan2(fwd.x, fwd.z)) + frsp(atan2(stick
+        // x, -stick y)) (double MSL atan2 800A2C74, fadds).
         FrameCamera camera;
         if (auto* cameras = engine.get<CameraManager>()) cameras->frame_camera(engine, camera);
         Mat4 inverse;
-        if (invert(camera.view, inverse)) {
-            const Vec3f forward{inverse(2, 0), inverse(2, 1), inverse(2, 2)};
-            ram.desired[1] = std::atan2(forward.x, forward.z) + std::atan2(sx, -sy);
+        gekko::invert(camera.view, inverse);
+        const Vec3f forward = gekko::rotate({0.0f, 0.0f, 1.0f}, inverse);
+        const float camera_yaw = float(gekko::atan2(forward.x, forward.z));
+        const float stick_yaw = float(gekko::atan2(sx, -sy));
+        ram.desired[1] = gekko::adds(camera_yaw, stick_yaw);
+        // DW4_TRACE_STICK: the stick and the wanted yaw as float bits, in
+        // the format of the Dolphin M log (hook 0x8034C6B8); DW4_TRACE_VIEW
+        // adds the view matrix and the forward direction (V, hook 0x8034C690).
+        if (static const bool trace = std::getenv("DW4_TRACE_STICK") != nullptr; trace)
+            std::printf("[%llu] M %08x %08x %08x\n", static_cast<unsigned long long>(engine.frame()),
+                        std::bit_cast<std::uint32_t>(sx), std::bit_cast<std::uint32_t>(sy),
+                        std::bit_cast<std::uint32_t>(ram.desired[1]));
+        if (static const bool trace = std::getenv("DW4_TRACE_VIEW") != nullptr; trace) {
+            std::printf("[%llu] V", static_cast<unsigned long long>(engine.frame()));
+            for (int row = 0; row < 4; ++row)
+                for (int column = 0; column < 3; ++column)
+                    std::printf(" %08x", std::bit_cast<std::uint32_t>(camera.view(row, column)));
+            for (float v : {forward.x, forward.y, forward.z}) std::printf(" %08x", std::bit_cast<std::uint32_t>(v));
+            std::printf("\n");
         }
     }
     // 8034C4E8: while a direction is held, its octant counter restarts at 30
@@ -1489,6 +1511,13 @@ bool ModelCtrlManager::advance_motion(Engine& engine, ModelRam& ram) {
     {
         const bool rotating = ram.channels.states()[3].active;
         const float frames = keika_frames(ram, engine.time());
+        // DW4_TRACE_TURN: the KEIKATIMER frames and the yaw before the turn
+        // (applied, wanted, rate), float bits, as the Dolphin G log (hook
+        // 0x8030C8E4 after 8031E4C4).
+        if (static const bool trace = std::getenv("DW4_TRACE_TURN") != nullptr; trace && ram.applied[1] != ram.desired[1])
+            std::printf("[%llu] G %08x %s#%d %08x %08x %08x\n", static_cast<unsigned long long>(engine.frame()),
+                        std::bit_cast<std::uint32_t>(frames), ram.info_name.c_str(), ram.index, std::bit_cast<std::uint32_t>(ram.applied[1]),
+                        std::bit_cast<std::uint32_t>(ram.desired[1]), std::bit_cast<std::uint32_t>(ram.turn_rate_y));
         try {
             step = ram.channels.advance(frames);
         } catch (const std::exception& error) {
@@ -1603,14 +1632,19 @@ void ModelCtrlManager::ride_step(ModelRam& ram) {
     if (static const char* traced = std::getenv("DW4_TRACE_RIDE"); traced && traced[0] == '2')
         std::fprintf(stderr, "ride %s#%d on %s: (%.1f, %.1f, %.1f) -> (%.1f, %.1f, %.1f)\n", ram.info_name.c_str(), ram.index,
                      ride.name.c_str(), ride.last(3, 0), ride.last(3, 1), ride.last(3, 2), current(3, 0), current(3, 1), current(3, 2));
-    Mat4 rotation = ride.last;
-    const Vec3f offset{m(3, 0) - rotation(3, 0), m(3, 1) - rotation(3, 1), m(3, 2) - rotation(3, 2)};
-    set_translation(rotation, {});
-    Mat4 inverse;
-    if (!invert(rotation, inverse)) inverse = Mat4{};
+    // 0x8030CED8..0x8030CFC4: the model's offset from last frame's
+    // translation (fsubs), last frame's rotation (translation cleared,
+    // 80128D90) inverted in place by 8012A92C (a singular one stays as it
+    // is), the model's matrix with the offset as its translation times that
+    // inverse, times the current matrix (80128690 twice), set on the node
+    // (vtable +0x94); then last = current (80128CF4).
+    Mat4 inverse = ride.last;
+    const Vec3f offset{m(3, 0) - inverse(3, 0), m(3, 1) - inverse(3, 1), m(3, 2) - inverse(3, 2)};
+    set_translation(inverse, {});
+    gekko::invert(inverse, inverse);
     Mat4 local = m;
     set_translation(local, offset);
-    m = local * inverse * current;
+    m = gekko::multiply(gekko::multiply(local, inverse), current);
     ride.last = current;
 }
 
