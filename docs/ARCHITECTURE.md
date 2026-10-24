@@ -27,7 +27,10 @@ nominal 16,666,666 ns frame (`kFrameNs`), so an n-frame wait ends after
 exactly n steps. In order:
 
 1. Pads: `dw4::OriginalPads` computes trigger/repeat masks from the host
-   samples (disabled while STAGECTL `PADINPUT DISABLE` is active).
+   samples every frame (bePadManager 80311F84); while STAGECTL
+   `PADINPUT DISABLE` is active the readers get the fifth, never updated pad
+   instead (the getter 80312138, `Engine::pads`), so a press read in the
+   frame of the ENABLE counts and a button held across it gives no trigger.
 2. The frame clock advances, so updates and the following render observe the
    same time.
    beSystem's update (80316258) then reads the console's reset button
@@ -287,7 +290,9 @@ scaled by an attack ramp down to -4 dB within the frame, then released by
 0.4 dB per frame over ten frames, the ramps of 804C0820) and the 16-bit
 saturation. A stream's start, pause and volume change from the game's update
 reach the first AX frame at or after the update's command time (the ADXT
-call reaches the RNA's voice at the next frame, 8029A480 -> 802A7534), an SFP
+call reaches the RNA's voice at the next frame, 8029A480 -> 802A7534; the
+server pass of a field a movie frame covers counts from its retrace, and the
+movie's sound starts in the first AX frame at or after Sofdec's unpause), an SFP
 note sounds from the frame after the SNDF callback that started it (the
 callback's PB changes reach the DSP a frame later, 802A8F7C -> 803C325C), so
 a stream leads an effect of the same update by an AX frame, as in the
@@ -305,17 +310,53 @@ stream channels `DW4_AUDIO_STREAMS_CHANNELS` names (default BGM and
 ambience), `DW4_AUDIO_TOPUP=FRAME:SAMPLES` renders extra audio after a frame like
 the host's queue top-up, `DW4_AX_COMPRESSOR=0` leaves the compressor out,
 `DW4_TRACE_SOUND=1` logs the effects and sound subcommands, the SNDF voices
-and where each stream's audio begins in the dump).
+and where each stream's and the movie's audio begins in the dump).
 MOVIE PLAY (8031EDFC) looks up the beMovieInfoData of the
-file ([5] end script), splits the Sofdec program stream with `dw4::sfd`
-(MPEG-1 video 0xE0, ADX sound 0xC0) and plays the sound on a movie channel;
-the host decodes the video with pl_mpeg and draws the picture for the time
-since the first picture over the screen. Sofdec starts in its prep state
-(803E3D1C creates the sound's ADXT paused): the captures unpause it 29 fields
-after MOVIE PLAY (803E38C4, after mwPlyStart's 8-field update and ten 2-field
-updates of the 30 Hz movie loop) and show picture k at MOVIE PLAY + 37 + 2k
-fields. The movie ends after its last picture or on A or START from player 1
-(8031EC10), then runs its end script.
+file (strcmp; [5] end script; a name the list lacks plays nothing, and a PLAY
+while the beMovie name is still set is refused), splits the Sofdec program stream with `dw4::sfd`
+(MPEG-1 video 0xE0, ADX sound 0xC0) and plays the sound on a movie channel
+of the AX mix (at the DSP rate like the streams, no AUX sends);
+the host decodes the video with pl_mpeg and draws the picture the player
+took over the screen. The only movie is the opening (stagIS09 first.lua,
+AUS_opening.sfd on the USA disc: 1920 pictures at 29.97 Hz), played after
+the logos and again whenever the title's prompt times out (attract mode).
+The game hands the movie to the Alchemy movie plugin (igMovieManager
+802AEC7C, igCriMovieCodec): its open (802ADC8C) reads the file's first ten
+sectors through ADXF and waits for them with VIWaitForRetrace inside the
+update of MOVIE PLAY, so that frame takes 8 or 9 fields, then starts the
+Sofdec player (prep state; 803E3D1C makes the sound's ADXT in RNA mode 1,
+paused). From the next frame on the movie manager's codec update (802AE8B8)
+waits for a retrace itself before its ADX server pass and mwPlyGetCurFrm, so
+every frame of a movie takes two fields: the game runs at 30 Hz until the
+stage's teardown stops the movie (`Engine::hold_update`: the covered fields
+run no update, keep the picture and the input, and only tick the CRI
+servers and the SNDF's AX frames; `Engine::held`, `Engine::vi_time`). The
+port's driver tick of a step stands for the servers on the retrace after it,
+so the MOVIE PLAY step's tick is the open loop's first pass (the header read)
+and the tick of the step before a covered field is the pass that field's
+loop iteration checks: the field whose pass booked the header runs
+mwPlyStart and ends the frame. The first codec update's pass starts
+Sofdec's stream (a 365-sector ring on the simulated drive, CriStreams
+`movie_*`); the player leaves prep two passes after the first with data
+(803E38C4 unpauses the sound 0.084 field after that pass), takes picture k
+in the codec update after the next k ones (update 12 + k) and reads
+PLAYEND two updates after the last picture; the XFB of a frame shows the
+picture of the codec update before its own (Dolphin: the frame taking k
+still shows k - 1), so the port's covered field shows that one. The codec
+then stops with state 2 and the next beMovie update (8031EC10) runs the end
+script and clears the name (a later PLAY is taken; the ended codec stays
+and waits its retrace in every frame), while the codec keeps the 30 Hz
+frames going until the teardown. A or START from player 1 (read through the
+pad getter, so a press in the frame of the PADINPUT ENABLE 120 frames after
+MOVIE PLAY counts) stops every movie at once (802AF560) and runs the end
+script in the same update. While
+Sofdec decodes, the frames start 0.011 field after their retraces
+(`Engine::set_clock_lateness`), so the skip's NEXTSTAGE, posted for one
+nominal frame later, arrives two updates after it. The movie's last picture
+stays on the screen through the frame that tears the stage down, after the
+end and after a skip (`Engine::presenting`). (Dolphin captures of a
+boot with both movies and of skips: work/dref r40movie / r41movie runs with OSReport
+hooks on these functions.)
 
 When a stream is ready matters to the scripts: demos wait with
 `DMchkSD SOUND ISALLREADY` / `ISREADY`, which test ADXT status 3 (PLAYING,

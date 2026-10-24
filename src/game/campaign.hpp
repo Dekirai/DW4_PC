@@ -51,6 +51,9 @@ public:
     void load_memory(std::istream& in);
 
 private:
+    // The driver's controls for the next frame (update lets go of them while
+    // the game takes no input).
+    Output drive(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam* player, int frame);
     struct Step {
         std::string stage;   // where the step is taken
         std::string action;  // explore:<mats> | mat:<mat> | talk:/strike:/step:<model>#<index> | wait

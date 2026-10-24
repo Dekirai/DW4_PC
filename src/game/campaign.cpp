@@ -1850,6 +1850,13 @@ constexpr int kGateWalk = 1500;
 // defeats there came one after another, each losing the bits and part of
 // the EXP to the bit capsule (no-cheat runs from a level 13 and a level 16
 // state: 28 and 10 defeats in a row in stag0201, the level never rising).
+// (Also while the heals held make up less than kPoorHeals times the maximum
+// HP, and for kFallLevels levels past the defeat: after Daemon's stages were
+// given up a no-cheat k10 segment restocked a few HP disks with the bits it
+// had, trained in stag0401 again at once and at every new level, and was
+// defeated there and in stag0301 eight times from level 41 to 44, each time
+// losing its bits (r41movie nc1 k10).)
+constexpr int kPoorHeals = 4, kFallLevels = 3;
 const Objective* train_for(engine::Engine& engine, const Objective& objective, const std::map<std::string, int>& defeats,
                            const std::map<std::string, int>& falls) {
     auto* sys = engine.get<engine::GameSystem>();
@@ -1870,12 +1877,20 @@ const Objective* train_for(engine::Engine& engine, const Objective& objective, c
         }
         if (!serves) continue;
         std::size_t pick = index;
+        const auto& slot = sys->players[0];
         int heals = 0;
-        for (const auto& disk : sys->players[0].disks)
+        double heal_hp = 0.0;
+        auto* db = engine.get<engine::DatabaseManager>();
+        for (const auto& disk : slot.disks) {
             if (disk.record >= 0 && disk.record <= 2) heals += disk.count;
-        while (pick > 0 && heals <= kTripHealStock) {
+            if (disk.record == 9) heal_hp += double(disk.count) * slot.max_hp;
+            else if (disk.record >= 0 && disk.record <= 2 && db)
+                heal_hp += double(disk.count) * std::min(db->number("conItem", disk.record, "HP").value_or(0), slot.max_hp);
+        }
+        const bool poor = heals <= kTripHealStock || heal_hp < double(kPoorHeals) * slot.max_hp;
+        while (pick > 0 && poor) {
             const auto fall = falls.find(kTraining[pick].field);
-            if (fall == falls.end() || fall->second < sys->players[0].stats.level) break;
+            if (fall == falls.end() || fall->second + kFallLevels <= slot.stats.level) break;
             --pick;
         }
         const auto& training = kTraining[pick];
@@ -3550,6 +3565,12 @@ bool CampaignBot::answer_menu(engine::Engine& engine, const engine::ModelCtrlMan
             if (menu.name == "i_messcr") {
                 want = menu.items >= 3 ? (pick.device >= 0 ? 1 : menu.items - 1) : 0;
             } else if (menu.name == "i_stcursor02") {
+                // (Back at the slot kinds: a medal's pocket path is over. Its
+                // flag left set made the next pick's slot cursor back out
+                // round and round: the board after a PWR Medal "not
+                // equipped" one device after another, then the errand
+                // stalled in the open lab, nc1 'new' on dref-r40movie.)
+                equip_pockets_ = false;
                 if (pick.device >= 0) want = pick_kind;
                 else cancel = true;
             } else if (menu.name == "i_stcursor01" && device_list) {
@@ -3620,8 +3641,14 @@ bool CampaignBot::answer_menu(engine::Engine& engine, const engine::ModelCtrlMan
             // and its first line was picked again and again ("Not enough
             // BITS"; 430000 frames in stagML13 on main 51c7572, level 5 with
             // 1125 bits).
+            // The Digi-Lab's own menus too (an equip errand that stalled with
+            // the lab open): Exit of its menu (i_messcr, 3 lines) and yes to
+            // "leave the lab?" (2 lines). Its first line, Digivolve, opened
+            // the forms list, which was backed out of round and round (5.6
+            // million frames in stagML12, nc1 'new' on dref-r40movie).
             if (menu.name.rfind("i_stcursor", 0) == 0) cancel = true;
             else if (menu.name == "i_stmesscr" && menu.items >= 3) want = menu.items - 1;
+            else if (menu.name == "i_messcr") want = menu.items >= 3 ? menu.items - 1 : 0;
         } else if (lab_target_ >= 0) {
             // The Digi-Lab (bML01004.lua, beNDMWShopCtrl20 / ShopCtrlEvolve):
             // "use the lab?" and later "equip now?" (2 lines, i_messcr), the
@@ -5006,7 +5033,26 @@ void CampaignBot::load_memory(std::istream& in) {
     }
 }
 
+// While STAGECTL PADINPUT DISABLE is on (stage starts, talks, stage change
+// prompts' after-math, the game's demos) the game's readers get the fifth
+// pad (80312138) and the four slots go on taking the controllers, so a
+// button pressed meanwhile is a held one when the input comes back: no
+// trigger. The driver lets go of every control then, as a player would, and
+// its next press is an edge the game sees. (The driver was written when the
+// port zeroed the samples while the input was off, which made a button held
+// across the ENABLE a press; with the original's poll-based mask its presses
+// in those windows were lost and a no-cheat run went other ways, nc1 k10
+// losing Daemon's stages and its bits round after round, r41movie a1.)
 CampaignBot::Output CampaignBot::update(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam* player, int frame) {
+    auto out = drive(engine, player, frame);
+    if (!engine.pad_input_enabled()) {
+        out.buttons = 0;
+        out.walk = false;
+    }
+    return out;
+}
+
+CampaignBot::Output CampaignBot::drive(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam* player, int frame) {
     g_live_bot = this;
     if (g_memory_pending) {
         g_memory_pending = false;

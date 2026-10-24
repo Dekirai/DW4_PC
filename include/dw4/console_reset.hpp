@@ -7,7 +7,10 @@
 
 namespace dw4 {
 
-// The console reset path, one call per frame (59.94 Hz field).
+// The console reset path: update() in every field with a game update,
+// hold() in the fields an update covers (Engine::hold_update: the movie's
+// 30 Hz frames), so the controller's timers and the button's 40 ms count
+// fields, not updates.
 //
 // The game's own soft reset (STAGECTL 80347BB4: START pressed while B and X
 // are held, kept for a second, outside the title stages) only returns to the
@@ -31,21 +34,26 @@ namespace dw4 {
 // run work/dref/r29reset d_reset3s; held for 2 s the game only returns to the
 // title, d_reset2s).
 //
-// Field counts (one call per field, the press seen by the call that taps):
+// Field counts (the press seen by the field that taps):
 //  - the combination's timer starts at the first field it is held and taps at
 //    the first poll more than 3 s later: 180 fields (3.003 s), then starts
 //    again if it is still held;
-//  - the button is released 0.5 s (29.97 fields) after the tap: the call 30
+//  - the button is released 0.5 s (29.97 fields) after the tap: the field 30
 //    fields later reads it released;
 //  - OSGetResetButtonState reports a press only from its second sample (the
-//    first sets Down and answers the hold, 0x80260210) and keeps reporting a
-//    released button pressed for 40 ms (the time of the first released sample,
-//    0x802602E8, then 40 * (bus clock / 4000) ticks): the third call after the
-//    release reads it released, the latch closes 33 fields after the tap.
+//    first sets Down and answers the hold, 0x80260210; later ones answer it
+//    pressed 100 us after the first, 0x80260254) and keeps reporting a
+//    released button pressed for 40 ms (HoldUp: the time of the first
+//    released sample, 0x802602E8, then 40 * (bus clock / 4000) ticks,
+//    0x80260324): a call within 2.4 fields of it still reads it pressed. At
+//    60 Hz the third call after the release reads it released and the latch
+//    closes 33 fields after the tap; in 30 Hz frames the second (34 fields).
 class ConsoleReset {
 public:
     static constexpr int kComboFields = 180;
     static constexpr int kButtonFields = 30;
+    // A call this many fields after HoldUp or later reads the button
+    // released (40 ms = 2.398 fields).
     static constexpr int kReleaseHoldFields = 3;
     // The controller's combination: these buttons held, A and Y released
     // (Dolphin compares the face and START bits, the D-pad, L, R and Z do
@@ -57,7 +65,20 @@ public:
     // combination is the controller's). True when beSystem reboots in this
     // frame.
     bool update(const std::array<PadSample, 4>& pads) {
+        hold(pads);
+        // 80316258: OSGetResetButtonState only while the release is not latched.
+        if (!latched_) {
+            previous_ = current_;
+            current_ = read_button();
+            latched_ = previous_ && !current_;
+        }
+        return enabled_ && latched_;
+    }
+    // A field without a game update (Engine::hold_update): only the
+    // controllers' combination and the button's times go on.
+    void hold(const std::array<PadSample, 4>& pads) {
         if (button_fields_ > 0 && --button_fields_ == 0) button_down_ = false;
+        if (os_up_ && os_up_fields_ < kReleaseHoldFields) ++os_up_fields_;
         for (std::size_t i = 0; i < pads.size(); ++i) {
             const bool held = pads[i].connected && (pads[i].buttons & kComboMask) == kCombo;
             if (!held) {
@@ -69,13 +90,6 @@ public:
                 tap();
             }
         }
-        // 80316258: OSGetResetButtonState only while the release is not latched.
-        if (!latched_) {
-            previous_ = current_;
-            current_ = read_button();
-            latched_ = previous_ && !current_;
-        }
-        return enabled_ && latched_;
     }
     // beSystem +0x5F.
     void set_enabled(bool enabled) { enabled_ = enabled; }
@@ -90,7 +104,8 @@ public:
         a.io(button_down_);
         a.io(button_fields_);
         a.io(os_down_);
-        a.io(os_hold_);
+        a.io(os_up_);
+        a.io(os_up_fields_);
         a.io(os_last_);
         a.io(current_);
         a.io(previous_);
@@ -112,16 +127,17 @@ private:
                 state = true;
             } else {
                 os_down_ = true;
-                state = os_hold_ > 0;
+                state = os_up_;
             }
         } else if (os_down_) {
             os_down_ = false;
             state = os_last_;
-            os_hold_ = state ? kReleaseHoldFields : 0;
-        } else if (os_hold_ > 0 && --os_hold_ > 0) {
+            os_up_ = state;
+            os_up_fields_ = 0;
+        } else if (os_up_ && os_up_fields_ < kReleaseHoldFields) {
             state = true;
         } else {
-            os_hold_ = 0;
+            os_up_ = false;
             state = false;
         }
         os_last_ = state;
@@ -131,7 +147,8 @@ private:
     bool button_down_{};
     std::int32_t button_fields_{};
     bool os_down_{};
-    std::int32_t os_hold_{};
+    bool os_up_{};               // HoldUp is set (a released press still reads pressed)
+    std::int32_t os_up_fields_{}; // fields since HoldUp
     bool os_last_{};
     bool current_{}, previous_{}, latched_{};
     bool enabled_ = true;

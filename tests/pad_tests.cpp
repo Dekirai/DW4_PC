@@ -288,6 +288,21 @@ void console_reset() {
         check(run(reset, combo, 150) < 0 && run(reset, 0, 1) < 0, "Interrupted combination reset");
         check(run(reset, combo, 300) == 213, "Combination timer did not restart");
     }
+    {
+        // 30 Hz frames (a game update every other field, the movie's codec
+        // wait covering the rest): the timers count fields, and the button's
+        // 40 ms after the release (field 210) end before the second update
+        // after it (field 214; by calls it would be 216).
+        ConsoleReset reset;
+        std::array<PadSample, 4> samples{};
+        samples[0] = {true, {}, {}, combo};
+        int first = -1;
+        for (int i = 0; i < 300 && first < 0; ++i) {
+            if (i % 2) reset.hold(samples);
+            else if (reset.update(samples)) first = i;
+        }
+        check(first == 214, "Reset in 30 Hz frames did not reboot at field 214");
+    }
 }
 
 // Host controls keep the GameCube pad's three direction channels apart: the

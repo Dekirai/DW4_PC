@@ -68,7 +68,13 @@ Streams demux(std::span<const std::uint8_t> data) {
         if (id == 0xE0 || id == 0xC0) {
             const auto payload = pes_payload(body);
             auto& stream = id == 0xE0 ? out.video : out.audio;
+            const std::size_t before = stream.size();
             stream.insert(stream.end(), payload.begin(), payload.end());
+            // Picture start codes this packet completed (also across packets).
+            if (id == 0xE0)
+                for (std::size_t s = before >= 3 ? before - 3 : 0; s + 4 <= stream.size(); ++s)
+                    if (stream[s] == 0 && stream[s + 1] == 0 && stream[s + 2] == 1 && stream[s + 3] == 0)
+                        out.picture_file_ends.push_back(std::uint32_t(at + 6 + length));
         }
         at += 6 + length;
     }

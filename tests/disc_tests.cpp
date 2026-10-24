@@ -636,6 +636,61 @@ void test_rotation_clock() {
     check(run(R::dolphin, 0) == 3, "One of them is near a whole second: the clock matters");
     check(run(R::mean, 0) == 0, "The mean rotation misses them");
 }
+// The movie's reads (Sofdec, MOVIE PLAY): the open's ten header sectors are
+// read from the next server pass and booked in the pass after the drive
+// finished; the stream asks for its whole 365-sector ring at once, then
+// refills what the demuxer freed once the ring holds less than 85 %, up to
+// the ring's end; a close leaves a read on the drive to finish.
+void test_movie_reads() {
+    constexpr std::int64_t field = dw4::CriStreams::kFieldTicks;
+    constexpr std::uint64_t sfd = 0x14010298; // area.afs entry 2 (AUS_opening.sfd)
+    constexpr std::uint32_t sectors = 19684;
+    dw4::CriStreams cri;
+    cri.drive.rotation = dw4::DiscDrive::Rotation::mean;
+    std::int64_t now = 100 * field;
+    cri.movie_open(sfd, sectors);
+    check(!cri.movie_header_read(), "The header is not read at the open");
+    cri.tick(now);
+    check(cri.inflight.slot == dw4::CriStreams::kMovieHeaderSlot, "The next pass reads the header");
+    const std::int64_t done = cri.inflight.done;
+    int fields = 0;
+    while (!cri.movie_header_read() && fields < 30) {
+        now += field;
+        cri.tick(now);
+        ++fields;
+    }
+    check(cri.movie_header_read() && now >= done && now - field < done, "The pass after the read's end books the header");
+    check(cri.movie_written() == 0, "The header is not the stream's data");
+    cri.movie_stream(now);
+    check(cri.inflight.slot == dw4::CriStreams::kMovieSlot && cri.movie.request == dw4::CriStreams::kMovieRingSectors,
+          "The stream's first read fills its ring in the same pass");
+    cri.movie_stream(now);
+    check(cri.movie.request == dw4::CriStreams::kMovieRingSectors && cri.movie.busy, "A second start changes nothing");
+    while (cri.movie_written() == 0 && fields < 200) {
+        now += field;
+        cri.tick(now);
+        ++fields;
+    }
+    check(cri.movie_written() == 365ull * 2048 && cri.movie.pos == 365, "The first read is booked");
+    // Full ring: nothing asked until the demuxer frees more than 15 %.
+    cri.movie_consume(50ull * 2048);
+    now += field;
+    cri.tick(now);
+    check(cri.inflight.slot < 0, "A ring at 86 % waits");
+    cri.movie_consume(60ull * 2048);
+    now += field;
+    cri.tick(now);
+    check(cri.inflight.slot == dw4::CriStreams::kMovieSlot && cri.movie.request == 60, "The freed 60 sectors up to the ring's end");
+    cri.movie_consume(1ull << 40);
+    check(cri.movie.consumed == cri.movie.written, "The demuxer takes no more than arrived");
+    cri.movie_close();
+    check(cri.movie.busy && cri.movie.stopping && cri.inflight.slot == dw4::CriStreams::kMovieSlot, "A close keeps the read on the drive");
+    for (int i = 0; i < 4; ++i) {
+        now += field;
+        cri.tick(now);
+    }
+    check(cri.inflight.slot < 0 && !cri.movie.busy && cri.movie_written() == 0, "The read ends without data and nothing follows");
+}
 } // namespace
 
 int main() {
@@ -650,6 +705,7 @@ int main() {
         test_fades();
         test_seq_fades();
         test_rna_rate();
+        test_movie_reads();
     } catch (const std::exception& error) {
         std::cerr << "disc tests failed: " << error.what() << '\n';
         return 1;

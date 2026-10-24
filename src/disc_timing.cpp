@@ -395,6 +395,8 @@ void CriStreams::tick(std::int64_t now) {
     // (80298FC8 twice, 80299248 each).
     if (inflight.slot >= 0 && now >= inflight.done) {
         if (inflight.slot == kLoaderSlot) loader.done = true;
+        else if (inflight.slot == kMovieSlot) movie.done = true;
+        else if (inflight.slot == kMovieHeaderSlot) movie.header_done = true;
         else handles[std::size_t(inflight.slot)].done = true;
         inflight.slot = -1;
     }
@@ -439,6 +441,10 @@ void CriStreams::tick(std::int64_t now) {
             inflight.slot = slot;
             inflight.done = now + duration;
         }
+        // Sofdec's stream (8051AE70) after them, the loader's (8051B1D0, also
+        // ADXF's: the movie's header) last.
+        movie_reader(now);
+        movie_header(now);
         // The loader's stream comes after the ADXT readers.
         if (loader.busy) {
             if (!loader.done) continue;
@@ -455,6 +461,75 @@ void CriStreams::tick(std::int64_t now) {
         loader.busy = true;
         loader.request = n;
     }
+}
+
+void CriStreams::movie_open(std::uint64_t disc_offset, std::uint32_t sectors) {
+    const bool busy = movie.busy || movie.header_busy;
+    movie = Movie{};
+    movie.stopping = busy;
+    movie.busy = busy;
+    movie.header = true;
+    movie.disc_offset = disc_offset;
+    movie.sectors = sectors;
+}
+
+void CriStreams::movie_close() {
+    const bool busy = movie.busy || movie.header_busy;
+    movie = Movie{};
+    movie.stopping = busy;
+    movie.busy = busy;
+}
+
+void CriStreams::movie_stream(std::int64_t now) {
+    if (movie.sectors == 0 || movie.active) return;
+    movie.active = true;
+    movie_reader(now);
+}
+
+// ADXSTM_ExecHndl (80299248) for the movie's stream: a finished read is
+// booked in its pass; then, with the drive free, it asks for the free part
+// of its ring up to the ring's end while the ring holds less than 85 %.
+void CriStreams::movie_reader(std::int64_t now) {
+    if (movie.busy) {
+        if (!movie.done) return;
+        movie.busy = movie.done = false;
+        if (movie.stopping) {
+            movie.stopping = false;
+            return;
+        }
+        movie.pos += movie.request;
+        movie.written += std::uint64_t(movie.request) * kSector;
+        movie.write_pos = std::uint32_t((movie.write_pos + std::uint64_t(movie.request) * kSector) % (kMovieRingSectors * kSector));
+        return;
+    }
+    if (!movie.active || inflight.slot >= 0) return;
+    const std::uint64_t ring = std::uint64_t(kMovieRingSectors) * kSector;
+    const std::uint64_t used = movie.written - movie.consumed;
+    if (used >= std::uint64_t(kMovieRingSectors * 85 / 100) * kSector) return;
+    const std::uint64_t contiguous = std::min<std::uint64_t>(ring - used, ring - movie.write_pos);
+    std::int64_t n = std::int64_t(contiguous / kSector);
+    n = std::min<std::int64_t>(n, std::int64_t(movie.sectors) - std::int64_t(movie.pos));
+    n = std::min<std::int64_t>(n, kMaxRequest);
+    if (n <= 0) return;
+    inflight.done = now + drive.read(movie.disc_offset + std::uint64_t(movie.pos) * kSector, std::uint64_t(n) * kSector, now);
+    inflight.slot = kMovieSlot;
+    movie.busy = true;
+    movie.request = std::uint32_t(n);
+}
+
+// The open's ADXF_ReadNw of the file's first ten sectors (20480 bytes): read
+// by the loader's stream; ADXF_GetStat answers 3 once the pass booked it.
+void CriStreams::movie_header(std::int64_t now) {
+    if (movie.header_busy) {
+        if (!movie.header_done) return;
+        movie.header_busy = movie.header_done = false;
+        movie.header_booked = true;
+        return;
+    }
+    if (!movie.header || movie.header_booked || inflight.slot >= 0) return;
+    inflight.done = now + drive.read(movie.disc_offset, std::uint64_t(kMovieHeaderSectors) * kSector, now);
+    inflight.slot = kMovieHeaderSlot;
+    movie.header_busy = true;
 }
 
 } // namespace dw4

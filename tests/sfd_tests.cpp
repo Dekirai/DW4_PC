@@ -48,6 +48,19 @@ void streams() {
     const auto s = sfd::demux(file);
     check(s.video == Bytes({0, 0, 1, 0xB3, 0x28, 0x01, 0xE0, 0xC4, 0, 0, 1, 0, 0x12}), "video payloads joined");
     check(s.audio == Bytes({0x80, 0x00, 0xAA, 0xBB}), "audio payloads joined");
+    // The picture start code comes with the second video packet (ends at 102).
+    check(s.picture_file_ends == std::vector<std::uint32_t>({102}), "where the demuxer has its picture");
+}
+
+void picture_ends() {
+    // A picture start code split over two packets counts with the second.
+    Bytes file;
+    pack_header(file);
+    packet(file, 0xE0, {0x0F, 0, 0, 1, 0x00, 0x11, 0, 0}); // a picture, then the next one's 00 00
+    packet(file, 0xE0, {0x0F, 1, 0x00, 0x22});            // ... 01 00
+    packet(file, 0xE0, {0x0F, 0, 0, 1, 0xB7});            // sequence end: no picture
+    const auto s = sfd::demux(file);
+    check(s.picture_file_ends == std::vector<std::uint32_t>({26, 36}), "pictures by the packet that completes them");
 }
 
 void video() {
@@ -89,6 +102,7 @@ void malformed() {
 int main() {
     try {
         streams();
+        picture_ends();
         video();
         malformed();
     } catch (const std::exception& error) {
