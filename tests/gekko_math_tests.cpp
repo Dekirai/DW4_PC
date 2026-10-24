@@ -217,6 +217,31 @@ void ray_test() {
     // z = -x + z * cos(pi/2) rounded once: one bit beyond -x (0xBEAB5942).
     check(b(side.x) == b(direction.z) && b(side.y) == 0 && b(side.z) == 0xbeab5943, "the quarter-turn side axis rounds");
 }
+
+void ride() {
+    // 8030CEB0 on the moving stag0203 train (Dolphin n 4629, hooks A
+    // 0x8030CF60, B 0x8030CF6C, R 0x8030CFA0): last frame's matrix of the car
+    // with its translation cleared, inverted in place by 8012A92C; the rider's
+    // matrix (its offset as the translation) times that, times the car's
+    // current matrix, both through the paired-single 80128690. (The port's
+    // plain inverse and products matched 1 of 60 inverses and 21 of 61
+    // results of this ride.)
+    Mat4 last = m12({0xbf800000, 0x329e31ac, 0x33bade71, 0xb2b23f97, 0x3f800001, 0x311bd90f, 0xb3bb8019, 0x30f997f8, 0xbf800001,
+                     0xc50fc000, 0x411fffc4, 0x449718bf});
+    last(3, 0) = last(3, 1) = last(3, 2) = 0.0f;
+    check(gekko::invert(last, last), "8012A92C inverts the car's rotation");
+    check(same(last, {0xbf800000, 0x329e31ab, 0xb3bade6f, 0xb2b23f96, 0x3f7ffffe, 0x311bd905, 0x33bb8017, 0x30f997e6, 0xbf7ffffe, 0x00000000,
+                      0x80000000, 0x80000000}),
+          "8012A92C in place (A n 4629)");
+    const Mat4 rider = m12({0xbf7ffffe, 0x329e31ac, 0xafdec077, 0xb2b23f94, 0x3f800000, 0x311bd909, 0x2ef45000, 0x30f99814, 0xbf800001,
+                            0x00000000, 0x00000000, 0xc18c0000});
+    const Mat4 car = m12({0xbf800001, 0x311d9300, 0x33bf0082, 0x32195c0c, 0x3f800001, 0x30a6c16b, 0xb3b80dba, 0xb14d0104, 0xbf800001,
+                          0xc50fc001, 0x4120002c, 0x4496d129});
+    check(same(gekko::multiply(gekko::multiply(rider, last), car),
+               {0xbf800000, 0x311d9304, 0x30d0d462, 0x32195c0f, 0x3f800000, 0x30a6c160, 0x30ebdcc0, 0xb14d00f0, 0xbf800001, 0xc50fc001,
+                0x4120002c, 0x4494a129}),
+          "80128690 twice: the rider on the car (R n 4629)");
+}
 } // namespace
 
 int main() {
@@ -225,6 +250,7 @@ int main() {
         msl();
         camera();
         ray_test();
+        ride();
         std::cout << checks << " gekko math checks passed\n";
         return 0;
     } catch (const std::exception& error) {

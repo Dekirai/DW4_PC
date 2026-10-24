@@ -587,7 +587,13 @@ Rides (ctrl work +CC, beModelCtrlInfoRideOn): landing from a fall on a named
 HitLand info (a model's collision such as a boat, train, box or moving
 scaffold) rides that model (MODELCTRL name child GETMATRIX); an unnamed floor
 ends the ride. Each frame (8030CEB0, before the wait check) the model keeps its
-place relative to the ridden matrix of the last frame. The stage scripts'
+place relative to the ridden matrix of the last frame: last frame's rotation
+inverted in place (8012A92C), the model's matrix with its offset as the
+translation times that, times the current matrix (the paired-single 80128690
+twice; the stag0203 train matches Dolphin's 61 ride steps bit for bit). The
+ridden car follows a recorder there (MOVERL JOINT), whose matrix the original
+takes from its traversal as modelview times the inverse view (801DE9C0), so
+it carries rounding the port's world matrix lacks (open). The stage scripts'
 floor effects use the same slot: SETCONVEYOR (a fixed step per frame),
 SETQUICKSAND (a pull towards a centre, faster inside the inner radius) and
 SETSLIPPEDFLOOR (the model's own steps blend into a sliding velocity). While

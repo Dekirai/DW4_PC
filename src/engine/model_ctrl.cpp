@@ -1632,14 +1632,19 @@ void ModelCtrlManager::ride_step(ModelRam& ram) {
     if (static const char* traced = std::getenv("DW4_TRACE_RIDE"); traced && traced[0] == '2')
         std::fprintf(stderr, "ride %s#%d on %s: (%.1f, %.1f, %.1f) -> (%.1f, %.1f, %.1f)\n", ram.info_name.c_str(), ram.index,
                      ride.name.c_str(), ride.last(3, 0), ride.last(3, 1), ride.last(3, 2), current(3, 0), current(3, 1), current(3, 2));
-    Mat4 rotation = ride.last;
-    const Vec3f offset{m(3, 0) - rotation(3, 0), m(3, 1) - rotation(3, 1), m(3, 2) - rotation(3, 2)};
-    set_translation(rotation, {});
-    Mat4 inverse;
-    if (!invert(rotation, inverse)) inverse = Mat4{};
+    // 0x8030CED8..0x8030CFC4: the model's offset from last frame's
+    // translation (fsubs), last frame's rotation (translation cleared,
+    // 80128D90) inverted in place by 8012A92C (a singular one stays as it
+    // is), the model's matrix with the offset as its translation times that
+    // inverse, times the current matrix (80128690 twice), set on the node
+    // (vtable +0x94); then last = current (80128CF4).
+    Mat4 inverse = ride.last;
+    const Vec3f offset{m(3, 0) - inverse(3, 0), m(3, 1) - inverse(3, 1), m(3, 2) - inverse(3, 2)};
+    set_translation(inverse, {});
+    gekko::invert(inverse, inverse);
     Mat4 local = m;
     set_translation(local, offset);
-    m = local * inverse * current;
+    m = gekko::multiply(gekko::multiply(local, inverse), current);
     ride.last = current;
 }
 

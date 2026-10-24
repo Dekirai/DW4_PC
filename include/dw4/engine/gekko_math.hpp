@@ -78,6 +78,10 @@ void transform_segment(Vec3f& origin, Vec3f& direction, float& length, const Mat
 // 80128774: a = b * a (row-vector convention: b applied first), each element
 // the j = 1 product rounded, then j = 0, 2 and 3 fused onto it.
 void premultiply(Mat4& a, const Mat4& b);
+// 80128690 (paired singles): a * b (a applied first), each element
+// a(i,0) * b(0,j) rounded (ps_muls0), then a(i,1) * b(1,j), a(i,2) * b(2,j)
+// and a(i,3) * b(3,j) fused onto it (ps_madds1, ps_madds0, ps_madds1).
+Mat4 multiply(const Mat4& a, const Mat4& b);
 // 8012947C: Euler angles (x, y, z) of a matrix: the rows divided by m[15]
 // when it is not 1, Gram-Schmidt with fused dot products, the rows negated
 // when their determinant is negative, then y = asin(-row0.z) clamped to

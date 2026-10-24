@@ -538,6 +538,22 @@ void premultiply(Mat4& a, const Mat4& b) {
     a = r;
 }
 
+Mat4 multiply(const Mat4& a, const Mat4& b) {
+    // 0x80128690..0x80128770: per row i of a, the pairs (j = 0, 1) and
+    // (j = 2, 3) of b's rows scaled by a(i,0) (ps_muls0), then a(i,1),
+    // a(i,2) and a(i,3) fused onto them.
+    Mat4 r;
+    for (int i = 0; i < 4; ++i)
+        for (int j = 0; j < 4; ++j) {
+            float s = muls(b(0, j), a(i, 0));
+            s = madds(b(1, j), a(i, 1), s);
+            s = madds(b(2, j), a(i, 2), s);
+            s = madds(b(3, j), a(i, 3), s);
+            r(i, j) = s;
+        }
+    return r;
+}
+
 void matrix_euler(const Mat4& m, float& x, float& y, float& z) {
     // 0x801294A8..0x8012953C: the rows (row 0 in registers, rows 1 and 2 on
     // the stack) divided by m[15] unless it is 1.
