@@ -90,7 +90,82 @@ void Messenger::clear() {
     paused_at_ = 0;
     by_category_stale_ = true;
     traced_no_recipient_.clear();
+    // 803040C0 releases the message objects (+0x10, the records) and clears
+    // the made flag (+0x30): the next select or post makes new ones (80303C0C).
+    objects_.clear();
 }
+
+void MessageObjects::clear() {
+    objects_.clear();
+    idle_.clear();
+    current_ = 0;
+    made_ = false;
+}
+
+void MessageObjects::select() {
+    // 80305344 / 80305F9C (0x80305364 / 0x80305FBC): made, the current
+    // object's counts are reset (80304618); otherwise 80303C0C makes the
+    // current object and the records, each with its own.
+    if (made_) {
+        objects_[current_].bools = 0;
+        return;
+    }
+    if (static const bool trace = std::getenv("DW4_TRACE_MESSAGE_OBJECTS") != nullptr; trace) std::printf("M\n");
+    objects_.assign(1 + kRecords, Object{});
+    current_ = 0;
+    idle_.clear();
+    for (std::size_t i = 1; i <= kRecords; ++i) idle_.push_back(i);
+    made_ = true;
+}
+
+void MessageObjects::append(std::uint8_t value) {
+    if (!made_) return;
+    auto& object = objects_[current_];
+    if (object.bools == 0) object.first_bool = value;
+    ++object.bools;
+}
+
+std::size_t MessageObjects::commit() {
+    // 80305F9C takes the last record of the list, a new one (802CF068, with
+    // a fresh object) when that one is in use; 803061BC swaps.
+    std::size_t record;
+    if (idle_.empty()) {
+        objects_.push_back(Object{});
+        record = objects_.size() - 1;
+    } else {
+        record = idle_.back();
+        idle_.pop_back();
+    }
+    const std::size_t filled = current_;
+    current_ = record;
+    return filled;
+}
+
+std::size_t MessageObjects::deliver(std::size_t object) {
+    objects_[current_].bools = 0; // 0x80304D78: the select
+    const std::size_t previous = current_;
+    current_ = object;
+    return previous;
+}
+
+void MessageObjects::retire(std::size_t previous) {
+    objects_[previous].bools = 0;
+    idle_.push_back(previous);
+}
+
+void MessageObjects::end_pass() {
+    if (made_) objects_[current_].bools = 0;
+}
+
+namespace {
+bool trace_message_objects() {
+    static const bool trace = std::getenv("DW4_TRACE_MESSAGE_OBJECTS") != nullptr;
+    return trace;
+}
+void print_object(const MessageObjects::State& state) {
+    std::printf(" %zu %d %u", state.current, state.bools, unsigned(state.first_bool));
+}
+} // namespace
 
 template <class Visit>
 void Messenger::candidates(std::string_view category, std::optional<std::string_view> name, Visit&& visit) const {
@@ -143,10 +218,24 @@ std::size_t Messenger::count(std::string_view category, std::optional<std::strin
 
 std::size_t Messenger::send(Engine& engine, std::string_view category, std::optional<std::string_view> name,
                             std::int32_t index, std::string_view command, Packet& packet) {
+    // The select (80305344) resets the current message object, the sender's
+    // argument bools go into it (80306964), then the dispatch (80305A28).
+    const bool model = modelling();
+    if (model) {
+        objects_.select();
+        for (const auto value : packet.bools) objects_.append(value);
+    }
+    return dispatch(engine, category, name, index, command, packet, model);
+}
+
+std::size_t Messenger::dispatch(Engine& engine, std::string_view category, std::optional<std::string_view> name,
+                                std::int32_t index, std::string_view command, Packet& packet, bool model) {
     if (command == "SEARCH") {
+        // 0x80305AE0..0x80305C40: a bool (any row) and the count answer.
         const auto n = count(category, name, index);
         packet.bools.push_back(n != 0);
         packet.ints.push_back(static_cast<std::int32_t>(n));
+        if (model) objects_.append(n != 0);
         return n;
     }
     // Capture the matching recipients first; handlers may register or send.
@@ -198,7 +287,13 @@ std::size_t Messenger::send(Engine& engine, std::string_view category, std::opti
     }
     for (auto* ram : recipients) {
         if (!ram || !ram->manager) continue;
+        // A handler's answers go into the message object current when it
+        // answers (a nested send resets and refills it first, a nested post
+        // swaps another one in).
+        const std::size_t before = packet.bools.size();
         if (!ram->manager->command(engine, *ram, command, packet)) ram->manager->fallback(engine, *ram, command, packet);
+        if (model)
+            for (std::size_t i = before; i < packet.bools.size(); ++i) objects_.append(packet.bools[i]);
     }
     return recipients.size();
 }
@@ -206,9 +301,30 @@ std::size_t Messenger::send(Engine& engine, std::string_view category, std::opti
 void Messenger::post(std::int64_t time, std::string category, std::optional<std::string> name, std::int32_t index,
                      std::string command, Packet arguments) {
     // 80305F9C prepares the message in the pool's last record and makes a new
-    // one when that record is still in use.
-    if (deferred_.size() >= deferred_records_) ++deferred_records_;
+    // one when that record is still in use (every record holds a message).
+    if (modelling()) {
+        const auto in_use = static_cast<std::size_t>(std::count_if(
+            deferred_.begin(), deferred_.end(), [](const DeferredMessage& m) { return m.object != DeferredMessage::kPortOnly; }));
+        if (in_use >= deferred_records_) ++deferred_records_;
+    }
+    // DW4_TRACE_POSTS=1: every posted message with its delivery time.
+    if (static const bool trace = std::getenv("DW4_TRACE_POSTS") != nullptr; trace)
+        std::printf("post %s %s %s for %lld\n", category.c_str(), name ? name->c_str() : "-", command.c_str(), static_cast<long long>(time));
     DeferredMessage message{time, std::move(category), std::move(name), index, std::move(command), std::move(arguments)};
+    if (modelling()) {
+        // 80305F9C resets the current object (or makes all), the poster's
+        // arguments go into it, 803061BC swaps it into the record.
+        objects_.select();
+        for (const auto value : message.arguments.bools) objects_.append(value);
+        const auto before = objects_.state();
+        message.object = objects_.commit();
+        if (trace_message_objects()) {
+            std::printf("S");
+            print_object(objects_.state());
+            print_object(before);
+            std::printf("\n");
+        }
+    }
     auto it = std::upper_bound(deferred_.begin(), deferred_.end(), message.time,
                                [](std::int64_t t, const DeferredMessage& m) { return t < m.time; });
     deferred_.insert(it, std::move(message));
@@ -224,18 +340,60 @@ void Messenger::update(Engine& engine) {
         const auto shift = now - paused_at_;
         for (auto& message : deferred_) message.time += shift;
         paused_at_ = now;
+        end_pass(engine);
         return;
     }
     // Otherwise the head is delivered while its time is not after now, at
     // most as many times as the pool had records when the pass began: a
     // message a delivery posts for now usually still arrives in this pass.
-    for (std::size_t budget = deferred_records_; budget > 0 && !deferred_.empty() && deferred_.front().time <= now; --budget) {
+    std::size_t budget = deferred_records_;
+    // (The port-only messages due now, at most the ones queued now: a
+    // port-only delivery that posts for now again waits for the next pass.)
+    std::size_t port_only_budget = deferred_.size();
+    while (budget > 0 && !deferred_.empty() && deferred_.front().time <= now) {
+        if (deferred_.front().object == DeferredMessage::kPortOnly) {
+            if (port_only_budget == 0) break;
+            --port_only_budget;
+        } else {
+            --budget;
+        }
         DeferredMessage message = std::move(deferred_.front());
         deferred_.erase(deferred_.begin());
         std::optional<std::string_view> name;
         if (message.name) name = *message.name;
-        send(engine, message.category, name, message.index, message.command, message.arguments);
+        if (static const bool trace = std::getenv("DW4_TRACE_POSTS") != nullptr; trace)
+            std::printf("[%llu] deliver %s %s (due %lld, now %lld)\n", static_cast<unsigned long long>(engine.frame()),
+                        message.category.c_str(), message.command.c_str(), static_cast<long long>(message.time), static_cast<long long>(now));
+        if (objects_.holds(message.object)) {
+            // 0x80304D78..0x80304E58: select, the delivered object becomes
+            // current for the dispatch (its arguments in it) and stays so;
+            // the record keeps the previous one (80304A04, to the list end).
+            if (trace_message_objects()) {
+                std::printf("D");
+                print_object(objects_.state(message.object));
+                print_object(objects_.state());
+                std::printf("\n");
+            }
+            const std::size_t previous = objects_.deliver(message.object);
+            dispatch(engine, message.category, name, message.index, message.command, message.arguments, true);
+            objects_.retire(previous);
+        } else {
+            // A message posted inside a port-only scope: no message object.
+            dispatch(engine, message.category, name, message.index, message.command, message.arguments, false);
+        }
     }
+    end_pass(engine);
+}
+
+void Messenger::end_pass(const Engine& engine) {
+    // 0x80304F8C: every pass of a made messenger ends with 80304618 on the
+    // current object.
+    if (trace_message_objects() && objects_.made()) {
+        std::printf("Z");
+        print_object(objects_.state());
+        std::printf(" @%llu\n", static_cast<unsigned long long>(engine.frame()));
+    }
+    objects_.end_pass();
 }
 
 // ---------------------------------------------------------------------------
@@ -356,7 +514,9 @@ void DemoManager::update(Engine& engine) {
 // ---------------------------------------------------------------------------
 // Engine
 // ---------------------------------------------------------------------------
-Engine::Engine(const std::filesystem::path& data_root) : resources_(MountedResources::open(data_root)) {
+Engine::Engine(const std::filesystem::path& data_root) : Engine(MountedResources::open(data_root)) {}
+
+Engine::Engine(MountedResources resources) : resources_(std::move(resources)) {
     global_root_.kind = NodeKind::group;
     global_root_.name = "GlobalRoot";
     cheats_.god = std::getenv("DW4_GOD") != nullptr;
@@ -536,6 +696,7 @@ void Engine::restore(const StageSnapshot& snapshot) {
     pending_stage_ = snapshot.stage;
     begin_stage_load(&snapshot);
     process_stage_loader();
+    if (auto* sound = get<SoundManager>()) sound->server_tick(*this);
     if (auto* camera = get<CameraManager>()) camera->begin_frame(*this);
     messenger_.update(*this);
     demo_.update(*this);
@@ -1127,20 +1288,34 @@ void Engine::loader_update() {
         loader_state_ = loader_queue_.empty() ? 102 : 100;
         return;
     }
-    case 100:
+    case 100: {
         if (!loader_queue_step(0)) return;
         // 802FA53C registers the preliminary infos; with a SOUND RAM among
-        // them (SOUND SEARCH, 0x802F9524) the loader sends MAKEBINLIST and
-        // goes to state 101, without one straight to 102.
+        // them (SOUND SEARCH 0x802F9518, its bools[0] read unchecked at
+        // 0x802F9524) the loader sends SOUND MAKEBINLIST (0x802F9544) and
+        // goes to state 101, without one straight to 102. The messages go
+        // through the messenger like the original's (its message objects).
         for (const auto& info : loader_preliminary_) register_info(info);
         loader_preliminary_.clear();
-        loader_state_ = messenger_.count("SOUND", std::nullopt, -1) != 0 ? 101 : 102;
+        Packet search;
+        messenger_.send(*this, "SOUND", std::nullopt, -1, "SEARCH", search);
+        if (search.boolean(0)) {
+            Packet list;
+            messenger_.send(*this, "SOUND", std::nullopt, -1, "MAKEBINLIST", list);
+            loader_state_ = 101;
+        } else {
+            loader_state_ = 102;
+        }
         return;
-    case 101:
-        // SOUND ISDONETRANS (0x802F957C) holds the state until it answers 1;
-        // every capture spends one update here.
-        loader_state_ = 102;
+    }
+    case 101: {
+        // SOUND ISDONETRANS (0x802F9564) holds the state until its bools[0]
+        // is 1 (0x802F9570..0x802F957C); every capture spends one update here.
+        Packet done;
+        messenger_.send(*this, "SOUND", std::nullopt, -1, "ISDONETRANS", done);
+        if (done.boolean(0)) loader_state_ = 102;
         return;
+    }
     case 102:
         loader_queue_.clear();
         loader_index_ = 0;
@@ -1282,11 +1457,9 @@ void Engine::step(const std::array<PadSample, 4>& samples) {
         ++reboot_fields_;
         return;
     }
-    auto input = samples;
-    // STAGECTL PADINPUT DISABLE: the game sees released controls.
-    if (!pad_input_enabled_)
-        for (auto& sample : input) { sample.buttons = 0; sample.left = {}; sample.right = {}; }
-    try { pads_.update(input); } catch (const std::exception& error) { note(std::string("pad input: ") + error.what()); }
+    // The pad module updates the controllers every frame; STAGECTL PADINPUT
+    // DISABLE only changes what its getter hands out (see pads()).
+    try { pads_.update(samples); } catch (const std::exception& error) { note(std::string("pad input: ") + error.what()); }
     // The frame clock advances first so updates and the following render
     // observe the same time (joint clamps and fades end exactly on a key).
     // One NTSC field of world time (8028AF84), see field_time.
@@ -1310,6 +1483,9 @@ void Engine::step(const std::array<PadSample, 4>& samples) {
     }
     if (!pending_stage_.empty()) begin_stage_load();
     process_stage_loader();
+    // The CRI servers of this field (see SoundManager::server_tick): after
+    // the loader's update, before the messenger, the demo and the managers.
+    if (auto* sound = get<SoundManager>()) sound->server_tick(*this);
     // The current camera viewer (802F4268, a scheduled module ahead of the
     // demo, the messenger and the managers) sets the frame's camera before
     // they run; see CameraManager::begin_frame.

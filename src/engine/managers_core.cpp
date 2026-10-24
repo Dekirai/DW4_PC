@@ -1,5 +1,6 @@
 #include "dw4/engine/managers.hpp"
 #include "dw4/animation_math.hpp"
+#include "dw4/engine/gekko_math.hpp"
 #include "dw4/engine/save_menu.hpp"
 #include "dw4/engine/state_archive.hpp"
 #include "dw4/igb_document.hpp"
@@ -503,6 +504,19 @@ void CameraManager::update_box(Engine& engine, CameraRam& ram) {
 
 bool CameraManager::command(Engine& engine, Ram& base, std::string_view command, Packet& packet) {
     auto& ram = static_cast<CameraRam&>(base);
+    // DW4_TRACE_CAMERA_COMMANDS: each command a camera RAM receives as the
+    // index of the command table 804D2B40 and the RAM, in the format of the
+    // Dolphin V log (hook 0x802F37E8).
+    if (static const bool trace = std::getenv("DW4_TRACE_CAMERA_COMMANDS") != nullptr; trace) {
+        static constexpr std::string_view kCommands[] = {"SHOWPOLYGON", "HIDEPOLYGON",   "GETPOSITION", "ENABLE",       "DISABLE",
+                                                         "SETBOXCAMERA", "SETDEMOCAMERA", "GETDEMONAME", "ISDEMOCAMERA", "SHAKE",
+                                                         "ONFREEZE",    "OFFREEZE"};
+        const auto at = std::find(std::begin(kCommands), std::end(kCommands), command);
+        std::size_t index = 0;
+        while (index < rams_.size() && rams_[index].get() != &ram) ++index;
+        std::printf("[%llu] V %08x %zu\n", static_cast<unsigned long long>(engine.frame()),
+                    unsigned(at == std::end(kCommands) ? 0xFF : at - std::begin(kCommands)), index);
+    }
     if (command == "SETDEMOCAMERA") {
         // 802F37AC case 6: the demo camera info of that name starts over (its
         // next update makes it the current viewer), every other demo camera
@@ -648,16 +662,23 @@ void CameraManager::compute_camera(Engine& engine, FrameCamera& camera) {
         const CameraRam* ram = chosen;
         const auto& path = viewer_ ? *viewer_->path : ram->paths.front();
         const std::int64_t at = viewer_ ? viewer_->time : 0;
-        // World matrices along the path; the last transform places the camera
-        // relative to its parent group, whose origin is the look-at pivot.
+        // World matrices along the path (801EA990): from the identity, each
+        // transform whose _target is 0 (+0x60; others are skipped) takes its
+        // matrix at the viewer's time (vfunc +0x9C) and is applied before
+        // the product so far (80128774, fused); the last transform places
+        // the camera relative to its parent group, whose origin is the
+        // look-at pivot.
         Mat4 world, pivot;
         const Node* last_transform = nullptr;
+        auto applies = [](const Node* node) {
+            return (node->kind == NodeKind::transform || node->kind == NodeKind::model_node) && node->object.i32(9) == 0;
+        };
         for (auto* node : path.nodes)
-            if (node->kind == NodeKind::transform || node->kind == NodeKind::model_node) last_transform = node;
+            if (applies(node)) last_transform = node;
         for (auto* node : path.nodes) {
-            if (node->kind != NodeKind::transform && node->kind != NodeKind::model_node) continue;
+            if (!applies(node)) continue;
             if (node == last_transform) pivot = world;
-            world = (node->sequence && node->sequence->valid ? node->sequence->evaluate(at) : node->matrix) * world;
+            gekko::premultiply(world, node->sequence && node->sequence->valid ? node->sequence->evaluate(at) : node->matrix);
         }
         if (path.camera) {
             // igCamera fields (804B0F14): _horizontalFieldOfView (default 45,
@@ -681,8 +702,43 @@ void CameraManager::compute_camera(Engine& engine, FrameCamera& camera) {
                 }
             }
         }
-        Mat4 view;
-        if (invert(world, view)) camera.view = view;
+        // 802F43DC..802F4418: the camera matrix makes a round trip through
+        // Euler angles (8012947C, then 80129134 with the translation put
+        // back), and the view matrix is its orthonormal inverse (8012A860),
+        // published to the viewer parameters (+0x6C) the player input reads.
+        static const bool trace = std::getenv("DW4_TRACE_VIEW") != nullptr;
+        auto print_matrix = [&](const char* letter) {
+            std::printf("[%llu] %s", static_cast<unsigned long long>(engine.frame()), letter);
+            for (int row = 0; row < 4; ++row)
+                for (int column = 0; column < 3; ++column) std::printf(" %08x", std::bit_cast<std::uint32_t>(world(row, column)));
+        };
+        // DW4_TRACE_VIEW: the path's matrix (G, Dolphin hook 0x802F43B4), the
+        // matrix after the round trip and its Euler angles (E, 0x802F440C),
+        // float bits.
+        if (trace) {
+            print_matrix("G");
+            std::printf("\n");
+            if (std::getenv("DW4_TRACE_VIEW_PATH"))
+                for (auto* node : path.nodes) {
+                    std::printf("[%llu] N %s %d %d", static_cast<unsigned long long>(engine.frame()), node->name.c_str(),
+                                int(node->kind), node->object.i32(9));
+                    for (float v : node->matrix.m) std::printf(" %08x", std::bit_cast<std::uint32_t>(v));
+                    std::printf("\n");
+                }
+        }
+        const Vec3f translation{world(3, 0), world(3, 1), world(3, 2)};
+        float x = 0.0f, y = 0.0f, z = 0.0f;
+        gekko::matrix_euler(world, x, y, z);
+        gekko::euler_matrix(world, x, y, z);
+        world(3, 0) = translation.x;
+        world(3, 1) = translation.y;
+        world(3, 2) = translation.z;
+        gekko::view_inverse(world, camera.view);
+        if (trace) {
+            print_matrix("E");
+            for (float v : {x, y, z}) std::printf(" %08x", std::bit_cast<std::uint32_t>(v));
+            std::printf("\n");
+        }
     }
 }
 
@@ -710,9 +766,26 @@ void StageCtlManager::update(Engine& engine) {
         messenger.send(engine, category, std::nullopt, -1, command, packet);
         return packet;
     };
+    // 0x80347D9C..0x80347DA4 / 0x80347E4C..0x80347E54: bools[0] of the
+    // answer is read without the count check (8030690C), so without a status
+    // window (stag0001, stag0203) the soft reset reads the first bool the
+    // shared message object kept from an earlier send (Messenger::
+    // stale_bool). Dolphin (r41resid, ISRUN read hook): in stag0001 it is 0
+    // there and the reset returns to the title like everywhere else; in
+    // stag0203 a model's ACTION ISCOMEND (8030BEF4) left 1, so state 1 removes
+    // the (missing) status window and hides all layers, and state 2 waits
+    // for it for good - the picture stays black with the sound stopped.
     auto subwnd_running = [&] {
         Packet run = send("SUBWND", "ISRUN");
-        return run.boolean(0);
+        const bool running = run.bools.empty() ? messenger.stale_bool() != 0 : run.boolean(0);
+        // DW4_TRACE_MESSAGE_OBJECTS: the read like the Dolphin hooks at
+        // 0x80347DA8 / 0x80347E58 (I / J): value, current object, its first bool.
+        if (static const bool trace = std::getenv("DW4_TRACE_MESSAGE_OBJECTS") != nullptr; trace) {
+            const auto object = messenger.message_objects().state();
+            std::printf("[%llu] %c %d %zu %u%s\n", static_cast<unsigned long long>(engine.frame()), reset_state_ == 1 ? 'I' : 'J',
+                        running ? 1 : 0, object.current, unsigned(object.first_bool), run.bools.empty() ? " stale" : "");
+        }
+        return running;
     };
     switch (reset_state_) {
     case 0:
@@ -732,6 +805,10 @@ void StageCtlManager::update(Engine& engine) {
         send("SOUND", "SESTOP");
         if (subwnd_running()) {
             send("SUBWND", "REMOVE");
+            // 0x80347DC0..0x80347DE8: system +0x14 -> vtable +0x98 (the
+            // visual context) -> +0x2C8 (0xFF000000): the clear colour
+            // turns black.
+            if (auto* background = engine.get<BkColorManager>()) background->set_color({0, 0, 0, 1});
             send("LAYERCTL", "SWITCH", {"ALL", "DISPOFF"});
         }
         reset_state_ = 2;
@@ -758,8 +835,11 @@ void StageCtlManager::update(Engine& engine) {
 }
 bool StageCtlManager::command(Engine& engine, Ram&, std::string_view command, Packet& packet) {
     if (command == "NEXTSTAGE") {
-        // 80347F94: the sound effects and the ambience stop at once.
+        // 80347F94: the clear colour turns black (0x80347FF4..0x8034801C,
+        // as in the soft reset), the sound effects and the ambience stop at
+        // once.
         if (!packet.strings.empty()) {
+            if (auto* background = engine.get<BkColorManager>()) background->set_color({0, 0, 0, 1});
             Packet stop;
             engine.messenger().send(engine, "SOUND", std::nullopt, -1, "SESTOP", stop);
             engine.messenger().send(engine, "SOUND", std::nullopt, -1, "ENVSTOP", stop);
@@ -1745,6 +1825,15 @@ bool SoundManager::command(Engine& engine, Ram& ram, std::string_view command, P
         return false;
     }
     if (t == "beSoundInfo") {
+        // The stage loader's (802F8A64 states 100 / 101): MAKEBINLIST builds
+        // the Cri's file list from the static infos (no answer; the port
+        // keeps the sound files in add_info), ISDONETRANS answers 1 once it
+        // is done, at the first ask in every capture.
+        if (command == "MAKEBINLIST") return true;
+        if (command == "ISDONETRANS") {
+            packet.bools.push_back(1);
+            return true;
+        }
         if (command == "PLAY" || command == "PLAYatPAUSE") {
             if (command == "PLAYatPAUSE") pause_next_ = true; // 80314FBC: Cri +0x3C
             play(engine, std::string(packet.string(0)));
@@ -2033,10 +2122,16 @@ void SoundManager::serialize_persistent(StateArchive& a, std::shared_ptr<const v
 
 // The driver side (beCri, a module outside the managers' gate): it keeps
 // running during stage loads.
-void SoundManager::update_driver(Engine& engine) {
-    // One field of the CRI servers: the stream reads on the simulated drive,
-    // decoding, PLAYING (disc_timing.hpp). The port's driver tick follows the
-    // frame's game update, as the original's servers follow the previous one.
+void SoundManager::server_tick(Engine& engine) {
+    // The CRI servers (ADXT 8029A60C, the file server 80296904) run once per
+    // field after the stage loader's update and before the frame's game
+    // update: the captures put each server pass 0.02 fields after the
+    // frame's world clock (0.63 fields while the loader's update runs first),
+    // a stream started (ADXT_StartAfs) or paused in a frame's update is seen
+    // by the next field's pass, and the PLAYING (status 3, 0x8029C03C) a pass
+    // sets is what that frame's ISREADY / ISALLREADY (802F6FB0) reads
+    // (stagBS01 2P / 1P, r42: the last stream PLAYING at 49.02 fields after
+    // the stage start, ISALLREADY answering 1 in the same frame).
     static const bool trace = std::getenv("DW4_TRACE_SOUND") != nullptr;
     // Test tool: DW4_DISC_CLOCK=<ticks> replaces the drive's Dolphin clock
     // offset (DiscDrive::kDolphinClockOffset), to line a run up with a capture
@@ -2056,6 +2151,12 @@ void SoundManager::update_driver(Engine& engine) {
     cri_.drive.instant = engine.fast_loading();
     cri_.tick(cri_ticks(engine.time()));
     if (trace) trace_cri(engine, inflight_before, done_before, playing_before);
+}
+
+// The driver side (beCri, a module outside the managers' gate): it keeps
+// running during stage loads.
+void SoundManager::update_driver(Engine& engine) {
+    static const bool trace = std::getenv("DW4_TRACE_SOUND") != nullptr;
     // The SNDF's AX frames up to now. The audio's mapping to the game's AX
     // frames moves by whole frames when the audio to come stands more than
     // half a field off the world clock (a host that topped its queue up, a
@@ -2452,6 +2553,14 @@ bool HitLandManager::query(Engine& engine, std::string_view command, Packet& pac
         packet.vectors.clear();
         packet.bools = {std::uint8_t(result.in_range), std::uint8_t(result.adjusted), std::uint8_t(result.found)};
         packet.vectors.push_back(result.position);
+        // DW4_TRACE_WALLBITS: the answer as float bits, in the format of the
+        // Dolphin N log (hook 0x803008E0: position, then the three bools).
+        if (static const bool trace = std::getenv("DW4_TRACE_WALLBITS") != nullptr; trace) {
+            auto b = [](float v) { return std::bit_cast<std::uint32_t>(v); };
+            std::printf("[%llu] N %08x %08x %08x %08x %08x %08x\n", static_cast<unsigned long long>(engine.frame()),
+                        b(result.position.x), b(result.position.y), b(result.position.z), unsigned(result.in_range),
+                        unsigned(result.adjusted), unsigned(result.found));
+        }
         return true;
     }
     if (packet.ints.empty() || packet.vectors.empty() || packet.floats.size() < 3) return true;
@@ -2459,10 +2568,29 @@ bool HitLandManager::query(Engine& engine, std::string_view command, Packet& pac
     if (command == "CHECKWALLFULL") {
         // 802FF748: the riding query takes only the position.
         result = world_.check_wall_full(packet.vectors[0], packet.floats[0], packet.floats[2], std::uint32_t(packet.ints[0]));
+        // DW4_TRACE_WALLBITS: the query position and the answer as float bits,
+        // in the format of the Dolphin O / F log (hooks 0x802FF804 / 0x803003E0).
+        if (static const bool trace = std::getenv("DW4_TRACE_WALLBITS") != nullptr; trace) {
+            auto b = [](float v) { return std::bit_cast<std::uint32_t>(v); };
+            const auto frame = static_cast<unsigned long long>(engine.frame());
+            std::printf("[%llu] O %08x %08x %08x\n[%llu] F %08x %08x %08x %08x\n", frame, b(packet.vectors[0].x),
+                        b(packet.vectors[0].y), b(packet.vectors[0].z), frame, b(result.position.x), b(result.position.y),
+                        b(result.position.z), result.hit ? 1u : 0u);
+        }
     } else {
         if (packet.ints.size() < 2 || packet.vectors.size() < 2) return true;
         result = world_.check_wall(packet.vectors[0], packet.vectors[1], packet.floats[0], packet.floats[2],
                                    std::uint32_t(packet.ints[0]), packet.ints[1] != 0);
+        // DW4_TRACE_WALLBITS: the query and its answer as float bits, in the
+        // format of the Dolphin K / L log (hooks 0x802FE93C / 0x802FF6B8).
+        if (static const bool trace = std::getenv("DW4_TRACE_WALLBITS") != nullptr; trace) {
+            auto b = [](float v) { return std::bit_cast<std::uint32_t>(v); };
+            std::printf("[%llu] K %08x %08x %08x %08x %08x\n[%llu] L %08x %08x %d\n",
+                        static_cast<unsigned long long>(engine.frame()), b(packet.vectors[0].x), b(packet.vectors[0].z),
+                        b(packet.vectors[1].x), b(packet.vectors[1].z), b(packet.floats[0]),
+                        static_cast<unsigned long long>(engine.frame()), b(result.position.x), b(result.position.z),
+                        result.hit ? 1 : 0);
+        }
     }
     packet.ints.clear();
     for (const auto& hit : result.hits) {
@@ -2494,8 +2622,16 @@ bool HitLandManager::deliver(Engine& engine, DelivRam& ram, std::string_view com
             if (full) {
                 answer.vectors.push_back(current);
             } else {
+                // 0x802FDAF0..0x802FDC0C: the squared length is dx * dx fused
+                // onto 0 * 0 (the zero dy, 0x804260C0) and dz * dz fused onto
+                // that (two fmadds, one rounding each); its root comes from
+                // frsqrte and three double Newton steps (the float square
+                // root), then each component times 1.0 / length (fdivs).
+                // Separate products and sums put the direction one bit off
+                // now and then, which a wall slide carries on (Dolphin
+                // CHECKWALL log, stag0204).
                 Vec3f direction{current.x - ram.previous.x, 0.0f, current.z - ram.previous.z};
-                const float length = std::sqrt(direction.x * direction.x + direction.z * direction.z);
+                const float length = gekko::sqrt_newton(std::fma(direction.z, direction.z, std::fma(direction.x, direction.x, 0.0f)));
                 direction = direction * (1.0f / length);
                 answer.vectors.push_back(direction);
             }

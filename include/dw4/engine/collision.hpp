@@ -142,11 +142,12 @@ private:
         // child's space; without one every query takes the child.
         bool bounded{};
         Vec3f bound_min, bound_max;
-        // `local` in world space at the node matrix `placed_matrix` (bit for
-        // bit), so queries between two moves of the node reuse it.
-        mutable std::vector<CollisionTriangle> placed;
-        mutable Mat4 placed_matrix{};
-        mutable bool placed_valid{};
+        // The child's space at the node matrix `space_matrix` (bit for bit):
+        // the matrix stack's top (the copy / switch transform pushed onto the
+        // identity, 8021B044 + 80128774) and its inverse (8012A92C), so the
+        // queries between two moves of the node reuse them.
+        mutable Mat4 space_matrix{}, top{}, inverse{};
+        mutable bool space_valid{};
     };
     // A dynamic child enabled at the start of a Still scope, with its
     // placement then: the origin (grouped children) or the translation
@@ -234,7 +235,7 @@ private:
     // centre p and half-size `reach` of it), in world space: one list per
     // dynamic child, in their order.
     void dynamic_near(const Vec3f& p, float reach, const Vec3f& minimum, const Vec3f& maximum,
-                      std::vector<const std::vector<CollisionTriangle>*>& out) const;
+                      std::vector<const Dynamic*>& out) const;
     std::vector<Dynamic> dynamic_;
     void index_triangle(std::size_t index);
     bool enabled(const CollisionTriangle& t) const { return t.group >= groups_.size() || groups_[t.group]; }

@@ -119,6 +119,10 @@ public:
     void clear_stage(Engine& engine) override;
     bool command(Engine& engine, Ram& ram, std::string_view command, Packet& packet) override;
     Vec4f color() const { return color_; }
+    // The visual context's clear colour from elsewhere (vtable +0x2C8 with
+    // 0xFF000000: the soft reset 0x80347DE8 and NEXTSTAGE 0x8034801C set it
+    // black; this manager sets it once, at its first update, 0x802F2A40).
+    void set_color(const Vec4f& color) { color_ = color; }
 
 private:
     std::vector<std::unique_ptr<Ram>> rams_;
@@ -294,6 +298,11 @@ public:
     // The CRI driver part (stream ramps and fades, SE sequences) also runs
     // while the stage is not active; the cues and the movie are RAM work.
     void update_inactive(Engine& engine) override { update_driver(engine); }
+    // One field of the CRI servers (the stream reads on the simulated drive,
+    // decoding, PLAYING; disc_timing.hpp), at the frame's world time: the
+    // engine runs it after the stage loader's update and before the
+    // messenger, the demo and the managers (Engine::step).
+    void server_tick(Engine& engine);
     // Interleaved stereo 16-bit PCM at kOutputRate: the AX mix at the DSP
     // rate, resampled. Successive calls continue the audio seamlessly,
     // whatever their sizes and however they run ahead of or fall behind the

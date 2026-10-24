@@ -336,7 +336,16 @@ std::vector<Lua4Value> Engine::lua_call(const Lua4HostCall& call) {
         demo().add(std::move(record));
         return {};
     }
-    if (method == "DMgetCount") return number(double(demo().running()));
+    if (method == "DMgetCount") {
+        // 802ED4B0: the count of running demo works (beDemoManager +0x1C);
+        // with none, SUBWND ISRUN to RAM 0 (0x802ED500, no name) - a running
+        // status window gives -1 (0x802ED538..0x802ED544), no answer or a
+        // stopped one 0.
+        if (const auto running = demo().running()) return number(double(running));
+        Packet run;
+        messenger().send(*this, "SUBWND", std::nullopt, 0, "ISRUN", run);
+        return number(!run.bools.empty() && run.bools[0] ? -1.0 : 0.0);
+    }
     if (method == "MsgBox" || method == "DMmsgBox") {
         log("MsgBox: " + opt_string(arg(0)).value_or(""));
         return {};
