@@ -214,7 +214,8 @@ void ray_test() {
     check(b(quarter.m[0]) == 0xb33bbd2e && b(quarter.m[8]) == 0x3f800000 && b(quarter.m[2]) == 0xbf800000, "Euler (0, pi/2, 0)");
     const Vec3f direction{f(0x3eab5942), 0.0f, f(0x3f713d00)};
     const Vec3f side = gekko::rotate(direction, quarter);
-    check(b(side.x) == b(direction.z) && b(side.z) != b(-direction.x), "the quarter-turn side axis rounds");
+    // z = -x + z * cos(pi/2) rounded once: one bit beyond -x (0xBEAB5942).
+    check(b(side.x) == b(direction.z) && b(side.y) == 0 && b(side.z) == 0xbeab5943, "the quarter-turn side axis rounds");
 }
 } // namespace
 

@@ -27,7 +27,12 @@ nominal 16,666,666 ns frame (`kFrameNs`), so an n-frame wait ends after
 exactly n steps. In order:
 
 1. Pads: `dw4::OriginalPads` computes trigger/repeat masks from the host
-   samples (disabled while STAGECTL `PADINPUT DISABLE` is active).
+   samples, every frame. STAGECTL `PADINPUT DISABLE` (+0x1D of the pad
+   module, 0x80348108..0x803481A8) only changes what the module's getter
+   80312138 hands out: `Engine::pads()` gives neutral pads while it holds,
+   checked at each read, so an ENABLE sent by this frame's demo already
+   counts for the managers that read after it, and a button held through the
+   disabled stretch is not a fresh press when it ends.
 2. The frame clock advances, so updates and the following render observe the
    same time.
    beSystem's update (80316258) then reads the console's reset button
@@ -41,7 +46,11 @@ exactly n steps. In order:
    members, `func.lua` / `boot.lua`, common files queued with `CFLsetName`,
    the wait for the loading screen's minimum play time (its beLoadingNode
    then holds its lock time on the LOADING layer until the scripts remove
-   it), info registration, `start.lua`, `first.lua`.
+   it), info registration, `start.lua`, `first.lua`. Then the CRI servers'
+   field (`SoundManager::server_tick`; the original's ADXT server 8029A60C
+   and file server 80296904 run after the loader's update and before the
+   messenger, the demo and the managers): stream reads on the simulated
+   drive, decoding, PLAYING (see the sound section below).
 4. Deferred messenger sends (80304C58: every `sd(..., delay)`, also a delay
    of 0, and the engine's own posts arrive here, in a later frame than they
    were sent; none while a SUBWND program or the soft reset pauses the queue,
@@ -321,8 +330,13 @@ When a stream is ready matters to the scripts: demos wait with
 `DMchkSD SOUND ISALLREADY` / `ISREADY`, which test ADXT status 3 (PLAYING,
 802F6FB0), and the original only gets there after the stream's first block
 came off the disc. `dw4::CriStreams` (include/dw4/disc_timing.hpp, in the
-core) models that on the engine clock, once per field from the sound driver
-tick (also during loads): the six beCri ADXT handles (two stereo 48 kHz for
+core) models that on the engine clock, once per field from the CRI server
+tick (also during loads), which the frame step runs where the original runs
+its servers: after the stage loader, before the messenger, the demo and the
+managers, so a stream started in a frame's update is first served in the
+next field and a PLAYING reached in a field counts for that frame's
+ISALLREADY (Dolphin, stagBS01 1P and 2P: the last stream PLAYING and
+ISALLREADY 1 49 fields after the stage start in both): the six beCri ADXT handles (two stereo 48 kHz for
 BGM and ambience with a 53-sector input ring, four mono with 13 sectors),
 their ADXSTM readers (one DVD read at a time through gcCi, the lowest handle
 first, 25 sectors before the header is parsed, refills below 85 %), the
@@ -525,6 +539,30 @@ out of it and be skipped there. A check-switch child
 that is a transform follows that transform's scene node (the limit circle
 under the beChangePosTransform, which `ChangePosManager` keeps at the players'
 centre while everyone is within 40 units, so players cannot leave each other).
+Static geometry sits under no transform (none in the stages checked, so the
+HitLand traversal's matrix stack holds only its identity and 801F6050 tests
+the triangles where the file puts them); a moving child's transform is pushed onto that identity (8021B044 +
+80128774), and 801F6050 then tests the child in its own vertex space: each
+segment goes through the inverse (8012A92C, 801252D0), a local hit comes back
+through the matrix (8012D498), its distance is measured from the original
+segment's origin (801F63BC) and the normal turns with the matrix (8012D434,
+not normalized again).
+
+The ray tests, the camera and the player input round like the Gekko
+(`gekko_math.hpp`, compiled without contraction): fmadds-style fused
+multiply-adds round once to single, square roots are frsqrte plus Newton
+steps, and sin / cos / atan2 / asin / acos are the DOL's MSL (fdlibm with
+CodeWarrior's fused multiply-adds), each in the original's operation order:
+the face normal from 8012CB74's cross product (801238E8), the fused facing,
+plane and hit-point arithmetic, CHECKWALL's side axis through the
+HitLandModel's Euler (0, pi/2, 0) matrix (its cosine is -4.37e-8, not 0) and
+its cos(acos()) push ratio, the camera's path product 80128774, Euler round
+trip 8012947C / 80129134 and view inverse 8012A860, the input's general
+inverse 8012A92C and wanted heading (frsp(atan2) sums, 8034C65C). Fed with
+Dolphin's stick reads and world clock, the stag0204 cannon scene then matches
+Dolphin's wall queries and answers, stick headings and box camera bit for bit
+over the whole scene, and a 2-player dng101b1 stretch matches all 1462 of
+its wall query and answer lines, enemies included.
 
 The test bots' route planning runs its walking maps inside a
 `CollisionWorld::Still` scope: nothing moves meanwhile, so the enabled moving

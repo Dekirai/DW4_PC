@@ -380,6 +380,21 @@ void extend(Vec3f& minimum, Vec3f& maximum, const Vec3f& p) {
     maximum.x = std::max(maximum.x, p.x);
     maximum.z = std::max(maximum.z, p.z);
 }
+
+// The wall passes' push ratio cos(acos(n.n / (|n| |n|))) of the nearest
+// hit's normal (CHECKWALL 0x802FF410..0x802FF658, CHECKWALLFULL
+// 0x802FFB64..): n.n plain, each |n| its frsqrte / Newton root (0 and NaN as
+// they are), the quotient clamped to [-1, 1] in the original's branch order
+// (a NaN gives -1), acos and cos the MSL ones (800A2C34 / 800A257C), each
+// rounded to single.
+float push_ratio(const Vec3f& normal) {
+    const float squared = dot(normal, normal);
+    const float length = squared > 0.0f ? gekko::sqrt_newton(squared) : squared;
+    const float x = squared / (length * length);
+    const float above = x > -1.0f ? x : -1.0f;
+    const float clamped = above >= 1.0f ? 1.0f : (x > -1.0f ? x : -1.0f);
+    return float(gekko::cos(float(gekko::acos(clamped))));
+}
 } // namespace
 
 // 801251D0: direction end - start, length from ((x*x + y*y) + z*z) plain
@@ -631,16 +646,7 @@ WallResult CollisionWorld::wall_query(const Vec3f& position, const Vec3f& direct
             for (std::size_t i = 1; i < hits.size(); ++i)
                 if (hits[i].distance < hits[selected].distance) selected = i;
             const Vec3f& normal = hits[selected].normal;
-            // 0x802FF410..0x802FF658: cos(acos(n.n / (|n| |n|))), the ratio
-            // clamped to [-1, 1] like 8012947C's asin argument, acos and cos
-            // the MSL ones (800A2C34 / 800A257C), each rounded to single.
-            const float squared = dot(normal, normal);
-            const float length = squared > 0.0f ? gekko::sqrt_newton(squared) : squared;
-            const float x = squared / (length * length);
-            const float above = x > -1.0f ? x : -1.0f;
-            const float clamped = above >= 1.0f ? 1.0f : (x > -1.0f ? x : -1.0f);
-            const float ratio = float(gekko::cos(float(gekko::acos(clamped))));
-            const float scale = (radius - hits[selected].distance) * ratio;
+            const float scale = (radius - hits[selected].distance) * push_ratio(normal);
             // 0x802FF680..0x802FF690: fused onto the position (fmadds).
             result.position = {std::fma(scale, normal.x, result.position.x), std::fma(scale, normal.y, result.position.y),
                                std::fma(scale, normal.z, result.position.z)};
@@ -695,15 +701,9 @@ WallResult CollisionWorld::check_wall_full(const Vec3f& position, float width, f
         for (std::size_t i = 1; i < hits.size(); ++i)
             if (hits[i].distance < hits[selected].distance) selected = i;
         const Vec3f& normal = hits[selected].normal;
-        // 0x802FFB64..0x802FFDEC: as the lateral wall pass, cos(acos(...))
-        // of the clamped ratio, the push fused onto the position.
-        const float squared = dot(normal, normal);
-        const float length = squared > 0.0f ? gekko::sqrt_newton(squared) : squared;
-        const float x = squared / (length * length);
-        const float above = x > -1.0f ? x : -1.0f;
-        const float clamped = above >= 1.0f ? 1.0f : (x > -1.0f ? x : -1.0f);
-        const float ratio = float(gekko::cos(float(gekko::acos(clamped))));
-        const float scale = (radius - hits[selected].distance) * ratio;
+        // 0x802FFB64..0x802FFDEC: as the lateral wall pass, the push fused
+        // onto the position.
+        const float scale = (radius - hits[selected].distance) * push_ratio(normal);
         result.position = {gekko::madds(scale, normal.x, result.position.x), gekko::madds(scale, normal.y, result.position.y),
                            gekko::madds(scale, normal.z, result.position.z)};
         result.hits.push_back(hits[selected]);
