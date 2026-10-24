@@ -1484,6 +1484,9 @@ void Engine::step(const std::array<PadSample, 4>& samples) {
     }
     if (!pending_stage_.empty()) begin_stage_load();
     process_stage_loader();
+    // The CRI servers of this field (see SoundManager::server_tick): after
+    // the loader's update, before the messenger, the demo and the managers.
+    if (auto* sound = get<SoundManager>()) sound->server_tick(*this);
     // The current camera viewer (802F4268, a scheduled module ahead of the
     // demo, the messenger and the managers) sets the frame's camera before
     // they run; see CameraManager::begin_frame.

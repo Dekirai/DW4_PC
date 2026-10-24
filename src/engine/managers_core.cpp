@@ -504,6 +504,19 @@ void CameraManager::update_box(Engine& engine, CameraRam& ram) {
 
 bool CameraManager::command(Engine& engine, Ram& base, std::string_view command, Packet& packet) {
     auto& ram = static_cast<CameraRam&>(base);
+    // DW4_TRACE_CAMERA_COMMANDS: each command a camera RAM receives as the
+    // index of the command table 804D2B40 and the RAM, in the format of the
+    // Dolphin V log (hook 0x802F37E8).
+    if (static const bool trace = std::getenv("DW4_TRACE_CAMERA_COMMANDS") != nullptr; trace) {
+        static constexpr std::string_view kCommands[] = {"SHOWPOLYGON", "HIDEPOLYGON",   "GETPOSITION", "ENABLE",       "DISABLE",
+                                                         "SETBOXCAMERA", "SETDEMOCAMERA", "GETDEMONAME", "ISDEMOCAMERA", "SHAKE",
+                                                         "ONFREEZE",    "OFFREEZE"};
+        const auto at = std::find(std::begin(kCommands), std::end(kCommands), command);
+        std::size_t index = 0;
+        while (index < rams_.size() && rams_[index].get() != &ram) ++index;
+        std::printf("[%llu] V %08x %zu\n", static_cast<unsigned long long>(engine.frame()),
+                    unsigned(at == std::end(kCommands) ? 0xFF : at - std::begin(kCommands)), index);
+    }
     if (command == "SETDEMOCAMERA") {
         // 802F37AC case 6: the demo camera info of that name starts over (its
         // next update makes it the current viewer), every other demo camera
@@ -2109,10 +2122,16 @@ void SoundManager::serialize_persistent(StateArchive& a, std::shared_ptr<const v
 
 // The driver side (beCri, a module outside the managers' gate): it keeps
 // running during stage loads.
-void SoundManager::update_driver(Engine& engine) {
-    // One field of the CRI servers: the stream reads on the simulated drive,
-    // decoding, PLAYING (disc_timing.hpp). The port's driver tick follows the
-    // frame's game update, as the original's servers follow the previous one.
+void SoundManager::server_tick(Engine& engine) {
+    // The CRI servers (ADXT 8029A60C, the file server 80296904) run once per
+    // field after the stage loader's update and before the frame's game
+    // update: the captures put each server pass 0.02 fields after the
+    // frame's world clock (0.63 fields while the loader's update runs first),
+    // a stream started (ADXT_StartAfs) or paused in a frame's update is seen
+    // by the next field's pass, and the PLAYING (status 3, 0x8029C03C) a pass
+    // sets is what that frame's ISREADY / ISALLREADY (802F6FB0) reads
+    // (stagBS01 2P / 1P, r42: the last stream PLAYING at 49.02 fields after
+    // the stage start, ISALLREADY answering 1 in the same frame).
     static const bool trace = std::getenv("DW4_TRACE_SOUND") != nullptr;
     // Test tool: DW4_DISC_CLOCK=<ticks> replaces the drive's Dolphin clock
     // offset (DiscDrive::kDolphinClockOffset), to line a run up with a capture
@@ -2132,6 +2151,12 @@ void SoundManager::update_driver(Engine& engine) {
     cri_.drive.instant = engine.fast_loading();
     cri_.tick(cri_ticks(engine.time()));
     if (trace) trace_cri(engine, inflight_before, done_before, playing_before);
+}
+
+// The driver side (beCri, a module outside the managers' gate): it keeps
+// running during stage loads.
+void SoundManager::update_driver(Engine& engine) {
+    static const bool trace = std::getenv("DW4_TRACE_SOUND") != nullptr;
     // The SNDF's AX frames up to now. The audio's mapping to the game's AX
     // frames moves by whole frames when the audio to come stands more than
     // half a field off the world clock (a host that topped its queue up, a
@@ -2528,6 +2553,14 @@ bool HitLandManager::query(Engine& engine, std::string_view command, Packet& pac
         packet.vectors.clear();
         packet.bools = {std::uint8_t(result.in_range), std::uint8_t(result.adjusted), std::uint8_t(result.found)};
         packet.vectors.push_back(result.position);
+        // DW4_TRACE_WALLBITS: the answer as float bits, in the format of the
+        // Dolphin N log (hook 0x803008E0: position, then the three bools).
+        if (static const bool trace = std::getenv("DW4_TRACE_WALLBITS") != nullptr; trace) {
+            auto b = [](float v) { return std::bit_cast<std::uint32_t>(v); };
+            std::printf("[%llu] N %08x %08x %08x %08x %08x %08x\n", static_cast<unsigned long long>(engine.frame()),
+                        b(result.position.x), b(result.position.y), b(result.position.z), unsigned(result.in_range),
+                        unsigned(result.adjusted), unsigned(result.found));
+        }
         return true;
     }
     if (packet.ints.empty() || packet.vectors.empty() || packet.floats.size() < 3) return true;
@@ -2535,6 +2568,15 @@ bool HitLandManager::query(Engine& engine, std::string_view command, Packet& pac
     if (command == "CHECKWALLFULL") {
         // 802FF748: the riding query takes only the position.
         result = world_.check_wall_full(packet.vectors[0], packet.floats[0], packet.floats[2], std::uint32_t(packet.ints[0]));
+        // DW4_TRACE_WALLBITS: the query position and the answer as float bits,
+        // in the format of the Dolphin O / F log (hooks 0x802FF804 / 0x803003E0).
+        if (static const bool trace = std::getenv("DW4_TRACE_WALLBITS") != nullptr; trace) {
+            auto b = [](float v) { return std::bit_cast<std::uint32_t>(v); };
+            const auto frame = static_cast<unsigned long long>(engine.frame());
+            std::printf("[%llu] O %08x %08x %08x\n[%llu] F %08x %08x %08x %08x\n", frame, b(packet.vectors[0].x),
+                        b(packet.vectors[0].y), b(packet.vectors[0].z), frame, b(result.position.x), b(result.position.y),
+                        b(result.position.z), result.hit ? 1u : 0u);
+        }
     } else {
         if (packet.ints.size() < 2 || packet.vectors.size() < 2) return true;
         result = world_.check_wall(packet.vectors[0], packet.vectors[1], packet.floats[0], packet.floats[2],

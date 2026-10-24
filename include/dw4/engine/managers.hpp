@@ -298,6 +298,11 @@ public:
     // The CRI driver part (stream ramps and fades, SE sequences) also runs
     // while the stage is not active; the cues and the movie are RAM work.
     void update_inactive(Engine& engine) override { update_driver(engine); }
+    // One field of the CRI servers (the stream reads on the simulated drive,
+    // decoding, PLAYING; disc_timing.hpp), at the frame's world time: the
+    // engine runs it after the stage loader's update and before the
+    // messenger, the demo and the managers (Engine::step).
+    void server_tick(Engine& engine);
     // Interleaved stereo 16-bit PCM at kOutputRate: the AX mix at the DSP
     // rate, resampled. Successive calls continue the audio seamlessly,
     // whatever their sizes and however they run ahead of or fall behind the
