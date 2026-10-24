@@ -71,7 +71,11 @@ private:
     // One frame of a boss fight (kBossFights); false when the boss is down.
     bool boss_fight(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player, const std::string& strike,
                     const std::string& follow, float keep, bool dodge, float arena_x, float arena_z, float arena_r, bool clear_touch,
-                    const char* omen, const char* homing, bool lead, const char* rings, bool shaped, int frame, Output& out);
+                    const char* omen, const char* homing, bool lead, const char* rings, bool shaped, const char* lane, int frame, Output& out);
+    // BossFight::lane: out of the way a flying boss's flight boxes will sweep;
+    // false when the boss has none of them pending or live.
+    bool lane_step(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player, const engine::ModelCtrlManager::ModelRam& boss,
+                   const char* lane, int frame, Output& out);
     // A maze floor swept (ExploreBot exhausted): on to another exit.
     void maze_turn(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player, const std::string& goal, int frame);
     // Survival without god mode (campaign.cpp kSupplies): the next disk shop
@@ -95,6 +99,9 @@ private:
     int next_gear(engine::Engine& engine, int program) const;
     // The next device to sell at the disk shop (campaign.cpp kSellFrom), -1 none.
     int next_sale(engine::Engine& engine) const;
+    std::vector<std::pair<int, int>> sales(engine::Engine& engine) const; // (folder index, price) of every device to sell
+    // The bits a full stock of the supplies (kSupplies' highest counts) still costs.
+    int stock_cost(engine::Engine& engine) const;
     bool raise_step(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player, int frame, Output& out);
     void start_disk(const engine::GameSystem::PlayerSlot& slot, int record, int frame);
     bool heal_gate_step(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player, int frame, Output& out);
@@ -198,6 +205,13 @@ private:
     const void* focus_seen_ = nullptr; // a boss fight's focus in the last frame (BossFight::lead) ...
     engine::Vec3f focus_at_{};   // ... where it stood ...
     int focus_frame_ = -1;       // ... and when
+    engine::Vec3f lane_at_{};    // a flying boss's middle in the last frame (lane_step: its flight's direction)
+    int lane_frame_ = -1;        // ... and when
+    engine::Vec3f lane_step_{};  // its last step
+    int lane_escape_ = -1;       // the last frame lane_step walked the player out of the way (survive: no guard then)
+    int chain_hp_visit_ = -1;    // the stage visit chain_enemy_hp_ belongs to (survive: kChainStageStall)
+    int chain_enemy_hp_ = 0;     // the enemies' HP in the last frame
+    int chain_progress_ = 0;     // the last frame an enemy lost HP (or the visit began)
     int dodge_frame_ = -1;       // the last frame a boss fight's dodge saw a box about to meet the player (survive: no slow heal)
     std::string exit_to_;        // the stage the current step's exit mat leads to (kExits; survive tops the HP up before a stage without heals)
     std::set<std::string> no_panel_stages_; // stages seen without the quick panels (survive), beside kNoHealStages
