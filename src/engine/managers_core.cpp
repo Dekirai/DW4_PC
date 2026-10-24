@@ -1781,11 +1781,14 @@ bool SoundManager::stream_on(std::size_t channel) const {
 // mwPlyGetCurFrm, so every frame of a movie takes two fields: the game runs
 // at 30 Hz until the stage's teardown stops the movie.
 //
-// The port's driver tick of a step stands for the servers of the retrace
-// after it (the CRI servers run on the retrace, before the next update;
-// DiscDrive::kDolphinClockOffset): the tick of the MOVIE PLAY step is the
-// pass after the open's first VIWaitForRetrace, and the tick of a codec
-// update's step the pass after the codec's wait.
+// Every step ticks the CRI servers once (server_tick: in a step that
+// updates after the stage loader's update, in a covered field from
+// update_held), and in the drive model's clock a step's tick stands for the
+// servers of the retrace after it (DiscDrive::kDolphinClockOffset): the tick
+// of the MOVIE PLAY step (first.lua runs in the loader's update, before it)
+// is the pass after the open's first VIWaitForRetrace, and the tick of a
+// codec update's step (which comes before the codec update) the pass after
+// the codec's wait.
 //
 // Dolphin captures of both opening movies of a boot (work/dref r40movie
 // d_boot1 / d_boot2: OSReport hooks on the codec, the Sofdec sound handler,
@@ -1824,6 +1827,9 @@ void SoundManager::play_movie(Engine& engine, const Ram& ram, const std::string&
         }
     }
     if (!found) return;
+    // (A RAM without the movie manager module - +0x20, looked up by 8031EB48
+    // through 8028A730 - would only keep the name and play nothing,
+    // 0x8031EEFC -> 0x8031F284; the port always has its movie player.)
     static const bool trace = std::getenv("DW4_TRACE_SOUND") != nullptr;
     // The RAM keeps the name (0x8031F308), and with it 8031EC10 skips the
     // movie and runs the data's end script, only once the movie layer
@@ -1871,8 +1877,10 @@ void SoundManager::play_movie(Engine& engine, const Ram& ram, const std::string&
         engine.note("movie " + name + ": " + error.what());
     }
     // The open's ADXF_ReadNw of the first ten sectors: the read goes on the
-    // drive in the server pass after this field (this step's driver tick);
-    // the frame waits for it in the fields after (update_held).
+    // drive in the server pass after this field (this step's server_tick for
+    // a PLAY from the stage loader's first.lua, the next field's for one from
+    // a frame's update); the frame waits for it in the fields after
+    // (update_held).
     std::uint64_t offset = 0;
     std::uint32_t sectors = 0;
     if (const auto* record = engine.resources().catalog().find(lower(name)); record && record->location) {
@@ -1967,7 +1975,7 @@ void SoundManager::update_movie_player(Engine& engine) {
     movie.previous = movie.taken;
     // This codec's wait ends on the retrace after the ended codecs' waits:
     // its pass runs on the servers of that field's retrace (the time of this
-    // step's driver tick stands for the first retrace after this field).
+    // step's server_tick stands for the first retrace after this field).
     const std::int64_t pass_vi = engine.vi_time() + field_time(engine.frame() + std::uint64_t(ended_codecs_)) - field_time(engine.frame());
     const std::int64_t pass = pass_vi + field_time(engine.frame() + 1) - field_time(engine.frame());
     // The first pass after mwPlyStart starts the stream, which asks for its
