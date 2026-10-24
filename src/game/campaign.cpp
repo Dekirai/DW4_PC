@@ -817,10 +817,11 @@ constexpr const char* kWaveFields[] = {"stag0404"};
 // (survive): left, the chain begins again at stag0401.
 constexpr const char* kChainStages[] = {"stag0404", "stagbs04", "stagbs05", "stagbs06"};
 // A boss stage of that chain in which no enemy has lost HP for this many
-// frames is stalled (survive): stagBS04's first form once warped from
-// island to island out of reach for 320000 frames, the mechas that bring
-// it down not coming again (GENE-10 had not spawned its third mecha for
-// cal_f_devl1.lua's count of three) - no Gate Disk works there.
+// frames is stalled (survive): stagBS04's first form twice warped from
+// island to island out of reach (SQ_WARPIN / SQ_WARPOUT2 / SQ_ISLANDBEAM,
+// wap_f_devl1.lua's "out1" way) for 320000 frames, its UFO call
+// (cal_f_devl1.lua) and the mechas that bring it down not coming again
+// after their second wave - no Gate Disk works there.
 constexpr int kChainStageStall = 60000;
 bool last_stand(engine::Engine& engine) {
     if (engine.cheats().god) return false;
@@ -2047,8 +2048,9 @@ CampaignBot::Purchase CampaignBot::next_purchase(engine::Engine& engine) const {
     return {};
 }
 
-// The bits all the purchases due would spend (next_purchase in turn), with
-// the bank's bits too (a trip to the lobby takes them out first, kBankDust).
+// The bits a full stock (kSupplies' highest count of each record that
+// applies now) still costs at the shop's prices, whatever the bits held
+// (the last stand's farming, kFarms).
 int CampaignBot::stock_cost(engine::Engine& engine) const {
     auto* sys = engine.get<engine::GameSystem>();
     if (!sys) return 0;
@@ -2064,6 +2066,8 @@ int CampaignBot::stock_cost(engine::Engine& engine) const {
     return cost;
 }
 
+// The bits all the purchases due would spend (next_purchase in turn), with
+// the bank's bits too (a trip to the lobby takes them out first, kBankDust).
 int CampaignBot::planned_spend(engine::Engine& engine) const {
     auto* sys = engine.get<engine::GameSystem>();
     if (!sys) return 0;
