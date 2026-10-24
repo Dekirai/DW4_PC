@@ -464,20 +464,22 @@ void CriStreams::tick(std::int64_t now) {
 }
 
 void CriStreams::movie_open(std::uint64_t disc_offset, std::uint32_t sectors) {
-    const bool busy = movie.busy || movie.header_busy;
-    movie = Movie{};
-    movie.stopping = busy;
-    movie.busy = busy;
+    movie_close();
     movie.header = true;
     movie.disc_offset = disc_offset;
     movie.sectors = sectors;
 }
 
+// A read still on the drive ends on the reader that asked for it: the
+// stream's (kMovieSlot: done, then booked as stopped by movie_reader) or the
+// open's on the loader's stream (kMovieHeaderSlot: header_done, then dropped
+// by movie_header); neither books its data, and a later open's header read
+// waits for the drive like any read.
 void CriStreams::movie_close() {
-    const bool busy = movie.busy || movie.header_busy;
+    const bool busy = movie.busy, header_busy = movie.header_busy;
     movie = Movie{};
-    movie.stopping = busy;
-    movie.busy = busy;
+    movie.busy = movie.stopping = busy;
+    movie.header_busy = movie.header_stopping = header_busy;
 }
 
 void CriStreams::movie_stream(std::int64_t now) {
@@ -523,6 +525,10 @@ void CriStreams::movie_header(std::int64_t now) {
     if (movie.header_busy) {
         if (!movie.header_done) return;
         movie.header_busy = movie.header_done = false;
+        if (movie.header_stopping) {
+            movie.header_stopping = false; // a closed open's read
+            return;
+        }
         movie.header_booked = true;
         return;
     }

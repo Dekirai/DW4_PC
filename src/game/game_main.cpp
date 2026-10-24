@@ -1652,9 +1652,16 @@ int run(const Options& options, dw4::game::Settings& settings) {
                         if (movie->visible >= 0 && movie_decoder->seek(std::size_t(movie->visible)))
                             renderer->draw_movie(movie_decoder->rgba().data(), movie_decoder->width(), movie_decoder->height(), screen,
                                                 width, height);
-                    } else if (movie_decoder && movie_stage == engine.stage_name() && !movie_decoder->rgba().empty()) {
-                        renderer->draw_movie(movie_decoder->rgba().data(), movie_decoder->width(), movie_decoder->height(), screen,
-                                            width, height);
+                    } else if (movie_decoder && movie_stage == engine.stage_name()) {
+                        // A movie that stopped (a skip, the teardown) leaves the
+                        // picture its codec took last on the layer.
+                        if (sound && sound->movie_still().serial == movie_serial && sound->movie_still().picture >= 0)
+                            movie_decoder->seek(std::size_t(sound->movie_still().picture));
+                        if (!movie_decoder->rgba().empty())
+                            renderer->draw_movie(movie_decoder->rgba().data(), movie_decoder->width(), movie_decoder->height(), screen,
+                                                width, height);
+                        else
+                            movie_decoder.reset();
                     } else {
                         movie_decoder.reset();
                     }

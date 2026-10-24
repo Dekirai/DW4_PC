@@ -359,10 +359,19 @@ public:
         int after_last{};         // codec updates since the last picture was taken
         int skipped{};            // pictures Sofdec dropped as late
         bool sound_on{};          // the sound plays (render mixes it)
-        bool codec{true};         // the codec plays it (false: the file could not be opened)
         std::uint32_t serial{};   // changes with every PLAY
     };
     const Movie* movie() const { return movie_ ? &*movie_ : nullptr; }
+    // The picture a movie that stopped (802AF560: a skip or the teardown)
+    // leaves on its layer: the last one its codec took (mwPlyGetCurFrm). The
+    // frames after the stop run no codec update, so their XFB shows that
+    // picture, not the one before it (Dolphin d_skipeven2), until the stage
+    // changes. serial: the movie's (Movie::serial); picture -1: none taken.
+    struct MovieStill {
+        std::uint32_t serial{};
+        int picture{-1};
+    };
+    const MovieStill& movie_still() const { return movie_still_; }
     // Save states: the streams that play on into the next stage, and back.
     std::shared_ptr<const void> persistent() const;
     void restore(Engine& engine, const std::shared_ptr<const void>& state);
@@ -564,15 +573,19 @@ private:
     std::optional<Movie> movie_;
     Stream movie_stream_;
     std::uint32_t movie_serial_{};
+    MovieStill movie_still_;
     // The beMovie RAM's name is set (+0x24: MOVIE PLAY of a name its
-    // beMovieInfoData list has; cleared after the end script, 0x8031EDE4)
-    // and that data's end script.
+    // beMovieInfoData list has, once the movie layer answered and the movie
+    // has its scene; cleared after the end script, 0x8031EDE4) and that
+    // data's end script.
     bool movie_named_{};
     std::string movie_script_;
     // Codecs of movies that ended (state 2) and whose name beMovie cleared,
     // left in the movie manager by a newer MOVIE PLAY: each still waits a
     // retrace in every frame (802AE8B8) until a stop takes every movie
-    // (802AF560, the teardown). The retail scripts play one movie per stage.
+    // (802AF560, the teardown). (A movie playing unnamed that a newer PLAY
+    // meets is kept the same way: its pictures and sound are not modelled.)
+    // The retail scripts play one movie per stage.
     int ended_codecs_{};
     // 802AF560 (the skip and the teardown): every movie stops.
     void stop_movie(Engine& engine);

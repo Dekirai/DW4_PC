@@ -149,7 +149,8 @@ public:
     void movie_consume(std::uint64_t bytes) { movie.consumed = std::max(movie.consumed, std::min(bytes, movie.written)); }
     // The ring's bytes from the disc so far.
     std::uint64_t movie_written() const { return movie.written; }
-    // mwPlyStop / destroy: the stream stops (a read on the drive still ends).
+    // mwPlyStop / destroy: the stream stops (a read on the drive still ends;
+    // the stream's and the open's reads each end on their own reader).
     void movie_close();
 
     bool active(int slot) const { return valid(slot) && handles[std::size_t(slot)].active; }
@@ -206,6 +207,7 @@ public:
     struct Movie {
         bool header{};          // the open's header read is wanted
         bool header_busy{}, header_done{}, header_booked{};
+        bool header_stopping{}; // closed with the header read on the drive
         bool active{};          // the stream runs (movie_stream)
         bool busy{}, done{};    // its read is on the drive / the drive finished it
         bool stopping{};        // closed with a read on the drive

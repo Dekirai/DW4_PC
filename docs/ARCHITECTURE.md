@@ -312,12 +312,19 @@ the host's queue top-up, `DW4_AX_COMPRESSOR=0` leaves the compressor out,
 `DW4_TRACE_SOUND=1` logs the effects and sound subcommands, the SNDF voices
 and where each stream's and the movie's audio begins in the dump).
 MOVIE PLAY (8031EDFC) looks up the beMovieInfoData of the
-file (strcmp; [5] end script; a name the list lacks plays nothing, and a PLAY
-while the beMovie name is still set is refused), splits the Sofdec program stream with `dw4::sfd`
+file (strcmp; [4] layer, [5] end script; a name the list lacks plays nothing,
+so does one behind an empty entry or one of another type, where the search
+ends (8031EE8C), and a PLAY while the beMovie name is still set is refused),
+splits the Sofdec program stream with `dw4::sfd`
 (MPEG-1 video 0xE0, ADX sound 0xC0) and plays the sound on a movie channel
 of the AX mix (at the DSP rate like the streams, no AUX sends);
 the host decodes the video with pl_mpeg and draws the picture the player
-took over the screen. The only movie is the opening (stagIS09 first.lua,
+took over the screen. The beMovie RAM keeps the name (0x8031F308), which the
+skip and the end script need, only once the movie layer answered LAYERCTL
+GETLAYERNODE for the data's layer and the movie has its scene (the movie
+manager makes it after the codec's open, 802AEC7C -> 802AF5C8); a movie
+without them plays on unnamed, and a file the codec cannot open plays nothing
+and leaves no name. The only movie is the opening (stagIS09 first.lua,
 AUS_opening.sfd on the USA disc: 1920 pictures at 29.97 Hz), played after
 the logos and again whenever the title's prompt times out (attract mode).
 The game hands the movie to the Alchemy movie plugin (igMovieManager
@@ -347,14 +354,20 @@ then stops with state 2 and the next beMovie update (8031EC10) runs the end
 script and clears the name (a later PLAY is taken; the ended codec stays
 and waits its retrace in every frame), while the codec keeps the 30 Hz
 frames going until the teardown. A or START from player 1 (read through the
-pad getter, so a press in the frame of the PADINPUT ENABLE 120 frames after
-MOVIE PLAY counts) stops every movie at once (802AF560) and runs the end
-script in the same update. While
+pad getter, so a press in the frame of the PADINPUT ENABLE counts; the
+stage's script enables the pads 120 nominal frames of world time after MOVIE PLAY, which
+the first update at or after that time takes: about 60 of the 30 Hz updates,
+Dolphin V 1116 -> E 1236, and in attract mode the time falls on a covered
+field and the update after it takes it) stops every movie at once (802AF560)
+and runs the end script in the same update. While
 Sofdec decodes, the frames start 0.011 field after their retraces
 (`Engine::set_clock_lateness`), so the skip's NEXTSTAGE, posted for one
-nominal frame later, arrives two updates after it. The movie's last picture
-stays on the screen through the frame that tears the stage down, after the
-end and after a skip (`Engine::presenting`). (Dolphin captures of a
+nominal frame later, arrives two updates after it. The picture the codec
+took last stays on the screen through the frame that tears the stage down,
+after the end and after a skip (`Engine::presenting`, `SoundManager::movie_still`):
+none of the frames after the stop runs a codec update, so their XFB shows
+that picture, not the one before it that a playing movie's frame shows
+(Dolphin d_skipeven2). (Dolphin captures of a
 boot with both movies and of skips: work/dref r40movie / r41movie runs with OSReport
 hooks on these functions.)
 

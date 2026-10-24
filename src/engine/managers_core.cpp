@@ -1726,28 +1726,53 @@ bool SoundManager::stream_on(std::size_t channel) const {
 //   beMovie update (8031EC10, state 2 from 802B1338) runs the end script.
 void SoundManager::play_movie(Engine& engine, const Ram& ram, const std::string& name) {
     // 0x8031EE64: while the beMovie name is set (a movie whose end script has
-    // not run) PLAY is refused; the end script's update clears it. The name
-    // must be one of the info's beMovieInfoData (strcmp 8009D5D8), whose name
-    // the RAM keeps (0x8031F308); any other plays nothing.
+    // not run) PLAY is refused; the end script's update clears it.
     if (movie_named_) return;
+    // 8031EE8C: the info's list in order; the first beMovieInfoData whose
+    // name is the PLAY's (strcmp 8009D5D8) is the movie's, and an empty entry
+    // or one of another type before it ends the search (return 1): nothing
+    // plays. (The beMovie update's walk for the end script, 8031EC10, returns
+    // at such an entry as well, without the script and keeping the name; it
+    // walks the same list for the same name, so it meets the entry found here.)
     const ObjectView* found = nullptr;
     const auto list = ram.info.list(5);
-    for (const auto& data : list)
-        if (data && data.str(2) == name) {
+    for (const auto& data : list) {
+        if (!data || data.type() != "beMovieInfoData") return;
+        if (data.str(2) == name) {
             found = &data;
             break;
         }
+    }
     if (!found) return;
-    movie_named_ = true;
-    movie_script_ = std::string(found->str(5));
+    static const bool trace = std::getenv("DW4_TRACE_SOUND") != nullptr;
+    // The RAM keeps the name (0x8031F308), and with it 8031EC10 skips the
+    // movie and runs the data's end script, only once the movie layer
+    // answered LAYERCTL GETLAYERNODE for the data's layer ([4], 0x8031F048 ..
+    // 0x8031F078) and the movie has its scene (igMovieInfo +0x50: the movie
+    // manager makes it after the codec's open, 802AEC7C -> 802AF5C8 ->
+    // 802B0FF0); else the movie plays on unnamed, neither skipped nor
+    // followed by its end script.
+    auto keep_name = [&](bool scene) {
+        Packet layer;
+        layer.strings.emplace_back(std::string(found->str(4)));
+        engine.messenger().send(engine, "LAYERCTL", std::nullopt, -1, "GETLAYERNODE", layer);
+        if (scene && !layer.bools.empty()) {
+            movie_named_ = true;
+            movie_script_ = std::string(found->str(5));
+        } else if (trace) {
+            engine.log("movie " + name + (scene ? " has no layer " + std::string(found->str(4)) : std::string(" has no scene")) +
+                       ": no name, no skip, no end script, frame " + std::to_string(engine.frame()));
+        }
+    };
     auto lower = [](std::string text) {
         std::transform(text.begin(), text.end(), text.begin(), [](unsigned char c) { return char(std::tolower(c)); });
         return text;
     };
     // A movie whose end script ran stays in the movie manager (its codec in
     // state 2 waits on); the port keeps only the new one and counts the old
-    // codec's retrace wait.
-    if (movie_ && movie_->codec) ++ended_codecs_;
+    // codec's retrace wait (so for an unnamed one still playing).
+    if (movie_) ++ended_codecs_;
+    movie_.reset();
     Movie movie;
     movie.name = name;
     movie_stream_.decoder.reset();
@@ -1777,27 +1802,31 @@ void SoundManager::play_movie(Engine& engine, const Ram& ram, const std::string&
     }
     movie.serial = ++movie_serial_;
     if (movie.pictures == 0 || sectors == 0) {
-        // A file the codec cannot open or play (802ADC8C fails, the movie
-        // manager keeps no codec): beMovie finds no movie, state 2, and runs
-        // the end script (8031EC10, 802B1338).
-        movie.phase = Movie::Phase::end;
-        movie.codec = false;
-        movie_ = std::move(movie);
+        // A file the codec cannot open or play: 802AEC7C returns after the
+        // failed open (802ADC8C) before it makes the scene or schedules the
+        // codec, so the movie manager keeps nothing and the RAM no name.
+        movie_stream_.decoder.reset();
+        keep_name(false);
         return;
     }
     cri_.movie_open(offset, sectors);
     engine.hold_update(1);
     movie_ = std::move(movie);
-    if (static const bool trace = std::getenv("DW4_TRACE_SOUND") != nullptr; trace)
+    keep_name(true);
+    if (trace)
         engine.log("movie " + name + " PLAY: open reads 10 sectors at disc " + std::to_string(offset) + ", frame " +
                    std::to_string(engine.frame()));
 }
 
 // Every codec stops and closes (802AF560 -> igMovieManager stop 802AF388:
 // 802AE6D0 with state 1, 802AE530) and the stream ends; the picture of the
-// movie layer stays until the stage changes.
+// movie layer stays until the stage changes: the one the codec took last
+// (movie_still), which the XFB of the stop's frame and the frames after it
+// shows, since none of them runs a codec update (the playing movie's frames
+// show the picture of the codec update before their own, Movie::visible).
 void SoundManager::stop_movie(Engine& engine) {
     if (movie_ || ended_codecs_) engine.set_clock_lateness(0);
+    if (movie_) movie_still_ = {movie_->serial, movie_->taken};
     movie_.reset();
     ended_codecs_ = 0;
     movie_stream_.decoder.reset();
@@ -1806,7 +1835,7 @@ void SoundManager::stop_movie(Engine& engine) {
 
 void SoundManager::update_held(Engine& engine) {
     static const bool trace = std::getenv("DW4_TRACE_SOUND") != nullptr;
-    if (movie_ && movie_->codec && movie_->phase == Movie::Phase::open) {
+    if (movie_ && movie_->phase == Movie::Phase::open) {
         // The open's loop (802ADC8C) in this field: VIWaitForRetrace, the ADX
         // server's pass on this field's retrace (the last step's driver
         // tick), ADXF_GetStat. Until the pass has booked the header the loop
@@ -1823,7 +1852,7 @@ void SoundManager::update_held(Engine& engine) {
         }
     }
     update_driver(engine, false);
-    if (!movie_ || !movie_->codec || movie_->phase == Movie::Phase::open) return;
+    if (!movie_ || movie_->phase == Movie::Phase::open) return;
     auto& movie = *movie_;
     // The frame shows the picture the codec update before its own took.
     movie.visible = movie.previous;
@@ -1839,8 +1868,8 @@ void SoundManager::update_held(Engine& engine) {
 // codec update (802AE8B8), the ended ones first.
 void SoundManager::update_movie_player(Engine& engine) {
     // (The frame of an open: the ended codecs wait after it, update_held.)
-    if (movie_ && movie_->codec && movie_->phase == Movie::Phase::open) return;
-    const bool playing = movie_ && movie_->codec;
+    if (movie_ && movie_->phase == Movie::Phase::open) return;
+    const bool playing = movie_.has_value();
     // 0x802AE93C: every codec not stopped (state 1) waits a retrace
     // (VIWaitForRetrace), so the frame takes as many more fields; the ADX
     // server pass and the picture follow each wait.
@@ -2205,6 +2234,7 @@ void SoundManager::serialize_persistent(StateArchive& a, std::shared_ptr<const v
     a.io(movie.header_busy);
     a.io(movie.header_done);
     a.io(movie.header_booked);
+    a.io(movie.header_stopping);
     a.io(movie.active);
     a.io(movie.busy);
     a.io(movie.done);
