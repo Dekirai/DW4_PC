@@ -1456,11 +1456,9 @@ void Engine::step(const std::array<PadSample, 4>& samples) {
         ++reboot_fields_;
         return;
     }
-    auto input = samples;
-    // STAGECTL PADINPUT DISABLE: the game sees released controls.
-    if (!pad_input_enabled_)
-        for (auto& sample : input) { sample.buttons = 0; sample.left = {}; sample.right = {}; }
-    try { pads_.update(input); } catch (const std::exception& error) { note(std::string("pad input: ") + error.what()); }
+    // The pad module updates the controllers every frame; STAGECTL PADINPUT
+    // DISABLE only changes what its getter hands out (see pads()).
+    try { pads_.update(samples); } catch (const std::exception& error) { note(std::string("pad input: ") + error.what()); }
     // The frame clock advances first so updates and the following render
     // observe the same time (joint clamps and fades end exactly on a key).
     // One NTSC field of world time (8028AF84), see field_time.

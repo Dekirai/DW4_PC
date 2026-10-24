@@ -475,7 +475,19 @@ public:
     // What the slots hold (0 = A, 1 = B).
     void set_card_setting(int slot, const CardSetting& setting) { card_settings_[std::size_t(slot & 1)] = setting; }
     const CardSetting& card_setting(int slot) const { return card_settings_[std::size_t(slot & 1)]; }
-    const std::array<PadState, 4>& pads() const { return pads_.states(); }
+    // The controllers as the game reads them: the pad module's getter
+    // (80312138) hands out its neutral fifth pad while STAGECTL PADINPUT
+    // DISABLE holds (+0x1D, 0x80348108..0x803481A8), checked at each read -
+    // an ENABLE from this frame's demo already counts for the managers that
+    // read after it, and the pads keep their own history meanwhile.
+    const std::array<PadState, 4>& pads() const {
+        if (pad_input_enabled_) return pads_.states();
+        for (std::size_t i = 0; i < neutral_pads_.size(); ++i) {
+            neutral_pads_[i] = PadState{};
+            neutral_pads_[i].connected = pads_.states()[i].connected;
+        }
+        return neutral_pads_;
+    }
 
     // Script execution (beLua::call 80301FA4): first matching name per info.
     bool run_script(std::string_view name);
@@ -686,6 +698,7 @@ private:
     std::uint64_t frame_{};
     std::int64_t world_delta_ = 16683333; // world time added by the last step (system_step)
     bool pad_input_enabled_{};
+    mutable std::array<PadState, 4> neutral_pads_{}; // see pads()
     std::map<std::int32_t, std::uint8_t> flags_;
     std::map<std::int32_t, std::int32_t> counters_;
     std::vector<DiagnosticCounter> notes_;

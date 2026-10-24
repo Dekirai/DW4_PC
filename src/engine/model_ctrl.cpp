@@ -1511,6 +1511,13 @@ bool ModelCtrlManager::advance_motion(Engine& engine, ModelRam& ram) {
     {
         const bool rotating = ram.channels.states()[3].active;
         const float frames = keika_frames(ram, engine.time());
+        // DW4_TRACE_TURN: the KEIKATIMER frames and the yaw before the turn
+        // (applied, wanted, rate), float bits, as the Dolphin G log (hook
+        // 0x8030C8E4 after 8031E4C4).
+        if (static const bool trace = std::getenv("DW4_TRACE_TURN") != nullptr; trace && ram.applied[1] != ram.desired[1])
+            std::printf("[%llu] G %08x %s#%d %08x %08x %08x\n", static_cast<unsigned long long>(engine.frame()),
+                        std::bit_cast<std::uint32_t>(frames), ram.info_name.c_str(), ram.index, std::bit_cast<std::uint32_t>(ram.applied[1]),
+                        std::bit_cast<std::uint32_t>(ram.desired[1]), std::bit_cast<std::uint32_t>(ram.turn_rate_y));
         try {
             step = ram.channels.advance(frames);
         } catch (const std::exception& error) {
