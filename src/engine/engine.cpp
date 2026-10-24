@@ -696,6 +696,7 @@ void Engine::restore(const StageSnapshot& snapshot) {
     pending_stage_ = snapshot.stage;
     begin_stage_load(&snapshot);
     process_stage_loader();
+    if (auto* sound = get<SoundManager>()) sound->server_tick(*this);
     if (auto* camera = get<CameraManager>()) camera->begin_frame(*this);
     messenger_.update(*this);
     demo_.update(*this);

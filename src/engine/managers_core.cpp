@@ -2631,7 +2631,7 @@ bool HitLandManager::deliver(Engine& engine, DelivRam& ram, std::string_view com
                 // now and then, which a wall slide carries on (Dolphin
                 // CHECKWALL log, stag0204).
                 Vec3f direction{current.x - ram.previous.x, 0.0f, current.z - ram.previous.z};
-                const float length = std::sqrt(std::fma(direction.z, direction.z, std::fma(direction.x, direction.x, 0.0f)));
+                const float length = gekko::sqrt_newton(std::fma(direction.z, direction.z, std::fma(direction.x, direction.x, 0.0f)));
                 direction = direction * (1.0f / length);
                 answer.vectors.push_back(direction);
             }
