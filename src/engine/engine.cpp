@@ -301,8 +301,12 @@ std::size_t Messenger::dispatch(Engine& engine, std::string_view category, std::
 void Messenger::post(std::int64_t time, std::string category, std::optional<std::string> name, std::int32_t index,
                      std::string command, Packet arguments) {
     // 80305F9C prepares the message in the pool's last record and makes a new
-    // one when that record is still in use.
-    if (deferred_.size() >= deferred_records_) ++deferred_records_;
+    // one when that record is still in use (every record holds a message).
+    if (modelling()) {
+        const auto in_use = static_cast<std::size_t>(std::count_if(
+            deferred_.begin(), deferred_.end(), [](const DeferredMessage& m) { return m.object != DeferredMessage::kPortOnly; }));
+        if (in_use >= deferred_records_) ++deferred_records_;
+    }
     // DW4_TRACE_POSTS=1: every posted message with its delivery time.
     if (static const bool trace = std::getenv("DW4_TRACE_POSTS") != nullptr; trace)
         std::printf("post %s %s %s for %lld\n", category.c_str(), name ? name->c_str() : "-", command.c_str(), static_cast<long long>(time));
@@ -320,8 +324,6 @@ void Messenger::post(std::int64_t time, std::string category, std::optional<std:
             print_object(before);
             std::printf("\n");
         }
-    } else {
-        message.object = static_cast<std::size_t>(-1);
     }
     auto it = std::upper_bound(deferred_.begin(), deferred_.end(), message.time,
                                [](std::int64_t t, const DeferredMessage& m) { return t < m.time; });
@@ -344,7 +346,17 @@ void Messenger::update(Engine& engine) {
     // Otherwise the head is delivered while its time is not after now, at
     // most as many times as the pool had records when the pass began: a
     // message a delivery posts for now usually still arrives in this pass.
-    for (std::size_t budget = deferred_records_; budget > 0 && !deferred_.empty() && deferred_.front().time <= now; --budget) {
+    std::size_t budget = deferred_records_;
+    // (The port-only messages due now, at most the ones queued now: a
+    // port-only delivery that posts for now again waits for the next pass.)
+    std::size_t port_only_budget = deferred_.size();
+    while (budget > 0 && !deferred_.empty() && deferred_.front().time <= now) {
+        if (deferred_.front().object == DeferredMessage::kPortOnly) {
+            if (port_only_budget == 0) break;
+            --port_only_budget;
+        } else {
+            --budget;
+        }
         DeferredMessage message = std::move(deferred_.front());
         deferred_.erase(deferred_.begin());
         std::optional<std::string_view> name;
@@ -502,7 +514,9 @@ void DemoManager::update(Engine& engine) {
 // ---------------------------------------------------------------------------
 // Engine
 // ---------------------------------------------------------------------------
-Engine::Engine(const std::filesystem::path& data_root) : resources_(MountedResources::open(data_root)) {
+Engine::Engine(const std::filesystem::path& data_root) : Engine(MountedResources::open(data_root)) {}
+
+Engine::Engine(MountedResources resources) : resources_(std::move(resources)) {
     global_root_.kind = NodeKind::group;
     global_root_.name = "GlobalRoot";
     cheats_.god = std::getenv("DW4_GOD") != nullptr;

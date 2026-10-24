@@ -156,9 +156,12 @@ struct DeferredMessage {
     std::int32_t index{};
     std::string command;
     Packet arguments;
-    // The message object the record holds (Messenger::MessageObject; the
-    // one the post filled, swapped into the record at the commit).
-    std::size_t object = 0;
+    // The message object the record holds (a MessageObjects index: the one
+    // the post filled, swapped into the record at the commit); kPortOnly for
+    // a message posted inside a Messenger::PortOnly scope, which has no
+    // record of the original.
+    static constexpr std::size_t kPortOnly = static_cast<std::size_t>(-1);
+    std::size_t object = kPortOnly;
 };
 
 class Messenger {
@@ -214,7 +217,8 @@ private:
     int port_only_ = 0;
     // 80303C0C makes 32 deferred records; preparing a post grows the pool by
     // one record while all are in use. A delivery pass covers at most the
-    // records the pool had when it began.
+    // records the pool had when it began. Port-only messages (no record)
+    // neither count as records in use nor spend a pass's deliveries.
     static constexpr std::size_t kDeferredRecords = 32;
     std::vector<MessengerRow> rows_;
     std::vector<DeferredMessage> deferred_;
@@ -384,6 +388,8 @@ StageSnapshot decode_snapshot(std::span<const std::uint8_t> bytes);
 class Engine {
 public:
     explicit Engine(const std::filesystem::path& data_root);
+    // An engine on resources already mounted (the tests: empty ones).
+    explicit Engine(MountedResources resources);
     // The snapshot of the running stage's load (null before the first).
     const StageSnapshot* stage_snapshot() const { return snapshot_ ? &*snapshot_ : nullptr; }
     // On a new engine: the state of the snapshot, then the rest of the step

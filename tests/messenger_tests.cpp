@@ -104,6 +104,91 @@ void messenger() {
     messenger.clear();
     check(!messenger.message_objects().made() && messenger.stale_bool() == 0, "clear releases the objects");
 }
+
+// A module answering like the original's command handlers: ANSWER puts one
+// bool (its value) into the reply, QUIET none.
+class Answering final : public Manager {
+public:
+    Answering() : Manager("TestAnswering") {}
+    bool accepts(const ObjectView&) const override { return false; }
+    void add_info(Engine&, const ObjectView&) override {}
+    bool command(Engine&, Ram&, std::string_view command, Packet& packet) override {
+        ++handled;
+        if (command == "ANSWER") packet.bools.push_back(value);
+        return command == "ANSWER" || command == "QUIET";
+    }
+    std::uint8_t value = 1;
+    int handled = 0;
+};
+
+void through_engine() {
+    // The whole path on an engine without game data: Messenger::send (select,
+    // argument bools, dispatch, answers), SEARCH, post + delivery pass, the
+    // stage change and the port-only scope.
+    Engine engine{dw4::MountedResources{}};
+    Messenger& m = engine.messenger();
+    Answering module;
+    Ram ram;
+    ram.manager = &module;
+    m.add_row("TEST", std::string("a"), 0, &ram);
+    auto send = [&](std::string_view command, std::vector<std::uint8_t> arguments) {
+        Packet packet;
+        packet.bools = std::move(arguments);
+        m.send(engine, "TEST", std::nullopt, -1, command, packet);
+        return packet;
+    };
+    // Argument before answer: data[0] is the argument.
+    module.value = 1;
+    const Packet first = send("ANSWER", {0});
+    check(first.bools.size() == 2 && first.bools[1] == 1 && m.stale_bool() == 0, "an argument bool takes data[0], the answer data[1]");
+    // No argument: the answer is data[0].
+    send("ANSWER", {});
+    check(m.stale_bool() == 1, "without arguments the answer takes data[0]");
+    // A send without any bool leaves data[0] to the unchecked read.
+    module.value = 0;
+    send("QUIET", {});
+    check(m.stale_bool() == 1 && m.message_objects().state().bools == 0, "no bool: the last entry stays, count 0");
+    // SEARCH answers its found bool (0x80305AE0..0x80305C40) and the count.
+    Packet search;
+    m.send(engine, "NONE", std::nullopt, -1, "SEARCH", search);
+    check(search.bools == std::vector<std::uint8_t>{0} && search.ints == std::vector<std::int32_t>{0} && m.stale_bool() == 0,
+          "SEARCH without a row: bool 0 in data[0]");
+    Packet found;
+    m.send(engine, "TEST", std::nullopt, -1, "SEARCH", found);
+    check(found.bools == std::vector<std::uint8_t>{1} && found.ints == std::vector<std::int32_t>{1} && m.stale_bool() == 1 &&
+              module.handled == 3,
+          "SEARCH with a row: bool 1, no dispatch to the module");
+    // A post swaps the filled object into its record: the current object
+    // is the record's (fresh), until the delivery swaps the posted one in.
+    Packet posted;
+    posted.bools = {1};
+    m.post(engine.time(), "TEST", std::nullopt, -1, "QUIET", posted);
+    check(m.stale_bool() == 0, "after the post the current object is the record's");
+    send("QUIET", {});
+    check(m.stale_bool() == 0, "a later send selects the record's object");
+    m.update(engine);
+    check(module.handled == 5 && m.stale_bool() == 1, "the delivered object stays current (its argument in data[0])");
+    send("QUIET", {});
+    check(m.stale_bool() == 1, "and stays for the following sends");
+    // Port-only sends and posts leave the objects alone.
+    {
+        const Messenger::PortOnly scope(m);
+        module.value = 0;
+        send("ANSWER", {0});
+        Packet bot;
+        bot.bools = {0};
+        m.post(engine.time(), "TEST", std::nullopt, -1, "ANSWER", bot);
+    }
+    check(m.stale_bool() == 1, "port-only messages change no message object");
+    const auto before = m.message_objects().state();
+    m.update(engine); // delivers the port-only post, dispatch without the model
+    check(module.handled == 8 && m.stale_bool() == 1 && m.message_objects().state().current == before.current,
+          "a port-only delivery swaps nothing");
+    // The stage change releases the objects (803040C0): data[0] reads 0
+    // until the next stage's first bool.
+    m.clear();
+    check(m.stale_bool() == 0 && !m.message_objects().made(), "the stage change releases the objects");
+}
 } // namespace
 
 int main() {
@@ -111,6 +196,7 @@ int main() {
         sends();
         swaps();
         messenger();
+        through_engine();
         std::cout << checks << " messenger checks passed\n";
         return 0;
     } catch (const std::exception& error) {
