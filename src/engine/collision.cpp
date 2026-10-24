@@ -1,4 +1,5 @@
 #include "dw4/engine/collision.hpp"
+#include "dw4/engine/gekko_math.hpp"
 
 #include "dw4/engine/scene_graph.hpp"
 
@@ -203,26 +204,11 @@ CollisionWorld::StillMemo* CollisionWorld::still_memo() const {
 namespace {
 std::uint32_t bits(float value) { return std::bit_cast<std::uint32_t>(value); }
 
-// 8012CB74: each component's first product fused with the second one,
-// which is rounded first (fmsubs): x = a.y * b.z - (a.z * b.y).
-Vec3f fused_cross(const Vec3f& a, const Vec3f& b) {
-    return {std::fma(a.y, b.z, -(a.z * b.y)), std::fma(a.z, b.x, -(a.x * b.z)), std::fma(a.x, b.y, -(a.y * b.x))};
-}
-
-// The dot products of 801238E8: y * y rounded, x * x and z * z fused onto it.
-float fused_dot(const Vec3f& a, const Vec3f& b) { return std::fma(a.z, b.z, std::fma(a.x, b.x, a.y * b.y)); }
-
-// 801238E8 (0x80123910..0x80123A28) makes the face normal at every test:
-// (b - a) x (c - a) through 8012CB74, its length from (x*x + y*y) + z*z
-// (frsqrte and three double Newton steps: the float square root), then each
-// component times 1.0 / length. The triangles keep it.
-Vec3f triangle_normal(const Vec3f& a, const Vec3f& b, const Vec3f& c) {
-    const Vec3f n = fused_cross(b - a, c - a);
-    const float squared = dot(n, n);
-    if (!(squared > 0.0f)) return n;
-    const float inverse = 1.0f / std::sqrt(squared);
-    return {n.x * inverse, n.y * inverse, n.z * inverse};
-}
+// The fused vector products and the face normal of the ray test (8012CB74,
+// 801238E8): gekko::cross / dot / triangle_normal.
+Vec3f fused_cross(const Vec3f& a, const Vec3f& b) { return gekko::cross(a, b); }
+float fused_dot(const Vec3f& a, const Vec3f& b) { return gekko::dot(a, b); }
+Vec3f triangle_normal(const Vec3f& a, const Vec3f& b, const Vec3f& c) { return gekko::triangle_normal(a, b, c); }
 } // namespace
 
 LandResult CollisionWorld::check_land(const Vec3f& p, float width, float up, float down) const {
@@ -245,26 +231,23 @@ WallResult CollisionWorld::check_wall(const Vec3f& position, const Vec3f& direct
 }
 
 void CollisionWorld::dynamic_near(const Vec3f& p, float reach, const Vec3f& minimum, const Vec3f& maximum,
-                                  std::vector<const std::vector<CollisionTriangle>*>& out) const {
+                                  std::vector<const Dynamic*>& out) const {
     auto place = [&](const Dynamic& d) {
+        // The child's transform (the copy transform with its source's
+        // matrix, or the check-switch transform) is pushed onto the HitLand
+        // traversal's identity (8021B044 + 80128774): the stack is deeper
+        // than one, so 801F6050 tests its triangles in their own vertex
+        // space with the inverse (8012A92C at 0x801F62BC).
         const Mat4& matrix = d.node->matrix;
-        if (!d.placed_valid || std::memcmp(d.placed_matrix.m.data(), matrix.m.data(), sizeof matrix.m) != 0) {
-            d.placed.clear();
-            for (const auto& local : d.local) {
-                CollisionTriangle t = local;
-                t.a = transform_point(local.a, matrix);
-                t.b = transform_point(local.b, matrix);
-                t.c = transform_point(local.c, matrix);
-                const Vec3f n = fused_cross(t.b - t.a, t.c - t.a);
-                if (length(n) < 1e-8f) continue;
-                t.normal = triangle_normal(t.a, t.b, t.c);
-                t.group = UINT32_MAX; // checked above
-                d.placed.push_back(t);
-            }
-            d.placed_matrix = matrix;
-            d.placed_valid = true;
+        if (!d.space_valid || std::memcmp(d.space_matrix.m.data(), matrix.m.data(), sizeof matrix.m) != 0) {
+            d.top = Mat4{};
+            gekko::premultiply(d.top, matrix);
+            d.inverse = Mat4{};
+            gekko::invert(d.top, d.inverse); // the status is not checked
+            d.space_matrix = matrix;
+            d.space_valid = true;
         }
-        out.push_back(&d.placed);
+        out.push_back(&d);
     };
     if (still_depth_ > 0) {
         // The same tests as below on the children enabled at the scope's
@@ -382,9 +365,13 @@ float triangle_hit(const HitSegment& segment, const CollisionTriangle& t, Vec3f&
     return std::signbit(x) == std::signbit(y) && std::signbit(y) == std::signbit(z) ? distance : -4.0f;
 }
 
-float hit_distance(const Vec3f& a, const Vec3f& b) {
-    const Vec3f d = a - b;
-    return std::sqrt(dot(d, d));
+// 801F63BC..801F643C: the candidate's distance from the segment origin to
+// the hit, origin - hit per axis, y * y rounded, x * x and z * z fused onto
+// it, the square root (frsqrte and Newton steps) when positive.
+float hit_distance(const Vec3f& origin, const Vec3f& hit) {
+    const float dy = gekko::subs(origin.y, hit.y), dx = gekko::subs(origin.x, hit.x), dz = gekko::subs(origin.z, hit.z);
+    const float squared = gekko::madds(dz, dz, gekko::madds(dx, dx, gekko::muls(dy, dy)));
+    return squared > 0.0f ? gekko::sqrt_newton(squared) : squared;
 }
 
 void extend(Vec3f& minimum, Vec3f& maximum, const Vec3f& p) {
@@ -395,11 +382,15 @@ void extend(Vec3f& minimum, Vec3f& maximum, const Vec3f& p) {
 }
 } // namespace
 
+// 801251D0: direction end - start, length from ((x*x + y*y) + z*z) plain
+// (the square root by frsqrte and Newton steps when positive), the direction
+// times 1 / length when the length exceeds 5e-7.
 HitSegment HitSegment::between(const Vec3f& start, const Vec3f& end) {
     HitSegment s;
     s.origin = start;
     s.direction = end - start;
-    s.length = std::sqrt(dot(s.direction, s.direction));
+    const float squared = dot(s.direction, s.direction);
+    s.length = squared > 0.0f ? gekko::sqrt_newton(squared) : squared;
     if (s.length > 5.0000001e-7f) s.direction = s.direction * (1.0f / s.length);
     return s;
 }
@@ -410,7 +401,7 @@ void CollisionWorld::query(std::span<const HitSegment> segments, const Vec3f& mi
     thread_local std::vector<std::int64_t> keys;
     thread_local std::vector<const std::vector<std::uint32_t>*> lists;
     thread_local std::vector<std::uint32_t> merged;
-    thread_local std::vector<const std::vector<CollisionTriangle>*> moving;
+    thread_local std::vector<const Dynamic*> moving;
     keys.clear();
     cells({minimum.x, 0, minimum.z}, {maximum.x, 0, maximum.z}, keys);
     keys.push_back(key(INT32_MAX, INT32_MAX));
@@ -470,8 +461,33 @@ void CollisionWorld::query(std::span<const HitSegment> segments, const Vec3f& mi
         const auto& t = triangles_[index];
         if (enabled(t)) test(t);
     }
-    for (const auto* placed : moving)
-        for (const auto& t : *placed) test(t);
+    // 801F6050 for a stack deeper than one: each segment goes into the
+    // child's vertex space (801252D0 with the inverse), the local hit comes
+    // back through the top matrix (8012D498), its distance is measured from
+    // the original segment's origin (801F63BC) and the append turns the
+    // local normal with the top matrix (80300F30: 8012D434, not normalized).
+    thread_local std::vector<HitSegment> local;
+    for (const auto* d : moving) {
+        local.resize(segments.size());
+        for (std::size_t i = 0; i < segments.size(); ++i) {
+            local[i] = segments[i];
+            gekko::transform_segment(local[i].origin, local[i].direction, local[i].length, d->inverse);
+        }
+        for (const auto& t : d->local) {
+            if (!selects(t.kind, flags)) continue;
+            for (std::size_t i = 0; i < segments.size(); ++i) {
+                Vec3f position;
+                if (triangle_hit(local[i], t, position) < 0.0f) continue;
+                HitCandidate c;
+                c.position = gekko::transform_point(position, d->top);
+                c.normal = gekko::rotate(t.normal, d->top);
+                c.distance = hit_distance(segments[i].origin, c.position);
+                c.info = t.info;
+                c.child = t.child;
+                out.push_back(c);
+            }
+        }
+    }
 }
 
 // 80300444: four rays from Y 1000 down to -100 at the corners of the width;
@@ -535,12 +551,24 @@ WallResult CollisionWorld::wall_query(const Vec3f& position, const Vec3f& direct
     result.position = position;
     flags &= ~1u;
     const float radius = 1.42f * width;
-    // Euler (0, pi/2, 0) applied to the direction (8012D434), then normalized.
-    Vec3f side{direction.z, direction.y, -direction.x};
+    // 0x802FE974..0x802FEAEC: the direction through the HitLandModel's
+    // Euler (0, pi/2, 0) matrix (+0x30, made by 80129134 at 0x802FE2B0 from
+    // 0 and 1.5707964: its cosines are -4.371139e-8, not 0) with 8012D434's
+    // fused products, then times 1 / length (frsqrte and Newton steps).
+    static const Mat4 quarter = [] {
+        Mat4 m;
+        gekko::euler_matrix(m, 0.0f, 1.5707964f, 0.0f);
+        return m;
+    }();
+    Vec3f side = gekko::rotate(direction, quarter);
     {
-        const float length = std::sqrt(dot(side, side));
-        if (length <= 0.0f) return result;
-        side = side * (1.0f / length);
+        const float squared = dot(side, side);
+        // A zero length (a vertical direction) makes the side NaN: no
+        // parallel or lateral segment can hit, and the one along the
+        // direction has no length either.
+        if (!(squared > 0.0f)) return result;
+        const float inverse = 1.0f / gekko::sqrt_newton(squared);
+        side = {side.x * inverse, side.y * inverse, side.z * inverse};
     }
     const Vec3f base{position.x, down + position.y, position.z};
     const Vec3f plus = base + direction * radius, minus = base + direction * -radius;
@@ -603,9 +631,15 @@ WallResult CollisionWorld::wall_query(const Vec3f& position, const Vec3f& direct
             for (std::size_t i = 1; i < hits.size(); ++i)
                 if (hits[i].distance < hits[selected].distance) selected = i;
             const Vec3f& normal = hits[selected].normal;
-            // cos(acos(|n|^2 / (|n| |n|))) of the unit normal: one.
+            // 0x802FF410..0x802FF658: cos(acos(n.n / (|n| |n|))), the ratio
+            // clamped to [-1, 1] like 8012947C's asin argument, acos and cos
+            // the MSL ones (800A2C34 / 800A257C), each rounded to single.
             const float squared = dot(normal, normal);
-            const float ratio = std::min(1.0f, squared / (std::sqrt(squared) * std::sqrt(squared)));
+            const float length = squared > 0.0f ? gekko::sqrt_newton(squared) : squared;
+            const float x = squared / (length * length);
+            const float above = x > -1.0f ? x : -1.0f;
+            const float clamped = above >= 1.0f ? 1.0f : (x > -1.0f ? x : -1.0f);
+            const float ratio = float(gekko::cos(float(gekko::acos(clamped))));
             const float scale = (radius - hits[selected].distance) * ratio;
             // 0x802FF680..0x802FF690: fused onto the position (fmadds).
             result.position = {std::fma(scale, normal.x, result.position.x), std::fma(scale, normal.y, result.position.y),
@@ -626,19 +660,31 @@ WallResult CollisionWorld::check_wall_full(const Vec3f& position, float width, f
     WallResult result;
     result.position = position;
     flags &= ~1u;
+    // 0x802FF88C..0x802FF8A0: the turn, made by 80129134 from (0, 0.7853982, 0).
+    static const Mat4 turn = [] {
+        Mat4 m;
+        gekko::euler_matrix(m, 0.0f, 0.78539819f, 0.0f);
+        return m;
+    }();
     auto pass = [&](float radius, std::uint32_t query_flags) {
         const Vec3f base{position.x, down + position.y, position.z};
         std::array<HitSegment, 8> segments;
         Vec3f lo = base, hi = base;
         Vec3f direction{1.0f, 0.0f, 0.0f};
-        constexpr float turn = 0.70710677f;
         for (int i = 0; i < 8; ++i) {
-            const Vec3f end = base + direction * radius;
+            // 0x802FF908..0x802FF914: the end is radius times the direction
+            // fused onto the base.
+            const Vec3f end{gekko::madds(radius, direction.x, base.x), gekko::madds(radius, direction.y, base.y),
+                            gekko::madds(radius, direction.z, base.z)};
             segments[std::size_t(i)] = HitSegment::between(base, end);
             extend(lo, hi, end);
             if (i == 7) break;
-            direction = normalize(Vec3f{direction.x * turn + direction.z * turn, direction.y,
-                                        direction.z * turn - direction.x * turn});
+            // 0x802FF9A0..0x802FFAC4: turned by 8012D434, times 1 / length.
+            direction = gekko::rotate(direction, turn);
+            float length = dot(direction, direction);
+            if (length > 0.0f) length = gekko::sqrt_newton(length);
+            const float inverse = 1.0f / length;
+            direction = {direction.x * inverse, direction.y * inverse, direction.z * inverse};
         }
         lo.y = hi.y = position.y;
         thread_local std::vector<HitCandidate> hits;
@@ -649,10 +695,17 @@ WallResult CollisionWorld::check_wall_full(const Vec3f& position, float width, f
         for (std::size_t i = 1; i < hits.size(); ++i)
             if (hits[i].distance < hits[selected].distance) selected = i;
         const Vec3f& normal = hits[selected].normal;
-        // cos(acos(|n|^2 / (|n| |n|))), as in the lateral wall pass: one.
+        // 0x802FFB64..0x802FFDEC: as the lateral wall pass, cos(acos(...))
+        // of the clamped ratio, the push fused onto the position.
         const float squared = dot(normal, normal);
-        const float ratio = std::min(1.0f, squared / (std::sqrt(squared) * std::sqrt(squared)));
-        result.position = result.position + normal * ((radius - hits[selected].distance) * ratio);
+        const float length = squared > 0.0f ? gekko::sqrt_newton(squared) : squared;
+        const float x = squared / (length * length);
+        const float above = x > -1.0f ? x : -1.0f;
+        const float clamped = above >= 1.0f ? 1.0f : (x > -1.0f ? x : -1.0f);
+        const float ratio = float(gekko::cos(float(gekko::acos(clamped))));
+        const float scale = (radius - hits[selected].distance) * ratio;
+        result.position = {gekko::madds(scale, normal.x, result.position.x), gekko::madds(scale, normal.y, result.position.y),
+                           gekko::madds(scale, normal.z, result.position.z)};
         result.hits.push_back(hits[selected]);
         result.hit = true;
         return true;

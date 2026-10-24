@@ -1273,6 +1273,8 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     if (send.frame != frame) continue;
                     dw4::engine::Packet packet;
                     if (!send.argument.empty()) dw4::engine::parse_packet_arguments(send.argument, packet);
+                    // An input-script SEND has no counterpart in the original.
+                    const dw4::engine::Messenger::PortOnly script_send(engine.messenger());
                     engine.messenger().send(engine, send.category, std::nullopt, send.row, send.command, packet);
                 }
                 // Player 1: the live devices, the script's presses and the

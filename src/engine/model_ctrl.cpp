@@ -1,4 +1,5 @@
 #include "dw4/engine/managers.hpp"
+#include "dw4/engine/gekko_math.hpp"
 #include "dw4/motion.hpp"
 
 #include <algorithm>
@@ -1236,19 +1237,33 @@ void ModelCtrlManager::update_player(Engine& engine, ModelRam& ram) {
     // stick at 0.3 neither steps nor turns. There is no other magnitude test.
     ram.key_input = ram.control_enabled && pad.left_directions.held != 0;
     if (ram.key_input) {
-        // 8034C67C..8034C6B8: desired heading from the inverse camera matrix and stick.
+        // 8034C65C..8034C6B8: the desired heading. The inverse of the
+        // viewer's view matrix (8012A92C into an identity, its status
+        // ignored) turns +Z (8012D434, 804F8B10) into the camera's forward
+        // direction; heading = frsp(atan2(fwd.x, fwd.z)) + frsp(atan2(stick
+        // x, -stick y)) (double MSL atan2 800A2C74, fadds).
         FrameCamera camera;
         if (auto* cameras = engine.get<CameraManager>()) cameras->frame_camera(engine, camera);
         Mat4 inverse;
-        if (invert(camera.view, inverse)) {
-            const Vec3f forward{inverse(2, 0), inverse(2, 1), inverse(2, 2)};
-            ram.desired[1] = std::atan2(forward.x, forward.z) + std::atan2(sx, -sy);
-            // DW4_TRACE_STICK: the stick and the wanted yaw as float bits, in
-            // the format of the Dolphin M log (hook 0x8034C6B8).
-            if (static const bool trace = std::getenv("DW4_TRACE_STICK") != nullptr; trace)
-                std::printf("[%llu] M %08x %08x %08x\n", static_cast<unsigned long long>(engine.frame()),
-                            std::bit_cast<std::uint32_t>(sx), std::bit_cast<std::uint32_t>(sy),
-                            std::bit_cast<std::uint32_t>(ram.desired[1]));
+        gekko::invert(camera.view, inverse);
+        const Vec3f forward = gekko::rotate({0.0f, 0.0f, 1.0f}, inverse);
+        const float camera_yaw = float(gekko::atan2(forward.x, forward.z));
+        const float stick_yaw = float(gekko::atan2(sx, -sy));
+        ram.desired[1] = gekko::adds(camera_yaw, stick_yaw);
+        // DW4_TRACE_STICK: the stick and the wanted yaw as float bits, in
+        // the format of the Dolphin M log (hook 0x8034C6B8); DW4_TRACE_VIEW
+        // adds the view matrix and the forward direction (V, hook 0x8034C690).
+        if (static const bool trace = std::getenv("DW4_TRACE_STICK") != nullptr; trace)
+            std::printf("[%llu] M %08x %08x %08x\n", static_cast<unsigned long long>(engine.frame()),
+                        std::bit_cast<std::uint32_t>(sx), std::bit_cast<std::uint32_t>(sy),
+                        std::bit_cast<std::uint32_t>(ram.desired[1]));
+        if (static const bool trace = std::getenv("DW4_TRACE_VIEW") != nullptr; trace) {
+            std::printf("[%llu] V", static_cast<unsigned long long>(engine.frame()));
+            for (int row = 0; row < 4; ++row)
+                for (int column = 0; column < 3; ++column)
+                    std::printf(" %08x", std::bit_cast<std::uint32_t>(camera.view(row, column)));
+            for (float v : {forward.x, forward.y, forward.z}) std::printf(" %08x", std::bit_cast<std::uint32_t>(v));
+            std::printf("\n");
         }
     }
     // 8034C4E8: while a direction is held, its octant counter restarts at 30

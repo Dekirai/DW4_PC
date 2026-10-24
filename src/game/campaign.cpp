@@ -3165,6 +3165,7 @@ bool CampaignBot::answer_menu(engine::Engine& engine, const engine::ModelCtrlMan
         lab_target_ = std::atoi(step.action.c_str() + 7);
     } else if (lab_target_ >= 0) {
         engine::Packet running;
+        const engine::Messenger::PortOnly bot_query(engine.messenger()); // not a message of the original
         engine.messenger().send(engine, "SUBWND", std::nullopt, -1, "ISRUN", running);
         if (running.bools.empty() || !running.bools[0]) {
             lab_target_ = -1;
@@ -3185,6 +3186,7 @@ bool CampaignBot::answer_menu(engine::Engine& engine, const engine::ModelCtrlMan
     // for a sale list - round and round for 950000 frames once.)
     const bool program_running = [&] {
         engine::Packet running;
+        const engine::Messenger::PortOnly bot_query(engine.messenger()); // not a message of the original
         engine.messenger().send(engine, "SUBWND", std::nullopt, -1, "ISRUN", running);
         return !running.bools.empty() && running.bools[0];
     }();
@@ -3203,6 +3205,7 @@ bool CampaignBot::answer_menu(engine::Engine& engine, const engine::ModelCtrlMan
     }
     if (bank_open_) {
         engine::Packet running;
+        const engine::Messenger::PortOnly bot_query(engine.messenger()); // not a message of the original
         engine.messenger().send(engine, "SUBWND", std::nullopt, -1, "ISRUN", running);
         if (!running.bools.empty() && running.bools[0]) {
             bank_ran_ = true;
@@ -3238,6 +3241,7 @@ bool CampaignBot::answer_menu(engine::Engine& engine, const engine::ModelCtrlMan
                                                                                : 6;
     if (gear_open_) {
         engine::Packet running;
+        const engine::Messenger::PortOnly bot_query(engine.messenger()); // not a message of the original
         engine.messenger().send(engine, "SUBWND", std::nullopt, -1, "ISRUN", running);
         if (!running.bools.empty() && running.bools[0]) {
             gear_ran_ = true;
@@ -3294,6 +3298,7 @@ bool CampaignBot::answer_menu(engine::Engine& engine, const engine::ModelCtrlMan
     };
     const auto subwnd_running = [&] {
         engine::Packet running;
+        const engine::Messenger::PortOnly bot_query(engine.messenger()); // not a message of the original
         engine.messenger().send(engine, "SUBWND", std::nullopt, -1, "ISRUN", running);
         return !running.bools.empty() && running.bools[0];
     };
@@ -5851,6 +5856,7 @@ CampaignBot::Output CampaignBot::play(engine::Engine& engine, const engine::Mode
         // the stage's PLAYERPOINT row exists (not yet on the frame the stage
         // changes); an exit's SETGENERATEPOS later is for the next.
         engine::Packet packet;
+        const engine::Messenger::PortOnly bot_query(engine.messenger()); // not a message of the original
         engine.messenger().send(engine, "PLAYERPOINT", std::nullopt, -1, "GETGENERATEPOS", packet);
         if (!packet.ints.empty()) {
             entry_ = packet.ints[0];

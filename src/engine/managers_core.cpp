@@ -1,5 +1,6 @@
 #include "dw4/engine/managers.hpp"
 #include "dw4/animation_math.hpp"
+#include "dw4/engine/gekko_math.hpp"
 #include "dw4/engine/save_menu.hpp"
 #include "dw4/engine/state_archive.hpp"
 #include "dw4/igb_document.hpp"
@@ -648,16 +649,23 @@ void CameraManager::compute_camera(Engine& engine, FrameCamera& camera) {
         const CameraRam* ram = chosen;
         const auto& path = viewer_ ? *viewer_->path : ram->paths.front();
         const std::int64_t at = viewer_ ? viewer_->time : 0;
-        // World matrices along the path; the last transform places the camera
-        // relative to its parent group, whose origin is the look-at pivot.
+        // World matrices along the path (801EA990): from the identity, each
+        // transform whose _target is 0 (+0x60; others are skipped) takes its
+        // matrix at the viewer's time (vfunc +0x9C) and is applied before
+        // the product so far (80128774, fused); the last transform places
+        // the camera relative to its parent group, whose origin is the
+        // look-at pivot.
         Mat4 world, pivot;
         const Node* last_transform = nullptr;
+        auto applies = [](const Node* node) {
+            return (node->kind == NodeKind::transform || node->kind == NodeKind::model_node) && node->object.i32(9) == 0;
+        };
         for (auto* node : path.nodes)
-            if (node->kind == NodeKind::transform || node->kind == NodeKind::model_node) last_transform = node;
+            if (applies(node)) last_transform = node;
         for (auto* node : path.nodes) {
-            if (node->kind != NodeKind::transform && node->kind != NodeKind::model_node) continue;
+            if (!applies(node)) continue;
             if (node == last_transform) pivot = world;
-            world = (node->sequence && node->sequence->valid ? node->sequence->evaluate(at) : node->matrix) * world;
+            gekko::premultiply(world, node->sequence && node->sequence->valid ? node->sequence->evaluate(at) : node->matrix);
         }
         if (path.camera) {
             // igCamera fields (804B0F14): _horizontalFieldOfView (default 45,
@@ -681,8 +689,43 @@ void CameraManager::compute_camera(Engine& engine, FrameCamera& camera) {
                 }
             }
         }
-        Mat4 view;
-        if (invert(world, view)) camera.view = view;
+        // 802F43DC..802F4418: the camera matrix makes a round trip through
+        // Euler angles (8012947C, then 80129134 with the translation put
+        // back), and the view matrix is its orthonormal inverse (8012A860),
+        // published to the viewer parameters (+0x6C) the player input reads.
+        static const bool trace = std::getenv("DW4_TRACE_VIEW") != nullptr;
+        auto print_matrix = [&](const char* letter) {
+            std::printf("[%llu] %s", static_cast<unsigned long long>(engine.frame()), letter);
+            for (int row = 0; row < 4; ++row)
+                for (int column = 0; column < 3; ++column) std::printf(" %08x", std::bit_cast<std::uint32_t>(world(row, column)));
+        };
+        // DW4_TRACE_VIEW: the path's matrix (G, Dolphin hook 0x802F43B4), the
+        // matrix after the round trip and its Euler angles (E, 0x802F440C),
+        // float bits.
+        if (trace) {
+            print_matrix("G");
+            std::printf("\n");
+            if (std::getenv("DW4_TRACE_VIEW_PATH"))
+                for (auto* node : path.nodes) {
+                    std::printf("[%llu] N %s %d %d", static_cast<unsigned long long>(engine.frame()), node->name.c_str(),
+                                int(node->kind), node->object.i32(9));
+                    for (float v : node->matrix.m) std::printf(" %08x", std::bit_cast<std::uint32_t>(v));
+                    std::printf("\n");
+                }
+        }
+        const Vec3f translation{world(3, 0), world(3, 1), world(3, 2)};
+        float x = 0.0f, y = 0.0f, z = 0.0f;
+        gekko::matrix_euler(world, x, y, z);
+        gekko::euler_matrix(world, x, y, z);
+        world(3, 0) = translation.x;
+        world(3, 1) = translation.y;
+        world(3, 2) = translation.z;
+        gekko::view_inverse(world, camera.view);
+        if (trace) {
+            print_matrix("E");
+            for (float v : {x, y, z}) std::printf(" %08x", std::bit_cast<std::uint32_t>(v));
+            std::printf("\n");
+        }
     }
 }
 
@@ -721,7 +764,15 @@ void StageCtlManager::update(Engine& engine) {
     // for it for good - the picture stays black with the sound stopped.
     auto subwnd_running = [&] {
         Packet run = send("SUBWND", "ISRUN");
-        return run.bools.empty() ? messenger.stale_bool() != 0 : run.boolean(0);
+        const bool running = run.bools.empty() ? messenger.stale_bool() != 0 : run.boolean(0);
+        // DW4_TRACE_MESSAGE_OBJECTS: the read like the Dolphin hooks at
+        // 0x80347DA8 / 0x80347E58 (I / J): value, current object, its first bool.
+        if (static const bool trace = std::getenv("DW4_TRACE_MESSAGE_OBJECTS") != nullptr; trace) {
+            const auto object = messenger.message_objects().state();
+            std::printf("[%llu] %c %d %zu %u%s\n", static_cast<unsigned long long>(engine.frame()), reset_state_ == 1 ? 'I' : 'J',
+                        running ? 1 : 0, object.current, unsigned(object.first_bool), run.bools.empty() ? " stale" : "");
+        }
+        return running;
     };
     switch (reset_state_) {
     case 0:
@@ -1761,6 +1812,15 @@ bool SoundManager::command(Engine& engine, Ram& ram, std::string_view command, P
         return false;
     }
     if (t == "beSoundInfo") {
+        // The stage loader's (802F8A64 states 100 / 101): MAKEBINLIST builds
+        // the Cri's file list from the static infos (no answer; the port
+        // keeps the sound files in add_info), ISDONETRANS answers 1 once it
+        // is done, at the first ask in every capture.
+        if (command == "MAKEBINLIST") return true;
+        if (command == "ISDONETRANS") {
+            packet.bools.push_back(1);
+            return true;
+        }
         if (command == "PLAY" || command == "PLAYatPAUSE") {
             if (command == "PLAYatPAUSE") pause_next_ = true; // 80314FBC: Cri +0x3C
             play(engine, std::string(packet.string(0)));

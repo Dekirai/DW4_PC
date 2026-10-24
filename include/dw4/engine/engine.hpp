@@ -90,6 +90,65 @@ struct MessengerRow {
     Ram* recipient{};
 };
 
+// beMessenger's message objects: +0x10 the current one, which every select
+// (80305344) and post preparation (80305F9C) resets and fills and every
+// dispatch (80305A28) answers into, and one in each deferred record (+0x28).
+// 80303C0C makes them at the first select or post of a stage (made flag
+// +0x30): the current object and 32 records with their objects. A post's
+// commit (803061BC, 0x803062A0..0x8030632C) swaps the current object with the
+// record's: the record takes the arguments, the record's old object becomes
+// current. The delivery pass (80304C58) selects (resetting the current
+// object's counts), swaps the delivered object in for the dispatch
+// (0x80304DCC..0x80304E58) and never swaps back: the record (80304A04 resets
+// its counts) goes to the end of the record list with the previous current
+// object, and the next post takes the last record. Each pass ends with
+// 80304618 on the current object; a stage change releases them all (803040C0).
+// A select only resets the counts and the shrink to four entries keeps the
+// data (8004155C), so the first bool entry an unchecked read sees (80306A1C
+// without 8030690C: the soft reset 0x80347DA4 / 0x80347E54) is the one the
+// last bool written at index 0 of the current object left - possibly by
+// another message. Only the bool counts and that entry are modelled.
+class MessageObjects {
+public:
+    void clear();                        // 803040C0
+    void select();                       // make (80303C0C), else 80304618 on the current object
+    void append(std::uint8_t value);     // 80306964: data[count] = value, count + 1
+    // 80305F9C + 803061BC after select() and the arguments: the record's
+    // object (a new record's when none is idle) becomes current; returns the
+    // object now holding the arguments.
+    std::size_t commit();
+    // 80304C58 for a due record holding `object`: select, swap; returns the
+    // previous current object, which the record now holds.
+    std::size_t deliver(std::size_t object);
+    // 80304A04 and 0x80304EC8..0x80304EF0 after the dispatch: the record's
+    // object counts reset, the record to the end of the list.
+    void retire(std::size_t previous);
+    void end_pass();                     // 0x80304F8C: 80304618 on the current object
+    bool made() const { return made_; }
+    bool holds(std::size_t object) const { return made_ && object < objects_.size(); }
+    std::uint8_t first_bool() const { return made_ ? objects_[current_].first_bool : 0; }
+    struct State {
+        std::size_t current = 0;
+        std::int32_t bools = 0;
+        std::uint8_t first_bool = 0;
+    };
+    State state() const { return made_ ? State{current_, objects_[current_].bools, objects_[current_].first_bool} : State{}; }
+    State state(std::size_t object) const { return holds(object) ? State{object, objects_[object].bools, objects_[object].first_bool} : State{}; }
+    std::size_t objects() const { return objects_.size(); }
+
+    static constexpr std::size_t kRecords = 32;
+
+private:
+    struct Object {
+        std::int32_t bools = 0;          // the bool list's count (+0x10 +8)
+        std::uint8_t first_bool = 0;     // its data[0]
+    };
+    std::vector<Object> objects_;
+    std::size_t current_ = 0;
+    std::vector<std::size_t> idle_;      // the idle records' objects in record list order
+    bool made_ = false;
+};
+
 struct DeferredMessage {
     std::int64_t time{};
     std::string category;
@@ -97,6 +156,9 @@ struct DeferredMessage {
     std::int32_t index{};
     std::string command;
     Packet arguments;
+    // The message object the record holds (Messenger::MessageObject; the
+    // one the post filled, swapped into the record at the commit).
+    std::size_t object = 0;
 };
 
 class Messenger {
@@ -121,15 +183,35 @@ public:
     std::size_t count(std::string_view category, std::optional<std::string_view> name, std::int32_t index) const;
     const std::vector<MessengerRow>& rows() const { return rows_; }
     void clear_deferred() { deferred_.clear(); }
-    // The first entry of the shared message object's bool list (80306A1C
-    // reads it without the count check 8030690C): every module sends through
-    // one message object (all module +0x14, 808413E0 in Dolphin), whose
-    // select 80305344 only resets the list's count (80304618) and whose
-    // shrink to four entries keeps them (8004155C), so the entry holds the
-    // first bool of the last send that wrote one (an argument or an answer).
-    std::uint8_t stale_bool() const { return stale_bool_; }
+    // The first entry of the current message object's bool list as 80306A1C
+    // reads it, without the count check 8030690C (the soft reset 0x80347DA4 /
+    // 0x80347E54): a select only resets the counts (80304618) and the shrink
+    // to four entries keeps the data (8004155C), so after a send or a
+    // delivery without a bool the entry is the one an earlier message left in
+    // that object - see MessageObjects. 0 before the first bool of a stage.
+    std::uint8_t stale_bool() const { return objects_.first_bool(); }
+    // A send of the port alone (the campaign bot's queries, input-script
+    // SEND lines) has no counterpart in the original: while a scope is open
+    // the message objects keep their state.
+    class PortOnly {
+    public:
+        explicit PortOnly(Messenger& messenger) : messenger_(messenger) { ++messenger_.port_only_; }
+        ~PortOnly() { --messenger_.port_only_; }
+        PortOnly(const PortOnly&) = delete;
+        PortOnly& operator=(const PortOnly&) = delete;
+
+    private:
+        Messenger& messenger_;
+    };
+    const MessageObjects& message_objects() const { return objects_; }
 
 private:
+    bool modelling() const { return port_only_ == 0; }
+    std::size_t dispatch(Engine& engine, std::string_view category, std::optional<std::string_view> name,
+                         std::int32_t index, std::string_view command, Packet& packet, bool model);
+    void end_pass(const Engine& engine);
+    MessageObjects objects_;
+    int port_only_ = 0;
     // 80303C0C makes 32 deferred records; preparing a post grows the pool by
     // one record while all are in use. A delivery pass covers at most the
     // records the pool had when it began.
@@ -140,10 +222,6 @@ private:
     // beMessenger +0x28: the world time of the pause or of the last paused
     // pass; 0 = running (also when paused at time 0, as the original).
     std::int64_t paused_at_ = 0;
-    // See stale_bool(); a stage change releases the reply object (803040C0)
-    // and the first send makes a new one, whose content before its first bool
-    // is not modelled (0).
-    std::uint8_t stale_bool_ = 0;
     // The rows of each category, all and by name, as row numbers in row
     // order (selection reads only these; rebuilt after the rows change).
     struct TextHash {
