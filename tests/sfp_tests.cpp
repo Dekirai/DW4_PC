@@ -333,8 +333,27 @@ void driver() {
     check(e.voices()[0].end == 0, "One-shot runs out in its first frame");
     e.tick(1, 1, banks, rnd);
     check(!e.voices()[0].used && e.status(5) == 2, "Ran out: freed; the track still waits");
-    for (int f = 2; f < 60 && e.status(5) == 2; ++f) e.tick(f, f, banks, rnd);
-    check(e.voices()[0].used && e.voices()[0].loop && e.seqs()[5].state == 3, "Second note after the wait");
+    // The wait (258 ms, 5 ms a tick) runs out in tick 52: the tick's own pass (803C3820, after the MIDI ring was
+    // drained) ends the track and leaves the note in the ring; the next tick's drain starts its voice (803C37A8).
+    sndf::Driver e2 = e; // (for the same-tick case below)
+    std::uint32_t rnd2 = rnd;
+    int fr = 2;
+    for (; fr < 60 && e.status(5) == 2; ++fr) e.tick(fr, fr, banks, rnd);
+    check(fr == 53 && e.status(5) == 0 && e.seqs()[5].state == 3 && !e.voices()[0].used,
+          "The pass after the drain ends the track; its note waits in the ring");
+    e.tick(fr, fr, banks, rnd);
+    check(e.voices()[0].used && e.voices()[0].loop && e.voices()[0].start == 53 && e.seqs()[5].voices == 1,
+          "Second note at the next tick's drain");
+    // A request run by the drain of the tick the wait runs out in: its pass (803C5734) plays every track that is due,
+    // and the drain goes on with what that pass added: the note sounds from this tick.
+    for (fr = 2; fr < 52; ++fr) e2.tick(fr, fr, banks, rnd2);
+    e2.seq_set(6, 0xa9050000u, 52);
+    e2.seq_play(6, 52);
+    e2.tick(52, 52, banks, rnd2);
+    bool both = false;
+    for (const auto& v : e2.voices())
+        if (v.used && v.seq == 5 && v.start == 52) both = e2.status(6) == 1;
+    check(both, "A request's pass in the drain plays the due note of another track in the same tick");
 
     // AX pool: two voices left; a key-on voice is never taken by an equal priority, a key-off one is (drop callback).
     sndf::Driver f;

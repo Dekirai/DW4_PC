@@ -1467,9 +1467,20 @@ std::uint64_t SoundManager::start_sfp(Engine& engine, const std::string& name, c
     entry.type = data.type;
     entry.name = name;
     entry.priority = data.priority;
-    if (static const bool trace = std::getenv("DW4_TRACE_SOUND") != nullptr; trace)
+    if (static const bool trace = std::getenv("DW4_TRACE_SOUND") != nullptr; trace) {
+        // (Where the request falls on the DSP's frame grid: its command time
+        // and the boundary of the tick that runs it, in AX frames after the
+        // frame's world time.)
+        const std::int64_t world = cri_ticks(engine.time());
+        const std::int64_t tick = cri_.ax_phase - floor_div(cri_.ax_phase - now, CriStreams::kAxFrameTicks) * CriStreams::kAxFrameTicks;
+        char phase[96];
+        std::snprintf(phase, sizeof phase, ", command +%.3f, tick +%.3f AX frames", double(now - world) / double(CriStreams::kAxFrameTicks),
+                      double(tick - world) / double(CriStreams::kAxFrameTicks));
+        char request[16];
+        std::snprintf(request, sizeof request, "%08X", data.request);
         engine.log("sound effect " + name + " from " + bank->name + " at frame " + std::to_string(engine.frame()) + " (entry " +
-                   std::to_string(seq) + ")");
+                   std::to_string(seq) + ", request " + request + ")" + phase);
+    }
     return entry.serial;
 }
 
