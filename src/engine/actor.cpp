@@ -217,11 +217,22 @@ float MotionState::weight(std::int64_t time) const {
 }
 
 void MotionState::update(std::int64_t time) {
+    // 0x801D00D0..0x801D0164, in list order: a MOTIONSET state the combiner
+    // has not evaluated yet (+0x1c) starts again at every update - its base
+    // so that its time is 0 now (a state at speed 0 too: the base becomes 0),
+    // the fade's start +0x48 now, so the weight below starts from 0 again.
+    // The baked pose has no time; the activation's state (combine mode 0) is
+    // skipped and never fresh.
+    if (previous_fresh && !previous_clip.empty()) previous_clock.restart(time);
+    if (fresh) {
+        clock.restart(time);
+        blend_start = time;
+    }
     // A replacing base state (combine mode 0) retires nothing (801CFFB4 skips
     // it); only a fade that reached weight 1 does.
     if (has_previous() && !(weight(time) < 1.0f)) {
         previous_clip.clear();
-        previous_frozen = false;
+        previous_fresh = false;
         previous_pose.clear();
         hidden = false;
     }
