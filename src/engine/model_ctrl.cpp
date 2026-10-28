@@ -3057,8 +3057,7 @@ bool ActionManager::execute(Engine& engine, ActionRam& ram, const Command& c) {
         // one fixed state built from the combiner's cached bone matrices
         // (+0x40), the output of its last evaluation - the scene traversal of
         // the last picture, not the pose at this time. The new clip fades
-        // from that. The 'S' freezes of field 3 (0x802F12C0, 0x802F1370) are
-        // left out: every MOTIONSET in the stage data has "RR" there.
+        // from that.
         const auto now = static_cast<std::int64_t>(scaled_clock(engine.time(), ram.node_clock.scale) + static_cast<std::uint64_t>(ram.node_clock.bias));
         auto& m = ram.motion;
         if (m.layered()) {
@@ -3066,11 +3065,14 @@ bool ActionManager::execute(Engine& engine, ActionRam& ram, const Command& c) {
             // Never traversed (no cached output yet): the pose at this time.
             if (baked.empty() && ram.database) motion_locals(*ram.database, m, now, baked);
             m.previous_clip.clear();
+            m.previous_frozen = false;
             m.previous_pose = std::move(baked);
             m.hidden = false;
         } else {
             m.previous_clip = m.clip;
             m.previous_start = m.start;
+            m.previous_frozen = m.frozen;
+            m.previous_frozen_local = m.frozen_local;
             m.previous_pose.clear();
         }
         m.blend_start = now;
@@ -3078,9 +3080,37 @@ bool ActionManager::execute(Engine& engine, ActionRam& ram, const Command& c) {
         ram.motion_immediate = false;
         m.clip = c.name;
         m.start = now;
+        m.frozen = false;
         // loc_801CFFB4 at 0x802F12B0 updates the combiner at node time: the new
         // state's fade starts now, and a state that cuts in retires the others.
         m.update(now);
+        // Field 3 'S' sets a state's speed (+0x38) to 0 (0x80424FB8) and moves
+        // its time base (+0x40) so the time stays put - the time it had at the
+        // world time, not the node time (0x802F12EC / 0x802F138C read the
+        // clock's +0x50 directly): the first letter freezes the combiner's
+        // first state (0x802F12C0..0x802F1360: the fade source, or the new
+        // clip once its cut-in retired the rest), the second the last state,
+        // the new clip (0x802F1370..0x802F141C). A frozen state keeps its time.
+        // Only n_leomon's KYRO01 in staggf03 has anything but "RR" there
+        // ("RS"): action01 holds its first picture while wait02 fades out.
+        const bool freeze_first = c.interpolation.size() >= 1 && c.interpolation[0] == 'S';
+        const bool freeze_last = c.interpolation.size() >= 2 && c.interpolation[1] == 'S';
+        if (freeze_first || freeze_last) {
+            const auto world = static_cast<std::int64_t>(scaled_clock(engine.time(), 1.0f));
+            if (freeze_first) {
+                if (!m.previous_clip.empty()) {
+                    if (!m.previous_frozen) m.previous_frozen_local = world - m.previous_start;
+                    m.previous_frozen = true;
+                } else if (m.previous_pose.empty()) {
+                    if (!m.frozen) m.frozen_local = world - m.start;
+                    m.frozen = true;
+                }
+            }
+            if (freeze_last) {
+                if (!m.frozen) m.frozen_local = world - m.start;
+                m.frozen = true;
+            }
+        }
         // 0x802F1440-0x802F14CC: 'L' loops the clip, anything else plays it once.
         if (ram.database) ram.database->set_looping(c.name, !c.loop.empty() && c.loop[0] == 'L');
         ram.motion_work = 1; // 0x802F14E4
@@ -3140,9 +3170,11 @@ void ActionManager::dispatch(Engine& engine, ActionRam& ram, std::string_view na
             auto& m = ram.motion;
             m.hidden = !m.clip.empty();
             m.previous_clip.clear();
+            m.previous_frozen = false;
             m.previous_pose.clear();
             m.clip = ram.database->first_clip_name();
             m.start = now;
+            m.frozen = false;
             m.blend = 0;
             m.blend_start = now;
             ram.pose_time = -1;
@@ -3303,13 +3335,22 @@ void ActionManager::update(Engine& engine) {
         // work waits one frame (1 -> 2), then updates the combiner at node
         // time (801CFFB4 at 0x802F0F50) each frame until one state is left
         // (0x802F1070), so WAITCHECK 'M' and the next MOTIONSET count this
-        // frame's states. The speed alignment there (0x802F108C) has no
-        // counterpart: the port's states run on the node clock.
+        // frame's states. Then the last state's speed is aligned with the
+        // node clock's scale (0x802F108C..0x802F1130): a frozen state runs on
+        // from the time it kept. The port's states run on the node clock, so
+        // only that release has a counterpart.
         if (ram.motion_work == 1) {
             ram.motion_work = 2;
         } else if (ram.motion_work == 2) {
-            if (ram.motion.layered()) ram.motion.update(node_time(ram.node_clock, now));
-            if (!ram.motion.layered()) ram.motion_work = 0;
+            const auto t = node_time(ram.node_clock, now);
+            if (ram.motion.layered()) ram.motion.update(t);
+            if (!ram.motion.layered()) {
+                if (ram.motion.frozen) {
+                    ram.motion.start = t - ram.motion.frozen_local;
+                    ram.motion.frozen = false;
+                }
+                ram.motion_work = 0;
+            }
         }
         // Joint section.
         if (ram.joint_state == 1 || ram.joint_state == 2) {
@@ -3370,7 +3411,7 @@ void ActionManager::update(Engine& engine) {
             if (ram.database && !ram.motion.clip.empty()) {
                 if (const Clip* clip = ram.database->clip(ram.motion.clip)) {
                     const auto t = static_cast<std::int64_t>(scaled_clock(now, ram.node_clock.scale) + static_cast<std::uint64_t>(ram.node_clock.bias));
-                    ready = !ram.motion.layered() && t - ram.motion.start >= clip->duration;
+                    ready = !ram.motion.layered() && ram.motion.local(t) >= clip->duration;
                 }
             }
         } else if (ram.wait_state == 3) {

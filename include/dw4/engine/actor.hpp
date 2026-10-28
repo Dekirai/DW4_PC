@@ -75,6 +75,18 @@ struct MotionState {
     std::string previous_clip;
     std::int64_t previous_start{};
     std::vector<Mat4> previous_pose; // baked bone locals; when set, the fade source
+    // A state at speed 0 (MOTIONSET's 'S' in field 3, 0x802F12C0 / 0x802F1370)
+    // keeps its time: `clip` / `previous_clip` sample at the frozen local time
+    // instead of `time - start` until the motion phase releases it.
+    bool frozen{};
+    std::int64_t frozen_local{};
+    bool previous_frozen{};
+    std::int64_t previous_frozen_local{};
+    // The states' times at node time `time` (801E52FC reads them).
+    std::int64_t local(std::int64_t time) const { return frozen ? frozen_local : time - start; }
+    std::int64_t previous_local(std::int64_t time) const {
+        return previous_frozen ? previous_frozen_local : time - previous_start;
+    }
     // States that stay in the combiner behind `clip` without showing: the
     // activation appends the first animation as a replacing base state
     // (801D2810), which no update retires; the next MOTIONSET's bake removes
