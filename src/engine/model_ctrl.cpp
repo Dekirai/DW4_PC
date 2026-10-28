@@ -757,7 +757,7 @@ bool ModelCtrlManager::command(Engine& engine, Ram& base, std::string_view comma
         ram.aim_height = 0.0f;
         ram.labels.clear();
         ram.ride.reset();
-        ram.capsule_on = ram.capsule_ended = false;
+        ram.capsule_on = false;
         ram.capsule_age = 0;
         // The named RAM timers (AITIMER, ATDELAY, KEIKATIMER) live in the
         // RAM's data list (+0x28), not in the info work: they stay over a
@@ -1784,7 +1784,11 @@ void ModelCtrlManager::update_slot(Engine& engine, int slot) {
         if (ram.ctrl_mode != 0) {
             if (ram.is_player) update_player(engine, ram);
             else if (ram.category == "ENEMY") update_enemy(engine, ram);
-            else if (ram.category == "PLAYER2") update_capsule(engine, ram);
+            else if (ram.category == "PLAYER2") {
+                // The same _isOnCtrl gate as items (80309168): the game over
+                // script's PLAYER2 OFCTRL stops every capsule's update.
+                if (ram.control_enabled) update_capsule(engine, ram);
+            }
             else if (ram.category == "ITEM") {
                 // 80309168 runs the class update (vtable +A0, 803AB5AC for
                 // beNDMWMdlItem) only with _isOnCtrl set (0x8030918C): no item
@@ -2216,7 +2220,8 @@ void ModelCtrlManager::player_erase_hook(Engine& engine, ModelRam& ram) {
 
 // KIND_PLAYER2 bit capsule (beNDMWMdlPlayer2, 8034EB78): switches on while a
 // live player is within 30 units; with no live player left it runs
-// end_g_000bcaps.lua, the stage's game over.
+// end_g_000bcaps.lua, the stage's game over, on every update (0x8034ED10, no
+// flag of its own): the script's first line turns every capsule's control off.
 void ModelCtrlManager::update_capsule(Engine& engine, ModelRam& ram) {
     if (!ram.node) return;
     if (ram.capsule_age < 10) ++ram.capsule_age;
@@ -2231,10 +2236,7 @@ void ModelCtrlManager::update_capsule(Engine& engine, ModelRam& ram) {
         any = true;
     }
     if (!any) {
-        if (!ram.capsule_ended && engine.demo().running() == 0) {
-            ram.capsule_ended = true;
-            engine.run_script("end_g_000bcaps.lua");
-        }
+        engine.run_script("end_g_000bcaps.lua");
         return;
     }
     if (!ram.capsule_on && best < 900.0f) {

@@ -407,7 +407,7 @@ void CameraManager::update_box(Engine& engine, CameraRam& ram) {
     Vec3f centre{};
     for (const auto& p : players) centre = centre + p;
     if (players.size() == 2) centre = centre * 0.5f;
-    else if (players.size() == 3) centre = centre * (1.0f / 3.0f);
+    else if (players.size() == 3) centre = {centre.x / 3.0f, centre.y / 3.0f, centre.z / 3.0f}; // fdivs (0x802F2CFC)
     else if (players.size() == 4) centre = centre * 0.25f;
     centre_moved_ = centre.x != centre_.x || centre.y != centre_.y || centre.z != centre_.z;
     if (centre_moved_) centre_ = centre;

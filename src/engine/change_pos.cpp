@@ -36,7 +36,7 @@ void ChangePosManager::update(Engine& engine) {
     for (const auto& p : players) centre = centre + p;
     // 3 divide, 2 and 4 scale, one or five and more stay the sum.
     const std::size_t count = players.size();
-    if (count == 3) centre = centre * (1.0f / 3.0f);
+    if (count == 3) centre = {centre.x / 3.0f, centre.y / 3.0f, centre.z / 3.0f}; // fdivs (0x802F45DC)
     else if (count == 2) centre = centre * 0.5f;
     else if (count == 4) centre = centre * 0.25f;
     for (auto& ram : rams_) {
