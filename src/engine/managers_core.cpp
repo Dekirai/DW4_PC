@@ -1808,13 +1808,14 @@ bool SoundManager::stream_on(std::size_t channel) const {
 // at 30 Hz until the stage's teardown stops the movie.
 //
 // Every step ticks the CRI servers once (server_tick: in a step that
-// updates after the stage loader's update, in a covered field from
-// update_held), and in the drive model's clock a step's tick stands for the
-// servers of the retrace after it (DiscDrive::kDolphinClockOffset): the tick
-// of the MOVIE PLAY step (first.lua runs in the loader's update, before it)
-// is the pass after the open's first VIWaitForRetrace, and the tick of a
-// codec update's step (which comes before the codec update) the pass after
-// the codec's wait.
+// updates after its managers and before this movie player, in a covered
+// field from update_held), and in the drive model's clock a step's tick
+// stands for the servers of the retrace after it
+// (DiscDrive::kDolphinClockOffset): the tick of the MOVIE PLAY step (from
+// first.lua in the loader's update or from a manager, both before it) is
+// the pass after the open's first VIWaitForRetrace, and the tick of a codec
+// update's step (which comes before the codec update) the pass after the
+// codec's wait.
 //
 // Dolphin captures of both opening movies of a boot (work/dref r40movie
 // d_boot1 / d_boot2: OSReport hooks on the codec, the Sofdec sound handler,
@@ -1903,10 +1904,9 @@ void SoundManager::play_movie(Engine& engine, const Ram& ram, const std::string&
         engine.note("movie " + name + ": " + error.what());
     }
     // The open's ADXF_ReadNw of the first ten sectors: the read goes on the
-    // drive in the server pass after this field (this step's server_tick for
-    // a PLAY from the stage loader's first.lua, the next field's for one from
-    // a frame's update); the frame waits for it in the fields after
-    // (update_held).
+    // drive in the server pass after this field (this step's server_tick,
+    // which follows the loader's first.lua and the managers); the frame waits
+    // for it in the fields after (update_held).
     std::uint64_t offset = 0;
     std::uint32_t sectors = 0;
     if (const auto* record = engine.resources().catalog().find(lower(name)); record && record->location) {
