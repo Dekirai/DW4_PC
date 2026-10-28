@@ -547,10 +547,19 @@ void Driver::update_volume(int index) {
 }
 
 // ---------------------------------------------------------------------------
-void Mirror::start(const Driver& game, std::uint32_t random, std::int64_t ticked) {
+void Driver::shift_frames(std::int64_t delta) {
+    for (auto& v : voices_) {
+        if (!v.used) continue;
+        v.start += delta;
+        if (v.end != std::numeric_limits<std::int64_t>::max()) v.end += delta;
+    }
+}
+
+void Mirror::start(const Driver& game, std::uint32_t random, std::int64_t game_ticked, std::int64_t delta) {
     driver_ = game;
+    driver_.shift_frames(delta);
     random_ = random;
-    ticked_ = ticked;
+    ticked_ = game_ticked + delta;
     calls_.clear();
     live_ = true;
 }

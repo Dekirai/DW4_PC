@@ -168,6 +168,9 @@ public:
     // A voice the game stops behind the driver's back (stage clear of a
     // bank's loops): freed like the driver frees it.
     void free_voice(int index) { release(index); }
+    // The voices' AX frames (start, end) renumbered by `delta` frames: a copy
+    // that ticks on another frame numbering (Mirror::start).
+    void shift_frames(std::int64_t delta);
     // Voice gains after the tick: linear, the volume envelope and the SEQ
     // volume included.
     static float gain(const Voice& v);
@@ -212,8 +215,10 @@ private:
 // its tick of frame g (`after`) reaches the copy before the copy's tick of the
 // audio frame that plays game frame g + 1, or at its next tick when the audio
 // already ran past that frame (a host that filled its queue ahead): such a
-// request just sounds later, nothing is played twice. While the audio keeps
-// pace with the game the copy goes through exactly the game driver's states.
+// request sounds later by as much as the audio runs ahead (the whole lead of
+// the host's queue: a top-up of 1600 samples delays it by 6 AX frames),
+// nothing is played twice. While the audio keeps pace with the game the copy
+// goes through exactly the game driver's states.
 class Mirror {
 public:
     struct Call {
@@ -226,9 +231,14 @@ public:
         std::vector<std::shared_ptr<const BankData>> banks; // free_loops: the loops of these banks go
     };
     bool live() const { return live_; }
-    // The copy of `game` (its rand() state `random`), whose last tick
-    // stands for audio frame `ticked`.
-    void start(const Driver& game, std::uint32_t random, std::int64_t ticked);
+    // The copy of `game` (its rand() state `random`), whose last tick (game
+    // frame `game_ticked`) stands for audio frame game_ticked + `delta`: the
+    // voices already running move to the audio's frame numbering (audio frame
+    // f plays game frame f - delta), so they go on at the sample they reached
+    // and run out when they run out in the game, whatever the mapping is when
+    // the copy is made (the first render after a restore, a copy made afresh
+    // after a long run without ticks).
+    void start(const Driver& game, std::uint32_t random, std::int64_t game_ticked, std::int64_t delta);
     // Calls are kept only while live; a long run without ticks (a host that
     // stopped rendering) drops the copy, made afresh at the next start.
     void record(Call call);

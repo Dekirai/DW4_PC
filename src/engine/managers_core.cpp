@@ -1554,7 +1554,7 @@ void SoundManager::mix_frame(std::int64_t frame, axmix::Output::Frame& out, axmi
     constexpr int n = axmix::kFrameSamples;
     const std::int64_t game = frame - audio_delta_;
     // The audio's SNDF up to the AX callback of the frame before.
-    if (!mirror_.live()) mirror_.start(driver_, random_, driver_frame_ + audio_delta_);
+    if (!mirror_.live()) mirror_.start(driver_, random_, driver_frame_, audio_delta_);
     if (mirror_.ticked() < frame - 1)
         mirror_.advance(frame - 1, audio_delta_, driver_banks(), [&](std::int64_t g) { return ax_frame_ticks(g); });
     std::array<float, 2 * n> main{};

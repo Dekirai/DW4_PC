@@ -532,7 +532,7 @@ void audio_timeline() {
         std::int64_t delta = 0;
         std::map<std::uint32_t, std::int64_t> next_k; // voice id -> the sample index its next frame must start at
         auto mix = [&](std::int64_t frame, axmix::Output::Frame&, axmix::Output::Part*) {
-            if (!mirror.live()) mirror.start(game, random, game_frame + delta);
+            if (!mirror.live()) mirror.start(game, random, game_frame, delta);
             if (mirror.ticked() < frame - 1) mirror.advance(frame - 1, delta, banks, frame_time);
             for (const auto& v : mirror.driver().voices()) {
                 if (!v.used) continue;
@@ -616,6 +616,57 @@ void audio_timeline() {
     }
     check(later && moved, "A top-up delays later notes, never plays them early");
 }
+
+// A copy made while a voice runs and the audio's frames stand off the game's
+// (the first render after a restore: delta far from 0; a copy made afresh):
+// the voice goes on at the sample it reached and runs out in the audio frame
+// that plays the game frame it runs out in.
+void mirror_restart() {
+    auto data = std::make_shared<sndf::BankData>();
+    data->bank = std::make_unique<sfp::Bank>(bank());
+    for (std::size_t i = 0; i < data->bank->sample_count(); ++i) {
+        std::uint32_t loop = 0;
+        data->pcm.push_back(data->bank->decode(i, &loop));
+        data->loop_start.push_back(loop);
+    }
+    data->pcm[0].assign(3000, 0); // the one-shot of request 1: about 26 AX frames
+    const std::shared_ptr<const sndf::BankData> shared = data;
+    const sndf::Driver::Banks banks{shared};
+    constexpr std::int64_t kFrame = 2427840, kPhase = 1099812;
+    auto frame_time = [](std::int64_t g) { return kPhase + g * kFrame; };
+    bool same_start = true, same_end = true, same_sample = true, ran = true;
+    for (const std::int64_t delta : {std::int64_t{-37}, std::int64_t{0}, std::int64_t{11}, std::int64_t{-1}}) {
+        sndf::Driver game;
+        std::uint32_t random = 1;
+        game.seq_set(4, 0xa9050100u, frame_time(3));
+        game.seq_play(4, frame_time(3));
+        std::int64_t g = 0;
+        for (; g <= 12; ++g) game.tick(g, frame_time(g), banks, random);
+        int index = -1;
+        for (int i = 0; i < sndf::Driver::kVoices; ++i)
+            if (game.voices()[std::size_t(i)].used) index = i;
+        ran = ran && index >= 0 && game.voices()[std::size_t(index)].start == 3;
+        if (index < 0) break;
+        const auto voice = game.voices()[std::size_t(index)];
+        sndf::Mirror mirror;
+        mirror.start(game, random, g - 1, delta);
+        const auto& copy = mirror.driver().voices()[std::size_t(index)];
+        same_start = same_start && copy.start == voice.start + delta && mirror.ticked() == g - 1 + delta;
+        // The mixer's sample index in the audio frame that plays game frame 13.
+        same_sample = same_sample && (13 + delta - (copy.start + 1)) * axmix::kFrameSamples == (13 - (voice.start + 1)) * axmix::kFrameSamples;
+        // Game and copy tick on: the voice ends in the same game frame.
+        for (; g < voice.end + 4; ++g) {
+            game.tick(g, frame_time(g), banks, random);
+            mirror.advance(g + delta, delta, banks, frame_time);
+            same_end = same_end && game.voices()[std::size_t(index)].used == mirror.driver().voices()[std::size_t(index)].used;
+        }
+        same_end = same_end && !game.voices()[std::size_t(index)].used;
+    }
+    check(ran, "A one-shot runs in the game's driver");
+    check(same_start, "A copy made at another frame mapping moves its running voices to the audio's frames");
+    check(same_sample, "The copied voice goes on at the sample it reached");
+    check(same_end, "The copied voice runs out with the game's");
+}
 } // namespace
 
 int main() {
@@ -632,6 +683,7 @@ int main() {
         ax_mix();
         ax_output();
         audio_timeline();
+        mirror_restart();
     } catch (const std::exception& error) {
         std::cerr << "FAILED: " << error.what() << '\n';
         return 1;

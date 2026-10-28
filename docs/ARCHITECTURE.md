@@ -224,7 +224,9 @@ event with a delta, also 0 (803C49F4). The audio hears a mirror of it
 (`sndf::Mirror`): a copy ticked once per AX frame of the audio timeline that
 gets the game's calls between the same ticks, so nothing the game sees
 depends on whether audio is rendered, and a host that renders ahead of the
-game only hears a request a frame or two later, never twice.
+game hears a request later by as much as its queue runs ahead (a top-up of
+1600 samples: 6 AX frames), never twice. A copy made while voices run (the
+first render after a restore) moves them to the audio's frame numbering.
 Effects without a request id are ADX files on four SE stream channels, each
 start taking a free one or else the oldest of lower or equal priority
 (beSoundData [9], 802F56B0). The PLAY handler (80314FC8) ignores a sound effect
