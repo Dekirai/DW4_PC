@@ -62,14 +62,19 @@ exactly n steps. In order:
    registration, `start.lua`, `first.lua`. Then the CRI servers' field
    (`SoundManager::server_tick`, the original's ADXT server 8029A60C and file
    server 80296904): stream reads on the simulated drive, decoding, PLAYING
-   (see the sound section below). Dolphin issues a field's reads at the
-   frame's start, before the messenger, so a stream a delivery or
-   `start.lua` starts is first read in the next field there; the port keeps
-   the pass after the loader's update, on which its load model is
-   calibrated. A field a movie frame covers runs only these servers and the
-   SNDF's AX frames (`Engine::hold_update`, see the movie below). Then the
-   demo manager (`DMsetSD` / `DMchkSD` / switch records, one blocking record
-   at a time).
+   (see the sound section below). The original runs these servers in their
+   own threads at the field's retrace, ahead of the whole frame (ADXT server
+   thread 8029D434 at priority 12, file server thread 8029D3DC at 14, main
+   thread 16), so a stream that a delivery of the messenger's pass or
+   `start.lua` / `first.lua` start is first seen by the next field's pass:
+   the port's pass holds a stream started earlier in the step for the next
+   field's (`CriStreams::Handle::hold`; Dolphin dngq1b1e: first.lua's
+   ADXT_StartAfs after that field's passes, its first read in the next
+   field's). The loader's own reads go out in the step's pass, on which its
+   load model is calibrated. A field a movie frame covers runs only these
+   servers and the SNDF's AX frames (`Engine::hold_update`, see the movie
+   below). Then the demo manager (`DMsetSD` / `DMchkSD` / switch records,
+   one blocking record at a time).
 5. The managers' updates in the original scheduler order
    (`Engine::update_managers`, igSerialScheduler 8028B7B0): first beSystem,
    which its plugin schedules at registration, then every manager in the
@@ -235,7 +240,9 @@ event with a delta, also 0 (803C49F4). The audio hears a mirror of it
 (`sndf::Mirror`): a copy ticked once per AX frame of the audio timeline that
 gets the game's calls between the same ticks, so nothing the game sees
 depends on whether audio is rendered, and a host that renders ahead of the
-game only hears a request a frame or two later, never twice.
+game hears a request later by as much as its queue runs ahead (a top-up of
+1600 samples: 6 AX frames), never twice. A copy made while voices run (the
+first render after a restore) moves them to the audio's frame numbering.
 Effects without a request id are ADX files on four SE stream channels, each
 start taking a free one or else the oldest of lower or equal priority
 (beSoundData [9], 802F56B0). The PLAY handler (80314FC8) ignores a sound effect

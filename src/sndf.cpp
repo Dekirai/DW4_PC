@@ -204,7 +204,7 @@ float Driver::gain(const Voice& v) {
 }
 
 bool Driver::idle() const {
-    if (!messages_.empty()) return false;
+    if (!messages_.empty() || !ring_.empty()) return false;
     for (const auto& v : voices_)
         if (v.used) return false;
     for (const auto& t : tracks_)
@@ -239,13 +239,27 @@ void Driver::tick(std::int64_t frame, std::int64_t time, const Banks& banks, std
             release(i);
         }
     }
-    // The command ring: up to 64 messages a tick (SNDF +0x85E).
+    // The command ring: up to 64 messages a tick (SNDF +0x85E) go into the
+    // MIDI ring behind the events the last tick's pass left there (a
+    // request starts at once only with top byte 0xA0 or without a sequence,
+    // 803C3590..803C3750; DW4's requests all name one); then the ring is
+    // drained, also of what the drain adds (the passes of the requests it
+    // starts).
     for (int n = 0; n < 64 && !messages_.empty() && messages_.front().time <= time; ++n) {
-        const std::uint32_t message = messages_.front().value;
+        ring_push({false, messages_.front().value});
         messages_.pop_front();
-        dispatch(message, frame, banks, random);
     }
-    run_tracks(frame, random);
+    while (!ring_.empty()) {
+        const RingEntry entry = std::move(ring_.front());
+        ring_.pop_front();
+        if (!entry.note) dispatch(entry.message, banks);
+        else if (entry.bank) note_on(entry.channel, *entry.bank, entry.bank, entry.key, entry.velocity, entry.seq, frame, random);
+    }
+    // The tick's own pass (803C3820): its events wait in the ring for the
+    // next tick (a note after a delta sounds one AX frame after the tick
+    // its wait ran out in; of the game's 599 sequences only 0xA9010A00 of
+    // _common/sbiallse.igb has one).
+    run_tracks();
     // AXARTServiceSound (80245544): the volume envelope steps (80245994) and
     // the MIX input; MIXUpdateSettings ramps the frame from the last level.
     for (auto& v : voices_) {
@@ -272,7 +286,7 @@ void Driver::tick(std::int64_t frame, std::int64_t time, const Banks& banks, std
 
 // 803BBDD4 for the messages DW4 sends: 0xB038 / 0xB035 (cases 56 / 53),
 // 0xB037 (case 55) and a request (803C5188).
-void Driver::dispatch(std::uint32_t message, std::int64_t frame, const Banks& banks, std::uint32_t& random) {
+void Driver::dispatch(std::uint32_t message, const Banks& banks) {
     const int seq = int(message & 0xFF);
     if ((message >> 24) == 0xB0) {
         const std::uint32_t command = (message >> 16) & 0x7F;
@@ -303,14 +317,14 @@ void Driver::dispatch(std::uint32_t message, std::int64_t frame, const Banks& ba
         }
         return;
     }
-    if ((message >> 24) >= 0xA8 && (message >> 24) < 0xAD && seq) start_track(message, frame, banks, random);
+    if ((message >> 24) >= 0xA8 && (message >> 24) < 0xAD && seq) start_track(message, banks);
 }
 
 // 803C5188: the request's group in the first bank slot that has it, the
 // track (a one-shot sequence with flag 0x10 takes the running track of its
 // group, else a free track, else the first one-shot track), state 2, and at
 // once a pass over all tracks (803C49F4).
-void Driver::start_track(std::uint32_t message, std::int64_t frame, const Banks& banks, std::uint32_t& random) {
+void Driver::start_track(std::uint32_t message, const Banks& banks) {
     int slot = -1;
     for (std::size_t i = 0; i < banks.size() && i < 16; ++i)
         if (banks[i] && banks[i]->bank && banks[i]->bank->has_group(message & 0xFFFFFF00u)) {
@@ -361,16 +375,22 @@ void Driver::start_track(std::uint32_t message, std::int64_t frame, const Banks&
     t.flags = 0x80;
     t.bank = bank;
     t.sequence = sfp::Sequence(data);
-    run_tracks(frame, random);
+    run_tracks();
+}
+
+// 803C1C5C: an event into the MIDI ring unless it holds 128.
+void Driver::ring_push(RingEntry entry) {
+    if (ring_.size() < kRing) ring_.push_back(std::move(entry));
 }
 
 // 803C49F4: every running track whose wait is over (its whole milliseconds,
 // wait >> 16, at most 0) plays its events up to the first one with a delta,
 // which adds the delta to the wait and ends the track's pass, also a delta of
-// 0 (the next tick's pass goes on); a note goes to the drum note-on of the
-// track's channel (the channel's program: the bank's drum program, 803C06C4),
-// the end stops the track (its sequence: state 3).
-void Driver::run_tracks(std::int64_t frame, std::uint32_t& random) {
+// 0 (a later pass goes on); a note goes into the MIDI ring (803C1C5C) for the
+// drum note-on of the track's channel when the tick drains it (the channel's
+// program: the bank's drum program, 803C06C4), the end stops the track at
+// once (its sequence: state 3).
+void Driver::run_tracks() {
     for (auto& t : tracks_) {
         if (!t.flags || (t.wait >> 16) > 0) continue;
         while (t.flags) {
@@ -383,7 +403,7 @@ void Driver::run_tracks(std::int64_t frame, std::uint32_t& random) {
                 break;
             }
             if (event.kind == sfp::Event::Kind::note && event.velocity && t.bank)
-                note_on(t.channel, *t.bank, t.bank, event.key, event.velocity, int(t.id & 0xFF), frame, random);
+                ring_push({true, 0, t.channel, event.key, event.velocity, std::uint8_t(t.id & 0xFF), t.bank});
             if (event.has_wait) {
                 t.wait += std::int32_t(event.wait_ms) << 16;
                 break;
@@ -547,10 +567,19 @@ void Driver::update_volume(int index) {
 }
 
 // ---------------------------------------------------------------------------
-void Mirror::start(const Driver& game, std::uint32_t random, std::int64_t ticked) {
+void Driver::shift_frames(std::int64_t delta) {
+    for (auto& v : voices_) {
+        if (!v.used) continue;
+        v.start += delta;
+        if (v.end != std::numeric_limits<std::int64_t>::max()) v.end += delta;
+    }
+}
+
+void Mirror::start(const Driver& game, std::uint32_t random, std::int64_t game_ticked, std::int64_t delta) {
     driver_ = game;
+    driver_.shift_frames(delta);
     random_ = random;
-    ticked_ = ticked;
+    ticked_ = game_ticked + delta;
     calls_.clear();
     live_ = true;
 }

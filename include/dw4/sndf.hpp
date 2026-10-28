@@ -8,7 +8,8 @@
 // and the SEQ volume (4) put messages into the driver's command ring, and
 // GETSTATUS (7) reads its state at once. The driver runs once per AX frame
 // in the AX frame callback (802A8F7C): its tick 803C325C (the voice records,
-// then the queued messages, then the 16 tracks), the articulation service
+// then the queued messages through the MIDI ring, then the 16 tracks, whose
+// events wait in the ring for the next tick), the articulation service
 // 80245048 (the voices' volume envelopes and SRC ratios) and
 // MIXUpdateSettings 8025A420 (a changed level ramps across the next frame).
 //
@@ -168,6 +169,9 @@ public:
     // A voice the game stops behind the driver's back (stage clear of a
     // bank's loops): freed like the driver frees it.
     void free_voice(int index) { release(index); }
+    // The voices' AX frames (start, end) renumbered by `delta` frames: a copy
+    // that ticks on another frame numbering (Mirror::start).
+    void shift_frames(std::int64_t delta);
     // Voice gains after the tick: linear, the volume envelope and the SEQ
     // volume included.
     static float gain(const Voice& v);
@@ -186,9 +190,24 @@ private:
         std::int64_t time{};
         std::uint32_t value{};
     };
-    void dispatch(std::uint32_t message, std::int64_t frame, const Banks& banks, std::uint32_t& random);
-    void start_track(std::uint32_t message, std::int64_t frame, const Banks& banks, std::uint32_t& random);
-    void run_tracks(std::int64_t frame, std::uint32_t& random);
+    // The MIDI ring (SNDF +0x440: 128 entries, count +0x840): the tick moves
+    // the command ring's messages into it behind what it still holds, then
+    // drains it (803C37A8..803C381C, 803BBDD4 per entry). The track passes
+    // put their events into it (803C1C5C; a full ring drops them): the pass
+    // of a request started during the drain (803C5188 -> 803C49F4 at
+    // 803C5734) in the same tick, the tick's own pass after the drain
+    // (803C3820) for the next tick's drain.
+    struct RingEntry {
+        bool note{};
+        std::uint32_t message{};     // a command ring message (not a note)
+        std::uint8_t channel{}, key{}, velocity{}, seq{};
+        std::shared_ptr<const BankData> bank;
+    };
+    static constexpr std::size_t kRing = 128;
+    void ring_push(RingEntry entry);
+    void dispatch(std::uint32_t message, const Banks& banks);
+    void start_track(std::uint32_t message, const Banks& banks);
+    void run_tracks();
     void note_on(int channel, const BankData& bank, const std::shared_ptr<const BankData>& owner, int key,
                  int velocity, int seq, std::int64_t frame, std::uint32_t& random);
     int allocate(int priority);
@@ -201,6 +220,7 @@ private:
     std::array<Track, kTracks> tracks_{};
     std::array<Seq, kSeqs> seqs_{};
     std::deque<Message> messages_;
+    std::deque<RingEntry> ring_;
     AxPool ax_;
     std::uint32_t counter_{};   // +0x84C: voice allocations
     float master_ = 1.0f;
@@ -212,8 +232,10 @@ private:
 // its tick of frame g (`after`) reaches the copy before the copy's tick of the
 // audio frame that plays game frame g + 1, or at its next tick when the audio
 // already ran past that frame (a host that filled its queue ahead): such a
-// request just sounds later, nothing is played twice. While the audio keeps
-// pace with the game the copy goes through exactly the game driver's states.
+// request sounds later by as much as the audio runs ahead (the whole lead of
+// the host's queue: a top-up of 1600 samples delays it by 6 AX frames),
+// nothing is played twice. While the audio keeps pace with the game the copy
+// goes through exactly the game driver's states.
 class Mirror {
 public:
     struct Call {
@@ -226,9 +248,14 @@ public:
         std::vector<std::shared_ptr<const BankData>> banks; // free_loops: the loops of these banks go
     };
     bool live() const { return live_; }
-    // The copy of `game` (its rand() state `random`), whose last tick
-    // stands for audio frame `ticked`.
-    void start(const Driver& game, std::uint32_t random, std::int64_t ticked);
+    // The copy of `game` (its rand() state `random`), whose last tick (game
+    // frame `game_ticked`) stands for audio frame game_ticked + `delta`: the
+    // voices already running move to the audio's frame numbering (audio frame
+    // f plays game frame f - delta), so they go on at the sample they reached
+    // and run out when they run out in the game, whatever the mapping is when
+    // the copy is made (the first render after a restore, a copy made afresh
+    // after a long run without ticks).
+    void start(const Driver& game, std::uint32_t random, std::int64_t game_ticked, std::int64_t delta);
     // Calls are kept only while live; a long run without ticks (a host that
     // stopped rendering) drops the copy, made afresh at the next start.
     void record(Call call);

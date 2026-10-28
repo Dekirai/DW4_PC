@@ -303,7 +303,10 @@ public:
     // movie the frame's world time): the engine runs it after the
     // messenger's pass and the stage loader's update, before the demo and
     // the managers (Engine::step); in a field an update covers update_held
-    // runs it.
+    // runs it. (The original's servers run in their threads at the retrace,
+    // before the whole frame: a stream a delivery or the loader's scripts
+    // start earlier in the step is held for the next field's pass,
+    // open_stream.)
     void server_tick(Engine& engine);
     // The CRI servers run on every retrace, also in the fields an update
     // covers (the movie's open and codec waits, Engine::hold_update).
@@ -569,6 +572,10 @@ private:
     std::array<SfpEntry, kSfpEntries> sfp_{};
     sndf::Driver driver_;              // the SNDF as the game sees it
     std::int64_t driver_frame_{-1};    // the last AX frame it ticked
+    // The frame whose step ran server_tick last: a stream started in a step
+    // before its pass (the stage loader's start.lua / first.lua) waits for
+    // the next field's pass (CriStreams::Handle::hold).
+    std::uint64_t pass_frame_{~std::uint64_t{}};
     // beSeInfoData: per model name, action -> sound after [4] frames.
     struct SeCue {
         std::string action, sound;

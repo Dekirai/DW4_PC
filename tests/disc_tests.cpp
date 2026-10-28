@@ -316,6 +316,28 @@ void test_stream_reads() {
         }
         check(status == 5, "A one-shot plays out (ADXT status 5)");
     }
+
+    // A start before the field's server pass (the stage loader's scripts; in
+    // the original after that field's retrace passes) is first seen by the
+    // next field's pass: its first read and its PLAYING come a field later.
+    {
+        auto first_read_and_playing = [&](bool hold) {
+            dw4::CriStreams cri;
+            cri.start(0, adx(95786, 2689, 2048, 2, 48000, 4892980, 1, 2686));
+            cri.handles[0].hold = hold;
+            int read = -1, playing = -1;
+            for (int k = 1; k <= 80 && playing < 0; ++k) {
+                cri.tick(std::int64_t(k) * dw4::CriStreams::kFieldTicks);
+                if (read < 0 && cri.reading()) read = k;
+                if (cri.playing(0)) playing = k;
+            }
+            check(!cri.handles[0].hold, "The pass clears the hold");
+            return std::pair{read, playing};
+        };
+        const auto now = first_read_and_playing(false), held = first_read_and_playing(true);
+        check(now.first == 1 && held.first == 2, "A held start reads in the next field's pass");
+        check(held.second >= now.second + 1, "... and becomes PLAYING no earlier than a field later");
+    }
 }
 
 // The DSP's progress as the renderer reads it (r29 captures: renderer reads

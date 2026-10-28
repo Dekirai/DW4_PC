@@ -188,6 +188,11 @@ public:
         std::uint64_t moved{}, reclaimed{};      // samples into the ARAM ring / played back out
         std::int64_t dsp_start{-1};              // time the renderer switched the voices on (-1: off)
         std::uint64_t played_base{};             // samples moved into the ARAM ring before that start
+        // Started in the frame before this field's server pass ran (the stage
+        // loader's scripts run ahead of it in the port's step): the pass
+        // leaves the handle to the next field's (tick clears it). In the
+        // original the servers run at the field's retrace before the frame.
+        bool hold{};
     };
     std::array<Handle, kSlots> handles{};
     // The inflight slot of the loader's reads.
