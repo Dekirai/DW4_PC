@@ -455,7 +455,10 @@ the output SJ's free chunk up to its end capped at the unit of three
 fields, and the frames to the output ring's end), the ARAM renderer (4096
 samples, played halves given back, one DMA per pass of the least of the
 ring's free chunk up to its end and the output SJ's data up to its end and
-96-sample extra area, 802A6DF8), the DSP's progress as the renderer reads it (the voice
+96-sample extra area, 802A6DF8; not modelled yet: at a loop's end the
+decoder stops at the loop end sample and the trap 8029C970 / 8029CAFC drops
+the rest of the loop end's sector from the input, 2048 - loop end byte % 2048
+bytes, 8029C1E0 +0x50, while the port decodes on through it), the DSP's progress as the renderer reads it (the voice
 address AX copies back at each 5 ms frame boundary, one frame behind: 240
 samples per frame of a 48 kHz voice, frames of 2427840 ticks at the AI's
 54 MHz / 1686; a pause stops the voices and drops the ARAM ring, 802A7534)
