@@ -20,16 +20,16 @@ include(CTest)
 add_library(dw4_core
   src/assets.cpp src/igb.cpp src/igb_document.cpp src/resources.cpp src/packages.cpp src/scripts.cpp
   src/lua4.cpp src/pad.cpp src/textures.cpp src/meshes.cpp src/skinning.cpp src/animation_math.cpp
-  src/enbaya.cpp src/motion.cpp src/motion_timer.cpp src/adx.cpp src/axfx.cpp src/axmix.cpp src/save_data.cpp src/sfp.cpp src/sndf.cpp src/sfd.cpp src/ini.cpp src/disc.cpp src/disc_timing.cpp src/card_timing.cpp)
+  src/enbaya.cpp src/motion.cpp src/motion_timer.cpp src/adx.cpp src/axfx.cpp src/axmix.cpp src/save_data.cpp src/sfp.cpp src/sndf.cpp src/sfd.cpp src/ini.cpp src/disc.cpp src/disc_timing.cpp src/card_timing.cpp src/msl_math.cpp)
 target_include_directories(dw4_core PUBLIC include)
 # Recovered scalar operations round separately; explicit std::fma remains
 # fused. Preserve IEEE zero-frame infinity/NaN behavior.
 if(MSVC)
-  set_source_files_properties(src/motion.cpp src/motion_timer.cpp src/animation_math.cpp PROPERTIES COMPILE_OPTIONS /fp:strict)
+  set_source_files_properties(src/motion.cpp src/motion_timer.cpp src/animation_math.cpp src/msl_math.cpp PROPERTIES COMPILE_OPTIONS /fp:strict)
   target_compile_options(dw4_core PRIVATE /W4 /permissive- /utf-8)
   add_compile_options(/utf-8)
 else()
-  set_source_files_properties(src/motion.cpp src/motion_timer.cpp src/animation_math.cpp PROPERTIES COMPILE_OPTIONS "-fno-fast-math;-ffp-contract=off")
+  set_source_files_properties(src/motion.cpp src/motion_timer.cpp src/animation_math.cpp src/msl_math.cpp PROPERTIES COMPILE_OPTIONS "-fno-fast-math;-ffp-contract=off")
   target_compile_options(dw4_core PRIVATE -Wall -Wextra -Wpedantic)
 endif()
 

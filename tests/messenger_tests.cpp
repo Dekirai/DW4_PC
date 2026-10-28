@@ -5,6 +5,8 @@
 // 0x803062E4 / 0x80304E10 / 0x80304F8C / 0x80347DA8, round 42): stag0001 /
 // stag0101 / stag0203 / dng101b1 / stagML11 soft resets, swap for swap.
 #include "dw4/engine/engine.hpp"
+#include "dw4/engine/managers.hpp"
+#include "dw4/lua4.hpp"
 
 #include <iostream>
 #include <stdexcept>
@@ -189,6 +191,40 @@ void through_engine() {
     m.clear();
     check(m.stale_bool() == 0 && !m.message_objects().made(), "the stage change releases the objects");
 }
+
+void ctrl_item() {
+    // The CTRLITEM folders (802EBF5C / 802EC064 / 802EC164 / 802EC26C) send
+    // GAMERAM CTRLITEM (80372054) and read the current object's bools[0]
+    // (SYSctlBit: ints[0]); stag0301 first.lua's twelve CTRLITEM answers 0
+    // are what the next post's object holds (Dolphin n 4368, round 44).
+    Engine engine{dw4::MountedResources{}};
+    Messenger& m = engine.messenger();
+    auto* sys = engine.get<GameSystem>();
+    check(sys != nullptr, "the engine has its GAMERAM");
+    sys->update(engine); // registers the GAMERAM row
+    auto call = [&](const char* method, const char* command, std::vector<double> numbers) {
+        std::vector<dw4::Lua4Value> args{dw4::Lua4Value::string(command)};
+        for (const double n : numbers) args.push_back(dw4::Lua4Value::number(n));
+        std::vector<dw4::Lua4Value> out;
+        check(sys->script_call(engine, method, args, out) && out.size() == 1, "a CTRLITEM folder call answers");
+        return int(out[0].as_number());
+    };
+    Answering module;
+    Ram ram;
+    ram.manager = &module;
+    m.add_row("TEST", std::string("a"), 0, &ram);
+    Packet one;
+    module.value = 1;
+    m.send(engine, "TEST", std::nullopt, -1, "ANSWER", one);
+    check(m.stale_bool() == 1, "an earlier answer 1 in data[0]");
+    check(call("SYSctlFlagFolder", "IS", {7}) == 0 && m.stale_bool() == 0, "FLAG IS answers 0 into data[0]");
+    check(call("SYSctlFlagFolder", "SET", {7}) == 1 && m.stale_bool() == 1, "FLAG SET answers 1");
+    check(call("SYSctlFlagFolder", "SET", {7}) == 0 && call("SYSctlFlagFolder", "IS", {7}) == 1, "a set flag: SET 0, IS 1");
+    check(call("SYSctlDiskFolder", "SET", {0, 3, 2}) == 1 && call("SYSctlDiskFolder", "IS", {0, 3}) == 1, "DISK SET / IS");
+    check(call("SYSctlBit", "SET", {2, 150}) == 2 && m.stale_bool() == 1,
+          "BIT SET answers nothing: the first int argument (the player) is read, the bools stay");
+    check(call("SYSctlBit", "GET", {2, 0}) == 150, "BIT GET clears the ints and answers the value");
+}
 } // namespace
 
 int main() {
@@ -197,6 +233,7 @@ int main() {
         swaps();
         messenger();
         through_engine();
+        ctrl_item();
         std::cout << checks << " messenger checks passed\n";
         return 0;
     } catch (const std::exception& error) {

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "dw4/engine/math.hpp"
+#include "dw4/msl_math.hpp"
 
 #include <cmath>
 #include <cstdint>
@@ -40,19 +41,15 @@ double frsqrte(double x);
 // they are (the callers skip the steps for x <= 0).
 float sqrt_newton(float x);
 
-// MSL (fdlibm compiled with fused multiply-adds): sin 800A2AE4, cos
-// 800A257C, asin 800A2C54 (__ieee754_asin 8009F678), acos 800A2C34
-// (__ieee754_acos 8009F43C), atan 800A21F8,
-// atan2 800A2C74 (__ieee754_atan2 8009F8B0). The argument reduction
-// (__ieee754_rem_pio2 800A0C5C) is followed up to |x| <= 2^19 pi / 2; the
-// table reduction beyond (__kernel_rem_pio2 800A10F0, never reached by the
-// game's angles) falls back to the host library.
-double sin(double x);
-double cos(double x);
-double asin(double x);
-double acos(double x);
-double atan(double x);
-double atan2(double y, double x);
+// MSL (fdlibm compiled with fused multiply-adds; dw4/msl_math.hpp, in the
+// core so the motion primitives share it): sin 800A2AE4, cos 800A257C, asin
+// 800A2C54, acos 800A2C34, atan 800A21F8, atan2 800A2C74.
+inline double sin(double x) { return msl::sin(x); }
+inline double cos(double x) { return msl::cos(x); }
+inline double asin(double x) { return msl::asin(x); }
+inline double acos(double x) { return msl::acos(x); }
+inline double atan(double x) { return msl::atan(x); }
+inline double atan2(double y, double x) { return msl::atan2(y, x); }
 
 // 8012CB74: a x b, each component's second product rounded first (fmsubs).
 Vec3f cross(const Vec3f& a, const Vec3f& b);

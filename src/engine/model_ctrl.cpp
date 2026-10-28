@@ -1825,6 +1825,16 @@ void ModelCtrlManager::update_slot(Engine& engine, int slot) {
             // data +0x10 plus the offset of the field meta 805646FC), as the
             // last traversal left it.
             if (ram.node && ram.follow_trace->recorded) ram.node->matrix = *ram.follow_trace->recorded;
+            // DW4_TRACE_RECORDER: the matrix taken as float bits (rows 0..3,
+            // columns 0..2), in the format of the Dolphin Q log (hook
+            // 0x8030CDC0: the model's RAM, then the twelve words of _m).
+            if (static const bool trace = std::getenv("DW4_TRACE_RECORDER") != nullptr; trace && ram.node) {
+                const auto& m = ram.node->matrix;
+                std::printf("[%llu] Q %s#%d", static_cast<unsigned long long>(engine.frame()), ram.info_name.c_str(), ram.index);
+                for (int r = 0; r < 4; ++r)
+                    for (int c = 0; c < 3; ++c) std::printf(" %08x", std::bit_cast<std::uint32_t>(m(r, c)));
+                std::printf("\n");
+            }
             if (static const bool trace = std::getenv("DW4_TRACE_FOLLOW") != nullptr; trace && engine.frame() % 60 == 0 && ram.node)
                 engine.log("follow " + ram.info_name + "#" + std::to_string(ram.index) + " trace at (" +
                            std::to_string(ram.node->matrix(3, 0)) + ", " + std::to_string(ram.node->matrix(3, 1)) + ", " +

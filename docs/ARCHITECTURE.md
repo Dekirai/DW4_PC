@@ -42,23 +42,34 @@ exactly n steps. In order:
    release turns the picture black and nothing else runs: after
    `Engine::kRebootFields` steps the host starts a new engine on the boot
    stage (the console restarted the disc, OSResetSystem).
-3. Pending stage change and the stage loader states (802F8A64): the loading
-   screen `loadingUSA/ld<stage name from its third letter>.igb`, package
-   members, `func.lua` / `boot.lua`, common files queued with `CFLsetName`,
-   the wait for the loading screen's minimum play time (its beLoadingNode
-   then holds its lock time on the LOADING layer until the scripts remove
-   it), info registration, `start.lua`, `first.lua`. Then the CRI servers'
-   field (`SoundManager::server_tick`; the original's ADXT server 8029A60C
-   and file server 80296904 run after the loader's update and before the
-   messenger, the demo and the managers): stream reads on the simulated
-   drive, decoding, PLAYING (see the sound section below). A field a
-   movie frame covers runs only these servers and the SNDF's AX frames
-   (`Engine::hold_update`, see the movie below).
-4. Deferred messenger sends (80304C58: every `sd(..., delay)`, also a delay
-   of 0, and the engine's own posts arrive here, in a later frame than they
-   were sent; none while a SUBWND program or the soft reset pauses the queue,
-   see docs/research/DEFERRED_MESSENGER.md), then the demo manager
-   (`DMsetSD` / `DMchkSD` / switch records, one blocking record at a time).
+3. The pending stage change (beSystem), then the camera viewer's frame
+   (`CameraManager::begin_frame`) and the deferred messenger sends (80304C58:
+   every `sd(..., delay)`, also a delay of 0, and the engine's own posts
+   arrive here, in a later frame than they were sent; none while a SUBWND
+   program or the soft reset pauses the queue, see
+   docs/research/DEFERRED_MESSENGER.md). The serial scheduler runs the
+   modules in this order (Dolphin, round 44: the viewer 8040DA1C, beSystem
+   80316258, beMessenger 80304C58, beCri 802F53B8, the stage loader
+   802F8A64, bePadManager 80311F84, beDemoManager 802F7EC0, then the
+   managers), so the loader's sends and the posts of `start.lua` and
+   `first.lua` follow the frame's pass, and every message object swap of a
+   stage start comes in Dolphin's order.
+4. The stage loader states (802F8A64): the loading screen
+   `loadingUSA/ld<stage name from its third letter>.igb`, package members,
+   `func.lua` / `boot.lua`, common files queued with `CFLsetName`, the wait
+   for the loading screen's minimum play time (its beLoadingNode then holds
+   its lock time on the LOADING layer until the scripts remove it), info
+   registration, `start.lua`, `first.lua`. Then the CRI servers' field
+   (`SoundManager::server_tick`, the original's ADXT server 8029A60C and file
+   server 80296904): stream reads on the simulated drive, decoding, PLAYING
+   (see the sound section below). Dolphin issues a field's reads at the
+   frame's start, before the messenger, so a stream a delivery or
+   `start.lua` starts is first read in the next field there; the port keeps
+   the pass after the loader's update, on which its load model is
+   calibrated. A field a movie frame covers runs only these servers and the
+   SNDF's AX frames (`Engine::hold_update`, see the movie below). Then the
+   demo manager (`DMsetSD` / `DMchkSD` / switch records, one blocking record
+   at a time).
 5. The managers' updates in the original scheduler order
    (`Engine::update_managers`, igSerialScheduler 8028B7B0): first beSystem,
    which its plugin schedules at registration, then every manager in the
@@ -391,8 +402,10 @@ When a stream is ready matters to the scripts: demos wait with
 came off the disc. `dw4::CriStreams` (include/dw4/disc_timing.hpp, in the
 core) models that on the engine clock, once per field from the CRI server
 tick (also during loads), which the frame step runs where the original runs
-its servers: after the stage loader, before the messenger, the demo and the
-managers, so a stream started in a frame's update is first served in the
+its servers: after the messenger's pass and the stage loader, before the
+demo and the managers (the serial scheduler's module order, Dolphin r44:
+the camera viewer, beSystem, beMessenger, beCri, the loader, bePadManager,
+beDemoManager, then the managers), so a stream started in a frame's update is first served in the
 next field and a PLAYING reached in a field counts for that frame's
 ISALLREADY (Dolphin, stagBS01 1P and 2P: the last stream PLAYING and
 ISALLREADY 1 49 fields after the stage start in both): the six beCri ADXT handles (two stereo 48 kHz for
@@ -651,8 +664,17 @@ inverted in place (8012A92C), the model's matrix with its offset as the
 translation times that, times the current matrix (the paired-single 80128690
 twice; the stag0203 train matches Dolphin's 61 ride steps bit for bit). The
 ridden car follows a recorder there (MOVERL JOINT), whose matrix the original
-takes from its traversal as modelview times the inverse view (801DE9C0), so
-it carries rounding the port's world matrix lacks (open). The stage scripts'
+takes from its traversal as modelview times the inverse view (801DE9C0). The
+traversal therefore carries the original's modelview stack next to the world
+matrix it draws with: it starts with the camera's view (+0x64), every
+igTransform and beModelCtrlNode2 pushes its local matrix times the top through
+the paired-single 80128690 (801DC85C, 8030FAA4), and a recorder keeps the top
+times the inverse view (+0xA4, 8012A92C of the view). So the car carries the
+original's rounding noise (rotation 1e-9..1e-7, translation up to 5e-5 at
+the stag0203 cameras) and its riders' land and wall queries follow Dolphin
+bit for bit (round 44: recorder, stack top and inverse view 326 / 326 frames,
+the follower's matrix 115 / 115, 5488 land / wall answers);
+`DW4_TRACE_RECORDER=1` prints them in the hooks' format. The stage scripts'
 floor effects use the same slot: SETCONVEYOR (a fixed step per frame),
 SETQUICKSAND (a pull towards a centre, faster inside the inner radius) and
 SETSLIPPEDFLOOR (the model's own steps blend into a sliding velocity). While

@@ -227,7 +227,38 @@ D `0x80304E10`, Z `0x80304F8C`, I / J `0x80347DA8` / `0x80347E58`): in stag0001
 ISCOMEND, the reset hides everything and waits for good), dng101b1 (0) and
 the lobby stagML11 (0) every swap of the run - boot, title, character
 select, stage - comes in the same order on the same objects, and the reset
-reads the same value. The objects' first entries at the pass ends agree
-except where a single send comes in another frame (the title flow, the stage
-start's scripts, the stage load's length): the model, not those timings, is
-what this checks.
+reads the same value.
+
+Round 44 closed the two gaps those runs left (hooks X select `0x80305354`, C
+dispatch `0x80305A38`, B bool `0x8030697C`, G the loader's state
+`0x802F8A90`, H the scheduler's module call `0x8028B890`):
+
+- The serial scheduler (8028B7B0) runs beMessenger (80304C58) before the
+  stage loader (802F8A64), so `start.lua`, `first.lua` and the loader's own
+  sends (TEXTCTL INITIALIZE, LAYERCTL ORDER / SWITCH, the SOUND sends of
+  states 100..102) follow the frame's pass: their posts swap after the
+  pass end's reset, and a bool they leave is seen at the next frame's pass
+  end. `Engine::step` runs the messenger first; the title flow's posts and
+  pass ends (stagis10) and the stage starts of stag0203 (27 / 27 events,
+  n 4360..4580), stag0301 (below) and dng101b1 (27 / 27, n 4100..4600, with
+  Dolphin's world clock from start.lua on: its 16.58 ms frame after the
+  long start.lua update keeps the PLAYERARMS GENERATE post for a second
+  pass) now match event for event (identities, first bools, frames).
+- The CTRLITEM folders (`SYSctlDeviceFolder` 802EBF5C, `SYSctlDiskFolder`
+  802EC064, `SYSctlFlagFolder` 802EC164, `SYSctlBit` 802EC26C) select
+  GAMERAM, push the folder, the command, the table and four ints and send
+  CTRLITEM (80372054), which answers a bool (BIT GET: clears the ints and
+  answers the value); the function returns the current object's bools[0]
+  (80306A1C, unchecked; SYSctlBit its ints[0], 80306B00, so BIT SET / ADD
+  return their first int argument). stag0301 `first.lua`'s twelve CTRLITEM
+  answers 0 put the 0 into data[0] that the post MODELCTRL i_fadewn01
+  SQ_BLIN60 carries (Dolphin n 4368: bools 0, 1, 1); the port called the
+  folders directly and kept the 1 of the CHECKLAND before. 48 / 48 object
+  events of stag0301's start (n 4360..4547) now agree.
+
+The remaining first-entry differences come from the stage loads' lengths
+(the loader's early states in another frame) and from sends the port does
+not make (the movie module's LAYERCTL GETLAYERNODE at a stage start, PLAYER
+GETMATRIX of managers that read the player directly). `DW4_TRACE_SENDS=1`
+prints the port's modelled sends in the hooks' X / C / B format,
+`DW4_TRACE_MESSAGE_OBJECTS=1` the swaps and pass ends.
