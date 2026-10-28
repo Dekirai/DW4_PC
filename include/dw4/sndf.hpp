@@ -201,6 +201,12 @@ private:
         bool note{};
         std::uint32_t message{};     // a command ring message (not a note)
         std::uint8_t channel{}, key{}, velocity{}, seq{};
+        // (The track's bank when the pass pushed the note. The original keeps
+        // only the MIDI word with channel and sequence byte, 803C1C5C, and
+        // resolves the channel's program at the drain, 803BBDD4 -> 803C06C4:
+        // the two differ only if the channel's bank changes between the pass
+        // and the next tick's drain; of the retail sequences only 0xA9010A00
+        // leaves a note for the next tick.)
         std::shared_ptr<const BankData> bank;
     };
     static constexpr std::size_t kRing = 128;

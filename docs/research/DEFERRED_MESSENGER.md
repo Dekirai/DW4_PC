@@ -243,7 +243,11 @@ dispatch `0x80305A38`, B bool `0x8030697C`, G the loader's state
   n 4360..4580), stag0301 (below) and dng101b1 (27 / 27, n 4100..4600, with
   Dolphin's world clock from start.lua on: its 16.58 ms frame after the
   long start.lua update keeps the PLAYERARMS GENERATE post for a second
-  pass) now match event for event (identities, first bools, frames).
+  pass) now match event for event: identities and first bools, and for
+  stag0203 and dng101b1, whose harnesses run on Dolphin's world clock, the
+  frames at one constant offset; the stag0301 run has no Dolphin clock, so
+  its loading phase lands a few frames apart (the round 44 integration:
+  the same 27 / 48 / 27 events with the CRI hold and the module reload).
 - The CTRLITEM folders (`SYSctlDeviceFolder` 802EBF5C, `SYSctlDiskFolder`
   802EC064, `SYSctlFlagFolder` 802EC164, `SYSctlBit` 802EC26C) select
   GAMERAM, push the folder, the command, the table and four ints and send

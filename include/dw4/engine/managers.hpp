@@ -577,8 +577,9 @@ private:
     sndf::Driver driver_;              // the SNDF as the game sees it
     std::int64_t driver_frame_{-1};    // the last AX frame it ticked
     // The frame whose step ran server_tick last: a stream started in a step
-    // before its pass (the stage loader's start.lua / first.lua) waits for
-    // the next field's pass (CriStreams::Handle::hold).
+    // before its pass (a delivery of the messenger's pass, the stage
+    // loader's start.lua / first.lua) waits for the next field's pass
+    // (CriStreams::Handle::hold).
     std::uint64_t pass_frame_{~std::uint64_t{}};
     // beSeInfoData: per model name, action -> sound after [4] frames.
     struct SeCue {

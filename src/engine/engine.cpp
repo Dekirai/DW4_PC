@@ -1670,7 +1670,19 @@ void Engine::step(const std::array<PadSample, 4>& samples) {
     }
     // The pad module (bePadManager 80311F84) updates the four slots from the
     // controllers every frame; STAGECTL PADINPUT DISABLE only changes what
-    // its getter hands out (see pads()).
+    // its getter hands out (see pads()). In the original it is a scheduled
+    // module after beMessenger and the stage loader (8028B7B0's order
+    // below: 80311F84 reads each device's state through its vtable +0x78 /
+    // +0x7C and writes the slots), so a message delivery or start.lua /
+    // first.lua would see the previous frame's slots. The port updates them
+    // here because nothing that runs before the managers reads them: every
+    // DOL call of the getter 80312138 (26, in beMovie 8031EC10,
+    // beNDMWStageCtl 80347BB4, beNDMWTitle2 80369284, the bit capsule
+    // 8034EB78, ...) is in a manager's RAM update (vtable +0x84 under the
+    // traversal 802F28F8) or a model / window class update below one, no
+    // script function reads a pad, and the port's readers are all manager
+    // updates. (The stage snapshot taken in begin_stage_load keeps this
+    // frame's slots, and a restore does not update them again.)
     try { pads_.update(samples); } catch (const std::exception& error) { note(std::string("pad input: ") + error.what()); }
     // The frame clock advances first so updates and the following render
     // observe the same time (joint clamps and fades end exactly on a key).
@@ -1713,12 +1725,17 @@ void Engine::step(const std::array<PadSample, 4>& samples) {
     messenger_.update(*this);
     process_stage_loader();
     // The CRI servers of this field (see SoundManager::server_tick): after
-    // the loader's update, before the demo and the managers. (In Dolphin the
-    // file reads of a field start with the frame, before the messenger's
-    // pass: a stream a delivery or start.lua starts is first read in the
-    // next frame, r44. The port keeps the pass after the loader's update,
-    // which its load model is calibrated on: running it first matched the
-    // stag0203 stream reads but moved stagBS01's load end by 11 fields.)
+    // the loader's update, before the demo and the managers. (The original's
+    // ADXT and file server threads run at the retrace, before the whole
+    // frame. The port keeps the pass after the loader's update, which its
+    // load model is calibrated on - running it first matched the stag0203
+    // stream reads but moved stagBS01's load end by 11 fields - and holds a
+    // stream that a delivery of this frame's messenger pass or start.lua /
+    // first.lua started before it for the next field's pass
+    // (SoundManager::open_stream, CriStreams::Handle::hold), so those
+    // streams are first read in the next field as in Dolphin: stag0203
+    // AM_DESER (start.lua) and AM_VALLE (a posted SOUND PLAY) on Dolphin's
+    // fields, r44 integration.)
     if (auto* sound = get<SoundManager>()) sound->server_tick(*this);
     demo_.update(*this);
     update_managers();

@@ -33,7 +33,15 @@ exactly n steps. In order:
    the fifth pad, which the update never touches (no input, not connected),
    checked at each read, so an ENABLE sent by this frame's demo already
    counts for the managers that read after it, a press read in the frame of
-   the ENABLE counts and a button held across it gives no trigger.
+   the ENABLE counts and a button held across it gives no trigger. The
+   original schedules bePadManager after beMessenger and the stage loader
+   (item 3), so a delivery or `start.lua` / `first.lua` would read the
+   previous frame's slots; the port updates them first because nothing before
+   the managers reads them (every DOL call of the getter is in a manager's
+   RAM update or a class update below one, no script function reads a pad).
+   (After NEXTSTAGE's frame the steps of the application loop's module reload
+   come first: covered fields without any of this, see the stage loader
+   below.)
 2. The frame clock advances, so updates and the following render observe the
    same time.
    beSystem's update (80316258) then reads the console's reset button
@@ -413,14 +421,22 @@ When a stream is ready matters to the scripts: demos wait with
 802F6FB0), and the original only gets there after the stream's first block
 came off the disc. `dw4::CriStreams` (include/dw4/disc_timing.hpp, in the
 core) models that on the engine clock, once per field from the CRI server
-tick (also during loads), which the frame step runs where the original runs
-its servers: after the messenger's pass and the stage loader, before the
-demo and the managers (the serial scheduler's module order, Dolphin r44:
-the camera viewer, beSystem, beMessenger, beCri, the loader, bePadManager,
-beDemoManager, then the managers), so a stream started in a frame's update is first served in the
-next field and a PLAYING reached in a field counts for that frame's
-ISALLREADY (Dolphin, stagBS01 1P and 2P: the last stream PLAYING and
-ISALLREADY 1 49 fields after the stage start in both): the six beCri ADXT handles (two stereo 48 kHz for
+tick (also during loads), which the frame step runs after the messenger's
+pass and the stage loader, before the demo and the managers (the serial
+scheduler's module order, Dolphin r44: the camera viewer, beSystem,
+beMessenger, beCri, the loader, bePadManager, beDemoManager, then the
+managers). The original runs its servers in their own threads at the
+retrace, ahead of the frame; the port's pass holds a stream that a delivery
+or the loader's scripts started earlier in the step
+(`CriStreams::Handle::hold`), so a stream started in a frame's update is
+first served in the next field there and here (stag0203: start.lua's
+AM_DESER and the posted AM_VALLE read on Dolphin's fields), and a PLAYING
+reached in a field counts for that frame's ISALLREADY (Dolphin, stagBS01 1P
+and 2P: the last stream PLAYING and ISALLREADY 1 49 fields after the stage
+start in both; since the round 44 module reload the port's 2P run reaches
+the stage with the old BGM's refills in another phase, its first read goes
+to another handle and the last PLAYING comes at 53, the load phase class of
+the stage loader section): the six beCri ADXT handles (two stereo 48 kHz for
 BGM and ambience with a 53-sector input ring, four mono with 13 sectors),
 their ADXSTM readers (one DVD read at a time through gcCi, the lowest handle
 first, 25 sectors before the header is parsed, refills below 85 %), the
@@ -487,8 +503,14 @@ loads at both BGM phases (the boot's three: 234 / 61 / 118 fields against
 233.8 / 62 / 121) the port's BGM refills come on the original's fields with
 its sizes; what remains is the loading thread's share of a field (a chunk a
 field early or late now and then, which can swap a chunk with a refill), on
-average -4 fields and 15 fields apart per load. The port parses each file
-when the original asks for it.
+average -4 fields and 15 fields apart per load. (Round 43 found loads after
+the title whose BGM refills come 2-3 fields before Dolphin's from the load's
+start on, +34 to +115 fields in all. The round 44 module reload moves each
+descriptor read a field earlier against the same refill cycle, which swaps
+chunks and refills in other places: NEXTSTAGE to start.lua from the title,
+dng101b1 528 fields against Dolphin's 490 (main 500), the lobby's AM_LOBBY
+start 493 against 503 (main 460), stagBS01 2P 12 fields later than main.)
+The port parses each file when the original asks for it.
 `DW4_TRACE_SOUND=1` logs every simulated read,
 PLAYING, stream start, pause / resume, fade stop and ISREADY / ISALLREADY
 change (`DW4_TRACE_CRI_RING=1` also the ring of each refill and the

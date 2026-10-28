@@ -1356,11 +1356,14 @@ bool SoundManager::open_stream(Engine& engine, Stream& stream, const std::string
     // (ADXM_SetupThrd 8029D0D8 with the default priorities: the ADXT server
     // thread 8029D434 at 12, the file server thread 8029D3DC at 14, both
     // after VIWaitForRetrace 802648EC, above the main thread's 16; the
-    // threaded registration 8028FBA4..8028FBCC, 0x804CD180 = 1): a start in
-    // the stage loader's scripts, which the port's step runs before its
-    // pass, is first seen by the next field's (Dolphin dngq1b1e: first.lua's
-    // ADXT_StartAfs after that field's ADXT and file server passes, the first
-    // read in the next field's file server pass).
+    // threaded registration 8028FBA4..8028FBCC, 0x804CD180 = 1): a start
+    // the port's step makes before its pass - a delivery of the messenger's
+    // pass, the stage loader's scripts - is first seen by the next field's
+    // (Dolphin dngq1b1e: first.lua's ADXT_StartAfs after that field's ADXT
+    // and file server passes, the first read in the next field's file server
+    // pass; stag0203: start.lua's AM_DESER and the posted SOUND PLAY's
+    // AM_VALLE read a field after their starts). A start after the pass (the
+    // managers) reaches the next field's pass anyway.
     const int slot = int(&stream - streams_.data());
     cri_.start(slot, stream_file(engine, archive, entry, stream.decoder->header()));
     if (engine.frame() != pass_frame_) cri_.handles[std::size_t(slot)].hold = true;
