@@ -599,33 +599,58 @@ Node* Engine::find_named_node(Node* from, std::string_view name) {
     return nullptr;
 }
 
-void Engine::begin_stage_load(const StageSnapshot* restoring) {
-    const std::string next = pending_stage_;
-    pending_stage_.clear();
-    log("stage change -> " + next);
-    // The update that asks for the next descriptor (beSystem 80316258) first
-    // releases the outgoing stage (8006F794): its length follows what the
-    // stage holds (loader_teardown_cost); a save state keeps it.
-    if (restoring) {
-        loader_teardown_ = restoring->loader_teardown;
-        loader_common_ = restoring->loader_common;
-    } else {
-        loader_teardown_ = loader_teardown_cost();
-    }
-    if (std::getenv("DW4_TRACE_LOADER")) {
-        std::size_t objects = 0, memories = 0;
-        for (const auto& file : files_)
-            if (file.document) {
-                objects += file.document->objects.size();
-                memories += file.document->memories.size();
-            }
-        log("loader teardown of " + stage_name_ + ": " + std::to_string(files_.size()) + " files, " + std::to_string(objects) +
-            " objects, " + std::to_string(memories) + " memory blocks -> " + std::to_string(loader_teardown_) + " milli-fields");
-    }
+// The application loop's module reload (8028A87C, Engine::step) first calls
+// the +0x70 reset of each of its 63 modules in the module list's order, then
+// deletes every info of the application's list +0x10 (80066e1c at
+// 0x8028A910). What the port has of the resets:
+// - igMovieManager 802AF560 (module 3): every movie stops (SoundManager::
+//   stop_movie);
+// - beSystem 8031624C (4): +0x2D set, so no manager updates until its next
+//   update (none runs in the reload anyway);
+// - beMessenger 80304C38 -> 803040C0 (6): registrations and pending
+//   messages go;
+// - beCri 802F523C (7): the effect of a beCriFxInfo named NONE (802F6F10,
+//   effects off), its beCriFxInfo list released, the stage's banks unloaded
+//   (802F6BAC at 0x802F53A0); beSound (15, 802F2628 with its hook 80314904)
+//   and beMovie (19, 8031EB48): their RAMs (SoundManager::clear_stage);
+// - beDemoManager 802F7D0C (13): the demo works go;
+// - the info managers' shared reset 802F2628 (beStaticInfoCtl, beDBManager,
+//   beBkColor .. beNDMWMdlEnemy): the class's hook (+0x88), the RAMs and
+//   their scheduler entries (8028A400) go (each Manager::clear_stage).
+// The reload runs no update and keeps the picture, so of all this only the
+// sound is heard before the next update (the effect's reverb tail, the
+// stage banks' loops; Dolphin d_ngsr1: the DSP output ends in the field
+// after the reload's start); the directories go with beSystem's next update
+// (begin_stage_load).
+void Engine::reset_modules() {
     for (auto& m : managers_) m->clear_stage(*this);
     schedule_.clear();
     messenger_.clear();
     demo_.clear();
+}
+
+void Engine::begin_stage_load(const StageSnapshot* restoring) {
+    const std::string next = pending_stage_;
+    pending_stage_.clear();
+    log("stage change -> " + next);
+    // This is the first update after the application loop's module reload
+    // (Engine::step, loader_teardown_cost): its world clock sample came late
+    // by the reload's fraction of a field, the next one is on time again.
+    // The module resets ran at the reload's start (reset_modules); beSystem's
+    // update now releases the outgoing stage's directories (8006F794 at
+    // 0x8031658C): its documents, scenes and scripts go. A save state keeps
+    // the reload's length (informational).
+    reloading_ = false;
+    if (restoring) {
+        loader_teardown_ = restoring->loader_teardown;
+        loader_common_ = restoring->loader_common;
+        // (A restore starts a new engine with the snapshot's sound state;
+        // the resets follow as in the live run, whose snapshot was taken
+        // after them.)
+        reset_modules();
+    } else {
+        clock_lateness_ = 0;
+    }
     global_root_.children.clear();
     for (auto& file : files_) retired_.push_back(file.document);
     for (auto& file : files_) scenes_.release_document(file.document.get());
@@ -937,24 +962,139 @@ bool trace_loader() {
     static const bool on = std::getenv("DW4_TRACE_LOADER") != nullptr;
     return on;
 }
+
+// The objects and memory blocks first reached from `start` through object
+// references, memory references and object lists (`seen` marks the
+// document's references already counted): what deleting an info frees.
+std::pair<std::size_t, std::size_t> reachable(const IgbDocument& document, std::uint32_t start, std::vector<char>& seen) {
+    std::size_t objects = 0, memories = 0;
+    std::vector<std::uint32_t> stack{start};
+    while (!stack.empty()) {
+        const auto reference = stack.back();
+        stack.pop_back();
+        if (reference >= document.references.size() || seen[reference]) continue;
+        seen[reference] = 1;
+        const auto& entry = document.references[reference];
+        if (entry.kind == IgbReferenceKind::memory) {
+            if (entry.value_index < document.memories.size()) ++memories;
+            continue;
+        }
+        if (entry.kind != IgbReferenceKind::object || entry.value_index >= document.objects.size()) continue;
+        ++objects;
+        const auto& object = document.objects[entry.value_index];
+        for (const auto& field : object.fields) {
+            if (field.type_index >= document.metadata.field_types.size()) continue;
+            const auto& type = document.metadata.field_types[field.type_index].name;
+            if (type != "igObjectRefMetaField" && type != "igMemoryRefMetaField") continue;
+            try {
+                if (const auto next = document.field_reference(object, field.slot)) stack.push_back(*next);
+            } catch (const std::exception&) {
+            }
+        }
+        if (document.is_a(object, "igObjectList")) {
+            try {
+                for (const auto& element : document.object_list(reference))
+                    if (element) stack.push_back(*element);
+            } catch (const std::exception&) {
+            }
+        }
+    }
+    return {objects, memories};
+}
 } // namespace
 
-// The update after NEXTSTAGE (80316258: the managers release the outgoing
-// stage's RAMs, 8006F794 its directories) asks for the next descriptor at its
-// end; it grows with what the stage's files hold: 1.5 fields + 0.7 per 1000
-// memory blocks + 0.18 per 1000 objects (captures: the descriptor request
-// 1.54 fields into the update after stagIS09, 8.59 after stagIS10 (5875
-// blocks, 14804 objects), 16.25 after stag0203, 20.58 after stag0204; the
-// logos, 6.31, take 2 fields longer than this).
+// NEXTSTAGE's frame ends the application loop's update / render loop: after
+// its picture (the endScene retrace) the loop reloads every module (80021944
+// -> 8040F570 -> 8028A87C) before the next update's world clock sample
+// (8028AF84) and beSystem's descriptor request (80316258: 8006F794 at
+// 0x8031658C, 8006FD34 at 0x803165A0). The reload calls every module's +0x70
+// reset (reset_modules) and deletes every info of the application's list +0x10
+// (80066e1c at 0x8028A910), then 80021944 finishes (8028A730, the
+// application's +0xEC, 800607F4), and all of it takes the main thread for
+// these milli-fields. With hooks on each reset and each delete (r44timing
+// d_td3) the module resets take 0.45 fields (beMessenger 0.13-0.21, beLua
+// 0.14-0.23, beLayerCtl, beFont, beCameraCtrl; the other 58 next to nothing)
+// and the deletes grow with what the infos hold; the tail in 80021944 after
+// 8040F570 is 0.01-0.12 fields, but 1.08 / 1.09 after dng101b1 (1P and 2P),
+// which nothing the port keeps explains. Fitted to the whole reload (the
+// reload's start to the next world clock sample, 16 Dolphin measurements):
+// 0.448 fields + 0.753 per 1000 objects the beDBManagerInfos reach + 0.656 per
+// 1000 memory blocks outside the DB / font infos + 0.166 per 1000 other
+// objects (the model RAMs and beFontInfos add nothing measurable beyond that).
+// Measured / modelled, fields (J->U: hooks on the reload's start 80021944 and
+// the loop's return 0x800212C0 and the next world clock sample; W: the world
+// clock delta minus a field, the NEXTSTAGE frame's lateness corrected):
+//   stagIS08 logos         4.317 /  4.054  J->U d_boot2, d_ngsr1 4.322
+//   stagIS09 opening       0.547 /  0.546  J->U d_ngsr1
+//   stagIS10 to attract    7.465 /  7.672  J->U d_boot2
+//   stagIS10 new game      7.629 /  7.672  J->U d_ngsr1
+//   stagIS10 login         7.598 /  7.672  W r43 d_rs_cons
+//   stagIS10 2P login      7.663 /  7.672  J->U r44timing d_rs2p101
+//   stag0203 change       15.23  / 15.371  W fix_r22load2
+//   stag0204 change       19.57  / 19.380  W fix_r29load
+//   dng101b1 soft reset   16.585 / 16.775  J->U r44timingrev d_ngsr1
+//   dng101b1 2P reset     16.678 / 16.804  J->U r44timing d_rs2p101
+//   stag0001 soft reset   16.335 / 16.616  J->U r44timingrev d_ngsr0001
+//   dng411b1 3P game over 17.258 / 17.129  W r43 d_mp3g (d_mp3g_late 17.259)
+//   stagBS01 game over    18.573 / 18.163  W r43 d_bs01go
+//   stag0101 soft reset   20.236 / 20.479  W r43 d_rs_cons
+//   stag0101 gate warp    20.451 / 20.479  W r43 d_g1
+//   stag0103 2P reset     17.037 / 16.622  W r43 d_rs_2pboat
+// The update after the reload comes on the original's field in 15 of the
+// 16 (whole fields alike); stag0103's reload, 0.04 past a whole field, ends
+// one field early (no monotone count of what it holds puts it above
+// dng101b1's 2P reload: 1-2 % fewer objects and memory blocks, 0.36 fields
+// longer). Leaving each point out of the fit, 14 of 16 still land on their
+// field (stagIS08 then 3.88). (The r44 fit of 5 points - 0.45 + 0.93 / 1000
+// DB objects + 1.4 per font + 0.0086 per model RAM + 0.405 / 1000 other
+// memory blocks - was 0.7 to 2.1 fields too long or short for dng101b1,
+// dng411b1 and stag0101; until r44 the loader added 1.5 + 0.7 / 1000 memory
+// blocks + 0.18 / 1000 objects to the update itself: fitted to the update's
+// whole world clock delta, one field more than the reload, so every
+// descriptor read after a teardown came a field late.) The session's first
+// load has nothing to release (0.12 fields: 0).
+Engine::TeardownLoad Engine::teardown_load() const {
+    TeardownLoad load;
+    std::size_t db_memories = 0;
+    for (const auto& file : files_) {
+        const auto* document = file.document.get();
+        if (!document) continue;
+        load.objects += document->objects.size();
+        load.memories += document->memories.size();
+        if (!document->info_list_reference) continue;
+        // (In the info list's order, each info taking what an earlier one
+        // did not reach, as the captures were measured. A broken info list
+        // counts as far as it can be read.)
+        std::vector<char> seen(document->references.size(), 0);
+        try {
+            for (const auto& element : document->object_list(*document->info_list_reference)) {
+                if (!element) continue;
+                const auto [objects, blocks] = reachable(*document, *element, seen);
+                const auto& info = document->object(*element);
+                if (info.type_index >= document->metadata.object_types.size()) continue;
+                const auto& type = document->metadata.object_types[info.type_index].name;
+                if (type == "beFontInfo") {
+                    ++load.fonts;
+                    db_memories += blocks;
+                } else if (type == "beDBManagerInfo") {
+                    load.db_objects += objects;
+                    db_memories += blocks;
+                }
+            }
+        } catch (const std::exception&) {
+        }
+    }
+    const auto* models = get<ModelCtrlManager>();
+    load.rams = models ? models->rams().size() : 0;
+    load.rest = load.memories - std::min(load.memories, db_memories);
+    return load;
+}
+
 std::int32_t Engine::loader_teardown_cost() const {
     if (files_.empty()) return 0;
-    std::size_t memories = 0, objects = 0;
-    for (const auto& file : files_)
-        if (file.document) {
-            memories += file.document->memories.size();
-            objects += file.document->objects.size();
-        }
-    return std::int32_t(1500 + memories * 7 / 10 + objects * 18 / 100);
+    const auto load = teardown_load();
+    const std::size_t other_objects = load.objects - std::min(load.objects, load.db_objects);
+    return std::int32_t(448 + load.db_objects * 753 / 1000 + load.rest * 656 / 1000 + other_objects * 166 / 1000);
 }
 
 // State 5 (802FA53C) registers the stage's infos; the update grows with the
@@ -1241,13 +1381,13 @@ void Engine::loader_update() {
         return;
     }
     case kLoaderDescriptor: {
-        // beSystem (80316258): the update after NEXTSTAGE releases the old
-        // stage and asks for <stage>.igb (0x803165A0); once that directory is
-        // ready (0x80316674) its beFileListInfo starts the file-list manager,
+        // beSystem (80316258): the first update after the module reload
+        // releases the old stage's directories (0x8031658C) and asks for
+        // <stage>.igb (0x803165A0) at once; once that directory is ready
+        // (0x80316674) its beFileListInfo starts the file-list manager,
         // whose update follows in the same frame (state 0).
         if (!loader_file_.active) {
             loader_request({stage_name_ + ".igb"});
-            loader_cost_ += loader_teardown_;
             return;
         }
         if (!loader_ready()) return;
@@ -1491,6 +1631,42 @@ void Engine::step(const std::array<PadSample, 4>& samples) {
         console_reset_.hold(samples);
         for (auto& m : managers_) m->update_held(*this);
         return;
+    }
+    // NEXTSTAGE's frame was the last of the application loop's update /
+    // render loop: the module reload comes first, from the retrace after its
+    // picture on (loader_teardown_cost): the module resets at its start
+    // (reset_modules), then its whole fields run no update and keep the last
+    // picture (no new XFB until the update after it; presenting()), only the
+    // work on the retraces goes on, and the update after it samples the world
+    // clock late by the rest of a field (Dolphin d_ngsr1: J at the retrace
+    // after NEXTSTAGE's frame, Q and the next sample U 16.585 fields later).
+    if (!pending_stage_.empty() && !reloading_) {
+        reloading_ = true;
+        // (Fast loading, a PC option, takes no time for it either.)
+        loader_teardown_ = cheats_.fast_loading ? 0 : loader_teardown_cost();
+        if (trace_loader()) {
+            std::size_t objects = 0;
+            for (const auto& file : files_)
+                if (file.document) objects += file.document->objects.size();
+            const auto load = teardown_load();
+            log("loader teardown of " + stage_name_ + ": " + std::to_string(files_.size()) + " files, " + std::to_string(objects) +
+                " objects, " + std::to_string(load.memories) + " memory blocks, " + std::to_string(load.rams) + " model RAMs, " +
+                std::to_string(load.db_objects) + " DB objects, " + std::to_string(load.fonts) + " fonts, " + std::to_string(load.rest) +
+                " other memory blocks -> module reload " + std::to_string(loader_teardown_) + " milli-fields");
+        }
+        // The module resets come first (reset_modules): the movies stop (the
+        // codecs' retrace waits end with them), the effect goes off and the
+        // stage's banks are unloaded before the reload's first field.
+        reset_modules();
+        set_clock_lateness(std::int64_t(loader_teardown_ % 1000) * (kFieldNsPer3 / 3) / 1000);
+        if (loader_teardown_ >= 1000) {
+            hold_fields_ = loader_teardown_ / 1000 - 1;
+            held_ = true;
+            ++frame_;
+            console_reset_.hold(samples);
+            for (auto& m : managers_) m->update_held(*this);
+            return;
+        }
     }
     // The pad module (bePadManager 80311F84) updates the four slots from the
     // controllers every frame; STAGECTL PADINPUT DISABLE only changes what

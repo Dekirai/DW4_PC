@@ -394,7 +394,12 @@ field and the update after it takes it) stops every movie at once (802AF560)
 and runs the end script in the same update. While
 Sofdec decodes, the frames start 0.011 field after their retraces
 (`Engine::set_clock_lateness`), so the skip's NEXTSTAGE, posted for one
-nominal frame later, arrives two updates after it. The picture the codec
+nominal frame later, arrives two updates after it; the decoder works two
+pictures ahead, so the frames start on time again from the one after the
+codec took the last but one picture (Dolphin's world clock samples: late in
+the frame taking picture 1918 of 1920, on time from the one taking 1919), and
+a skip in the movie's last frames gets its NEXTSTAGE in the next update
+(Dolphin d_rskipend1 / 2). The picture the codec
 took last stays on the screen through the frame that tears the stage down,
 after the end and after a skip (`Engine::presenting`, `SoundManager::movie_still`):
 none of the frames after the stop runs a codec update, so their XFB shows
@@ -442,8 +447,38 @@ which takes it whole fields more where the chunk holds the reference index,
 the start of the object buffer (the objects are made there, 0.34 fields per
 1000), object records or the start of the memory blocks; after the last
 chunk the file is ready by the time its memory blocks take, then routed in
-the next update. The teardown of the outgoing stage, routing a large member,
-state 5 and start.lua are long updates that cover the retraces after them.
+the next update. Routing a large member, state 5 and start.lua are long
+updates that cover the retraces after them. A stage change itself starts with
+the application loop's module reload: NEXTSTAGE's frame ends the loop's update
+/ render loop, and after its picture (the endScene retrace) the loop reloads
+every module (80021944 -> 8040F570 -> 8028A87C: every module's +0x70 reset,
+igMovieManager's stopping the movies, then every info of the application's
+list +0x10 deleted) before the next update samples the world clock and
+beSystem releases the directories and asks for the descriptor (0x8031658C /
+0x803165A0). The module resets come at the reload's start
+(`Engine::reset_modules`, every `Manager::clear_stage`, the messenger and the
+demo): igMovieManager's 802AF560 stops the movies, beCri's 802F523C turns the
+effect off (802F6F10 NONE: the reverb's delay lines go) and unloads the
+stage's banks (802F6BAC; the port frees their loops), so a stage's sound ends
+with the reload's first field (Dolphin d_ngsr1, a soft reset in dng101b1: the
+DSP output is silent from the field after NEXTSTAGE's on, the port's on the
+same field). Dolphin captures with hooks on the reload, every reset and every
+delete (r44timing d_td3) put 0.45 fields into the module resets and the rest
+into the deletes, growing with what the infos hold;
+`Engine::loader_teardown_cost` is fitted to 16 measured reloads (boot stages,
+stage changes, soft resets, game overs, a gate warp; J->U hooks or world clock
+deltas): 0.448 fields + 0.753 per 1000 objects of the beDBManagerInfos + 0.656
+per 1000 other memory blocks + 0.166 per 1000 other objects, within 0.41
+fields of each (the update after the reload on the original's field in 15 of
+16; stag0103's 2P soft reset, 17.04 fields, ends a field early; the table is
+at the function). `Engine::step` runs the reload's whole fields as covered
+fields (no update, the picture of NEXTSTAGE's frame stays,
+`Engine::presenting`) and the update after it samples the world clock late by
+the rest of a field (`StageSnapshot::clock_lateness`) and sends the descriptor
+request at once. (Until r44 the loader charged 1.5 fields + 0.7 / 1000 memory
+blocks + 0.18 / 1000 objects to that update: fitted to its whole world clock
+delta, a field more than the reload, so every descriptor read after a teardown
+came a field late.)
 So a stage starts 500-900 fields after its NEXTSTAGE as in the original (a
 constant 106 before). The load time depends strongly on where the BGM's
 refill cycle stands when it starts: Dolphin itself gives 497 or 607 fields
@@ -470,8 +505,8 @@ option and not the original timing) is a separate switch around that model:
 on and a save state's replay sees the value its snapshot holds. With it the
 loader runs every state in the original order, one state per update, but
 `loader_request` hands the file over at once (no `read_entry` on the loader's
-CRI stream, no chunk processing or post-processing fields), the update costs
-(teardown, routing, state 5, start.lua) cover no retraces, the boot's timing
+CRI stream, no chunk processing or post-processing fields), the module reload
+and the update costs (routing, state 5, start.lua) cover no retraces, the boot's timing
 reads are skipped, state 4 does not wait for the loading screen's minimum
 time (it still sets the lock time), and the queue states take several files
 per update (`loader_queue_fast`: parsed and routed in order while the files of
