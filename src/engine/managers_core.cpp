@@ -929,32 +929,36 @@ void SoundManager::add_info(Engine& engine, const ObjectView& info) {
     base_volume_ = info.i16(9);
     set_sndf_volume(info.i16(10));
 }
+// The module resets of the module reload at a stage change, at its start
+// (Engine::reset_modules), in the module list's order.
 void SoundManager::clear_stage(Engine& engine) {
-    // The Cri's stage end (802F523C): the effect of the first beCriFxInfo
-    // if it were named NONE, in practice effects off (the reverb's delay
-    // lines go); then the info list empties.
+    // igMovieManager's reset (802AF560, module 3) stops every movie (their
+    // codec waits end with them).
+    stop_movie(engine);
+    // beCri's reset (802F523C, module 7): the effect of the first
+    // beCriFxInfo if it were named NONE (802F6F10), in practice effects off
+    // (the reverb's delay lines go); then the info list empties and the
+    // stage's banks go (below).
     select_effect(engine, "NONE");
     fx_infos_.clear();
     fx_due_ = false;
-    // The streams keep playing into the next stage (its scripts stop or
-    // replace them); only the stage's sound list goes.
-    rams_.clear();
-    sounds_.clear();
-    files_.clear();
-    // The per-stage hook 80314904 clears only the repeat guard list
+    // beSound's reset (802F2628, module 15): the streams keep playing into
+    // the next stage (its scripts stop or replace them); only the stage's
+    // sound list goes. Its hook 80314904 clears only the repeat guard list
     // (+0x28). The current BGM (+0x24) belongs to the beSound manager made
     // once by the engine plugin (80318A24 -> 80318EE8): it survives the
     // stage change, and only PLAY / BGMSTOP / VOLUMECTL write it.
+    rams_.clear();
+    sounds_.clear();
+    files_.clear();
     se_recent_.clear();
-    // The teardown stops every movie (their codec waits end with them); the
-    // beMovie RAM goes with the stage.
-    stop_movie(engine);
+    // beMovie's reset (module 19): the beMovie RAM goes.
     movie_named_ = false;
     movie_script_.clear();
-    // The stage's banks go (802F6BAC -> 803C1CC4 unloads their SNDF slots).
-    // The original's voices of those banks play on from the ARAM the next
-    // stage's banks overwrite; the port frees the loops among them (their
-    // one-shots end, the common bank's sounds go on).
+    // beCri's bank unload (802F6BAC at 0x802F53A0 -> 803C1CC4 unloads the
+    // stage banks' SNDF slots). The original's voices of those banks play
+    // on from the ARAM the next stage's banks overwrite; the port frees the
+    // loops among them (their one-shots end, the common bank's sounds go on).
     for (int i = 0; i < sndf::Driver::kVoices; ++i) {
         const auto& voice = driver_.voices()[std::size_t(i)];
         if (!voice.used || !voice.loop) continue;

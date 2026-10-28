@@ -597,6 +597,17 @@ private:
     // `restoring`: a save state's snapshot (its loader values instead of the
     // outgoing stage's).
     void begin_stage_load(const StageSnapshot* restoring = nullptr);
+    // The module resets of the application loop's module reload (8028A87C:
+    // every module's +0x70, then every info of the application's list
+    // deleted), at the reload's start (Engine::step).
+    void reset_modules();
+    // What the module reload deletes (loader_teardown_cost): all objects
+    // and those the beDBManagerInfos reach, the beFontInfos, the model RAMs,
+    // all memory blocks and those outside the DB / font infos.
+    struct TeardownLoad {
+        std::size_t objects{}, db_objects{}, fonts{}, rams{}, memories{}, rest{};
+    };
+    TeardownLoad teardown_load() const;
     std::int32_t loader_teardown_cost() const;
     std::int64_t loader_register_cost(const std::vector<ObjectView>& infos) const;
     std::int64_t loader_start_cost() const;
@@ -746,6 +757,8 @@ public:
     const std::string& type_name() const { return type_name_; }
     virtual bool accepts(const ObjectView& info) const = 0;
     virtual void add_info(Engine& engine, const ObjectView& info) = 0;
+    // The module's reset at the start of a stage change's module reload
+    // (8028A87C, Engine::reset_modules): the stage's RAMs and infos go.
     virtual void clear_stage(Engine& engine) { (void)engine; }
     virtual void update(Engine& engine) { (void)engine; }
     // The frame's update while the stage is not active (Engine::stage_active):

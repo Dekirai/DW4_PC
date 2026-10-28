@@ -312,8 +312,8 @@ public:
     // movie, from the frame after its open on (Engine::update_managers).
     void update_movie_player(Engine& engine);
     // 802AF560 (the skip, and igMovieManager's reset at the start of the
-    // module reload before a stage's teardown, Engine::step): every movie
-    // stops.
+    // module reload before a stage's teardown, clear_stage from
+    // Engine::reset_modules): every movie stops.
     void stop_movie(Engine& engine);
     // Interleaved stereo 16-bit PCM at kOutputRate: the AX mix at the DSP
     // rate, resampled. Successive calls continue the audio seamlessly,
