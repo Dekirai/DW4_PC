@@ -1565,7 +1565,6 @@ public:
         std::uint32_t slam_direction{};
         float slam_timer{};
         bool capsule_on{};           // KIND_PLAYER2 work +EC: a player is close
-        bool capsule_ended{};        // end_g_000bcaps.lua already started
         int capsule_age{};           // KIND_PLAYER2 work +F0: updates since generated (to 10)
         // AIM map AI (803084B8): maps from the info's "AIM" data, AI work +50.
         const std::vector<ObjectView>* ai_maps{};
