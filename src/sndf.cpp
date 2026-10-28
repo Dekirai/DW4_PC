@@ -240,10 +240,11 @@ void Driver::tick(std::int64_t frame, std::int64_t time, const Banks& banks, std
         }
     }
     // The command ring: up to 64 messages a tick (SNDF +0x85E) go into the
-    // MIDI ring behind the events the last tick's pass left there (DW4's
-    // requests all name a sequence and its commands are 0xB0..: none starts
-    // at once, 803C3590..803C3750); then the ring is drained, also of what
-    // the drain adds (the passes of the requests it starts).
+    // MIDI ring behind the events the last tick's pass left there (a
+    // request starts at once only with top byte 0xA0 or without a sequence,
+    // 803C3590..803C3750; DW4's requests all name one); then the ring is
+    // drained, also of what the drain adds (the passes of the requests it
+    // starts).
     for (int n = 0; n < 64 && !messages_.empty() && messages_.front().time <= time; ++n) {
         ring_push({false, messages_.front().value});
         messages_.pop_front();
