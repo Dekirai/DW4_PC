@@ -745,7 +745,6 @@ void Engine::restore(const StageSnapshot& snapshot) {
     if (auto* camera = get<CameraManager>()) camera->begin_frame(*this);
     messenger_.update(*this);
     process_stage_loader();
-    if (auto* sound = get<SoundManager>()) sound->server_tick(*this);
     demo_.update(*this);
     update_managers();
 }
@@ -1720,23 +1719,11 @@ void Engine::step(const std::array<PadSample, 4>& samples) {
     // frame's camera before the others run (CameraManager::begin_frame); the
     // messenger's pass comes before the loader, so the posts of start.lua
     // and first.lua and the loader's own sends follow the frame's pass
-    // (a delay-0 post arrives at the next frame's pass).
+    // (a delay-0 post arrives at the next frame's pass). The CRI servers of
+    // the next retrace follow the managers (update_managers).
     if (auto* camera = get<CameraManager>()) camera->begin_frame(*this);
     messenger_.update(*this);
     process_stage_loader();
-    // The CRI servers of this field (see SoundManager::server_tick): after
-    // the loader's update, before the demo and the managers. (The original's
-    // ADXT and file server threads run at the retrace, before the whole
-    // frame. The port keeps the pass after the loader's update, which its
-    // load model is calibrated on - running it first matched the stag0203
-    // stream reads but moved stagBS01's load end by 11 fields - and holds a
-    // stream that a delivery of this frame's messenger pass or start.lua /
-    // first.lua started before it for the next field's pass
-    // (SoundManager::open_stream, CriStreams::Handle::hold), so those
-    // streams are first read in the next field as in Dolphin: stag0203
-    // AM_DESER (start.lua) and AM_VALLE (a posted SOUND PLAY) on Dolphin's
-    // fields, r44 integration.)
-    if (auto* sound = get<SoundManager>()) sound->server_tick(*this);
     demo_.update(*this);
     update_managers();
 }
@@ -1765,10 +1752,28 @@ void Engine::update_managers() {
     // The movie player (igMovieManager, 802B11BC) is a module MOVIE PLAY
     // appends to the scheduler (8028A398 at 0x802AF254): it runs after
     // everything scheduled before it, whether or not the stage is active.
+    // Before it come the CRI servers of the next retrace
+    // (SoundManager::server_tick). The original's ADXT server and file
+    // server threads (8029D434 at priority 12, 8029D3DC at 14, above the
+    // main thread's 16; ADXM_SetupThrd 8029D0D8) wake at every retrace
+    // (VIWaitForRetrace 802648EC) and run before the frame's update (r44
+    // Dolphin hooks: the ADXT server 0.013 and the file server 0.003 fields
+    // ahead of the frame's world clock sample, every field), so everything
+    // a frame's update does - the loader's requests and bookings, a stream
+    // started or paused by a delivery, start.lua / first.lua, the demo or a
+    // manager, the entries' updates (802F53B8) and ISREADY / ISALLREADY
+    // (802F6FB0) - meets the pass of its own retrace before it and the pass
+    // of the next one after it: a stream's first read comes in the field
+    // after its start whatever started it (Dolphin r44 / r46: ADXT_StartAfs
+    // in an update, the first read B at the next retrace), PLAYING counts
+    // from the next update. The movie codec's update waits for the retrace
+    // inside its own update (802AE8B8 -> VIWaitForRetrace) and sees the
+    // pass of that retrace, so the pass comes before the movie player.
     auto* sound = get<SoundManager>();
     if (!stage_active_) {
         for (auto& m : managers_)
             if (!m->scheduled_at_registration()) m->update_inactive(*this);
+        if (sound) sound->server_tick(*this);
         if (sound) sound->update_movie_player(*this);
         return;
     }
@@ -1781,6 +1786,7 @@ void Engine::update_managers() {
         if (!m->scheduled_at_registration() &&
             std::none_of(schedule_run_.begin(), schedule_run_.end(), [&](const Scheduled& e) { return e.manager == m.get(); }))
             m->update(*this);
+    if (sound) sound->server_tick(*this);
     if (sound) sound->update_movie_player(*this);
 }
 

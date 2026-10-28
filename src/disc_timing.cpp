@@ -44,6 +44,13 @@ constexpr std::uint32_t kStartLimit = 25;          // 804CD3A8: sectors read bef
 constexpr std::uint32_t kMaxRequest = 512;         // ADXSTM +0x2C
 constexpr std::uint32_t kLoaderRequest = 64;       // the loader's reads (every capture: 64-sector requests)
 constexpr std::uint32_t kOutputSamples = 0x2000;   // output SJ per channel (8029B820: +0x30)
+// The output SJ's extra area (8029B820: +0x34 8288 - +0x30): a chunk may run
+// past the ring's end by this much (SJRBF 802A372C), so the renderer reads
+// up to 96 samples beyond it in one piece.
+constexpr std::uint32_t kOutputExtra = 8288 - kOutputSamples;
+// The input SJ's extra area (8029B820: +0x28 = 36 bytes): the decoder's
+// chunk of the input may run 36 bytes past the ring's end.
+constexpr std::uint32_t kInputExtra = 36;
 constexpr std::uint32_t kAramSamples = 4096;       // RNARES ring per channel (802A8590)
 constexpr std::uint32_t kAramStep = 2048;          // played samples are given back in halves (802A72F0)
 // A command of the game update runs 0.02 field after the servers of its field.
@@ -280,9 +287,11 @@ void CriStreams::pause(int slot, bool paused, std::int64_t now) {
     // before the driver tick that follows it.
     const std::int64_t at = now - kFieldTicks + kGamePhase;
     if (paused) {
-        // 802A7534 (switch off): the voices stop and the ARAM ring is reset;
-        // what it held unplayed is dropped (the transfer refills it).
+        // 802A7534 (switch off): the voices stop and the ARAM ring is reset
+        // (its SJ's vtable +0x14: empty, both positions at the start); what
+        // it held unplayed is dropped (the transfer refills it).
         h.reclaimed = h.moved;
+        h.aram_base = h.moved;
         h.dsp_start = -1;
     } else {
         // 802A7534 (switch on): the voices start again at the ring's start,
@@ -314,22 +323,41 @@ std::uint64_t CriStreams::played(const Handle& h, std::int64_t now) const {
 }
 
 void CriStreams::tick(std::int64_t now) {
-    // ADXT server (8029A60C). The decoder server first (80290018 -> 80290520):
-    // each decoding handle decodes up to its unit into the output SJ.
-    for (auto& h : handles) {
+    // ADXT server (8029A60C). The decoder server first (80290018 -> 80290074
+    // -> 80290520): a decoding handle whose output SJ has room (lane 0's
+    // count / 2 >= ADXB +0x10, which the ADX header parse sets to 1,
+    // 0x802936F8) takes the input SJ's data chunk - up to the ring's end and
+    // its 36-byte extra area (SJRBF 802A372C) - and decodes in one call
+    // (80293AEC, the block count of 80293E5C) the least of its whole ADX
+    // frames, the output's free chunk (lane 0 up to its end and extra area,
+    // capped at the unit: the output callback 80290838 with ADXSJD +0x38,
+    // 80290C78) and the frames to the output ring's end; the consumed bytes
+    // go back to the input's free lane (0x80290258).
+    for (std::size_t slot = 0; slot < handles.size(); ++slot) {
+        auto& h = handles[slot];
         if (!h.active || !h.decoding) continue;
+        if (h.sj >= kOutputSamples) continue;
+        if (!h.file.loop && h.decoded >= h.file.samples) continue;
         const std::uint32_t frame_bytes = 18 * h.file.channels;
-        const std::uint64_t frames = (h.written - h.consumed) / frame_bytes;
-        std::uint64_t n = std::min<std::uint64_t>({decode_unit(h.file), kOutputSamples - h.sj, frames * 32});
+        const std::uint64_t ring = std::uint64_t(kRingSectors[slot]) * kSector;
+        const std::uint64_t in_chunk = std::min<std::uint64_t>(h.written - h.consumed, ring + kInputExtra - h.consumed % ring);
+        const std::uint64_t out_pos = h.decoded % kOutputSamples;
+        const std::uint64_t out_chunk =
+            std::min<std::uint64_t>({kOutputSamples - h.sj, kOutputSamples + kOutputExtra - out_pos, decode_unit(h.file)});
+        std::uint64_t frames = std::min<std::uint64_t>({in_chunk / frame_bytes, out_chunk / 32, (kOutputSamples - out_pos) / 32});
+        std::uint64_t n = frames * 32;
         if (!h.file.loop) {
-            // a one-shot ends with its last (whole) ADX frame
-            const std::uint64_t left = h.file.samples > h.decoded ? h.file.samples - h.decoded : 0;
-            n = std::min<std::uint64_t>(n, (left + 31) / 32 * 32);
+            // a one-shot ends with its last ADX frame, whose samples go out
+            // only up to the file's end (80290074: min(decoded, total -
+            // decoded so far) into the output SJ, all its bytes consumed)
+            const std::uint64_t left = h.file.samples - h.decoded;
+            frames = std::min<std::uint64_t>(frames, (left + 31) / 32);
+            n = std::min<std::uint64_t>(frames * 32, left);
         }
-        n -= n % 32;
+        if (!frames) continue;
         h.decoded += n;
         h.sj += std::uint32_t(n);
-        h.consumed += n / 32 * frame_bytes;
+        h.consumed += frames * frame_bytes;
     }
     // ADXT_ExecHndl (8029BED8) per handle.
     for (auto& h : handles) {
@@ -337,9 +365,7 @@ void CriStreams::tick(std::int64_t now) {
         if (!h.bound) {
             // decinfo (8029C1E0): the stream is bound (8029B2D0) once its
             // ADXSTM stopped; the reader opens the file in the next file server.
-            // (A handle started after this field's pass in the original is
-            // not there yet: hold.)
-            if (!h.busy && !h.stopping && !h.hold) h.bound = true;
+            if (!h.busy && !h.stopping) h.bound = true;
             continue;
         }
         if (h.state == 1 && h.first_block) {
@@ -379,16 +405,20 @@ void CriStreams::tick(std::int64_t now) {
         }
     }
     // Renderer server (802A6DF8): the DSP's progress comes back in halves
-    // (802A72F0: at most one per call), then the ring is refilled from the
-    // output SJ (also before playback).
+    // (802A72F0: at most one per call), then one DMA per channel refills the
+    // ARAM ring (also before playback): the least of the ring's free chunk
+    // (lane 0 up to the ring's end, no extra area: 802A7C64) and the output
+    // SJ's data chunk (up to its end and extra area), whole 16-sample units
+    // (0x802A6EE4).
     for (auto& h : handles) {
         if (!h.active || h.state < 2 || h.state > 4) continue;
         if (played(h, now) >= h.reclaimed + kAramStep) h.reclaimed += kAramStep;
         // After DECEND the transfer is off: the ring only gets silence
         // (802A6FF0), the DSP plays the rest out.
         if (h.state == 4) continue;
-        const std::uint64_t room = kAramSamples - (h.moved - h.reclaimed);
-        std::uint64_t m = std::min<std::uint64_t>(room, h.sj);
+        const std::uint64_t aram_pos = (h.moved - h.aram_base) % kAramSamples;
+        const std::uint64_t room = std::min<std::uint64_t>(kAramSamples - (h.moved - h.reclaimed), kAramSamples - aram_pos);
+        std::uint64_t m = std::min<std::uint64_t>({room, h.sj, kOutputSamples + kOutputExtra - h.moved % kOutputSamples});
         m -= m % 16;
         h.moved += m;
         h.sj -= std::uint32_t(m);
@@ -463,8 +493,6 @@ void CriStreams::tick(std::int64_t now) {
         loader.busy = true;
         loader.request = n;
     }
-    // The next field's pass sees the handles this one held back.
-    for (auto& h : handles) h.hold = false;
 }
 
 void CriStreams::movie_open(std::uint64_t disc_offset, std::uint32_t sectors) {

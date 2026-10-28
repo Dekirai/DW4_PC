@@ -67,22 +67,8 @@ exactly n steps. In order:
    `func.lua` / `boot.lua`, common files queued with `CFLsetName`, the wait
    for the loading screen's minimum play time (its beLoadingNode then holds
    its lock time on the LOADING layer until the scripts remove it), info
-   registration, `start.lua`, `first.lua`. Then the CRI servers' field
-   (`SoundManager::server_tick`, the original's ADXT server 8029A60C and file
-   server 80296904): stream reads on the simulated drive, decoding, PLAYING
-   (see the sound section below). The original runs these servers in their
-   own threads at the field's retrace, ahead of the whole frame (ADXT server
-   thread 8029D434 at priority 12, file server thread 8029D3DC at 14, main
-   thread 16), so a stream that a delivery of the messenger's pass or
-   `start.lua` / `first.lua` start is first seen by the next field's pass:
-   the port's pass holds a stream started earlier in the step for the next
-   field's (`CriStreams::Handle::hold`; Dolphin dngq1b1e: first.lua's
-   ADXT_StartAfs after that field's passes, its first read in the next
-   field's). The loader's own reads go out in the step's pass, on which its
-   load model is calibrated. A field a movie frame covers runs only these
-   servers and the SNDF's AX frames (`Engine::hold_update`, see the movie
-   below). Then the demo manager (`DMsetSD` / `DMchkSD` / switch records,
-   one blocking record at a time).
+   registration, `start.lua`, `first.lua`. Then the demo manager (`DMsetSD` /
+   `DMchkSD` / switch records, one blocking record at a time).
 5. The managers' updates in the original scheduler order
    (`Engine::update_managers`, igSerialScheduler 8028B7B0): first beSystem,
    which its plugin schedules at registration, then every manager in the
@@ -95,7 +81,24 @@ exactly n steps. In order:
    its own slot, so the player, from the common `f_m*.igb`, updates after
    the stage's menu managers. Managers without an info in the stage, which
    the original does not run, follow (idle). `DW4_TRACE_SCHEDULE=1` logs the
-   order at each stage start.
+   order at each stage start. Then the CRI servers of the next retrace
+   (`SoundManager::server_tick`, the original's ADXT server 8029A60C and file
+   server 80296904: stream reads on the simulated drive, decoding, PLAYING;
+   see the sound section below) and last the movie player, whose codec
+   update waits for that retrace inside its own update. The original runs
+   these servers in their own threads, woken at every retrace ahead of the
+   frame (ADXM_SetupThrd 8029D0D8: ADXT server thread 8029D434 at priority
+   12, file server thread 8029D3DC at 14, both after VIWaitForRetrace, main
+   thread 16; Dolphin r44: the two passes 0.013 / 0.003 fields before the
+   frame's world clock sample, every field), so the whole update of a frame
+   - the loader's requests and bookings, a stream started or paused by a
+   delivery, `start.lua` / `first.lua`, the demo or a manager, the entries'
+   update and ISREADY / ISALLREADY - lies between the pass of its own
+   retrace and the pass of the next one: a stream's first read comes in the
+   next field whatever started it, and a PLAYING counts from the next
+   update. A field a movie frame or the module reload covers runs only these
+   servers and the SNDF's AX frames (`Engine::hold_update`, see the movie
+   below).
 
 Every random number comes from one generator (`SystemRandom`, beSystem's
 igMersenneTwisterRandomNumber seeded 5150 at boot) through `fight::random()`.
@@ -421,25 +424,38 @@ When a stream is ready matters to the scripts: demos wait with
 802F6FB0), and the original only gets there after the stream's first block
 came off the disc. `dw4::CriStreams` (include/dw4/disc_timing.hpp, in the
 core) models that on the engine clock, once per field from the CRI server
-tick (also during loads), which the frame step runs after the messenger's
-pass and the stage loader, before the demo and the managers (the serial
-scheduler's module order, Dolphin r44: the camera viewer, beSystem,
-beMessenger, beCri, the loader, bePadManager, beDemoManager, then the
-managers). The original runs its servers in their own threads at the
-retrace, ahead of the frame; the port's pass holds a stream that a delivery
-or the loader's scripts started earlier in the step
-(`CriStreams::Handle::hold`), so a stream started in a frame's update is
-first served in the next field there and here (stag0203: start.lua's
-AM_DESER and the posted AM_VALLE read on Dolphin's fields), and a PLAYING
-reached in a field counts for that frame's ISALLREADY (Dolphin, stagBS01 1P:
-AM_BOS01 PLAYING 13, BT_BOSS1 20, bs01_trn 45 and the last PLAYING and
-ISALLREADY 1 49 fields after the stage start; the port 14 / 21 / 45 / 50 in
-a run aligned to Dolphin's NEXTSTAGE, round 44): the six beCri ADXT handles (two stereo 48 kHz for
+tick (also during loads), which the frame step runs after the managers and
+before the movie player: the pass of the next retrace, which in the
+original runs in the server threads before the next frame's update (see
+step 5 above). So a stream started anywhere in a frame's update is first
+read in the next field and a PLAYING counts from the next frame's update,
+as in Dolphin (r44 / r46 time-base logs: ADXT_StartAfs in an update, the
+first read at the next retrace, the PLAYING store at a retrace, ISALLREADY
+1 in the update after it; stag0203: start.lua's AM_DESER, its second read,
+the posted AM_VALLE and both PLAYINGs on Dolphin's passes; staggf03's
+PLAYatPAUSE DM_LEOMN's first read on Dolphin's field against the demo).
+Until r46 the pass ran after the loader's update and held a stream that a
+delivery or the loader's scripts started for the next field's pass
+(`CriStreams::Handle::hold`), so streams started in an update were read a
+field late on the drive's clock while the demo and the managers saw each
+PLAYING a field early, which cancelled in the frames ISALLREADY answers 1.
+The model: the six beCri ADXT handles (two stereo 48 kHz for
 BGM and ambience with a 53-sector input ring, four mono with 13 sectors),
-their ADXSTM readers (one DVD read at a time through gcCi, the lowest handle
-first, 25 sectors before the header is parsed, refills below 85 %), the
-decoder (+72 samples per call), the ARAM renderer (4096 samples, played
-halves given back), the DSP's progress as the renderer reads it (the voice
+their ADXSTM readers (one DVD read at a time through gcCi - 802A5D6C
+refuses a read while any handle's read is on the drive, the exec 802A680C
+at the start and the end of the file server marks it done - the lowest
+handle first, the loader's ADXSTM 8051B1D0 after the six, a finished read
+booked in its handle's pass before that handle asks again, 25 sectors
+before the header is parsed, a refill of the free chunk up to the ring's
+end while the ring holds less than 85 %, 8029B2D0 / 80299248: 45 of 53
+sectors, so a stereo stream reads 8 or 9 sectors every 18 or 20 fields),
+the decoder (one call per server pass, 80290074 / 80293E5C: the least of
+the input's whole frames up to the ring's end and its 36-byte extra area,
+the output SJ's free chunk up to its end capped at the unit of three
+fields, and the frames to the output ring's end), the ARAM renderer (4096
+samples, played halves given back, one DMA per pass of the least of the
+ring's free chunk up to its end and the output SJ's data up to its end and
+96-sample extra area, 802A6DF8), the DSP's progress as the renderer reads it (the voice
 address AX copies back at each 5 ms frame boundary, one frame behind: 240
 samples per frame of a 48 kHz voice, frames of 2427840 ticks at the AI's
 54 MHz / 1686; a pause stops the voices and drops the ARAM ring, 802A7534)
@@ -503,16 +519,33 @@ its sizes; what remains is the loading thread's share of a field (a chunk a
 field early or late now and then, which can swap a chunk with a refill), on
 average -4 fields and 15 fields apart per load. (Round 43 found loads after
 the title whose BGM refills come 2-3 fields before Dolphin's from the load's
-start on, +34 to +115 fields in all. The round 44 module reload puts each
-descriptor read on Dolphin's field, a field earlier against the same refill
-cycle, which swaps chunks and refills in other places. In runs aligned to
-Dolphin's NEXTSTAGE: NEXTSTAGE to start.lua from the title, dng101b1 526
-fields against Dolphin's 540 (498 before the reload model); NEXTSTAGE to
-the stage start, stagBS01 784 against 761 (757 before), the main file's
-chunks up to 15 fields off either way; the lobby's AM_LOBBY start 493
-against 503 (460 before).)
+start on, +34 to +115 fields in all, and round 45 staggf03 -> stagML02 +88
+to +91 fields. Round 46 traced both to the comparison, not to the CRI
+model: the drive's rotational latency follows the parity of the whole
+seconds of Dolphin's clock, and the port's world clock stood 240 to 420
+fields behind the captures' (their boots and menus take longer), so every
+seek of a load could cost half a turn (1.05 fields) more or less; the
+NEXTSTAGE of a script's SEND stood 1 to 157 fields off the BGM's file
+position; and Dolphin's sampled world clock delivers a one-frame post a
+frame later now and then (staggf03: NEXTSTAGE an update after the
+port's). With the BGM's phase, the drive's rotation and the DSP's frame
+grid put on Dolphin's at the load's first read (build tools of r46:
+cmpload.sh, loadcmp2.py: a world clock offset, `DW4_DISC_CLOCK`,
+`DW4_AX_PHASE`) every read of a load - loader chunks and refills, times and
+sizes - matches Dolphin's until the first loader request that comes a
+field early or late (the loading thread's share, below); title ->
+dngQ1B1e the first 15 reads to 113 fields, title -> stagML11 the first 25
+to 199 fields and the load's last read on Dolphin's field. Aligned so, the
+load's last loader read after its first one, Dolphin / port in fields:
+stagIS08 174 / 172, stagIS09 39 / 39, stagIS10 107 / 105, dngQ1B1e 616 /
+577, stagML11 466 / 466, dng101b1 493 / 489, stagBS01 733 / 753, stagBS04
+692 / 692, stagBS03 649 / 640, stagGF03 575 / 625, stagML02 after the
+Leomon demo 407 / 428; the first read off Dolphin's is a loader chunk a
+field early in eight of them, 8 early in dngQ1B1e.)
 The port parses each file when the original asks for it.
-`DW4_TRACE_SOUND=1` logs every simulated read,
+`DW4_TRACE_SOUND=1` logs every simulated read (with the drive's clock
+modulo the 2 s its rotation repeats in, to set beside a capture's DVD
+command time TB * 12 + 23.8e6),
 PLAYING, stream start, pause / resume, fade stop and ISREADY / ISALLREADY
 change (`DW4_TRACE_CRI_RING=1` also the ring of each refill and the
 renderer's view of the stereo voices every field),

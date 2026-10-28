@@ -317,26 +317,40 @@ void test_stream_reads() {
         check(status == 5, "A one-shot plays out (ADXT status 5)");
     }
 
-    // A start before the field's server pass (the stage loader's scripts; in
-    // the original after that field's retrace passes) is first seen by the
-    // next field's pass: its first read and its PLAYING come a field later.
+    // The decoder takes the input SJ's chunk up to the ring's end and its
+    // 36-byte extra area (80290520, SJRBF 802A372C), and the output SJ's
+    // free chunk up to its end, capped at the unit (80290838 / 80293E5C):
+    // whatever the phases, it never consumes past the input's or writes past
+    // the output's ring end in one call, the ARAM ring never takes more than
+    // its free chunk up to its own end, and the 85 % check (8029B2D0) asks
+    // for floor(free) sectors, at least 9 after the ring held 45.
     {
-        auto first_read_and_playing = [&](bool hold) {
-            dw4::CriStreams cri;
-            cri.start(0, adx(95786, 2689, 2048, 2, 48000, 4892980, 1, 2686));
-            cri.handles[0].hold = hold;
-            int read = -1, playing = -1;
-            for (int k = 1; k <= 80 && playing < 0; ++k) {
-                cri.tick(std::int64_t(k) * dw4::CriStreams::kFieldTicks);
-                if (read < 0 && cri.reading()) read = k;
-                if (cri.playing(0)) playing = k;
+        dw4::CriStreams cri;
+        cri.start(0, adx(95786, 2689, 2048, 2, 48000, 4892980, 1, 2686));
+        std::uint64_t last_consumed = 0, last_decoded = 0, last_moved = 0;
+        bool ok = true, refilled = false;
+        for (int k = 1; k <= 600; ++k) {
+            cri.tick(std::int64_t(k) * dw4::CriStreams::kFieldTicks);
+            const auto& h = cri.handles[0];
+            const std::uint64_t ring = 53 * 2048;
+            if (h.consumed > last_consumed && last_consumed > 2048) {
+                // one call's consumption stays inside the chunk up to the end + 36
+                const std::uint64_t before = last_consumed % ring;
+                if (before + (h.consumed - last_consumed) > ring + 36 && h.consumed - last_consumed <= 2 * 2432 / 32 * 36) ok = false;
             }
-            check(!cri.handles[0].hold, "The pass clears the hold");
-            return std::pair{read, playing};
-        };
-        const auto now = first_read_and_playing(false), held = first_read_and_playing(true);
-        check(now.first == 1 && held.first == 2, "A held start reads in the next field's pass");
-        check(held.second >= now.second + 1, "... and becomes PLAYING no earlier than a field later");
+            if (h.decoded > last_decoded && last_decoded % 8192 + (h.decoded - last_decoded) > 8192 &&
+                h.decoded - last_decoded <= 2432)
+                ok = false;
+            if (h.moved - h.reclaimed > 4096) ok = false;
+            if (cri.reading() && cri.inflight.slot == 0 && h.request >= 8 && h.request < 53) refilled = true;
+            last_consumed = h.consumed;
+            last_decoded = h.decoded;
+            last_moved = h.moved;
+        }
+        (void)last_moved;
+        check(ok, "One decode or transfer stays inside the rings' chunks");
+        check(refilled, "The stream refills its ring");
+        check(cri.handles[0].sj <= 8192 && cri.handles[0].moved - cri.handles[0].reclaimed <= 4096, "The output and ARAM rings never overflow");
     }
 }
 
