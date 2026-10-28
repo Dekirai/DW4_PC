@@ -239,8 +239,11 @@ dispatch `0x80305A38`, B bool `0x8030697C`, G the loader's state
   states 100..102) follow the frame's pass: their posts swap after the
   pass end's reset, and a bool they leave is seen at the next frame's pass
   end. `Engine::step` runs the messenger first; the title flow's posts and
-  pass ends (stagis10) and the stage starts of stag0203 and stag0301 now
-  match event for event (identities, first bools, frames).
+  pass ends (stagis10) and the stage starts of stag0203 (27 / 27 events,
+  n 4360..4580), stag0301 (below) and dng101b1 (27 / 27, n 4100..4600, with
+  Dolphin's world clock from start.lua on: its 16.58 ms frame after the
+  long start.lua update keeps the PLAYERARMS GENERATE post for a second
+  pass) now match event for event (identities, first bools, frames).
 - The CTRLITEM folders (`SYSctlDeviceFolder` 802EBF5C, `SYSctlDiskFolder`
   802EC064, `SYSctlFlagFolder` 802EC164, `SYSctlBit` 802EC26C) select
   GAMERAM, push the folder, the command, the table and four ints and send
