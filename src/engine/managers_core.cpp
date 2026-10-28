@@ -407,7 +407,7 @@ void CameraManager::update_box(Engine& engine, CameraRam& ram) {
     Vec3f centre{};
     for (const auto& p : players) centre = centre + p;
     if (players.size() == 2) centre = centre * 0.5f;
-    else if (players.size() == 3) centre = centre * (1.0f / 3.0f);
+    else if (players.size() == 3) centre = {centre.x / 3.0f, centre.y / 3.0f, centre.z / 3.0f}; // fdivs (0x802F2CFC)
     else if (players.size() == 4) centre = centre * 0.25f;
     centre_moved_ = centre.x != centre_.x || centre.y != centre_.y || centre.z != centre_.z;
     if (centre_moved_) centre_ = centre;
@@ -929,32 +929,36 @@ void SoundManager::add_info(Engine& engine, const ObjectView& info) {
     base_volume_ = info.i16(9);
     set_sndf_volume(info.i16(10));
 }
+// The module resets of the module reload at a stage change, at its start
+// (Engine::reset_modules), in the module list's order.
 void SoundManager::clear_stage(Engine& engine) {
-    // The Cri's stage end (802F523C): the effect of the first beCriFxInfo
-    // if it were named NONE, in practice effects off (the reverb's delay
-    // lines go); then the info list empties.
+    // igMovieManager's reset (802AF560, module 3) stops every movie (their
+    // codec waits end with them).
+    stop_movie(engine);
+    // beCri's reset (802F523C, module 7): the effect of the first
+    // beCriFxInfo if it were named NONE (802F6F10), in practice effects off
+    // (the reverb's delay lines go); then the info list empties and the
+    // stage's banks go (below).
     select_effect(engine, "NONE");
     fx_infos_.clear();
     fx_due_ = false;
-    // The streams keep playing into the next stage (its scripts stop or
-    // replace them); only the stage's sound list goes.
-    rams_.clear();
-    sounds_.clear();
-    files_.clear();
-    // The per-stage hook 80314904 clears only the repeat guard list
+    // beSound's reset (802F2628, module 15): the streams keep playing into
+    // the next stage (its scripts stop or replace them); only the stage's
+    // sound list goes. Its hook 80314904 clears only the repeat guard list
     // (+0x28). The current BGM (+0x24) belongs to the beSound manager made
     // once by the engine plugin (80318A24 -> 80318EE8): it survives the
     // stage change, and only PLAY / BGMSTOP / VOLUMECTL write it.
+    rams_.clear();
+    sounds_.clear();
+    files_.clear();
     se_recent_.clear();
-    // The teardown stops every movie (their codec waits end with them); the
-    // beMovie RAM goes with the stage.
-    stop_movie(engine);
+    // beMovie's reset (module 19): the beMovie RAM goes.
     movie_named_ = false;
     movie_script_.clear();
-    // The stage's banks go (802F6BAC -> 803C1CC4 unloads their SNDF slots).
-    // The original's voices of those banks play on from the ARAM the next
-    // stage's banks overwrite; the port frees the loops among them (their
-    // one-shots end, the common bank's sounds go on).
+    // beCri's bank unload (802F6BAC at 0x802F53A0 -> 803C1CC4 unloads the
+    // stage banks' SNDF slots). The original's voices of those banks play
+    // on from the ARAM the next stage's banks overwrite; the port frees the
+    // loops among them (their one-shots end, the common bank's sounds go on).
     for (int i = 0; i < sndf::Driver::kVoices; ++i) {
         const auto& voice = driver_.voices()[std::size_t(i)];
         if (!voice.used || !voice.loop) continue;
@@ -1347,8 +1351,22 @@ bool SoundManager::open_stream(Engine& engine, Stream& stream, const std::string
         return false;
     }
     // ADXT_StartAfs on the channel's handle: the stream is ready once its
-    // first block came off the (simulated) disc and was decoded.
-    cri_.start(int(&stream - streams_.data()), stream_file(engine, archive, entry, stream.decoder->header()));
+    // first block came off the (simulated) disc and was decoded. The CRI
+    // servers run in their own threads at every retrace, ahead of the frame
+    // (ADXM_SetupThrd 8029D0D8 with the default priorities: the ADXT server
+    // thread 8029D434 at 12, the file server thread 8029D3DC at 14, both
+    // after VIWaitForRetrace 802648EC, above the main thread's 16; the
+    // threaded registration 8028FBA4..8028FBCC, 0x804CD180 = 1): a start
+    // the port's step makes before its pass - a delivery of the messenger's
+    // pass, the stage loader's scripts - is first seen by the next field's
+    // (Dolphin dngq1b1e: first.lua's ADXT_StartAfs after that field's ADXT
+    // and file server passes, the first read in the next field's file server
+    // pass; stag0203: start.lua's AM_DESER and the posted SOUND PLAY's
+    // AM_VALLE read a field after their starts). A start after the pass (the
+    // managers) reaches the next field's pass anyway.
+    const int slot = int(&stream - streams_.data());
+    cri_.start(slot, stream_file(engine, archive, entry, stream.decoder->header()));
+    if (engine.frame() != pass_frame_) cri_.handles[std::size_t(slot)].hold = true;
     return true;
 }
 
@@ -1467,9 +1485,20 @@ std::uint64_t SoundManager::start_sfp(Engine& engine, const std::string& name, c
     entry.type = data.type;
     entry.name = name;
     entry.priority = data.priority;
-    if (static const bool trace = std::getenv("DW4_TRACE_SOUND") != nullptr; trace)
+    if (static const bool trace = std::getenv("DW4_TRACE_SOUND") != nullptr; trace) {
+        // (Where the request falls on the DSP's frame grid: its command time
+        // and the boundary of the tick that runs it, in AX frames after the
+        // frame's world time.)
+        const std::int64_t world = cri_ticks(engine.time());
+        const std::int64_t tick = cri_.ax_phase - floor_div(cri_.ax_phase - now, CriStreams::kAxFrameTicks) * CriStreams::kAxFrameTicks;
+        char phase[96];
+        std::snprintf(phase, sizeof phase, ", command +%.3f, tick +%.3f AX frames", double(now - world) / double(CriStreams::kAxFrameTicks),
+                      double(tick - world) / double(CriStreams::kAxFrameTicks));
+        char request[16];
+        std::snprintf(request, sizeof request, "%08X", data.request);
         engine.log("sound effect " + name + " from " + bank->name + " at frame " + std::to_string(engine.frame()) + " (entry " +
-                   std::to_string(seq) + ")");
+                   std::to_string(seq) + ", request " + request + ")" + phase);
+    }
     return entry.serial;
 }
 
@@ -1554,7 +1583,7 @@ void SoundManager::mix_frame(std::int64_t frame, axmix::Output::Frame& out, axmi
     constexpr int n = axmix::kFrameSamples;
     const std::int64_t game = frame - audio_delta_;
     // The audio's SNDF up to the AX callback of the frame before.
-    if (!mirror_.live()) mirror_.start(driver_, random_, driver_frame_ + audio_delta_);
+    if (!mirror_.live()) mirror_.start(driver_, random_, driver_frame_, audio_delta_);
     if (mirror_.ticked() < frame - 1)
         mirror_.advance(frame - 1, audio_delta_, driver_banks(), [&](std::int64_t g) { return ax_frame_ticks(g); });
     std::array<float, 2 * n> main{};
@@ -2017,6 +2046,14 @@ void SoundManager::update_movie_player(Engine& engine) {
             movie.skipped += due - movie.taken - 1;
             movie.taken = due;
             movie.after_last = 0;
+            // The decoder works two pictures ahead of the one taken: once
+            // the codec has the last but one, the last is decoded and its
+            // retraces are free again, the frames start on time (Dolphin's
+            // world clock samples: 0.009 field late in the frame that takes
+            // picture 1918 of 1920, on time from the one that takes 1919 on,
+            // so the end script's delayed NEXTSTAGE after a skip in the
+            // movie's last frames arrives in the next update).
+            if (movie.taken + 2 >= int(movie.pictures)) engine.set_clock_lateness(0);
             if (trace && (due < 2 || due + 1 >= int(movie.pictures)))
                 engine.log("movie " + movie.name + " codec update " + std::to_string(movie.frames) + " takes picture " + std::to_string(due) +
                            ", frame " + std::to_string(engine.frame()));
@@ -2205,6 +2242,7 @@ std::shared_ptr<const void> SoundManager::persistent() const {
 
 void SoundManager::restore(Engine& engine, const std::shared_ptr<const void>& opaque) {
     if (!opaque) return;
+    pass_frame_ = ~std::uint64_t{}; // (the restored step's pass is still to run)
     const auto& state = *static_cast<const SoundState*>(opaque.get());
     for (std::size_t i = 0; i < streams_.size() && i < state.streams.size(); ++i) {
         const auto& s = state.streams[i];
@@ -2369,7 +2407,10 @@ void SoundManager::server_tick(Engine& engine) {
     // The CRI servers (ADXT 8029A60C, the file server 80296904) run once per
     // field after the stage loader's update and before the frame's game
     // update: the captures put each server pass 0.02 fields after the
-    // frame's world clock (0.63 fields while the loader's update runs first),
+    // frame's world clock (0.63 fields while the loader's update runs first;
+    // the scheduler runs the messenger 80304C58, beCri 802F53B8 and the
+    // loader 802F8A64 before bePadManager 80311F84, the demo and the
+    // managers, r44),
     // a stream started (ADXT_StartAfs) or paused in a frame's update is seen
     // by the next field's pass, and the PLAYING (status 3, 0x8029C03C) a pass
     // sets is what that frame's ISREADY / ISALLREADY (802F6FB0) reads
@@ -2391,6 +2432,7 @@ void SoundManager::server_tick(Engine& engine) {
     // (CriStreams::kAxPhase) to line a run up with a capture.
     static const char* ax_phase = std::getenv("DW4_AX_PHASE");
     if (ax_phase && *ax_phase) cri_.ax_phase = std::strtoll(ax_phase, nullptr, 10);
+    pass_frame_ = engine.frame();
     const int inflight_before = cri_.inflight.slot;
     const std::int64_t done_before = cri_.inflight.done;
     std::array<bool, CriStreams::kSlots> playing_before{};
@@ -3270,24 +3312,40 @@ bool GameSystem::script_call(Engine& engine, const std::string& method, std::spa
         out = {Lua4Value::number(value)};
         return true;
     }
-    // CTRLITEM folders (802EBF5C / 802EC064 / 802EC164 / 802EC26C).
+    // CTRLITEM folders (802EBF5C / 802EC064 / 802EC164 / 802EC26C): each
+    // selects GAMERAM (80305EA8), pushes the folder, the command and the
+    // table ("" but for DEVICE) and four ints, sends CTRLITEM (80305A28 ->
+    // 80372054) and returns the current message object's bools[0] unchecked
+    // (80306A1C; SYSctlBit its ints[0], 80306B00), so the answer is the
+    // bool a later unchecked read finds (stag0301 first.lua, r44).
     auto arg_str = [&](std::size_t i) {
         return i < args.size() && args[i].type() == Lua4Type::String ? std::string(args[i].as_string()) : std::string();
     };
+    auto ctrl_item = [&](const char* folder, std::string table, int player, int a, int b, int c) {
+        Packet packet;
+        packet.strings = {std::string(folder), arg_str(0), std::move(table)};
+        packet.ints = {player, a, b, c};
+        // (GAMERAM always answers in the original; without the row the
+        // port still applies the change.)
+        if (engine.messenger().send(engine, "GAMERAM", std::nullopt, -1, "CTRLITEM", packet) == 0)
+            return control_item(folder, arg_str(0), player, packet.string(2), a, b, c);
+        if (std::string_view(folder) == "BIT") return packet.ints.empty() ? 0 : int(packet.ints[0]);
+        return int(packet.bools.empty() ? engine.messenger().stale_bool() : packet.bools[0]);
+    };
     if (method == "SYSctlDeviceFolder") {
-        out = {Lua4Value::number(control_item("DEVICE", arg_str(0), arg_int(1), arg_str(2), arg_int(3), arg_int(4), arg_int(5)))};
+        out = {Lua4Value::number(ctrl_item("DEVICE", arg_str(2), arg_int(1), arg_int(3), arg_int(4), arg_int(5)))};
         return true;
     }
     if (method == "SYSctlDiskFolder") {
-        out = {Lua4Value::number(control_item("DISK", arg_str(0), arg_int(1), {}, arg_int(2), 0, arg_int(3)))};
+        out = {Lua4Value::number(ctrl_item("DISK", {}, arg_int(1), arg_int(2), 0, arg_int(3)))};
         return true;
     }
     if (method == "SYSctlFlagFolder") {
-        out = {Lua4Value::number(control_item("FLAG", arg_str(0), 0, {}, arg_int(1), 0, 0))};
+        out = {Lua4Value::number(ctrl_item("FLAG", {}, 0, arg_int(1), 0, 0))};
         return true;
     }
     if (method == "SYSctlBit") {
-        out = {Lua4Value::number(control_item("BIT", arg_str(0), arg_int(1), {}, arg_int(2), 0, 0))};
+        out = {Lua4Value::number(ctrl_item("BIT", {}, arg_int(1), arg_int(2), 0, 0))};
         return true;
     }
     if (method == "SYSisGetShinkaDigimon") {

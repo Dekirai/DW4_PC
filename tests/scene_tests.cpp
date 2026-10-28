@@ -1,12 +1,14 @@
 #include "dw4/engine/math.hpp"
 #include "dw4/engine/actor.hpp"
 #include "dw4/engine/engine.hpp"
+#include "dw4/engine/gekko_math.hpp"
 #include "dw4/engine/gx_color.hpp"
 #include "dw4/engine/managers.hpp"
 #include "dw4/engine/particles.hpp"
 #include "dw4/engine/random.hpp"
 #include "dw4/engine/scene_graph.hpp"
 
+#include <bit>
 #include <cmath>
 #include <cstring>
 #include <iostream>
@@ -612,6 +614,65 @@ void test_gx_colors() {
     check(c.x == 1.0f && c.y == 128.0f / 255.0f && c.z == 26.0f / 255.0f && c.w == 0.0f, "Each channel rounds on its own");
 }
 
+// A matrix from its twelve float words (rows 0..3, columns 0..2), the
+// fourth column (0, 0, 0, 1).
+Mat4 words12(const std::uint32_t (&w)[12]) {
+    Mat4 m;
+    for (int r = 0; r < 4; ++r)
+        for (int c = 0; c < 3; ++c) m(r, c) = std::bit_cast<float>(w[r * 3 + c]);
+    return m;
+}
+
+bool same_words(const Mat4& m, const std::uint32_t (&w)[12]) {
+    for (int r = 0; r < 4; ++r)
+        for (int c = 0; c < 3; ++c)
+            if (std::bit_cast<std::uint32_t>(m(r, c)) != w[r * 3 + c]) return false;
+    return true;
+}
+
+void test_recorder_modelview() {
+    // The stag0203 train route (Dolphin n 4585, hooks P 0x801DC978, R
+    // 0x801DEA4C, V 0x801DEA54): model node (identity) -> route00 (turned
+    // pi about Y, sin(pi) = 8.74e-8) -> route01 (a translation of 1e-14) ->
+    // the recorder. The original pushes local * top (80128690) from the
+    // view, and _m = top * inverse view (801DE9C0): rounding noise of
+    // 1e-9..1e-7 in the rotation and up to 0.00005 in the translation that
+    // the world matrix product does not have.
+    static constexpr std::uint32_t view[12] = {0xbf000001, 0x3ebae377, 0xbf490c34, 0xb33bbd2f, 0x3f68265d, 0x3ed7cce2,
+                                               0x3f5db3d7, 0x3e57cce6, 0xbee8265e, 0xc50d4ad8, 0x440c05ed, 0xc4a39fd0};
+    static constexpr std::uint32_t route00[12] = {0xbf800000, 0x00000000, 0x33bbbd2e, 0x00000000, 0x3f800000, 0x00000000,
+                                                  0xb3bbbd2e, 0x00000000, 0xbf800000, 0xc50fc000, 0x41200000, 0x44a28000};
+    static constexpr std::uint32_t route01[12] = {0x3f800000, 0, 0, 0, 0x3f800000, 0, 0, 0, 0x3f800000, 0, 0x28800000, 0xa8cc2100};
+    static constexpr std::uint32_t top[12] = {0x3f000002, 0xbebae376, 0x3f490c33, 0xb33bbd2f, 0x3f68265d, 0x3ed7cce2,
+                                              0xbf5db3d6, 0xbe57cce8, 0x3ee82660, 0x41727c00, 0x4065a100, 0xc2afde90};
+    static constexpr std::uint32_t recorded[12] = {0xbf800000, 0x30a69060, 0x33c97cd2, 0x316e50c0, 0x3f800000, 0x32093904,
+                                                   0xb39512e0, 0x31198300, 0xbf800000, 0xc50fc001, 0x41200030, 0x44a27fff};
+    static constexpr std::uint32_t inverse[12] = {0xbf000001, 0xb3713414, 0x3f5db3d7, 0x3ebae378, 0x3f68265d, 0x3e57cce6,
+                                                  0xbf490c34, 0x3ed7cce2, 0xbee8265e, 0xc513aca8, 0x422f3cf3, 0x449bc7ee};
+    Node root, model, first, second, recorder;
+    root.kind = NodeKind::group;
+    model.kind = NodeKind::model_node;
+    first.kind = second.kind = NodeKind::transform;
+    recorder.kind = NodeKind::transform_recorder;
+    first.matrix = words12(route00);
+    second.matrix = words12(route01);
+    root.children = {&model};
+    model.children = {&first};
+    first.children = {&second};
+    second.children = {&recorder};
+    TraversalContext context;
+    context.cull = true;
+    context.cull_camera.view = words12(view);
+    context.camera = context.cull_camera;
+    traverse(&root, context);
+    check(same_words(context.traversal_inverse_view, inverse), "The traversal's inverse view is 8012A92C of the view");
+    check(same_words(gekko::multiply(second.matrix, gekko::multiply(first.matrix, context.cull_camera.view)), top),
+          "The modelview pushes round like 80128690 (Dolphin R n 4585)");
+    check(recorder.recorded && same_words(*recorder.recorded, recorded),
+          "The recorder's _m is the stack top times the inverse view (Dolphin V n 4585)");
+    check(!same_words(second.matrix * first.matrix, recorded), "The world matrix product lacks the original's noise");
+}
+
 int main() {
     try {
         test_gx_colors();
@@ -632,6 +693,7 @@ int main() {
         test_frustum_cull_code();
         test_particle_timer_state();
         test_frustum_cull_traversal();
+        test_recorder_modelview();
         test_particle_records();
         test_card_setting();
         test_gate_stage_name();

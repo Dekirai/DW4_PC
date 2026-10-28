@@ -372,7 +372,7 @@ struct StageSnapshot {
     OriginalPads pads;
     std::string random;                  // system generator state (fight::generator)
     std::int32_t point_no{};             // PLAYERPOINT's generate point (it survives stage loads)
-    std::int32_t loader_teardown{};      // milli-fields the update that starts this load takes (Engine::process_stage_loader)
+    std::int32_t loader_teardown{};      // milli-fields the module reload before this load took (Engine::step, loader_teardown_cost)
     bool loader_common{};                // this load still reads BecText.igb and _common/sbiallse.igb (the first of a session)
     bool stage_active{};                 // beSystem +0x2C at the change (cleared by the loader's state 0)
     std::shared_ptr<const void> system;  // GameSystem copy
@@ -471,7 +471,10 @@ public:
     // update on: a higher-priority thread's work on every retrace, Sofdec's
     // decoder while a movie plays (SoundManager), takes the CPU first, so
     // the update samples the world clock later (Dolphin: 0.005..0.022
-    // field, 0.011 on average, then on time again after the movie stops).
+    // field, 0.011 on average, on time again from the frame after the codec
+    // took the last but one picture); the stage change's module reload
+    // (Engine::step) makes the update after it late by its fraction of a
+    // field.
     void set_clock_lateness(std::int64_t ns) { clock_lateness_ = ns; }
     // The retrace of the last update plus the fields since: the VI clock of
     // the per-field work (time() without the frame's lateness).
@@ -594,6 +597,17 @@ private:
     // `restoring`: a save state's snapshot (its loader values instead of the
     // outgoing stage's).
     void begin_stage_load(const StageSnapshot* restoring = nullptr);
+    // The module resets of the application loop's module reload (8028A87C:
+    // every module's +0x70, then every info of the application's list
+    // deleted), at the reload's start (Engine::step).
+    void reset_modules();
+    // What the module reload deletes (loader_teardown_cost): all objects
+    // and those the beDBManagerInfos reach, the beFontInfos, the model RAMs,
+    // all memory blocks and those outside the DB / font infos.
+    struct TeardownLoad {
+        std::size_t objects{}, db_objects{}, fonts{}, rams{}, memories{}, rest{};
+    };
+    TeardownLoad teardown_load() const;
     std::int32_t loader_teardown_cost() const;
     std::int64_t loader_register_cost(const std::vector<ObjectView>& infos) const;
     std::int64_t loader_start_cost() const;
@@ -705,6 +719,7 @@ private:
     int loader_skip_{};                      // retraces the original's current update still covers
     std::int64_t loader_processing_{};       // milli-fields of chunk processing so far in this load (chunk_extra)
     std::int32_t loader_teardown_{};         // see StageSnapshot::loader_teardown
+    bool reloading_{};                       // the module reload before the pending stage's teardown has begun (Engine::step)
     bool loader_common_{true};               // see StageSnapshot::loader_common
     bool loader_fast_{};                     // see fast_loading()
     bool stage_active_{}; // beSystem +0x2C, see stage_active()
@@ -742,6 +757,8 @@ public:
     const std::string& type_name() const { return type_name_; }
     virtual bool accepts(const ObjectView& info) const = 0;
     virtual void add_info(Engine& engine, const ObjectView& info) = 0;
+    // The module's reset at the start of a stage change's module reload
+    // (8028A87C, Engine::reset_modules): the stage's RAMs and infos go.
     virtual void clear_stage(Engine& engine) { (void)engine; }
     virtual void update(Engine& engine) { (void)engine; }
     // The frame's update while the stage is not active (Engine::stage_active):

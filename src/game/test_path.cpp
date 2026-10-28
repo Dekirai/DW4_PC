@@ -2797,6 +2797,13 @@ ExploreBot::Decision ExploreBot::update(engine::Engine& engine, const engine::Mo
         stirring_.clear();
         not_platforms_.clear();
         off_ride_.clear();
+        // (The ride state belongs to the stage's vehicles: their RAMs went
+        // with it, a new RAM may reuse a freed one's address.)
+        closest_frames_ = 0;
+        closest_counted_ = -1;
+        ridden_.clear();
+        ride_target_ = nullptr;
+        ride_until_ = -1;
         hop_.reset();
         hop_wait_since_ = -1;
         hop_spots_for_ = {1e30f, 0.0f, 1e30f};

@@ -20,16 +20,16 @@ include(CTest)
 add_library(dw4_core
   src/assets.cpp src/igb.cpp src/igb_document.cpp src/resources.cpp src/packages.cpp src/scripts.cpp
   src/lua4.cpp src/pad.cpp src/textures.cpp src/meshes.cpp src/skinning.cpp src/animation_math.cpp
-  src/enbaya.cpp src/motion.cpp src/motion_timer.cpp src/adx.cpp src/axfx.cpp src/axmix.cpp src/save_data.cpp src/sfp.cpp src/sndf.cpp src/sfd.cpp src/ini.cpp src/disc.cpp src/disc_timing.cpp src/card_timing.cpp)
+  src/enbaya.cpp src/motion.cpp src/motion_timer.cpp src/adx.cpp src/axfx.cpp src/axmix.cpp src/save_data.cpp src/sfp.cpp src/sndf.cpp src/sfd.cpp src/ini.cpp src/disc.cpp src/disc_timing.cpp src/card_timing.cpp src/msl_math.cpp)
 target_include_directories(dw4_core PUBLIC include)
 # Recovered scalar operations round separately; explicit std::fma remains
 # fused. Preserve IEEE zero-frame infinity/NaN behavior.
 if(MSVC)
-  set_source_files_properties(src/motion.cpp src/motion_timer.cpp src/animation_math.cpp PROPERTIES COMPILE_OPTIONS /fp:strict)
+  set_source_files_properties(src/motion.cpp src/motion_timer.cpp src/animation_math.cpp src/msl_math.cpp PROPERTIES COMPILE_OPTIONS /fp:strict)
   target_compile_options(dw4_core PRIVATE /W4 /permissive- /utf-8)
   add_compile_options(/utf-8)
 else()
-  set_source_files_properties(src/motion.cpp src/motion_timer.cpp src/animation_math.cpp PROPERTIES COMPILE_OPTIONS "-fno-fast-math;-ffp-contract=off")
+  set_source_files_properties(src/motion.cpp src/motion_timer.cpp src/animation_math.cpp src/msl_math.cpp PROPERTIES COMPILE_OPTIONS "-fno-fast-math;-ffp-contract=off")
   target_compile_options(dw4_core PRIVATE -Wall -Wextra -Wpedantic)
 endif()
 
@@ -58,7 +58,7 @@ add_executable(dw4_catalog tools/dw4_catalog.cpp)
 target_link_libraries(dw4_catalog PRIVATE dw4_core)
 
 if(BUILD_TESTING)
-  foreach(suite assets igb igb_document resources packages scripts lua4 pad textures meshes skinning animation_math enbaya adx save_data sfp sfd ini disc)
+  foreach(suite assets igb igb_document resources packages scripts lua4 textures meshes skinning animation_math enbaya adx save_data sfp sfd ini disc)
     add_executable(dw4_${suite}_tests tests/${suite}_tests.cpp)
     target_link_libraries(dw4_${suite}_tests PRIVATE dw4_core)
     add_test(NAME ${suite} COMMAND dw4_${suite}_tests)
@@ -66,7 +66,8 @@ if(BUILD_TESTING)
   add_executable(dw4_scene_tests tests/scene_tests.cpp)
   target_link_libraries(dw4_scene_tests PRIVATE dw4_engine)
   add_test(NAME scene COMMAND dw4_scene_tests)
-  foreach(suite gekko_math messenger)
+  # (pad: the PADINPUT redirect of Engine::pads too)
+  foreach(suite gekko_math messenger pad)
     add_executable(dw4_${suite}_tests tests/${suite}_tests.cpp)
     target_link_libraries(dw4_${suite}_tests PRIVATE dw4_engine)
     add_test(NAME ${suite} COMMAND dw4_${suite}_tests)

@@ -402,6 +402,13 @@ struct TraversalContext {
     // subtrees in the data hold no igLod or igTransformRecorder, the other
     // nodes that read the modelview stack top.
     std::optional<Mat4> modelview_base;
+    // Set by traverse(): the traversal's view (+0x64, the game's camera) and
+    // its inverse (+0xA4, 8012A92C), as 801DB8F0 sets them in 8040B8C0. A
+    // transform recorder's world matrix is the modelview stack top times
+    // this inverse (801DE9C0).
+    Mat4 traversal_view{};
+    Mat4 traversal_inverse_view{};
+    std::uint64_t frame{}; // the engine frame (traces only)
 };
 
 // igBillboard (801D5ADC + 801D53EC): the world matrix that replaces the

@@ -4,6 +4,8 @@
 // M 0x8034C6B8, B 0x802F32C8, T 0x80123984, U 0x80123A54) and, for the MSL
 // functions, the DOL's own instructions run with Dolphin's double arithmetic.
 #include "dw4/engine/gekko_math.hpp"
+#include "dw4/motion.hpp"
+#include "dw4/msl_math.hpp"
 
 #include <array>
 #include <bit>
@@ -242,6 +244,27 @@ void ride() {
                 0x4120002c, 0x4494a129}),
           "80128690 twice: the rider on the car (R n 4629)");
 }
+
+void turn_basis() {
+    // The model turn basis 801292D4 (dw4::original_model_turn_basis) calls
+    // the MSL sin / cos (800A2AE4 / 800A257C) like gekko::euler_matrix: at
+    // 0.100430205 the MSL sin is 0x1.9aabc3b509d5ap-4 (a host libm may
+    // return the double below), at 0.100845315 the MSL cos is
+    // 0x1.fd6613fed7618p-1. (Over every float angle up to 2^19 pi / 2 the
+    // two agree once rounded to single, round 44.)
+    check(b(dw4::msl::sin(double(f(0x3dcdae5a)))) == 0x3FB9AABC3B509D5Aull, "MSL sin 0.100430205");
+    check(b(dw4::msl::cos(double(f(0x3dce87fd)))) == 0x3FEFD6613FED7618ull, "MSL cos 0.100845315");
+    check(gekko::sin(0.3) == dw4::msl::sin(0.3) && gekko::atan2(0.3, -2.0) == dw4::msl::atan2(0.3, -2.0), "gekko forwards to the MSL");
+    std::array<float, 16> m{};
+    dw4::original_model_turn_basis(m, {0.0f, f(0x3dcdae5a), 0.0f});
+    check(b(m[2]) == 0xbdcd55e2u && b(m[8]) == 0x3dcd55e2u, "801292D4: -sin y and sin y from the MSL (frsp)");
+    dw4::original_model_turn_basis(m, {0.0f, f(0x3dce87fd), 0.0f});
+    check(b(m[0]) == 0x3f7eb30au && b(m[10]) == 0x3f7eb30au, "801292D4: cos y from the MSL (frsp)");
+    Mat4 e;
+    gekko::euler_matrix(e, 0.0f, f(0x3dcdae5a), 0.0f);
+    dw4::original_model_turn_basis(m, {0.0f, f(0x3dcdae5a), 0.0f});
+    check(std::memcmp(e.m.data(), m.data(), sizeof m) == 0, "The core's turn basis and gekko::euler_matrix agree");
+}
 } // namespace
 
 int main() {
@@ -251,6 +274,7 @@ int main() {
         camera();
         ray_test();
         ride();
+        turn_basis();
         std::cout << checks << " gekko math checks passed\n";
         return 0;
     } catch (const std::exception& error) {

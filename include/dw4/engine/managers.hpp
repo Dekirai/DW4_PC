@@ -146,8 +146,8 @@ public:
     // (80304BB0) join only with the plugins. So it advances its clock and
     // sets the camera matrix the frame is drawn and steered with before the
     // demo or the camera update can change the viewer. Engine::step (and
-    // Engine::restore) call it before the messenger, the demo and the
-    // managers.
+    // Engine::restore) call it first, before the messenger, the stage
+    // loader, the demo and the managers.
     void begin_frame(Engine& engine);
     // The camera of this frame (begin_frame's), or the live one before it ran.
     void frame_camera(Engine& engine, FrameCamera& camera);
@@ -300,9 +300,13 @@ public:
     void update_inactive(Engine& engine) override { update_driver(engine); }
     // One field of the CRI servers (the stream reads on the simulated drive,
     // decoding, PLAYING; disc_timing.hpp), at the field's VI time (outside a
-    // movie the frame's world time): the engine runs it after the stage
-    // loader's update and before the messenger, the demo and the managers
-    // (Engine::step); in a field an update covers update_held runs it.
+    // movie the frame's world time): the engine runs it after the
+    // messenger's pass and the stage loader's update, before the demo and
+    // the managers (Engine::step); in a field an update covers update_held
+    // runs it. (The original's servers run in their threads at the retrace,
+    // before the whole frame: a stream a delivery or the loader's scripts
+    // start earlier in the step is held for the next field's pass,
+    // open_stream.)
     void server_tick(Engine& engine);
     // The CRI servers run on every retrace, also in the fields an update
     // covers (the movie's open and codec waits, Engine::hold_update).
@@ -311,6 +315,10 @@ public:
     // PLAY after every manager): the codec update 802AE8B8 of the playing
     // movie, from the frame after its open on (Engine::update_managers).
     void update_movie_player(Engine& engine);
+    // 802AF560 (the skip, and igMovieManager's reset at the start of the
+    // module reload before a stage's teardown, clear_stage from
+    // Engine::reset_modules): every movie stops.
+    void stop_movie(Engine& engine);
     // Interleaved stereo 16-bit PCM at kOutputRate: the AX mix at the DSP
     // rate, resampled. Successive calls continue the audio seamlessly,
     // whatever their sizes and however they run ahead of or fall behind the
@@ -568,6 +576,11 @@ private:
     std::array<SfpEntry, kSfpEntries> sfp_{};
     sndf::Driver driver_;              // the SNDF as the game sees it
     std::int64_t driver_frame_{-1};    // the last AX frame it ticked
+    // The frame whose step ran server_tick last: a stream started in a step
+    // before its pass (a delivery of the messenger's pass, the stage
+    // loader's start.lua / first.lua) waits for the next field's pass
+    // (CriStreams::Handle::hold).
+    std::uint64_t pass_frame_{~std::uint64_t{}};
     // beSeInfoData: per model name, action -> sound after [4] frames.
     struct SeCue {
         std::string action, sound;
@@ -597,8 +610,6 @@ private:
     // meets is kept the same way: its pictures and sound are not modelled.)
     // The retail scripts play one movie per stage.
     int ended_codecs_{};
-    // 802AF560 (the skip and the teardown): every movie stops.
-    void stop_movie(Engine& engine);
     // Sofdec leaves PREP this many codec server passes after the one that
     // first had the stream's data, and its sound handler starts 56,539 bus
     // ticks (0.084 field) after that pass (Dolphin, both opening movies).
@@ -608,7 +619,9 @@ private:
     // (Dolphin d_skip1500u: the frame start after the retrace, 0.0047..0.0220
     // field over 300 frames of the opening, 0.0007 before the first data,
     // 0.0001 after the skip): the skip's NEXTSTAGE, posted for one nominal
-    // frame later, arrives two updates after it.
+    // frame later, arrives two updates after it. From the frame after the
+    // codec took the last but one picture on the frames are on time again
+    // (update_movie_player: the decoder works two pictures ahead).
     static constexpr std::int64_t kMovieDecodeLateNs = 183517;
     // The stage's beCriFxInfo in acceptance order (Cri +0x2C, 802F51C4):
     // name and _reverb (slot 6).
@@ -1553,7 +1566,6 @@ public:
         std::uint32_t slam_direction{};
         float slam_timer{};
         bool capsule_on{};           // KIND_PLAYER2 work +EC: a player is close
-        bool capsule_ended{};        // end_g_000bcaps.lua already started
         int capsule_age{};           // KIND_PLAYER2 work +F0: updates since generated (to 10)
         // AIM map AI (803084B8): maps from the info's "AIM" data, AI work +50.
         const std::vector<ObjectView>* ai_maps{};

@@ -167,11 +167,16 @@ cases for intermediate products. The native implementation preserves these
 branches and explicit PPC fused multiply-add/subtract order. The wrapper resets
 the bottom row to `(0,0,0,1)` while restoring the previous position.
 
-Host double libm currently supplies sine/cosine. The original uses its MSL math
-functions at `800A2AE4 / 800A257C`; bitwise agreement with those functions is not
-established. The local instruction oracle supplies the same host trig boundary
-to both implementations, so its exact matches prove the surrounding arithmetic
-and control flow, not original libm parity.
+Sine and cosine are the original's MSL functions at `800A2AE4 / 800A257C`
+(`dw4/msl_math.hpp`: fdlibm 5.3 with CodeWarrior's fused multiply-adds, shared
+with the engine's `gekko::sin / cos`, whose results were checked against DOL
+execution in round 42). Earlier versions called the host double libm: its
+binary64 results differ from the MSL bodies' for a fraction of a percent of
+the angles, but a scan of every float angle with 0 < |x| <= 2^19 pi/2 found
+no pair on two sides of a binary32 rounding boundary, so the singles the
+basis uses were the same (round 44). The local instruction oracle below
+supplied the same host trig boundary to both implementations, so its exact
+matches prove the surrounding arithmetic and control flow.
 
 Version 0.27 corrects the Euler basis to the recovered startup NI=1/RN=00
 profile. The `frsp` instructions at `8012933C/34C/374/384/3B4/3C0` flush a

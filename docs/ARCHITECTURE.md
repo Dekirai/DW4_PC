@@ -33,7 +33,15 @@ exactly n steps. In order:
    the fifth pad, which the update never touches (no input, not connected),
    checked at each read, so an ENABLE sent by this frame's demo already
    counts for the managers that read after it, a press read in the frame of
-   the ENABLE counts and a button held across it gives no trigger.
+   the ENABLE counts and a button held across it gives no trigger. The
+   original schedules bePadManager after beMessenger and the stage loader
+   (item 3), so a delivery or `start.lua` / `first.lua` would read the
+   previous frame's slots; the port updates them first because nothing before
+   the managers reads them (every DOL call of the getter is in a manager's
+   RAM update or a class update below one, no script function reads a pad).
+   (After NEXTSTAGE's frame the steps of the application loop's module reload
+   come first: covered fields without any of this, see the stage loader
+   below.)
 2. The frame clock advances, so updates and the following render observe the
    same time.
    beSystem's update (80316258) then reads the console's reset button
@@ -42,23 +50,39 @@ exactly n steps. In order:
    release turns the picture black and nothing else runs: after
    `Engine::kRebootFields` steps the host starts a new engine on the boot
    stage (the console restarted the disc, OSResetSystem).
-3. Pending stage change and the stage loader states (802F8A64): the loading
-   screen `loadingUSA/ld<stage name from its third letter>.igb`, package
-   members, `func.lua` / `boot.lua`, common files queued with `CFLsetName`,
-   the wait for the loading screen's minimum play time (its beLoadingNode
-   then holds its lock time on the LOADING layer until the scripts remove
-   it), info registration, `start.lua`, `first.lua`. Then the CRI servers'
-   field (`SoundManager::server_tick`; the original's ADXT server 8029A60C
-   and file server 80296904 run after the loader's update and before the
-   messenger, the demo and the managers): stream reads on the simulated
-   drive, decoding, PLAYING (see the sound section below). A field a
-   movie frame covers runs only these servers and the SNDF's AX frames
-   (`Engine::hold_update`, see the movie below).
-4. Deferred messenger sends (80304C58: every `sd(..., delay)`, also a delay
-   of 0, and the engine's own posts arrive here, in a later frame than they
-   were sent; none while a SUBWND program or the soft reset pauses the queue,
-   see docs/research/DEFERRED_MESSENGER.md), then the demo manager
-   (`DMsetSD` / `DMchkSD` / switch records, one blocking record at a time).
+3. The pending stage change (beSystem), then the camera viewer's frame
+   (`CameraManager::begin_frame`) and the deferred messenger sends (80304C58:
+   every `sd(..., delay)`, also a delay of 0, and the engine's own posts
+   arrive here, in a later frame than they were sent; none while a SUBWND
+   program or the soft reset pauses the queue, see
+   docs/research/DEFERRED_MESSENGER.md). The serial scheduler runs the
+   modules in this order (Dolphin, round 44: the viewer 8040DA1C, beSystem
+   80316258, beMessenger 80304C58, beCri 802F53B8, the stage loader
+   802F8A64, bePadManager 80311F84, beDemoManager 802F7EC0, then the
+   managers), so the loader's sends and the posts of `start.lua` and
+   `first.lua` follow the frame's pass, and every message object swap of a
+   stage start comes in Dolphin's order.
+4. The stage loader states (802F8A64): the loading screen
+   `loadingUSA/ld<stage name from its third letter>.igb`, package members,
+   `func.lua` / `boot.lua`, common files queued with `CFLsetName`, the wait
+   for the loading screen's minimum play time (its beLoadingNode then holds
+   its lock time on the LOADING layer until the scripts remove it), info
+   registration, `start.lua`, `first.lua`. Then the CRI servers' field
+   (`SoundManager::server_tick`, the original's ADXT server 8029A60C and file
+   server 80296904): stream reads on the simulated drive, decoding, PLAYING
+   (see the sound section below). The original runs these servers in their
+   own threads at the field's retrace, ahead of the whole frame (ADXT server
+   thread 8029D434 at priority 12, file server thread 8029D3DC at 14, main
+   thread 16), so a stream that a delivery of the messenger's pass or
+   `start.lua` / `first.lua` start is first seen by the next field's pass:
+   the port's pass holds a stream started earlier in the step for the next
+   field's (`CriStreams::Handle::hold`; Dolphin dngq1b1e: first.lua's
+   ADXT_StartAfs after that field's passes, its first read in the next
+   field's). The loader's own reads go out in the step's pass, on which its
+   load model is calibrated. A field a movie frame covers runs only these
+   servers and the SNDF's AX frames (`Engine::hold_update`, see the movie
+   below). Then the demo manager (`DMsetSD` / `DMchkSD` / switch records,
+   one blocking record at a time).
 5. The managers' updates in the original scheduler order
    (`Engine::update_managers`, igSerialScheduler 8028B7B0): first beSystem,
    which its plugin schedules at registration, then every manager in the
@@ -224,7 +248,9 @@ event with a delta, also 0 (803C49F4). The audio hears a mirror of it
 (`sndf::Mirror`): a copy ticked once per AX frame of the audio timeline that
 gets the game's calls between the same ticks, so nothing the game sees
 depends on whether audio is rendered, and a host that renders ahead of the
-game only hears a request a frame or two later, never twice.
+game hears a request later by as much as its queue runs ahead (a top-up of
+1600 samples: 6 AX frames), never twice. A copy made while voices run (the
+first render after a restore) moves them to the audio's frame numbering.
 Effects without a request id are ADX files on four SE stream channels, each
 start taking a free one or else the oldest of lower or equal priority
 (beSoundData [9], 802F56B0). The PLAY handler (80314FC8) ignores a sound effect
@@ -376,7 +402,12 @@ field and the update after it takes it) stops every movie at once (802AF560)
 and runs the end script in the same update. While
 Sofdec decodes, the frames start 0.011 field after their retraces
 (`Engine::set_clock_lateness`), so the skip's NEXTSTAGE, posted for one
-nominal frame later, arrives two updates after it. The picture the codec
+nominal frame later, arrives two updates after it; the decoder works two
+pictures ahead, so the frames start on time again from the one after the
+codec took the last but one picture (Dolphin's world clock samples: late in
+the frame taking picture 1918 of 1920, on time from the one taking 1919), and
+a skip in the movie's last frames gets its NEXTSTAGE in the next update
+(Dolphin d_rskipend1 / 2). The picture the codec
 took last stays on the screen through the frame that tears the stage down,
 after the end and after a skip (`Engine::presenting`, `SoundManager::movie_still`):
 none of the frames after the stop runs a codec update, so their XFB shows
@@ -390,12 +421,20 @@ When a stream is ready matters to the scripts: demos wait with
 802F6FB0), and the original only gets there after the stream's first block
 came off the disc. `dw4::CriStreams` (include/dw4/disc_timing.hpp, in the
 core) models that on the engine clock, once per field from the CRI server
-tick (also during loads), which the frame step runs where the original runs
-its servers: after the stage loader, before the messenger, the demo and the
-managers, so a stream started in a frame's update is first served in the
-next field and a PLAYING reached in a field counts for that frame's
-ISALLREADY (Dolphin, stagBS01 1P and 2P: the last stream PLAYING and
-ISALLREADY 1 49 fields after the stage start in both): the six beCri ADXT handles (two stereo 48 kHz for
+tick (also during loads), which the frame step runs after the messenger's
+pass and the stage loader, before the demo and the managers (the serial
+scheduler's module order, Dolphin r44: the camera viewer, beSystem,
+beMessenger, beCri, the loader, bePadManager, beDemoManager, then the
+managers). The original runs its servers in their own threads at the
+retrace, ahead of the frame; the port's pass holds a stream that a delivery
+or the loader's scripts started earlier in the step
+(`CriStreams::Handle::hold`), so a stream started in a frame's update is
+first served in the next field there and here (stag0203: start.lua's
+AM_DESER and the posted AM_VALLE read on Dolphin's fields), and a PLAYING
+reached in a field counts for that frame's ISALLREADY (Dolphin, stagBS01 1P:
+AM_BOS01 PLAYING 13, BT_BOSS1 20, bs01_trn 45 and the last PLAYING and
+ISALLREADY 1 49 fields after the stage start; the port 14 / 21 / 45 / 50 in
+a run aligned to Dolphin's NEXTSTAGE, round 44): the six beCri ADXT handles (two stereo 48 kHz for
 BGM and ambience with a 53-sector input ring, four mono with 13 sectors),
 their ADXSTM readers (one DVD read at a time through gcCi, the lowest handle
 first, 25 sectors before the header is parsed, refills below 85 %), the
@@ -422,8 +461,38 @@ which takes it whole fields more where the chunk holds the reference index,
 the start of the object buffer (the objects are made there, 0.34 fields per
 1000), object records or the start of the memory blocks; after the last
 chunk the file is ready by the time its memory blocks take, then routed in
-the next update. The teardown of the outgoing stage, routing a large member,
-state 5 and start.lua are long updates that cover the retraces after them.
+the next update. Routing a large member, state 5 and start.lua are long
+updates that cover the retraces after them. A stage change itself starts with
+the application loop's module reload: NEXTSTAGE's frame ends the loop's update
+/ render loop, and after its picture (the endScene retrace) the loop reloads
+every module (80021944 -> 8040F570 -> 8028A87C: every module's +0x70 reset,
+igMovieManager's stopping the movies, then every info of the application's
+list +0x10 deleted) before the next update samples the world clock and
+beSystem releases the directories and asks for the descriptor (0x8031658C /
+0x803165A0). The module resets come at the reload's start
+(`Engine::reset_modules`, every `Manager::clear_stage`, the messenger and the
+demo): igMovieManager's 802AF560 stops the movies, beCri's 802F523C turns the
+effect off (802F6F10 NONE: the reverb's delay lines go) and unloads the
+stage's banks (802F6BAC; the port frees their loops), so a stage's sound ends
+with the reload's first field (Dolphin d_ngsr1, a soft reset in dng101b1: the
+DSP output is silent from the field after NEXTSTAGE's on, the port's on the
+same field). Dolphin captures with hooks on the reload, every reset and every
+delete (r44timing d_td3) put 0.45 fields into the module resets and the rest
+into the deletes, growing with what the infos hold;
+`Engine::loader_teardown_cost` is fitted to 16 measured reloads (boot stages,
+stage changes, soft resets, game overs, a gate warp; J->U hooks or world clock
+deltas): 0.448 fields + 0.753 per 1000 objects of the beDBManagerInfos + 0.656
+per 1000 other memory blocks + 0.166 per 1000 other objects, within 0.41
+fields of each (the update after the reload on the original's field in 15 of
+16; stag0103's 2P soft reset, 17.04 fields, ends a field early; the table is
+at the function). `Engine::step` runs the reload's whole fields as covered
+fields (no update, the picture of NEXTSTAGE's frame stays,
+`Engine::presenting`) and the update after it samples the world clock late by
+the rest of a field (`StageSnapshot::clock_lateness`) and sends the descriptor
+request at once. (Until r44 the loader charged 1.5 fields + 0.7 / 1000 memory
+blocks + 0.18 / 1000 objects to that update: fitted to its whole world clock
+delta, a field more than the reload, so every descriptor read after a teardown
+came a field late.)
 So a stage starts 500-900 fields after its NEXTSTAGE as in the original (a
 constant 106 before). The load time depends strongly on where the BGM's
 refill cycle stands when it starts: Dolphin itself gives 497 or 607 fields
@@ -432,8 +501,17 @@ loads at both BGM phases (the boot's three: 234 / 61 / 118 fields against
 233.8 / 62 / 121) the port's BGM refills come on the original's fields with
 its sizes; what remains is the loading thread's share of a field (a chunk a
 field early or late now and then, which can swap a chunk with a refill), on
-average -4 fields and 15 fields apart per load. The port parses each file
-when the original asks for it.
+average -4 fields and 15 fields apart per load. (Round 43 found loads after
+the title whose BGM refills come 2-3 fields before Dolphin's from the load's
+start on, +34 to +115 fields in all. The round 44 module reload puts each
+descriptor read on Dolphin's field, a field earlier against the same refill
+cycle, which swaps chunks and refills in other places. In runs aligned to
+Dolphin's NEXTSTAGE: NEXTSTAGE to start.lua from the title, dng101b1 526
+fields against Dolphin's 540 (498 before the reload model); NEXTSTAGE to
+the stage start, stagBS01 784 against 761 (757 before), the main file's
+chunks up to 15 fields off either way; the lobby's AM_LOBBY start 493
+against 503 (460 before).)
+The port parses each file when the original asks for it.
 `DW4_TRACE_SOUND=1` logs every simulated read,
 PLAYING, stream start, pause / resume, fade stop and ISREADY / ISALLREADY
 change (`DW4_TRACE_CRI_RING=1` also the ring of each refill and the
@@ -450,8 +528,8 @@ option and not the original timing) is a separate switch around that model:
 on and a save state's replay sees the value its snapshot holds. With it the
 loader runs every state in the original order, one state per update, but
 `loader_request` hands the file over at once (no `read_entry` on the loader's
-CRI stream, no chunk processing or post-processing fields), the update costs
-(teardown, routing, state 5, start.lua) cover no retraces, the boot's timing
+CRI stream, no chunk processing or post-processing fields), the module reload
+and the update costs (routing, state 5, start.lua) cover no retraces, the boot's timing
 reads are skipped, state 4 does not wait for the loading screen's minimum
 time (it still sets the lock time), and the queue states take several files
 per update (`loader_queue_fast`: parsed and routed in order while the files of
@@ -651,8 +729,17 @@ inverted in place (8012A92C), the model's matrix with its offset as the
 translation times that, times the current matrix (the paired-single 80128690
 twice; the stag0203 train matches Dolphin's 61 ride steps bit for bit). The
 ridden car follows a recorder there (MOVERL JOINT), whose matrix the original
-takes from its traversal as modelview times the inverse view (801DE9C0), so
-it carries rounding the port's world matrix lacks (open). The stage scripts'
+takes from its traversal as modelview times the inverse view (801DE9C0). The
+traversal therefore carries the original's modelview stack next to the world
+matrix it draws with: it starts with the camera's view (+0x64), every
+igTransform and beModelCtrlNode2 pushes its local matrix times the top through
+the paired-single 80128690 (801DC85C, 8030FAA4), and a recorder keeps the top
+times the inverse view (+0xA4, 8012A92C of the view). So the car carries the
+original's rounding noise (rotation 1e-9..1e-7, translation up to 5e-5 at
+the stag0203 cameras) and its riders' land and wall queries follow Dolphin
+bit for bit (round 44: recorder, stack top and inverse view 326 / 326 frames,
+the follower's matrix 115 / 115, 5488 land / wall answers);
+`DW4_TRACE_RECORDER=1` prints them in the hooks' format. The stage scripts'
 floor effects use the same slot: SETCONVEYOR (a fixed step per frame),
 SETQUICKSAND (a pull towards a centre, faster inside the inner radius) and
 SETSLIPPEDFLOOR (the model's own steps blend into a sliding velocity). While

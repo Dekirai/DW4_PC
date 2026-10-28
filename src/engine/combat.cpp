@@ -1281,6 +1281,24 @@ bool GameSystem::command(Engine& engine, Ram&, std::string_view command, Packet&
         recalc_player(engine, packet.integer(0, 0));
         return true;
     }
+    if (command == "CTRLITEM") {
+        // 80372054: S<folder>/S<command>/S<table>, I<player>/I<a>/I<b>/I<c>.
+        // DEVICE, DISK and FLAG answer a bool (80306964), BIT GET clears the
+        // ints and answers the value (80306AB8, 80306A40 at 0x80372950), BIT
+        // SET / ADD answer nothing.
+        auto text = [&](std::size_t i) { return packet.string(i); };
+        const int result = control_item(text(0), text(1), packet.integer(0, 0), text(2), packet.integer(1, 0), packet.integer(2, 0),
+                                        packet.integer(3, 0));
+        if (text(0) == "BIT") {
+            if (text(1) == "GET") {
+                packet.ints.clear();
+                packet.ints.push_back(result);
+            }
+        } else {
+            packet.bools.push_back(std::uint8_t(result));
+        }
+        return true;
+    }
     return false;
 }
 
