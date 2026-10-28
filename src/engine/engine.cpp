@@ -162,6 +162,10 @@ bool trace_message_objects() {
     static const bool trace = std::getenv("DW4_TRACE_MESSAGE_OBJECTS") != nullptr;
     return trace;
 }
+bool trace_sends() {
+    static const bool trace = std::getenv("DW4_TRACE_SENDS") != nullptr;
+    return trace;
+}
 void print_object(const MessageObjects::State& state) {
     std::printf(" %zu %d %u", state.current, state.bools, unsigned(state.first_bool));
 }
@@ -221,6 +225,15 @@ std::size_t Messenger::send(Engine& engine, std::string_view category, std::opti
     // The select (80305344) resets the current message object, the sender's
     // argument bools go into it (80306964), then the dispatch (80305A28).
     const bool model = modelling();
+    // DW4_TRACE_SENDS: every modelled send in the format of the Dolphin X /
+    // C / B logs (hooks 0x80305354 select, 0x80305A38 dispatch, 0x8030697C
+    // bool), the bools as the message object takes them.
+    if (model && trace_sends()) {
+        std::printf("[%llu] X %.*s %s %08x\n[%llu] C %.*s\n", static_cast<unsigned long long>(engine.frame()), int(category.size()),
+                    category.data(), name ? std::string(*name).c_str() : "-", unsigned(index), static_cast<unsigned long long>(engine.frame()),
+                    int(command.size()), command.data());
+        for (const auto value : packet.bools) std::printf("[%llu] B %08x\n", static_cast<unsigned long long>(engine.frame()), unsigned(value));
+    }
     if (model) {
         objects_.select();
         for (const auto value : packet.bools) objects_.append(value);
@@ -293,7 +306,10 @@ std::size_t Messenger::dispatch(Engine& engine, std::string_view category, std::
         const std::size_t before = packet.bools.size();
         if (!ram->manager->command(engine, *ram, command, packet)) ram->manager->fallback(engine, *ram, command, packet);
         if (model)
-            for (std::size_t i = before; i < packet.bools.size(); ++i) objects_.append(packet.bools[i]);
+            for (std::size_t i = before; i < packet.bools.size(); ++i) {
+                if (trace_sends()) std::printf("[%llu] B %08x\n", static_cast<unsigned long long>(engine.frame()), unsigned(packet.bools[i]));
+                objects_.append(packet.bools[i]);
+            }
     }
     return recipients.size();
 }
@@ -701,10 +717,10 @@ void Engine::restore(const StageSnapshot& snapshot) {
     // The rest of the step that started the load (Engine::step).
     pending_stage_ = snapshot.stage;
     begin_stage_load(&snapshot);
-    process_stage_loader();
-    if (auto* sound = get<SoundManager>()) sound->server_tick(*this);
     if (auto* camera = get<CameraManager>()) camera->begin_frame(*this);
     messenger_.update(*this);
+    process_stage_loader();
+    if (auto* sound = get<SoundManager>()) sound->server_tick(*this);
     demo_.update(*this);
     update_managers();
 }
@@ -1508,15 +1524,26 @@ void Engine::step(const std::array<PadSample, 4>& samples) {
         begin_stage_load();
         torn_down_ = true;
     }
-    process_stage_loader();
-    // The CRI servers of this field (see SoundManager::server_tick): after
-    // the loader's update, before the messenger, the demo and the managers.
-    if (auto* sound = get<SoundManager>()) sound->server_tick(*this);
-    // The current camera viewer (802F4268, a scheduled module ahead of the
-    // demo, the messenger and the managers) sets the frame's camera before
-    // they run; see CameraManager::begin_frame.
+    // The modules in the serial scheduler's order (8028B7B0, Dolphin r44:
+    // the viewer 8040DA1C, 80412E18, beSystem 80316258, beMessenger
+    // 80304C58, beCri 802F53B8, the stage loader 802F8A64, bePadManager
+    // 80311F84, 80302558, beDemoManager 802F7EC0, 8031BE1C, then the
+    // managers' 802F28F8). The current camera viewer (802F4268) sets the
+    // frame's camera before the others run (CameraManager::begin_frame); the
+    // messenger's pass comes before the loader, so the posts of start.lua
+    // and first.lua and the loader's own sends follow the frame's pass
+    // (a delay-0 post arrives at the next frame's pass).
     if (auto* camera = get<CameraManager>()) camera->begin_frame(*this);
     messenger_.update(*this);
+    process_stage_loader();
+    // The CRI servers of this field (see SoundManager::server_tick): after
+    // the loader's update, before the demo and the managers. (In Dolphin the
+    // file reads of a field start with the frame, before the messenger's
+    // pass: a stream a delivery or start.lua starts is first read in the
+    // next frame, r44. The port keeps the pass after the loader's update,
+    // which its load model is calibrated on: running it first matched the
+    // stag0203 stream reads but moved stagBS01's load end by 11 fields.)
+    if (auto* sound = get<SoundManager>()) sound->server_tick(*this);
     demo_.update(*this);
     update_managers();
 }

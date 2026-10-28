@@ -2369,7 +2369,10 @@ void SoundManager::server_tick(Engine& engine) {
     // The CRI servers (ADXT 8029A60C, the file server 80296904) run once per
     // field after the stage loader's update and before the frame's game
     // update: the captures put each server pass 0.02 fields after the
-    // frame's world clock (0.63 fields while the loader's update runs first),
+    // frame's world clock (0.63 fields while the loader's update runs first;
+    // the scheduler runs the messenger 80304C58, beCri 802F53B8 and the
+    // loader 802F8A64 before bePadManager 80311F84, the demo and the
+    // managers, r44),
     // a stream started (ADXT_StartAfs) or paused in a frame's update is seen
     // by the next field's pass, and the PLAYING (status 3, 0x8029C03C) a pass
     // sets is what that frame's ISREADY / ISALLREADY (802F6FB0) reads
@@ -3270,24 +3273,40 @@ bool GameSystem::script_call(Engine& engine, const std::string& method, std::spa
         out = {Lua4Value::number(value)};
         return true;
     }
-    // CTRLITEM folders (802EBF5C / 802EC064 / 802EC164 / 802EC26C).
+    // CTRLITEM folders (802EBF5C / 802EC064 / 802EC164 / 802EC26C): each
+    // selects GAMERAM (80305EA8), pushes the folder, the command and the
+    // table ("" but for DEVICE) and four ints, sends CTRLITEM (80305A28 ->
+    // 80372054) and returns the current message object's bools[0] unchecked
+    // (80306A1C; SYSctlBit its ints[0], 80306B00), so the answer is the
+    // bool a later unchecked read finds (stag0301 first.lua, r44).
     auto arg_str = [&](std::size_t i) {
         return i < args.size() && args[i].type() == Lua4Type::String ? std::string(args[i].as_string()) : std::string();
     };
+    auto ctrl_item = [&](const char* folder, std::string table, int player, int a, int b, int c) {
+        Packet packet;
+        packet.strings = {std::string(folder), arg_str(0), std::move(table)};
+        packet.ints = {player, a, b, c};
+        // (GAMERAM always answers in the original; without the row the
+        // port still applies the change.)
+        if (engine.messenger().send(engine, "GAMERAM", std::nullopt, -1, "CTRLITEM", packet) == 0)
+            return control_item(folder, arg_str(0), player, packet.string(2), a, b, c);
+        if (std::string_view(folder) == "BIT") return packet.ints.empty() ? 0 : int(packet.ints[0]);
+        return int(packet.bools.empty() ? engine.messenger().stale_bool() : packet.bools[0]);
+    };
     if (method == "SYSctlDeviceFolder") {
-        out = {Lua4Value::number(control_item("DEVICE", arg_str(0), arg_int(1), arg_str(2), arg_int(3), arg_int(4), arg_int(5)))};
+        out = {Lua4Value::number(ctrl_item("DEVICE", arg_str(2), arg_int(1), arg_int(3), arg_int(4), arg_int(5)))};
         return true;
     }
     if (method == "SYSctlDiskFolder") {
-        out = {Lua4Value::number(control_item("DISK", arg_str(0), arg_int(1), {}, arg_int(2), 0, arg_int(3)))};
+        out = {Lua4Value::number(ctrl_item("DISK", {}, arg_int(1), arg_int(2), 0, arg_int(3)))};
         return true;
     }
     if (method == "SYSctlFlagFolder") {
-        out = {Lua4Value::number(control_item("FLAG", arg_str(0), 0, {}, arg_int(1), 0, 0))};
+        out = {Lua4Value::number(ctrl_item("FLAG", {}, 0, arg_int(1), 0, 0))};
         return true;
     }
     if (method == "SYSctlBit") {
-        out = {Lua4Value::number(control_item("BIT", arg_str(0), arg_int(1), {}, arg_int(2), 0, 0))};
+        out = {Lua4Value::number(ctrl_item("BIT", {}, arg_int(1), arg_int(2), 0, 0))};
         return true;
     }
     if (method == "SYSisGetShinkaDigimon") {

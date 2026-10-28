@@ -146,8 +146,8 @@ public:
     // (80304BB0) join only with the plugins. So it advances its clock and
     // sets the camera matrix the frame is drawn and steered with before the
     // demo or the camera update can change the viewer. Engine::step (and
-    // Engine::restore) call it before the messenger, the demo and the
-    // managers.
+    // Engine::restore) call it first, before the messenger, the stage
+    // loader, the demo and the managers.
     void begin_frame(Engine& engine);
     // The camera of this frame (begin_frame's), or the live one before it ran.
     void frame_camera(Engine& engine, FrameCamera& camera);
@@ -300,9 +300,10 @@ public:
     void update_inactive(Engine& engine) override { update_driver(engine); }
     // One field of the CRI servers (the stream reads on the simulated drive,
     // decoding, PLAYING; disc_timing.hpp), at the field's VI time (outside a
-    // movie the frame's world time): the engine runs it after the stage
-    // loader's update and before the messenger, the demo and the managers
-    // (Engine::step); in a field an update covers update_held runs it.
+    // movie the frame's world time): the engine runs it after the
+    // messenger's pass and the stage loader's update, before the demo and
+    // the managers (Engine::step); in a field an update covers update_held
+    // runs it.
     void server_tick(Engine& engine);
     // The CRI servers run on every retrace, also in the fields an update
     // covers (the movie's open and codec waits, Engine::hold_update).
