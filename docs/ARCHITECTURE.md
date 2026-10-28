@@ -431,12 +431,10 @@ or the loader's scripts started earlier in the step
 (`CriStreams::Handle::hold`), so a stream started in a frame's update is
 first served in the next field there and here (stag0203: start.lua's
 AM_DESER and the posted AM_VALLE read on Dolphin's fields), and a PLAYING
-reached in a field counts for that frame's ISALLREADY (Dolphin, stagBS01 1P
-and 2P: the last stream PLAYING and ISALLREADY 1 49 fields after the stage
-start in both; since the round 44 module reload the port's 1P and 2P runs
-reach the stage 12 fields later with the old BGM's refills in another
-phase, the first read goes to another handle and the last PLAYING comes at
-53, the load phase class of the stage loader section): the six beCri ADXT handles (two stereo 48 kHz for
+reached in a field counts for that frame's ISALLREADY (Dolphin, stagBS01 1P:
+AM_BOS01 PLAYING 13, BT_BOSS1 20, bs01_trn 45 and the last PLAYING and
+ISALLREADY 1 49 fields after the stage start; the port 14 / 21 / 45 / 50 in
+a run aligned to Dolphin's NEXTSTAGE, round 44): the six beCri ADXT handles (two stereo 48 kHz for
 BGM and ambience with a 53-sector input ring, four mono with 13 sectors),
 their ADXSTM readers (one DVD read at a time through gcCi, the lowest handle
 first, 25 sectors before the header is parsed, refills below 85 %), the
@@ -505,12 +503,14 @@ its sizes; what remains is the loading thread's share of a field (a chunk a
 field early or late now and then, which can swap a chunk with a refill), on
 average -4 fields and 15 fields apart per load. (Round 43 found loads after
 the title whose BGM refills come 2-3 fields before Dolphin's from the load's
-start on, +34 to +115 fields in all. The round 44 module reload moves each
-descriptor read a field earlier against the same refill cycle, which swaps
-chunks and refills in other places: NEXTSTAGE to start.lua from the title,
-dng101b1 528 fields against Dolphin's 490 (main 500), the lobby's AM_LOBBY
-start 493 against 503 (main 460), stagBS01 1P / 2P 12 fields later than
-main.)
+start on, +34 to +115 fields in all. The round 44 module reload puts each
+descriptor read on Dolphin's field, a field earlier against the same refill
+cycle, which swaps chunks and refills in other places. In runs aligned to
+Dolphin's NEXTSTAGE: NEXTSTAGE to start.lua from the title, dng101b1 526
+fields against Dolphin's 540 (498 before the reload model); NEXTSTAGE to
+the stage start, stagBS01 784 against 761 (757 before), the main file's
+chunks up to 15 fields off either way; the lobby's AM_LOBBY start 493
+against 503 (460 before).)
 The port parses each file when the original asks for it.
 `DW4_TRACE_SOUND=1` logs every simulated read,
 PLAYING, stream start, pause / resume, fade stop and ISREADY / ISALLREADY
