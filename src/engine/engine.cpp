@@ -1586,6 +1586,7 @@ TraversalContext Engine::frame_context(std::vector<DrawItem>* out, FrameCamera& 
     context.time = time_;
     context.camera = camera;
     context.output = out;
+    context.frame = frame_;
     if (auto* models = get<ModelCtrlManager>()) models->install_actor_hook(*this, context);
     if (auto* actions = get<ActionManager>())
         context.actor_pose = [this, actions](const Node& actor, bool traversed) {

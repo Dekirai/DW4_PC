@@ -1,4 +1,5 @@
 #include "dw4/engine/scene_graph.hpp"
+#include "dw4/engine/gekko_math.hpp"
 #include "dw4/engine/particles.hpp"
 #include "dw4/animation_math.hpp"
 #include "dw4/motion.hpp"
@@ -9,6 +10,8 @@
 #include <limits>
 #include <tuple>
 #include <type_traits>
+#include <cstdio>
+#include <cstdlib>
 
 namespace dw4::engine {
 namespace {
@@ -1243,6 +1246,7 @@ namespace {
 struct ActorScope {
     const ActorPose* pose{};
     Mat4 actor_model{};
+    Mat4 actor_modelview{}; // the modelview stack top at the actor (see visit)
     std::shared_ptr<const std::vector<Mat4>> palette;
     const Node* pose_actor{}; // beCopyModelCtrl2: actors take this actor's pose
 };
@@ -1338,14 +1342,21 @@ void geometry_items(Node* n, TraversalContext& ctx, const Mat4& model, const Ren
 
 template <class State> constexpr bool kPicture = std::is_same_v<State, RenderState>;
 
-template <class State> void apply_all(const std::vector<const Attribute*>& attributes, State& state, Mat4& model) {
+// An igModelViewMatrixAttr also replaces the modelview stack top (`modelview`,
+// see visit) with its matrix.
+template <class State>
+void apply_all(const std::vector<const Attribute*>& attributes, State& state, Mat4& model, Mat4& modelview) {
     if constexpr (kPicture<State>) {
-        for (const auto* a : attributes) apply(a, state, model);
+        for (const auto* a : attributes) {
+            apply(a, state, model);
+            if (a->kind == AttrKind::model_view_matrix) modelview = a->matrix;
+        }
     } else {
         for (const auto* a : attributes)
             if (a->kind == AttrKind::model_view_matrix) {
                 state.view = a->matrix;
                 model = Mat4{};
+                modelview = a->matrix;
             } else if (a->kind == AttrKind::projection_matrix) {
                 state.projection = a->matrix;
             }
@@ -1406,15 +1417,21 @@ template <class State> void overrides(const Node& n, State& state) {
     if constexpr (kPicture<State>) apply_overrides(n, state);
 }
 
+// `parent_model` is the world matrix the port draws with, `parent_modelview`
+// the original's modelview stack top (igCommonTraversal): the traversal's
+// view at the root, then every transform pushes its local matrix times the
+// top (80128690, 801DC85C at 0x801DC97C). Only the nodes that read the stack
+// top back in the original's arithmetic use it (the transform recorders).
 template <class State>
-void visit(Node* n, TraversalContext& ctx, const Mat4& parent_model, const State& parent_state, std::int64_t time,
-           const ActorScope& parent_scope, CullScope cull, int depth) {
+void visit(Node* n, TraversalContext& ctx, const Mat4& parent_model, const Mat4& parent_modelview, const State& parent_state,
+           std::int64_t time, const ActorScope& parent_scope, CullScope cull, int depth) {
     constexpr bool picture = kPicture<State>;
     if (!n || n->hidden || depth > 256) return;
     // igFrustCullTraversal (801E9AB4): the bound in the parent's space, before
     // the node's own handler runs.
     if (!frustum_cull(*n, ctx, parent_model, parent_state, cull)) return;
     Mat4 model = parent_model;
+    Mat4 modelview = parent_modelview;
     State state = parent_state;
     ActorScope scope = parent_scope;
     // The camera the traversal's view-dependent choices follow (LOD,
@@ -1422,10 +1439,10 @@ void visit(Node* n, TraversalContext& ctx, const Mat4& parent_model, const State
     const Mat4& camera_view = ctx.cull ? ctx.cull_camera.view : ctx.camera.view;
     switch (n->kind) {
     case NodeKind::attr_set:
-        apply_all(n->attributes, state, model);
+        apply_all(n->attributes, state, model, modelview);
         break;
     case NodeKind::blend_matrix_select: {
-        apply_all(n->attributes, state, model);
+        apply_all(n->attributes, state, model, modelview);
         if (picture && scope.pose && scope.pose->skeleton) {
             auto palette = std::make_shared<std::vector<Mat4>>();
             const auto& skel = *scope.pose->skeleton;
@@ -1444,15 +1461,17 @@ void visit(Node* n, TraversalContext& ctx, const Mat4& parent_model, const State
         break;
     }
     case NodeKind::bone_select:
-        if (scope.pose && n->bone_index >= 0 && std::size_t(n->bone_index) < scope.pose->bone_world.size() && !scope.pose->bind_pose)
+        if (scope.pose && n->bone_index >= 0 && std::size_t(n->bone_index) < scope.pose->bone_world.size() && !scope.pose->bind_pose) {
             model = scope.pose->bone_world[std::size_t(n->bone_index)] * scope.actor_model;
+            modelview = gekko::multiply(scope.pose->bone_world[std::size_t(n->bone_index)], scope.actor_modelview);
+        }
         break;
     case NodeKind::light_set:
         if constexpr (picture)
             for (const auto* a : n->attributes) if (a->kind == AttrKind::light) state.lights.push_back(a);
         return;
     case NodeKind::light_state_set:
-        apply_all(n->attributes, state, model);
+        apply_all(n->attributes, state, model, modelview);
         break;
     case NodeKind::transform: {
         Mat4 local = n->sequence && n->sequence->valid ? n->sequence->evaluate(time) : n->matrix;
@@ -1463,6 +1482,8 @@ void visit(Node* n, TraversalContext& ctx, const Mat4& parent_model, const State
             break;
         }
         model = local * model;
+        // 801DC85C: the new stack top = local * top (80128690, 0x801DC97C).
+        modelview = gekko::multiply(local, modelview);
         break;
     }
     case NodeKind::particle_timer: {
@@ -1482,8 +1503,28 @@ void visit(Node* n, TraversalContext& ctx, const Mat4& parent_model, const State
         // inverse view (+0xA4), i.e. the world matrix; _mvm (+0x60, vtable
         // +0x98) = the modelview matrix itself. One matrix each, no double
         // buffer: MOVERL JOINT (8030CD94) reads _m through the field meta
-        // 805646FC (offset 0x20, registered by 801ABF70).
-        if (cull.simulate) n->recorded = model;
+        // 805646FC (offset 0x20, registered by 801ABF70). The product
+        // (80128690 at 0x801DEA50) of the stack top and the inverse view
+        // carries the rounding of the modelview pushes: a MOVERL JOINT
+        // follower (the stag0203 train) takes the original's bits.
+        if (cull.simulate) {
+            n->recorded = gekko::multiply(modelview, ctx.traversal_inverse_view);
+            // DW4_TRACE_RECORDER: the stack top (Dolphin R, hook 0x801DEA4C)
+            // and _m with the inverse view (V, hook 0x801DEA54) as float bits,
+            // rows 0..3, columns 0..2.
+            if (static const bool trace = std::getenv("DW4_TRACE_RECORDER") != nullptr; trace) {
+                const auto words = [](const Mat4& m) {
+                    for (int r = 0; r < 4; ++r)
+                        for (int c = 0; c < 3; ++c) std::printf(" %08x", std::bit_cast<std::uint32_t>(m(r, c)));
+                };
+                std::printf("[%llu] R", static_cast<unsigned long long>(ctx.frame));
+                words(modelview);
+                std::printf("\n[%llu] V", static_cast<unsigned long long>(ctx.frame));
+                words(*n->recorded);
+                words(ctx.traversal_inverse_view);
+                std::printf("\n");
+            }
+        }
         break;
     case NodeKind::reset_node:
         // beResetNode traversal 80312C28 (registered by 80313004 on the
@@ -1503,13 +1544,20 @@ void visit(Node* n, TraversalContext& ctx, const Mat4& parent_model, const State
             placed(3, 1) = model(3, 1);
             placed(3, 2) = model(3, 2);
             model = placed;
+            Mat4 view = ctx.traversal_view;
+            view(3, 0) = modelview(3, 0);
+            view(3, 1) = modelview(3, 1);
+            view(3, 2) = modelview(3, 2);
+            modelview = view;
         }
         if (n->reset_time) time = ctx.time;
         break;
     case NodeKind::copy_model: {
         // The source instance's placement and its actor's pose.
         if (Node* source = n->copy_source) {
-            model = (source->runtime_matrix ? *source->runtime_matrix : source->matrix) * model;
+            const Mat4& placement = source->runtime_matrix ? *source->runtime_matrix : source->matrix;
+            model = placement * model;
+            modelview = gekko::multiply(placement, modelview);
             if (!n->copy_resolved) {
                 n->copy_actor = first_actor(source, 0);
                 n->copy_resolved = true;
@@ -1532,6 +1580,9 @@ void visit(Node* n, TraversalContext& ctx, const Mat4& parent_model, const State
         Mat4 local = n->matrix;
         if (n->runtime_matrix) local = *n->runtime_matrix;
         model = local * model;
+        // 8030FAA4: the node pushes its matrix times the top like a transform
+        // (80128690 at 0x8030FB54).
+        modelview = gekko::multiply(local, modelview);
         // Original node clock: ((time >> 18) as float * scale) << 18 + bias.
         const auto coarse = static_cast<std::uint32_t>(static_cast<std::uint64_t>(time) >> 18);
         const auto scaled = static_cast<std::int64_t>(static_cast<float>(coarse) * n->time_scale);
@@ -1558,12 +1609,15 @@ void visit(Node* n, TraversalContext& ctx, const Mat4& parent_model, const State
             // the light's eye (the light view's origin), and the mode's up
             // vector is taken in camera view coordinates (mode 0: world Y
             // through the camera's rotation) and read in light view ones.
-            model = billboard_matrix(n->billboard_mode, n->billboard_axis, n->billboard_center,
-                                     model * *ctx.modelview_base * inverse_view, inverse_view) *
-                    view * base_inverse;
+            const Mat4 billboard = billboard_matrix(n->billboard_mode, n->billboard_axis, n->billboard_center,
+                                                    model * *ctx.modelview_base * inverse_view, inverse_view);
+            model = billboard * view * base_inverse;
+            modelview = gekko::multiply(billboard, view);
             break;
         }
         model = billboard_matrix(n->billboard_mode, n->billboard_axis, n->billboard_center, model, inverse_view);
+        // 801DD76C: the children's stack top = the billboard's world matrix * view.
+        modelview = gekko::multiply(model, view);
         break;
     }
     case NodeKind::lod: {
@@ -1585,11 +1639,11 @@ void visit(Node* n, TraversalContext& ctx, const Mat4& parent_model, const State
             child = n->select_lod(distance_squared);
             std::tie(n->lod_child, n->lod_index, n->lod_lower, n->lod_upper) = kept;
         }
-        if (child) visit(child, ctx, model, state, time, scope, cull, depth + 1);
+        if (child) visit(child, ctx, model, modelview, state, time, scope, cull, depth + 1);
         return;
     }
     case NodeKind::geometry:
-        apply_all(n->attributes, state, model);
+        apply_all(n->attributes, state, model, modelview);
         overrides(*n, state);
         if constexpr (picture)
             if (cull.draw) geometry_items(n, ctx, model, state, scope); // (no geometry decoding without)
@@ -1599,8 +1653,10 @@ void visit(Node* n, TraversalContext& ctx, const Mat4& parent_model, const State
         overrides(*n, state);
         ActorScope actor;
         actor.actor_model = n->actor_matrix * model;
+        actor.actor_modelview = gekko::multiply(n->actor_matrix, modelview);
         actor.pose = ctx.actor_pose ? ctx.actor_pose(scope.pose_actor ? *scope.pose_actor : *n, cull.simulate) : nullptr;
-        for (auto* root : n->appearance_roots) visit(root, ctx, actor.actor_model, state, time, actor, cull, depth + 1);
+        for (auto* root : n->appearance_roots)
+            visit(root, ctx, actor.actor_model, actor.actor_modelview, state, time, actor, cull, depth + 1);
         scope = actor;
         break;
     }
@@ -1611,7 +1667,7 @@ void visit(Node* n, TraversalContext& ctx, const Mat4& parent_model, const State
     overrides(*n, state);
     for (std::size_t i = 0; i < n->children.size(); ++i) {
         if (!n->child_enabled(i)) continue;
-        visit(n->children[i], ctx, model, state, n->fixed_time ? *n->fixed_time : time, scope, cull, depth + 1);
+        visit(n->children[i], ctx, model, modelview, state, n->fixed_time ? *n->fixed_time : time, scope, cull, depth + 1);
     }
 }
 } // namespace
@@ -1622,10 +1678,18 @@ void traverse(Node* n, TraversalContext& ctx, const Mat4& parent_model, const Re
     CullScope cull;
     cull.test = ctx.cull;
     cull.picture_test = ctx.cull && ctx.picture_cull && ctx.output;
+    // The traversal's view (+0x64) and its inverse (+0xA4, 8012A92C), which
+    // 801DB8F0 sets from the game's camera in 8040B8C0; the modelview stack
+    // starts with the view (the shadow caster pass: the light's, which
+    // 801FDCCC pushes) or the parent's modelview attribute.
+    ctx.traversal_view = ctx.cull ? ctx.cull_camera.view : ctx.camera.view;
+    if (!gekko::invert(ctx.traversal_view, ctx.traversal_inverse_view)) ctx.traversal_inverse_view = Mat4{};
+    Mat4 modelview = parent_state.view ? *parent_state.view : ctx.modelview_base ? *ctx.modelview_base : ctx.traversal_view;
+    if (parent_model.m != Mat4{}.m) modelview = gekko::multiply(parent_model, modelview);
     // Without an output list nothing of the render state is needed but the
     // view and the projection.
-    if (ctx.output) visit(n, ctx, parent_model, parent_state, time, ActorScope{}, cull, 0);
-    else visit(n, ctx, parent_model, ViewOnly{parent_state.view, parent_state.projection}, time, ActorScope{}, cull, 0);
+    if (ctx.output) visit(n, ctx, parent_model, modelview, parent_state, time, ActorScope{}, cull, 0);
+    else visit(n, ctx, parent_model, modelview, ViewOnly{parent_state.view, parent_state.projection}, time, ActorScope{}, cull, 0);
 }
 
 void traverse(Node* root, TraversalContext& context) {

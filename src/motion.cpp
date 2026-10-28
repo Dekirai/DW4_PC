@@ -1,4 +1,5 @@
 #include "dw4/motion.hpp"
+#include "dw4/msl_math.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -307,7 +308,7 @@ void turn_finite(float value) {
 }
 float euler_single(double value) {
     // Original frsp checks tininess before rounding the returned double trig
-    // value. Trig itself remains the explicitly shared host-libm boundary.
+    // value (the MSL sin / cos of the DOL, dw4/msl_math.hpp).
     return std::abs(value)<std::numeric_limits<float>::min() ?
         std::copysign(0.0f,static_cast<float>(value)) : static_cast<float>(value);
 }
@@ -338,15 +339,17 @@ float euler_fused(float a,float b,float addend) {
 void euler_basis(std::array<float,16>& matrix, const std::array<float,3>& angles) {
     for (const auto value : angles) turn_finite(value);
     for (std::size_t i=12;i<15;++i) turn_finite(matrix[i]);
-    // 801292D4 special-cases exact zero before calling double sin/cos. Keep
-    // those branches, their positive-zero products and the original FMA order.
-    const float sx = angles[0] == 0 ? 0 : euler_single(std::sin(static_cast<double>(angles[0])));
-    const float cx = angles[0] == 0 ? 1 : euler_single(std::cos(static_cast<double>(angles[0])));
-    const float sy = angles[1] == 0 ? 0 : euler_single(std::sin(static_cast<double>(angles[1])));
-    const float cy = angles[1] == 0 ? 1 : euler_single(std::cos(static_cast<double>(angles[1])));
+    // 801292D4 special-cases exact zero before calling double sin/cos (the
+    // MSL's: bl 800A2AE4 / 800A257C at 0x80129338..0x801293BC, then frsp).
+    // Keep those branches, their positive-zero products and the original FMA
+    // order.
+    const float sx = angles[0] == 0 ? 0 : euler_single(msl::sin(static_cast<double>(angles[0])));
+    const float cx = angles[0] == 0 ? 1 : euler_single(msl::cos(static_cast<double>(angles[0])));
+    const float sy = angles[1] == 0 ? 0 : euler_single(msl::sin(static_cast<double>(angles[1])));
+    const float cy = angles[1] == 0 ? 1 : euler_single(msl::cos(static_cast<double>(angles[1])));
     const float sxsy = angles[1] == 0 ? 0 : euler_product(sx,sy);
-    const float sz = angles[2] == 0 ? 0 : euler_single(std::sin(static_cast<double>(angles[2])));
-    const float cz = angles[2] == 0 ? 1 : euler_single(std::cos(static_cast<double>(angles[2])));
+    const float sz = angles[2] == 0 ? 0 : euler_single(msl::sin(static_cast<double>(angles[2])));
+    const float cz = angles[2] == 0 ? 1 : euler_single(msl::cos(static_cast<double>(angles[2])));
     const float cxsz = angles[2] == 0 ? 0 : euler_product(cx,sz);
     const float cxcz=euler_product(cx,cz),sxsz=euler_product(sx,sz),sxcz=euler_product(sx,cz);
     matrix[0]=euler_product(cy,cz);matrix[1]=euler_product(cy,sz);matrix[2]=-sy;

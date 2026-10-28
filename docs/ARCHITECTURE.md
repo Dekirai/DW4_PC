@@ -651,8 +651,17 @@ inverted in place (8012A92C), the model's matrix with its offset as the
 translation times that, times the current matrix (the paired-single 80128690
 twice; the stag0203 train matches Dolphin's 61 ride steps bit for bit). The
 ridden car follows a recorder there (MOVERL JOINT), whose matrix the original
-takes from its traversal as modelview times the inverse view (801DE9C0), so
-it carries rounding the port's world matrix lacks (open). The stage scripts'
+takes from its traversal as modelview times the inverse view (801DE9C0). The
+traversal therefore carries the original's modelview stack next to the world
+matrix it draws with: it starts with the camera's view (+0x64), every
+igTransform and beModelCtrlNode2 pushes its local matrix times the top through
+the paired-single 80128690 (801DC85C, 8030FAA4), and a recorder keeps the top
+times the inverse view (+0xA4, 8012A92C of the view). So the car carries the
+original's rounding noise (rotation 1e-9..1e-7, translation up to 5e-5 at
+the stag0203 cameras) and its riders' land and wall queries follow Dolphin
+bit for bit (round 44: recorder, stack top and inverse view 326 / 326 frames,
+the follower's matrix 115 / 115, 5488 land / wall answers);
+`DW4_TRACE_RECORDER=1` prints them in the hooks' format. The stage scripts'
 floor effects use the same slot: SETCONVEYOR (a fixed step per frame),
 SETQUICKSAND (a pull towards a centre, faster inside the inner radius) and
 SETSLIPPEDFLOOR (the model's own steps blend into a sliding velocity). While
