@@ -13,6 +13,10 @@ namespace dw4::sfd {
 struct Streams {
     std::vector<std::uint8_t> video; // MPEG-1 video elementary stream
     std::vector<std::uint8_t> audio; // the ADX file
+    // For each picture start code of the video stream, the file offset just
+    // past the packet that completes it: what a demuxer has read from the
+    // file when it reaches that picture.
+    std::vector<std::uint32_t> picture_file_ends;
 };
 
 // Splits the program stream into its video and audio payloads. Throws

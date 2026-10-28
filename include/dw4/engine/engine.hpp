@@ -363,6 +363,7 @@ struct Cheats {
 struct StageSnapshot {
     std::string stage;
     std::int64_t time{};
+    std::int64_t clock_lateness{};       // the lateness in that update's world clock sample (Engine::set_clock_lateness)
     std::uint64_t frame{};
     std::map<std::int32_t, std::uint8_t> flags;
     std::map<std::int32_t, std::int32_t> counters;
@@ -428,10 +429,13 @@ public:
     std::vector<std::string> scene_report();
 
     void request_stage(std::string name);
-    // False after the step that took a stage change (NEXTSTAGE, 80347F2C):
-    // the original presents no new picture from then on, the screen keeps
-    // the last one until the loader draws. A reboot presents black.
-    bool presenting() const { return rebooting_ || pending_stage_.empty(); }
+    // False after the step that took a stage change (NEXTSTAGE, 80347F2C)
+    // and in the step that tears the stage down: the original presents no
+    // new picture from then on, the screen keeps the last one until the
+    // loader draws (Dolphin: the XFB of the teardown's frame still holds the
+    // opening's last picture, after its end and after a skip; black from the
+    // frame after it). A reboot presents black.
+    bool presenting() const { return rebooting_ || (pending_stage_.empty() && !torn_down_); }
     // The console reboots (ConsoleReset): from the step beSystem saw the reset
     // button's release on, the picture is black and nothing runs; after
     // kRebootFields more steps the host starts a new engine on the boot stage
@@ -451,8 +455,27 @@ public:
     void set_reset_enabled(bool enabled) { console_reset_.set_enabled(enabled); }
     const ConsoleReset& console_reset() const { return console_reset_; }
     const std::string& stage_name() const { return stage_name_; }
+    // The world clock as the last update sampled it (8028AF84 at the start of
+    // each frame): it stays while the update covers more fields (held()).
     std::int64_t time() const { return time_; }
     std::uint64_t frame() const { return frame_; }
+    // An update that waits for retraces inside it (VIWaitForRetrace: Sofdec's
+    // open 802ADC8C reads the movie's header, the movie codec 802AE8B8 waits
+    // once in every frame of a movie) covers more fields: the next `fields`
+    // steps run no update, the game's picture and input stay, only the
+    // per-field work goes on (the CRI servers, Manager::update_held).
+    void hold_update(int fields) { hold_fields_ = std::max(hold_fields_, fields); }
+    // The last step was such a covered field (no update ran in it).
+    bool held() const { return held_; }
+    // The frame starts late (ns after its retrace; 0 by default) from the next
+    // update on: a higher-priority thread's work on every retrace, Sofdec's
+    // decoder while a movie plays (SoundManager), takes the CPU first, so
+    // the update samples the world clock later (Dolphin: 0.005..0.022
+    // field, 0.011 on average, then on time again after the movie stops).
+    void set_clock_lateness(std::int64_t ns) { clock_lateness_ = ns; }
+    // The retrace of the last update plus the fields since: the VI clock of
+    // the per-field work (time() without the frame's lateness).
+    std::int64_t vi_time() const { return time_ - applied_lateness_ + field_time(frame_) - field_time(update_frame_); }
     // World time added by the last step (one NTSC field).
     std::int64_t frame_delta() const { return field_time(frame_) - field_time(frame_ ? frame_ - 1 : 0); }
     // beSystem's frame step (80316258, 0x80316320..0x8031635C): the world
@@ -475,19 +498,17 @@ public:
     // What the slots hold (0 = A, 1 = B).
     void set_card_setting(int slot, const CardSetting& setting) { card_settings_[std::size_t(slot & 1)] = setting; }
     const CardSetting& card_setting(int slot) const { return card_settings_[std::size_t(slot & 1)]; }
-    // The controllers as the game reads them: the pad module's getter
-    // (80312138) hands out its neutral fifth pad while STAGECTL PADINPUT
-    // DISABLE holds (+0x1D, 0x80348108..0x803481A8), checked at each read -
-    // an ENABLE from this frame's demo already counts for the managers that
-    // read after it, and the pads keep their own history meanwhile.
-    const std::array<PadState, 4>& pads() const {
-        if (pad_input_enabled_) return pads_.states();
-        for (std::size_t i = 0; i < neutral_pads_.size(); ++i) {
-            neutral_pads_[i] = PadState{};
-            neutral_pads_[i].connected = pads_.states()[i].connected;
-        }
-        return neutral_pads_;
-    }
+    // The pads as the game's readers get them (bePadManager's getter
+    // 80312138): while STAGECTL PADINPUT DISABLE has set the manager's
+    // redirect byte (+0x1D, 0x80348108..0x803481A8) every reader gets the
+    // fifth pad, which the update 80311F84 never touches (it serves devices
+    // 0..3 only: no input, its connected byte +8 never set). The getter
+    // checks the byte at each read, so an ENABLE from this frame's demo
+    // already counts for the managers that read after it; the four slots
+    // update every frame meanwhile and keep their own history, so a press
+    // read in the frame of the ENABLE counts and a button held across it
+    // gives no trigger.
+    const std::array<PadState, 4>& pads() const { return pad_input_enabled_ ? pads_.states() : kFifthPads; }
 
     // Script execution (beLua::call 80301FA4): first matching name per info.
     bool run_script(std::string_view name);
@@ -647,6 +668,7 @@ private:
     std::map<std::pair<const void*, std::uint32_t>, Lua4Program> lua_programs_;
     int script_depth_{};
     dw4::OriginalPads pads_;
+    static inline const std::array<PadState, 4> kFifthPads{};
     Node global_root_;
     std::vector<Node*> attached_roots_;
 
@@ -689,6 +711,7 @@ private:
     bool soft_reset_allowed_{}; // stage data +63, set after first.lua outside the title stages
     ConsoleReset console_reset_;   // beSystem +0x5F..0x62 and the controllers' reset combination
     bool rebooting_{};             // the reset button restarted the console (rebooting())
+    bool torn_down_{};             // this step tore the stage down (presenting(); the host's picture only)
     int reboot_fields_{};          // steps since then
     Cheats cheats_;
     std::optional<StageSnapshot> snapshot_;
@@ -696,9 +719,13 @@ private:
     Node* loading_node_{}; // the loading screen's beLoadingNode
     std::int64_t time_{};
     std::uint64_t frame_{};
+    std::uint64_t update_frame_{};        // frame_ of the last step that updated (vi_time)
+    int hold_fields_{};                   // fields the running update still covers (hold_update)
+    bool held_{};                         // the last step was one of them (held())
+    std::int64_t clock_lateness_{};       // set_clock_lateness: for the next updates
+    std::int64_t applied_lateness_{};     // ... and in time_ now
     std::int64_t world_delta_ = 16683333; // world time added by the last step (system_step)
     bool pad_input_enabled_{};
-    mutable std::array<PadState, 4> neutral_pads_{}; // see pads()
     std::map<std::int32_t, std::uint8_t> flags_;
     std::map<std::int32_t, std::int32_t> counters_;
     std::vector<DiagnosticCounter> notes_;
@@ -721,6 +748,9 @@ public:
     // the original skips every manager's RAM updates then (802F28F8); only
     // what it runs outside them goes on (the sound driver).
     virtual void update_inactive(Engine& engine) { (void)engine; }
+    // A field the running update covers (Engine::hold_update): only what runs
+    // on the retraces themselves goes on (the CRI servers).
+    virtual void update_held(Engine& engine) { (void)engine; }
     // Scheduled when the plugin registers it (+5C -> 8028A398), so it runs
     // before every manager an info schedules and stays scheduled across
     // stage clears (beSystem, bePadManager, beMessenger, ...).

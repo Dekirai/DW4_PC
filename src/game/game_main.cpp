@@ -841,6 +841,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
         std::array<std::optional<SaveState>, 4> state_slots;
         std::vector<LoggedStep> input_log;
         bool load_step_drawn = false, last_step_loaded = false;
+        bool items_current = false; // `items` is the draw list of the last update
         std::uint64_t log_serial = 0;
         std::string state_message;
         auto message_until = std::chrono::steady_clock::now();
@@ -1264,8 +1265,10 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 // is traversed once after every step: catching up several
                 // steps traverses the skipped pictures without drawing them
                 // (loading screens and route animations run on that clock).
-                if (i > 0) {
+                // A field the running update covers draws nothing new.
+                if (i > 0 && !engine.held()) {
                     engine.traverse_scene();
+                    items_current = false;
                     if (last_step_loaded) load_step_drawn = true;
                     else if (!input_log.empty()) input_log.back().drawn = true;
                 }
@@ -1577,7 +1580,11 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 rendered_serial = serial;
                 interpolator.reset();
             }
-            if (draw) {
+            // A field the running update covers (Engine::held: the movie's
+            // 30 Hz frames) shows the last update's picture again, without a
+            // traversal (only a catch-up that left no draw list draws it).
+            if (engine.held() && steps > 0 && (items_current || !draw)) {
+            } else if (draw) {
                 // The picture's own frustum cull follows the renderer's
                 // widescreen widening (GlRenderer::render, the viewports
                 // below): subtrees the original's cull skips that lie in
@@ -1590,10 +1597,11 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     engine.picture_widen = (float(screen_width) / float(height)) / (float(width) / float(height));
                 }
                 engine.render(items, camera, clear, &shadow);
+                items_current = true;
             } else {
                 engine.traverse_scene();
             }
-            if (steps > 0) {
+            if (steps > 0 && !engine.held()) {
                 if (last_step_loaded) load_step_drawn = true;
                 else if (!input_log.empty()) input_log.back().drawn = true;
             }
@@ -1641,12 +1649,21 @@ int run(const Options& options, dw4::game::Settings& settings) {
                             movie_serial = movie->serial;
                             movie_stage = engine.stage_name();
                         }
-                        if (movie_decoder->seek(movie->picture_at(engine.time())))
+                        // The picture the player's last frame took, from
+                        // that frame's second field on (none before the first).
+                        if (movie->visible >= 0 && movie_decoder->seek(std::size_t(movie->visible)))
                             renderer->draw_movie(movie_decoder->rgba().data(), movie_decoder->width(), movie_decoder->height(), screen,
                                                 width, height);
-                    } else if (movie_decoder && movie_stage == engine.stage_name() && !movie_decoder->rgba().empty()) {
-                        renderer->draw_movie(movie_decoder->rgba().data(), movie_decoder->width(), movie_decoder->height(), screen,
-                                            width, height);
+                    } else if (movie_decoder && movie_stage == engine.stage_name()) {
+                        // A movie that stopped (a skip, the teardown) leaves the
+                        // picture its codec took last on the layer.
+                        if (sound && sound->movie_still().serial == movie_serial && sound->movie_still().picture >= 0)
+                            movie_decoder->seek(std::size_t(sound->movie_still().picture));
+                        if (!movie_decoder->rgba().empty())
+                            renderer->draw_movie(movie_decoder->rgba().data(), movie_decoder->width(), movie_decoder->height(), screen,
+                                                width, height);
+                        else
+                            movie_decoder.reset();
                     } else {
                         movie_decoder.reset();
                     }

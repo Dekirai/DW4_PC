@@ -645,6 +645,7 @@ void Engine::begin_stage_load(const StageSnapshot* restoring) {
     StageSnapshot snapshot;
     snapshot.stage = next;
     snapshot.time = time_;
+    snapshot.clock_lateness = applied_lateness_;
     snapshot.frame = frame_;
     snapshot.flags = flags_;
     snapshot.counters = counters_;
@@ -670,6 +671,11 @@ void Engine::begin_stage_load(const StageSnapshot* restoring) {
 void Engine::restore(const StageSnapshot& snapshot) {
     time_ = snapshot.time;
     frame_ = snapshot.frame;
+    update_frame_ = frame_; // (a stage load starts in a step that updated)
+    hold_fields_ = 0;
+    held_ = false;
+    applied_lateness_ = snapshot.clock_lateness;
+    clock_lateness_ = 0;
     world_delta_ = frame_delta(); // the field that step added (no stage is active in it)
     flags_ = snapshot.flags;
     counters_ = snapshot.counters;
@@ -1119,7 +1125,7 @@ void Engine::process_stage_loader() {
     }
     auto* sound = get<SoundManager>();
     // The read on its way: the frame that first sees its last chunk booked
-    // (the driver tick after the previous step's update booked it).
+    // (the previous step's server pass booked it, SoundManager::server_tick).
     if (loader_file_.issued && loader_file_.booked < 0 && (!sound || !sound->loading())) loader_file_.booked = std::int64_t(frame_);
     // The original's update is still running: no update for this retrace.
     if (loader_skip_ > 0) --loader_skip_;
@@ -1451,21 +1457,38 @@ const std::map<std::uint64_t, std::int64_t>& clock_file() {
 } // namespace
 
 void Engine::step(const std::array<PadSample, 4>& samples) {
+    torn_down_ = false;
     // The console reloads the game (rebooting): nothing of the old one runs.
     if (rebooting_) {
         ++frame_;
+        ++update_frame_;
         ++reboot_fields_;
         return;
     }
-    // The pad module updates the controllers every frame; STAGECTL PADINPUT
-    // DISABLE only changes what its getter hands out (see pads()).
+    // The original's update of this frame is still running (hold_update): no
+    // world clock sample, no input read, no update; the controllers' own
+    // reset combination and the work on the retraces (the CRI servers) go on.
+    held_ = hold_fields_ > 0;
+    if (held_) {
+        --hold_fields_;
+        ++frame_;
+        console_reset_.hold(samples);
+        for (auto& m : managers_) m->update_held(*this);
+        return;
+    }
+    // The pad module (bePadManager 80311F84) updates the four slots from the
+    // controllers every frame; STAGECTL PADINPUT DISABLE only changes what
+    // its getter hands out (see pads()).
     try { pads_.update(samples); } catch (const std::exception& error) { note(std::string("pad input: ") + error.what()); }
     // The frame clock advances first so updates and the following render
     // observe the same time (joint clamps and fades end exactly on a key).
     // One NTSC field of world time (8028AF84), see field_time.
+    // (After covered fields the sample has moved on by all of them.)
     const auto before = time_;
-    time_ += field_time(frame_ + 1) - field_time(frame_);
+    time_ += field_time(frame_ + 1) - field_time(update_frame_) + clock_lateness_ - applied_lateness_;
+    applied_lateness_ = clock_lateness_;
     ++frame_;
+    update_frame_ = frame_;
     if (const auto& clock = clock_file(); !clock.empty())
         if (const auto it = clock.find(frame_); it != clock.end()) time_ = it->second;
     // 80316258 keeps the world time of its last update (+0x18) and stores the
@@ -1481,7 +1504,10 @@ void Engine::step(const std::array<PadSample, 4>& samples) {
         log("reset button: the console reboots");
         return;
     }
-    if (!pending_stage_.empty()) begin_stage_load();
+    if (!pending_stage_.empty()) {
+        begin_stage_load();
+        torn_down_ = true;
+    }
     process_stage_loader();
     // The CRI servers of this field (see SoundManager::server_tick): after
     // the loader's update, before the messenger, the demo and the managers.
@@ -1516,9 +1542,14 @@ void Engine::step(const std::array<PadSample, 4>& samples) {
 void Engine::update_managers() {
     for (auto& m : managers_)
         if (m->scheduled_at_registration()) m->update(*this);
+    // The movie player (igMovieManager, 802B11BC) is a module MOVIE PLAY
+    // appends to the scheduler (8028A398 at 0x802AF254): it runs after
+    // everything scheduled before it, whether or not the stage is active.
+    auto* sound = get<SoundManager>();
     if (!stage_active_) {
         for (auto& m : managers_)
             if (!m->scheduled_at_registration()) m->update_inactive(*this);
+        if (sound) sound->update_movie_player(*this);
         return;
     }
     // 8028B7B0 walks a copy, so a manager scheduled during the run (a file
@@ -1530,6 +1561,7 @@ void Engine::update_managers() {
         if (!m->scheduled_at_registration() &&
             std::none_of(schedule_run_.begin(), schedule_run_.end(), [&](const Scheduled& e) { return e.manager == m.get(); }))
             m->update(*this);
+    if (sound) sound->update_movie_player(*this);
 }
 
 bool Engine::main_lobby() const {

@@ -134,6 +134,25 @@ public:
     // One VI field of the CRI servers at time `now`.
     void tick(std::int64_t now);
 
+    // A Sofdec movie (MOVIE PLAY): the open (802ADC8C) reads the file's first
+    // ten sectors through ADXF on the loader's stream (8051B1D0) and waits
+    // for them; the MW server's stream (ADXSTM 8051AE70, after the six ADXT
+    // readers in every file server pass) fills a 365-sector ring from the
+    // file's start on (Dolphin captures: one 365-sector read in the first
+    // codec frame, then refills of 6..121 sectors as the demuxer takes data).
+    void movie_open(std::uint64_t disc_offset, std::uint32_t sectors);
+    bool movie_header_read() const { return movie.header_booked; }
+    // The MW server's first pass after mwPlyStart: the stream starts and asks
+    // for its first read in the same file server pass.
+    void movie_stream(std::int64_t now);
+    // The file bytes the demuxer has taken (the ring frees them).
+    void movie_consume(std::uint64_t bytes) { movie.consumed = std::max(movie.consumed, std::min(bytes, movie.written)); }
+    // The ring's bytes from the disc so far.
+    std::uint64_t movie_written() const { return movie.written; }
+    // mwPlyStop / destroy: the stream stops (a read on the drive still ends;
+    // the stream's and the open's reads each end on their own reader).
+    void movie_close();
+
     bool active(int slot) const { return valid(slot) && handles[std::size_t(slot)].active; }
     // ADXT status (802A8C18): 0 stopped, 1 decinfo, 2 prep, 3 playing,
     // 4 decoding ended, 5 play ended (a one-shot that has been played out).
@@ -180,8 +199,25 @@ public:
         std::uint64_t disc_offset{};
         std::uint32_t sectors{}, pos{}, request{};
     } loader;
+    // The movie's reads (movie_open). kMovieSlot / kMovieHeaderSlot in inflight.
+    static constexpr int kMovieSlot = kSlots + 1;
+    static constexpr int kMovieHeaderSlot = kSlots + 2;
+    static constexpr std::uint32_t kMovieRingSectors = 365;
+    static constexpr std::uint32_t kMovieHeaderSectors = 10;
+    struct Movie {
+        bool header{};          // the open's header read is wanted
+        bool header_busy{}, header_done{}, header_booked{};
+        bool header_stopping{}; // closed with the header read on the drive
+        bool active{};          // the stream runs (movie_stream)
+        bool busy{}, done{};    // its read is on the drive / the drive finished it
+        bool stopping{};        // closed with a read on the drive
+        std::uint64_t disc_offset{};
+        std::uint32_t sectors{}, pos{}, request{};
+        std::uint32_t write_pos{};           // ring write position (bytes)
+        std::uint64_t written{}, consumed{}; // ring bytes in / out
+    } movie;
     struct Inflight {
-        int slot{-1};        // handle whose read is on the drive (-1: idle, kLoaderSlot: the loader)
+        int slot{-1};        // handle whose read is on the drive (-1: idle, kLoaderSlot: the loader, kMovie*)
         std::int64_t done{}; // completion time
     } inflight;
     DiscDrive drive;
@@ -199,6 +235,9 @@ public:
 
 private:
     static bool valid(int slot) { return slot >= 0 && slot < kSlots; }
+    // The movie stream's and the open's reads in one file server pass.
+    void movie_reader(std::int64_t now);
+    void movie_header(std::int64_t now);
     std::int64_t ax_frame(std::int64_t t) const;
     std::uint64_t played(const Handle& h, std::int64_t now) const;
 };

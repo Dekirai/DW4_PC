@@ -27,12 +27,13 @@ nominal 16,666,666 ns frame (`kFrameNs`), so an n-frame wait ends after
 exactly n steps. In order:
 
 1. Pads: `dw4::OriginalPads` computes trigger/repeat masks from the host
-   samples, every frame. STAGECTL `PADINPUT DISABLE` (+0x1D of the pad
-   module, 0x80348108..0x803481A8) only changes what the module's getter
-   80312138 hands out: `Engine::pads()` gives neutral pads while it holds,
+   samples every frame (bePadManager 80311F84). STAGECTL `PADINPUT DISABLE`
+   (+0x1D of the pad module, 0x80348108..0x803481A8) only changes what the
+   module's getter 80312138 hands out: while it holds, `Engine::pads()` gives
+   the fifth pad, which the update never touches (no input, not connected),
    checked at each read, so an ENABLE sent by this frame's demo already
-   counts for the managers that read after it, and a button held through the
-   disabled stretch is not a fresh press when it ends.
+   counts for the managers that read after it, a press read in the frame of
+   the ENABLE counts and a button held across it gives no trigger.
 2. The frame clock advances, so updates and the following render observe the
    same time.
    beSystem's update (80316258) then reads the console's reset button
@@ -50,7 +51,9 @@ exactly n steps. In order:
    field (`SoundManager::server_tick`; the original's ADXT server 8029A60C
    and file server 80296904 run after the loader's update and before the
    messenger, the demo and the managers): stream reads on the simulated
-   drive, decoding, PLAYING (see the sound section below).
+   drive, decoding, PLAYING (see the sound section below). A field a
+   movie frame covers runs only these servers and the SNDF's AX frames
+   (`Engine::hold_update`, see the movie below).
 4. Deferred messenger sends (80304C58: every `sd(..., delay)`, also a delay
    of 0, and the engine's own posts arrive here, in a later frame than they
    were sent; none while a SUBWND program or the soft reset pauses the queue,
@@ -296,7 +299,9 @@ scaled by an attack ramp down to -4 dB within the frame, then released by
 0.4 dB per frame over ten frames, the ramps of 804C0820) and the 16-bit
 saturation. A stream's start, pause and volume change from the game's update
 reach the first AX frame at or after the update's command time (the ADXT
-call reaches the RNA's voice at the next frame, 8029A480 -> 802A7534), an SFP
+call reaches the RNA's voice at the next frame, 8029A480 -> 802A7534; the
+server pass of a field a movie frame covers counts from its retrace, and the
+movie's sound starts in the first AX frame at or after Sofdec's unpause), an SFP
 note sounds from the frame after the SNDF callback that started it (the
 callback's PB changes reach the DSP a frame later, 802A8F7C -> 803C325C), so
 a stream leads an effect of the same update by an AX frame, as in the
@@ -314,17 +319,71 @@ stream channels `DW4_AUDIO_STREAMS_CHANNELS` names (default BGM and
 ambience), `DW4_AUDIO_TOPUP=FRAME:SAMPLES` renders extra audio after a frame like
 the host's queue top-up, `DW4_AX_COMPRESSOR=0` leaves the compressor out,
 `DW4_TRACE_SOUND=1` logs the effects and sound subcommands, the SNDF voices
-and where each stream's audio begins in the dump).
+and where each stream's and the movie's audio begins in the dump).
 MOVIE PLAY (8031EDFC) looks up the beMovieInfoData of the
-file ([5] end script), splits the Sofdec program stream with `dw4::sfd`
-(MPEG-1 video 0xE0, ADX sound 0xC0) and plays the sound on a movie channel;
-the host decodes the video with pl_mpeg and draws the picture for the time
-since the first picture over the screen. Sofdec starts in its prep state
-(803E3D1C creates the sound's ADXT paused): the captures unpause it 29 fields
-after MOVIE PLAY (803E38C4, after mwPlyStart's 8-field update and ten 2-field
-updates of the 30 Hz movie loop) and show picture k at MOVIE PLAY + 37 + 2k
-fields. The movie ends after its last picture or on A or START from player 1
-(8031EC10), then runs its end script.
+file (strcmp; [4] layer, [5] end script; a name the list lacks plays nothing,
+so does one behind an empty entry or one of another type, where the search
+ends (8031EE8C), and a PLAY while the beMovie name is still set is refused),
+splits the Sofdec program stream with `dw4::sfd`
+(MPEG-1 video 0xE0, ADX sound 0xC0) and plays the sound on a movie channel
+of the AX mix (at the DSP rate like the streams, no AUX sends);
+the host decodes the video with pl_mpeg and draws the picture the player
+took over the screen. The beMovie RAM keeps the name (0x8031F308), which the
+skip and the end script need, only once the movie layer answered LAYERCTL
+GETLAYERNODE for the data's layer and the movie has its scene (the movie
+manager makes it after the codec's open, 802AEC7C -> 802AF5C8); a movie
+without them plays on unnamed, and a file the codec cannot open plays nothing
+and leaves no name. The only movie is the opening (stagIS09 first.lua,
+AUS_opening.sfd on the USA disc: 1920 pictures at 29.97 Hz), played after
+the logos and again whenever the title's prompt times out (attract mode).
+The game hands the movie to the Alchemy movie plugin (igMovieManager
+802AEC7C, igCriMovieCodec): its open (802ADC8C) reads the file's first ten
+sectors through ADXF and waits for them with VIWaitForRetrace inside the
+update of MOVIE PLAY, so that frame takes 8 or 9 fields, then starts the
+Sofdec player (prep state; 803E3D1C makes the sound's ADXT in RNA mode 1,
+paused). From the next frame on the movie manager's codec update (802AE8B8)
+waits for a retrace itself before its ADX server pass and mwPlyGetCurFrm, so
+every frame of a movie takes two fields: the game runs at 30 Hz until the
+stage's teardown stops the movie (`Engine::hold_update`: the covered fields
+run no update, keep the picture and the input, and only tick the CRI
+servers and the SNDF's AX frames, `SoundManager::update_held`; `Engine::held`,
+`Engine::vi_time`). Every field ticks the servers once
+(`SoundManager::server_tick`, on the field's VI time): a frame that updates
+after the loader's update, a covered field after the open's check. In the
+drive model's clock a tick stands for the servers on the retrace after it
+(`DiscDrive::kDolphinClockOffset`), so the tick of the MOVIE PLAY step (the
+stage's first.lua runs in the loader's update, before it) is the open loop's
+first pass (the header read) and the tick of the step before a covered field
+is the pass that field's loop iteration checks: the field whose pass booked
+the header runs
+mwPlyStart and ends the frame. The first codec update's pass starts
+Sofdec's stream (a 365-sector ring on the simulated drive, CriStreams
+`movie_*`); the player leaves prep two passes after the first with data
+(803E38C4 unpauses the sound 0.084 field after that pass), takes picture k
+in the codec update after the next k ones (update 12 + k) and reads
+PLAYEND two updates after the last picture; the XFB of a frame shows the
+picture of the codec update before its own (Dolphin: the frame taking k
+still shows k - 1), so the port's covered field shows that one. The codec
+then stops with state 2 and the next beMovie update (8031EC10) runs the end
+script and clears the name (a later PLAY is taken; the ended codec stays
+and waits its retrace in every frame), while the codec keeps the 30 Hz
+frames going until the teardown. A or START from player 1 (read through the
+pad getter, so a press in the frame of the PADINPUT ENABLE counts; the
+stage's script enables the pads 120 nominal frames of world time after MOVIE PLAY, which
+the first update at or after that time takes: about 60 of the 30 Hz updates,
+Dolphin V 1116 -> E 1236, and in attract mode the time falls on a covered
+field and the update after it takes it) stops every movie at once (802AF560)
+and runs the end script in the same update. While
+Sofdec decodes, the frames start 0.011 field after their retraces
+(`Engine::set_clock_lateness`), so the skip's NEXTSTAGE, posted for one
+nominal frame later, arrives two updates after it. The picture the codec
+took last stays on the screen through the frame that tears the stage down,
+after the end and after a skip (`Engine::presenting`, `SoundManager::movie_still`):
+none of the frames after the stop runs a codec update, so their XFB shows
+that picture, not the one before it that a playing movie's frame shows
+(Dolphin d_skipeven2). (Dolphin captures of a
+boot with both movies and of skips: work/dref r40movie / r41movie runs with OSReport
+hooks on these functions.)
 
 When a stream is ready matters to the scripts: demos wait with
 `DMchkSD SOUND ISALLREADY` / `ISREADY`, which test ADXT status 3 (PLAYING,
