@@ -1347,8 +1347,19 @@ bool SoundManager::open_stream(Engine& engine, Stream& stream, const std::string
         return false;
     }
     // ADXT_StartAfs on the channel's handle: the stream is ready once its
-    // first block came off the (simulated) disc and was decoded.
-    cri_.start(int(&stream - streams_.data()), stream_file(engine, archive, entry, stream.decoder->header()));
+    // first block came off the (simulated) disc and was decoded. The CRI
+    // servers run in their own threads at every retrace, ahead of the frame
+    // (ADXM_SetupThrd 8029D0D8 with the default priorities: the ADXT server
+    // thread 8029D434 at 12, the file server thread 8029D3DC at 14, both
+    // after VIWaitForRetrace 802648EC, above the main thread's 16; the
+    // threaded registration 8028FBA4..8028FBCC, 0x804CD180 = 1): a start in
+    // the stage loader's scripts, which the port's step runs before its
+    // pass, is first seen by the next field's (Dolphin dngq1b1e: first.lua's
+    // ADXT_StartAfs after that field's ADXT and file server passes, the first
+    // read in the next field's file server pass).
+    const int slot = int(&stream - streams_.data());
+    cri_.start(slot, stream_file(engine, archive, entry, stream.decoder->header()));
+    if (engine.frame() != pass_frame_) cri_.handles[std::size_t(slot)].hold = true;
     return true;
 }
 
@@ -2216,6 +2227,7 @@ std::shared_ptr<const void> SoundManager::persistent() const {
 
 void SoundManager::restore(Engine& engine, const std::shared_ptr<const void>& opaque) {
     if (!opaque) return;
+    pass_frame_ = ~std::uint64_t{}; // (the restored step's pass is still to run)
     const auto& state = *static_cast<const SoundState*>(opaque.get());
     for (std::size_t i = 0; i < streams_.size() && i < state.streams.size(); ++i) {
         const auto& s = state.streams[i];
@@ -2402,6 +2414,7 @@ void SoundManager::server_tick(Engine& engine) {
     // (CriStreams::kAxPhase) to line a run up with a capture.
     static const char* ax_phase = std::getenv("DW4_AX_PHASE");
     if (ax_phase && *ax_phase) cri_.ax_phase = std::strtoll(ax_phase, nullptr, 10);
+    pass_frame_ = engine.frame();
     const int inflight_before = cri_.inflight.slot;
     const std::int64_t done_before = cri_.inflight.done;
     std::array<bool, CriStreams::kSlots> playing_before{};

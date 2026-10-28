@@ -48,10 +48,17 @@ exactly n steps. In order:
    the wait for the loading screen's minimum play time (its beLoadingNode
    then holds its lock time on the LOADING layer until the scripts remove
    it), info registration, `start.lua`, `first.lua`. Then the CRI servers'
-   field (`SoundManager::server_tick`; the original's ADXT server 8029A60C
-   and file server 80296904 run after the loader's update and before the
+   field (`SoundManager::server_tick`: the ADXT server 8029A60C and the
+   file server 80296904, here after the loader's update and before the
    messenger, the demo and the managers): stream reads on the simulated
-   drive, decoding, PLAYING (see the sound section below). A field a
+   drive, decoding, PLAYING (see the sound section below). The original
+   runs these servers in their own threads at the field's retrace, ahead of
+   the whole frame (ADXT server thread 8029D434 at priority 12, file server
+   thread 8029D3DC at 14, main thread 16), so a stream that `start.lua` /
+   `first.lua` start in the loader's update is first seen by the next
+   field's pass (`CriStreams::Handle::hold`; Dolphin dngq1b1e: first.lua's
+   ADXT_StartAfs after that field's passes, its first read in the next
+   field's). A field a
    movie frame covers runs only these servers and the SNDF's AX frames
    (`Engine::hold_update`, see the movie below).
 4. Deferred messenger sends (80304C58: every `sd(..., delay)`, also a delay

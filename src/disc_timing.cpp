@@ -337,7 +337,9 @@ void CriStreams::tick(std::int64_t now) {
         if (!h.bound) {
             // decinfo (8029C1E0): the stream is bound (8029B2D0) once its
             // ADXSTM stopped; the reader opens the file in the next file server.
-            if (!h.busy && !h.stopping) h.bound = true;
+            // (A handle started after this field's pass in the original is
+            // not there yet: hold.)
+            if (!h.busy && !h.stopping && !h.hold) h.bound = true;
             continue;
         }
         if (h.state == 1 && h.first_block) {
@@ -461,6 +463,8 @@ void CriStreams::tick(std::int64_t now) {
         loader.busy = true;
         loader.request = n;
     }
+    // The next field's pass sees the handles this one held back.
+    for (auto& h : handles) h.hold = false;
 }
 
 void CriStreams::movie_open(std::uint64_t disc_offset, std::uint32_t sectors) {
