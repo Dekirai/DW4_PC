@@ -1547,10 +1547,11 @@ void Engine::step(const std::array<PadSample, 4>& samples) {
     }
     // NEXTSTAGE's frame was the last of the application loop's update /
     // render loop: the module reload comes first (loader_teardown_cost), its
-    // whole fields run no update and keep the picture (the XFB of NEXTSTAGE's
-    // frame; presenting()), only the work on the retraces goes on, and the
-    // update after it samples the world clock late by the rest of a field
-    // (Dolphin: J .. Q, then U 0.48 field after the retrace after stagIS10).
+    // whole fields run no update and keep the last picture (no new XFB until
+    // the update after it; presenting()), only the work on the retraces goes
+    // on, and the update after it samples the world clock late by the rest of
+    // a field (Dolphin: J .. Q, then U 0.48 field after the retrace after
+    // stagIS10).
     if (!pending_stage_.empty() && !reloading_) {
         reloading_ = true;
         // (Fast loading, a PC option, takes no time for it either.)
