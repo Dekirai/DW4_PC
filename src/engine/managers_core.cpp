@@ -2017,6 +2017,14 @@ void SoundManager::update_movie_player(Engine& engine) {
             movie.skipped += due - movie.taken - 1;
             movie.taken = due;
             movie.after_last = 0;
+            // The decoder works two pictures ahead of the one taken: once
+            // the codec has the last but one, the last is decoded and its
+            // retraces are free again, the frames start on time (Dolphin's
+            // world clock samples: 0.009 field late in the frame that takes
+            // picture 1918 of 1920, on time from the one that takes 1919 on,
+            // so the end script's delayed NEXTSTAGE after a skip in the
+            // movie's last frames arrives in the next update).
+            if (movie.taken + 2 >= int(movie.pictures)) engine.set_clock_lateness(0);
             if (trace && (due < 2 || due + 1 >= int(movie.pictures)))
                 engine.log("movie " + movie.name + " codec update " + std::to_string(movie.frames) + " takes picture " + std::to_string(due) +
                            ", frame " + std::to_string(engine.frame()));

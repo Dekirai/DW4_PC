@@ -311,6 +311,10 @@ public:
     // PLAY after every manager): the codec update 802AE8B8 of the playing
     // movie, from the frame after its open on (Engine::update_managers).
     void update_movie_player(Engine& engine);
+    // 802AF560 (the skip, and igMovieManager's reset at the start of the
+    // module reload before a stage's teardown, Engine::step): every movie
+    // stops.
+    void stop_movie(Engine& engine);
     // Interleaved stereo 16-bit PCM at kOutputRate: the AX mix at the DSP
     // rate, resampled. Successive calls continue the audio seamlessly,
     // whatever their sizes and however they run ahead of or fall behind the
@@ -597,8 +601,6 @@ private:
     // meets is kept the same way: its pictures and sound are not modelled.)
     // The retail scripts play one movie per stage.
     int ended_codecs_{};
-    // 802AF560 (the skip and the teardown): every movie stops.
-    void stop_movie(Engine& engine);
     // Sofdec leaves PREP this many codec server passes after the one that
     // first had the stream's data, and its sound handler starts 56,539 bus
     // ticks (0.084 field) after that pass (Dolphin, both opening movies).
@@ -608,7 +610,9 @@ private:
     // (Dolphin d_skip1500u: the frame start after the retrace, 0.0047..0.0220
     // field over 300 frames of the opening, 0.0007 before the first data,
     // 0.0001 after the skip): the skip's NEXTSTAGE, posted for one nominal
-    // frame later, arrives two updates after it.
+    // frame later, arrives two updates after it. From the frame after the
+    // codec took the last but one picture on the frames are on time again
+    // (update_movie_player: the decoder works two pictures ahead).
     static constexpr std::int64_t kMovieDecodeLateNs = 183517;
     // The stage's beCriFxInfo in acceptance order (Cri +0x2C, 802F51C4):
     // name and _reverb (slot 6).

@@ -372,7 +372,7 @@ struct StageSnapshot {
     OriginalPads pads;
     std::string random;                  // system generator state (fight::generator)
     std::int32_t point_no{};             // PLAYERPOINT's generate point (it survives stage loads)
-    std::int32_t loader_teardown{};      // milli-fields the update that starts this load takes (Engine::process_stage_loader)
+    std::int32_t loader_teardown{};      // milli-fields the module reload before this load took (Engine::step, loader_teardown_cost)
     bool loader_common{};                // this load still reads BecText.igb and _common/sbiallse.igb (the first of a session)
     bool stage_active{};                 // beSystem +0x2C at the change (cleared by the loader's state 0)
     std::shared_ptr<const void> system;  // GameSystem copy
@@ -471,7 +471,10 @@ public:
     // update on: a higher-priority thread's work on every retrace, Sofdec's
     // decoder while a movie plays (SoundManager), takes the CPU first, so
     // the update samples the world clock later (Dolphin: 0.005..0.022
-    // field, 0.011 on average, then on time again after the movie stops).
+    // field, 0.011 on average, on time again from the frame after the codec
+    // took the last but one picture); the stage change's module reload
+    // (Engine::step) makes the update after it late by its fraction of a
+    // field.
     void set_clock_lateness(std::int64_t ns) { clock_lateness_ = ns; }
     // The retrace of the last update plus the fields since: the VI clock of
     // the per-field work (time() without the frame's lateness).
@@ -705,6 +708,7 @@ private:
     int loader_skip_{};                      // retraces the original's current update still covers
     std::int64_t loader_processing_{};       // milli-fields of chunk processing so far in this load (chunk_extra)
     std::int32_t loader_teardown_{};         // see StageSnapshot::loader_teardown
+    bool reloading_{};                       // the module reload before the pending stage's teardown has begun (Engine::step)
     bool loader_common_{true};               // see StageSnapshot::loader_common
     bool loader_fast_{};                     // see fast_loading()
     bool stage_active_{}; // beSystem +0x2C, see stage_active()

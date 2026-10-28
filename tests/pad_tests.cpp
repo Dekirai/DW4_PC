@@ -1,4 +1,5 @@
 #include "dw4/console_reset.hpp"
+#include "dw4/engine/engine.hpp"
 #include "dw4/pad.hpp"
 
 #include <array>
@@ -365,6 +366,42 @@ void host_inputs() {
     merge(keyboard, idle);
     check(keyboard.c_stick.y == 1.0f, "A centred stick replaced a moved one");
 }
+
+// STAGECTL PADINPUT (Engine::pads, the getter 80312138): while it is disabled
+// every reader gets the fifth pad, which the pad update 80311F84 never
+// touches (no input, connected byte +8 never set), and the four slots go on
+// taking the controllers, so they keep their own history.
+void fifth_pad() {
+    dw4::engine::Engine engine{dw4::MountedResources{}};
+    std::array<PadSample, 4> samples{};
+    for (auto& sample : samples) sample.connected = true;
+    engine.set_pad_input_enabled(true);
+    engine.step(samples);
+    check(engine.pads()[0].connected && engine.pads()[3].connected, "An enabled reader did not get the controllers");
+    engine.set_pad_input_enabled(false);
+    samples[0].buttons = pad_button::a;
+    samples[1].left = {1.0f, 0.0f};
+    engine.step(samples);
+    for (const auto& pad : engine.pads())
+        check(pad == PadState{} && !pad.connected, "A disabled reader did not get the empty, unconnected fifth pad");
+    // A held across the ENABLE: the slot saw the press while disabled.
+    engine.step(samples);
+    engine.set_pad_input_enabled(true);
+    engine.step(samples);
+    check(engine.pads()[0].connected && (engine.pads()[0].buttons.held & pad_button::a) != 0 &&
+              (engine.pads()[0].buttons.trigger & pad_button::a) == 0,
+          "A button held across the ENABLE gave a trigger (the slot lost its history)");
+    check(engine.pads()[1].left_directions.held != 0, "The slot lost the stick held while disabled");
+    // A press read in the frame of the ENABLE (from that frame's demo) counts.
+    samples[0].buttons = 0;
+    engine.set_pad_input_enabled(false);
+    engine.step(samples);
+    samples[0].buttons = pad_button::b;
+    engine.step(samples);
+    check(engine.pads()[0].buttons.trigger == 0, "A disabled reader saw the press");
+    engine.set_pad_input_enabled(true);
+    check((engine.pads()[0].buttons.trigger & pad_button::b) != 0, "A press read in the frame of the ENABLE was lost");
+}
 } // namespace
 
 int main() {
@@ -375,6 +412,7 @@ int main() {
         invalid_inputs();
         console_reset();
         host_inputs();
+        fifth_pad();
         std::cout << checks << " original pad checks passed\n";
         return 0;
     } catch (const std::exception& error) {

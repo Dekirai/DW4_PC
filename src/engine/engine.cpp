@@ -587,24 +587,16 @@ void Engine::begin_stage_load(const StageSnapshot* restoring) {
     const std::string next = pending_stage_;
     pending_stage_.clear();
     log("stage change -> " + next);
-    // The update that asks for the next descriptor (beSystem 80316258) first
-    // releases the outgoing stage (8006F794): its length follows what the
-    // stage holds (loader_teardown_cost); a save state keeps it.
+    // This is the first update after the application loop's module reload
+    // (Engine::step, loader_teardown_cost): its world clock sample came late
+    // by the reload's fraction of a field, the next one is on time again.
+    // A save state keeps the reload's length (informational).
+    reloading_ = false;
     if (restoring) {
         loader_teardown_ = restoring->loader_teardown;
         loader_common_ = restoring->loader_common;
     } else {
-        loader_teardown_ = loader_teardown_cost();
-    }
-    if (std::getenv("DW4_TRACE_LOADER")) {
-        std::size_t objects = 0, memories = 0;
-        for (const auto& file : files_)
-            if (file.document) {
-                objects += file.document->objects.size();
-                memories += file.document->memories.size();
-            }
-        log("loader teardown of " + stage_name_ + ": " + std::to_string(files_.size()) + " files, " + std::to_string(objects) +
-            " objects, " + std::to_string(memories) + " memory blocks -> " + std::to_string(loader_teardown_) + " milli-fields");
+        clock_lateness_ = 0;
     }
     for (auto& m : managers_) m->clear_stage(*this);
     schedule_.clear();
@@ -921,24 +913,101 @@ bool trace_loader() {
     static const bool on = std::getenv("DW4_TRACE_LOADER") != nullptr;
     return on;
 }
+
+// The objects and memory blocks first reached from `start` through object
+// references, memory references and object lists (`seen` marks the
+// document's references already counted): what deleting an info frees.
+std::pair<std::size_t, std::size_t> reachable(const IgbDocument& document, std::uint32_t start, std::vector<char>& seen) {
+    std::size_t objects = 0, memories = 0;
+    std::vector<std::uint32_t> stack{start};
+    while (!stack.empty()) {
+        const auto reference = stack.back();
+        stack.pop_back();
+        if (reference >= document.references.size() || seen[reference]) continue;
+        seen[reference] = 1;
+        const auto& entry = document.references[reference];
+        if (entry.kind == IgbReferenceKind::memory) {
+            if (entry.value_index < document.memories.size()) ++memories;
+            continue;
+        }
+        if (entry.kind != IgbReferenceKind::object || entry.value_index >= document.objects.size()) continue;
+        ++objects;
+        const auto& object = document.objects[entry.value_index];
+        for (const auto& field : object.fields) {
+            if (field.type_index >= document.metadata.field_types.size()) continue;
+            const auto& type = document.metadata.field_types[field.type_index].name;
+            if (type != "igObjectRefMetaField" && type != "igMemoryRefMetaField") continue;
+            try {
+                if (const auto next = document.field_reference(object, field.slot)) stack.push_back(*next);
+            } catch (const std::exception&) {
+            }
+        }
+        if (document.is_a(object, "igObjectList")) {
+            try {
+                for (const auto& element : document.object_list(reference))
+                    if (element) stack.push_back(*element);
+            } catch (const std::exception&) {
+            }
+        }
+    }
+    return {objects, memories};
+}
 } // namespace
 
-// The update after NEXTSTAGE (80316258: the managers release the outgoing
-// stage's RAMs, 8006F794 its directories) asks for the next descriptor at its
-// end; it grows with what the stage's files hold: 1.5 fields + 0.7 per 1000
-// memory blocks + 0.18 per 1000 objects (captures: the descriptor request
-// 1.54 fields into the update after stagIS09, 8.59 after stagIS10 (5875
-// blocks, 14804 objects), 16.25 after stag0203, 20.58 after stag0204; the
-// logos, 6.31, take 2 fields longer than this).
+// NEXTSTAGE's frame ends the application loop's update / render loop: after
+// its picture (the endScene retrace) the loop reloads every module
+// (80021944 -> 8040F570 -> 8028A87C) before the next update's world clock
+// sample (8028AF84) and beSystem's descriptor request (80316258: 8006F794 at
+// 0x8031658C, 8006FD34 at 0x803165A0). The reload calls every module's +0x70
+// reset (igMovieManager's 802AF560 stops the movies) and deletes every info
+// of the application's list +0x10 (80066e1c at 0x8028A910), and all of it
+// takes the main thread for these milli-fields. Dolphin captures with hooks
+// on the reload, each reset and each delete (r44timing d_td3; the world clock
+// deltas of the update after it in the fix_r22load2 / fix_r29load captures):
+// - the module resets 0.45 fields (beMessenger 0.13-0.21, beLua 0.14-0.23,
+//   beLayerCtl, beFont, beCameraCtrl; the other 60 next to nothing);
+// - a beDBManagerInfo 0.93 fields per 1000 objects it holds (usa_pack's 12,
+//   1839 objects: 1.74 / 1.76), a beFontInfo 1.2 / 1.6 fields (1.4);
+// - the rest grows with the model RAMs (0.0086 fields each: their
+//   beModelCtrlInfo / beAction2Info deletes, 2.7 fields for the title's 190)
+//   and with the other memory blocks (0.4 per 1000).
+// Measured / modelled: stagIS08 4.32 / 4.54, stagIS09 0.54 (0.57 with the
+// movie's stop) / 0.48, stagIS10 7.48 (7.60 before the new game) / 7.47,
+// stag0203 15.23 / 15.37, stag0204 19.57 / 19.49. (Until r44 the loader
+// added 1.5 + 0.7 / 1000 memory blocks + 0.18 / 1000 objects to the update
+// itself: fitted to the update's whole world clock delta, one field more
+// than the reload, so every descriptor read after a teardown came a field
+// late.) The session's first load has nothing to release (0.2 fields: 0).
 std::int32_t Engine::loader_teardown_cost() const {
     if (files_.empty()) return 0;
-    std::size_t memories = 0, objects = 0;
-    for (const auto& file : files_)
-        if (file.document) {
-            memories += file.document->memories.size();
-            objects += file.document->objects.size();
+    std::size_t memories = 0, db_objects = 0, db_memories = 0, fonts = 0;
+    for (const auto& file : files_) {
+        const auto* document = file.document.get();
+        if (!document) continue;
+        memories += document->memories.size();
+        if (!document->info_list_reference) continue;
+        // (In the info list's order, each info taking what an earlier one
+        // did not reach, as the captures were measured.)
+        std::vector<char> seen(document->references.size(), 0);
+        for (const auto& element : document->object_list(*document->info_list_reference)) {
+            if (!element) continue;
+            const auto [objects, blocks] = reachable(*document, *element, seen);
+            const auto& info = document->object(*element);
+            if (info.type_index >= document->metadata.object_types.size()) continue;
+            const auto& type = document->metadata.object_types[info.type_index].name;
+            if (type == "beFontInfo") {
+                ++fonts;
+                db_memories += blocks;
+            } else if (type == "beDBManagerInfo") {
+                db_objects += objects;
+                db_memories += blocks;
+            }
         }
-    return std::int32_t(1500 + memories * 7 / 10 + objects * 18 / 100);
+    }
+    const auto* models = get<ModelCtrlManager>();
+    const std::size_t rams = models ? models->rams().size() : 0;
+    const std::size_t rest = memories - std::min(memories, db_memories);
+    return std::int32_t(450 + db_objects * 93 / 100 + fonts * 1400 + rest * 405 / 1000 + rams * 858 / 100);
 }
 
 // State 5 (802FA53C) registers the stage's infos; the update grows with the
@@ -1225,13 +1294,13 @@ void Engine::loader_update() {
         return;
     }
     case kLoaderDescriptor: {
-        // beSystem (80316258): the update after NEXTSTAGE releases the old
-        // stage and asks for <stage>.igb (0x803165A0); once that directory is
-        // ready (0x80316674) its beFileListInfo starts the file-list manager,
+        // beSystem (80316258): the first update after the module reload
+        // releases the old stage's directories (0x8031658C) and asks for
+        // <stage>.igb (0x803165A0) at once; once that directory is ready
+        // (0x80316674) its beFileListInfo starts the file-list manager,
         // whose update follows in the same frame (state 0).
         if (!loader_file_.active) {
             loader_request({stage_name_ + ".igb"});
-            loader_cost_ += loader_teardown_;
             return;
         }
         if (!loader_ready()) return;
@@ -1475,6 +1544,41 @@ void Engine::step(const std::array<PadSample, 4>& samples) {
         console_reset_.hold(samples);
         for (auto& m : managers_) m->update_held(*this);
         return;
+    }
+    // NEXTSTAGE's frame was the last of the application loop's update /
+    // render loop: the module reload comes first (loader_teardown_cost), its
+    // whole fields run no update and keep the picture (the XFB of NEXTSTAGE's
+    // frame; presenting()), only the work on the retraces goes on, and the
+    // update after it samples the world clock late by the rest of a field
+    // (Dolphin: J .. Q, then U 0.48 field after the retrace after stagIS10).
+    if (!pending_stage_.empty() && !reloading_) {
+        reloading_ = true;
+        // (Fast loading, a PC option, takes no time for it either.)
+        loader_teardown_ = cheats_.fast_loading ? 0 : loader_teardown_cost();
+        if (trace_loader()) {
+            std::size_t objects = 0, memories = 0;
+            for (const auto& file : files_)
+                if (file.document) {
+                    objects += file.document->objects.size();
+                    memories += file.document->memories.size();
+                }
+            const auto* models = get<ModelCtrlManager>();
+            log("loader teardown of " + stage_name_ + ": " + std::to_string(files_.size()) + " files, " + std::to_string(objects) +
+                " objects, " + std::to_string(memories) + " memory blocks, " + std::to_string(models ? models->rams().size() : 0) +
+                " model RAMs -> module reload " + std::to_string(loader_teardown_) + " milli-fields");
+        }
+        // igMovieManager's reset (802AF560), among the first modules, stops
+        // every movie: the codecs' retrace waits end with it.
+        if (auto* sound = get<SoundManager>()) sound->stop_movie(*this);
+        set_clock_lateness(std::int64_t(loader_teardown_ % 1000) * (kFieldNsPer3 / 3) / 1000);
+        if (loader_teardown_ >= 1000) {
+            hold_fields_ = loader_teardown_ / 1000 - 1;
+            held_ = true;
+            ++frame_;
+            console_reset_.hold(samples);
+            for (auto& m : managers_) m->update_held(*this);
+            return;
+        }
     }
     // The pad module (bePadManager 80311F84) updates the four slots from the
     // controllers every frame; STAGECTL PADINPUT DISABLE only changes what
