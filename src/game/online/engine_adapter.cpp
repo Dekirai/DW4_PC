@@ -308,6 +308,19 @@ void GameEngineLink::set_view_slot(int slot) {
 #endif
 }
 
+void GameEngineLink::after_live_step() {
+    auto* sys = e().get<engine::GameSystem>();
+    if (!sys) return;
+    if (!sys->game_started) {
+        modes_applied_ = false;
+        return;
+    }
+    if (modes_applied_) return;
+    sys->camera_mode = settings_.camera_mode;
+    sys->light_mode = settings_.light_mode;
+    modes_applied_ = true;
+}
+
 Calibration calibrate_replay_rate(engine::Engine& engine, const std::string& stage, int max_steps, double max_seconds, bool music) {
     Calibration c;
     c.stage = stage;

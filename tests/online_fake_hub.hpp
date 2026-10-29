@@ -291,6 +291,7 @@ public:
     int suggested_delay = 3;
     bool answer_barriers = true;
     double co_arrival_hold = 3.0;
+    double state_delay = 0.0; // extra delay of STATE_DATA (a slow state transfer)
     std::vector<std::string> log_lines;
     std::map<std::uint32_t, Member> members;
     std::map<std::uint32_t, Instance> instances;
@@ -489,7 +490,15 @@ public:
             state.first = 0;
             for (std::uint32_t t = 0; target->log.contains(t); ++t) state.ticks.push_back(target->log.at(t));
             const auto body = w::encode_state_body(state);
-            for (const auto& c : w::make_chunks(target->id, target->visit, std::uint8_t(slot), body)) send(m.id, w::Type::state_data, w::encode(c, true), now);
+            for (const auto& c : w::make_chunks(target->id, target->visit, std::uint8_t(slot), body)) {
+                // A slow transfer (state_delay) holds everything behind it too (TCP order).
+                if (state_delay > 0 && m.conn) {
+                    auto& queue = m.conn->outbound;
+                    queue.emplace_back(std::max(delay_of(queue, now), now + state_delay), w::encode_frame(w::Type::state_data, w::encode(c, true)));
+                } else {
+                    send(m.id, w::Type::state_data, w::encode(c, true), now);
+                }
+            }
             target->observers.insert(m.id);
             log_lines.push_back("join " + m.name + " -> " + target->stage + " slot " + std::to_string(slot) + " after " +
                                 std::to_string(target->log.size()) + " ticks");
@@ -562,6 +571,33 @@ public:
         case w::Type::barrier: {
             const auto b = w::decode_barrier(f.payload);
             m.parked = b;
+            // The instance leaves its stage while joiners still catch up on it:
+            // they go back to their own fallback as NEW (6.6).
+            if (auto it = instances.find(b.inst); it != instances.end()) {
+                const auto observers = it->second.observers;
+                for (const auto obs : observers) {
+                    auto& om = members[obs];
+                    if (it->second.slots.contains(om.observe_slot) && it->second.slots.at(om.observe_slot) == obs) continue; // a member already
+                    auto& own = new_instance(it->second.stage, 1);
+                    own.slots[0] = obs;
+                    w::BarrierOk ok;
+                    ok.inst = it->second.id;
+                    ok.visit = it->second.visit;
+                    ok.decision = w::Decision::new_instance;
+                    ok.new_inst = own.id;
+                    ok.new_visit = 1;
+                    ok.own_slot = 0;
+                    ok.slot_members = {obs, 0, 0, 0};
+                    ok.rule_flags = 1;
+                    ok.present = 1;
+                    send(obs, w::Type::barrier_ok, w::encode(ok), now);
+                    om.inst = own.id;
+                    om.slot = 0;
+                    om.observing = 0;
+                    it->second.observers.erase(obs);
+                    log_lines.push_back("target left: " + om.name + " -> own " + own.stage);
+                }
+            }
             m.parked_at = now;
             if (auto it = instances.find(b.inst); it != instances.end()) {
                 // The old visit ends at B: nothing is sealed after it.

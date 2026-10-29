@@ -200,6 +200,36 @@ void co_arrival() {
     check(world.hub.fills_total > 60, "the server filled B's pads meanwhile");
 }
 
+// The target leaves the stage while the joiner still waits for its state:
+// the joiner restores its own load snapshot and plays the stage as NEW.
+void target_moves_on() {
+    World world;
+    world.hub.co_arrival_hold = 0.5;
+    world.hub.suggested_delay = 4;
+    auto& a = world.add("kim", 1);
+    a.input = press_in({{"stagis10", 30}, {"stagml11", 40}}, fake::kExitButton);
+    check(world.run_until(10, [&] { return a.engine.stage() == "stag0101" && a.session->mode() == Mode::solo; }), "A in stag0101");
+    world.run(4);
+    world.hub.state_delay = 3.0; // the state transfer is slow
+    auto& b = world.add("lee", 2);
+    b.input = press_in({{"stagis10", 30}, {"stagml11", 40}}, fake::kExitButton);
+    check(world.run_until(10, [&] { return b.session->mode() == Mode::waiting_state; }), "B waits for A's state");
+    const auto a_tick = a.session->tick();
+    a.input = [a_tick](const fake::Client& c) -> std::uint32_t {
+        return c.engine.stage() == "stag0101" && c.session->tick() == a_tick + 30 ? fake::kExitButton : 0u;
+    };
+    check(world.run_until(10, [&] { return b.session->mode() == Mode::solo && a.engine.stage() == "stag0102"; }),
+          "B falls back to its own stag0101 when A leaves");
+    print_log(world.hub);
+    check(b.engine.stage() == "stag0101" && b.session->own_slot() == 0 && b.session->present() == 1, "B alone in slot 0 of its own load");
+    check(b.engine.restores >= 1 && b.session->inst() != 0, "restored from the fallback, a registered instance");
+    world.run(2);
+    check(!world.hub.instances[b.session->inst()].snapshot.empty(), "B uploaded the fallback as its instance's snapshot");
+    bool notice = false;
+    for (const auto& n : b.session->take_notices()) notice |= n.find("on your own") != std::string::npos;
+    check(notice, "B is told why");
+}
+
 void barrier_timeout() {
     World world;
     world.hub.answer_barriers = false;
@@ -304,6 +334,8 @@ int main(int argc, char** argv) {
         presence_tracks();
         std::cout << "co-arrival, reconnect\n";
         co_arrival();
+        std::cout << "target moves on\n";
+        target_moves_on();
         std::cout << "barrier timeout\n";
         barrier_timeout();
         std::cout << "pacing, lag\n";

@@ -2001,7 +2001,10 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     engine.port_events_enabled() != collect)
                     engine.set_port_events(collect);
                 engine.step(pads);
-                if (online) online->session().after_step(steady_seconds());
+                if (online) {
+                    online->session().after_step(steady_seconds());
+                    online->link().after_live_step();
+                }
                 if (engine.port_events_enabled()) observe_step();
                 if (!net.active() && !online) bind_randomizer();
                 if (net.active() && (frame_base + engine.frame()) % 60 == 0) net.report_fingerprint(frame_base + engine.frame(), engine.fingerprint());

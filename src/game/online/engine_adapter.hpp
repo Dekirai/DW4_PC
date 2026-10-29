@@ -69,6 +69,13 @@ public:
     void set_view_slot(int slot) override;
 
     const RoomSettings& settings() const { return settings_; }
+    // After every live step: once the title starts a game (GameSystem::
+    // game_started, set by TITLE2 GAMESTART right after the title wrote its
+    // own camera and light mode), the room's camera mode and light mode
+    // replace them before gameStart.lua's first stage loads, so every
+    // instance of the room uses the same camera data (3.1). The title is the
+    // member's own solo instance, so each machine does it in its own line.
+    void after_live_step();
     bool replaying() const { return replay_; }
     // Seconds of output the last replay rendered for the music position.
     std::uint64_t replay_samples() const { return replay_samples_; }
@@ -78,6 +85,7 @@ private:
     EngineHooks hooks_;
     RoomSettings settings_;
     bool replay_ = false;
+    bool modes_applied_ = false;
     int own_slot_ = 0;
     std::uint64_t replay_samples_ = 0;
 };
