@@ -66,38 +66,32 @@ public class RoomServiceTests
     {
         public bool Available { get; set; } = true;
         public int? BoundPort => 52041;
-        public List<string> Closed { get; } = [];
-        public List<string> Dropped { get; } = [];
-        public event Action<string>? HostLost;
-
         public bool FailTickets { get; set; }
         public RelayTickets? Real { get; set; }
         public List<RelayTicket> Issued { get; } = [];
-        public List<string> Open { get; } = [];
-        public Func<RelayAdmission, ValueTask<bool>>? Admission { get; private set; }
+        public List<string> Events { get; } = [];
+        public Dictionary<string, List<InstanceGroupView>> Groups { get; } = [];
+        public Func<RelayAdmission, ValueTask<RelayAdmitted?>>? Admission { get; private set; }
+        public Func<string, IReadOnlyCollection<long>, ValueTask>? Beat { get; private set; }
 
-        public RelayTicket IssueTicket(string channel, long accountId, bool host)
+        public RelayTicket IssueTicket(string roomCode, long accountId)
         {
             if (FailTickets) throw new ArgumentException("no ticket");
-            var ticket = Real?.Create(channel, accountId, host ? RelayRoles.Host : RelayRoles.Guest) is { } real
+            var ticket = Real?.Create(roomCode, accountId, RelayRoles.Member) is { } real
                 ? new RelayTicket(real.Ticket, real.Nonce)
-                : new RelayTicket($"{channel}|{accountId}|{(host ? "host" : "guest")}", "n" + (Issued.Count + 1));
+                : new RelayTicket($"{roomCode}|{accountId}|member", "n" + (Issued.Count + 1));
             Issued.Add(ticket);
             return ticket;
         }
-        public void CloseChannel(string channel)
-        {
-            Closed.Add(channel);
-            Open.Remove(channel);
-        }
-        public void DropGuest(string channel, long accountId) => Dropped.Add($"{channel} {accountId}");
-        public IReadOnlyCollection<string> OpenChannels => Open.ToList();
-        public void SetAdmission(Func<RelayAdmission, ValueTask<bool>> check) => Admission = check;
-        public void LoseHost(string channel) => HostLost?.Invoke(channel);
 
-        /// <summary>What the relay asks the room service before it accepts a ticket of this assignment.</summary>
-        public ValueTask<bool> Admit(StageAssignment a, long account, string nonce) =>
-            Admission!(new RelayAdmission(a.Channel, account, a.Role == StageRoles.Host, nonce));
+        public void MemberLeft(string roomCode, long accountId, string reason) => Events.Add($"left {roomCode} {accountId} {reason}");
+        public void RoomClosed(string roomCode) => Events.Add($"closed {roomCode}");
+        public void OwnerPresence(string roomCode, bool present) => Events.Add($"owner {roomCode} {(present ? "present" : "away")}");
+        public IReadOnlyList<InstanceGroupView> Instances(string roomCode) => Groups.GetValueOrDefault(roomCode) ?? [];
+        public void SetAdmission(Func<RelayAdmission, ValueTask<RelayAdmitted?>> check) => Admission = check;
+        public void SetHeartbeat(Func<string, IReadOnlyCollection<long>, ValueTask> beat) => Beat = beat;
+
+        public ValueTask<RelayAdmitted?> Admit(string room, long account, string nonce) => Admission!(new RelayAdmission(room, account, nonce));
     }
 
     private sealed class NoAudit : IAuditLog
@@ -142,13 +136,14 @@ public class RoomServiceTests
         Assert.Equal("invalid_settings", (await rooms.CreateAsync(1, "Owner", Create(settings: "[1]"), false)).Error!.Code);
         Assert.Equal("maintenance", (await rooms.CreateAsync(1, "Owner", Create(), true)).Error!.Code);
 
-        var state = await Ok(rooms.CreateAsync(1, "Owner", Create(settings: "{\"difficulty\":2,\"randomizer\":{\"enabled\":true,\"seed\":\"ABC\"}}"), false));
+        var state = await Ok(rooms.CreateAsync(1, "Owner", Create(settings: "{\"difficulty\":2,\"randomizer\":{\"enabled\":true,\"seed\":123,\"enemies\":1}}"), false));
         Assert.Matches("^[A-HJ-NP-Z2-9]{6}$", state.Room.Code);
         Assert.True(state.Room.Randomizer);
         Assert.Equal(2, state.Room.Difficulty);
         Assert.Equal(0, state.You.Slot);
         Assert.True(state.You.Owner);
-        Assert.Equal("ABC", state.Settings!.Value.GetProperty("randomizer").GetProperty("seed").GetString());
+        Assert.Equal(123, state.Settings!.Value.GetProperty("randomizer").GetProperty("seed").GetInt32());
+        Assert.Equal(new RoomSettings(2, 0, 1, 123, false, 1, 0, false).Hash(41, 77).ToString("x16"), state.SettingsHash);
         Assert.Contains(_repo.Calls, c => c.StartsWith("create " + state.Room.Code + " ranked=True randomizer=True", StringComparison.Ordinal));
 
         var again = await rooms.CreateAsync(1, "Owner", Create(), false);
@@ -219,53 +214,93 @@ public class RoomServiceTests
     }
 
     [Fact]
-    public async Task Stage_instances_hold_four_players_each()
+    public async Task Create_and_join_hand_out_room_tickets_and_the_settings_hash()
     {
         var rooms = Service();
-        var code = (await Ok(rooms.CreateAsync(1, "P1", Create(max: 10), false))).Room.Code;
-        for (var id = 2; id <= 6; ++id) await Ok(rooms.JoinAsync(id, "P" + id, code, null, 41, 77, null));
+        var created = await Ok(rooms.CreateAsync(1, "P1", Create(max: 10, settings: "{\"difficulty\":1,\"cameraMode\":1}"), false));
+        var code = created.Room.Code;
+        Assert.Equal($"{code}|1|member", created.RelayTicket);
+        var expected = new RoomSettings(1, 1, 1, 0, false, 0, 0, false).Hash(41, 77).ToString("x16");
+        Assert.Equal(expected, created.SettingsHash);
+        var two = await Ok(rooms.JoinAsync(2, "P2", code, null, 41, 77, null));
+        Assert.Equal($"{code}|2|member", two.RelayTicket);
+        Assert.Equal(expected, two.SettingsHash);
+        // A heartbeat carries no ticket; /ticket issues a new one (it replaces the older one).
+        Assert.Null((await Ok(rooms.HeartbeatAsync(2, code))).RelayTicket);
+        Assert.NotNull((await Ok(rooms.TicketAsync(2, code))).RelayTicket);
+        Assert.Equal("not_in_room", (await rooms.TicketAsync(3, code)).Error!.Code);
 
-        var a = new Dictionary<long, StageAssignment>();
-        for (var id = 1; id <= 6; ++id)
-        {
-            var result = await rooms.EnterStageAsync(id, code, "stagD101", null);
-            Assert.True(result.Ok, result.Error?.Code);
-            a[id] = result.Value!;
-        }
-        Assert.Equal(StageRoles.Host, a[1].Role);
-        Assert.All(new long[] { 2, 3, 4 }, id => Assert.Equal((StageRoles.Guest, 1), (a[id].Role, a[id].Instance.Id)));
-        Assert.Equal((StageRoles.Host, 2), (a[5].Role, a[5].Instance.Id)); // instance 1 is full
-        Assert.Equal((StageRoles.Guest, 2), (a[6].Role, a[6].Instance.Id));
-        Assert.Equal(code + "-1", a[1].Channel);
-        Assert.Equal($"{code}-1|1|host", a[1].Ticket);
-        Assert.Equal($"{code}-2|6|guest", a[6].Ticket);
-        Assert.Contains(_repo.Calls, c => c.StartsWith("playing", StringComparison.Ordinal));
+        // Instance groups come from the relay and name each member's instance.
+        _relay.Groups[code] = [new InstanceGroupView(7, "stag0101", 2, "sealed", [new InstanceGroupMember(1, "P1", 0, true, false),
+            new InstanceGroupMember(2, "P2", 1, true, false)], false, false, true, 1234, null)];
+        var state = await Ok(rooms.HeartbeatAsync(1, code));
+        Assert.Equal(7u, state.You.Instance);
+        Assert.Equal(7u, state.Members.Single(m => m.AccountId == 2).Instance);
+        Assert.Equal(1, state.Room.Instances);
 
-        // A guest entering the same stage again reconnects to its instance; another stage moves it.
-        var again = (await rooms.EnterStageAsync(3, code, "stagD101", null)).Value!;
-        Assert.Equal((StageRoles.Guest, 1), (again.Role, again.Instance.Id));
-        Assert.Contains($"{code}-1 3", _relay.Dropped);
-        var moved = (await rooms.EnterStageAsync(4, code, "stagD102", null)).Value!;
-        Assert.Equal((StageRoles.Host, 3), (moved.Role, moved.Instance.Id));
-        // The preferred instance is honoured when it has room.
-        var follow = (await rooms.EnterStageAsync(2, code, "stagD102", 3)).Value!;
-        Assert.Equal((StageRoles.Guest, 3), (follow.Role, follow.Instance.Id));
-
-        // The instance host leaves: the instance ends, its players are out of every instance.
-        Assert.True((await rooms.LeaveStageAsync(1, code)).Ok);
-        Assert.Contains(code + "-1", _relay.Closed);
-        var three = await Ok(rooms.HeartbeatAsync(3, code));
-        Assert.Null(three.You.Instance);
-        Assert.DoesNotContain(three.Instances, i => i.Id == 1);
-
-        // The relay reports a lost host control socket: same effect.
-        _relay.LoseHost(code + "-2");
-        for (var i = 0; i < 50 && (await Ok(rooms.HeartbeatAsync(6, code))).You.Instance is not null; ++i) await Task.Delay(10);
-        Assert.Null((await Ok(rooms.HeartbeatAsync(6, code))).You.Instance);
-
-        Assert.Equal("invalid_stage", (await rooms.EnterStageAsync(1, code, "../x", null)).Error!.Code);
         _relay.Available = false;
-        Assert.Equal("relay_unavailable", (await rooms.EnterStageAsync(1, code, "stagD101", null)).Error!.Code);
+        Assert.Equal("relay_unavailable", (await rooms.TicketAsync(1, code)).Error!.Code);
+        Assert.Null((await Ok(rooms.JoinAsync(1, "P1", code, null, 41, 77, null))).RelayTicket);
+    }
+
+    /// <summary>The relay accepts only each member's newest ticket, once, and only while it is in the room.</summary>
+    [Fact]
+    public async Task Relay_admission_accepts_the_newest_ticket_once()
+    {
+        var rooms = Service();
+        var code = (await Ok(rooms.CreateAsync(1, "Owner", Create(max: 4), false))).Room.Code;
+        await Ok(rooms.JoinAsync(2, "Guest", code, null, 41, 77, null));
+        var first = _relay.Issued[^1].Nonce;
+        await Ok(rooms.TicketAsync(2, code));
+        var second = _relay.Issued[^1].Nonce;
+        Assert.Null(await _relay.Admit(code, 2, first)); // hoarded: an older ticket
+        var admitted = await _relay.Admit(code, 2, second);
+        Assert.NotNull(admitted);
+        Assert.Equal((1, "Guest", false, 41, 77ul), (admitted.MemberIndex, admitted.Username, admitted.Owner, admitted.Protocol, admitted.DataHash));
+        Assert.Equal(RoomSettings.Default.Hash(41, 77), admitted.SettingsHash);
+        Assert.Null(await _relay.Admit(code, 2, second)); // accepted once
+        Assert.Contains(_repo.Calls, c => c.StartsWith("playing", StringComparison.Ordinal));
+        Assert.Null(await _relay.Admit("ZZZZZZ", 2, second));
+
+        // Kicked: a ticket from before the kick is worthless, and the relay is told.
+        await Ok(rooms.TicketAsync(2, code));
+        var beforeKick = _relay.Issued[^1].Nonce;
+        Assert.True((await rooms.KickAsync(1, code, "Guest", null)).Ok);
+        Assert.Null(await _relay.Admit(code, 2, beforeKick));
+        Assert.Contains($"left {code} 2 {LeaveReasons.Kicked}", _relay.Events);
+        var owner = await _relay.Admit(code, 1, _relay.Issued[0].Nonce);
+        Assert.True(owner!.Owner);
+    }
+
+    [Fact]
+    public async Task The_relay_connection_is_the_heartbeat_and_hears_the_room_changes()
+    {
+        var rooms = Service();
+        var code = (await Ok(rooms.CreateAsync(1, "Owner", Create(max: 4), false))).Room.Code;
+        await Ok(rooms.JoinAsync(2, "Two", code, null, 41, 77, null));
+        await Ok(rooms.JoinAsync(3, "Three", code, null, 41, 77, null));
+        _clock.Now += TimeSpan.FromSeconds(30);
+        await _relay.Beat!(code, [1L, 2L]); // members 1 and 2 hold relay connections; 3 is silent
+        _clock.Now += TimeSpan.FromSeconds(10);
+        Assert.Equal(1, await rooms.SweepAsync());
+        Assert.Contains($"left {code} 3 {LeaveReasons.Timeout}", _relay.Events);
+
+        Assert.True((await rooms.LeaveAsync(1, code)).Ok);
+        Assert.Contains($"owner {code} away", _relay.Events);
+        await Ok(rooms.JoinAsync(1, "Owner", code, null, 41, 77, null));
+        Assert.Contains($"owner {code} present", _relay.Events);
+        Assert.True((await rooms.CloseAsync(1, false, code, null)).Ok);
+        Assert.Contains($"closed {code}", _relay.Events);
+    }
+
+    [Fact]
+    public async Task A_failed_ticket_still_answers_the_join()
+    {
+        var rooms = Service();
+        _relay.FailTickets = true;
+        var created = await Ok(rooms.CreateAsync(1, "P1", Create(max: 4), false));
+        Assert.Null(created.RelayTicket);
+        Assert.Equal("relay_ticket_failed", (await rooms.TicketAsync(1, created.Room.Code)).Error!.Code);
     }
 
     [Fact]
@@ -295,7 +330,6 @@ public class RoomServiceTests
         var rooms = Service();
         var code = (await Ok(rooms.CreateAsync(1, "Owner", Create(), false))).Room.Code;
         await Ok(rooms.JoinAsync(2, "Two", code, null, 41, 77, null));
-        await rooms.EnterStageAsync(1, code, "stagA", null);
         Assert.Equal("not_room_owner", (await rooms.CloseAsync(2, false, code, null)).Error!.Code);
 
         await rooms.RemoveAccountAsync(2);
@@ -304,106 +338,11 @@ public class RoomServiceTests
         Assert.True((await rooms.CloseAsync(9, true, code, null)).Ok);
         Assert.Contains(_repo.Calls, c => c.StartsWith("close", StringComparison.Ordinal) && c.EndsWith(CloseReasons.Admin, StringComparison.Ordinal));
         Assert.Contains("room_close_admin", _audit.Events);
-        Assert.Contains(code + "-1", _relay.Closed);
+        Assert.Contains($"left {code} 2 {LeaveReasons.Kicked}", _relay.Events);
+        Assert.Contains($"closed {code}", _relay.Events);
         Assert.Empty(await rooms.ListAsync());
         // The owner may open a new room now.
         Assert.True((await rooms.CreateAsync(1, "Owner", Create(), false)).Ok);
-    }
-
-    /// <summary>The review's blocker: a room keeps working past instance 9999 (real relay tickets).</summary>
-    [Fact]
-    public async Task Instance_numbers_keep_working_past_9999()
-    {
-        _relay.Real = new RelayTickets(new byte[32], TimeSpan.FromSeconds(60), _clock);
-        var rooms = Service();
-        var code = (await Ok(rooms.CreateAsync(1, "P1", Create(max: 4), false))).Room.Code;
-        await Ok(rooms.JoinAsync(2, "P2", code, null, 41, 77, null));
-        StageAssignment? last = null;
-        for (var i = 0; i < 10_050; ++i)
-        {
-            var result = await rooms.EnterStageAsync(1, code, i % 2 == 0 ? "stag0101" : "stag0102", null);
-            Assert.True(result.Ok, $"enter {i}: {result.Error?.Code}");
-            last = result.Value!;
-        }
-        Assert.Equal(10_050, last!.Instance.Id);
-        Assert.Equal($"{code}-10050", last.Channel);
-        var guest = await rooms.EnterStageAsync(2, code, "stag0102", null);
-        Assert.True(guest.Ok, guest.Error?.Code);
-        Assert.Equal((StageRoles.Guest, 10_050), (guest.Value!.Role, guest.Value.Instance.Id));
-        var state = await Ok(rooms.HeartbeatAsync(1, code));
-        Assert.Single(state.Instances); // every earlier instance ended when its host moved on
-    }
-
-    /// <summary>A ticket that cannot be issued changes nothing (no half-entered instance).</summary>
-    [Fact]
-    public async Task A_failed_ticket_leaves_the_room_as_it_was()
-    {
-        var rooms = Service();
-        var code = (await Ok(rooms.CreateAsync(1, "P1", Create(max: 4), false))).Room.Code;
-        await Ok(rooms.JoinAsync(2, "P2", code, null, 41, 77, null));
-        var hosted = (await rooms.EnterStageAsync(1, code, "stag0101", null)).Value!;
-        await rooms.EnterStageAsync(2, code, "stag0101", null);
-        _relay.FailTickets = true;
-        Assert.Equal("relay_ticket_failed", (await rooms.EnterStageAsync(2, code, "stag0102", null)).Error!.Code);
-        Assert.Equal("relay_ticket_failed", (await rooms.EnterStageAsync(1, code, "stag0102", null)).Error!.Code);
-        Assert.Equal("relay_ticket_failed", (await rooms.EnterStageAsync(2, code, "stag0101", null)).Error!.Code);
-        var state = await Ok(rooms.HeartbeatAsync(2, code));
-        Assert.Equal(hosted.Instance.Id, state.You.Instance); // still in its instance
-        Assert.Single(state.Instances);
-        Assert.Equal(2, state.Instances[0].Players.Count);
-        Assert.Empty(_relay.Closed);
-        _relay.FailTickets = false;
-        var moved = (await rooms.EnterStageAsync(1, code, "stag0102", null)).Value!;
-        Assert.Equal((StageRoles.Host, hosted.Instance.Id + 1), (moved.Role, moved.Instance.Id));
-    }
-
-    /// <summary>The relay accepts only each player's newest ticket of a running instance, once.</summary>
-    [Fact]
-    public async Task Relay_tickets_cannot_be_hoarded_or_outlive_their_instance()
-    {
-        var rooms = Service();
-        var code = (await Ok(rooms.CreateAsync(1, "Host", Create(max: 4), false))).Room.Code;
-        await Ok(rooms.JoinAsync(2, "Guest", code, null, 41, 77, null));
-        var host = (await rooms.EnterStageAsync(1, code, "stag0101", null)).Value!;
-        var hostNonce = _relay.Issued[^1].Nonce;
-
-        // A guest calling /stage again and again collects tickets: only the newest one works.
-        var first = (await rooms.EnterStageAsync(2, code, "stag0101", null)).Value!;
-        var firstNonce = _relay.Issued[^1].Nonce;
-        var second = (await rooms.EnterStageAsync(2, code, "stag0101", null)).Value!;
-        var secondNonce = _relay.Issued[^1].Nonce;
-        Assert.False(await _relay.Admit(first, 2, firstNonce));
-        Assert.True(await _relay.Admit(second, 2, secondNonce));
-        Assert.False(await _relay.Admit(second, 2, secondNonce)); // accepted once
-        Assert.False(await _relay.Admit(host, 2, hostNonce)); // a guest with the host's ticket: wrong role and nonce
-
-        // Kicked: a ticket from before the kick is worthless.
-        await rooms.EnterStageAsync(2, code, "stag0101", null);
-        var beforeKick = _relay.Issued[^1].Nonce;
-        Assert.True((await rooms.KickAsync(1, code, "Guest", null)).Ok);
-        Assert.False(await _relay.Admit(second, 2, beforeKick));
-
-        // A host ticket of an instance that ended (the host moved on) opens no channel.
-        var moved = (await rooms.EnterStageAsync(1, code, "stag0102", null)).Value!;
-        var movedNonce = _relay.Issued[^1].Nonce;
-        Assert.False(await _relay.Admit(host, 1, hostNonce));
-        Assert.True(await _relay.Admit(moved, 1, movedNonce));
-        Assert.True((await rooms.LeaveStageAsync(1, code)).Ok);
-        Assert.False(await _relay.Admit(moved, 1, movedNonce));
-    }
-
-    /// <summary>A relay channel without a running instance (a race at its end) is closed by the next sweep.</summary>
-    [Fact]
-    public async Task Sweep_closes_channels_without_an_instance()
-    {
-        var rooms = Service();
-        var code = (await Ok(rooms.CreateAsync(1, "Host", Create(max: 4), false))).Room.Code;
-        var live = (await rooms.EnterStageAsync(1, code, "stag0101", null)).Value!;
-        _relay.Open.AddRange([live.Channel, $"{code}-77", "ZZZZZZ-1"]);
-        await rooms.SweepAsync();
-        Assert.Equal([live.Channel], _relay.Open);
-        Assert.Contains($"{code}-77", _relay.Closed);
-        Assert.Contains("ZZZZZZ-1", _relay.Closed);
     }
 
     [Fact]
@@ -414,5 +353,34 @@ public class RoomServiceTests
         Assert.False(RoomService.ParseSettings(JsonDocument.Parse("{\"randomizer\":{\"enabled\":false}}").RootElement, 100).Value.Randomizer);
         Assert.Equal("invalid_settings", RoomService.ParseSettings(JsonDocument.Parse("{\"x\":\"" + new string('a', 200) + "\"}").RootElement, 100).Error!.Code);
         Assert.Equal("unranked_settings", RoomService.ParseSettings(JsonDocument.Parse("{\"rebalanced\":true}").RootElement, 100).Error!.Code);
+        Assert.Equal("invalid_settings", RoomService.ParseSettings(JsonDocument.Parse("{\"cameraMode\":2}").RootElement, 100).Error!.Code);
+        Assert.Equal("invalid_settings", RoomService.ParseSettings(JsonDocument.Parse("{\"randomizer\":{\"enabled\":true,\"seed\":\"x\"}}").RootElement, 100).Error!.Code);
+    }
+
+    /// <summary>The settings hash of the DW4R2 handshake: the canonical text (the client builds the same) and its FNV-1a 64.</summary>
+    [Fact]
+    public void Settings_hash_covers_every_simulation_setting()
+    {
+        var d = RoomSettings.Default;
+        Assert.Equal("DW4R2-settings/1;protocol=43;data=1234;difficulty=0;camera=0;light=1;rand=0,0,0,0;fast=0", d.Canonical(43, 1234));
+        Assert.Equal(RoomSettings.Fnv1a64(System.Text.Encoding.ASCII.GetBytes(d.Canonical(43, 1234))), d.Hash(43, 1234));
+        Assert.Equal(0xcbf29ce484222325UL, RoomSettings.Fnv1a64([])); // the FNV-1a 64 offset basis
+        var variants = new[]
+        {
+            d with { Difficulty = 1 }, d with { CameraMode = 1 }, d with { LightMode = 0 }, d with { FastLoading = true },
+            d with { RandomizerSeed = 5, RandomizerEnemies = 1 }, d with { RandomizerSeed = 5, RandomizerZones = 2 }, d with { RandomizerSeed = 5, RandomizerDrops = true },
+        };
+        var hashes = variants.Select(v => v.Hash(43, 1234)).Append(d.Hash(43, 1234)).Append(d.Hash(44, 1234)).Append(d.Hash(43, 1235)).ToList();
+        Assert.Equal(hashes.Count, hashes.Distinct().Count());
+        // An inactive randomizer (seed 0, or no mode) is the original game.
+        Assert.Equal(d.Hash(43, 1), (d with { RandomizerSeed = 9 }).Hash(43, 1));
+        Assert.Equal(d.Hash(43, 1), (d with { RandomizerEnemies = 2 }).Hash(43, 1));
+        Assert.Equal("DW4R2-settings/1;protocol=43;data=1;difficulty=2;camera=1;light=0;rand=4294967295,1,2,1;fast=1",
+            new RoomSettings(2, 1, 0, uint.MaxValue, true, 2, 1, true).Canonical(43, 1));
+        var parsed = RoomSettings.FromJson(JsonDocument.Parse("{\"difficulty\":2,\"cameraMode\":1,\"lightMode\":0,\"fastLoading\":true," +
+            "\"randomizer\":{\"enabled\":true,\"seed\":4294967295,\"drops\":true,\"enemies\":2,\"zones\":1}}").RootElement);
+        Assert.Equal(new RoomSettings(2, 1, 0, uint.MaxValue, true, 2, 1, true), parsed.Value);
+        Assert.Equal(d, RoomSettings.FromJson(JsonDocument.Parse("{\"randomizer\":{\"enabled\":false,\"seed\":7,\"enemies\":1}}").RootElement).Value);
+        Assert.Equal(d, RoomSettings.FromJson(null).Value);
     }
 }

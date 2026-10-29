@@ -12,12 +12,12 @@ namespace DW4Online.Api.Endpoints;
 public sealed record CreateRoomRequest(string? Name, string? Password, int MaxPlayers, int Protocol, ulong DataHash, string? ClientVersion, JsonElement? Settings);
 public sealed record JoinRoomRequest(string? Password, int Protocol, ulong DataHash, string? ClientVersion);
 public sealed record KickRequest(string? Username);
-public sealed record StageRequest(string? Stage, int? Instance);
 
 /// <summary>
-/// Rooms: create (name, optional password, 2..10 players), list, join, heartbeat, leave, kick, close, and the stage
-/// instances (at most four players each) with their one-time relay tickets. A room keeps running when its owner
-/// leaves; the story is frozen until the owner returns (room.storyFrozen).
+/// Rooms: create (name, optional password, 2..10 players, settings), list, join, heartbeat, leave, kick, close, and a
+/// fresh relay ticket (/ticket). Create and join answer with the member's one-time relay ticket (relayTicket) and the
+/// room's settings hash for the DW4R2 handshake; the relay groups the members into instances (instances). A room keeps
+/// running when its owner leaves; the story is frozen until the owner returns (room.storyFrozen).
 /// </summary>
 public static class RoomEndpoints
 {
@@ -69,20 +69,10 @@ public static class RoomEndpoints
         group.MapDelete("/{code}", async (string code, RoomService rooms, HttpContext ctx) =>
             ApiProblems.Ok(await rooms.CloseAsync(ctx.Session().AccountId, false, code, ctx.IpBytes(), ctx.RequestAborted), _ => Results.NoContent()));
 
-        // Entering a stage: an instance of that stage with a free place, or a new one hosted by the caller.
-        group.MapPost("/{code}/stage", async (string code, StageRequest r, RoomService rooms, ServiceOptions service, IRelayGateway relay, HttpContext ctx) =>
-            ApiProblems.Ok(await rooms.EnterStageAsync(ctx.Session().AccountId, code, r.Stage, r.Instance, ctx.RequestAborted), a => Results.Ok(new
-            {
-                a.Instance,
-                a.Role,
-                a.Ticket,
-                a.Channel,
-                relay = Relay(ctx, service, relay),
-            }))).RequireRateLimiting(RateLimitPolicies.RoomStage);
-
-        group.MapPost("/{code}/stage/leave", async (string code, RoomService rooms, HttpContext ctx) =>
-            ApiProblems.Ok(await rooms.LeaveStageAsync(ctx.Session().AccountId, code, ctx.RequestAborted), _ => Results.NoContent()))
-            .RequireRateLimiting(RateLimitPolicies.RoomStage);
+        // A fresh one-time relay ticket (a reconnect).
+        group.MapPost("/{code}/ticket", async (string code, RoomService rooms, ServiceOptions service, IRelayGateway relay, HttpContext ctx) =>
+            ApiProblems.Ok(await rooms.TicketAsync(ctx.Session().AccountId, code, ctx.RequestAborted),
+                state => Results.Ok(Body(state, Relay(ctx, service, relay))))).RequireRateLimiting(RateLimitPolicies.RoomStage);
     }
 
     /// <summary>
@@ -94,6 +84,7 @@ public static class RoomEndpoints
         {
             host = service.RelayHost.Length > 0 ? service.RelayHost : ctx.Request.Host.Host,
             port = service.RelayPort > 0 ? service.RelayPort : relay.BoundPort ?? 0,
+            protocol = "DW4R2",
         }
         : null;
 
@@ -101,10 +92,12 @@ public static class RoomEndpoints
     {
         s.Room,
         s.Settings,
+        s.SettingsHash,
         s.Members,
         s.Instances,
         s.You,
         s.HeartbeatSeconds,
         relay,
+        s.RelayTicket,
     };
 }

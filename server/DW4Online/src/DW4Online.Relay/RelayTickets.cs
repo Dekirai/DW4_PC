@@ -8,7 +8,7 @@ namespace DW4Online.Relay;
 /// <summary>Relay configuration (section "Relay").</summary>
 public sealed class RelayOptions
 {
-    /// <summary>Off until the room service issues tickets.</summary>
+    /// <summary>Off: no relay (rooms still work, nobody can play together).</summary>
     public bool Enabled { get; set; }
     /// <summary>"0.0.0.0" on the server, "127.0.0.1" for local tests.</summary>
     public string ListenAddress { get; set; } = "127.0.0.1";
@@ -17,20 +17,36 @@ public sealed class RelayOptions
     public string TicketKey { get; set; } = "";
     public int TicketLifetimeSeconds { get; set; } = 60;
     public int HandshakeTimeoutSeconds { get; set; } = 10;
-    /// <summary>A spliced pair with no traffic in either direction for this long is closed.</summary>
+    /// <summary>A connection that sends nothing (not even PONG) for this long is closed.</summary>
     public int IdleTimeoutSeconds { get; set; } = 60;
     public int MaxConnectionsPerIp { get; set; } = 16;
+    /// <summary>Rooms with a live relay connection at a time.</summary>
     public int MaxRooms { get; set; } = 200;
-    /// <summary>Sustained bytes per second per direction (lockstep needs about 2.1 KB/s per player).</summary>
+    /// <summary>Sustained inbound bytes per second of a connection's game frames (a member sends about 0.6 KB/s).</summary>
     public int BytesPerSecond { get; set; } = 65536;
-    /// <summary>Burst allowance per direction (the START message carries a save, about 90 KB today).</summary>
+    /// <summary>Inbound burst allowance of a connection (a snapshot upload, a long LOG after a hitch).</summary>
     public int BurstBytes { get; set; } = 1024 * 1024;
+    /// <summary>Sustained inbound frames per second of a connection (INPUT 60/s, PRESENCE 5/s, the rest rare).</summary>
+    public int FramesPerSecond { get; set; } = 400;
+    /// <summary>Inbound frame burst of a connection.</summary>
+    public int FrameBurst { get; set; } = 2000;
+    /// <summary>State transfers (STATE_DATA and the LIVE frames behind it) per connection, outside the game frames.</summary>
+    public int StateBytesPerSecond { get; set; } = 4 * 1024 * 1024;
+    public int StateBurstBytes { get; set; } = 16 * 1024 * 1024;
+    /// <summary>A connection whose unsent frames exceed this is closed (it does not read).</summary>
+    public int MaxQueuedBytes { get; set; } = 32 * 1024 * 1024;
+    /// <summary>A sealed member's slot is filled this long after its connection closed, then the server stamps LEAVE.</summary>
+    public int ReconnectSeconds { get; set; } = 10;
+    /// <summary>After this long of continuous filling the server stamps LEAVE for a lagging member.</summary>
+    public int LagLeaveSeconds { get; set; } = 10;
+    /// <summary>Folder for one JSON-lines membership log per room (diagnostics and the online test stack); empty = off.</summary>
+    public string DiagnosticsDirectory { get; set; } = "";
 }
 
 public static class RelayRoles
 {
-    public const string Host = "host";
-    public const string Guest = "guest";
+    /// <summary>A room member's ticket (DW4R2: one connection per member and room).</summary>
+    public const string Member = "member";
 }
 
 /// <summary>What a valid ticket says. <paramref name="Nonce"/> names this ticket (the room service keeps the live one per player).</summary>
@@ -40,9 +56,9 @@ public sealed record TicketClaims(string Room, long Account, string Role, DateTi
 public sealed record IssuedTicket(string Ticket, string Nonce, DateTimeOffset Expires);
 
 /// <summary>
-/// Relay tickets: base64url("channel|account|role|expiry|nonce") + "." + base64url(HMAC-SHA256). Issued by the room
-/// service after its checks; single use (the nonce is remembered until expiry); the session token never reaches the
-/// relay. A channel is one stage instance of a room: "&lt;room code&gt;-&lt;instance&gt;" (a bare room code also works).
+/// Relay tickets: base64url("room|account|role|expiry|nonce") + "." + base64url(HMAC-SHA256). Issued by the room
+/// service (room create / join / ticket) after its checks; single use (the nonce is remembered until expiry); the session
+/// token never reaches the relay. DW4R2 tickets name the room code; the role is "member".
 /// </summary>
 public sealed partial class RelayTickets
 {
@@ -72,7 +88,7 @@ public sealed partial class RelayTickets
     public IssuedTicket Create(string room, long account, string role)
     {
         if (!IsChannel(room)) throw new ArgumentException("Channels are a room code (4-8 of A-Z 0-9) with an optional '-<instance>' (1-9 digits).", nameof(room));
-        if (role is not (RelayRoles.Host or RelayRoles.Guest)) throw new ArgumentException("Unknown role.", nameof(role));
+        if (role is not RelayRoles.Member) throw new ArgumentException("Unknown role.", nameof(role));
         var expires = _time.GetUtcNow().Add(_lifetime).ToUnixTimeSeconds();
         var nonce = Convert.ToHexString(RandomNumberGenerator.GetBytes(12));
         var body = Encoding.ASCII.GetBytes(FormattableString.Invariant($"{room}|{account}|{role}|{expires}|{nonce}"));

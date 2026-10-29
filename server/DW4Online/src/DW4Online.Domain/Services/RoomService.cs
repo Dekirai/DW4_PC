@@ -11,18 +11,19 @@ namespace DW4Online.Domain.Services;
 
 /// <summary>
 /// The live room registry. A room has an owner (the host: the room's story is the owner's online save), a name, an
-/// optional password and a limit of 2..10 players. Players who are in the same stage share a stage instance of at
-/// most four players, whose host machine is the centre of the lockstep star; the relay splices the others to it.
-/// When the owner leaves, the room keeps running with the story frozen until the owner returns; a room closes when its
-/// last member leaves, when the owner closes it, or by staff. The durable record (rooms, room_members) is written
-/// before the memory changes, so achievements and the website see the same membership.
+/// optional password, a limit of 2..10 players and its settings (difficulty, camera and light mode, randomizer, fast
+/// loading) with their hash. Every member holds one relay connection (DW4R2, SEAMLESS.md 6); the relay groups the
+/// members into instances of at most four (Rooms:PlayersPerInstance) and this service lists them. Create, join and
+/// /ticket hand out the member's one-time relay ticket; the relay asks this service before it accepts one, and a live
+/// relay connection counts as the room heartbeat. When the owner leaves, the room keeps running with the story frozen
+/// until the owner returns; a room closes when its last member leaves, when the owner closes it, or by staff. The
+/// durable record (rooms, room_members) is written before the memory changes, so achievements and the website see the
+/// same membership.
 /// </summary>
 public sealed partial class RoomService
 {
     private const string CodeAlphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // no 0/O, 1/I
     private const int CodeLength = 6;
-    /// <summary>Instance numbers stay within 9 digits (the relay's channel names); they wrap around after that.</summary>
-    internal const int MaxInstanceId = 999_999_999;
 
     private readonly IRoomRepository _repository;
     private readonly IRelayGateway _relay;
@@ -36,9 +37,6 @@ public sealed partial class RoomService
     private readonly Dictionary<string, LiveRoom> _rooms = new(StringComparer.Ordinal);
     private readonly Dictionary<long, string> _memberOf = [];
 
-    [GeneratedRegex("^[A-Za-z0-9_]{1,24}$", RegexOptions.CultureInvariant)]
-    private static partial Regex StageName();
-
     public RoomService(IRoomRepository repository, IRelayGateway relay, IAuditLog audit, VersionGate versions, RoomOptions options, TimeProvider time)
     {
         _repository = repository;
@@ -49,8 +47,8 @@ public sealed partial class RoomService
         _time = time;
         _passwords = new PasswordHasher(Math.Max(1_000, options.PasswordIterations));
         _rankedHashes = options.RankedDataHashes.Select(ParseHash).ToHashSet();
-        _relay.HostLost += channel => _ = OnHostLostAsync(channel);
         _relay.SetAdmission(AdmitAsync);
+        _relay.SetHeartbeat(RelayHeartbeatAsync);
     }
 
     public int HeartbeatSeconds => _options.HeartbeatSeconds;
@@ -66,7 +64,7 @@ public sealed partial class RoomService
             return _rooms.Values
                 .Where(r => (protocol is null || r.Protocol == protocol) && (dataHash is null || r.DataHash == dataHash))
                 .OrderByDescending(r => r.CreatedAt).ThenBy(r => r.Code, StringComparer.Ordinal)
-                .Select(Summary).ToList();
+                .Select(r => Summary(r)).ToList();
         }
         finally
         {
@@ -122,6 +120,8 @@ public sealed partial class RoomService
         var settings = ParseSettings(request.Settings, _options.SettingsMaxBytes);
         if (!settings.Ok) return settings.Error!;
         var (settingsJson, randomizer, difficulty) = settings.Value;
+        var parsed = RoomSettings.FromJson(settingsJson is null ? null : JsonDocument.Parse(settingsJson).RootElement);
+        if (!parsed.Ok) return parsed.Error!;
         var hash = password is null ? null : _passwords.Hash(password); // expensive: outside the gate
         var version = Truncate(request.ClientVersion?.Trim() ?? "", 32);
 
@@ -172,13 +172,15 @@ public sealed partial class RoomService
                 Ranked = ranked,
                 Randomizer = randomizer,
                 Difficulty = difficulty,
+                RoomSettings = parsed.Value!,
+                SettingsHash = parsed.Value!.Hash(request.Protocol, request.DataHash),
                 CreatedAt = now,
             };
             var member = new LiveMember(accountId, username, 0, now) { LastSeen = now };
             room.Members[accountId] = member;
             _rooms[code] = room;
             _memberOf[accountId] = code;
-            return State(room, member);
+            return WithTicket(room, member);
         }
         finally
         {
@@ -206,7 +208,7 @@ public sealed partial class RoomService
             if (room.Members.TryGetValue(accountId, out var already))
             {
                 already.LastSeen = Clock.Now(_time);
-                return State(room, already);
+                return WithTicket(room, already);
             }
             if (room.Kicked.Contains(accountId)) return DomainError.Forbidden("kicked", "You were removed from this room.");
             hash = room.OwnerId == accountId ? null : room.PasswordHash;
@@ -226,7 +228,7 @@ public sealed partial class RoomService
             if (room.Members.TryGetValue(accountId, out var already))
             {
                 already.LastSeen = now;
-                return State(room, already);
+                return WithTicket(room, already);
             }
             var owner = room.OwnerId == accountId;
             if (!owner && room.Members.Keys.Count(k => k != room.OwnerId) >= room.MaxPlayers - 1)
@@ -244,7 +246,8 @@ public sealed partial class RoomService
             var member = new LiveMember(accountId, username, slot, now) { LastSeen = now };
             room.Members[accountId] = member;
             _memberOf[accountId] = code;
-            return State(room, member);
+            if (owner) _relay.OwnerPresence(room.Code, true);
+            return WithTicket(room, member);
         }
         finally
         {
@@ -342,61 +345,19 @@ public sealed partial class RoomService
         }
     }
 
-    // Stage instances ----------------------------------------------------------------------------------------------
+    // Relay ------------------------------------------------------------------------------------------------------------
 
-    /// <summary>
-    /// The caller enters a stage: it joins an instance of that stage with a free place (the preferred one when given)
-    /// or opens a new instance and hosts it. Entering again as a guest of the same stage reconnects with a fresh
-    /// ticket; an instance host who enters again opens a new instance (the old one ends).
-    /// </summary>
-    public async Task<Result<StageAssignment>> EnterStageAsync(long accountId, string code, string? stage, int? preferredInstance, CancellationToken ct = default)
+    /// <summary>A fresh one-time relay ticket for a member (a reconnect: SEAMLESS.md 6.2, 6.10).</summary>
+    public async Task<Result<RoomState>> TicketAsync(long accountId, string code, CancellationToken ct = default)
     {
-        if (stage is null || !StageName().IsMatch(stage)) return DomainError.Invalid("invalid_stage", "Stage names are 1-24 of A-Z, a-z, 0-9 and '_'.");
         if (!_relay.Available) return new DomainError(ErrorKind.Unavailable, "relay_unavailable", "The relay is switched off on this server.");
         await _gate.WaitAsync(ct);
         try
         {
             if (!TryMember(code, accountId, out var room, out var member)) return NotInRoom();
-            var now = Clock.Now(_time);
-            member.LastSeen = now;
-            if (!room.Playing)
-            {
-                await _repository.MarkPlayingAsync(room.Id, now, ct);
-                room.Playing = true;
-            }
-            var current = member.Instance is { } id ? room.Instances.GetValueOrDefault(id) : null;
-            if (current is not null && current.Stage == stage && current.HostId != accountId)
-            {
-                // Reconnecting as a guest: a fresh ticket first (it replaces any older one), then the old connection goes.
-                if (Ticket(room, current.Id, StageRoles.Guest, accountId) is not { } again) return TicketFailed();
-                current.Tickets[accountId] = again.Nonce;
-                _relay.DropGuest(Channel(room, current), accountId);
-                return new StageAssignment(InstanceView(room, current), StageRoles.Guest, again.Ticket, Channel(room, current.Id));
-            }
-
-            // The target: an instance of that stage with a free place (never the one the caller leaves now), else a
-            // new one the caller hosts. The ticket is issued before anything changes, so a failure leaves the room
-            // as it was.
-            var capacity = Math.Clamp(_options.PlayersPerInstance, 1, RoomLimits.MaxPlayers);
-            bool Open(LiveInstance i) => i != current && i.Stage == stage && i.Players.Count < capacity;
-            var target = preferredInstance is { } wanted && room.Instances.TryGetValue(wanted, out var p) && Open(p)
-                ? p
-                : room.Instances.Values.FirstOrDefault(Open);
-            var role = target is null ? StageRoles.Host : StageRoles.Guest;
-            var instanceId = target?.Id ?? NewInstanceId(room);
-            if (Ticket(room, instanceId, role, accountId) is not { } ticket) return TicketFailed();
-
-            if (current is not null) LeaveInstanceLocked(room, member);
-            if (target is null)
-            {
-                target = new LiveInstance(instanceId, stage, accountId, now);
-                room.Instances[target.Id] = target;
-                room.NextInstance = instanceId >= MaxInstanceId ? 1 : instanceId + 1;
-            }
-            target.Players.Add(accountId);
-            target.Tickets[accountId] = ticket.Nonce; // the only ticket of this player the relay accepts for the instance
-            member.Instance = target.Id;
-            return new StageAssignment(InstanceView(room, target), role, ticket.Ticket, Channel(room, target.Id));
+            member.LastSeen = Clock.Now(_time);
+            var state = WithTicket(room, member);
+            return state.RelayTicket is null ? TicketFailed() : state;
         }
         finally
         {
@@ -404,15 +365,45 @@ public sealed partial class RoomService
         }
     }
 
-    public async Task<Result<bool>> LeaveStageAsync(long accountId, string code, CancellationToken ct = default)
+    /// <summary>
+    /// The relay asks before it accepts a valid ticket: the room is open, the account is one of its members and the ticket
+    /// is the newest one issued to it (older tickets, tickets of members who left or were kicked are refused). A ticket is
+    /// accepted once. The answer carries the member's room slot and the room's protocol, data hash and settings hash.
+    /// </summary>
+    internal async ValueTask<RelayAdmitted?> AdmitAsync(RelayAdmission ticket)
     {
-        await _gate.WaitAsync(ct);
+        await _gate.WaitAsync();
         try
         {
-            if (!TryMember(code, accountId, out var room, out var member)) return NotInRoom();
-            member.LastSeen = Clock.Now(_time);
-            LeaveInstanceLocked(room, member);
-            return true;
+            if (!_rooms.TryGetValue(ticket.Room, out var room) || !room.Members.TryGetValue(ticket.AccountId, out var member)) return null;
+            if (member.TicketNonce is not { } nonce || !string.Equals(nonce, ticket.Nonce, StringComparison.Ordinal)) return null;
+            member.TicketNonce = null;
+            var now = Clock.Now(_time);
+            member.LastSeen = now;
+            if (!room.Playing)
+            {
+                await _repository.MarkPlayingAsync(room.Id, now);
+                room.Playing = true;
+            }
+            return new RelayAdmitted(member.Slot, member.Username, member.AccountId == room.OwnerId, room.Protocol, room.DataHash, room.SettingsHash,
+                room.MaxPlayers);
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    /// <summary>Members with a live relay connection count as heard from (the REST heartbeat is needed only while it is down).</summary>
+    internal async ValueTask RelayHeartbeatAsync(string code, IReadOnlyCollection<long> accounts)
+    {
+        await _gate.WaitAsync();
+        try
+        {
+            if (!_rooms.TryGetValue(code, out var room)) return;
+            var now = Clock.Now(_time);
+            foreach (var id in accounts)
+                if (room.Members.TryGetValue(id, out var m)) m.LastSeen = now;
         }
         finally
         {
@@ -423,17 +414,14 @@ public sealed partial class RoomService
     // Housekeeping -------------------------------------------------------------------------------------------------
 
     /// <summary>
-    /// Members without a heartbeat for <see cref="RoomOptions.MemberTimeoutSeconds"/> leave (reason timeout), and relay
-    /// channels that belong to no running stage instance are closed.
+    /// Members without a heartbeat (REST or a live relay connection) for <see cref="RoomOptions.MemberTimeoutSeconds"/>
+    /// leave (reason timeout).
     /// </summary>
     public async Task<int> SweepAsync(CancellationToken ct = default)
     {
         await _gate.WaitAsync(ct);
         try
         {
-            foreach (var channel in _relay.OpenChannels)
-                if (FindInstance(channel) is null) _relay.CloseChannel(channel);
-
             var now = Clock.Now(_time);
             var limit = TimeSpan.FromSeconds(_options.MemberTimeoutSeconds);
             var removed = 0;
@@ -457,53 +445,6 @@ public sealed partial class RoomService
     /// <summary>At startup: rooms a previous process left open are closed (reason server_restart).</summary>
     public Task<int> CloseLeftoversAsync(CancellationToken ct = default) => _repository.CloseAllOpenAsync(Clock.Now(_time), ct);
 
-    private async Task OnHostLostAsync(string channel)
-    {
-        await _gate.WaitAsync();
-        try
-        {
-            if (FindInstance(channel) is (var room, var instance)) EndInstanceLocked(room, instance);
-        }
-        finally
-        {
-            _gate.Release();
-        }
-    }
-
-    /// <summary>
-    /// The relay asks before it accepts a valid ticket: the instance still runs, the account is its host (host tickets)
-    /// or one of its guests and still in the room, and the ticket is the newest one issued to that player for the
-    /// instance. Older tickets (hoarded by repeated /stage calls), tickets of ended instances and tickets of players who
-    /// left or were kicked are refused. A ticket is accepted once.
-    /// </summary>
-    internal async ValueTask<bool> AdmitAsync(RelayAdmission ticket)
-    {
-        await _gate.WaitAsync();
-        try
-        {
-            if (FindInstance(ticket.Channel) is not (var room, var instance)) return false;
-            var role = instance.HostId == ticket.AccountId;
-            if (role != ticket.Host || !instance.Players.Contains(ticket.AccountId)) return false;
-            if (!room.Members.TryGetValue(ticket.AccountId, out var member) || member.Instance != instance.Id) return false;
-            if (!instance.Tickets.TryGetValue(ticket.AccountId, out var nonce) || !string.Equals(nonce, ticket.Nonce, StringComparison.Ordinal))
-                return false;
-            instance.Tickets.Remove(ticket.AccountId);
-            return true;
-        }
-        finally
-        {
-            _gate.Release();
-        }
-    }
-
-    /// <summary>The room and running instance of a relay channel ("CODE-n"), or null.</summary>
-    private (LiveRoom Room, LiveInstance Instance)? FindInstance(string channel)
-    {
-        var dash = channel.LastIndexOf('-');
-        if (dash <= 0 || !int.TryParse(channel.AsSpan(dash + 1), NumberStyles.None, CultureInfo.InvariantCulture, out var id)) return null;
-        return _rooms.TryGetValue(channel[..dash], out var room) && room.Instances.TryGetValue(id, out var instance) ? (room, instance) : null;
-    }
-
     // Internals (callers hold the gate) ----------------------------------------------------------------------------
 
     private async Task LeaveLockedAsync(LiveRoom room, long accountId, string reason, DateTime now, CancellationToken ct)
@@ -516,40 +457,21 @@ public sealed partial class RoomService
         else if (accountId == room.OwnerId)
             await _repository.SetStoryFrozenAsync(room.Id, now, ct);
 
-        LeaveInstanceLocked(room, member);
         room.Members.Remove(accountId);
         _memberOf.Remove(accountId);
+        _relay.MemberLeft(room.Code, accountId, reason);
+        _ = member;
         if (last) RemoveRoomLocked(room);
-        else if (accountId == room.OwnerId) room.StoryFrozenAt = now;
-    }
-
-    private void LeaveInstanceLocked(LiveRoom room, LiveMember member)
-    {
-        if (member.Instance is not { } id) return;
-        member.Instance = null;
-        if (!room.Instances.TryGetValue(id, out var instance)) return;
-        if (instance.HostId == member.AccountId)
+        else if (accountId == room.OwnerId)
         {
-            EndInstanceLocked(room, instance);
-            return;
+            room.StoryFrozenAt = now;
+            _relay.OwnerPresence(room.Code, false);
         }
-        instance.Players.Remove(member.AccountId);
-        instance.Tickets.Remove(member.AccountId);
-        _relay.DropGuest(Channel(room, instance), member.AccountId);
-    }
-
-    /// <summary>The instance host left: everyone in it leaves the instance (they enter the stage again).</summary>
-    private void EndInstanceLocked(LiveRoom room, LiveInstance instance)
-    {
-        room.Instances.Remove(instance.Id);
-        foreach (var player in instance.Players)
-            if (room.Members.TryGetValue(player, out var m) && m.Instance == instance.Id) m.Instance = null;
-        _relay.CloseChannel(Channel(room, instance));
     }
 
     private void RemoveRoomLocked(LiveRoom room)
     {
-        foreach (var instance in room.Instances.Values.ToList()) EndInstanceLocked(room, instance);
+        _relay.RoomClosed(room.Code);
         foreach (var id in room.Members.Keys) _memberOf.Remove(id);
         room.Members.Clear();
         _rooms.Remove(room.Code);
@@ -563,52 +485,48 @@ public sealed partial class RoomService
 
     private int CountOwned(long accountId) => _rooms.Values.Count(r => r.OwnerId == accountId);
 
-    /// <summary>A relay ticket for the instance's channel, or null when the relay refuses to issue one.</summary>
-    private RelayTicket? Ticket(LiveRoom room, int instanceId, string role, long accountId)
+    /// <summary>The member's state with a fresh one-time relay ticket (it replaces any older one), when the relay runs.</summary>
+    private RoomState WithTicket(LiveRoom room, LiveMember member)
     {
-        try
+        string? ticket = null;
+        if (_relay.Available)
         {
-            return _relay.IssueTicket(Channel(room, instanceId), accountId, role == StageRoles.Host);
+            try
+            {
+                var issued = _relay.IssueTicket(room.Code, member.AccountId);
+                member.TicketNonce = issued.Nonce;
+                ticket = issued.Ticket;
+            }
+            catch (ArgumentException)
+            {
+            }
         }
-        catch (ArgumentException)
-        {
-            return null;
-        }
-    }
-
-    /// <summary>The next free instance number (1..<see cref="MaxInstanceId"/>, wrapping around past instances that still run).</summary>
-    private static int NewInstanceId(LiveRoom room)
-    {
-        var id = Math.Clamp(room.NextInstance, 1, MaxInstanceId);
-        while (room.Instances.ContainsKey(id)) id = id >= MaxInstanceId ? 1 : id + 1;
-        return id;
+        return State(room, member) with { RelayTicket = ticket };
     }
 
     private static DomainError TicketFailed() =>
-        new(ErrorKind.Unavailable, "relay_ticket_failed", "The relay could not issue a ticket for this stage. Try again.");
+        new(ErrorKind.Unavailable, "relay_ticket_failed", "The relay could not issue a ticket for this room. Try again.");
 
-    private static string Channel(LiveRoom room, LiveInstance instance) => Channel(room, instance.Id);
+    private RoomSummary Summary(LiveRoom r) => Summary(r, _relay.Instances(r.Code).Count);
 
-    private static string Channel(LiveRoom room, int instanceId) => room.Code + "-" + instanceId.ToString(CultureInfo.InvariantCulture);
+    private static RoomSummary Summary(LiveRoom r, int instances) => new(r.Code, r.Name, r.OwnerName, r.Members.ContainsKey(r.OwnerId),
+        r.StoryFrozenAt is not null, r.StoryFrozenAt, r.PasswordHash is not null, r.Members.Count, r.MaxPlayers, r.Protocol, r.DataHash,
+        r.ClientVersion, r.Ranked, r.Randomizer, r.Difficulty, instances, r.CreatedAt);
 
-    private RoomSummary Summary(LiveRoom r) => new(r.Code, r.Name, r.OwnerName, r.Members.ContainsKey(r.OwnerId), r.StoryFrozenAt is not null,
-        r.StoryFrozenAt, r.PasswordHash is not null, r.Members.Count, r.MaxPlayers, r.Protocol, r.DataHash, r.ClientVersion, r.Ranked,
-        r.Randomizer, r.Difficulty, r.Instances.Count, r.CreatedAt);
-
-    private RoomState State(LiveRoom room, LiveMember you) => new(
-        Summary(room),
-        room.Settings,
-        room.Members.Values.OrderBy(m => m.Slot).Select(m => MemberView(room, m)).ToList(),
-        room.Instances.Values.Select(i => InstanceView(room, i)).ToList(),
-        MemberView(room, you),
-        _options.HeartbeatSeconds);
-
-    private static RoomMemberView MemberView(LiveRoom room, LiveMember m) =>
-        new(m.AccountId, m.Username, m.Slot, m.AccountId == room.OwnerId, m.Instance, m.JoinedAt);
-
-    private StageInstanceView InstanceView(LiveRoom room, LiveInstance i) => new(i.Id, i.Stage, Channel(room, i), i.HostId,
-        room.Members.TryGetValue(i.HostId, out var host) ? host.Username : "", i.Players.ToList(),
-        Math.Clamp(_options.PlayersPerInstance, 1, RoomLimits.MaxPlayers), i.CreatedAt);
+    private RoomState State(LiveRoom room, LiveMember you)
+    {
+        var instances = _relay.Instances(room.Code);
+        var where = new Dictionary<long, uint>();
+        foreach (var i in instances)
+            foreach (var m in i.Members) where[m.AccountId] = i.Id;
+        RoomMemberView View(LiveMember m) => new(m.AccountId, m.Username, m.Slot, m.AccountId == room.OwnerId,
+            where.TryGetValue(m.AccountId, out var id) ? id : null, m.JoinedAt);
+        return new RoomState(Summary(room, instances.Count), room.Settings, room.Members.Values.OrderBy(m => m.Slot).Select(View).ToList(),
+            instances, View(you), _options.HeartbeatSeconds)
+        {
+            SettingsHash = room.SettingsHash.ToString("x16", CultureInfo.InvariantCulture),
+        };
+    }
 
     private static string NewCode()
     {
@@ -627,20 +545,10 @@ public sealed partial class RoomService
         var json = s.GetRawText();
         if (Encoding.UTF8.GetByteCount(json) > maxBytes)
             return DomainError.Invalid("invalid_settings", $"Room settings hold at most {maxBytes} bytes.");
-        foreach (var forbidden in new[] { "cheats", "rebalanced" })
-            if (s.TryGetProperty(forbidden, out var f) && f.ValueKind == JsonValueKind.True)
-                return DomainError.Invalid("unranked_settings", "Online rooms allow no cheats and no rebalanced rates.");
-        int? difficulty = null;
-        if (s.TryGetProperty("difficulty", out var d))
-        {
-            if (d.ValueKind != JsonValueKind.Number || !d.TryGetInt32(out var value) || value is < 0 or > 2)
-                return DomainError.Invalid("invalid_settings", "difficulty is 0 (Normal), 1 (Hard) or 2 (Very Hard).");
-            difficulty = value;
-        }
-        var randomizer = s.TryGetProperty("randomizer", out var r) &&
-            (r.ValueKind == JsonValueKind.True ||
-             (r.ValueKind == JsonValueKind.Object && r.TryGetProperty("enabled", out var e) && e.ValueKind == JsonValueKind.True));
-        return (json, randomizer, difficulty);
+        var parsed = RoomSettings.FromJson(s);
+        if (!parsed.Ok) return parsed.Error!;
+        int? difficulty = s.TryGetProperty("difficulty", out var d) && d.ValueKind == JsonValueKind.Number ? parsed.Value!.Difficulty : null;
+        return (json, RoomSettings.RandomizerRequested(s), difficulty);
     }
 
     private static ulong ParseHash(string text)
@@ -677,9 +585,9 @@ public sealed partial class RoomService
         public DateTime CreatedAt { get; init; }
         public DateTime? StoryFrozenAt { get; set; }
         public bool Playing { get; set; }
-        public int NextInstance { get; set; } = 1;
+        public RoomSettings RoomSettings { get; init; } = RoomSettings.Default;
+        public ulong SettingsHash { get; init; }
         public Dictionary<long, LiveMember> Members { get; } = [];
-        public SortedDictionary<int, LiveInstance> Instances { get; } = [];
         public HashSet<long> Kicked { get; } = [];
     }
 
@@ -690,17 +598,7 @@ public sealed partial class RoomService
         public int Slot { get; } = slot;
         public DateTime JoinedAt { get; } = joinedAt;
         public DateTime LastSeen { get; set; }
-        public int? Instance { get; set; }
-    }
-
-    private sealed class LiveInstance(int id, string stage, long hostId, DateTime createdAt)
-    {
-        public int Id { get; } = id;
-        public string Stage { get; } = stage;
-        public long HostId { get; } = hostId;
-        public DateTime CreatedAt { get; } = createdAt;
-        public List<long> Players { get; } = [];
-        /// <summary>The nonce of each player's newest relay ticket that the relay has not accepted yet.</summary>
-        public Dictionary<long, string> Tickets { get; } = [];
+        /// <summary>The nonce of the member's newest relay ticket that the relay has not accepted yet.</summary>
+        public string? TicketNonce { get; set; }
     }
 }

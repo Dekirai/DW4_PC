@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Fake DW4R2 clients (a deterministic stand-in engine that speaks the relay protocol exactly as the game will), the
+       latency / jitter / loss proxy and the loss matrix (SEAMLESS.md 6.4, 16). Used by the tests and tools/online_test. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>DW4Online.FakeClient</RootNamespace>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\DW4Online.Relay\DW4Online.Relay.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+</Project>
