@@ -1724,6 +1724,10 @@ constexpr int kBigHitMargin = 130, kBigHitFor = 3600;
 // The guard (survive): no attack is started while an enemy blow lands within
 // kHoldAttackLead frames; B goes in kGuardLead frames before it.
 constexpr float kHoldAttackLead = 24.0f, kGuardLead = 3.0f;
+// A bind restarted this many times in a row while it ran is a bind chain:
+// the blows are guarded against until kBindChainAfter frames after it ends
+// (survive, the cheat runs too).
+constexpr int kBindChain = 2, kBindChainAfter = 600;
 // A swing lands some 12 frames after A (SQ_ATCK1 boxes from 10 frames in):
 // a shot still queued on a shooter within the swing's reach (its body boxes
 // kQueuedSwing off) for longer is cut off by the blow.
@@ -5770,6 +5774,43 @@ void CampaignBot::survive(engine::Engine& engine, const engine::ModelCtrlManager
                 guard_traced_ = frame;
                 std::printf("[%d] campaign guards (%s)\n", frame, guard_what_.c_str());
             }
+            return;
+        }
+    }
+    // A bind chain, guarded against in the cheat runs too (they take no
+    // guard otherwise). Every unguarded hit of a binding attack (eneatk KOUKA
+    // "ashidome", E2PBINDTIME) sends SETBIND again from hit_p_*.lua, which
+    // starts the bind's timer anew (803AEBB4), and a bound player walks
+    // nowhere (only its Y channel moves): shots from beyond the swing's reach
+    // keep it bound for good. The enemy shuffle (seed 5) put e_rare into
+    // stag0204's GENE-45 wave round the tower basin, whose enemies end on
+    // terraces below the rim they cannot climb (the stage's own e_mecha2 as
+    // well), and its shot (eneatk 59: rank 16, 900 frames) bound the level 15
+    // bot on the rim at a 77 % chance a hit for 873 frames - 63 binds in 7000
+    // frames, 170000 frames in all. Once a bind was restarted kBindChain
+    // times in a row, the blows due are guarded against (no swing while one
+    // is due) until kBindChainAfter frames after the bind ran out, so it runs
+    // out and the walk on (down to the shooters) is guarded too.
+    {
+        // (The timer's start, on the world clock, tells a restarted bind.)
+        const auto timer = player.named_timers.find("BIND");
+        if (!player.status || player.status->timer[3] == 0 || timer == player.named_timers.end()) {
+            bind_start_ = -1;
+            bind_restarts_ = 0;
+        } else {
+            if (bind_start_ >= 0 && timer->second.saved_world != bind_start_) ++bind_restarts_;
+            bind_start_ = timer->second.saved_world;
+            if (bind_restarts_ >= kBindChain) {
+                if (bind_chain_until_ < frame && trace()) std::printf("[%d] campaign: bind chain (%d binds in a row): guards the blows\n", frame, bind_restarts_ + 1);
+                bind_chain_until_ = frame + kBindChainAfter;
+            }
+        }
+    }
+    if ((engine.cheats().one_hit || engine.cheats().god) && frame < bind_chain_until_) {
+        const float due = blow_due(engine, player, kHoldAttackLead, frame);
+        if (due <= kHoldAttackLead) out.buttons &= ~pad_button::a;
+        if (due <= kGuardLead && player.muteki <= due + 1.0f && controllable && !fading && guard_footing(engine, player, !blow_shot_)) {
+            if (guard_pulse(frame)) out.buttons |= pad_button::b;
             return;
         }
     }

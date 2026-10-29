@@ -191,6 +191,9 @@ private:
     engine::Vec3f me_seen_{}, me_step_{}; // player 1's position when blow_due last ran, its step in the frame before
     int me_seen_frame_ = -1;
     int guard_pulse_from_ = -100, guard_pulse_last_ = -100; // the B pulse of survive's guards (guard_pulse)
+    std::int64_t bind_start_ = -1; // player 1's BIND timer start last seen (-1: not bound; survive's bind chain)
+    int bind_restarts_ = 0;      // binds restarted in a row while one ran (a new hit before it ran out)
+    int bind_chain_until_ = -1;  // the bind chain's guard holds until this frame
     engine::Vec3f guard_from_{}; // where the blow last found by blow_due / touch_escape comes from (its box centre)
     int tech_at_ = -1;           // a technique cast began (R), -1 none
     int touch_traced_ = -100000; // the last traced one
