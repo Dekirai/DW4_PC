@@ -65,17 +65,21 @@ public sealed class AccountService(
     /// <summary>
     /// Logs in. Failed attempts lock the pair of user name and client address (<see cref="LoginThrottle"/>, the same for
     /// names without an account), and many failures from all addresses lock the account except for addresses it used
-    /// before (<see cref="AccountOptions.MaxFailedLoginsPerAccount"/>): strangers cannot lock the owner out.
+    /// before (<see cref="AccountOptions.MaxFailedLoginsPerAccount"/>): strangers cannot lock the owner out. Only the
+    /// canonical form of the typed name is looked up (<see cref="UsernamePolicy.Canonical"/>); text that cannot be a user
+    /// name is an unknown name without a database query or a password hash (no account can have it, so its timing
+    /// tells nothing).
     /// </summary>
     public async Task<Result<LoginResult>> LoginAsync(string? username, string? password, string kind, CallerInfo caller, CancellationToken ct = default)
     {
         var now = Clock.Now(time);
         var key = LoginThrottle.Key(username, caller.Ip);
         if (throttle.LockedUntil(key) is { } refused) return TemporarilyLocked(refused, now);
-        var account = string.IsNullOrEmpty(username) ? null : await accounts.FindByUsernameAsync(UsernamePolicy.Normalize(username), ct);
+        var name = UsernamePolicy.Canonical(username);
+        var account = name is null ? null : await accounts.FindByUsernameAsync(name, ct);
         if (account is null || account.Status == AccountStatus.Deleted)
         {
-            hasher.VerifyDummy(password ?? "");
+            if (name is not null) hasher.VerifyDummy(password ?? "");
             throttle.Fail(key);
             // Never the typed name itself (often a password typed into the wrong field): a keyed hash of it.
             var tag = names.Tag(Truncate(username, 40));
@@ -100,15 +104,20 @@ public sealed class AccountService(
         return new LoginResult(ticket, AccountView.From(fresh));
     }
 
-    /// <summary>The session behind a bearer token; extends its sliding expiry at most every few minutes.</summary>
-    public async Task<AuthenticatedSession?> AuthenticateAsync(string? token, CancellationToken ct = default)
+    /// <summary>
+    /// The session behind a bearer token; extends its sliding expiry at most every few minutes, and at once when the
+    /// session is used from another address than last time (<paramref name="ip"/> becomes its last address, which the
+    /// account-wide lock counts as known: <see cref="AccountLockAsync"/>).
+    /// </summary>
+    public async Task<AuthenticatedSession?> AuthenticateAsync(string? token, byte[]? ip = null, CancellationToken ct = default)
     {
         if (!OpaqueToken.LooksValid(token)) return null;
         var now = Clock.Now(time);
         var session = await sessions.FindAsync(OpaqueToken.Hash(token!), now, ct);
         if (session is null) return null;
-        if (session.LastUsedAt is null || now - session.LastUsedAt.Value >= TimeSpan.FromMinutes(options.SessionTouchMinutes))
-            await sessions.TouchAsync(session.SessionId, now, now + Lifetime(session.Kind), ct);
+        var moved = ip is { Length: > 0 } && (session.LastUsedIp is null || !ip.AsSpan().SequenceEqual(session.LastUsedIp));
+        if (moved || session.LastUsedAt is null || now - session.LastUsedAt.Value >= TimeSpan.FromMinutes(options.SessionTouchMinutes))
+            await sessions.TouchAsync(session.SessionId, now, now + Lifetime(session.Kind), ip is { Length: > 0 } ? ip : null, ct);
         return session;
     }
 
@@ -178,7 +187,8 @@ public sealed class AccountService(
         var now = Clock.Now(time);
         var key = LoginThrottle.Key(username, caller.Ip);
         if (throttle.LockedUntil(key) is { } refused) return TemporarilyLocked(refused, now);
-        var account = string.IsNullOrEmpty(username) ? null : await accounts.FindByUsernameAsync(UsernamePolicy.Normalize(username), ct);
+        var name = UsernamePolicy.Canonical(username); // as for logins: only the canonical form is looked up
+        var account = name is null ? null : await accounts.FindByUsernameAsync(name, ct);
         var normalized = RecoveryCode.Normalize(code);
         if (account is null || account.Status == AccountStatus.Deleted)
         {
@@ -348,14 +358,14 @@ public sealed class AccountService(
     /// <summary>
     /// A wrong password or code: counts for the pair of name and address (<paramref name="key"/>) and for the account,
     /// which is locked for everyone but known addresses at <see cref="AccountOptions.MaxFailedLoginsPerAccount"/>
-    /// failures within <see cref="AccountOptions.LockoutMinutes"/> (<see cref="LoginThrottle.FailAccount"/>). A lock in
-    /// force stays: a known address's wrong password does not end it. accounts.failed_logins keeps the failures since
-    /// the last success for the staff.
+    /// failures within <see cref="AccountOptions.LockoutMinutes"/> (<see cref="LoginThrottle.FailAccount"/>; one network
+    /// adds at most <see cref="AccountOptions.MaxFailedLogins"/> of them). A lock in force stays: a known address's wrong
+    /// password does not end it. accounts.failed_logins keeps the failures since the last success for the staff.
     /// </summary>
     private async Task FailedAttemptAsync(AccountRecord account, string evt, string key, CallerInfo caller, DateTime now, CancellationToken ct)
     {
         var addressLocked = throttle.Fail(key) is not null;
-        var started = throttle.FailAccount(account.Id);
+        var started = throttle.FailAccount(account.Id, caller.Ip);
         var lockedUntil = started ?? (account.LockedUntil is { } held && held > now ? held : null);
         var failed = Math.Min(account.FailedLogins + 1, ushort.MaxValue);
         await accounts.RecordFailedLoginAsync(account.Id, failed, lockedUntil, ct);
@@ -364,8 +374,9 @@ public sealed class AccountService(
     }
 
     /// <summary>
-    /// The account-wide lock (many failures from many addresses): an address the account created or used a session from
-    /// within <see cref="AccountOptions.KnownAddressDays"/> may still try, any other is refused until the lock ends.
+    /// The account-wide lock (many failures from many addresses): an address the account created a session from or last
+    /// used one from within <see cref="AccountOptions.KnownAddressDays"/> (IPv6: the same /64) may still try, any other
+    /// is refused until the lock ends.
     /// </summary>
     private async Task<DomainError?> AccountLockAsync(AccountRecord account, CallerInfo caller, DateTime now, CancellationToken ct)
     {

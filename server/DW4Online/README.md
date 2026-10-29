@@ -19,7 +19,7 @@ separate work (see "Open ends"); `tests/winhttp_client` shows the client side of
 | `src/DW4Online.Relay` | The TCP relay (port 52041): HMAC tickets and byte-for-byte splicing. |
 | `src/DW4Online.Web` | The Razor Pages website (English, server-rendered, no scripts): home, register, login, recovery, account settings, profiles, achievements, rooms, admin, privacy. |
 | `src/DW4Online.Server` | The executable: composition root, configuration, Windows-service mode, CLI tools, TLS certificate selector, file log. |
-| `sql/` | Numbered migrations `NNNN_description.sql` (0001 schema, 0002 achievement definitions, 0003-0006 see "Database"). |
+| `sql/` | Numbered migrations `NNNN_description.sql` (0001 schema, 0002 achievement definitions, 0003-0007 see "Database"). |
 | `tests/DW4Online.Tests` | Unit tests (no database). |
 | `tests/DW4Online.Integration.Tests` | HTTP + MariaDB tests against a private local instance (API, rooms with the real relay, website forms, end to end on real Kestrel). |
 | `tests/winhttp_client` | `dw4online_client.cpp`, a C++20 WinHTTP test tool (the HTTP stack the game will use), and `build.cmd` (MSVC). |
@@ -141,7 +141,9 @@ Tables: `accounts`, `sessions` (only SHA-256 of tokens), `email_tokens` (future 
 written by the room service before its memory changes), `audit_log` (pruned after 180 days). Migration 0003 adds
 `rooms.randomizer`, `rooms.story_frozen_at` and the close reason `host_closed`; 0004 `accounts.online_reset_at`;
 0005 drops the user names old `login_unknown` audit rows held; 0006 `online_character_history.ended_at` (the reset
-that ended a revision's character, filled in for earlier resets).
+that ended a revision's character, filled in for earlier resets); 0007 `sessions.last_used_ip` (the address a session
+was last used from, for the account-wide lock) and `online_character_history.flagged` (each revision's flag, for staff
+restores; earlier revisions take their live character's flag or the one their reset noted).
 
 ## API (`/api/v1`, JSON, errors as problem details)
 
@@ -203,16 +205,23 @@ and stats must carry `protocol` / `clientVersion` (426 `client_outdated` otherwi
   - per user name and client address (IPv4 exactly, IPv6 by its /64 network, in memory): 10 failed logins, recovery
     codes or password confirmations within 15 minutes refuse that address for that name for 15 minutes, before any
     password check. A stranger locks out only their own address; a name without an account locks the same way, so the
-    answer does not tell whether an account exists. A correct password from the address clears its count.
+    answer does not tell whether an account exists. A correct password from the address clears its count. The name
+    counts and is looked up only in its canonical form (trimmed, lower case, the user name shape): the database
+    collation folds accents and full-width letters ("álice" and "ａlice" would find "alice"), so such spellings are
+    unknown names without a database query, and all typed text that cannot be a user name shares one count per address
+    (nothing longer than 20 characters of a typed name is kept in memory).
   - per account, against guessing from many addresses: 50 failures from all addresses together within 15 minutes (a
-    success clears them; one address alone gets at most 10 per window, so slow guessing never adds up to it) lock the
-    account for 15 minutes, but an address the account created or used a session from in the last 30 days may still
-    log in (its success ends the lock, its wrong password does not); other addresses wait. Only during such a lock
-    does the answer show that the name exists.
+    success clears them) lock the account for 15 minutes. One network adds at most 10 failures per window (IPv4: the
+    address, IPv6: its /48, the most a home connection gets, whose 256 or more /64 networks would otherwise each add
+    10), so neither slow guessing nor one connection adds up to it. During the lock an address the account created a
+    session from or last used one from in the last 30 days (IPv6: the same /64) may still log in (its success ends the
+    lock, its wrong password does not); other addresses wait. Only during such a lock does the answer show that the
+    name exists.
   Why not "check the password first, then lock": a lock that only applies after a correct password protects nothing
   against guessing, and one that applies before it lets anyone lock a public name. Counting per name and address
   keeps strangers to their own address; the account-wide lock spares the addresses the owner really uses.
-  Logins are also limited to 5 per minute per address (rate limit).
+  Logins are also limited to 5 per minute per address (rate limit; all per-address rate limits, the website's
+  included, count an IPv6 /64 network as one address).
 - **Sessions**: 256-bit opaque tokens, only SHA-256 stored, kinds `game` (30 days) and `web` (14 days), sliding
   expiry (moved forward at most every 5 minutes), at most 20 live sessions per account.
 - **Recovery**: a one-time recovery code (100 bits, shown at registration and after each use) or an admin reset
@@ -230,6 +239,10 @@ and stats must carry `protocol` / `clientVersion` (426 `client_outdated` otherwi
   reset, also when the next character is reset within those days; staff can restore one after a mistaken reset or
   look at a flagged character), then the hourly housekeeping deletes them; the audit row
   `character_reset` keeps the revision and whether the character was flagged. The next character starts unflagged.
+  A staff restore writes the kept revision with its own play time and flag (an honest character restored after a
+  mistaken reset is not "too fast" at its next upload, a flagged one stays flagged); restoring a reset character's
+  revision undoes that reset (its revisions are kept again, a newer live character it replaces ends like a reset, and
+  `accounts.online_reset_at` goes back to the reset before).
 - **Cloud save**: one per account, latest + 5 older revisions, at most 1 MiB, SHA-256 checked, GCI (90176 bytes) or raw
   (90112 bytes) with a valid copy; private (never on the website, never used for achievements).
 - **Rooms**: a name (1-32 characters), an optional password (4-64, PBKDF2 in memory only, never stored), 2..10

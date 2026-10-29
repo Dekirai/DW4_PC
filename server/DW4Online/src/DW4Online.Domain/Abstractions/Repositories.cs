@@ -38,7 +38,8 @@ public interface ISessionRepository
     Task<long> CreateAsync(long accountId, byte[] tokenHash, string kind, string? deviceName, byte[]? ip, DateTime now, DateTime expiresAt, CancellationToken ct = default);
     /// <summary>The live session of a token (not revoked, not expired, account active), or null.</summary>
     Task<AuthenticatedSession?> FindAsync(byte[] tokenHash, DateTime now, CancellationToken ct = default);
-    Task TouchAsync(long sessionId, DateTime now, DateTime expiresAt, CancellationToken ct = default);
+    /// <summary>Moves the session's sliding expiry; a non-null <paramref name="ip"/> becomes its last address.</summary>
+    Task TouchAsync(long sessionId, DateTime now, DateTime expiresAt, byte[]? ip, CancellationToken ct = default);
     Task<bool> RevokeAsync(long accountId, long sessionId, DateTime now, CancellationToken ct = default);
     Task<int> RevokeAllAsync(long accountId, long? exceptSessionId, DateTime now, CancellationToken ct = default);
     /// <summary>Revokes the oldest live sessions beyond <paramref name="keep"/>.</summary>
@@ -46,7 +47,7 @@ public interface ISessionRepository
     Task<IReadOnlyList<SessionInfo>> ListAsync(long accountId, DateTime now, CancellationToken ct = default);
     /// <summary>
     /// True when the account created or used a session since <paramref name="since"/> that was created from this address
-    /// (IPv4 exactly, IPv6 by its /64 network).
+    /// or last used from it (IPv4 exactly, IPv6 by its /64 network).
     /// </summary>
     Task<bool> KnowsAddressAsync(long accountId, byte[] ip, DateTime since, CancellationToken ct = default);
 }
@@ -65,7 +66,16 @@ public interface IOnlineCharacterRepository
     /// </summary>
     Task<WriteOutcome> SaveAsync(OnlineCharacterWrite write, int? expectedRevision, int historyKeep, CancellationToken ct = default);
     Task<IReadOnlyList<HistoryEntry>> ListHistoryAsync(long accountId, CancellationToken ct = default);
-    Task<byte[]?> GetHistoryRecordAsync(long accountId, int revision, CancellationToken ct = default);
+    /// <summary>A kept revision with its play time, its flag and when its character ended (null: the live character's).</summary>
+    Task<KeptRevision?> GetHistoryRevisionAsync(long accountId, int revision, CancellationToken ct = default);
+    /// <summary>
+    /// Staff restore: writes <paramref name="write"/> (a kept revision's record, play time and flag) as the next revision
+    /// like <see cref="SaveAsync"/> (<paramref name="expectedRevision"/>: the live revision, null when none). When the
+    /// kept revision's character ended (<paramref name="endedAt"/>), that character lives again: its revisions lose
+    /// ended_at, a live character it replaces ends now (its revisions stay ResetHistoryDays like a reset's), and
+    /// accounts.online_reset_at goes back to the reset before it (or null).
+    /// </summary>
+    Task<WriteOutcome> RestoreAsync(OnlineCharacterWrite write, int? expectedRevision, DateTime? endedAt, int historyKeep, CancellationToken ct = default);
     /// <summary>Moves the current character into the history and removes it; the next upload starts a new character.</summary>
     Task<bool> ResetAsync(long accountId, DateTime now, int historyKeep, CancellationToken ct = default);
     /// <summary>When the account's next online character could have started: its last reset, else the account's creation (null: no account).</summary>

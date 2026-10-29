@@ -28,7 +28,7 @@ public sealed class WebSessionHandler(
     {
         var token = Request.Cookies[WebSessions.CookieName(Request)];
         if (string.IsNullOrEmpty(token)) return AuthenticateResult.NoResult();
-        var session = await accounts.AuthenticateAsync(token, Context.RequestAborted);
+        var session = await accounts.AuthenticateAsync(token, Context.Caller().Ip, Context.RequestAborted);
         if (session is null || session.Kind != SessionKind.Web)
         {
             if (!Response.HasStarted) WebSessions.SignOut(Context); // a stale cookie: drop it

@@ -10,8 +10,8 @@ public sealed class SessionRepository(Database db) : ISessionRepository
     {
         await using var c = await db.OpenAsync(ct);
         return await c.ExecuteScalarAsync<long>(new CommandDefinition(
-            "INSERT INTO sessions (account_id, token_hash, kind, device_name, created_ip, created_at, last_used_at, expires_at) " +
-            "VALUES (@a, @t, @k, @d, @ip, @now, @now, @exp); SELECT LAST_INSERT_ID();",
+            "INSERT INTO sessions (account_id, token_hash, kind, device_name, created_ip, last_used_ip, created_at, last_used_at, expires_at) " +
+            "VALUES (@a, @t, @k, @d, @ip, @ip, @now, @now, @exp); SELECT LAST_INSERT_ID();",
             new { a = accountId, t = tokenHash, k = kind, d = deviceName, ip, now, exp = expiresAt }, cancellationToken: ct));
     }
 
@@ -19,18 +19,19 @@ public sealed class SessionRepository(Database db) : ISessionRepository
     {
         await using var c = await db.OpenAsync(ct);
         return await c.QuerySingleOrDefaultAsync<AuthenticatedSession>(new CommandDefinition(
-            "SELECT s.id AS session_id, s.account_id, a.username, a.role, s.kind, s.last_used_at, s.expires_at, a.must_change_password " +
+            "SELECT s.id AS session_id, s.account_id, a.username, a.role, s.kind, s.last_used_at, s.last_used_ip, s.expires_at, a.must_change_password " +
             "FROM sessions s JOIN accounts a ON a.id = s.account_id " +
             "WHERE s.token_hash = @t AND s.revoked_at IS NULL AND s.expires_at > @now AND a.status = 'active'",
             new { t = tokenHash, now }, cancellationToken: ct));
     }
 
-    public async Task TouchAsync(long sessionId, DateTime now, DateTime expiresAt, CancellationToken ct = default)
+    public async Task TouchAsync(long sessionId, DateTime now, DateTime expiresAt, byte[]? ip, CancellationToken ct = default)
     {
         await using var c = await db.OpenAsync(ct);
         await c.ExecuteAsync(new CommandDefinition(
-            "UPDATE sessions SET last_used_at = @now, expires_at = @exp WHERE id = @id AND revoked_at IS NULL",
-            new { id = sessionId, now, exp = expiresAt }, cancellationToken: ct));
+            "UPDATE sessions SET last_used_at = @now, expires_at = @exp, last_used_ip = COALESCE(@ip, last_used_ip) " +
+            "WHERE id = @id AND revoked_at IS NULL",
+            new { id = sessionId, now, exp = expiresAt, ip }, cancellationToken: ct));
     }
 
     public async Task<bool> RevokeAsync(long accountId, long sessionId, DateTime now, CancellationToken ct = default)
@@ -76,7 +77,8 @@ public sealed class SessionRepository(Database db) : ISessionRepository
         var network = ip.Length == 16 ? ip[..8] : null;
         return await c.ExecuteScalarAsync<bool>(new CommandDefinition(
             "SELECT EXISTS (SELECT 1 FROM sessions WHERE account_id = @a AND (created_at >= @since OR last_used_at >= @since) " +
-            "AND (created_ip = @ip OR (@net IS NOT NULL AND LENGTH(created_ip) = 16 AND LEFT(created_ip, 8) = @net)))",
+            "AND (created_ip = @ip OR last_used_ip = @ip OR (@net IS NOT NULL AND (" +
+            "(LENGTH(created_ip) = 16 AND LEFT(created_ip, 8) = @net) OR (LENGTH(last_used_ip) = 16 AND LEFT(last_used_ip, 8) = @net)))))",
             new { a = accountId, ip, net = network, since }, cancellationToken: ct));
     }
 }

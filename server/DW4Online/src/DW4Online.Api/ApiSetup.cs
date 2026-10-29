@@ -128,7 +128,8 @@ public static class ApiSetup
             QueueLimit = 0,
         });
 
-    public static string IpKey(HttpContext ctx) => "ip:" + (ctx.Connection.RemoteIpAddress?.ToString() ?? "unknown");
+    /// <summary>The per-address partition: IPv4 as a whole, IPv6 by its /64 network (one client, as for the login throttle).</summary>
+    public static string IpKey(HttpContext ctx) => "ip:" + DW4Online.Domain.Accounts.LoginThrottle.AddressKey(ctx.Connection.RemoteIpAddress);
 
     private static string AccountKey(HttpContext ctx) =>
         ctx.User.FindFirstValue(ClaimTypes.NameIdentifier) is { } id ? "acc:" + id : IpKey(ctx);

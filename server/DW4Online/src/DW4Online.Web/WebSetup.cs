@@ -153,7 +153,8 @@ public static class WebSetup
     private static RateLimitPartition<string> PostWindow(HttpContext ctx, string name, int permits, TimeSpan window, string? account = null)
     {
         if (!HttpMethods.IsPost(ctx.Request.Method)) return RateLimitPartition.GetNoLimiter("get");
-        var key = name + ":" + (account is { Length: > 0 } ? "acc:" + account : ctx.Connection.RemoteIpAddress?.ToString() ?? "unknown");
+        // By address: IPv4 as a whole, IPv6 by its /64 network (one client, as for the login throttle).
+        var key = name + ":" + (account is { Length: > 0 } ? "acc:" + account : DW4Online.Domain.Accounts.LoginThrottle.AddressKey(ctx.Connection.RemoteIpAddress));
         return RateLimitPartition.GetFixedWindowLimiter(key, _ => new FixedWindowRateLimiterOptions
         {
             PermitLimit = Math.Max(1, permits),

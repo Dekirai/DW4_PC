@@ -18,12 +18,12 @@ public sealed class AccountOptions
     /// <summary>
     /// Failed attempts on one account from all addresses together within <see cref="LockoutMinutes"/> (a success clears
     /// them) before the account is locked for <see cref="LockoutMinutes"/> against guessing from many addresses; slow
-    /// guessing from one address (at most <see cref="MaxFailedLogins"/> per window) never reaches it. During that lock
-    /// only addresses the account logged in from within <see cref="KnownAddressDays"/> may still try, so strangers
-    /// cannot lock the owner out.
+    /// guessing from one network (at most <see cref="MaxFailedLogins"/> per window: IPv4 the address, IPv6 its /48)
+    /// never reaches it. During that lock only addresses the account created or last used a session from within
+    /// <see cref="KnownAddressDays"/> may still try, so strangers cannot lock the owner out.
     /// </summary>
     public int MaxFailedLoginsPerAccount { get; set; } = 50;
-    /// <summary>How long a client address that created a session counts as known for the account-wide lock.</summary>
+    /// <summary>How long a client address that created a session or last used one counts as known for the account-wide lock.</summary>
     public int KnownAddressDays { get; set; } = 30;
     /// <summary>Sliding lifetime of game-client sessions.</summary>
     public int GameSessionDays { get; set; } = 30;

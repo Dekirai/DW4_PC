@@ -94,20 +94,34 @@ public sealed class OnlineCharacterService(
         return done;
     }
 
-    /// <summary>Staff: makes a kept revision the current one again (a new revision with reason admin_restore).</summary>
+    /// <summary>
+    /// Staff: makes a kept revision the current one again (a new revision with reason admin_restore) with that
+    /// revision's own play time and flag, so the next upload is checked against what the record really holds (an
+    /// honest player's next upload is not "too fast", a flagged character stays flagged). Restoring a revision of a
+    /// reset character undoes the reset: that character's revisions stay (no longer deleted ResetHistoryDays after the
+    /// reset), and a live character it replaces ends like a reset.
+    /// </summary>
     public async Task<Result<int>> RestoreAsync(long accountId, int revision, long actorId, byte[]? ip, CancellationToken ct = default)
     {
-        var record = await characters.GetHistoryRecordAsync(accountId, revision, ct);
-        if (record is null) return DomainError.NotFound("revision_not_found", "No such kept revision.");
+        var kept = await characters.GetHistoryRevisionAsync(accountId, revision, ct);
+        if (kept is null) return DomainError.NotFound("revision_not_found", "No such kept revision.");
         var current = await characters.GetAsync(accountId, ct);
-        var decoded = RecordCodec.Decode(record);
+        var decoded = RecordCodec.Decode(kept.Record);
         var now = Clock.Now(time);
-        var write = new OnlineCharacterWrite(accountId, record, SHA256.HashData(record), CharacterSummary.From(decoded),
-            current?.PlaySeconds ?? 0, current?.Flagged ?? false, current?.ClientVersion, "admin_restore", now);
-        var outcome = await characters.SaveAsync(write, current?.Revision, options.HistoryRevisions, ct);
+        var write = new OnlineCharacterWrite(accountId, kept.Record, SHA256.HashData(kept.Record), CharacterSummary.From(decoded),
+            kept.PlaySeconds, kept.Flagged, current?.ClientVersion, "admin_restore", now);
+        var outcome = await characters.RestoreAsync(write, current?.Revision, kept.EndedAt, options.HistoryRevisions, ct);
         if (outcome.Status != WriteStatus.Saved)
             return DomainError.Conflict("revision_conflict", "The online character changed in the meantime.", Revision(outcome.Revision));
-        await audit.WriteAsync("character_restore", accountId, actorId, ip, new { from = revision, revision = outcome.Revision }, now, ct);
+        await audit.WriteAsync("character_restore", accountId, actorId, ip, new
+        {
+            from = revision,
+            revision = outcome.Revision,
+            flagged = kept.Flagged,
+            undidReset = kept.EndedAt is not null,
+            // A live character replaced by undoing a reset ended (its revisions stay ResetHistoryDays).
+            replaced = kept.EndedAt is not null && current is not null ? current.Revision : (int?)null,
+        }, now, ct);
         return outcome.Revision;
     }
 
