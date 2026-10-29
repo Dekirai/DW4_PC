@@ -92,6 +92,14 @@ if(BUILD_TESTING)
   target_include_directories(dw4_labels_tests PRIVATE src/game)
   target_link_libraries(dw4_labels_tests PRIVATE dw4_engine)
   add_test(NAME labels COMMAND dw4_labels_tests)
+  # Seamless online co-op, the engine side. With the game data (a disc image
+  # or an extracted folder, never in the repository) it also plays membership
+  # scenarios in real stages; without, those are skipped.
+  set(DW4_TEST_DATA "" CACHE PATH "Game data for the online engine scenarios (optional)")
+  add_executable(dw4_online_tests tests/online_tests.cpp)
+  target_link_libraries(dw4_online_tests PRIVATE dw4_engine)
+  target_compile_definitions(dw4_online_tests PRIVATE DW4_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+  add_test(NAME online COMMAND dw4_online_tests "${DW4_TEST_DATA}")
   add_executable(dw4_achievements_tests tests/achievements_tests.cpp src/game/achievements.cpp)
   target_include_directories(dw4_achievements_tests PRIVATE src/game)
   target_link_libraries(dw4_achievements_tests PRIVATE dw4_engine)

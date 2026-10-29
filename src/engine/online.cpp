@@ -41,17 +41,19 @@ void engine_destroyed(bool online) {
 }
 
 // Round to nearest, no flush to zero, no denormals are zero, every exception
-// masked: the MXCSR of a fresh Windows x64 thread.
+// masked: the MXCSR of a fresh Windows x64 thread. Only the control bits
+// (6-15) count; bits 0-5 are the sticky exception flags any arithmetic sets.
 constexpr unsigned kMxcsr = 0x1F80u;
+constexpr unsigned kMxcsrControl = 0xFFC0u;
 
 MxcsrGuard::MxcsrGuard() : saved_(_mm_getcsr()) {
-    if (saved_ != kMxcsr) {
+    if ((saved_ & kMxcsrControl) != kMxcsr) {
         g_mxcsr_repairs.fetch_add(1, std::memory_order_relaxed);
-        _mm_setcsr(kMxcsr);
+        _mm_setcsr(kMxcsr | (saved_ & 0x3Fu));
     }
 }
 MxcsrGuard::~MxcsrGuard() {
-    if (saved_ != kMxcsr) _mm_setcsr(saved_);
+    if ((saved_ & kMxcsrControl) != kMxcsr) _mm_setcsr(saved_);
 }
 } // namespace detail
 
