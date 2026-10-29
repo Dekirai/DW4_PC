@@ -94,4 +94,77 @@ public class CertificateTests
         Assert.NotEqual(IntPtr.Zero, b!.Handle);
         Assert.NotEqual(IntPtr.Zero, c!.Handle);
     }
+
+    /// <summary>
+    /// The move from the pinned IP certificate to the domain: a connection to the IP sends no name and gets the IP
+    /// certificate, a connection naming the domain gets the domain's, and an unknown name (or a domain whose
+    /// certificate is missing) falls back to the IP certificate.
+    /// </summary>
+    [Fact]
+    public void The_certificate_follows_the_requested_host_name()
+    {
+        var ip = TestCertificates.SelfSignedPfx("88.198.52.221", Now.AddDays(-1), Now.AddYears(10));
+        var domain = TestCertificates.SelfSignedPfx("dekirai.crygod.de", Now.AddDays(-1), Now.AddDays(90));
+        var withDomain = true;
+        X509Certificate2Collection Read() => withDomain
+            ? new X509Certificate2Collection(new[] { TestCertificates.Load(ip), TestCertificates.Load(domain) })
+            : new X509Certificate2Collection(TestCertificates.Load(ip));
+        var options = new TlsOptions { StoreHostName = "88.198.52.221", AdditionalHostNames = [" dekirai.crygod.de "] };
+
+        var selector = new HostCertificateSelector(options, NullLogger.Instance, Read, new ManualClock());
+        using var ipCert = TestCertificates.Load(ip);
+        using var domainCert = TestCertificates.Load(domain);
+        Assert.Equal(ipCert.Thumbprint, selector.Select(null)?.Thumbprint);
+        Assert.Equal(ipCert.Thumbprint, selector.Select("")?.Thumbprint);
+        Assert.Equal(domainCert.Thumbprint, selector.Select("dekirai.crygod.de")?.Thumbprint);
+        Assert.Equal(domainCert.Thumbprint, selector.Select("DEKIRAI.crygod.de")?.Thumbprint);
+        Assert.Equal(ipCert.Thumbprint, selector.Select("other.example.org")?.Thumbprint);
+
+        withDomain = false;
+        var noDomain = new HostCertificateSelector(options, NullLogger.Instance, Read, new ManualClock());
+        Assert.Equal(ipCert.Thumbprint, noDomain.Select("dekirai.crygod.de")?.Thumbprint);
+    }
+
+    [Fact]
+    public void Tls_pin_prints_the_pin_of_a_certificate_file()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "dw4online-pin-" + Guid.NewGuid().ToString("N")[..8]);
+        Directory.CreateDirectory(dir);
+        try
+        {
+            using var cert = TestCertificates.Load(TestCertificates.SelfSignedPfx("88.198.52.221", Now.AddDays(-1), Now.AddYears(10)));
+            var der = Path.Combine(dir, "server.cer");
+            File.WriteAllBytes(der, cert.Export(X509ContentType.Cert));
+            var pem = Path.Combine(dir, "server.pem");
+            File.WriteAllText(pem, cert.ExportCertificatePem());
+
+            foreach (var file in new[] { der, pem })
+            {
+                var output = new StringWriter();
+                Assert.Equal(0, TlsPinCommand.Run(["--file", file], output, TextWriter.Null));
+                var text = output.ToString();
+                Assert.Contains("SPKI pin (SHA-256, base64): " + SpkiPin.Of(cert), text);
+                Assert.Contains("SPKI pin (SHA-256, hex):    " + SpkiPin.HexOf(cert), text);
+                Assert.Contains("IP 88.198.52.221", text);
+                Assert.Contains("Certificate fingerprint (SHA-256): " + cert.GetCertHashString(HashAlgorithmName.SHA256), text);
+            }
+
+            // SHA-256 over the DER SubjectPublicKeyInfo, 44 base64 characters, unchanged by a renewal with the same key.
+            Assert.Equal(Convert.ToBase64String(SHA256.HashData(cert.PublicKey.ExportSubjectPublicKeyInfo())), SpkiPin.Of(cert));
+            Assert.Equal(44, SpkiPin.Of(cert).Length);
+            using var key = RSA.Create(2048);
+            using var first = TestCertificates.Load(TestCertificates.SelfSignedPfx("88.198.52.221", Now.AddDays(-1), Now.AddYears(1), key));
+            using var renewed = TestCertificates.Load(TestCertificates.SelfSignedPfx("88.198.52.221", Now.AddYears(1), Now.AddYears(10), key));
+            Assert.NotEqual(first.Thumbprint, renewed.Thumbprint);
+            Assert.Equal(SpkiPin.Of(first), SpkiPin.Of(renewed));
+            Assert.NotEqual(SpkiPin.Of(cert), SpkiPin.Of(first));
+
+            Assert.Equal(1, TlsPinCommand.Run(["--file", Path.Combine(dir, "missing.cer")], TextWriter.Null, TextWriter.Null));
+            Assert.Equal(2, TlsPinCommand.Run([], TextWriter.Null, TextWriter.Null));
+        }
+        finally
+        {
+            Directory.Delete(dir, true);
+        }
+    }
 }

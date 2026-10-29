@@ -12,6 +12,8 @@ using DW4Online.Server;
 //   DW4Online.Server reset-password <user>   print a temporary password the user must change
 //   DW4Online.Server gen-relay-key           print a new random Relay:TicketKey
 //   DW4Online.Server audit-tag <name>        print the security log's tag of a user name (failed logins with unknown names)
+//   DW4Online.Server tls-pin --host <name or IP> | --thumbprint <hex> | --file <certificate>
+//                                            print a certificate's SHA-256 SPKI pin (self-signed certificate, pinned by the client)
 // Every form takes "--settings <file>": an extra JSON settings file (the server keeps its secrets outside the app folder).
 var command = args.Length > 0 && !args[0].StartsWith('-') ? args[0] : null;
 var rest = (command is null ? args : args[1..]).ToList();
@@ -47,6 +49,8 @@ switch (command)
         }
         return 0;
     }
+    case "tls-pin":
+        return TlsPinCommand.Run(hostArgs, Console.Out, Console.Error);
     case "gen-relay-key":
         Console.WriteLine(Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)));
         return 0;
@@ -88,6 +92,6 @@ switch (command)
         return 0;
     }
     default:
-        Console.Error.WriteLine("Unknown command. Use: migrate | set-role <user> <role> | reset-password <user> | gen-relay-key | audit-tag <name> | --service | --settings <file>");
+        Console.Error.WriteLine("Unknown command. Use: migrate | set-role <user> <role> | reset-password <user> | gen-relay-key | audit-tag <name> | tls-pin ... | --service | --settings <file>");
         return 2;
 }

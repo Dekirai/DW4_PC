@@ -196,8 +196,10 @@ public static class ServerApp
     [System.Runtime.Versioning.SupportedOSPlatform("windows")]
     private static void UseStoreCertificate(Microsoft.AspNetCore.Server.Kestrel.Core.KestrelServerOptions kestrel, TlsOptions tls)
     {
-        var selector = new StoreCertificateSelector(tls, kestrel.ApplicationServices.GetRequiredService<ILoggerFactory>().CreateLogger("Tls"));
-        kestrel.ConfigureHttpsDefaults(https => https.ServerCertificateSelector = (_, _) => selector.Select());
+        var source = kestrel.ApplicationServices.GetService<TlsCertificateSource>(); // tests only; the Windows store otherwise
+        var selector = new HostCertificateSelector(tls, kestrel.ApplicationServices.GetRequiredService<ILoggerFactory>().CreateLogger("Tls"),
+            source is null ? null : source.Read);
+        kestrel.ConfigureHttpsDefaults(https => https.ServerCertificateSelector = (_, name) => selector.Select(name));
     }
 
     private static byte[] RelayKey(RelayOptions relay, IHostEnvironment env, ILogger log)
