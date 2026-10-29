@@ -52,7 +52,9 @@ public sealed class OnlineCharacterService(
             return DomainError.Conflict("revision_conflict", "The online character changed in the meantime.", Revision(current.Revision));
 
         var previous = current is null ? null : RecordCodec.Decode(current.Record);
-        var wallSeconds = current is null ? 0 : Math.Max(0, (now - current.UpdatedAt).TotalSeconds);
+        // A new character: the real time since the account was made or its online character was last reset.
+        var since = current?.UpdatedAt ?? await characters.GetStartAsync(accountId, ct) ?? now;
+        var wallSeconds = Math.Max(0, (now - since).TotalSeconds);
         RecordValidator.CheckTransition(report, previous, current?.PlaySeconds ?? 0, decoded, playSeconds, wallSeconds, options.Rules);
         if (!report.Ok) return Rejected(report);
 

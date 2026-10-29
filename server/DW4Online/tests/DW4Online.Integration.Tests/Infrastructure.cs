@@ -112,6 +112,8 @@ public sealed class TestHost : IAsyncDisposable
             ["RateLimits:RoomJoinsPerMinute"] = "100000",
             ["RateLimits:WebLoginPerMinute"] = "100000",
             ["RateLimits:WebRegisterPerHour"] = "100000",
+            ["RateLimits:WebAccountChangesPerMinute"] = "100000",
+            ["RateLimits:StageChangesPerMinute"] = "100000",
             ["Rooms:PasswordIterations"] = "1000",
             ["Web:DataProtectionKeysDirectory"] = "memory",
             ["Relay:Enabled"] = "false",
@@ -156,15 +158,15 @@ public sealed class TestHost : IAsyncDisposable
     }
 
     /// <summary>A durable room row with members, as the room service writes it.</summary>
-    public async Task<string> CreateRoomAsync(long host, IEnumerable<long> guests, bool ranked = true)
+    public async Task<string> CreateRoomAsync(long host, IEnumerable<long> guests, bool ranked = true, bool randomizer = false)
     {
         var code = Guid.NewGuid().ToString("N")[..6].ToUpperInvariant();
         await using var c = await SqlAsync();
         var now = Clock.GetUtcNow().UtcDateTime;
         var id = await c.ExecuteScalarAsync<long>(
-            "INSERT INTO rooms (public_code, name, host_account_id, max_players, protocol, data_hash, client_version, ranked, status, created_at) " +
-            "VALUES (@code, 'Test room', @host, 10, 40, 1, 'tests', @ranked, 'playing', @now); SELECT LAST_INSERT_ID();",
-            new { code, host, ranked, now });
+            "INSERT INTO rooms (public_code, name, host_account_id, max_players, protocol, data_hash, client_version, ranked, randomizer, status, created_at) " +
+            "VALUES (@code, 'Test room', @host, 10, 40, 1, 'tests', @ranked, @randomizer, 'playing', @now); SELECT LAST_INSERT_ID();",
+            new { code, host, ranked, randomizer, now });
         var slot = 0;
         foreach (var member in guests.Prepend(host))
             await c.ExecuteAsync("INSERT INTO room_members (room_id, account_id, slot, joined_at) VALUES (@id, @member, @slot, @now)",

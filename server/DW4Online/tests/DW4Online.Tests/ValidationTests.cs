@@ -115,6 +115,30 @@ public class ValidationTests
         Assert.Empty(fine.Errors);
     }
 
+    /// <summary>A new online character starts from zero: its play time must fit into the account's age (or the time since a reset).</summary>
+    [Fact]
+    public void A_new_character_cannot_bring_more_play_time_than_the_account_has()
+    {
+        var rules = new CharacterRules();
+        var fresh = Samples.Fresh();
+        var old = new ValidationReport();
+        RecordValidator.CheckTransition(old, null, 0, fresh, 400L * 3600, 30, rules);
+        Assert.Contains(old.Warnings, w => w.Code == "play_time_too_fast");
+        var fits = new ValidationReport();
+        RecordValidator.CheckTransition(fits, null, 0, fresh, 3600, 7200, rules);
+        Assert.Empty(fits.Warnings);
+        // The level rate counts claimed play time only as far as real time allows.
+        var levelled = Samples.Fresh();
+        levelled.Level = 60;
+        levelled.BaseLevel[0] = 60;
+        var claimed = new ValidationReport();
+        RecordValidator.CheckTransition(claimed, null, 0, levelled, 100L * 3600, 60, rules);
+        Assert.Contains(claimed.Warnings, w => w.Code == "level_rate");
+        var real = new ValidationReport();
+        RecordValidator.CheckTransition(real, null, 0, levelled, 3600, 3600, rules);
+        Assert.DoesNotContain(real.Warnings, w => w.Code == "level_rate");
+    }
+
     [Fact]
     public void Level_rate_and_dropped_forms_are_flagged()
     {

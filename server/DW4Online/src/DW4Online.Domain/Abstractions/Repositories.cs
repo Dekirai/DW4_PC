@@ -61,6 +61,8 @@ public interface IOnlineCharacterRepository
     Task<byte[]?> GetHistoryRecordAsync(long accountId, int revision, CancellationToken ct = default);
     /// <summary>Moves the current character into the history and removes it; the next upload starts a new character.</summary>
     Task<bool> ResetAsync(long accountId, DateTime now, int historyKeep, CancellationToken ct = default);
+    /// <summary>When the account's next online character could have started: its last reset, else the account's creation (null: no account).</summary>
+    Task<DateTime?> GetStartAsync(long accountId, CancellationToken ct = default);
 }
 
 public interface ICloudSaveRepository
@@ -83,6 +85,7 @@ public interface IAchievementRepository
     /// <summary>Keeps the best (lowest) in-game time per board and ruleset; true when this one is the new best.</summary>
     Task<bool> SubmitTimeAsync(long accountId, string board, string ruleset, long igtMs, long? roomId, DateTime now, CancellationToken ct = default);
     Task<IReadOnlyDictionary<string, long>> GetStatsAsync(long accountId, CancellationToken ct = default);
+    /// <summary>The time of the account's last stats batch, else the account's creation (null: no such account).</summary>
     Task<DateTime?> GetLastStatsAtAsync(long accountId, CancellationToken ct = default);
     /// <summary>Adds the deltas and returns the new totals of the touched keys.</summary>
     Task<IReadOnlyDictionary<string, long>> AddStatsAsync(long accountId, IReadOnlyDictionary<string, long> deltas, DateTime now, CancellationToken ct = default);

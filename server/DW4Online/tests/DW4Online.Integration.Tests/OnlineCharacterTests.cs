@@ -46,11 +46,12 @@ public class OnlineCharacterTests
         character.BaseLevel[0] = 12;
         character.Hp = character.MaxHp = 300;
         host.Clock.Advance(TimeSpan.FromHours(1));
+        var room = await host.CreateRoomAsync(id, []);
         var stale = await client.PutJson("/api/v1/online-character", Upload(character, 3000), ifMatch: "\"7\"");
         Assert.Equal(HttpStatusCode.Conflict, stale.StatusCode);
         Assert.Equal(1, (await stale.Json()).GetProperty("currentRevision").GetInt32());
 
-        var updated = await client.PutJson("/api/v1/online-character", Upload(character, 3000), ifMatch: "\"1\"");
+        var updated = await client.PutJson("/api/v1/online-character", Upload(character, 3000, new { roomCode = room, players = 1 }), ifMatch: "\"1\"");
         Assert.Equal(HttpStatusCode.OK, updated.StatusCode);
         var result = await updated.Json();
         Assert.Equal(2, result.GetProperty("revision").GetInt32());
@@ -121,7 +122,8 @@ public class OnlineCharacterTests
         maxed.Level = 400;
         maxed.BaseLevel[0] = 400;
         maxed.Hp = maxed.MaxHp = 9000;
-        var created = await client.PutJson("/api/v1/online-character", Upload(maxed, 120), create: true);
+        var room = await host.CreateRoomAsync(id, []);
+        var created = await client.PutJson("/api/v1/online-character", Upload(maxed, 120, new { roomCode = room, players = 1 }), create: true);
         Assert.Equal(HttpStatusCode.Created, created.StatusCode);
         Assert.Contains("level_rate", (await created.Json()).GetProperty("warnings").EnumerateArray().Select(w => w.GetProperty("code").GetString()));
         await using var c = await host.SqlAsync();
@@ -162,5 +164,84 @@ public class OnlineCharacterTests
         var now = await (await client.GetAsync("/api/v1/online-character")).Json();
         Assert.Equal(5000, now.GetProperty("summary").GetProperty("bits").GetInt32());
         Assert.Equal("Kevin", now.GetProperty("summary").GetProperty("playerName").GetString());
+    }
+
+    /// <summary>The review's case: a fresh account uploads a maxed record claiming 400 hours of play.</summary>
+    [DbFact]
+    public async Task A_maxed_record_on_a_fresh_account_is_flagged_and_unlocks_nothing_outside_a_room()
+    {
+        await using var host = await TestHost.StartAsync();
+        var (token, _, id) = await host.RegisterAsync("Hexer");
+        var client = host.Client(token);
+        var maxed = Samples.Fresh();
+        maxed.Level = 999;
+        for (var s = 0; s < maxed.BaseLevel.Length; ++s)
+        {
+            maxed.BaseLevel[s] = 999;
+            maxed.BaseIsUse[s] = 1;
+        }
+        maxed.Bits = 9_999_999;
+        var created = await client.PutJson("/api/v1/online-character", Upload(maxed, 400L * 3600), create: true);
+        Assert.Equal(HttpStatusCode.Created, created.StatusCode);
+        var body = await created.Json();
+        var warnings = body.GetProperty("warnings").EnumerateArray().Select(w => w.GetProperty("code").GetString()).ToList();
+        Assert.Contains("play_time_too_fast", warnings); // 400 h on an account a few seconds old
+        Assert.Contains("level_rate", warnings);
+        Assert.Empty(body.GetProperty("unlocked").EnumerateArray()); // no room: nothing counts
+        await using var c = await host.SqlAsync();
+        Assert.True(await c.ExecuteScalarAsync<bool>("SELECT flagged FROM online_characters WHERE account_id = @id", new { id }));
+        Assert.Equal(0, await c.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM achievement_unlocks WHERE account_id = @id", new { id }));
+
+        // In a room the state unlocks come, flagged (hidden from rankings until reviewed).
+        var room = await host.CreateRoomAsync(id, []);
+        maxed.Bits = 9_999_998;
+        var update = await client.PutJson("/api/v1/online-character", Upload(maxed, 400L * 3600 + 60, new { roomCode = room, players = 1 }), ifMatch: "1");
+        Assert.Equal(HttpStatusCode.OK, update.StatusCode);
+        Assert.NotEmpty((await update.Json()).GetProperty("unlocked").EnumerateArray());
+        Assert.Equal(0, await c.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM achievement_unlocks WHERE account_id = @id AND flagged = 0", new { id }));
+
+        // A record that fits the account's age is not flagged: a new account after a day with a day of play.
+        var (token2, _, id2) = await host.RegisterAsync("Honest");
+        host.Clock.Advance(TimeSpan.FromHours(30));
+        var modest = Samples.Fresh("Hon");
+        modest.Unique = 0x12340001;
+        var ok = await host.Client(token2).PutJson("/api/v1/online-character", Upload(modest, 24 * 3600), create: true);
+        Assert.Equal(HttpStatusCode.Created, ok.StatusCode);
+        Assert.Empty((await ok.Json()).GetProperty("warnings").EnumerateArray());
+        // After a reset the clock starts again: the next new character cannot bring the old play time.
+        Assert.Equal(HttpStatusCode.NoContent,
+            (await host.Client(token2).PostAsJsonAsync("/api/v1/online-character/reset", new { currentPassword = "a decent password" })).StatusCode);
+        var again = await host.Client(token2).PutJson("/api/v1/online-character", Upload(modest, 24 * 3600), create: true);
+        Assert.Contains("play_time_too_fast", (await again.Json()).GetProperty("warnings").EnumerateArray().Select(w => w.GetProperty("code").GetString()));
+        Assert.True(await c.ExecuteScalarAsync<bool>("SELECT online_reset_at IS NOT NULL FROM accounts WHERE id = @id2", new { id2 }));
+    }
+
+    /// <summary>State unlocks go to the room's ruleset: a randomizer room's into the randomizer list.</summary>
+    [DbFact]
+    public async Task State_unlocks_take_the_rooms_ruleset()
+    {
+        await using var host = await TestHost.StartAsync();
+        var (token, _, id) = await host.RegisterAsync("Shuffler");
+        var client = host.Client(token);
+        host.Clock.Advance(TimeSpan.FromHours(2));
+        var room = await host.CreateRoomAsync(id, [], randomizer: true);
+        var character = Samples.Fresh();
+        character.Level = 12;
+        character.BaseLevel[0] = 12;
+        character.Hp = character.MaxHp = 300;
+        // The client even claims a standard run: the room decides.
+        var created = await client.PutJson("/api/v1/online-character", Upload(character, 3600, new { roomCode = room, players = 1, randomizer = false }), create: true);
+        Assert.Equal(HttpStatusCode.Created, created.StatusCode);
+        Assert.Contains("lv_10", (await created.Json()).GetProperty("unlocked").EnumerateArray().Select(e => e.GetString()));
+        await using var c = await host.SqlAsync();
+        Assert.Equal(["randomizer"], (await c.QueryAsync<string>(
+            "SELECT u.ruleset FROM achievement_unlocks u JOIN achievements a ON a.id = u.achievement_id WHERE u.account_id = @id AND a.code = 'lv_10'", new { id })).ToList());
+        // A room the account is not in counts for nothing.
+        var (otherToken, _, otherId) = await host.RegisterAsync("Outsider");
+        var foreignRoom = await host.CreateRoomAsync(otherId, []);
+        var outside = await client.PutJson("/api/v1/online-character", Upload(character, 3700, new { roomCode = foreignRoom, players = 1 }), ifMatch: "1");
+        Assert.Equal(HttpStatusCode.OK, outside.StatusCode);
+        Assert.Empty((await outside.Json()).GetProperty("unlocked").EnumerateArray());
+        _ = otherToken;
     }
 }

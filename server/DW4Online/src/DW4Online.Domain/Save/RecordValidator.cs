@@ -129,17 +129,23 @@ public static class RecordValidator
     }
 
     /// <summary>
-    /// Checks the change from the previous revision. <paramref name="wallSeconds"/> is the real time between the uploads.
-    /// A different character (UNIQUE) is an error: a new character needs a reset of the online character first.
+    /// Checks the change from the previous revision. <paramref name="wallSeconds"/> is the real time between the uploads;
+    /// for a new character (<paramref name="previous"/> null) the real time since the account was made or the online
+    /// character was last reset: a new online character starts from zero, so its play time must fit into it. The level
+    /// rate uses the play time only as far as real time allows. A different character (UNIQUE) is an error: a new
+    /// character needs a reset of the online character first.
     /// </summary>
     public static void CheckTransition(ValidationReport report, SaveRecord? previous, long previousPlaySeconds,
         SaveRecord next, long nextPlaySeconds, double wallSeconds, CharacterRules rules)
     {
         if (nextPlaySeconds < 0) report.Error("play_time_range", "Play time is negative.");
         var playDelta = nextPlaySeconds - previousPlaySeconds;
+        var realLimit = (long)Math.Min(long.MaxValue / 2, Math.Max(0, wallSeconds) + rules.PlayTimeSlackSeconds);
         if (previous is null)
         {
-            CheckLevelRate(report, LevelSum(next) - Species.Count, nextPlaySeconds, rules);
+            if (nextPlaySeconds > realLimit)
+                report.Warn("play_time_too_fast", "A new online character starts from zero, but its play time is longer than the account (or the time since its reset).");
+            CheckLevelRate(report, LevelSum(next) - Species.Count, Math.Min(Math.Max(0, nextPlaySeconds), realLimit), rules);
             return;
         }
         if (previous.Unique != next.Unique)
@@ -165,7 +171,7 @@ public static class RecordValidator
         if (playDelta < 0) report.Warn("play_time_decreased", "Play time went down.");
         else if (playDelta > wallSeconds + rules.PlayTimeSlackSeconds)
             report.Warn("play_time_too_fast", "Play time grew faster than real time.");
-        CheckLevelRate(report, LevelSum(next) - LevelSum(previous), Math.Max(0, playDelta), rules);
+        CheckLevelRate(report, LevelSum(next) - LevelSum(previous), Math.Min(Math.Max(0, playDelta), realLimit), rules);
     }
 
     /// <summary>The sum of the levels of all forms (the current form's level counts through its row when the row is behind).</summary>

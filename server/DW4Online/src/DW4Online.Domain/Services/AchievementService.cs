@@ -30,6 +30,7 @@ public sealed class AchievementService(
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
     private IReadOnlyList<AchievementDefinition>? _definitions;
+    private readonly StatBudgets _budgets = new();
 
     public async Task<IReadOnlyList<AchievementDefinition>> DefinitionsAsync(CancellationToken ct = default) =>
         _definitions ??= (await repository.ListDefinitionsAsync(ct)).Where(d => d.Active).OrderBy(d => d.SortOrder).ThenBy(d => d.Id).ToList();
@@ -74,7 +75,7 @@ public sealed class AchievementService(
             return DomainError.Invalid("requirement_not_met", reason);
 
         var now = Clock.Now(time);
-        var ruleset = room?.Randomizer == true ? Rulesets.Randomizer : Rulesets.Of(context);
+        var ruleset = RulesetOf(room, context);
         var evidenceJson = evidence is null ? null : JsonSerializer.Serialize(evidence, Json);
         var added = await repository.TryUnlockAsync(new UnlockWrite(accountId, definition.Id, ruleset, now, room?.RoomId, players,
             Truncate(context?.ClientVersion, 32), false, evidenceJson), ct);
@@ -84,7 +85,11 @@ public sealed class AchievementService(
         return new UnlockResult(definition.Code, ruleset, added, best);
     }
 
-    /// <summary>Counter deltas from the game; bounded by the time since the last batch. Stat achievements unlock here.</summary>
+    /// <summary>
+    /// Counter deltas from the game, bounded per counter by a token bucket: <see cref="AchievementRules.StatKeys"/> per
+    /// minute of real time, at most <see cref="StatBudgets.WindowMinutes"/> minutes saved up. Batches of one account are
+    /// checked one at a time. Stat achievements unlock here, in the room's ruleset.
+    /// </summary>
     public async Task<Result<StatsResult>> AddStatsAsync(long accountId, IReadOnlyDictionary<string, long>? deltas, PlayContext? context, byte[]? ip, CancellationToken ct = default)
     {
         if (deltas is null || deltas.Count == 0) return DomainError.Invalid("no_stats", "No counters were sent.");
@@ -96,39 +101,65 @@ public sealed class AchievementService(
         var session = await CheckSessionAsync(accountId, context, ct);
         if (!session.Ok) return session.Error!;
 
-        var now = Clock.Now(time);
-        var last = await repository.GetLastStatsAtAsync(accountId, ct);
-        var minutes = last is null ? 15 : Math.Clamp((now - last.Value).TotalMinutes, 1, 15);
-        foreach (var (key, value) in deltas)
+        var account = _budgets.For(accountId);
+        await account.Gate.WaitAsync(ct);
+        try
         {
-            if (value > AchievementRules.StatKeys[key] * minutes)
+            var now = Clock.Now(time);
+            if (!account.Ready)
             {
-                await audit.WriteAsync("stats_rejected", accountId, null, ip, new { key, value, minutes = Math.Round(minutes, 2) }, now, ct);
-                return DomainError.Invalid("stats_implausible", $"The '{key}' counter grew faster than the game allows.");
+                // The first batch since the service started: the budget saved up since the last stored batch (or,
+                // for the account's first batch ever, since the account was made).
+                var last = await repository.GetLastStatsAtAsync(accountId, ct);
+                account.Start(last is null ? 0 : Math.Clamp((now - last.Value).TotalMinutes, 0, StatBudgets.WindowMinutes), now);
             }
+            account.Refill(now);
+            foreach (var (key, value) in deltas)
+            {
+                if (value > account.Available(key))
+                {
+                    await audit.WriteAsync("stats_rejected", accountId, null, ip,
+                        new { key, value, available = Math.Floor(account.Available(key)) }, now, ct);
+                    return DomainError.Invalid("stats_implausible", $"The '{key}' counter grew faster than the game allows.");
+                }
+            }
+            var totals = await repository.AddStatsAsync(accountId, deltas.Where(d => d.Value > 0).ToDictionary(), now, ct);
+            foreach (var (key, value) in deltas) account.Spend(key, value);
+            var unlocked = new List<string>();
+            var room = session.Value.Room;
+            var ruleset = RulesetOf(room, context);
+            foreach (var d in (await DefinitionsAsync(ct)).Where(d => d.Kind == AchievementKinds.Stat && d.StatKey is not null))
+            {
+                if (totals.TryGetValue(d.StatKey!, out var total) && total >= (d.Goal ?? long.MaxValue) &&
+                    await repository.TryUnlockAsync(new UnlockWrite(accountId, d.Id, ruleset, now, room?.RoomId, session.Value.Players,
+                        Truncate(context?.ClientVersion, 32), false, null), ct))
+                    unlocked.Add(d.Code);
+            }
+            return new StatsResult(totals, unlocked);
         }
-        var totals = await repository.AddStatsAsync(accountId, deltas.Where(d => d.Value > 0).ToDictionary(), now, ct);
-        var unlocked = new List<string>();
-        var room = session.Value.Room;
-        foreach (var d in (await DefinitionsAsync(ct)).Where(d => d.Kind == AchievementKinds.Stat && d.StatKey is not null))
+        finally
         {
-            if (totals.TryGetValue(d.StatKey!, out var total) && total >= (d.Goal ?? long.MaxValue) &&
-                await repository.TryUnlockAsync(new UnlockWrite(accountId, d.Id, Rulesets.Standard, now, room?.RoomId, session.Value.Players,
-                    Truncate(context?.ClientVersion, 32), false, null), ct))
-                unlocked.Add(d.Code);
+            account.Gate.Release();
         }
-        return new StatsResult(totals, unlocked);
     }
 
-    /// <summary>State achievements from the server's decode of an accepted online character upload.</summary>
+    /// <summary>
+    /// State achievements from the server's decode of an accepted online character upload. Like event unlocks and stats
+    /// they need online play: a ranked room the account is a member of (unless Play:RequireRoom is off), and they go to
+    /// that room's ruleset. An upload outside a room unlocks nothing (the character is still saved).
+    /// </summary>
     public async Task<IReadOnlyList<string>> EvaluateStateAsync(long accountId, SaveRecord record, bool flagged, PlayContext? context, CancellationToken ct = default)
     {
+        var session = await CheckSessionAsync(accountId, context, ct);
+        if (!session.Ok) return [];
+        var (room, players) = session.Value;
+        var ruleset = RulesetOf(room, context);
         var now = Clock.Now(time);
         var unlocked = new List<string>();
         foreach (var d in (await DefinitionsAsync(ct)).Where(d => d.Kind == AchievementKinds.State))
         {
             if (AchievementRules.StateHolds(d.Code, record, d.Goal) &&
-                await repository.TryUnlockAsync(new UnlockWrite(accountId, d.Id, Rulesets.Standard, now, null, context?.Players,
+                await repository.TryUnlockAsync(new UnlockWrite(accountId, d.Id, ruleset, now, room?.RoomId, players,
                     Truncate(context?.ClientVersion, 32), flagged, null), ct))
                 unlocked.Add(d.Code);
         }
@@ -198,5 +229,65 @@ public sealed class AchievementService(
         return (room, players);
     }
 
+    /// <summary>The room's randomizer setting decides (a client cannot report a randomizer room as standard).</summary>
+    private static string RulesetOf(RoomMembership? room, PlayContext? context) =>
+        room?.Randomizer == true ? Rulesets.Randomizer : Rulesets.Of(context);
+
     private static string? Truncate(string? s, int max) => s is null ? null : s.Length <= max ? s : s[..max];
+}
+
+/// <summary>
+/// Per-account token buckets for the stats counters (in memory: a service start begins from the time of the last stored
+/// batch). Each counter refills at its <see cref="AchievementRules.StatKeys"/> rate per minute up to
+/// <see cref="WindowMinutes"/> minutes' worth; a batch spends what it adds.
+/// </summary>
+internal sealed class StatBudgets
+{
+    public const double WindowMinutes = 15;
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<long, Account> _accounts = new();
+    private long _lastPurgeTicks;
+
+    public Account For(long accountId)
+    {
+        var now = Environment.TickCount64;
+        var last = Interlocked.Read(ref _lastPurgeTicks);
+        if (now - last > 600_000 && Interlocked.CompareExchange(ref _lastPurgeTicks, now, last) == last)
+        {
+            // Accounts idle for a full window have a full bucket again: forget them.
+            foreach (var (id, account) in _accounts)
+                if (now - account.TouchedTicks > (long)(WindowMinutes * 60_000) && account.Gate.CurrentCount == 1)
+                    _accounts.TryRemove(id, out _);
+        }
+        var entry = _accounts.GetOrAdd(accountId, _ => new Account());
+        entry.TouchedTicks = now;
+        return entry;
+    }
+
+    internal sealed class Account
+    {
+        private readonly Dictionary<string, double> _tokens = new(StringComparer.Ordinal);
+        private DateTime _refilled;
+        public SemaphoreSlim Gate { get; } = new(1, 1);
+        public bool Ready { get; private set; }
+        public long TouchedTicks { get; set; }
+
+        public void Start(double minutesSaved, DateTime now)
+        {
+            foreach (var (key, rate) in AchievementRules.StatKeys) _tokens[key] = rate * minutesSaved;
+            _refilled = now;
+            Ready = true;
+        }
+
+        public void Refill(DateTime now)
+        {
+            var minutes = Math.Max(0, (now - _refilled).TotalMinutes);
+            if (now > _refilled) _refilled = now;
+            foreach (var (key, rate) in AchievementRules.StatKeys)
+                _tokens[key] = Math.Min(rate * WindowMinutes, _tokens.GetValueOrDefault(key) + rate * minutes);
+        }
+
+        public double Available(string key) => _tokens.GetValueOrDefault(key);
+
+        public void Spend(string key, long value) => _tokens[key] = Math.Max(0, _tokens.GetValueOrDefault(key) - value);
+    }
 }

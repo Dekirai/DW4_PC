@@ -119,8 +119,22 @@ public sealed class OnlineCharacterRepository(Database db) : IOnlineCharacterRep
     public async Task<bool> ResetAsync(long accountId, DateTime now, int historyKeep, CancellationToken ct = default)
     {
         await using var c = await db.OpenAsync(ct);
-        return await c.ExecuteAsync(new CommandDefinition(
-            "DELETE FROM online_characters WHERE account_id = @a", new { a = accountId }, cancellationToken: ct)) > 0;
+        await using var tx = await c.BeginTransactionAsync(ct);
+        var done = await c.ExecuteAsync(new CommandDefinition(
+            "DELETE FROM online_characters WHERE account_id = @a", new { a = accountId }, tx, cancellationToken: ct)) > 0;
+        if (done)
+            await c.ExecuteAsync(new CommandDefinition(
+                "UPDATE accounts SET online_reset_at = @now WHERE id = @a", new { a = accountId, now }, tx, cancellationToken: ct));
+        await tx.CommitAsync(ct);
+        return done;
+    }
+
+    public async Task<DateTime?> GetStartAsync(long accountId, CancellationToken ct = default)
+    {
+        await using var c = await db.OpenAsync(ct);
+        return await c.QuerySingleOrDefaultAsync<DateTime?>(new CommandDefinition(
+            "SELECT GREATEST(created_at, COALESCE(online_reset_at, created_at)) FROM accounts WHERE id = @a",
+            new { a = accountId }, cancellationToken: ct));
     }
 }
 

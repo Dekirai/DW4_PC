@@ -82,7 +82,8 @@ public sealed class AchievementRepository(Database db) : IAchievementRepository
     {
         await using var c = await db.OpenAsync(ct);
         return await c.ExecuteScalarAsync<DateTime?>(new CommandDefinition(
-            "SELECT MAX(updated_at) FROM player_stats WHERE account_id = @a", new { a = accountId }, cancellationToken: ct));
+            "SELECT COALESCE((SELECT MAX(updated_at) FROM player_stats WHERE account_id = @a), (SELECT created_at FROM accounts WHERE id = @a))",
+            new { a = accountId }, cancellationToken: ct));
     }
 
     public async Task<IReadOnlyDictionary<string, long>> AddStatsAsync(long accountId, IReadOnlyDictionary<string, long> deltas, DateTime now, CancellationToken ct = default)
