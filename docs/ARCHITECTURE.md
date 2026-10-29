@@ -473,15 +473,39 @@ three captured stage starts (stagBS01, stagBS02, dngQ1B1e) read for read. A
 replaced BGM fades over the original's table (8031D5D0) and stops once the
 fade reaches -21 dB with the stage's base volume (beSoundInfo [9]). The stage
 loader's own reads share the drive: like the original's loading thread
-(igAdxFile 802AA1B0 over a CRI file stream that comes after the ADXT readers
-in each server pass) the loader reads every file of a load in 64-sector
-requests and asks for the next chunk once the thread has used the last one,
-which takes it whole fields more where the chunk holds the reference index,
-the start of the object buffer (the objects are made there, 0.34 fields per
-1000), object records or the start of the memory blocks; after the last
-chunk the file is ready by the time its memory blocks take, then routed in
-the next update. Routing a large member, state 5 and start.lua are long
-updates that cover the retraces after them. A stage change itself starts with
+(igIGBFile::readFile 800528DC through igAdxFile 802AA1B0 over a CRI file
+stream that comes after the ADXT readers in each server pass, a thread below
+the main thread) the loader reads every file of a load in 64-sector requests
+and asks for the next chunk when the parser wants bytes beyond the last one.
+The thread's wait for a chunk (802A9DC4) does not follow the retrace: with
+igAdxFile +0x3C / +0x3D set it sleeps 16666666 ns (+0x58 / +0x5C) between
+looks at the stream, so it takes a chunk up at the first look after the
+server pass marked it done, on a grid that starts at its request and drifts
+against the fields (Dolphin r46, hooks on the requests and the wait's returns
+of 956 chunks: the return is the request + 0.00245 + n * 0.999309 fields
+within 0.002 and never before 0.027 fields after the retrace; the main
+thread and the servers take the first 0.031 fields after each retrace).
+What it does with each chunk follows the file's content
+(`loader_work` in engine.cpp, hooks after each step of 800528DC in 106
+files): the type metadata, the directory entries, the reference index,
+making every object (0.000247 fields each, 9.7 fields for a stage file's
+30000), the object pass through the reader's 128 KB buffer (+0x104,
+refilled by 800506CC: the thread asks for a chunk a buffer ahead of the
+records it reads; 0.000108 fields per record, 3.66e-5 per string byte), the
+memory blocks read in place (1.01e-6 per byte, 0.13 fields a chunk) and the
+passes after the last byte (memory entries, every entry's +0x90 800527D8,
+which grows with the textures' igCharMetaField bytes); walked from each
+chunk's arrival around the main thread's window this puts 941 captured
+chunk times within 0.14 fields (rms). The update after the work after the
+last chunk routes the file, the next update asks for the next one (the
+thread takes it up when that update ends: 0.036 fields after the retrace in
+states 100 and 2, 0.068 in state 4, 0.249 for the loading card, the
+descriptor after the reload's late sample). Routing a large member, state 5
+and start.lua are long updates that cover the retraces after them
+(`loader_register_cost`, `loader_start_cost`: refitted to 14 Dolphin loads,
+-1.888 fields + 0.00315 per model RAM + 0.0028 per info and -4.064 +
+0.00425 per model RAM + 0.0109 per generated model; dng205b3's start.lua
+covers 2 retraces, dng308b3's 1). A stage change itself starts with
 the application loop's module reload: NEXTSTAGE's frame ends the loop's update
 / render loop, and after its picture (the endScene retrace) the loop reloads
 every module (80021944 -> 8040F570 -> 8028A87C: every module's +0x70 reset,

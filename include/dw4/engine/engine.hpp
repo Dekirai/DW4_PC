@@ -619,7 +619,10 @@ private:
         int member{-1};          // index into loader_members_, -1 for a logical path
         bool timing_only{};      // read, not loaded (BecText / sbiallse: the port has its own)
     };
-    void loader_request(const LoaderItem& item);
+    // `start`: nano-fields after the frame's retrace at which the loading
+    // thread takes the request up (the main thread's update ends; see
+    // Engine::loader_request).
+    void loader_request(const LoaderItem& item, std::int64_t start);
     bool loader_ready() const;
     bool loader_queue_step(int kind);
     // Fast loading: several files of the queue per update (loader_queue_step).
@@ -691,21 +694,21 @@ private:
     std::string pending_stage_;
     int loader_state_ = -1;
     // The file on its way (802F9E98's pending directory): requested, its
-    // read issued on the simulated drive, the frame that first saw its last
-    // chunk booked, the fields its processing still takes after that.
+    // reads issued on the simulated drive chunk by chunk as the loading
+    // thread asks for them (Engine::process_stage_loader, loader_work), the
+    // frame whose update sees it done.
     struct LoaderFile {
         LoaderItem item;
         bool active{}, issued{};
         unsigned archive{}, entry{};
         std::uint32_t sectors{};
         std::uint32_t read{};      // sectors read so far (requests of up to 64)
-        int object_chunk{-1};      // the chunk holding the start of the object buffer (the objects are made after it)
-        int memory_chunk{-1};      // the chunk holding the start of the memory blocks
-        int stall{};               // milli-fields the objects take
-        bool chunk_costed{};       // the booked chunk's processing is counted (wait)
-        std::int64_t wait{};       // fields after its booking before the next request
         std::int64_t booked{-1};   // the frame that saw the chunk on its way booked
-        int parse{};
+        int parse{};               // the boot reads: fields from the booking to the next request
+        std::vector<std::int64_t> work; // nano-fields the loading thread works after each chunk arrives (the last: until done)
+        std::int64_t request_time{};    // nano-fields from frame 0: the loading thread's last request
+        std::int64_t issue_frame{-1};   // the frame whose server pass issues the next chunk's read
+        std::int64_t ready_frame{-1};   // the frame whose update sees the file done (80070130)
         std::int64_t route_cost{}; // milli-fields of the update that routes the file
         std::shared_ptr<const IgbDocument> document; // parsed at the request, routed when ready
         std::optional<std::uint64_t> raw_offset;      // a read of `sectors` at a disc offset (the boot reads)
@@ -717,7 +720,6 @@ private:
     std::vector<ObjectView> loader_preliminary_; // infos of the /s members, registered when state 100 ends
     std::int64_t loader_cost_{};             // milli-fields the current loader update takes
     int loader_skip_{};                      // retraces the original's current update still covers
-    std::int64_t loader_processing_{};       // milli-fields of chunk processing so far in this load (chunk_extra)
     std::int32_t loader_teardown_{};         // see StageSnapshot::loader_teardown
     bool reloading_{};                       // the module reload before the pending stage's teardown has begun (Engine::step)
     bool loader_common_{true};               // see StageSnapshot::loader_common

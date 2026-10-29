@@ -677,7 +677,6 @@ void Engine::begin_stage_load(const StageSnapshot* restoring) {
     loader_preliminary_.clear();
     loader_skip_ = 0;
     loader_cost_ = 0;
-    loader_processing_ = 0;
     // The load timing of this load and the stage it starts (a save state's
     // cheats are in place by now).
     loader_fast_ = cheats_.fast_loading;
@@ -885,76 +884,214 @@ void Engine::register_info(const ObjectView& info) {
 // two in-game changes). The port parses its files at once but its loader
 // waits for the same reads on the simulated drive (disc_timing.hpp) and steps
 // like the original's updates:
-// - A directory request (8006FD34) in an update is read by the loader's
-//   ADXSTM (8051B1D0, after the ADX streams' readers in each server pass)
-//   from the next server tick on, 64 sectors at a time; the loading thread
-//   asks for the next chunk once it has used the last one (chunk_extra). The
-//   file is routed (80070130 true, 80070140) in the update after the one
-//   that saw its last chunk booked, later by the time the thread spends on
-//   it after that (LoaderCost::post). The next request follows in the next
-//   update.
+// - A directory request (8006FD34) in an update hands the file to the
+//   loading thread (igIGBFile::readFile 800528DC through igAdxFile
+//   802AA1B0, a thread below the main thread), which takes it up once the
+//   main thread's update ends. The thread reads the file in 64-sector
+//   chunks through the loader's ADXSTM (8051B1D0, after the ADX streams'
+//   readers in each server pass): it asks for the next chunk when the
+//   parser wants bytes beyond the last one (loader_work), and the request
+//   is issued at the next retrace's server pass. Its wait 802A9DC4 does not
+//   follow the retrace: it sleeps 16666666 ns (igAdxFile +0x58 / +0x5C with
+//   +0x3C and +0x3D set: the thread sleep of 805622F8, not VIWaitForRetrace
+//   802648EC) between looks at the stream's state, so the chunk is taken up
+//   at the first look after the server pass marked it done, on a grid that
+//   starts at the request and drifts against the fields (Dolphin r46, hooks
+//   on the request 0x802AA2F8 / 0x802AA43C and the wait's return 0x802AA318 /
+//   0x802AA474 in 956 chunks: the return is the request + 0.00245 +
+//   n * 0.999309 fields within 0.002, never earlier than 0.027 fields after
+//   the retrace). The work after the file's last chunk ends with 80070130
+//   true; the update after that routes it (80070140), and the next request
+//   follows in the next update.
 // - An update that takes the original longer than a field (the teardown of
 //   the outgoing stage, routing a large stage member, registering the stage's
 //   infos in state 5, start.lua) covers the following retraces: the loader
 //   skips them, and a read it asked for is issued with the last of them.
 namespace {
-// What the original's loading thread spends on a file besides reading it
-// (Dolphin captures of 15 loads, 687 chunks; igAdxFile::read 802AA1B0 asks
-// for the next 64 sectors only when the parser wants more data, and its wait
-// 802A9DC4 sleeps to the next retrace, so a chunk that takes the thread more
-// than the rest of its field delays the next request by whole fields):
-// - a chunk before the object buffer (header, types, entries, the reference
-//   index): one field more; a chunk inside it (object records of
-//   15000-18000 fields) 1.1;
-// - the chunk holding the start of the object buffer: the objects are made
-//   first, 0.8 + 0.33 per 1000 objects (1079: 1, 8535: 3, 23931: 9, 40382:
-//   14; within 1), counted in milli-fields like the rest (the r29 captures
-//   at a second BGM phase, where no refill hides it: every stage's /s
-//   member, 470-680 objects, takes one field more over its first two
-//   chunks, already in the first from about 600 objects on);
-// - the chunk where the memory blocks start: two more;
-// - memory chunks: none (at times one);
-// - after the last chunk the file is ready 0.49 + 0.32 per 1000 memory
-//   blocks + 1.13 per MB of them later (111 files: 12 one off);
-// - the update that routes the file takes 0.081 fields per 1000 memory
-//   blocks (the stage members with 12400 and more cover a second retrace).
-struct LoaderCost {
-    int object_chunk{-1}; // the chunk holding the start of the object buffer (-1: no objects)
-    int memory_chunk{-1}; // the chunk holding the start of the memory blocks (-1: none)
-    int stall{};          // milli-fields the objects take
-    int post{};
-    std::int64_t route{};
-};
-LoaderCost loader_cost(const IgbDocument* document) {
-    LoaderCost cost;
-    if (!document) return cost;
-    const std::size_t chunk = 64 * 2048;
-    const std::size_t objects = document->objects.size(), memories = document->memories.size();
-    std::size_t memory_bytes = 0;
-    for (const auto& m : document->memories) memory_bytes += m.size;
-    const std::size_t memory_start = memories ? document->memories.front().offset : document->consumed_bytes;
-    const std::size_t object_start = memory_start - std::min<std::size_t>(memory_start, document->metadata.header.object_buffer_size);
-    if (objects) cost.object_chunk = int(object_start / chunk);
-    if (memories) cost.memory_chunk = int(memory_start / chunk);
-    cost.stall = int(800 + objects * 33 / 100);
-    cost.post = int((492 + memories * 32 / 100 + memory_bytes * 1132 / 1000000) / 1000);
-    cost.route = std::int64_t(memories) * 81 / 1000;
-    return cost;
+constexpr std::int64_t kNanoField = 1'000'000'000;  // the loading thread's clock: nano-fields from frame 0's retrace
+constexpr std::int64_t kLoaderPoll = 999'309'000;   // its sleep between looks at the stream (16666666 ns and the look)
+constexpr std::int64_t kLoaderPollOffset = 2'450'000; // the first look's own work after the request
+constexpr std::int64_t kLoaderBooked = 27'000'000;  // the loader's pass marks a read done this long after the retrace
+// The main thread and the CRI servers take the CPU from each retrace on for
+// this long before the loading thread runs (no request or look in 1278
+// captured ones falls earlier; the processing times fit best with it).
+constexpr std::int64_t kLoaderMainWindow = 31'000'000;
+// Where in its frame the thread takes a request up: the end of the main
+// thread's update that made it (Dolphin r46: the first request of a file
+// 0.030-0.047 fields after the retrace in states 100 and 2, 0.054-0.095 in
+// state 4, 0.245-0.264 for the loading card from state 0's update, and the
+// descriptor 0.035-0.040 after the update's late world clock sample, 0.160
+// after the session's boot reads).
+constexpr std::int64_t kLoaderStartQueue = 36'000'000;
+constexpr std::int64_t kLoaderStartCommon = 68'000'000;
+constexpr std::int64_t kLoaderStartCard = 249'000'000;
+constexpr std::int64_t kLoaderStartDescriptor = 40'000'000;
+constexpr std::int64_t kLoaderStartAfterBoot = 160'000'000;
+
+// The end of `work` nano-fields of the loading thread's work begun at time
+// `t`: after each retrace the main thread's window passes first.
+std::int64_t loader_walk(std::int64_t t, std::int64_t work) {
+    for (;;) {
+        const std::int64_t retrace = (t / kNanoField + 1) * kNanoField;
+        if (t + work <= retrace) return t + work;
+        work -= retrace - t;
+        t = retrace + kLoaderMainWindow;
+    }
 }
 
-// Milli-fields the loading thread spends on chunk `chunk` of a file beyond
-// the field the next request takes anyway; the captures' memory chunks cost a
-// field more one time in 13, object chunks one time in 10 (the main thread's
-// share of a field varies), which the load's running sum spreads evenly. Over
-// both r29 capture sets this predicts 259 of the 302 chunks no refill hides
-// (the truncated object cost before: 230), the rest within a field.
-std::int64_t chunk_extra(int chunk, int object_chunk, int memory_chunk, int stall) {
-    if (object_chunk < 0) return 0;
-    if (chunk < object_chunk) return 1000;
-    if (chunk == object_chunk) return stall;
-    if (memory_chunk < 0 || chunk < memory_chunk) return 1100;
-    if (chunk == memory_chunk) return 2000;
-    return 80;
+// The wait's return for a chunk requested at `request` whose read the
+// server pass of frame `booked` marked done: the first look after it; a look
+// that falls in the main thread's window runs once the window ends.
+std::int64_t loader_look(std::int64_t request, std::int64_t booked) {
+    const std::int64_t done = booked * kNanoField + kLoaderBooked;
+    std::int64_t look = request + kLoaderPollOffset + kLoaderPoll;
+    while (look < done) {
+        look += kLoaderPoll;
+        if (look % kNanoField < kLoaderMainWindow) look = look / kNanoField * kNanoField + kLoaderMainWindow;
+    }
+    if (look % kNanoField < kLoaderMainWindow) look = look / kNanoField * kNanoField + kLoaderMainWindow;
+    return look;
+}
+
+// The loading thread's work on a file (igIGBFile::readFile 800528DC), in
+// nano-fields of its own time, after each 64-sector chunk arrives before it
+// asks for the next; the last entry runs on until the file is done. The
+// readFile steps in file order, each needing the file's bytes up to some
+// offset (Dolphin r46: a hook after each step of 800528DC, 106 files of 17
+// captures; the fitted costs, in fields, with the files they were measured
+// in left out by name the error was):
+// - header and type metadata (8004F974 .. 8004FC94): 0.020 + 0.00242 per
+//   object type (within 0.012); external directories 4.6e-6 per byte;
+// - the directory entries (800509D4): 0.0038 + 0.000583 per entry (0.003);
+// - the reference index (80050C68): 0.0016 + 1.23e-5 per object + 1.16e-5
+//   per memory block (0.001);
+// - making the objects (80050E80): 0.0034 + 0.000247 per object + 0.000213
+//   per memory block (0.02; 30863 objects: 9.7 fields);
+// - the object pass (80051AE0): it fills the reader's 128 KB buffer (+0x104
+//   = 0x20000 by Dolphin's log, refilled by 800506CC with what was used) at
+//   the start of the object buffer, a loop over the objects (0.0137 +
+//   1.61e-5 per object + 5.4e-6 per memory block), then the records out of
+//   the buffer: 0.0148 + 0.000108 per record + 8.38e-5 per string field +
+//   3.66e-5 per string byte + 0.000266 per memory block of the file spread
+//   over the records (0.14 per file); a record the buffer does not hold
+//   whole refills it up to 128 KB from the record on, so the thread asks
+//   for the next chunk a buffer ahead of the records it reads;
+// - the memory blocks (the file's +0x84), read in place: 0.0017 + 5.74e-5
+//   per block + 1.01e-6 per byte (0.011);
+// - after the last byte: the memory entries' two passes (80051CB0), every
+//   entry's +0x90 (800527D8), the file's +0x78 and 80051E30: 0.0517 +
+//   6.16e-5 per object + 0.000128 per memory block + max(0, -0.0552 +
+//   0.000114 per memory block + 9.04e-7 per byte of igCharMetaField memory)
+//   (the textures' pixels; 0.2 per file, 1.2 for the stage file with the
+//   most).
+// Walked from each chunk's arrival with the main thread's window at each
+// retrace this puts 941 captured chunk times within 0.14 fields (rms).
+std::vector<std::int64_t> loader_work(const IgbDocument* document, std::size_t file_bytes) {
+    constexpr std::size_t kChunk = 64 * 2048, kBuffer = 0x20000;
+    const std::size_t chunks = std::max<std::size_t>(1, (file_bytes + kChunk - 1) / kChunk);
+    std::vector<std::int64_t> work(chunks, 0);
+    std::size_t loaded = 0; // chunks asked for
+    std::int64_t now = 0;   // work since the last chunk arrived
+    auto need = [&](std::size_t end) {
+        end = std::min(end, file_bytes);
+        while (loaded == 0 || loaded * kChunk < end) {
+            if (loaded > 0) {
+                work[loaded - 1] += now;
+                now = 0;
+            }
+            ++loaded;
+        }
+    };
+    auto spend = [&](std::int64_t nano) { now += nano; };
+    if (!document) {
+        // (A file the port could not parse: its bytes as memory.)
+        for (std::size_t p = 0; p < file_bytes; p += kChunk) {
+            need(p + kChunk);
+            spend(std::int64_t(std::min(kChunk, file_bytes - p)) * 1010);
+        }
+        need(file_bytes);
+        spend(51'700'000);
+        work[loaded - 1] += now;
+        return work;
+    }
+    const auto& doc = *document;
+    const auto& header = doc.metadata.header;
+    const auto bytes = doc.bytes();
+    auto u32 = [&](std::size_t offset) -> std::uint32_t {
+        if (offset + 4 > bytes.size()) return 0;
+        const std::uint8_t* p = bytes.data() + offset;
+        return header.byte_order == IgbByteOrder::big ? std::uint32_t(p[0]) << 24 | std::uint32_t(p[1]) << 16 | std::uint32_t(p[2]) << 8 | p[3]
+                                                      : std::uint32_t(p[3]) << 24 | std::uint32_t(p[2]) << 16 | std::uint32_t(p[1]) << 8 | p[0];
+    };
+    const std::int64_t objects = std::int64_t(doc.objects.size()), memories = std::int64_t(doc.memories.size());
+    std::size_t cursor = doc.metadata.metadata_bytes;
+    need(48);
+    spend(20'000'000);
+    need(cursor);
+    spend(std::int64_t(doc.metadata.object_types.size()) * 2'420'000);
+    if (header.flags & 0x40000000u) {
+        const std::size_t size = u32(cursor);
+        cursor += size;
+        need(cursor);
+        spend(std::int64_t(size) * 4'600);
+    }
+    if (header.flags & 0x10000000u) {
+        cursor += u32(cursor);
+        need(cursor);
+    }
+    cursor += header.entry_buffer_size;
+    need(cursor);
+    spend(3'800'000 + std::int64_t(doc.entries.size()) * 583'000);
+    cursor += u32(cursor);
+    need(cursor);
+    spend(1'600'000 + objects * 12'300 + memories * 11'600);
+    if (header.flags & 0x80000000u) cursor += 4;
+    need(cursor);
+    spend(3'400'000 + objects * 247'000 + memories * 213'000);
+    const std::size_t object_start = cursor, object_end = cursor + header.object_buffer_size;
+    if (objects) {
+        std::vector<char> string_type(doc.metadata.field_types.size(), 0);
+        for (std::size_t i = 0; i < string_type.size(); ++i) string_type[i] = doc.metadata.field_types[i].name == "igStringMetaField";
+        std::size_t fill = std::min(object_start + kBuffer, object_end);
+        need(fill);
+        spend(13'700'000 + objects * 16'100 + memories * 5'400);
+        spend(14'800'000);
+        const std::int64_t per_record = 108'000 + memories * 266'000 / objects;
+        std::size_t position = object_start;
+        for (const auto& object : doc.objects) {
+            const std::size_t length = u32(position + 4);
+            if (position + length > fill) {
+                fill = std::min(position + kBuffer, object_end);
+                need(fill);
+            }
+            std::int64_t strings = 0, string_bytes = 0;
+            for (const auto& field : object.fields)
+                if (field.type_index < string_type.size() && string_type[field.type_index]) {
+                    ++strings;
+                    string_bytes += std::int64_t(field.size >= 4 ? field.size - 4 : 0);
+                }
+            spend(per_record + strings * 83'800 + string_bytes * 36'600);
+            position += std::max<std::size_t>(length, 8);
+        }
+    }
+    spend(1'700'000);
+    std::int64_t char_bytes = 0;
+    for (const auto& memory : doc.memories) {
+        spend(57'400);
+        for (std::size_t p = memory.offset, e = memory.offset + memory.size; p < e;) {
+            const std::size_t q = std::min(e, (p / kChunk + 1) * kChunk);
+            need(q);
+            spend(std::int64_t(q - p) * 1'010);
+            p = q;
+        }
+        if (memory.memory_type_index >= 0 && std::size_t(memory.memory_type_index) < doc.metadata.field_types.size() &&
+            doc.metadata.field_types[std::size_t(memory.memory_type_index)].name == "igCharMetaField")
+            char_bytes += std::int64_t(memory.size);
+    }
+    need(file_bytes);
+    spend(51'700'000 + objects * 61'600 + memories * 127'600 + std::max<std::int64_t>(0, -55'200'000 + memories * 114'000 + char_bytes * 904));
+    work[loaded - 1] += now;
+    return work;
 }
 
 bool trace_loader() {
@@ -1096,28 +1233,37 @@ std::int32_t Engine::loader_teardown_cost() const {
     return std::int32_t(448 + load.db_objects * 753 / 1000 + load.rest * 656 / 1000 + other_objects * 166 / 1000);
 }
 
-// State 5 (802FA53C) registers the stage's infos; the update grows with the
-// model RAMs they make: 0.05 fields + 0.0024 per RAM (12 captures, 0.9 fields
-// for the lobby's 199 RAMs to 3.7 for 1344, within 0.5).
+// The two long updates at a stage's start, fitted to the update lengths of
+// 14 Dolphin loads (r46: the world clock delta after each, a whole number of
+// fields as the update waits for its retrace; the 7 of round 46's load set and
+// 7 new games sent to other stages). State 5 (802FA53C) registers the stage's
+// infos: -1.888 fields + 0.00315 per model RAM + 0.0028 per info (all 14
+// cover Dolphin's retraces; each left out of the fit: 11 of 14; the r29 fit
+// of 0.05 + 0.0024 per RAM covered 10 of 14).
 std::int64_t Engine::loader_register_cost(const std::vector<ObjectView>& infos) const {
-    (void)infos;
     const auto* models = get<ModelCtrlManager>();
-    return 50 + std::int64_t(models ? models->rams().size() : 0) * 24 / 10;
+    const std::int64_t rams = models ? std::int64_t(models->rams().size()) : 0;
+    return std::max<std::int64_t>(0, -1888 + rams * 315 / 100 + std::int64_t(infos.size()) * 28 / 10);
 }
 
-// State 7: TEXTCTL INITIALIZE and start.lua, 0.45 fields + 0.0177 per model
-// it generates (9 generated: below 0.6 fields, 78: 1.77; within 0.2).
+// State 7: TEXTCTL INITIALIZE and start.lua, -4.064 fields + 0.00425 per
+// model RAM + 0.0109 per model it generates (all 14; each left out: 13 of 14,
+// dng205b3 covers 2 retraces, dng308b3 1; the r29 fit of 0.45 + 0.0177 per
+// generated model covered 11 of 14).
 std::int64_t Engine::loader_start_cost() const {
-    std::size_t generated = 0;
-    if (const auto* models = get<ModelCtrlManager>())
+    std::int64_t generated = 0, rams = 0;
+    if (const auto* models = get<ModelCtrlManager>()) {
+        rams = std::int64_t(models->rams().size());
         for (const auto& ram : models->rams()) generated += ram->generated ? 1 : 0;
-    return 450 + std::int64_t(generated) * 177 / 10;
+    }
+    return std::max<std::int64_t>(0, -4064 + rams * 425 / 100 + generated * 109 / 10);
 }
 
-void Engine::loader_request(const LoaderItem& item) {
+void Engine::loader_request(const LoaderItem& item, std::int64_t start) {
     loader_file_ = {};
     loader_file_.item = item;
     loader_file_.active = true;
+    loader_file_.request_time = std::int64_t(frame_) * kNanoField + start;
     std::optional<ResourceLocation> location;
     const PackageMember* member = item.member >= 0 && std::size_t(item.member) < loader_members_.size()
                                       ? &loader_members_[std::size_t(item.member)] : nullptr;
@@ -1144,12 +1290,21 @@ void Engine::loader_request(const LoaderItem& item) {
             log("load failed: " + item.name + ": " + error.what());
         }
     }
-    const auto cost = loader_cost(loader_file_.document.get());
-    loader_file_.parse = cost.post;
-    loader_file_.route_cost = cost.route;
-    loader_file_.object_chunk = cost.object_chunk;
-    loader_file_.memory_chunk = cost.memory_chunk;
-    loader_file_.stall = cost.stall;
+    // What the loading thread does with each chunk (loader_work; a file the
+    // port reads on its own, such as BecText.igb, is parsed for it alone).
+    // The update that routes the file takes 0.081 fields per 1000 memory
+    // blocks (the stage members with 12400 and more cover a second retrace).
+    if (!loader_fast_) {
+        std::shared_ptr<const IgbDocument> timing = loader_file_.document;
+        if (!timing && item.timing_only && bytes) {
+            try {
+                timing = std::make_shared<const IgbDocument>(read_igb_document(resources_.read(item.name)));
+            } catch (const std::exception&) {
+            }
+        }
+        loader_file_.work = loader_work(timing.get(), bytes);
+    }
+    loader_file_.route_cost = loader_file_.document ? std::int64_t(loader_file_.document->memories.size()) * 81 / 1000 : 0;
     if (trace_loader() && std::getenv("DW4_TRACE_LOADER_CHUNKS") && loader_file_.document) {
         // Analysis aid: what each 64-sector chunk of the file holds.
         const auto& doc = *loader_file_.document;
@@ -1178,11 +1333,14 @@ void Engine::loader_request(const LoaderItem& item) {
         }
         log(text);
     }
-    if (trace_loader())
+    if (trace_loader()) {
+        std::string work;
+        for (const auto w : loader_file_.work) work += " " + std::to_string(w / 1'000'000);
         log("loader F " + item.name + " bytes " + std::to_string(bytes) + " objects " +
-            std::to_string(loader_file_.document ? loader_file_.document->objects.size() : 0) + " object data " +
-            "chunk " + std::to_string(loader_file_.object_chunk) + " / memory chunk " + std::to_string(loader_file_.memory_chunk) + ", stall " + std::to_string(loader_file_.stall) + " parse " +
-            std::to_string(loader_file_.parse) + " route " + std::to_string(loader_file_.route_cost));
+            std::to_string(loader_file_.document ? loader_file_.document->objects.size() : 0) + ", taken up at +" +
+            std::to_string((loader_file_.request_time % kNanoField) / 1'000'000) + ", work per chunk (milli-fields)" + work + ", route " +
+            std::to_string(loader_file_.route_cost));
+    }
     // Fast loading: the file is there as soon as it is asked for.
     if (loader_fast_) {
         loader_file_.issued = true;
@@ -1201,14 +1359,15 @@ std::size_t Engine::loader_item_bytes(const LoaderItem& item) const {
     return location->entry_index < entries.size() ? entries[location->entry_index].size : 0;
 }
 
-// 80070130 for the pending directory: its last chunk was booked and the
-// original processed it.
+// 80070130 for the pending directory: the loading thread finished the file
+// before this frame's update (a boot read: its fields after the booking).
 bool Engine::loader_ready() const {
     if (!loader_file_.active || !loader_file_.issued) return false;
     if (loader_fast_) return true;
     if (loader_file_.sectors == 0 || !get<SoundManager>()) return true;
     if (loader_file_.read < loader_file_.sectors) return false;
-    return loader_file_.booked >= 0 && std::int64_t(frame_) >= loader_file_.booked + 1 + loader_file_.parse;
+    if (loader_file_.raw_offset) return loader_file_.booked >= 0 && std::int64_t(frame_) >= loader_file_.booked + 1 + loader_file_.parse;
+    return loader_file_.ready_frame >= 0 && std::int64_t(frame_) >= loader_file_.ready_frame;
 }
 
 // The routing of a ready file (802F9E98 0x802F9EF8..0x802FA100) by queue:
@@ -1236,7 +1395,7 @@ bool Engine::loader_queue_step(int kind) {
     if (loader_fast_) return loader_queue_fast(kind);
     if (loader_index_ >= loader_queue_.size()) return true;
     if (!loader_file_.active) {
-        loader_request(loader_queue_[loader_index_]);
+        loader_request(loader_queue_[loader_index_], kind == 2 ? kLoaderStartCommon : kLoaderStartQueue);
         return false;
     }
     if (!loader_ready()) return false;
@@ -1258,7 +1417,7 @@ bool Engine::loader_queue_fast(int kind) {
         const std::size_t size = loader_item_bytes(loader_queue_[loader_index_]);
         if (bytes > 0 && bytes + size > kFastLoadBytes) return false;
         bytes += size;
-        loader_request(loader_queue_[loader_index_]);
+        loader_request(loader_queue_[loader_index_], 0);
         if (trace_loader()) log("loader R " + loader_file_.item.name);
         loader_route(loader_file_.item, kind);
         loader_file_ = {};
@@ -1279,9 +1438,38 @@ void Engine::process_stage_loader() {
         return;
     }
     auto* sound = get<SoundManager>();
-    // The read on its way: the frame that first sees its last chunk booked
-    // (the previous step's server pass booked it, SoundManager::server_tick).
-    if (loader_file_.issued && loader_file_.booked < 0 && (!sound || !sound->loading())) loader_file_.booked = std::int64_t(frame_);
+    // The read on its way: the frame that first sees it booked (the previous
+    // step's server pass booked it, SoundManager::server_tick). The loading
+    // thread takes the chunk up at its first look after that (loader_look),
+    // works on it (loader_work, loader_walk) and asks for the next one, which
+    // the server pass of the frame it asks in issues; after the last chunk
+    // the file is done when that work ends, and the next update routes it.
+    if (loader_file_.issued && loader_file_.booked < 0 && (!sound || !sound->loading())) {
+        loader_file_.booked = std::int64_t(frame_);
+        if (!loader_file_.raw_offset && loader_file_.work.empty()) {
+            loader_file_.issue_frame = loader_file_.booked;
+            loader_file_.ready_frame = loader_file_.booked + 1;
+        } else if (!loader_file_.raw_offset && loader_file_.read > 0) {
+            const std::size_t chunk = std::min<std::size_t>((loader_file_.read - 1) / 64, loader_file_.work.size() - 1);
+            const std::int64_t look = loader_look(loader_file_.request_time, loader_file_.booked);
+            const std::int64_t end = loader_walk(look, loader_file_.work[chunk]);
+            if (trace_loader()) {
+                auto at = [](std::int64_t t) {
+                    char text[48];
+                    std::snprintf(text, sizeof text, "%lld+%.3f", static_cast<long long>(t / kNanoField), double(t % kNanoField) / double(kNanoField));
+                    return std::string(text);
+                };
+                log("loader chunk " + std::to_string(chunk) + " of " + loader_file_.item.name + ": taken up at " + at(look) +
+                    (loader_file_.read >= loader_file_.sectors ? ", done at " : ", next asked for at ") + at(end));
+            }
+            if (loader_file_.read >= loader_file_.sectors) {
+                loader_file_.ready_frame = end / kNanoField + 1;
+            } else {
+                loader_file_.request_time = end;
+                loader_file_.issue_frame = end / kNanoField;
+            }
+        }
+    }
     // The original's update is still running: no update for this retrace.
     if (loader_skip_ > 0) --loader_skip_;
     else {
@@ -1294,9 +1482,12 @@ void Engine::process_stage_loader() {
     }
     if (!loader_file_.active) return;
     // A request is read from the server tick after the update that made it
-    // (a long update: with the last retrace it covers), chunk by chunk.
+    // (a long update: with the last retrace it covers; the loading thread
+    // takes it up when that update ends), chunk by chunk.
     if (!loader_file_.issued) {
         if (loader_skip_ > 0) return;
+        if (std::int64_t(frame_) < loader_file_.request_time / kNanoField) return;
+        loader_file_.request_time = std::max(loader_file_.request_time, std::int64_t(frame_) * kNanoField + kLoaderStartQueue);
         loader_file_.issued = true;
         if (!sound || !loader_file_.sectors) {
             loader_file_.read = loader_file_.sectors;
@@ -1310,21 +1501,12 @@ void Engine::process_stage_loader() {
         }
         return;
     }
-    // The next chunk: from the tick after the booking, later by the whole
-    // fields the loading thread spends on the booked chunk (chunk_extra; the
-    // load's running sum keeps their fractions).
+    // The next chunk: issued by the server pass of the frame the loading
+    // thread asked for it in.
     if (loader_file_.read >= loader_file_.sectors || loader_file_.booked < 0 || !sound) return;
-    const int chunk = int((loader_file_.read - 1) / 64);
-    if (!loader_file_.chunk_costed) {
-        const std::int64_t before = loader_processing_ / 1000;
-        loader_processing_ += chunk_extra(chunk, loader_file_.object_chunk, loader_file_.memory_chunk, loader_file_.stall);
-        loader_file_.wait = loader_processing_ / 1000 - before;
-        loader_file_.chunk_costed = true;
-    }
-    const std::int64_t wait = loader_file_.wait;
-    if (std::int64_t(frame_) < loader_file_.booked + wait) return;
+    if (loader_file_.issue_frame < 0 || std::int64_t(frame_) < loader_file_.issue_frame) return;
     loader_file_.booked = -1;
-    loader_file_.chunk_costed = false;
+    loader_file_.issue_frame = -1;
     loader_file_.read += sound->read_entry(*this, loader_file_.archive, loader_file_.entry, loader_file_.read, 64);
 }
 
@@ -1386,7 +1568,10 @@ void Engine::loader_update() {
         // (0x80316674) its beFileListInfo starts the file-list manager,
         // whose update follows in the same frame (state 0).
         if (!loader_file_.active) {
-            loader_request({stage_name_ + ".igb"});
+            // (After a module reload the update starts late by the reload's
+            // last field, StageSnapshot::clock_lateness.)
+            const std::int64_t late = applied_lateness_ * 3 * kNanoField / kFieldNsPer3;
+            loader_request({stage_name_ + ".igb"}, loader_boot_step_ > 0 ? kLoaderStartAfterBoot : late + kLoaderStartDescriptor);
             return;
         }
         if (!loader_ready()) return;
@@ -1413,7 +1598,7 @@ void Engine::loader_update() {
         loader_state_ = 1;
         if (stage_name_.size() > 2) {
             const std::string path = "loadingusa/ld" + stage_name_.substr(2) + ".igb";
-            if (const auto* record = resources_.catalog().find(path); record && record->location) loader_request({path});
+            if (const auto* record = resources_.catalog().find(path); record && record->location) loader_request({path}, kLoaderStartCard);
         }
         return;
     }
