@@ -88,7 +88,7 @@ and user secrets (Development) work as usual.
 | `Accounts` | `Registration` (open / closed), `PasswordIterations` (220000), `MaxFailedLogins` (10), `LockoutMinutes` (15), `GameSessionDays` (30), `WebSessionDays` (14), `SessionTouchMinutes` (5), `MaxSessionsPerAccount` (20). |
 | `OnlineCharacter` | `HistoryRevisions` (20), `Rules:MaxLevelsPerPlayHour` (120), `Rules:PlayTimeSlackSeconds` (600). |
 | `CloudSave` | `MaxBytes` (1 MiB), `HistoryRevisions` (5). |
-| `Play` | `RequireRoom` (true), `MinimumProtocol` / `CurrentProtocol` (netplay `kProtocol`), `MinimumClientVersion` / `CurrentClientVersion`. |
+| `Play` | `RequireRoom` (true), `MinimumProtocol` / `CurrentProtocol` (netplay `kProtocol`), `MinimumClientVersion` / `CurrentClientVersion`, `SpeedrunFloorSeconds` (per board `story_normal` / `story_hard` / `story_veryhard`, 2700 each: see "Speedrun floor"). |
 | `RateLimits` | `GlobalPerMinute` 300 (per IP), `LoginPerMinute` 5 (per IP, login + recovery), `RegisterPerHour` 3 (per IP), `CharacterWritesPerMinute` 12, `CloudWritesPerHour` 6, `AchievementsPerMinute` 60, `AccountChangesPerMinute` 10, `StaffPerMinute` 60, `RoomCreatesPerMinute` 5, `RoomJoinsPerMinute` 20, `StageChangesPerMinute` 30 (stage enter + leave) (per account); `WebLoginPerMinute` 5 (website login + recovery), `WebRegisterPerHour` 3 (per IP, POSTs only), `WebAccountChangesPerMinute` 10 (per account, the account page's POSTs). |
 | `Rooms` | `MaxRooms` (200), `PlayersPerInstance` (4), `HeartbeatSeconds` (10), `MemberTimeoutSeconds` (35), `RoomsPerOwner` (1), `PasswordIterations` (20000, room passwords live in memory only), `SettingsMaxBytes` (4096), `RankedDataHashes` (empty = every data hash is ranked; decimal or 0x-hex). |
 | `Relay` | `Enabled` (true), `ListenAddress` (127.0.0.1; 0.0.0.0 on the server), `Port` (52041), `TicketKey` (secret, base64 32 bytes: `DW4Online.Server gen-relay-key`; required outside Development), timeouts and byte budgets. |
@@ -150,7 +150,7 @@ Authenticated calls send `Authorization: Bearer dw4_<43 characters>`.
 | `POST /cloud-save/restore/{revision}` | token | Make a kept revision the latest again. |
 | `POST /cloud-save/delete` | token | `{currentPassword}`: delete the backup and its history (a wrong password counts as a failed login). |
 | `GET /achievements` | optional | All definitions (hidden ones masked until unlocked); with a token the caller's unlocks and progress. |
-| `POST /achievements/unlock` | token | `{code, context, evidence: {igtMs?, level?, stage?}}` -> `{code, ruleset, newlyUnlocked, newBestTime}`. |
+| `POST /achievements/unlock` | token | `{code, context, evidence: {igtMs?, level?, stage?}}` -> `{code, ruleset, newlyUnlocked, newBestTime, timeRejected}`. |
 | `POST /stats` | token | `{deltas: {enemies_defeated: 12, play_seconds: 60, ...}, context}` -> `{totals, unlocked}`. |
 | `GET /rooms?protocol=&dataHash=` | - | Open rooms (compatible ones only when filtered, like the HELLO check): code, name, owner, `ownerPresent`, `storyFrozen`, `hasPassword`, players / maxPlayers, ranked, randomizer, difficulty, instances. |
 | `POST /rooms` | token | `{name, password?, maxPlayers (2..10, default 4), protocol, dataHash, clientVersion, settings?}` -> 201 room state. `settings` is a JSON object (`difficulty` 0..2, `randomizer: {enabled, seed, ...}`); `cheats` / `rebalanced` are refused. One owned room per account. |
@@ -221,7 +221,16 @@ and stats must carry `protocol` / `clientVersion` (426 `client_outdated` otherwi
   account's batches are checked one at a time), `state` achievements unlock
   from the server's decode of an online character upload made in a ranked room the account is a member of (unlocks from
   a flagged upload are flagged too). Event, stat and state unlocks all take the room's ruleset. Story clears with
-  `evidence.igtMs` also keep the best time per board and ruleset (`speedrun_times`). Offline unlocks stay local in the game.
+  `evidence.igtMs` also keep the best time per board and ruleset (`speedrun_times`), unless the time is below the
+  board's floor (next point). Offline unlocks stay local in the game.
+- **Speedrun floor**: a story clear takes at least 45 minutes of in-game time (loading excluded) on every board. The
+  campaign bot plays the whole Normal story with god mode, one-hit defeats and infinite MP and skips every text box at
+  the fastest rate (`work/campaign`, checkpoint sets r25c and r25t, 59.94 fields per second, loads and `stagis*` menu
+  stages left out): 7.26 to 7.52 hours over 64 stages, the six story boss stages alone 9.6 to 13.3 minutes. 45 minutes
+  is about a tenth of the fastest bot run and a quarter of Speed Demon's 3-hour goal, so no real run gets near it; Hard
+  and Very Hard play the same stages. A clear reported faster keeps no best time, its new unlock is flagged for review
+  (answer `timeRejected: true`, audit `speedrun_implausible`), and `speed_6h` / `speed_3h` refuse it
+  (`requirement_not_met`). `Play:SpeedrunFloorSeconds` sets the floor per board (calibrate with real online runs).
 
 ## Relay protocol (TCP, default port 52041)
 

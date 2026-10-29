@@ -81,6 +81,47 @@ public class AchievementTests
     }
 
     [DbFact]
+    public async Task Impossible_speedrun_times_are_not_kept()
+    {
+        await using var host = await TestHost.StartAsync(new() { ["Play:SpeedrunFloorSeconds:story_hard"] = "3600" });
+        var (token, _, id) = await host.RegisterAsync("Glitcher");
+        var client = host.Client(token);
+        var room = await host.CreateRoomAsync(id, []);
+
+        // 1 ms: the clear counts but waits for review, no best time, an audit row.
+        var fake = await (await client.PostAsJsonAsync("/api/v1/achievements/unlock",
+            new { code = "clear_normal", context = new { roomCode = room }, evidence = new { igtMs = 1L } })).Json();
+        Assert.True(fake.GetProperty("newlyUnlocked").GetBoolean());
+        Assert.False(fake.GetProperty("newBestTime").GetBoolean());
+        Assert.True(fake.GetProperty("timeRejected").GetBoolean());
+        Assert.Equal("requirement_not_met", await (await client.PostAsJsonAsync("/api/v1/achievements/unlock",
+            new { code = "speed_3h", context = new { roomCode = room }, evidence = new { igtMs = 1L } })).ProblemCode());
+
+        // A plausible time afterwards is kept (the unlock stays as it is).
+        var real = await (await client.PostAsJsonAsync("/api/v1/achievements/unlock",
+            new { code = "clear_normal", context = new { roomCode = room }, evidence = new { igtMs = 2L * 3600 * 1000 } })).Json();
+        Assert.True(real.GetProperty("newBestTime").GetBoolean());
+        Assert.False(real.GetProperty("timeRejected").GetBoolean());
+        var speed = await client.PostAsJsonAsync("/api/v1/achievements/unlock",
+            new { code = "speed_3h", context = new { roomCode = room }, evidence = new { igtMs = 2L * 3600 * 1000 } });
+        Assert.Equal(HttpStatusCode.OK, speed.StatusCode);
+
+        // A per-board override: 50 minutes is below Hard's configured hour.
+        var hard = await (await client.PostAsJsonAsync("/api/v1/achievements/unlock",
+            new { code = "clear_hard", context = new { roomCode = room }, evidence = new { igtMs = 50L * 60 * 1000 } })).Json();
+        Assert.True(hard.GetProperty("timeRejected").GetBoolean());
+
+        await using var c = await host.SqlAsync();
+        Assert.Equal(2L * 3600 * 1000, await c.ExecuteScalarAsync<long>(
+            "SELECT igt_ms FROM speedrun_times WHERE account_id = @id AND board = 'story_normal'", new { id }));
+        Assert.Equal(0, await c.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM speedrun_times WHERE account_id = @id AND board = 'story_hard'", new { id }));
+        Assert.Equal(2, await c.ExecuteScalarAsync<int>(
+            "SELECT COUNT(*) FROM achievement_unlocks u JOIN achievements a ON a.id = u.achievement_id " +
+            "WHERE u.account_id = @id AND a.code IN ('clear_normal', 'clear_hard') AND u.flagged = 1", new { id }));
+        Assert.Equal(2, await c.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM audit_log WHERE event = 'speedrun_implausible' AND account_id = @id", new { id }));
+    }
+
+    [DbFact]
     public async Task Stats_drive_progress_achievements()
     {
         await using var host = await TestHost.StartAsync();

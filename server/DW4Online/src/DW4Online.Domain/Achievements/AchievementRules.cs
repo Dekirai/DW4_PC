@@ -48,6 +48,21 @@ public static class AchievementRules
         ["clear_veryhard"] = "story_veryhard",
     };
 
+    /// <summary>
+    /// The least in-game time (seconds, loading excluded) a story clear can take, per board; a faster claim is impossible
+    /// and only comes from a broken or edited client. Derived from the campaign bot's runs of the whole Normal story
+    /// (work/campaign checkpoint sets r25c and r25t: god mode, one-hit defeats, infinite MP, every text box skipped at
+    /// the fastest rate): 7.26 to 7.52 hours of live in-game time over 64 stages, of which the six story boss stages
+    /// alone take 9.6 to 13.3 minutes. 45 minutes is about a tenth of the fastest bot run and a quarter of Speed
+    /// Demon's 3-hour goal, so no real run comes near it. Hard and Very Hard play the same stages, so the same floor
+    /// applies. Play:SpeedrunFloorSeconds overrides it per board (calibrate with real online runs).
+    /// </summary>
+    public const long DefaultSpeedrunFloorSeconds = 45 * 60;
+
+    /// <summary>The default floor of every speedrun board (see <see cref="DefaultSpeedrunFloorSeconds"/>).</summary>
+    public static Dictionary<string, long> DefaultSpeedrunFloors() =>
+        SpeedrunBoards.Values.ToDictionary(board => board, _ => DefaultSpeedrunFloorSeconds, StringComparer.Ordinal);
+
     private static readonly Dictionary<string, Func<SaveRecord, long, bool>> StateRules = new(StringComparer.Ordinal)
     {
         ["lv_10"] = HighestLevel,
@@ -74,8 +89,8 @@ public static class AchievementRules
     /// <summary>Codes whose event reports need a check against the definition's goal or the context.</summary>
     private static readonly Dictionary<string, Func<AchievementCheck, string?>> EventRequirements = new(StringComparer.Ordinal)
     {
-        ["speed_6h"] = c => c.Evidence?.IgtMs is { } ms && ms > 0 && ms <= c.Goal * 1000 ? null : "The in-game time is missing or above the limit.",
-        ["speed_3h"] = c => c.Evidence?.IgtMs is { } ms && ms > 0 && ms <= c.Goal * 1000 ? null : "The in-game time is missing or above the limit.",
+        ["speed_6h"] = SpeedLimit,
+        ["speed_3h"] = SpeedLimit,
         ["lowlevel_apocalymon"] = c => c.Evidence?.Level is { } l && l >= 1 && l <= c.Goal ? null : "The level is missing or above the limit.",
         ["lowlevel_daemon"] = c => c.Evidence?.Level is { } l && l >= 1 && l <= c.Goal ? null : "The level is missing or above the limit.",
         ["solo_veryhard"] = c => c.Players == 1 ? null : "Lone Tamer needs a run with one player.",
@@ -98,6 +113,15 @@ public static class AchievementRules
     public static string? CheckEvent(string code, AchievementCheck check) =>
         EventRequirements.TryGetValue(code, out var rule) ? rule(check) : null;
 
+    /// <summary>Speed goals: the in-game time is given, at most the goal and not below the story's floor.</summary>
+    private static string? SpeedLimit(AchievementCheck c) => c.Evidence?.IgtMs switch
+    {
+        null or <= 0 => "The in-game time is missing.",
+        long ms when ms > c.Goal * 1000 => "The in-game time is above the limit.",
+        long ms when ms < c.StoryFloorMs => "The in-game time is below the fastest possible story clear.",
+        _ => null,
+    };
+
     private static bool HighestLevel(SaveRecord r, long goal)
     {
         if (r.Level >= goal) return true;
@@ -115,5 +139,8 @@ public static class AchievementRules
         r.Devices.Concat(r.Bank).Select(w => new PackedDevice(w)).Where(d => !d.Empty && d.WellFormed);
 }
 
-/// <summary>The facts an event requirement is checked against.</summary>
-public sealed record AchievementCheck(long Goal, UnlockEvidence? Evidence, int? Players, bool InRoom, bool IsHost);
+/// <summary>
+/// The facts an event requirement is checked against. <paramref name="StoryFloorMs"/>: the least in-game time of a story
+/// clear on any board (speed goals below it are impossible).
+/// </summary>
+public sealed record AchievementCheck(long Goal, UnlockEvidence? Evidence, int? Players, bool InRoom, bool IsHost, long StoryFloorMs = 0);

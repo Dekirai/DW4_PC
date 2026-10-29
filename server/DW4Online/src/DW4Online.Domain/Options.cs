@@ -50,6 +50,18 @@ public sealed class PlayOptions
     public string MinimumClientVersion { get; set; } = "";
     /// <summary>The current release's version, announced by the status endpoint.</summary>
     public string CurrentClientVersion { get; set; } = "";
+    /// <summary>
+    /// The least in-game time (seconds) a story clear can take, per speedrun board (story_normal, story_hard,
+    /// story_veryhard); default 45 minutes each (Achievements.AchievementRules.DefaultSpeedrunFloorSeconds). A clear
+    /// reported faster keeps no time, its new unlock is flagged for review, and speed goals refuse it. 0 = no floor.
+    /// </summary>
+    public Dictionary<string, long> SpeedrunFloorSeconds { get; set; } = Achievements.AchievementRules.DefaultSpeedrunFloors();
+
+    /// <summary>The floor of one board in milliseconds (0 when it has none).</summary>
+    public long SpeedrunFloorMs(string board) => Math.Max(0, SpeedrunFloorSeconds.GetValueOrDefault(board)) * 1000;
+
+    /// <summary>The lowest floor of any board in milliseconds: a story clear on any difficulty takes at least this long.</summary>
+    public long StoryFloorMs => SpeedrunFloorSeconds.Count == 0 ? 0 : Math.Max(0, SpeedrunFloorSeconds.Values.Min()) * 1000;
 }
 
 /// <summary>Service-wide settings announced to clients and shown on the website (section "Service").</summary>
