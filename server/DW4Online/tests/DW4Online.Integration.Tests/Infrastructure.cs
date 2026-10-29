@@ -81,6 +81,21 @@ public sealed class TestHost : IAsyncDisposable
     {
         var database = await TestDb.CreateAsync();
         var clock = new ManualClock();
+        var settings = Settings(database, overrides);
+        var app = ServerApp.Build(["--environment", "Testing"], settingsFile: settingsFile, configure: builder =>
+        {
+            builder.WebHost.UseTestServer();
+            builder.Configuration.AddInMemoryCollection(settings);
+            builder.Services.AddSingleton<TimeProvider>(clock);
+        });
+        await ServerApp.MigrateIfEnabledAsync(app);
+        await app.StartAsync();
+        return new TestHost(app, database, clock);
+    }
+
+    /// <summary>The test settings: a private database, cheap hashing, rate limits out of the way, the relay off.</summary>
+    public static Dictionary<string, string?> Settings(string database, Dictionary<string, string?>? overrides)
+    {
         var settings = new Dictionary<string, string?>
         {
             ["Database:ConnectionString"] = TestDb.ConnectionString(database),
@@ -105,15 +120,7 @@ public sealed class TestHost : IAsyncDisposable
         };
         if (overrides is not null)
             foreach (var (k, v) in overrides) settings[k] = v;
-        var app = ServerApp.Build(["--environment", "Testing"], settingsFile: settingsFile, configure: builder =>
-        {
-            builder.WebHost.UseTestServer();
-            builder.Configuration.AddInMemoryCollection(settings);
-            builder.Services.AddSingleton<TimeProvider>(clock);
-        });
-        await ServerApp.MigrateIfEnabledAsync(app);
-        await app.StartAsync();
-        return new TestHost(app, database, clock);
+        return settings;
     }
 
     public HttpClient Client(string? token = null)

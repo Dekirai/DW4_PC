@@ -13,6 +13,7 @@ stay untouched.
 | Logs | `D:\Dekirai\Servers\DW4Online\logs` |
 | Database backups | `D:\Dekirai\Servers\DW4Online\backups` |
 | ACME challenge folder (option A2) | `D:\Dekirai\Servers\DW4Online\acme` |
+| Website Data Protection keys | `D:\Dekirai\Servers\DW4Online\keys` (DPAPI-encrypted for the service account) |
 | Service | `DW4Online`, virtual account `NT SERVICE\DW4Online`, start delayed-auto |
 | Ports | 443 TCP (HTTPS: API and website), 52041 TCP (relay), 80 TCP only for certificate validation; MariaDB 3306 on 127.0.0.1 only |
 
@@ -77,7 +78,11 @@ SDK; the development PC currently only has the 11.0 RC SDK). The publish restore
 2. Create `D:\Dekirai\Servers\DW4Online\config\appsettings.Production.json` from
    [appsettings.Production.example.json](appsettings.Production.example.json): the connection string with the service
    password, a relay ticket key (`app\DW4Online.Server.exe gen-relay-key`), the host name or IP, the TLS option of
-   step 6. This file holds the secrets: never copy it into Git or the app folder.
+   step 6, and the `Web` section: `RequireHttps` true, `DataProtectionKeysDirectory` = the `keys` folder, and your
+   name, postal address and a contact in `OperatorName` / `OperatorAddress` / `OperatorContact` (the privacy page names
+   the controller, GDPR Art. 13). The relay is on by default (`Relay:Enabled`); it needs `ListenAddress` 0.0.0.0 and
+   the ticket key, and `Service:RelayHost` tells clients where it is. This file holds the secrets: never copy it into
+   Git or the app folder.
 3. Register the service, folder permissions and firewall rules:
 
    ```powershell
@@ -104,16 +109,20 @@ needed because http.sys is not used).
 ```powershell
 Start-Service DW4Online
 Get-Content D:\Dekirai\Servers\DW4Online\logs\dw4online-*.log -Tail 30
-Invoke-RestMethod https://<host>/health        # {"status":"ok","schema":2}
+Invoke-RestMethod https://<host>/health        # {"status":"ok","schema":3}
 ```
 
-The first start creates the tables (startup migrator). Register your own account in the game or with
-`POST /api/v1/auth/register`, then make it the admin from an elevated console:
+The first start creates the tables (startup migrator). Register your own account on the website
+(`https://<host>/register`, keep the recovery code) or in the game, then make it the admin from an elevated console:
 
 ```powershell
 cd D:\Dekirai\Servers\DW4Online\app
 .\DW4Online.Server.exe set-role <your name> admin --settings ..\config\appsettings.Production.json
 ```
+
+Log in on the website again: the navigation now shows "Admin" (account search, locks, bans, temporary passwords,
+unlock review, closing rooms, account deletion on request). Read the privacy page once (`/privacy`) and adjust the text
+in `src/DW4Online.Web/Pages/Privacy.cshtml` if your setup differs (for example other log retention).
 
 ## 6. TLS options
 
@@ -181,8 +190,9 @@ Register-ScheduledTask -TaskName 'DW4Online DB backup' -Action $action -Trigger 
 ```
 
 Copy the backups off the server as well (for example to your own FTPS server with WinSCP scripting, or a storage box).
-Also keep a copy of `config\appsettings.Production.json` (it holds the database password and the relay key) and, once
-the website exists, its Data Protection keys folder, stored encrypted.
+Also keep a copy of `config\appsettings.Production.json` (it holds the database password and the relay key), stored
+encrypted. The `keys` folder needs no backup: its keys are DPAPI-encrypted for this machine's service account and only
+protect anti-forgery tokens; if it is lost, open website forms simply have to be reloaded.
 
 Restore drill (once, and after schema changes):
 
@@ -196,7 +206,8 @@ check `/health`, then drop the database.
 
 ## 8. Updates and rollback
 
-1. Announce the update (set `Service:Motd`), pick a quiet time: stopping the service ends running co-op sessions.
+1. Announce the update (set `Service:Motd`, optionally `Service:Maintenance` true so no new rooms open), pick a quiet
+   time: stopping the service ends running co-op sessions and rooms (they close with `server_restart` at the next start).
 2. `Stop-Service DW4Online`
 3. Run `deploy\backup-db.ps1` once by hand (migrations commit DDL implicitly; a failed one leaves the schema between
    versions and the backup is the way back).
@@ -214,5 +225,7 @@ from step 3 into `dw4online` first (the old build refuses a database that is new
   endpoints with an admin token.
 - Privacy (GDPR, the server is in Germany): the database holds user names, optional e-mail addresses, IP addresses in
   `sessions.created_ip` and `audit_log.ip` (audit rows are deleted after 180 days, old sessions after 30 days). The
-  website needs a privacy note and account deletion before it opens to the public.
+  website has a privacy page (`/privacy`, fill in the `Web:Operator*` settings) and account deletion (by the player in
+  the account settings, or by an admin on request on the admin page); deleting removes the personal records at once
+  and leaves an anonymous `deleted_<id>` row. Backups keep deleted data until they roll over (14 daily + 8 weekly).
 - Ports 80 / 443 must not collide with other software on the server; the Pangya web port 88 is not used.

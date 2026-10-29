@@ -24,22 +24,31 @@ else
                 <tr>
                     <td>
                         <strong>@r.Name</strong>
-                        @if (r.HasPassword) { <span class="badge">password</span> }
+                        @if (r.HasPassword)
+                        {
+                            <span class="badge">password</span>
+                        }
                     </td>
                     <td><code>@r.Code</code></td>
                     <td>
                         @r.Owner
                         @if (r.StoryFrozen)
                         {
-                            <br /><span class="badge warn">host away: story paused</span>
+                            <div><span class="badge warn">host away: story paused</span></div>
                         }
                     </td>
-                    <td class="num">@r.Players / @r.MaxPlayers@(r.Instances > 0 ? $" ({r.Instances} in stages)" : "")</td>
+                    <td class="num">@r.Players / @r.MaxPlayers@(r.Instances == 1 ? " (1 stage group)" : r.Instances > 1 ? $" ({r.Instances} stage groups)" : "")</td>
                     <td>
                         @Format.Difficulty(r.Difficulty)
-                        @if (r.Randomizer) { <span class="badge">randomizer</span> }
-                        @if (!r.Ranked) { <span class="badge">unranked</span> }
-                        <br /><span class="muted small">version @(r.ClientVersion.Length > 0 ? r.ClientVersion : "?"), protocol @r.Protocol</span>
+                        @if (r.Randomizer)
+                        {
+                            <span class="badge">randomizer</span>
+                        }
+                        @if (!r.Ranked)
+                        {
+                            <span class="badge">unranked</span>
+                        }
+                        <div class="muted small">version @(r.ClientVersion.Length > 0 ? r.ClientVersion : "?"), protocol @r.Protocol</div>
                     </td>
                     <td>@Format.Ago(r.CreatedAt, Model.Now)</td>
                 </tr>

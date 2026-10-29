@@ -271,4 +271,27 @@ public class WebTests
         Assert.Equal("application/problem+json", api.Content.Headers.ContentType?.MediaType);
         Assert.False(api.Headers.Contains("Content-Security-Policy"));
     }
+
+    [DbFact]
+    public async Task Api_profile_switch_and_account_deletion()
+    {
+        await using var host = await TestHost.StartAsync();
+        var (token, _, id) = await host.RegisterAsync("ApiGdpr");
+        var client = host.Client(token);
+        await CharacterAndUnlockAsync(client);
+        var hidden = await client.PutAsJsonAsync("/api/v1/me/profile", new { @public = false });
+        Assert.False((await hidden.Json()).GetProperty("profilePublic").GetBoolean());
+        using (var web = new WebBrowser(host))
+            Assert.Contains("This profile is private.", (await web.GetAsync("/u/ApiGdpr")).Html);
+
+        Assert.Equal("wrong_password", await (await client.PostAsJsonAsync("/api/v1/me/delete", new { currentPassword = "nope" })).ProblemCode());
+        Assert.Equal(HttpStatusCode.NoContent, (await client.PostAsJsonAsync("/api/v1/me/delete", new { currentPassword = "a decent password" })).StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, (await client.GetAsync("/api/v1/me")).StatusCode);
+        await using var sql = await host.SqlAsync();
+        Assert.Equal($"deleted_{id}", await sql.ExecuteScalarAsync<string>("SELECT username FROM accounts WHERE id = @id", new { id }));
+        Assert.Equal(0, await sql.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM room_members WHERE account_id = @id", new { id }));
+        Assert.Equal(1, await sql.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM audit_log WHERE event = 'account_delete' AND account_id = @id AND ip IS NULL", new { id }));
+        // The room the account owned stays as a closed record.
+        Assert.Equal("closed", await sql.ExecuteScalarAsync<string>("SELECT status FROM rooms WHERE host_account_id = @id", new { id }));
+    }
 }

@@ -36,9 +36,18 @@
                 {
                     <span class="muted">not yet</span>
                 }
-                @if ((c.Summary.Clears & 1) != 0) { <span class="badge ok">Normal</span> }
-                @if ((c.Summary.Clears & 2) != 0) { <span class="badge ok">Hard</span> }
-                @if ((c.Summary.Clears & 4) != 0) { <span class="badge ok">Very Hard</span> }
+                @if ((c.Summary.Clears & 1) != 0)
+                {
+                    <span class="badge ok">Normal</span>
+                }
+                @if ((c.Summary.Clears & 2) != 0)
+                {
+                    <span class="badge ok">Hard</span>
+                }
+                @if ((c.Summary.Clears & 4) != 0)
+                {
+                    <span class="badge ok">Very Hard</span>
+                }
             </dd>
             <dt>Last saved</dt><dd>@Format.Date(c.UpdatedAt)</dd>
         </dl>
@@ -72,9 +81,18 @@ else
                         {
                             <div>
                                 @Format.Date(u.UnlockedAt)
-                                @if (u.Ruleset == "randomizer") { <span class="badge">randomizer</span> }
-                                @if (u.Players is > 1) { <span class="badge">@u.Players players</span> }
-                                @if (u.Flagged) { <span class="badge warn">under review</span> }
+                                @if (u.Ruleset == "randomizer")
+                                {
+                                    <span class="badge">randomizer</span>
+                                }
+                                @if (u.Players is > 1)
+                                {
+                                    <span class="badge">@u.Players players</span>
+                                }
+                                @if (u.Flagged)
+                                {
+                                    <span class="badge warn">under review</span>
+                                }
                             </div>
                         }
                     </td>

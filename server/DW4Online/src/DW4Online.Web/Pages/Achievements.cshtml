@@ -5,8 +5,8 @@
 }
 <h1>Achievements</h1>
 <p class="muted">Achievements count only in online play without cheats, rebalanced rates or save states. Rarity is the
-    share of the @Format.Number(Model.Players) players with an online character who hold it (randomizer unlocks
-    included, unlocks under review excluded).
+    share of players who hold it (players: accounts with an online character or an unlock, @Format.Number(Model.Players)
+    so far; randomizer unlocks included, unlocks under review excluded).
     @if (Model.SignedIn)
     {
         <span>You hold <strong>@Model.MineCount</strong>.</span>
@@ -17,7 +17,17 @@
 {
     <h2>@Format.Category(category.Key)</h2>
     <div class="table-wrap">
-        <table>
+        <table class="fixed">
+            <colgroup>
+                <col />
+                <col class="w-tier" />
+                <col class="w-points" />
+                <col class="w-rarity" />
+                @if (Model.SignedIn)
+                {
+                    <col class="w-you" />
+                }
+            </colgroup>
             <thead>
                 <tr>
                     <th>Achievement</th>

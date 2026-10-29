@@ -30,14 +30,24 @@ public static class RelaySettings
 /// <summary>A browser for the website on the test server: keeps cookies, fetches anti-forgery tokens, never follows redirects.</summary>
 public sealed partial class WebBrowser : IDisposable
 {
-    private static readonly Uri Base = new("http://localhost/");
+    private readonly Uri _base;
     private readonly CookieContainer _jar = new();
     private readonly HttpClient _http;
 
-    public WebBrowser(TestHost host)
+    public WebBrowser(TestHost host) : this(host.App.GetTestServer().CreateHandler(), new Uri("http://localhost/"))
     {
-        _http = new HttpClient(new CookieHandler(_jar) { InnerHandler = host.App.GetTestServer().CreateHandler() }) { BaseAddress = Base };
     }
+
+    /// <summary>A browser for a real server: <paramref name="inner"/> must neither follow redirects nor keep cookies itself.</summary>
+    public WebBrowser(HttpMessageHandler inner, Uri baseAddress)
+    {
+        _base = baseAddress;
+        _http = new HttpClient(new CookieHandler(_jar) { InnerHandler = inner }) { BaseAddress = baseAddress };
+    }
+
+    public static WebBrowser For(Uri server) => new(new HttpClientHandler { UseCookies = false, AllowAutoRedirect = false }, server);
+
+    public async Task<byte[]> GetBytesAsync(string path) => await _http.GetByteArrayAsync(path);
 
     public sealed record Page(HttpStatusCode Status, string Html, string? Location, HttpResponseMessage Response);
 
@@ -85,7 +95,7 @@ public sealed partial class WebBrowser : IDisposable
 
     public static string? Secret(string html) => SecretField().Match(html) is { Success: true } m ? WebUtility.HtmlDecode(m.Groups[1].Value).Trim() : null;
 
-    public string? Cookie(string name) => _jar.GetCookies(Base)[name]?.Value;
+    public string? Cookie(string name) => _jar.GetCookies(_base)[name]?.Value;
 
     public void Dispose() => _http.Dispose();
 

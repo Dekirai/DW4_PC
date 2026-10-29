@@ -34,6 +34,8 @@ public static class AccountEndpoints
             var session = ctx.Session();
             if (!await accounts.CheckPasswordAsync(session.AccountId, r.CurrentPassword, ctx.RequestAborted))
                 return ApiProblems.Of(StatusCodes.Status422UnprocessableEntity, "wrong_password", "The current password is wrong.");
+            if (session.Role == Domain.Abstractions.Roles.Admin)
+                return ApiProblems.Of(StatusCodes.Status403Forbidden, "admin_account", "Admins cannot delete their own account; remove the admin role first.");
             await rooms.RemoveAccountAsync(session.AccountId, ctx.RequestAborted);
             return ApiProblems.Ok(await accounts.DeleteAccountAsync(session, r.CurrentPassword, ctx.RequestAborted), _ => Results.NoContent());
         }).RequireRateLimiting(RateLimitPolicies.AccountChange);

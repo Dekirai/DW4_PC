@@ -124,7 +124,16 @@ else
                     <td>@u.Ruleset</td>
                     <td>@Format.Date(u.UnlockedAt)</td>
                     <td>@(u.Players?.ToString() ?? "-")</td>
-                    <td>@if (u.Flagged) { <span class="badge warn">flagged</span> } else { <span class="badge ok">ok</span> }</td>
+                    <td>
+                        @if (u.Flagged)
+                        {
+                            <span class="badge warn">flagged</span>
+                        }
+                        else
+                        {
+                            <span class="badge ok">ok</span>
+                        }
+                    </td>
                     <td>
                         <form method="post" asp-page-handler="Flag" class="inline">
                             <input type="hidden" name="Code" value="@a.Code" />
