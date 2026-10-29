@@ -6,6 +6,7 @@
 #include "netplay.hpp"
 #include "movie_decoder.hpp"
 #include "rvz.hpp"
+#include "save_store.hpp"
 #include "settings.hpp"
 #include "controls.hpp"
 #include "campaign.hpp"
@@ -35,6 +36,7 @@
 #include <fstream>
 #include <sstream>
 #include <iostream>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <vector>
@@ -54,6 +56,12 @@ struct Options {
     std::vector<float> debug_camera; // eye xyz, target xyz
     std::vector<std::pair<int, int>> flags;
     std::filesystem::path card_dir; // memory card GCI folders (Card A / Card B)
+    std::filesystem::path save_file; // --save-file FILE: slot A's single save file (slot B: <stem>_b<ext>)
+    // --import-save FILE[:BOXES] (--import-slot A|B) / --save-info FILE: GC
+    // save import into the run's store, or only its preview; then exit.
+    std::filesystem::path import_save, save_info;
+    std::string import_boxes;
+    int import_slot = 0;
     std::filesystem::path convert_from, convert_to; // --convert-rvz IN OUT
     // Online co-op: --host (with --players, --port, --net-delay) or --join ADDRESS[:PORT].
     bool net_host{};
@@ -436,29 +444,33 @@ std::optional<SaveState> read_state_file(const std::filesystem::path& path) {
     }
 }
 
-// Online co-op card handling: the GCI files of a card folder, a session copy
-// of the shared cards, and the owner's copy written back at the end.
-std::vector<dw4::game::CardFile> read_card(const std::filesystem::path& folder) {
-    std::vector<dw4::game::CardFile> files;
-    std::error_code error;
-    if (!std::filesystem::is_directory(folder, error)) return files;
-    for (const auto& entry : std::filesystem::directory_iterator(folder, error)) {
-        if (!entry.is_regular_file(error)) continue;
-        std::ifstream in(entry.path(), std::ios::binary);
-        files.push_back({entry.path().filename().string(), std::vector<std::uint8_t>((std::istreambuf_iterator<char>(in)), {})});
-    }
-    std::sort(files.begin(), files.end(), [](const auto& a, const auto& b) { return a.name < b.name; });
-    return files;
+// Online co-op card handling (save_store.hpp): a machine shares only the DW4
+// save of its slot A (never the card's other files); every machine plays
+// from a session copy of the shared cards, and the owner's save goes back
+// at the end.
+using dw4::game::session_card;
+using dw4::game::write_session_card;
+
+// The names of a session card's files for the log ("-" when none).
+std::string card_names(const std::vector<dw4::game::CardFile>& files) {
+    std::string names;
+    for (const auto& file : files) names += (names.empty() ? "" : ",") + file.name;
+    return names.empty() ? "-" : names;
 }
 
-void write_card(const std::filesystem::path& folder, const std::vector<dw4::game::CardFile>& files) {
-    std::error_code error;
-    std::filesystem::create_directories(folder, error);
-    for (const auto& file : files) {
-        if (file.name.find_first_of("/\\:") != std::string::npos || file.name == ".." || file.name == ".") continue;
-        std::ofstream out(folder / file.name, std::ios::binary | std::ios::trunc);
-        out.write(reinterpret_cast<const char*>(file.bytes.data()), std::streamsize(file.bytes.size()));
-    }
+// The program's folder ("" when unknown).
+std::filesystem::path program_dir() {
+    const char* base = SDL_GetBasePath();
+    return base ? std::filesystem::path(std::u8string(reinterpret_cast<const char8_t*>(base))) : std::filesystem::path();
+}
+
+// The import preview: one line per box of the save in `source`.
+std::vector<std::string> import_preview(const dw4::save::ImportSource& source) {
+    std::vector<std::string> lines;
+    const auto boxes = dw4::save::summarize_save(source.gci);
+    if (!boxes) return lines;
+    for (std::size_t i = 0; i < boxes->size(); ++i) lines.push_back("box " + std::to_string(i + 1) + ": " + dw4::save::describe_box((*boxes)[i]));
+    return lines;
 }
 
 // The game data identity peers compare (catalog paths and locations).
@@ -503,14 +515,18 @@ int run(const Options& options, dw4::game::Settings& settings) {
     // Steps of the engines a console reboot replaced (Engine::reboot_due):
     // the session's step count for the online frames and the sound output.
     std::uint64_t frame_base = 0;
-    // Memory cards: --card-dir, DW4_CARD_DIR, else saves/GC/USA next to the
-    // program. Dolphin's GC/USA folder works too (same GCI files).
-    // settings.ini [data] cards may point at another GCI root (e.g. Dolphin's
-    // GC/USA folder to continue its saves); test runs ignore it.
-    if (!options.card_dir.empty()) engine.set_card_root(options.card_dir);
-    else if (const char* dir = std::getenv("DW4_CARD_DIR")) engine.set_card_root(dir);
-    else if (!options.smoke_frames && !settings.cards.empty()) engine.set_card_root(settings.cards);
-    else if (const char* base = SDL_GetBasePath()) engine.set_card_root(std::filesystem::path(base) / "saves" / "GC" / "USA");
+    // Memory cards (save_store.hpp): --card-dir, DW4_CARD_DIR (GCI folders),
+    // --save-file (single files), a test run's GCI folders
+    // <program>/saves/GC/USA, settings.ini [data] cards (a GCI root such as
+    // Dolphin's GC/USA, live), else the single save files [data] save /
+    // save_b (saves/savedata.dat next to the program; an old saves/GC/USA
+    // save is copied there once).
+    const auto save_choice = dw4::game::choose_save_store(options.card_dir, options.save_file, options.smoke_frames != 0, settings, program_dir());
+    if (save_choice.settings_changed && !options.smoke_frames) settings.save();
+    engine.set_card_store(save_choice.store);
+    for (const auto& note : save_choice.notes) std::cout << "saves: " << note << '\n';
+    if (save_choice.why == dw4::game::SaveStoreChoice::Why::save_file || save_choice.why == dw4::game::SaveStoreChoice::Why::player)
+        std::cout << "saves: slot A " << save_choice.store.describe(0) << ", slot B " << save_choice.store.describe(1) << '\n';
     // What the slots hold: DW4_CARD_A / DW4_CARD_B, else settings.ini [data]
     // card_a / card_b (not in test runs): "none" (an empty slot),
     // "unformatted", "inserted" and / or the card's blocks ("251"; default
@@ -524,6 +540,10 @@ int run(const Options& options, dw4::game::Settings& settings) {
         if (const auto setting = dw4::engine::parse_card_setting(text)) engine.set_card_setting(slot, *setting);
         else std::cerr << variable << ": unknown memory card setting '" << text << "'\n";
     }
+    // The player's own cards (what a state load and the end of an online
+    // session go back to).
+    const auto player_store = engine.card_store();
+    const std::array<dw4::engine::CardSetting, 2> player_card_settings{engine.card_setting(0), engine.card_setting(1)};
     for (const auto& [flag, value] : options.flags) engine.flags()[flag] = static_cast<std::uint8_t>(value);
     // Content mods: mods/<id> next to the program (else in the working
     // folder); test runs only with DW4_MODS=<mods folder>.
@@ -592,12 +612,11 @@ int run(const Options& options, dw4::game::Settings& settings) {
     // Online co-op: wait in the lobby, then start every machine the same way
     // with the shared cards.
     dw4::game::NetSession net;
-    std::filesystem::path session_cards, own_card_folder;
+    std::filesystem::path session_cards;
     std::string own_card_name; // "Card A" (host) or "Card B" (first guest) in the session copy
     if (options.net_host || !options.net_join.empty()) {
         std::string error;
-        const auto real_cards = engine.card_root();
-        const auto my_card = read_card(real_cards / "Card A");
+        const auto my_card = session_card(player_store);
         const bool ok = options.net_host
                             ? net.host(options.net_port, options.net_players, options.net_delay, data_hash(engine.resources()), error,
                                        options.smoke_frames != 0)
@@ -659,11 +678,11 @@ int run(const Options& options, dw4::game::Settings& settings) {
         // Every machine plays from the same card copies.
         session_cards = std::filesystem::temp_directory_path() /
                         ("dw4_session_" + std::to_string(net.local_slot()) + "_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
-        write_card(session_cards / "Card A", started.card_a);
-        write_card(session_cards / "Card B", started.card_b);
+        write_session_card(session_cards / "Card A", started.card_a);
+        write_session_card(session_cards / "Card B", started.card_b);
+        std::cout << "online: shared cards: Card A " << card_names(started.card_a) << ", Card B " << card_names(started.card_b) << '\n';
         if (net.local_slot() == 0) own_card_name = "Card A";
         else if (net.local_slot() == 1) own_card_name = "Card B";
-        own_card_folder = real_cards / "Card A";
         engine.set_card_root(session_cards);
         // The shared copies in the usual slots on every machine.
         for (int slot = 0; slot < 2; ++slot) engine.set_card_setting(slot, {});
@@ -835,8 +854,15 @@ int run(const Options& options, dw4::game::Settings& settings) {
         std::unique_ptr<dw4::game::MovieDecoder> movie_decoder;
         std::uint32_t movie_serial = 0;
         std::string movie_stage; // stage the decoder's movie played in
-        // DW4_OPEN_MENU=1 opens the F1 menu at start (menu screenshots).
+        // DW4_OPEN_MENU=1 opens the F1 menu at start (menu screenshots);
+        // DW4_MENU_TAB=<tab> selects that tab when it first shows.
         bool running = true, show_menu = std::getenv("DW4_OPEN_MENU") != nullptr;
+        std::string menu_tab = std::getenv("DW4_MENU_TAB") ? std::getenv("DW4_MENU_TAB") : "";
+        auto tab_flags = [&](const char* name) -> ImGuiTabItemFlags {
+            if (menu_tab != name) return ImGuiTabItemFlags_None;
+            menu_tab.clear();
+            return ImGuiTabItemFlags_SetSelected;
+        };
         // Save states (this session): four slots, F5 saves and F9 loads slot 1.
         std::array<std::optional<SaveState>, 4> state_slots;
         std::vector<LoggedStep> input_log;
@@ -852,6 +878,24 @@ int run(const Options& options, dw4::game::Settings& settings) {
         bool state_test_save = false; // saves after the picture, like F5 or the menu
         std::vector<std::uint64_t> state_fingerprints;
         bool settings_changed = false;
+        // F1 Saves tab: the boxes of the slots (read again every 2 s while
+        // shown), the import preview and the file dialog's answer (it may
+        // come from another thread).
+        struct SavesTab {
+            std::array<std::optional<std::array<dw4::save::BoxSummary, 4>>, 2> boxes;
+            std::array<bool, 2> has_file{};
+            std::chrono::steady_clock::time_point read_at{};
+            char path[1024]{};
+            std::optional<dw4::save::ImportSource> source;
+            std::array<bool, 4> chosen{};
+            std::array<int, 4> into{0, 1, 2, 3};
+            int slot = 0;
+            std::string message;
+            std::mutex dialog_mutex;
+            std::string dialog_path;
+            std::atomic<bool> dialog_done{false};
+        };
+        static SavesTab saves_tab;
         std::optional<KeyCapture> capture;
         auto next_present = std::chrono::steady_clock::now();
         std::uint64_t net_submitted = std::uint64_t(net.active() ? net.start().delay : 0);
@@ -868,7 +912,6 @@ int run(const Options& options, dw4::game::Settings& settings) {
         const int trace_fingerprint = std::getenv("DW4_TRACE_FINGERPRINT") ? std::atoi(std::getenv("DW4_TRACE_FINGERPRINT")) : 0;
         auto last = std::chrono::steady_clock::now();
         double accumulator = 0;
-        const auto card_root = engine.card_root();
         // State files live in saves/states next to the program (not in test runs).
         std::filesystem::path state_dir;
         if (const char* program = SDL_GetBasePath()) state_dir = std::filesystem::path(program) / "saves" / "states";
@@ -910,7 +953,8 @@ int run(const Options& options, dw4::game::Settings& settings) {
             engine_storage.reset();
             engine_storage.emplace(options.data);
             engine.set_resource_overrides(mod_folders);
-            engine.set_card_root(card_root);
+            engine.set_card_store(player_store);
+            for (int slot = 0; slot < 2; ++slot) engine.set_card_setting(slot, player_card_settings[std::size_t(slot)]);
             engine.restore(state.snapshot);
             if (state.load_step_drawn) engine.traverse_scene();
             std::vector<std::int16_t> scratch(std::size_t(kAudioFrameSamples + 1) * 2);
@@ -946,7 +990,6 @@ int run(const Options& options, dw4::game::Settings& settings) {
         std::string lobby_status;
         auto begin_session = [&] {
             const auto& started = net.start();
-            const auto real_cards = card_root;
             engine_storage.reset();
             engine_storage.emplace(options.data);
             engine.set_resource_overrides(mod_folders);
@@ -961,10 +1004,10 @@ int run(const Options& options, dw4::game::Settings& settings) {
             session_cards = std::filesystem::temp_directory_path() /
                             ("dw4_session_" + std::to_string(net.local_slot()) + "_" +
                              std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
-            write_card(session_cards / "Card A", started.card_a);
-            write_card(session_cards / "Card B", started.card_b);
+            write_session_card(session_cards / "Card A", started.card_a);
+            write_session_card(session_cards / "Card B", started.card_b);
+            std::cout << "online: shared cards: Card A " << card_names(started.card_a) << ", Card B " << card_names(started.card_b) << '\n';
             own_card_name = net.local_slot() == 0 ? "Card A" : net.local_slot() == 1 ? "Card B" : "";
-            own_card_folder = real_cards / "Card A";
             engine.set_card_root(session_cards);
             engine.request_stage(started.stage);
             frame_base = 0;
@@ -979,13 +1022,19 @@ int run(const Options& options, dw4::game::Settings& settings) {
             message_until = std::chrono::steady_clock::now() + std::chrono::seconds(4);
         };
         auto end_session = [&] {
-            if (!own_card_name.empty()) write_card(own_card_folder, read_card(session_cards / own_card_name));
+            // Only the DW4 save goes back, and only when the session changed it.
+            if (!own_card_name.empty())
+                if (const auto note = dw4::game::write_back_session_card(player_store, session_cards / own_card_name); !note.empty()) {
+                    std::cout << note << '\n';
+                    engine.log(note);
+                }
             std::error_code error;
             if (!session_cards.empty()) std::filesystem::remove_all(session_cards, error);
             session_cards.clear();
             own_card_name.clear();
             net.close();
-            engine.set_card_root(card_root);
+            engine.set_card_store(player_store);
+            for (int slot = 0; slot < 2; ++slot) engine.set_card_setting(slot, player_card_settings[std::size_t(slot)]);
             apply_gameplay(engine.cheats());
         };
         // The console reboots (Engine::reboot_due, the reset button): a new
@@ -996,13 +1045,13 @@ int run(const Options& options, dw4::game::Settings& settings) {
         // and cheats.
         auto reboot_console = [&] {
             const auto cheats = engine.cheats();
-            const auto cards = engine.card_root();
+            const auto cards = engine.card_store();
             const std::array<dw4::engine::CardSetting, 2> slots{engine.card_setting(0), engine.card_setting(1)};
             frame_base += engine.frame();
             engine_storage.reset();
             engine_storage.emplace(options.data);
             engine.set_resource_overrides(mod_folders);
-            engine.set_card_root(cards);
+            engine.set_card_store(cards);
             for (int slot = 0; slot < 2; ++slot) engine.set_card_setting(slot, slots[std::size_t(slot)]);
             engine.cheats() = cheats;
             engine.request_stage(!net.active() && !options.smoke_frames && settings.skip_intro ? "stagis10" : "stagis08");
@@ -1204,7 +1253,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 if (const char* port = std::getenv("DW4_MENU_HOST"))
                     net.host(std::atoi(port), 2, 3, data_hash(engine.resources()), error, true);
                 else if (const char* join_port = std::getenv("DW4_MENU_JOIN"))
-                    net.join("127.0.0.1", std::atoi(join_port), data_hash(engine.resources()), read_card(card_root / "Card A"), error);
+                    net.join("127.0.0.1", std::atoi(join_port), data_hash(engine.resources()), session_card(player_store), error);
                 if (!error.empty()) std::cout << "online: " << error << '\n';
             }
             if (net.in_lobby()) {
@@ -1212,7 +1261,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 start.stage = "stagis10"; // everyone meets at the title
                 start.cheats = std::uint8_t((engine.cheats().god ? 1 : 0) | (engine.cheats().infinite_mp ? 2 : 0) |
                                             (engine.cheats().one_hit ? 4 : 0));
-                start.card_a = read_card(card_root / "Card A");
+                start.card_a = session_card(player_store);
                 start.exp_rate = engine.cheats().exp_rate;
                 start.damage_dealt = engine.cheats().damage_dealt;
                 start.damage_taken = engine.cheats().damage_taken;
@@ -1677,7 +1726,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     ImGui::SetNextWindowSize(ImVec2(560, 560), ImGuiCond_FirstUseEver);
                     ImGui::Begin("DW4 PC (F1)");
                     if (ImGui::BeginTabBar("menu")) {
-                    if (ImGui::BeginTabItem("Settings")) {
+                    if (ImGui::BeginTabItem("Settings", nullptr, tab_flags("Settings"))) {
                         {
                             // Presets: Original (the GameCube presentation, load
                             // times and balance) or Modernized (widescreen, smooth
@@ -1913,12 +1962,132 @@ int run(const Options& options, dw4::game::Settings& settings) {
                         if (ImGui::Checkbox("Pause the game while this menu is open", &settings.pause_in_menu)) settings_changed = true;
                         if (ImGui::Checkbox("Skip intro at the next start (straight to the title)", &settings.skip_intro))
                             settings_changed = true;
-                        ImGui::TextDisabled("Memory cards: %s", engine.card_root().string().c_str());
-                        ImGui::TextDisabled("(settings.ini [data] cards=<folder with Card A / Card B> changes it)");
+                        ImGui::TextDisabled("Save (memory card slot A): %s", player_store.describe(0).c_str());
+                        ImGui::TextDisabled("(the Saves tab shows slot B, the backups and imports GameCube saves)");
                         ImGui::TextDisabled("Settings file: %s", settings.file.string().c_str());
                         ImGui::EndTabItem();
                     }
-                    if (ImGui::BeginTabItem("Online")) {
+                    if (ImGui::BeginTabItem("Saves", nullptr, tab_flags("Saves"))) {
+                        auto& tab = saves_tab;
+                        const auto now = std::chrono::steady_clock::now();
+                        if (now - tab.read_at > std::chrono::seconds(2)) {
+                            for (int slot = 0; slot < 2; ++slot) {
+                                const auto gci = player_store.read(slot);
+                                tab.has_file[std::size_t(slot)] = gci.has_value();
+                                tab.boxes[std::size_t(slot)] = gci ? dw4::save::summarize_save(*gci) : std::nullopt;
+                            }
+                            tab.read_at = now;
+                        }
+                        ImGui::SeparatorText("Where the save lives");
+                        const bool single = player_store.kind() == dw4::save::CardStore::Kind::single_file;
+                        for (int slot = 0; slot < 2; ++slot) {
+                            const bool card = slot == 0 || player_store.slot_exists(1) ||
+                                              player_card_settings[1].mode == dw4::engine::CardSetting::Mode::inserted;
+                            ImGui::TextWrapped("Slot %c: %s%s", slot == 0 ? 'A' : 'B', player_store.describe(slot).c_str(),
+                                               !card ? " (no memory card in this slot)" : tab.has_file[std::size_t(slot)] ? "" : " (no save yet)");
+                            if (const auto& boxes = tab.boxes[std::size_t(slot)])
+                                for (std::size_t i = 0; i < boxes->size(); ++i)
+                                    ImGui::TextDisabled("    Box %zu: %s", i + 1, dw4::save::describe_box((*boxes)[i]).c_str());
+                            else if (tab.has_file[std::size_t(slot)])
+                                ImGui::TextColored(ImVec4(1, 0.5f, 0.4f, 1), "    The save is damaged (neither data copy passes its check).");
+                        }
+                        ImGui::TextDisabled("Chosen by %s.", dw4::game::why_text(save_choice.why));
+                        if (single)
+                            ImGui::TextWrapped("Each save keeps the previous file as .bak beside it. The file holds the same bytes as "
+                                               "Dolphin's B2-GDJE-NDMWSaveData.gci (rename it to use it there). settings.ini [data] "
+                                               "save / save_b move the files; [data] cards = a GCI folder (e.g. Dolphin's GC/USA) "
+                                               "plays from that folder instead. Slot B holds a card once its file exists.");
+                        for (const auto& note : save_choice.notes) ImGui::TextWrapped("%s", note.c_str());
+                        if (net.active()) ImGui::TextWrapped("Online, the session plays from shared copies of the cards.");
+
+                        ImGui::SeparatorText("Import a GameCube save");
+                        ImGui::TextWrapped("Dolphin / GCMM .gci, GameShark .gcs, MaxDrive / Action Replay .sav, memory card images "
+                                           ".raw / .gcp (Dolphin, Nintendont, card dumps) or a GCI folder.");
+                        if (tab.dialog_done.exchange(false)) {
+                            std::lock_guard lock(tab.dialog_mutex);
+                            std::snprintf(tab.path, sizeof tab.path, "%s", tab.dialog_path.c_str());
+                            tab.source.reset();
+                        }
+                        ImGui::InputText("File or folder", tab.path, sizeof tab.path);
+                        ImGui::SameLine();
+                        if (ImGui::Button("Browse...")) {
+                            static const SDL_DialogFileFilter filters[] = {{"GameCube saves", "gci;gcs;sav;raw;gcp"}, {"All files", "*"}};
+                            const SDL_DialogFileCallback callback = [](void* user, const char* const* files, int) {
+                                auto* t = static_cast<SavesTab*>(user);
+                                if (files && files[0]) {
+                                    std::lock_guard lock(t->dialog_mutex);
+                                    t->dialog_path = files[0];
+                                    t->dialog_done.store(true);
+                                }
+                            };
+                            SDL_ShowOpenFileDialog(callback, &tab, window, filters, 2, nullptr, false);
+                        }
+                        // DW4_MENU_IMPORT=<file> (test runs): that file's preview at the first menu frame.
+                        static bool preview_from_env = options.smoke_frames && std::getenv("DW4_MENU_IMPORT");
+                        if (preview_from_env) std::snprintf(tab.path, sizeof tab.path, "%s", std::getenv("DW4_MENU_IMPORT"));
+                        if (ImGui::Button("Preview") || std::exchange(preview_from_env, false)) {
+                            std::string error;
+                            tab.source = dw4::save::load_import(std::filesystem::path(std::u8string(reinterpret_cast<const char8_t*>(tab.path))), error);
+                            tab.message = tab.source ? std::string() : "Cannot import: " + error;
+                            tab.chosen = {};
+                            tab.into = {0, 1, 2, 3};
+                            if (tab.source)
+                                if (const auto boxes = dw4::save::summarize_save(tab.source->gci))
+                                    for (std::size_t i = 0; i < boxes->size(); ++i) tab.chosen[i] = (*boxes)[i].used;
+                        }
+                        if (tab.source) {
+                            const auto saved = dw4::save::save_time_text(tab.source->gci);
+                            ImGui::Text("%s - %s%s%s", tab.source->container.c_str(), tab.source->detail.c_str(), saved.empty() ? "" : ", saved ",
+                                        saved.c_str());
+                            const auto boxes = dw4::save::summarize_save(tab.source->gci);
+                            static const char* box_names[] = {"Box 1", "Box 2", "Box 3", "Box 4"};
+                            for (std::size_t i = 0; boxes && i < boxes->size(); ++i) {
+                                ImGui::PushID(int(i));
+                                ImGui::Checkbox("##take", &tab.chosen[i]);
+                                ImGui::SameLine();
+                                ImGui::Text("Box %zu", i + 1);
+                                ImGui::SameLine();
+                                // The target box beside the box it takes.
+                                ImGui::BeginDisabled(!tab.chosen[i]);
+                                ImGui::SetNextItemWidth(80);
+                                ImGui::Combo("##into", &tab.into[i], box_names, 4);
+                                ImGui::EndDisabled();
+                                ImGui::SameLine();
+                                ImGui::TextUnformatted(dw4::save::describe_box((*boxes)[i]).c_str());
+                                ImGui::PopID();
+                            }
+                            static const char* slots[] = {"Slot A", "Slot B"};
+                            ImGui::SetNextItemWidth(120);
+                            ImGui::Combo("Into the save of", &tab.slot, slots, 2);
+                            std::vector<dw4::save::BoxMove> moves;
+                            bool clash = false;
+                            for (int i = 0; i < 4; ++i)
+                                if (tab.chosen[std::size_t(i)]) {
+                                    for (const auto& m : moves) clash = clash || m.to == tab.into[std::size_t(i)];
+                                    moves.push_back({i, tab.into[std::size_t(i)]});
+                                }
+                            if (clash) ImGui::TextColored(ImVec4(1, 0.5f, 0.4f, 1), "Two boxes go into the same box.");
+                            auto run_import = [&](const std::vector<dw4::save::BoxMove>& chosen) {
+                                const auto outcome = dw4::game::import_save(player_store, tab.slot, *tab.source, chosen);
+                                tab.message = outcome.message;
+                                engine.log(outcome.message);
+                                tab.read_at = {};
+                            };
+                            ImGui::BeginDisabled(net.active() || moves.empty() || clash);
+                            if (ImGui::Button("Import the chosen boxes")) run_import(moves);
+                            ImGui::EndDisabled();
+                            ImGui::SameLine();
+                            ImGui::BeginDisabled(net.active());
+                            if (ImGui::Button("Replace the whole save")) run_import({});
+                            ImGui::EndDisabled();
+                            ImGui::TextDisabled("The current save is copied to %s first.",
+                                                dw4::save::backup_folder(player_store).generic_string().c_str());
+                            ImGui::TextDisabled("The game reads the card again at the next Call Digimon or save room visit.");
+                        }
+                        if (!tab.message.empty()) ImGui::TextWrapped("%s", tab.message.c_str());
+                        ImGui::EndTabItem();
+                    }
+                    if (ImGui::BeginTabItem("Online", nullptr, tab_flags("Online"))) {
                         static int players = 2, port = 52040, delay = 3;
                         static char address[128] = "127.0.0.1";
                         if (net.active()) {
@@ -1931,8 +2100,9 @@ int run(const Options& options, dw4::game::Settings& settings) {
                             if (ImGui::Button("Cancel")) net.close();
                         } else {
                             ImGui::TextWrapped("Everyone starts at the title together; each machine's keyboard and first controller play "
-                                               "its own player. The host's Card A and the first guest's Card A (as Card B) are shared "
-                                               "and go back to their owners when the session ends.");
+                                               "its own player. The host's save (slot A) and the first guest's save (as slot B) are "
+                                               "shared - only the Digimon World 4 save, no other files - and go back to their owners "
+                                               "when the session ends.");
                             ImGui::SliderInt("Players", &players, 2, 4);
                             ImGui::InputInt("Port", &port);
                             ImGui::SliderInt("Input delay (steps)", &delay, 1, 10);
@@ -1947,7 +2117,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                             ImGui::InputText("Host address", address, sizeof address);
                             if (ImGui::Button("Join")) {
                                 std::string error;
-                                if (!net.join(address, port, data_hash(engine.resources()), read_card(card_root / "Card A"), error)) {
+                                if (!net.join(address, port, data_hash(engine.resources()), session_card(player_store), error)) {
                                     state_message = "Online: " + error;
                                     message_until = std::chrono::steady_clock::now() + std::chrono::seconds(5);
                                 }
@@ -1956,7 +2126,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                         }
                         ImGui::EndTabItem();
                     }
-                    if (ImGui::BeginTabItem("Cheats")) {
+                    if (ImGui::BeginTabItem("Cheats", nullptr, tab_flags("Cheats"))) {
                         ImGui::TextWrapped("Optional cheats for this session. They change the original game; what they "
                                            "give (levels, bits) stays in saves.");
                         auto& cheats = engine.cheats();
@@ -2007,7 +2177,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                         }
                         ImGui::EndTabItem();
                     }
-                    if (ImGui::BeginTabItem("Debug")) {
+                    if (ImGui::BeginTabItem("Debug", nullptr, tab_flags("Debug"))) {
                     ImGui::Text("Stage: %s  (%s)", engine.stage_name().c_str(), engine.loader_state().c_str());
                     ImGui::Text("Frame %llu  draws %zu  meshes %zu  textures %zu", (unsigned long long)engine.frame(), items.size(),
                                 renderer->mesh_count(), renderer->texture_count());
@@ -2223,13 +2393,52 @@ int run(const Options& options, dw4::game::Settings& settings) {
     return 0;
 }
 
+// --save-info FILE / --import-save FILE[:BOXES]: the preview of a GC save
+// (any container save_import.hpp reads), and the import into this run's
+// store (--card-dir / --save-file / the player's save files, slot A or B),
+// backing up the current save first. No game data, no window.
+int save_command(const Options& options, dw4::game::Settings& settings) {
+    const auto& path = options.save_info.empty() ? options.import_save : options.save_info;
+    std::string error;
+    const auto source = dw4::save::load_import(path, error);
+    if (!source) {
+        std::cerr << "dw4_game: " << path.string() << ": " << error << '\n';
+        return 1;
+    }
+    const auto saved = dw4::save::save_time_text(source->gci);
+    std::cout << "save: " << source->container << " (" << source->detail << (saved.empty() ? "" : ", saved " + saved) << ") "
+              << source->file.generic_string() << '\n';
+    for (const auto& line : import_preview(*source)) std::cout << "  " << line << '\n';
+    if (options.import_save.empty()) return 0;
+    const auto moves = dw4::save::parse_box_moves(options.import_boxes);
+    if (!moves) {
+        std::cerr << "dw4_game: unknown boxes '" << options.import_boxes << "'\n";
+        return 1;
+    }
+    // A run without --smoke-test: the player's store (with the one-time
+    // migration first, so an old save is not left behind).
+    const auto choice = dw4::game::choose_save_store(options.card_dir, options.save_file, false, settings, program_dir());
+    if (choice.settings_changed) settings.save();
+    for (const auto& note : choice.notes) std::cout << "saves: " << note << '\n';
+    const auto outcome = dw4::game::import_save(choice.store, options.import_slot, *source, *moves);
+    std::cout << (outcome.ok ? "import: " : "import failed: ") << outcome.message << '\n';
+    if (!outcome.ok) return 1;
+    if (const auto now = choice.store.read(options.import_slot))
+        if (const auto boxes = dw4::save::summarize_save(*now))
+            for (std::size_t i = 0; i < boxes->size(); ++i)
+                std::cout << "  now box " << i + 1 << ": " << dw4::save::describe_box((*boxes)[i]) << '\n';
+    return 0;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
     // Test runs and the converter never open dialogs (they run unattended).
     bool interactive = !std::getenv("DW4_NO_ERROR_BOX");
     for (int i = 1; i < argc; ++i)
-        if (std::string_view(argv[i]) == "--smoke-test" || std::string_view(argv[i]) == "--convert-rvz") interactive = false;
+        if (std::string_view(argv[i]) == "--smoke-test" || std::string_view(argv[i]) == "--convert-rvz" ||
+            std::string_view(argv[i]) == "--import-save" || std::string_view(argv[i]) == "--save-info")
+            interactive = false;
     try {
         Options options;
         for (int i = 1; i < argc; ++i) {
@@ -2240,6 +2449,22 @@ int main(int argc, char** argv) {
             };
             if (arg == "--data") options.data = next();
             else if (arg == "--card-dir") options.card_dir = next();
+            else if (arg == "--save-file") options.save_file = next();
+            else if (arg == "--save-info") options.save_info = next();
+            else if (arg == "--import-save") {
+                // FILE[:BOXES]: a trailing ":all" / ":1,3" / ":1>2" (not a drive letter's colon).
+                std::string value = next();
+                if (const auto colon = value.rfind(':'); colon != std::string::npos && colon > 1 &&
+                                                         dw4::save::parse_box_moves(value.substr(colon + 1))) {
+                    options.import_boxes = value.substr(colon + 1);
+                    value.resize(colon);
+                }
+                options.import_save = value;
+            } else if (arg == "--import-slot") {
+                const std::string value = next();
+                if (value != "A" && value != "B" && value != "a" && value != "b") throw std::runtime_error("--import-slot takes A or B");
+                options.import_slot = (value == "B" || value == "b") ? 1 : 0;
+            }
             else if (arg == "--host") options.net_host = true;
             else if (arg == "--join") {
                 options.net_join = next();
@@ -2294,7 +2519,10 @@ int main(int argc, char** argv) {
             else if (arg == "--help" || arg == "-h") {
                 std::cout << "dw4_game [--data EXTRACTED_ROOT] [--stage NAME] [--smoke-test FRAMES] [--screenshot FILE.bmp]\n"
                              "         [--screenshot-frames N,M,...] [--input SCRIPT] [--card-dir GCI_ROOT]\n"
-                             "         [--load-state FILE] [--loading original|fast]\n";
+                             "         [--save-file FILE] [--load-state FILE] [--loading original|fast]\n"
+                             "dw4_game --save-info FILE|FOLDER\n"
+                             "dw4_game --import-save FILE|FOLDER[:all|BOXES] [--import-slot A|B] [--card-dir GCI_ROOT | --save-file FILE]\n"
+                             "         BOXES: 1,3 (the same boxes) or 1>2,4>1 (box 1 into box 2, ...); .gci .gcs .sav .raw .gcp\n";
                 return 0;
             } else throw std::runtime_error("unknown option " + arg);
         }
@@ -2320,6 +2548,7 @@ int main(int argc, char** argv) {
             return 0;
         }
         auto settings = dw4::game::Settings::load();
+        if (!options.save_info.empty() || !options.import_save.empty()) return save_command(options, settings);
         if (options.data.empty()) options.data = settings.data;
         // First start: pick and check the disc image or extraction, then
         // remember it.

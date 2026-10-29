@@ -1326,7 +1326,8 @@ private:
 // broken or unformatted card, 8 both data copies broken, 9 not enough
 // space, 10 no free file entry, 11 wrong device, 12 no card. While ready,
 // beSvConnectCheck probes both slots every update (deliver slot states).
-// The cards are GCI folders (Engine::card_root()/Card A|B) with what
+// The cards keep their files where Engine::card_store says (GCI folders
+// <card root>/Card A|B or one save file per slot), with what
 // Engine::card_setting puts in the slots.
 class SaveUtilManager final : public Manager {
 public:

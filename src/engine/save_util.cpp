@@ -1,6 +1,7 @@
 // SAVEUTILITY (beSaveUtil): the memory card front end of docs/SAVES.md on
-// GCI folders. The requests run as the beSv*Api state machines on the
-// simulated card (card_timing.hpp) and end with the beSv*Api codes.
+// the card store (GCI folders or single save files, dw4/card_store.hpp).
+// The requests run as the beSv*Api state machines on the simulated card
+// (card_timing.hpp) and end with the beSv*Api codes.
 #include "dw4/engine/managers.hpp"
 #include "dw4/save_data.hpp"
 
@@ -19,11 +20,6 @@ namespace {
 // Request order of the command table (804CF848 from REQUEST_FILEMAKE).
 constexpr std::string_view kRequests[] = {"REQUEST_FILEMAKE", "REQUEST_FILEFIND", "REQUEST_FORMAT", "REQUEST_USE_CHECK",
                                           "REQUEST_READ_MEDIA", "REQUEST_WRITE_MEDIA", "REQUEST_GETFREESIZE"};
-constexpr const char* kGciName = "B2-GDJE-NDMWSaveData.gci";
-
-std::filesystem::path card_folder(const Engine& engine, int slot) {
-    return engine.card_root() / (slot == 0 ? "Card A" : "Card B");
-}
 // The engine clock in CPU ticks (486 MHz).
 std::int64_t card_ticks(std::int64_t ns) { return ns / 1000 * 486 + ns % 1000 * 486 / 1000; }
 
@@ -35,17 +31,11 @@ bool inserted(const Engine& engine, int slot) {
     case CardSetting::Mode::unformatted: return true;
     case CardSetting::Mode::automatic: break;
     }
+    // Slot B holds a card when its GCI folder or its save file exists.
     if (slot == 0) return true;
-    std::error_code error;
-    return std::filesystem::is_directory(card_folder(engine, slot), error);
+    return engine.card_store().slot_exists(slot);
 }
-std::optional<std::vector<std::uint8_t>> read_gci(const Engine& engine, int slot) {
-    std::ifstream in(card_folder(engine, slot) / kGciName, std::ios::binary);
-    if (!in) return std::nullopt;
-    std::vector<std::uint8_t> bytes((std::istreambuf_iterator<char>(in)), {});
-    if (bytes.size() < save::kGciEntrySize + save::kFileSize) return std::nullopt;
-    return bytes;
-}
+std::optional<std::vector<std::uint8_t>> read_gci(const Engine& engine, int slot) { return engine.card_store().read(slot); }
 // The first data copy whose checksum and version word hold (80321670 case 4).
 std::optional<std::size_t> valid_copy(std::span<const std::uint8_t> gci, int version) {
     const auto file = gci.subspan(save::kGciEntrySize);
@@ -56,9 +46,7 @@ std::optional<std::size_t> valid_copy(std::span<const std::uint8_t> gci, int ver
     }
     return std::nullopt;
 }
-bool write_gci(const Engine& engine, int slot, std::span<const std::uint8_t> file) {
-    std::error_code error;
-    std::filesystem::create_directories(card_folder(engine, slot), error);
+bool write_gci(Engine& engine, int slot, std::span<const std::uint8_t> file) {
     save::GciEntry entry;
     // The entry's time is the console clock's (CARDSetStatus 0x8024C43C), the
     // local time of a console set to the PC's clock: the PC's local calendar
@@ -72,17 +60,12 @@ bool write_gci(const Engine& engine, int slot, std::span<const std::uint8_t> fil
 #endif
     if (known) entry.modified = save::card_time(local);
     const auto head = save::encode_gci_entry(entry);
-    const auto path = card_folder(engine, slot) / kGciName;
-    const auto temporary = path.string() + ".tmp";
-    {
-        std::ofstream out(temporary, std::ios::binary | std::ios::trunc);
-        if (!out) return false;
-        out.write(reinterpret_cast<const char*>(head.data()), std::streamsize(head.size()));
-        out.write(reinterpret_cast<const char*>(file.data()), std::streamsize(file.size()));
-        if (!out) return false;
-    }
-    std::filesystem::rename(temporary, path, error);
-    return !error;
+    std::vector<std::uint8_t> gci(head.begin(), head.end());
+    gci.insert(gci.end(), file.begin(), file.end());
+    std::string problem;
+    if (engine.card_store().write(slot, gci, &problem)) return true;
+    engine.log("memory card " + std::string(slot == 0 ? "A" : "B") + ": " + problem);
+    return false;
 }
 
 // TPL image payload (the pixels, then the palette) of the banner / icon.
@@ -156,30 +139,19 @@ void SaveUtilManager::clear_stage(Engine&) {
     request_.reset();
 }
 
-// The slot's card: what Engine::card_setting puts there and the directory
-// of its GCI folder (Dolphin's GCI folder card: every *.gci is a file, the
-// GCI header +0x38 its block count, +0x2C the banner offset).
+// The slot's card: what Engine::card_setting puts there and the files of
+// its store (Dolphin's GCI folder card: every *.gci is a file, the GCI
+// header +0x38 its block count, +0x2C the banner offset; a single save
+// file: that file alone).
 CardSlot SaveUtilManager::card_slot(Engine& engine, int slot, int version) const {
     CardSlot card;
     card.present = inserted(engine, slot);
     if (!card.present) return card;
     const auto& setting = engine.card_setting(slot);
     card.formatted = setting.mode != CardSetting::Mode::unformatted || formatted_[std::size_t(slot)];
-    std::uint32_t used = 0, files = 0;
-    std::error_code error;
-    for (std::filesystem::directory_iterator it(card_folder(engine, slot), error), end; !error && it != end; it.increment(error)) {
-        if (!it->is_regular_file(error)) continue;
-        auto extension = it->path().extension().string();
-        for (auto& c : extension) c = char(std::tolower(static_cast<unsigned char>(c)));
-        if (extension != ".gci") continue;
-        std::ifstream in(it->path(), std::ios::binary);
-        std::array<std::uint8_t, save::kGciEntrySize> head{};
-        if (!in.read(reinterpret_cast<char*>(head.data()), std::streamsize(head.size()))) continue;
-        used += std::uint32_t(head[0x38] << 8 | head[0x39]);
-        ++files;
-    }
-    card.free_blocks = setting.blocks > used ? setting.blocks - used : 0;
-    card.free_files = files < card::kMaxFiles ? card::kMaxFiles - files : 0;
+    const auto usage = engine.card_store().usage(slot);
+    card.free_blocks = setting.blocks > usage.blocks ? setting.blocks - usage.blocks : 0;
+    card.free_files = usage.files < card::kMaxFiles ? card::kMaxFiles - usage.files : 0;
     if (const auto gci = read_gci(engine, slot)) {
         card.file = true;
         card.image_offset = std::uint32_t(gci->at(0x2C)) << 24 | gci->at(0x2D) << 16 | gci->at(0x2E) << 8 | gci->at(0x2F);
@@ -235,7 +207,7 @@ bool SaveUtilManager::command(Engine& engine, Ram& base, std::string_view comman
 }
 
 // +0x64 of the finished request into the deliver record, with the file work
-// on the GCI folder.
+// on the card store.
 void SaveUtilManager::finish(Engine& engine, UtilRam& ram) {
     auto& d = ram.deliver;
     const auto& request = *request_;

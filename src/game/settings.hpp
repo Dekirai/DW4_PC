@@ -83,9 +83,19 @@ struct Settings {
     std::set<std::string> disabled_mods; // content mods (mods/<id>) switched off
     // [data]
     std::filesystem::path data;
-    std::filesystem::path cards; // memory card root (Card A / Card B), empty: saves/GC/USA
+    // The save files of memory card slots A and B (GCI bytes; relative paths
+    // are next to the program). Slot B holds a card when its file exists.
+    std::filesystem::path save_file = "saves/savedata.dat";
+    std::filesystem::path save_file_b = "saves/savedata_b.dat";
+    // [data] save_migrated: the old saves/GC/USA save was looked for (and
+    // copied into save_file / save_file_b) once.
+    bool save_migrated = false;
+    // A GCI folder root (Card A / Card B, e.g. Dolphin's GC/USA) used instead
+    // of the save files; empty: the save files.
+    std::filesystem::path cards;
     // What the slots hold (engine::parse_card_setting: "none", "unformatted",
-    // a block count ...), empty: a 2043-block card in A, B when its folder exists.
+    // a block count ...), empty: a 2043-block card in A, B when its file (or
+    // GCI folder) exists.
     std::string card_a, card_b;
 
     std::filesystem::path file; // where the settings are read from and saved to

@@ -2,6 +2,7 @@
 
 #include "dw4/engine/igb_view.hpp"
 #include "dw4/engine/scene_graph.hpp"
+#include "dw4/card_store.hpp"
 #include "dw4/console_reset.hpp"
 #include "dw4/igb_document.hpp"
 #include "dw4/lua4.hpp"
@@ -316,14 +317,15 @@ struct ModelScriptContext {
     std::int32_t damage{}, attribute = -1, damage_flag{};
 };
 
-// What is in a memory card slot (Engine::card_setting). The card is the
-// slot's GCI folder (<card root>/Card A|B) as Dolphin's GCI folder cards:
-// its free blocks are the card's blocks minus the block counts of the *.gci
-// files in the folder (GCI header +0x38), its free files 127 minus their
-// number.
+// What is in a memory card slot (Engine::card_setting). The card keeps its
+// files where Engine::card_store says (save::CardStore): a GCI folder
+// (<card root>/Card A|B) as Dolphin's GCI folder cards, or the single save
+// file of the slot. Its free blocks are the card's blocks minus the block
+// counts of the card's files (GCI header +0x38), its free files 127 minus
+// their number.
 struct CardSetting {
     enum class Mode : std::uint8_t {
-        automatic,   // slot A holds a card, slot B when its folder exists
+        automatic,   // slot A holds a card, slot B when its folder (or save file) exists
         none,        // an empty slot (CARDProbeEx: no card)
         inserted,    // a card, also without a folder
         unformatted, // a card without a file system (CARDMount: broken)
@@ -495,9 +497,13 @@ public:
     const MountedResources& resources() const { return resources_; }
     // Mods (folders replacing logical paths, first wins); before the first stage.
     void set_resource_overrides(std::vector<std::filesystem::path> roots) { resources_.set_overrides(std::move(roots)); }
-    // Memory card folders (Dolphin's GCI layout: <root>/Card A, <root>/Card B).
-    void set_card_root(std::filesystem::path root) { card_root_ = std::move(root); }
-    const std::filesystem::path& card_root() const { return card_root_; }
+    // Where the memory cards keep their files: GCI folders (Dolphin's layout:
+    // <root>/Card A, <root>/Card B) or one save file per slot.
+    void set_card_store(save::CardStore store) { card_store_ = std::move(store); }
+    const save::CardStore& card_store() const { return card_store_; }
+    // GCI folders at `root` (the folder store).
+    void set_card_root(std::filesystem::path root) { card_store_ = save::CardStore::folder(std::move(root)); }
+    const std::filesystem::path& card_root() const { return card_store_.root(); }
     // What the slots hold (0 = A, 1 = B).
     void set_card_setting(int slot, const CardSetting& setting) { card_settings_[std::size_t(slot & 1)] = setting; }
     const CardSetting& card_setting(int slot) const { return card_settings_[std::size_t(slot & 1)]; }
@@ -644,7 +650,7 @@ private:
     std::vector<Lua4Value> lua_call(const Lua4HostCall& call);
 
     MountedResources resources_;
-    std::filesystem::path card_root_ = "saves/GC/USA";
+    save::CardStore card_store_ = save::CardStore::folder("saves/GC/USA");
     std::array<CardSetting, 2> card_settings_{};
     Messenger messenger_;
     DemoManager demo_;

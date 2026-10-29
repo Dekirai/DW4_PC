@@ -286,6 +286,9 @@ Settings Settings::parse(IniFile document) {
         }
     }
     settings.data = ini.get_or("data", "path", "");
+    settings.save_file = ini.get_or("data", "save", settings.save_file.string());
+    settings.save_file_b = ini.get_or("data", "save_b", settings.save_file_b.string());
+    settings.save_migrated = ini.get_bool("data", "save_migrated", settings.save_migrated);
     settings.cards = ini.get_or("data", "cards", "");
     settings.card_a = ini.get_or("data", "card_a", "");
     settings.card_b = ini.get_or("data", "card_b", "");
@@ -342,6 +345,10 @@ void Settings::store() {
         ini_.set("mods", "disabled", list);
     }
     if (!data.empty()) ini_.set("data", "path", data.string());
+    // Where the saves live, so settings.ini shows it.
+    ini_.set("data", "save", save_file.generic_string());
+    ini_.set("data", "save_b", save_file_b.generic_string());
+    ini_.set_bool("data", "save_migrated", save_migrated);
 }
 
 bool Settings::save() {
