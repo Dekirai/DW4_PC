@@ -214,14 +214,19 @@ void OverheadLabels::reset() {
 }
 
 float OverheadLabels::ease_occlusion(std::uint64_t key, bool hidden) {
-    auto it = std::find_if(occlusion_.begin(), occlusion_.end(), [&](const auto& entry) { return entry.first == key; });
+    auto it = std::find_if(occlusion_.begin(), occlusion_.end(), [&](const Occlusion& entry) { return entry.key == key; });
     if (it == occlusion_.end()) {
-        occlusion_.emplace_back(key, hidden ? 1.0f : 0.0f);
-        return occlusion_.back().second;
+        occlusion_.push_back({key, hidden ? 1.0f : 0.0f, hidden ? kHideAfterFrames : 0});
+        return occlusion_.back().value;
     }
+    // Only a hide that lasts counts: the probes above the head also catch the
+    // player's own upright weapon, EXP and damage numbers and effect sprites
+    // for a frame or a few (a hidden k2 run: 77 of 81 hides lasted 8 frames
+    // or less), real cover (trees, walls) lasts much longer.
+    it->hidden_frames = hidden ? std::min(it->hidden_frames + 1, kHideAfterFrames) : 0;
     constexpr float kStep = 0.125f;
-    it->second = hidden ? std::min(1.0f, it->second + kStep) : std::max(0.0f, it->second - kStep);
-    return it->second;
+    it->value = it->hidden_frames >= kHideAfterFrames ? std::min(1.0f, it->value + kStep) : std::max(0.0f, it->value - kStep);
+    return it->value;
 }
 
 std::vector<OverheadLabel> OverheadLabels::blended(float alpha) const {

@@ -200,8 +200,24 @@ void occlusion() {
     check(near(value, 0.5f, 0.001f), "half way back after four frames");
     for (int i = 0; i < 8; ++i) value = labels.ease_occlusion(1, false);
     check(value == 0.0f, "seen again after eight");
-    labels.ease_occlusion(2, true);
-    check(near(labels.ease_occlusion(2, true), 0.25f, 0.001f), "hiding eases in too");
+    // A hide counts only after kHideAfterFrames frames in a row: the review's
+    // 1-3 frame hides (the player's own weapon, damage numbers, effects) and
+    // even 8-frame ones leave the tag as it is; real cover then eases in.
+    for (int i = 0; i < 3; ++i) value = labels.ease_occlusion(2, true);
+    check(value == 0.0f, "a 3 frame hide does not dim the tag");
+    value = labels.ease_occlusion(2, false);
+    for (int i = 0; i < OverheadLabels::kHideAfterFrames - 1; ++i) value = labels.ease_occlusion(2, true);
+    check(value == 0.0f, "nor one a frame short of the limit");
+    value = labels.ease_occlusion(2, false);
+    check(value == 0.0f, "seen again: counting starts over");
+    for (int i = 0; i < OverheadLabels::kHideAfterFrames; ++i) value = labels.ease_occlusion(2, true);
+    check(near(value, 0.125f, 0.001f), "a lasting hide starts to ease in");
+    value = labels.ease_occlusion(2, true);
+    check(near(value, 0.25f, 0.001f), "hiding eases in too");
+    for (int i = 0; i < 20; ++i) value = labels.ease_occlusion(2, true);
+    check(value == 1.0f, "fully hidden behind lasting cover");
+    value = labels.ease_occlusion(2, false);
+    check(near(value, 0.875f, 0.001f), "seen again: eases out at once");
     labels.reset();
     check(labels.ease_occlusion(2, false) == 0.0f, "reset forgets the eased values");
 }

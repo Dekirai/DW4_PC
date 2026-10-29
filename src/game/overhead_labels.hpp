@@ -130,7 +130,10 @@ public:
     void capture(std::vector<OverheadLabel> local, int local_players, std::string_view stage);
     void reset();
     // A label's occlusion eased towards `hidden` (an eighth of the way per
-    // presented frame), so a probe that grazes an edge does not blink.
+    // presented frame), so a probe that grazes an edge does not blink. A hide
+    // counts only after kHideAfterFrames presented frames in a row (a new
+    // label starts as it is).
+    static constexpr int kHideAfterFrames = 12;
     float ease_occlusion(std::uint64_t key, bool hidden);
     // The labels between the previous and the current capture (alpha 0..1,
     // the renderer's smooth motion blend; a label that jumped far, appeared
@@ -148,7 +151,12 @@ public:
 private:
     std::vector<OverheadLabel> previous_, current_;
     std::vector<RemotePlayer> remote_;
-    std::vector<std::pair<std::uint64_t, float>> occlusion_; // eased occlusion per label key
+    struct Occlusion {
+        std::uint64_t key{};
+        float value{};        // eased: 0 seen .. 1 hidden
+        int hidden_frames{};  // hidden probes in a row (at most kHideAfterFrames)
+    };
+    std::vector<Occlusion> occlusion_; // per label key
     int players_{};
 };
 
