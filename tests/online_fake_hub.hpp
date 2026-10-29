@@ -253,6 +253,7 @@ public:
         std::vector<std::uint8_t> carry;
         std::optional<w::Barrier> parked;
         double parked_at = 0;
+        double last_wait = -10;
         bool lagging = false;
     };
     struct Instance {
@@ -298,6 +299,7 @@ public:
     bool answer_barriers = true;
     double co_arrival_hold = 3.0;
     double state_delay = 0.0; // extra delay of STATE_DATA (a slow state transfer)
+    double wait_hold = 0.0;   // a field barrier is held this long with BARRIER_WAIT every second (a join hold), then decided
     std::vector<std::string> log_lines;
     std::map<std::uint32_t, Member> members;
     std::map<std::uint32_t, Instance> instances;
@@ -397,9 +399,20 @@ public:
             for (auto& [id, m] : members) send(id, w::Type::ping, w::encode(w::Ping{++ping_nonce, 0, 1, std::uint8_t(suggested_delay)}), now);
         }
         for (auto& [id, inst] : instances) seal(inst, now);
+        // Held barriers: BARRIER_WAIT every second, then the decision.
+        for (auto& [id, m] : members)
+            if (m.parked && answer_barriers && wait_hold > 0 && !is_hub_stage(m.parked->stage)) {
+                if (now - m.parked_at >= wait_hold) decide(m, now);
+                else if (now - m.last_wait >= 1.0) {
+                    m.last_wait = now;
+                    send(id, w::Type::barrier_wait, w::encode(w::BarrierWait{m.parked->inst, w::WaitReason::not_joinable,
+                                                                             std::uint16_t(wait_hold - (now - m.parked_at)), {"kim"}, 0}),
+                         now);
+                }
+            }
         // Co-arrival holds that ran out: NEW.
         for (auto& [id, m] : members)
-            if (m.parked && answer_barriers && now - m.parked_at > co_arrival_hold) decide(m, now);
+            if (m.parked && answer_barriers && wait_hold <= 0 && now - m.parked_at > co_arrival_hold) decide(m, now);
     }
 
     void lag(std::uint32_t member, bool on, double now) {
@@ -699,7 +712,7 @@ public:
                 bool target = false;
                 for (auto& [iid, inst] : instances)
                     if (inst.stage == b.stage && iid != b.inst && !inst.hub && !inst.slots.empty() && !inst.snapshot.empty()) target = true;
-                if (partner || target || co_arrival_hold <= 0) decide(m, now);
+                if (wait_hold <= 0 && (partner || target || co_arrival_hold <= 0)) decide(m, now);
             }
             break;
         }

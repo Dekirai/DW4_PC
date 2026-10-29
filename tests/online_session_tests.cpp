@@ -248,6 +248,22 @@ void barrier_timeout() {
     check(a.session->inst() == 0, "unregistered");
 }
 
+// A held barrier (BARRIER_WAIT every second, as the relay's join hold) is an
+// answer: the solo group keeps waiting past the five-second timeout and takes
+// the server's decision.
+void barrier_hold() {
+    World world;
+    world.hub.wait_hold = 9.0;
+    auto& a = world.add("kim", 1);
+    a.input = press_in({{"stagis10", 30}, {"stagml11", 40}}, fake::kExitButton);
+    check(world.run_until(10, [&] { return a.session->mode() == Mode::parked && a.engine.stage() == "stagml11"; }), "parked at the field barrier");
+    world.run(7);
+    check(a.session->mode() == Mode::parked, "still parked after seven seconds: the server holds the barrier");
+    check(a.session->overlay(world.now).loading.find("Joining") != std::string::npos, "the loading line names the hold");
+    check(world.run_until(5, [&] { return a.session->mode() == Mode::solo && a.engine.stage() == "stag0101"; }), "the server's NEW after the hold");
+    check(a.session->inst() >= 100, "a registered instance, not the timeout's");
+}
+
 void pacing_and_lag() {
     World world;
     world.hub.co_arrival_hold = 3.0;
@@ -342,6 +358,8 @@ int main(int argc, char** argv) {
         target_moves_on();
         std::cout << "barrier timeout\n";
         barrier_timeout();
+        std::cout << "barrier hold\n";
+        barrier_hold();
         std::cout << "pacing, lag\n";
         pacing_and_lag();
         std::cout << "input delay\n";

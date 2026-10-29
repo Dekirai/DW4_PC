@@ -169,8 +169,10 @@ void Session::poll(double now) {
     }
     if (mode_ == Mode::catching_up) run_catch_up(now);
     // A solo group parked without an answer goes on as NEW (3.4); a larger
-    // group keeps waiting.
-    if (mode_ == Mode::parked && members(group_at_barrier_) == 1 && now - parked_at_ > config_.barrier_timeout) {
+    // group keeps waiting. A held barrier (BARRIER_WAIT: the server holds it
+    // for a co-arrival, a join or a boss choice) is an answer: the five
+    // seconds count from the server's last word, and a boss choice waits.
+    if (mode_ == Mode::parked && members(group_at_barrier_) == 1 && !boss_choice_ && now - parked_at_ > config_.barrier_timeout) {
         w::BarrierOk ok;
         ok.inst = inst_;
         ok.visit = visit_;
@@ -242,7 +244,8 @@ void Session::handle(const w::Frame& frame, double now) {
         std::string names;
         for (std::size_t i = 0; i < m.names.size(); ++i) names += (i ? (i + 1 == m.names.size() ? " and " : ", ") : "") + m.names[i];
         if (names.empty()) names = "the others";
-        boss_choice_ = (m.flags & w::BarrierWait::choice_needed) != 0;
+        boss_choice_ = (m.flags & w::BarrierWait::choice_needed) != 0 || m.reason == w::WaitReason::boss_lock;
+        if (mode_ == Mode::parked) parked_at_ = now; // the server holds the barrier: it answered
         loading_ = m.reason == w::WaitReason::co_arrival  ? "Waiting for " + names + "..."
                    : m.reason == w::WaitReason::boss_lock ? names + " fight a boss. Wait for them, or go alone?"
                                                           : "Joining " + names + "...";
@@ -992,6 +995,7 @@ void Session::choose_boss(w::Choice choice) {
     if (mode_ != Mode::parked) return;
     send(w::Type::barrier_choice, w::encode(w::BarrierChoice{inst_, choice}));
     boss_choice_ = false;
+    parked_at_ = now_; // the five seconds count from the choice
 }
 
 void Session::send_intent(w::IntentKind kind, int argument) {
