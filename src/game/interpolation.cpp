@@ -33,12 +33,16 @@ std::size_t MotionInterpolator::KeyHash::operator()(const Key& key) const {
 }
 
 void MotionInterpolator::advance() {
-    if (captured_) previous_ = std::move(current_);
+    if (captured_) {
+        older_ = std::move(previous_);
+        previous_ = std::move(current_);
+    }
     current_ = {};
     captured_ = false;
 }
 
 void MotionInterpolator::reset() {
+    older_ = {};
     previous_ = {};
     current_ = {};
     captured_ = false;
@@ -64,17 +68,79 @@ void MotionInterpolator::capture(const std::vector<engine::DrawItem>& items, con
     captured_ = true;
 }
 
-void MotionInterpolator::apply(const Map& previous, std::vector<engine::DrawItem>& items, float alpha) {
+namespace {
+float distance(const engine::Mat4& a, const engine::Mat4& b) {
+    const float dx = a(3, 0) - b(3, 0), dy = a(3, 1) - b(3, 1), dz = a(3, 2) - b(3, 2);
+    return std::sqrt(dx * dx + dy * dy + dz * dz);
+}
+float turn(const engine::Mat4& a, const engine::Mat4& b) {
+    float most = 0;
+    for (int i = 0; i < 3; ++i)
+        for (int j = 0; j < 3; ++j) most = std::max(most, std::abs(a(i, j) - b(i, j)));
+    return most;
+}
+} // namespace
+
+void MotionInterpolator::apply(const Map& previous, std::vector<engine::DrawItem>& items, float alpha, BlendReport* report,
+                               const Map* older) {
     std::unordered_map<Key, int, KeyHash> seen;
     seen.reserve(items.size());
     for (auto& item : items) {
         Key key{item.node, item.geometry, 0};
         key.occurrence = std::uint32_t(seen[key]++);
+        if (report) ++report->items;
         const auto found = previous.find(key);
-        if (found == previous.end()) continue;
+        if (found == previous.end()) {
+            if (report) ++report->unmatched;
+            continue;
+        }
         const auto& before = found->second;
-        if (!close(before.model, item.model, 40.0f)) continue;
+        if (report) {
+            // (Diagnostics: another occurrence of the node and geometry was
+            // nearer in the previous step than the one this item blends from.)
+            const float own = distance(before.model, item.model);
+            for (const std::uint32_t other : {key.occurrence - 1, key.occurrence + 1}) {
+                if (other == std::uint32_t(-1)) continue;
+                const auto alt = previous.find(Key{key.node, key.geometry, other});
+                if (alt != previous.end() && distance(alt->second.model, item.model) + 0.01f < own) {
+                    ++report->swapped;
+                    report->flagged.push_back({&item, "swap", own});
+                    break;
+                }
+            }
+        }
+        if (!close(before.model, item.model, 40.0f)) {
+            if (report) {
+                ++report->far;
+                report->flagged.push_back({&item, "far", distance(before.model, item.model)});
+            }
+            continue;
+        }
+        if (report && older) {
+            // (Diagnostics: a change far larger than the one of the step
+            // before, e.g. a looping transform sequence wrapping to its
+            // start, is blended like motion.)
+            if (const auto old = older->find(key); old != older->end()) {
+                const float move_now = distance(before.model, item.model), move_before = distance(old->second.model, before.model);
+                const float turn_now = turn(before.model, item.model), turn_before = turn(old->second.model, before.model);
+                if (turn_now > 8.0f * turn_before + 0.01f || move_now > 8.0f * move_before + 0.5f) {
+                    ++report->jumps;
+                    report->flagged.push_back({&item, "jump", move_now, turn_now, turn_before});
+                }
+            }
+        }
         item.model = lerp(before.model, item.model, alpha);
+        if (report) ++report->blended;
+        if (report && item.palette) {
+            ++report->palettes;
+            if (before.palette == item.palette) {
+                ++report->palettes_shared;
+                report->flagged.push_back({&item, "palette_shared", 0.0f});
+            } else if (before.palette && before.palette->size() != item.palette->size()) {
+                ++report->palettes_resized;
+                report->flagged.push_back({&item, "palette_resized", 0.0f});
+            }
+        }
         if (item.palette && before.palette && before.palette != item.palette &&
             before.palette->size() == item.palette->size()) {
             auto blended = std::make_shared<std::vector<engine::Mat4>>(*item.palette);
@@ -84,20 +150,32 @@ void MotionInterpolator::apply(const Map& previous, std::vector<engine::DrawItem
                 else (*blended)[i] = lerp((*before.palette)[i], (*blended)[i], alpha);
             }
             if (ok) item.palette = std::move(blended);
+            if (report) {
+                if (ok) ++report->palettes_blended;
+                else {
+                    ++report->palettes_far;
+                    report->flagged.push_back({&item, "palette_far", 0.0f});
+                }
+            }
         }
     }
 }
 
 void MotionInterpolator::blend(std::vector<engine::DrawItem>& items, engine::FrameCamera& camera,
-                               engine::ShadowFrame& shadow, float alpha) const {
+                               engine::ShadowFrame& shadow, float alpha, BlendReport* report) const {
     if (!previous_.valid || !current_.valid) return;
     alpha = std::clamp(alpha, 0.0f, 1.0f);
     if (alpha >= 1.0f) return;
-    apply(previous_.items, items, alpha);
-    apply(previous_.casters, shadow.casters, alpha);
-    if (close(previous_.view, camera.view, 60.0f)) camera.view = lerp(previous_.view, camera.view, alpha);
-    if (close(previous_.light_view, shadow.light_view, 60.0f))
+    apply(previous_.items, items, alpha, report, older_.valid ? &older_.items : nullptr);
+    apply(previous_.casters, shadow.casters, alpha, nullptr);
+    if (close(previous_.view, camera.view, 60.0f)) {
+        camera.view = lerp(previous_.view, camera.view, alpha);
+        if (report) report->camera = true;
+    }
+    if (close(previous_.light_view, shadow.light_view, 60.0f)) {
         shadow.light_view = lerp(previous_.light_view, shadow.light_view, alpha);
+        if (report) report->light = true;
+    }
 }
 
 } // namespace dw4::game

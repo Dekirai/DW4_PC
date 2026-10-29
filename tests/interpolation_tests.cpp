@@ -3,6 +3,7 @@
 #include <cmath>
 #include <iostream>
 #include <stdexcept>
+#include <string>
 
 namespace {
 using namespace dw4;
@@ -74,6 +75,62 @@ void test_repeated_instances() {
     check(near(blended[0].model(3, 0), 0.5f) && near(blended[1].model(3, 0), 11.0f),
           "Instances of one node blend in drawing order");
 }
+
+// The dev diagnostics (BlendReport, DW4_DEV_DUMP) name the two cases the
+// key-and-distance blend cannot tell from motion.
+void test_blend_report() {
+    engine::Node node;
+    engine::GeometryData geometry;
+    engine::FrameCamera camera;
+    engine::ShadowFrame shadow;
+    {
+        // A looping transform: two small steps, then back to the start.
+        game::MotionInterpolator interpolator;
+        for (const float x : {0.0f, 0.1f, 0.2f}) {
+            std::vector<engine::DrawItem> items{item_at(&node, &geometry, x)};
+            interpolator.capture(items, camera, shadow);
+            interpolator.advance();
+        }
+        std::vector<engine::DrawItem> items{item_at(&node, &geometry, -5.0f)};
+        interpolator.capture(items, camera, shadow);
+        game::BlendReport report;
+        auto blended = items;
+        interpolator.blend(blended, camera, shadow, 0.5f, &report);
+        check(report.items == 1 && report.jumps == 1 && report.flagged.size() == 1 &&
+                  std::string(report.flagged[0].reason) == "jump",
+              "A wrap far larger than the step before is reported as a jump");
+    }
+    {
+        // Two instances; the first one is culled in the next step, so the
+        // second becomes occurrence 0 and meets the first one's place.
+        game::MotionInterpolator interpolator;
+        std::vector<engine::DrawItem> items{item_at(&node, &geometry, 0.0f), item_at(&node, &geometry, 20.0f)};
+        interpolator.capture(items, camera, shadow);
+        interpolator.advance();
+        items = {item_at(&node, &geometry, 20.0f)};
+        interpolator.capture(items, camera, shadow);
+        game::BlendReport report;
+        auto blended = items;
+        interpolator.blend(blended, camera, shadow, 0.5f, &report);
+        check(report.swapped == 1 && report.blended == 1, "A culled instance shifting the occurrences is reported as a swap");
+    }
+    {
+        // Plain motion reports nothing.
+        game::MotionInterpolator interpolator;
+        for (const float x : {0.0f, 1.0f, 2.0f}) {
+            std::vector<engine::DrawItem> items{item_at(&node, &geometry, x)};
+            interpolator.capture(items, camera, shadow);
+            interpolator.advance();
+        }
+        std::vector<engine::DrawItem> items{item_at(&node, &geometry, 3.0f)};
+        interpolator.capture(items, camera, shadow);
+        game::BlendReport report;
+        auto blended = items;
+        interpolator.blend(blended, camera, shadow, 0.5f, &report);
+        check(report.blended == 1 && report.flagged.empty() && report.camera, "Steady motion is blended without flags");
+        check(near(blended[0].model(3, 0), 2.5f), "The report does not change the blend");
+    }
+}
 } // namespace
 
 int main() {
@@ -81,6 +138,7 @@ int main() {
         test_blend_between_steps();
         test_jumps_and_new_items();
         test_repeated_instances();
+        test_blend_report();
     } catch (const std::exception& error) {
         std::cerr << "interpolation tests failed: " << error.what() << '\n';
         return 1;

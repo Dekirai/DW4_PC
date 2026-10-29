@@ -54,6 +54,7 @@ struct GlRenderer::Impl {
     int u_fog{}, u_fog_color{}, u_fog_range{}, u_skinned{}, u_palette{}, u_tex_matrix{};
     int u_shadow_matrix{}, u_shadow_tex{}, u_shadow_pass{};
     int u_texgen{}, u_pixel_center{}, u_normal{};
+    int u_id_mode{}, u_id{};
     PFNGLUNIFORM2FPROC Uniform2f{};
     // GX samples a pixel at 7/12 of its width and height instead of GL's 1/2
     // (unless antialiasing); Dolphin's VertexShaderManager compensates with
@@ -173,6 +174,8 @@ uniform int u_use_tex;
 uniform vec4 u_modulate;
 uniform int u_alpha_func;
 uniform float u_alpha_ref;
+uniform int u_id_mode;
+uniform vec4 u_id;
 out vec4 o_color;
 void main() {
     // Receiver pass (801FE190): the light's map is the multiplier (white
@@ -199,6 +202,8 @@ void main() {
     else if (u_alpha_func == 5) pass = a != r;
     else if (u_alpha_func == 6) pass = a >= r;
     if (!pass) discard;
+    // Dev item-id pass (set_id_pass): the draw item's number.
+    if (u_id_mode != 0) { o_color = u_id; return; }
     // Shadow map pass: casters in the _shadowColor grey (u_modulate) on the
     // white map, unlit and untextured.
     if (u_shadow_pass != 0) { o_color = vec4(u_modulate.rgb, 1.0); return; }
@@ -291,7 +296,7 @@ GlRenderer::GlRenderer() : gl_(std::make_unique<Impl>()) {
     U(model) U(view) U(proj) U(color) U(modulate) U(use_vcol) U(use_tex) U(alpha_func) U(alpha_ref)
     U(lighting) U(light_dir) U(light_col) U(light_count) U(diffuse) U(tex) U(light_ambient)
     U(fog) U(fog_color) U(fog_range) U(skinned) U(palette) U(tex_matrix)
-    U(shadow_matrix) U(shadow_tex) U(shadow_pass) U(texgen) U(pixel_center) U(normal)
+    U(shadow_matrix) U(shadow_tex) U(shadow_pass) U(texgen) U(pixel_center) U(normal) U(id_mode) U(id)
 #undef U
     gl.UseProgram(program_);
     const engine::Mat4 identity{};
@@ -763,7 +768,14 @@ void GlRenderer::render(const std::vector<engine::DrawItem>& items, const engine
                         const engine::Vec4f& clear, const Viewport& screen, const Viewport& wide, int window_width,
                         int window_height) {
     auto& gl = *gl_;
-    render_shadow_map();
+    if (!id_pass_) render_shadow_map();
+    // Dev item-id pass: no blending and no multisampling (every sample of a
+    // pixel gets the item's exact number), no shadow receivers.
+    const bool multisample = glIsEnabled(GL_MULTISAMPLE);
+    if (id_pass_) {
+        glDisable(GL_MULTISAMPLE);
+        glDisable(GL_DITHER);
+    }
     // Widescreen: perspective projections keep their vertical field of view
     // and widen horizontally to the wide area.
     const float widen = wide.width > screen.width && wide.height > 0 && screen.height > 0
@@ -805,18 +817,26 @@ void GlRenderer::render(const std::vector<engine::DrawItem>& items, const engine
     // setClearColor (802F29E8 -> 800EBF28) would truncate, but the clear
     // Dolphin shows is the rounded one: stagML14's 0.031 / 0.117 / 0.031
     // background is 8 / 30 / 8, not 7 / 29 / 7.
-    glClearColor(engine::gx_round(clear.x), engine::gx_round(clear.y), engine::gx_round(clear.z), 1);
+    if (id_pass_) glClearColor(0, 0, 0, 1);
+    else glClearColor(engine::gx_round(clear.x), engine::gx_round(clear.y), engine::gx_round(clear.z), 1);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     gl.UseProgram(program_);
+    gl.Uniform1i(gl.u_id_mode, id_pass_ ? 1 : 0);
     gl.Uniform1i(gl.u_tex, 0);
     gl.Uniform1i(gl.u_shadow_tex, 1);
     gl.Uniform1i(gl.u_shadow_pass, 0);
     gl.ActiveTexture(GL_TEXTURE0);
     const float sx = screen.width / 640.0f, sy = screen.height / 480.0f;
+    if (id_pass_) receivers_drawn = true;
+    std::uint32_t item_number = 0;
     for (const auto& item : items) {
+        ++item_number;
         const auto* m = mesh(item.geometry);
         if (!m || !m->index_count) continue;
         const auto& s = item.state;
+        if (id_pass_)
+            gl.Uniform4f(gl.u_id, float(item_number & 0xFF) / 255.0f, float((item_number >> 8) & 0xFF) / 255.0f,
+                         float((item_number >> 16) & 0xFF) / 255.0f, 1.0f);
         // igProjectiveShadowShader draws its receivers in a compound package
         // (801FE348 opens it with neither flag, 802062E0), which the sorter's
         // flush appends after the opaque packages and before the transparent
@@ -952,7 +972,7 @@ void GlRenderer::render(const std::vector<engine::DrawItem>& items, const engine
             gl.Uniform4f(gl.u_fog_color, engine::gx_trunc_light(f.x), engine::gx_trunc_light(f.y), engine::gx_trunc_light(f.z), 1);
             gl.Uniform2f(gl.u_fog_range, s.fog_params->f0, s.fog_params->f1);
         }
-        if (s.blend_enabled) {
+        if (s.blend_enabled && !id_pass_) {
             // The GX visual context's blend flush 800F8EA8 calls
             // GXSetBlendMode(enabled ? GX_BM_BLEND : GX_BM_NONE, src, dst,
             // GX_LO_COPY): it never selects GX_BM_SUBTRACT, so every blended
@@ -993,6 +1013,11 @@ void GlRenderer::render(const std::vector<engine::DrawItem>& items, const engine
     glDisable(GL_CULL_FACE);
     glDisable(GL_SCISSOR_TEST);
     glViewport(0, 0, window_width, window_height);
+    if (id_pass_) {
+        gl.Uniform1i(gl.u_id_mode, 0);
+        if (multisample) glEnable(GL_MULTISAMPLE);
+        glEnable(GL_DITHER);
+    }
     // Drop buffers of geometry not drawn for two seconds (replaced text).
     ++frame_;
     for (auto it = meshes_.begin(); it != meshes_.end();) {

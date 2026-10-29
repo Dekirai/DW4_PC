@@ -14,6 +14,27 @@
 
 namespace dw4::game {
 
+// What one blend did (dev diagnostics, DW4_DEV_DUMP's presents.csv and
+// blend_NNNNNN.txt; the blend itself does not depend on it).
+struct BlendReport {
+    int items{};      // draw items of the frame
+    int blended{};    // drawn between the two steps
+    int unmatched{};  // no item with the key in the previous step: drawn as they are
+    int far{};        // a key match too far away (warp, sudden turn): drawn as they are
+    int swapped{};    // blended from another occurrence's previous place (a nearer one exists)
+    int jumps{};      // blended across a change far larger than the step before it (a loop wrapping)
+    int palettes{}, palettes_blended{}, palettes_far{}, palettes_shared{}, palettes_resized{};
+    bool camera{}, light{}; // the view / light view were blended
+    struct Flag {
+        const engine::DrawItem* item; // into the blended list (valid until it changes)
+        const char* reason;           // "far", "swap", "jump", "palette_far", "palette_resized", "palette_shared"
+        float distance;               // from the previous step's matrix (translation)
+        float turn{};                 // largest change of the 3x3 part from the previous step
+        float turn_before{};          // the same from the step before ("jump")
+    };
+    std::vector<Flag> flagged;
+};
+
 class MotionInterpolator {
 public:
     // The simulation advanced: the state captured last becomes the previous one.
@@ -25,7 +46,7 @@ public:
     // Blends the frame from the previous toward the current state; alpha 0 is
     // the previous step, 1 the current one.
     void blend(std::vector<engine::DrawItem>& items, engine::FrameCamera& camera, engine::ShadowFrame& shadow,
-               float alpha) const;
+               float alpha, BlendReport* report = nullptr) const;
     void reset();
 
 private:
@@ -49,9 +70,11 @@ private:
         bool valid{};
     };
     static void record(Map& map, const std::vector<engine::DrawItem>& items);
-    static void apply(const Map& previous, std::vector<engine::DrawItem>& items, float alpha);
+    static void apply(const Map& previous, std::vector<engine::DrawItem>& items, float alpha, BlendReport* report,
+                      const Map* older = nullptr);
 
-    Snapshot previous_, current_;
+    // (older_: the step before previous_, only for BlendReport's jumps.)
+    Snapshot older_, previous_, current_;
     bool captured_{};
 };
 
