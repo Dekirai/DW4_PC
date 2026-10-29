@@ -96,19 +96,25 @@ const std::vector<std::string_view>& online_forbidden_env() {
         "DW4_CARD_B",
         // the cameras-exits test switches (game_main.cpp: rules, forks and intents of offline test runs)
         "DW4_CAMERAS", "DW4_CAM_LOCAL", "DW4_LEASH_OFF", "DW4_ONLINE", "DW4_TEST_RULES", "DW4_TEST_GATEDISC",
-        "DW4_TEST_GIVEUP"};
+        "DW4_TEST_GIVEUP",
+        // state tests, the randomizer's save bond of test runs and the direct netplay menus (the client lane's list)
+        "DW4_STATE_FILE", "DW4_STATE_TEST", "DW4_RANDOMIZER_BIND", "DW4_MENU_HOST", "DW4_MENU_IMPORT", "DW4_MENU_JOIN"};
     return names;
 }
 
 const std::vector<std::string_view>& online_presentation_env() {
     // An entry ending in '*' is a prefix.
     static const std::vector<std::string_view> names = {
-        "DW4_TRACE_*", "DW4_DEV_*", "DW4_AUDIO_*", "DW4_CAMPAIGN_*", "DW4_MENU_*", "DW4_FARM_*",
+        "DW4_TRACE_*", "DW4_DEV_*", "DW4_AUDIO_*", "DW4_CAMPAIGN_*", "DW4_MENU_TAB", "DW4_FARM_*",
         "DW4_ACHIEVEMENTS", "DW4_AX_COMPRESSOR", "DW4_AVOID_MATS", "DW4_DISCORD_PIPE", "DW4_DRAW_DUMP", "DW4_DUMP_SEQ",
         "DW4_DUMP_TEXTURES", "DW4_LABELS", "DW4_MAT_SEQUENCE", "DW4_MAT_SWITCH", "DW4_MIGRATE_FROM", "DW4_MSAA",
-        "DW4_NO_ERROR_BOX", "DW4_OPEN_MENU", "DW4_PRESENCE_ART_ALL", "DW4_PROFILE", "DW4_RANDOMIZER_BIND", "DW4_RENDER",
-        "DW4_SCENE_REPORT", "DW4_SEEK_DIRECT", "DW4_SMOKE_STAGES", "DW4_STAGE_STATES", "DW4_STATE_FILE",
-        "DW4_STATE_TEST", "DW4_TEXTURE_PACK", "DW4_WIDESCREEN", "DW4_WINDOW",
+        "DW4_NO_ERROR_BOX", "DW4_OPEN_MENU", "DW4_PRESENCE_ART_ALL", "DW4_PROFILE", "DW4_RENDER",
+        "DW4_SCENE_REPORT", "DW4_SEEK_DIRECT", "DW4_SMOKE_STAGES", "DW4_STAGE_STATES",
+        "DW4_TEXTURE_PACK", "DW4_WIDESCREEN", "DW4_WINDOW",
+        // the online client's own switches (src/game/online: development server, pin and password, the
+        // calibration, the rate override, its trace)
+        "DW4_ONLINE_CALIBRATION", "DW4_ONLINE_PASSWORD", "DW4_ONLINE_PIN", "DW4_ONLINE_RATE", "DW4_ONLINE_SERVER",
+        "DW4_ONLINE_TRACE",
         // round S1 test tools (game_main.cpp)
         "DW4_SNAPSHOT_DUMP", "DW4_PAD_LOG", "DW4_PAD_REPLAY", "DW4_EXTRA_RENDERS", "DW4_EXTRA_WIDEN", "DW4_EXTRA_PREVIOUS",
         "DW4_CAM_CHECK"};

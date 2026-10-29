@@ -913,6 +913,25 @@ The lanes may refine field layouts; the integration step writes the final
 layout into an appendix of this document and into
 `server/DW4Online/README.md`.
 
+**The client's layouts (round S1, client lane).** `src/game/online/wire.hpp`
+holds every payload byte for byte (little endian; `str8` = u8 length +
+bytes, `blob` = u32 length + bytes; message types 0x01-0x13 client to server,
+0x41-0x4E server to client) and `dw4_online_wire_tests` round-trips each. The
+client needed four additions to the tables above: JOIN carries the member id
+(`u8 slot | u32 member | i16 point | blob carry`, for notices and names);
+BARRIER_OK carries the member of each new slot (`4 x u32` after the slot map);
+a pad's seventh byte is flags, bit 0 set by the server when it filled the pad
+(lag icons come from it, clients send 0 and never simulate it); and REKEY
+(0x4E: `u32 old inst | u32 old visit | u32 new inst | u32 new visit`) tells
+the side of a fork that does not keep the instance id its new one (the server
+routes a member's INPUT and LOG by the member, so frames sent before the REKEY
+still land). Instance 0 is a member's own unregistered instance: the title at
+the session start, and a solo group that went on after five seconds without a
+BARRIER_OK. Every barrier, also into a hub, gets a BARRIER_OK with the new
+instance id and visit. The settings hash of the hello line is FNV-1a 64 over
+`dw4r2-settings|protocol=<p>|data=<dataHash>|difficulty=<d>|camera=<c>|light=<l>|seed=<s>|enemies=<e>|zones=<z>|drops=<0|1>|fast=<0|1>`
+(randomizer fields 0 when it is off, `src/game/online/room_settings.hpp`).
+
 ### 6.4 Ticks, sealing, delay
 
 **Solo-led** (one member). The member steps on its own 59.94 Hz clock
@@ -949,6 +968,31 @@ deterministic, because the sealed pads are what every machine executes).
 Bounds 1..10. Estimated `d` = 2-3 inside Europe, +1-2 on WLAN. Inputs are
 indexed by tick, so every machine has its own `d_i`, as the direct sessions
 already allow (`game_main.cpp:1853-1856`).
+
+**Measured in round S1 (client lane): the formula misses the playout tick.**
+A member does not execute tick t when SEALED(t) arrives but one playout tick
+later (the pacing below keeps one tick in reserve), plus up to one pass of its
+host loop. With the built client (`src/game/online/session.cpp`, the pacing of
+`pacing.cpp`) against the fake hub of `tests/online_fake_hub.hpp` (server-paced
+sealing, immediate fill, a simulated clock, TCP order kept), the smallest delay
+without a single late pad in 20 s of two-member play
+(`dw4_online_session_tests --delay-table`) was:
+
+| one way | jitter (each way) | needed `d` | `ceil((RTT + J) / f)` | `ceil((RTT + J) / f + 1.5)` |
+| --- | --- | --- | --- | --- |
+| 5 ms | 0 | 3 | 1 | 3 |
+| 10 ms | 0 | 3 | 2 | 3 |
+| 20 ms | 0 | 4 | 3 | 4 |
+| 30 ms | 10 ms | 7 | 5 | 7 |
+| 50 ms | 0 | 8 | 6 | 8 |
+| 50 ms | 20 ms | 10 | 9 | 10 |
+
+So the starting value is `d_i = ceil((RTT_i + J_i) / 16.683 ms + 1.5)`
+(J = the round-trip spread, both directions' jitter), one to two ticks more than
+the formula above; the server's adaptation then works from there. The
+estimate inside Europe becomes 3-4, +1-2 on WLAN. The client takes the
+suggested delay from PING before a sealed start (NEW with two or more members,
+JOIN_AT) and changes it in a sealed instance only through DELAY events.
 
 **Pacing.** A client executes sealed ticks at its own 59.94 Hz pace with a
 playout buffer of one tick. Its pace follows the server's by at most ±0.1 %
@@ -1116,6 +1160,45 @@ Decisions from it:
   slowest case, so a fresh client on a weaker PC is not offered a join it
   cannot finish in time; the calibration replaces it within the first second
   in the room.
+
+**The client's calibration and the music position (measured in round S1,
+client lane).** There is no bundled log (it would be game-derived data): the
+calibration direct-starts a field with four joined players (fast loading),
+lets every pad walk a slow circle and attack now and then, and times the
+steps after the load, each step as a catch-up step runs it (the step, the
+picture's traversal, the music position). `dw4_game --online-calibrate STEPS`
+prints it; the room join runs it for 0.5 s before the online engine starts.
+On the reference machine (hidden, other rounds running), main's path without
+the union pass, 6,000 steps:
+
+| Stage | steps / s | without the music position (`DW4_ONLINE_CALIBRATION=nomusic`) |
+| --- | --- | --- |
+| stag0102 | 2,731-2,805 | 4,561 |
+| dng101b1 | 3,066-3,254 | 5,726 |
+| stagBS02 | 4,519-4,646 | 11,598 |
+
+The music position is kept by rendering each replayed step's sound and
+dropping it, as the save state replay does (`load_state`); a seek of the
+streams afterwards would need a stream seek in the sound manager, which does
+not exist. It costs 0.14 ms per step in stag0102, about 40 % of the catch-up
+rate. With the union pass's 0.15-0.18 ms on top, a four-player field would
+replay at about 1,900 steps per second on the reference machine, not 3,000
+(the cameras lane measures the final path). The client reports what it
+measured (RATE after the calibration and after every replay), so the
+server's offers follow the real path either way; a position-only advance of
+the streams (no mixing) is a candidate for round S4's performance lane. Under
+load (two clients calibrating at once while four story segments ran) the
+0.5 s calibration gave 1,372-2,916 steps per second, so the first estimate
+is rough and the replays' own rates replace it.
+
+**Integration (round S1).** The client keeps the music position by rendering
+and dropping each replayed step's sound, so a catch-up runs at the cameras
+lane's "with the mix" column (about 1,800 steps per second in a four-player
+field on the reference machine), not the "without the mix" one. The decisions
+above stand: 30 s still admit about 14 minutes of a four-player field log on
+the reference machine, and the client's RATE reports what its replays really
+reach, so the server's offers follow the real path. A position-only advance
+of the streams (round S4) would give the "without the mix" rates back.
 
 **State size.** Measured (spike `r51net`, two and three processes, dng101b1,
 stag0101, stagml11): join state 271,387 B after 2,999 steps raw (snapshot
@@ -1337,11 +1420,29 @@ on, the owner's place stays reserved, the story follows the owner-away setting,
   `model_ctrl.cpp` (11), `lua_host.cpp` atan2, `particles.cpp`,
   `managers_core.cpp` sin / cos / pow, the Lua 4 VM's pow.
   - **Until round S4**: online needs a CPU on which the static CRT takes its
-    FMA3 routines (FMA3 and AVX2 by cpuid; the S1 client lane confirms the
-    exact condition in the CRT source shipped with MSVC). The client checks it
-    at the room join and refuses with "Online play needs a CPU with FMA3
-    (Intel 2013 / AMD 2015 or later)". With a static CRT (/MT) every machine
-    then runs the same code.
+    FMA3 routines. The client checks it at the room join and refuses with
+    "Online play needs a CPU with FMA3 (Intel 2013 / AMD 2015 or later)".
+    With a static CRT (/MT) every machine then runs the same code.
+  - **The exact condition (measured in round S1).** The source of the math
+    library is not part of the UCRT source drop (`ucrt/initializers/
+    fma3_initializer.cpp` only registers `__acrt_initialize_fma3`), so the
+    client lane disassembled `fma3_available.obj` and the dispatchers from the
+    static `libucrt.lib` of the Windows SDK 10.0.26100.0 that the build links
+    (`lib /extract`, `dumpbin /disasm`). `__acrt_initialize_fma3` stores
+    `__use_fma3_lib` = 0 unless CPUID.1:ECX has FMA (bit 12), OSXSAVE (27)
+    and AVX (28) and XGETBV(0) has the XMM and YMM bits (`& 6 == 6`); then 1,
+    and 3 when CPUID.0 reports leaf 7 and CPUID.(7,0):EBX has AVX2 (bit 5).
+    The routines test it in two ways: the assembler routines (`sin`, `cos`,
+    `tan`, `exp`, `log`, `fmod`, `sinf`, `cosf`, `tanf`, `expf`, `logf`,
+    `powf`) take their FMA3 path when it is nonzero, the C routines compiled
+    twice (`acos`, `asin`, `atan`, `atan2`, their float versions, and `pow`
+    from the ARM optimized routines) only when `(value & 3) == 3`. A CPU with
+    FMA3 but without AVX2 (AMD Piledriver / Steamroller) therefore runs a
+    mixed set that matches neither path. The gate wants exactly 3 (FMA3, AVX,
+    OSXSAVE, the OS's YMM state and AVX2) and `_get_FMA3_enable() != 0`;
+    the static build reads the CRT's own `__use_fma3_lib`, and a test checks
+    that the cpuid replication (`src/game/online/cpu_gate.cpp`) gives the same
+    value (3 on the reference Ryzen 7 7800X3D).
   - **Round S4** routes those call sites through `dw4::sim` wrappers that call
     the MSL routines in online sessions (`include/dw4/msl_math.hpp` has sin,
     cos, asin, acos, atan, atan2; tan, pow and exp are added; float callers go
