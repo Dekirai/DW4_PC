@@ -930,6 +930,8 @@ void GameSystem::recalc_player(Engine& engine, int slot) {
 
     // WAZALIST: each TECHn reached by LEVEL, at the highest rank whose
     // TECHn_SKILLk the technique's skill points meet.
+    std::vector<int> learned_before; // (observe-only, port_events.hpp)
+    if (engine.port_events_enabled()) learned_before = player.wazalist;
     player.wazalist.clear();
     for (int n = 1; n <= 6; ++n) {
         const std::string tech = "TECH" + std::to_string(n);
@@ -942,6 +944,21 @@ void GameSystem::recalc_player(Engine& engine, int slot) {
                 player.wazalist.push_back(base + rank);
                 break;
             }
+    }
+    if (engine.port_events_enabled() && !learned_before.empty()) {
+        // A technique the form had not (or a higher rank of one), when the
+        // list before was this form's too (not a load or a form change).
+        std::array<int, 6> bases{};
+        for (int n = 1; n <= 6; ++n) bases[std::size_t(n - 1)] = cell("shinka", row, "TECH" + std::to_string(n));
+        auto base_of = [&](int tech) {
+            for (const int base : bases)
+                if (tech >= base && tech <= base + 4) return base;
+            return -1;
+        };
+        if (std::all_of(learned_before.begin(), learned_before.end(), [&](int tech) { return base_of(tech) >= 0; }))
+            for (const int tech : player.wazalist)
+                if (std::find(learned_before.begin(), learned_before.end(), tech) == learned_before.end())
+                    engine.port_event({PortEvent::Kind::technique, slot, tech, tech - base_of(tech), {}});
     }
     // NEXTEXP (80370DBC): (level + 140) * level^2 + level * 200; none at 999.
     stats.next_exp = level >= 999 ? 0 : (level + 140) * level * level + level * 200;
@@ -1090,6 +1107,7 @@ bool GameSystem::apply_level_ups(Engine& engine, int slot) {
         leveled = true;
     }
     if (!leveled) return false;
+    engine.port_event({PortEvent::Kind::level_up, slot, stats.level, 0, {}}); // observe-only
     store_species(slot);
     player.hp = player.max_hp;
     player.mp = player.max_mp;

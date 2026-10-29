@@ -2226,6 +2226,7 @@ void ModelCtrlManager::player_erase_hook(Engine& engine, ModelRam& ram) {
         engine.messenger().send(engine, "NDMWPANEL", std::nullopt, ram.index, "REMOVE", remove);
     }
     engine.log("player " + std::to_string(ram.index) + " defeated");
+    engine.port_event({PortEvent::Kind::player_defeated, ram.index, 0, 0, {}}); // observe-only
 }
 
 // KIND_PLAYER2 bit capsule (beNDMWMdlPlayer2, 8034EB78): switches on while a

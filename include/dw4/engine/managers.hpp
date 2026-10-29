@@ -1738,6 +1738,8 @@ public:
     Stock* shop_stock(int program);
     // GETSHOPDATA 9 also returns COUNTER[1] as it was when the junk stock was made.
     int junk_counter() const { return junk_counter_; }
+    // A status / shop window program is open (SUBWND START until its end).
+    bool window_open() const { return running_; }
 
 private:
     // 80351794: a program start fills the empty stocks from shopWeapon /

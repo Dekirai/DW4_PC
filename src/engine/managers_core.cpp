@@ -3369,6 +3369,7 @@ bool GameSystem::script_call(Engine& engine, const std::string& method, std::spa
             if ((op == "SET") != (owned != 0)) {
                 owned = op == "SET" ? 1 : 0;
                 result = 1;
+                if (owned) engine.port_event({PortEvent::Kind::card, 0, card, 0, {}}); // observe-only
             }
         }
         out = {Lua4Value::number(result)};
