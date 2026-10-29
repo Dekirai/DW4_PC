@@ -106,10 +106,9 @@ public sealed class MaintenanceRepository(Database db)
             "DELETE FROM audit_log WHERE at < @cut LIMIT 10000", new { cut = now.AddDays(-auditDays) }, cancellationToken: ct));
         var sessions = await c.ExecuteAsync(new CommandDefinition(
             "DELETE FROM sessions WHERE expires_at < @cut OR revoked_at < @cut LIMIT 10000", new { cut = now.AddDays(-30) }, cancellationToken: ct));
-        // Revisions saved up to the account's last reset belong to an ended character: kept resetHistoryDays after it.
+        // The revisions of a reset character (ended_at = that reset) stay resetHistoryDays after it, then they go.
         var revisions = await c.ExecuteAsync(new CommandDefinition(
-            "DELETE h FROM online_character_history h JOIN accounts a ON a.id = h.account_id " +
-            "WHERE a.online_reset_at IS NOT NULL AND a.online_reset_at < @cut AND h.saved_at <= a.online_reset_at",
+            "DELETE FROM online_character_history WHERE ended_at < @cut LIMIT 10000",
             new { cut = now.AddDays(-Math.Max(0, resetHistoryDays)) }, cancellationToken: ct));
         return (audit, sessions, revisions);
     }

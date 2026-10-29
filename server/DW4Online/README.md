@@ -19,7 +19,7 @@ separate work (see "Open ends"); `tests/winhttp_client` shows the client side of
 | `src/DW4Online.Relay` | The TCP relay (port 52041): HMAC tickets and byte-for-byte splicing. |
 | `src/DW4Online.Web` | The Razor Pages website (English, server-rendered, no scripts): home, register, login, recovery, account settings, profiles, achievements, rooms, admin, privacy. |
 | `src/DW4Online.Server` | The executable: composition root, configuration, Windows-service mode, CLI tools, TLS certificate selector, file log. |
-| `sql/` | Numbered migrations `NNNN_description.sql` (0001 schema, 0002 achievement definitions). |
+| `sql/` | Numbered migrations `NNNN_description.sql` (0001 schema, 0002 achievement definitions, 0003-0006 see "Database"). |
 | `tests/DW4Online.Tests` | Unit tests (no database). |
 | `tests/DW4Online.Integration.Tests` | HTTP + MariaDB tests against a private local instance (API, rooms with the real relay, website forms, end to end on real Kestrel). |
 | `tests/winhttp_client` | `dw4online_client.cpp`, a C++20 WinHTTP test tool (the HTTP stack the game will use), and `build.cmd` (MSVC). |
@@ -134,7 +134,9 @@ Tables: `accounts`, `sessions` (only SHA-256 of tokens), `email_tokens` (future 
 `online_characters` + `online_character_history`, `cloud_saves` + `cloud_save_history`, `achievements`,
 `achievement_unlocks` (per ruleset), `player_stats`, `speedrun_times`, `rooms` + `room_members` (durable room record,
 written by the room service before its memory changes), `audit_log` (pruned after 180 days). Migration 0003 adds
-`rooms.randomizer`, `rooms.story_frozen_at` and the close reason `host_closed`.
+`rooms.randomizer`, `rooms.story_frozen_at` and the close reason `host_closed`; 0004 `accounts.online_reset_at`;
+0005 drops the user names old `login_unknown` audit rows held; 0006 `online_character_history.ended_at` (the reset
+that ended a revision's character, filled in for earlier resets).
 
 ## API (`/api/v1`, JSON, errors as problem details)
 
@@ -215,8 +217,9 @@ and stats must carry `protocol` / `clientVersion` (426 `client_outdated` otherwi
   fit into the time since the account was made or since the last reset (`accounts.online_reset_at`), and the levelling
   rate counts play time only as far as real time allows: an uploaded local or edited character gets flagged. Never
   auto-bans. Summary columns come from the server's decode. A reset (by the player with the password, or by staff)
-  ends the character: its revisions stay in the history for `OnlineCharacter:ResetHistoryDays` (30; staff can restore
-  one after a mistaken reset or look at a flagged character), then the hourly housekeeping deletes them; the audit row
+  ends the character: its revisions stay in the history for `OnlineCharacter:ResetHistoryDays` (30, counted from that
+  reset, also when the next character is reset within those days; staff can restore one after a mistaken reset or
+  look at a flagged character), then the hourly housekeeping deletes them; the audit row
   `character_reset` keeps the revision and whether the character was flagged. The next character starts unflagged.
 - **Cloud save**: one per account, latest + 5 older revisions, at most 1 MiB, SHA-256 checked, GCI (90176 bytes) or raw
   (90112 bytes) with a valid copy; private (never on the website, never used for achievements).

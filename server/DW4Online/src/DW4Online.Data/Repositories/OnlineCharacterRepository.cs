@@ -123,8 +123,14 @@ public sealed class OnlineCharacterRepository(Database db) : IOnlineCharacterRep
         var done = await c.ExecuteAsync(new CommandDefinition(
             "DELETE FROM online_characters WHERE account_id = @a", new { a = accountId }, tx, cancellationToken: ct)) > 0;
         if (done)
+        {
             await c.ExecuteAsync(new CommandDefinition(
                 "UPDATE accounts SET online_reset_at = @now WHERE id = @a", new { a = accountId, now }, tx, cancellationToken: ct));
+            // The ended character's revisions: the housekeeping deletes them ResetHistoryDays after this reset.
+            await c.ExecuteAsync(new CommandDefinition(
+                "UPDATE online_character_history SET ended_at = @now WHERE account_id = @a AND ended_at IS NULL",
+                new { a = accountId, now }, tx, cancellationToken: ct));
+        }
         await tx.CommitAsync(ct);
         return done;
     }

@@ -204,6 +204,60 @@ public class OnlineCharacterTests
         Assert.Equal([2], left);
     }
 
+    /// <summary>
+    /// Two resets within 30 days: each character's revisions go 30 days after its own reset (the second reset does not
+    /// keep the first character's revisions longer), and a staff restore after a reset starts a live character again.
+    /// </summary>
+    [DbFact]
+    public async Task Each_reset_characters_history_goes_30_days_after_its_own_reset()
+    {
+        await using var host = await TestHost.StartAsync();
+        var (token, _, id) = await host.RegisterAsync("Wiper2");
+        var client = host.Client(token);
+        async Task Upload(string name, uint unique)
+        {
+            var record = Samples.Fresh(name);
+            record.Unique = unique;
+            Assert.Equal(HttpStatusCode.Created, (await client.PutJson("/api/v1/online-character", OnlineCharacterTests.Upload(record, 30), create: true)).StatusCode);
+        }
+        async Task Reset() => Assert.Equal(HttpStatusCode.NoContent,
+            (await client.PostAsJsonAsync("/api/v1/online-character/reset", new { currentPassword = "a decent password" })).StatusCode);
+        var maintenance = host.App.Services.GetRequiredService<DW4Online.Data.Repositories.MaintenanceRepository>();
+        await using var c = await host.SqlAsync();
+        async Task<List<int>> Kept() =>
+            (await c.QueryAsync<int>("SELECT revision FROM online_character_history WHERE account_id = @id ORDER BY revision", new { id })).ToList();
+        async Task<int> Prune() => (await maintenance.PruneAsync(host.Clock.GetUtcNow().UtcDateTime, 180, 30)).ResetRevisions;
+
+        host.Clock.Advance(TimeSpan.FromHours(1));
+        await Upload("One", 0x11111111);             // revision 1
+        await Reset();                               // day 0: character one ends
+        host.Clock.Advance(TimeSpan.FromDays(20));
+        await Upload("Two", 0x22222222);             // revision 2
+        await Reset();                               // day 20: character two ends
+        host.Clock.Advance(TimeSpan.FromDays(1));
+        await Upload("Three", 0x33333333);           // revision 3, live
+
+        host.Clock.Advance(TimeSpan.FromDays(10));   // day 31: one goes, two (11 days ago) stays
+        Assert.Equal(1, await Prune());
+        Assert.Equal([2, 3], await Kept());
+        host.Clock.Advance(TimeSpan.FromDays(19));   // day 50: two is 30 days old
+        Assert.Equal(0, await Prune());
+        host.Clock.Advance(TimeSpan.FromDays(1));    // day 51: two goes, the live character stays
+        Assert.Equal(1, await Prune());
+        Assert.Equal([3], await Kept());
+
+        // A staff reset and restore make a new live revision that the housekeeping leaves alone (the player's token
+        // ran out after 30 idle days, so staff act here).
+        var staff = host.App.Services.GetRequiredService<DW4Online.Domain.Services.OnlineCharacterService>();
+        Assert.True(await staff.ResetAsync(id, id, null));
+        host.Clock.Advance(TimeSpan.FromDays(1));
+        Assert.True((await staff.RestoreAsync(id, 3, id, null)).Ok);
+        host.Clock.Advance(TimeSpan.FromDays(31));
+        Assert.Equal(1, await Prune());               // revision 3 (ended by the reset) goes
+        Assert.Equal([4], await Kept());              // the restored copy is the live character
+        Assert.Null(await c.ExecuteScalarAsync<DateTime?>("SELECT ended_at FROM online_character_history WHERE account_id = @id", new { id }));
+    }
+
     /// <summary>The review's case: a fresh account uploads a maxed record claiming 400 hours of play.</summary>
     [DbFact]
     public async Task A_maxed_record_on_a_fresh_account_is_flagged_and_unlocks_nothing_outside_a_room()
