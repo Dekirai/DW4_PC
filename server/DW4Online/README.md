@@ -86,7 +86,7 @@ and user secrets (Development) work as usual.
 | `Database` | `ConnectionString`, `AutoMigrate` (true): run pending migrations at startup. |
 | `Service` | `Name`, `Motd` (game menu and home page), `Maintenance` (announced; no new rooms), `RelayHost` (empty = the request's host name) / `RelayPort` (default 0 = the port the relay listens on, `Relay:Port`; set it only when clients reach the relay through another public port), announced to clients. |
 | `Accounts` | `Registration` (open / closed), `PasswordIterations` (220000), `MaxFailedLogins` (10, per user name and address), `LockoutMinutes` (15), `MaxFailedLoginsPerAccount` (50), `KnownAddressDays` (30), `GameSessionDays` (30), `WebSessionDays` (14), `SessionTouchMinutes` (5), `MaxSessionsPerAccount` (20). |
-| `OnlineCharacter` | `HistoryRevisions` (20), `Rules:MaxLevelsPerPlayHour` (120), `Rules:PlayTimeSlackSeconds` (600). |
+| `OnlineCharacter` | `HistoryRevisions` (20), `ResetHistoryDays` (30: the revisions of a reset character stay that long), `Rules:MaxLevelsPerPlayHour` (120), `Rules:PlayTimeSlackSeconds` (600). |
 | `CloudSave` | `MaxBytes` (1 MiB), `HistoryRevisions` (5). |
 | `Play` | `RequireRoom` (true), `MinimumProtocol` / `CurrentProtocol` (netplay `kProtocol`), `MinimumClientVersion` / `CurrentClientVersion`, `SpeedrunFloorSeconds` (per board `story_normal` / `story_hard` / `story_veryhard`, 2700 each: see "Speedrun floor"). |
 | `RateLimits` | `GlobalPerMinute` 300 (per IP), `LoginPerMinute` 5 (per IP, login + recovery), `RegisterPerHour` 3 (per IP), `CharacterWritesPerMinute` 12, `CloudWritesPerHour` 6, `AchievementsPerMinute` 60, `AccountChangesPerMinute` 10, `StaffPerMinute` 60, `RoomCreatesPerMinute` 5, `RoomJoinsPerMinute` 20, `StageChangesPerMinute` 30 (stage enter + leave) (per account); `WebLoginPerMinute` 5 (website login + recovery), `WebRegisterPerHour` 3 (per IP, POSTs only), `WebAccountChangesPerMinute` 10 (per account, the account page's POSTs). |
@@ -144,7 +144,7 @@ Authenticated calls send `Authorization: Bearer dw4_<43 characters>`.
 | `POST /me/delete` | token | `{currentPassword}`: GDPR erasure of the account (see "Rules in force"). |
 | `GET /online-character` | token | `{revision, record (base64), summary, playSeconds, flagged, ...}` with `ETag`; 404 = start from zero. |
 | `PUT /online-character` | token | `{record (base64 3316 bytes), playSeconds, context}`; `If-None-Match: *` creates, `If-Match: <revision>` updates (409 with `currentRevision`, 428 without either). Answers `{revision, summary, warnings, unlocked}`. |
-| `GET /online-character/history`, `POST /online-character/reset` | token | Kept revisions; end the character (`{currentPassword}`). |
+| `GET /online-character/history`, `POST /online-character/reset` | token | Kept revisions; end the character (`{currentPassword}`; its revisions stay 30 days for staff, then go). |
 | `GET /cloud-save` (`?revision=N`) | token | The save bytes (`application/octet-stream`), `ETag`, `X-Sha256`, `X-Save-Format`. |
 | `GET /cloud-save/meta` | token | `{latest, boxes, history}`. |
 | `PUT /cloud-save` | token | Body = save bytes, `X-Sha256` (hex), `If-None-Match: *` or `If-Match: <revision>`, optional `X-Device-Name`, `X-Client-Version`. 413 above `MaxBytes`. |
@@ -202,7 +202,10 @@ and stats must carry `protocol` / `clientVersion` (426 `client_outdated` otherwi
   moderators and an audit row is written. A new online character starts from zero, so its first upload's play time must
   fit into the time since the account was made or since the last reset (`accounts.online_reset_at`), and the levelling
   rate counts play time only as far as real time allows: an uploaded local or edited character gets flagged. Never
-  auto-bans. Summary columns come from the server's decode.
+  auto-bans. Summary columns come from the server's decode. A reset (by the player with the password, or by staff)
+  ends the character: its revisions stay in the history for `OnlineCharacter:ResetHistoryDays` (30; staff can restore
+  one after a mistaken reset or look at a flagged character), then the hourly housekeeping deletes them; the audit row
+  `character_reset` keeps the revision and whether the character was flagged. The next character starts unflagged.
 - **Cloud save**: one per account, latest + 5 older revisions, at most 1 MiB, SHA-256 checked, GCI (90176 bytes) or raw
   (90112 bytes) with a valid copy; private (never on the website, never used for achievements).
 - **Rooms**: a name (1-32 characters), an optional password (4-64, PBKDF2 in memory only, never stored), 2..10

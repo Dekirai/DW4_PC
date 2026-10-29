@@ -38,6 +38,11 @@ public sealed class OnlineCharacterOptions
 {
     /// <summary>Older revisions kept for restore and rollback.</summary>
     public int HistoryRevisions { get; set; } = 20;
+    /// <summary>
+    /// Days the revisions of a reset character stay in the history (undoing a mistaken reset, reviewing a flagged
+    /// character) before the housekeeping deletes them; account deletion removes them at once.
+    /// </summary>
+    public int ResetHistoryDays { get; set; } = 30;
     public CharacterRules Rules { get; set; } = new();
 }
 

@@ -183,8 +183,9 @@ public static class ServerApp
     }
 }
 
-/// <summary>Hourly housekeeping: audit retention (180 days) and expired sessions.</summary>
-internal sealed class MaintenanceService(MaintenanceRepository repository, TimeProvider time, ILogger<MaintenanceService> log) : BackgroundService
+/// <summary>Hourly housekeeping: audit retention (180 days), expired sessions and the history of reset online characters.</summary>
+internal sealed class MaintenanceService(MaintenanceRepository repository, OnlineCharacterOptions characters, TimeProvider time,
+    ILogger<MaintenanceService> log) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stop)
     {
@@ -195,8 +196,9 @@ internal sealed class MaintenanceService(MaintenanceRepository repository, TimeP
             {
                 try
                 {
-                    var (audit, sessions) = await repository.PruneAsync(Clock.Now(time), 180, stop);
-                    if (audit + sessions > 0) log.LogInformation("Pruned {Audit} audit rows and {Sessions} sessions", audit, sessions);
+                    var (audit, sessions, revisions) = await repository.PruneAsync(Clock.Now(time), 180, characters.ResetHistoryDays, stop);
+                    if (audit + sessions + revisions > 0)
+                        log.LogInformation("Pruned {Audit} audit rows, {Sessions} sessions and {Revisions} revisions of reset characters", audit, sessions, revisions);
                 }
                 catch (MySqlConnector.MySqlException e)
                 {

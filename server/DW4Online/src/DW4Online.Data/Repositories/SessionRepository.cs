@@ -95,16 +95,22 @@ public sealed class AuditLog(Database db) : IAuditLog
     }
 }
 
-/// <summary>Housekeeping: audit retention and old sessions.</summary>
+/// <summary>Housekeeping: audit retention, old sessions and the history of reset online characters.</summary>
 public sealed class MaintenanceRepository(Database db)
 {
-    public async Task<(int Audit, int Sessions)> PruneAsync(DateTime now, int auditDays, CancellationToken ct = default)
+    public async Task<(int Audit, int Sessions, int ResetRevisions)> PruneAsync(DateTime now, int auditDays, int resetHistoryDays,
+        CancellationToken ct = default)
     {
         await using var c = await db.OpenAsync(ct);
         var audit = await c.ExecuteAsync(new CommandDefinition(
             "DELETE FROM audit_log WHERE at < @cut LIMIT 10000", new { cut = now.AddDays(-auditDays) }, cancellationToken: ct));
         var sessions = await c.ExecuteAsync(new CommandDefinition(
             "DELETE FROM sessions WHERE expires_at < @cut OR revoked_at < @cut LIMIT 10000", new { cut = now.AddDays(-30) }, cancellationToken: ct));
-        return (audit, sessions);
+        // Revisions saved up to the account's last reset belong to an ended character: kept resetHistoryDays after it.
+        var revisions = await c.ExecuteAsync(new CommandDefinition(
+            "DELETE h FROM online_character_history h JOIN accounts a ON a.id = h.account_id " +
+            "WHERE a.online_reset_at IS NOT NULL AND a.online_reset_at < @cut AND h.saved_at <= a.online_reset_at",
+            new { cut = now.AddDays(-Math.Max(0, resetHistoryDays)) }, cancellationToken: ct));
+        return (audit, sessions, revisions);
     }
 }
