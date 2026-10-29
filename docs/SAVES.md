@@ -184,3 +184,31 @@ Packed device word (item class vtable +100 / +104): bits 0-9 record, bit 10
 equipped, bits 12-15 kind (+8), bits 16-19 rank (+0x18; a disk's count),
 bits 20-30 value (+0x14). Weapons and armor1 use every field, armor2 has no
 rank, chips only record/flag/kind. This is `ItemDevice::pack`.
+
+## Randomizer bond (PC option)
+
+The randomizer's seed and modes (README "Randomizer") belong to a save, not
+only to settings.ini. The save itself stays the original GCI bytes; the bond
+is a sidecar next to it (`src/game/randomizer_save.cpp`): `randomizer.ini` in
+the folder that holds the save (`saves/` beside the program, a test run's
+`--card-dir` / `DW4_CARD_DIR` folder) with one section per character, keyed
+by the record's UNIQUE (offset 4, drawn from the world clock when the
+character is made; `enemies` is off, each or wave, `zones` off or dungeons),
+and `randomizer_<UNIQUE>_spoiler.txt` beside it:
+
+```ini
+[character_1A2B3C4D]
+name=TAI
+seed=20261029
+drops=true
+enemies=each
+zones=dungeons
+```
+
+When player 1's character changes at the character select (a new game or a
+called box) the bond of its UNIQUE applies; a character without one is bound
+to the current settings when they randomize. Two characters can share a
+UNIQUE only when they were made in the same frame (the same value for every
+player made then); they then share the bond, which is the session's anyway.
+Online sessions use the host's settings and bind nothing (the online save is
+separate).

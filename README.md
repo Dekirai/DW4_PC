@@ -254,9 +254,9 @@ drives three parts, each switched on its own:
   Mecha Nest / Electro Mine), never to their own, and a dungeon's way out leads
   back to the entrance that was used. The exit prompt names the new target.
   Towers, quests, the fortress, boss stages, the lobby gate, Gate Disks and
-  defeats keep their targets, and every key item stays reachable (a dungeon
-  behind the Vein's gate is entered once the stag0301 lever and the stag0302
-  console have opened it).
+  defeats keep their targets, and every key item stays reachable (the gate
+  in stag0301 that led to the Vein still opens with the stag0301 lever and the
+  stag0302 console, whatever dungeon now lies behind it).
 
 A new game binds the randomizer it starts with to its save: `saves/randomizer.ini`
 next to the program keeps the seed and modes per saved character (by the
