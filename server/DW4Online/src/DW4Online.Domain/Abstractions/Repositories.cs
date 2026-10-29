@@ -20,6 +20,15 @@ public interface IAccountRepository
     Task SetStatusAsync(long id, string status, CancellationToken ct = default);
     Task SetRoleAsync(long id, string role, CancellationToken ct = default);
     Task<IReadOnlyList<AccountRecord>> SearchAsync(string? query, int limit, CancellationToken ct = default);
+    Task SetProfilePublicAsync(long id, bool value, CancellationToken ct = default);
+    /// <summary>
+    /// Deletes everything tied to the account (sessions, online character, cloud save, unlocks, stats, times, room
+    /// memberships, bans), removes its IP addresses from the audit log and anonymises the row (status deleted,
+    /// user name <paramref name="anonymousName"/>, no e-mail, no usable password). Rooms it hosted keep their record.
+    /// </summary>
+    Task ScrubAsync(long id, string anonymousName, CancellationToken ct = default);
+    /// <summary>Accounts that are not deleted or banned (the website's home page).</summary>
+    Task<long> CountActiveAsync(CancellationToken ct = default);
 }
 
 public interface ISessionRepository
@@ -77,6 +86,11 @@ public interface IAchievementRepository
     Task<DateTime?> GetLastStatsAtAsync(long accountId, CancellationToken ct = default);
     /// <summary>Adds the deltas and returns the new totals of the touched keys.</summary>
     Task<IReadOnlyDictionary<string, long>> AddStatsAsync(long accountId, IReadOnlyDictionary<string, long> deltas, DateTime now, CancellationToken ct = default);
+    /// <summary>Accounts holding each achievement (unflagged unlocks of active accounts, any ruleset) and the number of players.</summary>
+    Task<AchievementRarity> GetRarityAsync(CancellationToken ct = default);
+    /// <summary>False when the account has no such unlock.</summary>
+    Task<bool> SetUnlockFlaggedAsync(long accountId, int achievementId, string ruleset, bool flagged, CancellationToken ct = default);
+    Task<bool> RevokeUnlockAsync(long accountId, int achievementId, string ruleset, CancellationToken ct = default);
 }
 
 public interface IRoomDirectory

@@ -24,6 +24,9 @@ public sealed class RateLimitOptions
     public int AchievementsPerMinute { get; set; } = 60;     // per account: unlocks and stats
     public int AccountChangesPerMinute { get; set; } = 10;   // per account: password, e-mail, recovery code
     public int StaffPerMinute { get; set; } = 60;            // per account
+    public int RoomCreatesPerMinute { get; set; } = 5;       // per account
+    public int RoomJoinsPerMinute { get; set; } = 20;        // per account: room passwords cannot be brute-forced
+    // WebLoginPerMinute / WebRegisterPerHour (website forms) are read by DW4Online.Web from the same section.
 }
 
 public static class RateLimitPolicies
@@ -35,6 +38,8 @@ public static class RateLimitPolicies
     public const string Achievements = "achievements";
     public const string AccountChange = "account-change";
     public const string Staff = "staff";
+    public const string RoomCreate = "room-create";
+    public const string RoomJoin = "room-join";
 }
 
 public static class ApiSetup
@@ -61,6 +66,8 @@ public static class ApiSetup
             o.AddPolicy(RateLimitPolicies.Achievements, ctx => Window(AccountKey(ctx), limits.AchievementsPerMinute, TimeSpan.FromMinutes(1)));
             o.AddPolicy(RateLimitPolicies.AccountChange, ctx => Window(AccountKey(ctx), limits.AccountChangesPerMinute, TimeSpan.FromMinutes(1)));
             o.AddPolicy(RateLimitPolicies.Staff, ctx => Window(AccountKey(ctx), limits.StaffPerMinute, TimeSpan.FromMinutes(1)));
+            o.AddPolicy(RateLimitPolicies.RoomCreate, ctx => Window(AccountKey(ctx), limits.RoomCreatesPerMinute, TimeSpan.FromMinutes(1)));
+            o.AddPolicy(RateLimitPolicies.RoomJoin, ctx => Window(AccountKey(ctx), limits.RoomJoinsPerMinute, TimeSpan.FromMinutes(1)));
             o.OnRejected = async (context, ct) =>
             {
                 var retry = context.Lease.TryGetMetadata(MetadataName.RetryAfter, out var after) ? (int)Math.Ceiling(after.TotalSeconds) : 60;
@@ -72,11 +79,20 @@ public static class ApiSetup
         return services;
     }
 
-    /// <summary>Order matters: authentication first, so per-account rate limits know the account.</summary>
+    /// <summary>
+    /// Problem details for API paths (a 500 never shows a stack trace), then authentication before the rate limiter so
+    /// per-account limits know the account. The website adds its own HTML error pages for its paths.
+    /// </summary>
     public static WebApplication UseDw4Api(this WebApplication app)
     {
-        if (!app.Environment.IsDevelopment()) app.UseExceptionHandler(); // a problem-details 500, never a stack trace
-        app.UseStatusCodePages();
+        var development = app.Environment.IsDevelopment();
+        app.UseWhen(ctx => IsApiPath(ctx.Request.Path), api =>
+        {
+            if (!development) api.UseExceptionHandler();
+            api.UseStatusCodePages();
+        });
+        // Explicit routing after the error handlers (the website's included), so a re-executed error page is routed again.
+        app.UseRouting();
         app.UseAuthentication();
         app.UseRateLimiter();
         app.UseAuthorization();
@@ -92,11 +108,16 @@ public static class ApiSetup
         OnlineCharacterEndpoints.Map(v1);
         CloudSaveEndpoints.Map(v1);
         AchievementEndpoints.Map(v1);
+        RoomEndpoints.Map(v1);
         AdminEndpoints.Map(v1);
         return routes;
     }
 
-    private static RateLimitPartition<string> Window(string key, int permits, TimeSpan window) =>
+    /// <summary>The API, the health check and ACME challenges (everything else is the website).</summary>
+    public static bool IsApiPath(PathString path) =>
+        path.StartsWithSegments("/api") || path.StartsWithSegments("/health") || path.StartsWithSegments("/.well-known");
+
+    public static RateLimitPartition<string> Window(string key, int permits, TimeSpan window) =>
         RateLimitPartition.GetFixedWindowLimiter(key, _ => new FixedWindowRateLimiterOptions
         {
             PermitLimit = Math.Max(1, permits),
@@ -104,7 +125,7 @@ public static class ApiSetup
             QueueLimit = 0,
         });
 
-    private static string IpKey(HttpContext ctx) => "ip:" + (ctx.Connection.RemoteIpAddress?.ToString() ?? "unknown");
+    public static string IpKey(HttpContext ctx) => "ip:" + (ctx.Connection.RemoteIpAddress?.ToString() ?? "unknown");
 
     private static string AccountKey(HttpContext ctx) =>
         ctx.User.FindFirstValue(ClaimTypes.NameIdentifier) is { } id ? "acc:" + id : IpKey(ctx);

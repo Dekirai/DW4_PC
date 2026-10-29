@@ -1,0 +1,32 @@
+@page "/recover"
+@model RecoverModel
+@{
+    ViewData["Title"] = "Reset your password";
+}
+<h1>Reset your password</h1>
+@if (Model.NextCode is not null)
+{
+    <div class="notice ok">Your password was changed and every session of the account was logged out.</div>
+    <div class="panel">
+        <h2>Your new recovery code</h2>
+        <p>The old code no longer works. Write this one down; it is shown <strong>once</strong>.</p>
+        <p class="secret">@Model.NextCode</p>
+    </div>
+    <p><a class="button" href="/login">Log in</a></p>
+}
+else
+{
+    <p>Use the recovery code you got when you created the account (or the last one you were shown). Without it, ask the
+        server staff for a temporary password.</p>
+    @if (Model.Error is not null)
+    {
+        <div class="notice error">@Model.Error</div>
+    }
+    <form method="post" class="stack">
+        <label>User name <input type="text" asp-for="Username" autocomplete="username" required maxlength="20" /></label>
+        <label>Recovery code <input type="text" asp-for="RecoveryCode" autocomplete="off" required maxlength="64" /></label>
+        <label>New password <input type="password" asp-for="NewPassword" autocomplete="new-password" required minlength="10" maxlength="128" /></label>
+        <label>Repeat the new password <input type="password" asp-for="ConfirmPassword" autocomplete="new-password" required minlength="10" maxlength="128" /></label>
+        <button type="submit">Reset password</button>
+    </form>
+}

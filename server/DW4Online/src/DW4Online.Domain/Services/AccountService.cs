@@ -110,6 +110,15 @@ public sealed class AccountService(
         return count;
     }
 
+    /// <summary>Ends every session of the account except the caller's own.</summary>
+    public async Task<int> LogoutOthersAsync(AuthenticatedSession session, CallerInfo caller, CancellationToken ct = default)
+    {
+        var now = Clock.Now(time);
+        var count = await sessions.RevokeAllAsync(session.AccountId, session.SessionId, now, ct);
+        await audit.WriteAsync("logout_others", session.AccountId, session.AccountId, caller.Ip, new { count }, now, ct);
+        return count;
+    }
+
     public Task<IReadOnlyList<SessionInfo>> ListSessionsAsync(long accountId, CancellationToken ct = default) =>
         sessions.ListAsync(accountId, Clock.Now(time), ct);
 
@@ -193,6 +202,53 @@ public sealed class AccountService(
         await audit.WriteAsync("email_change", account.Id, account.Id, caller.Ip, null, Clock.Now(time), ct);
         return AccountView.From((await accounts.GetAsync(account.Id, ct))!);
     }
+
+    /// <summary>Public profiles show the online character and achievements on the website; private ones only to the owner and staff.</summary>
+    public async Task<Result<AccountView>> SetProfilePublicAsync(AuthenticatedSession session, bool isPublic, CallerInfo caller, CancellationToken ct = default)
+    {
+        if (await accounts.GetAsync(session.AccountId, ct) is null) return DomainError.Unauthorized("unauthorized", "Not logged in.");
+        await accounts.SetProfilePublicAsync(session.AccountId, isPublic, ct);
+        await audit.WriteAsync(isPublic ? "profile_public" : "profile_private", session.AccountId, session.AccountId, caller.Ip, null, Clock.Now(time), ct);
+        return AccountView.From((await accounts.GetAsync(session.AccountId, ct))!);
+    }
+
+    /// <summary>
+    /// Deletes the caller's account after a password check (GDPR erasure): every personal record goes, the row stays
+    /// anonymised as "deleted_&lt;id&gt;" so rooms and audit rows keep a valid reference. Take the account out of its
+    /// room first (RoomService.RemoveAccountAsync).
+    /// </summary>
+    public async Task<Result<bool>> DeleteAccountAsync(AuthenticatedSession session, string? currentPassword, CancellationToken ct = default)
+    {
+        var account = await accounts.GetAsync(session.AccountId, ct);
+        if (account is null || account.Status == AccountStatus.Deleted) return DomainError.Unauthorized("unauthorized", "Not logged in.");
+        if (hasher.Verify(account.PasswordHash, currentPassword ?? "") == PasswordCheck.Failed)
+            return DomainError.Invalid("wrong_password", "The current password is wrong.");
+        if (account.Role == Roles.Admin) return DomainError.Forbidden("admin_account", "Admins cannot delete their own account; remove the admin role first.");
+        await ScrubAsync(account, null, ct);
+        return true;
+    }
+
+    /// <summary>Admins delete an account on request (GDPR erasure), like <see cref="DeleteAccountAsync"/>.</summary>
+    public async Task<Result<bool>> AdminDeleteAccountAsync(AuthenticatedSession actor, string username, CancellationToken ct = default)
+    {
+        if (actor.Role != Roles.Admin) return DomainError.Forbidden("forbidden", "Only admins can delete accounts.");
+        var target = await accounts.FindByUsernameAsync(UsernamePolicy.Normalize(username), ct);
+        if (target is null || target.Status == AccountStatus.Deleted) return DomainError.NotFound("account_not_found", "No such account.");
+        if (target.Id == actor.AccountId) return DomainError.Invalid("own_account", "Staff cannot delete their own account here.");
+        if (target.Role == Roles.Admin) return DomainError.Forbidden("forbidden", "Remove the admin role before deleting an admin.");
+        await ScrubAsync(target, actor.AccountId, ct);
+        return true;
+    }
+
+    private async Task ScrubAsync(AccountRecord account, long? actorId, CancellationToken ct)
+    {
+        var name = UsernamePolicy.DeletedPrefix + account.Id.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        await accounts.ScrubAsync(account.Id, name, ct);
+        // No IP and no detail: the audit row only says that the account was erased and by whom.
+        await audit.WriteAsync(actorId is null ? "account_delete" : "admin_account_delete", account.Id, actorId ?? account.Id, null, null, Clock.Now(time), ct);
+    }
+
+    public Task<long> CountActiveAsync(CancellationToken ct = default) => accounts.CountActiveAsync(ct);
 
     // Staff ------------------------------------------------------------------------------------
 

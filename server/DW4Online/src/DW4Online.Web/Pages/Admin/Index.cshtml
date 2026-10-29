@@ -1,0 +1,72 @@
+@page "/admin"
+@model DW4Online.Web.Pages.Admin.IndexModel
+@{
+    ViewData["Title"] = "Admin";
+}
+<h1>Admin</h1>
+@if (Model.Message is not null)
+{
+    <div class="notice ok">@Model.Message</div>
+}
+@if (Model.Error is not null)
+{
+    <div class="notice error">@Model.Error</div>
+}
+
+<h2>Accounts</h2>
+<form method="get" class="stack">
+    <label>User name or e-mail starts with <input type="search" asp-for="Q" maxlength="254" /></label>
+    <button type="submit" class="secondary">Search</button>
+</form>
+<div class="table-wrap">
+    <table>
+        <thead><tr><th>User</th><th>Role</th><th>Status</th><th>Created</th><th>Last login</th></tr></thead>
+        <tbody>
+        @foreach (var a in Model.Results)
+        {
+            <tr>
+                <td><a href="/admin/account/@a.Username">@a.Username</a>@(a.MustChangePassword ? " (temporary password)" : "")</td>
+                <td>@a.Role</td>
+                <td>
+                    @if (a.Status == "active") { <span class="badge ok">active</span> }
+                    else { <span class="badge bad">@a.Status</span> }
+                </td>
+                <td>@Format.Day(a.CreatedAt)</td>
+                <td>@Format.Date(a.LastLoginAt)</td>
+            </tr>
+        }
+        </tbody>
+    </table>
+</div>
+
+<h2>Open rooms</h2>
+@if (Model.Rooms.Count == 0)
+{
+    <p class="muted">No rooms are open.</p>
+}
+else
+{
+    <div class="table-wrap">
+        <table>
+            <thead><tr><th>Room</th><th>Code</th><th>Owner</th><th class="num">Players</th><th>Opened</th><th></th></tr></thead>
+            <tbody>
+            @foreach (var r in Model.Rooms)
+            {
+                <tr>
+                    <td>@r.Name</td>
+                    <td><code>@r.Code</code></td>
+                    <td>@r.Owner@(r.StoryFrozen ? " (away)" : "")</td>
+                    <td class="num">@r.Players / @r.MaxPlayers</td>
+                    <td>@Format.Ago(r.CreatedAt, Model.Now)</td>
+                    <td>
+                        <form method="post" asp-page-handler="CloseRoom" class="inline">
+                            <input type="hidden" name="Code" value="@r.Code" />
+                            <button type="submit" class="link">Close</button>
+                        </form>
+                    </td>
+                </tr>
+            }
+            </tbody>
+        </table>
+    </div>
+}

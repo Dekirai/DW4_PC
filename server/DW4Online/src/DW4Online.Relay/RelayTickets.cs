@@ -37,8 +37,9 @@ public static class RelayRoles
 public sealed record TicketClaims(string Room, long Account, string Role, DateTimeOffset Expires);
 
 /// <summary>
-/// Relay tickets: base64url("room|account|role|expiry|nonce") + "." + base64url(HMAC-SHA256). Issued by the room API
-/// after its checks; single use (the nonce is remembered until expiry); the session token never reaches the relay.
+/// Relay tickets: base64url("channel|account|role|expiry|nonce") + "." + base64url(HMAC-SHA256). Issued by the room
+/// service after its checks; single use (the nonce is remembered until expiry); the session token never reaches the
+/// relay. A channel is one stage instance of a room: "&lt;room code&gt;-&lt;instance&gt;" (a bare room code also works).
 /// </summary>
 public sealed partial class RelayTickets
 {
@@ -48,8 +49,8 @@ public sealed partial class RelayTickets
     private readonly ConcurrentDictionary<string, DateTimeOffset> _used = new(StringComparer.Ordinal);
     private long _lastPurge;
 
-    [GeneratedRegex("^[A-Z0-9]{4,8}$", RegexOptions.CultureInvariant)]
-    private static partial Regex RoomCode();
+    [GeneratedRegex("^[A-Z0-9]{4,8}(-[0-9]{1,4})?$", RegexOptions.CultureInvariant)]
+    private static partial Regex ChannelName();
 
     public RelayTickets(byte[] key, TimeSpan lifetime, TimeProvider time)
     {
@@ -59,11 +60,11 @@ public sealed partial class RelayTickets
         _time = time;
     }
 
-    public static bool IsRoomCode(string room) => RoomCode().IsMatch(room);
+    public static bool IsChannel(string channel) => ChannelName().IsMatch(channel);
 
     public string Issue(string room, long account, string role)
     {
-        if (!IsRoomCode(room)) throw new ArgumentException("Room codes are 4-8 of A-Z 0-9.", nameof(room));
+        if (!IsChannel(room)) throw new ArgumentException("Channels are a room code (4-8 of A-Z 0-9) with an optional '-<instance>'.", nameof(room));
         if (role is not (RelayRoles.Host or RelayRoles.Guest)) throw new ArgumentException("Unknown role.", nameof(role));
         var expires = _time.GetUtcNow().Add(_lifetime).ToUnixTimeSeconds();
         var nonce = Convert.ToHexString(RandomNumberGenerator.GetBytes(12));

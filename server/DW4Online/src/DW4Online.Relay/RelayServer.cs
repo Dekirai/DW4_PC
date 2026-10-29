@@ -9,12 +9,13 @@ using Microsoft.Extensions.Logging;
 namespace DW4Online.Relay;
 
 /// <summary>
-/// The TCP relay (proven in the groundwork spike, hardened here). Every connection starts with one ASCII line:
+/// The TCP relay (proven in the groundwork spike, hardened here). A channel is one stage instance of a room
+/// ("&lt;room code&gt;-&lt;instance&gt;"); its host is the instance host's machine. Every connection starts with one ASCII line:
 /// <list type="bullet">
 /// <item>host control: "DW4R1 HOST &lt;ticket&gt;\n" -> "OK &lt;hostKey&gt;\n"; then the relay announces each guest as
-/// "GUEST &lt;n&gt; &lt;account&gt;\n". Closing this socket closes the room (no host migration).</item>
+/// "GUEST &lt;n&gt; &lt;account&gt;\n". Closing this socket ends the channel (the room service ends the instance).</item>
 /// <item>guest: "DW4R1 GUEST &lt;ticket&gt;\n" -> "OK\n" once the host's data socket arrived, then raw bytes.</item>
-/// <item>host data: "DW4R1 DATA &lt;room&gt; &lt;n&gt; &lt;hostKey&gt;\n" -> spliced with guest n byte for byte.</item>
+/// <item>host data: "DW4R1 DATA &lt;channel&gt; &lt;n&gt; &lt;hostKey&gt;\n" -> spliced with guest n byte for byte.</item>
 /// </list>
 /// Failures answer "ERR &lt;reason&gt;\n" and close. The relay does not parse the game protocol.
 /// </summary>
@@ -27,15 +28,34 @@ public sealed class RelayServer(RelayOptions options, RelayTickets tickets, Time
     /// <summary>The bound port once listening (useful with Port 0 in tests).</summary>
     public Task<int> Started => _started.Task;
 
-    /// <summary>Raised when a room's host control socket closes; the room service then closes the room.</summary>
+    /// <summary>Raised when a channel's host control socket closes; the room service then ends the stage instance.</summary>
     public event Action<string>? HostDisconnected;
 
+    /// <summary>Channels with a connected host.</summary>
     public int RoomCount => _rooms.Count;
 
-    /// <summary>Drops a room's host control socket and every spliced pair of the room.</summary>
-    public void CloseRoom(string room)
+    /// <summary>Drops a channel's host control socket and every spliced pair of the channel.</summary>
+    public void CloseRoom(string channel)
     {
-        if (_rooms.TryRemove(room, out var entry)) entry.Close();
+        if (_rooms.TryRemove(channel, out var entry)) entry.Close();
+    }
+
+    /// <summary>Drops the spliced connections of one guest account of a channel (left the instance, kicked).</summary>
+    public void DropGuest(string channel, long account)
+    {
+        if (!_rooms.TryGetValue(channel, out var entry)) return;
+        foreach (var (n, link) in entry.Guests)
+        {
+            if (link.Account != account) continue;
+            entry.Guests.TryRemove(n, out _);
+            try
+            {
+                link.Pair.Cancel();
+            }
+            catch (ObjectDisposedException)
+            {
+            }
+        }
     }
 
     protected override async Task ExecuteAsync(CancellationToken stop)
@@ -159,7 +179,7 @@ public sealed class RelayServer(RelayOptions options, RelayTickets tickets, Time
             return false;
         }
         await entry.SendAsync("OK " + entry.HostKey, stop);
-        log.LogInformation("Relay room {Room} hosted by account {Account}", claims.Room, claims.Account);
+        log.LogInformation("Relay channel {Room} hosted by account {Account}", claims.Room, claims.Account);
         _ = Task.Run(() => WatchHostAsync(entry, stream, stop), CancellationToken.None);
         return true;
     }
@@ -181,7 +201,7 @@ public sealed class RelayServer(RelayOptions options, RelayTickets tickets, Time
             if (_rooms.TryGetValue(entry.Room, out var current) && ReferenceEquals(current, entry)) _rooms.TryRemove(entry.Room, out _);
             entry.Close();
             Release(entry.Ip);
-            log.LogInformation("Relay room {Room} closed (host control ended)", entry.Room);
+            log.LogInformation("Relay channel {Room} closed (host control ended)", entry.Room);
             HostDisconnected?.Invoke(entry.Room);
         }
     }
@@ -217,15 +237,17 @@ public sealed class RelayServer(RelayOptions options, RelayTickets tickets, Time
             await ReplyAsync(stream, "ERR host_timeout", stop);
             return;
         }
+        using var pair = CancellationTokenSource.CreateLinkedTokenSource(stop, entry.Closed.Token);
+        entry.Guests[n] = new GuestLink(claims.Account, pair);
         try
         {
             await ReplyAsync(stream, "OK", stop);
-            log.LogInformation("Relay room {Room}: guest {N} (account {Account}) spliced", entry.Room, n, claims.Account);
-            using var pair = CancellationTokenSource.CreateLinkedTokenSource(stop, entry.Closed.Token);
+            log.LogInformation("Relay channel {Room}: guest {N} (account {Account}) spliced", entry.Room, n, claims.Account);
             await SpliceAsync(stream, hostData.GetStream(), pair);
         }
         finally
         {
+            entry.Guests.TryRemove(n, out _);
             DisposeData(hostData);
         }
     }
@@ -337,6 +359,7 @@ public sealed class RelayServer(RelayOptions options, RelayTickets tickets, Time
         public IPAddress Ip { get; } = ip;
         public string HostKey { get; } = hostKey;
         public ConcurrentDictionary<int, TaskCompletionSource<TcpClient>> Pending { get; } = new();
+        public ConcurrentDictionary<int, GuestLink> Guests { get; } = new();
         public CancellationTokenSource Closed { get; } = new();
         public int NextGuest;
 
@@ -367,6 +390,9 @@ public sealed class RelayServer(RelayOptions options, RelayTickets tickets, Time
         }
     }
 }
+
+/// <summary>A spliced guest: its account and the cancellation of its pair (used to drop one guest).</summary>
+internal sealed record GuestLink(long Account, CancellationTokenSource Pair);
 
 /// <summary>A per-direction byte budget: a burst allowance refilled at a sustained rate.</summary>
 internal sealed class TokenBucket(int perSecond, int burst, TimeProvider time)

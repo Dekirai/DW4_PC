@@ -176,12 +176,17 @@ public sealed record UnlockWrite(
     bool Flagged,
     string? EvidenceJson);
 
+/// <summary>How many players hold each achievement; players = accounts with an online character or an unlock.</summary>
+public sealed record AchievementRarity(IReadOnlyDictionary<int, long> Holders, long Players);
+
 /// <summary>A room membership as the durable rooms / room_members tables record it.</summary>
 public sealed class RoomMembership
 {
     public long RoomId { get; init; }
     public string Code { get; init; } = "";
     public bool Ranked { get; init; }
+    /// <summary>The host's randomizer room setting: unlocks go to the randomizer ruleset whatever the client says.</summary>
+    public bool Randomizer { get; init; }
     public bool IsHost { get; init; }
     public int Members { get; init; }
     public string Status { get; init; } = "";

@@ -179,7 +179,7 @@ public class AccountTests
         Assert.Equal(41, status.GetProperty("client").GetProperty("minimumProtocol").GetInt32());
         Assert.Equal("Hello", status.GetProperty("motd").GetString());
         var health = await (await host.Client().GetAsync("/health")).Json();
-        Assert.Equal(2, health.GetProperty("schema").GetInt32());
+        Assert.Equal(3, health.GetProperty("schema").GetInt32());
 
         await host.RegisterAsync("Oldie");
         var old = await host.Client().PostAsJsonAsync("/api/v1/auth/login", new { username = "Oldie", password = "a decent password", protocol = 40 });
@@ -187,6 +187,6 @@ public class AccountTests
         Assert.Equal("client_outdated", await old.ProblemCode());
         var current = await host.Client().PostAsJsonAsync("/api/v1/auth/login", new { username = "Oldie", password = "a decent password", protocol = 41 });
         Assert.Equal(HttpStatusCode.OK, current.StatusCode);
-        Assert.Equal(HttpStatusCode.OK, (await host.Client().GetAsync("/")).StatusCode); // the website skeleton renders
+        Assert.Equal(HttpStatusCode.OK, (await host.Client().GetAsync("/")).StatusCode); // the website renders
     }
 }

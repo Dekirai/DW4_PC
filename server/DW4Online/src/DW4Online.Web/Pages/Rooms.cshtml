@@ -1,0 +1,50 @@
+@page "/rooms"
+@model RoomsModel
+@{
+    ViewData["Title"] = "Rooms";
+}
+<h1>Rooms online</h1>
+<p class="muted">Open rooms right now. Join them from the game's online menu with the room code. A room holds up to ten
+    players; everyone in the same stage plays together, up to four per stage.</p>
+
+@if (Model.Rooms.Count == 0)
+{
+    <div class="panel"><p class="muted">No rooms are open at the moment.</p></div>
+}
+else
+{
+    <div class="table-wrap">
+        <table>
+            <thead>
+                <tr><th>Room</th><th>Code</th><th>Host</th><th class="num">Players</th><th>Settings</th><th>Opened</th></tr>
+            </thead>
+            <tbody>
+            @foreach (var r in Model.Rooms)
+            {
+                <tr>
+                    <td>
+                        <strong>@r.Name</strong>
+                        @if (r.HasPassword) { <span class="badge">password</span> }
+                    </td>
+                    <td><code>@r.Code</code></td>
+                    <td>
+                        @r.Owner
+                        @if (r.StoryFrozen)
+                        {
+                            <br /><span class="badge warn">host away: story paused</span>
+                        }
+                    </td>
+                    <td class="num">@r.Players / @r.MaxPlayers@(r.Instances > 0 ? $" ({r.Instances} in stages)" : "")</td>
+                    <td>
+                        @Format.Difficulty(r.Difficulty)
+                        @if (r.Randomizer) { <span class="badge">randomizer</span> }
+                        @if (!r.Ranked) { <span class="badge">unranked</span> }
+                        <br /><span class="muted small">version @(r.ClientVersion.Length > 0 ? r.ClientVersion : "?"), protocol @r.Protocol</span>
+                    </td>
+                    <td>@Format.Ago(r.CreatedAt, Model.Now)</td>
+                </tr>
+            }
+            </tbody>
+        </table>
+    </div>
+}

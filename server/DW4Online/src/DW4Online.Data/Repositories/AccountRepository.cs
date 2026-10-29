@@ -125,4 +125,39 @@ public sealed class AccountRepository(Database db) : IAccountRepository
             new { p = pattern, limit }, cancellationToken: ct));
         return rows.AsList();
     }
+
+    public async Task SetProfilePublicAsync(long id, bool value, CancellationToken ct = default)
+    {
+        await using var c = await db.OpenAsync(ct);
+        await c.ExecuteAsync(new CommandDefinition(
+            "UPDATE accounts SET profile_public = @value WHERE id = @id", new { id, value }, cancellationToken: ct));
+    }
+
+    public async Task ScrubAsync(long id, string anonymousName, CancellationToken ct = default)
+    {
+        string[] owned =
+        [
+            "sessions", "email_tokens", "online_character_history", "online_characters", "cloud_save_history", "cloud_saves",
+            "achievement_unlocks", "player_stats", "speedrun_times", "room_members", "account_bans",
+        ];
+        await using var c = await db.OpenAsync(ct);
+        await using var tx = await c.BeginTransactionAsync(ct);
+        foreach (var table in owned)
+            await c.ExecuteAsync(new CommandDefinition($"DELETE FROM {table} WHERE account_id = @id", new { id }, tx, cancellationToken: ct));
+        await c.ExecuteAsync(new CommandDefinition(
+            "UPDATE audit_log SET ip = NULL WHERE account_id = @id OR actor_id = @id", new { id }, tx, cancellationToken: ct));
+        await c.ExecuteAsync(new CommandDefinition(
+            "UPDATE accounts SET username = @name, username_norm = @name, email = NULL, email_norm = NULL, email_verified_at = NULL, " +
+            "password_hash = '!', must_change_password = 0, recovery_code_hash = NULL, status = 'deleted', failed_logins = 0, " +
+            "locked_until = NULL, profile_public = 0, last_login_at = NULL WHERE id = @id",
+            new { id, name = anonymousName }, tx, cancellationToken: ct));
+        await tx.CommitAsync(ct);
+    }
+
+    public async Task<long> CountActiveAsync(CancellationToken ct = default)
+    {
+        await using var c = await db.OpenAsync(ct);
+        return await c.ExecuteScalarAsync<long>(new CommandDefinition(
+            "SELECT COUNT(*) FROM accounts WHERE status IN ('active', 'locked')", cancellationToken: ct));
+    }
 }

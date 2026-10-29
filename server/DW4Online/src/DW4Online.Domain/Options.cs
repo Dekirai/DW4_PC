@@ -51,3 +51,17 @@ public sealed class PlayOptions
     /// <summary>The current release's version, announced by the status endpoint.</summary>
     public string CurrentClientVersion { get; set; } = "";
 }
+
+/// <summary>Service-wide settings announced to clients and shown on the website (section "Service").</summary>
+public sealed class ServiceOptions
+{
+    public string Name { get; set; } = "DW4Online";
+    /// <summary>Message of the day shown in the game's online menu and on the website's home page.</summary>
+    public string Motd { get; set; } = "";
+    /// <summary>Maintenance mode: announced in the status; the room service stops opening rooms.</summary>
+    public bool Maintenance { get; set; }
+    /// <summary>Public host name or IP clients use for the relay (announced in the status); empty = the host name of the request.</summary>
+    public string RelayHost { get; set; } = "";
+    /// <summary>The relay port announced to clients; 0 = the port the relay actually listens on (tests).</summary>
+    public int RelayPort { get; set; } = 52041;
+}

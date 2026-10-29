@@ -14,13 +14,17 @@ public static partial class UsernamePolicy
     [GeneratedRegex("^[A-Za-z0-9_-]{3,20}$", RegexOptions.CultureInvariant)]
     private static partial Regex Shape();
 
+    /// <summary>Deleted accounts are renamed to "deleted_&lt;id&gt;"; nobody can register such a name.</summary>
+    public const string DeletedPrefix = "deleted_";
+
     public static string Normalize(string username) => username.ToLowerInvariant();
 
     public static string? Check(string? username)
     {
         if (string.IsNullOrEmpty(username) || !Shape().IsMatch(username))
             return "User names are 3 to 20 characters: letters, digits, '_' and '-'.";
-        if (Reserved.Contains(Normalize(username))) return "This user name is reserved.";
+        if (Reserved.Contains(Normalize(username)) || Normalize(username).StartsWith(DeletedPrefix, StringComparison.Ordinal))
+            return "This user name is reserved.";
         return null;
     }
 }

@@ -151,6 +151,61 @@ public class RelayServerTests
     }
 
     [Fact]
+    public async Task Instance_channels_and_dropping_one_guest()
+    {
+        var (server, tickets, port, stop) = await StartAsync();
+        try
+        {
+            Assert.True(RelayTickets.IsChannel("ABC234-12"));
+            Assert.False(RelayTickets.IsChannel("ABC234-"));
+            Assert.False(RelayTickets.IsChannel("abc234-1"));
+            var (hostControl, control) = await ConnectAsync(port, "DW4R1 HOST " + tickets.Issue("ABC234-1", 1, RelayRoles.Host));
+            var hostKey = (await ReadLineAsync(control))[3..];
+
+            async Task<(TcpClient, NetworkStream, TcpClient, NetworkStream)> GuestAsync(long account)
+            {
+                var (g, gs) = await ConnectAsync(port, "DW4R1 GUEST " + tickets.Issue("ABC234-1", account, RelayRoles.Guest));
+                var n = (await ReadLineAsync(control)).Split(' ')[1];
+                var (d, ds) = await ConnectAsync(port, $"DW4R1 DATA ABC234-1 {n} {hostKey}");
+                Assert.Equal("OK", await ReadLineAsync(gs));
+                return (g, gs, d, ds);
+            }
+
+            var (g2, s2, d2, ds2) = await GuestAsync(2);
+            var (g3, s3, d3, ds3) = await GuestAsync(3);
+            server.DropGuest("ABC234-1", 2);
+
+            // Guest 2's pair is gone; guest 3 still talks to the host.
+            using (var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10)))
+            {
+                var buffer = new byte[4];
+                int read;
+                try
+                {
+                    read = await ds2.ReadAsync(buffer, timeout.Token);
+                }
+                catch (IOException)
+                {
+                    read = 0;
+                }
+                Assert.Equal(0, read);
+            }
+            await s3.WriteAsync(new byte[] { 9, 8, 7 });
+            Assert.Equal(new byte[] { 9, 8, 7 }, await ReadExactlyAsync(ds3, 3));
+            Assert.Equal(1, server.RoomCount);
+
+            server.CloseRoom("ABC234-1");
+            Assert.Equal(0, server.RoomCount);
+            foreach (var c in new[] { hostControl, g2, d2, g3, d3 }) c.Dispose();
+        }
+        finally
+        {
+            await server.StopAsync(CancellationToken.None);
+            stop.Dispose();
+        }
+    }
+
+    [Fact]
     public async Task Bad_handshakes_are_refused()
     {
         var (server, tickets, port, stop) = await StartAsync();

@@ -1,23 +1,11 @@
 using System.Reflection;
 using DW4Online.Domain;
+using DW4Online.Domain.Rooms;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 
 namespace DW4Online.Api.Endpoints;
-
-/// <summary>Service-wide settings announced to clients (section "Service").</summary>
-public sealed class ServiceOptions
-{
-    public string Name { get; set; } = "DW4Online";
-    /// <summary>Message of the day shown in the game's online menu.</summary>
-    public string Motd { get; set; } = "";
-    /// <summary>Maintenance mode: announced in the status; the room service stops opening rooms.</summary>
-    public bool Maintenance { get; set; }
-    /// <summary>Public host name or IP clients use for the relay (announced in the status).</summary>
-    public string RelayHost { get; set; } = "";
-    public int RelayPort { get; set; } = 52041;
-}
 
 public static class StatusEndpoints
 {
@@ -26,7 +14,7 @@ public static class StatusEndpoints
 
     public static void Map(RouteGroupBuilder v1)
     {
-        v1.MapGet("/status", (ServiceOptions service, PlayOptions play, AccountOptions accounts, TimeProvider time) => Results.Ok(new
+        v1.MapGet("/status", (ServiceOptions service, PlayOptions play, AccountOptions accounts, IRelayGateway relay, HttpContext ctx, TimeProvider time) => Results.Ok(new
         {
             service = service.Name,
             version = Version,
@@ -42,7 +30,7 @@ public static class StatusEndpoints
                 minimumProtocol = play.MinimumProtocol,
                 currentProtocol = play.CurrentProtocol,
             },
-            relay = string.IsNullOrEmpty(service.RelayHost) ? null : new { host = service.RelayHost, port = service.RelayPort },
+            relay = RoomEndpoints.Relay(ctx, service, relay),
         })).AllowAnonymous();
     }
 }

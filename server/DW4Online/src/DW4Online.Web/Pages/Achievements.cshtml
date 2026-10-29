@@ -1,0 +1,50 @@
+@page "/achievements"
+@model AchievementsModel
+@{
+    ViewData["Title"] = "Achievements";
+}
+<h1>Achievements</h1>
+<p class="muted">Achievements count only in online play without cheats, rebalanced rates or save states. Rarity is the
+    share of the @Format.Number(Model.Players) players with an online character who hold it (randomizer unlocks
+    included, unlocks under review excluded).
+    @if (Model.SignedIn)
+    {
+        <span>You hold <strong>@Model.MineCount</strong>.</span>
+    }
+</p>
+
+@foreach (var category in Model.Categories)
+{
+    <h2>@Format.Category(category.Key)</h2>
+    <div class="table-wrap">
+        <table>
+            <thead>
+                <tr>
+                    <th>Achievement</th>
+                    <th>Tier</th>
+                    <th class="num">Points</th>
+                    <th class="num">Rarity</th>
+                    @if (Model.SignedIn)
+                    {
+                        <th>You</th>
+                    }
+                </tr>
+            </thead>
+            <tbody>
+            @foreach (var row in category)
+            {
+                <tr>
+                    <td><strong>@row.Name</strong><br /><span class="muted small">@row.Description</span></td>
+                    <td><span class="badge @row.Definition.Tier">@row.Definition.Tier</span></td>
+                    <td class="num">@row.Definition.Points</td>
+                    <td class="num" title="@row.Holders players">@Format.Percent(row.Percent)</td>
+                    @if (Model.SignedIn)
+                    {
+                        <td>@(row.Mine ? "unlocked" : "")</td>
+                    }
+                </tr>
+            }
+            </tbody>
+        </table>
+    </div>
+}

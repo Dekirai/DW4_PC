@@ -74,7 +74,7 @@ public sealed class AchievementService(
             return DomainError.Invalid("requirement_not_met", reason);
 
         var now = Clock.Now(time);
-        var ruleset = Rulesets.Of(context);
+        var ruleset = room?.Randomizer == true ? Rulesets.Randomizer : Rulesets.Of(context);
         var evidenceJson = evidence is null ? null : JsonSerializer.Serialize(evidence, Json);
         var added = await repository.TryUnlockAsync(new UnlockWrite(accountId, definition.Id, ruleset, now, room?.RoomId, players,
             Truncate(context?.ClientVersion, 32), false, evidenceJson), ct);
@@ -134,6 +134,48 @@ public sealed class AchievementService(
         }
         return unlocked;
     }
+
+    /// <summary>Every active definition with the share of players holding it (unflagged unlocks, any ruleset).</summary>
+    public async Task<(IReadOnlyList<(AchievementDefinition Definition, long Holders, double Percent)> Rows, long Players)> RarityAsync(CancellationToken ct = default)
+    {
+        var definitions = await DefinitionsAsync(ct);
+        var rarity = await repository.GetRarityAsync(ct);
+        var rows = definitions.Select(d =>
+        {
+            var holders = rarity.Holders.GetValueOrDefault(d.Id);
+            return (d, holders, rarity.Players == 0 ? 0.0 : Math.Min(100.0, 100.0 * holders / rarity.Players));
+        }).ToList();
+        return (rows, rarity.Players);
+    }
+
+    /// <summary>Staff: flags an unlock (hidden from rankings and rarity until reviewed) or clears the flag.</summary>
+    public async Task<Result<bool>> AdminSetFlagAsync(long actorId, long accountId, string? code, string? ruleset, bool flagged, byte[]? ip, CancellationToken ct = default)
+    {
+        if (await FindUnlockTargetAsync(code, ruleset, ct) is not { } target) return UnknownUnlock();
+        if (!await repository.SetUnlockFlaggedAsync(accountId, target.Id, target.Ruleset, flagged, ct)) return UnknownUnlock();
+        await audit.WriteAsync(flagged ? "admin_unlock_flag" : "admin_unlock_unflag", accountId, actorId, ip,
+            new { code, ruleset = target.Ruleset }, Clock.Now(time), ct);
+        return true;
+    }
+
+    /// <summary>Staff: removes an unlock (a cheated one, after review).</summary>
+    public async Task<Result<bool>> AdminRevokeAsync(long actorId, long accountId, string? code, string? ruleset, byte[]? ip, CancellationToken ct = default)
+    {
+        if (await FindUnlockTargetAsync(code, ruleset, ct) is not { } target) return UnknownUnlock();
+        if (!await repository.RevokeUnlockAsync(accountId, target.Id, target.Ruleset, ct)) return UnknownUnlock();
+        await audit.WriteAsync("admin_unlock_revoke", accountId, actorId, ip, new { code, ruleset = target.Ruleset }, Clock.Now(time), ct);
+        return true;
+    }
+
+    private async Task<(int Id, string Ruleset)?> FindUnlockTargetAsync(string? code, string? ruleset, CancellationToken ct)
+    {
+        ruleset ??= Rulesets.Standard;
+        if (ruleset is not (Rulesets.Standard or Rulesets.Randomizer)) return null;
+        var definition = (await DefinitionsAsync(ct)).FirstOrDefault(d => d.Code == code);
+        return definition is null ? null : (definition.Id, ruleset);
+    }
+
+    private static DomainError UnknownUnlock() => DomainError.NotFound("unlock_not_found", "The account has no such unlock.");
 
     /// <summary>Ranked rules, version gate and the room check shared by unlocks and stats.</summary>
     private async Task<Result<(RoomMembership? Room, int? Players)>> CheckSessionAsync(long accountId, PlayContext? context, CancellationToken ct)

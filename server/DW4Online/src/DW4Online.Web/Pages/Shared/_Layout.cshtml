@@ -1,0 +1,49 @@
+@inject ServiceOptions Service
+@{
+    var session = Context.WebSession();
+    var title = ViewData["Title"] as string;
+}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="referrer" content="same-origin" />
+    <title>@(title is null ? Service.Name : $"{title} - {Service.Name}")</title>
+    <link rel="stylesheet" href="/css/site.css" />
+</head>
+<body>
+    <header class="site">
+        <div class="bar">
+            <a class="brand" href="/">@Service.Name</a>
+            <nav>
+                <a href="/achievements">Achievements</a>
+                <a href="/rooms">Rooms</a>
+                @if (session is not null)
+                {
+                    <a href="/u/@session.Username">Profile</a>
+                    <a href="/account">Account</a>
+                    @if (session.IsStaff())
+                    {
+                        <a href="/admin">Admin</a>
+                    }
+                    <form method="post" asp-page="/Logout">
+                        <button class="link" type="submit">Log out (@session.Username)</button>
+                    </form>
+                }
+                else
+                {
+                    <a href="/login">Log in</a>
+                    <a href="/register">Register</a>
+                }
+            </nav>
+        </div>
+    </header>
+    <main class="page">
+        @RenderBody()
+    </main>
+    <footer class="site">
+        @Service.Name &middot; online services for the Digimon World 4 PC port &middot; <a href="/privacy">Privacy</a>
+    </footer>
+</body>
+</html>

@@ -1,15 +1,17 @@
 using System.Security.Cryptography;
 using DW4Online.Api;
-using DW4Online.Api.Endpoints;
+using DW4Online.Api.Auth;
 using DW4Online.Data;
 using DW4Online.Data.Migrations;
 using DW4Online.Data.Repositories;
 using DW4Online.Domain;
 using DW4Online.Domain.Abstractions;
+using DW4Online.Domain.Rooms;
 using DW4Online.Domain.Security;
 using DW4Online.Domain.Services;
 using DW4Online.Relay;
 using DW4Online.Web;
+using DW4Online.Web.Auth;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 
 namespace DW4Online.Server;
@@ -46,6 +48,7 @@ public static class ServerApp
         var service = Bind<ServiceOptions>(config, "Service");
         var limits = Bind<RateLimitOptions>(config, "RateLimits");
         var relay = Bind<RelayOptions>(config, "Relay");
+        var rooms = Bind<RoomOptions>(config, "Rooms");
         var tls = Bind<TlsOptions>(config, "Tls");
         var database = Bind<DatabaseOptions>(config, "Database");
         if (string.IsNullOrEmpty(database.ConnectionString)) database.ConnectionString = config.GetConnectionString("Main") ?? "";
@@ -53,7 +56,7 @@ public static class ServerApp
         var services = builder.Services;
         services.TryAddSingleton(TimeProvider.System); // tests register a controllable clock first
         services.AddSingleton(accounts).AddSingleton(character).AddSingleton(cloud).AddSingleton(play)
-            .AddSingleton(service).AddSingleton(limits).AddSingleton(relay).AddSingleton(database);
+            .AddSingleton(service).AddSingleton(limits).AddSingleton(relay).AddSingleton(rooms).AddSingleton(database);
         services.AddSingleton(_ => new Database(database.ConnectionString));
         services.AddSingleton<IAccountRepository, AccountRepository>();
         services.AddSingleton<ISessionRepository, SessionRepository>();
@@ -62,6 +65,7 @@ public static class ServerApp
         services.AddSingleton<ICloudSaveRepository, CloudSaveRepository>();
         services.AddSingleton<IAchievementRepository, AchievementRepository>();
         services.AddSingleton<IRoomDirectory, RoomDirectory>();
+        services.AddSingleton<IRoomRepository, RoomRepository>();
         services.AddSingleton<MaintenanceRepository>();
         services.AddSingleton(_ => new PasswordHasher(accounts.PasswordIterations));
         services.AddSingleton<VersionGate>();
@@ -78,6 +82,10 @@ public static class ServerApp
             services.AddSingleton<RelayServer>();
             services.AddHostedService(sp => sp.GetRequiredService<RelayServer>());
         }
+        services.AddSingleton<RelayGateway>();
+        services.AddSingleton<IRelayGateway>(sp => sp.GetRequiredService<RelayGateway>());
+        services.AddSingleton<RoomService>();
+        services.AddHostedService<RoomSweeper>();
 
         builder.WebHost.ConfigureKestrel(kestrel =>
         {
@@ -88,9 +96,19 @@ public static class ServerApp
         });
 
         services.AddDw4Api(limits);
-        services.AddDw4Web();
+        services.AddDw4Web(config, builder.Environment);
+        // One default scheme: API paths authenticate the bearer token, website paths the session cookie.
+        services.AddAuthentication(o =>
+            {
+                o.DefaultScheme = DefaultScheme;
+                o.DefaultChallengeScheme = DefaultScheme;
+                o.DefaultForbidScheme = DefaultScheme;
+            })
+            .AddPolicyScheme(DefaultScheme, "API token or website session", o => o.ForwardDefaultSelector = ctx =>
+                WebSetup.IsWebPath(ctx.Request.Path) ? WebSessionHandler.SchemeName : TokenAuthenticationHandler.SchemeName);
 
         var app = builder.Build();
+        app.UseDw4Web(app.Services.GetRequiredService<WebOptions>(), app.Environment.IsDevelopment());
         app.UseDw4Api();
         app.MapDw4Api();
         app.MapDw4Web();
@@ -110,6 +128,8 @@ public static class ServerApp
         }).AllowAnonymous();
         return app;
     }
+
+    private const string DefaultScheme = "dw4";
 
     /// <summary>Runs the startup migrator when Database:AutoMigrate is on (the default).</summary>
     public static async Task MigrateIfEnabledAsync(WebApplication app)

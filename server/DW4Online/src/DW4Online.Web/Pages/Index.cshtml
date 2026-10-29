@@ -1,23 +1,44 @@
 @page "/"
-@model DW4Online.Web.Pages.IndexModel
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>DW4Online</title>
-    <style>
-        :root { color-scheme: light dark; }
-        body { font-family: system-ui, sans-serif; margin: 0; padding: 2rem 1rem; max-width: 40rem; margin-inline: auto; line-height: 1.5; }
-        h1 { margin-bottom: 0.25rem; }
-        .muted { opacity: 0.7; }
-        code { font-size: 0.95em; }
-    </style>
-</head>
-<body>
-    <h1>DW4Online</h1>
-    <p class="muted">Online services for the Digimon World 4 PC port.</p>
-    <p>The website is under construction. The game talks to the API at <code>/api/v1</code>; the service status is at <code>/api/v1/status</code>.</p>
-    <p>Registration: <strong>@Model.Registration</strong> &middot; Achievements: <strong>@Model.AchievementCount</strong></p>
-</body>
-</html>
+@model IndexModel
+@{
+    ViewData["Title"] = null;
+}
+<h1>@Model.Service.Name</h1>
+<p class="muted">Online co-op, achievements and cloud saves for the Digimon World 4 PC port.</p>
+
+@if (Model.Service.Maintenance)
+{
+    <div class="notice warn">The server is in maintenance. Rooms cannot be opened right now.</div>
+}
+@if (!string.IsNullOrWhiteSpace(Model.Service.Motd))
+{
+    <div class="notice">@Model.Service.Motd</div>
+}
+
+<div class="grid">
+    <div class="panel"><div class="stat">@Model.PlayersOnline</div><div class="muted">players online</div></div>
+    <div class="panel"><div class="stat">@Model.OpenRooms</div><div class="muted">open rooms</div></div>
+    <div class="panel"><div class="stat">@Format.Number(Model.Accounts)</div><div class="muted">accounts</div></div>
+    <div class="panel"><div class="stat">@Model.AchievementCount</div><div class="muted">achievements</div></div>
+</div>
+
+<h2>How it works</h2>
+<div class="panel">
+    <p>Create an account here or in the game, then log in from the game's online menu. Online play uses its own
+        online character, which starts from zero and is separate from your local save. Rooms hold up to ten players;
+        everyone in the same stage plays together (up to four per stage) with shared enemies and drops.</p>
+    <p>Achievements count only in online play without cheats, rebalanced rates or save states. You can also keep one
+        private cloud backup of your local save.</p>
+    @if (Model.SignedIn)
+    {
+        <p><a class="button" href="/account">Your account</a></p>
+    }
+    else if (Model.RegistrationOpen)
+    {
+        <p><a class="button" href="/register">Create an account</a> <a href="/login">or log in</a></p>
+    }
+    else
+    {
+        <p>Registration is closed on this server. <a href="/login">Log in</a></p>
+    }
+</div>

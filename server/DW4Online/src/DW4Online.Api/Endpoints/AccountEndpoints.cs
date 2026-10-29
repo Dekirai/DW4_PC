@@ -7,6 +7,7 @@ using Microsoft.AspNetCore.Routing;
 namespace DW4Online.Api.Endpoints;
 
 public sealed record EmailRequest(string? CurrentPassword, string? Email);
+public sealed record ProfileRequest(bool Public);
 
 public static class AccountEndpoints
 {
@@ -22,6 +23,20 @@ public static class AccountEndpoints
         me.MapPut("/email", async (EmailRequest r, AccountService accounts, HttpContext ctx) =>
             ApiProblems.Ok(await accounts.SetEmailAsync(ctx.Session(), r.CurrentPassword, r.Email, ctx.Caller(), ctx.RequestAborted)))
             .RequireRateLimiting(RateLimitPolicies.AccountChange);
+
+        me.MapPut("/profile", async (ProfileRequest r, AccountService accounts, HttpContext ctx) =>
+            ApiProblems.Ok(await accounts.SetProfilePublicAsync(ctx.Session(), r.Public, ctx.Caller(), ctx.RequestAborted)))
+            .RequireRateLimiting(RateLimitPolicies.AccountChange);
+
+        // Deletes the account and everything personal tied to it (GDPR erasure); needs the current password.
+        me.MapPost("/delete", async (PasswordConfirmation r, AccountService accounts, RoomService rooms, HttpContext ctx) =>
+        {
+            var session = ctx.Session();
+            if (!await accounts.CheckPasswordAsync(session.AccountId, r.CurrentPassword, ctx.RequestAborted))
+                return ApiProblems.Of(StatusCodes.Status422UnprocessableEntity, "wrong_password", "The current password is wrong.");
+            await rooms.RemoveAccountAsync(session.AccountId, ctx.RequestAborted);
+            return ApiProblems.Ok(await accounts.DeleteAccountAsync(session, r.CurrentPassword, ctx.RequestAborted), _ => Results.NoContent());
+        }).RequireRateLimiting(RateLimitPolicies.AccountChange);
 
         me.MapGet("/sessions", async (AccountService accounts, HttpContext ctx) =>
         {

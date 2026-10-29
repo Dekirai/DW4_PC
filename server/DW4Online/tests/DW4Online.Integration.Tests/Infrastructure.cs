@@ -93,6 +93,12 @@ public sealed class TestHost : IAsyncDisposable
             ["RateLimits:AchievementsPerMinute"] = "100000",
             ["RateLimits:AccountChangesPerMinute"] = "100000",
             ["RateLimits:StaffPerMinute"] = "100000",
+            ["RateLimits:RoomCreatesPerMinute"] = "100000",
+            ["RateLimits:RoomJoinsPerMinute"] = "100000",
+            ["RateLimits:WebLoginPerMinute"] = "100000",
+            ["RateLimits:WebRegisterPerHour"] = "100000",
+            ["Rooms:PasswordIterations"] = "1000",
+            ["Web:DataProtectionKeysDirectory"] = "memory",
             ["Relay:Enabled"] = "false",
             ["Play:RequireRoom"] = "true",
             ["Logging:LogLevel:Default"] = "Warning",
@@ -131,6 +137,15 @@ public sealed class TestHost : IAsyncDisposable
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
         var body = await response.Json();
         return (body.GetProperty("token").GetString()!, body.GetProperty("recoveryCode").GetString()!, body.GetProperty("account").GetProperty("id").GetInt64());
+    }
+
+    /// <summary>Logs in through the API (a game session) and returns its token.</summary>
+    public async Task<(string Token, long Id)> LoginAsync(string username, string password = "a decent password")
+    {
+        var response = await Client().PostAsJsonAsync("/api/v1/auth/login", new { username, password, deviceName = "tests" });
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var body = await response.Json();
+        return (body.GetProperty("token").GetString()!, body.GetProperty("account").GetProperty("id").GetInt64());
     }
 
     /// <summary>A durable room row with members, as the room service writes it.</summary>

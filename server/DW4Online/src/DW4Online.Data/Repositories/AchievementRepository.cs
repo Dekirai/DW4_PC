@@ -101,6 +101,41 @@ public sealed class AchievementRepository(Database db) : IAchievementRepository
         await tx.CommitAsync(ct);
         return rows.ToDictionary(r => r.Key, r => r.Value, StringComparer.Ordinal);
     }
+
+    public async Task<AchievementRarity> GetRarityAsync(CancellationToken ct = default)
+    {
+        await using var c = await db.OpenAsync(ct);
+        var holders = await c.QueryAsync<(int Id, long Count)>(new CommandDefinition(
+            "SELECT u.achievement_id AS id, COUNT(DISTINCT u.account_id) AS count FROM achievement_unlocks u " +
+            "JOIN accounts a ON a.id = u.account_id WHERE u.flagged = 0 AND a.status IN ('active', 'locked') GROUP BY u.achievement_id",
+            cancellationToken: ct));
+        var players = await c.ExecuteScalarAsync<long>(new CommandDefinition(
+            "SELECT COUNT(*) FROM accounts a WHERE a.status IN ('active', 'locked') AND " +
+            "(EXISTS (SELECT 1 FROM online_characters o WHERE o.account_id = a.id) OR " +
+            "EXISTS (SELECT 1 FROM achievement_unlocks u WHERE u.account_id = a.id AND u.flagged = 0))", cancellationToken: ct));
+        return new AchievementRarity(holders.ToDictionary(h => h.Id, h => h.Count), players);
+    }
+
+    public async Task<bool> SetUnlockFlaggedAsync(long accountId, int achievementId, string ruleset, bool flagged, CancellationToken ct = default)
+    {
+        await using var c = await db.OpenAsync(ct);
+        var exists = await c.ExecuteScalarAsync<long>(new CommandDefinition(
+            "SELECT COUNT(*) FROM achievement_unlocks WHERE account_id = @a AND achievement_id = @id AND ruleset = @ruleset",
+            new { a = accountId, id = achievementId, ruleset }, cancellationToken: ct));
+        if (exists == 0) return false;
+        await c.ExecuteAsync(new CommandDefinition(
+            "UPDATE achievement_unlocks SET flagged = @flagged WHERE account_id = @a AND achievement_id = @id AND ruleset = @ruleset",
+            new { a = accountId, id = achievementId, ruleset, flagged }, cancellationToken: ct));
+        return true;
+    }
+
+    public async Task<bool> RevokeUnlockAsync(long accountId, int achievementId, string ruleset, CancellationToken ct = default)
+    {
+        await using var c = await db.OpenAsync(ct);
+        return await c.ExecuteAsync(new CommandDefinition(
+            "DELETE FROM achievement_unlocks WHERE account_id = @a AND achievement_id = @id AND ruleset = @ruleset",
+            new { a = accountId, id = achievementId, ruleset }, cancellationToken: ct)) > 0;
+    }
 }
 
 /// <summary>Room membership from the durable rooms / room_members tables (written by the room service).</summary>
@@ -110,7 +145,7 @@ public sealed class RoomDirectory(Database db) : IRoomDirectory
     {
         await using var c = await db.OpenAsync(ct);
         return await c.QuerySingleOrDefaultAsync<RoomMembership>(new CommandDefinition(
-            "SELECT r.id AS room_id, r.public_code AS code, r.ranked, r.status, (r.host_account_id = @a) AS is_host, " +
+            "SELECT r.id AS room_id, r.public_code AS code, r.ranked, r.randomizer, r.status, (r.host_account_id = @a) AS is_host, " +
             "(SELECT COUNT(DISTINCT m2.account_id) FROM room_members m2 WHERE m2.room_id = r.id AND m2.left_at IS NULL) AS members " +
             "FROM rooms r WHERE r.open_code = @code AND r.status IN ('open', 'playing') AND EXISTS " +
             "(SELECT 1 FROM room_members m WHERE m.room_id = r.id AND m.account_id = @a AND m.left_at IS NULL) LIMIT 1",
