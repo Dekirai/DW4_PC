@@ -180,7 +180,8 @@ passes the save's check, the file's blocks in a row.
 The preview (`summarize_save`) shows per box: player name, Digimon (form
 name), level, bits, story phase (flags 2-6, 86 as
 `work/campaign/tools/gcisum.py`) and the forms unlocked. The records hold no
-play time or save date (see above), so the preview shows none.
+play time or save date (see above); the preview shows the file's time from
+its directory entry (`save_time_text`, the console clock, so local time).
 
 `merge_import` builds the new save: the whole file (the source's 90112 bytes
 unchanged) or chosen boxes, each copied as its whole 8 KB box buffer from the

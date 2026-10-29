@@ -472,7 +472,8 @@ the save lives.
   phase, forms); the chosen boxes go into the chosen boxes of slot A or B, or
   the whole save replaces the current one. The current save is first copied
   to `saves/backups/savedata-<date>-<time>.dat`. The game keeps no play time
-  or save date per box, so the preview has none.
+  per box; the preview shows when the file was last saved (its card
+  directory entry's time).
 - Command line: `dw4_game --save-info FILE` prints the preview,
   `dw4_game --import-save FILE[:BOXES] [--import-slot A|B]` imports (`BOXES`:
   `all`, the default, `1,3` for the same boxes or `1>2,4>1` to move them)

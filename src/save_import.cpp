@@ -4,6 +4,8 @@
 
 #include <algorithm>
 #include <cctype>
+#include <chrono>
+#include <cstdio>
 #include <cstring>
 #include <system_error>
 
@@ -312,6 +314,20 @@ std::string describe_box(const BoxSummary& box) {
     return (box.name.empty() ? std::string("?") : box.name) + " - " + form_label(box.digimon) + " Lv " + std::to_string(box.level) + ", " +
            std::to_string(box.bits) + " bits, story phase " + std::to_string(box.phase) + ", " + std::to_string(box.forms) +
            (box.forms == 1 ? " form" : " forms");
+}
+
+std::string save_time_text(std::span<const std::uint8_t> gci) {
+    if (gci.size() < kGciEntrySize) return {};
+    const std::uint32_t seconds = decode_gci_entry(gci).modified;
+    if (seconds == 0) return {};
+    using namespace std::chrono;
+    const auto day = floor<days>(sys_days(year{2000} / January / 1) + std::chrono::seconds(seconds));
+    const year_month_day date(day);
+    const auto in_day = std::uint32_t((sys_days(year{2000} / January / 1) + std::chrono::seconds(seconds) - day).count());
+    char text[32];
+    std::snprintf(text, sizeof text, "%04d-%02u-%02u %02u:%02u", int(date.year()), unsigned(date.month()), unsigned(date.day()), in_day / 3600,
+                  in_day / 60 % 60);
+    return text;
 }
 
 std::optional<std::vector<BoxMove>> parse_box_moves(std::string_view text) {

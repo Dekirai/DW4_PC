@@ -2036,7 +2036,9 @@ int run(const Options& options, dw4::game::Settings& settings) {
                                     for (std::size_t i = 0; i < boxes->size(); ++i) tab.chosen[i] = (*boxes)[i].used;
                         }
                         if (tab.source) {
-                            ImGui::Text("%s - %s", tab.source->container.c_str(), tab.source->detail.c_str());
+                            const auto saved = dw4::save::save_time_text(tab.source->gci);
+                            ImGui::Text("%s - %s%s%s", tab.source->container.c_str(), tab.source->detail.c_str(), saved.empty() ? "" : ", saved ",
+                                        saved.c_str());
                             const auto boxes = dw4::save::summarize_save(tab.source->gci);
                             static const char* box_names[] = {"Box 1", "Box 2", "Box 3", "Box 4"};
                             for (std::size_t i = 0; boxes && i < boxes->size(); ++i) {
@@ -2403,7 +2405,9 @@ int save_command(const Options& options, dw4::game::Settings& settings) {
         std::cerr << "dw4_game: " << path.string() << ": " << error << '\n';
         return 1;
     }
-    std::cout << "save: " << source->container << " (" << source->detail << ") " << source->file.string() << '\n';
+    const auto saved = dw4::save::save_time_text(source->gci);
+    std::cout << "save: " << source->container << " (" << source->detail << (saved.empty() ? "" : ", saved " + saved) << ") "
+              << source->file.generic_string() << '\n';
     for (const auto& line : import_preview(*source)) std::cout << "  " << line << '\n';
     if (options.import_save.empty()) return 0;
     const auto moves = dw4::save::parse_box_moves(options.import_boxes);

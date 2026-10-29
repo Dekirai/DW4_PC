@@ -300,6 +300,11 @@ void summaries() {
           "describe: " + save::describe_box((*boxes)[0]));
     check(save::describe_box((*boxes)[1]) == "(empty)", "describe empty");
     check(save::form_label("p_impdrapm") == "Imperialdramon PM" && save::form_label("p_unknown") == "p_unknown", "form labels");
+    // The entry's card time 0x324C22A2 = 2026-09-27 18:53:22 (save_data_tests).
+    check(save::save_time_text(gci) == "2026-09-27 18:53", "save time " + save::save_time_text(gci));
+    auto timeless = gci;
+    std::fill(timeless.begin() + 40, timeless.begin() + 44, 0);
+    check(save::save_time_text(timeless).empty(), "no save time");
     auto broken = gci;
     broken[64 + 0x2000 + 9] ^= 1;
     broken[64 + 0xC000 + 9] ^= 1;

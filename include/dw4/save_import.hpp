@@ -61,6 +61,10 @@ std::optional<std::array<BoxSummary, kRecordsPerCopy>> summarize_save(std::span<
 std::string form_label(std::string_view model);
 // "Tamer - Dorumon Lv 88, 2059734 bits, story phase 2, 3 forms" / "(empty)".
 std::string describe_box(const BoxSummary& box);
+// The save's time from its directory entry (+0x28, the console clock's
+// seconds since 2000-01-01; the records keep no time of their own) as
+// "YYYY-MM-DD HH:MM", "" for 0.
+std::string save_time_text(std::span<const std::uint8_t> gci);
 
 // One box going from the source into the target (boxes 0..3).
 struct BoxMove {
