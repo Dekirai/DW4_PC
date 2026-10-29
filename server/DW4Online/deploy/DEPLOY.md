@@ -240,7 +240,7 @@ the DW4Online website; if other content should live there, see case 2.)
 
 **Case 2: another web server serves dekirai.crygod.de on this machine** (IIS, nginx, Caddy). It forwards
 `/dw4online/...` with the prefix kept to `http://127.0.0.1:5280` and sends `X-Forwarded-For` and `X-Forwarded-Proto`;
-DW4Online then listens only there:
+DW4Online then listens only there (remove its `Https` endpoint and `Tls:StoreHostName`):
 
 ```json
 "Kestrel": { "Endpoints": { "Http": { "Url": "http://127.0.0.1:5280" } } },
