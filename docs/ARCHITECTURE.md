@@ -17,6 +17,20 @@ as they do on the console. Addresses below refer to the USA revision-0
 
 `dw4_core` and `dw4_engine` have no SDL, OpenGL or ImGui dependency.
 
+The host's presence features (overhead name tags, Discord Rich Presence,
+achievements) only read the engine after a step. The one thing the engine
+does for them is the observe-only event list (`engine/port_events.hpp`,
+`Engine::set_port_events` / `take_port_events`): a few hooks in the game
+logic (boss death scripts and defeat flags, quest goals and story flags in
+`FLGset`, level ups, technique changes in `RECALCPLAYER`, the Digi-Lab's
+form change, cards, player defeats, critical hits, enemy defeats) append an
+event while a host collects them. Collecting is off on a new engine (so a
+save state's replay reports nothing), nothing in the engine reads the list,
+and it is neither in `fingerprint()` nor in a `StageSnapshot`: the
+determinism reference (`DW4_TRACE_FINGERPRINT`) and the audio dump are the
+same with collecting on and off (`tests/port_events_tests.cpp` checks the
+fingerprint too).
+
 ## Frame step (`Engine::step`)
 
 One step is one original frame, one NTSC field: the world clock advances by
