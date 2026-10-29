@@ -1102,6 +1102,22 @@ membership lane checks the canonical form first: headless, with audio dump and
 in a hidden window, the canonical bytes are equal at every stage load of the
 r25c story run and the raw bytes differ only in presentation fields.
 
+**Measured (round S1).** All ten segments of the r25c story run, each
+headless and with the audio mixer running (`DW4_AUDIO_MIX=1`: the mixer
+renders every step's samples and drops them, as with a device), and the
+segments `new` and `k8` also in a hidden window that draws every picture
+(`DW4_RENDER=1` with the mixer), each process dumping every stage load's
+snapshot (`DW4_SNAPSHOT_DUMP`; `tools/online/canonical_check.py`): every
+segment reached its checkpoint at the reference frame in every mode; the
+canonical bytes are equal in all modes at all 193 stage loads (54 of them in
+three modes); the raw bytes are equal at 35 loads and differ at 158 in 2-4
+bytes each (502 in all), every one of them inside a stream's `frames_read`,
+the field the canonical form zeroes. No other presentation-only field
+exists. The mixer and the hidden window give byte-equal raw snapshots (the
+smoke runs feed the mixer at the simulation's pace), so only a machine
+without audio output differs. The SNAPHASH is
+`online_hash(snapshot_bytes(SnapshotForm::canonical))` (FNV-1a, 64 bit).
+
 A solo group that went on without the server (3.4) uploads snapshot and log
 when it reconnects.
 
