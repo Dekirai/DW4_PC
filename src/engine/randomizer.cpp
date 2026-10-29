@@ -38,15 +38,17 @@ std::uint64_t draw(std::uint64_t seed, std::string_view name, std::uint64_t coun
 namespace {
 // The enemy families (model names of the 'enemy' table), their area tier and
 // the smallest stage member holding their six infos (AFS sizes of the stage
-// main members, round 48 survey).
+// main members, round 48 survey) where the family is an ordinary enemy: no
+// quest stage (their hit scripts carry quest logic, dngQ8's e_mecha4 calls a
+// ded_ script) and no stage where it is the boss (dng308b3 / dng411b3).
 constexpr Family kFamilies[] = {
     {"e_nume", 1, false, "dng101b1"},    {"e_goburi", 1, false, "stag0001"},  {"e_ogre", 1, false, "stag0001"},
-    {"e_scum", 1, false, "dngq1b1e"},    {"e_cockatri", 1, false, "stag0001"}, {"e_mecha1", 1, false, "dngq4b1e"},
-    {"e_mummy", 2, false, "dng204b1"},   {"e_minotaru", 2, false, "dng205b1"}, {"e_pharaoh", 2, false, "dngq4b1e"},
-    {"e_mecha2", 2, false, "dngq2b2e"},  {"e_tyrano", 2, false, "stag0202"},  {"e_otama", 3, false, "dng307b1"},
-    {"e_geko", 3, false, "dng308b1"},    {"e_mecha3", 3, false, "dng309b1"},  {"e_maridevi", 3, false, "dngq3b1e"},
-    {"e_torta", 3, false, "stag0301"},   {"e_mecha4", 3, false, "dngq8b1e"},  {"e_infermo", 4, false, "dng411b2"},
-    {"e_megadra", 4, false, "dng411b1"}, {"e_rare", 4, false, "dngq8b1e"},    {"e_mecha5", 4, false, "dng411b3"},
+    {"e_scum", 1, false, "dng102b1"},    {"e_cockatri", 1, false, "stag0001"}, {"e_mecha1", 1, false, "dng103f1"},
+    {"e_mummy", 2, false, "dng204b1"},   {"e_minotaru", 2, false, "dng205b1"}, {"e_pharaoh", 2, false, "dng206f1"},
+    {"e_mecha2", 2, false, "dng308b2"},  {"e_tyrano", 2, false, "stag0202"},  {"e_otama", 3, false, "dng307b1"},
+    {"e_geko", 3, false, "dng308b1"},    {"e_mecha3", 3, false, "dng309b1"},  {"e_maridevi", 3, false, "stag0303"},
+    {"e_torta", 3, false, "stag0301"},   {"e_mecha4", 3, false, "dng412b2"},  {"e_infermo", 4, false, "dng411b2"},
+    {"e_megadra", 4, false, "dng411b1"}, {"e_rare", 4, false, "dng412b1"},    {"e_mecha5", 4, false, "dng412b4"},
     // Bosses and the 1-RAM mid-bosses stay where they are.
     {"e_blosso", 0, true, nullptr},      {"e_mammos", 0, true, nullptr},      {"e_skulgrey", 0, true, nullptr},
     {"e_anomalo", 0, true, nullptr},     {"e_tonogeko", 0, true, nullptr},    {"e_diabolo", 0, true, nullptr},
