@@ -420,6 +420,13 @@ picture does not cut; the newcomer starts with the first-run rule of
 SETBOXCAMERA (direct cut). The camera mask is simulation state and changes only
 at the step where a JOIN, LEAVE or fork applies, identically on every machine.
 
+Measured in round S1 (branch `feat-r52cam`, `CameraManager::set_player_cameras`,
+test switch `DW4_TEST_RULES=frame:cameras:present`): one player walking in
+stag0102 through a camera box change (box 1 to 2 at frame 885, a 120-frame
+blend) with the mask going from 0 to {0} at frame 1000 (inside the blend),
+1350 or 2150 gives the same picture camera (view and projection, bit for bit)
+in all 2,600 frames as the run without the change, and the same fingerprint.
+
 **A defeated member.** While a slot has no generated player, its `PlayerBox`
 stands still at the capsule (`update_player_box` returns, spike r51cam
 `managers_core.cpp:399-403`) and keeps the capsule's surroundings simulated
@@ -494,6 +501,12 @@ shared one in all 1,902 frames of the check. An instance that drops back to one
 member keeps the mask `{its slot}` until its next stage load (equal to the
 original by the same proof); a new solo instance starts with 0.
 
+Round S1 (r52, `feat-r52cam` on main 92b82f8 with round 50): `det.sh`
+4004f056 / 396cb219 twice with online off, with `DW4_CAMERAS=1` (the slot
+camera and the union pass with one camera; `DW4_CAM_CHECK`: 0 of 1,902
+frames differ) and with `DW4_CAMERAS=1 DW4_ONLINE=1` (a solo online instance:
+the online rules on, one member present).
+
 **Idempotent pictures.** A solo-led instance presents as often as its monitor
 asks (about 2.4 picture passes per step at 144 Hz), a joiner replays the same
 ticks headless with none; both must end in the same state. The netcode critique
@@ -505,6 +518,26 @@ once per step and blend only without `smoke_frames`
 test hook (`DW4_EXTRA_RENDERS=<n>`, `DW4_EXTRA_WIDEN=1`, plus an emulated r49
 previous-view peek) to the checks of section 15 and compares against headless
 with the net fingerprint.
+
+The hook is in `game_main.cpp` (round S1): `DW4_EXTRA_RENDERS=n` renders the
+same world time n more times after every step (into a scratch draw list, also
+in headless runs, plus one more `traverse_scene` there), `DW4_EXTRA_WIDEN=1`
+alternates the widening 0.75 / 0.5 between them, `DW4_EXTRA_PREVIOUS=1` gives
+them the previous step's picture camera view as smooth motion's previous view
+(the round 49 rule). Measured with n = 2 and both options, against the same
+run without the hook (fingerprints every 300 frames; for per-slot cameras also
+the `PlayerBox` states, `DW4_TRACE_CAMERAS`):
+
+| Run | Without the hook | With the hook, headless | With the hook, hidden 1920x1009 widescreen window |
+| --- | --- | --- | --- |
+| newgame_dng101b1, 6000 frames | 4004f056 | 4004f056 | 4004f056 |
+| four players, stag0102, shared camera | 4fa35801 | 4fa35801 | 4fa35801 |
+| four players, stag0102, `DW4_CAMERAS=15 DW4_ONLINE=15` | bd855f57 / cameras d2f83187 | bd855f57 / d2f83187 | bd855f57 / d2f83187 (local camera 2) |
+| four players, dng101b1, `DW4_CAMERAS=15 DW4_ONLINE=15` | 91da4c29 / cameras 996b1661 | - | 91da4c29 / 996b1661 (local camera 3) |
+
+The four-player stag0102 value with the shared camera is the one of the
+critique's experiment B on f915905 (4fa35801): rounds 49 and 50 changed
+nothing in it.
 
 ### 4.5 Cost
 
@@ -533,6 +566,29 @@ floating point contraction like `frustum_cull_code`; the exact original test
 stays for solo instances. S4 re-measures this table after the libm routing
 (6.12).
 
+Re-measured in round S1 on the production code (`feat-r52cam`, the same
+scenario: four players, `DW4_LEVEL=200`, `spread4.txt`, 2400 frames, a hidden
+1920x1009 widescreen window, `DW4_TRACE_TRAVERSAL_TIME=1`; the one-camera
+split with `DW4_CAMERAS=1 DW4_LEASH_OFF=1`, four cameras with
+`DW4_CAMERAS=15`). Two sequential runs a / b while other rounds used about
+half of the machine; the 4-camera no-cull probe of round 51 is gone (plan B
+only):
+
+| Stage | today | 1 camera split | 4 cameras |
+| --- | --- | --- | --- |
+| stag0102 | 215 / 200 | 123 / 116 + 155 / 152 | 309 / 282 + 175 / 152 |
+| dng101b1 | 166 / 174 | 90 / 90 + 121 / 118 | 217 / 232 + 110 / 125 |
+| stag0201 | 218 / 186 | 95 / 100 + 134 / 155 | 232 / 246 + 126 / 149 |
+| dng205b1 | 176 / 188 | 104 / 98 + 129 / 128 | 224 / 220 + 129 / 137 |
+| stagBS02 | 109 / 108 | 53 / 51 + 73 / 71 | 74 / 74 + 71 / 72 |
+
+The better of the two runs is within 10 % of the round 51 table for 28 of the
+30 values; the exceptions are stag0102's one-camera simulation pass (116
+against 100-107, the two runs themselves differ by 6 %) and stagBS02's
+one-camera picture pass (71 against 80, faster). The four-camera simulation
+pass costs 2.0-2.6x the one-camera pass in the fields and dungeons and 1.4x in
+the boss arena, as before.
+
 ### 4.6 No leash
 
 The leash is `beChangePosTransform` (`src/engine/change_pos.cpp:24-58`), which
@@ -549,6 +605,15 @@ where it is on again exactly when the instance starts with one member.
 ChangePos itself is unchanged. Whether anything besides the ring hangs under
 the ChangePos transform (or whether enemies query the ring) is unchecked; round
 S1 checks it with a solo run with the ring off against the reference.
+
+Checked in round S1 (`DW4_LEASH_OFF=1`, the ring off in every stage, also
+after each stage load): `det.sh` 4004f056 / 396cb219, and one player with the
+ring on and off gives the same fingerprint every 100 frames walking in stag0102
+and stag0201 (2600 frames) and with the explore bot fighting through dng101b1
+(6000 frames, the player defeated on the way). Nothing besides the ring acts
+on a solo player. The engine applies the rule itself: while
+`OnlineRules::leash_off` is set, every step switches the child hit off once
+the stage's HitLand infos are there (`Engine::apply_leash_rule`).
 
 The local co-op spread of about 92 units is also the yardstick for "near" in
 this design (`kNearUnits = 100`): what members within it experience is what a
@@ -659,6 +724,41 @@ players) and changes who is asked, who is frozen and who leaves:
   departure (3.4).
 - The randomizer's exit text remap happens on TEXTCTL in `ui.cpp`; the port
   sends the same TEXTCTL messages, so it keeps working.
+
+Built in round S1 (`src/engine/online_exits.cpp`, `feat-r52cam`):
+
+- The port replaces the Lua global `funcStageChange` after every `func.lua`
+  while the instance has two or more present members; the original function
+  stays under a hidden global and comes back when the instance drops to one
+  member, so a solo instance runs the original script (det with a solo online
+  instance: 4004f056).
+- On an exit mat (a mat script whose chunk names `funcStageChange`, found by
+  `Engine::script_mentions`) `MATisAllPlayer` is true online when a living
+  member stepped on in this update; every other mat keeps the original rule.
+  The 20 direct-NEXTSTAGE exits keep the original until S3.
+- The owner's prompt is a demo work with the original's records; after its
+  answer one port record (demo record type 8, port only) steps a state
+  machine: the other members' prompts one after another (600 frames each, then
+  SELECTCTRL REMOVE, a No), then the departure: `exit_leavers` (the side rule),
+  the group move when every living member goes, otherwise
+  `Engine::online_split` and, on the leavers' copy, the original departure
+  records as a new demo work; the stayers' copy fades the hidden half fade
+  back.
+- Draw filter: the picture pass skips another member's `i_zzstchgwb` /
+  `i_zzstchgwn`, and while an exit runs `i_fadewn01` and the STCHGFONT00 line
+  for members who do not see the prompt (`Engine::picture_hidden_roots`).
+- Limits in S1, as in the original: the owner's own prompt has no time limit;
+  a member who steps on while another member's exit runs (`DMgetCount()`
+  is not 0) gets no prompt until it steps off and on again.
+- Checked with two members in dng101b1 (both copies of every fork): an exit
+  taken alone (the leaver arrives in stag0101 alone, the stayer keeps
+  dng101b1, the fingerprints equal up to the fork), the partner on the mat
+  asked (yes: the group move without a fork; no, or no answer for 600 frames:
+  the fork), a defeated partner taken along by the only living member (no
+  fork, no game over), the gate disc (its user forks off to stagML11 point 3;
+  with a defeated partner everyone goes), give up (the defeated member's copy
+  runs the original game over into stagML11 point 0, the partner's copy
+  despawns it).
 
 ### 5.3 Scoped scenes (round S3)
 
@@ -946,6 +1046,41 @@ field log, on a weaker PC about 8-12 minutes; longer stays open a parallel
 instance with a notice (3.4). The minute limit of revision 1 goes. There is no
 mid-stage state to shorten this: a save state is a load snapshot plus its input
 log (`game_main.cpp:2016`), so every catch-up starts at the visit's load.
+
+**Measured on the final path (round S1).** The replay of a save state
+(`DW4_STATE_TEST=5400`: a new engine restores the stage snapshot and replays
+the 5,399 logged steps with their traversals, headless, as a catch-up does),
+four players (`DW4_PLAYERS=4 DW4_LEVEL=200`, `spread4x.txt`: they walk apart
+for 6000 frames), the CRT's FMA3 routines, the production union pass
+(`DW4_CAMERAS=15 DW4_ONLINE=15`) against the shared camera; the state test
+found every replay identical. The save state replay also mixes the music for
+its stream positions, which a catch-up leaves out (`set_replay`), so the rate
+without the mix is the catch-up rate. Steps per second, the range of two
+sequential runs (three with the mix; the machine shared with other rounds,
+about half loaded):
+
+| Stage | shared camera, without the mix | 4 cameras, without the mix | 4 cameras, with the mix |
+| --- | --- | --- | --- |
+| stag0102 (field) | 5,710-5,760 | 2,370-2,390 | 1,790-1,810 |
+| dng101b1 (dungeon) | 7,320-7,480 | 2,870-3,330 | 1,980-2,320 |
+| stagBS02 (boss) | 10,230-10,650 | 6,640-8,290 | 3,280-4,040 |
+
+A live four-member step costs the same (0.42 ms in stag0102, about 2.5 % of a
+core at 60 Hz). The field with four cameras is the slowest case: about 2,400
+steps per second on the reference machine, a fifth below the estimate above.
+Decisions from it:
+
+- `Instances:MaxCatchUpSeconds` stays **30**. With 2,400 steps per second a
+  30-second catch-up admits `30 x (2,400 - 59.94)`, about 70,000 ticks or 19
+  minutes of a four-player field log on the reference machine (dungeon about
+  23, boss arena about 55); a PC at half that speed about 9 minutes. Longer
+  stays open a parallel instance with a notice (3.4); the loading screen never
+  waits more than half a minute for a join.
+- The client's **initial rate estimate**, before its calibration replay has
+  reported (RATE), is **1,200 steps per second**: half the reference machine's
+  slowest case, so a fresh client on a weaker PC is not offered a join it
+  cannot finish in time; the calibration replaces it within the first second
+  in the room.
 
 **State size.** Measured (spike `r51net`, two and three processes, dng101b1,
 stag0101, stagml11): join state 271,387 B after 2,999 steps raw (snapshot
@@ -1265,6 +1400,24 @@ std::uint64_t Engine::net_fingerprint() const;
 Lua host functions registered only online: `NETsplit(mask)` (returns whether
 this copy continues), `NETisOnline()`. The `funcStageChange` port and the
 `run_script` wrappers (5.1) call into the same functions.
+
+The cameras-exits lane of round S1 (`feat-r52cam`) builds against these names
+and adds, in `include/dw4/engine/online.hpp` and `engine.hpp`:
+`Engine::player_cameras()`, `online_shared()` (online with two or more present
+members), `view_slot()` / `picture_slot()` (the picture's camera: the view
+slot, or the nearest living member's while defeated), `split_identity()`,
+`take_heading()` (`ExitHeading {frame, stage, point, leavers}` for HEADING),
+`exit_prompt()` (`ExitPromptView`, the texts and the draw filter),
+`picture_hidden_roots`, the pure rules `exit_prompt_owner` and `exit_leavers`,
+`CameraManager::set_player_cameras(engine, before, after, heirs)`,
+`player_box_hash()` (for the net fingerprint) and `player_box_centre(slot)`.
+`set_online` there calls `apply_online_cameras(before)` and
+`apply_leash_rule()`; `online_split` despawns the other side with a minimal
+`online_remove_player` (PLAYER REMOVE, the capsule, joined, present, the
+camera bit) that the membership lane's full despawn replaces. The test
+switches `DW4_CAMERAS`, `DW4_CAM_LOCAL`, `DW4_LEASH_OFF`, `DW4_ONLINE`,
+`DW4_TEST_RULES`, `DW4_TEST_GATEDISC` and `DW4_TEST_GIVEUP` change the
+simulation and belong on `online_forbidden_env` (6.12).
 
 ### 7.4 Pads: redirect, resets
 
