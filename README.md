@@ -245,6 +245,121 @@ are off online; a guest that leaves plays on released, a host that leaves ends
 the session for the others (they play on alone). The host needs the port
 open (router / firewall) for guests outside the local network.
 
+### Name tags
+
+Name, level and HP / MP bars float over the players' Digimon (Settings tab,
+*Name tags, Discord, achievements*; `settings.ini`):
+
+```ini
+[hud]
+overhead_labels=auto   ; auto (only with two or more players), all, others (not over your own), off
+label_scale=100        ; percent, 50-200 (the size also follows the window height)
+label_numbers=false    ; HP / MP numbers beside the bars
+```
+
+They are drawn by the PC host over the game picture (ImGui, under the F1
+menu) from the players' state after each step, the camera the picture used
+and the widescreen widening; nothing is added to the game's scene, so the
+simulation, save states, online sessions and the Dolphin comparisons are the
+same with them on. The tag sits a little above the highest joint of the
+Digimon's current pose (else above part of its bounding box, else a height per
+form), follows the smooth motion above 60 fps, fades with the distance from
+the camera and is hidden during stage loads, demos and cutscenes (pad input
+off), status and shop windows, the title and menu screens, and for a defeated
+player. Players beyond the four local slots (the coming seamless co-op) are
+handed in by the netcode (`OverheadLabels::set_remote_players`) and drawn the
+same way when they are in the same stage. Test runs: `DW4_LABELS=all` and
+`DW4_TRACE_LABELS=N` (every N frames the labels' head point, screen position,
+the feet's screen position and the distance, for the 1280x960 test window or
+`DW4_WINDOW`, without a window too).
+
+### Discord Rich Presence
+
+With the Discord desktop app running, Discord shows what you play:
+`<Form> Lv <level>` (for example *WarGreymon Lv 42*), the area (*Death Valley:
+Humid Cave*, names from the loading cards), the area's picture with the form's
+picture on it, the difficulty as the small picture's text, and the time since
+the game started; *In Menus* on the title and menu screens. The program talks
+to the app over its local pipe (`discord-ipc-0..9`) with its own small client
+(no SDK, no DLL, no login): it looks for the app again every 15 seconds (a
+Discord started later is found), sends a change at most every 15 seconds and
+says goodbye when the game ends. Without Discord, or with the setting off,
+nothing happens. Settings: the Settings tab's *Discord Rich Presence* box, or
+
+```ini
+[discord]
+enabled=true
+client_id=1560921673354453093   ; the Discord application whose name shows as "Playing ..."
+```
+
+The pictures are the application's art assets, which its owner uploads once:
+Discord Developer Portal > Applications > the application > Rich Presence >
+Art Assets > *Add Image(s)* (PNG or JPG, at least 512x512, 1024x1024
+recommended; the file name without extension becomes the key, lower case). The
+keys the game uses:
+
+| Key | Shown for |
+| --- | --- |
+| `logo` | title and menu screens (the large picture) |
+| `area_home_server` | Home Server: Commander Room, Main Lobby (Terminal, Central, Shop Area), Digivolution |
+| `area_practice` | Death Valley: Practice Stage |
+| `area_death_valley` | Death Valley: Goblin Pass, Abyss of Grief, Numenume River, Doom Dome |
+| `area_death_valley_dungeons` | Humid Cave, Cliff Dungeon, Dome Base |
+| `area_dry_land` | Dry Land: Mummy Desert, Grief Wasteland, Train Line, Station X, Power Plant |
+| `area_dry_land_dungeons` | Sand Labyrinth, Ancient Ruins, Virus Lab |
+| `area_venom_jungle` | Venom Jungle: Gekogeko Land, Mangrove Forest, Venom Swamp, Dread Note |
+| `area_venom_jungle_dungeons` | Geko Path, Vine Tunnel, Vein, Dread Bridge |
+| `area_machine_pit` | Machine Pit: Battle Arena, Mechanical Core, Core Area |
+| `area_machine_pit_dungeons` | Mecha Nest, Electro Mine |
+| `area_apocalymon` | Apokarimon Space (boss) |
+| `area_belphemon` | Demon Shift (boss) |
+| `area_lucemon` | Hades Obelisk (boss) |
+| `area_zone_x` | Zone X (boss) |
+| `area_fortress` | Fortress: Guard Room, Rotating Hall, X Digimon Lab, GobGob Room |
+| `area_quests` | the quest dungeons (Barbarian Cave ... Cursed Dungeon) |
+| `form_agumon`, `form_veemon`, `form_guilmon`, `form_dorumon`, `form_weregarurumon`, `form_hkabuterimon`, `form_wargreymon`, `form_clangemon`, `form_beelzemon`, `form_alphamon`, `form_bkwargreymon`, `form_ipdramonfm`, `form_ipdramonpm`, `form_metalgarurumon`, `form_gallantmoncm`, `form_susanomon` | the 16 forms (the small picture) |
+
+`dw4_game.exe --data <game data> --export-presence-art <folder>` writes
+suggested 512x512 pictures for the `logo` and `area_*` keys from your own
+copy's loading cards (they stay on your PC; upload them under their file
+names). The form pictures are yours to choose. Test runs talk to Discord only
+through `DW4_DISCORD_PIPE=<pipe name prefix>` (a test pipe, never the real
+app; `dw4_presence_tests --serve <pipe> <seconds>` is a fake Discord that
+prints what it gets) and `DW4_TRACE_PRESENCE=1` prints each new activity.
+
+### Achievements
+
+The F1 menu's Achievements tab lists 72 achievements in eleven groups (story,
+bosses, challenges, levels, forms, techniques, collection, quests, combat,
+time, together) with the date of each unlock and the progress of the counted
+ones; a notice shows at the top right when one unlocks (*Unlock notices*).
+They are kept in `saves/profile.dat` next to the program (a `.bak` of the
+previous file stays) and belong to this PC; the online account's achievements
+come with the seamless co-op server. Rules:
+
+- Nothing unlocks or counts while a cheat (god mode, infinite MP, one-hit
+  defeats) or a rebalancing value other than 100% has been on in the running
+  stage, after a save state was loaded in the running stage, while a save
+  state replays, in test runs and while the campaign bot or a scripted walk
+  plays. Fast loading does not matter.
+- A run with the item randomizer unlocks into its own list (shown beside the
+  date).
+- The run achievements (a story clear never defeated, under 8 / 4 hours, only
+  rookie forms, Very Hard alone) need a new character tracked since level 1
+  that never played with a closed gate (cheats, rebalancing, a loaded state).
+  Speed counts the in-game time without stage loads.
+- In local co-op every player of this PC counts; online only this machine's
+  player (story achievements count for everyone in the session).
+
+They come from a few observe-only hooks in the reconstructed game logic (boss
+death scripts and defeat flags, level ups, digivolutions, new techniques,
+cards, quest goals, player defeats, critical hits, enemy defeats, story flags;
+`engine/port_events.hpp`) plus the players' state after each step. The engine
+collects these events only while the host asks for them, never reads them
+back, and they are in neither the state fingerprint nor a save state. Test
+runs: `DW4_ACHIEVEMENTS=1` (with `DW4_PROFILE=<file>` to keep the profile)
+and `DW4_TRACE_EVENTS=1` (every event as it happens).
+
 ### Content mods
 
 A mod is a folder `mods/<id>` (next to the program, else in the working
@@ -437,8 +552,9 @@ cards, mods and PC options stay).
 
 F1 opens the menu: the Settings tab (an Original / Modernized preset, the
 loading speed (Original / Fast), display, widescreen, frame limit, anti-aliasing,
-window size, volume, keyboard and controller bindings), the Saves tab (where
-the save lives, the boxes of slots A and B, importing GameCube saves), the Cheats tab
+window size, volume, name tags, Discord, achievements, keyboard and controller
+bindings), the Saves tab (where the save lives, the boxes of slots A and B,
+importing GameCube saves), the Achievements tab, the Cheats tab
 (god mode, infinite MP, one-hit defeats, refills, levels and bits per player,
 session only and off by default; plus the saved rebalancing and randomizer
 options) and the Debug tab (stage loader, player state,

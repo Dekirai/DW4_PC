@@ -1,6 +1,7 @@
 #pragma once
 
 #include "dw4/engine/igb_view.hpp"
+#include "dw4/engine/port_events.hpp"
 #include "dw4/engine/scene_graph.hpp"
 #include "dw4/card_store.hpp"
 #include "dw4/console_reset.hpp"
@@ -553,6 +554,27 @@ public:
     const std::vector<DiagnosticCounter>& notes() const { return notes_; }
     void log(std::string text);
     const std::deque<std::string>& log_lines() const { return log_; }
+    // Observe-only events for the PC host (port_events.hpp): collected only
+    // while enabled (off by default, and on a new engine), never read by the
+    // simulation, not in fingerprint() and not in a snapshot. At most
+    // kMaxPortEvents wait for the host; more are dropped.
+    static constexpr std::size_t kMaxPortEvents = 4096;
+    void set_port_events(bool enabled) {
+        port_events_enabled_ = enabled;
+        if (!enabled) port_events_.clear();
+    }
+    bool port_events_enabled() const { return port_events_enabled_; }
+    void port_event(PortEvent event) {
+        if (port_events_enabled_ && port_events_.size() < kMaxPortEvents) port_events_.push_back(std::move(event));
+    }
+    std::vector<PortEvent> take_port_events() {
+        std::vector<PortEvent> taken;
+        taken.swap(port_events_);
+        return taken;
+    }
+    // (port_events.cpp) The boss death scripts running now, innermost last;
+    // an entry is cleared once its boss was reported.
+    std::vector<std::string>& port_boss_scripts() { return port_boss_scripts_; }
 
     // Global game state used by the script bindings.
     std::map<std::int32_t, std::uint8_t>& flags() { return flags_; }
@@ -749,6 +771,9 @@ private:
     std::int64_t applied_lateness_{};     // ... and in time_ now
     std::int64_t world_delta_ = 16683333; // world time added by the last step (system_step)
     bool pad_input_enabled_{};
+    bool port_events_enabled_{};          // see set_port_events (host only)
+    std::vector<PortEvent> port_events_;
+    std::vector<std::string> port_boss_scripts_;
     std::map<std::int32_t, std::uint8_t> flags_;
     std::map<std::int32_t, std::int32_t> counters_;
     std::vector<DiagnosticCounter> notes_;

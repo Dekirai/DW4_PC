@@ -2127,8 +2127,10 @@ struct ShopEvolve : Window {
         auto* sys = engine.get<GameSystem>();
         auto* p = player_slot(engine);
         if (!sys || !p) return;
+        const int before = p->stats.species;
         sys->store_species(player);
         sys->load_species(engine, player, species);
+        if (before != species) engine.port_event({PortEvent::Kind::digivolution, player, species, before, {}}); // observe-only
         recalc(engine);
         sys->equip_strongest_weapon(engine, player);
         for (auto* list : {&p->main_slot, &p->sub_slot, &p->power_pocket, &p->main_pocket})
@@ -2634,6 +2636,7 @@ struct ShopCardPack : Window {
             }
             p->cards[card] = 1;
             const int rare = db->number("card", card, "RARE").value_or(0);
+            engine.port_event({PortEvent::Kind::card, player, card, rare, {}}); // observe-only
             best = std::max(best, rare);
             note.text(engine, "TALKFONT01", lines[i], db->text("card", card, "NAME"), "LEFT");
             note.open_model(engine, db->text("card", card, "CARDINFO"), i, opens[i], "SQ_CLOSE");

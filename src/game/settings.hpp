@@ -81,6 +81,20 @@ struct Settings {
     std::filesystem::path texture_pack; // replacement PNGs (default mods/textures)
     bool dump_textures = false;         // write decoded textures to mods/dump/textures
     std::set<std::string> disabled_mods; // content mods (mods/<id>) switched off
+    // [hud] overhead name tags (overhead_labels.hpp): auto (only with two
+    // or more players), all, others (not over this machine's player), off;
+    // their size in percent and whether the bars show numbers.
+    std::string overhead_labels = "auto";
+    int label_scale = 100;
+    bool label_numbers = false;
+    // [discord] Rich Presence (discord_presence.hpp) and the application id.
+    static constexpr const char* kDiscordClientId = "1560921673354453093";
+    bool discord = true;
+    std::string discord_client_id = kDiscordClientId;
+    // [achievements] local achievements (achievements.hpp) and their
+    // unlock notices.
+    bool achievements = true;
+    bool achievement_popups = true;
     // [data]
     std::filesystem::path data;
     // The save files of memory card slots A and B (GCI bytes; relative paths
