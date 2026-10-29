@@ -1,0 +1,44 @@
+@page "/"
+@model IndexModel
+@{
+    ViewData["Title"] = null;
+}
+<h1>@Model.Service.Name</h1>
+<p class="muted">Online co-op, achievements and cloud saves for the Digimon World 4 PC port.</p>
+
+@if (Model.Service.Maintenance)
+{
+    <div class="notice warn">The server is in maintenance. Rooms cannot be opened right now.</div>
+}
+@if (!string.IsNullOrWhiteSpace(Model.Service.Motd))
+{
+    <div class="notice">@Model.Service.Motd</div>
+}
+
+<div class="grid">
+    <div class="panel"><div class="stat">@Model.PlayersOnline</div><div class="muted">players online</div></div>
+    <div class="panel"><div class="stat">@Model.OpenRooms</div><div class="muted">open rooms</div></div>
+    <div class="panel"><div class="stat">@Format.Number(Model.Accounts)</div><div class="muted">accounts</div></div>
+    <div class="panel"><div class="stat">@Model.AchievementCount</div><div class="muted">achievements</div></div>
+</div>
+
+<h2>How it works</h2>
+<div class="panel">
+    <p>Create an account here or in the game, then log in from the game's online menu. Online play uses its own
+        online character, which starts from zero and is separate from your local save. Rooms hold up to ten players;
+        everyone in the same stage plays together (up to four per stage) with shared enemies and drops.</p>
+    <p>Achievements count only in online play without cheats, rebalanced rates or save states. You can also keep one
+        private cloud backup of your local save.</p>
+    @if (Model.SignedIn)
+    {
+        <p><a class="button" href="/account">Your account</a></p>
+    }
+    else if (Model.RegistrationOpen)
+    {
+        <p><a class="button" href="/register">Create an account</a> <a href="/login">or log in</a></p>
+    }
+    else
+    {
+        <p>Registration is closed on this server. <a href="/login">Log in</a></p>
+    }
+</div>

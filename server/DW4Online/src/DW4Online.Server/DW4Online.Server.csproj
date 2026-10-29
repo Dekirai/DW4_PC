@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <!-- The service executable: hosts the API, the website and the relay; console, Windows service and CLI tools. -->
+  <PropertyGroup>
+    <RootNamespace>DW4Online.Server</RootNamespace>
+    <AssemblyName>DW4Online.Server</AssemblyName>
+    <UserSecretsId>dw4online-server-8f3c2a71</UserSecretsId>
+    <!-- deploy/publish.ps1 publishes self-contained for win-x64 (no runtime install on the server). -->
+    <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\DW4Online.Api\DW4Online.Api.csproj" />
+    <ProjectReference Include="..\DW4Online.Data\DW4Online.Data.csproj" />
+    <ProjectReference Include="..\DW4Online.Domain\DW4Online.Domain.csproj" />
+    <ProjectReference Include="..\DW4Online.Relay\DW4Online.Relay.csproj" />
+    <ProjectReference Include="..\DW4Online.Web\DW4Online.Web.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- Local secrets are copied for 'dotnet run' but never published. -->
+    <Content Update="appsettings.Local.json" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="Never" />
+    <Content Update="appsettings.Development.json" CopyToPublishDirectory="Never" />
+  </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="DW4Online.Integration.Tests" />
+  </ItemGroup>
+</Project>

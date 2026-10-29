@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    HTTP + MariaDB integration tests. They need a PRIVATE MariaDB instance (scripts/local-db.ps1) and the environment
+    variable DW4ONLINE_TEST_MYSQL (an admin connection string without a database); without it every test is skipped.
+    Each test class creates its own database dw4online_it_<random> and drops it afterwards.
+  -->
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+    <PackageReference Include="Microsoft.AspNetCore.TestHost" />
+    <PackageReference Include="MySqlConnector" />
+    <PackageReference Include="Dapper" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\DW4Online.Server\DW4Online.Server.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Include="..\DW4Online.Tests\Samples.cs" Link="Samples.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+</Project>

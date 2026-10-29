@@ -1,7 +1,9 @@
 #pragma once
 
 #include "dw4/engine/igb_view.hpp"
+#include "dw4/engine/port_events.hpp"
 #include "dw4/engine/scene_graph.hpp"
+#include "dw4/card_store.hpp"
 #include "dw4/console_reset.hpp"
 #include "dw4/igb_document.hpp"
 #include "dw4/lua4.hpp"
@@ -316,14 +318,15 @@ struct ModelScriptContext {
     std::int32_t damage{}, attribute = -1, damage_flag{};
 };
 
-// What is in a memory card slot (Engine::card_setting). The card is the
-// slot's GCI folder (<card root>/Card A|B) as Dolphin's GCI folder cards:
-// its free blocks are the card's blocks minus the block counts of the *.gci
-// files in the folder (GCI header +0x38), its free files 127 minus their
-// number.
+// What is in a memory card slot (Engine::card_setting). The card keeps its
+// files where Engine::card_store says (save::CardStore): a GCI folder
+// (<card root>/Card A|B) as Dolphin's GCI folder cards, or the single save
+// file of the slot. Its free blocks are the card's blocks minus the block
+// counts of the card's files (GCI header +0x38), its free files 127 minus
+// their number.
 struct CardSetting {
     enum class Mode : std::uint8_t {
-        automatic,   // slot A holds a card, slot B when its folder exists
+        automatic,   // slot A holds a card, slot B when its folder (or save file) exists
         none,        // an empty slot (CARDProbeEx: no card)
         inserted,    // a card, also without a folder
         unformatted, // a card without a file system (CARDMount: broken)
@@ -350,9 +353,20 @@ struct Cheats {
     // load timing (the simulated disc drive and loading thread), on takes
     // none of it (Engine::fast_loading). A stage load latches it.
     bool fast_loading{};
+    // Randomizer (settings.ini [randomizer], bound to the save; see
+    // dw4/engine/randomizer.hpp): the master seed the enemy and loading zone
+    // shuffles derive their seeds from (the item drops use it unchanged as
+    // drop_seed), 0 off; the enemy shuffle (0 off, 1 every enemy of a wave
+    // drawn on its own, 2 one family per wave) and the loading zone shuffle
+    // (0 off, 1 dungeon entrances within an area).
+    std::uint32_t rand_seed = 0;
+    std::uint8_t rand_enemies = 0;
+    std::uint8_t rand_zones = 0;
+    bool enemy_shuffle() const { return rand_seed != 0 && rand_enemies != 0; }
+    bool zone_shuffle() const { return rand_seed != 0 && rand_zones != 0; }
     bool original() const {
         return !god && !infinite_mp && !one_hit && exp_rate == 100 && damage_dealt == 100 && damage_taken == 100 && !drop_seed &&
-               !fast_loading;
+               !fast_loading && !enemy_shuffle() && !zone_shuffle();
     }
 };
 
@@ -495,9 +509,13 @@ public:
     const MountedResources& resources() const { return resources_; }
     // Mods (folders replacing logical paths, first wins); before the first stage.
     void set_resource_overrides(std::vector<std::filesystem::path> roots) { resources_.set_overrides(std::move(roots)); }
-    // Memory card folders (Dolphin's GCI layout: <root>/Card A, <root>/Card B).
-    void set_card_root(std::filesystem::path root) { card_root_ = std::move(root); }
-    const std::filesystem::path& card_root() const { return card_root_; }
+    // Where the memory cards keep their files: GCI folders (Dolphin's layout:
+    // <root>/Card A, <root>/Card B) or one save file per slot.
+    void set_card_store(save::CardStore store) { card_store_ = std::move(store); }
+    const save::CardStore& card_store() const { return card_store_; }
+    // GCI folders at `root` (the folder store).
+    void set_card_root(std::filesystem::path root) { card_store_ = save::CardStore::folder(std::move(root)); }
+    const std::filesystem::path& card_root() const { return card_store_.root(); }
     // What the slots hold (0 = A, 1 = B).
     void set_card_setting(int slot, const CardSetting& setting) { card_settings_[std::size_t(slot & 1)] = setting; }
     const CardSetting& card_setting(int slot) const { return card_settings_[std::size_t(slot & 1)]; }
@@ -519,6 +537,15 @@ public:
     bool has_script(std::string_view name) const;
     // That script's compiled chunk contains `text` (a string constant; test bot).
     bool script_mentions(std::string_view name, std::string_view text) const;
+    // The randomizer's enemy pool of the running stage as the loader made it
+    // (its own families and the donor families it loaded), empty without.
+    const std::vector<std::string>& randomizer_pool() const { return randomizer_pool_; }
+    // A family the loader brought from a donor stage for that pool (not one
+    // of the stage's own).
+    bool randomizer_donor(std::string_view family) const { return randomizer_donors_.contains(family); }
+    // Every stage script (name, compiled chunk bytes), stage scripts first
+    // (randomizer: the generators a script starts next to a model name).
+    void for_each_script(const std::function<void(std::string_view name, std::string_view chunk)>& visit) const;
     // Scene graph root management.
     Node* global_root() { return &global_root_; }
     bool soft_reset_allowed() const { return soft_reset_allowed_; }
@@ -547,6 +574,27 @@ public:
     const std::vector<DiagnosticCounter>& notes() const { return notes_; }
     void log(std::string text);
     const std::deque<std::string>& log_lines() const { return log_; }
+    // Observe-only events for the PC host (port_events.hpp): collected only
+    // while enabled (off by default, and on a new engine), never read by the
+    // simulation, not in fingerprint() and not in a snapshot. At most
+    // kMaxPortEvents wait for the host; more are dropped.
+    static constexpr std::size_t kMaxPortEvents = 4096;
+    void set_port_events(bool enabled) {
+        port_events_enabled_ = enabled;
+        if (!enabled) port_events_.clear();
+    }
+    bool port_events_enabled() const { return port_events_enabled_; }
+    void port_event(PortEvent event) {
+        if (port_events_enabled_ && port_events_.size() < kMaxPortEvents) port_events_.push_back(std::move(event));
+    }
+    std::vector<PortEvent> take_port_events() {
+        std::vector<PortEvent> taken;
+        taken.swap(port_events_);
+        return taken;
+    }
+    // (port_events.cpp) The boss death scripts running now, innermost last;
+    // an entry is cleared once its boss was reported.
+    std::vector<std::string>& port_boss_scripts() { return port_boss_scripts_; }
 
     // Global game state used by the script bindings.
     std::map<std::int32_t, std::uint8_t>& flags() { return flags_; }
@@ -644,7 +692,7 @@ private:
     std::vector<Lua4Value> lua_call(const Lua4HostCall& call);
 
     MountedResources resources_;
-    std::filesystem::path card_root_ = "saves/GC/USA";
+    save::CardStore card_store_ = save::CardStore::folder("saves/GC/USA");
     std::array<CardSetting, 2> card_settings_{};
     Messenger messenger_;
     DemoManager demo_;
@@ -681,6 +729,18 @@ private:
     std::vector<ObjectView> deferred_infos_;
     std::vector<ObjectView> lua_infos_;
     std::vector<std::string> common_queue_;
+    // Randomizer enemy pool loads (load_enemy_donors): the stage's pool, the
+    // donor families' infos (registered after the stage's in state 5), their
+    // action starters with the targets they may serve, and their scripts
+    // (consulted after the stage's own).
+    std::vector<std::string> randomizer_pool_;
+    std::set<std::string, std::less<>> randomizer_donors_;
+    std::vector<ObjectView> donor_infos_;
+    std::vector<std::pair<ObjectView, std::set<std::string, std::less<>>>> donor_starters_;
+    std::vector<ObjectView> donor_scripts_;
+    void load_enemy_donors();
+    // The targets (families and the effects they start) it registered.
+    std::set<std::string, std::less<>> route_donor(const std::shared_ptr<const IgbDocument>& document, const std::vector<std::string>& families);
     std::unique_ptr<Lua4Vm> lua_;
     std::map<std::pair<const void*, std::uint32_t>, Lua4Program> lua_programs_;
     int script_depth_{};
@@ -743,6 +803,9 @@ private:
     std::int64_t applied_lateness_{};     // ... and in time_ now
     std::int64_t world_delta_ = 16683333; // world time added by the last step (system_step)
     bool pad_input_enabled_{};
+    bool port_events_enabled_{};          // see set_port_events (host only)
+    std::vector<PortEvent> port_events_;
+    std::vector<std::string> port_boss_scripts_;
     std::map<std::int32_t, std::uint8_t> flags_;
     std::map<std::int32_t, std::int32_t> counters_;
     std::vector<DiagnosticCounter> notes_;

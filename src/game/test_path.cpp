@@ -1857,7 +1857,8 @@ void ExploreBot::plan(engine::Engine& engine, const engine::ModelCtrlManager::Mo
                 std::transform(script.begin(), script.end(), script.begin(), [](unsigned char c) { return char(std::tolower(c)); });
                 if (!engine.script_mentions(script, "POWERON") && !engine.script_mentions(script, "OFFHIT") && !engine.script_mentions(script, "FLGset"))
                     continue;
-                for (const int member : wave.members) key_wave.insert({wave.enemy, member});
+                for (std::size_t m = 0; m < wave.members.size(); ++m)
+                    key_wave.insert({m < wave.models.size() ? wave.models[m] : wave.enemy, wave.members[m]});
             }
     // Live enemies (structures such as towers first), then pickups: the
     // cheapest to walk to. While defending enemies are only struck in

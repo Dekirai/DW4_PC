@@ -1,12 +1,15 @@
 #include "campaign.hpp"
 
 #include "dw4/pad.hpp"
+#include "dw4/engine/randomizer.hpp"
 
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <deque>
+#include <span>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -361,8 +364,8 @@ constexpr Objective kObjectives[] = {
     // strike:#* also pulled none in 260000 frames among the frogs.) Without
     // the test cheats three of them stand behind poison plants, whose bodies
     // fill the ways there (see ExploreBot::set_wanted): they are wanted.
-    {"lever (stag0301)", "F56|K8|P6", "stag0301", "explore:none", -1, nullptr, "g_lever01z03"},
-    {"console (stag0302)", "F57|K8|P6", "stag0302", "strike:g_consolez03#0"},
+    {"lever (stag0301)", "F56|K6&K7&K8|P6", "stag0301", "explore:none", -1, nullptr, "g_lever01z03"},
+    {"console (stag0302)", "F57|K6&K7&K8|P6", "stag0302", "strike:g_consolez03#0"},
     {"key item 8 (dng309b4 boss)", "K8|P6", "dng309b4", "explore:matz02"},
     {"Gekomon (stag0302, flag 333)", "F333|P6", "stag0302", "talk:n_gekoa#0"},
     // The dng310 fortress (kMazeRegions): Lucemon's gate (dng310f3 matz06)
@@ -535,6 +538,32 @@ constexpr Exit kExits[] = {
     {"stagbs04", "matz01", "stagbs05", ""},     {"stagbs05", "matz01", "stagbs06", ""},
     {"stagbs06", "matz01", "stagis20", ""},
 };
+
+// The story exits as the randomizer's loading zone shuffle left them: a
+// shuffled dungeon entrance leads to its new dungeon and that dungeon's way
+// back to the entrance used (randomizer::zone_remap), so the plans follow
+// the shuffled world like a player who read the exit prompts.
+std::span<const Exit> story_exits(const engine::Engine& engine) {
+    static std::vector<Exit> table;
+    static std::deque<std::string> names; // the remapped targets' text
+    static std::uint64_t key = 0;
+    const std::uint64_t now = engine.cheats().zone_shuffle() ? engine::randomizer::sub_seed(engine.cheats().rand_seed, "zones") | 1 : 0;
+    if (!now) return kExits;
+    if (now != key) {
+        key = now;
+        table.assign(std::begin(kExits), std::end(kExits));
+        const auto seed = engine::randomizer::sub_seed(engine.cheats().rand_seed, "zones");
+        for (auto& exit : table) {
+            auto remap = engine::randomizer::zone_remap(seed, exit.stage, exit.target, 0);
+            for (const auto& e : engine::randomizer::zone_entrances())
+                if (!remap && std::string_view(exit.stage) == e.dungeon) remap = engine::randomizer::zone_remap(seed, exit.stage, exit.target, e.back_point);
+            if (!remap) continue;
+            names.push_back(remap->stage);
+            exit.target = names.back().c_str();
+        }
+    }
+    return table;
+}
 
 // Maze floors: their regions open with doors (buttons, cleared waves) that
 // often lie in other regions or on other floors (dng310f3 matz06 needs the
@@ -734,7 +763,7 @@ std::vector<std::string> lobby_path(engine::Engine& engine, const std::string& t
     std::map<std::string, std::string> parent{{"stagml11", ""}};
     std::vector<std::string> open{"stagml11"};
     for (std::size_t at = 0; at < open.size() && !parent.count(target); ++at)
-        for (const auto& exit : kExits) {
+        for (const auto& exit : story_exits(engine)) {
             if (open[at] != exit.stage || parent.count(exit.target)) continue;
             const bool usable = std::string_view(exit.when) == "transporter"
                                     ? std::find(areas.begin(), areas.end(), exit.target) != areas.end()
@@ -3063,11 +3092,19 @@ std::string locate_region(engine::Engine& engine, const engine::ModelCtrlManager
 
 std::optional<CampaignBot::Step> CampaignBot::next_step(engine::Engine& engine) const {
     const Objective* objective = nullptr;
+    // With the randomizer's dungeon entrances shuffled, an objective's
+    // dungeon may lie behind a gate a later objective opens (dng307 behind
+    // stag0301 matz01, flag 57): the first objective not done whose stage
+    // can be reached now is worked on (else the first, as before).
+    const Objective* first = nullptr;
     for (const auto& o : kObjectives)
         if (!holds(engine, o.done)) {
+            if (!first) first = &o;
+            if (engine.cheats().zone_shuffle() && !lobby(o.stage) && lobby_path(engine, o.stage).empty()) continue;
             objective = &o;
             break;
         }
+    if (!objective) objective = first;
     if (!objective) return std::nullopt;
     const Objective* const story = objective; // (farming is only ever for it, not for an errand)
     const std::string here = lower(engine.stage_name());
@@ -3248,7 +3285,7 @@ std::optional<CampaignBot::Step> CampaignBot::next_step(engine::Engine& engine) 
             break;
         }
         done.insert(*at);
-        for (const auto& exit : kExits) {
+        for (const auto& exit : story_exits(engine)) {
             if (at->first != exit.stage || !usable(exit, at->second)) continue;
             const Place next{exit.target, exit.entry};
             const float c = best + (std::string_view(exit.target) == "stagml11" ? 0.6f : 1.0f);
@@ -3265,7 +3302,7 @@ std::optional<CampaignBot::Step> CampaignBot::next_step(engine::Engine& engine) 
     // is a goal.
     Step step{here, "", -1, objective->name};
     std::string mats;
-    for (const auto& exit : kExits)
+    for (const auto& exit : story_exits(engine))
         if (here == exit.stage && next.first == exit.target && usable(exit, entry_) && next.second == exit.entry) {
             if (!mats.empty()) mats += '|';
             mats += exit.mat;
@@ -3834,7 +3871,7 @@ void CampaignBot::maze_turn(engine::Engine& engine, const engine::ModelCtrlManag
     };
     const Exit* best = nullptr;
     int fewest = 1 << 30;
-    for (const auto& exit : kExits) {
+    for (const auto& exit : story_exits(engine)) {
         if (stage_ != exit.stage || ("|" + goal + "|").find(std::string("|") + exit.mat + "|") != std::string::npos) continue;
         if (!holds(engine, exit.when, entry_) || !reachable(exit.mat)) continue;
         const auto it = place_visits_.find({exit.target, exit.entry});
@@ -6532,7 +6569,7 @@ CampaignBot::Output CampaignBot::play(engine::Engine& engine, const engine::Mode
         stage_.rfind("stagbs", 0) != 0 && objective_now_.rfind("train", 0) != 0 &&
         step->stage + " " + step->action + " (" + step->why + ")" == traced_ && frame - traced_at_ >= kStallLeave) {
         const std::string goals = "|" + step->action.substr(8) + "|";
-        for (const auto& exit : kExits)
+        for (const auto& exit : story_exits(engine))
             if (stage_ == exit.stage && goals.find(std::string("|") + exit.mat + "|") == std::string::npos && !*exit.when) {
                 stall_leave_ = exit.mat;
                 std::printf("[%d] campaign: %s stalled for %d frames, left by %s for now\n", frame, step->action.c_str(), frame - traced_at_,
@@ -6545,7 +6582,7 @@ CampaignBot::Output CampaignBot::play(engine::Engine& engine, const engine::Mode
     // a stage without heals.)
     exit_to_.clear();
     if (step && step->stage == stage_ && step->action.rfind("explore:", 0) == 0)
-        for (const auto& exit : kExits)
+        for (const auto& exit : story_exits(engine))
             if (stage_ == exit.stage && step->action.substr(8) == exit.mat) exit_to_ = exit.target;
     const std::string key = step ? step->stage + " " + step->action + " (" + step->why + ")" : "no step";
     if (key != traced_) {

@@ -68,7 +68,14 @@ struct Settings {
     bool skip_intro = false;
     // [gameplay]: optional rebalancing and randomizer (100 / 0 = original)
     int exp_rate = 100, damage_dealt = 100, damage_taken = 100;
-    std::uint32_t drop_seed = 0; // boot straight to the title (no logos / opening movie)
+    // [randomizer]: the seed new games bind to their save (0 off; the old
+    // [gameplay] drop_seed migrates as seed + drops), item drops, enemies
+    // (0 off, 1 every enemy on its own, 2 one family per wave) and loading
+    // zones (0 off, 1 dungeon entrances within an area).
+    std::uint32_t rand_seed = 0;
+    bool rand_drops = false;
+    int rand_enemies = 0;
+    int rand_zones = 0;
     // [gameplay] loading = original / fast: stage loads with the GameCube's
     // disc and loading-thread time, or without it (engine::Cheats::fast_loading).
     bool fast_loading = false;
@@ -81,11 +88,35 @@ struct Settings {
     std::filesystem::path texture_pack; // replacement PNGs (default mods/textures)
     bool dump_textures = false;         // write decoded textures to mods/dump/textures
     std::set<std::string> disabled_mods; // content mods (mods/<id>) switched off
+    // [hud] overhead name tags (overhead_labels.hpp): auto (only with two
+    // or more players), all, others (not over this machine's player), off;
+    // their size in percent and whether the bars show numbers.
+    std::string overhead_labels = "auto";
+    int label_scale = 100;
+    bool label_numbers = false;
+    // [discord] Rich Presence (discord_presence.hpp) and the application id.
+    static constexpr const char* kDiscordClientId = "1560921673354453093";
+    bool discord = true;
+    std::string discord_client_id = kDiscordClientId;
+    // [achievements] local achievements (achievements.hpp) and their
+    // unlock notices.
+    bool achievements = true;
+    bool achievement_popups = true;
     // [data]
     std::filesystem::path data;
-    std::filesystem::path cards; // memory card root (Card A / Card B), empty: saves/GC/USA
+    // The save files of memory card slots A and B (GCI bytes; relative paths
+    // are next to the program). Slot B holds a card when its file exists.
+    std::filesystem::path save_file = "saves/savedata.dat";
+    std::filesystem::path save_file_b = "saves/savedata_b.dat";
+    // [data] save_migrated: the old saves/GC/USA save was looked for (and
+    // copied into save_file / save_file_b) once.
+    bool save_migrated = false;
+    // A GCI folder root (Card A / Card B, e.g. Dolphin's GC/USA) used instead
+    // of the save files; empty: the save files.
+    std::filesystem::path cards;
     // What the slots hold (engine::parse_card_setting: "none", "unformatted",
-    // a block count ...), empty: a 2043-block card in A, B when its folder exists.
+    // a block count ...), empty: a 2043-block card in A, B when its file (or
+    // GCI folder) exists.
     std::string card_a, card_b;
 
     std::filesystem::path file; // where the settings are read from and saved to

@@ -337,6 +337,16 @@ public:
     // model's SE set (beSeInfo) sends it MODELCTRL SETSOUND for each sound of
     // the action, which the model queues as a sound subcommand.
     void action_started(Engine& engine, const std::string& model, int index, std::string_view action);
+    // Randomizer: a donor stage's sounds for its families and their effects
+    // (the /s member's SE sets of those models, the sounds they name with
+    // their files, and the sfp banks of those files); returns the banks added.
+    std::vector<std::string> add_donor_sounds(Engine& engine, const IgbDocument& preliminary, const std::set<std::string, std::less<>>& models);
+    // The SE cues of a model's set that could not play: a sound the stage
+    // lacks or one no loaded sfp bank holds (randomizer sweep). nullopt: the
+    // model has no SE set at all.
+    std::optional<std::vector<std::string>> missing_cues(Engine& engine, std::string_view model);
+    // The model's SE set came from a donor stage (add_donor_sounds).
+    bool donor_set(std::string_view model) const { return donor_sets_.contains(model); }
     // SOUND PLAY of a model's sound subcommand (803105DC): the play id (0:
     // nothing started) and the sound's type (beSoundData [4]; only a type 4
     // sound keeps its subcommand, for the end call).
@@ -580,6 +590,7 @@ private:
         int delay{};
     };
     std::map<std::string, std::vector<SeCue>, std::less<>> se_sets_;
+    std::set<std::string, std::less<>> donor_sets_;
     // The C library's rand() state (8009C1CC, r13 -0x7110: 1 at boot); the
     // SNDF's random detune is its only user (no script calls math.random).
     std::uint32_t random_ = 1;
@@ -1185,10 +1196,29 @@ public:
     GeneraterManager() : Manager("beGenerater") {}
     bool accepts(const ObjectView& info) const override { return info.type() == "beGeneraterInfo"; }
     void add_info(Engine& engine, const ObjectView& info) override;
-    void clear_stage(Engine& engine) override { (void)engine; rams_.clear(); }
+    void clear_stage(Engine& engine) override {
+        (void)engine;
+        rams_.clear();
+        shuffle_ready_ = false;
+        pool_.clear();
+        own_families_.clear();
+        sweep_index_ = 0;
+        sweep_wait_ = sweep_count_ = sweep_failures_ = 0;
+        sweep_reported_ = false;
+    }
     bool command(Engine& engine, Ram& ram, std::string_view command, Packet& packet) override;
     void update(Engine& engine) override;
 
+    // Randomizer (enemy shuffle): the families the stage's shuffled waves
+    // draw from, and the data names of the generators that are shuffled
+    // (made at the first wave of the stage; spoiler log, tests).
+    const std::vector<std::string>& shuffle_pool() const { return pool_; }
+    std::vector<std::string> shuffled_generators() const {
+        std::vector<std::string> out;
+        for (const auto& ram : rams_)
+            if (ram->shuffled && ram->data) out.emplace_back(ram->data.str(2));
+        return out;
+    }
     // Randomizer: a drop's record after the seeded permutation of its table.
     static int randomized_record(Engine& engine, const std::string& table, int record);
     // Each generator's data name and whether its waves were ever cleared (test bot).
@@ -1222,11 +1252,13 @@ public:
     struct Wave {
         std::string name, enemy;
         std::vector<int> members;
+        std::vector<std::string> models; // each member's model (the randomizer mixes them)
     };
     std::vector<Wave> waves() const {
         std::vector<Wave> out;
         for (const auto& ram : rams_)
-            if (ram->data && ram->started && !ram->done && ram->work) out.push_back({std::string(ram->data.str(2)), ram->enemy_name, ram->enemies});
+            if (ram->data && ram->started && !ram->done && ram->work)
+                out.push_back({std::string(ram->data.str(2)), ram->enemy_name, ram->enemies, ram->enemy_models});
         return out;
     }
     // Started "radar" generators still waiting for a player within reach of
@@ -1264,11 +1296,41 @@ private:
         // check, 8031E8BC remove). No command drops them.
         std::optional<NodeTimer> boot_timer, gene_timer;
         int clears{};              // waves cleared so far (test bot)
+        // The model each of `enemies` was generated as (the data's enemy
+        // unless the randomizer swapped it).
+        std::vector<std::string> enemy_models;
+        // Randomizer (enemy shuffle): this generator's enemies come from the
+        // stage's pool; one family per wave: this wave's; the draws so far;
+        // per member the spawn height and the updates it spent in the air
+        // (the watchdog removes one that fell or never lands).
+        bool shuffled{};
+        std::string wave_model;
+        std::uint32_t draws{};
+        struct Watch {
+            float spawn_y{};
+            int airborne{};
+        };
+        std::vector<Watch> watch;
     };
     int spawn(Engine& engine, GeneRam& ram, int count);
     void refresh(Engine& engine, GeneRam& ram, bool last_pass = false);
     void drop(Engine& engine, GeneRam& ram, const Vec3f& position, bool last);
+    void forget(GeneRam& ram, std::size_t member);
+    void start_work(Engine& engine, GeneRam& ram, int live_players);
+    void sweep(Engine& engine);
+    std::size_t sweep_index_{};
+    int sweep_wait_{}, sweep_wanted_{}, sweep_got_{}, sweep_watchdog_{}, sweep_count_{}, sweep_failures_{};
+    bool sweep_reported_{};
+    std::vector<std::string> sweep_models_;
+    int watchdog_removals_{}; // swapped enemies the watchdog erased (sweep report)
+    void prepare_shuffle(Engine& engine);
+    bool shuffle_generator(Engine& engine, const GeneRam& ram) const;
+    std::string draw_model(Engine& engine, GeneRam& ram);
     std::vector<std::unique_ptr<GeneRam>> rams_;
+    bool shuffle_ready_{};
+    std::vector<std::string> pool_;
+    std::set<std::string, std::less<>> fixed_generators_, fixed_families_;
+    std::set<std::string, std::less<>> own_families_; // with RAMs the stage loaded itself
 };
 
 // MATCTRL (beMatCtrl, update 803030A8, commands 80303B14): floor mats. Each
@@ -1326,7 +1388,8 @@ private:
 // broken or unformatted card, 8 both data copies broken, 9 not enough
 // space, 10 no free file entry, 11 wrong device, 12 no card. While ready,
 // beSvConnectCheck probes both slots every update (deliver slot states).
-// The cards are GCI folders (Engine::card_root()/Card A|B) with what
+// The cards keep their files where Engine::card_store says (GCI folders
+// <card root>/Card A|B or one save file per slot), with what
 // Engine::card_setting puts in the slots.
 class SaveUtilManager final : public Manager {
 public:
@@ -1606,6 +1669,9 @@ public:
     // 803B0620: a cure ends the poison of a model.
     void clear_poison(ModelRam& ram);
     const std::vector<std::unique_ptr<ModelRam>>& rams() const { return rams_; }
+    // The model info has a sequence of that name (randomizer: a swapped
+    // enemy's entry sequence).
+    bool has_sequence(std::string_view model, std::string_view sequence) const;
     // Changes whenever the RAM list does (never the same value twice, also
     // across engines), for test code that keeps lookups over the list.
     std::uint64_t rams_generation() const { return rams_generation_; }
@@ -1731,6 +1797,8 @@ public:
     Stock* shop_stock(int program);
     // GETSHOPDATA 9 also returns COUNTER[1] as it was when the junk stock was made.
     int junk_counter() const { return junk_counter_; }
+    // A status / shop window program is open (SUBWND START until its end).
+    bool window_open() const { return running_; }
 
 private:
     // 80351794: a program start fills the empty stocks from shopWeapon /
@@ -1799,11 +1867,21 @@ public:
     ActionStarterManager() : Manager("beActionStarter") {}
     bool accepts(const ObjectView& info) const override { return info.type() == "beActionStarterInfo"; }
     void add_info(Engine& engine, const ObjectView& info) override;
-    void clear_stage(Engine& engine) override { (void)engine; rams_.clear(); }
+    void clear_stage(Engine& engine) override {
+        (void)engine;
+        rams_.clear();
+        filters_.clear();
+    }
     bool command(Engine& engine, Ram& ram, std::string_view command, Packet& packet) override;
+    // Randomizer: a donor stage's starter serves only the donor families and
+    // their effects (its other targets are the host's or not loaded).
+    void set_target_filter(const ObjectView& info, std::set<std::string, std::less<>> targets) {
+        filters_[{info.document(), info.reference()}] = std::move(targets);
+    }
 
 private:
     std::vector<std::unique_ptr<Ram>> rams_;
+    std::map<std::pair<const void*, std::uint32_t>, std::set<std::string, std::less<>>> filters_;
 };
 
 class ActionManager final : public Manager {

@@ -755,6 +755,7 @@ void LoadIntf2Manager::update_ctrl(Engine& engine, PanelRam& ram, SaveCommon& co
                             // frame; the same value for every player created
                             // in that frame.
                             target.unique = std::uint32_t(engine.time());
+                            engine.port_event({PortEvent::Kind::new_character, idx, std::int32_t(target.unique), 0, {}}); // observe-only
                             // GAMESTART's player creation (8036EB0C) runs
                             // BASE2CURRENT first: the host's fresh BASE_FLAG
                             // (flag 960 set, 8036CE1C) becomes the common FLAG.

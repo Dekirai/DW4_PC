@@ -20,7 +20,7 @@ include(CTest)
 add_library(dw4_core
   src/assets.cpp src/igb.cpp src/igb_document.cpp src/resources.cpp src/packages.cpp src/scripts.cpp
   src/lua4.cpp src/pad.cpp src/textures.cpp src/meshes.cpp src/skinning.cpp src/animation_math.cpp
-  src/enbaya.cpp src/motion.cpp src/motion_timer.cpp src/adx.cpp src/axfx.cpp src/axmix.cpp src/save_data.cpp src/sfp.cpp src/sndf.cpp src/sfd.cpp src/ini.cpp src/disc.cpp src/disc_timing.cpp src/card_timing.cpp src/msl_math.cpp)
+  src/enbaya.cpp src/motion.cpp src/motion_timer.cpp src/adx.cpp src/axfx.cpp src/axmix.cpp src/save_data.cpp src/card_store.cpp src/save_import.cpp src/sfp.cpp src/sndf.cpp src/sfd.cpp src/ini.cpp src/disc.cpp src/disc_timing.cpp src/card_timing.cpp src/msl_math.cpp)
 target_include_directories(dw4_core PUBLIC include)
 # Recovered scalar operations round separately; explicit std::fma remains
 # fused. Preserve IEEE zero-frame infinity/NaN behavior.
@@ -38,10 +38,10 @@ endif()
 add_library(dw4_engine src/engine/math.cpp src/engine/gekko_math.cpp src/engine/igb_view.cpp src/engine/scene_graph.cpp
   src/engine/engine.cpp src/engine/lua_host.cpp src/engine/managers_core.cpp src/engine/model_ctrl.cpp
   src/engine/actor.cpp src/engine/collision.cpp src/engine/ui.cpp src/engine/title.cpp src/engine/load_intf.cpp
-  src/engine/mat_ctrl.cpp src/engine/generater.cpp src/engine/combat.cpp src/engine/status.cpp src/engine/save_game.cpp src/engine/save_util.cpp src/engine/save_menu.cpp src/engine/menu_text.cpp src/engine/shadow.cpp src/engine/particles.cpp src/engine/water.cpp src/engine/change_pos.cpp
+  src/engine/mat_ctrl.cpp src/engine/generater.cpp src/engine/randomizer.cpp src/engine/combat.cpp src/engine/status.cpp src/engine/save_game.cpp src/engine/save_util.cpp src/engine/save_menu.cpp src/engine/menu_text.cpp src/engine/shadow.cpp src/engine/particles.cpp src/engine/water.cpp src/engine/change_pos.cpp
   src/engine/hud.cpp src/engine/items.cpp src/engine/panel.cpp
   src/engine/subwnd.cpp src/engine/subwnd_folder.cpp src/engine/subwnd_skill.cpp
-  src/engine/subwnd_shop.cpp src/engine/save_state.cpp)
+  src/engine/subwnd_shop.cpp src/engine/save_state.cpp src/engine/port_events.cpp)
 target_link_libraries(dw4_engine PUBLIC dw4_core)
 # The Gekko arithmetic rounds only where the original rounds (no contraction).
 if(MSVC)
@@ -58,7 +58,7 @@ add_executable(dw4_catalog tools/dw4_catalog.cpp)
 target_link_libraries(dw4_catalog PRIVATE dw4_core)
 
 if(BUILD_TESTING)
-  foreach(suite assets igb igb_document resources packages scripts lua4 textures meshes skinning animation_math enbaya adx save_data sfp sfd ini disc)
+  foreach(suite assets igb igb_document resources packages scripts lua4 textures meshes skinning animation_math enbaya adx save_data save_import card_store sfp sfd ini disc)
     add_executable(dw4_${suite}_tests tests/${suite}_tests.cpp)
     target_link_libraries(dw4_${suite}_tests PRIVATE dw4_core)
     add_test(NAME ${suite} COMMAND dw4_${suite}_tests)
@@ -72,9 +72,30 @@ if(BUILD_TESTING)
     target_link_libraries(dw4_${suite}_tests PRIVATE dw4_engine)
     add_test(NAME ${suite} COMMAND dw4_${suite}_tests)
   endforeach()
+  # Randomizer: seeds, pools, the loading zone table, the save bond (sidecar) and spoiler.
+  add_executable(dw4_randomizer_tests tests/randomizer_tests.cpp src/game/randomizer_save.cpp)
+  target_link_libraries(dw4_randomizer_tests PRIVATE dw4_engine)
+  add_test(NAME randomizer COMMAND dw4_randomizer_tests)
   add_executable(dw4_interpolation_tests tests/interpolation_tests.cpp src/game/interpolation.cpp)
   target_link_libraries(dw4_interpolation_tests PRIVATE dw4_engine)
   add_test(NAME interpolation COMMAND dw4_interpolation_tests)
+  # Presence features (no SDL / ImGui): the engine's observe-only port events,
+  # the Discord IPC framing with a fake discord-ipc pipe server, the area /
+  # form tables, the name tags' projection and the achievement rules.
+  add_executable(dw4_port_events_tests tests/port_events_tests.cpp)
+  target_link_libraries(dw4_port_events_tests PRIVATE dw4_engine)
+  add_test(NAME port_events COMMAND dw4_port_events_tests)
+  add_executable(dw4_presence_tests tests/presence_tests.cpp src/game/discord_ipc.cpp src/game/discord_presence.cpp src/game/presence_data.cpp)
+  target_include_directories(dw4_presence_tests PRIVATE src/game)
+  add_test(NAME presence COMMAND dw4_presence_tests)
+  add_executable(dw4_labels_tests tests/labels_tests.cpp src/game/overhead_labels.cpp src/game/presence_data.cpp)
+  target_include_directories(dw4_labels_tests PRIVATE src/game)
+  target_link_libraries(dw4_labels_tests PRIVATE dw4_engine)
+  add_test(NAME labels COMMAND dw4_labels_tests)
+  add_executable(dw4_achievements_tests tests/achievements_tests.cpp src/game/achievements.cpp)
+  target_include_directories(dw4_achievements_tests PRIVATE src/game)
+  target_link_libraries(dw4_achievements_tests PRIVATE dw4_engine)
+  add_test(NAME achievements COMMAND dw4_achievements_tests)
 endif()
 
 if(DW4_BUILD_APP)
@@ -127,7 +148,10 @@ if(DW4_BUILD_APP)
     ${imgui_src_SOURCE_DIR}/backends/imgui_impl_opengl3.cpp)
   target_include_directories(imgui PUBLIC ${imgui_src_SOURCE_DIR} ${imgui_src_SOURCE_DIR}/backends)
   target_link_libraries(imgui PUBLIC SDL3::SDL3 OpenGL::GL)
-  add_executable(dw4_game src/game/game_main.cpp src/game/gl_renderer.cpp src/game/movie_decoder.cpp src/game/settings.cpp src/game/controls.cpp src/game/interpolation.cpp src/game/texture_pack.cpp src/game/rvz.cpp src/game/netplay.cpp src/game/mods.cpp src/game/test_path.cpp src/game/campaign.cpp)
+  add_executable(dw4_game src/game/game_main.cpp src/game/gl_renderer.cpp src/game/movie_decoder.cpp src/game/settings.cpp src/game/controls.cpp src/game/interpolation.cpp src/game/texture_pack.cpp src/game/rvz.cpp src/game/netplay.cpp src/game/save_store.cpp src/game/mods.cpp src/game/test_path.cpp src/game/campaign.cpp
+    src/game/discord_ipc.cpp src/game/discord_presence.cpp src/game/presence_data.cpp src/game/presence_art.cpp
+    src/game/overhead_labels.cpp src/game/overhead_labels_draw.cpp src/game/achievements.cpp
+    src/game/randomizer_save.cpp)
   target_include_directories(dw4_game PRIVATE ${pl_mpeg_src_SOURCE_DIR} ${stb_src_SOURCE_DIR})
   target_compile_definitions(dw4_game PRIVATE DW4_PC_VERSION="${PROJECT_VERSION}")
   target_link_libraries(dw4_game PRIVATE dw4_engine imgui zstd_decoder SDL3::SDL3 OpenGL::GL)
@@ -139,6 +163,10 @@ if(DW4_BUILD_APP)
     add_executable(dw4_controls_tests tests/controls_tests.cpp src/game/controls.cpp src/game/settings.cpp)
     target_link_libraries(dw4_controls_tests PRIVATE dw4_core SDL3::SDL3)
     add_test(NAME controls COMMAND dw4_controls_tests)
+    # The run's save store: store choice, migration, imports, online session card.
+    add_executable(dw4_save_store_tests tests/save_store_tests.cpp src/game/save_store.cpp src/game/settings.cpp src/game/controls.cpp)
+    target_link_libraries(dw4_save_store_tests PRIVATE dw4_core SDL3::SDL3)
+    add_test(NAME save_store COMMAND dw4_save_store_tests)
   endif()
   # The release's single entry point is DW4_PC.exe (dw4_game in the build).
   install(PROGRAMS $<TARGET_FILE:dw4_game> DESTINATION . RENAME DW4_PC${CMAKE_EXECUTABLE_SUFFIX})

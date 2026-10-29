@@ -17,6 +17,41 @@ as they do on the console. Addresses below refer to the USA revision-0
 
 `dw4_core` and `dw4_engine` have no SDL, OpenGL or ImGui dependency.
 
+The host's presence features (overhead name tags, Discord Rich Presence,
+achievements) only read the engine after a step. The one thing the engine
+does for them is the observe-only event list (`engine/port_events.hpp`,
+`Engine::set_port_events` / `take_port_events`): a few hooks in the game
+logic (boss death scripts and defeat flags, quest goals and story flags in
+`FLGset`, level ups, technique changes in `RECALCPLAYER`, the Digi-Lab's
+form change, cards, player defeats, critical hits, enemy defeats) append an
+event while a host collects them. Collecting is off on a new engine (so a
+save state's replay reports nothing), nothing in the engine reads the list,
+and it is neither in `fingerprint()` nor in a `StageSnapshot`: the
+determinism reference (`DW4_TRACE_FINGERPRINT`) and the audio dump are the
+same with collecting on and off (`tests/port_events_tests.cpp` checks the
+fingerprint too).
+
+The randomizer (a PC option, `engine/randomizer.hpp`) is the one feature of
+the PC package that changes the simulation, and only while it is on
+(`Cheats::rand_seed` with `rand_enemies` / `rand_zones`, or `drop_seed` for
+the item drops; all of them are in the snapshot and the online start
+message). Every decision comes from the master seed and the game's own state
+(stage, generator name, spawn count), never from the fight generator or the
+host clock. Its hooks: `GeneraterManager` swaps a wave's family (the
+original enemy record stays; only generators of a family the stage loaded
+itself, so a dormant generator stays dormant) and removes a swapped enemy that
+never lands;
+`Engine::load_enemy_donors` reads the pool's missing families from their
+donor stage members after boot.lua; `STAGECTL NEXTSTAGE` remaps the coupled
+dungeon entrances and the exit prompt names the new target. With the
+randomizer off none of them runs, so the determinism reference, the story
+runs and the save states are those of the original. The same round fixed one
+1:1 point in the generator that applies always: `_genePoint` lives in the
+beGeneraterInfoWork allocated when a wave starts (802FCFA8), so a restarted
+generator spawns from its first point again (`ram.point = 0`, confirmed in
+Dolphin by round 47 with the stag0302 e_torta wave); it does not change the
+determinism reference or the story runs.
+
 ## Frame step (`Engine::step`)
 
 One step is one original frame, one NTSC field: the world clock advances by

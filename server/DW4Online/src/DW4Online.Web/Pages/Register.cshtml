@@ -1,0 +1,54 @@
+@page "/register"
+@model RegisterModel
+@{
+    ViewData["Title"] = "Register";
+}
+@if (Model.RecoveryCode is not null)
+{
+    <h1>Welcome, @Model.CreatedName</h1>
+    <div class="notice ok">Your account is ready and you are logged in on this browser.</div>
+    <div class="panel">
+        <h2>Your recovery code</h2>
+        <p>Write this code down and keep it safe. It is the only way to reset a forgotten password without asking the
+            server staff. It is shown <strong>once</strong>; after you use it you get a new one.</p>
+        <p class="secret" id="recovery-code">@Model.RecoveryCode</p>
+    </div>
+    <p><a class="button" href="/account">Continue to your account</a></p>
+}
+else
+{
+    <h1>Create an account</h1>
+    @if (!Model.Open)
+    {
+        <div class="notice warn">Registration is closed on this server.</div>
+    }
+    else
+    {
+        @if (Model.Error is not null)
+        {
+            <div class="notice error">@Model.Error</div>
+        }
+        <form method="post" class="stack">
+            <label>User name
+                <input type="text" asp-for="Username" autocomplete="username" required minlength="3" maxlength="20" />
+                <span class="muted small">3 to 20 letters, digits, underscores or hyphens. Shown on your profile and in rooms.</span>
+            </label>
+            <label>Password
+                <input type="password" asp-for="Password" autocomplete="new-password" required minlength="10" maxlength="128" />
+                <span class="muted small">At least 10 characters. A few words make a good password.</span>
+            </label>
+            <label>Repeat the password
+                <input type="password" asp-for="ConfirmPassword" autocomplete="new-password" required minlength="10" maxlength="128" />
+            </label>
+            <label>E-mail (optional)
+                <input type="email" asp-for="Email" autocomplete="email" maxlength="254" />
+                <span class="muted small">Not needed to play. Without e-mail, a forgotten password is reset with your recovery code or by the server staff.</span>
+            </label>
+            <div class="hp" aria-hidden="true">
+                <label>Website <input type="text" asp-for="Website" tabindex="-1" autocomplete="off" /></label>
+            </div>
+            <p class="muted small">By creating an account you accept that the data listed on the <a href="/privacy">privacy page</a> is stored.</p>
+            <button type="submit">Create account</button>
+        </form>
+    }
+}

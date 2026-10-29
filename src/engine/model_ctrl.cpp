@@ -258,6 +258,16 @@ void ModelCtrlManager::add_info(Engine& engine, const ObjectView& info) {
     }
 }
 
+bool ModelCtrlManager::has_sequence(std::string_view model, std::string_view sequence) const {
+    for (const auto& ram : rams_) {
+        if (ram->info_name != model || !ram->sequences) continue;
+        for (const auto& s : *ram->sequences)
+            if (s.name == sequence) return true;
+        return false;
+    }
+    return false;
+}
+
 void ModelCtrlManager::clear_stage(Engine&) {
     rams_.clear();
     player_rams_.clear();
@@ -2226,6 +2236,7 @@ void ModelCtrlManager::player_erase_hook(Engine& engine, ModelRam& ram) {
         engine.messenger().send(engine, "NDMWPANEL", std::nullopt, ram.index, "REMOVE", remove);
     }
     engine.log("player " + std::to_string(ram.index) + " defeated");
+    engine.port_event({PortEvent::Kind::player_defeated, ram.index, 0, 0, {}}); // observe-only
 }
 
 // KIND_PLAYER2 bit capsule (beNDMWMdlPlayer2, 8034EB78): switches on while a
@@ -2694,6 +2705,9 @@ void ActionStarterManager::add_info(Engine& engine, const ObjectView& info) {
 bool ActionStarterManager::command(Engine& engine, Ram& ram, std::string_view command, Packet& packet) {
     const std::string source(packet.string(0));
     const int index = packet.integer(0, -1);
+    if (!filters_.empty())
+        if (const auto filter = filters_.find({ram.info.document(), ram.info.reference()}); filter != filters_.end() && !filter->second.contains(source))
+            return true;
     for (const auto& target : ram.info.list(7)) {
         if (!target || target.str(2) != source) continue;
         for (const auto& data : target.list(3)) {

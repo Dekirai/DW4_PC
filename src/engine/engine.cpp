@@ -659,6 +659,11 @@ void Engine::begin_stage_load(const StageSnapshot* restoring) {
     deferred_infos_.clear();
     lua_infos_.clear();
     common_queue_.clear();
+    randomizer_pool_.clear();
+    randomizer_donors_.clear();
+    donor_infos_.clear();
+    donor_starters_.clear();
+    donor_scripts_.clear();
     lua_.reset();
     // Compiled chunks are keyed by their document's address: a new document
     // may reuse a freed one's.
@@ -1681,6 +1686,9 @@ void Engine::loader_update() {
         loader_queue_.clear();
         loader_index_ = 0;
         for (const auto& path : common_queue_) loader_queue_.push_back({path});
+        // Randomizer: the enemy pool's families from donor stages (no disc
+        // time; every machine loads the same).
+        if (cheats_.enemy_shuffle()) load_enemy_donors();
         common_queue_.clear();
         loader_state_ = 4;
         return;
@@ -1713,6 +1721,14 @@ void Engine::loader_update() {
         }
         for (const auto& info : infos) register_info(info);
         loader_cost_ += loader_register_cost(infos);
+        // Randomizer: the donor families after the stage's own infos.
+        for (const auto& info : donor_infos_) register_info(info);
+        for (const auto& [info, targets] : donor_starters_) {
+            register_info(info);
+            if (auto* starters = get<ActionStarterManager>()) starters->set_target_filter(info, targets);
+        }
+        donor_infos_.clear();
+        donor_starters_.clear();
         if (trace_loader())
             if (auto* models = get<ModelCtrlManager>()) log("loader state 5 model RAMs " + std::to_string(models->rams().size()));
         loader_state_ = 6;

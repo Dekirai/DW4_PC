@@ -1,0 +1,103 @@
+namespace DW4Online.Domain.Abstractions;
+
+/// <summary>Thrown by <see cref="IAccountRepository.CreateAsync"/> when a unique key is taken.</summary>
+public sealed class DuplicateAccountException(string field) : Exception($"{field} is taken")
+{
+    public string Field { get; } = field; // "username" or "email"
+}
+
+public interface IAccountRepository
+{
+    Task<long> CreateAsync(NewAccount account, DateTime now, CancellationToken ct = default);
+    Task<AccountRecord?> GetAsync(long id, CancellationToken ct = default);
+    Task<AccountRecord?> FindByUsernameAsync(string username, CancellationToken ct = default);
+    Task RecordFailedLoginAsync(long id, int failedLogins, DateTime? lockedUntil, CancellationToken ct = default);
+    Task RecordLoginAsync(long id, DateTime now, string? newPasswordHash, CancellationToken ct = default);
+    Task SetPasswordAsync(long id, string passwordHash, bool mustChange, DateTime now, CancellationToken ct = default);
+    Task SetRecoveryCodeAsync(long id, byte[] hash, CancellationToken ct = default);
+    /// <summary>False when another account uses the address.</summary>
+    Task<bool> SetEmailAsync(long id, string? email, CancellationToken ct = default);
+    Task SetStatusAsync(long id, string status, CancellationToken ct = default);
+    Task SetRoleAsync(long id, string role, CancellationToken ct = default);
+    Task<IReadOnlyList<AccountRecord>> SearchAsync(string? query, int limit, CancellationToken ct = default);
+    Task SetProfilePublicAsync(long id, bool value, CancellationToken ct = default);
+    /// <summary>
+    /// Deletes everything tied to the account (sessions, online character, cloud save, unlocks, stats, times, room
+    /// memberships, bans), removes its IP addresses from the audit log and anonymises the row (status deleted,
+    /// user name <paramref name="anonymousName"/>, no e-mail, no usable password). Rooms it hosted keep their record.
+    /// </summary>
+    Task ScrubAsync(long id, string anonymousName, CancellationToken ct = default);
+    /// <summary>Accounts that are not deleted or banned (the website's home page).</summary>
+    Task<long> CountActiveAsync(CancellationToken ct = default);
+}
+
+public interface ISessionRepository
+{
+    Task<long> CreateAsync(long accountId, byte[] tokenHash, string kind, string? deviceName, byte[]? ip, DateTime now, DateTime expiresAt, CancellationToken ct = default);
+    /// <summary>The live session of a token (not revoked, not expired, account active), or null.</summary>
+    Task<AuthenticatedSession?> FindAsync(byte[] tokenHash, DateTime now, CancellationToken ct = default);
+    Task TouchAsync(long sessionId, DateTime now, DateTime expiresAt, CancellationToken ct = default);
+    Task<bool> RevokeAsync(long accountId, long sessionId, DateTime now, CancellationToken ct = default);
+    Task<int> RevokeAllAsync(long accountId, long? exceptSessionId, DateTime now, CancellationToken ct = default);
+    /// <summary>Revokes the oldest live sessions beyond <paramref name="keep"/>.</summary>
+    Task TrimAsync(long accountId, int keep, DateTime now, CancellationToken ct = default);
+    Task<IReadOnlyList<SessionInfo>> ListAsync(long accountId, DateTime now, CancellationToken ct = default);
+}
+
+public interface IAuditLog
+{
+    Task WriteAsync(string evt, long? accountId, long? actorId, byte[]? ip, object? detail, DateTime now, CancellationToken ct = default);
+}
+
+public interface IOnlineCharacterRepository
+{
+    Task<OnlineCharacterRow?> GetAsync(long accountId, CancellationToken ct = default);
+    /// <summary>
+    /// Creates (<paramref name="expectedRevision"/> null: fails with Conflict when a character exists) or updates
+    /// (fails with Conflict on another revision, NotFound when none exists) and keeps <paramref name="historyKeep"/> old revisions.
+    /// </summary>
+    Task<WriteOutcome> SaveAsync(OnlineCharacterWrite write, int? expectedRevision, int historyKeep, CancellationToken ct = default);
+    Task<IReadOnlyList<HistoryEntry>> ListHistoryAsync(long accountId, CancellationToken ct = default);
+    Task<byte[]?> GetHistoryRecordAsync(long accountId, int revision, CancellationToken ct = default);
+    /// <summary>Moves the current character into the history and removes it; the next upload starts a new character.</summary>
+    Task<bool> ResetAsync(long accountId, DateTime now, int historyKeep, CancellationToken ct = default);
+    /// <summary>When the account's next online character could have started: its last reset, else the account's creation (null: no account).</summary>
+    Task<DateTime?> GetStartAsync(long accountId, CancellationToken ct = default);
+}
+
+public interface ICloudSaveRepository
+{
+    Task<CloudSaveMeta?> GetMetaAsync(long accountId, CancellationToken ct = default);
+    Task<IReadOnlyList<CloudSaveMeta>> ListHistoryAsync(long accountId, CancellationToken ct = default);
+    /// <summary>The latest data (<paramref name="revision"/> null) or a kept older revision.</summary>
+    Task<CloudSaveData?> GetDataAsync(long accountId, int? revision, CancellationToken ct = default);
+    Task<WriteOutcome> SaveAsync(CloudSaveWrite write, int? expectedRevision, int historyKeep, CancellationToken ct = default);
+    /// <summary>Deletes the backup and its history.</summary>
+    Task<bool> DeleteAsync(long accountId, CancellationToken ct = default);
+}
+
+public interface IAchievementRepository
+{
+    Task<IReadOnlyList<AchievementDefinition>> ListDefinitionsAsync(CancellationToken ct = default);
+    Task<IReadOnlyList<AchievementUnlock>> ListUnlocksAsync(long accountId, CancellationToken ct = default);
+    /// <summary>True when the unlock is new (repeated reports are harmless).</summary>
+    Task<bool> TryUnlockAsync(UnlockWrite unlock, CancellationToken ct = default);
+    /// <summary>Keeps the best (lowest) in-game time per board and ruleset; true when this one is the new best.</summary>
+    Task<bool> SubmitTimeAsync(long accountId, string board, string ruleset, long igtMs, long? roomId, DateTime now, CancellationToken ct = default);
+    Task<IReadOnlyDictionary<string, long>> GetStatsAsync(long accountId, CancellationToken ct = default);
+    /// <summary>The time of the account's last stats batch, else the account's creation (null: no such account).</summary>
+    Task<DateTime?> GetLastStatsAtAsync(long accountId, CancellationToken ct = default);
+    /// <summary>Adds the deltas and returns the new totals of the touched keys.</summary>
+    Task<IReadOnlyDictionary<string, long>> AddStatsAsync(long accountId, IReadOnlyDictionary<string, long> deltas, DateTime now, CancellationToken ct = default);
+    /// <summary>Accounts holding each achievement (unflagged unlocks of active accounts, any ruleset) and the number of players.</summary>
+    Task<AchievementRarity> GetRarityAsync(CancellationToken ct = default);
+    /// <summary>False when the account has no such unlock.</summary>
+    Task<bool> SetUnlockFlaggedAsync(long accountId, int achievementId, string ruleset, bool flagged, CancellationToken ct = default);
+    Task<bool> RevokeUnlockAsync(long accountId, int achievementId, string ruleset, CancellationToken ct = default);
+}
+
+public interface IRoomDirectory
+{
+    /// <summary>The account's live membership in the open or playing room with this public code, or null.</summary>
+    Task<RoomMembership?> FindMembershipAsync(string roomCode, long accountId, CancellationToken ct = default);
+}

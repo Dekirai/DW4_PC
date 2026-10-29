@@ -1,0 +1,122 @@
+@page "/u/{name}"
+@model ProfileModel
+@{
+    ViewData["Title"] = Model.Account.Username;
+}
+<h1>@Model.Account.Username</h1>
+@if (Model.Hidden)
+{
+    <div class="notice">This profile is private.</div>
+    return;
+}
+<p class="muted">Member since @Format.Day(Model.Account.CreatedAt)
+    @if (!Model.Account.ProfilePublic)
+    {
+        <span class="badge">private profile</span>
+    }
+    @if (Model.Account.Status != "active")
+    {
+        <span class="badge bad">@Model.Account.Status</span>
+    }
+</p>
+
+<h2>Online character</h2>
+@if (Model.Character is { } c)
+{
+    <div class="panel">
+        <dl class="facts">
+            <dt>Digimon</dt><dd>@Model.DigimonName(c.Summary.Digimon)</dd>
+            <dt>Name</dt><dd>@c.Summary.PlayerName</dd>
+            <dt>Level</dt><dd>@c.Summary.Level@(c.Summary.HighestLevel > c.Summary.Level ? $" (highest form level {c.Summary.HighestLevel})" : "")</dd>
+            <dt>Play time</dt><dd>@Format.Duration(c.PlaySeconds)</dd>
+            <dt>Forms reached</dt><dd>@c.Summary.FormsReached of 16</dd>
+            <dt>Story cleared</dt>
+            <dd>
+                @if (c.Summary.Clears == 0)
+                {
+                    <span class="muted">not yet</span>
+                }
+                @if ((c.Summary.Clears & 1) != 0)
+                {
+                    <span class="badge ok">Normal</span>
+                }
+                @if ((c.Summary.Clears & 2) != 0)
+                {
+                    <span class="badge ok">Hard</span>
+                }
+                @if ((c.Summary.Clears & 4) != 0)
+                {
+                    <span class="badge ok">Very Hard</span>
+                }
+            </dd>
+            <dt>Last saved</dt><dd>@Format.Date(c.UpdatedAt)</dd>
+        </dl>
+        @if (c.Flagged && (Model.IsOwner || Model.IsStaff))
+        {
+            <p class="small"><span class="badge warn">flagged</span> A plausibility check noted this character for the staff.</p>
+        }
+    </div>
+}
+else
+{
+    <p class="muted">No online character yet.</p>
+}
+
+<h2>Achievements</h2>
+<p>@Model.Unlocked.Count of @Model.Total unlocked &middot; @Model.Points points</p>
+@if (Model.Unlocked.Count > 0)
+{
+    <div class="table-wrap">
+        <table>
+            <thead><tr><th>Achievement</th><th>Tier</th><th class="num">Points</th><th>Unlocked</th></tr></thead>
+            <tbody>
+            @foreach (var (a, first, all) in Model.Unlocked)
+            {
+                <tr>
+                    <td><strong>@a.Name</strong><br /><span class="muted small">@a.Description</span></td>
+                    <td><span class="badge @a.Tier">@a.Tier</span></td>
+                    <td class="num">@a.Points</td>
+                    <td>
+                        @foreach (var u in all)
+                        {
+                            <div>
+                                @Format.Date(u.UnlockedAt)
+                                @if (u.Ruleset == "randomizer")
+                                {
+                                    <span class="badge">randomizer</span>
+                                }
+                                @if (u.Players is > 1)
+                                {
+                                    <span class="badge">@u.Players players</span>
+                                }
+                                @if (u.Flagged)
+                                {
+                                    <span class="badge warn">under review</span>
+                                }
+                            </div>
+                        }
+                    </td>
+                </tr>
+            }
+            </tbody>
+        </table>
+    </div>
+}
+@if (Model.InProgress.Count > 0)
+{
+    <h3>In progress</h3>
+    <div class="table-wrap">
+        <table>
+            <thead><tr><th>Achievement</th><th>Progress</th></tr></thead>
+            <tbody>
+            @foreach (var a in Model.InProgress)
+            {
+                <tr>
+                    <td><strong>@a.Name</strong><br /><span class="muted small">@a.Description</span></td>
+                    <td><progress max="@a.Goal" value="@a.Progress"></progress> @Format.Number(a.Progress ?? 0) / @Format.Number(a.Goal ?? 0)</td>
+                </tr>
+            }
+            </tbody>
+        </table>
+    </div>
+}

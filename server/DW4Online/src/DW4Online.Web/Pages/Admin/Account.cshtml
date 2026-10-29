@@ -1,0 +1,156 @@
+@page "/admin/account/{name}"
+@model DW4Online.Web.Pages.Admin.AccountModel
+@{
+    ViewData["Title"] = "Admin: " + Model.Target.Username;
+    var t = Model.Target;
+}
+<p><a href="/admin">&larr; Admin</a></p>
+<h1>@t.Username</h1>
+@if (Model.Message is not null)
+{
+    <div class="notice ok">@Model.Message</div>
+}
+@if (Model.Error is not null)
+{
+    <div class="notice error">@Model.Error</div>
+}
+@if (Model.TemporaryPassword is not null)
+{
+    <div class="panel">
+        <h2>Temporary password</h2>
+        <p>Give it to the player over a private channel. It is shown <strong>once</strong>; the player must choose a new
+            password at the next login.</p>
+        <p class="secret">@Model.TemporaryPassword</p>
+    </div>
+}
+
+<div class="grid">
+    <div class="panel">
+        <h2>Account</h2>
+        <dl class="facts">
+            <dt>Id</dt><dd>@t.Id</dd>
+            <dt>Role</dt><dd>@t.Role</dd>
+            <dt>Status</dt><dd>@t.Status</dd>
+            <dt>E-mail</dt><dd>@(t.Email ?? "none")</dd>
+            <dt>Profile</dt><dd>@(t.ProfilePublic ? "public" : "private") (<a href="/u/@t.Username">view</a>)</dd>
+            <dt>Created</dt><dd>@Format.Date(t.CreatedAt)</dd>
+            <dt>Last login</dt><dd>@Format.Date(t.LastLoginAt)</dd>
+        </dl>
+    </div>
+    <div class="panel">
+        <h2>Online character</h2>
+        @if (Model.Character is { } c)
+        {
+            <dl class="facts">
+                <dt>Digimon</dt><dd>@Model.DigimonName(c.Summary.Digimon)</dd>
+                <dt>Name</dt><dd>@c.Summary.PlayerName</dd>
+                <dt>Level</dt><dd>@c.Summary.Level (highest @c.Summary.HighestLevel)</dd>
+                <dt>Play time</dt><dd>@Format.Duration(c.PlaySeconds)</dd>
+                <dt>Revision</dt><dd>@c.Revision, @Format.Date(c.UpdatedAt)</dd>
+                <dt>Flagged</dt><dd>@(c.Flagged ? "yes" : "no")</dd>
+            </dl>
+        }
+        else
+        {
+            <p class="muted">None.</p>
+        }
+    </div>
+</div>
+
+@if (t.Status != "deleted")
+{
+    <h2>Actions</h2>
+    <div class="panel">
+        <form method="post" asp-page-handler="Status" class="stack">
+            <label>Reason (for the audit log) <input type="text" asp-for="Reason" maxlength="200" /></label>
+            <div>
+                @if (t.Status == "active")
+                {
+                    <button type="submit" name="Status" value="locked" class="secondary">Lock</button>
+                    <button type="submit" name="Status" value="banned" class="danger">Ban</button>
+                }
+                else
+                {
+                    <button type="submit" name="Status" value="active">@(t.Status == "banned" ? "Unban" : "Unlock")</button>
+                }
+            </div>
+        </form>
+    </div>
+    @if (Model.IsAdmin)
+    {
+        <div class="panel">
+            <form method="post" asp-page-handler="ResetPassword">
+                <button type="submit" class="secondary">Set a temporary password</button>
+                <span class="muted small">Logs out every session of the account.</span>
+            </form>
+        </div>
+        <div class="panel">
+            <form method="post" asp-page-handler="Role" class="stack">
+                <label>Role
+                    <select name="Role">
+                        <option value="player" selected="@(t.Role == "player")">player</option>
+                        <option value="moderator" selected="@(t.Role == "moderator")">moderator</option>
+                        <option value="admin" selected="@(t.Role == "admin")">admin</option>
+                    </select>
+                </label>
+                <button type="submit" class="secondary">Set role</button>
+            </form>
+        </div>
+        <div class="panel">
+            <h3>Delete account (GDPR request)</h3>
+            <form method="post" asp-page-handler="Delete" class="stack">
+                <label class="check"><input type="checkbox" asp-for="ConfirmDelete" /> Delete this account and all its data</label>
+                <button type="submit" class="danger">Delete account</button>
+            </form>
+        </div>
+    }
+}
+
+<h2>Achievements (@Model.Unlocks.Count)</h2>
+@if (Model.Unlocks.Count == 0)
+{
+    <p class="muted">No unlocks.</p>
+}
+else
+{
+    <div class="table-wrap">
+        <table>
+            <thead><tr><th>Achievement</th><th>Ruleset</th><th>Unlocked</th><th>Players</th><th>State</th><th></th></tr></thead>
+            <tbody>
+            @foreach (var (a, u) in Model.Unlocks)
+            {
+                <tr>
+                    <td>@a.Name <span class="muted small">(@a.Code)</span></td>
+                    <td>@u.Ruleset</td>
+                    <td>@Format.Date(u.UnlockedAt)</td>
+                    <td>@(u.Players?.ToString() ?? "-")</td>
+                    <td>
+                        @if (u.Flagged)
+                        {
+                            <span class="badge warn">flagged</span>
+                        }
+                        else
+                        {
+                            <span class="badge ok">ok</span>
+                        }
+                    </td>
+                    <td>
+                        <form method="post" asp-page-handler="Flag" class="inline">
+                            <input type="hidden" name="Code" value="@a.Code" />
+                            <input type="hidden" name="Ruleset" value="@u.Ruleset" />
+                            <input type="hidden" name="Flagged" value="@(u.Flagged ? "false" : "true")" />
+                            <button type="submit" class="link">@(u.Flagged ? "Unflag" : "Flag")</button>
+                        </form>
+                        &middot;
+                        <form method="post" asp-page-handler="Revoke" class="inline">
+                            <input type="hidden" name="Code" value="@a.Code" />
+                            <input type="hidden" name="Ruleset" value="@u.Ruleset" />
+                            <button type="submit" class="link">Revoke</button>
+                        </form>
+                    </td>
+                </tr>
+            }
+            </tbody>
+        </table>
+    </div>
+}

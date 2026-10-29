@@ -226,7 +226,17 @@ Settings Settings::parse(IniFile document) {
     settings.exp_rate = std::clamp(ini.get_int("gameplay", "exp_rate", settings.exp_rate), 10, 1000);
     settings.damage_dealt = std::clamp(ini.get_int("gameplay", "damage_dealt", settings.damage_dealt), 10, 1000);
     settings.damage_taken = std::clamp(ini.get_int("gameplay", "damage_taken", settings.damage_taken), 10, 1000);
-    settings.drop_seed = std::uint32_t(std::max(0, ini.get_int("gameplay", "drop_seed", 0)));
+    if (ini.get("randomizer", "seed")) {
+        settings.rand_seed = std::uint32_t(std::max(0, ini.get_int("randomizer", "seed", 0)));
+        settings.rand_drops = ini.get_bool("randomizer", "drops", false);
+        const std::string enemies = ini.get_or("randomizer", "enemies", "off");
+        settings.rand_enemies = enemies == "wave" ? 2 : enemies == "each" ? 1 : 0;
+        settings.rand_zones = ini.get_or("randomizer", "zones", "off") == "dungeons" ? 1 : 0;
+    } else if (const int drop_seed = ini.get_int("gameplay", "drop_seed", 0); drop_seed > 0) {
+        // The item drop seed of earlier versions: the same drops.
+        settings.rand_seed = std::uint32_t(drop_seed);
+        settings.rand_drops = true;
+    }
     {
         std::string loading = ini.get_or("gameplay", "loading", "original");
         for (auto& c : loading) c = char(std::tolower(static_cast<unsigned char>(c)));
@@ -285,7 +295,21 @@ Settings Settings::parse(IniFile document) {
             start = comma + 1;
         }
     }
+    settings.overhead_labels = ini.get_or("hud", "overhead_labels", settings.overhead_labels);
+    settings.label_scale = std::clamp(ini.get_int("hud", "label_scale", settings.label_scale), 50, 200);
+    settings.label_numbers = ini.get_bool("hud", "label_numbers", settings.label_numbers);
+    settings.discord = ini.get_bool("discord", "enabled", settings.discord);
+    settings.discord_client_id = ini.get_or("discord", "client_id", settings.discord_client_id);
+    // (An id is digits only; anything else falls back to the default.)
+    if (settings.discord_client_id.empty() || settings.discord_client_id.size() > 24 ||
+        !std::all_of(settings.discord_client_id.begin(), settings.discord_client_id.end(), [](char c) { return c >= '0' && c <= '9'; }))
+        settings.discord_client_id = kDiscordClientId;
+    settings.achievements = ini.get_bool("achievements", "enabled", settings.achievements);
+    settings.achievement_popups = ini.get_bool("achievements", "popups", settings.achievement_popups);
     settings.data = ini.get_or("data", "path", "");
+    settings.save_file = ini.get_or("data", "save", settings.save_file.string());
+    settings.save_file_b = ini.get_or("data", "save_b", settings.save_file_b.string());
+    settings.save_migrated = ini.get_bool("data", "save_migrated", settings.save_migrated);
     settings.cards = ini.get_or("data", "cards", "");
     settings.card_a = ini.get_or("data", "card_a", "");
     settings.card_b = ini.get_or("data", "card_b", "");
@@ -307,7 +331,11 @@ void Settings::store() {
     ini_.set_int("gameplay", "exp_rate", exp_rate);
     ini_.set_int("gameplay", "damage_dealt", damage_dealt);
     ini_.set_int("gameplay", "damage_taken", damage_taken);
-    ini_.set_int("gameplay", "drop_seed", int(drop_seed & 0x7FFFFFFF));
+    ini_.remove("gameplay", "drop_seed");
+    ini_.set_int("randomizer", "seed", int(rand_seed & 0x7FFFFFFF));
+    ini_.set_bool("randomizer", "drops", rand_drops);
+    ini_.set("randomizer", "enemies", rand_enemies == 2 ? "wave" : rand_enemies == 1 ? "each" : "off");
+    ini_.set("randomizer", "zones", rand_zones ? "dungeons" : "off");
     ini_.set("gameplay", "loading", fast_loading ? "fast" : "original");
     // The old combined direction inputs are migrated (parse) and dropped.
     for (const char* legacy : kLegacyDirections) {
@@ -341,7 +369,18 @@ void Settings::store() {
         for (const auto& id : disabled_mods) list += (list.empty() ? "" : ",") + id;
         ini_.set("mods", "disabled", list);
     }
+    ini_.set("hud", "overhead_labels", overhead_labels);
+    ini_.set_int("hud", "label_scale", label_scale);
+    ini_.set_bool("hud", "label_numbers", label_numbers);
+    ini_.set_bool("discord", "enabled", discord);
+    ini_.set("discord", "client_id", discord_client_id);
+    ini_.set_bool("achievements", "enabled", achievements);
+    ini_.set_bool("achievements", "popups", achievement_popups);
     if (!data.empty()) ini_.set("data", "path", data.string());
+    // Where the saves live, so settings.ini shows it.
+    ini_.set("data", "save", save_file.generic_string());
+    ini_.set("data", "save_b", save_file_b.generic_string());
+    ini_.set_bool("data", "save_migrated", save_migrated);
 }
 
 bool Settings::save() {

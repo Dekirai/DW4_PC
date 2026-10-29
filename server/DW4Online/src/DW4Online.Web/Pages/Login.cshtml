@@ -1,0 +1,22 @@
+@page "/login"
+@model LoginModel
+@{
+    ViewData["Title"] = "Log in";
+}
+<h1>Log in</h1>
+@if (Model.Error is not null)
+{
+    <div class="notice error">@Model.Error</div>
+}
+<form method="post" class="stack">
+    <input type="hidden" asp-for="ReturnUrl" />
+    <label>User name
+        <input type="text" asp-for="Username" autocomplete="username" required maxlength="20" />
+    </label>
+    <label>Password
+        <input type="password" asp-for="Password" autocomplete="current-password" required maxlength="128" />
+    </label>
+    <label class="check"><input type="checkbox" asp-for="Remember" /> Keep me logged in on this device</label>
+    <button type="submit">Log in</button>
+</form>
+<p class="small"><a href="/recover">Forgot your password?</a> &middot; <a href="/register">Create an account</a></p>

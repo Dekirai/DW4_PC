@@ -63,6 +63,8 @@ bool Engine::has_script(std::string_view name) const {
     for (const auto& info : lua_infos_)
         for (const auto& data : info.list(7))
             if (data && data.str(2) == name) return true;
+    for (const auto& data : donor_scripts_)
+        if (data.str(2) == name) return true;
     return false;
 }
 
@@ -76,7 +78,28 @@ bool Engine::script_mentions(std::string_view name, std::string_view text) const
             const std::string_view chunk(reinterpret_cast<const char*>(bytes.data()), bytes.size());
             if (chunk.find(text) != std::string_view::npos) return true;
         }
+    for (const auto& data : donor_scripts_) {
+        if (data.str(2) != name || !data.ref(3)) continue;
+        const auto bytes = data.ref(3).memory(3);
+        if (std::string_view(reinterpret_cast<const char*>(bytes.data()), bytes.size()).find(text) != std::string_view::npos) return true;
+    }
     return false;
+}
+
+void Engine::for_each_script(const std::function<void(std::string_view name, std::string_view chunk)>& visit) const {
+    for (const auto& info : lua_infos_)
+        for (const auto& data : info.list(7)) {
+            if (!data) continue;
+            const auto object = data.ref(3);
+            if (!object) continue;
+            const auto bytes = object.memory(3);
+            visit(data.str(2), std::string_view(reinterpret_cast<const char*>(bytes.data()), bytes.size()));
+        }
+    for (const auto& data : donor_scripts_) {
+        if (!data.ref(3)) continue;
+        const auto bytes = data.ref(3).memory(3);
+        visit(data.str(2), std::string_view(reinterpret_cast<const char*>(bytes.data()), bytes.size()));
+    }
 }
 
 bool Engine::run_script(std::string_view name) {
@@ -84,12 +107,35 @@ bool Engine::run_script(std::string_view name) {
     // DW4_TRACE_SCRIPT=1 logs every script run (=name: only that one).
     if (static const char* trace = std::getenv("DW4_TRACE_SCRIPT"); trace && (std::string_view(trace) == "1" || name == trace))
         log("script " + std::string(name));
+    // Observe-only (port_events.hpp): a boss death script's run is watched
+    // until it ends.
+    struct PortScope {
+        Engine& engine;
+        bool open;
+        ~PortScope() {
+            if (open) port_script_finished(engine);
+        }
+    } port_scope{*this, port_script_started(*this, name)};
     bool ran = false;
-    for (const auto& info : lua_infos_) {
-        for (const auto& data : info.list(7)) {
-            if (!data || data.str(2) != name) continue;
+    // The first entry of that name in every script info; the randomizer's
+    // donor scripts only when the stage has none.
+    std::vector<ObjectView> matches;
+    for (const auto& info : lua_infos_)
+        for (const auto& data : info.list(7))
+            if (data && data.str(2) == name) {
+                matches.push_back(data);
+                break;
+            }
+    if (matches.empty())
+        for (const auto& data : donor_scripts_)
+            if (data.str(2) == name) {
+                matches.push_back(data);
+                break;
+            }
+    for (const auto& data : matches) {
+        {
             const auto object = data.ref(3);
-            if (!object) break;
+            if (!object) continue;
             const auto key = std::make_pair(static_cast<const void*>(object.document()), object.reference());
             auto found = lua_programs_.find(key);
             if (found == lua_programs_.end()) {
@@ -142,7 +188,6 @@ bool Engine::run_script(std::string_view name) {
                 }
                 return ran;
             }
-            break; // first match per info only
         }
     }
     if (!ran) note("script not found: " + std::string(name));
@@ -353,7 +398,14 @@ std::vector<Lua4Value> Engine::lua_call(const Lua4HostCall& call) {
 
     // --- Flags / counters (game RAM) ---
     if (method == "FLGisOn") return number(flags()[to_int(arg(0))] ? 1 : 0);
-    if (method == "FLGset") { flags()[to_int(arg(0))] = to_int(arg(1)) ? 1 : 0; return {}; }
+    if (method == "FLGset") {
+        const std::int32_t flag = to_int(arg(0));
+        auto& value = flags()[flag];
+        const int before = value;
+        value = to_int(arg(1)) ? 1 : 0;
+        port_flag_changed(*this, flag, before, value); // observe-only (port_events.hpp)
+        return {};
+    }
     if (method == "FLGflip") { auto& f = flags()[to_int(arg(0))]; f = f ? 0 : 1; return {}; }
     if (method == "COUNTERset") { counters()[to_int(arg(0))] = to_int(arg(1)); return {}; }
     if (method == "COUNTERget") return number(counters()[to_int(arg(0))]);
@@ -522,7 +574,9 @@ std::vector<Lua4Value> Engine::lua_call(const Lua4HostCall& call) {
     if (method == "BLTisCritical") {
         const auto* slot = shooter_slot();
         auto* model = context_model();
-        return number(slot && model && fight::player_critical(*this, *slot, model->record, bullet_kind) ? 1 : 0);
+        const bool critical = slot && model && fight::player_critical(*this, *slot, model->record, bullet_kind);
+        if (critical && port_events_enabled() && context) port_event({PortEvent::Kind::critical_hit, context->shooter, 0, 0, {}});
+        return number(critical ? 1 : 0);
     }
     if (method == "BLTgetDamageValue") {
         const auto* slot = shooter_slot();
@@ -571,6 +625,7 @@ std::vector<Lua4Value> Engine::lua_call(const Lua4HostCall& call) {
         auto* sys = get<GameSystem>();
         if (!model || !sys || !context) return number(0);
         const int killer = context->shooter_name.starts_with('p') ? context->shooter : -1;
+        if (port_events_enabled()) port_event({PortEvent::Kind::enemy_defeated, killer, model->record, 0, model->info_name});
         return number(sys->experience_up(*this, killer, model->record));
     }
     if (method == "BLTcalcSkillUp") {
@@ -704,6 +759,8 @@ std::vector<Lua4Value> Engine::lua_call(const Lua4HostCall& call) {
         if (op == "SETSHINKA") {
             if (reached) return number(0);
             player.base_isuse[species] = 1;
+            if (port_events_enabled())
+                port_event({PortEvent::Kind::form_reached, std::clamp(to_int(arg(1)), 0, 3), species, 0, {}});
             return number(1);
         }
         return number(0);

@@ -22,9 +22,10 @@ the game. Builds and tests run locally; GitHub Actions is disabled.
   character from a memory card box.
 - Memory card saves: the lobby's save NPC opens the save room (slot A/B,
   creating or formatting the game file, the four save boxes with status
-  windows, overwrite check, timed write). Cards are Dolphin-style GCI folders
-  (`saves/GC/USA/Card A` next to the program, or `--card-dir`), so Dolphin
-  saves can be copied in and out.
+  windows, overwrite check, timed write). The save lives in one file,
+  `saves/savedata.dat` next to the program (see *Saves* below); GameCube
+  saves from Dolphin, GCMM, GameShark, MaxDrive / Action Replay and memory
+  card images import from the F1 menu's Saves tab.
 - Lobby areas (`stagML11`, Central Area, Shop Area, Commander Room): first-visit
   story scenes, dialogs with portraits and prompts, talking to NPCs, walking,
   jumping, floor gates with the confirmation dialog and stage changes.
@@ -96,7 +97,8 @@ quicksand and slippery floors; many smaller managers are still missing. See
 | --- | --- |
 | `include/dw4`, `src` | `dw4_core`: IGB documents, packages and resources, textures, meshes, skinning, Enbaya animation, Lua 4 bytecode, pads and motion primitives |
 | `include/dw4/engine`, `src/engine` | `dw4_engine`: frame step, messenger and demo manager, Lua host, scene graph, and the reconstructed managers (stage loader, scene/layer/camera, model control, actions, text, menus, title, character select, floor mats, collision) |
-| `src/game` | `dw4_game`: SDL3 window, OpenGL renderer, input mapping, settings and the F1 menu |
+| `src/game` | `dw4_game`: SDL3 window, OpenGL renderer, input mapping, settings and the F1 menu, the save store and GC save import, online sessions, Discord Rich Presence, name tags, achievements |
+| `server/DW4Online` | The online backend (ASP.NET Core + MariaDB: accounts, online character, cloud save, achievements, rooms, relay, website), its tests and deployment kit; built with `dotnet`, separate from the CMake build |
 | `tools` | `dw4_inspect` (IGB inspection), `dw4_catalog` (logical resource catalog), `verify_game.py` (read-only ISO identification) |
 | `tests` | Asset-free tests for the core formats and tools |
 | `docs` | Format and module notes; `docs/research` keeps the reverse-engineering notes (DOL addresses, recovered behavior) |
@@ -147,14 +149,19 @@ the 2D layers stay 4:3 and full-screen fades stretch), `vsync`,
 picture blends between the last two updates) and `msaa` (2/4/8 samples, applied at start-up),
 `[audio] volume` (percent), `[menu] pause` (pause while the menu is open),
 `[preferences] skip_intro` (boot straight to the title), `[gameplay]`
-`exp_rate`, `damage_dealt`, `damage_taken` (percent, 100 = original),
-`drop_seed` (item drop randomizer, 0 = off; key items stay) and `loading`
-(`original`, the default, or `fast`; see *Fast loading* below), `[data] cards` (the
-memory card folder with `Card A` / `Card B`, default `saves/GC/USA` next to the
-program; Dolphin's `GC/USA` folder works too), `[data] card_a` / `card_b` (what
-the slots hold: `none` for an empty slot, `unformatted`, and / or the card's
+`exp_rate`, `damage_dealt`, `damage_taken` (percent, 100 = original) and `loading`
+(`original`, the default, or `fast`; see *Fast loading* below), `[randomizer]`
+`seed` (0 = off), `drops`, `enemies` (`off`, `each`, `wave`) and `zones` (`off`,
+`dungeons`) for new games (see *Randomizer* below; an old `[gameplay] drop_seed`
+becomes `seed` with `drops` on), `[data] save` /
+`save_b` (the save files of memory card slots A and B, default
+`saves/savedata.dat` / `saves/savedata_b.dat`; relative paths are next to the
+program), `[data] cards` (instead of the save files: a GCI folder root with
+`Card A` / `Card B`, e.g. Dolphin's `GC/USA` folder to play on its saves),
+`[data] card_a` / `card_b` (what
+the slots hold: `none` for an empty slot, `unformatted`, `inserted`, and / or the card's
 blocks such as `251`; default a 2043-block card in slot A and one in slot B when
-its folder exists, also `DW4_CARD_A` / `DW4_CARD_B`) and
+its file or folder exists, also `DW4_CARD_A` / `DW4_CARD_B`) and
 `[keyboard]` with up to three key names per control (`a=Return, Space, K`) and
 `[gamepad]` with up to three SDL controller inputs per control (`l=lefttrigger,
 leftshoulder`). The controls are `a`, `b`, `x`, `y`, `start`, `l`, `r`, `z`,
@@ -216,6 +223,75 @@ about the same either way (the same files are parsed and the same scripts
 run, 10-35 ms in the longest frame of a load), so a Fast stage change is over
 in about a third of a second.
 
+### Randomizer
+
+An optional randomizer (F1 Cheats tab, `settings.ini [randomizer]`; off by
+default, and with it off the game is the original frame for frame). One seed
+drives three parts, each switched on its own:
+
+- **Item drops** change into other items of the same kind (weapons into
+  weapons, disks into disks); key items stay. The same seed gives the same drops
+  as the item drop seed of earlier versions.
+- **Enemies** become other Digimon: every enemy of a wave drawn on its own
+  (`each`, the default: four Numemon become four different Digimon) or one
+  family per wave (`wave`). A swapped enemy keeps the original enemy's record:
+  its HP, strength, defence, EXP and the wave's drops stay, only the body, its
+  attacks and sounds change. Each enemy stage draws from a pool of up to six
+  families: its own, filled up from the whole game weighted by area (a family
+  of the stage's own area is eight times as likely as one three areas away).
+  Families a stage does not have are loaded from the smallest story stage
+  where they are ordinary enemies (their six model infos, attack effects, hit
+  and AI scripts, sound effect bank and cues), like the original's own enemy
+  packages (`stag0202/separate/e_arachne.igb`); a stage load with the
+  randomizer reads up to five such members more (no extra loading time is
+  simulated). Bosses, the one-of-a-kind mid-bosses
+  (Blossomon, Mammothmon, SkullGreymon, Anomalocarimon, Tonosama Gekomon,
+  Diaboromon, LordKnightmon), stag0404's Imperialdramon, the boss stages
+  (`stagBS*`), the stagGF03 fights, every wave a stage script starts next to a
+  model name (intro and demo fights wait for that model), a family whose
+  only waves in the stage are such fights and every generator whose family the
+  stage does not load itself (it never spawns in the original: no RAM for it,
+  e.g. stag0403's e_mecha3 and stag0202's SkullGreymon generators) stay as
+  they are. A wave keeps its
+  entry move when the new family has it, else the family's plain entry; when
+  all of a family's bodies are out, the next family of the pool (then the
+  original) takes the place. A swapped enemy that falls off the stage or never
+  lands (six seconds in the air or 150 units below its spawn point) is
+  removed and counts as defeated, without a drop.
+- **Loading zones** (`dungeons`): the dungeon entrances of each area lead to
+  each other's dungeons (area 1: Humid Cave / Cliff Dungeon, area 2: Sand
+  Labyrinth / Ancient Ruins, area 3: Geko Path / Vine Tunnel / Vein, area 4:
+  Mecha Nest / Electro Mine), never to their own, and a dungeon's way out leads
+  back to the entrance that was used. The exit prompt names the new target.
+  Towers, quests, the fortress, boss stages, the lobby gate, Gate Disks and
+  defeats keep their targets, and every key item stays reachable (the gate
+  in stag0301 that led to the Vein still opens with the stag0301 lever and the
+  stag0302 console, whatever dungeon now lies behind it).
+
+A new game binds the randomizer it starts with to its save: `randomizer.ini`
+next to the save (`saves/randomizer.ini` beside `saves/savedata.dat`, or
+beside the `[data] save` / `--save-file` file; the GCI root with `--card-dir`
+/ `DW4_CARD_DIR`; `saves/` next to the program for a `[data] cards` folder,
+so nothing is written into a Dolphin folder) keeps the seed and modes per
+saved character (by the character's UNIQUE id), so changing the settings
+later does not change a running game, and `randomizer_<UNIQUE>_spoiler.txt`
+beside it lists the seed, the loading zone table and every stage's enemy
+pool. Only a new game is bound by itself: a save from before (or one started
+with the randomizer off) keeps playing the original game when it is called
+with the randomizer on, and a notice says so; the F1 section shows what the
+running save plays and can bind the current settings to it. Delete a character's section in `randomizer.ini` to let it follow the
+settings again. Save states replay with the randomizer they were made with.
+Online, every machine plays the host's randomizer and nothing is bound.
+Randomized games are not the original game (`Cheats::original()`), so they
+count as their own category wherever that matters (achievements unlock into
+their own list with any of the three parts on).
+
+Test runs: `DW4_RANDOMIZER=seed[,enemies[,zones[,drops]]]` (a bare seed turns
+everything on), `DW4_RANDOMIZER_SWEEP=1` makes every enemy generator of the
+stage spawn its wave in turn and logs one `sweep` line per generator (models,
+problems such as a missing hit script, a sound without a bank, a model that
+did not start or one the watchdog removed).
+
 ### Online co-op
 
 Up to four machines play one session in lockstep (TCP, the host relays). The
@@ -233,12 +309,152 @@ rebalancing and loading choice) and
 each step waits for every player's input, so the simulation stays identical;
 guests report state fingerprints and a desync shows on screen. Each machine's
 keyboard and first controller play its own player (host 1, guests 2-4). The
-host's Card A and the first guest's Card A (as Card B) are copied to every
-machine, so both can call their Digimon at the character select; when the
-session ends each owner gets its card back with what was saved. Save states
+host's save (slot A) and the first guest's save (as slot B) are copied to every
+machine, so both can call their Digimon at the character select; only the
+Digimon World 4 save travels, never other files of a card folder. When the
+session ends each owner gets its save back with what was saved. Save states
 are off online; a guest that leaves plays on released, a host that leaves ends
 the session for the others (they play on alone). The host needs the port
 open (router / firewall) for guests outside the local network.
+
+These sessions are the first step. The planned online play goes through the
+project's own server (next section): rooms of up to ten players, everyone in
+the same stage playing it together (at most four per stage instance, shared
+enemies and drops), all traffic relayed by the server so nobody opens a
+port, and an online character per account that starts from zero, separate
+from the local save. The game client for it is not built yet.
+
+### Online server (DW4Online)
+
+`server/DW4Online` is the backend for that: one ASP.NET Core (.NET 10)
+service with MariaDB that holds the accounts (open registration with rate
+limits, optional e-mail, one-time recovery codes, admin resets), the online
+character, one private cloud backup of the local save per account (the
+latest and five earlier revisions), the online achievements (only online
+play counts; cheats, rebalancing and loaded save states never, randomizer
+runs as their own category, speedrun times in in-game time without loading),
+the room list with stage instances, the TCP relay with one-time HMAC tickets
+(port 52041) and the website (accounts, profiles, achievements with their
+rarity, rooms, admin, privacy page). It runs on loopback in its tests and is
+not deployed yet; building, configuration, the deployment kit for a Windows
+server (Windows service, TLS, backups) and the API are described in
+[server/DW4Online/README.md](server/DW4Online/README.md) and
+[server/DW4Online/deploy/DEPLOY.md](server/DW4Online/deploy/DEPLOY.md).
+
+### Name tags
+
+Name, level and HP / MP bars float over the players' Digimon (Settings tab,
+*Name tags, Discord, achievements*; `settings.ini`):
+
+```ini
+[hud]
+overhead_labels=auto   ; auto (only with two or more players), all, others (not over your own), off
+label_scale=100        ; percent, 50-200 (the size also follows the window height)
+label_numbers=false    ; HP / MP numbers beside the bars
+```
+
+They are drawn by the PC host over the game picture (ImGui, under the F1
+menu) from the players' state after each step, the camera the picture used
+and the widescreen widening; nothing is added to the game's scene, so the
+simulation, save states, online sessions and the Dolphin comparisons are the
+same with them on. The tag sits a little above the highest joint of the
+Digimon's current pose (else above part of its bounding box, else a height per
+form), follows the smooth motion above 60 fps, fades with the distance from
+the camera and is hidden during stage loads, demos and cutscenes (pad input
+off), status and shop windows, the title and menu screens, and for a defeated
+player. Players beyond the four local slots (the coming seamless co-op) are
+handed in by the netcode (`OverheadLabels::set_remote_players`) and drawn the
+same way when they are in the same stage. Test runs: `DW4_LABELS=all` and
+`DW4_TRACE_LABELS=N` (every N frames the labels' head point, screen position,
+the feet's screen position and the distance, for the 1280x960 test window or
+`DW4_WINDOW`, without a window too).
+
+### Discord Rich Presence
+
+With the Discord desktop app running, Discord shows what you play:
+`<Form> Lv <level>` (for example *WarGreymon Lv 42*), the area (*Death Valley:
+Humid Cave*, names from the loading cards), the area's picture with the form's
+picture on it, the difficulty as the small picture's text, and the time since
+the game started; *In Menus* on the title and menu screens. The program talks
+to the app over its local pipe (`discord-ipc-0..9`) with its own small client
+(no SDK, no DLL, no login): it looks for the app again every 15 seconds (a
+Discord started later is found), sends a change at most every 15 seconds and
+says goodbye when the game ends. Without Discord, or with the setting off,
+nothing happens. Settings: the Settings tab's *Discord Rich Presence* box, or
+
+```ini
+[discord]
+enabled=true
+client_id=1560921673354453093   ; the Discord application whose name shows as "Playing ..."
+```
+
+The pictures are the application's art assets, which its owner uploads once:
+Discord Developer Portal > Applications > the application > Rich Presence >
+Art Assets > *Add Image(s)* (PNG or JPG, at least 512x512, 1024x1024
+recommended; the file name without extension becomes the key, lower case). The
+keys the game uses:
+
+| Key | Shown for |
+| --- | --- |
+| `logo` | title and menu screens (the large picture) |
+| `area_home_server` | Home Server: Commander Room, Main Lobby (Terminal, Central, Shop Area), Digivolution |
+| `area_practice` | Death Valley: Practice Stage |
+| `area_death_valley` | Death Valley: Goblin Pass, Abyss of Grief, Numenume River, Doom Dome |
+| `area_death_valley_dungeons` | Humid Cave, Cliff Dungeon, Dome Base |
+| `area_dry_land` | Dry Land: Mummy Desert, Grief Wasteland, Train Line, Station X, Power Plant |
+| `area_dry_land_dungeons` | Sand Labyrinth, Ancient Ruins, Virus Lab |
+| `area_venom_jungle` | Venom Jungle: Gekogeko Land, Mangrove Forest, Venom Swamp, Dread Note |
+| `area_venom_jungle_dungeons` | Geko Path, Vine Tunnel, Vein, Dread Bridge |
+| `area_machine_pit` | Machine Pit: Battle Arena, Mechanical Core, Core Area |
+| `area_machine_pit_dungeons` | Mecha Nest, Electro Mine |
+| `area_apocalymon` | Apokarimon Space (boss) |
+| `area_belphemon` | Demon Shift (boss) |
+| `area_lucemon` | Hades Obelisk (boss) |
+| `area_zone_x` | Zone X (boss) |
+| `area_fortress` | Fortress: Guard Room, Rotating Hall, X Digimon Lab, GobGob Room |
+| `area_quests` | the quest dungeons (Barbarian Cave ... Cursed Dungeon) |
+| `form_agumon`, `form_veemon`, `form_guilmon`, `form_dorumon`, `form_weregarurumon`, `form_hkabuterimon`, `form_wargreymon`, `form_clangemon`, `form_beelzemon`, `form_alphamon`, `form_bkwargreymon`, `form_ipdramonfm`, `form_ipdramonpm`, `form_metalgarurumon`, `form_gallantmoncm`, `form_susanomon` | the 16 forms (the small picture) |
+
+`dw4_game.exe --data <game data> --export-presence-art <folder>` writes
+suggested 512x512 pictures for the `logo` and `area_*` keys from your own
+copy's loading cards (they stay on your PC; upload them under their file
+names). The form pictures are yours to choose. Test runs talk to Discord only
+through `DW4_DISCORD_PIPE=<pipe name prefix>` (a test pipe, never the real
+app; `dw4_presence_tests --serve <pipe> <seconds>` is a fake Discord that
+prints what it gets) and `DW4_TRACE_PRESENCE=1` prints each new activity.
+
+### Achievements
+
+The F1 menu's Achievements tab lists 72 achievements in eleven groups (story,
+bosses, challenges, levels, forms, techniques, collection, quests, combat,
+time, together) with the date of each unlock and the progress of the counted
+ones; a notice shows at the top right when one unlocks (*Unlock notices*).
+They are kept in `saves/profile.dat` next to the program (a `.bak` of the
+previous file stays) and belong to this PC; the online account's achievements
+come with the seamless co-op server. Rules:
+
+- Nothing unlocks or counts while a cheat (god mode, infinite MP, one-hit
+  defeats) or a rebalancing value other than 100% has been on in the running
+  stage, after a save state was loaded in the running stage, while a save
+  state replays, in test runs and while the campaign bot or a scripted walk
+  plays. Fast loading does not matter.
+- A run with the randomizer (item drops, enemies or loading zones) unlocks
+  into its own list (shown beside the date).
+- The run achievements (a story clear never defeated, under 8 / 4 hours, only
+  rookie forms, Very Hard alone) need a new character tracked since level 1
+  that never played with a closed gate (cheats, rebalancing, a loaded state).
+  Speed counts the in-game time without stage loads.
+- In local co-op every player of this PC counts; online only this machine's
+  player (story achievements count for everyone in the session).
+
+They come from a few observe-only hooks in the reconstructed game logic (boss
+death scripts and defeat flags, level ups, digivolutions, new techniques,
+cards, quest goals, player defeats, critical hits, enemy defeats, story flags;
+`engine/port_events.hpp`) plus the players' state after each step. The engine
+collects these events only while the host asks for them, never reads them
+back, and they are in neither the state fingerprint nor a save state. Test
+runs: `DW4_ACHIEVEMENTS=1` (with `DW4_PROFILE=<file>` to keep the profile)
+and `DW4_TRACE_EVENTS=1` (every event as it happens).
 
 ### Content mods
 
@@ -369,9 +585,11 @@ player hits defeat their target, `DW4_INFINITE_MP` keeps MP full,
 `DW4_BITS=n`, `DW4_XDATA=n`, `DW4_LEVEL=n` and `DW4_FORMS=species,...` fill a new player's folders, level and forms,
 `DW4_FLAG_FOLDER=item,...` gives key items (story progress items such as boss IDs), `DW4_DIFFICULTY=n` sets the
 difficulty (0-2) before the first stage loads, `DW4_CARD_RECORD=FILE.gci:N` makes player 1 the character of
-save box N (as the character select loads it), `DW4_ENTRY=n` starts a
+save box N (as the character select loads it; FILE may be a `savedata.dat`), `DW4_ENTRY=n` starts a
 test run's first stage at player point group n (as when arriving from another exit),
-`DW4_PLAYERS=n` joins n players, `DW4_OPEN_MENU=1` opens the F1 menu,
+`DW4_PLAYERS=n` joins n players, `DW4_OPEN_MENU=1` opens the F1 menu (`DW4_MENU_TAB=Saves` on that tab,
+`DW4_MENU_IMPORT=FILE` with that file's import preview), `DW4_MIGRATE_FROM=<GCI root>` (with `--save-file`) copies
+that root's `Card A` / `Card B` saves in as a first start copies `saves/GC/USA`,
 `DW4_FAST_LOADING=1` loads with the fast loading option (`--loading original|fast` overrides it),
 `DW4_TRACE_LOADTIME=1` prints for every stage load the frames to the stage start and to player 1's
 control and the real time the load's frames took (`=2` every frame of the load with the loader state),
@@ -430,12 +648,50 @@ cards, mods and PC options stay).
 
 F1 opens the menu: the Settings tab (an Original / Modernized preset, the
 loading speed (Original / Fast), display, widescreen, frame limit, anti-aliasing,
-window size, volume, keyboard and controller bindings), the Cheats tab
+window size, volume, name tags, Discord, achievements, keyboard and controller
+bindings), the Saves tab (where the save lives, the boxes of slots A and B,
+importing GameCube saves), the Achievements tab, the Cheats tab
 (god mode, infinite MP, one-hit defeats, refills, levels and bits per player,
 session only and off by default; plus the saved rebalancing and randomizer
-options) and the Debug tab (stage loader, player state,
+options, see *Randomizer*) and the Debug tab (stage loader, player state,
 notes, script log). F11 toggles fullscreen,
 F2 a free camera.
+
+### Saves
+
+The game saves like on the GameCube: in the save room, onto the memory card
+in slot A or B, four boxes per card. The PC version keeps each card's Digimon
+World 4 file in one file next to the program: `saves/savedata.dat` (slot A)
+and `saves/savedata_b.dat` (slot B; the slot holds a card once that file
+exists, or with `[data] card_b = inserted`). The file holds exactly the bytes
+of Dolphin's `B2-GDJE-NDMWSaveData.gci`, so renaming it moves a save to
+Dolphin and back. Every save first keeps the previous file as
+`savedata.dat.bak`, and the new file replaces the old one only once it is
+completely written. The F1 menu's Saves tab and the Settings tab show where
+the save lives.
+
+- First start: a save of an older build in `saves/GC/USA/Card A` (or
+  `Card B`) is copied into `savedata.dat` (`savedata_b.dat`) once; the old
+  file stays where it is (`[data] save_migrated` in settings.ini records it).
+- `[data] cards = <folder>` plays from a GCI folder root instead (for example
+  Dolphin's `GC/USA` folder, so both play on the same save). `--card-dir`,
+  `DW4_CARD_DIR` and test runs use GCI folders too (`saves/GC/USA` next to the
+  program in test runs).
+- Importing GameCube saves (F1, Saves tab, or `--import-save`): Dolphin /
+  GCMM / Swiss `.gci`, GameShark `.gcs`, MaxDrive / Action Replay `.sav`,
+  memory card images `.raw` / `.gcp` (Dolphin, Nintendont, card dumps) and
+  GCI folders. The preview shows each box (name, Digimon, level, bits, story
+  phase, forms); the chosen boxes go into the chosen boxes of slot A or B, or
+  the whole save replaces the current one. The current save is first copied
+  to `saves/backups/savedata-<date>-<time>.dat`. The game keeps no play time
+  per box; the preview shows when the file was last saved (its card
+  directory entry's time).
+- Command line: `dw4_game --save-info FILE` prints the preview,
+  `dw4_game --import-save FILE[:BOXES] [--import-slot A|B]` imports (`BOXES`:
+  `all`, the default, `1,3` for the same boxes or `1>2,4>1` to move them)
+  into the save files (or `--card-dir DIR` / `--save-file FILE`), then
+  exits. `--save-file FILE` makes any run (also a test run) use that file
+  for slot A (`<name>_b<ext>` for slot B). Details: `docs/SAVES.md`.
 
 Save states: F5 saves and F9 loads state 1; the Settings tab has four
 slots, kept as `saves/states/state<N>.dw4state` next to the program. A state is the snapshot taken when

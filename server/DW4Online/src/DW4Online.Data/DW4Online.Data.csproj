@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- MariaDB access: MySqlConnector + Dapper repositories and the startup migrator. -->
+  <PropertyGroup>
+    <RootNamespace>DW4Online.Data</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="MySqlConnector" />
+    <PackageReference Include="Dapper" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\DW4Online.Domain\DW4Online.Domain.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- The migrations are part of the assembly, so a published service always carries the matching SQL. -->
+    <EmbeddedResource Include="..\..\sql\*.sql" LogicalName="sql/%(Filename)%(Extension)" />
+  </ItemGroup>
+</Project>
