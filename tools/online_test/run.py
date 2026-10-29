@@ -59,7 +59,7 @@ SCENARIOS = [
              [("sealed_together", ["a", "b"], "stag0102"), ("fingerprint_ticks", 10000)]),
     scenario("S2", "a leaves by an exit (fork), b follows later (join by catch-up), both change stage together",
              [client("a", [ex(1.0, "stag0101"), ex(10.0, "stag0102"), ex(32.0, "stag0201", group=True)]),
-              client("b", [ex(1.0, "stag0101"), ex(18.0, "stag0102")])], 45,
+              client("b", [ex(1.4, "stag0101"), ex(18.0, "stag0102")])], 45,
              [("decision", "a", "New", "stag0101"), ("fork_seen", "a"), ("decision", "b", "Join", "stag0102"),
               ("sealed_together", ["a", "b"], "stag0201")]),
     scenario("S3", "three clients: two joins mid-stage one at a time, then a common stage change",
@@ -166,8 +166,13 @@ def wait_port(port, seconds):
 
 def start_mysql(stack):
     port = stack.args.mysql_port
-    if port in used_ports():
+    probe = socket.socket()
+    try:
+        probe.bind(("127.0.0.1", port))  # a listener there (not just TIME_WAIT entries) refuses the bind
+    except OSError:
         raise RuntimeError("port %d is in use (another mysqld?): pass --mysql-port" % port)
+    finally:
+        probe.close()
     data = os.path.join(WORK, "mysql-data")
     pw_file = os.path.join(WORK, "mysql-root.txt")
     if not os.path.isdir(data):
