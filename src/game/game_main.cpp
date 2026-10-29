@@ -2262,10 +2262,14 @@ int run(const Options& options, dw4::game::Settings& settings) {
                             ImGui::TextDisabled("Anti-aliasing applies at the next start (now %dx).", samples > 1 ? samples : 0);
                             static const int sizes[][2] = {{1280, 960}, {1440, 1080}, {1920, 1440}, {1280, 720}, {1920, 1080}, {2560, 1440}};
                             if (!settings.fullscreen) {
+                                // The buttons wrap onto the next line instead of
+                                // running past the window's edge.
+                                const float line_end = ImGui::GetCursorScreenPos().x + ImGui::GetContentRegionAvail().x;
                                 ImGui::TextUnformatted("Window size:");
                                 for (const auto& size : sizes) {
-                                    ImGui::SameLine();
                                     const std::string label = std::to_string(size[0]) + "x" + std::to_string(size[1]);
+                                    const float button = ImGui::CalcTextSize(label.c_str()).x + ImGui::GetStyle().FramePadding.x * 2.0f;
+                                    if (ImGui::GetItemRectMax().x + ImGui::GetStyle().ItemSpacing.x + button <= line_end) ImGui::SameLine();
                                     if (ImGui::SmallButton(label.c_str())) {
                                         SDL_SetWindowSize(window, size[0], size[1]);
                                         settings.width = size[0];
