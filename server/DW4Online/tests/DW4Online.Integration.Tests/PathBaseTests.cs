@@ -37,6 +37,10 @@ public partial class PathBaseTests
 
         using var web = new WebBrowser(host, "/dw4online");
         AllBelowBase(await web.GetAsync("/"));
+        // The bare base without a trailing slash (what people type) is the home page too.
+        var bare = await host.Client().GetAsync("/dw4online");
+        Assert.Equal(HttpStatusCode.OK, bare.StatusCode);
+        Assert.Contains("href=\"/dw4online/css/site.css\"", await bare.Content.ReadAsStringAsync());
         Assert.Equal(HttpStatusCode.OK, (await web.GetAsync("/css/site.css")).Status);
 
         // Signed out, the account page sends the browser to the login below the base and back.
