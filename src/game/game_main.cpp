@@ -1,5 +1,6 @@
 // Native Digimon World 4 runtime: SDL3 window, OpenGL renderer and the
 // reconstructed engine in dw4::engine. Original data is read from --data.
+#include "dev_present.hpp"
 #include "gl_renderer.hpp"
 #include "interpolation.hpp"
 #include "mods.hpp"
@@ -521,6 +522,12 @@ int run(const Options& options, dw4::game::Settings& settings) {
     std::optional<dw4::engine::Engine> engine_storage;
     engine_storage.emplace(options.data);
     auto& engine = *engine_storage;
+    // Dev presentation tools of test runs (dev_present.hpp; off unless their
+    // DW4_DEV_* variables are set): a fixed virtual refresh with smooth
+    // motion, the window settings of a settings.ini copy, picture dumps.
+    const auto dev = options.smoke_frames ? dw4::game::DevPresent::from_environment() : dw4::game::DevPresent{};
+    const bool dev_window = options.smoke_frames && dev.window_settings();
+    if (dev_window) dev.apply(settings);
     // Steps of the engines a console reboot replaced (Engine::reboot_due):
     // the session's step count for the online frames and the sound output.
     std::uint64_t frame_base = 0;
@@ -595,6 +602,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
         if (loading_override) return *loading_override;
         if (options.smoke_frames) {
             const char* text = std::getenv("DW4_FAST_LOADING");
+            if (!text && !dev.settings_file.empty()) return settings.fast_loading;
             return text && std::atoi(text) != 0;
         }
         return settings.fast_loading;
@@ -658,7 +666,9 @@ int run(const Options& options, dw4::game::Settings& settings) {
         if (auto* sys = engine.get<dw4::engine::GameSystem>()) sys->direct_start = true;
     // Skip intro: boot straight to the title (stagIS10) instead of the
     // license, logos and opening movie.
-    std::string first_stage = !options.smoke_frames && settings.skip_intro && !options.stage_given ? std::string("stagis10") : options.stage;
+    std::string first_stage = (!options.smoke_frames || !dev.settings_file.empty()) && settings.skip_intro && !options.stage_given
+                                  ? std::string("stagis10")
+                                  : options.stage;
     // Online co-op: wait in the lobby, then start every machine the same way
     // with the shared cards.
     dw4::game::NetSession net;
@@ -785,7 +795,8 @@ int run(const Options& options, dw4::game::Settings& settings) {
     // combiners and recorded matrices advance there, so such a run simulates
     // the same frames as one that draws them.
     const bool draw = !options.smoke_frames || !options.screenshot.empty() || std::getenv("DW4_TEXTURE_PACK") ||
-                      std::getenv("DW4_DUMP_TEXTURES") || (std::getenv("DW4_RENDER") && std::atoi(std::getenv("DW4_RENDER")) != 0);
+                      std::getenv("DW4_DUMP_TEXTURES") || (std::getenv("DW4_RENDER") && std::atoi(std::getenv("DW4_RENDER")) != 0) ||
+                      dev.presenting() || !dev.dump_dir.empty();
     if (!SDL_Init(draw ? SDL_INIT_VIDEO | SDL_INIT_GAMEPAD : SDL_INIT_EVENTS)) throw std::runtime_error(SDL_GetError());
     SDL_Window* window = nullptr;
     SDL_GLContext context = nullptr;
@@ -800,14 +811,15 @@ int run(const Options& options, dw4::game::Settings& settings) {
         if (options.smoke_frames) flags |= SDL_WINDOW_HIDDEN;
         // Multisampling is chosen with the window (settings.ini msaa, read at
         // start-up); without support the window opens without it.
-        const int msaa = options.smoke_frames ? 0 : settings.msaa;
+        const int msaa = options.smoke_frames && !dev_window ? 0 : settings.msaa;
         SDL_GL_SetAttribute(SDL_GL_MULTISAMPLEBUFFERS, msaa > 1 ? 1 : 0);
         SDL_GL_SetAttribute(SDL_GL_MULTISAMPLESAMPLES, msaa > 1 ? msaa : 0);
         // Test runs ignore settings.ini: 1280x960 unless DW4_WINDOW=WxH, 4:3
         // unless DW4_WIDESCREEN=1.
-        int window_width = options.smoke_frames ? 1280 : settings.width;
-        int window_height = options.smoke_frames ? 960 : settings.height;
-        if (options.smoke_frames) {
+        // (DW4_DEV_SETTINGS / DW4_DEV_WINDOW: the settings' window.)
+        int window_width = options.smoke_frames && !dev_window ? 1280 : settings.width;
+        int window_height = options.smoke_frames && !dev_window ? 960 : settings.height;
+        if (options.smoke_frames && !dev_window) {
             if (const char* size = std::getenv("DW4_WINDOW")) std::sscanf(size, "%dx%d", &window_width, &window_height);
             settings.widescreen = std::getenv("DW4_WIDESCREEN") != nullptr;
         }
@@ -1147,6 +1159,11 @@ int run(const Options& options, dw4::game::Settings& settings) {
             }
             if (!unlocked.empty() || std::chrono::steady_clock::now() - last_profile_save > std::chrono::minutes(2)) save_profile();
         };
+        // DW4_DEV_DUMP: the presents of a test run, counted from its start.
+        std::optional<dw4::game::DevDumper> dev_dumper;
+        if (!dev.dump_dir.empty()) dev_dumper.emplace(dev);
+        int dev_present = 0;
+        if (dev.presenting()) present_interval = 1.0 / dev.hz;
         const int trace_player = std::getenv("DW4_TRACE_PLAYER") ? std::atoi(std::getenv("DW4_TRACE_PLAYER")) : 0;
         // DW4_TRACE_FINGERPRINT=N prints the state fingerprint every N frames:
         // two runs of the same script must print the same lines (determinism).
@@ -1539,9 +1556,10 @@ int run(const Options& options, dw4::game::Settings& settings) {
             // Fixed-step simulation at the NTSC field rate (59.94 Hz, one
             // original frame per field; Engine::step adds a field of time).
             const auto now = std::chrono::steady_clock::now();
-            accumulator += std::chrono::duration<double>(now - last).count();
+            // (DW4_DEV_PRESENT: every pass is one present of the virtual refresh.)
+            accumulator += dev.presenting() ? 1.0 / dev.hz : std::chrono::duration<double>(now - last).count();
             last = now;
-            int steps = options.smoke_frames ? (net.in_lobby() ? 0 : 1) : 0;
+            int steps = options.smoke_frames && !dev.presenting() ? (net.in_lobby() ? 0 : 1) : 0;
             if (options.smoke_frames && net.in_lobby()) std::this_thread::sleep_for(std::chrono::milliseconds(2));
             // DW4_MENU_HOST=port / DW4_MENU_JOIN=port (test runs): the Online
             // tab's Host / Join at frame 100, on loopback.
@@ -1587,7 +1605,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     message_until = std::chrono::steady_clock::now() + std::chrono::seconds(4);
                 }
             if (paused) accumulator = 0;
-            if (!options.smoke_frames && !paused) {
+            if ((!options.smoke_frames || dev.presenting()) && !paused) {
                 while (accumulator >= dw4::engine::kFieldSeconds && steps < 4) { accumulator -= dw4::engine::kFieldSeconds; ++steps; }
                 if (steps == 4) accumulator = 0;
             }
@@ -1982,6 +2000,10 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 labels.reset();
                 save_profile();
             }
+            // Smooth motion: the picture is drawn between the previous step
+            // and this one (MotionInterpolator::blend below).
+            const bool smooth_blending =
+                (!options.smoke_frames || dev.presenting()) && settings.smooth_motion && present_interval < 1.0 / 75.0;
             // A field the running update covers (Engine::held: the movie's
             // 30 Hz frames) shows the last update's picture again, without a
             // traversal (only a catch-up that left no draw list draws it).
@@ -1998,7 +2020,11 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     const int screen_width = height * 4 / 3;
                     engine.picture_widen = (float(screen_width) / float(height)) / (float(width) / float(height));
                 }
+                // Smooth motion draws between the previous step's camera and
+                // this one: the picture's cull keeps what is inside either.
+                engine.picture_previous_view = smooth_blending ? interpolator.previous_view() : std::nullopt;
                 engine.render(items, camera, clear, &shadow);
+                dw4::game::dev_hide(dev, items, shadow);
                 items_current = true;
             } else {
                 engine.traverse_scene();
@@ -2020,8 +2046,11 @@ int run(const Options& options, dw4::game::Settings& settings) {
             // The picture, the menu and the sound output.
             if (draw) {
                 if (!interpolator.captured()) interpolator.capture(items, camera, shadow);
-                if (!options.smoke_frames && settings.smooth_motion && present_interval < 1.0 / 75.0)
-                    interpolator.blend(items, camera, shadow, float(accumulator / dw4::engine::kFieldSeconds));
+                const float present_alpha = float(accumulator / dw4::engine::kFieldSeconds);
+                // (DW4_DEV_DUMP: what the blend did, for presents.csv.)
+                dw4::game::BlendReport blend_report;
+                const bool report_blend = dev_dumper && dev.dumping(frame);
+                if (smooth_blending) interpolator.blend(items, camera, shadow, present_alpha, report_blend ? &blend_report : nullptr);
                 renderer->set_shadow(&shadow);
                 int width = 0, height = 0;
                 SDL_GetWindowSizeInPixels(window, &width, &height);
@@ -2730,6 +2759,25 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     write_bmp(path, width, height, pixels);
                     std::cout << "screenshot " << path << " at frame " << frame << " stage " << engine.stage_name() << '\n';
                 }
+                // DW4_DEV_DUMP / DW4_DEV_IDS: every present of the window,
+                // then the same draw list as item numbers (not presented).
+                if (dev_dumper && dev.dumping(frame)) {
+                    std::vector<std::uint8_t> pixels(dev.pictures ? std::size_t(width * height * 4) : 0);
+                    if (dev.pictures) glReadPixels(0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+                    dev_dumper->picture(dev_present, frame, steps, present_alpha, smooth_blending ? &blend_report : nullptr,
+                                        engine.stage_name(), width, height, pixels);
+                    if (dev.ids && dev.pictures) {
+                        renderer->set_id_pass(true);
+                        renderer->render(items, camera, clear, screen, wide, width, height);
+                        renderer->set_id_pass(false);
+                        glReadPixels(0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+                        std::unordered_map<const void*, std::string> files;
+                        for (const auto& file : engine.loaded_files())
+                            if (file.document) files[file.document.get()] = file.logical_path;
+                        dev_dumper->ids(dev_present, width, height, pixels, items, files);
+                    }
+                }
+                ++dev_present;
                 // Keep about three frames of audio queued across frame hitches.
                 if (audio) {
                     const int queued = SDL_GetAudioStreamQueued(audio) / int(2 * sizeof(std::int16_t));
@@ -2741,6 +2789,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     const double seconds = std::chrono::duration<double>(now - last_present).count();
                     last_present = now;
                     present_interval += (std::min(seconds, 0.1) - present_interval) * 0.1;
+                    if (dev.presenting()) present_interval = 1.0 / dev.hz;
                     frame_times[frame_time_at++ % frame_times.size()] = float(seconds * 1000.0);
                 }
             }

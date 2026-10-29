@@ -167,6 +167,73 @@ void test_sequence_interpolation_methods() {
     check(close(n(0, 0), std::cos(angle)), "Quaternion LINEAR blends linearly and normalizes");
 }
 
+// TransformSequence::phase (presentation only): it changes exactly where
+// evaluate() jumps, so smooth motion does not blend across the jump.
+void test_sequence_phase() {
+    constexpr std::int64_t second = 1'000'000'000;
+    auto seq = line_sequence(second); // REPEAT, 0 -> 1 in one second
+    check(seq.phase(100'000'000) == seq.phase(900'000'000), "A linear pass keeps its phase");
+    check(seq.phase(second) == seq.phase(900'000'000), "The end itself still belongs to the pass");
+    check(seq.phase(1'100'000'000) != seq.phase(900'000'000), "REPEAT passing the end changes the phase");
+    check(seq.phase(1'100'000'000) == seq.phase(1'900'000'000), "The next pass keeps its own phase");
+    check(seq.phase(2'100'000'000) != seq.phase(1'900'000'000), "Every wrap changes the phase");
+    seq.play_mode = TransformSequence::bounce;
+    check(seq.phase(1'100'000'000) == seq.phase(900'000'000), "BOUNCE runs back continuously");
+    seq.play_mode = TransformSequence::clamp;
+    check(seq.phase(5 * second) == seq.phase(6 * second), "CLAMP holds one key");
+    check(seq.phase(1'100'000'000) == seq.phase(900'000'000), "CLAMP's end continues the pass (the last key held)");
+    auto late = line_sequence(second);
+    late.time_offset = 500'000'000;
+    check(late.phase(100'000'000) == late.phase(700'000'000), "Before the first key key 0 is held: no jump at the start");
+    auto loop = line_sequence(2 * second);
+    loop.play_mode = TransformSequence::loop;
+    check(loop.phase(1'500'000'000) == loop.phase(500'000'000), "LOOP's blend into key 0 is continuous");
+    check(loop.phase(2'100'000'000) == loop.phase(1'900'000'000), "LOOP passing the end ends in key 0: no phase change");
+    check(std::abs(loop.evaluate(2 * second)(3, 0) - loop.evaluate(0)(3, 0)) < 1e-6f, "(LOOP's end evaluates key 0)");
+    auto tight = line_sequence(second); // LOOP without time after the last key: the end is the last key
+    tight.play_mode = TransformSequence::loop;
+    check(!tight.wrap_continuous() && tight.phase(1'100'000'000) != tight.phase(900'000'000),
+          "A LOOP that ends at its last key jumps to key 0");
+    // REPEAT whose last key places as its first one (a full turn, a path
+    // back to its start) wraps continuously.
+    auto round = line_sequence(2 * second);
+    round.translations = {{0, 0, 0}, {1, 0, 0}, {0, 0, 0}};
+    round.times = {0, second, 2 * second};
+    check(round.wrap_continuous(), "Equal end keys: a continuous wrap");
+    check(round.phase(2'100'000'000) == round.phase(1'900'000'000), "REPEAT back to its start keeps the phase");
+    check(!line_sequence(second).wrap_continuous(), "A REPEAT line's ends differ: its wrap jumps");
+    // Uniform LOOP keys blend by the key spacing, not up to the end: only
+    // equal end keys make that wrap continuous.
+    auto uniform = loop;
+    uniform.uniform = true;
+    uniform.times = {second, second};
+    check(!uniform.wrap_continuous(), "A uniform LOOP with different end keys jumps at the wrap");
+    // A stepped channel jumps at every key.
+    auto stepped = line_sequence(2 * second);
+    stepped.translations = {{0, 0, 0}, {1, 0, 0}, {2, 0, 0}};
+    stepped.times = {0, second, 2 * second};
+    stepped.methods[0] = TransformSequence::none;
+    check(stepped.phase(100'000'000) == stepped.phase(900'000'000), "A held key keeps its phase");
+    check(stepped.phase(1'100'000'000) != stepped.phase(900'000'000), "A stepped key change changes the phase");
+    check(std::abs(stepped.evaluate(1'100'000'000)(3, 0) - stepped.evaluate(900'000'000)(3, 0)) > 0.5f,
+          "(the stepped channel jumps there)");
+    // The ring walls of stagML11 (QS, Y rotation 0 -> 11.25 degrees in 240
+    // frames, REPEAT): continuous for 240 frames, then a phase change.
+    TransformSequence ring;
+    ring.compressed = true;
+    const float s = std::sin(11.25f * 3.14159265f / 360.0f), c = std::cos(11.25f * 3.14159265f / 360.0f);
+    ring.rotations = {{0, 0, 0, 1}, {0, s, 0, c}};
+    ring.times = {0, 240 * frame};
+    ring.driven_channels = TransformSequence::quaternion;
+    ring.duration = 240 * frame;
+    ring.valid = true;
+    const std::int64_t start = 7 * frame;
+    int changes = 0;
+    for (int f = 1; f <= 720; ++f)
+        if (ring.phase(start + f * frame) != ring.phase(start + (f - 1) * frame)) ++changes;
+    check(changes == 3, "The ring's sequence changes its phase once every 240 frames");
+}
+
 void test_compressed_sequence() {
     TransformSequence seq;
     seq.compressed = true;
@@ -578,6 +645,199 @@ void test_frustum_cull_traversal() {
           "Without the picture's cull the original's cull still decides the updates");
 }
 
+// What smooth motion reads from the traversal (DrawItem::instance / phase)
+// and the picture's cull with the previous step's camera.
+void test_presentation_trail() {
+    // root -> place_a (x -20) -> shared; root -> place_b (x +20) -> spin -> shared:
+    // one geometry node placed twice (a DAG, as the stagML11 pillars).
+    Node root, place_a, place_b, spin, shared;
+    root.kind = NodeKind::group;
+    place_a.kind = place_b.kind = spin.kind = NodeKind::transform;
+    place_a.matrix = translation(-20, 0, -100);
+    place_b.matrix = translation(20, 0, -100);
+    auto seq = std::make_shared<TransformSequence>(line_sequence(1'000'000'000));
+    seq->translations = {{0, 0, 0}, {0, 1, 0}}; // REPEAT up by one: the wrap jumps back down
+    spin.sequence = seq;
+    shared.kind = NodeKind::geometry;
+    auto quad = std::make_shared<GeometryData>();
+    quad->valid = true;
+    shared.runtime_geometry = quad;
+    shared.has_bound = true;
+    shared.bound_min = {-1, -1, -1};
+    shared.bound_max = {1, 1, 1};
+    root.children = {&place_a, &place_b};
+    place_a.children = {&shared};
+    place_b.children = {&spin};
+    spin.children = {&shared};
+
+    TraversalContext context;
+    context.cull = true;
+    context.time = 500'000'000;
+    context.cull_camera.projection = perspective_horizontal(3.14159265f / 2.0f, 640.0f / 448.0f, 10.0f, 2000.0f);
+    context.camera = context.cull_camera;
+    std::vector<DrawItem> items;
+    context.output = &items;
+    traverse(&root, context);
+    check(items.size() == 2 && items[0].node == items[1].node && items[0].geometry == items[1].geometry,
+          "One node and geometry drawn at two placements");
+    check(items[0].instance != items[1].instance, "Each placement has its own instance");
+    const auto a = items[0].instance, b = items[1].instance;
+    const auto phase_a = items[0].phase, phase_b = items[1].phase;
+
+    // Looking right: placement a leaves the picture, b keeps its instance.
+    const Mat4 turned = look_at({0, 0, 0}, {0.85f, 0, -1}, {0, 1, 0}); // 40 degrees to the right
+    context.camera.view = context.cull_camera.view = turned;
+    items.clear();
+    traverse(&root, context);
+    check(items.size() == 1 && items[0].instance == b, "A placement keeps its instance when another one is culled");
+
+    // The sequence above placement b wraps: its phase changes, a's does not.
+    context.camera.view = context.cull_camera.view = Mat4{};
+    context.time = 1'500'000'000;
+    items.clear();
+    traverse(&root, context);
+    check(items.size() == 2 && items[0].instance == a && items[1].instance == b, "The instances are stable");
+    check(items[1].phase != phase_b, "A wrap above the item changes its phase");
+    check(items[0].phase == phase_a, "A placement without the sequence keeps its phase");
+
+    // Smooth motion: the previous step looked straight ahead, so placement a
+    // (outside this step's frustum) is still drawn, without updates below.
+    context.time = 500'000'000;
+    context.camera.view = context.cull_camera.view = turned;
+    context.picture_previous_view = Mat4{};
+    items.clear();
+    traverse(&root, context);
+    check(items.size() == 2 && items[0].instance == a, "The previous step's frustum keeps placement a in the picture");
+    context.picture_previous_view.reset();
+    items.clear();
+    traverse(&root, context);
+    check(items.size() == 1, "Without smooth motion only this step's frustum draws");
+}
+
+// A beModelCtrlNode2's node clock given an earlier origin (ACTION's
+// JOINTSET, a joint loop: the stagis10 menu background's turning parts
+// every 358 steps) takes back the sequence time of what its sequences
+// place, nothing else.
+void test_node_clock_phase() {
+    Node model, spin, turned, still;
+    model.kind = NodeKind::model_node;
+    spin.kind = NodeKind::transform;
+    spin.sequence = std::make_shared<TransformSequence>(line_sequence(4'000'000'000));
+    turned.kind = still.kind = NodeKind::geometry;
+    auto quad = std::make_shared<GeometryData>();
+    quad->valid = true;
+    turned.runtime_geometry = still.runtime_geometry = quad;
+    model.children = {&spin, &still};
+    spin.children = {&turned};
+    TraversalContext context;
+    context.time = 1'000'000'000;
+    std::vector<DrawItem> items;
+    context.output = &items;
+    traverse(&model, context);
+    check(items.size() == 2, "Both items are drawn");
+    const auto turned_time = items[0].sequence_time;
+    check(turned_time > 0 && items[1].sequence_time == 0, "Only the sequence's item has a sequence time");
+    context.time += frame;
+    items.clear();
+    traverse(&model, context);
+    check(items[0].sequence_time > turned_time, "A running node clock moves the sequence time on");
+    model.time_bias = -500'000'000; // a new origin: the sequence runs again from an earlier time
+    items.clear();
+    traverse(&model, context);
+    check(items[0].sequence_time < turned_time, "An earlier node clock origin takes the sequence time back");
+    check(items[1].sequence_time == 0, "Items no sequence places have none");
+}
+
+// A beMeterCtrlNode's children run at the meter's value (Node::fixed_time):
+// the meter falling is no clock going back, but a jump of its sequence
+// still changes the phase.
+void test_meter_phase() {
+    Node meter, bar, shape;
+    meter.kind = NodeKind::group;
+    bar.kind = NodeKind::transform;
+    auto seq = std::make_shared<TransformSequence>(line_sequence(4'000'000'000));
+    seq->translations = {{0, 0, 0}, {1, 0, 0}, {2, 0, 0}};
+    seq->times = {1'000'000'000, 2'000'000'000, 3'000'000'000};
+    bar.sequence = seq;
+    shape.kind = NodeKind::geometry;
+    auto quad = std::make_shared<GeometryData>();
+    quad->valid = true;
+    shape.runtime_geometry = quad;
+    meter.children = {&bar};
+    bar.children = {&shape};
+    TraversalContext context;
+    context.time = 10'000'000'000;
+    std::vector<DrawItem> items;
+    context.output = &items;
+    meter.fixed_time = 2'500'000'000;
+    traverse(&meter, context);
+    check(items.size() == 1, "The meter's bar is drawn");
+    const auto phase = items[0].phase;
+    const auto time = items[0].sequence_time;
+    meter.fixed_time = 2'450'000'000; // the meter falls
+    items.clear();
+    traverse(&meter, context);
+    check(items[0].sequence_time >= time, "A falling meter takes no sequence time back");
+    check(items[0].phase == phase, "A falling meter keeps the phase");
+    check(items[0].model(3, 0) < 1.5f, "(the bar moved with the meter)");
+    seq->methods[0] = TransformSequence::none; // a stepped meter
+    items.clear();
+    traverse(&meter, context);
+    const auto stepped = items[0].phase;
+    meter.fixed_time = 1'900'000'000; // into the key before
+    items.clear();
+    traverse(&meter, context);
+    check(items[0].phase != stepped, "A stepped meter's key change still changes the phase");
+    // A clock-driven placement of the same sequence going back is a jump.
+    meter.fixed_time.reset();
+    context.time = 2'500'000'000;
+    items.clear();
+    traverse(&meter, context);
+    const auto clocked = items[0].sequence_time;
+    context.time = 1'500'000'000;
+    items.clear();
+    traverse(&meter, context);
+    check(items[0].sequence_time < clocked, "Without the meter a clock going back takes the sequence time back");
+}
+
+void test_previous_camera_cull_state() {
+    // As test_frustum_cull_traversal: the subtree the previous camera saw is
+    // drawn, but its recorder and ParticleTimer stay as the original leaves them.
+    Node root, aside, aside_recorder, aside_timer, aside_geometry;
+    root.kind = NodeKind::group;
+    aside.kind = NodeKind::group;
+    aside_recorder.kind = NodeKind::transform_recorder;
+    aside_timer.kind = NodeKind::particle_timer;
+    aside_geometry.kind = NodeKind::geometry;
+    auto quad = std::make_shared<GeometryData>();
+    quad->valid = true;
+    aside_geometry.runtime_geometry = quad;
+    aside.has_bound = true;
+    aside.bound_min = {110, -10, -110};
+    aside.bound_max = {120, 10, -90};
+    root.children = {&aside};
+    aside.children = {&aside_recorder, &aside_timer, &aside_geometry};
+    aside_timer.timer.running = true;
+    aside_timer.timer.time = -1;
+    TraversalContext context;
+    context.cull = true;
+    context.time = 5000 * frame;
+    context.cull_camera.projection = perspective_horizontal(3.14159265f / 2.0f, 640.0f / 448.0f, 10.0f, 2000.0f);
+    context.camera = context.cull_camera;
+    context.picture_previous_view = look_at({0, 0, 0}, {0.85f, 0, -1}, {0, 1, 0}); // turned right: the box is ahead
+    std::vector<DrawItem> items;
+    context.output = &items;
+    traverse(&root, context);
+    check(items.size() == 1 && items[0].node == &aside_geometry, "The previous camera's frustum draws the subtree");
+    check(!aside_recorder.recorded.has_value() && aside_timer.timer.time == -1,
+          "The previous camera's extra subtree changes no state");
+    // The shadow casters (light view as the modelview base) ignore it.
+    context.modelview_base = Mat4{};
+    items.clear();
+    traverse(&root, context);
+    check(items.empty(), "Under a modelview base the previous camera does not apply");
+}
+
 void test_particle_records() {
     // y_messcr (the menu cursor ping): one 160-byte record, no Bec terms.
     std::vector<std::uint8_t> one(160, 1);
@@ -684,6 +944,7 @@ int main() {
         test_sequence_play_modes();
         test_sequence_interpolation_methods();
         test_compressed_sequence();
+        test_sequence_phase();
         test_horizontal_perspective();
         test_billboard_matrix();
         test_system_random();
@@ -693,6 +954,10 @@ int main() {
         test_frustum_cull_code();
         test_particle_timer_state();
         test_frustum_cull_traversal();
+        test_presentation_trail();
+        test_node_clock_phase();
+        test_meter_phase();
+        test_previous_camera_cull_state();
         test_recorder_modelview();
         test_particle_records();
         test_card_setting();

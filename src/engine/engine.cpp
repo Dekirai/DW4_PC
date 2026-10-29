@@ -2008,6 +2008,7 @@ TraversalContext Engine::frame_context(std::vector<DrawItem>* out, FrameCamera& 
     context.cull_camera = camera;
     context.picture_cull = !debug_camera;
     context.picture_widen = picture_widen;
+    if (!debug_camera) context.picture_previous_view = picture_previous_view;
     if (debug_camera) camera = *debug_camera;
     context.cache = &scenes_;
     context.time = time_;

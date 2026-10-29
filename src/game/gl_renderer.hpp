@@ -46,6 +46,11 @@ public:
     void set_shadow(const engine::ShadowFrame* shadow) { shadow_ = shadow; }
     // Drop all GPU resources (call when the engine changed stage).
     void clear_cache();
+    // Dev tool (DW4_DEV_IDS, dev_present.hpp): render() draws every item in
+    // a flat colour that encodes its position in the draw list (index + 1 in
+    // R, G, B), without blending, multisampling or shadow receivers; the
+    // alpha test still drops what the picture does not show.
+    void set_id_pass(bool on) { id_pass_ = on; }
     std::size_t texture_count() const { return textures_.size(); }
     std::size_t mesh_count() const { return meshes_.size(); }
     struct Impl;
@@ -83,6 +88,7 @@ private:
     int shadow_width_{}, shadow_height_{};
     bool shadow_ready_{};
     TexturePack* pack_{};
+    bool id_pass_{};
 };
 
 } // namespace dw4::game

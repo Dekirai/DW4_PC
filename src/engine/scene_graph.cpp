@@ -522,6 +522,79 @@ Mat4 TransformSequence::evaluate(std::int64_t time) const {
     return blend(j - 1, j, blend_ratio(at - times[j - 1], times[j] - times[j - 1]));
 }
 
+bool TransformSequence::wrap_continuous() const {
+    // LOOP blends the last key into key 0 between the last key and the end
+    // (reaching key 0 at the end itself), except with uniform keys, whose
+    // blend follows the key spacing instead of the end, and without time
+    // after the last key; REPEAT holds the last key up to the end and goes
+    // on at key 0. Otherwise the wrap is continuous when the two keys place
+    // alike (a full turn, a path back to its start).
+    if (times.empty()) return true;
+    if (play_mode == loop && !(uniform && !compressed)) {
+        const std::int64_t after_last = times.front() + duration - times.back();
+        if (after_last > 0 && blend_ratio(after_last, after_last) == 1.0f) return true;
+    }
+    const Mat4 a = key(0), b = key(times.size() - 1);
+    for (int i = 0; i < 3; ++i)
+        for (int j = 0; j < 3; ++j)
+            if (std::abs(a(i, j) - b(i, j)) > 1e-3f) return false;
+    for (int j = 0; j < 3; ++j)
+        if (std::abs(a(3, j) - b(3, j)) > 1e-2f) return false;
+    return true;
+}
+
+std::uint32_t TransformSequence::phase(std::int64_t time) const {
+    // The time arithmetic of evaluate() (which stays the only source of the
+    // matrix). Before the first key key 0 is held and after a CLAMP end the
+    // last key, both where the pass itself starts / ends: no jump there.
+    if (!valid || times.empty() || duration == 0) return 0;
+    const std::size_t count = times.size();
+    const std::int64_t t = compressed ? time : time - time_offset;
+    std::int64_t first = times.front(), last = times.back(), end = first + duration;
+    if (uniform && !compressed) {
+        first = 0;
+        last = times.front() * (static_cast<std::int64_t>(rotations.size()) - 1);
+        end = duration;
+    }
+    constexpr std::uint32_t kUnknownMode = 0xFFFFFFFFu;
+    std::uint32_t passes = 0;
+    std::int64_t at = t;
+    if (t > end) {
+        const std::int64_t whole = (t - first) / duration, rest = (t - first) % duration;
+        switch (play_mode) {
+        case bounce: at = (whole & 1) ? end - rest : first + rest; break; // runs back: continuous
+        case repeat:
+        case loop:
+            at = first + rest;
+            // (Only a wrap that jumps counts: LOOP's blend into key 0, a
+            // REPEAT whose end key places as its first one.)
+            if (!wrap_continuous()) passes = static_cast<std::uint32_t>(whole);
+            break;
+        case clamp: at = std::max(end, last + 1); break; // past the last key: it is held
+        default: return kUnknownMode;                     // key 0
+        }
+    } else if (t < first) {
+        at = first; // key 0, as the first key itself
+    }
+    const bool stepped = ((driven_channels & translation) && methods[0] == none) ||
+                         (((driven_channels & quaternion) || ((driven_channels & euler) && !compressed)) && methods[1] == none) ||
+                         ((driven_channels & scale) && !compressed && methods[2] == none);
+    if (!stepped) return passes * 0x9E3779B1u;
+    // The key a stepped channel holds (blend()'s first key).
+    std::uint32_t held = 0;
+    if (at > last) {
+        held = static_cast<std::uint32_t>(count - 1);
+    } else if (uniform && !compressed) {
+        const float step = coarse_time(times.front()), x = coarse_time(at);
+        if (step > 0.0f) held = static_cast<std::uint32_t>(std::max(0.0f, std::trunc(x / step)));
+    } else if (count >= 2) {
+        std::size_t j = 1;
+        while (j + 1 < count && times[j] < at) ++j;
+        held = static_cast<std::uint32_t>(j - 1);
+    }
+    return passes * 0x9E3779B1u + held + 1;
+}
+
 void Node::set_child_enabled(std::size_t index, bool enabled) {
     const std::size_t word = index / 32;
     if (word >= mask.size()) mask.resize(word + 1, 0);
@@ -1251,6 +1324,36 @@ struct ActorScope {
     const Node* pose_actor{}; // beCopyModelCtrl2: actors take this actor's pose
 };
 
+// What smooth motion reads from the traversal path (DrawItem::instance,
+// phase and texture_phase; presentation only, nothing else reads it).
+struct Trail {
+    std::uint64_t path{};
+    std::uint32_t phase{}, texture_phase{};
+    std::int64_t sequence_time{}, texture_sequence_time{};
+    // Below a beMeterCtrlNode (Node::fixed_time): the sequences run at the
+    // meter's value, not on a clock, so their time going back is the meter
+    // falling (continuously, MeterCtrlManager's steps) and adds nothing to
+    // the sequence times.
+    bool metered{};
+    static std::uint64_t mix(std::uint64_t x) { // (splitmix64's finalizer)
+        x ^= x >> 30;
+        x *= 0xBF58476D1CE4E5B9ull;
+        x ^= x >> 27;
+        x *= 0x94D049BB133111EBull;
+        return x ^ (x >> 31);
+    }
+    // A different value always gives a different result (odd multiplier).
+    static std::uint32_t combine(std::uint32_t phase, std::uint32_t value) { return phase * 0x01000193u ^ value; }
+    // The child in `slot` of the node this trail leads to.
+    Trail child(const Node* node, std::uint64_t slot) const {
+        Trail next = *this;
+        next.path = mix(path + 0x9E3779B97F4A7C15ull +
+                        mix(static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(node)) ^ (slot << 40)));
+        return next;
+    }
+};
+constexpr std::uint64_t kAppearanceSlot = 0x10000, kLodSlot = 0x20000;
+
 // The first actor below a model instance (through LOD and switches).
 Node* first_actor(Node* n, int depth) {
     if (!n || depth > 32) return nullptr;
@@ -1277,13 +1380,19 @@ struct CullScope {
     bool test{};          // the original still tests bounds here (its cull table is current)
     bool picture_test{};  // the picture's own cull still tests bounds here
     bool simulate = true; // the original traverses this subtree: clocks, combiners, caches and recorders advance
-    bool draw = true;     // draw items
+    bool draw = true;     // draw items (picture_in or previous_in)
+    // Smooth motion (TraversalContext::picture_previous_view): the picture's
+    // cull with the previous step's camera still tests here / the subtree
+    // may lie inside that frustum; picture_in: inside this step's picture.
+    bool previous_test{}, previous_in{};
+    bool picture_in = true;
 };
 
 // The running effect's particles as camera-facing quads at effect time
 // `elapsed` (draw items only; `state` takes the node's overrides as before
 // the quads).
-void particle_items(Node* n, TraversalContext& ctx, const Mat4& model, RenderState& state, std::int64_t elapsed) {
+void particle_items(Node* n, TraversalContext& ctx, const Mat4& model, RenderState& state, std::int64_t elapsed,
+                    const Trail& trail) {
     if (!n->particle_live || !ctx.output) return;
     const float seconds = float(double(elapsed) * 1e-9);
     const Mat4 view = state.view.value_or(ctx.camera.view);
@@ -1301,13 +1410,19 @@ void particle_items(Node* n, TraversalContext& ctx, const Mat4& model, RenderSta
         item.state = state;
         item.layer = ctx.layer;
         item.order = ctx.order++;
+        item.instance = trail.path;
+        item.phase = trail.phase;
+        item.texture_phase = trail.texture_phase;
+        item.sequence_time = trail.sequence_time;
+        item.texture_sequence_time = trail.texture_sequence_time;
         ctx.output->push_back(std::move(item));
     }
 }
 
 // A geometry node's draw items: its runtime geometry (text, numbers) or its
 // decoded geometry attributes, skinned with the actor's palette.
-void geometry_items(Node* n, TraversalContext& ctx, const Mat4& model, const RenderState& state, const ActorScope& scope) {
+void geometry_items(Node* n, TraversalContext& ctx, const Mat4& model, const RenderState& state, const ActorScope& scope,
+                    const Trail& trail) {
     if (!ctx.output) return;
     if (n->runtime_geometry) {
         if (!n->runtime_geometry->valid) return;
@@ -1322,6 +1437,11 @@ void geometry_items(Node* n, TraversalContext& ctx, const Mat4& model, const Ren
         }
         item.layer = ctx.layer;
         item.order = ctx.order++;
+        item.instance = trail.path;
+        item.phase = trail.phase;
+        item.texture_phase = trail.texture_phase;
+        item.sequence_time = trail.sequence_time;
+        item.texture_sequence_time = trail.texture_sequence_time;
         ctx.output->push_back(std::move(item));
         return;
     }
@@ -1336,6 +1456,11 @@ void geometry_items(Node* n, TraversalContext& ctx, const Mat4& model, const Ren
         item.layer = ctx.layer;
         item.order = ctx.order++;
         if (data->weight_count && scope.palette) item.palette = scope.palette;
+        item.instance = trail.path;
+        item.phase = trail.phase;
+        item.texture_phase = trail.texture_phase;
+        item.sequence_time = trail.sequence_time;
+        item.texture_sequence_time = trail.texture_sequence_time;
         ctx.output->push_back(std::move(item));
     }
 }
@@ -1371,7 +1496,7 @@ void apply_all(const std::vector<const Attribute*>& attributes, State& state, Ma
 // false when the traversal has nothing left to do below the node.
 template <class State>
 bool frustum_cull(const Node& n, const TraversalContext& ctx, const Mat4& model, const State& state, CullScope& cull) {
-    if (!n.has_bound || (!cull.test && !cull.picture_test)) return true;
+    if (!n.has_bound || (!cull.test && !cull.picture_test && !cull.previous_test)) return true;
     auto classify = [&](const Mat4& view, const Mat4& projection, bool& test) {
         const int code = frustum_cull_code(model * view, projection, n.bound_min, n.bound_max);
         if (code == 1 || code == 5) test = false;
@@ -1389,25 +1514,40 @@ bool frustum_cull(const Node& n, const TraversalContext& ctx, const Mat4& model,
         }
     }
     if constexpr (kPicture<State>) {
-        if (cull.picture_test) {
+        if (cull.picture_test || cull.previous_test) {
             Mat4 projection = state.projection ? *state.projection : ctx.projection_base ? *ctx.projection_base : ctx.camera.projection;
             // As GlRenderer::render: perspective projections without their
             // own viewport widen in x.
             const bool widened = ctx.picture_widen != 1.0f && projection(2, 3) != 0.0f && !state.viewport;
-            bool picture = original;
-            if (!tested || widened) {
-                const Mat4& view = state.view ? *state.view : ctx.modelview_base ? *ctx.modelview_base : ctx.camera.view;
-                if (widened)
-                    for (int r = 0; r < 4; ++r) projection(r, 0) *= ctx.picture_widen;
-                picture = classify(view, projection, cull.picture_test);
-            } else {
-                // The picture's camera and projection are the original's.
-                cull.picture_test = cull.test;
+            if (widened)
+                for (int r = 0; r < 4; ++r) projection(r, 0) *= ctx.picture_widen;
+            if (cull.picture_test) {
+                bool picture = original;
+                if (!tested || widened) {
+                    const Mat4& view = state.view ? *state.view : ctx.modelview_base ? *ctx.modelview_base : ctx.camera.view;
+                    picture = classify(view, projection, cull.picture_test);
+                } else {
+                    // The picture's camera and projection are the original's.
+                    cull.picture_test = cull.test;
+                }
+                if (!picture) {
+                    cull.picture_in = false;
+                    cull.picture_test = false;
+                }
             }
-            if (!picture) {
-                cull.draw = false;
-                cull.picture_test = false;
+            if (cull.picture_in && !cull.picture_test) {
+                cull.previous_test = false; // inside this step's picture: drawn either way
+            } else if (cull.previous_test) {
+                // Smooth motion: the previous step's camera, wherever the
+                // picture's view is the camera's (not a modelview attribute
+                // or the shadow casters' light view).
+                if (state.view || ctx.modelview_base || !ctx.picture_previous_view ||
+                    !classify(*ctx.picture_previous_view, projection, cull.previous_test)) {
+                    cull.previous_in = false;
+                    cull.previous_test = false;
+                }
             }
+            cull.draw = cull.picture_in || cull.previous_in;
         }
     }
     return cull.simulate || (kPicture<State> && cull.draw);
@@ -1424,7 +1564,7 @@ template <class State> void overrides(const Node& n, State& state) {
 // top back in the original's arithmetic use it (the transform recorders).
 template <class State>
 void visit(Node* n, TraversalContext& ctx, const Mat4& parent_model, const Mat4& parent_modelview, const State& parent_state,
-           std::int64_t time, const ActorScope& parent_scope, CullScope cull, int depth) {
+           std::int64_t time, const ActorScope& parent_scope, CullScope cull, const Trail& parent_trail, int depth) {
     constexpr bool picture = kPicture<State>;
     if (!n || n->hidden || depth > 256) return;
     // igFrustCullTraversal (801E9AB4): the bound in the parent's space, before
@@ -1434,6 +1574,13 @@ void visit(Node* n, TraversalContext& ctx, const Mat4& parent_model, const Mat4&
     Mat4 modelview = parent_modelview;
     State state = parent_state;
     ActorScope scope = parent_scope;
+    Trail trail = parent_trail;
+    // (Only the picture reads the trail: the children's trails, from the
+    // trail as the node's handler leaves it.)
+    const auto below = [&trail](const Node* child, std::uint64_t slot) {
+        if constexpr (picture) return trail.child(child, slot);
+        else return trail;
+    };
     // The camera the traversal's view-dependent choices follow (LOD,
     // billboards): the game's, so a debug camera changes no update below.
     const Mat4& camera_view = ctx.cull ? ctx.cull_camera.view : ctx.camera.view;
@@ -1478,9 +1625,20 @@ void visit(Node* n, TraversalContext& ctx, const Mat4& parent_model, const Mat4&
         if (n->runtime_matrix) local = *n->runtime_matrix * local;
         if (n->texture_transform) {
             // UV animation (icon atlases, scrolling surfaces).
-            if constexpr (picture) state.texture_matrix = state.texture_matrix ? local * *state.texture_matrix : local;
+            if constexpr (picture) {
+                state.texture_matrix = state.texture_matrix ? local * *state.texture_matrix : local;
+                if (n->sequence && n->sequence->valid) {
+                    trail.texture_phase = Trail::combine(trail.texture_phase, n->sequence->phase(time));
+                    if (!trail.metered) trail.texture_sequence_time += time;
+                }
+            }
             break;
         }
+        if constexpr (picture)
+            if (n->sequence && n->sequence->valid) {
+                trail.phase = Trail::combine(trail.phase, n->sequence->phase(time));
+                if (!trail.metered) trail.sequence_time += time;
+            }
         model = local * model;
         // 801DC85C: the new stack top = local * top (80128690, 0x801DC97C).
         modelview = gekko::multiply(local, modelview);
@@ -1494,7 +1652,7 @@ void visit(Node* n, TraversalContext& ctx, const Mat4& parent_model, const Mat4&
         const bool started = n->timer.time != -1;
         const std::int64_t elapsed = cull.simulate ? n->timer.visit(time) : n->timer.peek(time);
         if constexpr (picture)
-            if (cull.draw && (cull.simulate || started)) particle_items(n, ctx, model, state, elapsed);
+            if (cull.draw && (cull.simulate || started)) particle_items(n, ctx, model, state, elapsed, trail);
         break;
     }
     case NodeKind::transform_recorder:
@@ -1639,14 +1797,14 @@ void visit(Node* n, TraversalContext& ctx, const Mat4& parent_model, const Mat4&
             child = n->select_lod(distance_squared);
             std::tie(n->lod_child, n->lod_index, n->lod_lower, n->lod_upper) = kept;
         }
-        if (child) visit(child, ctx, model, modelview, state, time, scope, cull, depth + 1);
+        if (child) visit(child, ctx, model, modelview, state, time, scope, cull, below(child, kLodSlot), depth + 1);
         return;
     }
     case NodeKind::geometry:
         apply_all(n->attributes, state, model, modelview);
         overrides(*n, state);
         if constexpr (picture)
-            if (cull.draw) geometry_items(n, ctx, model, state, scope); // (no geometry decoding without)
+            if (cull.draw) geometry_items(n, ctx, model, state, scope, trail); // (no geometry decoding without)
         break;
     case NodeKind::actor: {
         if (ctx.actor_hook && cull.simulate) ctx.actor_hook(*n, model, ctx);
@@ -1655,8 +1813,11 @@ void visit(Node* n, TraversalContext& ctx, const Mat4& parent_model, const Mat4&
         actor.actor_model = n->actor_matrix * model;
         actor.actor_modelview = gekko::multiply(n->actor_matrix, modelview);
         actor.pose = ctx.actor_pose ? ctx.actor_pose(scope.pose_actor ? *scope.pose_actor : *n, cull.simulate) : nullptr;
-        for (auto* root : n->appearance_roots)
-            visit(root, ctx, actor.actor_model, actor.actor_modelview, state, time, actor, cull, depth + 1);
+        for (std::size_t r = 0; r < n->appearance_roots.size(); ++r) {
+            Node* root = n->appearance_roots[r];
+            visit(root, ctx, actor.actor_model, actor.actor_modelview, state, time, actor, cull, below(root, kAppearanceSlot + r),
+                  depth + 1);
+        }
         scope = actor;
         break;
     }
@@ -1667,7 +1828,9 @@ void visit(Node* n, TraversalContext& ctx, const Mat4& parent_model, const Mat4&
     overrides(*n, state);
     for (std::size_t i = 0; i < n->children.size(); ++i) {
         if (!n->child_enabled(i)) continue;
-        visit(n->children[i], ctx, model, modelview, state, n->fixed_time ? *n->fixed_time : time, scope, cull, depth + 1);
+        Trail child_trail = below(n->children[i], i);
+        if (n->fixed_time) child_trail.metered = true;
+        visit(n->children[i], ctx, model, modelview, state, n->fixed_time ? *n->fixed_time : time, scope, cull, child_trail, depth + 1);
     }
 }
 } // namespace
@@ -1678,6 +1841,8 @@ void traverse(Node* n, TraversalContext& ctx, const Mat4& parent_model, const Re
     CullScope cull;
     cull.test = ctx.cull;
     cull.picture_test = ctx.cull && ctx.picture_cull && ctx.output;
+    cull.previous_test = cull.picture_test && ctx.picture_previous_view && !ctx.modelview_base;
+    cull.previous_in = cull.previous_test;
     // The traversal's view (+0x64) and its inverse (+0xA4, 8012A92C), which
     // 801DB8F0 sets from the game's camera in 8040B8C0; the modelview stack
     // starts with the view (the shadow caster pass: the light's, which
@@ -1688,8 +1853,9 @@ void traverse(Node* n, TraversalContext& ctx, const Mat4& parent_model, const Re
     if (parent_model.m != Mat4{}.m) modelview = gekko::multiply(parent_model, modelview);
     // Without an output list nothing of the render state is needed but the
     // view and the projection.
-    if (ctx.output) visit(n, ctx, parent_model, modelview, parent_state, time, ActorScope{}, cull, 0);
-    else visit(n, ctx, parent_model, modelview, ViewOnly{parent_state.view, parent_state.projection}, time, ActorScope{}, cull, 0);
+    const Trail trail = ctx.output ? Trail{}.child(n, 0) : Trail{};
+    if (ctx.output) visit(n, ctx, parent_model, modelview, parent_state, time, ActorScope{}, cull, trail, 0);
+    else visit(n, ctx, parent_model, modelview, ViewOnly{parent_state.view, parent_state.projection}, time, ActorScope{}, cull, trail, 0);
 }
 
 void traverse(Node* root, TraversalContext& context) {
