@@ -369,11 +369,42 @@ The engine-wide temporary values fall into three classes. A data file
 census of the load-time reads in every stage a quest can reach (the first task
 of the membership lane).
 
-| Class | Values (starting list) | Online rule |
+| Class | Values (census of round S1) | Online rule |
 | --- | --- | --- |
-| context | quest flags 409, 376-381, 384-389, 424, 571-575; COUNTER 0 and 2; flag folder 11 | hashed from the arriving engine at the barrier (BARRIER) and on change (STATE); JOIN and co-arrival only between equal hashes |
-| personal | GATESTAGE and its point (read only by `stagML11_m1__start.lua` and `mate02.lua`, set by the gate disc and the quest boards) | kept aside in the member's carry at a join, written back into the member's engine at DISSOLVE, so a gate disc return never leads to a stranger's stage |
-| instance | every other temporary flag and COUNTER 3-6 | belong to the engine line: a fork keeps them on both sides, a joiner adopts the instance's (documented, not merged) |
+| context (22) | flags 63, 64, 71, 72, 376-381, 384-389, 409, 424, 508, 571; COUNTER 2; flag folder 11 | hashed from the arriving engine at the barrier (BARRIER) and on change (STATE); JOIN and co-arrival only between equal hashes |
+| personal (64) | GATESTAGE and its point (read only by `stagML11_m1__start.lua` and `mate02.lua`, set by the gate disc and the quest boards); the 63 flags only hub stages write and no joinable stage reads (lobby talks, shops and the quest boards' 572-575, the lobby's derived 900-937, 24-34, 85, 328, 336, 352, 364, 374, 375, 415-420, 475-480, 594, 611) | kept aside in the member's carry at a join, written back into the member's engine at DISSOLVE, so a gate disc return never leads to a stranger's stage and a lobby talk never comes back from another member's lobby |
+| instance (290) | every other temporary flag (the dungeon flags 100-299, lever and gate flags, ...) and COUNTER 0 and 3-6 (quest dungeon timers and counters, written and read only inside dngq1-3 and dngq7) | belong to the engine line: a fork keeps them on both sides, a joiner adopts the instance's (documented, not merged) |
+
+**Census (round S1, measured).** `tools/online/session_census.py` reads the
+7,168 decompiled scripts and writes `data/online/session_values.txt` (checked
+in; a ctest compares it with the engine's tables in `src/engine/online.cpp`).
+It takes the temporary values (the flags `gameStart.lua` clears minus the
+story set it restores, the never-merged 0, 503, 508, 611 and 900-937,
+COUNTER 0 and 2-6, folder 11, GATESTAGE) and classes them by where they are
+written and read: *context* = written by a hub program and read by a joinable
+stage (load or run time), or written by a hub program and a joinable stage
+and read back by a hub (409, 424, 571, 384, 388: the quest state the lobby's
+`start.lua` and `mate01.lua` read on the return); *personal* = GATESTAGE and
+every value no joinable stage writes or reads; *instance* = the rest. Against
+the starting list: 63 and 64 are new (a lobby talk in stagML12 / stagML13
+switches an event of stag0202 / stag0302 at its load); 71, 72 (stag0401's
+gate state the quest boards reset) and 508 (the lobby's "came through the
+lobby" flag every field's game over reads) are new; 572-575 move to
+personal (written and read only by the quest boards); COUNTER 0 moves to
+instance (only the quest dungeons that set it read it). COUNTER 2 stays
+context: the dungeons' first floors compare it at load (b1 / f1
+`start.lua`), and every field's game over script (`end_g_000bcaps.lua`)
+reads it to clear the right quest. 64 scripts index the dungeon flags
+100-299 by a computed number; all of them are instance values.
+
+**Personal values in the engine.** Online, the engine keeps every present
+slot's personal values (in the snapshot's online block): a joiner's and a
+co-arrival's come from their carry; SYSsetGateStage writes the engine-wide
+GATESTAGE and the personal GATESTAGE of every present slot (after a gate disc
+fork that is the leaving side); `carry_player` of the only present member
+reads the engine-wide values. DISSOLVE writes the own slot's personal values
+back into the engine-wide ones. The context hash treats an absent flag or
+counter like 0 (FLGisOn creates zero entries).
 
 Why: stag0401 is both the area-4 story field and the start of every board quest.
 `stagML11_m1__quest01..04.lua` set 409 plus 376-379, 571 and 424 and COUNTER 2;
