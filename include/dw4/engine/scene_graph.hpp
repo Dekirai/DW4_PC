@@ -153,10 +153,15 @@ struct TransformSequence {
     Mat4 evaluate(std::int64_t time) const;
     // Presentation only (DrawItem::phase): a value that changes exactly when
     // evaluate(time) jumps instead of moving on continuously: REPEAT / LOOP
-    // passing the end (the start key follows the end key at once), and with
-    // a stepped channel (_interpolationMethod NONE) every change of the key
-    // it holds. Time order is not assumed (a clock may restart).
+    // passing the end where the start does not continue the end
+    // (wrap_continuous), and with a stepped channel (_interpolationMethod
+    // NONE) every change of the key it holds. Time order is not assumed (a
+    // clock may restart).
     std::uint32_t phase(std::int64_t time) const;
+    // REPEAT / LOOP pass from the end to the start without a jump: LOOP's
+    // blend into key 0 (not with uniform keys), or a last key that places
+    // as key 0 (a full turn, a path back to its start).
+    bool wrap_continuous() const;
     // One key without interpolation (80208084; QS 801E32B8 outside the keys).
     Mat4 key(std::size_t index) const;
     // Keys i and j blended by alpha (80209578; QS 801E32B8).
@@ -327,10 +332,11 @@ struct DrawItem {
     // the sum of the times those sequences were evaluated at, only decreases
     // when a clock they run on jumped back (ACTION's JOINTSET or a joint loop
     // setting a beModelCtrlNode2 clock's origin, a beNodeAnim loop): the
-    // model matrix must not be blended across such a step.
+    // model matrix must not be blended across such a step. (Sequences below
+    // a beMeterCtrlNode run at the meter's value, which falls continuously:
+    // they add no sequence time.)
     // `texture_phase` / `texture_sequence_time` the same for the texture
-    // matrix (texture transform sequences; runtime texture matrices change
-    // the phase whenever they change).
+    // matrix (texture transform sequences).
     std::uint32_t phase{}, texture_phase{};
     std::int64_t sequence_time{}, texture_sequence_time{};
 };

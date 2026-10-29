@@ -522,9 +522,31 @@ Mat4 TransformSequence::evaluate(std::int64_t time) const {
     return blend(j - 1, j, blend_ratio(at - times[j - 1], times[j] - times[j - 1]));
 }
 
+bool TransformSequence::wrap_continuous() const {
+    // LOOP blends the last key into key 0 between the last key and the end
+    // (reaching key 0 at the end itself), except with uniform keys, whose
+    // blend follows the key spacing instead of the end, and without time
+    // after the last key; REPEAT holds the last key up to the end and goes
+    // on at key 0. Otherwise the wrap is continuous when the two keys place
+    // alike (a full turn, a path back to its start).
+    if (times.empty()) return true;
+    if (play_mode == loop && !(uniform && !compressed)) {
+        const std::int64_t after_last = times.front() + duration - times.back();
+        if (after_last > 0 && blend_ratio(after_last, after_last) == 1.0f) return true;
+    }
+    const Mat4 a = key(0), b = key(times.size() - 1);
+    for (int i = 0; i < 3; ++i)
+        for (int j = 0; j < 3; ++j)
+            if (std::abs(a(i, j) - b(i, j)) > 1e-3f) return false;
+    for (int j = 0; j < 3; ++j)
+        if (std::abs(a(3, j) - b(3, j)) > 1e-2f) return false;
+    return true;
+}
+
 std::uint32_t TransformSequence::phase(std::int64_t time) const {
     // The time arithmetic of evaluate() (which stays the only source of the
-    // matrix): before the first key and after a CLAMP end one key is held.
+    // matrix). Before the first key key 0 is held and after a CLAMP end the
+    // last key, both where the pass itself starts / ends: no jump there.
     if (!valid || times.empty() || duration == 0) return 0;
     const std::size_t count = times.size();
     const std::int64_t t = compressed ? time : time - time_offset;
@@ -534,7 +556,7 @@ std::uint32_t TransformSequence::phase(std::int64_t time) const {
         last = times.front() * (static_cast<std::int64_t>(rotations.size()) - 1);
         end = duration;
     }
-    constexpr std::uint32_t kBefore = 0xFFFFFFFFu, kHeld = 0xFFFFFFFEu;
+    constexpr std::uint32_t kUnknownMode = 0xFFFFFFFFu;
     std::uint32_t passes = 0;
     std::int64_t at = t;
     if (t > end) {
@@ -544,12 +566,15 @@ std::uint32_t TransformSequence::phase(std::int64_t time) const {
         case repeat:
         case loop:
             at = first + rest;
-            passes = static_cast<std::uint32_t>(whole);
+            // (Only a wrap that jumps counts: LOOP's blend into key 0, a
+            // REPEAT whose end key places as its first one.)
+            if (!wrap_continuous()) passes = static_cast<std::uint32_t>(whole);
             break;
-        default: return kHeld;
+        case clamp: at = std::max(end, last + 1); break; // past the last key: it is held
+        default: return kUnknownMode;                     // key 0
         }
     } else if (t < first) {
-        return kBefore;
+        at = first; // key 0, as the first key itself
     }
     const bool stepped = ((driven_channels & translation) && methods[0] == none) ||
                          (((driven_channels & quaternion) || ((driven_channels & euler) && !compressed)) && methods[1] == none) ||
@@ -1305,6 +1330,11 @@ struct Trail {
     std::uint64_t path{};
     std::uint32_t phase{}, texture_phase{};
     std::int64_t sequence_time{}, texture_sequence_time{};
+    // Below a beMeterCtrlNode (Node::fixed_time): the sequences run at the
+    // meter's value, not on a clock, so their time going back is the meter
+    // falling (continuously, MeterCtrlManager's steps) and adds nothing to
+    // the sequence times.
+    bool metered{};
     static std::uint64_t mix(std::uint64_t x) { // (splitmix64's finalizer)
         x ^= x >> 30;
         x *= 0xBF58476D1CE4E5B9ull;
@@ -1323,12 +1353,6 @@ struct Trail {
     }
 };
 constexpr std::uint64_t kAppearanceSlot = 0x10000, kLodSlot = 0x20000;
-
-std::uint32_t matrix_hash(const Mat4& m) {
-    std::uint32_t h = 0x811C9DC5u;
-    for (const float v : m.m) h = (h ^ std::bit_cast<std::uint32_t>(v)) * 0x01000193u;
-    return h;
-}
 
 // The first actor below a model instance (through LOD and switches).
 Node* first_actor(Node* n, int depth) {
@@ -1551,6 +1575,12 @@ void visit(Node* n, TraversalContext& ctx, const Mat4& parent_model, const Mat4&
     State state = parent_state;
     ActorScope scope = parent_scope;
     Trail trail = parent_trail;
+    // (Only the picture reads the trail: the children's trails, from the
+    // trail as the node's handler leaves it.)
+    const auto below = [&trail](const Node* child, std::uint64_t slot) {
+        if constexpr (picture) return trail.child(child, slot);
+        else return trail;
+    };
     // The camera the traversal's view-dependent choices follow (LOD,
     // billboards): the game's, so a debug camera changes no update below.
     const Mat4& camera_view = ctx.cull ? ctx.cull_camera.view : ctx.camera.view;
@@ -1599,17 +1629,15 @@ void visit(Node* n, TraversalContext& ctx, const Mat4& parent_model, const Mat4&
                 state.texture_matrix = state.texture_matrix ? local * *state.texture_matrix : local;
                 if (n->sequence && n->sequence->valid) {
                     trail.texture_phase = Trail::combine(trail.texture_phase, n->sequence->phase(time));
-                    trail.texture_sequence_time += time;
+                    if (!trail.metered) trail.texture_sequence_time += time;
                 }
-                // (A manager's matrix may step anywhere: any change is a jump.)
-                if (n->runtime_matrix) trail.texture_phase = Trail::combine(trail.texture_phase, matrix_hash(*n->runtime_matrix));
             }
             break;
         }
         if constexpr (picture)
             if (n->sequence && n->sequence->valid) {
                 trail.phase = Trail::combine(trail.phase, n->sequence->phase(time));
-                trail.sequence_time += time;
+                if (!trail.metered) trail.sequence_time += time;
             }
         model = local * model;
         // 801DC85C: the new stack top = local * top (80128690, 0x801DC97C).
@@ -1769,7 +1797,7 @@ void visit(Node* n, TraversalContext& ctx, const Mat4& parent_model, const Mat4&
             child = n->select_lod(distance_squared);
             std::tie(n->lod_child, n->lod_index, n->lod_lower, n->lod_upper) = kept;
         }
-        if (child) visit(child, ctx, model, modelview, state, time, scope, cull, trail.child(child, kLodSlot), depth + 1);
+        if (child) visit(child, ctx, model, modelview, state, time, scope, cull, below(child, kLodSlot), depth + 1);
         return;
     }
     case NodeKind::geometry:
@@ -1787,7 +1815,7 @@ void visit(Node* n, TraversalContext& ctx, const Mat4& parent_model, const Mat4&
         actor.pose = ctx.actor_pose ? ctx.actor_pose(scope.pose_actor ? *scope.pose_actor : *n, cull.simulate) : nullptr;
         for (std::size_t r = 0; r < n->appearance_roots.size(); ++r) {
             Node* root = n->appearance_roots[r];
-            visit(root, ctx, actor.actor_model, actor.actor_modelview, state, time, actor, cull, trail.child(root, kAppearanceSlot + r),
+            visit(root, ctx, actor.actor_model, actor.actor_modelview, state, time, actor, cull, below(root, kAppearanceSlot + r),
                   depth + 1);
         }
         scope = actor;
@@ -1800,8 +1828,9 @@ void visit(Node* n, TraversalContext& ctx, const Mat4& parent_model, const Mat4&
     overrides(*n, state);
     for (std::size_t i = 0; i < n->children.size(); ++i) {
         if (!n->child_enabled(i)) continue;
-        visit(n->children[i], ctx, model, modelview, state, n->fixed_time ? *n->fixed_time : time, scope, cull,
-              trail.child(n->children[i], i), depth + 1);
+        Trail child_trail = below(n->children[i], i);
+        if (n->fixed_time) child_trail.metered = true;
+        visit(n->children[i], ctx, model, modelview, state, n->fixed_time ? *n->fixed_time : time, scope, cull, child_trail, depth + 1);
     }
 }
 } // namespace
@@ -1824,7 +1853,7 @@ void traverse(Node* n, TraversalContext& ctx, const Mat4& parent_model, const Re
     if (parent_model.m != Mat4{}.m) modelview = gekko::multiply(parent_model, modelview);
     // Without an output list nothing of the render state is needed but the
     // view and the projection.
-    const Trail trail = Trail{}.child(n, 0);
+    const Trail trail = ctx.output ? Trail{}.child(n, 0) : Trail{};
     if (ctx.output) visit(n, ctx, parent_model, modelview, parent_state, time, ActorScope{}, cull, trail, 0);
     else visit(n, ctx, parent_model, modelview, ViewOnly{parent_state.view, parent_state.projection}, time, ActorScope{}, cull, trail, 0);
 }

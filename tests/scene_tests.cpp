@@ -181,10 +181,33 @@ void test_sequence_phase() {
     check(seq.phase(1'100'000'000) == seq.phase(900'000'000), "BOUNCE runs back continuously");
     seq.play_mode = TransformSequence::clamp;
     check(seq.phase(5 * second) == seq.phase(6 * second), "CLAMP holds one key");
+    check(seq.phase(1'100'000'000) == seq.phase(900'000'000), "CLAMP's end continues the pass (the last key held)");
+    auto late = line_sequence(second);
+    late.time_offset = 500'000'000;
+    check(late.phase(100'000'000) == late.phase(700'000'000), "Before the first key key 0 is held: no jump at the start");
     auto loop = line_sequence(2 * second);
     loop.play_mode = TransformSequence::loop;
     check(loop.phase(1'500'000'000) == loop.phase(500'000'000), "LOOP's blend into key 0 is continuous");
-    check(loop.phase(2'100'000'000) != loop.phase(1'900'000'000), "LOOP passing the end changes the phase");
+    check(loop.phase(2'100'000'000) == loop.phase(1'900'000'000), "LOOP passing the end ends in key 0: no phase change");
+    check(std::abs(loop.evaluate(2 * second)(3, 0) - loop.evaluate(0)(3, 0)) < 1e-6f, "(LOOP's end evaluates key 0)");
+    auto tight = line_sequence(second); // LOOP without time after the last key: the end is the last key
+    tight.play_mode = TransformSequence::loop;
+    check(!tight.wrap_continuous() && tight.phase(1'100'000'000) != tight.phase(900'000'000),
+          "A LOOP that ends at its last key jumps to key 0");
+    // REPEAT whose last key places as its first one (a full turn, a path
+    // back to its start) wraps continuously.
+    auto round = line_sequence(2 * second);
+    round.translations = {{0, 0, 0}, {1, 0, 0}, {0, 0, 0}};
+    round.times = {0, second, 2 * second};
+    check(round.wrap_continuous(), "Equal end keys: a continuous wrap");
+    check(round.phase(2'100'000'000) == round.phase(1'900'000'000), "REPEAT back to its start keeps the phase");
+    check(!line_sequence(second).wrap_continuous(), "A REPEAT line's ends differ: its wrap jumps");
+    // Uniform LOOP keys blend by the key spacing, not up to the end: only
+    // equal end keys make that wrap continuous.
+    auto uniform = loop;
+    uniform.uniform = true;
+    uniform.times = {second, second};
+    check(!uniform.wrap_continuous(), "A uniform LOOP with different end keys jumps at the wrap");
     // A stepped channel jumps at every key.
     auto stepped = line_sequence(2 * second);
     stepped.translations = {{0, 0, 0}, {1, 0, 0}, {2, 0, 0}};
@@ -633,7 +656,7 @@ void test_presentation_trail() {
     place_a.matrix = translation(-20, 0, -100);
     place_b.matrix = translation(20, 0, -100);
     auto seq = std::make_shared<TransformSequence>(line_sequence(1'000'000'000));
-    seq->translations = {{0, 0, 0}, {0, 0, 0}};
+    seq->translations = {{0, 0, 0}, {0, 1, 0}}; // REPEAT up by one: the wrap jumps back down
     spin.sequence = seq;
     shared.kind = NodeKind::geometry;
     auto quad = std::make_shared<GeometryData>();
@@ -723,6 +746,58 @@ void test_node_clock_phase() {
     traverse(&model, context);
     check(items[0].sequence_time < turned_time, "An earlier node clock origin takes the sequence time back");
     check(items[1].sequence_time == 0, "Items no sequence places have none");
+}
+
+// A beMeterCtrlNode's children run at the meter's value (Node::fixed_time):
+// the meter falling is no clock going back, but a jump of its sequence
+// still changes the phase.
+void test_meter_phase() {
+    Node meter, bar, shape;
+    meter.kind = NodeKind::group;
+    bar.kind = NodeKind::transform;
+    auto seq = std::make_shared<TransformSequence>(line_sequence(4'000'000'000));
+    seq->translations = {{0, 0, 0}, {1, 0, 0}, {2, 0, 0}};
+    seq->times = {1'000'000'000, 2'000'000'000, 3'000'000'000};
+    bar.sequence = seq;
+    shape.kind = NodeKind::geometry;
+    auto quad = std::make_shared<GeometryData>();
+    quad->valid = true;
+    shape.runtime_geometry = quad;
+    meter.children = {&bar};
+    bar.children = {&shape};
+    TraversalContext context;
+    context.time = 10'000'000'000;
+    std::vector<DrawItem> items;
+    context.output = &items;
+    meter.fixed_time = 2'500'000'000;
+    traverse(&meter, context);
+    check(items.size() == 1, "The meter's bar is drawn");
+    const auto phase = items[0].phase;
+    const auto time = items[0].sequence_time;
+    meter.fixed_time = 2'450'000'000; // the meter falls
+    items.clear();
+    traverse(&meter, context);
+    check(items[0].sequence_time >= time, "A falling meter takes no sequence time back");
+    check(items[0].phase == phase, "A falling meter keeps the phase");
+    check(items[0].model(3, 0) < 1.5f, "(the bar moved with the meter)");
+    seq->methods[0] = TransformSequence::none; // a stepped meter
+    items.clear();
+    traverse(&meter, context);
+    const auto stepped = items[0].phase;
+    meter.fixed_time = 1'900'000'000; // into the key before
+    items.clear();
+    traverse(&meter, context);
+    check(items[0].phase != stepped, "A stepped meter's key change still changes the phase");
+    // A clock-driven placement of the same sequence going back is a jump.
+    meter.fixed_time.reset();
+    context.time = 2'500'000'000;
+    items.clear();
+    traverse(&meter, context);
+    const auto clocked = items[0].sequence_time;
+    context.time = 1'500'000'000;
+    items.clear();
+    traverse(&meter, context);
+    check(items[0].sequence_time < clocked, "Without the meter a clock going back takes the sequence time back");
 }
 
 void test_previous_camera_cull_state() {
@@ -881,6 +956,7 @@ int main() {
         test_frustum_cull_traversal();
         test_presentation_trail();
         test_node_clock_phase();
+        test_meter_phase();
         test_previous_camera_cull_state();
         test_recorder_modelview();
         test_particle_records();
