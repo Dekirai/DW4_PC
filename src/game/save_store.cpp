@@ -21,7 +21,8 @@ std::filesystem::path legacy_save(const std::filesystem::path& legacy_root, int 
 // Copies the old GCI folder saves of `legacy_root` (Card A / Card B) into
 // the store's files; notes a copy, records an old save that could not be
 // copied as a problem and warns the player of it. Returns true when a copy
-// failed (an I/O error: worth another try at the next start).
+// failed (an I/O error, reading the old file included: worth another try at
+// the next start).
 bool migrate(const std::filesystem::path& legacy_root, const save::CardStore& store, SaveStoreChoice& choice) {
     bool retry = false;
     for (int slot = 0; slot < 2; ++slot) {
@@ -31,14 +32,14 @@ bool migrate(const std::filesystem::path& legacy_root, const save::CardStore& st
         if (result == save::Migration::no_source || result == save::Migration::target_exists) continue;
         std::string note = "Old save " + text_of(legacy) + ": " + save::migration_text(result);
         if (result == save::Migration::copied) note += " to " + text_of(store.save_path(slot)) + " (the old file stays)";
-        if (!error.empty()) note += " (" + error + ")";
+        if (!error.empty()) note += ": " + error; // (an error may end in its own bracket)
         const std::string card = slot == 0 ? "Card A" : "Card B";
         if (result == save::Migration::failed) {
             retry = true;
             note += "; the game tries again at the next start";
             choice.problems.push_back(note);
             choice.warnings.push_back("Your old save (" + card + ") could not be copied to " + text_of(store.save_path(slot)) +
-                                      (error.empty() ? "" : " (" + error + ")") +
+                                      (error.empty() ? "" : ": " + error) +
                                       ". The game tries again at the next start; until then this slot starts empty. "
                                       "F1 > Saves has the details.");
         } else if (result == save::Migration::invalid_source) {
@@ -61,7 +62,7 @@ void note_damaged_leftovers(const std::filesystem::path& legacy_root, const save
         std::error_code ec;
         if (!std::filesystem::is_regular_file(legacy, ec) || std::filesystem::exists(store.save_path(slot), ec)) continue;
         const auto bytes = save::read_whole_file(legacy);
-        if (bytes && save::valid_save_gci(*bytes)) continue;
+        if (!bytes || save::valid_save_gci(*bytes)) continue; // (unreadable now is not damaged)
         problems.push_back("Old save " + text_of(legacy) + ": " + save::migration_text(save::Migration::invalid_source) +
                            ", so it was not copied (the file stays where it is)");
     }

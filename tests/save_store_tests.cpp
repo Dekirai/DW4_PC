@@ -148,6 +148,11 @@ void migration_trouble(const fs::path& root) {
           "slot A: the copy failed, tried again: " + c.problems[0]);
     check(c.warnings[0].find("could not be copied") != std::string::npos && c.warnings[0].find("F1 > Saves") != std::string::npos,
           "the player hears of it: " + c.warnings[0]);
+    // The write error ends in its own bracket ("(is the disk full?)"): no
+    // bracket around it, so no "))".
+    check(c.problems[0].find("is the disk full?") != std::string::npos && c.problems[0].find("))") == std::string::npos &&
+              c.warnings[0].find("))") == std::string::npos,
+          "one closing bracket: " + c.problems[0] + " / " + c.warnings[0]);
     check(c.problems[1].find("damaged") != std::string::npos && c.warnings[1].find("is damaged") != std::string::npos,
           "slot B: damaged: " + c.problems[1]);
     check(!c.store.read(0), "this start has no save in slot A");

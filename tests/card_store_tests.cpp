@@ -15,6 +15,12 @@
 #include <string>
 #include <vector>
 
+#if defined(_WIN32)
+#define NOMINMAX
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#endif
+
 namespace {
 using namespace dw4;
 namespace fs = std::filesystem;
@@ -138,6 +144,20 @@ void migration(const fs::path& root) {
     write_raw(legacy, std::vector<std::uint8_t>(5000, 1));
     check(save::migrate_gci(legacy, target, &error) == save::Migration::invalid_source && !fs::exists(target), "a damaged old save");
     write_raw(legacy, make_gci(12));
+#if defined(_WIN32)
+    {
+        // Another program holds the old save open without sharing: it cannot
+        // be read now, which is a failed copy (tried again at the next start),
+        // not a damaged save.
+        HANDLE held = CreateFileW(legacy.c_str(), GENERIC_READ, 0, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        check(held != INVALID_HANDLE_VALUE, "hold the old save open");
+        error.clear();
+        const auto result = save::migrate_gci(legacy, target, &error);
+        CloseHandle(held);
+        check(result == save::Migration::failed && !fs::exists(target) && error.starts_with("cannot read "), "a locked old save: " + error);
+        error.clear();
+    }
+#endif
     check(save::migrate_gci(legacy, target, &error) == save::Migration::copied, "migration: " + error);
     check(fs::exists(legacy) && level_of(*save::read_whole_file(target)) == 12, "copied, the old file stays");
     check(*save::read_whole_file(target) == *save::read_whole_file(legacy), "a byte copy");

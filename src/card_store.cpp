@@ -192,7 +192,13 @@ Migration migrate_gci(const std::filesystem::path& legacy_gci, const std::filesy
     if (std::filesystem::exists(target, ec)) return Migration::target_exists;
     if (!std::filesystem::is_regular_file(legacy_gci, ec)) return Migration::no_source;
     const auto bytes = read_whole_file(legacy_gci);
-    if (!bytes || !valid_save_gci(*bytes)) return Migration::invalid_source;
+    if (!bytes) {
+        // Not damaged, only unreadable now (locked by another program, no
+        // permission): worth another try.
+        if (error) *error = "cannot read " + path_text(legacy_gci);
+        return Migration::failed;
+    }
+    if (!valid_save_gci(*bytes)) return Migration::invalid_source;
     if (!write_file_atomic(target, *bytes, false, error)) return Migration::failed;
     return Migration::copied;
 }
