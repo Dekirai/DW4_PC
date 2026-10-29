@@ -16,6 +16,6 @@ public sealed class LogoutModel(AccountService accounts) : PageModel
     {
         if (HttpContext.WebSession() is { } session) await accounts.LogoutAsync(session, ct);
         WebSessions.SignOut(HttpContext);
-        return Redirect("/");
+        return Redirect("~/");
     }
 }

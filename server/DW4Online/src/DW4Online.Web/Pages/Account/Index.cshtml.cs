@@ -27,6 +27,7 @@ public sealed class IndexModel(
     [BindProperty] public bool Public { get; set; }
     [BindProperty] public long SessionId { get; set; }
     [BindProperty] public bool ConfirmDelete { get; set; }
+    [BindProperty] public bool ConfirmCloudDelete { get; set; }
 
     public AccountView Account { get; private set; } = null!;
     public AuthenticatedSession Session { get; private set; } = null!;
@@ -96,6 +97,18 @@ public sealed class IndexModel(
         return File(data.Data, "application/octet-stream", data.Format == "gci" ? "savedata.dat" : "NDMWSaveData.bin");
     }
 
+    /// <summary>Deletes the cloud save and its kept revisions; needs the current password like the account deletion.</summary>
+    public async Task<IActionResult> OnPostDeleteCloudAsync(CancellationToken ct)
+    {
+        if (Blocked() is { } blocked) return blocked;
+        var session = HttpContext.WebSession()!;
+        if (!ConfirmCloudDelete) return await ShowAsync(ct, error: "Tick the box to confirm that the cloud save and its older revisions should be deleted.");
+        if (await accounts.ConfirmPasswordAsync(session.AccountId, CurrentPassword, HttpContext.Caller(), ct) is { Ok: false } wrong)
+            return await ShowAsync(ct, error: wrong.Error!.Message);
+        var done = await cloud.DeleteAsync(session.AccountId, HttpContext.Caller().Ip, ct);
+        return await ShowAsync(ct, done ? "Your cloud save and its older revisions were deleted." : null, done ? null : "There is no cloud save.");
+    }
+
     public async Task<IActionResult> OnPostDeleteAsync(CancellationToken ct)
     {
         var session = HttpContext.WebSession()!;
@@ -107,18 +120,18 @@ public sealed class IndexModel(
         var result = await accounts.DeleteAccountAsync(session, CurrentPassword, HttpContext.Caller(), ct);
         if (!result.Ok) return await ShowAsync(ct, error: result.Error!.Message);
         WebSessions.SignOut(HttpContext);
-        return Redirect("/?deleted=1");
+        return Redirect("~/?deleted=1");
     }
 
     // While a temporary password is in force only the password form works.
-    private IActionResult? Blocked() => HttpContext.WebSession() is { MustChangePassword: true } ? Redirect("/account") : null;
+    private IActionResult? Blocked() => HttpContext.WebSession() is { MustChangePassword: true } ? Redirect("~/account") : null;
 
     private async Task<IActionResult> ShowAsync(CancellationToken ct, string? message = null, string? error = null, bool mustChangeDone = false)
     {
         ModelState.Clear(); // the forms show the stored values, never the posted ones
         Session = HttpContext.WebSession()!;
         var account = await accounts.GetAccountAsync(Session.AccountId, ct);
-        if (account is null) return Redirect("/login");
+        if (account is null) return Redirect("~/login");
         Account = account;
         if (mustChangeDone && account.MustChangePassword) Account = account with { MustChangePassword = false };
         Sessions = await accounts.ListSessionsAsync(Session.AccountId, ct);

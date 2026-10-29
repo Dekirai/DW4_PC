@@ -25,8 +25,10 @@ public interface IAccountRepository
     /// Deletes everything tied to the account (sessions, online character, cloud save, unlocks, stats, times, room
     /// memberships, bans), removes its IP addresses from the audit log and anonymises the row (status deleted,
     /// user name <paramref name="anonymousName"/>, no e-mail, no usable password). Rooms it hosted keep their record.
+    /// Failed logins with an unknown name whose tag is <paramref name="nameTag"/> (the account's name) lose the tag and
+    /// their IP address too.
     /// </summary>
-    Task ScrubAsync(long id, string anonymousName, CancellationToken ct = default);
+    Task ScrubAsync(long id, string anonymousName, string? nameTag, CancellationToken ct = default);
     /// <summary>Accounts that are not deleted or banned (the website's home page).</summary>
     Task<long> CountActiveAsync(CancellationToken ct = default);
 }
@@ -42,6 +44,11 @@ public interface ISessionRepository
     /// <summary>Revokes the oldest live sessions beyond <paramref name="keep"/>.</summary>
     Task TrimAsync(long accountId, int keep, DateTime now, CancellationToken ct = default);
     Task<IReadOnlyList<SessionInfo>> ListAsync(long accountId, DateTime now, CancellationToken ct = default);
+    /// <summary>
+    /// True when the account created or used a session since <paramref name="since"/> that was created from this address
+    /// (IPv4 exactly, IPv6 by its /64 network).
+    /// </summary>
+    Task<bool> KnowsAddressAsync(long accountId, byte[] ip, DateTime since, CancellationToken ct = default);
 }
 
 public interface IAuditLog
