@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using DW4Online.Domain.Abstractions;
 using DW4Online.Domain.Services;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -170,6 +171,56 @@ public class AccountTests
         Assert.Equal("bad_credentials", await stranger.ProblemCode()); // the ban is not revealed without the password
     }
 
+    /// <summary>The review's cases: moderators can neither set 'deleted' nor reset passwords (account takeover).</summary>
+    [DbFact]
+    public async Task Moderators_cannot_delete_by_status_or_reset_passwords()
+    {
+        await using var host = await TestHost.StartAsync();
+        var (modToken, _, modId) = await host.RegisterAsync("ModA");
+        await host.RegisterAsync("ModB");
+        var (_, _, victimId) = await host.RegisterAsync("Victim");
+        var (adminToken, _, _) = await host.RegisterAsync("Chief");
+        var accounts = host.App.Services.GetRequiredService<AccountService>();
+        Assert.True((await accounts.AdminSetRoleAsync(null, "ModA", "moderator", new CallerInfo(null, "tests"))).Ok);
+        Assert.True((await accounts.AdminSetRoleAsync(null, "ModB", "moderator", new CallerInfo(null, "tests"))).Ok);
+        Assert.True((await accounts.AdminSetRoleAsync(null, "Chief", "admin", new CallerInfo(null, "tests"))).Ok);
+        var mod = host.Client(modToken);
+
+        var deleted = await mod.PostAsJsonAsync("/api/v1/admin/accounts/Victim/status", new { status = "deleted" });
+        Assert.Equal("invalid_status", await deleted.ProblemCode());
+        Assert.Equal(HttpStatusCode.Forbidden, (await mod.PostAsync("/api/v1/admin/accounts/Victim/reset-password", null)).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await mod.PostAsync("/api/v1/admin/accounts/ModB/reset-password", null)).StatusCode);
+        // The service refuses too (the website's path).
+        var modSession = new AuthenticatedSession { AccountId = modId, Role = "moderator", Username = "ModA" };
+        Assert.Equal("forbidden", (await accounts.AdminResetPasswordAsync(modSession, "Victim", new CallerInfo(null, "tests"))).Error!.Code);
+        // Locking still works for moderators, and an admin can still reset and delete.
+        Assert.Equal(HttpStatusCode.OK, (await mod.PostAsJsonAsync("/api/v1/admin/accounts/Victim/status", new { status = "locked" })).StatusCode);
+        var admin = host.Client(adminToken);
+        Assert.Equal(HttpStatusCode.OK, (await admin.PostAsync("/api/v1/admin/accounts/Victim/reset-password", null)).StatusCode);
+        Assert.Equal("invalid_status", await (await admin.PostAsJsonAsync("/api/v1/admin/accounts/Victim/status", new { status = "deleted" })).ProblemCode());
+        Assert.Equal(HttpStatusCode.NoContent, (await admin.DeleteAsync("/api/v1/admin/accounts/Victim")).StatusCode);
+        Assert.Equal("account_not_found", await (await admin.PostAsJsonAsync($"/api/v1/admin/accounts/deleted_{victimId}/status", new { status = "active" })).ProblemCode());
+    }
+
+    /// <summary>Wrong current passwords in confirmations count like failed logins: the lockout stops guessing.</summary>
+    [DbFact]
+    public async Task Password_confirmations_count_towards_the_lockout()
+    {
+        await using var host = await TestHost.StartAsync(new() { ["Accounts:MaxFailedLogins"] = "5" });
+        var (token, _, _) = await host.RegisterAsync("Guarded");
+        var client = host.Client(token);
+        for (var i = 0; i < 4; ++i)
+            Assert.Equal("wrong_password", await (await client.PutAsJsonAsync("/api/v1/me/email", new { currentPassword = "guess " + i, email = "x@example.com" })).ProblemCode());
+        Assert.Equal("wrong_password", await (await client.PostAsJsonAsync("/api/v1/online-character/reset", new { currentPassword = "guess 4" })).ProblemCode());
+        // Locked now: even the right password confirms nothing, and logins wait too.
+        Assert.Equal("account_locked_temporarily",
+            await (await client.PostAsJsonAsync("/api/v1/me/delete", new { currentPassword = "a decent password" })).ProblemCode());
+        Assert.Equal("account_locked_temporarily",
+            await (await host.Client().PostAsJsonAsync("/api/v1/auth/login", new { username = "Guarded", password = "a decent password" })).ProblemCode());
+        host.Clock.Advance(TimeSpan.FromMinutes(16));
+        Assert.Equal(HttpStatusCode.OK, (await client.PutAsJsonAsync("/api/v1/me/email", new { currentPassword = "a decent password", email = "x@example.com" })).StatusCode);
+    }
+
     [DbFact]
     public async Task Status_health_and_version_gate()
     {
@@ -179,7 +230,7 @@ public class AccountTests
         Assert.Equal(41, status.GetProperty("client").GetProperty("minimumProtocol").GetInt32());
         Assert.Equal("Hello", status.GetProperty("motd").GetString());
         var health = await (await host.Client().GetAsync("/health")).Json();
-        Assert.Equal(3, health.GetProperty("schema").GetInt32());
+        Assert.Equal(4, health.GetProperty("schema").GetInt32());
 
         await host.RegisterAsync("Oldie");
         var old = await host.Client().PostAsJsonAsync("/api/v1/auth/login", new { username = "Oldie", password = "a decent password", protocol = 40 });

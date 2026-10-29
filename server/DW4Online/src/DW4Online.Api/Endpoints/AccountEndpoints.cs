@@ -32,12 +32,12 @@ public static class AccountEndpoints
         me.MapPost("/delete", async (PasswordConfirmation r, AccountService accounts, RoomService rooms, HttpContext ctx) =>
         {
             var session = ctx.Session();
-            if (!await accounts.CheckPasswordAsync(session.AccountId, r.CurrentPassword, ctx.RequestAborted))
-                return ApiProblems.Of(StatusCodes.Status422UnprocessableEntity, "wrong_password", "The current password is wrong.");
             if (session.Role == Domain.Abstractions.Roles.Admin)
                 return ApiProblems.Of(StatusCodes.Status403Forbidden, "admin_account", "Admins cannot delete their own account; remove the admin role first.");
+            if (await accounts.ConfirmPasswordAsync(session.AccountId, r.CurrentPassword, ctx.Caller(), ctx.RequestAborted) is { Ok: false } wrong)
+                return ApiProblems.From(wrong.Error!);
             await rooms.RemoveAccountAsync(session.AccountId, ctx.RequestAborted);
-            return ApiProblems.Ok(await accounts.DeleteAccountAsync(session, r.CurrentPassword, ctx.RequestAborted), _ => Results.NoContent());
+            return ApiProblems.Ok(await accounts.DeleteAccountAsync(session, r.CurrentPassword, ctx.Caller(), ctx.RequestAborted), _ => Results.NoContent());
         }).RequireRateLimiting(RateLimitPolicies.AccountChange);
 
         me.MapGet("/sessions", async (AccountService accounts, HttpContext ctx) =>

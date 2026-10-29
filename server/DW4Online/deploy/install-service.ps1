@@ -59,15 +59,26 @@ Step "sc.exe failure ${ServiceName}: restart after 5 s, 30 s, 60 s" {
     & sc.exe failure $ServiceName reset= 86400 actions= restart/5000/restart/30000/restart/60000 | Out-Null
 }
 
-# The virtual account exists once the service does; grant it only what it needs.
-Step "icacls $config (Administrators, SYSTEM full; service read)" {
-    & icacls $config /inheritance:r /grant:r 'Administrators:(OI)(CI)F' 'SYSTEM:(OI)(CI)F' "${account}:(OI)(CI)R" | Out-Null
+# The virtual account exists once the service does; grant it only what it needs. Every folder drops the permissions
+# inherited from the drive (on a data volume Users may read and Authenticated Users may even change files) and keeps
+# only Administrators and SYSTEM (full control, by SID so localized Windows works too) plus the service's rights. The
+# root goes first: a folder created in it later (the next release's app, see DEPLOY.md step 8) inherits its rights.
+function Set-FolderAcl([string]$path, [string]$serviceRights, [string]$what) {
+    $grants = @('*S-1-5-32-544:(OI)(CI)F', '*S-1-5-18:(OI)(CI)F')
+    if ($serviceRights) { $grants += "${account}:(OI)(CI)$serviceRights" }
+    Step "icacls $path /inheritance:r ($what)" {
+        & icacls $path /inheritance:r /grant:r @grants | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "icacls $path failed ($LASTEXITCODE)" }
+    }
 }
+Set-FolderAcl $Root 'RX' 'Administrators, SYSTEM full; service read and execute'
+Set-FolderAcl $app 'RX' 'the executable: Administrators, SYSTEM full; service read and execute'
+Set-FolderAcl $config 'R' 'secrets: Administrators, SYSTEM full; service read'
 foreach ($dir in @('logs', 'acme', 'keys')) {
-    $path = Join-Path $Root $dir
-    Step "icacls $path (service modify)" { & icacls $path /grant "${account}:(OI)(CI)M" | Out-Null }
+    Set-FolderAcl (Join-Path $Root $dir) 'M' 'Administrators, SYSTEM full; service modify'
 }
-Step "icacls $app (service read and execute)" { & icacls $app /grant "${account}:(OI)(CI)RX" | Out-Null }
+# Full dumps with password hashes, e-mail addresses and cloud saves: the nightly backup runs as SYSTEM, nobody else reads them.
+Set-FolderAcl (Join-Path $Root 'backups') '' 'Administrators and SYSTEM only'
 
 $ports = @($HttpsPort, $RelayPort)
 if ($OpenPort80) { $ports += 80 }

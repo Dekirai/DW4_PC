@@ -67,8 +67,8 @@ public static class OnlineCharacterEndpoints
         group.MapPost("/reset", async (PasswordConfirmation r, OnlineCharacterService characters, AccountService accounts, HttpContext ctx) =>
         {
             var session = ctx.Session();
-            if (!await accounts.CheckPasswordAsync(session.AccountId, r.CurrentPassword, ctx.RequestAborted))
-                return ApiProblems.Of(StatusCodes.Status422UnprocessableEntity, "wrong_password", "The current password is wrong.");
+            if (await accounts.ConfirmPasswordAsync(session.AccountId, r.CurrentPassword, ctx.Caller(), ctx.RequestAborted) is { Ok: false } wrong)
+                return ApiProblems.From(wrong.Error!);
             return await characters.ResetAsync(session.AccountId, session.AccountId, ctx.IpBytes(), ctx.RequestAborted)
                 ? Results.NoContent()
                 : ApiProblems.Of(StatusCodes.Status404NotFound, "no_online_character", "There is no online character.");

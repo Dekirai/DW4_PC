@@ -131,17 +131,25 @@ public sealed class AccountService(
     public async Task<AccountView?> FindAccountAsync(string username, CancellationToken ct = default) =>
         await accounts.FindByUsernameAsync(UsernamePolicy.Normalize(username), ct) is { } a ? AccountView.From(a) : null;
 
-    /// <summary>True when the password is the account's current one (confirmation for destructive actions).</summary>
-    public async Task<bool> CheckPasswordAsync(long accountId, string? password, CancellationToken ct = default) =>
-        await accounts.GetAsync(accountId, ct) is { } a && hasher.Verify(a.PasswordHash, password ?? "") != PasswordCheck.Failed;
+    /// <summary>
+    /// The current password confirms a destructive action (account deletion, online character reset). A wrong one
+    /// counts like a failed login (the account locks after <see cref="AccountOptions.MaxFailedLogins"/>), and a locked
+    /// account confirms nothing until the lock ends.
+    /// </summary>
+    public async Task<Result<bool>> ConfirmPasswordAsync(long accountId, string? password, CallerInfo caller, CancellationToken ct = default)
+    {
+        var account = await accounts.GetAsync(accountId, ct);
+        if (account is null || account.Status == AccountStatus.Deleted) return DomainError.Unauthorized("unauthorized", "Not logged in.");
+        if (await ConfirmAsync(account, password, caller, ct) is { } wrong) return wrong;
+        return true;
+    }
 
     /// <summary>Changes the password; every other session of the account is revoked.</summary>
     public async Task<Result<bool>> ChangePasswordAsync(AuthenticatedSession session, string? currentPassword, string? newPassword, CallerInfo caller, CancellationToken ct = default)
     {
         var account = await accounts.GetAsync(session.AccountId, ct);
         if (account is null) return DomainError.Unauthorized("unauthorized", "Not logged in.");
-        if (hasher.Verify(account.PasswordHash, currentPassword ?? "") == PasswordCheck.Failed)
-            return DomainError.Invalid("wrong_password", "The current password is wrong.");
+        if (await ConfirmAsync(account, currentPassword, caller, ct) is { } wrong) return wrong;
         if (PasswordPolicy.Check(newPassword, account.Username) is { } error) return DomainError.Invalid("weak_password", error);
         var now = Clock.Now(time);
         await accounts.SetPasswordAsync(account.Id, hasher.Hash(newPassword!), false, now, ct);
@@ -180,8 +188,7 @@ public sealed class AccountService(
     {
         var account = await accounts.GetAsync(session.AccountId, ct);
         if (account is null) return DomainError.Unauthorized("unauthorized", "Not logged in.");
-        if (hasher.Verify(account.PasswordHash, currentPassword ?? "") == PasswordCheck.Failed)
-            return DomainError.Invalid("wrong_password", "The current password is wrong.");
+        if (await ConfirmAsync(account, currentPassword, caller, ct) is { } wrong) return wrong;
         var code = RecoveryCode.Create();
         var now = Clock.Now(time);
         await accounts.SetRecoveryCodeAsync(account.Id, RecoveryCode.Hash(RecoveryCode.Normalize(code)!), ct);
@@ -193,8 +200,7 @@ public sealed class AccountService(
     {
         var account = await accounts.GetAsync(session.AccountId, ct);
         if (account is null) return DomainError.Unauthorized("unauthorized", "Not logged in.");
-        if (hasher.Verify(account.PasswordHash, currentPassword ?? "") == PasswordCheck.Failed)
-            return DomainError.Invalid("wrong_password", "The current password is wrong.");
+        if (await ConfirmAsync(account, currentPassword, caller, ct) is { } wrong) return wrong;
         email = string.IsNullOrWhiteSpace(email) ? null : email.Trim();
         if (EmailPolicy.Check(email) is { } error) return DomainError.Invalid("invalid_email", error);
         if (!await accounts.SetEmailAsync(account.Id, email, ct))
@@ -217,12 +223,11 @@ public sealed class AccountService(
     /// anonymised as "deleted_&lt;id&gt;" so rooms and audit rows keep a valid reference. Take the account out of its
     /// room first (RoomService.RemoveAccountAsync).
     /// </summary>
-    public async Task<Result<bool>> DeleteAccountAsync(AuthenticatedSession session, string? currentPassword, CancellationToken ct = default)
+    public async Task<Result<bool>> DeleteAccountAsync(AuthenticatedSession session, string? currentPassword, CallerInfo caller, CancellationToken ct = default)
     {
         var account = await accounts.GetAsync(session.AccountId, ct);
         if (account is null || account.Status == AccountStatus.Deleted) return DomainError.Unauthorized("unauthorized", "Not logged in.");
-        if (hasher.Verify(account.PasswordHash, currentPassword ?? "") == PasswordCheck.Failed)
-            return DomainError.Invalid("wrong_password", "The current password is wrong.");
+        if (await ConfirmAsync(account, currentPassword, caller, ct) is { } wrong) return wrong;
         if (account.Role == Roles.Admin) return DomainError.Forbidden("admin_account", "Admins cannot delete their own account; remove the admin role first.");
         await ScrubAsync(account, null, ct);
         return true;
@@ -255,13 +260,15 @@ public sealed class AccountService(
     public async Task<IReadOnlyList<AccountView>> SearchAsync(string? query, int limit, CancellationToken ct = default) =>
         (await accounts.SearchAsync(query, Math.Clamp(limit, 1, 200), ct)).Select(AccountView.From).ToList();
 
-    /// <summary>Sets a temporary password the user must change; all sessions end. Returns the temporary password once.</summary>
+    /// <summary>
+    /// Admins only: sets a temporary password the user must change; all sessions end. Returns the temporary password
+    /// once. (Whoever learns it can take the account over, so moderators cannot do this.)
+    /// </summary>
     public async Task<Result<string>> AdminResetPasswordAsync(AuthenticatedSession actor, string username, CallerInfo caller, CancellationToken ct = default)
     {
+        if (actor.Role != Roles.Admin) return DomainError.Forbidden("forbidden", "Only admins can reset passwords.");
         var target = await accounts.FindByUsernameAsync(UsernamePolicy.Normalize(username), ct);
-        if (target is null) return DomainError.NotFound("account_not_found", "No such account.");
-        if (target.Role == Roles.Admin && actor.Role != Roles.Admin)
-            return DomainError.Forbidden("forbidden", "Only admins can reset an admin's password.");
+        if (target is null || target.Status == AccountStatus.Deleted) return DomainError.NotFound("account_not_found", "No such account.");
         var temporary = TemporaryPassword.Create();
         var now = Clock.Now(time);
         await accounts.SetPasswordAsync(target.Id, hasher.Hash(temporary), true, now, ct);
@@ -274,8 +281,11 @@ public sealed class AccountService(
     public async Task<Result<AccountView>> AdminSetStatusAsync(AuthenticatedSession actor, string username, string status, string? reason, CallerInfo caller, CancellationToken ct = default)
     {
         if (!AccountStatus.All.Contains(status)) return DomainError.Invalid("invalid_status", "Unknown account status.");
+        // Deleting is its own action (admins only, with the GDPR erasure): never a status change.
+        if (status == AccountStatus.Deleted)
+            return DomainError.Invalid("invalid_status", "Accounts are deleted with the delete action (admins only), not with a status.");
         var target = await accounts.FindByUsernameAsync(UsernamePolicy.Normalize(username), ct);
-        if (target is null) return DomainError.NotFound("account_not_found", "No such account.");
+        if (target is null || target.Status == AccountStatus.Deleted) return DomainError.NotFound("account_not_found", "No such account.");
         if (target.Id == actor.AccountId) return DomainError.Invalid("own_account", "Staff cannot change their own status.");
         if (target.Role != Roles.Player && actor.Role != Roles.Admin)
             return DomainError.Forbidden("forbidden", "Only admins can change staff accounts.");
@@ -323,6 +333,20 @@ public sealed class AccountService(
         }
         await accounts.RecordFailedLoginAsync(account.Id, failed, lockedUntil, ct);
         await audit.WriteAsync(lockedUntil is null ? evt : evt + "_locked", account.Id, null, caller.Ip, null, now, ct);
+    }
+
+    /// <summary>Null when the password is the account's current one; a wrong one counts as a failed attempt.</summary>
+    private async Task<DomainError?> ConfirmAsync(AccountRecord account, string? password, CallerInfo caller, CancellationToken ct)
+    {
+        var now = Clock.Now(time);
+        if (account.LockedUntil is { } until && until > now) return TemporarilyLocked(until, now);
+        if (hasher.Verify(account.PasswordHash, password ?? "") == PasswordCheck.Failed)
+        {
+            await FailedAttemptAsync(account, "confirm_fail", caller, now, ct);
+            return DomainError.Invalid("wrong_password", "The current password is wrong.");
+        }
+        if (account.FailedLogins > 0) await accounts.RecordFailedLoginAsync(account.Id, 0, null, ct);
+        return null;
     }
 
     private static DomainError? Blocked(AccountRecord account) => account.Status switch

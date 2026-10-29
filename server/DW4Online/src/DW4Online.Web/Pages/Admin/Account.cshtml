@@ -76,14 +76,14 @@
             </div>
         </form>
     </div>
-    <div class="panel">
-        <form method="post" asp-page-handler="ResetPassword">
-            <button type="submit" class="secondary">Set a temporary password</button>
-            <span class="muted small">Logs out every session of the account.</span>
-        </form>
-    </div>
     @if (Model.IsAdmin)
     {
+        <div class="panel">
+            <form method="post" asp-page-handler="ResetPassword">
+                <button type="submit" class="secondary">Set a temporary password</button>
+                <span class="muted small">Logs out every session of the account.</span>
+            </form>
+        </div>
         <div class="panel">
             <form method="post" asp-page-handler="Role" class="stack">
                 <label>Role

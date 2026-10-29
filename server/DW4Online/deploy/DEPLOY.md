@@ -94,8 +94,11 @@ SDK; the development PC currently only has the 11.0 RC SDK). The publish restore
    - `New-Service DW4Online` with the path `"...\app\DW4Online.Server.exe" --service --settings "...\config\appsettings.Production.json"`,
      then `sc.exe config DW4Online start= delayed-auto obj= "NT SERVICE\DW4Online"` (virtual account, no password) and
      restart-on-failure actions (5 s, 30 s, 60 s).
-   - ACLs: `config` readable only by Administrators, SYSTEM and `NT SERVICE\DW4Online`; `logs`, `acme` and `keys`
-     writable by the service; `app` read and execute.
+   - ACLs: every folder drops the permissions inherited from the drive and keeps only Administrators and SYSTEM (full
+     control) plus the service's rights: the root and `app` read and execute for `NT SERVICE\DW4Online` (a release
+     folder made later in the root inherits that), `config` read, `logs`, `acme` and `keys` modify, `backups` nothing
+     (only Administrators and SYSTEM: the dumps hold password hashes, e-mail addresses and cloud saves). Check with
+     `icacls D:\Dekirai\Servers\DW4Online\backups`.
    - Inbound firewall rules for TCP 443 and 52041 (and 80 with `-OpenPort80`), limited to the service executable.
 4. If the hoster has a network firewall in front of the server (for example a Hetzner firewall in the Robot / Cloud
    console), open TCP 443, 52041 (and 80 for certificate validation) there too.

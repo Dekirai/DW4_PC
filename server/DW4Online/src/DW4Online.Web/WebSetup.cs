@@ -72,6 +72,10 @@ public static class WebSetup
         {
             o.AddPolicy(WebPolicies.LoginLimit, ctx => PostWindow(ctx, "login", limits.WebLoginPerMinute, TimeSpan.FromMinutes(1)));
             o.AddPolicy(WebPolicies.RegisterLimit, ctx => PostWindow(ctx, "register", limits.WebRegisterPerHour, TimeSpan.FromHours(1)));
+            // The account page's forms confirm with the current password (PBKDF2): per account, like the API's
+            // account changes, so a signed-in browser cannot guess passwords or burn CPU at the global rate.
+            o.AddPolicy(WebPolicies.AccountChangeLimit, ctx => PostWindow(ctx, "account", limits.WebAccountChangesPerMinute, TimeSpan.FromMinutes(1),
+                ctx.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value));
             var api = o.OnRejected;
             o.OnRejected = async (context, ct) =>
             {
@@ -144,10 +148,11 @@ public static class WebSetup
     public static bool IsWebPath(PathString path) =>
         !path.StartsWithSegments("/api") && !path.StartsWithSegments("/health") && !path.StartsWithSegments("/.well-known");
 
-    private static RateLimitPartition<string> PostWindow(HttpContext ctx, string name, int permits, TimeSpan window)
+    /// <summary>A fixed window for POSTs, keyed by the account when one is given, else by the IP address.</summary>
+    private static RateLimitPartition<string> PostWindow(HttpContext ctx, string name, int permits, TimeSpan window, string? account = null)
     {
         if (!HttpMethods.IsPost(ctx.Request.Method)) return RateLimitPartition.GetNoLimiter("get");
-        var key = name + ":" + (ctx.Connection.RemoteIpAddress?.ToString() ?? "unknown");
+        var key = name + ":" + (account is { Length: > 0 } ? "acc:" + account : ctx.Connection.RemoteIpAddress?.ToString() ?? "unknown");
         return RateLimitPartition.GetFixedWindowLimiter(key, _ => new FixedWindowRateLimiterOptions
         {
             PermitLimit = Math.Max(1, permits),

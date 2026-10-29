@@ -89,7 +89,7 @@ and user secrets (Development) work as usual.
 | `OnlineCharacter` | `HistoryRevisions` (20), `Rules:MaxLevelsPerPlayHour` (120), `Rules:PlayTimeSlackSeconds` (600). |
 | `CloudSave` | `MaxBytes` (1 MiB), `HistoryRevisions` (5). |
 | `Play` | `RequireRoom` (true), `MinimumProtocol` / `CurrentProtocol` (netplay `kProtocol`), `MinimumClientVersion` / `CurrentClientVersion`. |
-| `RateLimits` | `GlobalPerMinute` 300 (per IP), `LoginPerMinute` 5 (per IP, login + recovery), `RegisterPerHour` 3 (per IP), `CharacterWritesPerMinute` 12, `CloudWritesPerHour` 6, `AchievementsPerMinute` 60, `AccountChangesPerMinute` 10, `StaffPerMinute` 60, `RoomCreatesPerMinute` 5, `RoomJoinsPerMinute` 20 (per account); `WebLoginPerMinute` 5 (website login + recovery), `WebRegisterPerHour` 3 (per IP, POSTs only). |
+| `RateLimits` | `GlobalPerMinute` 300 (per IP), `LoginPerMinute` 5 (per IP, login + recovery), `RegisterPerHour` 3 (per IP), `CharacterWritesPerMinute` 12, `CloudWritesPerHour` 6, `AchievementsPerMinute` 60, `AccountChangesPerMinute` 10, `StaffPerMinute` 60, `RoomCreatesPerMinute` 5, `RoomJoinsPerMinute` 20, `StageChangesPerMinute` 30 (stage enter + leave) (per account); `WebLoginPerMinute` 5 (website login + recovery), `WebRegisterPerHour` 3 (per IP, POSTs only), `WebAccountChangesPerMinute` 10 (per account, the account page's POSTs). |
 | `Rooms` | `MaxRooms` (200), `PlayersPerInstance` (4), `HeartbeatSeconds` (10), `MemberTimeoutSeconds` (35), `RoomsPerOwner` (1), `PasswordIterations` (20000, room passwords live in memory only), `SettingsMaxBytes` (4096), `RankedDataHashes` (empty = every data hash is ranked; decimal or 0x-hex). |
 | `Relay` | `Enabled` (true), `ListenAddress` (127.0.0.1; 0.0.0.0 on the server), `Port` (52041), `TicketKey` (secret, base64 32 bytes: `DW4Online.Server gen-relay-key`; required outside Development), timeouts and byte budgets. |
 | `Web` | `RequireHttps` (false; true on the server: website pages redirect to https, cookies are Secure), `Hsts`, `DataProtectionKeysDirectory` (anti-forgery keys, DPAPI-encrypted on Windows; empty = the service account's profile, `memory` = tests), `OperatorName` / `OperatorAddress` / `OperatorContact` (the controller on the privacy page), `DigimonNames` (display names by model, overriding the built-in list). |
@@ -157,9 +157,9 @@ Authenticated calls send `Authorization: Bearer dw4_<43 characters>`.
 | `POST /rooms/{code}/join` | token | `{password?, protocol, dataHash, clientVersion}`; repeating it is a heartbeat; the owner always gets back in (no password, place kept) and unfreezes the story; joining leaves any other room. 403 `wrong_room_password` / `kicked`, 409 `room_full` / `incompatible_room`. |
 | `POST /rooms/{code}/heartbeat` | token | Every `heartbeatSeconds` (10); silent members leave after 35 s. Answers the room state; 404 `not_in_room` means join again. |
 | `POST /rooms/{code}/leave`, `POST /rooms/{code}/kick` `{username}`, `DELETE /rooms/{code}` | token | Leave; the owner (present) kicks a guest (no re-join); the owner closes the room for everyone. |
-| `POST /rooms/{code}/stage` | token | `{stage, instance?}` -> `{instance, role (host / guest), ticket, channel, relay: {host, port}}`: joins an instance of that stage with a free place (the preferred one when given) or opens one hosted by the caller. 503 `relay_unavailable` when the relay is off. |
+| `POST /rooms/{code}/stage` | token | `{stage, instance?}` -> `{instance, role (host / guest), ticket, channel, relay: {host, port}}`: joins an instance of that stage with a free place (the preferred one when given) or opens one hosted by the caller. 503 `relay_unavailable` when the relay is off, 503 `relay_ticket_failed` when no ticket could be issued (nothing changes then). Instance numbers have up to 9 digits and wrap around. |
 | `POST /rooms/{code}/stage/leave` | token | Leave the stage instance; an instance host leaving ends the instance (its players enter again). |
-| `GET /admin/accounts?query=`, `POST /admin/accounts/{user}/reset-password`, `.../status`, `.../role` (admin), `.../online-character/history`, `.../online-character/restore/{rev}`, `.../online-character/reset` | staff | Moderation; every action is audited. A locked or banned account leaves its room. |
+| `GET /admin/accounts?query=`, `POST /admin/accounts/{user}/reset-password` (admin), `.../status`, `.../role` (admin), `.../online-character/history`, `.../online-character/restore/{rev}`, `.../online-character/reset` | staff | Moderation; every action is audited. A locked or banned account leaves its room. `status` is active, locked or banned (deleting is `DELETE /admin/accounts/{user}`, admins only); a temporary password only from an admin (whoever knows it owns the account). |
 | `POST /admin/accounts/{user}/achievements/{code}/flag` `{ruleset?, flagged}`, `DELETE /admin/accounts/{user}/achievements/{code}?ruleset=`, `POST /admin/rooms/{code}/close`, `DELETE /admin/accounts/{user}` (admin) | staff | Flag / unflag or revoke an unlock, close a room, erase an account on request. |
 | `GET /health` (no prefix) | - | `{status, schema}` or 503 when the database is unreachable. |
 
@@ -187,7 +187,10 @@ and stats must carry `protocol` / `clientVersion` (426 `client_outdated` otherwi
   1-999, HP / MP ranges, bits and bank bits 0-9,999,999, malformed device words, equipment indices) and a different
   character (UNIQUE) on update; plausibility findings (form levels dropping, forms lost, play time running backwards or
   faster than real time, unusually fast levelling) are **warnings**: the upload is stored, the character is flagged for
-  moderators and an audit row is written. Never auto-bans. Summary columns come from the server's decode.
+  moderators and an audit row is written. A new online character starts from zero, so its first upload's play time must
+  fit into the time since the account was made or since the last reset (`accounts.online_reset_at`), and the levelling
+  rate counts play time only as far as real time allows: an uploaded local or edited character gets flagged. Never
+  auto-bans. Summary columns come from the server's decode.
 - **Cloud save**: one per account, latest + 5 older revisions, at most 1 MiB, SHA-256 checked, GCI (90176 bytes) or raw
   (90112 bytes) with a valid copy; private (never on the website, never used for achievements).
 - **Rooms**: a name (1-32 characters), an optional password (4-64, PBKDF2 in memory only, never stored), 2..10
@@ -203,15 +206,20 @@ and stats must carry `protocol` / `clientVersion` (426 `client_outdated` otherwi
 - **Account deletion** (GDPR erasure, by the user with the password or by an admin on request): sessions, online
   character and its history, cloud save and history, unlocks, stats, best times, room memberships, bans and e-mail
   tokens are deleted, the account row stays as `deleted_<id>` (no e-mail, no usable password, status `deleted`) so
-  rooms and audit rows keep a valid reference, and the account's audit rows lose their IP addresses. The name prefix
+  rooms and audit rows keep a valid reference, and the account's audit rows lose their IP addresses. Every password
+  confirmation (password, e-mail, recovery code, deletion, online character reset) counts a wrong password like a
+  failed login, so the lockout applies. The name prefix
   `deleted_` cannot be registered.
 - **Achievements** (72 definitions, `sql/0002_achievements.sql`, stable ids 1-72): only online play counts, so unlocks
   and stats need a room the account is a member of (`Play:RequireRoom`); a report with cheats, rebalanced rates or a
   save-state load is refused (`unranked_*`), and so is an unranked room. Randomizer runs are their own ruleset (a second
   unlock row). `event` achievements come from the game (some checked against the goal or the room: speed limits on
   in-game time without loading, low-level limits, player counts capped by the room's members), `stat` achievements unlock
-  when `player_stats` reaches the goal (deltas bounded per minute since the last batch), `state` achievements unlock from
-  the server's decode of an online character upload (unlocks from a flagged upload are flagged too). Story clears with
+  when `player_stats` reaches the goal (deltas bounded per counter by a token bucket: the counter's rate per minute of
+  real time since the last batch - for the first batch since the account was made -, at most 15 minutes saved up; one
+  account's batches are checked one at a time), `state` achievements unlock
+  from the server's decode of an online character upload made in a ranked room the account is a member of (unlocks from
+  a flagged upload are flagged too). Event, stat and state unlocks all take the room's ruleset. Story clears with
   `evidence.igtMs` also keep the best time per board and ruleset (`speedrun_times`). Offline unlocks stay local in the game.
 
 ## Relay protocol (TCP, default port 52041)

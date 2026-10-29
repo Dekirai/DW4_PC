@@ -4,10 +4,15 @@ using DW4Online.Domain.Services;
 using DW4Online.Web.Auth;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
+using Microsoft.AspNetCore.RateLimiting;
 
 namespace DW4Online.Web.Pages.Account;
 
-/// <summary>Account settings: password, e-mail, recovery code, profile visibility, sessions, cloud save, deletion.</summary>
+/// <summary>
+/// Account settings: password, e-mail, recovery code, profile visibility, sessions, cloud save, deletion. Its POSTs are
+/// rate limited per account, and a wrong current password counts as a failed login (AccountService).
+/// </summary>
+[EnableRateLimiting(WebPolicies.AccountChangeLimit)]
 public sealed class IndexModel(
     AccountService accounts,
     OnlineCharacterService characters,
@@ -95,10 +100,11 @@ public sealed class IndexModel(
     {
         var session = HttpContext.WebSession()!;
         if (!ConfirmDelete) return await ShowAsync(ct, error: "Tick the box to confirm that the account and its data should be deleted.");
-        if (!await accounts.CheckPasswordAsync(session.AccountId, CurrentPassword, ct)) return await ShowAsync(ct, error: "The current password is wrong.");
         if (session.Role == Roles.Admin) return await ShowAsync(ct, error: "Admins cannot delete their own account; remove the admin role first.");
+        if (await accounts.ConfirmPasswordAsync(session.AccountId, CurrentPassword, HttpContext.Caller(), ct) is { Ok: false } wrong)
+            return await ShowAsync(ct, error: wrong.Error!.Message);
         await rooms.RemoveAccountAsync(session.AccountId, ct);
-        var result = await accounts.DeleteAccountAsync(session, CurrentPassword, ct);
+        var result = await accounts.DeleteAccountAsync(session, CurrentPassword, HttpContext.Caller(), ct);
         if (!result.Ok) return await ShowAsync(ct, error: result.Error!.Message);
         WebSessions.SignOut(HttpContext);
         return Redirect("/?deleted=1");

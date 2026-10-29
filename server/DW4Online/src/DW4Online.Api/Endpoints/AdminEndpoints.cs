@@ -21,10 +21,11 @@ public static class AdminEndpoints
         admin.MapGet("/accounts", async (string? query, int? limit, AccountService accounts, HttpContext ctx) =>
             Results.Ok(await accounts.SearchAsync(query, limit ?? 50, ctx.RequestAborted)));
 
-        // Returns a temporary password once; the user must change it at the next login. All sessions end.
+        // Admins only: returns a temporary password once; the user must change it at the next login. All sessions end.
         admin.MapPost("/accounts/{username}/reset-password", async (string username, AccountService accounts, HttpContext ctx) =>
             ApiProblems.Ok(await accounts.AdminResetPasswordAsync(ctx.Session(), username, ctx.Caller(), ctx.RequestAborted),
-                temporary => Results.Ok(new { temporaryPassword = temporary })));
+                temporary => Results.Ok(new { temporaryPassword = temporary })))
+            .RequireAuthorization(Policies.Admin);
 
         // A locked or banned account also leaves its room at once.
         admin.MapPost("/accounts/{username}/status", async (string username, StatusRequest r, AccountService accounts, RoomService rooms, HttpContext ctx) =>
