@@ -78,10 +78,11 @@ public static class RoomEndpoints
                 a.Ticket,
                 a.Channel,
                 relay = Relay(ctx, service, relay),
-            })));
+            }))).RequireRateLimiting(RateLimitPolicies.RoomStage);
 
         group.MapPost("/{code}/stage/leave", async (string code, RoomService rooms, HttpContext ctx) =>
-            ApiProblems.Ok(await rooms.LeaveStageAsync(ctx.Session().AccountId, code, ctx.RequestAborted), _ => Results.NoContent()));
+            ApiProblems.Ok(await rooms.LeaveStageAsync(ctx.Session().AccountId, code, ctx.RequestAborted), _ => Results.NoContent()))
+            .RequireRateLimiting(RateLimitPolicies.RoomStage);
     }
 
     /// <summary>Where clients reach the relay: Service:RelayHost (or the host name of the request) and its port.</summary>

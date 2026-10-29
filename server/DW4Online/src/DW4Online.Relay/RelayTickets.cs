@@ -49,7 +49,8 @@ public sealed partial class RelayTickets
     private readonly ConcurrentDictionary<string, DateTimeOffset> _used = new(StringComparer.Ordinal);
     private long _lastPurge;
 
-    [GeneratedRegex("^[A-Z0-9]{4,8}(-[0-9]{1,4})?$", RegexOptions.CultureInvariant)]
+    // The instance number has up to 9 digits (RoomService.MaxInstanceId).
+    [GeneratedRegex("^[A-Z0-9]{4,8}(-[0-9]{1,9})?$", RegexOptions.CultureInvariant)]
     private static partial Regex ChannelName();
 
     public RelayTickets(byte[] key, TimeSpan lifetime, TimeProvider time)
@@ -64,7 +65,7 @@ public sealed partial class RelayTickets
 
     public string Issue(string room, long account, string role)
     {
-        if (!IsChannel(room)) throw new ArgumentException("Channels are a room code (4-8 of A-Z 0-9) with an optional '-<instance>'.", nameof(room));
+        if (!IsChannel(room)) throw new ArgumentException("Channels are a room code (4-8 of A-Z 0-9) with an optional '-<instance>' (1-9 digits).", nameof(room));
         if (role is not (RelayRoles.Host or RelayRoles.Guest)) throw new ArgumentException("Unknown role.", nameof(role));
         var expires = _time.GetUtcNow().Add(_lifetime).ToUnixTimeSeconds();
         var nonce = Convert.ToHexString(RandomNumberGenerator.GetBytes(12));

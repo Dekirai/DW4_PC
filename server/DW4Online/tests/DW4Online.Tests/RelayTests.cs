@@ -157,6 +157,9 @@ public class RelayServerTests
         try
         {
             Assert.True(RelayTickets.IsChannel("ABC234-12"));
+            Assert.True(RelayTickets.IsChannel("ABC234-10000")); // past 9999 (the review's blocker)
+            Assert.True(RelayTickets.IsChannel("ABC234-999999999"));
+            Assert.False(RelayTickets.IsChannel("ABC234-1000000000"));
             Assert.False(RelayTickets.IsChannel("ABC234-"));
             Assert.False(RelayTickets.IsChannel("abc234-1"));
             var (hostControl, control) = await ConnectAsync(port, "DW4R1 HOST " + tickets.Issue("ABC234-1", 1, RelayRoles.Host));

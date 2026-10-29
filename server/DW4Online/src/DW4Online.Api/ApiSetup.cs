@@ -26,7 +26,8 @@ public sealed class RateLimitOptions
     public int StaffPerMinute { get; set; } = 60;            // per account
     public int RoomCreatesPerMinute { get; set; } = 5;       // per account
     public int RoomJoinsPerMinute { get; set; } = 20;        // per account: room passwords cannot be brute-forced
-    // WebLoginPerMinute / WebRegisterPerHour (website forms) are read by DW4Online.Web from the same section.
+    public int StageChangesPerMinute { get; set; } = 30;     // per account: entering and leaving stage instances (relay tickets)
+    // WebLoginPerMinute / WebRegisterPerHour / WebAccountChangesPerMinute (website forms) are read by DW4Online.Web from the same section.
 }
 
 public static class RateLimitPolicies
@@ -40,6 +41,7 @@ public static class RateLimitPolicies
     public const string Staff = "staff";
     public const string RoomCreate = "room-create";
     public const string RoomJoin = "room-join";
+    public const string RoomStage = "room-stage";
 }
 
 public static class ApiSetup
@@ -68,6 +70,7 @@ public static class ApiSetup
             o.AddPolicy(RateLimitPolicies.Staff, ctx => Window(AccountKey(ctx), limits.StaffPerMinute, TimeSpan.FromMinutes(1)));
             o.AddPolicy(RateLimitPolicies.RoomCreate, ctx => Window(AccountKey(ctx), limits.RoomCreatesPerMinute, TimeSpan.FromMinutes(1)));
             o.AddPolicy(RateLimitPolicies.RoomJoin, ctx => Window(AccountKey(ctx), limits.RoomJoinsPerMinute, TimeSpan.FromMinutes(1)));
+            o.AddPolicy(RateLimitPolicies.RoomStage, ctx => Window(AccountKey(ctx), limits.StageChangesPerMinute, TimeSpan.FromMinutes(1)));
             o.OnRejected = async (context, ct) =>
             {
                 var retry = context.Lease.TryGetMetadata(MetadataName.RetryAfter, out var after) ? (int)Math.Ceiling(after.TotalSeconds) : 60;

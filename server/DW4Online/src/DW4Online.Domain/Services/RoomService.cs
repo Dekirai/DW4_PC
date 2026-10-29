@@ -21,6 +21,8 @@ public sealed partial class RoomService
 {
     private const string CodeAlphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // no 0/O, 1/I
     private const int CodeLength = 6;
+    /// <summary>Instance numbers stay within 9 digits (the relay's channel names); they wrap around after that.</summary>
+    internal const int MaxInstanceId = 999_999_999;
 
     private readonly IRoomRepository _repository;
     private readonly IRelayGateway _relay;
@@ -364,30 +366,34 @@ public sealed partial class RoomService
             var current = member.Instance is { } id ? room.Instances.GetValueOrDefault(id) : null;
             if (current is not null && current.Stage == stage && current.HostId != accountId)
             {
+                // Reconnecting as a guest: a fresh ticket first, then the old connection goes.
+                if (Ticket(room, current.Id, StageRoles.Guest, accountId) is not { } again) return TicketFailed();
                 _relay.DropGuest(Channel(room, current), accountId);
-                return Assign(room, current, StageRoles.Guest, accountId);
+                return new StageAssignment(InstanceView(room, current), StageRoles.Guest, again, Channel(room, current.Id));
             }
-            if (current is not null) LeaveInstanceLocked(room, member);
 
+            // The target: an instance of that stage with a free place (never the one the caller leaves now), else a
+            // new one the caller hosts. The ticket is issued before anything changes, so a failure leaves the room
+            // as it was.
             var capacity = Math.Clamp(_options.PlayersPerInstance, 1, RoomLimits.MaxPlayers);
-            var target = preferredInstance is { } wanted && room.Instances.TryGetValue(wanted, out var p) && p.Stage == stage && p.Players.Count < capacity
+            bool Open(LiveInstance i) => i != current && i.Stage == stage && i.Players.Count < capacity;
+            var target = preferredInstance is { } wanted && room.Instances.TryGetValue(wanted, out var p) && Open(p)
                 ? p
-                : room.Instances.Values.FirstOrDefault(i => i.Stage == stage && i.Players.Count < capacity);
-            string role;
+                : room.Instances.Values.FirstOrDefault(Open);
+            var role = target is null ? StageRoles.Host : StageRoles.Guest;
+            var instanceId = target?.Id ?? NewInstanceId(room);
+            if (Ticket(room, instanceId, role, accountId) is not { } ticket) return TicketFailed();
+
+            if (current is not null) LeaveInstanceLocked(room, member);
             if (target is null)
             {
-                target = new LiveInstance(room.NextInstance++, stage, accountId, now);
-                target.Players.Add(accountId);
+                target = new LiveInstance(instanceId, stage, accountId, now);
                 room.Instances[target.Id] = target;
-                role = StageRoles.Host;
+                room.NextInstance = instanceId >= MaxInstanceId ? 1 : instanceId + 1;
             }
-            else
-            {
-                target.Players.Add(accountId);
-                role = StageRoles.Guest;
-            }
+            target.Players.Add(accountId);
             member.Instance = target.Id;
-            return Assign(room, target, role, accountId);
+            return new StageAssignment(InstanceView(room, target), role, ticket, Channel(room, target.Id));
         }
         finally
         {
@@ -516,13 +522,33 @@ public sealed partial class RoomService
 
     private int CountOwned(long accountId) => _rooms.Values.Count(r => r.OwnerId == accountId);
 
-    private StageAssignment Assign(LiveRoom room, LiveInstance instance, string role, long accountId)
+    /// <summary>A relay ticket for the instance's channel, or null when the relay refuses to issue one.</summary>
+    private string? Ticket(LiveRoom room, int instanceId, string role, long accountId)
     {
-        var channel = Channel(room, instance);
-        return new StageAssignment(InstanceView(room, instance), role, _relay.IssueTicket(channel, accountId, role == StageRoles.Host), channel);
+        try
+        {
+            return _relay.IssueTicket(Channel(room, instanceId), accountId, role == StageRoles.Host);
+        }
+        catch (ArgumentException)
+        {
+            return null;
+        }
     }
 
-    private static string Channel(LiveRoom room, LiveInstance instance) => room.Code + "-" + instance.Id.ToString(CultureInfo.InvariantCulture);
+    /// <summary>The next free instance number (1..<see cref="MaxInstanceId"/>, wrapping around past instances that still run).</summary>
+    private static int NewInstanceId(LiveRoom room)
+    {
+        var id = Math.Clamp(room.NextInstance, 1, MaxInstanceId);
+        while (room.Instances.ContainsKey(id)) id = id >= MaxInstanceId ? 1 : id + 1;
+        return id;
+    }
+
+    private static DomainError TicketFailed() =>
+        new(ErrorKind.Unavailable, "relay_ticket_failed", "The relay could not issue a ticket for this stage. Try again.");
+
+    private static string Channel(LiveRoom room, LiveInstance instance) => Channel(room, instance.Id);
+
+    private static string Channel(LiveRoom room, int instanceId) => room.Code + "-" + instanceId.ToString(CultureInfo.InvariantCulture);
 
     private RoomSummary Summary(LiveRoom r) => new(r.Code, r.Name, r.OwnerName, r.Members.ContainsKey(r.OwnerId), r.StoryFrozenAt is not null,
         r.StoryFrozenAt, r.PasswordHash is not null, r.Members.Count, r.MaxPlayers, r.Protocol, r.DataHash, r.ClientVersion, r.Ranked,

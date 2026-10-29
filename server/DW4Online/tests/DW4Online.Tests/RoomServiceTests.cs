@@ -3,6 +3,7 @@ using DW4Online.Domain;
 using DW4Online.Domain.Abstractions;
 using DW4Online.Domain.Rooms;
 using DW4Online.Domain.Services;
+using DW4Online.Relay;
 
 namespace DW4Online.Tests;
 
@@ -69,7 +70,15 @@ public class RoomServiceTests
         public List<string> Dropped { get; } = [];
         public event Action<string>? HostLost;
 
-        public string IssueTicket(string channel, long accountId, bool host) => $"{channel}|{accountId}|{(host ? "host" : "guest")}";
+        public bool FailTickets { get; set; }
+        public RelayTickets? Real { get; set; }
+
+        public string IssueTicket(string channel, long accountId, bool host)
+        {
+            if (FailTickets) throw new ArgumentException("no ticket");
+            if (Real is not null) return Real.Issue(channel, accountId, host ? RelayRoles.Host : RelayRoles.Guest);
+            return $"{channel}|{accountId}|{(host ? "host" : "guest")}";
+        }
         public void CloseChannel(string channel) => Closed.Add(channel);
         public void DropGuest(string channel, long accountId) => Dropped.Add($"{channel} {accountId}");
         public void LoseHost(string channel) => HostLost?.Invoke(channel);
@@ -283,6 +292,53 @@ public class RoomServiceTests
         Assert.Empty(await rooms.ListAsync());
         // The owner may open a new room now.
         Assert.True((await rooms.CreateAsync(1, "Owner", Create(), false)).Ok);
+    }
+
+    /// <summary>The review's blocker: a room keeps working past instance 9999 (real relay tickets).</summary>
+    [Fact]
+    public async Task Instance_numbers_keep_working_past_9999()
+    {
+        _relay.Real = new RelayTickets(new byte[32], TimeSpan.FromSeconds(60), _clock);
+        var rooms = Service();
+        var code = (await Ok(rooms.CreateAsync(1, "P1", Create(max: 4), false))).Room.Code;
+        await Ok(rooms.JoinAsync(2, "P2", code, null, 41, 77, null));
+        StageAssignment? last = null;
+        for (var i = 0; i < 10_050; ++i)
+        {
+            var result = await rooms.EnterStageAsync(1, code, i % 2 == 0 ? "stag0101" : "stag0102", null);
+            Assert.True(result.Ok, $"enter {i}: {result.Error?.Code}");
+            last = result.Value!;
+        }
+        Assert.Equal(10_050, last!.Instance.Id);
+        Assert.Equal($"{code}-10050", last.Channel);
+        var guest = await rooms.EnterStageAsync(2, code, "stag0102", null);
+        Assert.True(guest.Ok, guest.Error?.Code);
+        Assert.Equal((StageRoles.Guest, 10_050), (guest.Value!.Role, guest.Value.Instance.Id));
+        var state = await Ok(rooms.HeartbeatAsync(1, code));
+        Assert.Single(state.Instances); // every earlier instance ended when its host moved on
+    }
+
+    /// <summary>A ticket that cannot be issued changes nothing (no half-entered instance).</summary>
+    [Fact]
+    public async Task A_failed_ticket_leaves_the_room_as_it_was()
+    {
+        var rooms = Service();
+        var code = (await Ok(rooms.CreateAsync(1, "P1", Create(max: 4), false))).Room.Code;
+        await Ok(rooms.JoinAsync(2, "P2", code, null, 41, 77, null));
+        var hosted = (await rooms.EnterStageAsync(1, code, "stag0101", null)).Value!;
+        await rooms.EnterStageAsync(2, code, "stag0101", null);
+        _relay.FailTickets = true;
+        Assert.Equal("relay_ticket_failed", (await rooms.EnterStageAsync(2, code, "stag0102", null)).Error!.Code);
+        Assert.Equal("relay_ticket_failed", (await rooms.EnterStageAsync(1, code, "stag0102", null)).Error!.Code);
+        Assert.Equal("relay_ticket_failed", (await rooms.EnterStageAsync(2, code, "stag0101", null)).Error!.Code);
+        var state = await Ok(rooms.HeartbeatAsync(2, code));
+        Assert.Equal(hosted.Instance.Id, state.You.Instance); // still in its instance
+        Assert.Single(state.Instances);
+        Assert.Equal(2, state.Instances[0].Players.Count);
+        Assert.Empty(_relay.Closed);
+        _relay.FailTickets = false;
+        var moved = (await rooms.EnterStageAsync(1, code, "stag0102", null)).Value!;
+        Assert.Equal((StageRoles.Host, hosted.Instance.Id + 1), (moved.Role, moved.Instance.Id));
     }
 
     [Fact]
