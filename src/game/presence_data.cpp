@@ -114,14 +114,14 @@ constexpr AreaInfo kAreas[] = {
 };
 
 constexpr AreaImage kImages[] = {
-    {"logo", "Title / menus", "ldagis11"},
+    {"logo", "Title / menus", "ldagis11"}, // the title logo; the card only when it is missing
     {"area_home_server", "Home Server", "ldagml12"},
     {"area_practice", "Practice Stage", "ldag0001"},
-    {"area_death_valley", "Death Valley", "ldag0101"},
+    {"area_death_valley", "Death Valley", "ldag0102"},
     {"area_death_valley_dungeons", "Death Valley dungeons", "ldg101b1"},
     {"area_dry_land", "Dry Land", "ldag0201"},
     {"area_dry_land_dungeons", "Dry Land dungeons", "ldg205b1"},
-    {"area_venom_jungle", "Venom Jungle", "ldag0302"},
+    {"area_venom_jungle", "Venom Jungle", "ldag0301"},
     {"area_venom_jungle_dungeons", "Venom Jungle dungeons", "ldg309b1"},
     {"area_machine_pit", "Machine Pit", "ldag0401"},
     {"area_machine_pit_dungeons", "Machine Pit dungeons", "ldg411b1"},

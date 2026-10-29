@@ -417,8 +417,12 @@ keys the game uses:
 
 `dw4_game.exe --data <game data> --export-presence-art <folder>` writes
 suggested 512x512 pictures for the `logo` and `area_*` keys from your own
-copy's loading cards (they stay on your PC; upload them under their file
-names). The form pictures are yours to choose. Test runs talk to Discord only
+copy of the game (they stay on your PC; upload them under their file names):
+`logo` is the title logo on a transparent square, each `area_*` picture the
+stage picture its loading card shows in the middle of the loading screen
+(the card's picture quad, without the name and "Now Loading" strip of the
+same texture), upright, centre-cropped to a square without stretching. The
+form pictures are yours to choose. Test runs talk to Discord only
 through `DW4_DISCORD_PIPE=<pipe name prefix>` (a test pipe, never the real
 app; `dw4_presence_tests --serve <pipe> <seconds>` is a fake Discord that
 prints what it gets) and `DW4_TRACE_PRESENCE=1` prints each new activity.
