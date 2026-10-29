@@ -9,13 +9,23 @@
 // ends or the setting goes off. Without a running Discord, or with the
 // setting off, nothing is sent and nothing waits: the game never blocks on
 // it. No authorization is asked for (Rich Presence needs none).
+//
+// Every pipe transfer is overlapped and bounded: a read or write that does
+// not finish within io_timeout (a hung client, a client that sends a header
+// but not its payload, one that stops reading) is cancelled and the
+// connection dropped; a client that does not answer the handshake within
+// reply_timeout is dropped too. Such a misbehaving client is tried again
+// after retry_interval, doubling for each further failure up to
+// max_retry_interval (a client that is simply not running is looked for
+// every retry_interval). Quitting never waits on Discord: the destructor
+// wakes the worker out of any transfer, gives the CLOSE frame close_timeout
+// and waits at most shutdown_timeout on top for the worker; a worker still
+// busy then is left to finish alone (it owns everything it uses).
 #include "discord_ipc.hpp"
 
 #include <chrono>
-#include <condition_variable>
 #include <cstdint>
 #include <memory>
-#include <mutex>
 #include <optional>
 #include <string>
 #include <thread>
@@ -27,15 +37,19 @@ public:
     struct Options {
         // Pipe names: \\?\pipe\<prefix>0 .. <prefix>9 (tests use their own).
         std::string pipe_prefix = "discord-ipc-";
-        std::chrono::milliseconds retry_interval{15000}; // looking for the client again
-        std::chrono::milliseconds send_interval{15000};  // between two SET_ACTIVITY
-        std::chrono::milliseconds reply_timeout{3000};   // for the READY answer
+        std::chrono::milliseconds retry_interval{15000};      // looking for the client again
+        std::chrono::milliseconds max_retry_interval{240000}; // backoff cap after failures
+        std::chrono::milliseconds send_interval{15000};       // between two SET_ACTIVITY
+        std::chrono::milliseconds reply_timeout{3000};        // for the READY answer
+        std::chrono::milliseconds io_timeout{2000};           // one frame's read or write
+        std::chrono::milliseconds close_timeout{250};         // the CLOSE frame when quitting
+        std::chrono::milliseconds shutdown_timeout{1000};     // the destructor's wait for the worker on top
     };
     enum class State { off, searching, connected, rejected };
 
     DiscordPresence();
     explicit DiscordPresence(Options options);
-    ~DiscordPresence(); // sends CLOSE when connected, then joins the worker
+    ~DiscordPresence(); // sends CLOSE when connected; waits at most close_timeout + shutdown_timeout
     DiscordPresence(const DiscordPresence&) = delete;
     DiscordPresence& operator=(const DiscordPresence&) = delete;
 
@@ -47,36 +61,17 @@ public:
     State state() const;
     std::string status() const;        // a line for the F1 menu
     std::uint64_t sent_count() const;  // SET_ACTIVITY frames sent so far
+    // Connection attempts in a row that ended in a failure (0 after a READY
+    // or while no client runs); the wait before the next attempt doubles
+    // with each.
+    int failures() const;
+    // Connections that reached READY so far.
+    std::uint64_t connections() const;
+
+    struct Shared; // the worker's state, owned together with the worker thread
 
 private:
-    struct Pipe;
-    void run();
-    bool connect(std::unique_lock<std::mutex>& lock);
-    void disconnect(bool say_close);
-    bool write_frame(discord::Opcode opcode, const std::string& json);
-    // Reads waiting frames (answers PING); false when the pipe broke or the
-    // client closed it.
-    bool drain();
-
-    Options options_;
-    mutable std::mutex mutex_;
-    std::condition_variable wake_;
-    bool stop_{};
-    bool enabled_{};
-    std::string client_id_;
-    std::uint64_t config_serial_{};
-    std::optional<discord::Activity> wanted_;
-    std::uint64_t wanted_serial_{};
-    State state_ = State::off;
-    std::string status_ = "Off";
-    std::uint64_t sent_{};
-    // Worker only.
-    std::unique_ptr<Pipe> pipe_;
-    std::uint64_t connected_config_{};
-    std::uint64_t sent_serial_{};
-    bool sent_any_{};
-    std::uint64_t nonce_{};
-    std::chrono::steady_clock::time_point next_attempt_{}, last_send_{};
+    std::shared_ptr<Shared> shared_;
     std::thread worker_;
 };
 

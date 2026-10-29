@@ -380,7 +380,11 @@ to the app over its local pipe (`discord-ipc-0..9`) with its own small client
 (no SDK, no DLL, no login): it looks for the app again every 15 seconds (a
 Discord started later is found), sends a change at most every 15 seconds and
 says goodbye when the game ends. Without Discord, or with the setting off,
-nothing happens. Settings: the Settings tab's *Discord Rich Presence* box, or
+nothing happens. A Discord that hangs never holds the game: every message to
+or from it must get through within 2 seconds (the handshake's answer within
+3), otherwise the connection is dropped and tried again after 15 seconds,
+then 30, 60 ... up to 4 minutes while it keeps failing (the Settings tab shows
+why), and quitting waits at most about a second for it. Settings: the Settings tab's *Discord Rich Presence* box, or
 
 ```ini
 [discord]
@@ -424,8 +428,11 @@ stage picture its loading card shows in the middle of the loading screen
 same texture), upright, centre-cropped to a square without stretching. The
 form pictures are yours to choose. Test runs talk to Discord only
 through `DW4_DISCORD_PIPE=<pipe name prefix>` (a test pipe, never the real
-app; `dw4_presence_tests --serve <pipe> <seconds>` is a fake Discord that
-prints what it gets) and `DW4_TRACE_PRESENCE=1` prints each new activity.
+app; `dw4_presence_tests --serve <pipe> <seconds> [ready|silent|header|deaf]`
+is a fake Discord that prints what it gets: `ready` answers like Discord,
+`silent` takes the connection and never answers, `header` answers with a
+message header and no payload, `deaf` answers and then stops reading) and
+`DW4_TRACE_PRESENCE=1` prints each new activity.
 
 ### Achievements
 
