@@ -29,10 +29,13 @@ public class RoomServiceTests
             return Task.FromResult(++_next);
         }
 
+        /// <summary>While set, adding a member waits for it (a database that hangs).</summary>
+        public TaskCompletionSource? Hang { get; set; }
+
         public Task AddMemberAsync(long roomId, long accountId, int slot, DateTime now, CancellationToken ct = default)
         {
             Calls.Add($"add {roomId} {accountId} {slot}");
-            return Task.CompletedTask;
+            return Hang?.Task ?? Task.CompletedTask;
         }
 
         public Task RemoveMemberAsync(long roomId, long accountId, string reason, DateTime now, CancellationToken ct = default)
@@ -72,16 +75,32 @@ public class RoomServiceTests
 
         public bool FailTickets { get; set; }
         public RelayTickets? Real { get; set; }
+        public List<RelayTicket> Issued { get; } = [];
+        public List<string> Open { get; } = [];
+        public Func<RelayAdmission, ValueTask<bool>>? Admission { get; private set; }
 
-        public string IssueTicket(string channel, long accountId, bool host)
+        public RelayTicket IssueTicket(string channel, long accountId, bool host)
         {
             if (FailTickets) throw new ArgumentException("no ticket");
-            if (Real is not null) return Real.Issue(channel, accountId, host ? RelayRoles.Host : RelayRoles.Guest);
-            return $"{channel}|{accountId}|{(host ? "host" : "guest")}";
+            var ticket = Real?.Create(channel, accountId, host ? RelayRoles.Host : RelayRoles.Guest) is { } real
+                ? new RelayTicket(real.Ticket, real.Nonce)
+                : new RelayTicket($"{channel}|{accountId}|{(host ? "host" : "guest")}", "n" + (Issued.Count + 1));
+            Issued.Add(ticket);
+            return ticket;
         }
-        public void CloseChannel(string channel) => Closed.Add(channel);
+        public void CloseChannel(string channel)
+        {
+            Closed.Add(channel);
+            Open.Remove(channel);
+        }
         public void DropGuest(string channel, long accountId) => Dropped.Add($"{channel} {accountId}");
+        public IReadOnlyCollection<string> OpenChannels => Open.ToList();
+        public void SetAdmission(Func<RelayAdmission, ValueTask<bool>> check) => Admission = check;
         public void LoseHost(string channel) => HostLost?.Invoke(channel);
+
+        /// <summary>What the relay asks the room service before it accepts a ticket of this assignment.</summary>
+        public ValueTask<bool> Admit(StageAssignment a, long account, string nonce) =>
+            Admission!(new RelayAdmission(a.Channel, account, a.Role == StageRoles.Host, nonce));
     }
 
     private sealed class NoAudit : IAuditLog
@@ -148,6 +167,24 @@ public class RoomServiceTests
         Assert.True((await Ok(rooms.CreateAsync(1, "A", Create(hash: 77), false))).Room.Ranked);
         Assert.False((await Ok(rooms.CreateAsync(2, "B", Create(hash: 13), false))).Room.Ranked);
         Assert.Throws<InvalidOperationException>(() => Service(new RoomOptions { RankedDataHashes = ["nope"] }));
+    }
+
+    /// <summary>
+    /// The room service holds its lock during database writes: while the database hangs, the relay's ticket check is
+    /// refused after the admission timeout instead of keeping the handshake (and the address's connection) open.
+    /// </summary>
+    [Fact]
+    public async Task A_hanging_database_refuses_relay_tickets_in_time()
+    {
+        var rooms = Service(new RoomOptions { PasswordIterations = 1000, AdmissionTimeoutMilliseconds = 100 });
+        var code = (await Ok(rooms.CreateAsync(1, "Owner", Create(), false))).Room.Code;
+        _repo.Hang = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var join = rooms.JoinAsync(2, "Two", code, null, 41, 77, null); // waits in the database, the lock held
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+        Assert.False(await _relay.Admission!(new RelayAdmission(code + "-1", 2, false, "nonce")));
+        Assert.InRange(watch.ElapsedMilliseconds, 50, 4000);
+        _repo.Hang.SetResult();
+        Assert.True((await join).Ok);
     }
 
     [Fact]
@@ -339,6 +376,55 @@ public class RoomServiceTests
         _relay.FailTickets = false;
         var moved = (await rooms.EnterStageAsync(1, code, "stag0102", null)).Value!;
         Assert.Equal((StageRoles.Host, hosted.Instance.Id + 1), (moved.Role, moved.Instance.Id));
+    }
+
+    /// <summary>The relay accepts only each player's newest ticket of a running instance, once.</summary>
+    [Fact]
+    public async Task Relay_tickets_cannot_be_hoarded_or_outlive_their_instance()
+    {
+        var rooms = Service();
+        var code = (await Ok(rooms.CreateAsync(1, "Host", Create(max: 4), false))).Room.Code;
+        await Ok(rooms.JoinAsync(2, "Guest", code, null, 41, 77, null));
+        var host = (await rooms.EnterStageAsync(1, code, "stag0101", null)).Value!;
+        var hostNonce = _relay.Issued[^1].Nonce;
+
+        // A guest calling /stage again and again collects tickets: only the newest one works.
+        var first = (await rooms.EnterStageAsync(2, code, "stag0101", null)).Value!;
+        var firstNonce = _relay.Issued[^1].Nonce;
+        var second = (await rooms.EnterStageAsync(2, code, "stag0101", null)).Value!;
+        var secondNonce = _relay.Issued[^1].Nonce;
+        Assert.False(await _relay.Admit(first, 2, firstNonce));
+        Assert.True(await _relay.Admit(second, 2, secondNonce));
+        Assert.False(await _relay.Admit(second, 2, secondNonce)); // accepted once
+        Assert.False(await _relay.Admit(host, 2, hostNonce)); // a guest with the host's ticket: wrong role and nonce
+
+        // Kicked: a ticket from before the kick is worthless.
+        await rooms.EnterStageAsync(2, code, "stag0101", null);
+        var beforeKick = _relay.Issued[^1].Nonce;
+        Assert.True((await rooms.KickAsync(1, code, "Guest", null)).Ok);
+        Assert.False(await _relay.Admit(second, 2, beforeKick));
+
+        // A host ticket of an instance that ended (the host moved on) opens no channel.
+        var moved = (await rooms.EnterStageAsync(1, code, "stag0102", null)).Value!;
+        var movedNonce = _relay.Issued[^1].Nonce;
+        Assert.False(await _relay.Admit(host, 1, hostNonce));
+        Assert.True(await _relay.Admit(moved, 1, movedNonce));
+        Assert.True((await rooms.LeaveStageAsync(1, code)).Ok);
+        Assert.False(await _relay.Admit(moved, 1, movedNonce));
+    }
+
+    /// <summary>A relay channel without a running instance (a race at its end) is closed by the next sweep.</summary>
+    [Fact]
+    public async Task Sweep_closes_channels_without_an_instance()
+    {
+        var rooms = Service();
+        var code = (await Ok(rooms.CreateAsync(1, "Host", Create(max: 4), false))).Room.Code;
+        var live = (await rooms.EnterStageAsync(1, code, "stag0101", null)).Value!;
+        _relay.Open.AddRange([live.Channel, $"{code}-77", "ZZZZZZ-1"]);
+        await rooms.SweepAsync();
+        Assert.Equal([live.Channel], _relay.Open);
+        Assert.Contains($"{code}-77", _relay.Closed);
+        Assert.Contains("ZZZZZZ-1", _relay.Closed);
     }
 
     [Fact]

@@ -10,22 +10,22 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="referrer" content="same-origin" />
     <title>@(title is null ? Service.Name : $"{title} - {Service.Name}")</title>
-    <link rel="stylesheet" href="/css/site.css" />
+    <link rel="stylesheet" href="~/css/site.css" />
 </head>
 <body>
     <header class="site">
         <div class="bar">
-            <a class="brand" href="/">@Service.Name</a>
+            <a class="brand" href="~/">@Service.Name</a>
             <nav>
-                <a href="/achievements">Achievements</a>
-                <a href="/rooms">Rooms</a>
+                <a href="~/achievements">Achievements</a>
+                <a href="~/rooms">Rooms</a>
                 @if (session is not null)
                 {
-                    <a href="/u/@session.Username">Profile</a>
-                    <a href="/account">Account</a>
+                    <a href="~/u/@session.Username">Profile</a>
+                    <a href="~/account">Account</a>
                     @if (session.IsStaff())
                     {
-                        <a href="/admin">Admin</a>
+                        <a href="~/admin">Admin</a>
                     }
                     <form method="post" asp-page="/Logout">
                         <button class="link" type="submit">Log out (@session.Username)</button>
@@ -33,8 +33,8 @@
                 }
                 else
                 {
-                    <a href="/login">Log in</a>
-                    <a href="/register">Register</a>
+                    <a href="~/login">Log in</a>
+                    <a href="~/register">Register</a>
                 }
             </nav>
         </div>
@@ -43,7 +43,7 @@
         @RenderBody()
     </main>
     <footer class="site">
-        @Service.Name &middot; online services for the Digimon World 4 PC port &middot; <a href="/privacy">Privacy</a>
+        @Service.Name &middot; online services for the Digimon World 4 PC port &middot; <a href="~/privacy">Privacy</a>
     </footer>
 </body>
 </html>

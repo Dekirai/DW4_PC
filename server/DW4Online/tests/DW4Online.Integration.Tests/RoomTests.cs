@@ -70,8 +70,10 @@ public class RoomTests
                 "SELECT COUNT(*) FROM room_members m JOIN rooms r ON r.id = m.room_id WHERE r.public_code = @code AND m.left_at IS NULL", new { code }));
         }
 
-        // Both enter the same stage: the owner hosts instance 1, the guest joins it.
+        // Both enter the same stage: the owner hosts instance 1, the guest joins it. Asking twice leaves the guest only
+        // the newest ticket (no hoarding).
         var hostStage = await OkJson(await owner.PostAsJsonAsync($"/api/v1/rooms/{code}/stage", new { stage = "stagD101" }));
+        var hoarded = await OkJson(await guest.PostAsJsonAsync($"/api/v1/rooms/{code}/stage", new { stage = "stagD101" }));
         var guestStage = await OkJson(await guest.PostAsJsonAsync($"/api/v1/rooms/{code}/stage", new { stage = "stagD101" }));
         Assert.Equal("host", hostStage.GetProperty("role").GetString());
         Assert.Equal("guest", guestStage.GetProperty("role").GetString());
@@ -83,6 +85,8 @@ public class RoomTests
         await using var control = await RelayConnection.OpenAsync(relayPort, "DW4R1 HOST " + hostStage.GetProperty("ticket").GetString());
         var ok = await control.ReadLineAsync();
         Assert.StartsWith("OK ", ok, StringComparison.Ordinal);
+        await using (var old = await RelayConnection.OpenAsync(relayPort, "DW4R1 GUEST " + hoarded.GetProperty("ticket").GetString()))
+            Assert.Equal("ERR ticket", await old.ReadLineAsync());
         await using var guestSocket = await RelayConnection.OpenAsync(relayPort, "DW4R1 GUEST " + guestStage.GetProperty("ticket").GetString());
         var notice = (await control.ReadLineAsync()).Split(' ');
         Assert.Equal(["GUEST", notice[1], guestId.ToString(System.Globalization.CultureInfo.InvariantCulture)], notice);
@@ -243,5 +247,25 @@ public class RoomTests
         var stage = await client.PostAsJsonAsync($"/api/v1/rooms/{code}/stage", new { stage = "stagD101" });
         Assert.Equal(HttpStatusCode.ServiceUnavailable, stage.StatusCode);
         Assert.Equal("relay_unavailable", await stage.ProblemCode());
+    }
+
+    [DbFact]
+    public async Task Announced_relay_port_follows_the_bound_port_unless_set()
+    {
+        // Default (Service:RelayPort 0): whatever Relay:Port the relay listens on is announced.
+        await using (var host = await TestHost.StartAsync(RelaySettings.On()))
+        {
+            var bound = await host.App.Services.GetRequiredService<RelayServer>().Started.WaitAsync(TimeSpan.FromSeconds(10));
+            var status = await OkJson(await host.Client().GetAsync("/api/v1/status"));
+            Assert.Equal(bound, status.GetProperty("relay").GetProperty("port").GetInt32());
+            Assert.NotEqual(52041, bound);
+        }
+        // A port forward: clients use another public port.
+        await using (var host = await TestHost.StartAsync(RelaySettings.On(new() { ["Service:RelayPort"] = "45123" })))
+        {
+            await host.App.Services.GetRequiredService<RelayServer>().Started.WaitAsync(TimeSpan.FromSeconds(10));
+            var status = await OkJson(await host.Client().GetAsync("/api/v1/status"));
+            Assert.Equal(45123, status.GetProperty("relay").GetProperty("port").GetInt32());
+        }
     }
 }

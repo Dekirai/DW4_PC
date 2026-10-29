@@ -56,7 +56,7 @@ public static class OnlineCharacterEndpoints
             {
                 ctx.Response.Headers.ETag = Revisions.ETag(v.Revision);
                 var payload = new { v.Revision, v.Summary, v.Warnings, v.Unlocked };
-                return expected is null ? Results.Created("/api/v1/online-character", payload) : Results.Ok(payload);
+                return expected is null ? Results.Created(ctx.Request.PathBase + "/api/v1/online-character", payload) : Results.Ok(payload);
             });
         }).RequireRateLimiting(RateLimitPolicies.CharacterWrite);
 

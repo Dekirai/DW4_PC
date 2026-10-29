@@ -541,6 +541,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
     if (save_choice.settings_changed && !options.smoke_frames) settings.save();
     engine.set_card_store(save_choice.store);
     for (const auto& note : save_choice.notes) std::cout << "saves: " << note << '\n';
+    for (const auto& problem : save_choice.problems) std::cout << "saves: " << problem << '\n';
     if (save_choice.why == dw4::game::SaveStoreChoice::Why::save_file || save_choice.why == dw4::game::SaveStoreChoice::Why::player)
         std::cout << "saves: slot A " << save_choice.store.describe(0) << ", slot B " << save_choice.store.describe(1) << '\n';
     // The randomizer's bond to the save (randomizer_save.hpp) lives next to
@@ -613,6 +614,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
     // game started (randomizer_save.hpp).
     std::optional<dw4::game::RandomizerConfig> randomizer_bound;
     std::uint32_t randomizer_unique = 0;
+    std::string randomizer_name; // player 1's character the bond belongs to
     std::set<std::uint32_t> new_characters; // UNIQUEs of player 1's new games in this session
     auto randomizer_settings = [&] {
         dw4::game::RandomizerConfig config;
@@ -630,7 +632,9 @@ int run(const Options& options, dw4::game::Settings& settings) {
         config.seed = settings.rand_seed;
         config.drops = settings.rand_drops;
         config.enemies = settings.rand_enemies;
-        config.zones = settings.rand_zones;
+        // settings.ini [randomizer] zones = dungeons: the current rule of the
+        // table (a bond keeps the rule its game started with).
+        config.zones = settings.rand_zones ? dw4::engine::randomizer::kZoneRuleCurrent : 0;
         return config;
     };
     // Rebalancing (settings.ini [gameplay]; test runs:
@@ -800,6 +804,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
     if (!SDL_Init(draw ? SDL_INIT_VIDEO | SDL_INIT_GAMEPAD : SDL_INIT_EVENTS)) throw std::runtime_error(SDL_GetError());
     SDL_Window* window = nullptr;
     SDL_GLContext context = nullptr;
+    ImFont* tag_font = nullptr; // the overhead name tags' font
     int samples = 0;
     if (draw) {
         SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
@@ -811,7 +816,11 @@ int run(const Options& options, dw4::game::Settings& settings) {
         if (options.smoke_frames) flags |= SDL_WINDOW_HIDDEN;
         // Multisampling is chosen with the window (settings.ini msaa, read at
         // start-up); without support the window opens without it.
-        const int msaa = options.smoke_frames && !dev_window ? 0 : settings.msaa;
+        // Test runs: none unless DW4_MSAA=n (screenshots at a player's settings);
+        // with DW4_DEV_SETTINGS / DW4_DEV_WINDOW the settings' msaa.
+        const int msaa = options.smoke_frames && !dev_window
+                             ? (std::getenv("DW4_MSAA") ? std::atoi(std::getenv("DW4_MSAA")) : 0)
+                             : settings.msaa;
         SDL_GL_SetAttribute(SDL_GL_MULTISAMPLEBUFFERS, msaa > 1 ? 1 : 0);
         SDL_GL_SetAttribute(SDL_GL_MULTISAMPLESAMPLES, msaa > 1 ? msaa : 0);
         // Test runs ignore settings.ini: 1280x960 unless DW4_WINDOW=WxH, 4:3
@@ -845,6 +854,19 @@ int run(const Options& options, dw4::game::Settings& settings) {
         ImGui::StyleColorsDark();
         ImGui_ImplSDL3_InitForOpenGL(window, context);
         ImGui_ImplOpenGL3_Init("#version 330");
+        // The menus keep ImGui's own font (the first one added is the
+        // default); the overhead name tags take a bold system face when
+        // there is one (Segoe UI Bold, Arial Bold: readable over any
+        // background at their small size), else ImGui's scalable one.
+        auto& fonts = *ImGui::GetIO().Fonts;
+        fonts.AddFontDefaultBitmap(); // what ImGui picks on its own at this size (13 px)
+        if (const char* windows = std::getenv("WINDIR"))
+            for (const char* face : {"segoeuib.ttf", "arialbd.ttf"}) {
+                const auto file = std::filesystem::path(windows) / "Fonts" / face;
+                std::error_code error;
+                if (!tag_font && std::filesystem::is_regular_file(file, error)) tag_font = fonts.AddFontFromFileTTF(file.string().c_str(), 18.0f);
+            }
+        if (!tag_font) tag_font = fonts.AddFontDefaultVector();
     }
 
     // Audio: the SoundManager's streams go to the default playback device
@@ -994,6 +1016,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
         // positions every N frames, without a window too).
         dw4::game::OverheadLabels labels;
         const int trace_labels = options.smoke_frames && std::getenv("DW4_TRACE_LABELS") ? std::atoi(std::getenv("DW4_TRACE_LABELS")) : 0;
+        std::set<std::uint64_t> traced_occlusion; // the labels the last picture hid (traces)
         auto label_mode = [&] {
             if (options.smoke_frames) {
                 const char* mode = std::getenv("DW4_LABELS");
@@ -1069,6 +1092,10 @@ int run(const Options& options, dw4::game::Settings& settings) {
             std::chrono::steady_clock::time_point until;
         };
         std::deque<Toast> toasts;
+        // An old save the one-time move into saves/savedata.dat could not
+        // copy (save_store.cpp): the player hears of it at once.
+        for (const auto& warning : save_choice.warnings)
+            toasts.push_back({"Saves", warning, std::chrono::steady_clock::now() + std::chrono::seconds(15)});
         dw4::game::AchievementGate last_gate = dw4::game::AchievementGate::open;
         std::uint64_t taint_stage = ~0ull;
         bool stage_cheats = false, stage_rebalanced = false;
@@ -1193,6 +1220,8 @@ int run(const Options& options, dw4::game::Settings& settings) {
             std::string name;
             for (const char16_t c : player.name)
                 name.push_back(c >= 0xFF01 && c <= 0xFF5E ? char(c - 0xFEE0) : c == 0x3000 ? ' ' : c < 0x80 ? char(c) : '?');
+            while (!name.empty() && (name.back() == ' ' || name.back() == '\0')) name.pop_back();
+            randomizer_name = name;
             const auto bound = dw4::game::load_randomizer_binding(randomizer_folder, player.unique);
             const auto config = randomizer_settings();
             const bool new_game = new_characters.contains(player.unique);
@@ -1978,13 +2007,14 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 for (const auto& label : labels.current()) {
                     const auto point = dw4::game::project_label(label.head, view);
                     const bool shown = !hidden && label.hp > 0 && point && dw4::game::label_visible(label_mode(), label.own, labels.players());
-                    std::printf("[%d] label slot=%d '%s' Lv %d HP %d/%d MP %d/%d head=(%.1f, %.1f, %.1f) ", frame, label.slot, label.name.c_str(),
-                                label.level, label.hp, label.max_hp, label.mp, label.max_mp, label.head.x, label.head.y, label.head.z);
+                    std::printf("[%d] label slot=%d '%s' Lv %d HP %d/%d MP %d/%d head=(%.1f, %.1f, %.1f) %.1f above the feet ", frame,
+                                label.slot, label.name.c_str(), label.level, label.hp, label.max_hp, label.mp, label.max_mp, label.head.x,
+                                label.head.y, label.head.z, label.head.y - label.feet.y);
                     const auto feet = dw4::game::project_label(label.feet, view, 1.0f);
                     if (point)
-                        std::printf("screen=(%.1f, %.1f) feet=(%.1f, %.1f) distance %.0f alpha %.2f%s\n", point->x, point->y,
+                        std::printf("screen=(%.1f, %.1f) feet=(%.1f, %.1f) distance %.0f alpha %.2f%s%s\n", point->x, point->y,
                                     feet ? feet->x : -1.0f, feet ? feet->y : -1.0f, point->distance, dw4::game::label_fade(point->distance),
-                                    shown ? "" : " (hidden)");
+                                    shown ? "" : " (hidden)", traced_occlusion.contains(label.key) ? " (behind the scene)" : "");
                     else
                         std::printf("off screen%s\n", hidden ? " (hidden)" : "");
                 }
@@ -2067,8 +2097,43 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 }
                 // From the step that took a stage change on, the original presents
                 // nothing new: the last picture stays until the loader draws.
+                // Overhead name tags: where they stand on this picture and
+                // whether it hides their players (its depth buffer, read
+                // right after the scene is drawn).
+                const auto tag_mode = label_mode();
+                bool tags_shown = false;
+                std::vector<dw4::game::OverheadLabel> tags;
+                dw4::game::LabelView tag_view;
                 if (engine.presenting() || !renderer->draw_kept_picture(width, height)) {
                     renderer->render(items, camera, clear, screen, wide, width, height);
+                    if (tag_mode != dw4::game::LabelMode::off && !dw4::game::OverheadLabels::hidden(engine)) {
+                        tags_shown = true;
+                        tag_view.camera = camera;
+                        tag_view.widen = wide.width > screen.width && wide.height > 0 && screen.height > 0
+                                             ? (float(screen.width) / float(screen.height)) / (float(wide.width) / float(wide.height))
+                                             : 1.0f;
+                        tag_view.wide_x = float(wide.x);
+                        tag_view.wide_y = float(wide.y);
+                        tag_view.wide_width = float(wide.width);
+                        tag_view.wide_height = float(wide.height);
+                        tag_view.window_height = float(height);
+                        // (Last frame's scale: ImGui sets it with the next NewFrame.)
+                        const ImVec2 scale = ImGui::GetIO().DisplayFramebufferScale;
+                        tag_view.scale_x = scale.x > 0 ? scale.x : 1.0f;
+                        tag_view.scale_y = scale.y > 0 ? scale.y : 1.0f;
+                        // (Between the two steps like the picture: smooth motion's condition.)
+                        tags = labels.blended(smooth_blending ? present_alpha : 1.0f);
+                        traced_occlusion.clear();
+                        for (auto& tag : tags) {
+                            if (tag.hp <= 0 || !dw4::game::label_visible(tag_mode, tag.own, labels.players())) continue;
+                            const bool hidden_now = dw4::game::occluded_in_picture(
+                                dw4::game::occlusion_probes(tag.head, tag_view),
+                                [&](float x, float y) { return renderer->read_depth(int(x), height - 1 - int(y), width, height); },
+                                tag_view.camera.projection);
+                            tag.occlusion = labels.ease_occlusion(tag.key, hidden_now);
+                            if (hidden_now) traced_occlusion.insert(tag.key);
+                        }
+                    }
                     // A playing movie covers the screen with its current picture.
                     // After its end Sofdec's last picture stays up until the
                     // stage changes (the opening's end script switches a frame
@@ -2105,25 +2170,10 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 ImGui_ImplSDL3_NewFrame();
                 ImGui::NewFrame();
                 // Overhead name tags over the picture, under the menus.
-                if (const auto mode = label_mode(); mode != dw4::game::LabelMode::off && !dw4::game::OverheadLabels::hidden(engine)) {
-                    dw4::game::LabelView view;
-                    view.camera = camera;
-                    view.widen = wide.width > screen.width && wide.height > 0 && screen.height > 0
-                                     ? (float(screen.width) / float(screen.height)) / (float(wide.width) / float(wide.height))
-                                     : 1.0f;
-                    view.wide_x = float(wide.x);
-                    view.wide_y = float(wide.y);
-                    view.wide_width = float(wide.width);
-                    view.wide_height = float(wide.height);
-                    view.window_height = float(height);
-                    const ImVec2 scale = ImGui::GetIO().DisplayFramebufferScale;
-                    view.scale_x = scale.x > 0 ? scale.x : 1.0f;
-                    view.scale_y = scale.y > 0 ? scale.y : 1.0f;
-                    const bool smooth = !options.smoke_frames && settings.smooth_motion && present_interval < 1.0 / 75.0;
-                    const float alpha = smooth ? float(accumulator / dw4::engine::kFieldSeconds) : 1.0f;
-                    const float size = float(height) / view.scale_y / 960.0f * float(settings.label_scale) / 100.0f;
-                    dw4::game::draw_overhead_labels(ImGui::GetBackgroundDrawList(), labels.blended(alpha), view, mode, labels.players(),
-                                                    std::max(size, 0.5f), settings.label_numbers);
+                if (tags_shown) {
+                    const float size = float(height) / tag_view.scale_y / 960.0f * float(settings.label_scale) / 100.0f;
+                    dw4::game::draw_overhead_labels(ImGui::GetBackgroundDrawList(), tags, tag_view, tag_mode, labels.players(),
+                                                    std::max(size, 0.5f), settings.label_numbers, tag_font);
                 }
                 if (show_menu) {
                     ImGui::SetNextWindowSize(ImVec2(560, 560), ImGuiCond_FirstUseEver);
@@ -2135,9 +2185,14 @@ int run(const Options& options, dw4::game::Settings& settings) {
                             // times and balance) or Modernized (widescreen, smooth
                             // motion, anti-aliasing, straight to the title, fast
                             // loading).
+                            // "Original" only while the running game is not randomized
+                            // either: a loaded save's bond keeps its randomizer whatever
+                            // the settings say.
+                            const auto playing = dw4::game::randomizer_from_cheats(engine.cheats());
                             const bool original = !settings.widescreen && !settings.smooth_motion && settings.msaa == 0 &&
                                                   !settings.skip_intro && !settings.fast_loading && settings.exp_rate == 100 &&
-                                                  settings.damage_dealt == 100 && settings.damage_taken == 100 && settings.rand_seed == 0;
+                                                  settings.damage_dealt == 100 && settings.damage_taken == 100 && settings.rand_seed == 0 &&
+                                                  !playing.active();
                             const bool modernized = settings.widescreen && settings.smooth_motion && settings.msaa >= 4 && settings.skip_intro &&
                                                     settings.fast_loading;
                             int preset = original ? 0 : modernized ? 1 : 2;
@@ -2161,6 +2216,19 @@ int run(const Options& options, dw4::game::Settings& settings) {
                             ImGui::PushTextWrapPos(0.0f);
                             ImGui::TextDisabled("Original: 4:3, 60 fps motion, no anti-aliasing, the intro, GameCube load times and the "
                                                 "original balance.");
+                            if (playing.active()) {
+                                if (net.active())
+                                    ImGui::TextColored(ImVec4(1, 0.75f, 0.4f, 1), "This session plays the host's randomizer (%s).",
+                                                       dw4::game::describe_randomizer(playing).c_str());
+                                else if (randomizer_unique != 0 && randomizer_bound && randomizer_bound->active())
+                                    ImGui::TextColored(ImVec4(1, 0.75f, 0.4f, 1),
+                                                       "The loaded save plays the randomizer (%s): its bond keeps it, whatever the preset. "
+                                                       "F1 > Cheats can let this save play the original game.",
+                                                       dw4::game::describe_randomizer(*randomizer_bound).c_str());
+                                else
+                                    ImGui::TextColored(ImVec4(1, 0.75f, 0.4f, 1), "The randomizer is on for new games (%s, F1 > Cheats).",
+                                                       dw4::game::describe_randomizer(playing).c_str());
+                            }
                             ImGui::PopTextWrapPos();
                             // Loading: the original's disc and loading-thread time or none
                             // of it (shown as it applies: online the host's choice).
@@ -2226,10 +2294,14 @@ int run(const Options& options, dw4::game::Settings& settings) {
                             ImGui::TextDisabled("Anti-aliasing applies at the next start (now %dx).", samples > 1 ? samples : 0);
                             static const int sizes[][2] = {{1280, 960}, {1440, 1080}, {1920, 1440}, {1280, 720}, {1920, 1080}, {2560, 1440}};
                             if (!settings.fullscreen) {
+                                // The buttons wrap onto the next line instead of
+                                // running past the window's edge.
+                                const float line_end = ImGui::GetCursorScreenPos().x + ImGui::GetContentRegionAvail().x;
                                 ImGui::TextUnformatted("Window size:");
                                 for (const auto& size : sizes) {
-                                    ImGui::SameLine();
                                     const std::string label = std::to_string(size[0]) + "x" + std::to_string(size[1]);
+                                    const float button = ImGui::CalcTextSize(label.c_str()).x + ImGui::GetStyle().FramePadding.x * 2.0f;
+                                    if (ImGui::GetItemRectMax().x + ImGui::GetStyle().ItemSpacing.x + button <= line_end) ImGui::SameLine();
                                     if (ImGui::SmallButton(label.c_str())) {
                                         SDL_SetWindowSize(window, size[0], size[1]);
                                         settings.width = size[0];
@@ -2420,6 +2492,11 @@ int run(const Options& options, dw4::game::Settings& settings) {
                                                "save / save_b move the files; [data] cards = a GCI folder (e.g. Dolphin's GC/USA) "
                                                "plays from that folder instead. Slot B holds a card once its file exists.");
                         for (const auto& note : save_choice.notes) ImGui::TextWrapped("%s", note.c_str());
+                        for (const auto& problem : save_choice.problems) {
+                            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 0.6f, 0.4f, 1));
+                            ImGui::TextWrapped("%s", problem.c_str());
+                            ImGui::PopStyleColor();
+                        }
                         if (net.active()) ImGui::TextWrapped("Online, the session plays from shared copies of the cards.");
 
                         ImGui::SeparatorText("Import a GameCube save");
@@ -2459,8 +2536,8 @@ int run(const Options& options, dw4::game::Settings& settings) {
                         }
                         if (tab.source) {
                             const auto saved = dw4::save::save_time_text(tab.source->gci);
-                            ImGui::Text("%s - %s%s%s", tab.source->container.c_str(), tab.source->detail.c_str(), saved.empty() ? "" : ", saved ",
-                                        saved.c_str());
+                            ImGui::TextWrapped("%s - %s%s%s", tab.source->container.c_str(), tab.source->detail.c_str(),
+                                               saved.empty() ? "" : ", saved ", saved.c_str());
                             const auto boxes = dw4::save::summarize_save(tab.source->gci);
                             static const char* box_names[] = {"Box 1", "Box 2", "Box 3", "Box 4"};
                             for (std::size_t i = 0; boxes && i < boxes->size(); ++i) {
@@ -2475,7 +2552,9 @@ int run(const Options& options, dw4::game::Settings& settings) {
                                 ImGui::Combo("##into", &tab.into[i], box_names, 4);
                                 ImGui::EndDisabled();
                                 ImGui::SameLine();
+                                ImGui::PushTextWrapPos(0.0f);
                                 ImGui::TextUnformatted(dw4::save::describe_box((*boxes)[i]).c_str());
+                                ImGui::PopTextWrapPos();
                                 ImGui::PopID();
                             }
                             static const char* slots[] = {"Slot A", "Slot B"};
@@ -2502,9 +2581,11 @@ int run(const Options& options, dw4::game::Settings& settings) {
                             ImGui::BeginDisabled(net.active());
                             if (ImGui::Button("Replace the whole save")) run_import({});
                             ImGui::EndDisabled();
+                            ImGui::PushTextWrapPos(0.0f);
                             ImGui::TextDisabled("The current save is copied to %s first.",
                                                 dw4::save::backup_folder(player_store).generic_string().c_str());
                             ImGui::TextDisabled("The game reads the card again at the next Call Digimon or save room visit.");
+                            ImGui::PopTextWrapPos();
                         }
                         if (!tab.message.empty()) ImGui::TextWrapped("%s", tab.message.c_str());
                         ImGui::EndTabItem();
@@ -2561,7 +2642,52 @@ int run(const Options& options, dw4::game::Settings& settings) {
                         gameplay_changed |= ImGui::SliderInt("EXP from enemies", &settings.exp_rate, 10, 1000, "%d%%");
                         gameplay_changed |= ImGui::SliderInt("Damage of your hits", &settings.damage_dealt, 10, 1000, "%d%%");
                         gameplay_changed |= ImGui::SliderInt("Damage enemies do", &settings.damage_taken, 10, 1000, "%d%%");
-                        ImGui::SeparatorText("Randomizer (saved; seed 0 is off)");
+                        ImGui::SeparatorText("Randomizer");
+                        // What the running game plays (the bond of player 1's save,
+                        // the host's online), then the settings new games bind.
+                        {
+                            const ImVec4 lit(1, 0.75f, 0.4f, 1);
+                            ImGui::PushTextWrapPos(0.0f);
+                            if (net.active()) {
+                                ImGui::Text("This session: %s (the host's).",
+                                            dw4::game::describe_randomizer(dw4::game::randomizer_from_cheats(engine.cheats())).c_str());
+                            } else if (randomizer_unique != 0 && randomizer_bound) {
+                                const std::string who = randomizer_name.empty() ? "This save" : "This save (" + randomizer_name + ")";
+                                if (randomizer_bound->active())
+                                    ImGui::TextColored(lit, "%s plays %s.", who.c_str(), dw4::game::describe_randomizer(*randomizer_bound).c_str());
+                                else
+                                    ImGui::Text("%s plays the original game.", who.c_str());
+                            } else {
+                                ImGui::TextDisabled("No save in play: a new game binds the settings below to its save.");
+                            }
+                            ImGui::PopTextWrapPos();
+                            if (!net.active() && randomizer_unique != 0 && randomizer_bound) {
+                                if (randomizer_bound->active() && ImGui::Button("Play this save without the randomizer")) {
+                                    // An explicit "off" bond: the save plays the original
+                                    // game from now on (enemies spawning from here, the next
+                                    // stage change, drops), also after a restart.
+                                    randomizer_bound = dw4::game::RandomizerConfig{};
+                                    dw4::game::store_randomizer_binding(randomizer_folder, randomizer_unique, randomizer_name, *randomizer_bound);
+                                    std::cout << "randomizer: save " << dw4::game::randomizer_unique_key(randomizer_unique)
+                                              << " plays the original game now\n";
+                                    toasts.push_back({"Randomizer", "This save plays the original game now.",
+                                                      std::chrono::steady_clock::now() + std::chrono::seconds(6)});
+                                    gameplay_changed = true;
+                                }
+                                if (randomizer_settings().active() && !(*randomizer_bound == randomizer_settings())) {
+                                    if (randomizer_bound->active()) ImGui::SameLine();
+                                    if (ImGui::Button("Bind the settings below to this save")) {
+                                        randomizer_bound = randomizer_settings();
+                                        dw4::game::store_randomizer_binding(randomizer_folder, randomizer_unique, randomizer_name, *randomizer_bound);
+                                        dw4::game::write_randomizer_spoiler(randomizer_folder, randomizer_unique, *randomizer_bound);
+                                        std::cout << "randomizer: save " << dw4::game::randomizer_unique_key(randomizer_unique) << " bound to "
+                                                  << dw4::game::describe_randomizer(*randomizer_bound) << "\n";
+                                        gameplay_changed = true;
+                                    }
+                                }
+                            }
+                        }
+                        ImGui::SeparatorText("Settings for new games (saved; seed 0 is off)");
                         int seed = int(settings.rand_seed & 0x7FFFFFFF);
                         if (ImGui::InputInt("Seed", &seed)) {
                             settings.rand_seed = std::uint32_t(std::max(0, seed));
@@ -2580,25 +2706,11 @@ int run(const Options& options, dw4::game::Settings& settings) {
                         ImGui::PushTextWrapPos(0.0f);
                         ImGui::TextDisabled("Drops change into other items of the same kind (key items stay). Enemies become other "
                                             "Digimon with the original enemy's strength, EXP and drops; bosses and story fights stay. "
-                                            "Dungeon entrances of an area lead to each other's dungeons. Only a new game binds these "
-                                            "settings to its save (saves/randomizer.ini, spoiler log beside it); a save from before "
-                                            "keeps playing the original game until you bind the settings to it below.");
-                        if (randomizer_bound && randomizer_unique != 0) {
-                            if (randomizer_bound->active())
-                                ImGui::Text("This save plays seed %u (enemies %s, zones %s, drops %s).", randomizer_bound->seed,
-                                            randomizer_bound->enemies == 2 ? "per wave" : randomizer_bound->enemies ? "each" : "off",
-                                            randomizer_bound->zones ? "dungeons" : "off", randomizer_bound->drops ? "on" : "off");
-                            else
-                                ImGui::Text("This save plays without the randomizer.");
-                        }
+                                            "The dungeon entrances of an area are shuffled among the area's dungeons (an entrance may "
+                                            "keep its own). Only a new game binds these settings to its save (saves/randomizer.ini, "
+                                            "spoiler log beside it); a save from before keeps playing the original game until you "
+                                            "bind the settings to it above.");
                         ImGui::PopTextWrapPos();
-                        if (randomizer_bound && randomizer_unique != 0 && !(*randomizer_bound == randomizer_settings()) &&
-                            ImGui::Button("Bind these settings to this save")) {
-                            randomizer_bound = randomizer_settings();
-                            dw4::game::store_randomizer_binding(randomizer_folder, randomizer_unique, "", *randomizer_bound);
-                            dw4::game::write_randomizer_spoiler(randomizer_folder, randomizer_unique, *randomizer_bound);
-                            gameplay_changed = true;
-                        }
                         if (gameplay_changed) {
                             apply_gameplay(cheats);
                             settings_changed = true;
@@ -2736,10 +2848,14 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     ImGui::Begin("##achievements", nullptr,
                                  ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoInputs |
                                      ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing);
+                    // Long notices (a save path) wrap instead of running off
+                    // the window's left edge.
+                    ImGui::PushTextWrapPos(std::min(display.x - 40.0f, std::max(360.0f, display.x * 0.4f)));
                     for (const auto& toast : toasts) {
                         ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.3f, 1), "%s", toast.title.c_str());
                         ImGui::TextUnformatted(toast.text.c_str());
                     }
+                    ImGui::PopTextWrapPos();
                     ImGui::End();
                 }
                 ImGui::Render();
@@ -2972,6 +3088,7 @@ int save_command(const Options& options, dw4::game::Settings& settings) {
     const auto choice = dw4::game::choose_save_store(options.card_dir, options.save_file, false, settings, program_dir());
     if (choice.settings_changed) settings.save();
     for (const auto& note : choice.notes) std::cout << "saves: " << note << '\n';
+    for (const auto& problem : choice.problems) std::cout << "saves: " << problem << '\n';
     const auto outcome = dw4::game::import_save(choice.store, options.import_slot, *source, *moves);
     std::cout << (outcome.ok ? "import: " : "import failed: ") << outcome.message << '\n';
     if (!outcome.ok) return 1;

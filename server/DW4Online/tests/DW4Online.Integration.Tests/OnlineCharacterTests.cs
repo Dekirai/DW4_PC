@@ -4,6 +4,7 @@ using System.Text.Json;
 using Dapper;
 using DW4Online.Domain.Save;
 using DW4Online.Tests;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace DW4Online.Integration.Tests;
 
@@ -164,6 +165,168 @@ public class OnlineCharacterTests
         var now = await (await client.GetAsync("/api/v1/online-character")).Json();
         Assert.Equal(5000, now.GetProperty("summary").GetProperty("bits").GetInt32());
         Assert.Equal("Kevin", now.GetProperty("summary").GetProperty("playerName").GetString());
+    }
+
+    /// <summary>What the privacy page says: a reset character's revisions stay 30 days, then they go; the flag is noted.</summary>
+    [DbFact]
+    public async Task A_reset_characters_history_goes_after_30_days()
+    {
+        await using var host = await TestHost.StartAsync();
+        var (token, _, id) = await host.RegisterAsync("Wiper");
+        var client = host.Client(token);
+        host.Clock.Advance(TimeSpan.FromMinutes(2));
+        var maxed = Samples.Fresh();
+        maxed.Level = 300;
+        maxed.BaseLevel[0] = 300;
+        maxed.Hp = maxed.MaxHp = 9000;
+        Assert.Equal(HttpStatusCode.Created, (await client.PutJson("/api/v1/online-character", Upload(maxed, 60), create: true)).StatusCode);
+        host.Clock.Advance(TimeSpan.FromMinutes(1));
+        Assert.Equal(HttpStatusCode.NoContent,
+            (await client.PostAsJsonAsync("/api/v1/online-character/reset", new { currentPassword = "a decent password" })).StatusCode);
+        host.Clock.Advance(TimeSpan.FromMinutes(1));
+        var next = Samples.Fresh("Two");
+        next.Unique = 0x33333333;
+        Assert.Equal(HttpStatusCode.Created, (await client.PutJson("/api/v1/online-character", Upload(next, 30), create: true)).StatusCode);
+
+        var maintenance = host.App.Services.GetRequiredService<DW4Online.Data.Repositories.MaintenanceRepository>();
+        await using var c = await host.SqlAsync();
+        Assert.Equal(2, await c.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM online_character_history WHERE account_id = @id", new { id }));
+        var detail = await c.ExecuteScalarAsync<string>("SELECT detail FROM audit_log WHERE event = 'character_reset' AND account_id = @id", new { id });
+        Assert.Contains("\"flagged\":true", detail);
+        Assert.False(await c.ExecuteScalarAsync<bool>("SELECT flagged FROM online_characters WHERE account_id = @id", new { id }));
+
+        // 29 days later the old revision is still there for the staff; after 30 it is gone, the new character's stays.
+        host.Clock.Advance(TimeSpan.FromDays(29));
+        Assert.Equal(0, (await maintenance.PruneAsync(host.Clock.GetUtcNow().UtcDateTime, 180, 30)).ResetRevisions);
+        host.Clock.Advance(TimeSpan.FromDays(2));
+        Assert.Equal(1, (await maintenance.PruneAsync(host.Clock.GetUtcNow().UtcDateTime, 180, 30)).ResetRevisions);
+        var left = (await c.QueryAsync<int>("SELECT revision FROM online_character_history WHERE account_id = @id", new { id })).ToList();
+        Assert.Equal([2], left);
+    }
+
+    /// <summary>
+    /// Two resets within 30 days: each character's revisions go 30 days after its own reset (the second reset does not
+    /// keep the first character's revisions longer), and a staff restore after a reset starts a live character again.
+    /// </summary>
+    [DbFact]
+    public async Task Each_reset_characters_history_goes_30_days_after_its_own_reset()
+    {
+        await using var host = await TestHost.StartAsync();
+        var (token, _, id) = await host.RegisterAsync("Wiper2");
+        var client = host.Client(token);
+        async Task Upload(string name, uint unique)
+        {
+            var record = Samples.Fresh(name);
+            record.Unique = unique;
+            Assert.Equal(HttpStatusCode.Created, (await client.PutJson("/api/v1/online-character", OnlineCharacterTests.Upload(record, 30), create: true)).StatusCode);
+        }
+        async Task Reset() => Assert.Equal(HttpStatusCode.NoContent,
+            (await client.PostAsJsonAsync("/api/v1/online-character/reset", new { currentPassword = "a decent password" })).StatusCode);
+        var maintenance = host.App.Services.GetRequiredService<DW4Online.Data.Repositories.MaintenanceRepository>();
+        await using var c = await host.SqlAsync();
+        async Task<List<int>> Kept() =>
+            (await c.QueryAsync<int>("SELECT revision FROM online_character_history WHERE account_id = @id ORDER BY revision", new { id })).ToList();
+        async Task<int> Prune() => (await maintenance.PruneAsync(host.Clock.GetUtcNow().UtcDateTime, 180, 30)).ResetRevisions;
+
+        host.Clock.Advance(TimeSpan.FromHours(1));
+        await Upload("One", 0x11111111);             // revision 1
+        await Reset();                               // day 0: character one ends
+        host.Clock.Advance(TimeSpan.FromDays(20));
+        await Upload("Two", 0x22222222);             // revision 2
+        await Reset();                               // day 20: character two ends
+        host.Clock.Advance(TimeSpan.FromDays(1));
+        await Upload("Three", 0x33333333);           // revision 3, live
+
+        host.Clock.Advance(TimeSpan.FromDays(10));   // day 31: one goes, two (11 days ago) stays
+        Assert.Equal(1, await Prune());
+        Assert.Equal([2, 3], await Kept());
+        host.Clock.Advance(TimeSpan.FromDays(19));   // day 50: two is 30 days old
+        Assert.Equal(0, await Prune());
+        host.Clock.Advance(TimeSpan.FromDays(1));    // day 51: two goes, the live character stays
+        Assert.Equal(1, await Prune());
+        Assert.Equal([3], await Kept());
+
+        // A staff reset and its undo (a restore of the reset character's revision) make the character live again: its
+        // revisions are no longer deleted 30 days after that reset (the player's token ran out after 30 idle days, so
+        // staff act here).
+        var staff = host.App.Services.GetRequiredService<DW4Online.Domain.Services.OnlineCharacterService>();
+        Assert.True(await staff.ResetAsync(id, id, null));
+        host.Clock.Advance(TimeSpan.FromDays(1));
+        Assert.True((await staff.RestoreAsync(id, 3, id, null)).Ok);
+        host.Clock.Advance(TimeSpan.FromDays(31));
+        Assert.Equal(0, await Prune());
+        Assert.Equal([3, 4], await Kept());           // the restored character's revision 3 and its restored copy
+        Assert.Equal(0, await c.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM online_character_history WHERE account_id = @id AND ended_at IS NOT NULL", new { id }));
+    }
+
+    /// <summary>
+    /// The review's restore probe: an honest level 60 character with 100 hours on a 200-day-old account, reset by
+    /// mistake and restored by staff, keeps its play time, and its next upload is not flagged; a flagged character
+    /// (level 90 with 200 hours on a fresh account) stays flagged through reset and restore. Undoing a reset over a
+    /// newer character ends that one like a reset.
+    /// </summary>
+    [DbFact]
+    public async Task A_restore_after_a_reset_keeps_the_revisions_play_time_and_flag()
+    {
+        await using var host = await TestHost.StartAsync();
+        var staff = host.App.Services.GetRequiredService<DW4Online.Domain.Services.OnlineCharacterService>();
+        await using var c = await host.SqlAsync();
+        const long hundredHours = 100L * 3600;
+
+        var (_, _, id) = await host.RegisterAsync("Honest");
+        host.Clock.Advance(TimeSpan.FromDays(200));
+        var client = host.Client((await host.LoginAsync("Honest")).Token); // the registration's token ran out long ago
+        var honest = Samples.Fresh("Hon");
+        honest.Level = 60;
+        honest.BaseLevel[0] = 60;
+        Assert.Equal(HttpStatusCode.Created, (await client.PutJson("/api/v1/online-character", Upload(honest, hundredHours - 600), create: true)).StatusCode);
+        host.Clock.Advance(TimeSpan.FromMinutes(10));
+        var second = await client.PutJson("/api/v1/online-character", Upload(honest, hundredHours), ifMatch: "1");
+        Assert.Empty((await second.Json()).GetProperty("warnings").EnumerateArray());
+        Assert.True(await staff.ResetAsync(id, id, null));
+        var resetAt = await c.ExecuteScalarAsync<DateTime>("SELECT online_reset_at FROM accounts WHERE id = @id", new { id });
+        host.Clock.Advance(TimeSpan.FromHours(2));
+        Assert.Equal(3, (await staff.RestoreAsync(id, 2, id, null)).Value);
+
+        // Before the fix: play time 0, so the next upload was "too fast" and flagged the character for good.
+        var restored = await (await client.GetAsync("/api/v1/online-character")).Json();
+        Assert.Equal(hundredHours, restored.GetProperty("playSeconds").GetInt64());
+        Assert.False(restored.GetProperty("flagged").GetBoolean());
+        Assert.Equal(0, await c.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM online_character_history WHERE account_id = @id AND ended_at IS NOT NULL", new { id }));
+        Assert.Null(await c.ExecuteScalarAsync<DateTime?>("SELECT online_reset_at FROM accounts WHERE id = @id", new { id })); // no earlier reset
+        host.Clock.Advance(TimeSpan.FromMinutes(10));
+        var next = await client.PutJson("/api/v1/online-character", Upload(honest, hundredHours + 600), ifMatch: "3");
+        Assert.Equal(HttpStatusCode.OK, next.StatusCode);
+        Assert.Empty((await next.Json()).GetProperty("warnings").EnumerateArray());
+        Assert.False(await c.ExecuteScalarAsync<bool>("SELECT flagged FROM online_characters WHERE account_id = @id", new { id }));
+
+        // Undoing a reset after a new character started: the new one ends now (kept like a reset character's revisions).
+        Assert.True(await staff.ResetAsync(id, id, null));
+        host.Clock.Advance(TimeSpan.FromMinutes(5));
+        var fresh = Samples.Fresh("New");
+        fresh.Unique = 0x22222222;
+        Assert.Equal(5, (await (await client.PutJson("/api/v1/online-character", Upload(fresh, 60), create: true)).Json()).GetProperty("revision").GetInt32());
+        host.Clock.Advance(TimeSpan.FromMinutes(5));
+        Assert.Equal(6, (await staff.RestoreAsync(id, 4, id, null)).Value);
+        var ended = (await c.QueryAsync<int>("SELECT revision FROM online_character_history WHERE account_id = @id AND ended_at IS NOT NULL", new { id })).ToList();
+        Assert.Equal([5], ended);
+        Assert.Equal(resetAt, await c.ExecuteScalarAsync<DateTime?>("SELECT online_reset_at FROM accounts WHERE id = @id", new { id })); // the reset before
+        Assert.Equal(hundredHours + 600, (await (await client.GetAsync("/api/v1/online-character")).Json()).GetProperty("playSeconds").GetInt64());
+        var audit = await c.ExecuteScalarAsync<string>("SELECT detail FROM audit_log WHERE event = 'character_restore' AND account_id = @id ORDER BY id DESC LIMIT 1", new { id });
+        Assert.Contains("\"replaced\":5", audit);
+
+        // A flagged character stays flagged through a reset and a restore (before the fix it came back unflagged).
+        var (token2, _, id2) = await host.RegisterAsync("Cheater");
+        var maxed = Samples.Fresh("Max");
+        maxed.Unique = 0x33333333;
+        maxed.Level = 90;
+        maxed.BaseLevel[0] = 90;
+        var flagged = await host.Client(token2).PutJson("/api/v1/online-character", Upload(maxed, 200L * 3600), create: true);
+        Assert.Contains("play_time_too_fast", (await flagged.Json()).GetProperty("warnings").EnumerateArray().Select(w => w.GetProperty("code").GetString()));
+        Assert.True(await staff.ResetAsync(id2, id2, null));
+        Assert.True((await staff.RestoreAsync(id2, 1, id2, null)).Ok);
+        Assert.True(await c.ExecuteScalarAsync<bool>("SELECT flagged FROM online_characters WHERE account_id = @id2", new { id2 }));
+        Assert.True((await (await host.Client(token2).GetAsync("/api/v1/online-character")).Json()).GetProperty("flagged").GetBoolean());
     }
 
     /// <summary>The review's case: a fresh account uploads a maxed record claiming 400 hours of play.</summary>

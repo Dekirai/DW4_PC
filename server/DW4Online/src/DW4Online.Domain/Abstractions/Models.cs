@@ -51,6 +51,8 @@ public sealed class AuthenticatedSession
     public string Role { get; init; } = Roles.Player;
     public string Kind { get; init; } = SessionKind.Game;
     public DateTime? LastUsedAt { get; init; }
+    /// <summary>The address the session was last used from (4 or 16 bytes), null before its first use since migration 0007.</summary>
+    public byte[]? LastUsedIp { get; init; }
     public DateTime ExpiresAt { get; init; }
     public bool MustChangePassword { get; init; }
 }
@@ -106,6 +108,19 @@ public sealed class HistoryEntry
     public long PlaySeconds { get; init; }
     public string Reason { get; init; } = "";
     public DateTime SavedAt { get; init; }
+    /// <summary>The revision came from a flagged upload (or a flagged character).</summary>
+    public bool Flagged { get; init; }
+    /// <summary>When its character ended (a reset); null while the character is the live one.</summary>
+    public DateTime? EndedAt { get; init; }
+}
+
+/// <summary>A kept revision as a staff restore needs it.</summary>
+public sealed class KeptRevision
+{
+    public byte[] Record { get; init; } = [];
+    public long PlaySeconds { get; init; }
+    public bool Flagged { get; init; }
+    public DateTime? EndedAt { get; init; }
 }
 
 public sealed class CloudSaveMeta

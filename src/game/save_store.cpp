@@ -14,18 +14,57 @@ std::string text_of(const std::filesystem::path& path) {
     return std::string(text.begin(), text.end());
 }
 
+std::filesystem::path legacy_save(const std::filesystem::path& legacy_root, int slot) {
+    return legacy_root / (slot == 0 ? "Card A" : "Card B") / std::string(save::kSaveFileName);
+}
+
 // Copies the old GCI folder saves of `legacy_root` (Card A / Card B) into
-// the store's files; notes what happened.
-void migrate(const std::filesystem::path& legacy_root, const save::CardStore& store, std::vector<std::string>& notes) {
+// the store's files; notes a copy, records an old save that could not be
+// copied as a problem and warns the player of it. Returns true when a copy
+// failed (an I/O error, reading the old file included: worth another try at
+// the next start).
+bool migrate(const std::filesystem::path& legacy_root, const save::CardStore& store, SaveStoreChoice& choice) {
+    bool retry = false;
     for (int slot = 0; slot < 2; ++slot) {
-        const auto legacy = legacy_root / (slot == 0 ? "Card A" : "Card B") / std::string(save::kSaveFileName);
+        const auto legacy = legacy_save(legacy_root, slot);
         std::string error;
         const auto result = save::migrate_gci(legacy, store.save_path(slot), &error);
         if (result == save::Migration::no_source || result == save::Migration::target_exists) continue;
         std::string note = "Old save " + text_of(legacy) + ": " + save::migration_text(result);
         if (result == save::Migration::copied) note += " to " + text_of(store.save_path(slot)) + " (the old file stays)";
-        if (!error.empty()) note += " (" + error + ")";
-        notes.push_back(note);
+        if (!error.empty()) note += ": " + error; // (an error may end in its own bracket)
+        const std::string card = slot == 0 ? "Card A" : "Card B";
+        if (result == save::Migration::failed) {
+            retry = true;
+            note += "; the game tries again at the next start";
+            choice.problems.push_back(note);
+            choice.warnings.push_back("Your old save (" + card + ") could not be copied to " + text_of(store.save_path(slot)) +
+                                      (error.empty() ? "" : ": " + error) +
+                                      ". The game tries again at the next start; until then this slot starts empty. "
+                                      "F1 > Saves has the details.");
+        } else if (result == save::Migration::invalid_source) {
+            note += ", so it was not copied (the file stays where it is)";
+            choice.problems.push_back(note);
+            choice.warnings.push_back("Your old save (" + card + ") is damaged (neither data copy passes its check) and was not "
+                                      "copied, so this slot starts empty. The old file stays where it is; F1 > Saves has the details.");
+        } else {
+            choice.notes.push_back(note);
+        }
+    }
+    return retry;
+}
+
+// After the migration: an old save that was damaged and never copied keeps
+// its note in the F1 Saves tab while its slot has no save of its own.
+void note_damaged_leftovers(const std::filesystem::path& legacy_root, const save::CardStore& store, std::vector<std::string>& problems) {
+    for (int slot = 0; slot < 2; ++slot) {
+        const auto legacy = legacy_save(legacy_root, slot);
+        std::error_code ec;
+        if (!std::filesystem::is_regular_file(legacy, ec) || std::filesystem::exists(store.save_path(slot), ec)) continue;
+        const auto bytes = save::read_whole_file(legacy);
+        if (!bytes || save::valid_save_gci(*bytes)) continue; // (unreadable now is not damaged)
+        problems.push_back("Old save " + text_of(legacy) + ": " + save::migration_text(save::Migration::invalid_source) +
+                           ", so it was not copied (the file stays where it is)");
     }
 }
 
@@ -65,7 +104,7 @@ SaveStoreChoice choose_save_store(const std::filesystem::path& card_dir, const s
     } else if (!save_file.empty()) {
         choice.store = save::CardStore::single_file(save_file, slot_b_file(save_file));
         choice.why = SaveStoreChoice::Why::save_file;
-        if (const char* from = std::getenv("DW4_MIGRATE_FROM"); from && *from) migrate(from, choice.store, choice.notes);
+        if (const char* from = std::getenv("DW4_MIGRATE_FROM"); from && *from) migrate(from, choice.store, choice);
     } else if (test_run) {
         choice.store = save::CardStore::folder(program_dir / "saves" / "GC" / "USA");
         choice.why = SaveStoreChoice::Why::test_run;
@@ -77,10 +116,18 @@ SaveStoreChoice choose_save_store(const std::filesystem::path& card_dir, const s
         const auto b = settings.save_file_b.empty() ? slot_b_file(a) : program_relative(settings.save_file_b, program_dir);
         choice.store = save::CardStore::single_file(a, b);
         choice.why = SaveStoreChoice::Why::player;
+        const auto legacy_root = program_dir / "saves" / "GC" / "USA";
         if (!settings.save_migrated) {
-            migrate(program_dir / "saves" / "GC" / "USA", choice.store, choice.notes);
-            settings.save_migrated = true;
-            choice.settings_changed = true;
+            // Done once - unless a copy failed (an I/O error): then the next
+            // start tries again. A damaged old save is not copied and not
+            // tried again, but the player is told (and the F1 Saves tab keeps
+            // saying so while its slot has no save).
+            if (!migrate(legacy_root, choice.store, choice)) {
+                settings.save_migrated = true;
+                choice.settings_changed = true;
+            }
+        } else {
+            note_damaged_leftovers(legacy_root, choice.store, choice.problems);
         }
     }
     return choice;

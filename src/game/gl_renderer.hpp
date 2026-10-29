@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <map>
 #include <memory>
+#include <optional>
 #include <unordered_map>
 #include <vector>
 
@@ -42,6 +43,11 @@ public:
     // none was kept at this window size).
     void keep_picture(int window_width, int window_height);
     bool draw_kept_picture(int window_width, int window_height);
+    // The window depth (0..1) the last render left at a window pixel (GL
+    // coordinates, origin bottom left); nullopt outside the window or when
+    // the depth cannot be read. It waits for the picture to be drawn (the
+    // overhead name tags' occlusion reads a few pixels per frame).
+    std::optional<float> read_depth(int x, int y, int window_width, int window_height);
     // The projected shadow drawn with the next render (null: none).
     void set_shadow(const engine::ShadowFrame* shadow) { shadow_ = shadow; }
     // Drop all GPU resources (call when the engine changed stage).

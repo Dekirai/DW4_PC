@@ -19,7 +19,7 @@ separate work (see "Open ends"); `tests/winhttp_client` shows the client side of
 | `src/DW4Online.Relay` | The TCP relay (port 52041): HMAC tickets and byte-for-byte splicing. |
 | `src/DW4Online.Web` | The Razor Pages website (English, server-rendered, no scripts): home, register, login, recovery, account settings, profiles, achievements, rooms, admin, privacy. |
 | `src/DW4Online.Server` | The executable: composition root, configuration, Windows-service mode, CLI tools, TLS certificate selector, file log. |
-| `sql/` | Numbered migrations `NNNN_description.sql` (0001 schema, 0002 achievement definitions). |
+| `sql/` | Numbered migrations `NNNN_description.sql` (0001 schema, 0002 achievement definitions, 0003-0007 see "Database"). |
 | `tests/DW4Online.Tests` | Unit tests (no database). |
 | `tests/DW4Online.Integration.Tests` | HTTP + MariaDB tests against a private local instance (API, rooms with the real relay, website forms, end to end on real Kestrel). |
 | `tests/winhttp_client` | `dw4online_client.cpp`, a C++20 WinHTTP test tool (the HTTP stack the game will use), and `build.cmd` (MSVC). |
@@ -35,6 +35,11 @@ this round was built with the installed SDK 11.0.100-rc.3 (no .NET 10 SDK is ins
 10.0.14 runtimes and targeting packs are). Release builds for the server should use a GA SDK (install the .NET 10 SDK
 or wait for the .NET 11 SDK GA). Packages: MySqlConnector 2.6.1, Dapper 2.1.79 (runtime), xUnit 2.9.3 and
 Microsoft.AspNetCore.TestHost 10.0.0 (tests); everything else comes from the shared framework.
+
+With the 11.0 RC SDK the shared compiler server sometimes generates broken Razor code when it rebuilds
+`DW4Online.Web` a second time (unchanged pages fail with errors such as "IndexModel has no definition for asp" or
+"newline in constant"). Build with `--disable-build-servers` (or run `dotnet build-server shutdown` once) and it
+compiles again; the sources are fine.
 
 ```powershell
 cd server\DW4Online
@@ -60,6 +65,15 @@ leave, logout) and checks that the profile page shows the character and the achi
 and the round-trip time, the owner leaving with the story frozen, the login rate limit). Both tests are skipped when
 the client is not built (`tests\winhttp_client\build.cmd`) or no Python is given (`DW4ONLINE_PYTHON`).
 
+The IP phase is tested the same way: `Pinned_self_signed_https_at_an_ip_address_below_a_path_base` runs the service on
+`https://127.0.0.1` with a self-signed IP certificate below `/dw4online`; the client must refuse the certificate without
+`--pin`, send nothing with a wrong pin (not even a failed login reaches the server) and pass every step with the right
+one, and the website must work over it below the path base and at the root. That test feeds the certificate selector
+from memory (`TlsCertificateSource`), never from a certificate store. With `DW4ONLINE_TEST_CERT_STORE=1`,
+`Deploy_kit_certificate_from_the_store_and_the_pinned_client` also runs `deploy\new-selfsigned-cert.ps1` against the
+current user's store (a `CN=127.0.0.2` test certificate whose key cannot be exported, removed with its key
+afterwards), serves it from the store as the service does and runs the client with the pin the script printed.
+
 `local-db.ps1` uses XAMPP's MariaDB binaries (`-MySqlBin` for others) with its **own** data directory in
 `server/DW4Online/.local` (gitignored), its own port and `--bind-address=127.0.0.1`; it never touches XAMPP's data,
 other databases or services and stops only the `mysqld` it started (by PID). XAMPP ships MariaDB 10.4, whose native
@@ -84,16 +98,16 @@ and user secrets (Development) work as usual.
 | Section | Keys (defaults) |
 | --- | --- |
 | `Database` | `ConnectionString`, `AutoMigrate` (true): run pending migrations at startup. |
-| `Service` | `Name`, `Motd` (game menu and home page), `Maintenance` (announced; no new rooms), `RelayHost` (empty = the request's host name) / `RelayPort` (0 = the port the relay listens on), announced to clients. |
-| `Accounts` | `Registration` (open / closed), `PasswordIterations` (220000), `MaxFailedLogins` (10), `LockoutMinutes` (15), `GameSessionDays` (30), `WebSessionDays` (14), `SessionTouchMinutes` (5), `MaxSessionsPerAccount` (20). |
-| `OnlineCharacter` | `HistoryRevisions` (20), `Rules:MaxLevelsPerPlayHour` (120), `Rules:PlayTimeSlackSeconds` (600). |
+| `Service` | `Name`, `Motd` (game menu and home page), `Maintenance` (announced; no new rooms), `RelayHost` (empty = the request's host name) / `RelayPort` (default 0 = the port the relay listens on, `Relay:Port`; set it only when clients reach the relay through another public port), announced to clients; `PathBase` (empty; for example `/dw4online`: website and API below that path, see "Website"), `BehindProxy` (false; true behind a reverse proxy on the same machine: client address and scheme from `X-Forwarded-For` / `X-Forwarded-Proto` of a loopback proxy only). |
+| `Accounts` | `Registration` (open / closed), `PasswordIterations` (220000), `MaxFailedLogins` (10, per user name and address), `LockoutMinutes` (15), `MaxFailedLoginsPerAccount` (50), `KnownAddressDays` (30), `GameSessionDays` (30), `WebSessionDays` (14), `SessionTouchMinutes` (5), `MaxSessionsPerAccount` (20). |
+| `OnlineCharacter` | `HistoryRevisions` (20), `ResetHistoryDays` (30: the revisions of a reset character stay that long), `Rules:MaxLevelsPerPlayHour` (120), `Rules:PlayTimeSlackSeconds` (600). |
 | `CloudSave` | `MaxBytes` (1 MiB), `HistoryRevisions` (5). |
-| `Play` | `RequireRoom` (true), `MinimumProtocol` / `CurrentProtocol` (netplay `kProtocol`), `MinimumClientVersion` / `CurrentClientVersion`. |
+| `Play` | `RequireRoom` (true), `MinimumProtocol` / `CurrentProtocol` (netplay `kProtocol`), `MinimumClientVersion` / `CurrentClientVersion`, `SpeedrunFloorSeconds` (per board `story_normal` / `story_hard` / `story_veryhard`, 2700 each: see "Speedrun floor"). |
 | `RateLimits` | `GlobalPerMinute` 300 (per IP), `LoginPerMinute` 5 (per IP, login + recovery), `RegisterPerHour` 3 (per IP), `CharacterWritesPerMinute` 12, `CloudWritesPerHour` 6, `AchievementsPerMinute` 60, `AccountChangesPerMinute` 10, `StaffPerMinute` 60, `RoomCreatesPerMinute` 5, `RoomJoinsPerMinute` 20, `StageChangesPerMinute` 30 (stage enter + leave) (per account); `WebLoginPerMinute` 5 (website login + recovery), `WebRegisterPerHour` 3 (per IP, POSTs only), `WebAccountChangesPerMinute` 10 (per account, the account page's POSTs). |
 | `Rooms` | `MaxRooms` (200), `PlayersPerInstance` (4), `HeartbeatSeconds` (10), `MemberTimeoutSeconds` (35), `RoomsPerOwner` (1), `PasswordIterations` (20000, room passwords live in memory only), `SettingsMaxBytes` (4096), `RankedDataHashes` (empty = every data hash is ranked; decimal or 0x-hex). |
 | `Relay` | `Enabled` (true), `ListenAddress` (127.0.0.1; 0.0.0.0 on the server), `Port` (52041), `TicketKey` (secret, base64 32 bytes: `DW4Online.Server gen-relay-key`; required outside Development), timeouts and byte budgets. |
 | `Web` | `RequireHttps` (false; true on the server: website pages redirect to https, cookies are Secure), `Hsts`, `DataProtectionKeysDirectory` (anti-forgery keys, DPAPI-encrypted on Windows; empty = the service account's profile, `memory` = tests), `OperatorName` / `OperatorAddress` / `OperatorContact` (the controller on the privacy page), `DigimonNames` (display names by model, overriding the built-in list). |
-| `Tls` | `StoreHostName`: take HTTPS certificates from the Windows store (renewals without a restart); `AcmeChallengeDirectory`: serve ACME http-01 files from a folder. |
+| `Tls` | `StoreHostName`: take HTTPS certificates from the Windows store (renewals without a restart); its certificate serves every connection that names no other host (an IP address sends no name: the IP phase's pinned self-signed certificate). `AdditionalHostNames` (empty): host names with their own certificate, chosen by the name the client asks for (SNI), for example the later domain next to the pinned IP certificate. `StoreName` (My), `StoreLocation` (LocalMachine), `RefreshMinutes` (10); `AcmeChallengeDirectory`: serve ACME http-01 files from a folder. |
 | `Logging:File` | `Directory` (empty = off), `MinimumLevel`, `RetainDays`: daily UTC log files for the service. |
 | `Kestrel` | Standard Kestrel endpoints (`http://127.0.0.1:5280` by default). |
 
@@ -106,6 +120,10 @@ DW4Online.Server migrate                  apply pending migrations and exit
 DW4Online.Server set-role <user> <role>   player | moderator | admin (bootstraps the first admin)
 DW4Online.Server reset-password <user>    print a temporary password the user must change (audit actor 0 = console)
 DW4Online.Server gen-relay-key            print a new random Relay:TicketKey
+DW4Online.Server audit-tag <name>         print the security log's tag of a user name (failed logins with unknown names)
+DW4Online.Server tls-pin --host <IP or name> | --thumbprint <hex> | --file <certificate> [--password-env NAME] [--store My] [--location LocalMachine]
+                                          print a certificate's SHA-256 SPKI pin (what the game client pins in the IP
+                                          phase) and SHA-256 fingerprint; --host = the certificate the service would serve
 ... --settings <file>                      every form: load an extra settings file (the server's secrets live outside the app folder)
 ```
 
@@ -121,7 +139,11 @@ Tables: `accounts`, `sessions` (only SHA-256 of tokens), `email_tokens` (future 
 `online_characters` + `online_character_history`, `cloud_saves` + `cloud_save_history`, `achievements`,
 `achievement_unlocks` (per ruleset), `player_stats`, `speedrun_times`, `rooms` + `room_members` (durable room record,
 written by the room service before its memory changes), `audit_log` (pruned after 180 days). Migration 0003 adds
-`rooms.randomizer`, `rooms.story_frozen_at` and the close reason `host_closed`.
+`rooms.randomizer`, `rooms.story_frozen_at` and the close reason `host_closed`; 0004 `accounts.online_reset_at`;
+0005 drops the user names old `login_unknown` audit rows held; 0006 `online_character_history.ended_at` (the reset
+that ended a revision's character, filled in for earlier resets); 0007 `sessions.last_used_ip` (the address a session
+was last used from, for the account-wide lock) and `online_character_history.flagged` (each revision's flag, for staff
+restores; earlier revisions take their live character's flag or the one their reset noted).
 
 ## API (`/api/v1`, JSON, errors as problem details)
 
@@ -143,13 +165,14 @@ Authenticated calls send `Authorization: Bearer dw4_<43 characters>`.
 | `POST /me/delete` | token | `{currentPassword}`: GDPR erasure of the account (see "Rules in force"). |
 | `GET /online-character` | token | `{revision, record (base64), summary, playSeconds, flagged, ...}` with `ETag`; 404 = start from zero. |
 | `PUT /online-character` | token | `{record (base64 3316 bytes), playSeconds, context}`; `If-None-Match: *` creates, `If-Match: <revision>` updates (409 with `currentRevision`, 428 without either). Answers `{revision, summary, warnings, unlocked}`. |
-| `GET /online-character/history`, `POST /online-character/reset` | token | Kept revisions; end the character (`{currentPassword}`). |
+| `GET /online-character/history`, `POST /online-character/reset` | token | Kept revisions; end the character (`{currentPassword}`; its revisions stay 30 days for staff, then go). |
 | `GET /cloud-save` (`?revision=N`) | token | The save bytes (`application/octet-stream`), `ETag`, `X-Sha256`, `X-Save-Format`. |
 | `GET /cloud-save/meta` | token | `{latest, boxes, history}`. |
 | `PUT /cloud-save` | token | Body = save bytes, `X-Sha256` (hex), `If-None-Match: *` or `If-Match: <revision>`, optional `X-Device-Name`, `X-Client-Version`. 413 above `MaxBytes`. |
-| `POST /cloud-save/restore/{revision}`, `DELETE /cloud-save` | token | Make a kept revision the latest again; delete the backup and its history. |
+| `POST /cloud-save/restore/{revision}` | token | Make a kept revision the latest again. |
+| `POST /cloud-save/delete` | token | `{currentPassword}`: delete the backup and its history (a wrong password counts as a failed login). |
 | `GET /achievements` | optional | All definitions (hidden ones masked until unlocked); with a token the caller's unlocks and progress. |
-| `POST /achievements/unlock` | token | `{code, context, evidence: {igtMs?, level?, stage?}}` -> `{code, ruleset, newlyUnlocked, newBestTime}`. |
+| `POST /achievements/unlock` | token | `{code, context, evidence: {igtMs?, level?, stage?}}` -> `{code, ruleset, newlyUnlocked, newBestTime, timeRejected}`. |
 | `POST /stats` | token | `{deltas: {enemies_defeated: 12, play_seconds: 60, ...}, context}` -> `{totals, unlocked}`. |
 | `GET /rooms?protocol=&dataHash=` | - | Open rooms (compatible ones only when filtered, like the HELLO check): code, name, owner, `ownerPresent`, `storyFrozen`, `hasPassword`, players / maxPlayers, ranked, randomizer, difficulty, instances. |
 | `POST /rooms` | token | `{name, password?, maxPlayers (2..10, default 4), protocol, dataHash, clientVersion, settings?}` -> 201 room state. `settings` is a JSON object (`difficulty` 0..2, `randomizer: {enabled, seed, ...}`); `cheats` / `rebalanced` are refused. One owned room per account. |
@@ -176,8 +199,29 @@ and stats must carry `protocol` / `clientVersion` (426 `client_outdated` otherwi
 - **Passwords**: PBKDF2-HMAC-SHA512, 220,000 iterations (OWASP), about 150 ms per hash on the development PC, stored
   as `$pbkdf2-sha512$i=...$salt$hash`; stronger settings rehash at the next login. 10-128 characters, not the user name,
   not a common password. Unknown user names cost the same time as wrong passwords.
-- **Lockout**: 10 failed logins or recovery attempts in a row lock the account for 15 minutes (423 with
-  `retryAfterSeconds`); staff locks and bans are separate statuses, reported only after a correct password.
+- **Lockout** (both answers are 423 `account_locked_temporarily` with `retryAfterSeconds`; staff locks and bans are
+  separate statuses, reported only after a correct password). User names are public (room list, profiles), so a lock
+  must not let strangers lock the owner out:
+  - per user name and client address (IPv4 exactly, IPv6 by its /64 network, in memory): 10 failed logins, recovery
+    codes or password confirmations within 15 minutes refuse that address for that name for 15 minutes, before any
+    password check. A stranger locks out only their own address; a name without an account locks the same way, so the
+    answer does not tell whether an account exists. A correct password from the address clears its count. The name
+    counts and is looked up only in its canonical form (trimmed, lower case, the user name shape): the database
+    collation folds accents and full-width letters ("álice" and "ａlice" would find "alice"), so such spellings are
+    unknown names without a database query, and all typed text that cannot be a user name shares one count per address
+    (nothing longer than 20 characters of a typed name is kept in memory).
+  - per account, against guessing from many addresses: 50 failures from all addresses together within 15 minutes (a
+    success clears them) lock the account for 15 minutes. One network adds at most 10 failures per window (IPv4: the
+    address, IPv6: its /48, the most a home connection gets, whose 256 or more /64 networks would otherwise each add
+    10), so neither slow guessing nor one connection adds up to it. During the lock an address the account created a
+    session from or last used one from in the last 30 days (IPv6: the same /64) may still log in (its success ends the
+    lock, its wrong password does not); other addresses wait. Only during such a lock does the answer show that the
+    name exists.
+  Why not "check the password first, then lock": a lock that only applies after a correct password protects nothing
+  against guessing, and one that applies before it lets anyone lock a public name. Counting per name and address
+  keeps strangers to their own address; the account-wide lock spares the addresses the owner really uses.
+  Logins are also limited to 5 per minute per address (rate limit; all per-address rate limits, the website's
+  included, count an IPv6 /64 network as one address).
 - **Sessions**: 256-bit opaque tokens, only SHA-256 stored, kinds `game` (30 days) and `web` (14 days), sliding
   expiry (moved forward at most every 5 minutes), at most 20 live sessions per account.
 - **Recovery**: a one-time recovery code (100 bits, shown at registration and after each use) or an admin reset
@@ -190,7 +234,15 @@ and stats must carry `protocol` / `clientVersion` (426 `client_outdated` otherwi
   moderators and an audit row is written. A new online character starts from zero, so its first upload's play time must
   fit into the time since the account was made or since the last reset (`accounts.online_reset_at`), and the levelling
   rate counts play time only as far as real time allows: an uploaded local or edited character gets flagged. Never
-  auto-bans. Summary columns come from the server's decode.
+  auto-bans. Summary columns come from the server's decode. A reset (by the player with the password, or by staff)
+  ends the character: its revisions stay in the history for `OnlineCharacter:ResetHistoryDays` (30, counted from that
+  reset, also when the next character is reset within those days; staff can restore one after a mistaken reset or
+  look at a flagged character), then the hourly housekeeping deletes them; the audit row
+  `character_reset` keeps the revision and whether the character was flagged. The next character starts unflagged.
+  A staff restore writes the kept revision with its own play time and flag (an honest character restored after a
+  mistaken reset is not "too fast" at its next upload, a flagged one stays flagged); restoring a reset character's
+  revision undoes that reset (its revisions are kept again, a newer live character it replaces ends like a reset, and
+  `accounts.online_reset_at` goes back to the reset before).
 - **Cloud save**: one per account, latest + 5 older revisions, at most 1 MiB, SHA-256 checked, GCI (90176 bytes) or raw
   (90112 bytes) with a valid copy; private (never on the website, never used for achievements).
 - **Rooms**: a name (1-32 characters), an optional password (4-64, PBKDF2 in memory only, never stored), 2..10
@@ -206,8 +258,14 @@ and stats must carry `protocol` / `clientVersion` (426 `client_outdated` otherwi
 - **Account deletion** (GDPR erasure, by the user with the password or by an admin on request): sessions, online
   character and its history, cloud save and history, unlocks, stats, best times, room memberships, bans and e-mail
   tokens are deleted, the account row stays as `deleted_<id>` (no e-mail, no usable password, status `deleted`) so
-  rooms and audit rows keep a valid reference, and the account's audit rows lose their IP addresses. Every password
-  confirmation (password, e-mail, recovery code, deletion, online character reset) counts a wrong password like a
+  rooms and audit rows keep a valid reference, and the account's audit rows lose their IP addresses (so do the failed
+  logins whose name tag is the account's name, see the next point).
+- **Security log of unknown names**: a failed login with a user name that matches no account (often a password typed
+  into the name field) stores only a tag of the typed name: HMAC-SHA256 with a key derived (HKDF) from
+  `Relay:TicketKey`, of the trimmed lower-case name, 32 hex characters (`audit_log.detail.name`). Repeated attempts on
+  one name stay visible without the name; `DW4Online.Server audit-tag <name> --settings ...` prints a name's tag to
+  search for. A new `Relay:TicketKey` starts new tags. Migration 0005 removed the names older rows held. Every password
+  confirmation (password, e-mail, recovery code, deletion, online character reset, cloud save deletion) counts a wrong password like a
   failed login, so the lockout applies. The name prefix
   `deleted_` cannot be registered.
 - **Achievements** (72 definitions, `sql/0002_achievements.sql`, stable ids 1-72): only online play counts, so unlocks
@@ -220,13 +278,27 @@ and stats must carry `protocol` / `clientVersion` (426 `client_outdated` otherwi
   account's batches are checked one at a time), `state` achievements unlock
   from the server's decode of an online character upload made in a ranked room the account is a member of (unlocks from
   a flagged upload are flagged too). Event, stat and state unlocks all take the room's ruleset. Story clears with
-  `evidence.igtMs` also keep the best time per board and ruleset (`speedrun_times`). Offline unlocks stay local in the game.
+  `evidence.igtMs` also keep the best time per board and ruleset (`speedrun_times`), unless the time is below the
+  board's floor (next point). Offline unlocks stay local in the game.
+- **Speedrun floor**: a story clear takes at least 45 minutes of in-game time (loading excluded) on every board. The
+  campaign bot plays the whole Normal story with god mode, one-hit defeats and infinite MP and skips every text box at
+  the fastest rate (`work/campaign`, checkpoint sets r25c and r25t, four runs, 59.94 fields per second, from "stage
+  started" to the next stage change, loads and `stagis*` menu stages left out): 6.93 to 7.52 hours over the 64 story
+  stages, 6.61 hours for the best time of every stage over those runs added up, the six story boss stages alone 9.6 to
+  13.3 minutes. 45 minutes is about a ninth of that sum and a quarter of Speed Demon's 3-hour goal, so no real run gets
+  near it even with a far better route than the bot's; Hard and Very Hard play the same stages. A clear reported faster keeps no best time, its new unlock is flagged for review
+  (answer `timeRejected: true`, audit `speedrun_implausible`), and `speed_6h` / `speed_3h` refuse it
+  (`requirement_not_met`). `Play:SpeedrunFloorSeconds` sets the floor per board (calibrate with real online runs).
 
 ## Relay protocol (TCP, default port 52041)
 
 A channel is one stage instance: `<room code>-<instance>` (for example `K7QW2M-1`). Tickets come from
 `POST /rooms/{code}/stage`: `base64url("channel|account|role|expiry|nonce")` + "." + `base64url(HMAC-SHA256)`, single
-use, 60 s. Every connection starts with one ASCII line ending in `\n`:
+use, 60 s. Before it accepts a valid ticket the relay asks the room service, which keeps the nonce of each player's
+newest ticket per instance: the instance must still run, the account must be its host (host tickets) or one of its
+guests and still in the room, and the ticket must be the newest one (asking `/stage` again replaces it). So tickets
+cannot be hoarded for after a kick, and a host ticket of an ended instance opens no channel; the room sweep (every 5 s)
+also closes any relay channel without a running instance. Every connection starts with one ASCII line ending in `\n`:
 
 1. Host control: `DW4R1 HOST <ticket>` -> `OK <hostKey>`. The relay then sends `GUEST <n> <account>` per arriving
    guest. Closing this socket ends the channel and raises `RelayServer.HostDisconnected`; the room service ends the
@@ -249,12 +321,21 @@ Razor Pages in `src/DW4Online.Web`, English, one embedded stylesheet (`/css/site
 | `/` | Players online, open rooms, accounts, the message of the day. |
 | `/register` | User name, password twice, optional e-mail, a honeypot field; shows the recovery code once and signs in. |
 | `/login`, `/logout`, `/recover` | Sign in (optionally persistent), sign out (POST), reset a forgotten password with the recovery code (shows the next one). |
-| `/account` | Overview, online character, password (ends every other session), e-mail, new recovery code, public / private profile, cloud save info and download, sessions (log out one or all others), account deletion. A temporary password from an admin must be changed first; every other page redirects here until then. |
+| `/account` | Overview, online character, password (ends every other session), e-mail, new recovery code, public / private profile, cloud save info, download and deletion (with the password), sessions (log out one or all others), account deletion. A temporary password from an admin must be changed first; every other page redirects here until then. |
 | `/u/{name}` | Profile: online character (Digimon, name, level, play time, forms, story clears) and achievements with unlock dates, rulesets, player counts and progress bars. Private profiles show only to the owner and staff; unlocks under review only to them. |
 | `/achievements` | Every definition by category with tier, points and rarity (share of players holding it); hidden ones masked unless the visitor holds them. |
 | `/rooms` | Open rooms, read-only (host away = story paused). |
 | `/admin`, `/admin/account/{name}` | Staff: account search, open rooms (close), lock / unlock, ban / unban, temporary password, flag / unflag / revoke unlocks; admins also set roles and erase accounts. |
 | `/privacy` | What is stored, why, how long, cookies, recipients, rights, deletion (GDPR, server in Germany); the controller from `Web:Operator*`. |
+
+Below a path (`Service:PathBase`, for example `/dw4online` for `https://dekirai.crygod.de/dw4online`) every link,
+redirect, form, `Location` header and cookie stays below it (the session cookie is then `__Secure-dw4_session` with
+`Path=/dw4online` on https instead of `__Host-dw4_session`, so other sites on the host never receive it, and the login
+returns only to pages below the prefix); requests without the prefix keep working at the root, so clients of an
+earlier root address go on working during a move. The browser's same-origin rule knows no paths, though: pages of
+other sites on the same host name (`https://dekirai.crygod.de/...`) can script DW4Online with the visitor's cookie,
+so a script flaw there would be an account takeover here. Give DW4Online its own host name (a subdomain such as
+`dw4.crygod.de`) when other sites share the name (deploy/DEPLOY.md 6.2).
 
 Security: sign-in is a cookie holding an opaque `web` session token (same sessions table as the game: revocable,
 14 days sliding), HttpOnly, SameSite=Lax, Secure and `__Host-` prefixed on https. Every POST carries an anti-forgery
@@ -268,6 +349,10 @@ minute per IP, registrations to 3 per hour, on top of the account lockout. Websi
 
 - Game client: WinHTTP client in the game (as `tests/winhttp_client` shows), token storage, the online character in
   place of the card, the relay transport, rooms and stage instances in the netcode (instance host migration included).
+  For the IP phase it talks to `https://88.198.52.221` and pins the two SPKI pins `deploy/new-selfsigned-cert.ps1`
+  prints (in use and spare), checked in WinHTTP's SENDING_REQUEST callback exactly like `dw4online_client --pin`;
+  for the later domain (`https://dekirai.crygod.de/dw4online`) it validates normally and puts every API path below
+  the base URL's path.
 - Achievement goals that need calibration on real runs (speed limits, Minimalist level, stat rates, level-rate warning).
 - Partner display names: `p_angelr` has no built-in English name yet (the website shows the model name); set
   `Web:DigimonNames` or check the built-in list in `src/DW4Online.Web/WebOptions.cs`.

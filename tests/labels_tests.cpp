@@ -8,6 +8,7 @@
 #include "dw4/engine/managers.hpp"
 
 #include <cmath>
+#include <optional>
 #include <iostream>
 #include <stdexcept>
 #include <string>
@@ -92,7 +93,8 @@ void heads() {
     dw4::engine::Node node;
     node.matrix = dw4::engine::translation(10, 5, -3);
     const auto table = head_point(node, 0);
-    check(near(table.x, 10) && near(table.z, -3) && near(table.y, 5 + form_label_height(0) + 3), "no box: the form's height");
+    check(near(table.x, 10) && near(table.z, -3) && near(table.y, 5 + form_label_height(0) + 1), "no box: the form's height");
+    check(form_label_height(0) < 10.0f, "a rookie's table height is about its figure (Agumon 7.3)");
     check(form_label_height(-1) == 30.0f && form_label_height(16) == 30.0f, "unknown form");
     dw4::engine::Node body;
     body.has_bound = true;
@@ -100,11 +102,14 @@ void heads() {
     body.bound_max = {5, 26, 5};
     node.children.push_back(&body);
     const auto boxed = head_point(node, 0);
-    check(near(boxed.y, 5 + 26 * 0.6f + 3), "a share of the bounding box's top");
+    check(near(boxed.y, 5 + 26 * 0.45f + 1), "a share of the bounding box's top");
     body.bound_max.y = 900; // a cull box of a whole level
-    check(near(head_point(node, 11).y, 5 + form_label_height(11) + 3), "an absurd box gives way to the table");
-    check(near(head_point(node, 11, 5.0f + 14.0f).y, 5 + 14 + 7), "the highest joint wins");
-    check(near(head_point(node, 11, 5.0f + 1.0f).y, 5 + form_label_height(11) + 3), "a joint at the feet is no head");
+    check(near(head_point(node, 11).y, 5 + form_label_height(11) + 1), "an absurd box gives way to the table");
+    check(near(head_point(node, 11, 5.0f + 14.0f).y, 5 + 14 + 14 * 0.25f), "the highest joint wins, a share of its height above");
+    check(near(head_point(node, 0, 5.0f + 5.6f).y, 5 + 5.6f + 1.8f), "Agumon: just above its head (7.3), not a body above");
+    check(near(head_point(node, 1, 5.0f + 7.7f).y, 5 + 7.7f + 7.7f * 0.25f), "Veemon: just above its ears' roots (its head's top)");
+    check(near(head_point(node, 11, 5.0f + 40.0f).y, 5 + 40 + 6), "a tall figure: the margin stays small");
+    check(near(head_point(node, 11, 5.0f + 1.0f).y, 5 + form_label_height(11) + 1), "a joint at the feet is no head");
 }
 
 OverheadLabel label(std::uint64_t key, Vec3f head) {
@@ -134,7 +139,7 @@ void blending() {
     const auto& now = labels.current();
     check(now.size() == 2 && labels.players() == 2, "one remote player in this stage");
     check(now[1].key == 0x100 + 7 && now[1].slot == -1 && now[1].name == "Taiki" && now[1].level == 12, "the remote label");
-    check(near(now[1].head.y, form_label_height(0) + 3), "a remote head from the form table");
+    check(near(now[1].head.y, form_label_height(0) + 1), "a remote head from the form table");
     labels.reset();
     check(labels.current().empty() && labels.players() == 0, "reset");
 }
@@ -151,6 +156,98 @@ void engine_capture() {
 
 } // namespace
 
+// The occlusion from the picture's depth buffer: the probes above the head
+// point, the projection's depth turned back into a distance, the verdict.
+void occlusion() {
+    const auto view = view_4x3();
+    const Vec3f head{0, 0, 0};
+    const auto probes = occlusion_probes(head, view);
+    check(probes.size() == 3, "three probes");
+    check(probes[0].y < 360 && probes[0].y > 340 && near(probes[0].x, 640, 0.5f), "the centre probe stands just above the head point");
+    check(near(probes[1].x, 640 - 720 * 0.012f, 0.5f) && near(probes[2].x, 640 + 720 * 0.012f, 0.5f) && probes[1].y == probes[0].y,
+          "the side probes beside it");
+    check(near(probes[0].depth, 100, 0.01f), "a probe's depth is its distance along the view axis");
+    // The depth the projection writes for a point at distance d, read back.
+    const auto& projection = view.camera.projection;
+    auto window_depth = [&](float distance) {
+        const float z = -distance; // eye space
+        const float clip_z = z * projection(2, 2) + projection(3, 2), clip_w = z * projection(2, 3) + projection(3, 3);
+        return (clip_z / clip_w) * 0.5f + 0.5f;
+    };
+    for (const float d : {2.0f, 50.0f, 100.0f, 1000.0f})
+        check(view_distance(window_depth(d), projection) && near(*view_distance(window_depth(d), projection), d, d * 0.002f),
+              "a window depth reads back as its distance, " + std::to_string(d));
+    check(!view_distance(1.0f, projection), "the cleared far plane is no distance");
+    dw4::engine::Mat4 ortho; // w = 1 everywhere
+    check(!view_distance(0.5f, ortho), "an orthographic projection gives none");
+    auto wall_at = [&](float distance) { return [=](float, float) -> std::optional<float> { return window_depth(distance); }; };
+    check(occluded_in_picture(probes, wall_at(50), projection), "a wall halfway to the camera hides the player");
+    check(!occluded_in_picture(probes, wall_at(99), projection), "within the margin: the player's own surroundings");
+    check(!occluded_in_picture(probes, wall_at(300), projection), "the scene behind the player");
+    check(!occluded_in_picture(probes, [](float, float) -> std::optional<float> { return 1.0f; }, projection), "nothing drawn");
+    check(!occluded_in_picture(probes, [](float, float) -> std::optional<float> { return std::nullopt; }, projection), "no depth to read");
+    check(!occluded_in_picture(probes, [&](float x, float) -> std::optional<float> { return window_depth(x > 645 ? 300 : 50); }, projection),
+          "a probe beside a pillar sees the player");
+    check(!occluded_in_picture({}, wall_at(50), projection), "no probes (behind the camera)");
+    LabelView behind = view;
+    behind.camera.view = dw4::engine::look_at({0, 0, -100}, {0, 0, -200}, {0, 1, 0});
+    check(occlusion_probes(head, behind).empty(), "behind the camera: no probes");
+    // Eased over eight presented frames, a new label at once.
+    OverheadLabels labels;
+    check(labels.ease_occlusion(1, true) == 1.0f && labels.ease_occlusion(2, false) == 0.0f, "a new label starts as it is");
+    float value = 0;
+    for (int i = 0; i < 4; ++i) value = labels.ease_occlusion(1, false);
+    check(near(value, 0.5f, 0.001f), "half way back after four frames");
+    for (int i = 0; i < 8; ++i) value = labels.ease_occlusion(1, false);
+    check(value == 0.0f, "seen again after eight");
+    // A hide counts only after kHideAfterFrames frames in a row: the review's
+    // 1-3 frame hides (the player's own weapon, damage numbers, effects) and
+    // even 8-frame ones leave the tag as it is; real cover then eases in.
+    for (int i = 0; i < 3; ++i) value = labels.ease_occlusion(2, true);
+    check(value == 0.0f, "a 3 frame hide does not dim the tag");
+    value = labels.ease_occlusion(2, false);
+    for (int i = 0; i < OverheadLabels::kHideAfterFrames - 1; ++i) value = labels.ease_occlusion(2, true);
+    check(value == 0.0f, "nor one a frame short of the limit");
+    value = labels.ease_occlusion(2, false);
+    check(value == 0.0f, "seen again: counting starts over");
+    for (int i = 0; i < OverheadLabels::kHideAfterFrames; ++i) value = labels.ease_occlusion(2, true);
+    check(near(value, 0.125f, 0.001f), "a lasting hide starts to ease in");
+    value = labels.ease_occlusion(2, true);
+    check(near(value, 0.25f, 0.001f), "hiding eases in too");
+    for (int i = 0; i < 20; ++i) value = labels.ease_occlusion(2, true);
+    check(value == 1.0f, "fully hidden behind lasting cover");
+    value = labels.ease_occlusion(2, false);
+    check(near(value, 0.875f, 0.001f), "seen again: eases out at once");
+    labels.reset();
+    check(labels.ease_occlusion(2, false) == 0.0f, "reset forgets the eased values");
+}
+
+// The layout: the nearer tag keeps its place, one behind it stacks above,
+// a hidden player's tag is faint, no HP or the mode hides it.
+void layout() {
+    const auto view = view_4x3();
+    auto size = [](const OverheadLabel&) { return std::make_pair(80.0f, 30.0f); };
+    std::vector<OverheadLabel> tags = {label(0, {0, 0, 0}), label(1, {0, 0, -20}), label(2, {30, 0, 0})};
+    tags[0].slot = 0;
+    tags[1].slot = 1;
+    tags[2].slot = 2;
+    auto boxes = layout_overhead_labels(tags, view, LabelMode::all, 3, size);
+    check(boxes[0].shown && near(boxes[0].x, 640 - 40) && near(boxes[0].y, 360 - 30), "the nearest tag right above its head point");
+    check(boxes[1].shown && boxes[1].y + boxes[1].height + 2.0f <= boxes[0].y + 0.01f, "the one behind it moves up above it");
+    check(near(boxes[1].anchor_x, 640) && boxes[1].anchor_y > boxes[1].y + boxes[1].height, "and keeps its head point (the line down)");
+    check(boxes[2].shown && near(boxes[2].y, boxes[0].y, 0.5f), "a tag beside them stays where it is");
+    tags[0].occlusion = 1.0f;
+    tags[2].occlusion = 0.5f;
+    boxes = layout_overhead_labels(tags, view, LabelMode::all, 3, size);
+    check(near(boxes[0].alpha, 0.35f, 0.001f) && near(boxes[2].alpha, 1.0f - 0.65f * 0.5f, 0.001f) && near(boxes[1].alpha, 1.0f),
+          "a hidden player's tag is faint, eased in between");
+    tags[1].hp = 0;
+    tags[2].own = true;
+    boxes = layout_overhead_labels(tags, view, LabelMode::others, 3, size);
+    check(boxes[0].shown && !boxes[1].shown && !boxes[2].shown, "no HP and the own tag in 'others' do not show");
+    check(!layout_overhead_labels(tags, view, LabelMode::off, 3, size)[0].shown, "off shows none");
+}
+
 int main() {
     try {
         projection();
@@ -158,6 +255,8 @@ int main() {
         heads();
         blending();
         engine_capture();
+        occlusion();
+        layout();
         std::cout << checks << " name tag checks passed\n";
         return 0;
     } catch (const std::exception& error) {

@@ -10,8 +10,8 @@ public sealed class SessionRepository(Database db) : ISessionRepository
     {
         await using var c = await db.OpenAsync(ct);
         return await c.ExecuteScalarAsync<long>(new CommandDefinition(
-            "INSERT INTO sessions (account_id, token_hash, kind, device_name, created_ip, created_at, last_used_at, expires_at) " +
-            "VALUES (@a, @t, @k, @d, @ip, @now, @now, @exp); SELECT LAST_INSERT_ID();",
+            "INSERT INTO sessions (account_id, token_hash, kind, device_name, created_ip, last_used_ip, created_at, last_used_at, expires_at) " +
+            "VALUES (@a, @t, @k, @d, @ip, @ip, @now, @now, @exp); SELECT LAST_INSERT_ID();",
             new { a = accountId, t = tokenHash, k = kind, d = deviceName, ip, now, exp = expiresAt }, cancellationToken: ct));
     }
 
@@ -19,18 +19,19 @@ public sealed class SessionRepository(Database db) : ISessionRepository
     {
         await using var c = await db.OpenAsync(ct);
         return await c.QuerySingleOrDefaultAsync<AuthenticatedSession>(new CommandDefinition(
-            "SELECT s.id AS session_id, s.account_id, a.username, a.role, s.kind, s.last_used_at, s.expires_at, a.must_change_password " +
+            "SELECT s.id AS session_id, s.account_id, a.username, a.role, s.kind, s.last_used_at, s.last_used_ip, s.expires_at, a.must_change_password " +
             "FROM sessions s JOIN accounts a ON a.id = s.account_id " +
             "WHERE s.token_hash = @t AND s.revoked_at IS NULL AND s.expires_at > @now AND a.status = 'active'",
             new { t = tokenHash, now }, cancellationToken: ct));
     }
 
-    public async Task TouchAsync(long sessionId, DateTime now, DateTime expiresAt, CancellationToken ct = default)
+    public async Task TouchAsync(long sessionId, DateTime now, DateTime expiresAt, byte[]? ip, CancellationToken ct = default)
     {
         await using var c = await db.OpenAsync(ct);
         await c.ExecuteAsync(new CommandDefinition(
-            "UPDATE sessions SET last_used_at = @now, expires_at = @exp WHERE id = @id AND revoked_at IS NULL",
-            new { id = sessionId, now, exp = expiresAt }, cancellationToken: ct));
+            "UPDATE sessions SET last_used_at = @now, expires_at = @exp, last_used_ip = COALESCE(@ip, last_used_ip) " +
+            "WHERE id = @id AND revoked_at IS NULL",
+            new { id = sessionId, now, exp = expiresAt, ip }, cancellationToken: ct));
     }
 
     public async Task<bool> RevokeAsync(long accountId, long sessionId, DateTime now, CancellationToken ct = default)
@@ -69,6 +70,17 @@ public sealed class SessionRepository(Database db) : ISessionRepository
             "WHERE account_id = @a AND revoked_at IS NULL AND expires_at > @now ORDER BY COALESCE(last_used_at, created_at) DESC",
             new { a = accountId, now }, cancellationToken: ct))).AsList();
     }
+
+    public async Task<bool> KnowsAddressAsync(long accountId, byte[] ip, DateTime since, CancellationToken ct = default)
+    {
+        await using var c = await db.OpenAsync(ct);
+        var network = ip.Length == 16 ? ip[..8] : null;
+        return await c.ExecuteScalarAsync<bool>(new CommandDefinition(
+            "SELECT EXISTS (SELECT 1 FROM sessions WHERE account_id = @a AND (created_at >= @since OR last_used_at >= @since) " +
+            "AND (created_ip = @ip OR last_used_ip = @ip OR (@net IS NOT NULL AND (" +
+            "(LENGTH(created_ip) = 16 AND LEFT(created_ip, 8) = @net) OR (LENGTH(last_used_ip) = 16 AND LEFT(last_used_ip, 8) = @net)))))",
+            new { a = accountId, ip, net = network, since }, cancellationToken: ct));
+    }
 }
 
 public sealed class AuditLog(Database db) : IAuditLog
@@ -85,16 +97,21 @@ public sealed class AuditLog(Database db) : IAuditLog
     }
 }
 
-/// <summary>Housekeeping: audit retention and old sessions.</summary>
+/// <summary>Housekeeping: audit retention, old sessions and the history of reset online characters.</summary>
 public sealed class MaintenanceRepository(Database db)
 {
-    public async Task<(int Audit, int Sessions)> PruneAsync(DateTime now, int auditDays, CancellationToken ct = default)
+    public async Task<(int Audit, int Sessions, int ResetRevisions)> PruneAsync(DateTime now, int auditDays, int resetHistoryDays,
+        CancellationToken ct = default)
     {
         await using var c = await db.OpenAsync(ct);
         var audit = await c.ExecuteAsync(new CommandDefinition(
             "DELETE FROM audit_log WHERE at < @cut LIMIT 10000", new { cut = now.AddDays(-auditDays) }, cancellationToken: ct));
         var sessions = await c.ExecuteAsync(new CommandDefinition(
             "DELETE FROM sessions WHERE expires_at < @cut OR revoked_at < @cut LIMIT 10000", new { cut = now.AddDays(-30) }, cancellationToken: ct));
-        return (audit, sessions);
+        // The revisions of a reset character (ended_at = that reset) stay resetHistoryDays after it, then they go.
+        var revisions = await c.ExecuteAsync(new CommandDefinition(
+            "DELETE FROM online_character_history WHERE ended_at < @cut LIMIT 10000",
+            new { cut = now.AddDays(-Math.Max(0, resetHistoryDays)) }, cancellationToken: ct));
+        return (audit, sessions, revisions);
     }
 }

@@ -77,7 +77,7 @@ public sealed class AccountModel(AccountService accounts, OnlineCharacterService
         await rooms.RemoveAccountAsync(target.Id, ct);
         var result = await accounts.AdminDeleteAccountAsync(actor, name, ct);
         if (!result.Ok) return await ShowAsync(name, ct, error: result.Error!.Message);
-        return Redirect("/admin?q=deleted_" + target.Id);
+        return Redirect("~/admin?q=deleted_" + target.Id);
     }
 
     private async Task<IActionResult> ShowAsync(string name, CancellationToken ct, string? message = null, string? error = null)

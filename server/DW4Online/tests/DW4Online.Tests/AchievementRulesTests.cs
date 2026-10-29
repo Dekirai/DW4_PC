@@ -1,5 +1,6 @@
 using System.Text.RegularExpressions;
 using DW4Online.Domain.Achievements;
+using DW4Online.Domain;
 
 namespace DW4Online.Tests;
 
@@ -86,6 +87,33 @@ public partial class AchievementRulesTests
         Assert.NotNull(AchievementRules.CheckEvent("online_host", Check(0, players: 4, room: true)));
         Assert.Null(AchievementRules.CheckEvent("online_host", Check(0, players: 4, room: true, host: true)));
         Assert.Null(AchievementRules.CheckEvent("story_briefing", Check(0)));
+    }
+
+    [Fact]
+    public void Speed_goals_respect_the_story_floor()
+    {
+        var floor = new PlayOptions().StoryFloorMs;
+        Assert.Equal(45 * 60 * 1000L, floor);
+        AchievementCheck Check(long goal, long igt) => new(goal, new UnlockEvidence { IgtMs = igt }, 1, true, true, floor);
+
+        Assert.NotNull(AchievementRules.CheckEvent("speed_3h", Check(10800, 1)));          // a 1 ms "speedrun"
+        Assert.NotNull(AchievementRules.CheckEvent("speed_3h", Check(10800, floor - 1)));
+        Assert.Null(AchievementRules.CheckEvent("speed_3h", Check(10800, floor)));
+        Assert.Null(AchievementRules.CheckEvent("speed_6h", Check(21600, 5 * 3600 * 1000L)));
+        Assert.NotNull(AchievementRules.CheckEvent("speed_6h", Check(21600, 0)));
+    }
+
+    [Fact]
+    public void Speedrun_floors_cover_every_board_and_can_be_overridden()
+    {
+        var play = new PlayOptions();
+        Assert.Equal(AchievementRules.SpeedrunBoards.Values.Order(), play.SpeedrunFloorSeconds.Keys.Order());
+        Assert.All(AchievementRules.SpeedrunBoards.Values, board => Assert.Equal(2_700_000, play.SpeedrunFloorMs(board)));
+        play.SpeedrunFloorSeconds["story_veryhard"] = 3600;
+        play.SpeedrunFloorSeconds["story_normal"] = 1800;
+        Assert.Equal(1_800_000, play.StoryFloorMs);
+        Assert.Equal(3_600_000, play.SpeedrunFloorMs("story_veryhard"));
+        Assert.Equal(0, play.SpeedrunFloorMs("unknown_board"));
     }
 
     [Fact]

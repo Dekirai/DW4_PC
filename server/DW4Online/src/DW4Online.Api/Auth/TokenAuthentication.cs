@@ -26,7 +26,7 @@ public sealed class TokenAuthenticationHandler(
     {
         var header = Request.Headers.Authorization.ToString();
         if (!header.StartsWith("Bearer ", StringComparison.Ordinal)) return AuthenticateResult.NoResult();
-        var session = await accounts.AuthenticateAsync(header[7..].Trim(), Context.RequestAborted);
+        var session = await accounts.AuthenticateAsync(header[7..].Trim(), Context.IpBytes(), Context.RequestAborted);
         if (session is null) return AuthenticateResult.Fail("invalid or expired token");
         Context.Items[SessionItem] = session;
         var identity = new ClaimsIdentity(

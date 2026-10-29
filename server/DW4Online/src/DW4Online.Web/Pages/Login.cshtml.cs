@@ -1,6 +1,7 @@
 using DW4Online.Domain.Abstractions;
 using DW4Online.Domain.Services;
 using DW4Online.Web.Auth;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using Microsoft.AspNetCore.RateLimiting;
@@ -31,8 +32,19 @@ public sealed class LoginModel(AccountService accounts) : PageModel
             return Page();
         }
         WebSessions.SignIn(HttpContext, result.Value!.Session, Remember);
-        return Redirect(result.Value.Account.MustChangePassword ? "/account" : SafeReturn());
+        return Redirect(result.Value.Account.MustChangePassword ? "~/account" : SafeReturn());
     }
 
-    private string SafeReturn() => !string.IsNullOrEmpty(ReturnUrl) && Url.IsLocalUrl(ReturnUrl) ? ReturnUrl : "/account";
+    /// <summary>
+    /// A local return address; below a path base (a shared host) only one below it: another site's path on the same
+    /// host ("/elsewhere") is no page of this site.
+    /// </summary>
+    private string SafeReturn()
+    {
+        if (string.IsNullOrEmpty(ReturnUrl) || !Url.IsLocalUrl(ReturnUrl)) return "~/account";
+        if (Request.PathBase.HasValue && !ReturnUrl.StartsWith("~/", StringComparison.Ordinal) &&
+            !new PathString(ReturnUrl.Split('?', '#')[0]).StartsWithSegments(Request.PathBase))
+            return "~/account";
+        return ReturnUrl;
+    }
 }

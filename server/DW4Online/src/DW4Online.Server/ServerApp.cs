@@ -12,6 +12,7 @@ using DW4Online.Domain.Services;
 using DW4Online.Relay;
 using DW4Online.Web;
 using DW4Online.Web.Auth;
+using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 
 namespace DW4Online.Server;
@@ -68,6 +69,7 @@ public static class ServerApp
         services.AddSingleton<IRoomRepository, RoomRepository>();
         services.AddSingleton<MaintenanceRepository>();
         services.AddSingleton(_ => new PasswordHasher(accounts.PasswordIterations));
+        services.AddSingleton<DW4Online.Domain.Accounts.LoginThrottle>();
         services.AddSingleton<VersionGate>();
         services.AddSingleton<AccountService>();
         services.AddSingleton<AchievementService>();
@@ -75,8 +77,11 @@ public static class ServerApp
         services.AddSingleton<CloudSaveService>();
         services.AddHostedService<MaintenanceService>();
 
-        services.AddSingleton(sp => new RelayTickets(RelayKey(relay, builder.Environment, sp.GetRequiredService<ILogger<RelayServer>>()),
+        // Relay:TicketKey signs relay tickets and (through HKDF) keys the security log's tags of unknown user names.
+        services.AddSingleton(sp => new ServerSecret(RelayKey(relay, builder.Environment, sp.GetRequiredService<ILogger<RelayServer>>())));
+        services.AddSingleton(sp => new RelayTickets(sp.GetRequiredService<ServerSecret>().Key,
             TimeSpan.FromSeconds(relay.TicketLifetimeSeconds), sp.GetRequiredService<TimeProvider>()));
+        services.AddSingleton(sp => new AuditNameHasher(sp.GetRequiredService<ServerSecret>().Key));
         if (relay.Enabled)
         {
             services.AddSingleton<RelayServer>();
@@ -108,6 +113,15 @@ public static class ServerApp
                 WebSetup.IsWebPath(ctx.Request.Path) ? WebSessionHandler.SchemeName : TokenAuthenticationHandler.SchemeName);
 
         var app = builder.Build();
+        if (service.BehindProxy)
+        {
+            // Only a proxy on this machine is trusted (the defaults: 127.0.0.0/8 and ::1).
+            app.UseForwardedHeaders(new ForwardedHeadersOptions
+            {
+                ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto,
+            });
+        }
+        if (service.NormalizedPathBase() is { Length: > 0 } pathBase) app.UsePathBase(pathBase);
         app.UseDw4Web(app.Services.GetRequiredService<WebOptions>(), app.Environment.IsDevelopment());
         app.UseDw4Api();
         app.MapDw4Api();
@@ -131,12 +145,37 @@ public static class ServerApp
 
     private const string DefaultScheme = "dw4";
 
-    /// <summary>Runs the startup migrator when Database:AutoMigrate is on (the default).</summary>
-    public static async Task MigrateIfEnabledAsync(WebApplication app)
+    /// <summary>The server secret (Relay:TicketKey, or a key for this process only in Development / with the relay off).</summary>
+    private sealed record ServerSecret(byte[] Key);
+
+    /// <summary>
+    /// Runs the startup migrator when Database:AutoMigrate is on (the default). A database that does not answer yet
+    /// (MariaDB still starting after a reboot) is tried again for up to <paramref name="waitForDatabase"/> (20 s, inside
+    /// the 30 s the Service Control Manager waits for a starting service); after that the start fails and the service's
+    /// restart-on-failure actions take over.
+    /// </summary>
+    public static async Task MigrateIfEnabledAsync(WebApplication app, TimeSpan? waitForDatabase = null)
     {
         if (!app.Services.GetRequiredService<DatabaseOptions>().AutoMigrate) return;
         var log = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Migrator");
-        var applied = await new Migrator(app.Services.GetRequiredService<Database>(), m => log.LogInformation("{Message}", m)).MigrateAsync();
+        var migrator = new Migrator(app.Services.GetRequiredService<Database>(), m => log.LogInformation("{Message}", m));
+        var wait = waitForDatabase ?? TimeSpan.FromSeconds(20);
+        var started = System.Diagnostics.Stopwatch.GetTimestamp();
+        IReadOnlyList<int> applied;
+        while (true)
+        {
+            try
+            {
+                applied = await migrator.MigrateAsync();
+                break;
+            }
+            catch (MySqlConnector.MySqlException e) when (e.ErrorCode == MySqlConnector.MySqlErrorCode.UnableToConnectToHost &&
+                                                          System.Diagnostics.Stopwatch.GetElapsedTime(started) < wait)
+            {
+                log.LogWarning("The database does not answer yet ({Message}); trying again in 2 s", e.Message);
+                await Task.Delay(TimeSpan.FromSeconds(2));
+            }
+        }
         log.LogInformation(applied.Count == 0 ? "Database schema is current" : "Applied migrations {Versions}", string.Join(", ", applied));
     }
 
@@ -157,8 +196,10 @@ public static class ServerApp
     [System.Runtime.Versioning.SupportedOSPlatform("windows")]
     private static void UseStoreCertificate(Microsoft.AspNetCore.Server.Kestrel.Core.KestrelServerOptions kestrel, TlsOptions tls)
     {
-        var selector = new StoreCertificateSelector(tls, kestrel.ApplicationServices.GetRequiredService<ILoggerFactory>().CreateLogger("Tls"));
-        kestrel.ConfigureHttpsDefaults(https => https.ServerCertificateSelector = (_, _) => selector.Select());
+        var source = kestrel.ApplicationServices.GetService<TlsCertificateSource>(); // tests only; the Windows store otherwise
+        var selector = new HostCertificateSelector(tls, kestrel.ApplicationServices.GetRequiredService<ILoggerFactory>().CreateLogger("Tls"),
+            source is null ? null : source.Read);
+        kestrel.ConfigureHttpsDefaults(https => https.ServerCertificateSelector = (_, name) => selector.Select(name));
     }
 
     private static byte[] RelayKey(RelayOptions relay, IHostEnvironment env, ILogger log)
@@ -171,13 +212,17 @@ public static class ServerApp
         }
         if (relay.Enabled && !env.IsDevelopment())
             throw new InvalidOperationException("Relay:TicketKey is not configured (run 'DW4Online.Server gen-relay-key').");
-        if (relay.Enabled) log.LogWarning("Relay:TicketKey is not configured; using a temporary key until the process exits.");
+        // Also with the relay off: the key tags the security log's unknown user names, and a temporary one makes the
+        // tags of earlier runs unmatched (audit-tag finds nothing, an account deletion leaves them).
+        log.LogWarning("Relay:TicketKey is not configured; using a temporary key until the process exits (relay tickets and the " +
+                       "security log's name tags change at every restart; run 'DW4Online.Server gen-relay-key').");
         return RandomNumberGenerator.GetBytes(32);
     }
 }
 
-/// <summary>Hourly housekeeping: audit retention (180 days) and expired sessions.</summary>
-internal sealed class MaintenanceService(MaintenanceRepository repository, TimeProvider time, ILogger<MaintenanceService> log) : BackgroundService
+/// <summary>Hourly housekeeping: audit retention (180 days), expired sessions and the history of reset online characters.</summary>
+internal sealed class MaintenanceService(MaintenanceRepository repository, OnlineCharacterOptions characters, TimeProvider time,
+    ILogger<MaintenanceService> log) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stop)
     {
@@ -188,8 +233,9 @@ internal sealed class MaintenanceService(MaintenanceRepository repository, TimeP
             {
                 try
                 {
-                    var (audit, sessions) = await repository.PruneAsync(Clock.Now(time), 180, stop);
-                    if (audit + sessions > 0) log.LogInformation("Pruned {Audit} audit rows and {Sessions} sessions", audit, sessions);
+                    var (audit, sessions, revisions) = await repository.PruneAsync(Clock.Now(time), 180, characters.ResetHistoryDays, stop);
+                    if (audit + sessions + revisions > 0)
+                        log.LogInformation("Pruned {Audit} audit rows, {Sessions} sessions and {Revisions} revisions of reset characters", audit, sessions, revisions);
                 }
                 catch (MySqlConnector.MySqlException e)
                 {

@@ -17,6 +17,11 @@ public sealed class RoomOptions
     public int RoomsPerOwner { get; set; } = 1;
     /// <summary>PBKDF2 iterations for room passwords (kept in memory only, never stored).</summary>
     public int PasswordIterations { get; set; } = 20_000;
+    /// <summary>
+    /// How long the relay's ticket check waits for the room service (which holds its lock during database writes);
+    /// longer and the ticket is refused, so a hanging database never keeps relay handshakes open (the client retries).
+    /// </summary>
+    public int AdmissionTimeoutMilliseconds { get; set; } = 5000;
     /// <summary>Largest JSON settings object of a room (difficulty, randomizer seed and options).</summary>
     public int SettingsMaxBytes { get; set; } = 4096;
     /// <summary>
@@ -134,6 +139,12 @@ public interface IRoomRepository
     Task<int> CloseAllOpenAsync(DateTime now, CancellationToken ct = default);
 }
 
+/// <summary>A one-time relay ticket and its nonce (the room service accepts only the newest ticket per player).</summary>
+public sealed record RelayTicket(string Ticket, string Nonce);
+
+/// <summary>A ticket the relay is about to accept: whose, for which channel and role, and its nonce.</summary>
+public sealed record RelayAdmission(string Channel, long AccountId, bool Host, string Nonce);
+
 /// <summary>The relay as the room service uses it: tickets, closing a channel, dropping one guest.</summary>
 public interface IRelayGateway
 {
@@ -142,11 +153,18 @@ public interface IRelayGateway
     /// <summary>The port the relay listens on once it started (null before; tests bind port 0).</summary>
     int? BoundPort { get; }
     /// <summary>A one-time ticket for <paramref name="channel"/> ("ABC234-1").</summary>
-    string IssueTicket(string channel, long accountId, bool host);
+    RelayTicket IssueTicket(string channel, long accountId, bool host);
     /// <summary>Drops the channel's host control socket and every spliced guest.</summary>
     void CloseChannel(string channel);
     /// <summary>Drops the spliced connections of one guest of the channel.</summary>
     void DropGuest(string channel, long accountId);
+    /// <summary>The channels whose host is connected.</summary>
+    IReadOnlyCollection<string> OpenChannels { get; }
+    /// <summary>
+    /// The check the relay makes before it accepts a valid ticket (signature, expiry and single use are its own): the
+    /// room service answers whether the ticket still belongs to a running instance and is the player's newest.
+    /// </summary>
+    void SetAdmission(Func<RelayAdmission, ValueTask<bool>> check);
     /// <summary>Raised when a channel's host control socket ends (the instance host left or lost the connection).</summary>
     event Action<string>? HostLost;
 }

@@ -28,7 +28,7 @@ public sealed class WebSessionHandler(
     {
         var token = Request.Cookies[WebSessions.CookieName(Request)];
         if (string.IsNullOrEmpty(token)) return AuthenticateResult.NoResult();
-        var session = await accounts.AuthenticateAsync(token, Context.RequestAborted);
+        var session = await accounts.AuthenticateAsync(token, Context.Caller().Ip, Context.RequestAborted);
         if (session is null || session.Kind != SessionKind.Web)
         {
             if (!Response.HasStarted) WebSessions.SignOut(Context); // a stale cookie: drop it
@@ -49,7 +49,7 @@ public sealed class WebSessionHandler(
     protected override Task HandleChallengeAsync(AuthenticationProperties properties)
     {
         var back = Request.PathBase + Request.Path + Request.QueryString;
-        Response.Redirect("/login?returnUrl=" + Uri.EscapeDataString(back));
+        Response.Redirect(Request.PathBase + "/login?returnUrl=" + Uri.EscapeDataString(back));
         return Task.CompletedTask;
     }
 
@@ -64,8 +64,16 @@ public static class WebSessions
 {
     private const string PlainName = "dw4_session";
     private const string HostName = "__Host-dw4_session"; // https only: Secure, Path=/, no Domain
+    private const string SecureName = "__Secure-dw4_session"; // https below a path base: Secure, Path=<base>
 
-    public static string CookieName(HttpRequest request) => request.IsHttps ? HostName : PlainName;
+    /// <summary>
+    /// The cookie's name: "__Host-" on https at the site's root; below Service:PathBase (a shared host such as
+    /// https://example.org/dw4online) "__Secure-" with the path base as its Path, so other sites on the host never get it.
+    /// </summary>
+    public static string CookieName(HttpRequest request) =>
+        !request.IsHttps ? PlainName : request.PathBase.HasValue ? SecureName : HostName;
+
+    private static string CookiePath(HttpRequest request) => request.PathBase.HasValue ? request.PathBase.Value! : "/";
 
     /// <summary>The signed-in website session of the request, or null.</summary>
     public static AuthenticatedSession? WebSession(this HttpContext context) =>
@@ -83,7 +91,7 @@ public static class WebSessions
             HttpOnly = true,
             Secure = context.Request.IsHttps,
             SameSite = SameSiteMode.Lax,
-            Path = "/",
+            Path = CookiePath(context.Request),
             IsEssential = true,
         };
         if (persistent) options.Expires = new DateTimeOffset(DateTime.SpecifyKind(ticket.ExpiresAt, DateTimeKind.Utc));
@@ -96,7 +104,7 @@ public static class WebSessions
             HttpOnly = true,
             Secure = context.Request.IsHttps,
             SameSite = SameSiteMode.Lax,
-            Path = "/",
+            Path = CookiePath(context.Request),
         });
 
     /// <summary>The caller's address as 4 or 16 bytes (IPv4-mapped addresses as 4) and a device label for new sessions.</summary>

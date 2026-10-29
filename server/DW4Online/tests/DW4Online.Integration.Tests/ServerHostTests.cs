@@ -1,4 +1,8 @@
+using System.Diagnostics;
 using System.Net;
+using DW4Online.Server;
+using Microsoft.Extensions.Configuration;
+using MySqlConnector;
 
 namespace DW4Online.Integration.Tests;
 
@@ -29,5 +33,23 @@ public class ServerHostTests
         {
             Directory.Delete(dir, true);
         }
+    }
+
+    /// <summary>A database that does not answer yet (MariaDB still starting) is tried again for a while, then the start fails.</summary>
+    [Fact]
+    public async Task The_startup_waits_a_while_for_the_database()
+    {
+        await using var app = ServerApp.Build(["--environment", "Testing"], configure: builder => builder.Configuration.AddInMemoryCollection(
+            new Dictionary<string, string?>
+            {
+                ["Database:ConnectionString"] = "Server=127.0.0.1;Port=1;Database=x;User ID=x;Password=x;Connection Timeout=2",
+                ["Relay:Enabled"] = "false",
+                ["Web:DataProtectionKeysDirectory"] = "memory",
+                ["Logging:LogLevel:Default"] = "None",
+            }));
+        var watch = Stopwatch.StartNew();
+        var error = await Assert.ThrowsAsync<MySqlException>(() => ServerApp.MigrateIfEnabledAsync(app, TimeSpan.FromSeconds(3)));
+        Assert.Equal(MySqlErrorCode.UnableToConnectToHost, error.ErrorCode);
+        Assert.InRange(watch.Elapsed, TimeSpan.FromSeconds(3), TimeSpan.FromSeconds(30)); // tried again, then gave up
     }
 }

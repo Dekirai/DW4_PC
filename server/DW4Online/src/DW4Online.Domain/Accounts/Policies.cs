@@ -11,13 +11,27 @@ public static partial class UsernamePolicy
         "dw4", "dw4online", "dw4_pc", "official", "null", "undefined", "anonymous", "guest", "host",
     };
 
-    [GeneratedRegex("^[A-Za-z0-9_-]{3,20}$", RegexOptions.CultureInvariant)]
+    // \z, not $: "$" also matches before a final line break ("alice\n").
+    [GeneratedRegex(@"^[A-Za-z0-9_-]{3,20}\z", RegexOptions.CultureInvariant)]
     private static partial Regex Shape();
 
     /// <summary>Deleted accounts are renamed to "deleted_&lt;id&gt;"; nobody can register such a name.</summary>
     public const string DeletedPrefix = "deleted_";
 
     public static string Normalize(string username) => username.ToLowerInvariant();
+
+    /// <summary>
+    /// The account name a typed login name can stand for: trimmed and lower case when it has the shape of a user name,
+    /// null when no account can have it. Logins and recovery look up and count only this form, never the typed text:
+    /// the database collation folds accents and full-width letters ("álice" and "ａlice" find "alice"), so each such
+    /// variant would otherwise get its own failed-login count, and a long typed name would sit in the throttle's memory.
+    /// </summary>
+    public static string? Canonical(string? typed)
+    {
+        if (typed is null) return null;
+        var trimmed = typed.Trim();
+        return Shape().IsMatch(trimmed) ? Normalize(trimmed) : null;
+    }
 
     public static string? Check(string? username)
     {

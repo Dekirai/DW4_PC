@@ -18,12 +18,16 @@
 .PARAMETER StopDatabase
   Stop the private MariaDB afterwards.
 
+.PARAMETER Port
+  The private MariaDB's port (local-db.ps1 -Port, default 3427).
+
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File scripts\e2e.ps1 -Python C:\Python313\python.exe
 #>
 param(
     [string]$Python = $env:DW4ONLINE_PYTHON,
-    [switch]$StopDatabase
+    [switch]$StopDatabase,
+    [int]$Port = 3427
 )
 
 $ErrorActionPreference = 'Stop'
@@ -33,8 +37,8 @@ $root = Split-Path -Parent $PSScriptRoot
 if ($LASTEXITCODE -ne 0) { throw 'Building the WinHTTP test client failed.' }
 
 $db = Join-Path $PSScriptRoot 'local-db.ps1'
-& powershell -NoProfile -ExecutionPolicy Bypass -File $db start
-$line = & powershell -NoProfile -ExecutionPolicy Bypass -File $db env
+& powershell -NoProfile -ExecutionPolicy Bypass -File $db start -Port $Port
+$line = & powershell -NoProfile -ExecutionPolicy Bypass -File $db env -Port $Port
 if ($line -notmatch "'(.+)'") { throw "Could not read the test connection string from local-db.ps1 env." }
 $env:DW4ONLINE_TEST_MYSQL = $Matches[1]
 if ($Python) {
@@ -49,6 +53,6 @@ try {
     & dotnet test (Join-Path $root 'tests\DW4Online.Integration.Tests') --nologo --filter 'FullyQualifiedName~EndToEnd' --logger 'console;verbosity=detailed'
     $code = $LASTEXITCODE
 } finally {
-    if ($StopDatabase) { & powershell -NoProfile -ExecutionPolicy Bypass -File $db stop }
+    if ($StopDatabase) { & powershell -NoProfile -ExecutionPolicy Bypass -File $db stop -Port $Port }
 }
 exit $code
