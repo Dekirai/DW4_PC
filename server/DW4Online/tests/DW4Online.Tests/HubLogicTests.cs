@@ -121,6 +121,8 @@ public class HubLogicTests
         var ok = h.Decision("a");
         Assert.Equal((BarrierDecision.New, InstanceMode.SoloLed, (byte)0), (ok.Decision, ok.Mode, ok.OwnSlot));
         Assert.Equal(new sbyte[] { 0, -1, -1, -1 }, ok.SlotMap);
+        // The answer names the visit the member parked in (the game client matches it), the reused id the next visit.
+        Assert.Equal((welcome.Inst, welcome.Visit, welcome.Inst, welcome.Visit + 1), (ok.Inst, ok.Visit, ok.NewInst, ok.NewVisit));
         h.Snapshot("a");
         h.Log("a", 0, 30);
         h.Log("a", 20, 20); // a resent overlap is fine

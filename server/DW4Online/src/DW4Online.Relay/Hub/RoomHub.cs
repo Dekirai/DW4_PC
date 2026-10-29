@@ -896,6 +896,8 @@ public sealed class RoomHub
     {
         _holds.Remove(g);
         var reuse = !g.From.Ended && g.From.Id != 0 && g.From.Members.All(x => g.Members.Any(a => a.Member == x));
+        // The visit the members parked in (BARRIER_OK names it; a reused instance's visit counts on below).
+        var (fromId, fromVisit) = (g.From.Id, g.From.Visit);
         var inst = reuse ? g.From : NewInstance(InstanceMode.SoloLed, g.Stage, 0, g.Context, now);
         var oldObservers = reuse ? inst.Observers.ToList() : [];
         var oldStage = inst.Stage;
@@ -945,7 +947,7 @@ public sealed class RoomHub
             var slotMap = new sbyte[Wire.MaxSlots];
             Array.Fill(slotMap, (sbyte)-1);
             foreach (var b in g.Members) slotMap[b.Slot] = (sbyte)map[b.Member];
-            m.Peer?.Send(new BarrierOkMsg(g.From.Id, g.From.Visit, BarrierDecision.New, inst.Id, inst.Visit, g.Stage, g.Point, (byte)map[m], slotMap,
+            m.Peer?.Send(new BarrierOkMsg(fromId, fromVisit, BarrierDecision.New, inst.Id, inst.Visit, g.Stage, g.Point, (byte)map[m], slotMap,
                 inst.Mode, (byte)(inst.Mode == InstanceMode.Sealed ? delays[m] : 0), coList, 0, [], [], notice, noticeNames).Frame());
         }
         foreach (var c in g.CoArrivals)
