@@ -100,7 +100,6 @@ public sealed class FakeEngine
             Leaving = 0;
         }
         var active = (byte)(Present & ~Leaving);
-        Span<byte> pad = stackalloc byte[Pad.Size];
         Hash = FnvMix(Hash, t);
         Hash = FnvMix(Hash, (ulong)Present | ((ulong)Leaving << 8));
         byte exiters = 0;
@@ -108,8 +107,7 @@ public sealed class FakeEngine
         for (var s = 0; s < Wire.MaxSlots; ++s)
         {
             var p = (active & (1 << s)) != 0 && (rec.Mask & (1 << s)) != 0 ? rec.Pads[s] : Pad.Neutral;
-            p.Write(pad);
-            Hash = FnvMix(Hash, BinaryPrimitives.ReadUInt64LittleEndian([.. pad, 0]));
+            Hash = FnvMix(Hash, p.Buttons | ((ulong)(byte)p.Lx << 16) | ((ulong)(byte)p.Ly << 24) | ((ulong)(byte)p.Rx << 32) | ((ulong)(byte)p.Ry << 40));
             if ((active & (1 << s)) != 0 && (p.Buttons & ExitBit) != 0)
             {
                 if (exiters == 0) first = p;

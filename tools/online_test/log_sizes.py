@@ -8,7 +8,7 @@ compressed sizes:
   r48 format   21-byte pads (connected u8, four float sticks, u32 buttons),
                what the direct sessions send today
   DW4R2        the relay's tick record: present mask u8, event count u8, then
-               7 bytes per present slot (buttons u16 LE, four int8 sticks
+               6 bytes per present slot (buttons u16 LE, four int8 sticks
                quantized to round(v * 74), the GameCube's stick steps)
 
 Player k of n replays the recording from offset k * len / n (wrapping), so
@@ -126,8 +126,8 @@ def measure(name, steps, zstd, rng_seed=7):
     rows = []
     variants = [
         ("r48 21 B float pads", pad_r48, False, False),
-        ("DW4R2 7 B quantized", pad_q, True, False),
-        ("DW4R2 7 B quantized, stick noise first", pad_q, True, True),
+        ("DW4R2 6 B quantized", pad_q, True, False),
+        ("DW4R2 6 B quantized, stick noise first", pad_q, True, True),
     ]
     for players in (1, 2, 4):
         for label, pad_bytes, header, noise in variants:

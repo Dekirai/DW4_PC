@@ -133,8 +133,8 @@ def parse_ticks(p):
         pads = {}
         for slot in range(4):
             if mask & (1 << slot):
-                pads[slot] = p[pos:pos + 7]
-                pos += 7
+                pads[slot] = p[pos:pos + 6]
+                pos += 6
         for _ in range(events):
             length = struct.unpack_from("<H", p, pos + 1)[0]
             pos += 3 + length
@@ -209,12 +209,15 @@ def main():
     context = 0xC0FFEE
     for m in (a, b):
         m.send(HEADING, struct.pack("<I", m.inst) + string("stag0101") + bytes([0]) + struct.pack("<Q", context))
-    for m in (a, b):
+    def barrier(m):
         carry = m.ok.encode()
         m.send(BARRIER, struct.pack("<III", m.inst, m.visit, 0) + string("stag0101") + bytes([0, 1, 1]) + struct.pack("<Q", context)
                + struct.pack("<I", len(carry)) + carry)
+
+    barrier(a)
     kind, p = a.next(BARRIER_WAIT)
     check(p[4] == 1, "the first waits for the announced one (co-arrival)")
+    barrier(b)
     oa = parse_barrier_ok(a.next(BARRIER_OK)[1])
     ob = parse_barrier_ok(b.next(BARRIER_OK)[1])
     check(oa["decision"] == 1 and oa["mode"] == 2 and oa["co_arrivals"] == 1, "owner: NEW, sealed, one co-arrival", oa)
@@ -249,7 +252,7 @@ def main():
         streams[m.slot] = (first, ticks[0])
     check(streams[0] == streams[1] and streams[0][0] == 0, "both machines sealed tick 0 alike", streams[0][1][0])
     check(streams[0][1][0] == 0b11 and streams[0][1][1][0][:2] == struct.pack("<H", 0x10) and streams[0][1][1][1][:2] == struct.pack("<H", 0x20),
-          "tick 0 carries both pads")
+          "tick 0 carries both pads", {k: v.hex() for k, v in streams[0][1][1].items()})
 
     # PING / PONG round trip through the relay.
     lat = []

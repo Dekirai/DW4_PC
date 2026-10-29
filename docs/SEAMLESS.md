@@ -864,9 +864,12 @@ direction.
 logical bits are 0x0008-0x8000 (`include/dw4/pad.hpp`, `pad_button`),
 `gamecube_buttons` maps raw PADStatus bits only onto them, and the keyboard
 and controller bindings (`controls.cpp`, `press(PadKey)`) set only those bits;
-the recorded logs of 6.6 use 0x0010-0xFC50. So a pad is 7 B: buttons u16 LE,
-then the main stick x, y and the C-stick x, y as int8 `round(v * 74)`
-(main stick -72..72 after the host's 72/74 scale, C-stick -59..59).
+the recorded logs of 6.6 use 0x0010-0xFC50. So a pad is buttons u16 LE, then
+the main stick x, y and the C-stick x, y as int8 `round(v * 74)` (main stick
+-72..72 after the host's 72/74 scale, C-stick -59..59): 6 B, not the 7 B
+counted above, since `connected` comes from the present mask and nothing else
+needs a byte (the u32 case would have been 8 B). The relay lane's independent
+Python client found the miscount: the wire layout in the appendix is 6 B.
 
 ### 6.5 Events and when they apply
 
@@ -976,14 +979,14 @@ stage load): the user's own keyboard game (1,492 steps), a campaign bot
 driver run with continuous analog steering (30,743 steps, 8.5 min, 32,793
 distinct stick values) and a shorter bot run (1,349 steps). Player k of n
 replays the recording from offset k·len/n; the log is the relay's tick record
-(present mask, event count, 7 B per present slot); sizes per 600-tick block,
+(present mask, event count, 6 B per present slot); sizes per 600-tick block,
 each compressed on its own (as the relay stores it), scaled to the duration.
 The driver run is the representative one:
 
 | Log | raw | zstd 3 | zlib 6 |
 | --- | --- | --- | --- |
 | 4 players, 20 min, r48 21-byte float pads | 5.90 MB | 1.18 MB (20.0 %) | 1.22 MB |
-| 4 players, 20 min, quantized 7-byte pads | 1.83 MB | 227 KB (12.4 %) | 234 KB |
+| 4 players, 20 min, quantized 6-byte pads | 1.83 MB | 227 KB (12.4 %) | 234 KB |
 | same, with +-24 LSB stick noise before the quantization | 1.83 MB | 239 KB (13.1 %) | 244 KB |
 | 4 players, 30 min, quantized (with noise) | 2.74 MB | 341 KB (359 KB) | 351 KB |
 | 2 players, 20 min, quantized | 0.98 MB | 111 KB | 112 KB |

@@ -194,11 +194,11 @@ public enum CloseReason : byte
 
 /// <summary>
 /// One controller sample on the wire (SEAMLESS.md 6.4): buttons u16 LE, then the main stick x, y and the C-stick x, y as
-/// int8 = round(v * 74) (the GameCube's steps). 7 bytes. The relay never interprets it.
+/// int8 = round(v * 74) (the GameCube's steps). 6 bytes (connected comes from the present mask). The relay never interprets it.
 /// </summary>
 public readonly record struct Pad(ushort Buttons, sbyte Lx, sbyte Ly, sbyte Rx, sbyte Ry)
 {
-    public const int Size = 7;
+    public const int Size = 6;
     public static readonly Pad Neutral = default;
 
     public static Pad Read(ReadOnlySpan<byte> s) => new(BinaryPrimitives.ReadUInt16LittleEndian(s), (sbyte)s[2], (sbyte)s[3], (sbyte)s[4], (sbyte)s[5]);

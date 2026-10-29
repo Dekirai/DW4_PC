@@ -108,6 +108,7 @@ public class RoomTests
             ["guest"] = async () => (await (await guest.PostAsync($"/api/v1/rooms/{code}/ticket", null)).Json()).GetProperty("relayTicket").GetString()!,
         };
         _ = ownerTicket;
+        var fakeLog = new System.Collections.Concurrent.ConcurrentQueue<string>();
         var fakes = tickets.Select((t, k) => new DW4Online.FakeClient.FakeClient(new FakeClientOptions
         {
             Port = relayPort,
@@ -119,6 +120,7 @@ public class RoomTests
             Seed = k + 1,
             Duration = TimeSpan.FromSeconds(9),
             Script = [new ScriptAction(0.8, "exit", "stag0101", 0)],
+            Log = line => fakeLog.Enqueue(line),
         })).ToList();
         var runs = fakes.Select(f => f.RunAsync(CancellationToken.None)).ToList();
         JsonElement beat = default;
@@ -128,6 +130,8 @@ public class RoomTests
             beat = await OkJson(await guest.PostAsync($"/api/v1/rooms/{code}/heartbeat", null));
             if (beat.GetProperty("instances").EnumerateArray().Any(x => x.GetProperty("mode").GetString() == "sealed")) break;
         }
+        Assert.True(beat.GetProperty("instances").EnumerateArray().Count(x => x.GetProperty("mode").GetString() == "sealed") == 1,
+            beat + Environment.NewLine + string.Join(Environment.NewLine, fakeLog.Where(l => !l.Contains("\"script\"")).Take(60)));
         var sealedGroup = beat.GetProperty("instances").EnumerateArray().Single(x => x.GetProperty("mode").GetString() == "sealed");
         Assert.Equal("stag0101", sealedGroup.GetProperty("stage").GetString());
         Assert.Equal(new[] { hostId, guestId }.OrderBy(x => x),

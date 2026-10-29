@@ -154,7 +154,14 @@ public sealed class RelayHub : BackgroundService
             var next = long.MaxValue;
             foreach (var hub in _rooms.Values)
             {
-                lock (hub.Sync) next = Math.Min(next, hub.Seal(now));
+                try
+                {
+                    lock (hub.Sync) next = Math.Min(next, hub.Seal(now));
+                }
+                catch (Exception e)
+                {
+                    _log.LogError(e, "Sealing failed in room {Room}", hub.Code);
+                }
             }
             // Nothing sealed: wait for a wake (an instance starts sealing) but look again every 50 ms.
             var limit = Stopwatch.GetTimestamp() + Stopwatch.Frequency / 20;
@@ -297,6 +304,14 @@ public sealed class RelayHub : BackgroundService
         catch (Exception e) when (e is IOException or SocketException or OperationCanceledException or ObjectDisposedException)
         {
             _log.LogDebug(e, "relay connection from {Ip} ended", ip);
+            if (hub is not null && member is not null && conn is not null)
+                lock (hub.Sync) hub.Disconnect(member, conn, Stopwatch.GetTimestamp());
+        }
+        catch (Exception e)
+        {
+            // A fault in the room logic: logged, the connection closes, the room goes on.
+            _log.LogError(e, "Relay connection from {Ip} failed", ip);
+            conn?.Close(CloseReason.Protocol, "Internal error.");
             if (hub is not null && member is not null && conn is not null)
                 lock (hub.Sync) hub.Disconnect(member, conn, Stopwatch.GetTimestamp());
         }

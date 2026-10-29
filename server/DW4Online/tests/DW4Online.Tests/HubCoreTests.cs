@@ -88,7 +88,7 @@ public class HubCoreTests
         var bytes = r.ToBytes();
         Assert.Equal(r.EncodedSize, bytes.Length);
         Assert.Equal(bytes.Length, TickLog.RecordLength(bytes));
-        Assert.Equal(2 + 2 * 7 + (3 + 5) + (3 + 2) + (3 + 4), bytes.Length);
+        Assert.Equal(2 + 2 * 6 + (3 + 5) + (3 + 2) + (3 + 4), bytes.Length);
         var back = TickRecord.Parse(bytes);
         Assert.Equal((byte)0b1010, back.Mask);
         Assert.Equal(P(3), back.Pads[3]);

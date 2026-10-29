@@ -44,7 +44,7 @@ public sealed record TickEvent(byte Type, byte[] Payload)
 
 /// <summary>
 /// One tick of an instance's stream: present mask u8 (the slots whose pads follow), event count u8, the pads in slot
-/// order (7 bytes each), then the events. SEALED, LIVE and STATE_DATA carry these records unchanged.
+/// order (6 bytes each), then the events. SEALED, LIVE and STATE_DATA carry these records unchanged.
 /// </summary>
 public sealed class TickRecord
 {
