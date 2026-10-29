@@ -313,7 +313,7 @@ void CameraManager::clear_stage(Engine&) {
     centre_moved_ = false;
     blend_ = 0.0f;
     box_ = previous_box_ = 0;
-    // SPIKE r51cam: the per-player boxes start again with the stage.
+    // Per-slot cameras: the boxes start again with the stage.
     player_box_ = {};
     player_frame_ = {};
     viewer_events_ = demo_event_ = 0;
@@ -372,13 +372,14 @@ Mat4 camera_projection(float fov_x_degrees, float near_plane, float far_plane) {
 // cleared, the first step adds nothing) and becomes the current viewer.
 void CameraManager::set_viewer(const CameraRam& ram, const CameraPath& path, std::int64_t duration) {
     viewer_ = Viewer{&ram, &path, 0, duration, 0, false};
-    // SPIKE r51cam: a demo viewer replaces every slot's box camera.
+    // Per-slot cameras: a demo viewer replaces every slot's box camera.
     ++viewer_events_;
     if (!ram.box) demo_event_ = viewer_events_;
 }
 
-// SPIKE r51cam: 802F2BC0 for one slot, on that slot's own box state and live
-// pivot / eye / target matrices (the shared nodes stay the shared camera's).
+// Per-slot cameras: 802F2BC0 for one slot, on that slot's own box state and
+// live pivot / eye / target matrices (the shared nodes stay the shared
+// camera's). A slot without a generated player (defeated) stands still.
 // The centre is the slot's player alone (one player: the sum, no division),
 // so with one player this is the original update step for step. It runs
 // before update_box, which steps the shared SHAKE timers, so both read the
@@ -703,12 +704,12 @@ void CameraManager::update(Engine& engine) {
         if (!ram->active) continue;
         if (ram->box) {
             if (!box_done && !named_demo_running(engine)) {
-                // SPIKE r51cam: each slot's own box camera first (it reads
-                // the shake digit before update_box steps it).
-                if (engine.player_cameras) {
+                // Per-slot cameras: each slot's own box camera first (it
+                // reads the shake digit before update_box steps it).
+                if (const auto mask = engine.player_cameras()) {
                     const bool fresh = ram->state == 0;
                     for (int slot = 0; slot < 4; ++slot)
-                        if (engine.player_cameras & (1u << slot)) update_player_box(engine, *ram, slot, fresh);
+                        if (mask & (1u << slot)) update_player_box(engine, *ram, slot, fresh);
                 }
                 update_box(engine, *ram);
             }
@@ -746,25 +747,27 @@ void CameraManager::begin_frame(Engine& engine) {
     FrameCamera camera;
     compute_camera(engine, camera);
     frame_ = camera;
-    // SPIKE r51cam: every slot's own camera of this frame.
+    // Per-slot cameras: every slot's own camera of this frame.
     player_frame_ = {};
-    if (engine.player_cameras) {
+    if (const auto mask = engine.player_cameras()) {
+        static const bool check = std::getenv("DW4_CAM_CHECK") != nullptr;
         int players = 0;
         bool player0 = false;
-        if (auto* models = engine.get<ModelCtrlManager>())
-            for (const auto& model : models->rams())
-                if (model->is_player && model->generated && model->node) {
-                    ++players;
-                    player0 = player0 || model->index == 0;
-                }
+        if (check)
+            if (auto* models = engine.get<ModelCtrlManager>())
+                for (const auto& model : models->rams())
+                    if (model->is_player && model->generated && model->node) {
+                        ++players;
+                        player0 = player0 || model->index == 0;
+                    }
         for (int slot = 0; slot < 4; ++slot) {
-            if (!(engine.player_cameras & (1u << slot))) continue;
+            if (!(mask & (1u << slot))) continue;
             FrameCamera own;
-            compute_camera(engine, own, slot);
+            compute_camera(engine, own, &player_box_[std::size_t(slot)], slot);
             player_frame_[std::size_t(slot)] = own;
             // DW4_CAM_CHECK: with player 1 alone, slot 0's camera must be
-            // the shared one bit for bit (union of one frustum = original).
-            if (static const bool check = std::getenv("DW4_CAM_CHECK") != nullptr; check && slot == 0 && players == 1 && player0) {
+            // the shared one bit for bit (the original's one-player case).
+            if (check && slot == 0 && players == 1 && player0) {
                 ++check_frames_;
                 if (std::memcmp(own.view.m.data(), camera.view.m.data(), sizeof(float) * 16) != 0 ||
                     std::memcmp(own.projection.m.data(), camera.projection.m.data(), sizeof(float) * 16) != 0)
@@ -780,102 +783,133 @@ void CameraManager::frame_camera(Engine& engine, FrameCamera& camera) {
 }
 
 void CameraManager::frame_camera(Engine& engine, FrameCamera& camera, int slot) {
-    if (slot < 0 || slot > 3 || !(engine.player_cameras & (1u << slot))) {
+    if (slot < 0 || slot > 3 || !(engine.player_cameras() & (1u << slot))) {
         frame_camera(engine, camera);
         return;
     }
     if (player_frame_[std::size_t(slot)]) camera = *player_frame_[std::size_t(slot)];
-    else compute_camera(engine, camera, slot);
+    else compute_camera(engine, camera, &player_box_[std::size_t(slot)], slot);
 }
 
-// SPIKE r51cam: compute_camera for one slot. The same path evaluation; a box
-// path (the box ram's, or no viewer yet) takes the slot's own pivot / eye /
-// target matrices, and the box-less fallback follows the slot's player. A
-// demo viewer is shared: every slot sees it.
-void CameraManager::compute_camera(Engine& engine, FrameCamera& camera, int slot) {
-    camera.projection = camera_projection(54.4322f, 10.0f, 2000.0f);
-    camera.view = look_at({0, 50, 300}, {0, 0, 0}, {0, 1, 0});
-    const auto& pb = player_box_[std::size_t(slot)];
+void CameraManager::set_player_cameras(Engine& engine, std::uint8_t before, std::uint8_t after, std::uint8_t heirs) {
+    (void)engine;
     const CameraRam* box_ram = nullptr;
     for (const auto& ram : rams_)
-        if (!box_ram && !ram->paths.empty() && ram->box && ram->active) box_ram = ram.get();
-    // The slot sees its box camera when its own box set the box path after
-    // the last demo viewer, or the current viewer is a box path anyway.
-    const bool own_box = box_ram && pb.started && (pb.box_event > demo_event_ || (viewer_ && viewer_->ram->box));
-    const CameraRam* chosen = own_box ? box_ram : viewer_ ? viewer_->ram : nullptr;
-    for (const auto& ram : rams_)
-        if (!chosen && !ram->paths.empty() && ram->box && ram->active) chosen = ram.get();
-    for (const auto& ram : rams_)
-        if (!chosen && !ram->paths.empty()) chosen = ram.get();
-    if (!chosen) return;
-    const CameraRam* ram = chosen;
-    const bool use_viewer = viewer_ && !own_box;
-    const auto& path = use_viewer ? *viewer_->path : ram->paths.front();
-    const std::int64_t at = use_viewer ? viewer_->time : 0;
-    const BoxData* box = ram->box && pb.started ? &*ram->box : nullptr;
-    auto matrix_of = [&](const Node* node) -> const Mat4& {
-        if (box) {
-            if (node == box->pivot) return pb.pivot;
-            if (node == box->eyes[0]) return pb.eye;
-            if (node == box->targets[0]) return pb.target;
+        if (!box_ram && ram->active && ram->box) box_ram = ram.get();
+    for (int slot = 0; slot < 4; ++slot) {
+        const auto bit = std::uint8_t(1u << slot);
+        auto& pb = player_box_[std::size_t(slot)];
+        player_frame_[std::size_t(slot)].reset();
+        if (!(after & bit)) {
+            pb = PlayerBox{};
+            continue;
         }
-        return node->matrix;
-    };
-    Mat4 world, pivot;
-    const Node* last_transform = nullptr;
-    auto applies = [](const Node* node) {
-        return (node->kind == NodeKind::transform || node->kind == NodeKind::model_node) && node->object.i32(9) == 0;
-    };
-    for (auto* node : path.nodes)
-        if (applies(node)) last_transform = node;
-    for (auto* node : path.nodes) {
-        if (!applies(node)) continue;
-        if (node == last_transform) pivot = world;
-        gekko::premultiply(world, node->sequence && node->sequence->valid ? node->sequence->evaluate(at) : matrix_of(node));
-    }
-    if (path.camera) {
-        const float fov = path.camera->object.f32(8, 45.0f);
-        const float near_plane = path.camera->object.f32(9, 10.0f);
-        const float far_plane = path.camera->object.f32(10, 2000.0f);
-        camera.projection = camera_projection(fov, near_plane, far_plane);
-    }
-    if (!use_viewer && !viewer_ && !ram->box) {
-        if (auto* models = engine.get<ModelCtrlManager>()) {
-            if (const auto* player = models->player(slot); player && player->node) {
-                const auto& pm = player->node->matrix;
-                const Vec3f offset{world(3, 0) - pivot(3, 0), world(3, 1) - pivot(3, 1), world(3, 2) - pivot(3, 2)};
-                const Vec3f pivot_local{pivot(3, 0), pivot(3, 1), pivot(3, 2)};
-                world(3, 0) = pm(3, 0) + pivot_local.x + offset.x;
-                world(3, 1) = pm(3, 1) + pivot_local.y + offset.y;
-                world(3, 2) = pm(3, 2) + pivot_local.z + offset.z;
-            }
+        if (before & bit) continue; // it keeps its box
+        pb = PlayerBox{};
+        if (before != 0 || !(heirs & bit) || !box_ram) continue; // a first run: its box comes directly
+        // The member that played with the shared camera takes its state over:
+        // the centre, the boxes, the blend and its CAMHOKAN step, the saved
+        // and live matrices, the shake's unshaken translations. Its picture
+        // goes on as before (with the shared viewer: a box path shows its
+        // box, a demo stays the demo until SETBOXCAMERA).
+        const auto& box = *box_ram->box;
+        pb.started = true;
+        pb.centre = centre_;
+        pb.centre_moved = centre_moved_;
+        pb.blend = blend_;
+        pb.box = box_;
+        pb.previous_box = previous_box_;
+        pb.saved_eye = saved_eye_;
+        pb.saved_target = saved_target_;
+        pb.pivot = box.pivot->matrix;
+        pb.eye = box.eyes[0]->matrix;
+        pb.target = box.targets[0]->matrix;
+        pb.hokan = box_ram->hokan;
+        if (box_ram->shake) {
+            pb.shake_eye = box_ram->shake->eye;
+            pb.shake_target = box_ram->shake->target;
         }
     }
-    const Vec3f translation{world(3, 0), world(3, 1), world(3, 2)};
-    float x = 0.0f, y = 0.0f, z = 0.0f;
-    gekko::matrix_euler(world, x, y, z);
-    gekko::euler_matrix(world, x, y, z);
-    world(3, 0) = translation.x;
-    world(3, 1) = translation.y;
-    world(3, 2) = translation.z;
-    gekko::view_inverse(world, camera.view);
 }
 
-void CameraManager::compute_camera(Engine& engine, FrameCamera& camera) {
+std::uint64_t CameraManager::player_box_hash() const {
+    std::uint64_t h = 0xcbf29ce484222325ull;
+    auto mix = [&](const void* data, std::size_t size) {
+        const auto* bytes = static_cast<const unsigned char*>(data);
+        for (std::size_t i = 0; i < size; ++i) {
+            h ^= bytes[i];
+            h *= 0x100000001b3ull;
+        }
+    };
+    auto mix_value = [&](auto value) { mix(&value, sizeof value); };
+    auto mix_matrix = [&](const Mat4& m) { mix(m.m.data(), sizeof(float) * m.m.size()); };
+    mix_value(viewer_events_);
+    mix_value(demo_event_);
+    for (const auto& pb : player_box_) {
+        mix_value(pb.started);
+        if (!pb.started) continue;
+        for (float v : {pb.centre.x, pb.centre.y, pb.centre.z, pb.blend, pb.shake_eye.x, pb.shake_eye.y, pb.shake_eye.z,
+                        pb.shake_target.x, pb.shake_target.y, pb.shake_target.z})
+            mix_value(v);
+        mix_value(pb.centre_moved);
+        mix_value(pb.box);
+        mix_value(pb.previous_box);
+        mix_value(pb.box_event);
+        for (const Mat4* m : {&pb.saved_eye, &pb.saved_target, &pb.pivot, &pb.eye, &pb.target}) mix_matrix(*m);
+        mix_value(pb.hokan.has_value());
+        if (pb.hokan) {
+            mix_value(pb.hokan->scale);
+            mix_value(pb.hokan->bias);
+            mix_value(pb.hokan->end);
+            mix_value(pb.hokan->saved_world);
+            mix_value(pb.hokan->cached_frames);
+            mix_value(pb.hokan->previous);
+        }
+    }
+    return h;
+}
+
+const Vec3f* CameraManager::player_box_centre(int slot) const {
+    if (slot < 0 || slot > 3 || !player_box_[std::size_t(slot)].started) return nullptr;
+    return &player_box_[std::size_t(slot)].centre;
+}
+
+void CameraManager::compute_camera(Engine& engine, FrameCamera& camera, const PlayerBox* own, int slot) {
     camera.projection = camera_projection(54.4322f, 10.0f, 2000.0f);
     camera.view = look_at({0, 50, 300}, {0, 0, 0}, {0, 1, 0});
+    // Per-slot cameras (`own`): the slot sees its own box camera when its box
+    // made the box path its viewer after the last demo viewer, or when the
+    // current viewer is a box path anyway; a demo viewer is everyone's.
+    bool own_box = false;
+    const CameraRam* box_ram = nullptr;
+    if (own) {
+        for (const auto& ram : rams_)
+            if (!box_ram && !ram->paths.empty() && ram->box && ram->active) box_ram = ram.get();
+        own_box = box_ram && own->started && (own->box_event > demo_event_ || (viewer_ && viewer_->ram->box));
+    }
+    const bool use_viewer = viewer_ && !own_box;
     // The current viewer's path at its clock. Before the box or a demo camera
     // has set one, the stage's scene camera (8040E7DC): the active box
     // camera's path, else the first camera with a path.
-    const CameraRam* chosen = viewer_ ? viewer_->ram : nullptr;
+    const CameraRam* chosen = own_box ? box_ram : viewer_ ? viewer_->ram : nullptr;
     for (const auto& ram : rams_)
         if (!chosen && !ram->paths.empty() && ram->box && ram->active) chosen = ram.get();
     for (const auto& ram : rams_)
         if (!chosen && !ram->paths.empty()) chosen = ram.get();
     if (chosen) {
         const CameraRam* ram = chosen;
-        const auto& path = viewer_ ? *viewer_->path : ram->paths.front();
-        const std::int64_t at = viewer_ ? viewer_->time : 0;
+        const auto& path = use_viewer ? *viewer_->path : ram->paths.front();
+        const std::int64_t at = use_viewer ? viewer_->time : 0;
+        // A slot's box path takes that slot's live pivot / eye / target.
+        const BoxData* box = own && ram->box && own->started ? &*ram->box : nullptr;
+        auto matrix_of = [&](const Node* node) -> const Mat4& {
+            if (box) {
+                if (node == box->pivot) return own->pivot;
+                if (node == box->eyes[0]) return own->eye;
+                if (node == box->targets[0]) return own->target;
+            }
+            return node->matrix;
+        };
         // World matrices along the path (801EA990): from the identity, each
         // transform whose _target is 0 (+0x60; others are skipped) takes its
         // matrix at the viewer's time (vfunc +0x9C) and is applied before
@@ -892,7 +926,7 @@ void CameraManager::compute_camera(Engine& engine, FrameCamera& camera) {
         for (auto* node : path.nodes) {
             if (!applies(node)) continue;
             if (node == last_transform) pivot = world;
-            gekko::premultiply(world, node->sequence && node->sequence->valid ? node->sequence->evaluate(at) : node->matrix);
+            gekko::premultiply(world, node->sequence && node->sequence->valid ? node->sequence->evaluate(at) : matrix_of(node));
         }
         if (path.camera) {
             // igCamera fields (804B0F14): _horizontalFieldOfView (default 45,
@@ -902,11 +936,11 @@ void CameraManager::compute_camera(Engine& engine, FrameCamera& camera) {
             const float far_plane = path.camera->object.f32(10, 2000.0f);
             camera.projection = camera_projection(fov, near_plane, far_plane);
         }
-        // Without a viewer and box data: follow the first player with the
-        // authored angle and distance.
+        // Without a viewer and box data: follow the first player (a slot's
+        // camera: its own player) with the authored angle and distance.
         if (!viewer_ && !ram->box) {
             if (auto* models = engine.get<ModelCtrlManager>()) {
-                if (const auto* player = models->player(0); player && player->node) {
+                if (const auto* player = models->player(own ? slot : 0); player && player->node) {
                     const auto& pm = player->node->matrix;
                     const Vec3f offset{world(3, 0) - pivot(3, 0), world(3, 1) - pivot(3, 1), world(3, 2) - pivot(3, 2)};
                     const Vec3f pivot_local{pivot(3, 0), pivot(3, 1), pivot(3, 2)};
@@ -920,7 +954,8 @@ void CameraManager::compute_camera(Engine& engine, FrameCamera& camera) {
         // Euler angles (8012947C, then 80129134 with the translation put
         // back), and the view matrix is its orthonormal inverse (8012A860),
         // published to the viewer parameters (+0x6C) the player input reads.
-        static const bool trace = std::getenv("DW4_TRACE_VIEW") != nullptr;
+        static const bool trace_view = std::getenv("DW4_TRACE_VIEW") != nullptr;
+        const bool trace = trace_view && !own;
         auto print_matrix = [&](const char* letter) {
             std::printf("[%llu] %s", static_cast<unsigned long long>(engine.frame()), letter);
             for (int row = 0; row < 4; ++row)

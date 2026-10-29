@@ -1,6 +1,7 @@
 #pragma once
 
 #include "dw4/engine/igb_view.hpp"
+#include "dw4/engine/online.hpp"
 #include "dw4/engine/port_events.hpp"
 #include "dw4/engine/scene_graph.hpp"
 #include "dw4/card_store.hpp"
@@ -253,6 +254,8 @@ private:
 // beDemoManager record types (802F7580 / 802F7EC0).
 struct DemoRecord {
     int type{};                 // 0 set, 1 wait-while-false, 2 wait-while-true, 3 switch, 4 case, 5 end, 7 lua
+                                // port only (seamless co-op, never in an offline game): 8 wait while `port`
+                                // returns nonzero, 9 switch on `port`'s value
     std::string category;
     std::optional<std::string> name;
     std::int32_t index{};
@@ -260,6 +263,7 @@ struct DemoRecord {
     std::optional<std::string> argument;
     std::int64_t delay_frames{};
     std::int32_t case_value{};
+    std::function<int(Engine&)> port;
 };
 struct DemoWork {
     std::vector<DemoRecord> records;
@@ -273,6 +277,10 @@ public:
     void add_case(std::int32_t value);
     void end_switch();
     void run();
+    // A work built elsewhere starts at once (the seamless co-op exit port;
+    // a script's unfinished work stays as it is). It runs from the next
+    // update on.
+    void start(std::unique_ptr<DemoWork> work) { running_.push_back(std::move(work)); }
     void update(Engine& engine);
     void clear();
     std::size_t running() const { return running_.size(); }
@@ -443,30 +451,11 @@ public:
     // blends the picture between two steps (TraversalContext::
     // picture_previous_view). Presentation only, like picture_widen.
     std::optional<Mat4> picture_previous_view;
-    // SPIKE r51cam (seamless co-op cameras). A bit per player slot that has
-    // its own box camera (CameraManager::frame_camera(.., slot)); 0 (the
-    // default, every offline and lockstep game) keeps the one shared camera
-    // and the original single traversal. With bits set:
-    //  - the simulation traversal (traverse_scene, and render() once per
-    //    step) culls against the UNION of those cameras' frusta: a node is
-    //    simulated when any of them sees it (every machine of an instance
-    //    computes every member's camera from the lockstep inputs, so the
-    //    union is the same everywhere); view-dependent values take the first
-    //    camera (recorders, billboards, beResetNode) or the nearest live one
-    //    (igLod);
-    //  - render() then draws `local_camera_slot`'s picture without changing
-    //    anything (every node on its peek path).
-    // One bit with one player is the original camera (union of one frustum).
-    std::uint8_t player_cameras = 0;
-    int local_camera_slot = 0;
-    // SPIKE: DW4_CAM_UNION=1 forces the union code path even for one camera
-    // (the proof that it equals the original traversal); DW4_CAM_NAIVE=1
-    // runs one full simulation traversal per camera instead (cost compare).
-    bool force_union = false;
-    bool naive_union = false;
-    // SPIKE: accumulated traversal times (ns) and counts: [0] the combined
-    // render (original), [1] traverse_scene (original), [2] union simulation
-    // pass, [3] draw-only pass.
+    // Development measurement (DW4_TRACE_TRAVERSAL_TIME): the traversals'
+    // accumulated CPU time in ns and their count: [0] the combined pass
+    // (render, the original), [1] traverse_scene (the original), [2] the
+    // union simulation pass, [3] the picture-only pass. Never read by the
+    // simulation; counted only while that variable is set.
     std::array<std::uint64_t, 4> traversal_ns{}, traversal_count{};
     // Per-scene draw statistics for diagnostics.
     std::vector<std::string> scene_report();
@@ -668,6 +657,51 @@ public:
     bool load_common_now(const std::string& logical_path);
     std::string folder_name() const { return stage_folder_; }
 
+    // --- Seamless online co-op (docs/SEAMLESS.md section 7) ---------------
+    // All off by default: the original game. The rules are simulation state
+    // (every member of an instance applies the same rules at the same step)
+    // and change only between steps.
+    const OnlineRules& online() const { return online_; }
+    void set_online(const OnlineRules& rules);
+    // The slots with their own box camera (OnlineRules::player_cameras); 0:
+    // the one shared camera and the original single traversal.
+    std::uint8_t player_cameras() const { return online_.player_cameras; }
+    // A multi-member instance: online with two or more present members (the
+    // exit port, the gate disc fork and the draw filters act only then).
+    bool online_shared() const;
+    // Presentation only: whose camera this machine's picture uses (the local
+    // member's slot). picture_slot() is the camera render() draws: the view
+    // slot, or while its player is defeated the nearest living member's
+    // (SEAMLESS.md 4.1); the view slot itself without per-slot cameras.
+    void set_view_slot(int slot) { view_slot_ = slot < 0 || slot > 3 ? 0 : slot; }
+    int view_slot() const { return view_slot_; }
+    int picture_slot() const;
+    // Live play: the local member's slot, which decides the side this copy
+    // continues at a fork (NETsplit). A replay takes the recorded side
+    // instead (the membership lane's set_fork_sides).
+    void set_split_identity(int slot) { split_identity_ = slot < 0 || slot > 3 ? 0 : slot; }
+    int split_identity() const { return split_identity_; }
+    // A fork at this step (SEAMLESS.md 6.7): `leavers` and the rest of the
+    // present members part; this copy keeps its own side (split_identity)
+    // and despawns the other side's players at once. Returns whether this
+    // copy is on the leavers' side. Online only.
+    bool online_split(std::uint8_t leavers, bool in_stage);
+    std::optional<SplitResult> take_split();
+    // A present member leaves this copy: its player is removed and its slot
+    // is no longer present (before a step, or inside a fork).
+    void online_remove_player(int slot);
+    // A member's port choice, applied before a step (give up: a defeated
+    // member forks off alone).
+    void online_intent(int slot, IntentKind kind, int argument);
+    // An exit the local copy takes, for the client's HEADING.
+    std::optional<ExitHeading> take_heading();
+    // The exit port's state for this machine's texts and draw filter.
+    const ExitPromptView& exit_prompt() const { return exit_view_; }
+    // The subtrees this machine's picture leaves out in a multi-member
+    // instance (SEAMLESS.md 4.3, 5.2): other members' item name lines and
+    // exit prompts. Presentation only; render()'s picture pass skips them.
+    void picture_hidden_roots(std::vector<const Node*>& out);
+
 private:
     void process_stage_loader();
     void loader_update();
@@ -717,8 +751,9 @@ private:
     // The frame's camera, clear colour and traversal context (render,
     // traverse_scene); `out` null: no draw items.
     TraversalContext frame_context(std::vector<DrawItem>* out, FrameCamera& camera, Vec4f& clear_color);
-    // SPIKE r51cam: the union simulation pass (no draw items) once per step,
-    // and the frame/time it last ran on.
+    // Per-slot cameras (OnlineRules::player_cameras): the simulation pass
+    // culled against the union of the member cameras (no draw items), once
+    // per step, and the frame and world time it last ran on.
     void traverse_union();
     std::uint64_t union_frame_ = ~0ull;
     std::int64_t union_time_ = -1;
@@ -845,6 +880,23 @@ private:
     std::vector<DiagnosticCounter> notes_;
     std::vector<ModelScriptContext> model_contexts_;
     std::deque<std::string> log_;
+    // Seamless online co-op (online(), the exit port in online_exits.cpp).
+    OnlineRules online_;
+    int view_slot_{};
+    int split_identity_{};
+    std::optional<SplitResult> split_;
+    std::optional<ExitHeading> heading_;
+    ExitPromptView exit_view_;
+    struct ExitPort;
+    std::shared_ptr<ExitPort> exit_port_;   // the running exit prompt (shared with its demo records)
+    std::vector<const Node*> picture_hidden_; // render(): picture_hidden_roots
+    // The per-slot camera and leash side of set_online (cameras.cpp side).
+    void apply_online_cameras(const OnlineRules& before);
+    void apply_leash_rule();
+    std::vector<Lua4Value> stage_change_port(std::span<const Lua4Value> args);
+    bool gatedisc_fork();
+    void install_online_lua();
+    friend struct ExitPortAccess;
 };
 
 // Base class for original be* managers. Registration follows the original

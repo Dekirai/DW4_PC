@@ -102,9 +102,11 @@ void ShadowManager::update(Engine& engine) {
         ++count;
     }
     if (count) light_ = Vec3f{sum.x / float(count), sum.y / float(count) + 200.0f, sum.z / float(count)};
-    // SPIKE r51cam: one light per member camera, at its own player.
-    player_cameras_ = engine.player_cameras;
-    local_slot_ = engine.local_camera_slot;
+    // Per-slot cameras (seamless co-op): every member has its own light, as
+    // 8031C1FC with that member's player alone (its position + 200 up); the
+    // union pass traverses the casters under each, the picture uses the
+    // light of the picture's camera.
+    player_cameras_ = engine.player_cameras();
     player_lights_ = {};
     if (player_cameras_)
         for (int i = 0; i < 4; ++i) {
@@ -169,9 +171,9 @@ Mat4 ShadowManager::light_projection() const {
 void ShadowManager::traverse(const TraversalContext& context) {
     if (!active()) return;
     if (player_cameras_ && context.union_cull) {
-        // SPIKE r51cam: the casters under every member's light (the
+        // Per-slot cameras: the casters under every member's light (the
         // traversal is idempotent at one world time, so a caster two lights
-        // see is simulated once).
+        // see is simulated once). A defeated member has no light.
         const auto shared = light_;
         bool any = false;
         for (const auto& light : player_lights_) {
@@ -187,10 +189,10 @@ void ShadowManager::traverse(const TraversalContext& context) {
 }
 
 void ShadowManager::render(Engine& engine, const TraversalContext& context, ShadowFrame& frame) {
-    // SPIKE r51cam: the local member's light for the picture.
+    // Per-slot cameras: the light of the picture's camera.
     const auto shared = light_;
-    if (player_cameras_ && player_lights_[std::size_t(std::clamp(local_slot_, 0, 3))])
-        light_ = player_lights_[std::size_t(std::clamp(local_slot_, 0, 3))];
+    if (player_cameras_)
+        if (const auto& own = player_lights_[std::size_t(engine.picture_slot())]) light_ = own;
     struct Restore {
         std::optional<Vec3f>& light;
         std::optional<Vec3f> value;

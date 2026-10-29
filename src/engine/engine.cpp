@@ -491,6 +491,16 @@ void DemoManager::update(Engine& engine) {
                 }
             } else if (record.type == 7) {
                 if (record.argument) engine.run_script(*record.argument);
+            } else if (record.type == 8) {
+                block = record.port && record.port(engine) != 0;
+            } else if (record.type == 9) {
+                const std::int32_t value = record.port ? record.port(engine) : 0;
+                while (cursor < records.size()) {
+                    ++cursor;
+                    if (cursor >= records.size()) break;
+                    if (records[cursor].type == 4 && records[cursor].case_value == value) break;
+                    if (records[cursor].type == 5) break;
+                }
             } else if (record.type >= 0 && record.type <= 3) {
                 Packet packet;
                 if (record.argument) parse_packet_arguments(*record.argument, packet);
@@ -628,6 +638,9 @@ void Engine::reset_modules() {
     schedule_.clear();
     messenger_.clear();
     demo_.clear();
+    // Seamless co-op: a running exit ends with the stage.
+    exit_port_.reset();
+    exit_view_ = ExitPromptView{};
 }
 
 void Engine::begin_stage_load(const StageSnapshot* restoring) {
@@ -1927,6 +1940,8 @@ void Engine::step(const std::array<PadSample, 4>& samples) {
     messenger_.update(*this);
     process_stage_loader();
     demo_.update(*this);
+    // Seamless co-op: no leash while OnlineRules::leash_off (a no-op offline).
+    apply_leash_rule();
     update_managers();
 }
 
@@ -2027,31 +2042,42 @@ TraversalContext Engine::frame_context(std::vector<DrawItem>* out, FrameCamera& 
 }
 
 namespace {
-// SPIKE r51cam: traversal timing (Engine::traversal_ns).
+// DW4_TRACE_TRAVERSAL_TIME (development measurement, Engine::traversal_ns):
+// the CPU time of each traversal pass. Off, it reads no clock.
+bool trace_traversal_time() {
+    static const bool on = std::getenv("DW4_TRACE_TRAVERSAL_TIME") != nullptr;
+    return on;
+}
 struct PassTimer {
     std::uint64_t& ns;
     std::uint64_t& count;
-    std::chrono::steady_clock::time_point start = std::chrono::steady_clock::now();
+    bool on = trace_traversal_time();
+    std::chrono::steady_clock::time_point start = on ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
     ~PassTimer() {
+        if (!on) return;
         ns += std::uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - start).count());
         ++count;
     }
 };
 } // namespace
 
-// SPIKE r51cam: the simulation pass of an instance with per-player cameras:
-// the traversal (and the shadow casters) culled against the union of every
-// member camera's frustum, without draw items, once per step.
+// Per-slot cameras (OnlineRules::player_cameras, docs/SEAMLESS.md 4.2): the
+// simulation pass of the step, culled against the union of every member
+// camera's frustum (the first member's camera first: it takes the
+// view-dependent values), without draw items, and the shadow casters under
+// every member's light. Every machine of an instance computes every member's
+// camera from the lockstep inputs, so the union is the same everywhere. With
+// one camera it is the original traversal.
 void Engine::traverse_union() {
     if (rebooting_) return;
     PassTimer timer{traversal_ns[2], traversal_count[2]};
     FrameCamera camera;
     Vec4f clear_color;
     TraversalContext context = frame_context(nullptr, camera, clear_color);
-    if (auto* cameras = get<CameraManager>(); cameras && player_cameras) {
+    if (auto* cameras = get<CameraManager>()) {
         bool first = true;
         for (int slot = 0; slot < 4; ++slot) {
-            if (!(player_cameras & (1u << slot))) continue;
+            if (!(online_.player_cameras & (1u << slot))) continue;
             FrameCamera own;
             cameras->frame_camera(*this, own, slot);
             if (first) context.cull_camera = own;
@@ -2059,27 +2085,9 @@ void Engine::traverse_union() {
             first = false;
         }
     }
-    if (naive_union) {
-        // Cost comparison only: one full original traversal per camera.
-        std::vector<FrameCamera> all{context.cull_camera};
-        all.insert(all.end(), context.extra_cull.begin(), context.extra_cull.end());
-        context.extra_cull.clear();
-        for (const auto& own : all) {
-            context.cull_camera = own;
-            traverse(&global_root_, context);
-            if (auto* shadows = get<ShadowManager>()) shadows->traverse(context);
-        }
-    } else {
-        context.union_cull = true;
-        // Cost comparison only (DW4_CAM_NOCULL): simulate every node.
-        if (static const bool nocull = std::getenv("DW4_CAM_NOCULL") != nullptr; nocull) context.cull = false;
-        // Cost comparison only (DW4_CAM_DUP): the extra cameras are copies
-        // of the first (the same nodes simulated, the tests repeated).
-        if (static const bool dup = std::getenv("DW4_CAM_DUP") != nullptr; dup)
-            for (auto& extra : context.extra_cull) extra = context.cull_camera;
-        traverse(&global_root_, context);
-        if (auto* shadows = get<ShadowManager>()) shadows->traverse(context);
-    }
+    context.union_cull = true;
+    traverse(&global_root_, context);
+    if (auto* shadows = get<ShadowManager>()) shadows->traverse(context);
     union_frame_ = frame_;
     union_time_ = time_;
 }
@@ -2089,7 +2097,7 @@ void Engine::traverse_scene() {
     // time and poses; only the draw items (geometry, particle quads, skin
     // palettes, lights) are left out.
     if (rebooting_) return;
-    if (player_cameras || force_union) {
+    if (online_.player_cameras) {
         traverse_union();
         return;
     }
@@ -2109,20 +2117,28 @@ void Engine::render(std::vector<DrawItem>& out, FrameCamera& camera, Vec4f& clea
         if (shadow) shadow->active = false;
         return;
     }
-    if (player_cameras || force_union) {
-        // SPIKE r51cam: the step's union simulation pass (once), then the
-        // local player's picture, which changes nothing.
+    if (online_.player_cameras) {
+        // Per-slot cameras: the step's union simulation pass (once per step;
+        // a traversal at the same world time changes nothing), then this
+        // machine's picture with its own camera, which changes nothing
+        // either: every node takes its peek path. The picture keeps the
+        // widescreen widening and the smooth motion rule (the previous
+        // step's view of this camera, set by the host).
         if (union_frame_ != frame_ || union_time_ != time_) traverse_union();
         PassTimer timer{traversal_ns[3], traversal_count[3]};
         TraversalContext context = frame_context(&out, camera, clear_color);
         FrameCamera local = context.cull_camera;
-        if (auto* cameras = get<CameraManager>()) cameras->frame_camera(*this, local, local_camera_slot);
+        if (auto* cameras = get<CameraManager>()) cameras->frame_camera(*this, local, picture_slot());
         context.cull_camera = local;
         context.camera = debug_camera ? *debug_camera : local;
         camera = context.camera;
         context.simulate = false;
         Mat4 inverse_view;
         if (invert(camera.view, inverse_view)) context.camera_position = {inverse_view(3, 0), inverse_view(3, 1), inverse_view(3, 2)};
+        // A multi-member instance: other members' item name lines and exit
+        // prompts are not this machine's (picture_hidden_roots).
+        picture_hidden_roots(picture_hidden_);
+        if (!picture_hidden_.empty()) context.picture_hidden = &picture_hidden_;
         traverse(&global_root_, context);
         std::stable_partition(out.begin(), out.end(), [](const DrawItem& item) { return !item.state.blend_enabled; });
         if (shadow) {

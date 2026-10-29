@@ -130,11 +130,11 @@ bool WaterPlainManager::visible(Engine& engine, const Water& w) const {
     FrameCamera camera;
     auto* cameras = engine.get<CameraManager>();
     if (!cameras) return true;
-    // SPIKE r51cam: with per-player cameras the surface runs while any
-    // member's camera sees it (the union, as the scene traversal).
-    if (engine.player_cameras) {
+    // Per-slot cameras (seamless co-op): the surface runs while any member's
+    // camera sees it (the union, as the scene traversal).
+    if (const auto mask = engine.player_cameras()) {
         for (int slot = 0; slot < 4; ++slot) {
-            if (!(engine.player_cameras & (1u << slot))) continue;
+            if (!(mask & (1u << slot))) continue;
             cameras->frame_camera(engine, camera, slot);
             if (visible_from(camera, w)) return true;
         }

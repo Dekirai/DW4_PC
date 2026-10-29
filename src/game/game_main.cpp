@@ -26,6 +26,7 @@
 #include "dw4/disc.hpp"
 #include "dw4/engine/state_archive.hpp"
 #include <algorithm>
+#include <bit>
 #include <cmath>
 
 #include <SDL3/SDL.h>
@@ -658,6 +659,36 @@ int run(const Options& options, dw4::game::Settings& settings) {
     if (const char* count = std::getenv("DW4_PLAYERS"))
         if (auto* sys = engine.get<dw4::engine::GameSystem>())
             for (int i = 0; i < std::clamp(std::atoi(count), 0, 4); ++i) sys->players[std::size_t(i)].joined = true;
+    // Seamless co-op test switches (development and test runs only; they
+    // change the simulation, so an online session refuses them,
+    // docs/SEAMLESS.md 6.12), applied to every new engine before its first
+    // step:
+    //   DW4_CAMERAS=<mask>   those slots get their own box camera
+    //                        (OnlineRules::player_cameras); two or more bits
+    //                        also switch the leash off
+    //   DW4_CAM_LOCAL=<slot> this machine's view slot and split identity
+    //   DW4_LEASH_OFF=1      the leash off alone (the solo check of 4.6)
+    //   DW4_ONLINE=<mask>    the online overrides on with these slots present
+    //                        (the exit port, the gate disc fork, give up)
+    const auto apply_test_online = [](dw4::engine::Engine& e) {
+        static const char* cameras = std::getenv("DW4_CAMERAS");
+        static const char* local = std::getenv("DW4_CAM_LOCAL");
+        static const char* leash = std::getenv("DW4_LEASH_OFF");
+        static const char* online = std::getenv("DW4_ONLINE");
+        if (!cameras && !local && !leash && !online) return;
+        dw4::engine::OnlineRules rules;
+        if (cameras) rules.player_cameras = std::uint8_t(std::strtol(cameras, nullptr, 0) & 15);
+        rules.leash_off = leash != nullptr || std::popcount(unsigned(rules.player_cameras)) >= 2;
+        if (online) {
+            rules.enabled = true;
+            rules.present = std::uint8_t(std::strtol(online, nullptr, 0) & 15);
+        }
+        const int slot = local ? std::clamp(std::atoi(local), 0, 3) : 0;
+        e.set_view_slot(slot);
+        e.set_split_identity(slot);
+        e.set_online(rules);
+    };
+    apply_test_online(engine);
     // DW4_DIFFICULTY=n: the difficulty a test run plays (0 normal, 1 hard, 2
     // very hard). The character select writes GAMERAM DIFFICULTY before the
     // first stage (80368050 at 0x803687D4, then TITLE2 GAMESTART), so the first
@@ -991,6 +1022,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
         std::uint64_t net_submitted = std::uint64_t(net.active() ? net.start().delay : 0);
         // Smooth motion above 60 presents per second (settings.ini smooth_motion).
         dw4::game::MotionInterpolator interpolator;
+        int last_picture_slot = -1; // Engine::picture_slot of the last picture (smooth motion restarts on a change)
         double present_interval = 1.0 / 60.0;
         std::array<float, 240> frame_times{}; // ms per presented frame (F1 graph)
         std::size_t frame_time_at = 0;
@@ -1287,15 +1319,22 @@ int run(const Options& options, dw4::game::Settings& settings) {
             engine.set_resource_overrides(mod_folders);
             engine.set_card_store(player_store);
             for (int slot = 0; slot < 2; ++slot) engine.set_card_setting(slot, player_card_settings[std::size_t(slot)]);
+            apply_test_online(engine);
             engine.restore(state.snapshot);
             if (state.load_step_drawn) engine.traverse_scene();
             std::vector<std::int16_t> scratch(std::size_t(kAudioFrameSamples + 1) * 2);
             auto* sound = engine.get<dw4::engine::SoundManager>();
+            const auto replay_started = std::chrono::steady_clock::now();
             for (const auto& step : state.inputs) {
                 engine.step(step.pads);
                 if (sound) sound->render(scratch.data(), std::size_t(step_samples(engine.frame()))); // music position
                 if (step.drawn) engine.traverse_scene();
             }
+            // (Test runs: the replay's own rate, without the engine's start.)
+            const double replay_seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - replay_started).count();
+            if (options.smoke_frames && !state.inputs.empty())
+                std::printf("state replay: %zu steps in %.3f s, %.0f steps per second\n", state.inputs.size(), replay_seconds,
+                            double(state.inputs.size()) / std::max(replay_seconds, 1e-9));
             const bool exact = engine.fingerprint() == state.fingerprint;
             // (No achievement counts in the rest of this stage.)
             ++engine_generation;
@@ -1395,6 +1434,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
             engine.set_card_store(cards);
             for (int slot = 0; slot < 2; ++slot) engine.set_card_setting(slot, slots[std::size_t(slot)]);
             engine.cheats() = cheats;
+            if (!net.active()) apply_test_online(engine);
             engine.request_stage(!net.active() && !options.smoke_frames && settings.skip_intro ? "stagis10" : "stagis08");
             ++engine_generation;
             labels.reset();
@@ -1705,7 +1745,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                         const float dx = out.x - p->node->matrix(3, 0), dz = out.z - p->node->matrix(3, 2);
                         if (dx * dx + dz * dz > out.reach) {
                             dw4::engine::FrameCamera camera;
-                            cameras->frame_camera(engine, camera);
+                            cameras->frame_camera(engine, camera, 0); // the bot's player's own camera (per-slot cameras)
                             dw4::engine::Mat4 inverse;
                             if (dw4::engine::invert(camera.view, inverse)) {
                                 const float relative = std::atan2(dx, dz) - std::atan2(inverse(2, 0), inverse(2, 2));
@@ -1858,7 +1898,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                                            (p->control_enabled && p->seq_name.rfind("SQ_DEMO", 0) != 0);
                         if (steer && dx * dx + dz * dz > reach) {
                             dw4::engine::FrameCamera camera;
-                            cameras->frame_camera(engine, camera);
+                            cameras->frame_camera(engine, camera, 0); // the bot's player's own camera (per-slot cameras)
                             dw4::engine::Mat4 inverse;
                             if (dw4::engine::invert(camera.view, inverse)) {
                                 const float heading = std::atan2(inverse(2, 0), inverse(2, 2));
@@ -1909,24 +1949,6 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 if (const bool collect = achievements_on() || trace_events || (!net.active() && randomizer_settings().active());
                     engine.port_events_enabled() != collect)
                     engine.set_port_events(collect);
-                // SPIKE r51cam (seamless co-op cameras, test runs):
-                // DW4_CAMERAS=mask gives those player slots their own box
-                // camera (union simulation pass + local picture),
-                // DW4_CAM_LOCAL=slot picks the picture's, DW4_CAM_UNION=1 runs
-                // the union code with the one shared camera, DW4_CAM_NAIVE=1
-                // one full traversal per camera, DW4_CAM_NOLEASH=1 switches
-                // the players' limit circle off while cameras are per player.
-                {
-                    static const char* cams = std::getenv("DW4_CAMERAS");
-                    static const char* local = std::getenv("DW4_CAM_LOCAL");
-                    engine.player_cameras = cams ? std::uint8_t(std::strtol(cams, nullptr, 0) & 15) : 0;
-                    engine.local_camera_slot = local ? std::clamp(std::atoi(local), 0, 3) : 0;
-                    engine.force_union = std::getenv("DW4_CAM_UNION") != nullptr;
-                    engine.naive_union = std::getenv("DW4_CAM_NAIVE") != nullptr;
-                    if (engine.player_cameras && std::getenv("DW4_CAM_NOLEASH"))
-                        if (auto* hitland = engine.get<dw4::engine::HitLandManager>(); hitland && hitland->child_hit("limit_Circle").value_or(false))
-                            hitland->set_child_hit("limit_Circle", false);
-                }
                 engine.step(pads);
                 if (engine.port_events_enabled()) observe_step();
                 if (!net.active()) bind_randomizer();
@@ -1977,7 +1999,16 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     std::printf("[%d] fingerprint %016llx random %016zx\n", frame, static_cast<unsigned long long>(engine.fingerprint()),
                                 std::hash<std::string>{}(random.str()));
                 }
-                // SPIKE r51cam: DW4_TRACE_PLAYERS=N prints every player's position every N frames.
+                // DW4_TRACE_CAMERAS=N (test runs, seamless co-op): every N
+                // frames the per-slot camera state (the box hash the net
+                // fingerprint takes), the online rules and the pictures' slot.
+                if (static const int every = std::getenv("DW4_TRACE_CAMERAS") ? std::atoi(std::getenv("DW4_TRACE_CAMERAS")) : 0;
+                    every > 0 && frame % every == 0)
+                    if (auto* cameras = engine.get<dw4::engine::CameraManager>())
+                        std::printf("[%d] cameras %016llx mask %x present %x leash %s\n", frame,
+                                    static_cast<unsigned long long>(cameras->player_box_hash()), unsigned(engine.player_cameras()),
+                                    unsigned(engine.online().present), engine.online().leash_off ? "off" : "on");
+                // DW4_TRACE_PLAYERS=N (development) prints every player's position every N frames.
                 if (static const int every = std::getenv("DW4_TRACE_PLAYERS") ? std::atoi(std::getenv("DW4_TRACE_PLAYERS")) : 0;
                     every > 0 && frame % every == 0)
                     if (auto* models = engine.get<dw4::engine::ModelCtrlManager>()) {
@@ -2031,7 +2062,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 int width = 1280, height = 960;
                 if (const char* size = std::getenv("DW4_WINDOW")) std::sscanf(size, "%dx%d", &width, &height);
                 dw4::game::LabelView view;
-                if (auto* cameras = engine.get<dw4::engine::CameraManager>()) cameras->frame_camera(engine, view.camera);
+                if (auto* cameras = engine.get<dw4::engine::CameraManager>()) cameras->frame_camera(engine, view.camera, engine.picture_slot());
                 const bool wider = width * 3 > height * 4;
                 const int screen_width = wider ? height * 4 / 3 : width;
                 const int screen_height = wider ? height : width * 3 / 4;
@@ -2092,11 +2123,52 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 // Smooth motion draws between the previous step's camera and
                 // this one: the picture's cull keeps what is inside either.
                 engine.picture_previous_view = smooth_blending ? interpolator.previous_view() : std::nullopt;
+                // Seamless co-op: a new picture camera (a defeated member
+                // watches a partner) starts its smooth motion anew.
+                if (const int slot = engine.picture_slot(); slot != last_picture_slot) {
+                    if (last_picture_slot >= 0) interpolator.reset();
+                    last_picture_slot = slot;
+                    engine.picture_previous_view = std::nullopt;
+                }
                 engine.render(items, camera, clear, &shadow);
                 dw4::game::dev_hide(dev, items, shadow);
                 items_current = true;
             } else {
                 engine.traverse_scene();
+            }
+            // The idempotence check of the pictures (docs/SEAMLESS.md 4.4, a
+            // permanent check of test runs): DW4_EXTRA_RENDERS=n draws the
+            // same world time n more times, as a machine presenting faster
+            // than 60 Hz does between two steps (into a scratch list, headless
+            // runs too); DW4_EXTRA_WIDEN=1 alternates the widescreen widening
+            // between them and DW4_EXTRA_PREVIOUS=1 gives them the previous
+            // step's picture camera as smooth motion's previous view (the
+            // round 49 rule). The fingerprints must equal a run without.
+            if (static const int extra_renders = std::getenv("DW4_EXTRA_RENDERS") ? std::atoi(std::getenv("DW4_EXTRA_RENDERS")) : 0;
+                extra_renders > 0 && steps > 0 && !engine.held()) {
+                static const bool extra_widen = std::getenv("DW4_EXTRA_WIDEN") != nullptr;
+                static const bool extra_previous = std::getenv("DW4_EXTRA_PREVIOUS") != nullptr;
+                static std::optional<dw4::engine::Mat4> previous_step_view;
+                const float widen = engine.picture_widen;
+                const auto previous = engine.picture_previous_view;
+                std::vector<dw4::engine::DrawItem> scratch_items;
+                dw4::engine::FrameCamera scratch_camera;
+                dw4::engine::Vec4f scratch_clear;
+                dw4::engine::ShadowFrame scratch_shadow;
+                for (int k = 0; k < extra_renders; ++k) {
+                    if (extra_widen) engine.picture_widen = (k & 1) ? 0.5f : 0.75f;
+                    if (extra_previous) engine.picture_previous_view = previous_step_view;
+                    engine.render(scratch_items, scratch_camera, scratch_clear, &scratch_shadow);
+                }
+                if (!draw) engine.traverse_scene();
+                engine.picture_widen = widen;
+                engine.picture_previous_view = previous;
+                if (extra_previous)
+                    if (auto* cameras = engine.get<dw4::engine::CameraManager>()) {
+                        dw4::engine::FrameCamera now;
+                        cameras->frame_camera(engine, now, engine.picture_slot());
+                        previous_step_view = now.view;
+                    }
             }
             if (steps > 0 && !engine.held()) {
                 if (last_step_loaded) load_step_drawn = true;
@@ -3017,7 +3089,8 @@ int run(const Options& options, dw4::game::Settings& settings) {
         // draw count and DW4_DRAW_DUMP.
         if (!draw) engine.render(items, camera, clear, &shadow);
         std::cout << "stage " << engine.stage_name() << ", frame " << engine.frame() << ", draws " << items.size() << '\n';
-        // SPIKE r51cam: traversal times and the one-player camera check.
+        // DW4_TRACE_TRAVERSAL_TIME (development): traversal times; DW4_CAM_CHECK
+        // (test runs): the one-player camera check of the per-slot cameras.
         if (std::getenv("DW4_TRACE_TRAVERSAL_TIME")) {
             static constexpr const char* kNames[4] = {"render (sim+picture)", "traverse_scene", "union sim pass", "picture-only pass"};
             for (int i = 0; i < 4; ++i)

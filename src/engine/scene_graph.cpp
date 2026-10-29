@@ -1386,9 +1386,9 @@ struct CullScope {
     // may lie inside that frustum; picture_in: inside this step's picture.
     bool previous_test{}, previous_in{};
     bool picture_in = true;
-    // SPIKE r51cam (TraversalContext::union_cull): bit 0 cull_camera, bit k
-    // extra_cull[k - 1]. `live`: the cameras that still have the subtree in
-    // view (simulate = live != 0); `testing`: those still testing bounds.
+    // Per-slot cameras (TraversalContext::union_cull): bit 0 cull_camera,
+    // bit k extra_cull[k - 1]. `live`: the cameras that may still have the
+    // subtree in view (simulate = live != 0); `testing`: those still testing.
     std::uint8_t live{}, testing{};
 };
 
@@ -1498,10 +1498,13 @@ void apply_all(const std::vector<const Attribute*>& attributes, State& state, Ma
 // still current. The original's test uses the game camera; the picture's own
 // test the picture's camera with the renderer's widened perspective. Returns
 // false when the traversal has nothing left to do below the node.
-// SPIKE r51cam: the union of several game cameras' frusta (simulation pass,
-// no draw items). Per camera the original test (801E9AB4 / 801E994C): outside
-// drops the camera, inside stops its tests; the subtree is simulated while any
-// camera still has it. One camera gives the original decisions.
+//
+// The union of the member cameras' frusta (per-slot cameras, the simulation
+// pass; TraversalContext::union_cull). Per camera the original test: outside
+// drops that camera, and once one camera has the subtree completely inside
+// (1 or 5) nothing below is tested for any camera, as the original stops
+// after an inside. The subtree is simulated while any camera still has it.
+// With one camera every decision is the original's.
 template <class State>
 bool frustum_cull_union(const Node& n, const TraversalContext& ctx, const Mat4& model, const State& state, CullScope& cull) {
     if (!n.has_bound || !cull.testing) return true;
@@ -1527,16 +1530,10 @@ bool frustum_cull_union(const Node& n, const TraversalContext& ctx, const Mat4& 
                 cull.live &= std::uint8_t(~bit);
                 cull.testing &= std::uint8_t(~bit);
             } else if (code == 1 || code == 5) {
-                cull.testing &= std::uint8_t(~bit);
                 // Inside one camera: the whole subtree is simulated whatever
-                // the others say, so no camera tests below (the masks only
-                // mattered for igLod, which then takes every camera). With
-                // one camera this is the original test. DW4_CAM_FULLMASK
-                // keeps testing the others (cost comparison).
-                if (static const bool full = std::getenv("DW4_CAM_FULLMASK") != nullptr; !full) {
-                    cull.testing = 0;
-                    break;
-                }
+                // the others say, so no camera tests below.
+                cull.testing = 0;
+                break;
             }
         }
     }
@@ -1620,6 +1617,8 @@ void visit(Node* n, TraversalContext& ctx, const Mat4& parent_model, const Mat4&
            std::int64_t time, const ActorScope& parent_scope, CullScope cull, const Trail& parent_trail, int depth) {
     constexpr bool picture = kPicture<State>;
     if (!n || n->hidden || depth > 256) return;
+    if (!ctx.simulate && ctx.picture_hidden && std::find(ctx.picture_hidden->begin(), ctx.picture_hidden->end(), n) != ctx.picture_hidden->end())
+        return;
     // igFrustCullTraversal (801E9AB4): the bound in the parent's space, before
     // the node's own handler runs.
     if (!frustum_cull(*n, ctx, parent_model, parent_state, cull)) return;
@@ -1842,20 +1841,13 @@ void visit(Node* n, TraversalContext& ctx, const Mat4& parent_model, const Mat4&
         overrides(*n, state);
         const Vec3f eye = transform_point(n->lod_center, model * state.view.value_or(camera_view));
         float distance_squared = eye.z * eye.z + (eye.x * eye.x + eye.y * eye.y);
-        // SPIKE r51cam: the union pass takes the nearest camera that still
-        // sees the subtree (cull_camera alone: the original distance).
-        if (ctx.union_cull && !state.view && !ctx.extra_cull.empty()) {
-            static const bool full = std::getenv("DW4_CAM_FULLMASK") != nullptr;
-            bool first = true;
-            for (std::size_t c = 0; c <= ctx.extra_cull.size(); ++c) {
-                if (full && !(cull.live & (1u << c))) continue;
-                const Mat4& view = c == 0 ? ctx.cull_camera.view : ctx.extra_cull[c - 1].view;
-                const Vec3f e = transform_point(n->lod_center, model * view);
-                const float d2 = e.z * e.z + (e.x * e.x + e.y * e.y);
-                if (first || d2 < distance_squared) distance_squared = d2;
-                first = false;
+        // Per-slot cameras: the union pass takes the nearest member camera
+        // (cull_camera alone: the original distance).
+        if (ctx.union_cull && !state.view && !ctx.extra_cull.empty())
+            for (const auto& extra : ctx.extra_cull) {
+                const Vec3f e = transform_point(n->lod_center, model * extra.view);
+                distance_squared = std::min(distance_squared, e.z * e.z + (e.x * e.x + e.y * e.y));
             }
-        }
         Node* child = nullptr;
         if (cull.simulate) {
             child = n->select_lod(distance_squared);
@@ -1910,11 +1902,12 @@ void traverse(Node* n, TraversalContext& ctx, const Mat4& parent_model, const Re
     cull.picture_test = ctx.cull && ctx.picture_cull && ctx.output;
     cull.previous_test = cull.picture_test && ctx.picture_previous_view && !ctx.modelview_base;
     cull.previous_in = cull.previous_test;
-    // SPIKE r51cam: the union pass tests every camera; a picture-only pass
-    // simulates nothing and keeps only the picture's own test.
+    // Per-slot cameras: the union pass tests every member camera; a
+    // picture-only pass simulates nothing and keeps the picture's own tests.
     if (ctx.union_cull) {
         cull.test = false;
         cull.picture_test = false;
+        cull.previous_test = cull.previous_in = false;
         cull.live = cull.testing = ctx.cull ? std::uint8_t((1u << (1 + ctx.extra_cull.size())) - 1u) : 0;
         if (!ctx.cull) cull.live = 1;
     }

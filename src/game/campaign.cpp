@@ -1620,7 +1620,7 @@ float camera_heading(engine::Engine& engine) {
     auto* cameras = engine.get<engine::CameraManager>();
     if (!cameras) return 0.0f;
     engine::FrameCamera camera;
-    cameras->frame_camera(engine, camera);
+    cameras->frame_camera(engine, camera, 0); // the bot's player's own camera (per-slot cameras)
     engine::Mat4 inverse;
     if (!engine::invert(camera.view, inverse)) return 0.0f;
     return std::atan2(inverse(2, 0), inverse(2, 2));
