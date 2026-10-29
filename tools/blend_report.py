@@ -16,7 +16,8 @@ texture and prints how often and at which 60 Hz steps (frames) they were flagged
          remain. 'near' swaps (< 40 units, so blended) slide the item toward another occurrence's
          place for one step, 'far' ones are drawn as they are
   far    too far from the previous step: drawn as it is (warps, sudden turns)
-  texture_jump  a texture matrix that changed but could not be blended (scroll wrapped, atlas step)
+  texture_jump  a texture matrix that changed but could not be blended while its model was (scroll
+                wrapped, atlas step); items drawn as they are (wrap, far) keep their texture matrix unflagged
   palette_*  skinning palettes that could not be blended (palette_far: bones drawn as they are)
 """
 import argparse

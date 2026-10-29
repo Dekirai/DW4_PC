@@ -428,7 +428,7 @@ and come back (and, with item ids, pixels whose draw item does that), a heat map
 the items owning them; `tools/blend_report.py DUMP_DIR` groups the blend's flagged items (`wrap`: a
 sequence that wrapped, stepped or whose clock went back, drawn as it is; `jump`: a change far larger
 than the step before that no sequence marked, still blended; `swap(near)`: blended from another
-occurrence's place; `texture_jump`: a texture matrix drawn as it is). Example, the lobby after loading a save at
+occurrence's place; `texture_jump`: a texture matrix drawn as it is while its model blends). Example, the lobby after loading a save at
 144 Hz: `DW4_DEV_SETTINGS=settings_copy.ini DW4_DEV_PRESENT=144 DW4_DEV_DUMP=4790-4800
 DW4_DEV_DUMP_DIR=dump DW4_DEV_IDS=1 dw4_game --data GAME --card-dir CARDS --input load.txt
 --smoke-test 4800`, then `python tools/flicker.py dump`.
