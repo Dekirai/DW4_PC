@@ -1325,16 +1325,24 @@ int run(const Options& options, dw4::game::Settings& settings) {
             std::vector<std::int16_t> scratch(std::size_t(kAudioFrameSamples + 1) * 2);
             auto* sound = engine.get<dw4::engine::SoundManager>();
             const auto replay_started = std::chrono::steady_clock::now();
+            std::chrono::steady_clock::duration audio_time{};
             for (const auto& step : state.inputs) {
                 engine.step(step.pads);
-                if (sound) sound->render(scratch.data(), std::size_t(step_samples(engine.frame()))); // music position
+                if (sound) {
+                    const auto mixed = options.smoke_frames ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+                    sound->render(scratch.data(), std::size_t(step_samples(engine.frame()))); // music position
+                    if (options.smoke_frames) audio_time += std::chrono::steady_clock::now() - mixed;
+                }
                 if (step.drawn) engine.traverse_scene();
             }
-            // (Test runs: the replay's own rate, without the engine's start.)
+            // (Test runs: the replay's own rate without the engine's start,
+            // and without the music mix, which a catch-up replay leaves out.)
             const double replay_seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - replay_started).count();
+            const double audio_seconds = std::chrono::duration<double>(audio_time).count();
             if (options.smoke_frames && !state.inputs.empty())
-                std::printf("state replay: %zu steps in %.3f s, %.0f steps per second\n", state.inputs.size(), replay_seconds,
-                            double(state.inputs.size()) / std::max(replay_seconds, 1e-9));
+                std::printf("state replay: %zu steps in %.3f s (%.3f s music mix), %.0f steps per second, %.0f without the mix\n",
+                            state.inputs.size(), replay_seconds, audio_seconds, double(state.inputs.size()) / std::max(replay_seconds, 1e-9),
+                            double(state.inputs.size()) / std::max(replay_seconds - audio_seconds, 1e-9));
             const bool exact = engine.fingerprint() == state.fingerprint;
             // (No achievement counts in the rest of this stage.)
             ++engine_generation;

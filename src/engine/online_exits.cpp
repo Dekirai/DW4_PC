@@ -260,17 +260,15 @@ struct ExitPortAccess {
                 // dead stay with the living ones (SEAMLESS.md 6.7): when no
                 // living member stays, everyone goes (the original group move).
                 const std::uint8_t present = engine.online().present;
-                const std::uint8_t living = std::uint8_t(living_players(engine) & present);
-                const std::uint8_t going = std::uint8_t(view.yes & living);
-                if (!going) {
+                const std::uint8_t leavers = exit_leavers(present, living_players(engine), view.yes);
+                if (!leavers) {
                     post("MODELCTRL", "i_fadewn01", 0, "SQ_BHLFIN30", {}, 10);
                     for (int slot = 0; slot < 4; ++slot)
                         if (view.yes & (1u << slot)) post("PLAYER", std::nullopt, slot, "ONCTRL", {}, 30);
                     finish_in(42);
                     continue;
                 }
-                const bool group = (living & ~going) == 0;
-                const std::uint8_t leavers = group ? present : going;
+                const bool group = leavers == present;
                 const bool local_leaves = group || engine.online_split(leavers, false);
                 if (!local_leaves) {
                     // This copy stays: the leavers are gone, their fade fades
@@ -311,8 +309,7 @@ std::vector<Lua4Value> Engine::stage_change_port(std::span<const Lua4Value> args
     const auto* mats = get<MatCtrlManager>();
     const auto running = mats ? mats->running_mat() : std::nullopt;
     if (!running) return {};
-    const std::uint32_t stepped = running->current & ~running->previous & running->live & online_.present;
-    const int owner = lowest_slot(stepped);
+    const int owner = exit_prompt_owner(running->current, running->previous, running->live, online_.present);
     if (owner < 0 || (exit_port_ && exit_port_->state != ExitPort::State::done)) return {};
     auto exit = std::make_shared<ExitPort>();
     exit->owner = owner;
@@ -356,12 +353,12 @@ bool Engine::gatedisc_fork() {
     auto* sys = get<GameSystem>();
     if (!sys || !sys->gate_stage_name || *sys->gate_stage_name != "Player") return true;
     const int user = std::clamp(int(sys->gate_stage_no), 0, 3);
-    const std::uint8_t living = std::uint8_t(living_players(*this) & online_.present);
-    if ((living & ~(1u << user)) == 0) {
+    std::uint8_t leavers = exit_leavers(online_.present, std::uint8_t(living_players(*this) | (1u << user)), std::uint8_t(1u << user));
+    if (!leavers) leavers = online_.present;
+    if (leavers == online_.present) {
         heading_ = ExitHeading{frame_, "stagML11", 3, online_.present};
         return true; // nobody living stays: the original, everyone goes
     }
-    const std::uint8_t leavers = std::uint8_t(1u << user);
     if (!online_split(leavers, false)) return false;
     heading_ = ExitHeading{frame_, "stagML11", 3, leavers};
     return true;

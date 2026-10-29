@@ -64,4 +64,27 @@ struct ExitPromptView {
     bool boss_destination{};  // a boss stage (warning text)
 };
 
+// The exit port's prompt owner (SEAMLESS.md 5.2): the lowest present, living
+// member whose bit is in current & ~previous of the mat (it stepped on in this
+// update); -1 for none: a mask change by a step off, a death or a despawn
+// asks nobody (never MATgetPlayerNo's slot-0 fallback).
+constexpr int exit_prompt_owner(std::uint32_t current, std::uint32_t previous, std::uint32_t living, std::uint8_t present) {
+    const std::uint32_t stepped = current & ~previous & living & present & 0xFu;
+    for (int slot = 0; slot < 4; ++slot)
+        if (stepped & (1u << slot)) return slot;
+    return -1;
+}
+
+// The side rule of an exit-type departure (SEAMLESS.md 6.7): the living
+// members among `going` leave; defeated members stay with the living ones
+// who stay; when no living member stays, every present member goes (the
+// original group move, no fork). 0 when no living member goes.
+constexpr std::uint8_t exit_leavers(std::uint8_t present, std::uint8_t living, std::uint8_t going) {
+    living &= present;
+    const auto leaving = std::uint8_t(going & living);
+    if (!leaving) return 0;
+    if ((living & ~leaving) == 0) return present;
+    return leaving;
+}
+
 } // namespace dw4::engine
