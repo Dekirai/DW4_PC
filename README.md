@@ -22,9 +22,10 @@ the game. Builds and tests run locally; GitHub Actions is disabled.
   character from a memory card box.
 - Memory card saves: the lobby's save NPC opens the save room (slot A/B,
   creating or formatting the game file, the four save boxes with status
-  windows, overwrite check, timed write). Cards are Dolphin-style GCI folders
-  (`saves/GC/USA/Card A` next to the program, or `--card-dir`), so Dolphin
-  saves can be copied in and out.
+  windows, overwrite check, timed write). The save lives in one file,
+  `saves/savedata.dat` next to the program (see *Saves* below); GameCube
+  saves from Dolphin, GCMM, GameShark, MaxDrive / Action Replay and memory
+  card images import from the F1 menu's Saves tab.
 - Lobby areas (`stagML11`, Central Area, Shop Area, Commander Room): first-visit
   story scenes, dialogs with portraits and prompts, talking to NPCs, walking,
   jumping, floor gates with the confirmation dialog and stage changes.
@@ -149,12 +150,15 @@ picture blends between the last two updates) and `msaa` (2/4/8 samples, applied 
 `[preferences] skip_intro` (boot straight to the title), `[gameplay]`
 `exp_rate`, `damage_dealt`, `damage_taken` (percent, 100 = original),
 `drop_seed` (item drop randomizer, 0 = off; key items stay) and `loading`
-(`original`, the default, or `fast`; see *Fast loading* below), `[data] cards` (the
-memory card folder with `Card A` / `Card B`, default `saves/GC/USA` next to the
-program; Dolphin's `GC/USA` folder works too), `[data] card_a` / `card_b` (what
-the slots hold: `none` for an empty slot, `unformatted`, and / or the card's
+(`original`, the default, or `fast`; see *Fast loading* below), `[data] save` /
+`save_b` (the save files of memory card slots A and B, default
+`saves/savedata.dat` / `saves/savedata_b.dat`; relative paths are next to the
+program), `[data] cards` (instead of the save files: a GCI folder root with
+`Card A` / `Card B`, e.g. Dolphin's `GC/USA` folder to play on its saves),
+`[data] card_a` / `card_b` (what
+the slots hold: `none` for an empty slot, `unformatted`, `inserted`, and / or the card's
 blocks such as `251`; default a 2043-block card in slot A and one in slot B when
-its folder exists, also `DW4_CARD_A` / `DW4_CARD_B`) and
+its file or folder exists, also `DW4_CARD_A` / `DW4_CARD_B`) and
 `[keyboard]` with up to three key names per control (`a=Return, Space, K`) and
 `[gamepad]` with up to three SDL controller inputs per control (`l=lefttrigger,
 leftshoulder`). The controls are `a`, `b`, `x`, `y`, `start`, `l`, `r`, `z`,
@@ -233,9 +237,10 @@ rebalancing and loading choice) and
 each step waits for every player's input, so the simulation stays identical;
 guests report state fingerprints and a desync shows on screen. Each machine's
 keyboard and first controller play its own player (host 1, guests 2-4). The
-host's Card A and the first guest's Card A (as Card B) are copied to every
-machine, so both can call their Digimon at the character select; when the
-session ends each owner gets its card back with what was saved. Save states
+host's save (slot A) and the first guest's save (as slot B) are copied to every
+machine, so both can call their Digimon at the character select; only the
+Digimon World 4 save travels, never other files of a card folder. When the
+session ends each owner gets its save back with what was saved. Save states
 are off online; a guest that leaves plays on released, a host that leaves ends
 the session for the others (they play on alone). The host needs the port
 open (router / firewall) for guests outside the local network.
@@ -369,9 +374,11 @@ player hits defeat their target, `DW4_INFINITE_MP` keeps MP full,
 `DW4_BITS=n`, `DW4_XDATA=n`, `DW4_LEVEL=n` and `DW4_FORMS=species,...` fill a new player's folders, level and forms,
 `DW4_FLAG_FOLDER=item,...` gives key items (story progress items such as boss IDs), `DW4_DIFFICULTY=n` sets the
 difficulty (0-2) before the first stage loads, `DW4_CARD_RECORD=FILE.gci:N` makes player 1 the character of
-save box N (as the character select loads it), `DW4_ENTRY=n` starts a
+save box N (as the character select loads it; FILE may be a `savedata.dat`), `DW4_ENTRY=n` starts a
 test run's first stage at player point group n (as when arriving from another exit),
-`DW4_PLAYERS=n` joins n players, `DW4_OPEN_MENU=1` opens the F1 menu,
+`DW4_PLAYERS=n` joins n players, `DW4_OPEN_MENU=1` opens the F1 menu (`DW4_MENU_TAB=Saves` on that tab,
+`DW4_MENU_IMPORT=FILE` with that file's import preview), `DW4_MIGRATE_FROM=<GCI root>` (with `--save-file`) copies
+that root's `Card A` / `Card B` saves in as a first start copies `saves/GC/USA`,
 `DW4_FAST_LOADING=1` loads with the fast loading option (`--loading original|fast` overrides it),
 `DW4_TRACE_LOADTIME=1` prints for every stage load the frames to the stage start and to player 1's
 control and the real time the load's frames took (`=2` every frame of the load with the loader state),
@@ -430,12 +437,48 @@ cards, mods and PC options stay).
 
 F1 opens the menu: the Settings tab (an Original / Modernized preset, the
 loading speed (Original / Fast), display, widescreen, frame limit, anti-aliasing,
-window size, volume, keyboard and controller bindings), the Cheats tab
+window size, volume, keyboard and controller bindings), the Saves tab (where
+the save lives, the boxes of slots A and B, importing GameCube saves), the Cheats tab
 (god mode, infinite MP, one-hit defeats, refills, levels and bits per player,
 session only and off by default; plus the saved rebalancing and randomizer
 options) and the Debug tab (stage loader, player state,
 notes, script log). F11 toggles fullscreen,
 F2 a free camera.
+
+### Saves
+
+The game saves like on the GameCube: in the save room, onto the memory card
+in slot A or B, four boxes per card. The PC version keeps each card's Digimon
+World 4 file in one file next to the program: `saves/savedata.dat` (slot A)
+and `saves/savedata_b.dat` (slot B; the slot holds a card once that file
+exists, or with `[data] card_b = inserted`). The file holds exactly the bytes
+of Dolphin's `B2-GDJE-NDMWSaveData.gci`, so renaming it moves a save to
+Dolphin and back. Every save first keeps the previous file as
+`savedata.dat.bak`, and the new file replaces the old one only once it is
+completely written. The F1 menu's Saves tab and the Settings tab show where
+the save lives.
+
+- First start: a save of an older build in `saves/GC/USA/Card A` (or
+  `Card B`) is copied into `savedata.dat` (`savedata_b.dat`) once; the old
+  file stays where it is (`[data] save_migrated` in settings.ini records it).
+- `[data] cards = <folder>` plays from a GCI folder root instead (for example
+  Dolphin's `GC/USA` folder, so both play on the same save). `--card-dir`,
+  `DW4_CARD_DIR` and test runs use GCI folders too (`saves/GC/USA` next to the
+  program in test runs).
+- Importing GameCube saves (F1, Saves tab, or `--import-save`): Dolphin /
+  GCMM / Swiss `.gci`, GameShark `.gcs`, MaxDrive / Action Replay `.sav`,
+  memory card images `.raw` / `.gcp` (Dolphin, Nintendont, card dumps) and
+  GCI folders. The preview shows each box (name, Digimon, level, bits, story
+  phase, forms); the chosen boxes go into the chosen boxes of slot A or B, or
+  the whole save replaces the current one. The current save is first copied
+  to `saves/backups/savedata-<date>-<time>.dat`. The game keeps no play time
+  or save date per box, so the preview has none.
+- Command line: `dw4_game --save-info FILE` prints the preview,
+  `dw4_game --import-save FILE[:BOXES] [--import-slot A|B]` imports (`BOXES`:
+  `all`, the default, `1,3` for the same boxes or `1>2,4>1` to move them)
+  into the save files (or `--card-dir DIR` / `--save-file FILE`), then
+  exits. `--save-file FILE` makes any run (also a test run) use that file
+  for slot A (`<name>_b<ext>` for slot B). Details: `docs/SAVES.md`.
 
 Save states: F5 saves and F9 loads state 1; the Settings tab has four
 slots, kept as `saves/states/state<N>.dw4state` next to the program. A state is the snapshot taken when

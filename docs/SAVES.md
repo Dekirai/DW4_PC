@@ -95,8 +95,10 @@ settings.ini `[data] card_a` / `card_b`): `none` (CARDProbeEx: no card, 12),
 `unformatted` (the mount and CARDCheck report it broken, 7, until a FORMAT),
 `inserted`, and the card's blocks (default 2043, Dolphin's GCI folder card).
 Free blocks are the card's blocks minus the GCI header block counts (+0x38)
-of the `*.gci` files in the slot's folder, free files 127 minus their number,
-so a folder holding a 2043-block GCI is a full card (GETFREESIZE 9).
+of the card's files (a GCI folder: every `*.gci` in the slot's folder; a
+single save file: that file), free files 127 minus their number, so a folder
+holding a 2043-block GCI is a full card (GETFREESIZE 9). In automatic mode
+slot A always holds a card and slot B when its folder (or save file) exists.
 
 The logo (803B18BC) checks slot A, then B. A broken card asks to format it
 (sub 50: texts 92204/92205 + 92030, question 92031 with the cursor on no,
@@ -107,6 +109,103 @@ broken: 92206 / 92207, none: 92000 "Memory Card not found." / 92001) and asks
 "Yes, continue without saving. / No, use another Memory Card."; yes shows
 the logos (after 92210 "To manage the contents of your Memory Card, use the
 Memory Card Screen." when the card was full), no checks again (92100).
+
+## Where the save lives
+
+The card requests only ever touch a slot's DW4 file (the 64-byte directory
+entry and the 90112-byte file, "GCI bytes") and the space the card's files
+take. `save::CardStore` (`include/dw4/card_store.hpp`, `src/card_store.cpp`)
+keeps them in one of two ways; `Engine::card_store` says which, and
+SAVEUTILITY's reads, writes and space checks go through it
+(`src/engine/save_util.cpp`):
+
+| Store | Slot A / B | Used for |
+| --- | --- | --- |
+| single file | `saves/savedata.dat` / `saves/savedata_b.dat` (settings.ini `[data] save` / `save_b`, relative to the program) | the players' default |
+| GCI folder | `<root>/Card A` / `<root>/Card B`, the save as `B2-GDJE-NDMWSaveData.gci`, other `*.gci` count as the card's other files | `--card-dir`, `DW4_CARD_DIR`, test runs (`<program>/saves/GC/USA`), `[data] cards` (e.g. Dolphin's `GC/USA`, live), the online session copy |
+
+`src/game/save_store.cpp` picks the store of a run in this order:
+`--card-dir`, `DW4_CARD_DIR`, `--save-file FILE` (single file, slot B
+`<name>_b<ext>`), a test run (`--smoke-test`) without them (GCI folders at
+`<program>/saves/GC/USA`, as before the single file existed, so the
+campaign tools, `det.sh` and the Dolphin comparisons are unchanged),
+`[data] cards`, else the single files of `[data] save` / `save_b`.
+
+- A single save file holds the GCI bytes unchanged (the same bytes the
+  folder store writes as `B2-GDJE-NDMWSaveData.gci`; a headless save room
+  run writes byte-identical files in both stores). Its slot holds a card in
+  automatic mode once the file exists; `[data] card_b = inserted` puts a card
+  in slot B before that.
+- Writes: `<file>.tmp` first, then a rename over the file. The single file
+  store first copies the old file to `<file>.bak` (every write); the GCI
+  folder store keeps no backup (the original folder behaviour).
+- Migration: in the players' default, the first start copies
+  `<program>/saves/GC/USA/Card A|B/B2-GDJE-NDMWSaveData.gci` (where older
+  builds saved) to `savedata.dat` / `savedata_b.dat` when the target does not
+  exist and the GCI holds a data copy that passes its check. The old file is
+  never deleted. `[data] save_migrated = true` records that the copy was
+  tried, so a save file deleted later does not come back. With
+  `--save-file`, `DW4_MIGRATE_FROM=<GCI root>` runs the same copy (tests).
+- Online sessions share only the DW4 save of each owner's slot A
+  (`session_card`): the session copy (a GCI folder in the temp directory)
+  gets nothing else, and files of other names from a peer are not written.
+  At the end the owner's save goes back through the owner's store (with the
+  `.bak`), only when the session changed it. Before, every file of the card
+  folder went to every peer (a `[data] cards` folder pointing at Dolphin's
+  `GC/USA` shared all GameCube saves of the player).
+- Save states, a console reboot and the end of an online session keep the
+  store and the slot settings of the run.
+
+## Importing GC saves
+
+`dw4::save::load_import` / `parse_import` (`include/dw4/save_import.hpp`,
+`src/save_import.cpp`) find the DW4 save (directory entry GDJE / B2 /
+`NDMWSaveData`, at least 90112 bytes, a data copy that passes its check) in:
+
+| Container | Recognised by | Layout |
+| --- | --- | --- |
+| `.gcs` (GameShark, PSO tools) | `GCSAVE` at 0 | 0x110-byte header, entry at 0x110 (its block count is unreliable, often 1), blocks from 0x150 |
+| `.sav` (MaxDrive, Action Replay) | `DATELGC_SAVE` at 0 | 0x80-byte header, entry at 0x80 with the bytes of each 16-bit pair at +0x06 and +0x2C..+0x3F swapped, blocks from 0xC0 |
+| memory card image (`.raw`, `.gcp`; Dolphin, Nintendont, dumps) | size a multiple of 8192 | block 0 header (+0x22 size in Mbit), directories in blocks 1 / 2 (127 entries, +0x1FFA update counter, +0x1FFC / +0x1FFE checksums over 0..0x1FFB), block maps in 3 / 4 (+0 / +2 checksums over 4..0x1FFF, +4 update counter, +0x0A next block of blocks 5.., 0xFFFF last) |
+| `.gci` (Dolphin, GCMM, Swiss) | anything else from 64 + 8192 bytes | entry, then the blocks |
+| GCI folder | a folder | `B2-GDJE-NDMWSaveData.gci` in it, `Card A`, `Card B`, then any `*.gci` with the DW4 entry |
+
+The card checksum is the 16-bit sum of the big-endian words and the sum of
+their complements (0xFFFF counts as 0). A card image uses the directory and
+block map copies whose checksums hold, the higher update counter first (a
+16-bit wrapping compare), then the others; the file follows the block map
+from the entry's first block, and when no map gives a chain whose data
+passes the save's check, the file's blocks in a row.
+
+The preview (`summarize_save`) shows per box: player name, Digimon (form
+name), level, bits, story phase (flags 2-6, 86 as
+`work/campaign/tools/gcisum.py`) and the forms unlocked. The records hold no
+play time or save date (see above), so the preview shows none.
+
+`merge_import` builds the new save: the whole file (the source's 90112 bytes
+unchanged) or chosen boxes, each copied as its whole 8 KB box buffer from the
+source's checked data copy into the target box of the current save's checked
+copy (or, without a current save or with both copies broken, the source's
+8 KB header and empty boxes), then both copies written with the new
+checksum. The directory entry is the one the save room writes (time now).
+Before writing, `import_save` copies the current save to
+`<save folder>/backups/<name>-YYYYMMDD-HHMMSS<ext>` (a GCI folder store:
+`<root>/backups`). A character already called in the running session is not
+changed; the game reads the card again at the next Call Digimon or save.
+
+User side: F1 menu, Saves tab (file dialog, preview, a box choice and a
+target box per source box, target slot A / B, "Import the chosen boxes" /
+"Replace the whole save"; off during online sessions); command line
+`--save-info FILE` (preview) and `--import-save FILE[:BOXES] [--import-slot
+A|B]` with `BOXES` = `all` (default), `1,3` (same boxes) or `1>2,4>1`
+(boxes counted 1-4 as the data select shows them), into the run's store
+(`--card-dir`, `--save-file`, else the save files after the migration).
+Tests: `tests/save_import_tests.cpp` (synthetic files of every container,
+broken directories / block maps, wrapped counters, merges),
+`tests/card_store_tests.cpp`, `tests/save_store_tests.cpp`.
+
+PS2 saves (SLUS-20836 / SLES-53405 / SLPS-25453) are not imported yet: no
+samples to check the record layout against.
 
 ## GameCube file
 
