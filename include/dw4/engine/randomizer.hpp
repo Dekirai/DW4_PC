@@ -67,9 +67,8 @@ int tier_weight(int stage_tier, int family_tier);
 // families by tier weight (seeded by stage), at most 6 in all. The order is
 // the draw order (present ones first).
 // How many families a stage's pool takes beyond its own (from donor stages,
-// GeneraterManager's enemy pool loads); 0 keeps the shuffle within the
-// families a stage loads itself.
-constexpr int kPoolExtra = 0;
+// Engine::load_enemy_donors), the pool holding at most 6 in all.
+constexpr int kPoolExtra = 6;
 std::vector<std::string> stage_pool(std::uint64_t enemy_seed, std::string_view stage, const std::vector<std::string>& present,
                                     int extra);
 

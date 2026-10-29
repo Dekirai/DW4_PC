@@ -339,6 +339,16 @@ public:
     // model's SE set (beSeInfo) sends it MODELCTRL SETSOUND for each sound of
     // the action, which the model queues as a sound subcommand.
     void action_started(Engine& engine, const std::string& model, int index, std::string_view action);
+    // Randomizer: a donor stage's sounds for its families and their effects
+    // (the /s member's SE sets of those models, the sounds they name with
+    // their files, and the sfp banks of those files); returns the banks added.
+    std::vector<std::string> add_donor_sounds(Engine& engine, const IgbDocument& preliminary, const std::set<std::string, std::less<>>& models);
+    // The SE cues of a model's set that could not play: a sound the stage
+    // lacks or one no loaded sfp bank holds (randomizer sweep). nullopt: the
+    // model has no SE set at all.
+    std::optional<std::vector<std::string>> missing_cues(Engine& engine, std::string_view model);
+    // The model's SE set came from a donor stage (add_donor_sounds).
+    bool donor_set(std::string_view model) const { return donor_sets_.contains(model); }
     // SOUND PLAY of a model's sound subcommand (803105DC): the play id (0:
     // nothing started) and the sound's type (beSoundData [4]; only a type 4
     // sound keeps its subcommand, for the end call).
@@ -587,6 +597,7 @@ private:
         int delay{};
     };
     std::map<std::string, std::vector<SeCue>, std::less<>> se_sets_;
+    std::set<std::string, std::less<>> donor_sets_;
     // The C library's rand() state (8009C1CC, r13 -0x7110: 1 at boot); the
     // SNDF's random detune is its only user (no script calls math.random).
     std::uint32_t random_ = 1;
@@ -1197,6 +1208,9 @@ public:
         rams_.clear();
         shuffle_ready_ = false;
         pool_.clear();
+        sweep_index_ = 0;
+        sweep_wait_ = sweep_count_ = sweep_failures_ = 0;
+        sweep_reported_ = false;
     }
     bool command(Engine& engine, Ram& ram, std::string_view command, Packet& packet) override;
     void update(Engine& engine) override;
@@ -1308,6 +1322,13 @@ private:
     void refresh(Engine& engine, GeneRam& ram, bool last_pass = false);
     void drop(Engine& engine, GeneRam& ram, const Vec3f& position, bool last);
     void forget(GeneRam& ram, std::size_t member);
+    void start_work(Engine& engine, GeneRam& ram, int live_players);
+    void sweep(Engine& engine);
+    std::size_t sweep_index_{};
+    int sweep_wait_{}, sweep_wanted_{}, sweep_got_{}, sweep_watchdog_{}, sweep_count_{}, sweep_failures_{};
+    bool sweep_reported_{};
+    std::vector<std::string> sweep_models_;
+    int watchdog_removals_{}; // swapped enemies the watchdog erased (sweep report)
     void prepare_shuffle(Engine& engine);
     bool shuffle_generator(Engine& engine, const GeneRam& ram) const;
     std::string draw_model(Engine& engine, GeneRam& ram);
@@ -1848,11 +1869,21 @@ public:
     ActionStarterManager() : Manager("beActionStarter") {}
     bool accepts(const ObjectView& info) const override { return info.type() == "beActionStarterInfo"; }
     void add_info(Engine& engine, const ObjectView& info) override;
-    void clear_stage(Engine& engine) override { (void)engine; rams_.clear(); }
+    void clear_stage(Engine& engine) override {
+        (void)engine;
+        rams_.clear();
+        filters_.clear();
+    }
     bool command(Engine& engine, Ram& ram, std::string_view command, Packet& packet) override;
+    // Randomizer: a donor stage's starter serves only the donor families and
+    // their effects (its other targets are the host's or not loaded).
+    void set_target_filter(const ObjectView& info, std::set<std::string, std::less<>> targets) {
+        filters_[{info.document(), info.reference()}] = std::move(targets);
+    }
 
 private:
     std::vector<std::unique_ptr<Ram>> rams_;
+    std::map<std::pair<const void*, std::uint32_t>, std::set<std::string, std::less<>>> filters_;
 };
 
 class ActionManager final : public Manager {

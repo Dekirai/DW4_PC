@@ -147,9 +147,11 @@ the 2D layers stay 4:3 and full-screen fades stretch), `vsync`,
 picture blends between the last two updates) and `msaa` (2/4/8 samples, applied at start-up),
 `[audio] volume` (percent), `[menu] pause` (pause while the menu is open),
 `[preferences] skip_intro` (boot straight to the title), `[gameplay]`
-`exp_rate`, `damage_dealt`, `damage_taken` (percent, 100 = original),
-`drop_seed` (item drop randomizer, 0 = off; key items stay) and `loading`
-(`original`, the default, or `fast`; see *Fast loading* below), `[data] cards` (the
+`exp_rate`, `damage_dealt`, `damage_taken` (percent, 100 = original) and `loading`
+(`original`, the default, or `fast`; see *Fast loading* below), `[randomizer]`
+`seed` (0 = off), `drops`, `enemies` (`off`, `each`, `wave`) and `zones` (`off`,
+`dungeons`) for new games (see *Randomizer* below; an old `[gameplay] drop_seed`
+becomes `seed` with `drops` on), `[data] cards` (the
 memory card folder with `Card A` / `Card B`, default `saves/GC/USA` next to the
 program; Dolphin's `GC/USA` folder works too), `[data] card_a` / `card_b` (what
 the slots hold: `none` for an empty slot, `unformatted`, and / or the card's
@@ -215,6 +217,65 @@ frames (47 seconds) with Fast. The real time a load's frames take on the PC is
 about the same either way (the same files are parsed and the same scripts
 run, 10-35 ms in the longest frame of a load), so a Fast stage change is over
 in about a third of a second.
+
+### Randomizer
+
+An optional randomizer (F1 Cheats tab, `settings.ini [randomizer]`; off by
+default, and with it off the game is the original frame for frame). One seed
+drives three parts, each switched on its own:
+
+- **Item drops** change into other items of the same kind (weapons into
+  weapons, disks into disks); key items stay. The same seed gives the same drops
+  as the item drop seed of earlier versions.
+- **Enemies** become other Digimon: every enemy of a wave drawn on its own
+  (`each`, the default: four Numemon become four different Digimon) or one
+  family per wave (`wave`). A swapped enemy keeps the original enemy's record:
+  its HP, strength, defence, EXP and the wave's drops stay, only the body, its
+  attacks and sounds change. Each enemy stage draws from a pool of up to six
+  families: its own, filled up from the whole game weighted by area (a family
+  of the stage's own area is eight times as likely as one three areas away).
+  Families a stage does not have are loaded from the smallest stage that holds
+  them (their six model infos, attack effects, hit and AI scripts, sound effect
+  bank and cues), like the original's own enemy packages
+  (`stag0202/separate/e_arachne.igb`). Bosses, the one-of-a-kind mid-bosses
+  (Blossomon, Mammothmon, SkullGreymon, Anomalocarimon, Tonosama Gekomon,
+  Diaboromon, LordKnightmon), stag0404's Imperialdramon, the boss stages
+  (`stagBS*`), the stagGF03 fights, every wave a stage script starts next to a
+  model name (intro and demo fights wait for that model) and a family whose
+  only waves in the stage are such fights stay as they are. A wave keeps its
+  entry move when the new family has it, else the family's plain entry; when
+  all of a family's bodies are out, the next family of the pool (then the
+  original) takes the place. A swapped enemy that falls off the stage or never
+  lands (six seconds in the air or 150 units below its spawn point) is
+  removed and counts as defeated, without a drop.
+- **Loading zones** (`dungeons`): the dungeon entrances of each area lead to
+  each other's dungeons (area 1: Humid Cave / Cliff Dungeon, area 2: Sand
+  Labyrinth / Ancient Ruins, area 3: Geko Path / Vine Tunnel / Vein, area 4:
+  Mecha Nest / Electro Mine), never to their own, and a dungeon's way out leads
+  back to the entrance that was used. The exit prompt names the new target.
+  Towers, quests, the fortress, boss stages, the lobby gate, Gate Disks and
+  defeats keep their targets, and every key item stays reachable (a dungeon
+  behind the Vein's gate is entered once the stag0301 lever and the stag0302
+  console have opened it).
+
+A new game binds the randomizer it starts with to its save: `saves/randomizer.ini`
+next to the program keeps the seed and modes per saved character (by the
+character's UNIQUE id), so changing the settings later does not change a
+running game, and `saves/randomizer_<UNIQUE>_spoiler.txt` beside it lists the
+seed, the loading zone table and every stage's enemy pool. A save started
+without the randomizer is bound the first time it is played with one; the F1
+section shows the bound seed and can bind the current settings to the running
+save. Delete a character's section in `randomizer.ini` to let it follow the
+settings again. Save states replay with the randomizer they were made with.
+Online, every machine plays the host's randomizer and nothing is bound.
+Randomized games are not the original game (`Cheats::original()`), so they
+count as their own category wherever that matters.
+
+Test runs: `DW4_RANDOMIZER=seed[,enemies[,zones[,drops]]]` (a bare seed turns
+everything on), `DW4_RANDOMIZER_SWEEP=1` makes every enemy generator of the
+stage spawn its wave in turn and logs one `sweep` line per generator (models,
+problems such as a missing hit script, a sound without a bank, a model that
+did not start or one the watchdog removed).
 
 ### Online co-op
 
@@ -433,7 +494,7 @@ loading speed (Original / Fast), display, widescreen, frame limit, anti-aliasing
 window size, volume, keyboard and controller bindings), the Cheats tab
 (god mode, infinite MP, one-hit defeats, refills, levels and bits per player,
 session only and off by default; plus the saved rebalancing and randomizer
-options) and the Debug tab (stage loader, player state,
+options, see *Randomizer*) and the Debug tab (stage loader, player state,
 notes, script log). F11 toggles fullscreen,
 F2 a free camera.
 

@@ -1,9 +1,12 @@
 #include "dw4/engine/randomizer.hpp"
 
 #include "dw4/engine/engine.hpp"
+#include "dw4/engine/managers.hpp"
 
 #include <algorithm>
 #include <map>
+#include <set>
+#include <stdexcept>
 #include <cstdio>
 #include <sstream>
 
@@ -44,11 +47,13 @@ constexpr Family kFamilies[] = {
     {"e_geko", 3, false, "dng308b1"},    {"e_mecha3", 3, false, "dng309b1"},  {"e_maridevi", 3, false, "dngq3b1e"},
     {"e_torta", 3, false, "stag0301"},   {"e_mecha4", 3, false, "dngq8b1e"},  {"e_infermo", 4, false, "dng411b2"},
     {"e_megadra", 4, false, "dng411b1"}, {"e_rare", 4, false, "dngq8b1e"},    {"e_mecha5", 4, false, "dng411b3"},
-    {"e_impdra", 4, false, "stag0404"},
     // Bosses and the 1-RAM mid-bosses stay where they are.
     {"e_blosso", 0, true, nullptr},      {"e_mammos", 0, true, nullptr},      {"e_skulgrey", 0, true, nullptr},
     {"e_anomalo", 0, true, nullptr},     {"e_tonogeko", 0, true, nullptr},    {"e_diabolo", 0, true, nullptr},
     {"e_ldknight", 0, true, nullptr},    {"e_mecha4bs", 0, true, nullptr},    {"e_arachne", 0, true, nullptr},
+    // stag0404's Imperialdramon flies over the tower and takes no hits (no
+    // hit script): a wave of it could never be cleared.
+    {"e_impdra", 0, true, nullptr},
 };
 
 // The shuffleable families of each enemy stage (its generators' and model
@@ -84,7 +89,7 @@ constexpr StageFamilies kStageFamilies[] = {
     {"stag0201", "mecha2 mummy tyrano"}, {"stag0202", "mecha2 mummy tyrano"}, {"stag0203", "mecha1 mecha2"},
     {"stag0204", "mecha2"}, {"stag0301", "geko otama torta"}, {"stag0302", "geko otama"}, {"stag0303", "maridevi"},
     {"stag0304", "mecha1 mecha2"}, {"stag0401", "infermo mecha3 megadra"}, {"stag0403", "infermo"},
-    {"stag0404", "impdra infermo mecha3"},    {"staggf01", "goburi"}, {"staggf02", "goburi"}, {"staggf04", "goburi"},
+    {"stag0404", "infermo mecha3"},    {"staggf01", "goburi"}, {"staggf02", "goburi"}, {"staggf04", "goburi"},
 };
 
 std::vector<std::string> split_families(std::string_view text) {
@@ -243,6 +248,138 @@ std::optional<StageTarget> zone_dialog_source(std::uint64_t zone_seed, std::stri
     }
     return std::nullopt;
 }
+
+// ---------------------------------------------------------------------------
+// Enemy pool loads (Engine): after boot.lua, the pool's families the stage
+// does not bring itself come from the smallest stage member that holds them
+// (Family::donor), registered filtered like the original's own enemy
+// packages (stag0202/separate/e_arachne.igb ...): the family's six infos, the
+// action starters aimed at it (and at its effects, transitively) with that
+// target filter, the effect models they start unless the stage has them
+// (generic x_099 / y_099 effects), the effect scene, and the scripts named
+// for the family or its effects (hit_ / LUACALL / bht_), consulted after the
+// stage's own.
+// ---------------------------------------------------------------------------
+} // namespace dw4::engine::randomizer
+
+namespace dw4::engine {
+
+void Engine::load_enemy_donors() {
+    namespace rnd = randomizer;
+    if (rnd::fixed_stage(stage_name_)) return;
+    std::vector<std::string> present;
+    auto add_present = [&](std::string name) {
+        if (name.starts_with("e_") && std::find(present.begin(), present.end(), name) == present.end()) present.push_back(std::move(name));
+    };
+    for (const auto& info : deferred_infos_)
+        if (info.type() == "beModelCtrlInfo") add_present(std::string(info.str(2)));
+    // The original's own enemy packages boot.lua queued (separate/e_*.igb).
+    for (const auto& item : loader_queue_) {
+        const auto slash = item.name.find_last_of('/');
+        std::string base = item.name.substr(slash == std::string::npos ? 0 : slash + 1);
+        if (base.starts_with("e_") && base.ends_with(".igb")) add_present(base.substr(0, base.size() - 4));
+    }
+    if (present.empty()) return; // no enemies here
+    const auto seed = rnd::sub_seed(cheats_.rand_seed, "enemies");
+    randomizer_pool_ = rnd::stage_pool(seed, stage_name_, present, rnd::kPoolExtra);
+    std::map<std::string, std::vector<std::string>> by_donor;
+    for (const auto& name : randomizer_pool_)
+        if (std::find(present.begin(), present.end(), name) == present.end())
+            if (const auto* family = rnd::family(name); family && family->donor) by_donor[family->donor].push_back(name);
+    std::string text = "randomizer: enemy pool loads for " + stage_name_ + ":";
+    for (const auto& [donor, families] : by_donor) {
+        try {
+            const auto descriptor = load_package_descriptor(resources_, donor + ".igb");
+            const PackageMember* main = nullptr;
+            const PackageMember* preliminary = nullptr;
+            for (const auto& member : descriptor.members) {
+                if (member.suffix != "/s" && !main) main = &member;
+                if (member.suffix == "/s" && !preliminary) preliminary = &member;
+            }
+            if (!main) throw std::runtime_error("no main member");
+            auto document = std::make_shared<const IgbDocument>(read_package_member(resources_, *main));
+            files_.push_back({donor + main->specifier, document, false});
+            const auto targets = route_donor(document, families);
+            for (const auto& name : families) text += " " + name + " (" + donor + ")";
+            // Their sounds: the SE sets, sounds and sfp banks of the donor's /s member.
+            if (auto* sound = get<SoundManager>(); sound && preliminary) {
+                auto sounds = std::make_shared<const IgbDocument>(read_package_member(resources_, *preliminary));
+                files_.push_back({donor + preliminary->specifier, sounds, false});
+                for (const auto& bank : sound->add_donor_sounds(*this, *sounds, targets)) text += " +" + bank;
+            }
+        } catch (const std::exception& error) {
+            log("randomizer: enemy pool load " + donor + " failed: " + error.what());
+            for (const auto& name : families) randomizer_pool_.erase(std::remove(randomizer_pool_.begin(), randomizer_pool_.end(), name), randomizer_pool_.end());
+        }
+    }
+    log(text);
+}
+
+std::set<std::string, std::less<>> Engine::route_donor(const std::shared_ptr<const IgbDocument>& document,
+                                                      const std::vector<std::string>& families) {
+    if (!document->info_list_reference) return {};
+    std::vector<ObjectView> infos;
+    for (const auto& element : document->object_list(*document->info_list_reference))
+        if (element) infos.emplace_back(document.get(), *element);
+    // The targets: the families, then every effect a starter aimed at a
+    // target starts (an effect's own starters chain on).
+    std::set<std::string, std::less<>> targets(families.begin(), families.end()), effects;
+    for (bool grew = true; grew;) {
+        grew = false;
+        for (const auto& info : infos) {
+            if (info.type() != "beActionStarterInfo") continue;
+            const std::string name(info.str(2));
+            if (effects.contains(name)) continue;
+            for (const auto& target : info.list(7))
+                if (target && targets.contains(target.str(2))) {
+                    effects.insert(name);
+                    targets.insert(name);
+                    grew = true;
+                    break;
+                }
+        }
+    }
+    // What the stage (and earlier donors) registers already.
+    std::set<std::pair<std::string, std::string>> known;
+    for (const auto& info : deferred_infos_) known.insert({info.type(), std::string(info.str(2))});
+    for (const auto& info : donor_infos_) known.insert({info.type(), std::string(info.str(2))});
+    auto script_wanted = [&](std::string_view script) {
+        if (!script.ends_with(".lua") || script.starts_with("ded_")) return false;
+        const auto stem = script.substr(0, script.size() - 4);
+        for (const auto& target : targets)
+            if (stem.size() > target.size() && stem.ends_with(target) && stem[stem.size() - target.size() - 1] == '_') return true;
+        return false;
+    };
+    bool effect_models = false;
+    for (const auto& info : infos) {
+        const std::string type = info.type();
+        const std::string name(info.str(2));
+        if (type == "beLuaInfo") {
+            for (const auto& data : info.list(7))
+                if (data && script_wanted(data.str(2)) && !has_script(data.str(2))) donor_scripts_.push_back(data);
+            continue;
+        }
+        if (type == "beActionStarterInfo") {
+            if (effects.contains(name)) donor_starters_.push_back({info, targets});
+            continue;
+        }
+        const bool family = std::find(families.begin(), families.end(), name) != families.end();
+        if (!family && (!effects.contains(name) || known.contains({type, name}))) continue;
+        donor_infos_.push_back(info);
+        known.insert({type, name});
+        if (!family && type == "beModelCtrlInfo") effect_models = true;
+    }
+    // The effect models' nodes live in the stage's effect scene (EF01).
+    if (effect_models)
+        for (const auto& info : infos)
+            if (info.type() == "igSceneInfo" && info.str(2).empty())
+                if (const auto root = info.ref(5); root && root.str(2) == "EF01") donor_infos_.push_back(info);
+    return targets;
+}
+
+} // namespace dw4::engine
+
+namespace dw4::engine::randomizer {
 
 std::optional<std::u16string> zone_dialog_text(Engine& engine, int text) {
     const auto source = zone_dialog_source(sub_seed(engine.cheats().rand_seed, "zones"), engine.stage_name(), text);

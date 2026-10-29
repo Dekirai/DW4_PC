@@ -2704,6 +2704,9 @@ void ActionStarterManager::add_info(Engine& engine, const ObjectView& info) {
 bool ActionStarterManager::command(Engine& engine, Ram& ram, std::string_view command, Packet& packet) {
     const std::string source(packet.string(0));
     const int index = packet.integer(0, -1);
+    if (!filters_.empty())
+        if (const auto filter = filters_.find({ram.info.document(), ram.info.reference()}); filter != filters_.end() && !filter->second.contains(source))
+            return true;
     for (const auto& target : ram.info.list(7)) {
         if (!target || target.str(2) != source) continue;
         for (const auto& data : target.list(3)) {

@@ -988,6 +988,7 @@ void SoundManager::clear_stage(Engine& engine) {
     record(std::move(call));
     std::erase_if(banks_, [](const auto& bank) { return !bank->common; });
     se_sets_.clear();
+    donor_sets_.clear();
 }
 
 // 803130D4 (the SE set's ACTION_BROADCAST handler): the set of the model's
@@ -1008,6 +1009,83 @@ void SoundManager::action_started(Engine& engine, const std::string& model, int 
         packet.floats.push_back(float(cue.delay)); // s16 [4] as a float (800A3FDC)
         engine.messenger().send(engine, "MODELCTRL", model, index, "SETSOUND", packet);
     }
+}
+
+std::optional<std::vector<std::string>> SoundManager::missing_cues(Engine& engine, std::string_view model) {
+    load_common_banks(engine);
+    const auto set = se_sets_.find(model);
+    if (set == se_sets_.end()) return std::nullopt;
+    std::vector<std::string> out;
+    for (const auto& cue : set->second) {
+        const auto sound = sounds_.find(cue.sound);
+        if (sound == sounds_.end()) {
+            out.push_back(cue.sound + " (no sound)");
+            continue;
+        }
+        if (sound->second.request == 0xffffffffu) continue; // a stream
+        bool held = false;
+        for (const auto& bank : banks_) held |= bank->data && bank->data->bank && bank->data->bank->has_group(sound->second.request);
+        if (!held) out.push_back(cue.sound + " (no bank)");
+    }
+    return out;
+}
+
+std::vector<std::string> SoundManager::add_donor_sounds(Engine& engine, const IgbDocument& preliminary,
+                                                        const std::set<std::string, std::less<>>& models) {
+    std::vector<std::string> added;
+    if (!preliminary.info_list_reference) return added;
+    std::vector<ObjectView> infos;
+    for (const auto& element : preliminary.object_list(*preliminary.info_list_reference))
+        if (element) infos.emplace_back(&preliminary, *element);
+    // The models' SE sets and the sounds they name.
+    std::set<std::string, std::less<>> wanted;
+    for (const auto& info : infos) {
+        if (info.type() != "beSeInfo") continue;
+        for (const auto& set : info.list(5)) {
+            if (!set || !models.contains(set.str(2)) || se_sets_.contains(set.str(2))) continue;
+            donor_sets_.insert(std::string(set.str(2)));
+            auto& cues = se_sets_[std::string(set.str(2))];
+            for (const auto& cue : set.list(4))
+                if (cue) {
+                    cues.push_back({std::string(cue.str(2)), std::string(cue.str(3)), cue.i16(4)});
+                    wanted.insert(std::string(cue.str(3)));
+                }
+        }
+    }
+    // Those sounds (the stage's own of the same name stay), their files
+    // appended to the stage's file list.
+    std::set<std::string, std::less<>> banks;
+    for (const auto& info : infos) {
+        if (info.type() != "beSoundInfo") continue;
+        std::vector<std::string> files;
+        for (const auto& file : info.list(7)) files.emplace_back(file ? std::string(file.str(2)) : std::string());
+        for (const auto& data : info.list(5)) {
+            if (!data || !wanted.contains(data.str(2)) || sounds_.contains(data.str(2))) continue;
+            SoundData sound{data.i16(4), data.i16(5), data.i16(8), std::uint32_t(data.i32(6)), data.i16(9)};
+            if (sound.file >= 0 && std::size_t(sound.file) < files.size()) {
+                const auto& file = files[std::size_t(sound.file)];
+                const auto found = std::find(files_.begin(), files_.end(), file);
+                sound.file = int(found - files_.begin());
+                if (found == files_.end()) files_.push_back(file);
+                std::string bank = file.substr(file.find_last_of('/') + 1);
+                for (auto& c : bank) c = char(std::tolower(static_cast<unsigned char>(c)));
+                banks.insert(bank);
+            }
+            sounds_[std::string(data.str(2))] = sound;
+        }
+    }
+    for (const auto& info : infos) {
+        if (info.type() != "beStaticInfo") continue;
+        for (const auto& data : info.list(5)) {
+            if (!data || data.type() != "beCriSfpData") continue;
+            std::string name(data.str(2));
+            for (auto& c : name) c = char(std::tolower(static_cast<unsigned char>(c)));
+            if (!banks.contains(name)) continue;
+            add_bank(engine, data, false);
+            added.push_back(name);
+        }
+    }
+    return added;
 }
 
 // 803105DC: SOUND PLAY of the subcommand's name (the repeat guard included);
