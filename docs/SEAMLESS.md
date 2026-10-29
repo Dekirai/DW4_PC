@@ -2272,7 +2272,9 @@ appendix, golden bytes on both sides). Checked on the integrated code:
   ctest green, the online suite with the game data included.
 - Server: unit tests (with the golden wire and settings-hash tests),
   integration and end-to-end tests (the C++ WinHTTP client and the Python
-  DW4R2 client) green against a private MariaDB.
+  DW4R2 client) green against a private MariaDB; the fake-client scenarios
+  S1, S2, S3, S5, S16, S17a, S17b, S22a and S22b pass again on the integrated
+  hub (`run.py`).
 - Real game clients (`run.py G1`, offset 10 s): both clients reach stag0001
   (frame 10,870) from the title through four DISSOLVEs; the first gets NEW (its
   hub instance with the next visit), the second's barrier is held 12.8 s until
