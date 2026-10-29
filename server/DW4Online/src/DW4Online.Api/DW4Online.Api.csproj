@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- The JSON API for the game (/api/v1): endpoints, token authentication, rate limits, problem details. -->
+  <PropertyGroup>
+    <RootNamespace>DW4Online.Api</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\DW4Online.Domain\DW4Online.Domain.csproj" />
+  </ItemGroup>
+</Project>

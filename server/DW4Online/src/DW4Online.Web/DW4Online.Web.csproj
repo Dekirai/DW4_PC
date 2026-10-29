@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk.Razor">
+  <!-- The website (Razor Pages, server-rendered, no npm build). This round ships the skeleton only. -->
+  <PropertyGroup>
+    <RootNamespace>DW4Online.Web</RootNamespace>
+    <AddRazorSupportForMvc>true</AddRazorSupportForMvc>
+  </PropertyGroup>
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\DW4Online.Domain\DW4Online.Domain.csproj" />
+  </ItemGroup>
+</Project>

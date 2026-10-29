@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- The TCP relay (port 52041): HMAC tickets, host control sockets, byte-for-byte splicing of guest and host data sockets. -->
+  <PropertyGroup>
+    <RootNamespace>DW4Online.Relay</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+</Project>

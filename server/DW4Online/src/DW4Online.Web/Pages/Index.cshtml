@@ -1,0 +1,23 @@
+@page "/"
+@model DW4Online.Web.Pages.IndexModel
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>DW4Online</title>
+    <style>
+        :root { color-scheme: light dark; }
+        body { font-family: system-ui, sans-serif; margin: 0; padding: 2rem 1rem; max-width: 40rem; margin-inline: auto; line-height: 1.5; }
+        h1 { margin-bottom: 0.25rem; }
+        .muted { opacity: 0.7; }
+        code { font-size: 0.95em; }
+    </style>
+</head>
+<body>
+    <h1>DW4Online</h1>
+    <p class="muted">Online services for the Digimon World 4 PC port.</p>
+    <p>The website is under construction. The game talks to the API at <code>/api/v1</code>; the service status is at <code>/api/v1/status</code>.</p>
+    <p>Registration: <strong>@Model.Registration</strong> &middot; Achievements: <strong>@Model.AchievementCount</strong></p>
+</body>
+</html>

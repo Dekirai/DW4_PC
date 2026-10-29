@@ -1,0 +1,16 @@
+<Project>
+  <PropertyGroup>
+    <!-- .NET 10 LTS (supported to November 2028). Builds with the .NET 10 SDK or any newer SDK. -->
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <Deterministic>true</Deterministic>
+    <Version>0.1.0</Version>
+    <Product>DW4Online</Product>
+    <Company>DW4_PC</Company>
+    <Copyright>DW4_PC contributors, MIT License</Copyright>
+    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+  </PropertyGroup>
+</Project>

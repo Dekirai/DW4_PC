@@ -1,0 +1,12 @@
+# Build outputs
+bin/
+obj/
+publish/
+TestResults/
+*.user
+
+# Local-only data and secrets: the private test database, local configuration
+.local/
+appsettings.Local.json
+appsettings.*.Local.json
+appsettings.Production.json
