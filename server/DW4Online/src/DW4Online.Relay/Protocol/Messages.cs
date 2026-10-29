@@ -1,0 +1,768 @@
+using System.Numerics;
+
+namespace DW4Online.Relay.Protocol;
+
+// The DW4R2 messages (SEAMLESS.md 6.3; the exact layout is the document's appendix "DW4R2 wire layout"). Every record
+// parses its payload (Parse) and builds its frame (Frame); both directions live here so that the relay, the fake clients
+// and the tests share one definition.
+
+/// <summary>An event inside a tick record: type u8, length u16, payload.</summary>
+public sealed record TickEvent(byte Type, byte[] Payload)
+{
+    public static TickEvent Join(int slot, int entrancePoint, ReadOnlySpan<byte> carry)
+    {
+        var p = new byte[2 + carry.Length];
+        p[0] = (byte)slot;
+        p[1] = (byte)entrancePoint;
+        carry.CopyTo(p.AsSpan(2));
+        return new TickEvent(Ev.Join, p);
+    }
+
+    public static TickEvent Leave(int slot) => new(Ev.Leave, [(byte)slot]);
+
+    public static TickEvent Intent(int slot, IntentKind kind, int argument)
+    {
+        var p = new byte[6];
+        p[0] = (byte)slot;
+        p[1] = (byte)kind;
+        System.Buffers.Binary.BinaryPrimitives.WriteInt32LittleEndian(p.AsSpan(2), argument);
+        return new TickEvent(Ev.Intent, p);
+    }
+
+    public static TickEvent LeadFrom(uint tick)
+    {
+        var p = new byte[4];
+        System.Buffers.Binary.BinaryPrimitives.WriteUInt32LittleEndian(p, tick);
+        return new TickEvent(Ev.LeadFrom, p);
+    }
+
+    public static TickEvent Delay(int slot, int delay) => new(Ev.Delay, [(byte)slot, (byte)delay]);
+
+    /// <summary>The slot an event concerns (JOIN, LEAVE, INTENT, DELAY), or -1.</summary>
+    public int Slot => Type is Ev.Join or Ev.Leave or Ev.Intent or Ev.Delay && Payload.Length > 0 ? Payload[0] : -1;
+}
+
+/// <summary>
+/// One tick of an instance's stream: present mask u8 (the slots whose pads follow), event count u8, the pads in slot
+/// order (6 bytes each), then the events. SEALED, LIVE and STATE_DATA carry these records unchanged.
+/// </summary>
+public sealed class TickRecord
+{
+    public byte Mask { get; init; }
+    public Pad[] Pads { get; } = new Pad[Wire.MaxSlots];
+    public List<TickEvent> Events { get; } = [];
+
+    public int EncodedSize => 2 + Pad.Size * BitOperations.PopCount((uint)(Mask & Wire.SlotMask)) + Events.Sum(e => 3 + e.Payload.Length);
+
+    public void Write(WireWriter w)
+    {
+        w.U8((byte)(Mask & Wire.SlotMask)).U8((byte)Events.Count);
+        for (var s = 0; s < Wire.MaxSlots; ++s)
+            if ((Mask & (1 << s)) != 0) w.Pad(Pads[s]);
+        foreach (var e in Events) w.U8(e.Type).U16((ushort)e.Payload.Length).Bytes(e.Payload);
+    }
+
+    public byte[] ToBytes()
+    {
+        var w = new WireWriter(0, EncodedSize);
+        Write(w);
+        return w.Frame()[Wire.HeaderBytes..];
+    }
+
+    public static TickRecord Read(ref WireReader r)
+    {
+        var mask = r.U8();
+        if ((mask & ~Wire.SlotMask) != 0) throw new ProtocolException("tick mask above slot 3");
+        var events = r.U8();
+        var t = new TickRecord { Mask = mask };
+        for (var s = 0; s < Wire.MaxSlots; ++s)
+            if ((mask & (1 << s)) != 0) t.Pads[s] = r.Pad();
+        for (var i = 0; i < events; ++i)
+        {
+            var type = r.U8();
+            var len = r.U16();
+            t.Events.Add(new TickEvent(type, r.Bytes(len).ToArray()));
+        }
+        return t;
+    }
+
+    public static TickRecord Parse(ReadOnlySpan<byte> bytes)
+    {
+        var r = new WireReader(bytes);
+        var t = Read(ref r);
+        r.End();
+        return t;
+    }
+}
+
+// Client to server -----------------------------------------------------------------------------------------------------
+
+/// <summary>INPUT: a sealed member's pads for ticks first..first+count-1 (count 1..32).</summary>
+public sealed record InputMsg(uint Inst, uint Visit, uint FirstTick, Pad[] Pads)
+{
+    public const int MaxPads = 32;
+
+    public static InputMsg Parse(ReadOnlySpan<byte> p)
+    {
+        var r = new WireReader(p);
+        var m = new InputMsg(r.U32(), r.U32(), r.U32(), ReadPads(ref r, r.U8(), MaxPads));
+        r.End();
+        return m;
+    }
+
+    public byte[] Frame()
+    {
+        var w = new WireWriter(Msg.Input, 13 + Pads.Length * Pad.Size).U32(Inst).U32(Visit).U32(FirstTick).U8((byte)Pads.Length);
+        foreach (var pad in Pads) w.Pad(pad);
+        return w.Frame();
+    }
+
+    internal static Pad[] ReadPads(ref WireReader r, int count, int max)
+    {
+        if (count < 1 || count > max) throw new ProtocolException("pad count out of range");
+        var pads = new Pad[count];
+        for (var i = 0; i < count; ++i)
+        {
+            pads[i] = r.Pad();
+            if (!pads[i].Valid) throw new ProtocolException("stick value outside the GameCube range");
+        }
+        return pads;
+    }
+}
+
+/// <summary>LOG: a solo-led member's applied pads for ticks first..first+count-1 (count 1..1200), batched every 100 ms.</summary>
+public sealed record LogMsg(uint Inst, uint Visit, uint FirstTick, Pad[] Pads)
+{
+    public const int MaxPads = 1200;
+
+    public static LogMsg Parse(ReadOnlySpan<byte> p)
+    {
+        var r = new WireReader(p);
+        var m = new LogMsg(r.U32(), r.U32(), r.U32(), InputMsg.ReadPads(ref r, r.U16(), MaxPads));
+        r.End();
+        return m;
+    }
+
+    public byte[] Frame()
+    {
+        var w = new WireWriter(Msg.Log, 14 + Pads.Length * Pad.Size).U32(Inst).U32(Visit).U32(FirstTick).U16((ushort)Pads.Length);
+        foreach (var pad in Pads) w.Pad(pad);
+        return w.Frame();
+    }
+}
+
+/// <summary>
+/// HEADING: a member confirmed an exit or the gate disc (one to two seconds before its barrier), with the session context
+/// hash its engine will arrive with (co-arrivals need the same context).
+/// </summary>
+public sealed record HeadingMsg(uint Inst, string Stage, byte Point, ulong ContextHash)
+{
+    public static HeadingMsg Parse(ReadOnlySpan<byte> p)
+    {
+        var r = new WireReader(p);
+        var m = new HeadingMsg(r.U32(), StageNames.Read(ref r), r.U8(), r.U64());
+        r.End();
+        return m;
+    }
+
+    public byte[] Frame() => new WireWriter(Msg.Heading).U32(Inst).Str(Stage).U8(Point).U64(ContextHash).Frame();
+}
+
+/// <summary>BARRIER: after the barrier tick (the step that executed NEXTSTAGE); carry = the sender's own player carry.</summary>
+public sealed record BarrierMsg(uint Inst, uint Visit, uint Tick, string Stage, byte Point, byte AliveMask, byte PresentMask, ulong ContextHash, byte[] Carry)
+{
+    public const int MaxCarry = 64 * 1024;
+
+    public static BarrierMsg Parse(ReadOnlySpan<byte> p)
+    {
+        var r = new WireReader(p);
+        var m = new BarrierMsg(r.U32(), r.U32(), r.U32(), StageNames.Read(ref r), r.U8(), Masks.Read(ref r), Masks.Read(ref r), r.U64(), r.Blob(MaxCarry));
+        r.End();
+        return m;
+    }
+
+    public byte[] Frame() => new WireWriter(Msg.Barrier, 40 + Carry.Length).U32(Inst).U32(Visit).U32(Tick).Str(Stage).U8(Point)
+        .U8(AliveMask).U8(PresentMask).U64(ContextHash).Blob(Carry).Frame();
+}
+
+/// <summary>BARRIER_CHOICE: at a boss-locked target, 0 = wait for them, 1 = go alone.</summary>
+public sealed record BarrierChoiceMsg(uint Inst, byte Choice)
+{
+    public const byte Wait = 0;
+    public const byte Alone = 1;
+
+    public static BarrierChoiceMsg Parse(ReadOnlySpan<byte> p)
+    {
+        var r = new WireReader(p);
+        var m = new BarrierChoiceMsg(r.U32(), r.U8());
+        r.End();
+        if (m.Choice > 1) throw new ProtocolException("unknown barrier choice");
+        return m;
+    }
+
+    public byte[] Frame() => new WireWriter(Msg.BarrierChoice).U32(Inst).U8(Choice).Frame();
+}
+
+/// <summary>SPLIT: after the step of a fork; leaver mask = the side that moves to the child instance.</summary>
+public sealed record SplitMsg(uint Inst, uint Visit, uint Tick, byte LeaverMask, SplitKind Kind)
+{
+    public static SplitMsg Parse(ReadOnlySpan<byte> p)
+    {
+        var r = new WireReader(p);
+        var m = new SplitMsg(r.U32(), r.U32(), r.U32(), Masks.Read(ref r), (SplitKind)r.U8());
+        r.End();
+        if (m.Kind is not (SplitKind.Exit or SplitKind.InStage)) throw new ProtocolException("unknown split kind");
+        if (m.LeaverMask == 0) throw new ProtocolException("empty leaver mask");
+        return m;
+    }
+
+    public byte[] Frame() => new WireWriter(Msg.Split).U32(Inst).U32(Visit).U32(Tick).U8(LeaverMask).U8((byte)Kind).Frame();
+}
+
+/// <summary>SNAPSHOT: a chunk of the visit's load snapshot (the leader uploads it after the load step).</summary>
+public sealed record SnapshotMsg(uint Inst, uint Visit, uint Total, uint Offset, byte[] Chunk)
+{
+    public static SnapshotMsg Parse(ReadOnlySpan<byte> p)
+    {
+        var r = new WireReader(p);
+        var m = new SnapshotMsg(r.U32(), r.U32(), r.U32(), r.U32(), r.Rest().ToArray());
+        if (m.Chunk.Length == 0 && m.Total != 0) throw new ProtocolException("empty snapshot chunk");
+        if ((ulong)m.Offset + (ulong)m.Chunk.Length > m.Total) throw new ProtocolException("snapshot chunk beyond its total");
+        return m;
+    }
+
+    public byte[] Frame() => new WireWriter(Msg.Snapshot, 16 + Chunk.Length).U32(Inst).U32(Visit).U32(Total).U32(Offset).Bytes(Chunk).Frame();
+}
+
+/// <summary>SNAPHASH: the canonical hash of the visit's load snapshot (every member, the leader included).</summary>
+public sealed record SnapHashMsg(uint Inst, uint Visit, ulong Hash)
+{
+    public static SnapHashMsg Parse(ReadOnlySpan<byte> p)
+    {
+        var r = new WireReader(p);
+        var m = new SnapHashMsg(r.U32(), r.U32(), r.U64());
+        r.End();
+        return m;
+    }
+
+    public byte[] Frame() => new WireWriter(Msg.SnapHash).U32(Inst).U32(Visit).U64(Hash).Frame();
+}
+
+/// <summary>READY: a joiner caught up; tick = a multiple of 60 with its net fingerprint, its replay rate and its carry.</summary>
+public sealed record ReadyMsg(uint Inst, uint Visit, uint Tick, ulong NetFp, uint Rate, byte[] Carry)
+{
+    public static ReadyMsg Parse(ReadOnlySpan<byte> p)
+    {
+        var r = new WireReader(p);
+        var m = new ReadyMsg(r.U32(), r.U32(), r.U32(), r.U64(), r.U32(), r.Blob(BarrierMsg.MaxCarry));
+        r.End();
+        return m;
+    }
+
+    public byte[] Frame() => new WireWriter(Msg.Ready, 32 + Carry.Length).U32(Inst).U32(Visit).U32(Tick).U64(NetFp).U32(Rate).Blob(Carry).Frame();
+}
+
+/// <summary>JOIN_AT: the solo leader's answer to JOIN_REQ: from tick J the instance is sealed and the JOIN applies.</summary>
+public sealed record JoinAtMsg(uint Inst, uint Visit, uint Tick)
+{
+    public static JoinAtMsg Parse(ReadOnlySpan<byte> p)
+    {
+        var r = new WireReader(p);
+        var m = new JoinAtMsg(r.U32(), r.U32(), r.U32());
+        r.End();
+        return m;
+    }
+
+    public byte[] Frame() => new WireWriter(Msg.JoinAt).U32(Inst).U32(Visit).U32(Tick).Frame();
+}
+
+/// <summary>NETFP: the net fingerprint after tick (every 60 ticks, every member).</summary>
+public sealed record NetFpMsg(uint Inst, uint Visit, uint Tick, ulong Hash)
+{
+    public static NetFpMsg Parse(ReadOnlySpan<byte> p)
+    {
+        var r = new WireReader(p);
+        var m = new NetFpMsg(r.U32(), r.U32(), r.U32(), r.U64());
+        r.End();
+        return m;
+    }
+
+    public byte[] Frame() => new WireWriter(Msg.NetFp).U32(Inst).U32(Visit).U32(Tick).U64(Hash).Frame();
+}
+
+/// <summary>STATE: the instance's joinable / membership-safe / boss lock flags and the session context hash, on change.</summary>
+public sealed record StateMsg(uint Inst, uint Visit, uint Tick, byte Flags, ulong ContextHash, StateReason Reason)
+{
+    public const byte Joinable = 1;
+    public const byte MembershipSafe = 2;
+    public const byte BossLock = 4;
+
+    public static StateMsg Parse(ReadOnlySpan<byte> p)
+    {
+        var r = new WireReader(p);
+        var m = new StateMsg(r.U32(), r.U32(), r.U32(), r.U8(), r.U64(), (StateReason)r.U8());
+        r.End();
+        if (m.Flags > 7) throw new ProtocolException("unknown state flags");
+        return m;
+    }
+
+    public byte[] Frame() => new WireWriter(Msg.State).U32(Inst).U32(Visit).U32(Tick).U8(Flags).U64(ContextHash).U8((byte)Reason).Frame();
+}
+
+/// <summary>INTENT: a member's port choice (go without them, give up).</summary>
+public sealed record IntentMsg(uint Inst, uint Visit, IntentKind Kind, int Argument)
+{
+    public static IntentMsg Parse(ReadOnlySpan<byte> p)
+    {
+        var r = new WireReader(p);
+        var m = new IntentMsg(r.U32(), r.U32(), (IntentKind)r.U8(), r.I32());
+        r.End();
+        if (m.Kind is not (IntentKind.GoWithout or IntentKind.GiveUp)) throw new ProtocolException("unknown intent");
+        return m;
+    }
+
+    public byte[] Frame() => new WireWriter(Msg.Intent).U32(Inst).U32(Visit).U8((byte)Kind).I32(Argument).Frame();
+}
+
+/// <summary>PRESENCE (both directions; the server adds the member index in front).</summary>
+public sealed record PresenceMsg(string Stage, uint Inst, float X, float Y, float Z, float Yaw, byte Species, ushort Level, ushort Hp, ushort HpMax,
+    ushort Mp, ushort MpMax)
+{
+    public static PresenceMsg Read(ref WireReader r) =>
+        new(StageNames.Read(ref r, allowEmpty: true), r.U32(), r.F32(), r.F32(), r.F32(), r.F32(), r.U8(), r.U16(), r.U16(), r.U16(), r.U16(), r.U16());
+
+    public static PresenceMsg Parse(ReadOnlySpan<byte> p)
+    {
+        var r = new WireReader(p);
+        var m = Read(ref r);
+        r.End();
+        if (!float.IsFinite(m.X) || !float.IsFinite(m.Y) || !float.IsFinite(m.Z) || !float.IsFinite(m.Yaw)) throw new ProtocolException("presence position is not finite");
+        return m;
+    }
+
+    public void Write(WireWriter w) => w.Str(Stage).U32(Inst).F32(X).F32(Y).F32(Z).F32(Yaw).U8(Species).U16(Level).U16(Hp).U16(HpMax).U16(Mp).U16(MpMax);
+
+    public byte[] Frame()
+    {
+        var w = new WireWriter(Msg.Presence);
+        Write(w);
+        return w.Frame();
+    }
+}
+
+/// <summary>RESUME: after a reconnect: the instance, slot and the last tick this machine executed.</summary>
+public sealed record ResumeMsg(uint Inst, uint Visit, byte Slot, uint LastTick)
+{
+    public static ResumeMsg Parse(ReadOnlySpan<byte> p)
+    {
+        var r = new WireReader(p);
+        var m = new ResumeMsg(r.U32(), r.U32(), r.U8(), r.U32());
+        r.End();
+        return m;
+    }
+
+    public byte[] Frame() => new WireWriter(Msg.Resume).U32(Inst).U32(Visit).U8(Slot).U32(LastTick).Frame();
+}
+
+/// <summary>RATE: the replay rate in steps per second (calibration at the room join and after every replay).</summary>
+public sealed record RateMsg(uint StepsPerSecond)
+{
+    public static RateMsg Parse(ReadOnlySpan<byte> p)
+    {
+        var r = new WireReader(p);
+        var m = new RateMsg(r.U32());
+        r.End();
+        return m;
+    }
+
+    public byte[] Frame() => new WireWriter(Msg.Rate).U32(StepsPerSecond).Frame();
+}
+
+public sealed record PongMsg(uint Nonce, ulong ClientTimeMs)
+{
+    public static PongMsg Parse(ReadOnlySpan<byte> p)
+    {
+        var r = new WireReader(p);
+        var m = new PongMsg(r.U32(), r.U64());
+        r.End();
+        return m;
+    }
+
+    public byte[] Frame() => new WireWriter(Msg.Pong).U32(Nonce).U64(ClientTimeMs).Frame();
+}
+
+public sealed record ByeMsg(byte Reason)
+{
+    public static ByeMsg Parse(ReadOnlySpan<byte> p)
+    {
+        var r = new WireReader(p);
+        var m = new ByeMsg(r.U8());
+        r.End();
+        return m;
+    }
+
+    public byte[] Frame() => new WireWriter(Msg.Bye).U8(Reason).Frame();
+}
+
+// Server to client -----------------------------------------------------------------------------------------------------
+
+/// <summary>
+/// WELCOME: the first frame after "OK": the member's room index and the instance the server has it in (a fresh solo hub
+/// instance, or after a reconnect within the window the instance and slot it still holds, with the last sealed tick).
+/// </summary>
+public sealed record WelcomeMsg(byte Member, uint Inst, uint Visit, byte Slot, InstanceMode Mode, string Stage, uint LastTick, byte Delay,
+    ushort MaxCatchUpSeconds, byte Flags)
+{
+    public const byte Resumable = 1;
+    public const uint NoTick = uint.MaxValue;
+
+    public static WelcomeMsg Parse(ReadOnlySpan<byte> p)
+    {
+        var r = new WireReader(p);
+        var m = new WelcomeMsg(r.U8(), r.U32(), r.U32(), r.U8(), (InstanceMode)r.U8(), StageNames.Read(ref r, allowEmpty: true), r.U32(), r.U8(), r.U16(), r.U8());
+        r.End();
+        return m;
+    }
+
+    public byte[] Frame() => new WireWriter(Msg.Welcome).U8(Member).U32(Inst).U32(Visit).U8(Slot).U8((byte)Mode).Str(Stage).U32(LastTick)
+        .U8(Delay).U16(MaxCatchUpSeconds).U8(Flags).Frame();
+}
+
+/// <summary>SEALED / LIVE: ticks first..first+count-1 of an instance's stream (batched when behind).</summary>
+public sealed record TicksMsg(byte Type, uint Inst, uint Visit, uint FirstTick, IReadOnlyList<TickRecord> Ticks)
+{
+    public static TicksMsg Parse(byte type, ReadOnlySpan<byte> p)
+    {
+        var r = new WireReader(p);
+        var inst = r.U32();
+        var visit = r.U32();
+        var first = r.U32();
+        var count = r.U16();
+        var ticks = new List<TickRecord>(count);
+        for (var i = 0; i < count; ++i) ticks.Add(TickRecord.Read(ref r));
+        r.End();
+        return new TicksMsg(type, inst, visit, first, ticks);
+    }
+
+    /// <summary>A SEALED or LIVE frame from already encoded tick records.</summary>
+    public static byte[] Frame(byte type, uint inst, uint visit, uint first, IReadOnlyList<byte[]> records)
+    {
+        var w = new WireWriter(type, 14 + records.Sum(x => x.Length)).U32(inst).U32(visit).U32(first).U16((ushort)records.Count);
+        foreach (var rec in records) w.Bytes(rec);
+        return w.Frame();
+    }
+}
+
+/// <summary>JOIN_REQ: to the leader of a solo-led instance: choose the tick J from which the instance is sealed.</summary>
+public sealed record JoinReqMsg(uint Inst, uint Visit, byte Slot, byte Delay)
+{
+    public static JoinReqMsg Parse(ReadOnlySpan<byte> p)
+    {
+        var r = new WireReader(p);
+        var m = new JoinReqMsg(r.U32(), r.U32(), r.U8(), r.U8());
+        r.End();
+        return m;
+    }
+
+    public byte[] Frame() => new WireWriter(Msg.JoinReq).U32(Inst).U32(Visit).U8(Slot).U8(Delay).Frame();
+}
+
+/// <summary>A co-arrival in the base's BARRIER_OK: its slot in the new instance, its room member index and its carry.</summary>
+public sealed record CoArrival(byte Slot, byte Member, byte[] Carry);
+
+/// <summary>
+/// BARRIER_OK: the server's decision for a parked member. SlotMap[old slot] = the new slot of that engine player or -1
+/// (NEW: the group's engine continues with these slots; DISSOLVE: only the own player stays, at slot 0). CoArrivals: the
+/// players the base engine spawns in its load step. Story bytes and the dropped set are empty until round S2. Notice and
+/// names say why a NEW opened next to an instance of the same stage.
+/// </summary>
+public sealed record BarrierOkMsg(uint Inst, uint Visit, BarrierDecision Decision, uint NewInst, uint NewVisit, string Stage, byte Point, byte OwnSlot,
+    sbyte[] SlotMap, InstanceMode Mode, byte Delay, IReadOnlyList<CoArrival> CoArrivals, uint StoryRevision, byte[] Story, byte[] Dropped,
+    BarrierNotice Notice = BarrierNotice.None, IReadOnlyList<string>? NoticeNames = null)
+{
+    public static BarrierOkMsg Parse(ReadOnlySpan<byte> p)
+    {
+        var r = new WireReader(p);
+        var inst = r.U32();
+        var visit = r.U32();
+        var decision = (BarrierDecision)r.U8();
+        var newInst = r.U32();
+        var newVisit = r.U32();
+        var stage = StageNames.Read(ref r, allowEmpty: true);
+        var point = r.U8();
+        var own = r.U8();
+        var map = new sbyte[Wire.MaxSlots];
+        for (var i = 0; i < map.Length; ++i) map[i] = r.I8();
+        var mode = (InstanceMode)r.U8();
+        var delay = r.U8();
+        var n = r.U8();
+        var co = new List<CoArrival>(n);
+        for (var i = 0; i < n; ++i) co.Add(new CoArrival(r.U8(), r.U8(), r.Blob(BarrierMsg.MaxCarry)));
+        var revision = r.U32();
+        var story = r.Blob(1 << 16);
+        var dropped = r.Blob(1 << 16);
+        var notice = (BarrierNotice)r.U8();
+        var nn = r.U8();
+        var names = new List<string>(nn);
+        for (var i = 0; i < nn; ++i) names.Add(r.Str(64));
+        r.End();
+        return new BarrierOkMsg(inst, visit, decision, newInst, newVisit, stage, point, own, map, mode, delay, co, revision, story, dropped, notice, names);
+    }
+
+    public byte[] Frame()
+    {
+        var w = new WireWriter(Msg.BarrierOk, 64 + CoArrivals.Sum(c => c.Carry.Length + 6) + Story.Length + Dropped.Length)
+            .U32(Inst).U32(Visit).U8((byte)Decision).U32(NewInst).U32(NewVisit).Str(Stage).U8(Point).U8(OwnSlot);
+        foreach (var s in SlotMap) w.I8(s);
+        w.U8((byte)Mode).U8(Delay).U8((byte)CoArrivals.Count);
+        foreach (var c in CoArrivals) w.U8(c.Slot).U8(c.Member).Blob(c.Carry);
+        w.U32(StoryRevision).Blob(Story).Blob(Dropped).U8((byte)Notice);
+        var names = NoticeNames ?? [];
+        w.U8((byte)names.Count);
+        foreach (var n in names) w.Str(n);
+        return w.Frame();
+    }
+}
+
+/// <summary>
+/// REASSIGN: after a fork the member's copy continues as another instance (the side that does not keep the id): from
+/// tick FromTick its stream comes with NewInst. Flags bit 0 = departing (an exit fork's child), bit 1 = joinable.
+/// </summary>
+public sealed record ReassignMsg(uint OldInst, uint Visit, uint NewInst, uint FromTick, InstanceMode Mode, byte Flags)
+{
+    public const byte Departing = 1;
+
+    public static ReassignMsg Parse(ReadOnlySpan<byte> p)
+    {
+        var r = new WireReader(p);
+        var m = new ReassignMsg(r.U32(), r.U32(), r.U32(), r.U32(), (InstanceMode)r.U8(), r.U8());
+        r.End();
+        return m;
+    }
+
+    public byte[] Frame() => new WireWriter(Msg.Reassign).U32(OldInst).U32(Visit).U32(NewInst).U32(FromTick).U8((byte)Mode).U8(Flags).Frame();
+}
+
+/// <summary>BARRIER_WAIT: a held barrier (loading screen text); flag 1 = the member must choose wait or alone (boss lock).</summary>
+public sealed record BarrierWaitMsg(uint Inst, WaitReason Reason, ushort SecondsLeft, IReadOnlyList<string> Names, byte Flags)
+{
+    public const byte ChoiceNeeded = 1;
+
+    public static BarrierWaitMsg Parse(ReadOnlySpan<byte> p)
+    {
+        var r = new WireReader(p);
+        var inst = r.U32();
+        var reason = (WaitReason)r.U8();
+        var seconds = r.U16();
+        var n = r.U8();
+        var names = new List<string>(n);
+        for (var i = 0; i < n; ++i) names.Add(r.Str(64));
+        var m = new BarrierWaitMsg(inst, reason, seconds, names, r.U8());
+        r.End();
+        return m;
+    }
+
+    public byte[] Frame()
+    {
+        var w = new WireWriter(Msg.BarrierWait).U32(Inst).U8((byte)Reason).U16(SecondsLeft).U8((byte)Names.Count);
+        foreach (var n in Names) w.Str(n);
+        return w.U8(Flags).Frame();
+    }
+}
+
+/// <summary>STATE_DATA: a chunk of a state blob (<see cref="StateBlob"/>) for a join, co-arrival, resync or resume.</summary>
+public sealed record StateDataMsg(uint Inst, uint Visit, uint Total, uint Offset, byte[] Chunk)
+{
+    public static StateDataMsg Parse(ReadOnlySpan<byte> p)
+    {
+        var r = new WireReader(p);
+        var m = new StateDataMsg(r.U32(), r.U32(), r.U32(), r.U32(), r.Rest().ToArray());
+        if ((ulong)m.Offset + (ulong)m.Chunk.Length > m.Total) throw new ProtocolException("state chunk beyond its total");
+        return m;
+    }
+
+    public byte[] Frame() => new WireWriter(Msg.StateData, 16 + Chunk.Length).U32(Inst).U32(Visit).U32(Total).U32(Offset).Bytes(Chunk).Frame();
+}
+
+/// <summary>A fork in an instance's history since its snapshot: the tick, the leaver mask, the kind and the side (0 stayers, 1 leavers) that leads to the instance.</summary>
+public sealed record ForkSide(uint Tick, byte LeaverMask, SplitKind Kind, byte Side)
+{
+    public const byte Stay = 0;
+    public const byte Leave = 1;
+}
+
+/// <summary>
+/// The reassembled STATE_DATA: purpose u8, slot u8 (the slot the receiver gets or holds), codec u8 (0 = raw tick records),
+/// snapshot (u32 length + the bytes the leader uploaded), fork count u8 + forks (tick u32, leaver mask u8, kind u8, side u8),
+/// first tick u32, tick count u32, then the tick records. LIVE frames continue the stream after the last tick.
+/// </summary>
+public sealed record StateBlob(StatePurpose Purpose, byte Slot, byte[] Snapshot, IReadOnlyList<ForkSide> Forks, uint FirstTick, IReadOnlyList<TickRecord> Ticks)
+{
+    public const int MaxSnapshot = 4 * 1024 * 1024;
+
+    public static byte[] Build(StatePurpose purpose, byte slot, ReadOnlySpan<byte> snapshot, IReadOnlyList<ForkSide> forks, uint firstTick, IReadOnlyList<byte[]> records)
+    {
+        var w = new WireWriter(0, 16 + snapshot.Length + forks.Count * 7 + records.Sum(x => x.Length))
+            .U8((byte)purpose).U8(slot).U8(0).Blob(snapshot).U8((byte)forks.Count);
+        foreach (var f in forks) w.U32(f.Tick).U8(f.LeaverMask).U8((byte)f.Kind).U8(f.Side);
+        w.U32(firstTick).U32((uint)records.Count);
+        foreach (var rec in records) w.Bytes(rec);
+        return w.Frame()[Wire.HeaderBytes..];
+    }
+
+    public static StateBlob Parse(ReadOnlySpan<byte> blob)
+    {
+        var r = new WireReader(blob);
+        var purpose = (StatePurpose)r.U8();
+        var slot = r.U8();
+        if (r.U8() != 0) throw new ProtocolException("unknown state codec");
+        var snapshot = r.Blob(MaxSnapshot);
+        var nf = r.U8();
+        var forks = new List<ForkSide>(nf);
+        for (var i = 0; i < nf; ++i) forks.Add(new ForkSide(r.U32(), r.U8(), (SplitKind)r.U8(), r.U8()));
+        var first = r.U32();
+        var count = r.U32();
+        var ticks = new List<TickRecord>((int)Math.Min(count, 1_000_000));
+        for (var i = 0u; i < count; ++i) ticks.Add(TickRecord.Read(ref r));
+        r.End();
+        return new StateBlob(purpose, slot, snapshot, forks, first, ticks);
+    }
+}
+
+public sealed record PresenceOutMsg(byte Member, PresenceMsg Presence)
+{
+    public static PresenceOutMsg Parse(ReadOnlySpan<byte> p)
+    {
+        var r = new WireReader(p);
+        var member = r.U8();
+        var m = new PresenceOutMsg(member, PresenceMsg.Read(ref r));
+        r.End();
+        return m;
+    }
+
+    public byte[] Frame()
+    {
+        var w = new WireWriter(Msg.PresenceOut).U8(Member);
+        Presence.Write(w);
+        return w.Frame();
+    }
+}
+
+public sealed record ResyncMsg(uint Inst, uint Visit)
+{
+    public static ResyncMsg Parse(ReadOnlySpan<byte> p)
+    {
+        var r = new WireReader(p);
+        var m = new ResyncMsg(r.U32(), r.U32());
+        r.End();
+        return m;
+    }
+
+    public byte[] Frame() => new WireWriter(Msg.Resync).U32(Inst).U32(Visit).Frame();
+}
+
+/// <summary>ROOM: an in-band room change (flags bit 0 = the member is the room owner).</summary>
+public sealed record RoomMsg(RoomNotice Kind, byte Member, ulong AccountId, string Name, byte Flags)
+{
+    public const byte Owner = 1;
+
+    public static RoomMsg Parse(ReadOnlySpan<byte> p)
+    {
+        var r = new WireReader(p);
+        var m = new RoomMsg((RoomNotice)r.U8(), r.U8(), r.U64(), r.Str(64), r.U8());
+        r.End();
+        return m;
+    }
+
+    public byte[] Frame() => new WireWriter(Msg.Room).U8((byte)Kind).U8(Member).U64(AccountId).Str(Name).U8(Flags).Frame();
+}
+
+/// <summary>PING: once per second; margin = the member's recent 0.1 % arrival margin in ms (sealed), delay = the suggested input delay.</summary>
+public sealed record PingMsg(uint Nonce, ulong ServerTimeMs, short MarginMs, byte Delay)
+{
+    public static PingMsg Parse(ReadOnlySpan<byte> p)
+    {
+        var r = new WireReader(p);
+        var m = new PingMsg(r.U32(), r.U64(), r.I16(), r.U8());
+        r.End();
+        return m;
+    }
+
+    public byte[] Frame() => new WireWriter(Msg.Ping).U32(Nonce).U64(ServerTimeMs).I16(MarginMs).U8(Delay).Frame();
+}
+
+public sealed record CloseMsg(CloseReason Reason, string Text)
+{
+    public static CloseMsg Parse(ReadOnlySpan<byte> p)
+    {
+        var r = new WireReader(p);
+        var m = new CloseMsg((CloseReason)r.U8(), r.Str());
+        r.End();
+        return m;
+    }
+
+    public byte[] Frame() => new WireWriter(Msg.Close).U8((byte)Reason).Str(Text.Length > 200 ? Text[..200] : Text).Frame();
+}
+
+/// <summary>A roster line: member, stage, instance, level, HP, max HP, flags (1 connected, 2 lagging, 4 owner).</summary>
+public sealed record RosterEntry(byte Member, string Stage, uint Inst, ushort Level, ushort Hp, ushort HpMax, byte Flags)
+{
+    public const byte Connected = 1;
+    public const byte Lagging = 2;
+    public const byte Owner = 4;
+}
+
+/// <summary>ROSTER: once per second, every member of the room (the room UI).</summary>
+public sealed record RosterMsg(IReadOnlyList<RosterEntry> Entries)
+{
+    public static RosterMsg Parse(ReadOnlySpan<byte> p)
+    {
+        var r = new WireReader(p);
+        var n = r.U8();
+        var list = new List<RosterEntry>(n);
+        for (var i = 0; i < n; ++i) list.Add(new RosterEntry(r.U8(), StageNames.Read(ref r, allowEmpty: true), r.U32(), r.U16(), r.U16(), r.U16(), r.U8()));
+        r.End();
+        return new RosterMsg(list);
+    }
+
+    public byte[] Frame()
+    {
+        var w = new WireWriter(Msg.Roster).U8((byte)Entries.Count);
+        foreach (var e in Entries) w.U8(e.Member).Str(e.Stage).U32(e.Inst).U16(e.Level).U16(e.Hp).U16(e.HpMax).U8(e.Flags);
+        return w.Frame();
+    }
+}
+
+/// <summary>Stage names: 1-24 of A-Z, a-z, 0-9, '_' (empty only where the title / no stage is allowed).</summary>
+public static class StageNames
+{
+    public static bool Valid(string s, bool allowEmpty = false) =>
+        (s.Length == 0 ? allowEmpty : s.Length <= Wire.MaxStageName) && s.All(c => char.IsAsciiLetterOrDigit(c) || c == '_');
+
+    public static string Read(ref WireReader r, bool allowEmpty = false)
+    {
+        var s = r.Str(Wire.MaxStageName);
+        if (!Valid(s, allowEmpty)) throw new ProtocolException("bad stage name");
+        return s;
+    }
+
+    /// <summary>
+    /// Hub and UI stages (SEAMLESS.md 2): stagML02, stagML11-14 and every stagIS* (title, character select, save room,
+    /// call shop, staff roll, the menu stages); the title before the first stage ("") counts as one.
+    /// </summary>
+    public static bool IsHub(string stage) =>
+        stage.Length == 0 ||
+        stage.StartsWith("stagIS", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(stage, "stagML02", StringComparison.OrdinalIgnoreCase) ||
+        (stage.Length == 8 && stage.StartsWith("stagML1", StringComparison.OrdinalIgnoreCase) && stage[7] is >= '1' and <= '4');
+}
+
+internal static class Masks
+{
+    public static byte Read(ref WireReader r)
+    {
+        var m = r.U8();
+        if ((m & ~Wire.SlotMask) != 0) throw new ProtocolException("slot mask above slot 3");
+        return m;
+    }
+}

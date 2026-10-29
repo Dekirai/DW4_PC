@@ -1,0 +1,474 @@
+"""The local online test stack (SEAMLESS.md 16).
+
+Starts a private MariaDB (C:/xampp/mysql/bin/mysqld.exe with its own data directory under tools/online_test/.work and
+its own port), the DW4Online server on 127.0.0.1 with a throw-away HTTPS certificate (openssl, pinned by the clients)
+and the DW4R2 relay on a free port, registers accounts through the API, creates and joins a room, starts N hidden
+clients with input scripts (fake DW4R2 clients until the game client exists: tests/DW4Online.FakeClient), optionally
+each behind the latency / jitter / loss proxy, collects every client's net fingerprints and membership log and the
+relay's membership log, compares them per instance and checks each scenario's expected events. It stops only the
+processes it started (by their handles), never anything by name.
+
+    python run.py [SCENARIO ...] [--list] [--mysql-port 3431] [--ports 53100-53199] [--impair OW,JITTER,LOSS] [--keep]
+    python run.py matrix [--seconds 40] [--warmup 20]      the loss and jitter matrix (in-process hub, SEAMLESS.md 6.4)
+
+Without a scenario every one of round S1 runs: S1 S2 S3 S5 S16 S17a S17b S22a S22b. Network traffic stays on loopback.
+"""
+import argparse
+import base64
+import hashlib
+import json
+import os
+import secrets
+import shutil
+import socket
+import ssl
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.request
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+REPO = os.path.abspath(os.path.join(HERE, "..", ".."))
+SERVER = os.path.join(REPO, "server", "DW4Online")
+WORK = os.path.join(HERE, ".work")
+MYSQL_BIN = r"C:\xampp\mysql\bin"
+BELOW_NORMAL = 0x00004000
+NO_WINDOW = 0x08000000
+PROTOCOL, DATA_HASH = 43, 1
+
+# The stand-in engine's timing for every client of a scenario (simulation: all must agree).
+ENTRY, DEPART = 120, 120
+
+
+def scenario(name, desc, clients, duration, checks, entry=ENTRY, depart=DEPART):
+    return {"name": name, "desc": desc, "clients": clients, "duration": duration, "checks": checks, "entry": entry, "depart": depart}
+
+
+def client(name, script, quest=0, start=0.0, rate=3000):
+    return {"name": name, "script": script, "quest": quest, "start": start, "rate": rate}
+
+
+def ex(at, stage, group=False, point=0):
+    return {"at": at, "do": "group_exit" if group else "exit", "stage": stage, "point": point}
+
+
+SCENARIOS = [
+    scenario("S1", "two members in one stage for 10,000+ ticks, own cameras (fake: the same sealed instance throughout)",
+             [client("a", [ex(1.0, "stag0102")]), client("b", [ex(1.0, "stag0102")])], 180,
+             [("sealed_together", ["a", "b"], "stag0102"), ("fingerprint_ticks", 10000)]),
+    scenario("S2", "a leaves by an exit (fork), b follows later (join by catch-up), both change stage together",
+             [client("a", [ex(1.0, "stag0101"), ex(10.0, "stag0102"), ex(32.0, "stag0201", group=True)]),
+              client("b", [ex(1.4, "stag0101"), ex(18.0, "stag0102")])], 45,
+             [("decision", "a", "New", "stag0101"), ("fork_seen", "a"), ("decision", "b", "Join", "stag0102"),
+              ("sealed_together", ["a", "b"], "stag0201")]),
+    scenario("S3", "three clients: two joins mid-stage one at a time, then a common stage change",
+             [client("a", [ex(1.0, "stag0101"), ex(30.0, "stag0102", group=True)]), client("b", [ex(8.0, "stag0101")]),
+              client("c", [ex(16.0, "stag0101")])], 45,
+             [("decision", "b", "Join", "stag0101"), ("decision", "c", "Join", "stag0101"), ("sealed_together", ["a", "b", "c"], "stag0102")]),
+    scenario("S5", "everybody falls: game over, the group dissolves into solo lobbies",
+             [client("a", [ex(1.0, "stag0101"), ex(10.0, "stagML11", group=True)]), client("b", [ex(1.0, "stag0101")])], 18,
+             [("sealed_together", ["a", "b"], "stag0101"), ("decision", "a", "Dissolve", "stagML11"), ("decision", "b", "Dissolve", "stagML11")]),
+    scenario("S16", "quest and story in stag0401: other quests stay apart, the same quest shares one instance",
+             [client("a", [ex(1.0, "stag0401")], quest=1), client("b", [ex(6.0, "stag0401")], quest=0),
+              client("c", [ex(9.0, "stag0401")], quest=1)], 22,
+             [("decision", "b", "New", "stag0401", "OtherContext"), ("decision", "c", "Join", "stag0401"), ("sealed_together", ["a", "c"], "stag0401")]),
+    scenario("S17a", "two members take the gate 1.5 s apart: one co-arrival, one entry scene",
+             [client("a", [ex(1.0, "stag0101")]), client("b", [ex(2.5, "stag0101")])], 14,
+             [("decision", "a", "New", "stag0101"), ("decision", "b", "CoArrive", "stag0101"), ("sealed_together", ["a", "b"], "stag0101")]),
+    scenario("S17b", "two members take the gate 8 s apart: the later waits for the entry scene, then joins",
+             [client("a", [ex(1.0, "stag0101")]), client("b", [ex(9.0, "stag0101")])], 30,
+             [("waited", "b", "NotJoinable"), ("decision", "b", "Join", "stag0101"), ("sealed_together", ["a", "b"], "stag0101")], entry=600),
+    scenario("S22a", "a joiner whose target leaves the stage during the catch-up falls back to NEW",
+             [client("a", [ex(1.0, "stag0101"), ex(15.5, "stag0102")]), client("b", [ex(12.0, "stag0101")], rate=90)], 26,
+             [("decision", "b", "Join", "stag0101"), ("decision", "b", "New", "stag0101", "HoldExpired")]),
+    scenario("S22b", "a joiner whose target forks during the catch-up follows the instance id",
+             [client("a", [ex(1.0, "stag0101")]), client("c", [ex(1.0, "stag0101"), ex(15.0, "stag0102")]),
+              client("b", [ex(12.0, "stag0101")], rate=90)], 40,
+             [("decision", "b", "Join", "stag0101"), ("fork_seen", "a"), ("sealed_together", ["a", "b"], "stag0101")]),
+]
+
+
+class Stack:
+    """The processes this run starts; stop() ends exactly those."""
+
+    def __init__(self, args):
+        self.args = args
+        self.procs = []
+        self.ports = []
+        self.dir = os.path.join(WORK, time.strftime("run_%Y%m%d_%H%M%S"))
+        os.makedirs(self.dir, exist_ok=True)
+
+    def spawn(self, argv, log, env=None):
+        f = open(log, "w", encoding="utf-8")
+        p = subprocess.Popen(argv, stdout=f, stderr=subprocess.STDOUT, env=env, creationflags=BELOW_NORMAL | NO_WINDOW)
+        self.procs.append((p, f))
+        return p
+
+    def stop(self):
+        if getattr(self, "mysql", None):
+            port, pw = self.mysql
+            subprocess.run([os.path.join(MYSQL_BIN, "mysql.exe"), "--protocol=tcp", "-h", "127.0.0.1", "-P", str(port), "-u", "root",
+                            "--password=" + pw, "-e", "SHUTDOWN"], capture_output=True, creationflags=NO_WINDOW)
+            self.mysql = None
+        for p, f in reversed(self.procs):
+            if p.poll() is None:
+                p.terminate()
+                try:
+                    p.wait(10)
+                except subprocess.TimeoutExpired:
+                    p.kill()
+            f.close()
+        self.procs.clear()
+
+
+def used_ports():
+    out = subprocess.run(["netstat", "-ano", "-p", "TCP"], capture_output=True, text=True, creationflags=NO_WINDOW).stdout
+    used = set()
+    for line in out.splitlines():
+        parts = line.split()
+        if len(parts) >= 2 and ":" in parts[1]:
+            try:
+                used.add(int(parts[1].rsplit(":", 1)[1]))
+            except ValueError:
+                pass
+    return used
+
+
+def free_port(stack):
+    lo, hi = (int(x) for x in stack.args.ports.split("-"))
+    used = used_ports()
+    for p in range(lo, hi + 1):
+        if p in used or p in stack.ports:
+            continue
+        s = socket.socket()
+        try:
+            s.bind(("127.0.0.1", p))
+        except OSError:
+            continue
+        finally:
+            s.close()
+        stack.ports.append(p)
+        return p
+    raise RuntimeError("no free port in " + stack.args.ports)
+
+
+def wait_port(port, seconds):
+    end = time.time() + seconds
+    while time.time() < end:
+        try:
+            socket.create_connection(("127.0.0.1", port), timeout=0.5).close()
+            return True
+        except OSError:
+            time.sleep(0.3)
+    return False
+
+
+def start_mysql(stack):
+    port = stack.args.mysql_port
+    probe = socket.socket()
+    try:
+        probe.bind(("127.0.0.1", port))  # a listener there (not just TIME_WAIT entries) refuses the bind
+    except OSError:
+        raise RuntimeError("port %d is in use (another mysqld?): pass --mysql-port" % port)
+    finally:
+        probe.close()
+    data = os.path.join(WORK, "mysql-data")
+    pw_file = os.path.join(WORK, "mysql-root.txt")
+    if not os.path.isdir(data):
+        pw = secrets.token_urlsafe(18)
+        with open(pw_file, "w") as f:
+            f.write(pw)
+        subprocess.run([os.path.join(MYSQL_BIN, "mysql_install_db.exe"), "--datadir=" + data, "--port=%d" % port, "--password=" + pw, "--silent"],
+                       check=True, creationflags=NO_WINDOW)
+    pw = open(pw_file).read().strip()
+    stack.spawn([os.path.join(MYSQL_BIN, "mysqld.exe"), "--defaults-file=" + os.path.join(data, "my.ini"), "--bind-address=127.0.0.1",
+                 "--port=%d" % port, "--character-set-server=utf8mb4", "--collation-server=utf8mb4_unicode_ci", "--default-time-zone=+00:00",
+                 "--innodb-use-native-aio=0", "--log-error=" + os.path.join(stack.dir, "mysqld.err")], os.path.join(stack.dir, "mysqld.out"))
+    if not wait_port(port, 40):
+        raise RuntimeError("mysqld did not open port %d" % port)
+    stack.mysql = (port, pw)
+    db = "dw4online_run_" + secrets.token_hex(4)
+    subprocess.run([os.path.join(MYSQL_BIN, "mysql.exe"), "--protocol=tcp", "-h", "127.0.0.1", "-P", str(port), "-u", "root", "--password=" + pw,
+                    "-e", "CREATE DATABASE %s CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci" % db], check=True, creationflags=NO_WINDOW)
+    return "Server=127.0.0.1;Port=%d;Database=%s;User ID=root;Password=%s" % (port, db, pw)
+
+
+def openssl():
+    for cand in (r"C:\Program Files\Git\mingw64\bin\openssl.exe", r"C:\Program Files\Git\usr\bin\openssl.exe", shutil.which("openssl") or ""):
+        if cand and os.path.exists(cand):
+            return cand
+    raise RuntimeError("openssl not found (Git for Windows ships one)")
+
+
+def make_certificate(stack):
+    """A throw-away P-256 certificate for 127.0.0.1 (PEM for Kestrel), its SPKI pin and its DER."""
+    o = openssl()
+    cert, key = os.path.join(stack.dir, "cert.pem"), os.path.join(stack.dir, "key.pem")
+    subprocess.run([o, "req", "-x509", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:P-256", "-nodes", "-keyout", key, "-out", cert,
+                    "-days", "2", "-subj", "/CN=127.0.0.1", "-addext", "subjectAltName=IP:127.0.0.1"], check=True, capture_output=True,
+                   creationflags=NO_WINDOW)
+    der = subprocess.run([o, "x509", "-in", cert, "-outform", "der"], check=True, capture_output=True, creationflags=NO_WINDOW).stdout
+    pub = subprocess.run([o, "x509", "-in", cert, "-pubkey", "-noout"], check=True, capture_output=True, creationflags=NO_WINDOW).stdout
+    spki = subprocess.run([o, "pkey", "-pubin", "-outform", "der"], input=pub, check=True, capture_output=True, creationflags=NO_WINDOW).stdout
+    return cert, key, base64.b64encode(hashlib.sha256(spki).digest()).decode(), der
+
+
+def build():
+    for proj in ("src/DW4Online.Server/DW4Online.Server.csproj", "tests/DW4Online.FakeClient/DW4Online.FakeClient.csproj"):
+        subprocess.run(["dotnet", "build", os.path.join(SERVER, proj), "-nologo", "-v", "q", "--disable-build-servers"], check=True,
+                       creationflags=BELOW_NORMAL | NO_WINDOW)
+
+
+def dll(project, name):
+    return os.path.join(SERVER, project, "bin", "Debug", "net10.0", name)
+
+
+class Api:
+    def __init__(self, base, der):
+        self.base = base
+        self.ctx = ssl.create_default_context()
+        self.ctx.check_hostname = False
+        self.ctx.verify_mode = ssl.CERT_NONE
+        self.der = der
+
+    def call(self, method, path, body=None, token=None):
+        req = urllib.request.Request(self.base + path, data=json.dumps(body).encode() if body is not None else None, method=method)
+        req.add_header("Content-Type", "application/json")
+        if token:
+            req.add_header("Authorization", "Bearer " + token)
+        # The pin: the server must present exactly the certificate this run made.
+        host, port = self.base.split("//")[1].split(":")
+        with socket.create_connection((host, int(port))) as raw, self.ctx.wrap_socket(raw) as tls:
+            if tls.getpeercert(binary_form=True) != self.der:
+                raise RuntimeError("the server presented another certificate")
+        try:
+            with urllib.request.urlopen(req, timeout=15, context=self.ctx) as r:
+                raw = r.read()
+                return r.status, json.loads(raw) if raw else None
+        except urllib.error.HTTPError as e:
+            raw = e.read()
+            return e.code, json.loads(raw) if raw else None
+
+
+def start_server(stack, connection):
+    https, relay = free_port(stack), free_port(stack)
+    cert, key, pin, der = make_certificate(stack)
+    diag = os.path.join(stack.dir, "relay")
+    settings = {
+        "Database": {"ConnectionString": connection, "AutoMigrate": True},
+        "Kestrel": {"Endpoints": {"Http": {"Url": "http://127.0.0.1:%d" % free_port(stack)},
+                                  "Https": {"Url": "https://127.0.0.1:%d" % https, "Certificate": {"Path": cert, "KeyPath": key}}}},
+        "Service": {"RelayHost": "127.0.0.1"},
+        "Accounts": {"PasswordIterations": 1000},
+        "RateLimits": {k: 100000 for k in ("GlobalPerMinute", "LoginPerMinute", "RegisterPerHour", "RoomCreatesPerMinute", "RoomJoinsPerMinute",
+                                           "StageChangesPerMinute")},
+        "Relay": {"Enabled": True, "ListenAddress": "127.0.0.1", "Port": relay, "TicketKey": base64.b64encode(secrets.token_bytes(32)).decode(),
+                  "DiagnosticsDirectory": diag},
+        "Web": {"DataProtectionKeysDirectory": "memory"},
+        "Logging": {"File": {"Directory": os.path.join(stack.dir, "server-log")}},
+    }
+    path = os.path.join(stack.dir, "server-settings.json")
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(settings, f, indent=1)
+    stack.spawn(["dotnet", dll("src/DW4Online.Server", "DW4Online.Server.dll"), "--settings", path], os.path.join(stack.dir, "server.out"),
+                env=dict(os.environ, ASPNETCORE_ENVIRONMENT="Production", DOTNET_gcServer="0"))
+    if not wait_port(https, 60) or not wait_port(relay, 30):
+        raise RuntimeError("the server did not start (see %s)" % os.path.join(stack.dir, "server.out"))
+    return "https://127.0.0.1:%d" % https, relay, pin, der, diag
+
+
+def run_scenario(stack, sc, api, relay_port, pin, diag):
+    tag = sc["name"].lower() + secrets.token_hex(2)
+    names = [c["name"] for c in sc["clients"]]
+    tokens = {}
+    for n in names:
+        s, body = api.call("POST", "/api/v1/auth/register", {"username": tag + n, "password": "online test " + n})
+        if s != 201:
+            raise RuntimeError("register %s: %s %s" % (n, s, body))
+        tokens[n] = body["token"]
+    s, room = api.call("POST", "/api/v1/rooms", {"name": sc["name"], "maxPlayers": 10, "protocol": PROTOCOL, "dataHash": DATA_HASH,
+                                                 "clientVersion": "0.52.0"}, tokens[names[0]])
+    code, settings_hash = room["room"]["code"], room["settingsHash"]
+    for n in names[1:]:
+        s, _ = api.call("POST", "/api/v1/rooms/%s/join" % code, {"protocol": PROTOCOL, "dataHash": DATA_HASH, "clientVersion": "0.52.0"}, tokens[n])
+        if s != 200:
+            raise RuntimeError("join %s: %s" % (n, s))
+    out = os.path.join(stack.dir, sc["name"])
+    os.makedirs(out, exist_ok=True)
+    procs, t0 = [], time.time()
+    impair = stack.args.impair
+    for k, c in enumerate(sorted(sc["clients"], key=lambda c: c["start"])):
+        while time.time() - t0 < c["start"]:
+            time.sleep(0.05)
+        port = relay_port
+        if impair:
+            ow, jitter, loss = impair.split(",")
+            port = free_port(stack)
+            stack.spawn(["dotnet", dll("tests/DW4Online.FakeClient", "DW4Online.FakeClient.dll"), "proxy", "--listen", str(port), "--target",
+                         str(relay_port), "--one-way", ow, "--jitter", jitter, "--loss", loss], os.path.join(out, c["name"] + ".proxy.out"))
+            wait_port(port, 20)
+        script = os.path.join(out, c["name"] + ".script.json")
+        with open(script, "w") as f:
+            json.dump([{**a, "at": a["at"] - c["start"]} for a in c["script"]], f)
+        argv = ["dotnet", dll("tests/DW4Online.FakeClient", "DW4Online.FakeClient.dll"), "client", "--port", str(port), "--api", api.base,
+                "--token", tokens[c["name"]], "--room", code, "--pin", pin, "--protocol", str(PROTOCOL), "--data-hash", str(DATA_HASH),
+                "--settings-hash", settings_hash, "--name", c["name"], "--quest", str(c["quest"]), "--seed", str(k + 1), "--script", script,
+                "--duration", str(sc["duration"] - c["start"]), "--replay-rate", str(c["rate"]), "--entry-ticks", str(sc["entry"]),
+                "--depart-ticks", str(sc["depart"]), "--log", os.path.join(out, c["name"] + ".jsonl"), "--stats", os.path.join(out, c["name"] + ".stats.json")]
+        procs.append((c["name"], stack.spawn(argv, os.path.join(out, c["name"] + ".out"))))
+    for name, p in procs:
+        p.wait(sc["duration"] + 60)
+    return evaluate(sc, out, code, diag)
+
+
+def load_jsonl(path):
+    if not os.path.exists(path):
+        return []
+    return [json.loads(line) for line in open(path, encoding="utf-8") if line.strip()]
+
+
+def evaluate(sc, out, code, diag):
+    logs = {c["name"]: load_jsonl(os.path.join(out, c["name"] + ".jsonl")) for c in sc["clients"]}
+    stats = {}
+    for c in sc["clients"]:
+        p = os.path.join(out, c["name"] + ".stats.json")
+        stats[c["name"]] = json.load(open(p)) if os.path.exists(p) else {"fingerprints": []}
+    problems, notes = [], []
+    # Fingerprints: equal for every (instance, visit, tick) two clients both reported.
+    table = {}
+    for n, st in stats.items():
+        for fp in st.get("fingerprints", []):
+            table.setdefault((fp["inst"], fp["visit"], fp["tick"]), {})[n] = fp["fp"]
+    compared = mismatched = 0
+    ticks_by_instance = {}
+    for key, per in table.items():
+        if len(per) >= 2:
+            compared += 1
+            if len(set(per.values())) > 1:
+                mismatched += 1
+                if mismatched <= 3:
+                    problems.append("fingerprints differ at instance %s visit %s tick %s: %s" % (key[0], key[1], key[2], per))
+            ticks_by_instance[(key[0], key[1])] = max(ticks_by_instance.get((key[0], key[1]), 0), key[2])
+    notes.append("%d fingerprint ticks compared, %d differ" % (compared, mismatched))
+    # Membership logs: every client whose fingerprints of an instance span an event's tick logged the same event
+    # (joins, leaves and forks at the same tick with the same slots).
+    span = {}
+    for n, st in stats.items():
+        for fp in st.get("fingerprints", []):
+            k = (n, fp["inst"], fp["visit"])
+            lo, hi = span.get(k, (fp["tick"], fp["tick"]))
+            span[k] = (min(lo, fp["tick"]), max(hi, fp["tick"]))
+    events = {}
+    for n, lines in logs.items():
+        for e in lines:
+            if e["ev"] in ("join_applied", "leave_applied", "fork"):
+                events.setdefault((e["inst"], e["visit"], e["ev"], e.get("at"), e.get("slots", e.get("leavers"))), set()).add(n)
+    membership = 0
+    for key, who in events.items():
+        inst, visit, ev, at, slots = key
+        should = {n for n in logs if (n, inst, visit) in span and span[(n, inst, visit)][0] <= at and span[(n, inst, visit)][1] >= at + 60}
+        missing = should - who
+        membership += 1
+        if missing:
+            problems.append("membership event %s logged by %s, not by %s" % (key, sorted(who), sorted(missing)))
+    notes.append("%d membership events compared" % membership)
+    # Expected events.
+    for check in sc["checks"]:
+        kind = check[0]
+        if kind == "decision":
+            _, who, decision, stage = check[:4]
+            notice = check[4] if len(check) > 4 else None
+            ok = any(e["ev"] == "decision" and e["decision"] == decision and e.get("to") == stage
+                     and (notice is None or e.get("notice") == notice) for e in logs[who])
+            if not ok:
+                problems.append("%s: no %s decision%s for %s" % (who, decision, " (" + notice + ")" if notice else "", stage))
+        elif kind == "fork_seen":
+            if not any(e["ev"] == "fork" for e in logs[check[1]]):
+                problems.append("%s saw no fork" % check[1])
+        elif kind == "waited":
+            if not any(e["ev"] == "wait" and e.get("reason") == check[2] for e in logs[check[1]]):
+                problems.append("%s did not wait (%s)" % (check[1], check[2]))
+        elif kind == "sealed_together":
+            _, who, stage = check
+            insts = []
+            for n in who:
+                fps = [fp for fp in stats[n].get("fingerprints", [])]
+                ins = {(fp["inst"], fp["visit"]) for fp in fps}
+                staged = {(e["inst"], e["visit"]) for e in logs[n] if e.get("stage") == stage}
+                insts.append(ins & staged)
+            common = set.intersection(*insts) if insts else set()
+            if not common:
+                problems.append("%s never shared a logged instance in %s" % ("+".join(who), stage))
+            else:
+                best = max(common, key=lambda k: ticks_by_instance.get(k, 0))
+                notes.append("%s shared instance %s visit %s in %s up to tick %d" % ("+".join(who), best[0], best[1], stage, ticks_by_instance.get(best, 0)))
+        elif kind == "fingerprint_ticks":
+            longest = max(ticks_by_instance.values() or [0])
+            if longest < check[1]:
+                problems.append("fingerprints compared only up to tick %d (< %d)" % (longest, check[1]))
+            else:
+                notes.append("fingerprints identical up to tick %d" % longest)
+    relay_log = load_jsonl(os.path.join(diag, "room_%s.jsonl" % code))
+    notes.append("relay: %d membership events (%s)" % (len(relay_log), ", ".join(sorted({e["ev"] for e in relay_log}))))
+    for n, st in stats.items():
+        if st.get("CloseReason") and not str(st["CloseReason"]).startswith("Left"):
+            problems.append("%s was closed: %s" % (n, st["CloseReason"]))
+    return problems, notes
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("scenarios", nargs="*")
+    ap.add_argument("--list", action="store_true")
+    ap.add_argument("--mysql-port", type=int, default=3431)
+    ap.add_argument("--ports", default="53100-53199")
+    ap.add_argument("--impair", default="", help="one-way ms,jitter ms,loss (each client behind the proxy)")
+    ap.add_argument("--keep", action="store_true", help="keep the run folder")
+    ap.add_argument("--no-build", action="store_true")
+    ap.add_argument("--seconds", default="40")
+    ap.add_argument("--warmup", default="20")
+    a = ap.parse_args()
+    if a.list:
+        for sc in SCENARIOS:
+            print("%-5s %s" % (sc["name"], sc["desc"]))
+        return 0
+    if not a.no_build:
+        build()
+    if a.scenarios == ["matrix"]:
+        lo, hi = a.ports.split("-")
+        out = os.path.join(WORK, "loss_matrix")
+        os.makedirs(out, exist_ok=True)
+        return subprocess.run(["dotnet", dll("tests/DW4Online.FakeClient", "DW4Online.FakeClient.dll"), "matrix", "--ports", a.ports,
+                               "--warmup", a.warmup, "--seconds", a.seconds, "--out", os.path.join(out, "matrix.json"), "--md",
+                               os.path.join(out, "matrix.md")], creationflags=BELOW_NORMAL | NO_WINDOW).returncode
+    wanted = [s for s in SCENARIOS if not a.scenarios or s["name"] in a.scenarios]
+    stack = Stack(a)
+    failed = 0
+    try:
+        connection = start_mysql(stack)
+        base, relay, pin, der, diag = start_server(stack, connection)
+        api = Api(base, der)
+        s, status = api.call("GET", "/api/v1/status")
+        print("server %s, relay %s:%d (%s), pin %s" % (base, status["relay"]["host"], status["relay"]["port"], status["relay"]["protocol"], pin), flush=True)
+        for sc in wanted:
+            t = time.time()
+            problems, notes = run_scenario(stack, sc, api, relay, pin, diag)
+            print("%s %-5s %s (%.0f s)" % ("PASS" if not problems else "FAIL", sc["name"], sc["desc"], time.time() - t), flush=True)
+            for n in notes:
+                print("       " + n, flush=True)
+            for p in problems:
+                print("     ! " + p, flush=True)
+            failed += bool(problems)
+    finally:
+        stack.stop()
+        if not a.keep and not failed:
+            shutil.rmtree(stack.dir, ignore_errors=True)
+        else:
+            print("run folder: " + stack.dir)
+    print("%d of %d scenarios passed" % (len(wanted) - failed, len(wanted)))
+    return 1 if failed else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

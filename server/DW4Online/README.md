@@ -1,7 +1,7 @@
 # DW4Online
 
 The online backend of the Digimon World 4 PC port: accounts, the online character, the private cloud backup of the
-local save, achievements, rooms with stage instances, the TCP relay and the website, in **one** ASP.NET Core process
+local save, achievements, rooms, the DW4R2 relay with its lockstep instances and the website, in **one** ASP.NET Core process
 (API, website and relay share memory) backed by MariaDB. It runs as a Windows service on the user's Windows Server;
 players never forward ports.
 
@@ -16,14 +16,15 @@ separate work (see "Open ends"); `tests/winhttp_client` shows the client side of
 | `src/DW4Online.Domain` | Pure rules, no ASP.NET Core and no database: the 3316-byte character record codec (C# port of `src/save_data.cpp`), validation, summaries, password hashing, tokens, recovery codes, achievement rules, the services (accounts, online character, cloud save, achievements) and the repository interfaces. |
 | `src/DW4Online.Data` | MariaDB through MySqlConnector + Dapper: repositories and the startup migrator. The SQL migrations are embedded. |
 | `src/DW4Online.Api` | The JSON API `/api/v1`: endpoints, bearer-token authentication, rate limits, problem details. |
-| `src/DW4Online.Relay` | The TCP relay (port 52041): HMAC tickets and byte-for-byte splicing. |
+| `src/DW4Online.Relay` | The DW4R2 relay (port 52041, SEAMLESS.md 6): `Protocol` (frames and messages), `Hub` (one connection per member and room, instances as solo-led and sealed lockstep groups, server-paced sealing on a dedicated high-resolution timer thread, barrier decisions, forks, the tick log, state delivery), HMAC room tickets. |
 | `src/DW4Online.Web` | The Razor Pages website (English, server-rendered, no scripts): home, register, login, recovery, account settings, profiles, achievements, rooms, admin, privacy. |
 | `src/DW4Online.Server` | The executable: composition root, configuration, Windows-service mode, CLI tools, TLS certificate selector, file log. |
 | `sql/` | Numbered migrations `NNNN_description.sql` (0001 schema, 0002 achievement definitions, 0003-0007 see "Database"). |
 | `tests/DW4Online.Tests` | Unit tests (no database). |
-| `tests/DW4Online.Integration.Tests` | HTTP + MariaDB tests against a private local instance (API, rooms with the real relay, website forms, end to end on real Kestrel). |
+| `tests/DW4Online.Integration.Tests` | HTTP + MariaDB tests against a private local instance (API, rooms with the real relay and fake clients, website forms, end to end on real Kestrel). |
+| `tests/DW4Online.FakeClient` | Fake DW4R2 clients (a deterministic stand-in engine that speaks the protocol as the game will), the latency / jitter / loss proxy and the loss matrix; a console tool (`client`, `proxy`, `matrix`) and a library for the tests. |
 | `tests/winhttp_client` | `dw4online_client.cpp`, a C++20 WinHTTP test tool (the HTTP stack the game will use), and `build.cmd` (MSVC). |
-| `tests/e2e/relay_spike_test.py` | The groundwork spike's Python test, moved to the real API and relay. |
+| `tests/e2e/relay_spike_test.py` | The groundwork spike's Python test on the real API and relay: an independent DW4R2 client (standard library only) that drives a co-arrival and checks the first sealed tick on both machines. |
 | `scripts/local-db.ps1` | Starts / stops the private MariaDB for development and tests. |
 | `scripts/e2e.ps1` | Builds the WinHTTP client, starts the private MariaDB and runs the end-to-end tests. |
 | `deploy/` | Deployment kit for the server ([DEPLOY.md](deploy/DEPLOY.md)): publish, service, firewall, backups, TLS. |
@@ -59,11 +60,19 @@ powershell -ExecutionPolicy Bypass -File scripts\e2e.ps1 -Python C:\path\to\pyth
 ```
 
 It registers an account through the website form, runs `dw4online_client.exe` (login, cloud save upload and download
-with SHA-256 check, online character write and read, room, stage instance, relay host handshake, achievement unlock,
-leave, logout) and checks that the profile page shows the character and the achievement; then it runs
-`relay_spike_test.py` (register, login, rooms, password join, stage instances, relay splice with netplay-style frames
-and the round-trip time, the owner leaving with the story frozen, the login rate limit). Both tests are skipped when
-the client is not built (`tests\winhttp_client\build.cmd`) or no Python is given (`DW4ONLINE_PYTHON`).
+with SHA-256 check, online character write and read, room with its relay ticket and settings hash, the DW4R2
+handshake up to WELCOME, achievement unlock, leave, logout) and checks that the profile page shows the character and
+the achievement; then it runs `relay_spike_test.py` (register, login, rooms, password join, the DW4R2 handshake, a
+co-arrival with the snapshot, the co-arrival's state, hashes, pads and the first sealed tick, the owner leaving with
+the story frozen, the login rate limit). Both tests are skipped when the client is not built
+(`tests\winhttp_client\build.cmd`) or no Python is given (`DW4ONLINE_PYTHON`). With `DW4ONLINE_TEST_PORTS=53100-53199`
+every listener of the tests takes a free port of that range instead of one the system picks (parallel work on one
+machine keeps to its own range).
+
+The whole online stack with fake clients (SEAMLESS.md 16) runs from `tools/online_test/run.py` (a private MariaDB,
+the server over HTTPS with a throw-away pinned certificate, the relay, accounts, rooms, hidden clients with input
+scripts, fingerprint and membership-log comparison per instance; `--list` shows the scenarios, `--impair OW,JITTER,LOSS`
+puts every client behind the proxy, `run.py matrix` measures the loss and jitter matrix).
 
 The IP phase is tested the same way: `Pinned_self_signed_https_at_an_ip_address_below_a_path_base` runs the service on
 `https://127.0.0.1` with a self-signed IP certificate below `/dw4online`; the client must refuse the certificate without
@@ -105,7 +114,9 @@ and user secrets (Development) work as usual.
 | `Play` | `RequireRoom` (true), `MinimumProtocol` / `CurrentProtocol` (netplay `kProtocol`), `MinimumClientVersion` / `CurrentClientVersion`, `SpeedrunFloorSeconds` (per board `story_normal` / `story_hard` / `story_veryhard`, 2700 each: see "Speedrun floor"). |
 | `RateLimits` | `GlobalPerMinute` 300 (per IP), `LoginPerMinute` 5 (per IP, login + recovery), `RegisterPerHour` 3 (per IP), `CharacterWritesPerMinute` 12, `CloudWritesPerHour` 6, `AchievementsPerMinute` 60, `AccountChangesPerMinute` 10, `StaffPerMinute` 60, `RoomCreatesPerMinute` 5, `RoomJoinsPerMinute` 20, `StageChangesPerMinute` 30 (stage enter + leave) (per account); `WebLoginPerMinute` 5 (website login + recovery), `WebRegisterPerHour` 3 (per IP, POSTs only), `WebAccountChangesPerMinute` 10 (per account, the account page's POSTs). |
 | `Rooms` | `MaxRooms` (200), `PlayersPerInstance` (4), `HeartbeatSeconds` (10), `MemberTimeoutSeconds` (35), `RoomsPerOwner` (1), `PasswordIterations` (20000, room passwords live in memory only), `SettingsMaxBytes` (4096), `RankedDataHashes` (empty = every data hash is ranked; decimal or 0x-hex). |
-| `Relay` | `Enabled` (true), `ListenAddress` (127.0.0.1; 0.0.0.0 on the server), `Port` (52041), `TicketKey` (secret, base64 32 bytes: `DW4Online.Server gen-relay-key`; required outside Development), timeouts and byte budgets. |
+| `Relay` | `Enabled` (true), `ListenAddress` (127.0.0.1; 0.0.0.0 on the server), `Port` (52041), `TicketKey` (secret, base64 32 bytes: `DW4Online.Server gen-relay-key`; required outside Development), `TicketLifetimeSeconds` (60), `HandshakeTimeoutSeconds` (10), `IdleTimeoutSeconds` (60), `MaxConnectionsPerIp` (16), `MaxRooms` (200), inbound limits per connection `BytesPerSecond` (65536) / `BurstBytes` (1 MiB) / `FramesPerSecond` (400) / `FrameBurst` (2000), state transfers `StateBytesPerSecond` (4 MB/s) / `StateBurstBytes` (16 MiB), `MaxQueuedBytes` (32 MiB: a connection that does not read is closed), `ReconnectSeconds` (10), `LagLeaveSeconds` (10), `DiagnosticsDirectory` (empty; a folder gets one JSON-lines membership log per room). |
+| `Sealing` | `MaxDelayTicks` (15), `LateTarget` (0.001: d rises when more of the last 3,600 pads were late), `EventMarginTicks` (2: added to the largest member horizon for JOIN, LEAVE, INTENT). |
+| `Instances` | `CoArrivalHoldMs` (3000), `JoinHoldSeconds` (15), `MaxCatchUpSeconds` (30), `DefaultReplayRate` (3000 steps/s for a member that sent no RATE), `HeadingValidMs` (5000), `BarrierReportSeconds` (5). `Rooms:PlayersPerInstance` (4) caps every instance. |
 | `Web` | `RequireHttps` (false; true on the server: website pages redirect to https, cookies are Secure), `Hsts`, `DataProtectionKeysDirectory` (anti-forgery keys, DPAPI-encrypted on Windows; empty = the service account's profile, `memory` = tests), `OperatorName` / `OperatorAddress` / `OperatorContact` (the controller on the privacy page), `DigimonNames` (display names by model, overriding the built-in list). |
 | `Tls` | `StoreHostName`: take HTTPS certificates from the Windows store (renewals without a restart); its certificate serves every connection that names no other host (an IP address sends no name: the IP phase's pinned self-signed certificate). `AdditionalHostNames` (empty): host names with their own certificate, chosen by the name the client asks for (SNI), for example the later domain next to the pinned IP certificate. `StoreName` (My), `StoreLocation` (LocalMachine), `RefreshMinutes` (10); `AcmeChallengeDirectory`: serve ACME http-01 files from a folder. |
 | `Logging:File` | `Directory` (empty = off), `MinimumLevel`, `RetainDays`: daily UTC log files for the service. |
@@ -175,20 +186,21 @@ Authenticated calls send `Authorization: Bearer dw4_<43 characters>`.
 | `POST /achievements/unlock` | token | `{code, context, evidence: {igtMs?, level?, stage?}}` -> `{code, ruleset, newlyUnlocked, newBestTime, timeRejected}`. |
 | `POST /stats` | token | `{deltas: {enemies_defeated: 12, play_seconds: 60, ...}, context}` -> `{totals, unlocked}`. |
 | `GET /rooms?protocol=&dataHash=` | - | Open rooms (compatible ones only when filtered, like the HELLO check): code, name, owner, `ownerPresent`, `storyFrozen`, `hasPassword`, players / maxPlayers, ranked, randomizer, difficulty, instances. |
-| `POST /rooms` | token | `{name, password?, maxPlayers (2..10, default 4), protocol, dataHash, clientVersion, settings?}` -> 201 room state. `settings` is a JSON object (`difficulty` 0..2, `randomizer: {enabled, seed, ...}`); `cheats` / `rebalanced` are refused. One owned room per account. |
+| `POST /rooms` | token | `{name, password?, maxPlayers (2..10, default 4), protocol, dataHash, clientVersion, settings?}` -> 201 room state with `relayTicket`. `settings` is a JSON object: `difficulty` 0..2, `cameraMode` 0..1, `lightMode` 0..1 (default 1), `fastLoading`, `randomizer: {enabled, seed (u32), drops, enemies 0..2, zones 0..2}`; `cheats` / `rebalanced` are refused. One owned room per account. |
 | `GET /rooms/{code}` | token | Members get the room state, others the summary. |
-| `POST /rooms/{code}/join` | token | `{password?, protocol, dataHash, clientVersion}`; repeating it is a heartbeat; the owner always gets back in (no password, place kept) and unfreezes the story; joining leaves any other room. 403 `wrong_room_password` / `kicked`, 409 `room_full` / `incompatible_room`. |
-| `POST /rooms/{code}/heartbeat` | token | Every `heartbeatSeconds` (10); silent members leave after 35 s. Answers the room state; 404 `not_in_room` means join again. |
+| `POST /rooms/{code}/join` | token | `{password?, protocol, dataHash, clientVersion}` -> room state with `relayTicket`; repeating it is a heartbeat; the owner always gets back in (no password, place kept) and unfreezes the story; joining leaves any other room. 403 `wrong_room_password` / `kicked`, 409 `room_full` / `incompatible_room`. |
+| `POST /rooms/{code}/ticket` | token | A fresh one-time relay ticket (`relayTicket`, a reconnect); it replaces the member's older ticket. 503 `relay_unavailable` with the relay off. |
+| `POST /rooms/{code}/heartbeat` | token | Every `heartbeatSeconds` (10) while the relay connection is down (a live relay connection counts as the heartbeat); silent members leave after 35 s. Answers the room state; 404 `not_in_room` means join again. |
 | `POST /rooms/{code}/leave`, `POST /rooms/{code}/kick` `{username}`, `DELETE /rooms/{code}` | token | Leave; the owner (present) kicks a guest (no re-join); the owner closes the room for everyone. |
-| `POST /rooms/{code}/stage` | token | `{stage, instance?}` -> `{instance, role (host / guest), ticket, channel, relay: {host, port}}`: joins an instance of that stage with a free place (the preferred one when given) or opens one hosted by the caller. 503 `relay_unavailable` when the relay is off, 503 `relay_ticket_failed` when no ticket could be issued (nothing changes then). Instance numbers have up to 9 digits and wrap around. |
-| `POST /rooms/{code}/stage/leave` | token | Leave the stage instance; an instance host leaving ends the instance (its players enter again). |
 | `GET /admin/accounts?query=`, `POST /admin/accounts/{user}/reset-password` (admin), `.../status`, `.../role` (admin), `.../online-character/history`, `.../online-character/restore/{rev}`, `.../online-character/reset` | staff | Moderation; every action is audited. A locked or banned account leaves its room. `status` is active, locked or banned (deleting is `DELETE /admin/accounts/{user}`, admins only); a temporary password only from an admin (whoever knows it owns the account). |
 | `POST /admin/accounts/{user}/achievements/{code}/flag` `{ruleset?, flagged}`, `DELETE /admin/accounts/{user}/achievements/{code}?ruleset=`, `POST /admin/rooms/{code}/close`, `DELETE /admin/accounts/{user}` (admin) | staff | Flag / unflag or revoke an unlock, close a room, erase an account on request. |
 | `GET /health` (no prefix) | - | `{status, schema}` or 503 when the database is unreachable. |
 
-The room state (create, join, heartbeat, `GET` for members) is `{room, settings, members: [{accountId, username, slot,
-owner, instance, joinedAt}], instances: [{id, stage, channel, hostAccountId, hostName, players, capacity, createdAt}],
-you, heartbeatSeconds, relay}`.
+The room state (create, join, heartbeat, `GET` for members) is `{room, settings, settingsHash, members: [{accountId,
+username, slot, owner, instance, joinedAt}], instances: [{id, stage, visit, mode (hub / solo / sealed), members:
+[{accountId, username, slot, connected, lagging}], departing, bossLock, joinable, ticks, parent}], you,
+heartbeatSeconds, relay: {host, port, protocol}, relayTicket}` (`relayTicket` only after create, join and /ticket;
+`settingsHash` is the 16-hex-digit hash the DW4R2 handshake must carry).
 
 `context` (sent with uploads, unlocks and stats): `{roomCode, players, randomizer, cheats, rebalanced, saveStateLoaded,
 difficulty, protocol, clientVersion}`. With `Play:MinimumProtocol` / `Play:MinimumClientVersion` set, uploads, unlocks
@@ -250,10 +262,11 @@ and stats must carry `protocol` / `clientVersion` (426 `client_outdated` otherwi
   room's story is the owner's online save. When the owner leaves (or times out), the room **keeps running with the
   story frozen** (`storyFrozen`, `rooms.story_frozen_at`) until the owner returns; the last member leaving closes it
   (`empty`), the owner can close it (`host_closed`), staff too (`admin`); rooms left open by a previous process close at
-  start (`server_restart`). Players in the same stage share a **stage instance** of at most four (the engine's player
-  slots); the fifth opens a second instance. The instance host's machine is the centre of the lockstep star; when it
-  leaves, its relay channel ends and the others enter the stage again (the instance logic in the game comes with the
-  netcode round). A room's randomizer setting puts every unlock in it into the randomizer ruleset; unknown data hashes
+  start (`server_restart`). Members in the same stage with the same session context share an **instance** of at most
+  four (the engine's player slots) on the relay; a fifth, another quest or a catch-up longer than 30 s opens another
+  (SEAMLESS.md 3). There is no instance host: the relay seals the ticks, a leaving member is an ordinary LEAVE. The
+  room settings' hash makes sure every member's engine runs the room's difficulty, camera and light mode, randomizer
+  and fast loading. A room's randomizer setting puts every unlock in it into the randomizer ruleset; unknown data hashes
   (with `Rooms:RankedDataHashes` set) make a room unranked.
 - **Account deletion** (GDPR erasure, by the user with the password or by an admin on request): sessions, online
   character and its history, cloud save and history, unlocks, stats, best times, room memberships, bans and e-mail
@@ -290,27 +303,43 @@ and stats must carry `protocol` / `clientVersion` (426 `client_outdated` otherwi
   (answer `timeRejected: true`, audit `speedrun_implausible`), and `speed_6h` / `speed_3h` refuse it
   (`requirement_not_met`). `Play:SpeedrunFloorSeconds` sets the floor per board (calibrate with real online runs).
 
-## Relay protocol (TCP, default port 52041)
+## Relay protocol (DW4R2, TCP, default port 52041)
 
-A channel is one stage instance: `<room code>-<instance>` (for example `K7QW2M-1`). Tickets come from
-`POST /rooms/{code}/stage`: `base64url("channel|account|role|expiry|nonce")` + "." + `base64url(HMAC-SHA256)`, single
-use, 60 s. Before it accepts a valid ticket the relay asks the room service, which keeps the nonce of each player's
-newest ticket per instance: the instance must still run, the account must be its host (host tickets) or one of its
-guests and still in the room, and the ticket must be the newest one (asking `/stage` again replaces it). So tickets
-cannot be hoarded for after a kick, and a host ticket of an ended instance opens no channel; the room sweep (every 5 s)
-also closes any relay channel without a running instance. Every connection starts with one ASCII line ending in `\n`:
+The design is SEAMLESS.md section 6; the exact wire layout is its appendix "DW4R2 wire layout". In short:
 
-1. Host control: `DW4R1 HOST <ticket>` -> `OK <hostKey>`. The relay then sends `GUEST <n> <account>` per arriving
-   guest. Closing this socket ends the channel and raises `RelayServer.HostDisconnected`; the room service ends the
-   instance (the room stays).
-2. Guest: `DW4R1 GUEST <ticket>` -> `OK` once the host's data socket arrived (within 10 s), then raw bytes.
-3. Host data: `DW4R1 DATA <channel> <n> <hostKey>` -> spliced with guest `n` byte for byte.
-
-A guest leaving the instance or being kicked is dropped from the channel (`RelayServer.DropGuest`).
-
-Failures answer `ERR <reason>` (`ticket`, `no_host`, `host_timeout`, `room_taken`, `full`, `data`, `protocol`) and close.
-Limits: handshake 10 s, idle 60 s, 16 connections per IP, 200 rooms, 64 KB/s sustained per direction with a 1 MiB burst
-(the START message carries about 90 KB). The relay does not parse the game protocol.
+- **One connection per member and room**, across all its instances. Tickets come from `POST /rooms`, `POST
+  /rooms/{code}/join` and `POST /rooms/{code}/ticket`: `base64url("room|account|member|expiry|nonce")` + "." +
+  `base64url(HMAC-SHA256)`, single use, 60 s. The relay asks the room service before it accepts one: the account must
+  be a member of the open room and the ticket its newest (a new ticket replaces the older one), so tickets cannot be
+  hoarded for after a kick. A newer connection of the same member replaces the older one (CLOSE replaced).
+- **Handshake**: `DW4R2 <ticket> <protocol> <dataHash> <settingsHash hex>` -> `OK <member> <serverMs>` or `ERR
+  <code>` (`protocol`, `ticket`, `data`, `settings`, `full`); then frames of type u8 + length u32 LE + payload, at most
+  1 MiB, WELCOME first.
+- **Instances**: every member is in exactly one: a hub instance (hub and UI stages, solo, not logged), a solo-led one
+  (its member steps on its own clock and streams LOG) or a sealed one (two to four members: the relay seals every
+  tick at 59.94 Hz on its own timer thread with each member's pad, filling a missing pad at once with that member's
+  last pad, six times, then neutral). The delay of each member follows its arrival margins (DELAY events). JOIN,
+  LEAVE and INTENT are stamped at the largest member horizon plus two ticks. The relay never simulates the game.
+- **Barriers** (a NEXTSTAGE): DISSOLVE into solo hubs for a hub target; a co-arrival when another group announced
+  (HEADING) the same target with the same session context (the first holds up to 3 s); JOIN into an instance of the
+  target with room, the same context and a catch-up within 30 s by the slowest arriving member's reported replay
+  rate (held up to 15 s while it is not joinable; a boss lock asks *wait* or *alone*); NEW otherwise (same instance id,
+  next visit, slot 0 refilled, preferred slots kept), with a notice when an instance of the stage was there.
+- **Joins**: STATE_DATA (the visit's snapshot as its leader uploaded it, the fork list, every tick since) on its own
+  budget, LIVE frames after it, READY with the net fingerprint and replay rate, then the JOIN (sealed: stamped;
+  solo-led: JOIN_REQ to the leader, which answers JOIN_AT and is sealed from J).
+- **Forks** (SPLIT): the leaver side becomes a child instance (departing for an exit fork, joinable for an in-stage
+  fork) that shares the parent's snapshot and every tick sealed so far; its members get REASSIGN; a side left with
+  one member leads alone (LEAD_FROM).
+- **Log**: per visit in blocks of 600 ticks, each full block compressed with Deflate (about 240 KB for 20 minutes of
+  four players); snapshots kept with every member's canonical hash; net fingerprints every 60 ticks with a majority
+  vote (two members: the longer member wins) and RESYNC for the minority.
+- **Leaving**: BYE, a room leave, kick or timeout stamp LEAVE at once; a closed connection keeps its slot filled for
+  10 s (`Relay:ReconnectSeconds`), 10 s of continuous filling (`Relay:LagLeaveSeconds`) end it too.
+- **Limits**: handshake 10 s, idle 60 s, 16 connections per IP, 200 rooms, inbound 64 KB/s with a 1 MiB burst and
+  400 frames/s with a burst of 2000 per connection (a flood closes with CLOSE abuse), malformed frames close with
+  CLOSE protocol, state transfers 4 MB/s with a 16 MiB burst, 32 MiB of unsent frames close a connection that does
+  not read.
 
 ## Website
 
@@ -347,8 +376,10 @@ minute per IP, registrations to 3 per hour, on top of the account lockout. Websi
 
 ## Open ends (other lanes)
 
-- Game client: WinHTTP client in the game (as `tests/winhttp_client` shows), token storage, the online character in
-  place of the card, the relay transport, rooms and stage instances in the netcode (instance host migration included).
+- Game client (round S1 client lane): WinHTTP client in the game (as `tests/winhttp_client` shows), token storage, the
+  online character in place of the card, the DW4R2 client (SEAMLESS.md 6 and its wire layout appendix).
+- Round S2: STORY / STORY_ACK and the room story; round S4: the resync path completed, RESUME with missing ticks after
+  a crash-free reconnect, UDP for INPUT / SEALED (the S1 loss matrix, SEAMLESS.md 6.4).
   For the IP phase it talks to `https://88.198.52.221` and pins the two SPKI pins `deploy/new-selfsigned-cert.ps1`
   prints (in use and spare), checked in WinHTTP's SENDING_REQUEST callback exactly like `dw4online_client --pin`;
   for the later domain (`https://dekirai.crygod.de/dw4online`) it validates normally and puts every API path below

@@ -965,7 +965,11 @@ one when more than 0.1 % of the last 3,600 pads were late and lowers it by one
 when the 0.1 % quantile of the margin stayed above one tick for 30 s; a change
 is a DELAY event at a sealed tick (the member repeats or skips one sample;
 deterministic, because the sealed pads are what every machine executes).
-Bounds 1..10. Estimated `d` = 2-3 inside Europe, +1-2 on WLAN. Inputs are
+Bounds 1..15 (`Sealing:MaxDelayTicks`; revision 2 said 10, which the S1 loss
+matrix below showed too small above about 110 ms of round trip). The starting
+value is `ceil((RTT + spread) / 16.683 ms) + 1`, the +1 for the client's
+one-tick playout buffer; measured `d` without loss: 3 at 21 ms RTT, 5 at 61 ms,
+7 at 71 ms with 10 ms jitter, 11 at 121 ms. Inputs are
 indexed by tick, so every machine has its own `d_i`, as the direct sessions
 already allow (`game_main.cpp:1853-1856`).
 
@@ -1016,6 +1020,63 @@ on Windows loopback, and real TCP loss on loopback where a netem-capable
 environment exists. The result decides whether round S4 carries a UDP
 transport for the game frames.
 
+*Measured in S1 (relay lane):* `DW4Online.FakeClient matrix` (also
+`tools/online_test/run.py matrix`). Per cell an in-process DW4R2 relay on
+loopback and three fake clients that arrive together in one sealed instance,
+each behind its own impairment proxy with the same one-way time, jitter and
+loss in both directions. Windows loopback has no netem and the development PC
+no WSL, so the head-of-line model is the measurement: every read from the
+sender is one segment, delivered after one-way + U(0, jitter) and never before
+an earlier one (TCP keeps the order, so jitter adds latency); a lost segment
+arrives one fast retransmission later (RTT + three segment gaps, about RTT +
+50 ms at 60 segments per second), a lost retransmission adds a 300 ms RTO
+(doubling), and everything behind it waits. 20 s warm-up (the delay rule
+settles; for the matrix its bound is 20 and nobody leaves for lag), then 40 s
+measured, machine about 25 % busy with other rounds. Each cell: the mean of the
+three members' fill rate (pads the relay filled), final `d` (range), hitches
+per minute (ticks that reached the client after their playout time; one tick
+of playout buffer above the 99th percentile arrival, moved by at most 0.1 % of
+the pace) and stall seconds per minute:
+
+| one-way / jitter (RTT) | 0 % loss | 0.1 % loss | 0.5 % loss | 1 % loss | 2 % loss |
+| --- | --- | --- | --- | --- | --- |
+| 0 / 0 (0.3 ms), proxy only | 0 %, d 2, 0/min, 0 s | | | | |
+| 10 / 0 ms (21 ms) | 0 %, d 3, 0/min, 0 s | 0.33 %, d 5-6, 2.0/min, 0.10 s | 0.32 %, d 9, 18.5/min, 0.39 s | 0.35 %, d 10, 27.5/min, 0.46 s | 1.40 %, d 11, 52.0/min, 1.19 s |
+| 10 / 10 ms (32 ms) | 0 %, d 4, 0/min, 0 s | 0.28 %, d 7-8, 4.0/min, 0.21 s | 0.51 %, d 10-11, 20.5/min, 0.65 s | 0.76 %, d 11, 34.0/min, 0.98 s | 1.26 %, d 12-17, 44.0/min, 1.46 s |
+| 10 / 30 ms (57 ms) | 0.11 %, d 8-9, 1.0/min, 0 s | 0.42 %, d 9-11, 1.5/min, 0.10 s | 0.44 %, d 13, 15.0/min, 0.83 s | 1.07 %, d 14, 31.0/min, 1.45 s | 1.24 %, d 14-20, 49.5/min, 3.04 s |
+| 30 / 0 ms (61 ms) | 0 %, d 5, 0/min, 0 s | 0.50 %, d 9-10, 3.5/min, 0.30 s | 0.50 %, d 14, 18.5/min, 1.03 s | 0.39 %, d 15, 31.5/min, 1.81 s | 1.50 %, d 15-16, 61.0/min, 4.05 s |
+| 30 / 10 ms (71 ms) | 0 %, d 7, 0/min, 0 s | 0.61 %, d 11-13, 3.5/min, 0.31 s | 0.79 %, d 15-16, 17.5/min, 1.19 s | 0.93 %, d 16, 35.5/min, 2.55 s | 1.47 %, d 16-18, 59.0/min, 4.45 s |
+| 30 / 30 ms (95 ms) | 0 %, d 9, 0/min, 0 s | 0.65 %, d 13-15, 2.5/min, 0.26 s | 0.85 %, d 18, 19.5/min, 1.77 s | 1.01 %, d 18-19, 29.0/min, 2.84 s | 1.47 %, d 18-20, 61.5/min, 6.06 s |
+| 60 / 0 ms (121 ms) | 0.40 %, d 11, 1.5/min, 0 s | 0.99 %, d 14-17, 4.5/min, 0.56 s | 1.03 %, d 20, 15.0/min, 1.78 s | 1.28 %, d 20, 31.5/min, 3.75 s | 4.66 %, d 20, 60.5/min, 7.73 s |
+| 60 / 10 ms (132 ms) | 0 %, d 10-11, 0/min, 0 s | 1.14 %, d 15-18, 4.5/min, 0.54 s | 1.86 %, d 20, 16.5/min, 2.12 s | 2.91 %, d 20, 36.0/min, 4.84 s | 6.52 %, d 20, 61.0/min, 8.42 s |
+| 60 / 30 ms (155 ms) | 0.22 %, d 13, 0/min, 0 s | 1.14 %, d 19-20, 5.0/min, 0.58 s | 3.84 %, d 20, 20.5/min, 2.86 s | 37.5 %, d 20, 27.5/min, 3.77 s | 13.8 %, d 20, 58.0/min, 10.27 s |
+
+Only the impaired member pays: with 2 % loss on one member's link only (30 /
+10 ms), that member had 0.54 % fills, d 16, 63 hitches and 4.3 s of stalls per
+minute while the two clean members had 0.04 % fills, d 7-8, 0-1.5 hitches and no
+stall (60 / 30 ms: 13.6 % against 0-0.17 %, the clean ones at d 13 and without
+hitches). Server-paced sealing keeps a loss local, as designed.
+
+What TCP costs: without loss nothing (no fill, no hitch). With loss the delay
+rule keeps the fill rate low (at most 1.5 % up to 2 % loss at 30 ms) by raising
+`d` far above the clean value (0.5 % loss: 9-18 instead of 3-9 ticks, 100 to
+150 ms more input delay), and every lost segment on a member's downlink stalls
+its picture for about one round trip plus 50 ms: 15-20 hitches and 0.4-1.8 s of
+stall per minute at 0.5 % loss, 28-36 and 0.5-3.8 s at 1 %, 44-62 and 1.2-8 s at
+2 %. A first run on a fully loaded machine (every core busy with other rounds,
+not used for the table) showed the same picture plus a few scheduling
+hitches.
+
+**Decision: round S4 carries UDP for INPUT and SEALED**, with redundancy (each
+INPUT datagram repeats the member's pads not yet sealed, each SEALED datagram
+the last few ticks, so an isolated loss costs nothing and only a burst longer
+than the redundancy waits), the ticket as the session key, the TCP connection
+kept for everything else and as the fallback when UDP does not get through.
+The loss rates of WLAN and busy home links (0.5-2 %) would otherwise cost the
+affected player 100-150 ms of extra input delay and 15-60 picture stalls per
+minute. Until then TCP works: the relay's delay rule and fill keep everyone
+else unaffected.
+
 **1 → 2 members.** The server sends JOIN_REQ to the solo leader; the leader
 answers JOIN_AT(J) with `J = current tick + d`, switches to delayed sampling at
 once and repeats its last pad for the ticks before `J` it has no sample for
@@ -1038,6 +1099,17 @@ Offline input is unchanged. A pad is then 7 B: buttons as u16 (if the PC's
 masks fit in 16 bits, which S1 checks; else u32 and 9 B) and four int8 sticks;
 `connected` comes from the present mask. About 0.4 KB/s per player and
 direction.
+
+*Checked in S1 (relay lane):* the PC's button masks fit in 16 bits. The
+logical bits are 0x0008-0x8000 (`include/dw4/pad.hpp`, `pad_button`),
+`gamecube_buttons` maps raw PADStatus bits only onto them, and the keyboard
+and controller bindings (`controls.cpp`, `press(PadKey)`) set only those bits;
+the recorded logs of 6.6 use 0x0010-0xFC50. So a pad is buttons u16 LE, then
+the main stick x, y and the C-stick x, y as int8 `round(v * 74)` (main stick
+-72..72 after the host's 72/74 scale, C-stick -59..59): 6 B, not the 7 B
+counted above, since `connected` comes from the present mask and nothing else
+needs a byte (the u32 case would have been 8 B). The relay lane's independent
+Python client found the miscount: the wire layout in the appendix is 6 B.
 
 ### 6.5 Events and when they apply
 
@@ -1214,6 +1286,39 @@ the longest joinable log. The relay lane measures it with recorded real input
 first. State transfers have their own limit (`Relay:StateBytesPerSecond`,
 default 4 MB/s per connection with a 16 MiB burst), outside the 64 KB/s bucket
 of the game frames.
+
+*Measured in S1 (relay lane), `tools/online_test/log_sizes.py`.* Recorded
+input from save state files (the snapshot plus every step's pads since the
+stage load): the user's own keyboard game (1,492 steps), a campaign bot
+driver run with continuous analog steering (30,743 steps, 8.5 min, 32,793
+distinct stick values) and a shorter bot run (1,349 steps). Player k of n
+replays the recording from offset k·len/n; the log is the relay's tick record
+(present mask, event count, 6 B per present slot); sizes per 600-tick block,
+each compressed on its own (as the relay stores it), scaled to the duration.
+The driver run is the representative one:
+
+| Log | raw | zstd 3 | zlib 6 |
+| --- | --- | --- | --- |
+| 4 players, 20 min, r48 21-byte float pads | 5.90 MB | 1.18 MB (20.0 %) | 1.22 MB |
+| 4 players, 20 min, quantized 6-byte pads | 1.83 MB | 227 KB (12.4 %) | 234 KB |
+| same, with +-24 LSB stick noise before the quantization | 1.83 MB | 239 KB (13.1 %) | 244 KB |
+| 4 players, 30 min, quantized (with noise) | 2.74 MB | 341 KB (359 KB) | 351 KB |
+| 2 players, 20 min, quantized | 0.98 MB | 111 KB | 112 KB |
+| 1 player, 20 min, quantized | 0.56 MB | 54 KB | 53 KB |
+
+The keyboard game compresses to 0.6-0.9 % (three stick values); the short
+bot run to 6-8 %. Quantized pads make the log 5.2 times smaller than the r48
+pads (the critique's 5x), and the controller noise of an int16 axis barely
+survives the GameCube's steps (+5 %). The longest joinable log (30 min, four
+players) is about 0.35 MB compressed and 2.7 MB raw; with the snapshot
+(19.4-20.2 KB raw in these files) a join state stays below 3 MB raw.
+Consequences built on in S1: the relay keeps its log in memory as 600-tick
+blocks compressed with Deflate (zlib 6 is as good as zstd 3 on these blocks
+and is in .NET; about 240 KB per 20-minute four-player visit); STATE_DATA
+sends the tick records raw (codec 0; the client has only a zstd decoder and
+.NET no zstd encoder), which at the default `Relay:StateBytesPerSecond`
+(4 MB/s, 16 MiB burst) is under one second for the longest log and well
+inside the burst; the snapshot travels as the leader uploaded it.
 
 The spike proved spawning only for a joiner of the same species with its
 package already loaded; other species (packages mid-stage, the scheduler's
@@ -1956,7 +2061,7 @@ the room (up to ten), not the instance. No invites or join secrets for now.
 | Rooms | `RoomService`: instances as lockstep groups (id, stage, visit, context hash, slots, parent and fork frame, departing, boss lock, joinable), barrier decisions DISSOLVE / co-arrival / JOIN / NEW with holds and the boss choice (3.4), catch-up estimates from the members' replay rates, forks of both kinds, in-band JOIN and LEAVE, preferred slots, no instance end when its first member leaves (`EndInstanceLocked` goes), room-scoped relay tickets, the settings hash, the relay connection as heartbeat. `POST /rooms/{code}/stage` and `/stage/leave` are retired; the room state lists instances with stage and members. Room settings gain camera mode and light mode |
 | Story | migration with `online_story`; `StoryMerge` in the domain with the golden vectors; plausibility table from the census; pending sets with STORY_ACK; the owner-away setting with the session's dropped set; `GET /online-character` composes, `PUT` ignores story bytes; `GET /rooms/{code}/story` for the website and debugging |
 | Achievements | catalogue migration to the client's ids and thresholds |
-| Config | `Sealing:MaxDelayTicks` (10), `Sealing:LateTarget` (0.001), `Relay:ReconnectSeconds` (10), `Relay:LagLeaveSeconds` (10), `Relay:StateBytesPerSecond`, `Instances:CoArrivalHoldMs` (3000), `Instances:JoinHoldSeconds` (15), `Instances:MaxCatchUpSeconds` (30), `Rooms:StoryWhileOwnerAway`; `Play:CurrentProtocol` follows the client. `Sealing:StallMs` and `Instances:MaxJoinLogMinutes` of revision 1 are gone |
+| Config | `Sealing:MaxDelayTicks` (15, measured in S1, 6.4), `Sealing:LateTarget` (0.001), `Relay:ReconnectSeconds` (10), `Relay:LagLeaveSeconds` (10), `Relay:StateBytesPerSecond`, `Instances:CoArrivalHoldMs` (3000), `Instances:JoinHoldSeconds` (15), `Instances:MaxCatchUpSeconds` (30), `Rooms:StoryWhileOwnerAway`; `Play:CurrentProtocol` follows the client. `Sealing:StallMs` and `Instances:MaxJoinLogMinutes` of revision 1 are gone |
 | Website | the room page shows instances per stage |
 | Deploy | fixed-key self-signed certificate and the pin script (10); port 52041 as before |
 | Tests | unit tests for sealing schedules and fills, events, forks, barrier decisions (holds, co-arrival, context key) and merge vectors; integration tests with scripted fake clients; end-to-end tests with the real game client (16) |
@@ -2255,8 +2360,10 @@ Depends on: S4 and the answers.
   FMA3 gate excludes CPUs without FMA3 (older than about 2013-2015); the MSL
   routing then has to prove itself on two machines the user owns.
 - **Latency over TCP**: losses cause head-of-line delays. Server-paced sealing
-  keeps them local to the member they hit, but that member loses its inputs
-  for that time. The S1 matrix decides about UDP.
+  keeps them local to the member they hit (measured in S1), but that member
+  pays with a much larger input delay and picture stalls (0.5 % loss: about
+  +100-150 ms and 15-20 stalls per minute). The S1 matrix decided: round S4
+  carries UDP with redundancy for INPUT and SEALED (6.4).
 - **Server timing**: the 59.94 Hz schedule depends on the server's timer and
   garbage collector; a pause of the server hitches every member of every
   sealed instance equally. A dedicated timer thread and the server GC settings
@@ -2365,3 +2472,96 @@ u32 (88 B per step). It is not the relay's pad format (7 B, 6.4).
 `DW4_PAD_LOG` and `DW4_TRACE_FINGERPRINT=1`), `xjoin/s21`, `xjoin/s22` (the
 cross-process joins), `runs/std_*` (the state test through a file on a
 direct start), `online_data.log` (the ctest scenarios' output).
+
+## Appendix: DW4R2 wire layout (relay lane, round S1)
+
+The layout the relay of round S1 speaks (`server/DW4Online/src/DW4Online.Relay/Protocol`, branch `feat-r52relay`);
+the fake clients (`tests/DW4Online.FakeClient`) and the independent Python client (`tests/e2e/relay_spike_test.py`)
+speak it too. The client lane builds against it; the integration pins it. All integers little endian; `str` = u8
+length + printable ASCII; `blob` = u32 length + bytes; `pad` = 6 B (6.4); masks use bits 0-3 (slots 0-3).
+
+**Room REST.** `POST /rooms` and `POST /rooms/{code}/join` answer with `relayTicket` (one-time, 60 s, role
+`member`) and `settingsHash` (16 hex digits); `POST /rooms/{code}/ticket` gives a fresh ticket (a reconnect). `GET
+/status` and the room state's `relay` are `{host, port, protocol: "DW4R2"}`. The room state's `instances` are the
+relay's groups `{id, stage, visit, mode: hub|solo|sealed, members: [{accountId, username, slot, connected, lagging}],
+departing, bossLock, joinable, ticks, parent}`; `members[].instance` names each member's. Room settings: `difficulty`
+0-2, `cameraMode` 0-1 (default 0), `lightMode` 0-1 (default 1), `fastLoading`, `randomizer: {enabled, seed (u32),
+drops, enemies 0-2, zones 0-2}`.
+
+**Settings hash.** FNV-1a 64 (offset basis 0xcbf29ce484222325, prime 0x100000001b3) of the ASCII text
+`DW4R2-settings/1;protocol=P;data=D;difficulty=N;camera=N;light=N;rand=SEED,DROPS,ENEMIES,ZONES;fast=N` (decimal
+numbers; DROPS and fast 0/1; `rand=0,0,0,0` while the randomizer is not active, that is seed 0 or no mode on).
+
+**Handshake.** `DW4R2 <ticket> <protocol> <dataHash decimal> <settingsHash hex>\n` -> `OK <member> <serverMs>\n`
+(member = the room slot 0-9) or `ERR <code>\n` with code `protocol` (bad line or protocol differs), `ticket`, `data`,
+`settings`, `full`. Then frames: type u8, payload length u32, payload; at most 1 MiB; WELCOME is the first frame.
+
+**Tick record** (SEALED, LIVE, STATE_DATA): mask u8 (slots whose pads follow), event count u8, pads (slot order),
+events: type u8, length u16, payload. Events: JOIN 1 (slot u8, entrance point u8, carry bytes), LEAVE 2 (slot u8),
+INTENT 3 (slot u8, kind u8, argument i32), LEAD_FROM 4 (tick u32: the last sealed tick; the remaining member leads
+alone from that tick), DELAY 5 (slot u8, d u8: only that member's sampler uses it). The mask only says which pads
+follow; the engine's own present / leaving masks (from JOIN / LEAVE) decide what a pad does (6.5).
+
+Client to server:
+
+| Type | Name | Payload |
+| --- | --- | --- |
+| 0x01 | INPUT | inst u32, visit u32, first tick u32, count u8 (1-32), pads |
+| 0x02 | LOG | inst u32, visit u32, first tick u32, count u16 (1-1200), pads (contiguous from the log's end; overlap is ignored, a gap closes the connection) |
+| 0x03 | HEADING | inst u32, stage str, point u8, context hash u64 |
+| 0x04 | BARRIER | inst u32, visit u32, barrier tick u32, stage str, point u8, alive mask u8, present mask u8, context hash u64, own carry blob (at most 64 KiB) |
+| 0x05 | BARRIER_CHOICE | inst u32, choice u8 (0 wait, 1 alone) |
+| 0x06 | SPLIT | inst u32, visit u32, fork tick u32, leaver mask u8 (the side that moves to the child), kind u8 (0 exit, 1 in-stage) |
+| 0x07 | SNAPSHOT | inst u32, visit u32, total u32 (at most 4 MiB), offset u32, chunk (the rest; chunks in order from 0) |
+| 0x08 | SNAPHASH | inst u32, visit u32, canonical hash u64 |
+| 0x09 | READY | inst u32, visit u32, tick u32 (a multiple of 60), net fingerprint u64, replay rate u32, carry blob |
+| 0x0A | JOIN_AT | inst u32, visit u32, tick J u32 |
+| 0x0B | NETFP | inst u32, visit u32, tick u32 (tick % 60 == 0), hash u64 |
+| 0x0C | STATE | inst u32, visit u32, tick u32, flags u8 (1 joinable, 2 membership-safe, 4 boss lock), context hash u64, reason u8 (0 none, 1 entry scene, 2 scene, 3 menu, 4 loading, 5 boss, 6 fork pending, 7 hub) |
+| 0x0D | INTENT | inst u32, visit u32, kind u8 (1 go without, 2 give up), argument i32 (sealed instances only) |
+| 0x0E | STORY | reserved for round S2 (accepted and ignored) |
+| 0x0F | PRESENCE | stage str (may be empty), inst u32, x f32, y f32, z f32, yaw f32, species u8, level u16, hp u16, max hp u16, mp u16, max mp u16 (at most every 150 ms) |
+| 0x10 | RESUME | inst u32, visit u32, slot u8, last executed tick u32 |
+| 0x11 | RATE | replay rate u32 (steps per second) |
+| 0x12 | PONG | nonce u32, client ms u64 |
+| 0x13 | BYE | reason u8 (leaves the relay at once; the room membership stays) |
+
+Server to client:
+
+| Type | Name | Payload |
+| --- | --- | --- |
+| 0x80 | WELCOME | member u8, inst u32, visit u32, slot u8, mode u8 (0 hub, 1 solo-led, 2 sealed), stage str, last tick u32 (0xFFFFFFFF none), delay u8, max catch-up seconds u16, flags u8 (1 resumable: the member still holds that slot; send RESUME) |
+| 0x81 / 0x82 | SEALED / LIVE | inst u32, visit u32, first tick u32, count u16, tick records (SEALED to members, LIVE to observers catching up) |
+| 0x83 | JOIN_REQ | inst u32, visit u32, slot u8, leader's delay u8 |
+| 0x84 | BARRIER_OK | old inst u32, old visit u32, decision u8 (1 NEW, 2 JOIN, 3 DISSOLVE, 4 CO_ARRIVE), new inst u32, new visit u32, stage str, point u8, own slot u8, slot map 4 x i8 (old slot -> new slot or -1), mode u8, delay u8, co-arrival count u8 + (slot u8, member u8, carry blob) each, story revision u32, story blob, dropped blob (both empty until S2), notice u8 (0 none, 1 other context, 2 full, 3 too long to catch up, 4 hold expired, 5 went alone, 6 join failed), name count u8 + names |
+| 0x85 | BARRIER_WAIT | inst u32, reason u8 (1 co-arrival, 2 not joinable, 3 boss lock, 4 snapshot), seconds left u16, name count u8 + names, flags u8 (1 = send BARRIER_CHOICE) |
+| 0x86 | STATE_DATA | inst u32, visit u32, total u32, offset u32, chunk (at most 60 KiB): the state blob |
+| 0x87 | PRESENCE | member u8, then the PRESENCE fields (members in the same stage outside the own instance) |
+| 0x88 | RESYNC | inst u32, visit u32 (a STATE_DATA with purpose resync follows) |
+| 0x89 | STORY_ACK | reserved for round S2 |
+| 0x8A | ROOM | notice u8 (1 joined, 2 left, 3 owner present, 4 owner away, 5 lagging, 6 lag over, 7 connected, 8 disconnected), member u8, account u64, name str, flags u8 (1 owner) |
+| 0x8B | PING | nonce u32, server ms u64, margin ms i16 (the member's 0.1 % arrival margin), suggested delay u8 (once per second) |
+| 0x8C | CLOSE | reason u8 (1 left, 2 kicked, 3 room closed, 4 replaced, 5 protocol, 6 abuse, 7 timeout, 8 server stopping), text str |
+| 0x8D | ROSTER | count u8 + (member u8, stage str, inst u32, level u16, hp u16, max hp u16, flags u8: 1 connected, 2 lagging, 4 owner) (once per second) |
+| 0x8E | REASSIGN | old inst u32, visit u32, new inst u32, from tick u32, mode u8, flags u8 (1 departing): after a fork the receiver's copy is the child; its stream comes with the new id from that tick |
+
+**State blob** (reassembled STATE_DATA): purpose u8 (1 join, 2 co-arrival, 3 resync, 4 resume), slot u8, codec u8
+(0 = raw records), snapshot blob (as the leader uploaded it), fork count u8 + (tick u32, leaver mask u8, kind u8,
+side u8: 0 stayers, 1 leavers = the side that leads to this instance), first tick u32 (0), tick count u32, tick
+records. LIVE frames continue with the next tick; they come after the blob on the same ordered queue.
+
+**Rules the client must follow** (found while building the relay):
+
+- Pads of a sealed NEW for ticks 0..d-1 may (and should) go out together with SNAPHASH; the relay accepts INPUT
+  before it starts sealing (S(0) = the last hash + the largest round trip + two ticks).
+- A joiner replays LEAVE, LEAD_FROM and DELAY of the history like any record, but it takes LEAD_FROM and DELAY only
+  for itself and only live (a LEAD_FROM in the replayed history is for whoever played then; taking it desynced the
+  fake joiner of S22b).
+- Every copy ignores events for slots not on its side of a fork (6.7); a JOIN goes with the side that keeps the id.
+- The barrier: send BARRIER after the barrier tick; ticks of the old visit that still arrive are discarded. A
+  member whose report does not arrive within `Instances:BarrierReportSeconds` (5) is left out of the group and
+  arrives alone with its next BARRIER (it is told by its decision).
+- After REASSIGN, frames in flight that name the old id are still taken for the new instance.
+- The solo leader answers JOIN_REQ with JOIN_AT(J), samples ahead from then on, repeats its last pad for the solo
+  ticks before J, logs them and flushes the LOG up to J-1; from J it executes only SEALED ticks.
+- HEADING carries the session context hash: co-arrivals need equal contexts.

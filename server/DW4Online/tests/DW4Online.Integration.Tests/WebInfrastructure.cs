@@ -19,13 +19,54 @@ public static class RelaySettings
         {
             ["Relay:Enabled"] = "true",
             ["Relay:ListenAddress"] = "127.0.0.1",
-            ["Relay:Port"] = "0",
+            ["Relay:Port"] = TestPorts.Next().ToString(System.Globalization.CultureInfo.InvariantCulture),
             ["Relay:TicketKey"] = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)),
             ["Service:RelayHost"] = "127.0.0.1",
         };
         if (more is not null)
             foreach (var (k, v) in more) settings[k] = v;
         return settings;
+    }
+}
+
+/// <summary>
+/// Ports for listeners of the tests: from DW4ONLINE_TEST_PORTS ("53100-53199", free ones only) when set, so parallel work on
+/// the same machine keeps to its own range; otherwise 0 (the system picks a free port).
+/// </summary>
+public static class TestPorts
+{
+    private static readonly Lock Gate = new();
+    private static Queue<int>? _free;
+
+    public static int Next()
+    {
+        var range = Environment.GetEnvironmentVariable("DW4ONLINE_TEST_PORTS");
+        if (string.IsNullOrEmpty(range)) return 0;
+        lock (Gate)
+        {
+            if (_free is null)
+            {
+                var parts = range.Split('-');
+                var props = System.Net.NetworkInformation.IPGlobalProperties.GetIPGlobalProperties();
+                var used = props.GetActiveTcpListeners().Select(e => e.Port).ToHashSet();
+                _free = new Queue<int>(Enumerable.Range(int.Parse(parts[0]), int.Parse(parts[1]) - int.Parse(parts[0]) + 1).Where(p => !used.Contains(p)));
+            }
+            while (_free.Count > 0)
+            {
+                var p = _free.Dequeue();
+                try
+                {
+                    var probe = new TcpListener(IPAddress.Loopback, p);
+                    probe.Start();
+                    probe.Stop();
+                    return p;
+                }
+                catch (SocketException)
+                {
+                }
+            }
+        }
+        throw new InvalidOperationException("DW4ONLINE_TEST_PORTS has no free port left");
     }
 }
 

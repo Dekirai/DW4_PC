@@ -10,6 +10,7 @@ using DW4Online.Domain.Rooms;
 using DW4Online.Domain.Security;
 using DW4Online.Domain.Services;
 using DW4Online.Relay;
+using DW4Online.Relay.Hub;
 using DW4Online.Web;
 using DW4Online.Web.Auth;
 using Microsoft.AspNetCore.HttpOverrides;
@@ -50,6 +51,9 @@ public static class ServerApp
         var limits = Bind<RateLimitOptions>(config, "RateLimits");
         var relay = Bind<RelayOptions>(config, "Relay");
         var rooms = Bind<RoomOptions>(config, "Rooms");
+        var sealing = Bind<SealingOptions>(config, "Sealing");
+        var instances = Bind<InstanceOptions>(config, "Instances");
+        instances.PlayersPerInstance = rooms.PlayersPerInstance;
         var tls = Bind<TlsOptions>(config, "Tls");
         var database = Bind<DatabaseOptions>(config, "Database");
         if (string.IsNullOrEmpty(database.ConnectionString)) database.ConnectionString = config.GetConnectionString("Main") ?? "";
@@ -57,7 +61,8 @@ public static class ServerApp
         var services = builder.Services;
         services.TryAddSingleton(TimeProvider.System); // tests register a controllable clock first
         services.AddSingleton(accounts).AddSingleton(character).AddSingleton(cloud).AddSingleton(play)
-            .AddSingleton(service).AddSingleton(limits).AddSingleton(relay).AddSingleton(rooms).AddSingleton(database);
+            .AddSingleton(service).AddSingleton(limits).AddSingleton(relay).AddSingleton(rooms).AddSingleton(database)
+            .AddSingleton(sealing).AddSingleton(instances);
         services.AddSingleton(_ => new Database(database.ConnectionString));
         services.AddSingleton<IAccountRepository, AccountRepository>();
         services.AddSingleton<ISessionRepository, SessionRepository>();
@@ -78,14 +83,14 @@ public static class ServerApp
         services.AddHostedService<MaintenanceService>();
 
         // Relay:TicketKey signs relay tickets and (through HKDF) keys the security log's tags of unknown user names.
-        services.AddSingleton(sp => new ServerSecret(RelayKey(relay, builder.Environment, sp.GetRequiredService<ILogger<RelayServer>>())));
+        services.AddSingleton(sp => new ServerSecret(RelayKey(relay, builder.Environment, sp.GetRequiredService<ILogger<RelayHub>>())));
         services.AddSingleton(sp => new RelayTickets(sp.GetRequiredService<ServerSecret>().Key,
             TimeSpan.FromSeconds(relay.TicketLifetimeSeconds), sp.GetRequiredService<TimeProvider>()));
         services.AddSingleton(sp => new AuditNameHasher(sp.GetRequiredService<ServerSecret>().Key));
         if (relay.Enabled)
         {
-            services.AddSingleton<RelayServer>();
-            services.AddHostedService(sp => sp.GetRequiredService<RelayServer>());
+            services.AddSingleton<RelayHub>();
+            services.AddHostedService(sp => sp.GetRequiredService<RelayHub>());
         }
         services.AddSingleton<RelayGateway>();
         services.AddSingleton<IRelayGateway>(sp => sp.GetRequiredService<RelayGateway>());
