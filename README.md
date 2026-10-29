@@ -144,7 +144,12 @@ The same file keeps the PC settings that the F1 menu edits while playing:
 the 2D layers stay 4:3 and full-screen fades stretch), `vsync`,
 `fps_limit` (presented frames per second, 0 = off; the game always updates
 60 times a second), `smooth_motion` (above about 75 presents per second the
-picture blends between the last two updates) and `msaa` (2/4/8 samples, applied at start-up),
+picture blends between the last two updates: objects, skinned characters, UV
+scrolls, the camera and the shadow light; each placement of a shared object
+blends on its own, a looping or stepped animation that jumps back or steps is
+drawn as it is in that update instead of being blended backwards, and the
+picture also keeps what the previous update's camera still saw at its edges;
+none of it changes the game) and `msaa` (2/4/8 samples, applied at start-up),
 `[audio] volume` (percent), `[menu] pause` (pause while the menu is open),
 `[preferences] skip_intro` (boot straight to the title), `[gameplay]`
 `exp_rate`, `damage_dealt`, `damage_taken` (percent, 100 = original),
@@ -408,19 +413,21 @@ player's), `DW4_DEV_SMOOTH=0|1`, `DW4_DEV_WIDESCREEN=0|1`, `DW4_DEV_MSAA=n` and
 `DW4_DEV_WINDOW=WxH` override single values. `DW4_DEV_DUMP=FROM-TO[,FROM-TO...]` with
 `DW4_DEV_DUMP_DIR=dir` writes every picture presented during those steps (`present_NNNNNN.png`,
 counted over the run) and a line per present in `presents.csv` (step, blend factor, and what the
-blend did: items blended, unmatched, too far, swapped occurrences, jumps, palettes, camera);
+blend did: items blended, unmatched, too far, swapped occurrences, jumps, sequence wraps, palettes,
+texture matrices, camera and the camera's change in this and the previous step);
 `blend_NNNNNN.txt` lists the items the blend flagged. `DW4_DEV_PICTURES=0` writes only the CSV and
 the blend lists (fast, whole routes). `DW4_DEV_IDS=1` adds an item-id picture per present
 (`ids_NNNNNN.png`: RGB = draw list index + 1, the list drawn again without blending and
 multisampling) and `items_NNNNNN.txt` (index, node, kind, IGB file and object, texture, flags,
-translation, 3x3, UV scroll), so every pixel names its draw item. `DW4_DEV_HIDE=pat,...` leaves items
+translation, 3x3, UV scroll, placement and sequence phases), so every pixel names its draw item. `DW4_DEV_HIDE=pat,...` leaves items
 out whose node or texture name contains a pattern, or a category (`:blend`, `:opaque`, `:2d`, `:3d`,
 `:skinned`, `:particles`, `:texmatrix`, `:shadow`), for A/B runs. `tools/flicker.py DUMP_DIR`
 (numpy, Pillow) finds flicker in such a dump: pixels that leave their value for one to three presents
 and come back (and, with item ids, pixels whose draw item does that), a heat map, the hot regions and
-the items owning them; `tools/blend_report.py DUMP_DIR` groups the blend's flagged items (`jump`: a
-looping transform blended backwards across its wrap; `swap(near)`: an instance blended from another
-instance's place after culling shifted the occurrences). Example, the lobby after loading a save at
+the items owning them; `tools/blend_report.py DUMP_DIR` groups the blend's flagged items (`wrap`: a
+sequence that wrapped, stepped or whose clock went back, drawn as it is; `jump`: a change far larger
+than the step before that no sequence marked, still blended; `swap(near)`: blended from another
+occurrence's place; `texture_jump`: a texture matrix drawn as it is). Example, the lobby after loading a save at
 144 Hz: `DW4_DEV_SETTINGS=settings_copy.ini DW4_DEV_PRESENT=144 DW4_DEV_DUMP=4790-4800
 DW4_DEV_DUMP_DIR=dump DW4_DEV_IDS=1 dw4_game --data GAME --card-dir CARDS --input load.txt
 --smoke-test 4800`, then `python tools/flicker.py dump`.

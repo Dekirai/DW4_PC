@@ -142,6 +142,12 @@ frustum (the renderer widens perspective projections for widescreen, and a
 debug camera shows everything): a subtree outside the original's frustum but
 in the picture is drawn without its updates (`ActionManager::peek_pose`, copied
 clocks and caches), so the simulation does not depend on the presentation.
+While smooth motion blends the picture between the previous step's camera and
+this one (`Engine::picture_previous_view`), that test also keeps a subtree
+inside the previous step's frustum (this step's projection, widened alike;
+not where a modelview attribute or the shadow casters' light view supplies
+the view), drawn the same way, so nothing at the trailing edge of a turning
+camera leaves the blended picture a step early.
 
 An ACTION actor's motion combiner (`MotionState`) keeps each state's clock as
 the original's igAnimationState does (`StateClock`: time = ((T >> 18) * speed
@@ -763,6 +769,34 @@ receiver drawn as a whole square so keeps the floor under it from being shaded
 twice, and a receiver's depth hides blended items under it that are drawn
 later (the centre tile of stagBS05's boss gate).
 `DW4_TRACE_SHADOW=1` logs the light, the box and the item counts.
+
+Smooth motion (`game/interpolation.hpp`, presents above about 75 per second)
+blends each draw item's model, skinning palette and texture matrix, the camera
+and the shadow light view between the last two steps. The traversal gives
+every `DrawItem` what that needs and nothing the original has: `instance`, a
+hash of the node path from the traversal's root (child pointers and slots,
+appearance roots and the chosen LOD child included), so the placements of a
+shared DAG node keep their own keys when culling or a switch changes which of
+them are drawn (keyed by node, geometry and draw order alone, the stagML11
+benches and pillars slid 20-40 units toward a sister placement for a step
+whenever another placement entered or left the picture); `phase`, which
+changes when a transform sequence above the item wraps (REPEAT / LOOP passing
+the end) or a stepped channel (`_interpolationMethod` NONE) takes another key
+(`TransformSequence::phase`, from evaluate()'s time arithmetic); and
+`sequence_time`, the sum of the times those sequences were evaluated at,
+which only decreases when a clock they run on jumped back (a beModelCtrlNode2
+clock given an earlier origin by ACTION's JOINTSET or a joint loop, a
+beNodeAnim loop). `texture_phase` / `texture_sequence_time` do the same for
+texture transforms, and a texture transform's runtime matrix changes
+`texture_phase` whenever it changes. The interpolator draws an item as it is
+when its phase changed or its sequence time went back (the stagML11 ring
+walls turn 11.25 degrees in 240 steps and start again, 32-fold symmetric;
+blended across the wrap they turned back for two or three presents every
+four seconds), blends the rows of the 3x3 parts at their interpolated lengths
+(no shrinking in a turn), each palette bone on its own (a bone that jumps is
+drawn as it is), and the camera through its placement (the inverse view), so
+the eye moves on the line between its two positions. None of this is read by
+the simulation: the fingerprints do not change with smooth motion on.
 
 ## Collision
 
