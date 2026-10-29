@@ -1909,6 +1909,24 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 if (const bool collect = achievements_on() || trace_events || (!net.active() && randomizer_settings().active());
                     engine.port_events_enabled() != collect)
                     engine.set_port_events(collect);
+                // SPIKE r51cam (seamless co-op cameras, test runs):
+                // DW4_CAMERAS=mask gives those player slots their own box
+                // camera (union simulation pass + local picture),
+                // DW4_CAM_LOCAL=slot picks the picture's, DW4_CAM_UNION=1 runs
+                // the union code with the one shared camera, DW4_CAM_NAIVE=1
+                // one full traversal per camera, DW4_CAM_NOLEASH=1 switches
+                // the players' limit circle off while cameras are per player.
+                {
+                    static const char* cams = std::getenv("DW4_CAMERAS");
+                    static const char* local = std::getenv("DW4_CAM_LOCAL");
+                    engine.player_cameras = cams ? std::uint8_t(std::strtol(cams, nullptr, 0) & 15) : 0;
+                    engine.local_camera_slot = local ? std::clamp(std::atoi(local), 0, 3) : 0;
+                    engine.force_union = std::getenv("DW4_CAM_UNION") != nullptr;
+                    engine.naive_union = std::getenv("DW4_CAM_NAIVE") != nullptr;
+                    if (engine.player_cameras && std::getenv("DW4_CAM_NOLEASH"))
+                        if (auto* hitland = engine.get<dw4::engine::HitLandManager>(); hitland && hitland->child_hit("limit_Circle").value_or(false))
+                            hitland->set_child_hit("limit_Circle", false);
+                }
                 engine.step(pads);
                 if (engine.port_events_enabled()) observe_step();
                 if (!net.active()) bind_randomizer();
@@ -1959,6 +1977,27 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     std::printf("[%d] fingerprint %016llx random %016zx\n", frame, static_cast<unsigned long long>(engine.fingerprint()),
                                 std::hash<std::string>{}(random.str()));
                 }
+                // SPIKE r51cam: DW4_TRACE_PLAYERS=N prints every player's position every N frames.
+                if (static const int every = std::getenv("DW4_TRACE_PLAYERS") ? std::atoi(std::getenv("DW4_TRACE_PLAYERS")) : 0;
+                    every > 0 && frame % every == 0)
+                    if (auto* models = engine.get<dw4::engine::ModelCtrlManager>()) {
+                        std::printf("[%d] players", frame);
+                        for (int slot = 0; slot < 4; ++slot)
+                            if (const auto* p = models->player(slot); p && p->node)
+                                std::printf(" %d:(%.0f,%.0f,%.0f)%s", slot + 1, p->node->matrix(3, 0), p->node->matrix(3, 1),
+                                            p->node->matrix(3, 2), p->control_enabled ? "" : "*");
+                        // The players' limit circle: L on, l off, - none in this stage.
+                        if (auto* hitland = engine.get<dw4::engine::HitLandManager>()) {
+                            const auto circle = hitland->child_hit("limit_Circle");
+                            std::printf(" %s", !circle ? "-" : *circle ? "L" : "l");
+                        }
+                        // Cumulative traversal ns / passes (render, traverse, union, picture).
+                        std::printf(" | t");
+                        for (int i = 0; i < 4; ++i)
+                            std::printf(" %llu/%llu", (unsigned long long)engine.traversal_ns[std::size_t(i)],
+                                        (unsigned long long)engine.traversal_count[std::size_t(i)]);
+                        std::printf("\n");
+                    }
                 // DW4_TRACE_PLAYER=N prints player 1's sequence and position every N frames.
                 if (trace_player > 0 && frame % trace_player == 0)
                     if (auto* models = engine.get<dw4::engine::ModelCtrlManager>())
@@ -2978,6 +3017,31 @@ int run(const Options& options, dw4::game::Settings& settings) {
         // draw count and DW4_DRAW_DUMP.
         if (!draw) engine.render(items, camera, clear, &shadow);
         std::cout << "stage " << engine.stage_name() << ", frame " << engine.frame() << ", draws " << items.size() << '\n';
+        // SPIKE r51cam: traversal times and the one-player camera check.
+        if (std::getenv("DW4_TRACE_TRAVERSAL_TIME")) {
+            static constexpr const char* kNames[4] = {"render (sim+picture)", "traverse_scene", "union sim pass", "picture-only pass"};
+            for (int i = 0; i < 4; ++i)
+                if (engine.traversal_count[std::size_t(i)])
+                    std::printf("traversal %s: %llu passes, %.1f us each, %.3f s total\n", kNames[i],
+                                (unsigned long long)engine.traversal_count[std::size_t(i)],
+                                double(engine.traversal_ns[std::size_t(i)]) / 1000.0 / double(engine.traversal_count[std::size_t(i)]),
+                                double(engine.traversal_ns[std::size_t(i)]) * 1e-9);
+        }
+        if (std::getenv("DW4_TRACE_TRAVERSAL_TIME"))
+            if (auto* models = engine.get<dw4::engine::ModelCtrlManager>())
+                for (int slot = 0; slot < 4; ++slot)
+                    if (const auto* p = models->player(slot); p && p->node) {
+                        dw4::engine::FrameCamera own;
+                        if (auto* cameras = engine.get<dw4::engine::CameraManager>()) cameras->frame_camera(engine, own, slot);
+                        dw4::engine::Mat4 inverse;
+                        dw4::engine::invert(own.view, inverse);
+                        std::printf("player %d at (%.1f, %.1f, %.1f), its camera at (%.1f, %.1f, %.1f)\n", slot + 1, p->node->matrix(3, 0),
+                                    p->node->matrix(3, 1), p->node->matrix(3, 2), inverse(3, 0), inverse(3, 1), inverse(3, 2));
+                    }
+        if (std::getenv("DW4_CAM_CHECK"))
+            if (auto* cameras = engine.get<dw4::engine::CameraManager>())
+                std::printf("camera check: slot 0's own camera differed from the shared one in %llu of %llu frames\n",
+                            (unsigned long long)cameras->check_mismatches(), (unsigned long long)cameras->check_frames());
         if (net.active()) {
             std::cout << "online: final fingerprint " << std::hex << engine.fingerprint() << std::dec
                       << (net.desync() ? " (desync at step " + std::to_string(*net.desync()) + ")" : "") << '\n';

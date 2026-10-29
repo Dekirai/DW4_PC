@@ -102,6 +102,18 @@ void ShadowManager::update(Engine& engine) {
         ++count;
     }
     if (count) light_ = Vec3f{sum.x / float(count), sum.y / float(count) + 200.0f, sum.z / float(count)};
+    // SPIKE r51cam: one light per member camera, at its own player.
+    player_cameras_ = engine.player_cameras;
+    local_slot_ = engine.local_camera_slot;
+    player_lights_ = {};
+    if (player_cameras_)
+        for (int i = 0; i < 4; ++i) {
+            if (!(player_cameras_ & (1u << i))) continue;
+            const auto* player = models->player(i);
+            if (!player || !player->node || !player->generated) continue;
+            const auto& m = player->node->runtime_matrix ? *player->node->runtime_matrix : player->node->matrix;
+            player_lights_[std::size_t(i)] = Vec3f{m(3, 0), m(3, 1) + 200.0f, m(3, 2)};
+        }
     // A shadow proxy only casts while the instance it copies is out.
     for (auto* root : casters_)
         for (std::size_t i = 0; i < root->children.size(); ++i) {
@@ -155,10 +167,35 @@ Mat4 ShadowManager::light_projection() const {
 }
 
 void ShadowManager::traverse(const TraversalContext& context) {
-    if (active()) traverse(context, nullptr, nullptr);
+    if (!active()) return;
+    if (player_cameras_ && context.union_cull) {
+        // SPIKE r51cam: the casters under every member's light (the
+        // traversal is idempotent at one world time, so a caster two lights
+        // see is simulated once).
+        const auto shared = light_;
+        bool any = false;
+        for (const auto& light : player_lights_) {
+            if (!light) continue;
+            light_ = light;
+            traverse(context, nullptr, nullptr);
+            any = true;
+        }
+        light_ = shared;
+        if (any) return;
+    }
+    traverse(context, nullptr, nullptr);
 }
 
 void ShadowManager::render(Engine& engine, const TraversalContext& context, ShadowFrame& frame) {
+    // SPIKE r51cam: the local member's light for the picture.
+    const auto shared = light_;
+    if (player_cameras_ && player_lights_[std::size_t(std::clamp(local_slot_, 0, 3))])
+        light_ = player_lights_[std::size_t(std::clamp(local_slot_, 0, 3))];
+    struct Restore {
+        std::optional<Vec3f>& light;
+        std::optional<Vec3f> value;
+        ~Restore() { light = value; }
+    } restore{light_, shared};
     frame.casters.clear();
     frame.receivers.clear();
     frame.active = active();

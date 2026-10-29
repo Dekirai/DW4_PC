@@ -424,6 +424,18 @@ struct TraversalContext {
     // also draws a subtree inside the previous step's frustum (with this
     // step's projection, widened as above), without its updates as above.
     std::optional<Mat4> picture_previous_view;
+    // SPIKE r51cam (seamless co-op): further game cameras whose frusta join
+    // cull_camera's (union): a node is simulated while any of them still has
+    // it inside; the view-dependent values (recorders, billboards,
+    // beResetNode) stay with cull_camera, igLod takes the nearest live
+    // camera. `union_cull` with no extra camera runs the same union code with
+    // cull_camera alone (equal to the original test).
+    std::vector<FrameCamera> extra_cull;
+    bool union_cull = false;
+    // SPIKE: false = a picture only: every node takes its peek path (no
+    // clock, combiner, LOD cache or recorder changes), culled against
+    // `camera` (the local player's) with the picture's own test.
+    bool simulate = true;
     // The projection under the modelview_base of the shadow caster pass
     // (the light's, pushed by 801FDCCC with its view).
     std::optional<Mat4> projection_base;

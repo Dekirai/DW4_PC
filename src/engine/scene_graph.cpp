@@ -1386,6 +1386,10 @@ struct CullScope {
     // may lie inside that frustum; picture_in: inside this step's picture.
     bool previous_test{}, previous_in{};
     bool picture_in = true;
+    // SPIKE r51cam (TraversalContext::union_cull): bit 0 cull_camera, bit k
+    // extra_cull[k - 1]. `live`: the cameras that still have the subtree in
+    // view (simulate = live != 0); `testing`: those still testing bounds.
+    std::uint8_t live{}, testing{};
 };
 
 // The running effect's particles as camera-facing quads at effect time
@@ -1494,8 +1498,57 @@ void apply_all(const std::vector<const Attribute*>& attributes, State& state, Ma
 // still current. The original's test uses the game camera; the picture's own
 // test the picture's camera with the renderer's widened perspective. Returns
 // false when the traversal has nothing left to do below the node.
+// SPIKE r51cam: the union of several game cameras' frusta (simulation pass,
+// no draw items). Per camera the original test (801E9AB4 / 801E994C): outside
+// drops the camera, inside stops its tests; the subtree is simulated while any
+// camera still has it. One camera gives the original decisions.
+template <class State>
+bool frustum_cull_union(const Node& n, const TraversalContext& ctx, const Mat4& model, const State& state, CullScope& cull) {
+    if (!n.has_bound || !cull.testing) return true;
+    if (state.view || ctx.modelview_base) {
+        // A modelview attribute or the shadow caster base: the same matrices
+        // for every camera, so one test answers for all of them.
+        const Mat4& view = state.view ? *state.view : *ctx.modelview_base;
+        const Mat4& projection = state.projection ? *state.projection : ctx.projection_base ? *ctx.projection_base : ctx.cull_camera.projection;
+        const int code = frustum_cull_code(model * view, projection, n.bound_min, n.bound_max);
+        if (code == 2) {
+            cull.live &= std::uint8_t(~cull.testing);
+            cull.testing = 0;
+        } else if (code == 1 || code == 5) cull.testing = 0;
+    } else {
+        const std::size_t count = 1 + ctx.extra_cull.size();
+        for (std::size_t c = 0; c < count; ++c) {
+            const auto bit = std::uint8_t(1u << c);
+            if (!(cull.testing & bit)) continue;
+            const FrameCamera& camera = c == 0 ? ctx.cull_camera : ctx.extra_cull[c - 1];
+            const Mat4& projection = state.projection ? *state.projection : ctx.projection_base ? *ctx.projection_base : camera.projection;
+            const int code = frustum_cull_code(model * camera.view, projection, n.bound_min, n.bound_max);
+            if (code == 2) {
+                cull.live &= std::uint8_t(~bit);
+                cull.testing &= std::uint8_t(~bit);
+            } else if (code == 1 || code == 5) {
+                cull.testing &= std::uint8_t(~bit);
+                // Inside one camera: the whole subtree is simulated whatever
+                // the others say, so no camera tests below (the masks only
+                // mattered for igLod, which then takes every camera). With
+                // one camera this is the original test. DW4_CAM_FULLMASK
+                // keeps testing the others (cost comparison).
+                if (static const bool full = std::getenv("DW4_CAM_FULLMASK") != nullptr; !full) {
+                    cull.testing = 0;
+                    break;
+                }
+            }
+        }
+    }
+    if (cull.live) return true;
+    cull.simulate = false;
+    cull.testing = 0;
+    return false;
+}
+
 template <class State>
 bool frustum_cull(const Node& n, const TraversalContext& ctx, const Mat4& model, const State& state, CullScope& cull) {
+    if (ctx.union_cull) return frustum_cull_union(n, ctx, model, state, cull);
     if (!n.has_bound || (!cull.test && !cull.picture_test && !cull.previous_test)) return true;
     auto classify = [&](const Mat4& view, const Mat4& projection, bool& test) {
         const int code = frustum_cull_code(model * view, projection, n.bound_min, n.bound_max);
@@ -1788,7 +1841,21 @@ void visit(Node* n, TraversalContext& ctx, const Mat4& parent_model, const Mat4&
         // subtree the original skips keeps the selection cache as it was.
         overrides(*n, state);
         const Vec3f eye = transform_point(n->lod_center, model * state.view.value_or(camera_view));
-        const float distance_squared = eye.z * eye.z + (eye.x * eye.x + eye.y * eye.y);
+        float distance_squared = eye.z * eye.z + (eye.x * eye.x + eye.y * eye.y);
+        // SPIKE r51cam: the union pass takes the nearest camera that still
+        // sees the subtree (cull_camera alone: the original distance).
+        if (ctx.union_cull && !state.view && !ctx.extra_cull.empty()) {
+            static const bool full = std::getenv("DW4_CAM_FULLMASK") != nullptr;
+            bool first = true;
+            for (std::size_t c = 0; c <= ctx.extra_cull.size(); ++c) {
+                if (full && !(cull.live & (1u << c))) continue;
+                const Mat4& view = c == 0 ? ctx.cull_camera.view : ctx.extra_cull[c - 1].view;
+                const Vec3f e = transform_point(n->lod_center, model * view);
+                const float d2 = e.z * e.z + (e.x * e.x + e.y * e.y);
+                if (first || d2 < distance_squared) distance_squared = d2;
+                first = false;
+            }
+        }
         Node* child = nullptr;
         if (cull.simulate) {
             child = n->select_lod(distance_squared);
@@ -1843,6 +1910,18 @@ void traverse(Node* n, TraversalContext& ctx, const Mat4& parent_model, const Re
     cull.picture_test = ctx.cull && ctx.picture_cull && ctx.output;
     cull.previous_test = cull.picture_test && ctx.picture_previous_view && !ctx.modelview_base;
     cull.previous_in = cull.previous_test;
+    // SPIKE r51cam: the union pass tests every camera; a picture-only pass
+    // simulates nothing and keeps only the picture's own test.
+    if (ctx.union_cull) {
+        cull.test = false;
+        cull.picture_test = false;
+        cull.live = cull.testing = ctx.cull ? std::uint8_t((1u << (1 + ctx.extra_cull.size())) - 1u) : 0;
+        if (!ctx.cull) cull.live = 1;
+    }
+    if (!ctx.simulate) {
+        cull.simulate = false;
+        cull.test = false;
+    }
     // The traversal's view (+0x64) and its inverse (+0xA4, 8012A92C), which
     // 801DB8F0 sets from the game's camera in 8040B8C0; the modelview stack
     // starts with the view (the shadow caster pass: the light's, which

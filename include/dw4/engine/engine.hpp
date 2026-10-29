@@ -443,6 +443,31 @@ public:
     // blends the picture between two steps (TraversalContext::
     // picture_previous_view). Presentation only, like picture_widen.
     std::optional<Mat4> picture_previous_view;
+    // SPIKE r51cam (seamless co-op cameras). A bit per player slot that has
+    // its own box camera (CameraManager::frame_camera(.., slot)); 0 (the
+    // default, every offline and lockstep game) keeps the one shared camera
+    // and the original single traversal. With bits set:
+    //  - the simulation traversal (traverse_scene, and render() once per
+    //    step) culls against the UNION of those cameras' frusta: a node is
+    //    simulated when any of them sees it (every machine of an instance
+    //    computes every member's camera from the lockstep inputs, so the
+    //    union is the same everywhere); view-dependent values take the first
+    //    camera (recorders, billboards, beResetNode) or the nearest live one
+    //    (igLod);
+    //  - render() then draws `local_camera_slot`'s picture without changing
+    //    anything (every node on its peek path).
+    // One bit with one player is the original camera (union of one frustum).
+    std::uint8_t player_cameras = 0;
+    int local_camera_slot = 0;
+    // SPIKE: DW4_CAM_UNION=1 forces the union code path even for one camera
+    // (the proof that it equals the original traversal); DW4_CAM_NAIVE=1
+    // runs one full simulation traversal per camera instead (cost compare).
+    bool force_union = false;
+    bool naive_union = false;
+    // SPIKE: accumulated traversal times (ns) and counts: [0] the combined
+    // render (original), [1] traverse_scene (original), [2] union simulation
+    // pass, [3] draw-only pass.
+    std::array<std::uint64_t, 4> traversal_ns{}, traversal_count{};
     // Per-scene draw statistics for diagnostics.
     std::vector<std::string> scene_report();
 
@@ -692,6 +717,11 @@ private:
     // The frame's camera, clear colour and traversal context (render,
     // traverse_scene); `out` null: no draw items.
     TraversalContext frame_context(std::vector<DrawItem>* out, FrameCamera& camera, Vec4f& clear_color);
+    // SPIKE r51cam: the union simulation pass (no draw items) once per step,
+    // and the frame/time it last ran on.
+    void traverse_union();
+    std::uint64_t union_frame_ = ~0ull;
+    std::int64_t union_time_ = -1;
     void install_lua();
     std::vector<Lua4Value> lua_call(const Lua4HostCall& call);
 

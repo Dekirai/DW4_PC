@@ -151,6 +151,17 @@ public:
     void begin_frame(Engine& engine);
     // The camera of this frame (begin_frame's), or the live one before it ran.
     void frame_camera(Engine& engine, FrameCamera& camera);
+    // SPIKE r51cam (seamless co-op): one box camera per player slot of
+    // Engine::player_cameras(). Each runs the original box camera logic with
+    // the centre at its own player (802F2BC0 with one player: the sum, i.e.
+    // the position), so a one-player instance gets the original camera. A
+    // demo viewer is shared by every slot. Without per-player cameras (or
+    // for a slot without one) this is frame_camera(engine, camera).
+    void frame_camera(Engine& engine, FrameCamera& camera, int slot);
+    // SPIKE: steps where slot 0's own camera differed from the shared one
+    // although only player 1 is out (DW4_CAM_CHECK).
+    std::uint64_t check_mismatches() const { return check_mismatches_; }
+    std::uint64_t check_frames() const { return check_frames_; }
 
     struct CameraPath {
         std::string name;
@@ -220,9 +231,33 @@ private:
     int box_{}, previous_box_{};
     Mat4 saved_eye_, saved_target_;
     std::optional<FrameCamera> frame_;
+    // SPIKE r51cam: the box state of 802F2BC0 (manager +2C..+D4) per player
+    // slot, with that slot's own live pivot / eye / target matrices in place
+    // of the shared scene nodes (which only the shared camera writes).
+    struct PlayerBox {
+        bool started{};
+        Vec3f centre{-1.0f, -1.0f, -1.0f};
+        bool centre_moved{};
+        float blend{};
+        int box{}, previous_box{};
+        Mat4 saved_eye, saved_target;
+        Mat4 pivot, eye, target;
+        std::optional<NodeTimer> hokan;
+        Vec3f shake_eye{}, shake_target{};
+        // The viewer event at which this slot's box made the box path its
+        // viewer (802F2F70..802F30E8 per slot): later than the last demo
+        // viewer, the slot sees its box camera.
+        std::uint64_t box_event{};
+    };
+    std::uint64_t viewer_events_{}, demo_event_{};
+    std::array<PlayerBox, 4> player_box_{};
+    std::array<std::optional<FrameCamera>, 4> player_frame_{};
+    std::uint64_t check_mismatches_{}, check_frames_{};
+    void update_player_box(Engine& engine, CameraRam& ram, int slot, bool fresh);
     void update_box(Engine& engine, CameraRam& ram);
     void set_viewer(const CameraRam& ram, const CameraPath& path, std::int64_t duration);
     void compute_camera(Engine& engine, FrameCamera& camera);
+    void compute_camera(Engine& engine, FrameCamera& camera, int slot);
     bool named_demo_running(const Engine& engine) const;
 };
 
@@ -778,6 +813,7 @@ private:
     void push(Water& w, const Vec3f& p, float strength);
     void step(Water& w);
     bool visible(Engine& engine, const Water& w) const;
+    static bool visible_from(const FrameCamera& camera, const Water& w); // SPIKE r51cam
     void flatten(Water& w);
     void restart_move(Engine& engine, Water& w);
     void surface_update(Engine& engine, Water& w);
@@ -832,6 +868,12 @@ private:
     Vec3f up_{1, 0, 0};                 // [29] _upVector
     Vec3f direction_{0, -1, 0};         // the light's direction
     std::optional<Vec3f> light_;
+    // SPIKE r51cam: with per-player cameras every member has its own light
+    // (8031C1FC with its player alone: the position + 200 up); the union pass
+    // traverses the casters under each, the picture uses the local one.
+    std::array<std::optional<Vec3f>, 4> player_lights_{};
+    std::uint8_t player_cameras_{};
+    int local_slot_{};
     bool active() const { return shader_ && light_.has_value() && !casters_.empty() && !receivers_.empty(); }
     Mat4 light_view() const; // only while active()
     Mat4 light_projection() const;

@@ -235,7 +235,7 @@ void ModelCtrlManager::update_item_label(Engine& engine, ModelRam& ram) {
     auto* cameras = engine.get<CameraManager>();
     if (!cameras) return;
     FrameCamera camera;
-    cameras->frame_camera(engine, camera);
+    cameras->frame_camera(engine, camera, ram.item_label); // SPIKE r51cam: the owner's camera
     const Mat4 vp = camera.view * camera.projection;
     const Vec3f p{m(3, 0), m(3, 1) + 10.0f, m(3, 2)};
     const float x = p.x * vp(0, 0) + p.y * vp(1, 0) + p.z * vp(2, 0) + vp(3, 0);
