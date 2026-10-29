@@ -4,11 +4,12 @@
 // leaves and logs out. Every step prints one line; the exit code is 0 only when every step passed.
 //
 //   dw4online_client --base http://127.0.0.1:5280 --user NAME --password PW --save savedata.dat --record record.bin
-//                    [--stage stagD101] [--achievement online_join] [--protocol 42] [--data-hash 1] [--pin BASE64]
+//                    [--stage stagD101] [--achievement online_join] [--protocol 42] [--data-hash 1] [--pin BASE64[,BASE64]]
 //
 // --base may carry a path (https://example.org/dw4online): every API path goes below it.
 // --pin: the server's certificate is self-signed (https://88.198.52.221): instead of the Windows root store, the
-// SHA-256 of its SubjectPublicKeyInfo (base64, "DW4Online.Server tls-pin") must match. It is checked in WinHTTP's
+// SHA-256 of its SubjectPublicKeyInfo (base64, "DW4Online.Server tls-pin") must be one of the given pins (the key in
+// use and the spare of deploy/new-selfsigned-cert.ps1, comma-separated). It is checked in WinHTTP's
 // SENDING_REQUEST callback, after the TLS handshake and before any request byte (token, password) leaves the machine;
 // a mismatch closes the request. Only an unknown CA and a name mismatch are ignored then, never an expired certificate.
 //
@@ -22,6 +23,7 @@
 #include <wincrypt.h>
 #include <winhttp.h>
 
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
@@ -163,9 +165,19 @@ std::string spki_pin(PCCERT_CONTEXT cert) {
     return hashed ? base64(digest) : std::string{};
 }
 
+// True when `pin` is one of the comma-separated pins in `list` (the one in use and the spare).
+bool pin_listed(const std::string& list, const std::string& pin) {
+    for (size_t at = 0; at <= list.size();) {
+        const size_t comma = std::min(list.find(',', at), list.size());
+        if (comma > at && list.compare(at, comma - at, pin) == 0 && comma - at == pin.size()) return true;
+        at = comma + 1;
+    }
+    return false;
+}
+
 // One request's pin check, filled in by the callback.
 struct PinCheck {
-    std::string expected;
+    std::string expected; // comma-separated base64 pins
     std::string seen;
     bool checked = false;
     bool mismatch = false;
@@ -183,7 +195,7 @@ void CALLBACK pin_callback(HINTERNET request, DWORD_PTR context, DWORD status, L
         CertFreeCertificateContext(cert);
     }
     check->checked = true;
-    if (check->seen.empty() || check->seen != check->expected) {
+    if (check->seen.empty() || !pin_listed(check->expected, check->seen)) {
         check->mismatch = true;
         WinHttpCloseHandle(request);
     }
@@ -364,7 +376,7 @@ int main(int argc, char** argv) {
     Options o;
     if (!parse_args(argc, argv, o)) {
         std::fprintf(stderr, "usage: dw4online_client --base URL --user NAME --password PW --save FILE --record FILE "
-                             "[--stage NAME] [--achievement CODE] [--protocol N] [--data-hash N] [--pin BASE64]\n");
+                             "[--stage NAME] [--achievement CODE] [--protocol N] [--data-hash N] [--pin BASE64[,BASE64]]\n");
         return 2;
     }
     const auto save = read_file(o.save_path);

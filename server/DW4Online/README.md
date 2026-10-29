@@ -327,6 +327,10 @@ minute per IP, registrations to 3 per hour, on top of the account lockout. Websi
 
 - Game client: WinHTTP client in the game (as `tests/winhttp_client` shows), token storage, the online character in
   place of the card, the relay transport, rooms and stage instances in the netcode (instance host migration included).
+  For the IP phase it talks to `https://88.198.52.221` and pins the two SPKI pins `deploy/new-selfsigned-cert.ps1`
+  prints (in use and spare), checked in WinHTTP's SENDING_REQUEST callback exactly like `dw4online_client --pin`;
+  for the later domain (`https://dekirai.crygod.de/dw4online`) it validates normally and puts every API path below
+  the base URL's path.
 - Achievement goals that need calibration on real runs (speed limits, Minimalist level, stat rates, level-rate warning).
 - Partner display names: `p_angelr` has no built-in English name yet (the website shows the model name); set
   `Web:DigimonNames` or check the built-in list in `src/DW4Online.Web/WebOptions.cs`.

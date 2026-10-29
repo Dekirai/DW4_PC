@@ -278,7 +278,8 @@ public class EndToEndTests(Xunit.Abstractions.ITestOutputHelper log)
             Assert.Contains("PIN FAILURES", output);
             Assert.Equal(before, await AuditRows()); // not even a failed login reached the server
 
-            (exit, output) = await EndToEnd.RunAsync(EndToEnd.ClientPath!, Args("--pin", pin), TimeSpan.FromSeconds(120));
+            // The client pins the key in use and a spare (deploy/new-selfsigned-cert.ps1 prints both); either one passes.
+            (exit, output) = await EndToEnd.RunAsync(EndToEnd.ClientPath!, Args("--pin", wrongPin + "," + pin), TimeSpan.FromSeconds(120));
             log.WriteLine("--- pin ---" + Environment.NewLine + output);
             Assert.True(exit == 0, output);
             Assert.Contains("ALL PASSED", output);
