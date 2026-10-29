@@ -72,7 +72,10 @@ machine keeps to its own range).
 The whole online stack with fake clients (SEAMLESS.md 16) runs from `tools/online_test/run.py` (a private MariaDB,
 the server over HTTPS with a throw-away pinned certificate, the relay, accounts, rooms, hidden clients with input
 scripts, fingerprint and membership-log comparison per instance; `--list` shows the scenarios, `--impair OW,JITTER,LOSS`
-puts every client behind the proxy, `run.py matrix` measures the loss and jitter matrix).
+puts every client behind the proxy, `run.py matrix` measures the loss and jitter matrix). `run.py G1 --game-exe EXE
+--data DATA` runs two hidden real game clients (a `DW4_ONLINE_DEV` build) instead: both log in over the pinned HTTPS
+API, play a new game with the campaign bot from the title, meet in the first field (the second joins by catch-up) and
+must keep equal net fingerprints in the sealed instance (`DW4_ONLINE_TRACE` netfp lines) for `--sealed-ticks` ticks.
 
 The IP phase is tested the same way: `Pinned_self_signed_https_at_an_ip_address_below_a_path_base` runs the service on
 `https://127.0.0.1` with a self-signed IP certificate below `/dw4online`; the client must refuse the certificate without
@@ -305,7 +308,9 @@ and stats must carry `protocol` / `clientVersion` (426 `client_outdated` otherwi
 
 ## Relay protocol (DW4R2, TCP, default port 52041)
 
-The design is SEAMLESS.md section 6; the exact wire layout is its appendix "DW4R2 wire layout". In short:
+The design is SEAMLESS.md section 6; the exact wire layout is its appendix "DW4R2 wire layout", the one layout of the
+relay, the fake clients, the Python client and the game client (`src/game/online/wire.hpp`); golden byte vectors in
+`tests/DW4Online.Tests/WireGoldenTests.cs` and the game's `tests/online_wire_tests.cpp` hold both sides to it. In short:
 
 - **One connection per member and room**, across all its instances. Tickets come from `POST /rooms`, `POST
   /rooms/{code}/join` and `POST /rooms/{code}/ticket`: `base64url("room|account|member|expiry|nonce")` + "." +
@@ -376,8 +381,9 @@ minute per IP, registrations to 3 per hour, on top of the account lockout. Websi
 
 ## Open ends (other lanes)
 
-- Game client (round S1 client lane): WinHTTP client in the game (as `tests/winhttp_client` shows), token storage, the
-  online character in place of the card, the DW4R2 client (SEAMLESS.md 6 and its wire layout appendix).
+- Game client: round S1 built the WinHTTP client with pinning, the DPAPI token, the command-line room login and the
+  DW4R2 client (`src/game/online`, speaking the relay's layout since the round S1 integration); round S2 adds the title /
+  F1 room UI and the online character in place of the card.
 - Round S2: STORY / STORY_ACK and the room story; round S4: the resync path completed, RESUME with missing ticks after
   a crash-free reconnect, UDP for INPUT / SEALED (the S1 loss matrix, SEAMLESS.md 6.4).
   For the IP phase it talks to `https://88.198.52.221` and pins the two SPKI pins `deploy/new-selfsigned-cert.ps1`

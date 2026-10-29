@@ -10,8 +10,14 @@ processes it started (by their handles), never anything by name.
 
     python run.py [SCENARIO ...] [--list] [--mysql-port 3431] [--ports 53100-53199] [--impair OW,JITTER,LOSS] [--keep]
     python run.py matrix [--seconds 40] [--warmup 20]      the loss and jitter matrix (in-process hub, SEAMLESS.md 6.4)
+    python run.py G1 --game-exe EXE --data DATA [--offset 8] [--frames 22000] [--sealed-ticks 3000]
+                                                           two hidden game clients (a DW4_ONLINE_DEV build) in one stage
 
-Without a scenario every one of round S1 runs: S1 S2 S3 S5 S16 S17a S17b S22a S22b. Network traffic stays on loopback.
+Without a scenario every fake-client scenario of round S1 runs: S1 S2 S3 S5 S16 S17a S17b S22a S22b. G1 runs the real game:
+both clients log in through the pinned HTTPS API, the first creates the room, the second joins it OFFSET seconds later; both
+play a new game with the campaign bot from the title (hub stages dissolve, each field is a barrier), meet in the first field
+(the second joins the first's instance by catch-up), seal and must keep equal net fingerprints (DW4_ONLINE_TRACE netfp lines)
+for at least SEALED_TICKS ticks; the relay's NETFP vote must find no mismatch. Network traffic stays on loopback.
 """
 import argparse
 import base64
@@ -417,6 +423,115 @@ def evaluate(sc, out, code, diag):
     return problems, notes
 
 
+def run_game(stack, api, relay_port, pin, diag):
+    """G1: two hidden game clients (DW4_ONLINE_DEV) in one room and one stage, sealed, equal net fingerprints."""
+    a = stack.args
+    if not a.game_exe or not a.data:
+        raise RuntimeError("G1 needs --game-exe (a DW4_ONLINE_DEV build) and --data (the game data)")
+    out = os.path.join(stack.dir, "G1")
+    os.makedirs(out, exist_ok=True)
+    tag = "g" + secrets.token_hex(3)
+    names = ["kim", "lee"]
+    passwords = {}
+    for n in names:
+        passwords[n] = "online test " + n + " " + secrets.token_hex(4)
+        s, body = api.call("POST", "/api/v1/auth/register", {"username": tag + n, "password": passwords[n]})
+        if s != 201:
+            raise RuntimeError("register %s: %s %s" % (n, s, body))
+    with open(os.path.join(out, "campaign.txt"), "w") as f:
+        f.write("0 SEEK 200000 campaign\n")
+    https_port = api.base.rsplit(":", 1)[1]
+    room_name = "G1 " + tag
+
+    def start(name, room_args):
+        card = os.path.join(out, "card_" + name)
+        for sub in ("Card A", "Card B"):
+            os.makedirs(os.path.join(card, sub), exist_ok=True)
+        env = dict(os.environ, DW4_NO_ERROR_BOX="1", DW4_ONLINE_SERVER="127.0.0.1:" + https_port, DW4_ONLINE_PIN=pin,
+                   DW4_ONLINE_PASSWORD=passwords[name], DW4_ONLINE_TRACE="1")
+        argv = [a.game_exe, "--data", a.data, "--smoke-test", str(a.frames), "--card-dir", card, "--input", os.path.join(out, "campaign.txt"),
+                "--online-login", tag + name] + room_args
+        return stack.spawn(argv, os.path.join(out, name + ".log"), env=env)
+
+    t0 = time.time()
+    first = start(names[0], ["--online-create", room_name])
+    code = None
+    while time.time() - t0 < 90 and code is None:
+        if first.poll() is not None:
+            raise RuntimeError("the first client ended before its room existed (see %s)" % os.path.join(out, names[0] + ".log"))
+        s, rooms = api.call("GET", "/api/v1/rooms")
+        for r in (rooms if isinstance(rooms, list) else (rooms or {}).get("rooms", [])):
+            if r.get("name") == room_name:
+                code = r.get("code")
+        time.sleep(0.5)
+    if not code:
+        raise RuntimeError("the first client's room did not appear")
+    created = time.time()
+    while time.time() - created < a.offset:
+        time.sleep(0.1)
+    second = start(names[1], ["--online-join", code])
+    limit = a.frames / 59.94 + 240
+    for p in (first, second):
+        try:
+            p.wait(max(1, limit - (time.time() - t0)))
+        except subprocess.TimeoutExpired:
+            pass
+    return evaluate_game(out, names, code, diag, a.sealed_ticks)
+
+
+def evaluate_game(out, names, code, diag, sealed_ticks):
+    problems, notes = [], []
+    fps, decisions, members, closes, finals = {}, {}, {}, {}, {}
+    for n in names:
+        path = os.path.join(out, n + ".log")
+        lines = open(path, encoding="utf-8", errors="replace").read().splitlines() if os.path.exists(path) else []
+        fps[n], decisions[n], members[n] = {}, [], []
+        for line in lines:
+            if line.startswith("online-trace: netfp "):
+                kv = dict(x.split("=", 1) for x in line[len("online-trace: netfp "):].split())
+                fps[n][(int(kv["inst"]), int(kv["visit"]), int(kv["tick"]))] = (kv["fp"], int(kv["present"], 16), kv["mode"])
+            elif line.startswith("online-trace: decision "):
+                decisions[n].append(line[len("online-trace: "):])
+            elif line.startswith("online-trace: join applied") or line.startswith("online-trace: member") or line.startswith("online-trace: ready"):
+                members[n].append(line[len("online-trace: "):])
+            elif line.startswith("online-trace: close"):
+                closes[n] = line
+            elif line.startswith("online: final mode"):
+                finals[n] = line
+        notes.append("%s: %d netfp lines, %d decisions, last: %s" % (n, len(fps[n]), len(decisions[n]), finals.get(n, "(no final line)")))
+        for m in members[n][:6]:
+            notes.append("   %s %s" % (n, m))
+    common = set(fps[names[0]]) & set(fps[names[1]])
+    mismatched = [k for k in sorted(common) if fps[names[0]][k][0] != fps[names[1]][k][0]]
+    shared = [k for k in sorted(common) if fps[names[0]][k][1] & fps[names[0]][k][1] - 1]  # two or more present
+    by_inst = {}
+    for k in shared:
+        by_inst.setdefault((k[0], k[1]), []).append(k[2])
+    notes.append("%d netfp ticks both reported, %d with two members present, %d differ" % (len(common), len(shared), len(mismatched)))
+    for k in mismatched[:3]:
+        problems.append("net fingerprints differ at instance %d visit %d tick %d: %s / %s" % (k[0], k[1], k[2], fps[names[0]][k][0], fps[names[1]][k][0]))
+    best = max(by_inst.items(), key=lambda kv: max(kv[1]) - min(kv[1]), default=None)
+    if not best:
+        problems.append("the two clients never shared an instance (no netfp tick with both present)")
+    else:
+        span = max(best[1]) - min(best[1])
+        notes.append("shared instance %d visit %d: equal net fingerprints from tick %d to %d (%d ticks, %d comparisons)" %
+                     (best[0][0], best[0][1], min(best[1]), max(best[1]), span, len(best[1])))
+        if span < sealed_ticks:
+            problems.append("only %d sealed ticks compared (< %d)" % (span, sealed_ticks))
+    relay_log = load_jsonl(os.path.join(diag, "room_%s.jsonl" % code))
+    kinds = {}
+    for e in relay_log:
+        kinds[e["ev"]] = kinds.get(e["ev"], 0) + 1
+    notes.append("relay: " + ", ".join("%s %d" % kv for kv in sorted(kinds.items())))
+    for bad in ("desync", "snaphash_mismatch", "split_mismatch", "barrier_mismatch", "barrier_split", "resync", "ready_mismatch"):
+        if kinds.get(bad):
+            problems.append("relay logged %d x %s" % (kinds[bad], bad))
+    for n, line in closes.items():
+        problems.append("%s was closed: %s" % (n, line))
+    return problems, notes
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("scenarios", nargs="*")
@@ -428,6 +543,11 @@ def main():
     ap.add_argument("--no-build", action="store_true")
     ap.add_argument("--seconds", default="40")
     ap.add_argument("--warmup", default="20")
+    ap.add_argument("--game-exe", default="", help="G1: a DW4_ONLINE_DEV build of dw4_game.exe")
+    ap.add_argument("--data", default="", help="G1: the game data (disc image or extracted folder, read only)")
+    ap.add_argument("--offset", type=float, default=8.0, help="G1: seconds between the room's creation and the second client")
+    ap.add_argument("--frames", type=int, default=22000, help="G1: frames each client runs (--smoke-test)")
+    ap.add_argument("--sealed-ticks", type=int, default=3000, help="G1: sealed ticks with equal net fingerprints needed")
     a = ap.parse_args()
     if a.list:
         for sc in SCENARIOS:
@@ -442,7 +562,8 @@ def main():
         return subprocess.run(["dotnet", dll("tests/DW4Online.FakeClient", "DW4Online.FakeClient.dll"), "matrix", "--ports", a.ports,
                                "--warmup", a.warmup, "--seconds", a.seconds, "--out", os.path.join(out, "matrix.json"), "--md",
                                os.path.join(out, "matrix.md")], creationflags=BELOW_NORMAL | NO_WINDOW).returncode
-    wanted = [s for s in SCENARIOS if not a.scenarios or s["name"] in a.scenarios]
+    game = "G1" in a.scenarios
+    wanted = [s for s in SCENARIOS if (not a.scenarios and not game) or s["name"] in a.scenarios]
     stack = Stack(a)
     failed = 0
     try:
@@ -460,6 +581,17 @@ def main():
             for p in problems:
                 print("     ! " + p, flush=True)
             failed += bool(problems)
+        if game:
+            t = time.time()
+            problems, notes = run_game(stack, api, relay, pin, diag)
+            print("%s G1    two hidden game clients in one stage, sealed, equal net fingerprints (%.0f s)" % ("PASS" if not problems else "FAIL",
+                                                                                                          time.time() - t), flush=True)
+            for n in notes:
+                print("       " + n, flush=True)
+            for p in problems:
+                print("     ! " + p, flush=True)
+            failed += bool(problems)
+            wanted = wanted + [{"name": "G1"}]
     finally:
         stack.stop()
         if not a.keep and not failed:

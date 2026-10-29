@@ -101,7 +101,7 @@ first task of the round that needs it (17).
 | Snapshot bytes hold the audio position | hashes use a canonical form without presentation fields; a mismatch is a desync vote | 6.8 |
 | Resume tick after a barrier undefined | barrier tick B, transition steps with the pads of B, barrier applied in the load step, tick 0 = first step after the load step | 6.7 |
 | Sealing waits up to 150 ms on p95, the delay rule misses the own return path, loss unmeasured | server-paced sealing at 59.94 Hz with immediate fill; `d_i` from the member's own round trip at p99.9; loss matrix in S1 | 6.4 |
-| int16 sticks make join states 5x larger | online pads quantized to the GameCube's stick steps (7 B per player); state transfers get their own limit | 6.4, 6.6 |
+| int16 sticks make join states 5x larger | online pads quantized to the GameCube's stick steps (6 B per player, round S1); state transfers get their own limit | 6.4, 6.6 |
 | Catch-up numbers optimistic, RESYNC unbounded | clients report their replay rate; joins and resyncs limited by the expected catch-up time; beyond it a member continues alone; S1 measures the final path | 6.6, 6.9 |
 | Console reset (B+X+START) reboots every machine | off online; the local combo opens *Leave room?* | 7.4 |
 | Auto-join surprises at puzzle mats and NINZU timers | auto-join stays (user decision); arrival notices, *Waiting for* hints, question 8 (play alone) | 5 |
@@ -866,71 +866,79 @@ equals. It never runs the game.
 
 ### 6.3 Messages
 
-Client to server (`inst` = instance id, `visit` = its stage load count):
+**Pinned in round S1 (integration).** One layout for the C++ client
+(`src/game/online/wire.hpp`), the C# relay hub and its fake clients
+(`server/DW4Online/src/DW4Online.Relay/Protocol`) and the Python test client
+(`server/DW4Online/tests/e2e/relay_spike_test.py`); the byte layout of every
+field is in the appendix "DW4R2 wire layout". Golden byte vectors check it on
+both sides (`tests/online_wire_tests.cpp`,
+`server/DW4Online/tests/DW4Online.Tests/WireGoldenTests.cs`): a change on one
+side fails both until the other follows. Message types 0x01-0x13 go client to
+server, 0x80-0x8E server to client; a pad is 6 bytes (6.4); `inst` is the
+instance id, `visit` its stage load count, both u32.
 
-| Message | Fields | When |
-| --- | --- | --- |
-| INPUT | inst, visit, tick u32, pad (7 B, 6.4) | sealed instance: every step, `d_i` ticks ahead |
-| LOG | inst, visit, first tick, count, pads | solo-led instance: the pads it applied, batched every 100 ms |
-| HEADING | inst, stage, point | a member confirmed an exit or the gate disc (one to two seconds before its barrier) |
-| BARRIER | inst, visit, barrier tick, stage, point, alive and present masks, session context hash, carries | after the barrier tick |
-| BARRIER_CHOICE | inst, wait or alone | the arriving member's choice at a boss-locked target |
-| SPLIT | inst, visit, tick, leaver mask, in-stage or exit | after the step of a fork (verification and bookkeeping) |
-| SNAPSHOT / SNAPHASH | inst, visit, chunked bytes / canonical hash | after the load step: the leader uploads, the others send the canonical hash (6.8) |
-| READY | inst, visit, tick (a multiple of 60), net fingerprint, carry, replay rate | a joiner that caught up |
-| JOIN_AT | inst, visit, tick | the leader of a solo-led instance answering JOIN_REQ |
-| NETFP | inst, visit, tick, hash | every 60 ticks, every member |
-| STATE | inst, visit, joinable, membership-safe, boss lock, session context hash, reason | on change, debounced to one second (the boss lock and the context at once) |
-| INTENT | inst, visit, kind (go_without, give_up), argument | a member's port choice |
-| STORY | pending story set, counter growth per engine line (8.3) | at every barrier and every 10 s while not empty |
-| PRESENCE | stage, inst, position, yaw, species, level, HP, max HP, MP, max MP | five times per second while in a stage |
-| RESUME | inst, visit, slot, last executed tick | after a reconnect |
-| RATE | replay rate (steps per second) | after the calibration at the room join and after every replay |
-| PONG / BYE | nonce, client time / reason | |
+Client to server:
+
+| Type | Message | Fields | When |
+| --- | --- | --- | --- |
+| 0x01 | INPUT | inst, visit, first tick, 1-32 pads | sealed instance: every step, `d_i` ticks ahead (the first `d` together with SNAPHASH) |
+| 0x02 | LOG | inst, visit, first tick, 1-1200 pads | solo-led instance: the pads it applied, batched every 100 ms, contiguous from tick 0 (hub instances send none) |
+| 0x03 | HEADING | inst, stage, point, session context hash | an exit or the gate disc this copy takes (`Engine::take_heading`), one to two seconds before its barrier |
+| 0x04 | BARRIER | inst, visit, barrier tick, stage, point, alive and present masks, session context hash, own carry | after the barrier tick |
+| 0x05 | BARRIER_CHOICE | inst, wait or alone | the arriving member's choice at a boss-locked target (BARRIER_WAIT flag 1) |
+| 0x06 | SPLIT | inst, visit, fork tick, leaver mask (the side that moves to the child: `SplitResult::child`), kind (exit, in-stage) | after the step of a fork |
+| 0x07 | SNAPSHOT | inst, visit, total, offset, chunk (at most 60 KiB) | after the load step of a NEW: the base group's member in the lowest new slot only |
+| 0x08 | SNAPHASH | inst, visit, canonical hash | after the load step (NEW) or the restore (co-arrival): every member |
+| 0x09 | READY | inst, visit, tick (a multiple of 60), net fingerprint, replay rate, carry | a joiner within ten ticks of the newest tick |
+| 0x0A | JOIN_AT | inst, visit, tick J | the solo leader's answer to JOIN_REQ |
+| 0x0B | NETFP | inst, visit, tick (a multiple of 60), net fingerprint after that tick | every member of a field instance |
+| 0x0C | STATE | inst, visit, tick, flags (joinable, membership-safe, boss lock), session context hash, reason | on change (the boss lock and the context at once, the rest at most once a second) |
+| 0x0D | INTENT | inst, visit, kind (1 go without, 2 give up), argument | a member's port choice (sealed instances; the server stamps it) |
+| 0x0E | STORY | reserved for round S2 | |
+| 0x0F | PRESENCE | stage (empty: hidden), inst, position, yaw, species, level, HP, max HP, MP, max MP | five times per second in a stage (HP 0: defeated) |
+| 0x10 | RESUME | inst, visit, slot, last executed tick | after a reconnect that WELCOME calls resumable |
+| 0x11 | RATE | replay steps per second | after WELCOME (the calibration) and after every replay |
+| 0x12 / 0x13 | PONG / BYE | nonce, client time / reason | |
 
 Server to client:
 
-| Message | Fields | When |
-| --- | --- | --- |
-| SEALED | inst, visit, tick, present mask, pads, events | every tick of a sealed instance at its due time (batched when behind) |
-| LIVE | the leader's LOG batches or the SEALED ticks | to observers (joiners catching up) |
-| JOIN_REQ | inst, visit, slot | to the leader of a solo-led instance: choose J |
-| BARRIER_OK | inst, visit, decision (NEW, JOIN, DISSOLVE, CO_ARRIVE), new inst and visit, slot map, co-arrivals' carries, story revision, bytes and dropped set, rules | answer to BARRIER |
-| BARRIER_WAIT | inst, reason (co-arrival, entry scene, boss lock), names, seconds left | while a barrier is held (loading screen text) |
-| STATE_DATA | inst, visit, slot, snapshot, log, events, fork sides (chunked) | join, co-arrival, resync |
-| RESYNC | inst, visit | the member's fingerprint lost the vote |
-| STORY_ACK | revision, room story bytes, accepted, refused with reason | answer to STORY |
-| PRESENCE | member, the fields above | others in the same stage outside the own instance; a one-per-second roster for the room UI |
-| ROOM | member joined or left, owner present, story frozen, story revision | in-band room changes |
-| PING | nonce, server time, arrival margin, suggested delay | once per second |
-| KICK / CLOSE | reason | |
+| Type | Message | Fields | When |
+| --- | --- | --- | --- |
+| 0x80 | WELCOME | member (the room slot 0-9), inst, visit, slot, mode (hub, solo-led, sealed), stage, last tick, delay, max catch-up seconds, flags (resumable) | the first frame after OK: a fresh member's solo hub instance (the title, stage ""), or the instance it still holds |
+| 0x81 / 0x82 | SEALED / LIVE | inst, visit, first tick, count, tick records | SEALED to members at each tick's due time (batched when behind), LIVE to observers (the leader's LOG or the sealed ticks) |
+| 0x83 | JOIN_REQ | inst, visit, slot, suggested delay | to the leader of a solo-led instance: choose J |
+| 0x84 | BARRIER_OK | old inst and visit, decision (1 NEW, 2 JOIN, 3 DISSOLVE, 4 CO_ARRIVE), new inst and visit, stage, point, own slot, slot map, mode, delay, co-arrivals (slot, member, carry), story revision, story, dropped set, notice, names | answer to BARRIER |
+| 0x85 | BARRIER_WAIT | inst, reason (co-arrival, not joinable, boss lock, snapshot), seconds left, names, flags (choice needed) | while a barrier is held (the loading screen's line) |
+| 0x86 | STATE_DATA | inst, visit, total, offset, chunk of the state blob (purpose, slot, snapshot, forks with their sides, first tick, tick records) | join, co-arrival, resync, resume |
+| 0x87 | PRESENCE | member, the fields above | members in the same stage outside the own instance |
+| 0x88 | RESYNC | inst, visit | the member's fingerprint lost the vote (a STATE_DATA follows) |
+| 0x89 | STORY_ACK | reserved for round S2 | |
+| 0x8A | ROOM | notice (joined, left, owner present, owner away, lagging, lag over, connected, disconnected), member, account, name, flags (owner) | in-band room changes |
+| 0x8B | PING | nonce, server time, the member's arrival margin in ms, suggested delay | once per second |
+| 0x8C | CLOSE | reason (left, kicked, room closed, replaced, protocol, abuse, timeout, stopping), text | before the server closes |
+| 0x8D | ROSTER | every member: stage, inst, level, HP, max HP, flags (connected, lagging, owner) | once per second (the room UI) |
+| 0x8E | REASSIGN | old inst, visit, new inst, from tick, mode, flags (departing) | after a fork: this member's copy is the child |
 
-Events inside SEALED (and inside a solo leader's LOG stream for its own JOIN):
-JOIN (slot, carry, entrance point), LEAVE (slot), INTENT (slot, kind, argument),
-LEAD_FROM (tick: from here the remaining member leads alone), DELAY (slot, d).
+Events inside a tick record: JOIN (slot, entrance point, carry), LEAVE (slot),
+INTENT (slot, kind, argument), LEAD_FROM (tick: the remaining member leads
+alone from it; stamped on the tick before), DELAY (slot, d). A client takes
+LEAD_FROM and DELAY only live and only for itself (never from a replayed
+history or while it observes before its own JOIN) and ignores events for
+slots that are not on its side of a fork.
 
-The lanes may refine field layouts; the integration step writes the final
-layout into an appendix of this document and into
-`server/DW4Online/README.md`.
-
-**The client's layouts (round S1, client lane).** `src/game/online/wire.hpp`
-holds every payload byte for byte (little endian; `str8` = u8 length +
-bytes, `blob` = u32 length + bytes; message types 0x01-0x13 client to server,
-0x41-0x4E server to client) and `dw4_online_wire_tests` round-trips each. The
-client needed four additions to the tables above: JOIN carries the member id
-(`u8 slot | u32 member | i16 point | blob carry`, for notices and names);
-BARRIER_OK carries the member of each new slot (`4 x u32` after the slot map);
-a pad's seventh byte is flags, bit 0 set by the server when it filled the pad
-(lag icons come from it, clients send 0 and never simulate it); and REKEY
-(0x4E: `u32 old inst | u32 old visit | u32 new inst | u32 new visit`) tells
-the side of a fork that does not keep the instance id its new one (the server
-routes a member's INPUT and LOG by the member, so frames sent before the REKEY
-still land). Instance 0 is a member's own unregistered instance: the title at
-the session start, and a solo group that went on after five seconds without a
-BARRIER_OK. Every barrier, also into a hub, gets a BARRIER_OK with the new
-instance id and visit. The settings hash of the hello line is FNV-1a 64 over
-`dw4r2-settings|protocol=<p>|data=<dataHash>|difficulty=<d>|camera=<c>|light=<l>|seed=<s>|enemies=<e>|zones=<z>|drops=<0|1>|fast=<0|1>`
-(randomizer fields 0 when it is off, `src/game/online/room_settings.hpp`).
+What the integration changed against the lanes: the client lane's layout
+(server types 0x41-0x4E, 7-byte pads with a fill flag, the member id in JOIN
+and in BARRIER_OK, REKEY, instance 0 for the title, decisions 0-3, a decimal
+settings hash) gave way to the relay lane's, which the hub, the fake clients
+and the Python client already shared: WELCOME names the title's hub
+instance, REASSIGN replaces REKEY, a side of one member after a fork stays
+sealed until the server's LEAD_FROM, the lag icons come from ROOM / ROSTER,
+a hidden or defeated member's tag comes from PRESENCE's empty stage or HP 0,
+and the settings hash is the relay's canonical text (appendix) sent as 16 hex
+digits. Two client-side facts stay: a solo group whose barrier gets no answer
+for five seconds goes on as NEW under instance 0 (not offered to joiners),
+and the wire's numbering of decisions (1-4) and intents (1-2) maps onto the
+engine's (`Decision` 0-3, `IntentKind` 0-1) in `src/game/online/engine_adapter.cpp`.
 
 ### 6.4 Ticks, sealing, delay
 
@@ -1586,8 +1594,9 @@ on, the owner's place stays reserved, the story follows the owner-away setting,
 ## 7. Engine interface
 
 Everything below exists only with `Engine::online().enabled` (or a nonzero
-camera mask). The rounds build against these names; the integration of round S1
-fixes the final signatures in this section.
+camera mask). The signatures below are the final ones of round S1 (pinned by
+the integration; `include/dw4/engine/online.hpp`, `online_membership.hpp`,
+`engine.hpp`, `managers.hpp`); later rounds extend them.
 
 ### 7.1 Snapshot completeness (also an offline fix)
 
@@ -1631,8 +1640,9 @@ virtual card anyway.
 
 ### 7.2 Online rules
 
-Built in round S1 (membership lane, `include/dw4/engine/online.hpp`,
-`src/engine/online.cpp`); the integration may rename, the meaning is fixed.
+Built in round S1 (membership and cameras-exits lanes, joined by the
+integration into one implementation: `src/engine/online.cpp`,
+`online_cameras.cpp`, `online_exits.cpp`).
 
 ```cpp
 // include/dw4/engine/online.hpp (included by engine.hpp)
@@ -1645,29 +1655,58 @@ struct OnlineRules {
     std::uint8_t present = 0;        // instance members (bit per slot)
     std::uint8_t leaving = 0;        // members with a pending LEAVE
     bool boss_lock = false;          // a boss fight runs (set by boss_mat / boss_intro, cleared by boss_end and barriers)
+    bool operator==(const OnlineRules&) const = default;
 };
 struct PersonalSession { std::optional<std::string> gate_stage_name; std::int32_t gate_stage_no; std::map<std::int32_t, std::uint8_t> flags; };
 enum class ForkKind : std::uint8_t { exit = 0, in_stage = 1, give_up = 2 };
-struct ForkSide { std::uint64_t frame; std::uint8_t leavers; bool take_leavers; };
-struct SplitResult { std::uint64_t frame; std::uint8_t leavers, kept; bool in_stage, local_leaves; };
+struct ForkSide { std::uint64_t frame; std::uint8_t leavers; bool take_leavers; };  // `leavers` names either side (below)
+struct SplitResult { std::uint64_t frame; std::uint8_t leavers, kept; bool in_stage, local_leaves; std::uint8_t child; };
 enum class IntentKind : std::uint8_t { go_without = 0, give_up = 1 };
 enum class Decision : std::uint8_t { new_instance = 0, join = 1, dissolve = 2, co_arrive = 3 };
 enum class SnapshotForm : std::uint8_t { raw = 0, canonical = 1 };
+struct ExitHeading { std::uint64_t frame; std::string stage; int point; std::uint8_t leavers; };   // HEADING's data
+struct ExitPromptView { bool active; int owner = -1, asking = -1; std::uint8_t yes, stays, sees_fade; std::string stage; bool boss_destination; };
+constexpr int exit_prompt_owner(std::uint32_t current, std::uint32_t previous, std::uint32_t living, std::uint8_t present);  // 5.2, -1 none
+constexpr std::uint8_t exit_leavers(std::uint8_t present, std::uint8_t living, std::uint8_t going);  // the side rule of 6.7
 Cheats online_cheats(const Cheats& room);              // no cheats, no rebalancing; randomizer, drops, fast loading kept
 const SessionValueTables& session_value_tables();     // 3.7, equal to data/online/session_values.txt (ctest)
-const std::vector<std::string_view>& online_forbidden_env();    // 6.12; online_forbidden_env_set() names the set ones
-const std::vector<std::string_view>& online_presentation_env(); // the rest of getenv("DW4_..") in src (ctest)
-std::uint64_t net_fingerprint_cameras(const Engine&);  // seam: the cameras lane hashes the PlayerBox state here
+const std::vector<std::string_view>& online_forbidden_env();    // 6.12; the one list (the client's env check delegates to it)
+const std::vector<std::string_view>& online_presentation_env(); // the rest of the program's DW4_* names ('*' = prefix)
+std::vector<std::string> online_forbidden_env_set();
 std::uint64_t online_hash(std::span<const std::uint8_t>); // FNV-1a 64; SNAPHASH = online_hash(snapshot_bytes(canonical))
+std::uint64_t net_fingerprint_cameras(const Engine&);  // CameraManager::player_box_hash()
 
 const OnlineRules& Engine::online() const;
-void Engine::set_online(const OnlineRules&);   // only between steps; on: room cheats, console reset off, NET* Lua globals
-void Engine::set_view_slot(int slot);          // presentation only: whose camera the picture uses (-1 own)
+void Engine::set_online(const OnlineRules&);   // only between steps; on: room cheats, console reset off; then the camera, leash and Lua side
+std::uint8_t Engine::player_cameras() const;   // OnlineRules::player_cameras
+bool Engine::online_shared() const;            // online with two or more present members
+void Engine::set_view_slot(int slot);          // presentation only: the local member's slot (0..3)
+int Engine::view_slot() const;
+int Engine::picture_slot() const;              // the camera render() draws: the view slot, the nearest living member's while defeated
 void Engine::set_fork_sides(std::span<const ForkSide>);  // replays: the side to take at each fork
-void Engine::set_split_identity(int slot);     // live play: the local slot for NETsplit (-1: the side that keeps the instance)
+void Engine::set_split_identity(int slot);     // live play: the local slot for forks (-1: the side that keeps the instance id)
+int Engine::split_identity() const;
 static int Engine::live_engines();             // an engine constructed while an online one lives throws std::logic_error
 static std::uint64_t Engine::mxcsr_repairs();  // simulation entries that found another MXCSR control word
+// managers.hpp, CameraManager (per-slot box cameras, 4.1)
+void CameraManager::frame_camera(Engine&, FrameCamera&, int slot);
+void CameraManager::set_player_cameras(Engine&, std::uint8_t before, std::uint8_t after, std::uint8_t heirs);
+std::uint64_t CameraManager::player_box_hash() const;
+const Vec3f* CameraManager::player_box_centre(int slot) const;
 ```
+
+**One implementation (integration).** `set_online` and every membership
+step (join, remove, fork, barrier: `membership_changed`) end in
+`online_rules_changed(before)`: `apply_online_cameras(before)` hands the
+camera mask over (`set_player_cameras(before.player_cameras,
+after.player_cameras, heirs = before.present)`: members that played with
+the shared camera keep its box state, new ones start with SETBOXCAMERA's
+first run; at a barrier the boxes were cleared with the module reset, so
+every member starts fresh), `apply_leash_rule()` switches `limit_Circle` off
+while `leash_off` (it also runs in every step, after the demo update, for
+the ring a stage load brings back), and the online Lua globals are
+reinstalled when online or the sharing changes (the `funcStageChange` port
+only while `online_shared()`).
 
 `OnlineRules` and the present slots' `PersonalSession` values are part of
 the StageSnapshot (a joiner restores them) and of the net fingerprint, not of
@@ -1704,20 +1743,47 @@ PlayerCarry Engine::carry_player(int slot) const;
 void Engine::online_join_player(int slot, const PlayerCarry&, int entrance_point);  // before a step, when joinable()
 void Engine::online_remove_player(int slot);                                        // before a step, when membership_safe()
 void Engine::online_intent(int slot, IntentKind, int argument);                     // before a step (give_up forks at once)
-bool Engine::online_split(std::uint8_t mask, ForkKind kind);  // inside a step (NETsplit, the port's overrides)
+bool Engine::online_split(std::uint8_t mask, ForkKind kind);  // inside a step (NETsplit, the exit port, the gate disc)
 std::optional<SplitResult> Engine::take_split();   // after a step; the copy's side is already applied
+std::optional<ExitHeading> Engine::take_heading(); // after a step: an exit this copy takes (the client's HEADING)
+const ExitPromptView& Engine::exit_prompt() const; // the exit port's state (texts, the picture filter)
+void Engine::picture_hidden_roots(std::vector<const Node*>&);  // presentation: other members' item lines and exit prompts
 void Engine::set_barrier(const BarrierResult&);    // while parked after the barrier tick; applied in the load step before begin_stage_load
 bool Engine::barrier_set() const;
 void Engine::apply_room_story(const RoomStory&);   // at game_started only (barriers go through set_barrier)
 std::vector<std::uint8_t> Engine::snapshot_bytes(SnapshotForm) const;  // raw or canonical (presentation fields zeroed)
 void Engine::set_replay(bool);                     // catch-up: no port events (the host renders no audio)
-std::uint64_t Engine::net_fingerprint();
+std::uint64_t Engine::net_fingerprint();           // fingerprint + generator + rotations + sound random + rules + personal + PlayerBoxes + context
 void Engine::set_boss_lock(bool);                  // round S3 wires boss_mat / boss_intro / boss_end
 int Engine::leader() const;                        // the lowest present slot that is not leaving
 int Engine::trigger_slot() const;  class Engine::TriggerScope;  // 5.1: mats, hits, the gate disc; demo works and posts keep it
 int Engine::pad_reader_slot(int index, int trigger) const;      // 7.4
 void Engine::online_gate_stage_set();              // SYSsetGateStage ran: the present slots' personal GATESTAGE follows
 ```
+
+**Fork sides and the relay (integration).** `SplitResult::child` is the side
+that leaves the instance id (exit and give up: the leavers; in-stage: the
+others): the relay's SPLIT and its fork lists name that side. A
+`ForkSide::leavers` may name either side; the engine matches it against the
+continuing side or the child side of the fork at that frame and takes the
+named side when `take_leavers`. `ForkSide::frame` is the engine's frame after
+the fork's step: tick t of a visit runs in the step after the load step's
+frame plus t, so the client converts a fork list's tick with `load frame + t
++ 1` (`GameEngineLink::set_fork_sides`). The exit port and the gate disc call
+`online_split(mask, ForkKind::exit)`: `present` narrows at once (the
+departure's records cover only this copy's side) and the other side's
+players go at the end of the step.
+
+**The client's side.** The DW4R2 session drives the engine through
+`dw4::game::online::EngineLink` (`src/game/online/engine_link.hpp`; the game's
+`GameEngineLink` in `engine_adapter.cpp`, the tests' fake engine in
+`tests/online_fake_hub.hpp`): the facts after a step (stage, pending stage
+and point, load serial, snapshot bytes, net fingerprint, membership-safe,
+joinable with the STATE reason, boss lock, context hash, alive and present
+masks, carry, `take_split` as the relay's child side, `take_heading`,
+presence) and the changes between steps (replay steps with the music
+position, restore into a fresh engine, replay mode, `start_online`, split
+identity, fork sides, `set_barrier`, join, remove, intent, view slot).
 
 How they behave (proven by `tests/online_tests.cpp`, ctest `online`):
 
@@ -1771,24 +1837,6 @@ Lua host functions registered only online: `NETsplit(mask [, kind])` (kind
 0 exit, 1 in-stage, 2 give up; returns 1 when this copy goes on with the
 script run), `NETisOnline()`. The `funcStageChange` port and the
 `run_script` wrappers (5.1) call `Engine::online_split` directly.
-
-The cameras-exits lane of round S1 (`feat-r52cam`) builds against these names
-and adds, in `include/dw4/engine/online.hpp` and `engine.hpp`:
-`Engine::player_cameras()`, `online_shared()` (online with two or more present
-members), `view_slot()` / `picture_slot()` (the picture's camera: the view
-slot, or the nearest living member's while defeated), `split_identity()`,
-`take_heading()` (`ExitHeading {frame, stage, point, leavers}` for HEADING),
-`exit_prompt()` (`ExitPromptView`, the texts and the draw filter),
-`picture_hidden_roots`, the pure rules `exit_prompt_owner` and `exit_leavers`,
-`CameraManager::set_player_cameras(engine, before, after, heirs)`,
-`player_box_hash()` (for the net fingerprint) and `player_box_centre(slot)`.
-`set_online` there calls `apply_online_cameras(before)` and
-`apply_leash_rule()`; `online_split` despawns the other side with a minimal
-`online_remove_player` (PLAYER REMOVE, the capsule, joined, present, the
-camera bit) that the membership lane's full despawn replaces. The test
-switches `DW4_CAMERAS`, `DW4_CAM_LOCAL`, `DW4_LEASH_OFF`, `DW4_ONLINE`,
-`DW4_TEST_RULES`, `DW4_TEST_GATEDISC` and `DW4_TEST_GIVEUP` change the
-simulation and belong on `online_forbidden_env` (6.12).
 
 ### 7.4 Pads: redirect, resets
 
@@ -2135,6 +2183,15 @@ the room (up to ten), not the instance. No invites or join secrets for now.
 | S24 | map recorder (dng102b3) read far from the partner (scoped, local freeze) and near (original) | S3 |
 | S25 | Trailmon ride (dng412b3) with one member not aboard: no fork, the rider moves alone | S3 |
 
+- **Real game clients** (round S1 integration): `run.py G1 --game-exe EXE
+  --data DATA` starts two hidden `DW4_ONLINE_DEV` game clients instead of fake
+  ones. Both log in over the pinned HTTPS API (`DW4_ONLINE_SERVER`,
+  `DW4_ONLINE_PIN`, `DW4_ONLINE_PASSWORD`), the first creates the room, the
+  second joins it `--offset` seconds later; both play a new game with the
+  campaign bot from the title (every hub stage a DISSOLVE), meet in the first
+  field (the second joins the first's instance by catch-up) and must keep equal
+  net fingerprints (`DW4_ONLINE_TRACE` netfp lines) for `--sealed-ticks` ticks;
+  the relay's membership log must show no desync, mismatch or resync.
 - **Checks outside the stack**: the extra-renders hook (4.4), the canonical
   snapshot check (6.8), the cross-process join after a long campaign session
   (7.1), the console reset test (7.4).
@@ -2201,6 +2258,42 @@ Done when:
   CPU.
 
 Depends on: this design; main with rounds 49 and 50 joined.
+
+**Integration (round S1, branch `dref-r52int`).** The four lanes are joined
+on main with round 50 (merge order membership, cameras-exits, client, relay)
+and fitted to one engine API (7.2, 7.3) and one wire layout (6.3 and the
+appendix, golden bytes on both sides). Checked on the integrated code:
+
+- Online off: `det.sh` twice 4004f056 / 396cb219, also with `DW4_CAMERAS=1`
+  (the one-camera union) and with the extra-renders hook (`DW4_EXTRA_RENDERS=2`,
+  widen, previous view); the save state suite 17/17 and states through a file
+  (direct start, new game frame 4500) identical after loading; r25c 10/10 with
+  every segment's frame count equal to main's run (1,758,666 frames in all);
+  ctest green, the online suite with the game data included.
+- Server: unit tests (with the golden wire and settings-hash tests),
+  integration and end-to-end tests (the C++ WinHTTP client and the Python
+  DW4R2 client) green against a private MariaDB.
+- Real game clients (`run.py G1`, offset 10 s): both clients reach stag0001
+  (frame 10,870) from the title through four DISSOLVEs; the first gets NEW (its
+  hub instance with the next visit), the second's barrier is held 12.8 s until
+  the first's instance is joinable (1,294 ticks after its load), then JOIN:
+  STATE_DATA with the snapshot and 1,294 ticks, a catch-up at 5,970 steps per
+  second, READY at tick 1,260 with the members' fingerprint, JOIN_REQ /
+  JOIN_AT 1,330, the JOIN event at tick 1,330 on both machines, sealed from
+  there: equal net fingerprints at all 163 compared ticks from 1,380 to 11,100
+  (9,720 sealed ticks); when the first left, LEAVE and LEAD_FROM let the second
+  lead alone. The first two runs found two integration faults that the fake
+  clients could not: BARRIER_OK of a NEW named the reused instance's next visit
+  as the old one (the hub, fixed), and the client's five-second barrier
+  timeout ran out during the relay's join hold (a BARRIER_WAIT now restarts
+  it).
+
+Not covered by the integration (the review and fix phase or later rounds):
+the scenarios S2-S22 with real game clients (the fake clients pass them on
+the hub; co-arrivals need HEADING, which a solo instance's original
+`funcStageChange` does not give), `scripts/online-dev.ps1` and the README note
+"Online co-op (preview)", visual checks of the online presentation (hidden
+runs only).
 
 ### Round S2 (r53): accounts, online character, room story
 
@@ -2464,7 +2557,7 @@ OnlineRules (8 B).
 **Pad log of the test tools** (`DW4_PAD_LOG` / `DW4_PAD_REPLAY`,
 `src/game/game_main.cpp`, test runs only): per step u32 host frame before
 the step, then 4 pads of connected u8, left x / y, right x / y as f32, buttons
-u32 (88 B per step). It is not the relay's pad format (7 B, 6.4).
+u32 (88 B per step). It is not the relay's pad format (6 B, 6.4).
 
 **Evidence of the membership lane** (worktree `DW4_PC-wt/r52mem`,
 `build/`, not committed): `canon/<mode>/<segment>/` (the r25c segments with
@@ -2473,11 +2566,12 @@ u32 (88 B per step). It is not the relay's pad format (7 B, 6.4).
 cross-process joins), `runs/std_*` (the state test through a file on a
 direct start), `online_data.log` (the ctest scenarios' output).
 
-## Appendix: DW4R2 wire layout (relay lane, round S1)
+## Appendix: DW4R2 wire layout (round S1, pinned)
 
-The layout the relay of round S1 speaks (`server/DW4Online/src/DW4Online.Relay/Protocol`, branch `feat-r52relay`);
-the fake clients (`tests/DW4Online.FakeClient`) and the independent Python client (`tests/e2e/relay_spike_test.py`)
-speak it too. The client lane builds against it; the integration pins it. All integers little endian; `str` = u8
+The one layout of round S1, built by the relay lane (`server/DW4Online/src/DW4Online.Relay/Protocol`) and pinned by
+the integration: the game client (`src/game/online/wire.hpp`), the fake clients (`tests/DW4Online.FakeClient`) and the
+independent Python client (`tests/e2e/relay_spike_test.py`) speak it; golden byte vectors in
+`tests/online_wire_tests.cpp` and `server/DW4Online/tests/DW4Online.Tests/WireGoldenTests.cs` hold both sides to it. All integers little endian; `str` = u8
 length + printable ASCII; `blob` = u32 length + bytes; `pad` = 6 B (6.4); masks use bits 0-3 (slots 0-3).
 
 **Room REST.** `POST /rooms` and `POST /rooms/{code}/join` answer with `relayTicket` (one-time, 60 s, role
@@ -2562,6 +2656,10 @@ records. LIVE frames continue with the next tick; they come after the blob on th
   member whose report does not arrive within `Instances:BarrierReportSeconds` (5) is left out of the group and
   arrives alone with its next BARRIER (it is told by its decision).
 - After REASSIGN, frames in flight that name the old id are still taken for the new instance.
+- BARRIER_OK names the instance and visit the member parked in (old inst and visit, also when a NEW reuses the instance
+  with the next visit); a client takes only an answer to its own barrier.
+- A held barrier is an answer: a solo client's five seconds without a BARRIER_OK (then NEW as instance 0) count from
+  the last BARRIER_WAIT; a boss choice waits without a limit.
 - The solo leader answers JOIN_REQ with JOIN_AT(J), samples ahead from then on, repeats its last pad for the solo
   ticks before J, logs them and flushes the LOG up to J-1; from J it executes only SEALED ticks.
 - HEADING carries the session context hash: co-arrivals need equal contexts.
