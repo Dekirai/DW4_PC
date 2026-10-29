@@ -5,7 +5,7 @@
 // packets: the tag is drawn one packet interval behind, between the two
 // packets around that time, so it glides instead of jumping five times a
 // second. A member whose packets stop for two seconds, or that is hidden
-// (loading, a scene, a menu) or defeated, has no tag. Presentation only: it
+// (loading, a scene, a menu: an empty stage) or defeated (hp 0), has no tag. Presentation only: it
 // never touches the scene graph.
 #include "wire.hpp"
 

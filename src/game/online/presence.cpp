@@ -21,7 +21,7 @@ std::vector<RemoteSample> PresenceTracks::sample(double now) const {
         if (track.points.empty()) continue;
         const auto& last = track.points.back();
         if (now - last.at > kStale) continue;
-        if (last.presence.flags & (wire::presence_flag::hidden | wire::presence_flag::defeated)) continue;
+        if (last.presence.stage.empty() || last.presence.hp == 0) continue; // hidden (empty stage) or defeated
         // One interval behind: between the two packets around that time.
         const double at = now - kInterval;
         const Point* a = &track.points.front();

@@ -38,7 +38,6 @@ void write_pad(std::uint8_t* out, const WirePad& pad) noexcept {
     out[3] = std::uint8_t(pad.ly);
     out[4] = std::uint8_t(pad.rx);
     out[5] = std::uint8_t(pad.ry);
-    out[6] = pad.flags;
 }
 
 WirePad read_pad(const std::uint8_t* in) noexcept {
@@ -48,7 +47,6 @@ WirePad read_pad(const std::uint8_t* in) noexcept {
     pad.ly = std::int8_t(in[3]);
     pad.rx = std::int8_t(in[4]);
     pad.ry = std::int8_t(in[5]);
-    pad.flags = in[6];
     return pad;
 }
 

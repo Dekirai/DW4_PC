@@ -40,6 +40,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -56,6 +57,7 @@ struct SessionConfig {
     double presence_interval = 0.2;     // PRESENCE five times per second
     double log_interval = 0.1;          // LOG batches every 100 ms
     std::size_t state_limit = 64u << 20; // largest state transfer accepted
+    bool trace = false;                 // DW4_ONLINE_TRACE: decisions, membership, NETFP lines on stdout (test runs)
 };
 
 enum class Mode : std::uint8_t { connecting, solo, sealed, parked, transition, waiting_state, catching_up, observing, lost, closed };
@@ -140,6 +142,10 @@ private:
     };
     void send(wire::Type type, const std::vector<std::uint8_t>& payload);
     void handle(const wire::Frame& frame, double now);
+    void on_welcome(const wire::Welcome& welcome, double now);
+    // The new instance of a BARRIER_OK: ids, slot, members, mode, delay, the
+    // snapshot's uploader, the notice.
+    void take_decision(const wire::BarrierOk& ok);
     void on_sealed(std::uint32_t inst, std::uint32_t visit, std::uint32_t tick, wire::TickBody body, double now);
     void on_barrier_ok(const wire::BarrierOk& ok, double now);
     void on_state(wire::StateData state, double now);
@@ -155,6 +161,7 @@ private:
     void send_input_ahead(const wire::WirePad& pad);
     void start_sealed(const wire::WirePad& pad);
     void notice(std::string text);
+    void trace(const char* format, ...) const;
     std::string slot_name(int slot) const;
 
     EngineLink& engine_;
@@ -172,12 +179,16 @@ private:
 
     // The instance.
     std::uint32_t inst_ = 0, visit_ = 0;
+    std::optional<std::uint32_t> previous_inst_; // after REASSIGN: frames in flight with the old id
+    wire::Mode mode_of_instance_ = wire::Mode::hub;
+    int uploader_slot_ = 0;                     // the slot that uploads the visit's snapshot
     int slot_ = 0;
     std::uint8_t present_ = 1;
     int delay_ = 2;
     std::uint32_t tick_ = 0;            // the next tick of this visit to execute
     bool hub_ = true;
-    std::array<std::uint32_t, 4> slot_members_{};
+    static constexpr std::uint32_t kNoMember = 0xFFFFFFFFu;
+    std::array<std::uint32_t, 4> slot_members_{kNoMember, kNoMember, kNoMember, kNoMember}; // room member index per slot
     std::map<std::uint32_t, wire::TickBody> ticks_; // sealed / live ticks not executed yet
     std::deque<PendingEvent> events_;
     std::array<PadSample, 4> last_pads_{};
@@ -220,9 +231,11 @@ private:
     bool state_pending_ = false;
     double presence_at_ = -100;
 
-    // Pacing and lag.
+    // Pacing and lag (ROOM / ROSTER lagging flags by room member).
     PaceController pace_;
-    std::array<int, 4> filled_run_{};
+    std::set<std::uint32_t> lagging_members_;
+    std::set<std::uint32_t> known_members_;
+    bool hello_seen_ = false;
     double last_tick_at_ = 0;
     double now_ = 0;
 

@@ -24,9 +24,16 @@ namespace dw4::game::online {
 // Engine::take_split (7.3): a fork decided inside the simulation in the
 // step just run.
 struct SplitInfo {
-    std::uint8_t leavers{};
+    std::uint8_t leavers{}; // the side that leaves the instance id (the relay's leaver mask, the child)
     bool in_stage{};
-    bool local_leaves{}; // this copy continues with the leavers
+    bool local_leaves{};    // this copy is on that side
+};
+
+// Engine::take_heading (5.2): an exit this copy takes, one to two seconds
+// before its barrier (HEADING lets the server hold a co-arrival).
+struct HeadingInfo {
+    std::string stage;
+    int point{};
 };
 
 // What a member shows the others (PRESENCE, name tags).
@@ -63,8 +70,11 @@ public:
     virtual bool boss_lock() const = 0;
     virtual std::uint64_t session_context_hash() const = 0;
     virtual std::uint8_t alive_mask() const = 0;
+    // The instance's present slots as the engine has them (OnlineRules::present).
+    virtual std::uint8_t present_mask() const = 0;
     virtual std::vector<std::uint8_t> carry(int slot) const = 0;
     virtual std::optional<SplitInfo> take_split() = 0;
+    virtual std::optional<HeadingInfo> take_heading() { return std::nullopt; }
     virtual PresenceFacts presence(int slot) const = 0;
 
     // ---- changes between steps

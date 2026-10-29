@@ -1,8 +1,9 @@
-// The DW4R2 client against an in-process fake hub (tests/online_fake_hub.hpp)
-// on a simulated clock with 20 ms one-way latency: solo-led play with LOG,
-// a mid-stage join by snapshot + replay (READY, JOIN_REQ / JOIN_AT, the JOIN
-// event, then sealed ticks with identical net fingerprints), an exit fork,
-// a co-arrival (one entry for both, sealed from tick 0), a reconnect with
+// The DW4R2 client against an in-process fake hub (tests/online_fake_hub.hpp,
+// the relay's layout) on a simulated clock with 20 ms one-way latency:
+// WELCOME, solo-led play with LOG, a mid-stage join by snapshot + replay
+// (READY, JOIN_REQ / JOIN_AT, the JOIN event, then sealed ticks with
+// identical net fingerprints), an exit fork (REASSIGN, LEAD_FROM), a
+// co-arrival (one entry for both, sealed from tick 0), a reconnect with
 // RESUME, the barrier timeout of a solo group, and the 1 -> 2 pads.
 #include "online_fake_hub.hpp"
 
@@ -120,15 +121,16 @@ void solo_join_fork() {
                                                       std::to_string(world.hub.late_pads - late_after_join) + ")");
     const auto notices_a = a.session->take_notices();
     bool joined = false;
-    for (const auto& n : notices_a) joined |= n == "lee joined";
-    check(joined, "A's notice names the joiner");
+    for (const auto& n : notices_a) joined |= n.find("joined") != std::string::npos;
+    check(joined, "A is told about the joiner");
     // B forks away (an exit-type fork): both sides go on alone.
     const std::uint32_t fork_at = b.session->tick() + 60;
     b.input = [fork_at](const fake::Client& c) -> std::uint32_t { return c.session->tick() == fork_at ? fake::kForkButton : 0u; };
-    check(world.run_until(10, [&] { return a.session->mode() == Mode::solo && b.session->mode() == Mode::solo; }), "both solo after the fork");
+    check(world.run_until(10, [&] { return a.session->mode() == Mode::solo && b.session->mode() == Mode::solo; }),
+          "both solo after the fork (LEAD_FROM)");
     world.run(0.2); // the SPLIT frames reach the hub
     check(world.hub.splits == 2, "both members reported the SPLIT (" + std::to_string(world.hub.splits) + ")");
-    check(b.session->inst() != a.session->inst(), "B continues under a new instance id (REKEY)");
+    check(world.hub.reassigns == 1 && b.session->inst() != a.session->inst(), "B continues under a new instance id (REASSIGN)");
     check(a.session->present() == 0b01 && b.session->present() == 0b10, "each side despawned the other");
     world.run(3);
     check(a.session->mode() == Mode::solo && b.session->mode() == Mode::solo, "still solo");
@@ -144,6 +146,7 @@ void presence_tracks() {
     p.stage = "stagml11";
     p.inst = 1;
     p.level = 7;
+    p.hp = p.max_hp = 40;
     for (int i = 0; i <= 5; ++i) {
         p.x = float(i * 10);
         tracks.add(p, "kim", i * 0.2);
@@ -159,12 +162,13 @@ void presence_tracks() {
     tracks.add(p, "kim", 1.3);
     s = tracks.sample(1.4);
     check(s.size() == 1 && s[0].x == 500.0f && s[0].stage == "stag0101", "a stage change does not glide");
-    p.flags = w::presence_flag::hidden;
+    p.stage.clear();
     tracks.add(p, "kim", 1.5);
-    check(tracks.sample(1.6).empty(), "hidden: no tag");
-    p.flags = w::presence_flag::defeated;
+    check(tracks.sample(1.6).empty(), "hidden (an empty stage): no tag");
+    p.stage = "stag0101";
+    p.hp = 0;
     tracks.add(p, "kim", 1.7);
-    check(tracks.sample(1.8).empty(), "defeated: no tag");
+    check(tracks.sample(1.8).empty(), "defeated (hp 0): no tag");
 }
 
 void co_arrival() {
@@ -268,7 +272,7 @@ void pacing_and_lag() {
         world.hub.tick(world.now);
         for (auto& c : world.clients) c->frame(world.now, World::kPass);
     }
-    check(a.session->overlay(world.now).lagging[1], "A sees B lagging (filled pads)");
+    check(a.session->overlay(world.now).lagging[1], "A sees B lagging (ROOM lagging after 30 filled pads)");
     check(b.session->overlay(world.now).slow_uplink, "B sees its own pads filled");
 }
 // The input delay a member needs so that its pads reach the server before

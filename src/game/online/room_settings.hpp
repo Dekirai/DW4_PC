@@ -10,10 +10,12 @@
 //   {"difficulty":0,"cameraMode":0,"lightMode":0,"fastLoading":false,
 //    "randomizer":{"enabled":true,"seed":4242,"enemies":1,"zones":2,"drops":true}}
 //
-// The settings hash of the DW4R2 hello line is FNV-1a 64 (offset basis
-// 0xcbf29ce484222325, prime 0x100000001b3) over the ASCII text
-//   dw4r2-settings|protocol=<p>|data=<dataHash>|difficulty=<d>|camera=<c>|light=<l>|seed=<s>|enemies=<e>|zones=<z>|drops=<0|1>|fast=<0|1>
-// with every number in decimal and the randomizer fields 0 when it is off.
+// The settings hash of the DW4R2 hello line (16 hex digits) is FNV-1a 64
+// (offset basis 0xcbf29ce484222325, prime 0x100000001b3) over the relay's
+// canonical ASCII text (DW4Online.Domain RoomSettings.Canonical)
+//   DW4R2-settings/1;protocol=P;data=D;difficulty=N;camera=N;light=N;rand=SEED,DROPS,ENEMIES,ZONES;fast=N
+// with decimal numbers, DROPS and fast 0 or 1, and rand=0,0,0,0 while the
+// randomizer is not active.
 #include "dw4/engine/engine.hpp"
 
 #include <cstdint>
@@ -29,7 +31,7 @@ struct Value;
 struct RoomSettings {
     int difficulty = 0;   // 0 Normal, 1 Hard, 2 Very Hard
     int camera_mode = 0;  // title option camera_mode (aaaCamera / aaaCameraL)
-    int light_mode = 0;   // title option light_mode
+    int light_mode = 1;   // title option light_mode (1: the original's new game default, as the server's)
     bool fast_loading = false;
     std::uint32_t rand_seed = 0;
     int rand_enemies = 0, rand_zones = 0;

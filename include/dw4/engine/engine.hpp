@@ -994,7 +994,7 @@ private:
     std::vector<ForkSide> fork_sides_;
     int split_identity_ = -1;
     struct PendingFork {
-        std::uint8_t leavers{}, kept{}, other{}; // other: the side this copy despawns
+        std::uint8_t leavers{}, kept{}, other{}, child{}; // other: the side this copy despawns; child: the side that leaves the id
         bool in_stage{}, take_leavers{};
     };
     std::optional<PendingFork> pending_fork_;

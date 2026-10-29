@@ -99,6 +99,7 @@ OnlineRun::OnlineRun(std::unique_ptr<online::HttpWorker> http, OnlineRoom room, 
     config.settings_hash = online::settings_hash(room_.settings, kOnlineProtocol, data_hash);
     config.own_name = room_.account;
     config.rate = rate;
+    config.trace = std::getenv("DW4_ONLINE_TRACE") != nullptr;
     session_ = std::make_unique<online::Session>(link_, config);
 }
 

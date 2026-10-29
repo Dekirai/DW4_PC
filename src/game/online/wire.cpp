@@ -1,5 +1,6 @@
 #include "wire.hpp"
 
+#include <algorithm>
 #include <bit>
 #include <charconv>
 #include <cstring>
@@ -27,20 +28,21 @@ const char* type_name(Type type) noexcept {
     case Type::rate: return "RATE";
     case Type::pong: return "PONG";
     case Type::bye: return "BYE";
+    case Type::welcome: return "WELCOME";
     case Type::sealed: return "SEALED";
     case Type::live: return "LIVE";
     case Type::join_req: return "JOIN_REQ";
     case Type::barrier_ok: return "BARRIER_OK";
     case Type::barrier_wait: return "BARRIER_WAIT";
     case Type::state_data: return "STATE_DATA";
+    case Type::presence_of: return "PRESENCE";
     case Type::resync: return "RESYNC";
     case Type::story_ack: return "STORY_ACK";
-    case Type::presence_of: return "PRESENCE";
     case Type::room: return "ROOM";
     case Type::ping: return "PING";
-    case Type::kick: return "KICK";
     case Type::close: return "CLOSE";
-    case Type::rekey: return "REKEY";
+    case Type::roster: return "ROSTER";
+    case Type::reassign: return "REASSIGN";
     }
     return "?";
 }
@@ -100,10 +102,13 @@ std::uint64_t Reader::u64() {
     return v;
 }
 float Reader::f32() { return std::bit_cast<float>(u32()); }
-std::string Reader::str8() {
+std::string Reader::str8(std::size_t limit) {
     const std::size_t n = u8();
+    if (n > limit) throw WireError("string too long");
     need(n);
     std::string s(reinterpret_cast<const char*>(in.data() + at), n);
+    for (const char c : s)
+        if (c < 0x20 || c > 0x7E) throw WireError("string is not printable ASCII");
     at += n;
     return s;
 }
@@ -113,6 +118,11 @@ std::vector<std::uint8_t> Reader::blob(std::size_t limit) {
     need(n);
     std::vector<std::uint8_t> v(in.begin() + std::ptrdiff_t(at), in.begin() + std::ptrdiff_t(at + n));
     at += n;
+    return v;
+}
+std::vector<std::uint8_t> Reader::rest() {
+    std::vector<std::uint8_t> v(in.begin() + std::ptrdiff_t(at), in.end());
+    at = in.size();
     return v;
 }
 WirePad Reader::pad() {
@@ -127,8 +137,10 @@ void Reader::end() const {
 
 // ---- handshake
 std::string hello_line(std::string_view ticket, std::uint32_t protocol, std::uint64_t data_hash, std::uint64_t settings_hash) {
-    return "DW4R2 " + std::string(ticket) + " " + std::to_string(protocol) + " " + std::to_string(data_hash) + " " +
-           std::to_string(settings_hash) + "\n";
+    char hex[17];
+    for (int i = 0; i < 16; ++i) hex[i] = "0123456789abcdef"[(settings_hash >> (60 - 4 * i)) & 0xF];
+    hex[16] = 0;
+    return "DW4R2 " + std::string(ticket) + " " + std::to_string(protocol) + " " + std::to_string(data_hash) + " " + hex + "\n";
 }
 
 namespace {
@@ -143,8 +155,8 @@ std::vector<std::string_view> words(std::string_view line) {
     }
     return out;
 }
-template <class T> bool number(std::string_view text, T& value) {
-    const auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), value);
+template <class T> bool number(std::string_view text, T& value, int base = 10) {
+    const auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), value, base);
     return error == std::errc{} && end == text.data() + text.size();
 }
 } // namespace
@@ -170,7 +182,7 @@ std::optional<Hello> parse_hello(std::string_view line) {
     Hello hello;
     if (w.size() != 5 || w[0] != "DW4R2") return std::nullopt;
     hello.ticket = std::string(w[1]);
-    if (!number(w[2], hello.protocol) || !number(w[3], hello.data_hash) || !number(w[4], hello.settings_hash)) return std::nullopt;
+    if (!number(w[2], hello.protocol) || !number(w[3], hello.data_hash) || !number(w[4], hello.settings_hash, 16)) return std::nullopt;
     return hello;
 }
 
@@ -207,192 +219,414 @@ std::optional<Frame> FrameReader::next() {
     return frame;
 }
 
-// ---- ticks
+// ---- checks
+namespace {
+void check_mask(std::uint8_t mask) {
+    if (mask & 0xF0) throw WireError("slot mask above slot 3");
+}
+void check_stage(const std::string& stage, bool allow_empty) {
+    if (stage.empty() ? !allow_empty : stage.size() > kMaxStage) throw WireError("bad stage name");
+    for (const char c : stage)
+        if (!((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_')) throw WireError("bad stage name");
+}
+std::string stage_of(Reader& r, bool allow_empty) {
+    auto s = r.str8(kMaxStage);
+    check_stage(s, allow_empty);
+    return s;
+}
+void put_stage(Writer& w, const std::string& stage, bool allow_empty) {
+    check_stage(stage, allow_empty);
+    w.str8(stage);
+}
+void check_pad(const WirePad& p) {
+    auto ok = [](std::int8_t v) { return v >= -kStickSteps && v <= kStickSteps; };
+    if (!ok(p.lx) || !ok(p.ly) || !ok(p.rx) || !ok(p.ry)) throw WireError("stick value outside the GameCube range");
+}
+std::vector<WirePad> read_pads(Reader& r, std::size_t count, std::size_t max) {
+    if (count < 1 || count > max) throw WireError("pad count out of range");
+    std::vector<WirePad> pads(count);
+    for (auto& p : pads) {
+        p = r.pad();
+        check_pad(p);
+    }
+    return pads;
+}
+} // namespace
+
+// ---- tick records
 void write_tick(Writer& w, const TickBody& tick) {
+    check_mask(tick.present);
+    if (tick.events.size() > 255) throw WireError("too many events in a tick");
     w.u8(tick.present);
+    w.u8(std::uint8_t(tick.events.size()));
     for (int slot = 0; slot < 4; ++slot)
         if (tick.present & (1u << slot)) w.pad(tick.pads[std::size_t(slot)]);
-    if (tick.events.size() > 255) throw WireError("too many events in a tick");
-    w.u8(std::uint8_t(tick.events.size()));
     for (const auto& e : tick.events) {
-        w.u8(std::uint8_t(e.kind));
+        Writer p;
         switch (e.kind) {
         case EventKind::join:
-            w.u8(e.slot);
-            w.u32(e.member);
-            w.i16(e.point);
-            w.blob(e.carry);
+            p.u8(e.slot);
+            p.u8(e.point);
+            p.raw(e.carry);
             break;
-        case EventKind::leave: w.u8(e.slot); break;
+        case EventKind::leave: p.u8(e.slot); break;
         case EventKind::intent:
-            w.u8(e.slot);
-            w.u8(e.intent_kind);
-            w.i32(e.argument);
+            p.u8(e.slot);
+            p.u8(e.intent_kind);
+            p.i32(e.argument);
             break;
-        case EventKind::lead_from: w.u32(e.tick); break;
+        case EventKind::lead_from: p.u32(e.tick); break;
         case EventKind::delay:
-            w.u8(e.slot);
-            w.u8(e.delay);
+            p.u8(e.slot);
+            p.u8(e.delay);
             break;
         default: throw WireError("unknown event kind");
         }
+        if (p.out.size() > 0xFFFF) throw WireError("event too long");
+        w.u8(std::uint8_t(e.kind));
+        w.u16(std::uint16_t(p.out.size()));
+        w.raw(p.out);
     }
 }
 
 TickBody read_tick(Reader& r) {
     TickBody tick;
     tick.present = r.u8();
-    if (tick.present & 0xF0) throw WireError("present mask above slot 3");
+    check_mask(tick.present);
+    const int events = r.u8();
     for (int slot = 0; slot < 4; ++slot)
         if (tick.present & (1u << slot)) tick.pads[std::size_t(slot)] = r.pad();
-    const int events = r.u8();
     for (int i = 0; i < events; ++i) {
+        const std::uint8_t type = r.u8();
+        const std::size_t length = r.u16();
+        r.need(length);
+        Reader p{r.in.subspan(r.at, length)};
+        r.at += length;
         Event e;
-        e.kind = EventKind(r.u8());
+        e.kind = EventKind(type);
         switch (e.kind) {
         case EventKind::join:
-            e.slot = r.u8();
-            e.member = r.u32();
-            e.point = r.i16();
-            e.carry = r.blob(kMaxFrame);
+            e.slot = p.u8();
+            e.point = p.u8();
+            e.carry = p.rest();
             break;
-        case EventKind::leave: e.slot = r.u8(); break;
+        case EventKind::leave: e.slot = p.u8(); break;
         case EventKind::intent:
-            e.slot = r.u8();
-            e.intent_kind = r.u8();
-            e.argument = r.i32();
+            e.slot = p.u8();
+            e.intent_kind = p.u8();
+            e.argument = p.i32();
             break;
-        case EventKind::lead_from: e.tick = r.u32(); break;
+        case EventKind::lead_from: e.tick = p.u32(); break;
         case EventKind::delay:
-            e.slot = r.u8();
-            e.delay = r.u8();
+            e.slot = p.u8();
+            e.delay = p.u8();
             break;
-        default: throw WireError("unknown event kind");
+        default: continue; // an event type of a newer server: skipped
         }
-        if (e.kind != EventKind::lead_from && e.slot > 3) throw WireError("event slot above 3");
+        p.end();
+        if (e.slot > 3) throw WireError("event slot above 3");
         tick.events.push_back(std::move(e));
     }
     return tick;
 }
 
-// ---- encoders
-namespace {
-void iv(Writer& w, std::uint32_t inst, std::uint32_t visit) {
-    w.u32(inst);
-    w.u32(visit);
+std::uint8_t BarrierOk::present() const {
+    if (decision == Decision::dissolve) return 1;
+    std::uint8_t mask = 0;
+    for (const auto to : slot_map)
+        if (to >= 0 && to < 4) mask |= std::uint8_t(1u << to);
+    for (const auto& c : co_arrivals)
+        if (c.slot < 4) mask |= std::uint8_t(1u << c.slot);
+    if (decision == Decision::join || decision == Decision::co_arrive) mask |= std::uint8_t(1u << (own_slot & 3));
+    return mask;
 }
-Reader reader(std::span<const std::uint8_t> p) { return Reader{p}; }
-} // namespace
 
+// ---- client -> server
 std::vector<std::uint8_t> encode(const Input& m) {
+    if (m.pads.empty() || m.pads.size() > kMaxInputPads) throw WireError("pad count out of range");
     Writer w;
-    iv(w, m.inst, m.visit);
-    w.u32(m.tick);
-    w.pad(m.pad);
-    return w.out;
+    w.u32(m.inst);
+    w.u32(m.visit);
+    w.u32(m.first);
+    w.u8(std::uint8_t(m.pads.size()));
+    for (const auto& p : m.pads) w.pad(p);
+    return std::move(w.out);
 }
+Input decode_input(std::span<const std::uint8_t> b) {
+    Reader r{b};
+    Input m;
+    m.inst = r.u32();
+    m.visit = r.u32();
+    m.first = r.u32();
+    m.pads = read_pads(r, r.u8(), kMaxInputPads);
+    r.end();
+    return m;
+}
+
 std::vector<std::uint8_t> encode(const Log& m) {
-    if (m.pads.size() > 0xFFFF) throw WireError("log batch too long");
+    if (m.pads.empty() || m.pads.size() > kMaxLogPads) throw WireError("pad count out of range");
     Writer w;
-    iv(w, m.inst, m.visit);
+    w.u32(m.inst);
+    w.u32(m.visit);
     w.u32(m.first);
     w.u16(std::uint16_t(m.pads.size()));
     for (const auto& p : m.pads) w.pad(p);
-    return w.out;
+    return std::move(w.out);
 }
+Log decode_log(std::span<const std::uint8_t> b) {
+    Reader r{b};
+    Log m;
+    m.inst = r.u32();
+    m.visit = r.u32();
+    m.first = r.u32();
+    m.pads = read_pads(r, r.u16(), kMaxLogPads);
+    r.end();
+    return m;
+}
+
 std::vector<std::uint8_t> encode(const Heading& m) {
     Writer w;
     w.u32(m.inst);
-    w.str8(m.stage);
-    w.i16(m.point);
-    return w.out;
+    put_stage(w, m.stage, false);
+    w.u8(m.point);
+    w.u64(m.context);
+    return std::move(w.out);
 }
+Heading decode_heading(std::span<const std::uint8_t> b) {
+    Reader r{b};
+    Heading m;
+    m.inst = r.u32();
+    m.stage = stage_of(r, false);
+    m.point = r.u8();
+    m.context = r.u64();
+    r.end();
+    return m;
+}
+
 std::vector<std::uint8_t> encode(const Barrier& m) {
+    if (m.carry.size() > kMaxCarry) throw WireError("carry above 64 KiB");
+    check_mask(m.alive);
+    check_mask(m.present);
     Writer w;
-    iv(w, m.inst, m.visit);
+    w.u32(m.inst);
+    w.u32(m.visit);
     w.u32(m.tick);
-    w.str8(m.stage);
-    w.i16(m.point);
+    put_stage(w, m.stage, false);
+    w.u8(m.point);
     w.u8(m.alive);
     w.u8(m.present);
     w.u64(m.context);
-    w.u8(std::uint8_t(m.carries.size()));
-    for (const auto& c : m.carries) {
-        w.u8(c.slot);
-        w.blob(c.bytes);
-    }
-    return w.out;
+    w.blob(m.carry);
+    return std::move(w.out);
 }
+Barrier decode_barrier(std::span<const std::uint8_t> b) {
+    Reader r{b};
+    Barrier m;
+    m.inst = r.u32();
+    m.visit = r.u32();
+    m.tick = r.u32();
+    m.stage = stage_of(r, false);
+    m.point = r.u8();
+    m.alive = r.u8();
+    m.present = r.u8();
+    check_mask(m.alive);
+    check_mask(m.present);
+    m.context = r.u64();
+    m.carry = r.blob(kMaxCarry);
+    r.end();
+    return m;
+}
+
 std::vector<std::uint8_t> encode(const BarrierChoice& m) {
     Writer w;
     w.u32(m.inst);
     w.u8(std::uint8_t(m.choice));
-    return w.out;
+    return std::move(w.out);
 }
+BarrierChoice decode_barrier_choice(std::span<const std::uint8_t> b) {
+    Reader r{b};
+    BarrierChoice m;
+    m.inst = r.u32();
+    const auto c = r.u8();
+    if (c > 1) throw WireError("unknown barrier choice");
+    m.choice = Choice(c);
+    r.end();
+    return m;
+}
+
 std::vector<std::uint8_t> encode(const Split& m) {
+    check_mask(m.leavers);
     Writer w;
-    iv(w, m.inst, m.visit);
+    w.u32(m.inst);
+    w.u32(m.visit);
     w.u32(m.tick);
     w.u8(m.leavers);
     w.u8(std::uint8_t(m.kind));
-    return w.out;
+    return std::move(w.out);
 }
-std::vector<std::uint8_t> encode(const Chunk& m, bool with_slot) {
+Split decode_split(std::span<const std::uint8_t> b) {
+    Reader r{b};
+    Split m;
+    m.inst = r.u32();
+    m.visit = r.u32();
+    m.tick = r.u32();
+    m.leavers = r.u8();
+    check_mask(m.leavers);
+    const auto kind = r.u8();
+    if (kind > 1) throw WireError("unknown split kind");
+    if (m.leavers == 0) throw WireError("empty leaver mask");
+    m.kind = SplitKind(kind);
+    r.end();
+    return m;
+}
+
+std::vector<std::uint8_t> encode(const Chunk& m) {
     Writer w;
-    iv(w, m.inst, m.visit);
-    if (with_slot) w.u8(m.slot);
-    w.u32(m.offset);
+    w.u32(m.inst);
+    w.u32(m.visit);
     w.u32(m.total);
-    w.blob(m.bytes);
-    return w.out;
+    w.u32(m.offset);
+    w.raw(m.bytes);
+    return std::move(w.out);
 }
+Chunk decode_chunk(std::span<const std::uint8_t> b) {
+    Reader r{b};
+    Chunk m;
+    m.inst = r.u32();
+    m.visit = r.u32();
+    m.total = r.u32();
+    m.offset = r.u32();
+    m.bytes = r.rest();
+    if (std::uint64_t(m.offset) + m.bytes.size() > m.total) throw WireError("chunk beyond its total");
+    return m;
+}
+
 std::vector<std::uint8_t> encode(const SnapHash& m) {
     Writer w;
-    iv(w, m.inst, m.visit);
+    w.u32(m.inst);
+    w.u32(m.visit);
     w.u64(m.hash);
-    return w.out;
+    return std::move(w.out);
 }
+SnapHash decode_snaphash(std::span<const std::uint8_t> b) {
+    Reader r{b};
+    SnapHash m;
+    m.inst = r.u32();
+    m.visit = r.u32();
+    m.hash = r.u64();
+    r.end();
+    return m;
+}
+
 std::vector<std::uint8_t> encode(const Ready& m) {
+    if (m.carry.size() > kMaxCarry) throw WireError("carry above 64 KiB");
     Writer w;
-    iv(w, m.inst, m.visit);
+    w.u32(m.inst);
+    w.u32(m.visit);
     w.u32(m.tick);
     w.u64(m.fingerprint);
     w.u32(m.rate);
     w.blob(m.carry);
-    return w.out;
+    return std::move(w.out);
 }
+Ready decode_ready(std::span<const std::uint8_t> b) {
+    Reader r{b};
+    Ready m;
+    m.inst = r.u32();
+    m.visit = r.u32();
+    m.tick = r.u32();
+    m.fingerprint = r.u64();
+    m.rate = r.u32();
+    m.carry = r.blob(kMaxCarry);
+    r.end();
+    return m;
+}
+
 std::vector<std::uint8_t> encode(const JoinAt& m) {
     Writer w;
-    iv(w, m.inst, m.visit);
+    w.u32(m.inst);
+    w.u32(m.visit);
     w.u32(m.tick);
-    return w.out;
+    return std::move(w.out);
 }
+JoinAt decode_join_at(std::span<const std::uint8_t> b) {
+    Reader r{b};
+    JoinAt m;
+    m.inst = r.u32();
+    m.visit = r.u32();
+    m.tick = r.u32();
+    r.end();
+    return m;
+}
+
 std::vector<std::uint8_t> encode(const NetFp& m) {
     Writer w;
-    iv(w, m.inst, m.visit);
+    w.u32(m.inst);
+    w.u32(m.visit);
     w.u32(m.tick);
     w.u64(m.hash);
-    return w.out;
+    return std::move(w.out);
 }
+NetFp decode_netfp(std::span<const std::uint8_t> b) {
+    Reader r{b};
+    NetFp m;
+    m.inst = r.u32();
+    m.visit = r.u32();
+    m.tick = r.u32();
+    m.hash = r.u64();
+    r.end();
+    return m;
+}
+
 std::vector<std::uint8_t> encode(const State& m) {
     Writer w;
-    iv(w, m.inst, m.visit);
+    w.u32(m.inst);
+    w.u32(m.visit);
+    w.u32(m.tick);
     w.u8(m.flags);
     w.u64(m.context);
     w.u8(std::uint8_t(m.reason));
-    return w.out;
+    return std::move(w.out);
 }
+State decode_state(std::span<const std::uint8_t> b) {
+    Reader r{b};
+    State m;
+    m.inst = r.u32();
+    m.visit = r.u32();
+    m.tick = r.u32();
+    m.flags = r.u8();
+    if (m.flags > 7) throw WireError("unknown state flags");
+    m.context = r.u64();
+    m.reason = NotJoinable(r.u8());
+    r.end();
+    return m;
+}
+
 std::vector<std::uint8_t> encode(const Intent& m) {
     Writer w;
-    iv(w, m.inst, m.visit);
+    w.u32(m.inst);
+    w.u32(m.visit);
     w.u8(std::uint8_t(m.kind));
     w.i32(m.argument);
-    return w.out;
+    return std::move(w.out);
 }
+Intent decode_intent(std::span<const std::uint8_t> b) {
+    Reader r{b};
+    Intent m;
+    m.inst = r.u32();
+    m.visit = r.u32();
+    const auto kind = r.u8();
+    if (kind != 1 && kind != 2) throw WireError("unknown intent");
+    m.kind = IntentKind(kind);
+    m.argument = r.i32();
+    r.end();
+    return m;
+}
+
 std::vector<std::uint8_t> encode(const Presence& m, bool with_member) {
     Writer w;
-    if (with_member) w.u32(m.member);
-    w.str8(m.stage);
+    if (with_member) w.u8(m.member);
+    put_stage(w, m.stage, true);
     w.u32(m.inst);
     w.f32(m.x);
     w.f32(m.y);
@@ -404,267 +638,13 @@ std::vector<std::uint8_t> encode(const Presence& m, bool with_member) {
     w.u16(m.max_hp);
     w.u16(m.mp);
     w.u16(m.max_mp);
-    w.u8(m.flags);
-    return w.out;
+    return std::move(w.out);
 }
-std::vector<std::uint8_t> encode(const Resume& m) {
-    Writer w;
-    iv(w, m.inst, m.visit);
-    w.u8(m.slot);
-    w.u32(m.last_tick);
-    return w.out;
-}
-std::vector<std::uint8_t> encode(std::uint32_t rate) {
-    Writer w;
-    w.u32(rate);
-    return w.out;
-}
-std::vector<std::uint8_t> encode(const Pong& m) {
-    Writer w;
-    w.u32(m.nonce);
-    w.u64(m.client_time_ms);
-    return w.out;
-}
-std::vector<std::uint8_t> encode(const Sealed& m) {
-    Writer w;
-    iv(w, m.inst, m.visit);
-    w.u32(m.tick);
-    write_tick(w, m.body);
-    return w.out;
-}
-std::vector<std::uint8_t> encode(const Live& m) {
-    if (m.ticks.size() > 0xFFFF) throw WireError("live batch too long");
-    Writer w;
-    iv(w, m.inst, m.visit);
-    w.u32(m.first);
-    w.u16(std::uint16_t(m.ticks.size()));
-    for (const auto& t : m.ticks) write_tick(w, t);
-    return w.out;
-}
-std::vector<std::uint8_t> encode(const JoinReq& m) {
-    Writer w;
-    iv(w, m.inst, m.visit);
-    w.u8(m.slot);
-    return w.out;
-}
-std::vector<std::uint8_t> encode(const BarrierOk& m) {
-    Writer w;
-    iv(w, m.inst, m.visit);
-    w.u8(std::uint8_t(m.decision));
-    w.u32(m.new_inst);
-    w.u32(m.new_visit);
-    w.u8(m.own_slot);
-    for (const auto s : m.slot_map) w.i8(s);
-    for (const auto member : m.slot_members) w.u32(member);
-    w.u8(std::uint8_t(m.co_arrivals.size()));
-    for (const auto& c : m.co_arrivals) {
-        w.u8(c.slot);
-        w.blob(c.bytes);
-    }
-    w.u32(m.story_revision);
-    w.blob(m.story);
-    w.blob(m.dropped);
-    w.u8(m.rule_flags);
-    w.u8(m.present);
-    return w.out;
-}
-std::vector<std::uint8_t> encode(const BarrierWait& m) {
-    Writer w;
-    w.u32(m.inst);
-    w.u8(std::uint8_t(m.reason));
-    w.u16(m.seconds_left);
-    w.u8(std::uint8_t(m.names.size()));
-    for (const auto& n : m.names) w.str8(n);
-    return w.out;
-}
-std::vector<std::uint8_t> encode_state_body(const StateData& m) {
-    Writer w;
-    w.blob(m.snapshot);
-    w.u32(m.first);
-    w.u32(std::uint32_t(m.ticks.size()));
-    for (const auto& t : m.ticks) write_tick(w, t);
-    w.u8(std::uint8_t(m.forks.size()));
-    for (const auto& f : m.forks) {
-        w.u32(f.tick);
-        w.u8(f.leavers);
-        w.u8(std::uint8_t(f.kind));
-        w.u8(f.side);
-    }
-    return w.out;
-}
-std::vector<std::uint8_t> encode(const Room& m) {
-    Writer w;
-    w.u8(std::uint8_t(m.kind));
-    w.u32(m.member);
-    w.str8(m.name);
-    w.u32(m.value);
-    return w.out;
-}
-std::vector<std::uint8_t> encode(const Ping& m) {
-    Writer w;
-    w.u32(m.nonce);
-    w.u64(m.server_time_ms);
-    w.i16(m.margin);
-    w.u8(m.delay);
-    return w.out;
-}
-std::vector<std::uint8_t> encode(const Reason& m) {
-    Writer w;
-    w.str8(m.reason);
-    return w.out;
-}
-std::vector<std::uint8_t> encode(const InstVisit& m) {
-    Writer w;
-    iv(w, m.inst, m.visit);
-    return w.out;
-}
-std::vector<std::uint8_t> encode(const Rekey& m) {
-    Writer w;
-    iv(w, m.inst, m.visit);
-    iv(w, m.new_inst, m.new_visit);
-    return w.out;
-}
-
-// ---- decoders
-Input decode_input(std::span<const std::uint8_t> p) {
-    auto r = reader(p);
-    Input m{r.u32(), r.u32(), r.u32(), {}};
-    m.pad = r.pad();
-    r.end();
-    return m;
-}
-Log decode_log(std::span<const std::uint8_t> p) {
-    auto r = reader(p);
-    Log m;
-    m.inst = r.u32();
-    m.visit = r.u32();
-    m.first = r.u32();
-    const int n = r.u16();
-    for (int i = 0; i < n; ++i) m.pads.push_back(r.pad());
-    r.end();
-    return m;
-}
-Heading decode_heading(std::span<const std::uint8_t> p) {
-    auto r = reader(p);
-    Heading m;
-    m.inst = r.u32();
-    m.stage = r.str8();
-    m.point = r.i16();
-    r.end();
-    return m;
-}
-Barrier decode_barrier(std::span<const std::uint8_t> p) {
-    auto r = reader(p);
-    Barrier m;
-    m.inst = r.u32();
-    m.visit = r.u32();
-    m.tick = r.u32();
-    m.stage = r.str8();
-    m.point = r.i16();
-    m.alive = r.u8();
-    m.present = r.u8();
-    m.context = r.u64();
-    const int n = r.u8();
-    for (int i = 0; i < n; ++i) {
-        Carry c;
-        c.slot = r.u8();
-        c.bytes = r.blob(kMaxFrame);
-        m.carries.push_back(std::move(c));
-    }
-    r.end();
-    return m;
-}
-BarrierChoice decode_barrier_choice(std::span<const std::uint8_t> p) {
-    auto r = reader(p);
-    BarrierChoice m;
-    m.inst = r.u32();
-    m.choice = Choice(r.u8());
-    r.end();
-    return m;
-}
-Split decode_split(std::span<const std::uint8_t> p) {
-    auto r = reader(p);
-    Split m;
-    m.inst = r.u32();
-    m.visit = r.u32();
-    m.tick = r.u32();
-    m.leavers = r.u8();
-    m.kind = SplitKind(r.u8());
-    r.end();
-    return m;
-}
-Chunk decode_chunk(std::span<const std::uint8_t> p, bool with_slot) {
-    auto r = reader(p);
-    Chunk m;
-    m.inst = r.u32();
-    m.visit = r.u32();
-    if (with_slot) m.slot = r.u8();
-    m.offset = r.u32();
-    m.total = r.u32();
-    m.bytes = r.blob(kMaxFrame);
-    r.end();
-    return m;
-}
-SnapHash decode_snaphash(std::span<const std::uint8_t> p) {
-    auto r = reader(p);
-    SnapHash m{r.u32(), r.u32(), 0};
-    m.hash = r.u64();
-    r.end();
-    return m;
-}
-Ready decode_ready(std::span<const std::uint8_t> p) {
-    auto r = reader(p);
-    Ready m;
-    m.inst = r.u32();
-    m.visit = r.u32();
-    m.tick = r.u32();
-    m.fingerprint = r.u64();
-    m.rate = r.u32();
-    m.carry = r.blob(kMaxFrame);
-    r.end();
-    return m;
-}
-JoinAt decode_join_at(std::span<const std::uint8_t> p) {
-    auto r = reader(p);
-    JoinAt m{r.u32(), r.u32(), 0};
-    m.tick = r.u32();
-    r.end();
-    return m;
-}
-NetFp decode_netfp(std::span<const std::uint8_t> p) {
-    auto r = reader(p);
-    NetFp m{r.u32(), r.u32(), 0, 0};
-    m.tick = r.u32();
-    m.hash = r.u64();
-    r.end();
-    return m;
-}
-State decode_state(std::span<const std::uint8_t> p) {
-    auto r = reader(p);
-    State m;
-    m.inst = r.u32();
-    m.visit = r.u32();
-    m.flags = r.u8();
-    m.context = r.u64();
-    m.reason = NotJoinable(r.u8());
-    r.end();
-    return m;
-}
-Intent decode_intent(std::span<const std::uint8_t> p) {
-    auto r = reader(p);
-    Intent m;
-    m.inst = r.u32();
-    m.visit = r.u32();
-    m.kind = IntentKind(r.u8());
-    m.argument = r.i32();
-    r.end();
-    return m;
-}
-Presence decode_presence(std::span<const std::uint8_t> p, bool with_member) {
-    auto r = reader(p);
+Presence decode_presence(std::span<const std::uint8_t> b, bool with_member) {
+    Reader r{b};
     Presence m;
-    if (with_member) m.member = r.u32();
-    m.stage = r.str8();
+    if (with_member) m.member = r.u8();
+    m.stage = stage_of(r, true);
     m.inst = r.u32();
     m.x = r.f32();
     m.y = r.f32();
@@ -676,12 +656,22 @@ Presence decode_presence(std::span<const std::uint8_t> p, bool with_member) {
     m.max_hp = r.u16();
     m.mp = r.u16();
     m.max_mp = r.u16();
-    m.flags = r.u8();
     r.end();
+    for (const float v : {m.x, m.y, m.z, m.yaw})
+        if (!(v == v) || v > 3.0e38f || v < -3.0e38f) throw WireError("presence position is not finite");
     return m;
 }
-Resume decode_resume(std::span<const std::uint8_t> p) {
-    auto r = reader(p);
+
+std::vector<std::uint8_t> encode(const Resume& m) {
+    Writer w;
+    w.u32(m.inst);
+    w.u32(m.visit);
+    w.u8(m.slot);
+    w.u32(m.last_tick);
+    return std::move(w.out);
+}
+Resume decode_resume(std::span<const std::uint8_t> b) {
+    Reader r{b};
     Resume m;
     m.inst = r.u32();
     m.visit = r.u32();
@@ -690,154 +680,394 @@ Resume decode_resume(std::span<const std::uint8_t> p) {
     r.end();
     return m;
 }
-std::uint32_t decode_rate(std::span<const std::uint8_t> p) {
-    auto r = reader(p);
+
+std::vector<std::uint8_t> encode(std::uint32_t rate) {
+    Writer w;
+    w.u32(rate);
+    return std::move(w.out);
+}
+std::uint32_t decode_rate(std::span<const std::uint8_t> b) {
+    Reader r{b};
     const auto v = r.u32();
     r.end();
     return v;
 }
-Pong decode_pong(std::span<const std::uint8_t> p) {
-    auto r = reader(p);
+
+std::vector<std::uint8_t> encode(const Pong& m) {
+    Writer w;
+    w.u32(m.nonce);
+    w.u64(m.client_time_ms);
+    return std::move(w.out);
+}
+Pong decode_pong(std::span<const std::uint8_t> b) {
+    Reader r{b};
     Pong m;
     m.nonce = r.u32();
     m.client_time_ms = r.u64();
     r.end();
     return m;
 }
-Sealed decode_sealed(std::span<const std::uint8_t> p) {
-    auto r = reader(p);
-    Sealed m;
-    m.inst = r.u32();
-    m.visit = r.u32();
-    m.tick = r.u32();
-    m.body = read_tick(r);
+
+std::vector<std::uint8_t> encode(const Bye& m) {
+    Writer w;
+    w.u8(m.reason);
+    return std::move(w.out);
+}
+Bye decode_bye(std::span<const std::uint8_t> b) {
+    Reader r{b};
+    Bye m;
+    m.reason = r.u8();
     r.end();
     return m;
 }
-Live decode_live(std::span<const std::uint8_t> p) {
-    auto r = reader(p);
-    Live m;
+
+// ---- server -> client
+std::vector<std::uint8_t> encode(const Welcome& m) {
+    Writer w;
+    w.u8(m.member);
+    w.u32(m.inst);
+    w.u32(m.visit);
+    w.u8(m.slot);
+    w.u8(std::uint8_t(m.mode));
+    put_stage(w, m.stage, true);
+    w.u32(m.last_tick);
+    w.u8(m.delay);
+    w.u16(m.max_catch_up);
+    w.u8(m.flags);
+    return std::move(w.out);
+}
+Welcome decode_welcome(std::span<const std::uint8_t> b) {
+    Reader r{b};
+    Welcome m;
+    m.member = r.u8();
+    m.inst = r.u32();
+    m.visit = r.u32();
+    m.slot = r.u8();
+    m.mode = Mode(r.u8());
+    m.stage = stage_of(r, true);
+    m.last_tick = r.u32();
+    m.delay = r.u8();
+    m.max_catch_up = r.u16();
+    m.flags = r.u8();
+    r.end();
+    if (m.slot > 3 || std::uint8_t(m.mode) > 2) throw WireError("bad welcome");
+    return m;
+}
+
+std::vector<std::uint8_t> encode(const Ticks& m) {
+    if (m.ticks.size() > 0xFFFF) throw WireError("too many ticks in one frame");
+    Writer w;
+    w.u32(m.inst);
+    w.u32(m.visit);
+    w.u32(m.first);
+    w.u16(std::uint16_t(m.ticks.size()));
+    for (const auto& t : m.ticks) write_tick(w, t);
+    return std::move(w.out);
+}
+Ticks decode_ticks(std::span<const std::uint8_t> b) {
+    Reader r{b};
+    Ticks m;
     m.inst = r.u32();
     m.visit = r.u32();
     m.first = r.u32();
-    const int n = r.u16();
-    for (int i = 0; i < n; ++i) m.ticks.push_back(read_tick(r));
+    const std::size_t n = r.u16();
+    m.ticks.reserve(n);
+    for (std::size_t i = 0; i < n; ++i) m.ticks.push_back(read_tick(r));
     r.end();
     return m;
 }
-JoinReq decode_join_req(std::span<const std::uint8_t> p) {
-    auto r = reader(p);
+
+std::vector<std::uint8_t> encode(const JoinReq& m) {
+    Writer w;
+    w.u32(m.inst);
+    w.u32(m.visit);
+    w.u8(m.slot);
+    w.u8(m.delay);
+    return std::move(w.out);
+}
+JoinReq decode_join_req(std::span<const std::uint8_t> b) {
+    Reader r{b};
     JoinReq m;
     m.inst = r.u32();
     m.visit = r.u32();
     m.slot = r.u8();
+    m.delay = r.u8();
     r.end();
     return m;
 }
-BarrierOk decode_barrier_ok(std::span<const std::uint8_t> p) {
-    auto r = reader(p);
+
+std::vector<std::uint8_t> encode(const BarrierOk& m) {
+    Writer w;
+    w.u32(m.inst);
+    w.u32(m.visit);
+    w.u8(std::uint8_t(m.decision));
+    w.u32(m.new_inst);
+    w.u32(m.new_visit);
+    put_stage(w, m.stage, true);
+    w.u8(m.point);
+    w.u8(m.own_slot);
+    for (const auto s : m.slot_map) w.i8(s);
+    w.u8(std::uint8_t(m.mode));
+    w.u8(m.delay);
+    if (m.co_arrivals.size() > 4) throw WireError("more than four co-arrivals");
+    w.u8(std::uint8_t(m.co_arrivals.size()));
+    for (const auto& c : m.co_arrivals) {
+        w.u8(c.slot);
+        w.u8(c.member);
+        w.blob(c.carry);
+    }
+    w.u32(m.story_revision);
+    w.blob(m.story);
+    w.blob(m.dropped);
+    w.u8(std::uint8_t(m.notice));
+    if (m.names.size() > 255) throw WireError("too many names");
+    w.u8(std::uint8_t(m.names.size()));
+    for (const auto& n : m.names) w.str8(n);
+    return std::move(w.out);
+}
+BarrierOk decode_barrier_ok(std::span<const std::uint8_t> b) {
+    Reader r{b};
     BarrierOk m;
     m.inst = r.u32();
     m.visit = r.u32();
-    m.decision = Decision(r.u8());
+    const auto decision = r.u8();
+    if (decision < 1 || decision > 4) throw WireError("unknown barrier decision");
+    m.decision = Decision(decision);
     m.new_inst = r.u32();
     m.new_visit = r.u32();
+    m.stage = stage_of(r, true);
+    m.point = r.u8();
     m.own_slot = r.u8();
-    for (auto& s : m.slot_map) s = r.i8();
-    for (auto& member : m.slot_members) member = r.u32();
+    if (m.own_slot > 3) throw WireError("own slot above 3");
+    for (auto& s : m.slot_map) {
+        s = r.i8();
+        if (s < -1 || s > 3) throw WireError("slot map out of range");
+    }
+    m.mode = Mode(r.u8());
+    if (std::uint8_t(m.mode) > 2) throw WireError("unknown instance mode");
+    m.delay = r.u8();
     const int n = r.u8();
+    if (n > 4) throw WireError("more than four co-arrivals");
     for (int i = 0; i < n; ++i) {
-        Carry c;
+        CoArrival c;
         c.slot = r.u8();
-        c.bytes = r.blob(kMaxFrame);
+        if (c.slot > 3) throw WireError("co-arrival slot above 3");
+        c.member = r.u8();
+        c.carry = r.blob(kMaxCarry);
         m.co_arrivals.push_back(std::move(c));
     }
     m.story_revision = r.u32();
-    m.story = r.blob(kMaxFrame);
-    m.dropped = r.blob(kMaxFrame);
-    m.rule_flags = r.u8();
-    m.present = r.u8();
+    m.story = r.blob(1u << 16);
+    m.dropped = r.blob(1u << 16);
+    m.notice = Notice(r.u8());
+    const int names = r.u8();
+    for (int i = 0; i < names; ++i) m.names.push_back(r.str8(64));
     r.end();
     return m;
 }
-BarrierWait decode_barrier_wait(std::span<const std::uint8_t> p) {
-    auto r = reader(p);
+
+std::vector<std::uint8_t> encode(const BarrierWait& m) {
+    Writer w;
+    w.u32(m.inst);
+    w.u8(std::uint8_t(m.reason));
+    w.u16(m.seconds_left);
+    if (m.names.size() > 255) throw WireError("too many names");
+    w.u8(std::uint8_t(m.names.size()));
+    for (const auto& n : m.names) w.str8(n);
+    w.u8(m.flags);
+    return std::move(w.out);
+}
+BarrierWait decode_barrier_wait(std::span<const std::uint8_t> b) {
+    Reader r{b};
     BarrierWait m;
     m.inst = r.u32();
     m.reason = WaitReason(r.u8());
     m.seconds_left = r.u16();
     const int n = r.u8();
-    for (int i = 0; i < n; ++i) m.names.push_back(r.str8());
+    for (int i = 0; i < n; ++i) m.names.push_back(r.str8(64));
+    m.flags = r.u8();
     r.end();
     return m;
 }
-StateData decode_state_body(std::span<const std::uint8_t> p) {
-    auto r = reader(p);
+
+std::vector<std::uint8_t> encode_state_body(const StateData& m) {
+    Writer w;
+    w.u8(std::uint8_t(m.purpose));
+    w.u8(m.slot);
+    w.u8(0); // codec: raw tick records
+    w.blob(m.snapshot);
+    if (m.forks.size() > 255) throw WireError("too many forks");
+    w.u8(std::uint8_t(m.forks.size()));
+    for (const auto& f : m.forks) {
+        w.u32(f.tick);
+        w.u8(f.leavers);
+        w.u8(std::uint8_t(f.kind));
+        w.u8(f.side);
+    }
+    w.u32(m.first);
+    w.u32(std::uint32_t(m.ticks.size()));
+    for (const auto& t : m.ticks) write_tick(w, t);
+    return std::move(w.out);
+}
+StateData decode_state_body(std::span<const std::uint8_t> b) {
+    Reader r{b};
     StateData m;
-    m.snapshot = r.blob(64u << 20);
-    m.first = r.u32();
-    const std::uint32_t n = r.u32();
-    if (n > p.size()) throw WireError("tick count beyond the body");
-    m.ticks.reserve(n);
-    for (std::uint32_t i = 0; i < n; ++i) m.ticks.push_back(read_tick(r));
+    const auto purpose = r.u8();
+    if (purpose < 1 || purpose > 4) throw WireError("unknown state purpose");
+    m.purpose = StatePurpose(purpose);
+    m.slot = r.u8();
+    if (m.slot > 3) throw WireError("state slot above 3");
+    if (r.u8() != 0) throw WireError("unknown state codec");
+    m.snapshot = r.blob(4u << 20);
     const int forks = r.u8();
     for (int i = 0; i < forks; ++i) {
         Fork f;
         f.tick = r.u32();
         f.leavers = r.u8();
-        f.kind = SplitKind(r.u8());
+        check_mask(f.leavers);
+        const auto kind = r.u8();
+        if (kind > 1) throw WireError("unknown split kind");
+        f.kind = SplitKind(kind);
         f.side = r.u8();
         m.forks.push_back(f);
     }
+    m.first = r.u32();
+    const std::uint32_t count = r.u32();
+    m.ticks.reserve(std::min<std::uint32_t>(count, 1u << 20));
+    for (std::uint32_t i = 0; i < count; ++i) m.ticks.push_back(read_tick(r));
     r.end();
     return m;
 }
-Room decode_room(std::span<const std::uint8_t> p) {
-    auto r = reader(p);
+
+std::vector<std::uint8_t> encode(const Room& m) {
+    Writer w;
+    w.u8(std::uint8_t(m.kind));
+    w.u8(m.member);
+    w.u64(m.account);
+    w.str8(m.name);
+    w.u8(m.flags);
+    return std::move(w.out);
+}
+Room decode_room(std::span<const std::uint8_t> b) {
+    Reader r{b};
     Room m;
     m.kind = RoomEvent(r.u8());
-    m.member = r.u32();
-    m.name = r.str8();
-    m.value = r.u32();
+    m.member = r.u8();
+    m.account = r.u64();
+    m.name = r.str8(64);
+    m.flags = r.u8();
     r.end();
     return m;
 }
-Ping decode_ping(std::span<const std::uint8_t> p) {
-    auto r = reader(p);
+
+std::vector<std::uint8_t> encode(const Ping& m) {
+    Writer w;
+    w.u32(m.nonce);
+    w.u64(m.server_time_ms);
+    w.i16(m.margin_ms);
+    w.u8(m.delay);
+    return std::move(w.out);
+}
+Ping decode_ping(std::span<const std::uint8_t> b) {
+    Reader r{b};
     Ping m;
     m.nonce = r.u32();
     m.server_time_ms = r.u64();
-    m.margin = r.i16();
+    m.margin_ms = r.i16();
     m.delay = r.u8();
     r.end();
     return m;
 }
-Reason decode_reason(std::span<const std::uint8_t> p) {
-    auto r = reader(p);
-    Reason m{r.str8()};
+
+std::vector<std::uint8_t> encode(const Close& m) {
+    Writer w;
+    w.u8(std::uint8_t(m.reason));
+    w.str8(m.text.size() > 200 ? m.text.substr(0, 200) : m.text);
+    return std::move(w.out);
+}
+Close decode_close(std::span<const std::uint8_t> b) {
+    Reader r{b};
+    Close m;
+    m.reason = CloseReason(r.u8());
+    m.text = r.str8();
     r.end();
     return m;
 }
-InstVisit decode_inst_visit(std::span<const std::uint8_t> p) {
-    auto r = reader(p);
-    InstVisit m{r.u32(), 0};
+
+std::vector<std::uint8_t> encode(const Roster& m) {
+    if (m.entries.size() > 255) throw WireError("too many roster entries");
+    Writer w;
+    w.u8(std::uint8_t(m.entries.size()));
+    for (const auto& e : m.entries) {
+        w.u8(e.member);
+        put_stage(w, e.stage, true);
+        w.u32(e.inst);
+        w.u16(e.level);
+        w.u16(e.hp);
+        w.u16(e.max_hp);
+        w.u8(e.flags);
+    }
+    return std::move(w.out);
+}
+Roster decode_roster(std::span<const std::uint8_t> b) {
+    Reader r{b};
+    Roster m;
+    const int n = r.u8();
+    for (int i = 0; i < n; ++i) {
+        RosterEntry e;
+        e.member = r.u8();
+        e.stage = stage_of(r, true);
+        e.inst = r.u32();
+        e.level = r.u16();
+        e.hp = r.u16();
+        e.max_hp = r.u16();
+        e.flags = r.u8();
+        m.entries.push_back(std::move(e));
+    }
+    r.end();
+    return m;
+}
+
+std::vector<std::uint8_t> encode(const InstVisit& m) {
+    Writer w;
+    w.u32(m.inst);
+    w.u32(m.visit);
+    return std::move(w.out);
+}
+InstVisit decode_inst_visit(std::span<const std::uint8_t> b) {
+    Reader r{b};
+    InstVisit m;
+    m.inst = r.u32();
     m.visit = r.u32();
     r.end();
     return m;
 }
-Rekey decode_rekey(std::span<const std::uint8_t> p) {
-    auto r = reader(p);
-    Rekey m;
+
+std::vector<std::uint8_t> encode(const Reassign& m) {
+    Writer w;
+    w.u32(m.inst);
+    w.u32(m.visit);
+    w.u32(m.new_inst);
+    w.u32(m.from_tick);
+    w.u8(std::uint8_t(m.mode));
+    w.u8(m.flags);
+    return std::move(w.out);
+}
+Reassign decode_reassign(std::span<const std::uint8_t> b) {
+    Reader r{b};
+    Reassign m;
     m.inst = r.u32();
     m.visit = r.u32();
     m.new_inst = r.u32();
-    m.new_visit = r.u32();
+    m.from_tick = r.u32();
+    m.mode = Mode(r.u8());
+    m.flags = r.u8();
     r.end();
     return m;
 }
 
 // ---- chunks
-std::vector<Chunk> make_chunks(std::uint32_t inst, std::uint32_t visit, std::uint8_t slot, std::span<const std::uint8_t> body) {
+std::vector<Chunk> make_chunks(std::uint32_t inst, std::uint32_t visit, std::span<const std::uint8_t> body) {
     std::vector<Chunk> chunks;
     std::size_t offset = 0;
     do {
@@ -845,7 +1075,6 @@ std::vector<Chunk> make_chunks(std::uint32_t inst, std::uint32_t visit, std::uin
         Chunk c;
         c.inst = inst;
         c.visit = visit;
-        c.slot = slot;
         c.offset = std::uint32_t(offset);
         c.total = std::uint32_t(body.size());
         c.bytes.assign(body.begin() + std::ptrdiff_t(offset), body.begin() + std::ptrdiff_t(offset + n));

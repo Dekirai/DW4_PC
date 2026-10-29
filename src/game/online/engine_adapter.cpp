@@ -104,7 +104,7 @@ bool GameEngineLink::joinable(wire::NotJoinable& reason) const {
         return false;
     }
     if (e().demo().running() > 0) {
-        reason = wire::NotJoinable::demo;
+        reason = wire::NotJoinable::scene;
         return false;
     }
 #ifdef DW4_ONLINE_ENGINE_API
@@ -147,6 +147,13 @@ std::uint8_t GameEngineLink::alive_mask() const {
     return mask;
 }
 
+std::uint8_t GameEngineLink::present_mask() const {
+#ifdef DW4_ONLINE_ENGINE_API
+    if (e().online().enabled) return e().online().present;
+#endif
+    return std::uint8_t(1u << (own_slot_ & 3));
+}
+
 std::vector<std::uint8_t> GameEngineLink::carry(int slot) const {
 #ifdef DW4_ONLINE_ENGINE_API
     return engine::encode_carry(e().carry_player(slot));
@@ -158,7 +165,17 @@ std::vector<std::uint8_t> GameEngineLink::carry(int slot) const {
 
 std::optional<SplitInfo> GameEngineLink::take_split() {
 #ifdef DW4_ONLINE_ENGINE_API
-    if (const auto split = e().take_split()) return SplitInfo{split->leavers, split->in_stage, split->local_leaves};
+    // The relay names the side that leaves the instance id (exit, give up:
+    // the leavers; in-stage: the others), and whether this copy is on it.
+    if (const auto split = e().take_split())
+        return SplitInfo{split->child, split->in_stage, split->child == split->leavers ? split->local_leaves : !split->local_leaves};
+#endif
+    return std::nullopt;
+}
+
+std::optional<HeadingInfo> GameEngineLink::take_heading() {
+#ifdef DW4_ONLINE_ENGINE_API
+    if (auto heading = e().take_heading()) return HeadingInfo{std::move(heading->stage), heading->point};
 #endif
     return std::nullopt;
 }
@@ -234,6 +251,7 @@ void GameEngineLink::start_online(int own_slot, std::uint8_t present) {
     if (present) rules.present = present;
     engine.set_online(rules);
     engine.set_split_identity(own_slot);
+    engine.set_view_slot(own_slot);
 #else
     // Without the online rules: the console reset off at the start of the
     // member's own engine (present != 0), never after a restore, where it is
@@ -268,13 +286,18 @@ void GameEngineLink::set_fork_sides(std::span<const wire::Fork> forks) {
 void GameEngineLink::set_barrier(const wire::BarrierOk& ok) {
 #ifdef DW4_ONLINE_ENGINE_API
     engine::BarrierResult result;
-    result.decision = engine::Decision(int(ok.decision));
+    switch (ok.decision) {
+    case wire::Decision::new_instance: result.decision = engine::Decision::new_instance; break;
+    case wire::Decision::join: result.decision = engine::Decision::join; break;
+    case wire::Decision::dissolve: result.decision = engine::Decision::dissolve; break;
+    case wire::Decision::co_arrive: result.decision = engine::Decision::co_arrive; break;
+    }
     for (int s = 0; s < 4; ++s) result.slot_map[std::size_t(s)] = ok.slot_map[std::size_t(s)];
-    for (const auto& c : ok.co_arrivals) result.co_arrivals.emplace_back(int(c.slot), engine::decode_carry(c.bytes));
+    for (const auto& c : ok.co_arrivals) result.co_arrivals.emplace_back(int(c.slot), engine::decode_carry(c.carry));
     result.own_slot = ok.own_slot;
     result.rules = e().online();
     result.rules.enabled = true;
-    result.rules.present = ok.present;
+    result.rules.present = ok.present();
     e().set_barrier(result);
     own_slot_ = ok.own_slot;
 #else

@@ -331,7 +331,7 @@ void Engine::apply_pending_fork() {
     before.present = std::uint8_t(online_.present | other);
     for (int s = 0; s < 4; ++s)
         if (other & bit(s)) despawn_player(s);
-    split_ = SplitResult{frame_, fork.leavers, fork.kept, fork.in_stage, fork.take_leavers};
+    split_ = SplitResult{frame_, fork.leavers, fork.kept, fork.in_stage, fork.take_leavers, fork.child};
     membership_changed(before);
 }
 
@@ -523,9 +523,12 @@ bool Engine::online_split(std::uint8_t mask, ForkKind kind) {
     const std::uint8_t kept = kind == ForkKind::in_stage ? leavers : stayers;
     bool take = kept == leavers;
     bool decided = false;
+    // The recorded side: named by the continuing side or by the side that
+    // leaves the instance id (the relay's fork lists).
+    const std::uint8_t child = kept == leavers ? stayers : leavers;
     for (const auto& side : fork_sides_)
-        if (side.frame == frame_ && side.leavers == leavers) {
-            take = side.take_leavers;
+        if (side.frame == frame_ && (side.leavers == leavers || side.leavers == child)) {
+            take = side.leavers == leavers ? side.take_leavers : !side.take_leavers;
             decided = true;
             break;
         }
@@ -536,7 +539,7 @@ bool Engine::online_split(std::uint8_t mask, ForkKind kind) {
     // (A second fork in the same step forks the side this copy took; the
     // despawns of both happen at the end of the step.)
     const std::uint8_t earlier = pending_fork_ ? pending_fork_->other : std::uint8_t(0);
-    pending_fork_ = PendingFork{leavers, kept, std::uint8_t((take ? stayers : leavers) | earlier), kind == ForkKind::in_stage, take};
+    pending_fork_ = PendingFork{leavers, kept, std::uint8_t((take ? stayers : leavers) | earlier), child, kind == ForkKind::in_stage, take};
     online_.present = take ? leavers : stayers;
     return take;
 }

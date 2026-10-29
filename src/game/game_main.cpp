@@ -2122,7 +2122,9 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     auto* models = engine.get<dw4::engine::ModelCtrlManager>();
                     const bool defeated = (engine.online().present & (1u << local)) && models && !models->player(local);
                     give_up_held = defeated && (pads[std::size_t(local)].buttons & dw4::pad_button::start) ? give_up_held + 1 : 0;
-                    if (give_up_held == kGiveUpFrames && !net.active()) engine.online_intent(local, dw4::engine::IntentKind::give_up, 0);
+                    // (An online client sends the choice as INTENT: the server stamps it at a tick every member applies.)
+                    if (give_up_held == kGiveUpFrames && online) online->session().send_intent(dw4::game::online::wire::IntentKind::give_up, 0);
+                    else if (give_up_held == kGiveUpFrames && !net.active()) engine.online_intent(local, dw4::engine::IntentKind::give_up, 0);
                 } else {
                     give_up_held = 0;
                 }

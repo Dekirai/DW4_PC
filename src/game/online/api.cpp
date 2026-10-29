@@ -92,7 +92,7 @@ std::optional<RoomJoined> parse_room(const HttpResponse& response) {
     const auto settings = settings_from_json((*v)["settings"]);
     if (!settings) return std::nullopt;
     r.settings = *settings;
-    r.ticket = (*v)["ticket"].str().value_or((*v)["relay"]["ticket"].str().value_or(""));
+    r.ticket = (*v)["relayTicket"].str().value_or((*v)["ticket"].str().value_or((*v)["relay"]["ticket"].str().value_or("")));
     r.member_id = std::uint32_t((*v)["you"]["accountId"].u64().value_or(0));
     if (const auto port = (*v)["relay"]["port"].i64(); port && *port > 0 && *port < 65536) r.relay_port = int(*port);
     return r;
@@ -101,7 +101,8 @@ std::optional<RoomJoined> parse_room(const HttpResponse& response) {
 std::optional<std::string> parse_ticket(const HttpResponse& response) {
     const auto v = body_of(response);
     if (!v) return std::nullopt;
-    const auto t = (*v)["ticket"].str();
+    auto t = (*v)["relayTicket"].str();
+    if (!t || t->empty()) t = (*v)["ticket"].str();
     if (!t || t->empty()) return std::nullopt;
     return t;
 }

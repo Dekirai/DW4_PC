@@ -61,13 +61,15 @@ void settings() {
     const auto text = settings_json(s);
     const auto back = settings_from_json(*json::parse(text));
     check(back && *back == s, "settings JSON round trip");
-    check(settings_hash_text(s, 44, 123) ==
-              "dw4r2-settings|protocol=44|data=123|difficulty=1|camera=1|light=0|seed=4242|enemies=1|zones=2|drops=1|fast=1",
-          "settings hash text");
+    check(settings_hash_text(s, 44, 123) == "DW4R2-settings/1;protocol=44;data=123;difficulty=1;camera=1;light=0;rand=4242,1,1,2;fast=1",
+          "settings hash text (the relay's RoomSettings.Canonical)");
+    // Golden values shared with the server's RoomSettings tests (one hash on both sides).
+    check(settings_hash(s, 44, 123) == 0x54c0f0b064c906baull, "settings hash");
+    check(settings_hash(RoomSettings{}, 44, 123) == 0x3832ef80ddfb9134ull, "default settings hash (light mode 1 as the server's default)");
     RoomSettings off = s;
     off.rand_enemies = off.rand_zones = 0;
     off.rand_drops = false; // a seed without modes is no randomizer
-    check(settings_hash_text(off, 44, 123).find("|seed=0|enemies=0|zones=0|drops=0|") != std::string::npos, "an inactive randomizer hashes as off");
+    check(settings_hash_text(off, 44, 123).find(";rand=0,0,0,0;") != std::string::npos, "an inactive randomizer hashes as off");
     check(settings_hash(s, 44, 123) != settings_hash(off, 44, 123) && settings_hash(s, 44, 123) == settings_hash(s, 44, 123), "hash");
     check(settings_hash(s, 44, 123) != settings_hash(s, 45, 123) && settings_hash(s, 44, 123) != settings_hash(s, 44, 124),
           "protocol and data hash count");
@@ -114,15 +116,18 @@ void api_calls() {
     const auto l = api::parse_login(r);
     check(l && l->token == "abc.def" && l->account == "kim", "login answer");
     r.body = R"({"room":{"code":"QX7P","name":"Kim's room"},"settings":{"difficulty":2,"cameraMode":1},"members":[],"instances":[],)"
-             R"("you":{"accountId":3,"username":"kim","slot":0},"heartbeatSeconds":10,"relay":{"host":"88.198.52.221","port":52041},"ticket":"T1"})";
+             R"("you":{"accountId":3,"username":"kim","slot":0},"heartbeatSeconds":10,"relay":{"host":"88.198.52.221","port":52041,"protocol":"DW4R2"},)"
+             R"("settingsHash":"54c0f0b064c906ba","relayTicket":"T1"})";
     const auto joined = api::parse_room(r);
     check(joined && joined->code == "QX7P" && joined->settings.difficulty == 2 && joined->settings.camera_mode == 1 && joined->ticket == "T1" &&
               joined->member_id == 3 && joined->relay_port == 52041,
-          "room answer with a top-level ticket");
+          "room answer with the relay ticket (relayTicket)");
     r.body = R"({"room":{"code":"QX7P"},"settings":null,"relay":{"port":52041,"ticket":"T2"}})";
     check(api::parse_room(r)->ticket == "T2", "or the ticket in relay");
     r.body = R"({"ticket":"T3"})";
     check(api::parse_ticket(r) == "T3", "ticket answer");
+    r.body = R"({"room":{"code":"QX7P"},"relayTicket":"T4"})";
+    check(api::parse_ticket(r) == "T4", "a fresh ticket from POST /rooms/{code}/ticket (relayTicket)");
     r.status = 409;
     r.body = R"({"type":"about:blank","title":"Conflict","status":409,"detail":"The room is full.","code":"room_full"})";
     check(!api::parse_room(r) && api::problem_text(r) == "The room is full.", "problem details");

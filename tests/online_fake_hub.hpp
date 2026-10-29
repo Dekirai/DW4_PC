@@ -2,12 +2,14 @@
 
 // Test doubles for the DW4R2 client: a deterministic fake engine (its state
 // is a hash of every pad it executed, stage loads, joins, leaves and forks)
-// and an in-process fake hub that speaks docs/SEAMLESS.md 6.3 over memory
-// pipes on a simulated clock: solo-led and sealed instances, server-paced
-// sealing at 59.94 Hz with immediate fill, barrier decisions (DISSOLVE / NEW
-// for hubs, co-arrival, JOIN by catch-up, NEW), JOIN_REQ / JOIN_AT, state
-// delivery with LIVE ticks for observers, SPLIT and REKEY, RESUME, PING with
-// a suggested delay, NETFP collection.
+// and an in-process fake hub that speaks the relay's layout (docs/SEAMLESS.md
+// 6.3 and the appendix "DW4R2 wire layout") over memory pipes on a simulated
+// clock: WELCOME with a solo hub instance, solo-led and sealed instances,
+// server-paced sealing at 59.94 Hz with immediate fill, barrier decisions
+// (DISSOLVE for hubs, NEW, co-arrival, JOIN by catch-up), JOIN_REQ / JOIN_AT,
+// state delivery with LIVE ticks for observers, SPLIT with REASSIGN and
+// LEAD_FROM, RESUME, PING with a suggested delay, ROOM lag notices, NETFP
+// collection. The real hub is server/DW4Online/src/DW4Online.Relay/Hub.
 #include "online/engine_link.hpp"
 #include "online/pacing.hpp"
 #include "online/session.hpp"
@@ -97,6 +99,7 @@ public:
     bool boss_lock() const override { return false; }
     std::uint64_t session_context_hash() const override { return 0x1234; }
     std::uint8_t alive_mask() const override { return present_; }
+    std::uint8_t present_mask() const override { return present_; }
     std::vector<std::uint8_t> carry(int slot) const override { return {std::uint8_t(slot), 0xC0, 0xDE}; }
     std::optional<SplitInfo> take_split() override { return std::exchange(split_, std::nullopt); }
     PresenceFacts presence(int slot) const override {
@@ -119,11 +122,8 @@ public:
             ++serial_;
             frame_ = 0;
             if (barrier_) {
-                std::uint8_t present = 0;
-                for (int s = 0; s < 4; ++s)
-                    if (barrier_->present & (1u << s)) present |= std::uint8_t(1u << s);
-                present_ = present;
-                for (const auto& c : barrier_->co_arrivals) state_ = mix(state_, 0x5000 + c.slot + c.bytes.size());
+                present_ = barrier_->present();
+                for (const auto& c : barrier_->co_arrivals) state_ = mix(state_, 0x5000 + c.slot + c.carry.size());
                 barrier_.reset();
             }
             state_ = mix(state_, serial_);
@@ -247,22 +247,25 @@ public:
         std::uint32_t inst = 0;
         int slot = 0;
         Conn* conn = nullptr;
-        bool observer_of = false;
         std::uint32_t observing = 0; // instance being caught up on
         int observe_slot = 0;
+        int old_slot = 0;            // its slot in the group it arrived with (a fallback's slot map)
         std::vector<std::uint8_t> carry;
         std::optional<w::Barrier> parked;
         double parked_at = 0;
+        bool lagging = false;
     };
     struct Instance {
         std::uint32_t id = 0, visit = 0;
         std::string stage;
         std::map<int, std::uint32_t> slots; // slot -> member
+        bool hub = false;
         bool sealed = false;
         std::vector<std::uint8_t> snapshot;
         std::map<std::uint32_t, w::TickBody> log; // ticks since the snapshot
         double s0 = 0;                      // S(t) = s0 + t * field
         std::uint32_t next_seal = 0;
+        std::optional<std::uint32_t> lead_from; // sealing ends before this tick (one member left)
         std::map<std::uint32_t, std::map<int, w::WirePad>> pads; // tick -> slot -> pad
         std::map<int, w::WirePad> last;
         std::map<int, int> fills;
@@ -271,11 +274,13 @@ public:
         std::optional<std::uint32_t> pending_joiner;
         std::map<std::uint32_t, std::map<std::uint32_t, std::uint64_t>> netfp; // tick -> member -> hash
         std::map<std::uint32_t, std::uint64_t> snaphash; // member -> hash
+        std::set<std::uint32_t> splits;                  // fork ticks already processed
         std::uint8_t present() const {
             std::uint8_t m = 0;
             for (const auto& [s, _] : slots) m |= std::uint8_t(1u << s);
             return m;
         }
+        w::Mode mode() const { return hub ? w::Mode::hub : slots.size() >= 2 || sealed ? w::Mode::sealed : w::Mode::solo; }
     };
 
     double latency = 0.02; // one way
@@ -298,7 +303,7 @@ public:
     std::map<std::uint32_t, Instance> instances;
     std::vector<std::unique_ptr<Conn>> conns;
     std::uint32_t next_inst = 100;
-    std::uint64_t netfp_compared = 0, netfp_mismatches = 0, late_pads = 0, fills_total = 0, splits = 0, snaphash_mismatches = 0;
+    std::uint64_t netfp_compared = 0, netfp_mismatches = 0, late_pads = 0, fills_total = 0, splits = 0, snaphash_mismatches = 0, reassigns = 0;
     double last_ping = 0;
     std::uint32_t ping_nonce = 0;
 
@@ -329,6 +334,32 @@ public:
         auto& queue = it->second.conn->outbound;
         queue.emplace_back(delay_of(queue, now), w::encode_frame(type, payload));
     }
+    void send_ticks(std::uint32_t member, w::Type type, const Instance& inst, std::uint32_t first, std::vector<w::TickBody> ticks, double now) {
+        send(member, type, w::encode(w::Ticks{inst.id, inst.visit, first, std::move(ticks)}), now);
+    }
+
+    void welcome(Conn& c, double now) {
+        auto& m = members[c.member];
+        // A reconnect within the window keeps the slot (RESUME follows).
+        const bool resumable = m.inst != 0 && instances.contains(m.inst) && !instances[m.inst].hub && instances[m.inst].slots.contains(m.slot) &&
+                               instances[m.inst].slots.at(m.slot) == m.id;
+        if (!resumable) {
+            auto& hub = new_instance("", 1);
+            hub.hub = true;
+            hub.slots[0] = m.id;
+            m.inst = hub.id;
+            m.slot = 0;
+        }
+        const auto& inst = instances[m.inst];
+        w::Welcome welcome{std::uint8_t(m.id), inst.id, inst.visit, std::uint8_t(m.slot), inst.mode(), inst.stage, w::kNoTick, 0, 30,
+                           std::uint8_t(resumable ? w::Welcome::resumable : 0)};
+        send(m.id, w::Type::welcome, w::encode(welcome), now);
+        for (auto& [id, other] : members)
+            if (id != c.member) {
+                send(id, w::Type::room, w::encode(w::Room{w::RoomEvent::joined, std::uint8_t(c.member), c.member, m.name, 0}), now);
+                send(c.member, w::Type::room, w::encode(w::Room{w::RoomEvent::joined, std::uint8_t(id), id, other.name, 0}), now);
+            }
+    }
 
     void tick(double now) {
         for (auto& c : conns) {
@@ -347,14 +378,10 @@ public:
                         continue;
                     }
                     const auto hello = w::parse_hello(c->line);
-                    const std::string answer = hello ? "OK " + std::to_string(c->member) + " 1000\n" : "ERR bad_hello\n";
+                    const std::string answer = hello ? "OK " + std::to_string(c->member) + " 1000\n" : "ERR protocol\n";
                     c->outbound.emplace_back(now + latency, std::vector<std::uint8_t>(answer.begin(), answer.end()));
                     c->hello = hello.has_value();
-                    for (auto& [id, other] : members)
-                        if (id != c->member) {
-                            send(id, w::Type::room, w::encode(w::Room{w::RoomEvent::joined, c->member, members[c->member].name, 0}), now);
-                            send(c->member, w::Type::room, w::encode(w::Room{w::RoomEvent::joined, id, other.name, 0}), now);
-                        }
+                    if (c->hello) welcome(*c, now);
                 }
                 if (at < data.size()) c->reader.feed(std::span(data).subspan(at));
                 while (auto f = c->reader.next()) handle(c->member, *f, now);
@@ -372,12 +399,26 @@ public:
         for (auto& [id, inst] : instances) seal(inst, now);
         // Co-arrival holds that ran out: NEW.
         for (auto& [id, m] : members)
-            if (m.parked && answer_barriers && now - m.parked_at > co_arrival_hold) decide(m, now, true);
+            if (m.parked && answer_barriers && now - m.parked_at > co_arrival_hold) decide(m, now);
+    }
+
+    void lag(std::uint32_t member, bool on, double now) {
+        auto& m = members[member];
+        if (m.lagging == on) return;
+        m.lagging = on;
+        for (auto& [id, other] : members)
+            send(id, w::Type::room, w::encode(w::Room{on ? w::RoomEvent::lagging : w::RoomEvent::lag_over, std::uint8_t(member), member, m.name, 0}), now);
     }
 
     void seal(Instance& inst, double now) {
         if (!inst.sealed) return;
-        while (inst.s0 + double(inst.next_seal) * kFieldSeconds <= now) {
+        while (inst.sealed && inst.s0 + double(inst.next_seal) * kFieldSeconds <= now) {
+            if (inst.lead_from && inst.next_seal >= *inst.lead_from) {
+                // One member left: it leads alone from here (LEAD_FROM was sealed before).
+                inst.sealed = false;
+                inst.lead_from.reset();
+                break;
+            }
             const std::uint32_t t = inst.next_seal++;
             w::TickBody body;
             body.present = inst.present();
@@ -387,12 +428,12 @@ public:
                     body.pads[std::size_t(slot)] = p->second;
                     inst.last[slot] = p->second;
                     inst.fills[slot] = 0;
+                    lag(member, false, now);
                 } else {
                     // Filled at once: the last sealed pad (six ticks), then neutral.
-                    auto pad = ++inst.fills[slot] <= 6 ? inst.last[slot] : w::WirePad{};
-                    pad.flags = 1;
-                    body.pads[std::size_t(slot)] = pad;
+                    body.pads[std::size_t(slot)] = ++inst.fills[slot] <= 6 ? inst.last[slot] : w::WirePad{};
                     ++fills_total;
+                    if (inst.fills[slot] >= 30) lag(member, true, now);
                 }
             }
             inst.pads.erase(t);
@@ -401,10 +442,11 @@ public:
                 inst.events.erase(e);
             }
             inst.log[t] = body;
-            const auto payload = w::encode(w::Sealed{inst.id, inst.visit, t, body});
-            std::set<std::uint32_t> to(inst.observers.begin(), inst.observers.end());
-            for (const auto& [slot, member] : inst.slots) to.insert(member);
-            for (const auto member : to) send(member, w::Type::sealed, payload, now);
+            std::set<std::uint32_t> members_now;
+            for (const auto& [slot, member] : inst.slots) members_now.insert(member);
+            for (const auto member : members_now) send_ticks(member, w::Type::sealed, inst, t, {body}, now);
+            for (const auto observer : inst.observers)
+                if (!members_now.contains(observer)) send_ticks(observer, w::Type::live, inst, t, {body}, now);
         }
     }
 
@@ -416,26 +458,45 @@ public:
         return inst;
     }
 
-    void decide(Member& m, double now, bool hold_over) {
+    void decide(Member& m, double now) {
         const auto b = *m.parked;
         auto* from = instances.contains(b.inst) ? &instances[b.inst] : nullptr;
         w::BarrierOk ok;
         ok.inst = b.inst;
         ok.visit = b.visit;
-        ok.rule_flags = 1;
+        ok.stage = b.stage;
+        ok.point = b.point;
+        if (is_hub_stage(b.stage)) {
+            // DISSOLVE: its own solo hub instance, slot 0.
+            auto& hub = new_instance(b.stage, 1);
+            hub.hub = true;
+            hub.slots[0] = m.id;
+            ok.decision = w::Decision::dissolve;
+            ok.new_inst = hub.id;
+            ok.new_visit = 1;
+            ok.own_slot = 0;
+            ok.slot_map[std::size_t(m.slot)] = 0;
+            ok.mode = w::Mode::hub;
+            m.inst = hub.id;
+            m.slot = 0;
+            m.parked.reset();
+            send(m.id, w::Type::barrier_ok, w::encode(ok), now);
+            log_lines.push_back("dissolve " + m.name + " " + b.stage);
+            leave_instance_if_empty(from);
+            return;
+        }
         // Joinable instance of the target stage?
         Instance* target = nullptr;
-        if (!is_hub_stage(b.stage))
-            for (auto& [id, inst] : instances)
-                if (inst.stage == b.stage && id != b.inst && !inst.slots.empty() && inst.slots.size() < 4 && !inst.snapshot.empty()) target = &inst;
+        for (auto& [id, inst] : instances)
+            if (inst.stage == b.stage && id != b.inst && !inst.hub && !inst.slots.empty() && inst.slots.size() < 4 && !inst.snapshot.empty()) target = &inst;
         // Another member parked for the same stage: co-arrival (the first parked is the base).
         Member* partner = nullptr;
-        if (!is_hub_stage(b.stage))
-            for (auto& [id, other] : members)
-                if (id != m.id && other.parked && other.parked->stage == b.stage) partner = &other;
+        for (auto& [id, other] : members)
+            if (id != m.id && other.parked && other.parked->stage == b.stage) partner = &other;
         if (partner && !target) {
             Member& base = partner->parked_at <= m.parked_at ? *partner : m;
             Member& late = &base == &m ? *partner : m;
+            auto* late_from = instances.contains(late.parked->inst) ? &instances[late.parked->inst] : nullptr;
             auto& inst = new_instance(b.stage, 1);
             inst.slots[0] = base.id;
             inst.slots[1] = late.id;
@@ -446,27 +507,29 @@ public:
             base_ok.new_inst = inst.id;
             base_ok.new_visit = 1;
             base_ok.own_slot = 0;
-            base_ok.slot_map = {0, -1, -1, -1};
-            base_ok.slot_members = {base.id, late.id, 0, 0};
-            base_ok.co_arrivals = {{1, late.parked->carries.empty() ? std::vector<std::uint8_t>{} : late.parked->carries[0].bytes}};
-            base_ok.present = 0b11;
+            base_ok.slot_map = {-1, -1, -1, -1};
+            base_ok.slot_map[std::size_t(base.slot)] = 0;
+            base_ok.mode = w::Mode::sealed;
+            base_ok.delay = std::uint8_t(suggested_delay);
+            base_ok.co_arrivals = {{1, std::uint8_t(late.id), late.parked->carry}};
             w::BarrierOk late_ok = base_ok;
             late_ok.inst = late.parked->inst;
             late_ok.visit = late.parked->visit;
             late_ok.decision = w::Decision::co_arrive;
             late_ok.own_slot = 1;
+            late_ok.slot_map = {-1, -1, -1, -1};
             late_ok.co_arrivals.clear();
             base.inst = late.inst = inst.id;
             base.slot = 0;
             late.slot = 1;
             base.parked.reset();
             late.parked.reset();
-            late.observing = inst.id; // gets the base's snapshot once it is uploaded
             pending_co_arrival[inst.id] = late.id;
             send(base.id, w::Type::barrier_ok, w::encode(base_ok), now);
             send(late.id, w::Type::barrier_ok, w::encode(late_ok), now);
             log_lines.push_back("co-arrival " + base.name + " + " + late.name + " in " + b.stage);
             leave_instance_if_empty(from);
+            leave_instance_if_empty(late_from);
             return;
         }
         if (target) {
@@ -476,28 +539,31 @@ public:
             ok.new_inst = target->id;
             ok.new_visit = target->visit;
             ok.own_slot = std::uint8_t(slot);
-            ok.present = target->present();
-            for (const auto& [s, id] : target->slots) ok.slot_members[std::size_t(s)] = id;
+            ok.mode = target->mode();
+            ok.delay = std::uint8_t(suggested_delay);
+            m.old_slot = m.slot;
             m.inst = target->id;
             m.slot = slot;
             m.observing = target->id;
             m.observe_slot = slot;
-            m.carry = b.carries.empty() ? std::vector<std::uint8_t>{} : b.carries[0].bytes;
+            m.carry = b.carry;
             m.parked.reset();
             send(m.id, w::Type::barrier_ok, w::encode(ok), now);
             // The state: snapshot and every tick since; LIVE / SEALED keep coming.
             w::StateData state;
+            state.purpose = w::StatePurpose::join;
+            state.slot = std::uint8_t(slot);
             state.snapshot = target->snapshot;
             state.first = 0;
             for (std::uint32_t t = 0; target->log.contains(t); ++t) state.ticks.push_back(target->log.at(t));
             const auto body = w::encode_state_body(state);
-            for (const auto& c : w::make_chunks(target->id, target->visit, std::uint8_t(slot), body)) {
+            for (const auto& c : w::make_chunks(target->id, target->visit, body)) {
                 // A slow transfer (state_delay) holds everything behind it too (TCP order).
                 if (state_delay > 0 && m.conn) {
                     auto& queue = m.conn->outbound;
-                    queue.emplace_back(std::max(delay_of(queue, now), now + state_delay), w::encode_frame(w::Type::state_data, w::encode(c, true)));
+                    queue.emplace_back(std::max(delay_of(queue, now), now + state_delay), w::encode_frame(w::Type::state_data, w::encode(c)));
                 } else {
-                    send(m.id, w::Type::state_data, w::encode(c, true), now);
+                    send(m.id, w::Type::state_data, w::encode(c), now);
                 }
             }
             target->observers.insert(m.id);
@@ -506,22 +572,34 @@ public:
             leave_instance_if_empty(from);
             return;
         }
-        auto& inst = new_instance(b.stage, 1);
+        // NEW: the instance keeps its id with the next visit when the whole
+        // group arrived, else a new one.
+        const bool reuse = from && from->slots.size() == 1;
+        auto& inst = reuse ? *from : new_instance(b.stage, 1);
+        if (reuse) {
+            inst.stage = b.stage;
+            inst.visit += 1;
+            inst.hub = false;
+            inst.snapshot.clear();
+            inst.log.clear();
+            inst.snaphash.clear();
+            inst.netfp.clear();
+            inst.slots.clear();
+        }
         inst.slots[0] = m.id;
         ok.decision = w::Decision::new_instance;
         ok.new_inst = inst.id;
-        ok.new_visit = 1;
+        ok.new_visit = inst.visit;
         ok.own_slot = 0;
         ok.slot_map = {-1, -1, -1, -1};
         ok.slot_map[std::size_t(m.slot)] = 0;
-        ok.slot_members = {m.id, 0, 0, 0};
-        ok.present = 1;
+        ok.mode = w::Mode::solo;
         m.inst = inst.id;
         m.slot = 0;
         m.parked.reset();
         send(m.id, w::Type::barrier_ok, w::encode(ok), now);
         log_lines.push_back("new " + m.name + " " + b.stage);
-        leave_instance_if_empty(from);
+        if (!reuse) leave_instance_if_empty(from);
     }
     std::map<std::uint32_t, std::uint32_t> pending_co_arrival; // instance -> late member
 
@@ -542,7 +620,8 @@ public:
             auto it = instances.find(m.inst); // routed by the member (after a fork the id may be the old one)
             if (it == instances.end()) break;
             auto& inst = it->second;
-            w::Live live{inst.id, inst.visit, l.first, {}};
+            std::vector<w::TickBody> fresh;
+            std::uint32_t first = 0;
             for (std::size_t i = 0; i < l.pads.size(); ++i) {
                 const std::uint32_t t = l.first + std::uint32_t(i);
                 if (inst.log.contains(t)) continue;
@@ -550,11 +629,11 @@ public:
                 body.present = std::uint8_t(1u << m.slot);
                 body.pads[std::size_t(m.slot)] = l.pads[i];
                 inst.log[t] = body;
-                if (live.ticks.empty()) live.first = t;
-                live.ticks.push_back(body);
+                if (fresh.empty()) first = t;
+                fresh.push_back(body);
             }
-            if (!live.ticks.empty())
-                for (const auto observer : inst.observers) send(observer, w::Type::live, w::encode(live), now);
+            if (!fresh.empty())
+                for (const auto observer : inst.observers) send_ticks(observer, w::Type::live, inst, first, fresh, now);
             break;
         }
         case w::Type::input: {
@@ -562,11 +641,14 @@ public:
             auto it = instances.find(m.inst);
             if (it == instances.end()) break;
             auto& inst = it->second;
-            if (in.tick < inst.next_seal && inst.sealed) {
-                ++late_pads;
-                break;
+            for (std::size_t k = 0; k < in.pads.size(); ++k) {
+                const std::uint32_t t = in.first + std::uint32_t(k);
+                if (t < inst.next_seal && inst.sealed) {
+                    ++late_pads;
+                    continue;
+                }
+                inst.pads[t][m.slot] = in.pads[k];
             }
-            inst.pads[in.tick][m.slot] = in.pad;
             break;
         }
         case w::Type::barrier: {
@@ -587,10 +669,11 @@ public:
                     ok.decision = w::Decision::new_instance;
                     ok.new_inst = own.id;
                     ok.new_visit = 1;
+                    ok.stage = it->second.stage;
                     ok.own_slot = 0;
-                    ok.slot_members = {obs, 0, 0, 0};
-                    ok.rule_flags = 1;
-                    ok.present = 1;
+                    ok.slot_map[std::size_t(om.old_slot)] = 0;
+                    ok.mode = w::Mode::solo;
+                    ok.notice = w::Notice::hold_expired;
                     send(obs, w::Type::barrier_ok, w::encode(ok), now);
                     om.inst = own.id;
                     om.slot = 0;
@@ -608,20 +691,20 @@ public:
             }
             if (!answer_barriers) break;
             // Hubs at once; fields wait a little for a partner (co-arrival).
-            if (is_hub_stage(b.stage)) decide(m, now, false);
+            if (is_hub_stage(b.stage)) decide(m, now);
             else {
                 bool partner = false;
                 for (auto& [oid, other] : members)
                     if (oid != id && other.parked && other.parked->stage == b.stage) partner = true;
                 bool target = false;
                 for (auto& [iid, inst] : instances)
-                    if (inst.stage == b.stage && iid != b.inst && !inst.slots.empty() && !inst.snapshot.empty()) target = true;
-                if (partner || target || co_arrival_hold <= 0) decide(m, now, false);
+                    if (inst.stage == b.stage && iid != b.inst && !inst.hub && !inst.slots.empty() && !inst.snapshot.empty()) target = true;
+                if (partner || target || co_arrival_hold <= 0) decide(m, now);
             }
             break;
         }
         case w::Type::snapshot: {
-            const auto c = w::decode_chunk(f.payload, false);
+            const auto c = w::decode_chunk(f.payload);
             auto it = instances.find(c.inst);
             if (it == instances.end()) break;
             auto& inst = it->second;
@@ -633,9 +716,11 @@ public:
             if (inst.snapshot.size() == c.total) {
                 if (const auto co = pending_co_arrival.find(inst.id); co != pending_co_arrival.end()) {
                     w::StateData state;
+                    state.purpose = w::StatePurpose::co_arrival;
+                    state.slot = std::uint8_t(members[co->second].slot);
                     state.snapshot = inst.snapshot;
                     const auto body = w::encode_state_body(state);
-                    for (const auto& ch : w::make_chunks(inst.id, inst.visit, 1, body)) send(co->second, w::Type::state_data, w::encode(ch, true), now);
+                    for (const auto& ch : w::make_chunks(inst.id, inst.visit, body)) send(co->second, w::Type::state_data, w::encode(ch), now);
                     pending_co_arrival.erase(co);
                 }
             }
@@ -669,12 +754,12 @@ public:
                     ++netfp_compared;
                     if (hash != r.fingerprint) ++netfp_mismatches;
                 }
-            w::Event join{w::EventKind::join, std::uint8_t(m.observe_slot), id, 1, r.carry};
+            w::Event join{w::EventKind::join, std::uint8_t(m.observe_slot), 1, r.carry};
             if (!inst.sealed) {
                 // Solo-led: the leader chooses J.
                 inst.pending_joiner = id;
                 const auto leader = inst.slots.begin()->second;
-                send(leader, w::Type::join_req, w::encode(w::JoinReq{inst.id, inst.visit, std::uint8_t(m.observe_slot)}), now);
+                send(leader, w::Type::join_req, w::encode(w::JoinReq{inst.id, inst.visit, std::uint8_t(m.observe_slot), std::uint8_t(suggested_delay)}), now);
             } else {
                 const std::uint32_t j = inst.next_seal + 8;
                 inst.events[j].push_back(join);
@@ -692,7 +777,7 @@ public:
             const auto joiner = *inst.pending_joiner;
             inst.pending_joiner.reset();
             auto& jm = members[joiner];
-            inst.events[j.tick].push_back(w::Event{w::EventKind::join, std::uint8_t(jm.observe_slot), joiner, 1, jm.carry});
+            inst.events[j.tick].push_back(w::Event{w::EventKind::join, std::uint8_t(jm.observe_slot), 1, jm.carry});
             inst.slots[jm.observe_slot] = joiner; // stays an observer too: the leader's LOG until J comes as LIVE
             inst.sealed = true;
             inst.next_seal = j.tick;
@@ -720,20 +805,43 @@ public:
             const auto s = w::decode_split(f.payload);
             ++splits;
             auto it = instances.find(s.inst);
-            if (it == instances.end()) break;
+            if (it == instances.end()) break; // the reporter moved to the child already
             auto& inst = it->second;
-            // The leavers become a child instance (REKEY); the stayers keep the id.
-            if (m.slot >= 0 && (s.leavers & (1u << m.slot))) {
-                auto& child = new_instance(inst.stage, inst.visit);
-                child.slots[m.slot] = id;
-                child.snapshot = inst.snapshot;
-                child.log.insert(inst.log.begin(), inst.log.upper_bound(s.tick));
-                inst.slots.erase(m.slot);
-                m.inst = child.id;
-                send(id, w::Type::rekey, w::encode(w::Rekey{inst.id, inst.visit, child.id, child.visit}), now);
-                log_lines.push_back("fork " + m.name + " -> " + std::to_string(child.id));
+            if (!inst.splits.insert(s.tick).second) break; // the other side's report of the same fork
+            // The leaver side becomes a child instance (REASSIGN) on the same
+            // schedule; a side with one member leads alone after LEAD_FROM.
+            auto& child = new_instance(inst.stage, inst.visit);
+            child.snapshot = inst.snapshot;
+            child.log.insert(inst.log.begin(), inst.log.end());
+            child.sealed = inst.sealed;
+            child.s0 = inst.s0;
+            child.next_seal = inst.next_seal;
+            for (int slot = 0; slot < 4; ++slot) {
+                if (!(s.leavers & (1u << slot)) || !inst.slots.contains(slot)) continue;
+                const auto member = inst.slots.at(slot);
+                child.slots[slot] = member;
+                inst.slots.erase(slot);
+                for (auto& [t, pads] : inst.pads)
+                    if (const auto p = pads.find(slot); p != pads.end()) {
+                        child.pads[t][slot] = p->second;
+                        pads.erase(p);
+                    }
+                child.last[slot] = inst.last[slot];
+                members[member].inst = child.id;
+                ++reassigns;
+                send(member, w::Type::reassign,
+                     w::encode(w::Reassign{inst.id, inst.visit, child.id, child.next_seal, child.slots.size() >= 2 ? w::Mode::sealed : w::Mode::solo, 1}),
+                     now);
+                log_lines.push_back("fork " + members[member].name + " -> " + std::to_string(child.id));
             }
-            if (inst.slots.size() <= 1) inst.sealed = false;
+            for (auto* side : {&inst, &child})
+                if (side->sealed && side->slots.size() == 1) {
+                    const std::uint32_t lead = side->next_seal + 1;
+                    w::Event e{w::EventKind::lead_from};
+                    e.tick = lead;
+                    side->events[lead - 1].push_back(e);
+                    side->lead_from = lead;
+                }
             break;
         }
         case w::Type::resume: {
@@ -741,14 +849,13 @@ public:
             auto it = instances.find(r.inst);
             if (it == instances.end()) break;
             auto& inst = it->second;
-            for (auto t = inst.log.upper_bound(r.last_tick); t != inst.log.end(); ++t)
-                send(id, w::Type::sealed, w::encode(w::Sealed{inst.id, inst.visit, t->first, t->second}), now);
+            for (auto t = inst.log.upper_bound(r.last_tick); t != inst.log.end(); ++t) send_ticks(id, w::Type::sealed, inst, t->first, {t->second}, now);
             log_lines.push_back("resume " + m.name + " from " + std::to_string(r.last_tick + 1));
             break;
         }
         case w::Type::presence: {
             auto p = w::decode_presence(f.payload, false);
-            p.member = id;
+            p.member = std::uint8_t(id);
             for (auto& [oid, other] : members)
                 if (oid != id && other.inst != m.inst) send(oid, w::Type::presence_of, w::encode(p, true), now);
             break;

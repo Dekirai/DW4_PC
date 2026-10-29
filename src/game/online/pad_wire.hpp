@@ -7,11 +7,9 @@
 // sealed values are what every machine simulates. The buttons fit in 16 bits
 // (every dw4::pad_button mask is below 0x10000; the test checks it).
 //
-// Wire layout, 7 bytes, little endian:
-//   u16 buttons | i8 left.x | i8 left.y | i8 right.x | i8 right.y | u8 flags
-// flags bit 0: the server filled this pad (the member's pad was late: its last
-// sealed pad, then neutral); clients send 0 and never feed the flags into the
-// simulation. `connected` is not on the wire: it comes from the present mask.
+// Wire layout, 6 bytes, little endian (the relay's Pad, SEAMLESS.md 6.4):
+//   u16 buttons | i8 left.x | i8 left.y | i8 right.x | i8 right.y
+// `connected` is not on the wire: it comes from the tick record's mask.
 #include "dw4/pad.hpp"
 
 #include <array>
@@ -19,15 +17,13 @@
 
 namespace dw4::game::online {
 
-inline constexpr std::size_t kWirePadBytes = 7;
+inline constexpr std::size_t kWirePadBytes = 6;
 inline constexpr int kStickSteps = 74;
 
 struct WirePad {
     std::uint16_t buttons{};
     std::int8_t lx{}, ly{}, rx{}, ry{};
-    std::uint8_t flags{};
     bool operator==(const WirePad&) const = default;
-    bool filled() const { return (flags & 1) != 0; }
 };
 
 // One axis: round(v * 74) clamped to -74..74 (NaN -> 0).

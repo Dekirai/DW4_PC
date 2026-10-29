@@ -52,8 +52,10 @@ public:
     bool boss_lock() const override;
     std::uint64_t session_context_hash() const override;
     std::uint8_t alive_mask() const override;
+    std::uint8_t present_mask() const override;
     std::vector<std::uint8_t> carry(int slot) const override;
     std::optional<SplitInfo> take_split() override;
+    std::optional<HeadingInfo> take_heading() override;
     PresenceFacts presence(int slot) const override;
 
     void replay_step(const std::array<PadSample, 4>& pads) override;

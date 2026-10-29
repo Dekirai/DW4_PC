@@ -49,12 +49,12 @@ std::optional<RoomSettings> settings_from_json(const json::Value& v) {
 }
 
 std::string settings_hash_text(const RoomSettings& s, std::uint32_t protocol, std::uint64_t data_hash) {
+    // The relay's canonical text (RoomSettings.Canonical in DW4Online.Domain).
     const bool on = s.randomizer();
-    return "dw4r2-settings|protocol=" + std::to_string(protocol) + "|data=" + std::to_string(data_hash) + "|difficulty=" +
-           std::to_string(s.difficulty) + "|camera=" + std::to_string(s.camera_mode) + "|light=" + std::to_string(s.light_mode) +
-           "|seed=" + std::to_string(on ? s.rand_seed : 0) + "|enemies=" + std::to_string(on ? s.rand_enemies : 0) +
-           "|zones=" + std::to_string(on ? s.rand_zones : 0) + "|drops=" + (on && s.rand_drops ? "1" : "0") + "|fast=" +
-           (s.fast_loading ? "1" : "0");
+    return "DW4R2-settings/1;protocol=" + std::to_string(protocol) + ";data=" + std::to_string(data_hash) + ";difficulty=" +
+           std::to_string(s.difficulty) + ";camera=" + std::to_string(s.camera_mode) + ";light=" + std::to_string(s.light_mode) + ";rand=" +
+           std::to_string(on ? s.rand_seed : 0) + "," + (on && s.rand_drops ? "1" : "0") + "," + std::to_string(on ? s.rand_enemies : 0) + "," +
+           std::to_string(on ? s.rand_zones : 0) + ";fast=" + (s.fast_loading ? "1" : "0");
 }
 
 std::uint64_t settings_hash(const RoomSettings& s, std::uint32_t protocol, std::uint64_t data_hash) {

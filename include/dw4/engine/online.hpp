@@ -64,8 +64,10 @@ struct PersonalSession {
 enum class ForkKind : std::uint8_t { exit = 0, in_stage = 1, give_up = 2 };
 
 // A fork in a replayed history (STATE_DATA): at the step of `frame` (the
-// engine's frame() after that step), take the side of `leavers` (the
-// continuing side of online_split) when `take_leavers`, else the other one.
+// engine's frame() after that step), take the side named by `leavers` when
+// `take_leavers`, else the other one. `leavers` may name either side: the
+// continuing side of online_split (SplitResult::leavers) or the side that
+// leaves the instance id (SplitResult::child, the relay's leaver mask).
 struct ForkSide {
     std::uint64_t frame{};
     std::uint8_t leavers{};
@@ -76,7 +78,9 @@ struct ForkSide {
 // The fork of the last step (Engine::take_split). `leavers` is the side that
 // continued the script run, after the side rule for defeated members;
 // `kept` the side that keeps the instance id; `local_leaves` whether this
-// copy took the leavers' side. The copy's side is already applied (the other
+// copy took the leavers' side; `child` the side that leaves the instance id
+// (exit and give up: the leavers; in-stage: the others), which the relay's
+// SPLIT and fork lists name. The copy's side is already applied (the other
 // side's players are despawned at the end of the step).
 struct SplitResult {
     std::uint64_t frame{};
@@ -84,6 +88,7 @@ struct SplitResult {
     std::uint8_t kept{};
     bool in_stage{};
     bool local_leaves{};
+    std::uint8_t child{};
     bool operator==(const SplitResult&) const = default;
 };
 
