@@ -1865,8 +1865,10 @@ public:
     // bone matrices GETBONEMATRIX reads.
     const ActorPose* pose_for(const Node& actor, std::int64_t world_time);
     // The pose for a picture of an actor the original's frustum cull skips
-    // (drawn only in the widened widescreen picture): evaluated without the
-    // combiner update and without touching the pose or combiner caches.
+    // (drawn only in the widened widescreen picture): evaluated without
+    // touching the combiner, the pose or the combiner caches; a state not
+    // evaluated yet shows as the combiner update would restart it now (on a
+    // copy), so the margin holds its first picture until the first traversal.
     const ActorPose* peek_pose(const Node& actor, std::int64_t world_time);
     // GETAPPEARANCELIST (802F1870): the action of a model (its igActor nodes
     // and animation database with the skeleton).

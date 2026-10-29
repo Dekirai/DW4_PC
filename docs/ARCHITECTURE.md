@@ -169,7 +169,15 @@ state time against the clip's duration unsigned (0x802F03A8). Not modelled:
 the speed and base a reused pool state brings along (801D1BCC resets
 neither) - the port starts the activation's combine mode 0 state at time 0,
 and no 'S' state goes back to the pool frozen in the data. `MotionState` is
-not in the snapshot: a restore replays the stage.
+not in the snapshot: a restore replays the stage. A fresh state that the
+widened widescreen picture shows while the original's frustum still culls it
+(`peek_pose`) is drawn as the combiner update would leave it now, on a copy
+of the combiner: its first picture, the fade at weight 0, until the first
+traversal starts the clip from there. (Drawn from its MOTIONSET's time
+instead, the clip ran in the margin and jumped back to time 0 at the first
+traversal: in the cheat story run's widescreen pictures Ophanimon's wait01
+25 s, n_gekoa's in stag0302 8.5 s, the stagBS01 bases 0.6-1.5 s, each only
+a few pixels at the picture's edge.)
 
 ## Messenger and scripts
 

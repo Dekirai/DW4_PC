@@ -2931,6 +2931,18 @@ const ActorPose* ActionManager::peek_pose(const Node& actor, std::int64_t world_
     if (!ram.database) return nullptr;
     if (ram.pose_time == world_time) return &ram.pose;
     const auto time = static_cast<std::int64_t>(scaled_clock(world_time, ram.node_clock.scale) + static_cast<std::uint64_t>(ram.node_clock.bias));
+    // No evaluation runs for this picture (801D0C14 is never called), so the
+    // combiner stays as it is and its states stay fresh. The margin shows the
+    // pose an evaluation would give now, after the combiner update it starts
+    // with (801CFFB4 at 0x801D0CB8), on a copy: a fresh state stands at time 0
+    // and its fade at weight 0, so the margin holds the clip's first picture
+    // until the first traversal starts the clip from there (pose_for).
+    if (ram.motion.fresh || ram.motion.previous_fresh) {
+        auto motion = ram.motion;
+        motion.update(time);
+        evaluate_pose(*ram.database, motion, time, ram.peek, ram.peek_locals);
+        return &ram.peek;
+    }
     evaluate_pose(*ram.database, ram.motion, time, ram.peek, ram.peek_locals);
     return &ram.peek;
 }
