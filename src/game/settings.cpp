@@ -285,6 +285,17 @@ Settings Settings::parse(IniFile document) {
             start = comma + 1;
         }
     }
+    settings.overhead_labels = ini.get_or("hud", "overhead_labels", settings.overhead_labels);
+    settings.label_scale = std::clamp(ini.get_int("hud", "label_scale", settings.label_scale), 50, 200);
+    settings.label_numbers = ini.get_bool("hud", "label_numbers", settings.label_numbers);
+    settings.discord = ini.get_bool("discord", "enabled", settings.discord);
+    settings.discord_client_id = ini.get_or("discord", "client_id", settings.discord_client_id);
+    // (An id is digits only; anything else falls back to the default.)
+    if (settings.discord_client_id.empty() || settings.discord_client_id.size() > 24 ||
+        !std::all_of(settings.discord_client_id.begin(), settings.discord_client_id.end(), [](char c) { return c >= '0' && c <= '9'; }))
+        settings.discord_client_id = kDiscordClientId;
+    settings.achievements = ini.get_bool("achievements", "enabled", settings.achievements);
+    settings.achievement_popups = ini.get_bool("achievements", "popups", settings.achievement_popups);
     settings.data = ini.get_or("data", "path", "");
     settings.cards = ini.get_or("data", "cards", "");
     settings.card_a = ini.get_or("data", "card_a", "");
@@ -341,6 +352,13 @@ void Settings::store() {
         for (const auto& id : disabled_mods) list += (list.empty() ? "" : ",") + id;
         ini_.set("mods", "disabled", list);
     }
+    ini_.set("hud", "overhead_labels", overhead_labels);
+    ini_.set_int("hud", "label_scale", label_scale);
+    ini_.set_bool("hud", "label_numbers", label_numbers);
+    ini_.set_bool("discord", "enabled", discord);
+    ini_.set("discord", "client_id", discord_client_id);
+    ini_.set_bool("achievements", "enabled", achievements);
+    ini_.set_bool("achievements", "popups", achievement_popups);
     if (!data.empty()) ini_.set("data", "path", data.string());
 }
 

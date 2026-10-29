@@ -11,6 +11,11 @@
 #include "campaign.hpp"
 #include "test_path.hpp"
 #include "texture_pack.hpp"
+#include "achievements.hpp"
+#include "discord_presence.hpp"
+#include "overhead_labels.hpp"
+#include "presence_art.hpp"
+#include "presence_data.hpp"
 
 #include "dw4/engine/engine.hpp"
 #include "dw4/engine/managers.hpp"
@@ -27,6 +32,7 @@
 
 #include <array>
 #include <atomic>
+#include <deque>
 #include <thread>
 #include <chrono>
 #include <cstdio>
@@ -62,6 +68,7 @@ struct Options {
     // --loading original|fast: this run's load timing instead of settings.ini
     // [gameplay] loading (test runs: else DW4_FAST_LOADING=1).
     std::optional<bool> fast_loading;
+    std::filesystem::path export_art; // --export-presence-art FOLDER
 };
 
 
@@ -862,6 +869,182 @@ int run(const Options& options, dw4::game::Settings& settings) {
         std::size_t frame_time_at = 0;
         auto last_present = std::chrono::steady_clock::now();
         int frame = 0;
+        // ---- Presence features: overhead name tags, Discord Rich Presence,
+        // achievements. Host only: they read the engine after a step and
+        // never write it (the engine's port events are observe-only).
+        //
+        // A new engine (state load, console reboot, online start) starts the
+        // achievement tracker's stage over.
+        std::uint64_t engine_generation = 0;
+        // The stage (serial and generation) a save state was loaded in: no
+        // achievement counts until the next stage load.
+        std::optional<std::uint64_t> state_loaded_stage;
+        auto stage_key = [&]() -> std::uint64_t {
+            const std::uint64_t serial = engine.stage_snapshot() ? engine.stage_snapshot()->serial : 0;
+            return (engine_generation << 40) ^ serial;
+        };
+        auto own_slot = [&] { return net.active() ? net.local_slot() : 0; };
+        // Overhead name tags (settings.ini [hud]; test runs: DW4_LABELS=
+        // auto|all|others|off, DW4_TRACE_LABELS=N prints their screen
+        // positions every N frames, without a window too).
+        dw4::game::OverheadLabels labels;
+        const int trace_labels = options.smoke_frames && std::getenv("DW4_TRACE_LABELS") ? std::atoi(std::getenv("DW4_TRACE_LABELS")) : 0;
+        auto label_mode = [&] {
+            if (options.smoke_frames) {
+                const char* mode = std::getenv("DW4_LABELS");
+                return mode ? dw4::game::parse_label_mode(mode) : trace_labels ? dw4::game::LabelMode::all : dw4::game::LabelMode::off;
+            }
+            return dw4::game::parse_label_mode(settings.overhead_labels);
+        };
+        // Discord Rich Presence (settings.ini [discord]). Test runs talk only
+        // to a test pipe (DW4_DISCORD_PIPE=<pipe name prefix>), never to a
+        // running Discord; DW4_TRACE_PRESENCE=1 prints each new activity.
+        const char* discord_pipe = options.smoke_frames ? std::getenv("DW4_DISCORD_PIPE") : nullptr;
+        std::optional<dw4::game::DiscordPresence> discord;
+        if (!options.smoke_frames || discord_pipe) {
+            dw4::game::DiscordPresence::Options discord_options;
+            if (discord_pipe) discord_options.pipe_prefix = discord_pipe;
+            discord.emplace(discord_options);
+        }
+        const bool trace_presence = options.smoke_frames && std::getenv("DW4_TRACE_PRESENCE");
+        auto unix_now = [] {
+            return std::int64_t(std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count());
+        };
+        const std::int64_t session_started = unix_now();
+        std::optional<dw4::game::discord::Activity> traced_activity;
+        auto presence_activity = [&] {
+            dw4::game::discord::Activity activity;
+            activity.start = session_started;
+            const std::string stage = engine.stage_name();
+            const auto* sys = engine.get<dw4::engine::GameSystem>();
+            const int slot = own_slot();
+            const bool menus = stage.empty() || dw4::game::is_menu_stage(stage) || engine.rebooting() || !sys ||
+                               !sys->players[std::size_t(slot)].joined || !sys->players[std::size_t(slot)].stats.ready;
+            if (menus) {
+                activity.details = "In Menus";
+                activity.large_image = dw4::game::kLogoImageKey;
+                activity.large_text = "Digimon World 4";
+                return activity;
+            }
+            const auto& player = sys->players[std::size_t(slot)];
+            const auto* form = dw4::game::form_by_species(player.stats.species);
+            if (!form) form = dw4::game::form_by_model(player.digimon);
+            activity.details = std::string(form ? form->name : "Digimon") + " Lv " + std::to_string(player.stats.level);
+            const auto* area = dw4::game::find_area(stage);
+            activity.state = area ? dw4::game::area_display_name(*area) : stage;
+            activity.large_image = area ? area->key : dw4::game::kLogoImageKey;
+            activity.large_text = area ? area->region : "Digimon World 4";
+            if (net.active()) activity.large_text += " - online co-op, " + std::to_string(net.start().players) + " players";
+            if (form) activity.small_image = form->key;
+            activity.small_text = dw4::game::difficulty_name(sys->difficulty);
+            return activity;
+        };
+        // Achievements (settings.ini [achievements]; saves/profile.dat next
+        // to the program). Test runs only with DW4_ACHIEVEMENTS=1, their
+        // profile in DW4_PROFILE (none written without it);
+        // DW4_TRACE_EVENTS=1 prints the engine's port events.
+        const bool achievements_test = options.smoke_frames && std::getenv("DW4_ACHIEVEMENTS");
+        const bool trace_events = options.smoke_frames && std::getenv("DW4_TRACE_EVENTS");
+        std::filesystem::path profile_path;
+        if (!options.smoke_frames) {
+            if (const char* program = SDL_GetBasePath()) profile_path = std::filesystem::path(program) / "saves" / "profile.dat";
+        } else if (const char* file = std::getenv("DW4_PROFILE")) {
+            profile_path = file;
+        }
+        dw4::game::AchievementTracker achievements(profile_path.empty() ? dw4::game::AchievementProfile{}
+                                                                        : dw4::game::AchievementProfile::load(profile_path).value_or(dw4::game::AchievementProfile{}));
+        auto achievements_on = [&] { return options.smoke_frames ? achievements_test : settings.achievements; };
+        auto last_profile_save = std::chrono::steady_clock::now();
+        auto save_profile = [&] {
+            if (!profile_path.empty() && achievements.dirty() && achievements.profile().save(profile_path)) achievements.clear_dirty();
+            last_profile_save = std::chrono::steady_clock::now();
+        };
+        struct Toast {
+            std::string title, text;
+            std::chrono::steady_clock::time_point until;
+        };
+        std::deque<Toast> toasts;
+        dw4::game::AchievementGate last_gate = dw4::game::AchievementGate::open;
+        std::uint64_t taint_stage = ~0ull;
+        bool stage_cheats = false, stage_rebalanced = false;
+        auto achievement_gate = [&]() {
+            using Gate = dw4::game::AchievementGate;
+            // The campaign / explore bots and scripted walks drive the player.
+            if (scripted.active_goto(frame)) return Gate::bot;
+            const auto key = stage_key();
+            if (key != taint_stage) {
+                taint_stage = key;
+                stage_cheats = stage_rebalanced = false;
+            }
+            const auto& cheats = engine.cheats();
+            stage_cheats |= cheats.god || cheats.infinite_mp || cheats.one_hit;
+            stage_rebalanced |= cheats.exp_rate != 100 || cheats.damage_dealt != 100 || cheats.damage_taken != 100;
+            if (stage_cheats) return Gate::cheats;
+            if (stage_rebalanced) return Gate::rebalancing;
+            if (state_loaded_stage && *state_loaded_stage == key) return Gate::save_state;
+            return Gate::open;
+        };
+        auto achievement_step = [&] {
+            dw4::game::AchievementStep step;
+            step.stage = engine.stage_name();
+            step.live = !engine.loading() && engine.presenting() && engine.stage_active() && !dw4::game::is_menu_stage(step.stage);
+            step.online = net.active();
+            step.hosting = net.active() && net.role() == dw4::game::NetSession::Role::host;
+            step.online_players = net.active() ? net.start().players : 0;
+            step.stage_serial = stage_key();
+            if (const auto* sys = engine.get<dw4::engine::GameSystem>()) {
+                step.difficulty = sys->difficulty;
+                for (int slot = 0; slot < 4; ++slot) {
+                    const auto& player = sys->players[std::size_t(slot)];
+                    auto& seen = step.players[std::size_t(slot)];
+                    seen.joined = player.joined && player.stats.ready;
+                    seen.local = !net.active() || slot == net.local_slot();
+                    seen.unique = player.unique;
+                    seen.level = player.stats.level;
+                    seen.exp = player.stats.exp;
+                    seen.species = player.stats.species;
+                    seen.hp = player.hp;
+                    seen.max_hp = player.max_hp;
+                    seen.bits = player.bits;
+                    seen.bank_bits = player.bank_bits;
+                    seen.devices = int(player.devices.size());
+                    for (const auto& device : player.devices) {
+                        seen.best_rank = std::max(seen.best_rank, device.rank);
+                        seen.best_value = std::max(seen.best_value, device.value);
+                    }
+                    for (const auto& [species, reached] : player.base_isuse)
+                        if (species >= 0 && species < 16 && reached) seen.forms[std::size_t(species)] = true;
+                    seen.form_levels = player.base_level;
+                    seen.techniques = int(player.wazalist.size());
+                }
+                for (const auto& [card, owned] : sys->players[0].cards) step.cards += owned == 1 ? 1 : 0;
+            }
+            // (find, not operator[]: a read must not add entries.)
+            for (std::int32_t flag = 89; flag <= 98; ++flag)
+                if (const auto found = engine.flags().find(flag); found != engine.flags().end() && found->second) ++step.numemon_freed;
+            return step;
+        };
+        // After every step: the step's events into the tracker.
+        auto observe_step = [&] {
+            auto events = engine.take_port_events();
+            if (trace_events)
+                for (const auto& e : events)
+                    std::printf("[%d] event %s slot=%d value=%d extra=%d %s\n", frame, dw4::engine::port_event_name(e.kind), e.slot, e.value,
+                                e.extra, e.text.c_str());
+            if (!achievements_on()) return;
+            last_gate = achievement_gate();
+            const auto unlocked = achievements.observe(achievement_step(), events, last_gate, engine.cheats().drop_seed != 0, unix_now());
+            for (const auto& unlock : unlocked) {
+                if (!unlock.def) continue;
+                if (options.smoke_frames)
+                    std::printf("[%d] achievement %s%s (%s)\n", frame, unlock.def->id, unlock.randomizer ? " [randomizer]" : "", unlock.def->title);
+                if (settings.achievement_popups || options.smoke_frames)
+                    toasts.push_back({std::string(unlock.randomizer ? "Achievement unlocked (randomizer)" : "Achievement unlocked"),
+                                      std::string(unlock.def->title) + " - " + unlock.def->description,
+                                      std::chrono::steady_clock::now() + std::chrono::seconds(6)});
+            }
+            if (!unlocked.empty() || std::chrono::steady_clock::now() - last_profile_save > std::chrono::minutes(2)) save_profile();
+        };
         const int trace_player = std::getenv("DW4_TRACE_PLAYER") ? std::atoi(std::getenv("DW4_TRACE_PLAYER")) : 0;
         // DW4_TRACE_FINGERPRINT=N prints the state fingerprint every N frames:
         // two runs of the same script must print the same lines (determinism).
@@ -921,6 +1104,10 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 if (step.drawn) engine.traverse_scene();
             }
             const bool exact = engine.fingerprint() == state.fingerprint;
+            // (No achievement counts in the rest of this stage.)
+            ++engine_generation;
+            state_loaded_stage = stage_key();
+            labels.reset();
             // The replay loaded with the state's load timing; from the next
             // stage load on the current choice applies again.
             engine.cheats().fast_loading = fast_loading_choice();
@@ -969,6 +1156,8 @@ int run(const Options& options, dw4::game::Settings& settings) {
             engine.request_stage(started.stage);
             frame_base = 0;
             net_submitted = std::uint64_t(started.delay);
+            ++engine_generation;
+            labels.reset();
             input_log.clear();
             log_serial = 0;
             accumulator = 0;
@@ -1006,6 +1195,8 @@ int run(const Options& options, dw4::game::Settings& settings) {
             for (int slot = 0; slot < 2; ++slot) engine.set_card_setting(slot, slots[std::size_t(slot)]);
             engine.cheats() = cheats;
             engine.request_stage(!net.active() && !options.smoke_frames && settings.skip_intro ? "stagis10" : "stagis08");
+            ++engine_generation;
+            labels.reset();
             input_log.clear();
             log_serial = 0;
             load_step_drawn = last_step_loaded = false;
@@ -1508,7 +1699,11 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     net.poll();
                     pads = net.take(net_frame);
                 }
+                // Port events only while achievements or the event trace want them.
+                if (const bool collect = achievements_on() || trace_events; engine.port_events_enabled() != collect)
+                    engine.set_port_events(collect);
                 engine.step(pads);
+                if (engine.port_events_enabled()) observe_step();
                 if (net.active() && (frame_base + engine.frame()) % 60 == 0) net.report_fingerprint(frame_base + engine.frame(), engine.fingerprint());
                 // The input since the running stage's load, for save states.
                 if (const auto* snapshot = engine.stage_snapshot(); snapshot && snapshot->serial != log_serial) {
@@ -1571,6 +1766,50 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 if (engine.reboot_due()) reboot_console();
             }
             if (steps > 0 && draw) interpolator.advance();
+            if (steps > 0 && (label_mode() != dw4::game::LabelMode::off || trace_labels)) labels.capture(engine, own_slot());
+            if (discord) {
+                discord->configure(options.smoke_frames ? true : settings.discord, settings.discord_client_id);
+                const auto activity = presence_activity();
+                if (trace_presence && activity != traced_activity) {
+                    std::printf("[%d] presence details='%s' state='%s' large=%s small=%s (%s)\n", frame, activity.details.c_str(),
+                                activity.state.c_str(), activity.large_image.c_str(), activity.small_image.c_str(), activity.small_text.c_str());
+                    traced_activity = activity;
+                }
+                discord->set_activity(activity);
+            }
+            // DW4_TRACE_LABELS=N (test runs): the labels' screen positions for
+            // the test window (1280x960 unless DW4_WINDOW, DW4_WIDESCREEN=1),
+            // with the frame camera, every N frames.
+            if (trace_labels > 0 && steps > 0 && frame % trace_labels == 0) {
+                int width = 1280, height = 960;
+                if (const char* size = std::getenv("DW4_WINDOW")) std::sscanf(size, "%dx%d", &width, &height);
+                dw4::game::LabelView view;
+                if (auto* cameras = engine.get<dw4::engine::CameraManager>()) cameras->frame_camera(engine, view.camera);
+                const bool wider = width * 3 > height * 4;
+                const int screen_width = wider ? height * 4 / 3 : width;
+                const int screen_height = wider ? height : width * 3 / 4;
+                const bool wide = std::getenv("DW4_WIDESCREEN") && wider;
+                view.wide_x = wide ? 0.0f : float((width - screen_width) / 2);
+                view.wide_y = float((height - screen_height) / 2);
+                view.wide_width = float(wide ? width : screen_width);
+                view.wide_height = float(screen_height);
+                view.widen = wide ? (float(screen_width) / float(screen_height)) / (float(width) / float(height)) : 1.0f;
+                view.window_height = float(height);
+                const bool hidden = dw4::game::OverheadLabels::hidden(engine);
+                for (const auto& label : labels.current()) {
+                    const auto point = dw4::game::project_label(label.head, view);
+                    const bool shown = !hidden && label.hp > 0 && point && dw4::game::label_visible(label_mode(), label.own, labels.players());
+                    std::printf("[%d] label slot=%d '%s' Lv %d HP %d/%d MP %d/%d head=(%.1f, %.1f, %.1f) ", frame, label.slot, label.name.c_str(),
+                                label.level, label.hp, label.max_hp, label.mp, label.max_mp, label.head.x, label.head.y, label.head.z);
+                    const auto feet = dw4::game::project_label(label.feet, view, 1.0f);
+                    if (point)
+                        std::printf("screen=(%.1f, %.1f) feet=(%.1f, %.1f) distance %.0f alpha %.2f%s\n", point->x, point->y,
+                                    feet ? feet->x : -1.0f, feet ? feet->y : -1.0f, point->distance, dw4::game::label_fade(point->distance),
+                                    shown ? "" : " (hidden)");
+                    else
+                        std::printf("off screen%s\n", hidden ? " (hidden)" : "");
+                }
+            }
             // (Every stage load, also of the same stage: the texture cache is
             // keyed by document addresses, which a new load may reuse.)
             const std::uint64_t serial = engine.stage_snapshot() ? engine.stage_snapshot()->serial : 0;
@@ -1579,6 +1818,8 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 rendered_stage = engine.stage_name();
                 rendered_serial = serial;
                 interpolator.reset();
+                labels.reset();
+                save_profile();
             }
             // A field the running update covers (Engine::held: the movie's
             // 30 Hz frames) shows the last update's picture again, without a
@@ -1673,6 +1914,27 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 ImGui_ImplOpenGL3_NewFrame();
                 ImGui_ImplSDL3_NewFrame();
                 ImGui::NewFrame();
+                // Overhead name tags over the picture, under the menus.
+                if (const auto mode = label_mode(); mode != dw4::game::LabelMode::off && !dw4::game::OverheadLabels::hidden(engine)) {
+                    dw4::game::LabelView view;
+                    view.camera = camera;
+                    view.widen = wide.width > screen.width && wide.height > 0 && screen.height > 0
+                                     ? (float(screen.width) / float(screen.height)) / (float(wide.width) / float(wide.height))
+                                     : 1.0f;
+                    view.wide_x = float(wide.x);
+                    view.wide_y = float(wide.y);
+                    view.wide_width = float(wide.width);
+                    view.wide_height = float(wide.height);
+                    view.window_height = float(height);
+                    const ImVec2 scale = ImGui::GetIO().DisplayFramebufferScale;
+                    view.scale_x = scale.x > 0 ? scale.x : 1.0f;
+                    view.scale_y = scale.y > 0 ? scale.y : 1.0f;
+                    const bool smooth = !options.smoke_frames && settings.smooth_motion && present_interval < 1.0 / 75.0;
+                    const float alpha = smooth ? float(accumulator / dw4::engine::kFieldSeconds) : 1.0f;
+                    const float size = float(height) / view.scale_y / 960.0f * float(settings.label_scale) / 100.0f;
+                    dw4::game::draw_overhead_labels(ImGui::GetBackgroundDrawList(), labels.blended(alpha), view, mode, labels.players(),
+                                                    std::max(size, 0.5f), settings.label_numbers);
+                }
                 if (show_menu) {
                     ImGui::SetNextWindowSize(ImVec2(560, 560), ImGuiCond_FirstUseEver);
                     ImGui::Begin("DW4 PC (F1)");
@@ -1789,6 +2051,25 @@ int run(const Options& options, dw4::game::Settings& settings) {
                         }
                         if (ImGui::CollapsingHeader("Audio", ImGuiTreeNodeFlags_DefaultOpen)) {
                             if (ImGui::SliderInt("Volume", &settings.volume, 0, 100, "%d%%")) settings_changed = true;
+                        }
+                        if (ImGui::CollapsingHeader("Name tags, Discord, achievements", ImGuiTreeNodeFlags_DefaultOpen)) {
+                            // (LabelMode order: automatic, all, others, off.)
+                            static const char* label_modes[] = {"Auto (two or more players)", "All players", "Other players", "Off"};
+                            int mode = int(dw4::game::parse_label_mode(settings.overhead_labels));
+                            if (ImGui::Combo("Name tags", &mode, label_modes, 4)) {
+                                settings.overhead_labels = dw4::game::label_mode_name(dw4::game::LabelMode(mode));
+                                settings_changed = true;
+                            }
+                            if (ImGui::SliderInt("Name tag size", &settings.label_scale, 50, 200, "%d%%")) settings_changed = true;
+                            if (ImGui::Checkbox("HP / MP numbers on name tags", &settings.label_numbers)) settings_changed = true;
+                            ImGui::TextDisabled("Name, level, HP and MP over the players' Digimon (not in cutscenes, menus and loads).");
+                            if (ImGui::Checkbox("Discord Rich Presence", &settings.discord)) settings_changed = true;
+                            ImGui::SameLine();
+                            ImGui::TextDisabled("(%s)", discord ? discord->status().c_str() : "off");
+                            ImGui::TextDisabled("Shows your form, level, area and difficulty in Discord while the Discord app runs.");
+                            if (ImGui::Checkbox("Achievements", &settings.achievements)) settings_changed = true;
+                            ImGui::SameLine();
+                            if (ImGui::Checkbox("Unlock notices", &settings.achievement_popups)) settings_changed = true;
                         }
                         if (ImGui::CollapsingHeader("Keyboard (player 1)", ImGuiTreeNodeFlags_DefaultOpen)) {
                             ImGui::TextDisabled("Click a key to change it, right-click to clear it.");
@@ -2007,6 +2288,68 @@ int run(const Options& options, dw4::game::Settings& settings) {
                         }
                         ImGui::EndTabItem();
                     }
+                    if (ImGui::BeginTabItem("Achievements")) {
+                        const auto list = dw4::game::achievement_list();
+                        const auto& profile = achievements.profile();
+                        ImGui::Text("%zu of %zu unlocked", profile.unlocked.size(), list.size());
+                        if (!profile.unlocked_randomizer.empty()) {
+                            ImGui::SameLine();
+                            ImGui::TextDisabled("(randomizer runs: %zu)", profile.unlocked_randomizer.size());
+                        }
+                        const std::int64_t minutes = profile.stat("play_minutes");
+                        ImGui::TextDisabled("In-game time %lld h %02lld min (without loading).", (long long)(minutes / 60), (long long)(minutes % 60));
+                        if (!achievements_on()) ImGui::TextColored(ImVec4(1, 0.7f, 0.4f, 1), "Achievements are switched off (Settings).");
+                        else if (last_gate != dw4::game::AchievementGate::open)
+                            ImGui::TextColored(ImVec4(1, 0.7f, 0.4f, 1), "%s", dw4::game::achievement_gate_text(last_gate));
+                        ImGui::PushTextWrapPos(0.0f);
+                        ImGui::TextDisabled("Offline achievements stay on this PC (%s). Cheats, rebalancing and a save state loaded in "
+                                            "the running stage pause them; runs with the item randomizer count separately.",
+                                            profile_path.empty() ? "not saved" : profile_path.string().c_str());
+                        ImGui::PopTextWrapPos();
+                        auto day = [](std::int64_t unix_seconds) {
+                            const std::chrono::sys_days days = std::chrono::floor<std::chrono::days>(std::chrono::sys_seconds(std::chrono::seconds(unix_seconds)));
+                            const std::chrono::year_month_day date(days);
+                            char text[16];
+                            std::snprintf(text, sizeof text, "%04d-%02u-%02u", int(date.year()), unsigned(date.month()), unsigned(date.day()));
+                            return std::string(text);
+                        };
+                        for (int category = 0; category <= int(dw4::game::AchievementCategory::multiplayer); ++category) {
+                            const auto cat = dw4::game::AchievementCategory(category);
+                            std::size_t total = 0, done = 0;
+                            for (const auto& def : list)
+                                if (def.category == cat) {
+                                    ++total;
+                                    done += profile.unlocked.count(def.id) ? 1 : 0;
+                                }
+                            const std::string header = std::string(dw4::game::achievement_category_name(cat)) + " (" + std::to_string(done) + "/" +
+                                                       std::to_string(total) + ")###cat" + std::to_string(category);
+                            if (!ImGui::CollapsingHeader(header.c_str())) continue;
+                            if (!ImGui::BeginTable(("ach" + std::to_string(category)).c_str(), 3, ImGuiTableFlags_SizingStretchProp)) continue;
+                            for (const auto& def : list) {
+                                if (def.category != cat) continue;
+                                const auto found = profile.unlocked.find(def.id);
+                                const auto random = profile.unlocked_randomizer.find(def.id);
+                                ImGui::TableNextRow();
+                                ImGui::TableNextColumn();
+                                if (found != profile.unlocked.end()) ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.3f, 1), "%s", def.title);
+                                else ImGui::TextDisabled("%s", def.title);
+                                ImGui::TableNextColumn();
+                                ImGui::TextWrapped("%s", def.description);
+                                ImGui::TableNextColumn();
+                                if (found != profile.unlocked.end()) ImGui::Text("%s", day(found->second).c_str());
+                                else if (def.stat && def.goal > 0)
+                                    ImGui::ProgressBar(float(std::min<std::int64_t>(profile.stat(def.stat), def.goal)) / float(def.goal), ImVec2(-1, 0),
+                                                       (std::to_string(std::min<std::int64_t>(profile.stat(def.stat), def.goal)) + " / " + std::to_string(def.goal)).c_str());
+                                else ImGui::TextDisabled("-");
+                                if (random != profile.unlocked_randomizer.end()) {
+                                    ImGui::SameLine();
+                                    ImGui::TextDisabled("(randomizer %s)", day(random->second).c_str());
+                                }
+                            }
+                            ImGui::EndTable();
+                        }
+                        ImGui::EndTabItem();
+                    }
                     if (ImGui::BeginTabItem("Debug")) {
                     ImGui::Text("Stage: %s  (%s)", engine.stage_name().c_str(), engine.loader_state().c_str());
                     ImGui::Text("Frame %llu  draws %zu  meshes %zu  textures %zu", (unsigned long long)engine.frame(), items.size(),
@@ -2045,6 +2388,21 @@ int run(const Options& options, dw4::game::Settings& settings) {
                                  ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoInputs |
                                      ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing);
                     ImGui::TextUnformatted(state_message.c_str());
+                    ImGui::End();
+                }
+                // Achievement notices, top right.
+                while (!toasts.empty() && std::chrono::steady_clock::now() > toasts.front().until) toasts.pop_front();
+                if (!toasts.empty()) {
+                    const ImVec2 display = ImGui::GetIO().DisplaySize;
+                    ImGui::SetNextWindowPos(ImVec2(display.x - 12, 12), ImGuiCond_Always, ImVec2(1, 0));
+                    ImGui::SetNextWindowBgAlpha(0.75f);
+                    ImGui::Begin("##achievements", nullptr,
+                                 ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoInputs |
+                                     ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing);
+                    for (const auto& toast : toasts) {
+                        ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.3f, 1), "%s", toast.title.c_str());
+                        ImGui::TextUnformatted(toast.text.c_str());
+                    }
                     ImGui::End();
                 }
                 ImGui::Render();
@@ -2135,6 +2493,13 @@ int run(const Options& options, dw4::game::Settings& settings) {
             std::cout << "state test: " << (state_mismatch < 0 ? "identical after loading" : "differs from frame " + std::to_string(state_mismatch))
                       << " (" << state_fingerprints.size() << " frames compared)\n";
         if (settings_changed && !options.smoke_frames) settings.save();
+        save_profile();
+        if (options.smoke_frames && achievements_on())
+            std::printf("achievements: %zu unlocked (%zu randomizer), kills %lld, in-game minutes %lld\n", achievements.profile().unlocked.size(),
+                        achievements.profile().unlocked_randomizer.size(), (long long)achievements.profile().stat("kills"),
+                        (long long)achievements.profile().stat("play_minutes"));
+        if (options.smoke_frames && discord)
+            std::printf("presence: %s, %llu activity updates sent\n", discord->status().c_str(), (unsigned long long)discord->sent_count());
         // Without pictures the last frame's draw list is collected once here
         // (a second traversal at the same time changes nothing), for the
         // draw count and DW4_DRAW_DUMP.
@@ -2229,7 +2594,9 @@ int main(int argc, char** argv) {
     // Test runs and the converter never open dialogs (they run unattended).
     bool interactive = !std::getenv("DW4_NO_ERROR_BOX");
     for (int i = 1; i < argc; ++i)
-        if (std::string_view(argv[i]) == "--smoke-test" || std::string_view(argv[i]) == "--convert-rvz") interactive = false;
+        if (std::string_view(argv[i]) == "--smoke-test" || std::string_view(argv[i]) == "--convert-rvz" ||
+            std::string_view(argv[i]) == "--export-presence-art")
+            interactive = false;
     try {
         Options options;
         for (int i = 1; i < argc; ++i) {
@@ -2271,6 +2638,7 @@ int main(int argc, char** argv) {
                 }
             } else if (arg == "--input") options.input_script = next();
             else if (arg == "--load-state") options.load_state = next();
+            else if (arg == "--export-presence-art") options.export_art = next();
             else if (arg == "--loading") {
                 const std::string value = next();
                 if (value != "original" && value != "fast") throw std::runtime_error("--loading takes original or fast");
@@ -2294,7 +2662,8 @@ int main(int argc, char** argv) {
             else if (arg == "--help" || arg == "-h") {
                 std::cout << "dw4_game [--data EXTRACTED_ROOT] [--stage NAME] [--smoke-test FRAMES] [--screenshot FILE.bmp]\n"
                              "         [--screenshot-frames N,M,...] [--input SCRIPT] [--card-dir GCI_ROOT]\n"
-                             "         [--load-state FILE] [--loading original|fast]\n";
+                             "         [--load-state FILE] [--loading original|fast]\n"
+                             "         [--export-presence-art FOLDER] (Discord art asset PNGs from your game data)\n";
                 return 0;
             } else throw std::runtime_error("unknown option " + arg);
         }
@@ -2347,6 +2716,7 @@ int main(int argc, char** argv) {
             if (problem.empty()) problem = check_game_data(options.data);
             if (!problem.empty()) throw std::runtime_error(problem);
         }
+        if (!options.export_art.empty()) return dw4::game::export_presence_art(options.data, options.export_art);
         return run(options, settings);
     } catch (const std::exception& error) {
         std::cerr << "dw4_game: " << error.what() << '\n';
