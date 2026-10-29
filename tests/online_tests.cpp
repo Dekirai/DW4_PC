@@ -707,6 +707,73 @@ PlayerCarry carry_of(const char* digimon, int level, const char* weapon) {
     return c;
 }
 
+// 6.7: the transition steps take the pads of the barrier tick. Two machines
+// that execute the same NEXTSTAGE but sample different pads while they run
+// the module reload, its held fields and the load step still take the same
+// load snapshot (the load step's pads are in it) and stay equal.
+struct TransitionRun {
+    std::vector<std::uint8_t> canonical; // the new visit's snapshot
+    std::map<std::uint64_t, std::uint64_t> fingerprints;
+    std::uint64_t barrier_frame{}, load_frame{};
+};
+
+TransitionRun run_transition(const std::filesystem::path& data, bool noise) {
+    TransitionRun run;
+    Engine engine(data);
+    engine.set_card_root(std::filesystem::temp_directory_path() / "dw4_online_tests_cards");
+    auto* sys = engine.get<GameSystem>();
+    sys->direct_start = true;
+    sys->players[1].joined = true;
+    sys->players[1].digimon = "p_dorumon";
+    OnlineRules rules;
+    rules.enabled = true;
+    rules.present = 0b0011;
+    engine.set_online(rules);
+    engine.set_split_identity(0);
+    engine.request_stage("dng101b1");
+    std::uint64_t serial = 0;
+    bool posted = false;
+    for (int i = 0; i < 3200; ++i) {
+        const std::uint64_t frame = engine.frame();
+        if (!posted && frame >= 1100 && engine.membership_safe()) {
+            // STAGECTL NEXTSTAGE delivered inside the next step, as a script's.
+            Packet next;
+            next.strings.emplace_back("dng101b2");
+            engine.messenger().post(engine.time() + kFrameNs, "STAGECTL", std::nullopt, -1, "NEXTSTAGE", std::move(next));
+            posted = true;
+        }
+        auto pads = pads_at(frame);
+        // While the transition runs, this machine's controllers do anything.
+        if (noise && engine.pending_stage())
+            for (auto& p : pads) {
+                p.buttons = dw4::pad_button::b | dw4::pad_button::x | std::uint32_t(frame % 7 == 0 ? dw4::pad_button::start : 0);
+                p.left = {float(frame % 74) / 74.0f, -0.5f};
+            }
+        const bool before = engine.pending_stage().has_value();
+        host_step(engine, pads, nullptr);
+        if (!before && engine.pending_stage() && !run.barrier_frame) run.barrier_frame = engine.frame();
+        if (const auto* snapshot = engine.stage_snapshot(); snapshot && snapshot->serial != serial) {
+            serial = snapshot->serial;
+            if (snapshot->stage == "dng101b2") {
+                run.canonical = engine.snapshot_bytes(SnapshotForm::canonical);
+                run.load_frame = engine.frame();
+            }
+        }
+        run.fingerprints[engine.frame()] = engine.net_fingerprint();
+    }
+    engine.set_online(OnlineRules{});
+    return run;
+}
+
+void transition_pads(const std::filesystem::path& data) {
+    const auto quiet = run_transition(data, false);
+    const auto noisy = run_transition(data, true);
+    std::cout << "  transition: barrier tick at frame " << quiet.barrier_frame << ", dng101b2 load step at " << quiet.load_frame << '\n';
+    check(quiet.barrier_frame && quiet.load_frame > quiet.barrier_frame, "the NEXTSTAGE ran and dng101b2 loaded");
+    check(!quiet.canonical.empty() && quiet.canonical == noisy.canonical, "the load snapshots are equal whatever the pads of the transition steps");
+    check(quiet.fingerprints == noisy.fingerprints, "and the machines stay equal");
+}
+
 void data_scenarios(const std::filesystem::path& data) {
     // 1. dng101b1: Agumon alone, a Dorumon joins mid-stage (another species:
     // its package loads now), a Veemon joins as the third, the Dorumon leaves
@@ -880,6 +947,9 @@ void data_scenarios(const std::filesystem::path& data) {
         const auto b5 = run_scenario(data, s5, &a5.applied);
         check(compare(a5, b5, s5.name) == a5.fingerprints.size(), "give up: the second engine agrees");
     }
+
+    // 6. The transition steps take the pads of the barrier tick.
+    transition_pads(data);
 }
 
 } // namespace
