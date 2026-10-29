@@ -143,6 +143,34 @@ debug camera shows everything): a subtree outside the original's frustum but
 in the picture is drawn without its updates (`ActionManager::peek_pose`, copied
 clocks and caches), so the simulation does not depend on the presentation.
 
+An ACTION actor's motion combiner (`MotionState`) keeps each state's clock as
+the original's igAnimationState does (`StateClock`: time = ((T >> 18) * speed
++0x38) << 18 + base +0x40 at node time T, 801D3628). A state that MOTIONSET
+puts in (801D1BCC) is not evaluated yet (+0x1c, `MotionState::fresh`): every
+combiner update restarts it at time 0 with its fade starting at that update
+(801CFFB4 0x801D00D0..0x801D0164) until the traversal's evaluation (801D0C14)
+or the motion phase's update (802F0EB0) marks it evaluated. Because the
+traversal culls, a clip set while its actor is out of view or before the
+stage's first picture starts - and its fade and WAITCHECK 'M' count - from
+the actor's first traversal (n_leomon's wait02 in staggf03 1.95 s later;
+e_rare's trnsIN in dng412b1; the g_b01base1 bases in stagBS01 up to 1.9 s).
+MOTIONSET's field 3 'S' freezes a state at the world time's state time
+(802F1160: the first letter the combiner's first state 0x802F12C0 - the
+previous clip; a baked pose has no time - the second the new clip
+0x802F1370; speed 0, the base moved to keep the time). The frozen new clip is
+still fresh, so the next combiner update restarts it at time 0 on the frozen
+clock: it holds its first picture. Once one state is left, the motion phase
+gives it the node clock's scale again with its time kept (0x802F108C). Only
+two MOTIONSETs of the game data use 'S' (all 6142 records of ndmw.afs and
+area.afs checked): n_leomon's KYRO01 in staggf03 ("RS", action01 holds its
+first picture through the 16 frame fade) and f_apocaly's ACTN05 in stagBS01
+("SS", wait01's first picture for two frames). WAITCHECK 'M' compares the
+state time against the clip's duration unsigned (0x802F03A8). Not modelled:
+the speed and base a reused pool state brings along (801D1BCC resets
+neither) - the port starts the activation's combine mode 0 state at time 0,
+and no 'S' state goes back to the pool frozen in the data. `MotionState` is
+not in the snapshot: a restore replays the stage.
+
 ## Messenger and scripts
 
 `Messenger` holds `(category, name, index) -> RAM` rows registered by the
