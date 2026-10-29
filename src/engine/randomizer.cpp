@@ -40,13 +40,15 @@ namespace {
 // the smallest stage member holding their six infos (AFS sizes of the stage
 // main members, round 48 survey) where the family is an ordinary enemy: no
 // quest stage (their hit scripts carry quest logic, dngQ8's e_mecha4 calls a
-// ded_ script) and no stage where it is the boss (dng308b3 / dng411b3).
+// ded_ script) and no stage where it is the boss (dng308b3 / dng411b3);
+// MarineDevimon from dng310f1, whose sound list has the Otamamon death cry
+// its SE set names (stag0303's lacks it).
 constexpr Family kFamilies[] = {
     {"e_nume", 1, false, "dng101b1"},    {"e_goburi", 1, false, "stag0001"},  {"e_ogre", 1, false, "stag0001"},
     {"e_scum", 1, false, "dng102b1"},    {"e_cockatri", 1, false, "stag0001"}, {"e_mecha1", 1, false, "dng103f1"},
     {"e_mummy", 2, false, "dng204b1"},   {"e_minotaru", 2, false, "dng205b1"}, {"e_pharaoh", 2, false, "dng206f1"},
     {"e_mecha2", 2, false, "dng308b2"},  {"e_tyrano", 2, false, "stag0202"},  {"e_otama", 3, false, "dng307b1"},
-    {"e_geko", 3, false, "dng308b1"},    {"e_mecha3", 3, false, "dng309b1"},  {"e_maridevi", 3, false, "stag0303"},
+    {"e_geko", 3, false, "dng308b1"},    {"e_mecha3", 3, false, "dng309b1"},  {"e_maridevi", 3, false, "dng310f1"},
     {"e_torta", 3, false, "stag0301"},   {"e_mecha4", 3, false, "dng412b2"},  {"e_infermo", 4, false, "dng411b2"},
     {"e_megadra", 4, false, "dng411b1"}, {"e_rare", 4, false, "dng412b1"},    {"e_mecha5", 4, false, "dng412b4"},
     // Bosses and the 1-RAM mid-bosses stay where they are.
