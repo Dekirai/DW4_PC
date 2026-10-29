@@ -8,9 +8,21 @@ public sealed class AccountOptions
     /// <summary>"open" or "closed".</summary>
     public string Registration { get; set; } = "open";
     public int PasswordIterations { get; set; } = Security.PasswordHasher.DefaultIterations;
-    /// <summary>Failed logins in a row before the account is locked for <see cref="LockoutMinutes"/>.</summary>
+    /// <summary>
+    /// Failed attempts (password, recovery code, password confirmations) from one client address on one user name within
+    /// <see cref="LockoutMinutes"/> before that address is refused for <see cref="LockoutMinutes"/> (Accounts.LoginThrottle).
+    /// </summary>
     public int MaxFailedLogins { get; set; } = 10;
+    /// <summary>The window of <see cref="MaxFailedLogins"/> and the length of both locks.</summary>
     public int LockoutMinutes { get; set; } = 15;
+    /// <summary>
+    /// Failed attempts on one account from all addresses together (reset by a success) before the account is locked for
+    /// <see cref="LockoutMinutes"/> against guessing from many addresses. During that lock only addresses the account
+    /// logged in from within <see cref="KnownAddressDays"/> may still try, so strangers cannot lock the owner out.
+    /// </summary>
+    public int MaxFailedLoginsPerAccount { get; set; } = 50;
+    /// <summary>How long a client address that created a session counts as known for the account-wide lock.</summary>
+    public int KnownAddressDays { get; set; } = 30;
     /// <summary>Sliding lifetime of game-client sessions.</summary>
     public int GameSessionDays { get; set; } = 30;
     /// <summary>Sliding lifetime of website sessions.</summary>

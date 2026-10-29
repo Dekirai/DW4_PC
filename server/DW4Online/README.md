@@ -85,7 +85,7 @@ and user secrets (Development) work as usual.
 | --- | --- |
 | `Database` | `ConnectionString`, `AutoMigrate` (true): run pending migrations at startup. |
 | `Service` | `Name`, `Motd` (game menu and home page), `Maintenance` (announced; no new rooms), `RelayHost` (empty = the request's host name) / `RelayPort` (default 0 = the port the relay listens on, `Relay:Port`; set it only when clients reach the relay through another public port), announced to clients. |
-| `Accounts` | `Registration` (open / closed), `PasswordIterations` (220000), `MaxFailedLogins` (10), `LockoutMinutes` (15), `GameSessionDays` (30), `WebSessionDays` (14), `SessionTouchMinutes` (5), `MaxSessionsPerAccount` (20). |
+| `Accounts` | `Registration` (open / closed), `PasswordIterations` (220000), `MaxFailedLogins` (10, per user name and address), `LockoutMinutes` (15), `MaxFailedLoginsPerAccount` (50), `KnownAddressDays` (30), `GameSessionDays` (30), `WebSessionDays` (14), `SessionTouchMinutes` (5), `MaxSessionsPerAccount` (20). |
 | `OnlineCharacter` | `HistoryRevisions` (20), `Rules:MaxLevelsPerPlayHour` (120), `Rules:PlayTimeSlackSeconds` (600). |
 | `CloudSave` | `MaxBytes` (1 MiB), `HistoryRevisions` (5). |
 | `Play` | `RequireRoom` (true), `MinimumProtocol` / `CurrentProtocol` (netplay `kProtocol`), `MinimumClientVersion` / `CurrentClientVersion`, `SpeedrunFloorSeconds` (per board `story_normal` / `story_hard` / `story_veryhard`, 2700 each: see "Speedrun floor"). |
@@ -178,8 +178,18 @@ and stats must carry `protocol` / `clientVersion` (426 `client_outdated` otherwi
 - **Passwords**: PBKDF2-HMAC-SHA512, 220,000 iterations (OWASP), about 150 ms per hash on the development PC, stored
   as `$pbkdf2-sha512$i=...$salt$hash`; stronger settings rehash at the next login. 10-128 characters, not the user name,
   not a common password. Unknown user names cost the same time as wrong passwords.
-- **Lockout**: 10 failed logins or recovery attempts in a row lock the account for 15 minutes (423 with
-  `retryAfterSeconds`); staff locks and bans are separate statuses, reported only after a correct password.
+- **Lockout** (both answers are 423 `account_locked_temporarily` with `retryAfterSeconds`; staff locks and bans are
+  separate statuses, reported only after a correct password). User names are public (room list, profiles), so a lock
+  must not let strangers lock the owner out:
+  - per user name and client address (IPv4 exactly, IPv6 by its /64 network, in memory): 10 failed logins, recovery
+    codes or password confirmations within 15 minutes refuse that address for that name for 15 minutes, before any
+    password check. A stranger locks out only their own address; a name without an account locks the same way, so the
+    answer does not tell whether an account exists. A correct password from the address clears its count.
+  - per account, against guessing from many addresses: 50 failures from all addresses together (reset by a success)
+    lock the account for 15 minutes, but an address the account created or used a session from in the last 30 days
+    may still log in (and its success ends the lock); other addresses wait. Only during such a lock does the answer
+    show that the name exists.
+  Logins are also limited to 5 per minute per address (rate limit).
 - **Sessions**: 256-bit opaque tokens, only SHA-256 stored, kinds `game` (30 days) and `web` (14 days), sliding
   expiry (moved forward at most every 5 minutes), at most 20 live sessions per account.
 - **Recovery**: a one-time recovery code (100 bits, shown at registration and after each use) or an admin reset

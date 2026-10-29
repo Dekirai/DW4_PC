@@ -98,6 +98,61 @@ public class AccountTests
         Assert.Equal(HttpStatusCode.OK, ok.StatusCode);
     }
 
+    private static Task<HttpResponseMessage> Login(TestHost host, string ip, string username, string password) =>
+        host.Client(ip: ip).PostAsJsonAsync("/api/v1/auth/login", new { username, password });
+
+    /// <summary>A stranger who knows a name (room list, profiles) locks out only their own address, never the owner.</summary>
+    [DbFact]
+    public async Task Strangers_lock_out_only_their_own_address()
+    {
+        await using var host = await TestHost.StartAsync(new() { ["Accounts:MaxFailedLogins"] = "3" });
+        await host.RegisterAsync("Famous");
+        for (var i = 0; i < 3; ++i)
+            Assert.Equal(HttpStatusCode.Unauthorized, (await Login(host, "198.51.100.66", "Famous", "guess " + i)).StatusCode);
+        // The stranger's address is refused, even with the right password; no password check happens.
+        Assert.Equal(HttpStatusCode.Locked, (await Login(host, "198.51.100.66", "Famous", "a decent password")).StatusCode);
+        // The owner, from anywhere else, logs in as usual.
+        Assert.Equal(HttpStatusCode.OK, (await Login(host, "203.0.113.20", "Famous", "a decent password")).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await Login(host, "2001:db8:5::1", "Famous", "a decent password")).StatusCode);
+
+        // A name without an account behaves the same (the answer does not reveal whether it exists).
+        for (var i = 0; i < 3; ++i)
+            Assert.Equal(HttpStatusCode.Unauthorized, (await Login(host, "198.51.100.66", "Nobody", "guess " + i)).StatusCode);
+        Assert.Equal(HttpStatusCode.Locked, (await Login(host, "198.51.100.66", "Nobody", "guess 4")).StatusCode);
+
+        // The recovery form counts on the same pair.
+        Assert.Equal("account_locked_temporarily", await (await host.Client(ip: "198.51.100.66").PostAsJsonAsync("/api/v1/auth/recover",
+            new { username = "Famous", recoveryCode = "AAAA-AAAA-AAAA-AAAA-AAAA", newPassword = "another decent password" })).ProblemCode());
+    }
+
+    /// <summary>Guessing from many addresses locks the account, but its owner still gets in from an address used before.</summary>
+    [DbFact]
+    public async Task Guessing_from_many_addresses_locks_the_account_except_for_known_addresses()
+    {
+        await using var host = await TestHost.StartAsync(new() { ["Accounts:MaxFailedLogins"] = "3", ["Accounts:MaxFailedLoginsPerAccount"] = "6" });
+        await host.RegisterAsync("Target"); // from the default test address 192.0.2.1: a known address now
+        Assert.Equal(HttpStatusCode.OK, (await Login(host, "2001:db8:77:1::5", "Target", "a decent password")).StatusCode);
+        foreach (var ip in new[] { "198.51.100.1", "198.51.100.2", "198.51.100.3" })
+            for (var i = 0; i < 2; ++i)
+                Assert.Equal(HttpStatusCode.Unauthorized, (await Login(host, ip, "Target", "guess " + i)).StatusCode);
+
+        // Six failures from three addresses: the account is locked for new addresses, even with the right password ...
+        Assert.Equal(HttpStatusCode.Locked, (await Login(host, "198.51.100.200", "Target", "a decent password")).StatusCode);
+        // ... while the owner's known addresses (IPv6: the same /64 network) still work.
+        Assert.Equal(HttpStatusCode.OK, (await Login(host, "2001:db8:77:1::abcd", "Target", "a decent password")).StatusCode);
+        // That login ended the account-wide lock.
+        Assert.Equal(HttpStatusCode.OK, (await Login(host, "198.51.100.200", "Target", "a decent password")).StatusCode);
+
+        foreach (var ip in new[] { "198.51.100.4", "198.51.100.5", "198.51.100.6" })
+            for (var i = 0; i < 2; ++i)
+                await Login(host, ip, "Target", "guess " + i);
+        Assert.Equal(HttpStatusCode.Locked, (await Login(host, "198.51.100.201", "Target", "a decent password")).StatusCode);
+        host.Clock.Advance(TimeSpan.FromMinutes(16));
+        Assert.Equal(HttpStatusCode.OK, (await Login(host, "198.51.100.201", "Target", "a decent password")).StatusCode);
+        await using var sql = await host.SqlAsync();
+        Assert.Equal(2, await Dapper.SqlMapper.ExecuteScalarAsync<int>(sql, "SELECT COUNT(*) FROM audit_log WHERE event = 'login_fail_locked'"));
+    }
+
     [DbFact]
     public async Task Login_rate_limit_answers_429()
     {

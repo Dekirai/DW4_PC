@@ -69,6 +69,16 @@ public sealed class SessionRepository(Database db) : ISessionRepository
             "WHERE account_id = @a AND revoked_at IS NULL AND expires_at > @now ORDER BY COALESCE(last_used_at, created_at) DESC",
             new { a = accountId, now }, cancellationToken: ct))).AsList();
     }
+
+    public async Task<bool> KnowsAddressAsync(long accountId, byte[] ip, DateTime since, CancellationToken ct = default)
+    {
+        await using var c = await db.OpenAsync(ct);
+        var network = ip.Length == 16 ? ip[..8] : null;
+        return await c.ExecuteScalarAsync<bool>(new CommandDefinition(
+            "SELECT EXISTS (SELECT 1 FROM sessions WHERE account_id = @a AND (created_at >= @since OR last_used_at >= @since) " +
+            "AND (created_ip = @ip OR (@net IS NOT NULL AND LENGTH(created_ip) = 16 AND LEFT(created_ip, 8) = @net)))",
+            new { a = accountId, ip, net = network, since }, cancellationToken: ct));
+    }
 }
 
 public sealed class AuditLog(Database db) : IAuditLog

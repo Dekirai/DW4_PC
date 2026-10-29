@@ -44,6 +44,11 @@ public interface ISessionRepository
     /// <summary>Revokes the oldest live sessions beyond <paramref name="keep"/>.</summary>
     Task TrimAsync(long accountId, int keep, DateTime now, CancellationToken ct = default);
     Task<IReadOnlyList<SessionInfo>> ListAsync(long accountId, DateTime now, CancellationToken ct = default);
+    /// <summary>
+    /// True when the account created or used a session since <paramref name="since"/> that was created from this address
+    /// (IPv4 exactly, IPv6 by its /64 network).
+    /// </summary>
+    Task<bool> KnowsAddressAsync(long accountId, byte[] ip, DateTime since, CancellationToken ct = default);
 }
 
 public interface IAuditLog

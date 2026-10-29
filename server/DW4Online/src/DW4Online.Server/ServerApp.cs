@@ -68,6 +68,7 @@ public static class ServerApp
         services.AddSingleton<IRoomRepository, RoomRepository>();
         services.AddSingleton<MaintenanceRepository>();
         services.AddSingleton(_ => new PasswordHasher(accounts.PasswordIterations));
+        services.AddSingleton<DW4Online.Domain.Accounts.LoginThrottle>();
         services.AddSingleton<VersionGate>();
         services.AddSingleton<AccountService>();
         services.AddSingleton<AchievementService>();
