@@ -160,7 +160,7 @@ and that the decisions above do not settle are questions in section 18.
 | Scenes of one member (status window, talks, recorders, camera tours): original when everyone is near, scoped to that member with a local freeze otherwise, from round S3 (question 6) | 5.3 |
 | EXP is shared by the members near the kill (question 7) | 5 |
 | Story while the owner is away: server setting, *drop* until the user decides, refused progress removed at the next barrier (question 2) | 8.6 |
-| The online character is uploaded when the save room writes, as in the original (question 3) | 9 |
+| The online character is uploaded when the save room writes and also automatically at stage changes and when leaving the room (question 3, answered) | 9 |
 | Difficulty, camera mode, light mode, randomizer and fast loading are room settings | 3.1, 10 |
 | Online needs a CPU with FMA3 until round S4 | 6.12 |
 | The relay stays plain TCP with one-time HMAC tickets; UDP only if the S1 loss matrix demands it | 6.2, 6.4 |
@@ -1423,9 +1423,11 @@ The default stays `drop` until the user decides (question 2).
   the room context. A 409 (the same account saved from another machine) shows a
   message and reloads; it never overwrites silently. The card file is only a
   cache; the server is the truth.
-- **When.** As in the original only when the save room writes (question 3 asks
-  whether to upload also at stage changes or when leaving the room). The room
-  story does not depend on it (8.3).
+- **When.** When the save room writes, as in the original, and also
+  automatically at every stage change (at the barrier, from the state the
+  member carries into the next stage) and when the member leaves the room
+  (question 3, answered: automatic saves wanted). A crash or quit loses at most
+  the current stage. The room story does not depend on it (8.3).
 - **Cloud backup** of the local save (F1 > Saves, outside rooms only): upload
   with a preview (`summarize_save`) and `X-Sha256`, download with a backup of
   the current file first (`.bak`), restore of the five earlier revisions; the
@@ -1790,6 +1792,20 @@ Depends on: S4 and the answers.
    automatically (your decision). Should a member also be able to switch to
    "play alone" (never joined into others' instances, still in the room and
    counting for its story)? Default: no switch.
+
+### Answers (user, 2026-10-29)
+
+1. Lobby: solo (the default).
+2. Story while the owner is away: drop (the default).
+3. Saving the online character: **also automatically** at stage changes and
+   when leaving the room, in addition to the save room (not the default;
+   section 9 and round S2 / S5 follow it).
+4. Warp to a friend: no, walking only (the default).
+5. Two players on one PC online: no, one player per PC (the default).
+6. Menus and talks far from the others: (a) only that member pauses, the
+   enemies near it freeze too (the default).
+7. EXP: (a) only members near the kill share it (the default).
+8. Play alone in a room: no switch (the default).
 
 ## 19. Risks
 
