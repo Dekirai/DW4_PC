@@ -31,8 +31,8 @@ public sealed class LoginModel(AccountService accounts) : PageModel
             return Page();
         }
         WebSessions.SignIn(HttpContext, result.Value!.Session, Remember);
-        return Redirect(result.Value.Account.MustChangePassword ? "/account" : SafeReturn());
+        return Redirect(result.Value.Account.MustChangePassword ? "~/account" : SafeReturn());
     }
 
-    private string SafeReturn() => !string.IsNullOrEmpty(ReturnUrl) && Url.IsLocalUrl(ReturnUrl) ? ReturnUrl : "/account";
+    private string SafeReturn() => !string.IsNullOrEmpty(ReturnUrl) && Url.IsLocalUrl(ReturnUrl) ? ReturnUrl : "~/account";
 }

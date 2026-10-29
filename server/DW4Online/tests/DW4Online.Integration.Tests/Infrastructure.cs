@@ -87,6 +87,7 @@ public sealed class TestHost : IAsyncDisposable
             builder.WebHost.UseTestServer();
             builder.Configuration.AddInMemoryCollection(settings);
             builder.Services.AddSingleton<TimeProvider>(clock);
+            builder.Services.AddSingleton<IStartupFilter, TestClientAddress>();
         });
         await ServerApp.MigrateIfEnabledAsync(app);
         await app.StartAsync();
@@ -125,10 +126,12 @@ public sealed class TestHost : IAsyncDisposable
         return settings;
     }
 
-    public HttpClient Client(string? token = null)
+    /// <summary>An API client; <paramref name="ip"/> is the client address the service sees (default 192.0.2.1).</summary>
+    public HttpClient Client(string? token = null, string? ip = null)
     {
         var client = App.GetTestClient();
         if (token is not null) client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        if (ip is not null) client.DefaultRequestHeaders.Add(TestClientAddress.Header, ip);
         return client;
     }
 
@@ -200,4 +203,26 @@ public static class HttpExtensions
         if (create) request.Headers.TryAddWithoutValidation("If-None-Match", "*");
         return client.SendAsync(request);
     }
+}
+
+/// <summary>
+/// TestServer has no real connection: a test request names its client address in the X-Test-Ip header (default
+/// 192.0.2.1, a documentation address), so per-IP rules can be tested. Test hosts only.
+/// </summary>
+public sealed class TestClientAddress : IStartupFilter
+{
+    public const string Header = "X-Test-Ip";
+    public static readonly IPAddress Default = IPAddress.Parse("192.0.2.1");
+
+    public Action<IApplicationBuilder> Configure(Action<IApplicationBuilder> next) => app =>
+    {
+        app.Use(async (ctx, call) =>
+        {
+            ctx.Connection.RemoteIpAddress = ctx.Request.Headers.TryGetValue(Header, out var value) && IPAddress.TryParse(value, out var ip)
+                ? ip
+                : ctx.Connection.RemoteIpAddress ?? Default;
+            await call();
+        });
+        next(app);
+    };
 }

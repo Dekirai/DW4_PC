@@ -89,10 +89,11 @@ public static class WebSetup
                 response.StatusCode = StatusCodes.Status429TooManyRequests;
                 response.Headers.RetryAfter = retry.ToString(System.Globalization.CultureInfo.InvariantCulture);
                 response.ContentType = "text/html; charset=utf-8";
+                var root = System.Net.WebUtility.HtmlEncode(context.HttpContext.Request.PathBase.Value ?? "");
                 await response.WriteAsync(
                     "<!DOCTYPE html><html lang=\"en\"><head><meta charset=\"utf-8\"><title>Too many attempts</title>" +
-                    "<link rel=\"stylesheet\" href=\"/css/site.css\"></head><body><main class=\"page\"><h1>Too many attempts</h1>" +
-                    $"<p>Please wait {retry} seconds and try again.</p><p><a href=\"/\">Back to the home page</a></p></main></body></html>", ct);
+                    $"<link rel=\"stylesheet\" href=\"{root}/css/site.css\"></head><body><main class=\"page\"><h1>Too many attempts</h1>" +
+                    $"<p>Please wait {retry} seconds and try again.</p><p><a href=\"{root}/\">Back to the home page</a></p></main></body></html>", ct);
             };
         });
         return services;
@@ -181,7 +182,7 @@ internal sealed class PasswordChangePageFilter : IAsyncPageFilter
     {
         if (context.HttpContext.WebSession() is { MustChangePassword: true } && !Allowed.Contains(context.ActionDescriptor.ViewEnginePath))
         {
-            context.Result = new RedirectResult("/account");
+            context.Result = new RedirectResult("~/account"); // "~/": below Service:PathBase
             return;
         }
         await next();

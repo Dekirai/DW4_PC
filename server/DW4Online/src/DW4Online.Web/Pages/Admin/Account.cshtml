@@ -4,7 +4,7 @@
     ViewData["Title"] = "Admin: " + Model.Target.Username;
     var t = Model.Target;
 }
-<p><a href="/admin">&larr; Admin</a></p>
+<p><a href="~/admin">&larr; Admin</a></p>
 <h1>@t.Username</h1>
 @if (Model.Message is not null)
 {
@@ -32,7 +32,7 @@
             <dt>Role</dt><dd>@t.Role</dd>
             <dt>Status</dt><dd>@t.Status</dd>
             <dt>E-mail</dt><dd>@(t.Email ?? "none")</dd>
-            <dt>Profile</dt><dd>@(t.ProfilePublic ? "public" : "private") (<a href="/u/@t.Username">view</a>)</dd>
+            <dt>Profile</dt><dd>@(t.ProfilePublic ? "public" : "private") (<a href="~/u/@t.Username">view</a>)</dd>
             <dt>Created</dt><dd>@Format.Date(t.CreatedAt)</dd>
             <dt>Last login</dt><dd>@Format.Date(t.LastLoginAt)</dd>
         </dl>

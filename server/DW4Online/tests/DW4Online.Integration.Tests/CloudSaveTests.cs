@@ -1,6 +1,8 @@
 using System.Net;
 using System.Net.Http.Headers;
+using System.Net.Http.Json;
 using System.Security.Cryptography;
+using Dapper;
 using DW4Online.Domain.Save;
 using DW4Online.Tests;
 
@@ -67,9 +69,43 @@ public class CloudSaveTests
         Assert.Equal(8, (await restored.Json()).GetProperty("revision").GetInt32());
         Assert.Equal(Save(102), await (await client.GetAsync("/api/v1/cloud-save")).Content.ReadAsByteArrayAsync());
 
-        Assert.Equal(HttpStatusCode.NoContent, (await client.DeleteAsync("/api/v1/cloud-save")).StatusCode);
+        // Deleting needs the current password: a token alone does not destroy the backup.
+        Assert.Equal(HttpStatusCode.MethodNotAllowed, (await client.DeleteAsync("/api/v1/cloud-save")).StatusCode);
+        Assert.Equal("wrong_password", await (await client.PostAsJsonAsync("/api/v1/cloud-save/delete", new { currentPassword = "not my password" })).ProblemCode());
+        Assert.Equal("wrong_password", await (await client.PostAsJsonAsync("/api/v1/cloud-save/delete", new { })).ProblemCode());
+        Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/api/v1/cloud-save")).StatusCode);
+        Assert.Equal(HttpStatusCode.NoContent, (await client.PostAsJsonAsync("/api/v1/cloud-save/delete", new { currentPassword = "a decent password" })).StatusCode);
         Assert.Equal(HttpStatusCode.NotFound, (await client.GetAsync("/api/v1/cloud-save")).StatusCode);
-        Assert.Equal(HttpStatusCode.NotFound, (await client.DeleteAsync("/api/v1/cloud-save")).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await client.GetAsync("/api/v1/cloud-save?revision=3")).StatusCode);
+        Assert.Equal("no_cloud_save", await (await client.PostAsJsonAsync("/api/v1/cloud-save/delete", new { currentPassword = "a decent password" })).ProblemCode());
+        await using var sql = await host.SqlAsync();
+        Assert.Equal(2, await sql.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM audit_log WHERE event = 'confirm_fail'"));
+        Assert.Equal(1, await sql.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM audit_log WHERE event = 'cloud_delete'"));
+    }
+
+    [DbFact]
+    public async Task Website_deletes_the_cloud_save_only_with_the_password()
+    {
+        await using var host = await TestHost.StartAsync();
+        using var web = new WebBrowser(host);
+        await web.RegisterAsync("WebSaver");
+        var (token, _) = await host.LoginAsync("WebSaver");
+        Assert.Equal(HttpStatusCode.Created, (await PutAsync(host.Client(token), Save(7), create: true)).StatusCode);
+
+        var page = await web.GetAsync("/account");
+        Assert.Contains("Delete cloud save", page.Html);
+        var unticked = await web.PostAsync("/account?handler=DeleteCloud", new() { ["CurrentPassword"] = "a decent password" }, "/account");
+        Assert.Contains("Tick the box", unticked.Html);
+        var wrong = await web.PostAsync("/account?handler=DeleteCloud",
+            new() { ["CurrentPassword"] = "a wrong password", ["ConfirmCloudDelete"] = "true" }, "/account");
+        Assert.Contains("The current password is wrong.", wrong.Html);
+        Assert.Equal(HttpStatusCode.OK, (await host.Client(token).GetAsync("/api/v1/cloud-save")).StatusCode);
+
+        var done = await web.PostAsync("/account?handler=DeleteCloud",
+            new() { ["CurrentPassword"] = "a decent password", ["ConfirmCloudDelete"] = "true" }, "/account");
+        Assert.Contains("Your cloud save and its older revisions were deleted.", done.Html);
+        Assert.Contains("No cloud save yet.", done.Html);
+        Assert.Equal(HttpStatusCode.NotFound, (await host.Client(token).GetAsync("/api/v1/cloud-save")).StatusCode);
     }
 
     [DbFact]

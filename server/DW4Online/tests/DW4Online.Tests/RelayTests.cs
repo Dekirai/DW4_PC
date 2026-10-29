@@ -236,4 +236,36 @@ public class RelayServerTests
             stop.Dispose();
         }
     }
+
+    /// <summary>The room service's admission check: a valid but stale ticket opens no channel and splices nobody.</summary>
+    [Fact]
+    public async Task Tickets_the_room_service_no_longer_expects_are_refused()
+    {
+        var (server, tickets, port, stop) = await StartAsync();
+        var expected = new HashSet<string>();
+        server.Admission = claims => ValueTask.FromResult(expected.Contains(claims.Nonce));
+        try
+        {
+            var stale = tickets.Create("ROOM03-1", 7, RelayRoles.Host);
+            var (c1, s1) = await ConnectAsync(port, "DW4R1 HOST " + stale.Ticket);
+            Assert.Equal("ERR ticket", await ReadLineAsync(s1));
+            Assert.Empty(server.Channels); // no orphaned channel
+
+            var host = tickets.Create("ROOM03-1", 7, RelayRoles.Host);
+            expected.Add(host.Nonce);
+            var (c2, s2) = await ConnectAsync(port, "DW4R1 HOST " + host.Ticket);
+            Assert.StartsWith("OK ", await ReadLineAsync(s2), StringComparison.Ordinal);
+            Assert.Equal(["ROOM03-1"], server.Channels);
+
+            var hoarded = tickets.Create("ROOM03-1", 8, RelayRoles.Guest);
+            var (c3, s3) = await ConnectAsync(port, "DW4R1 GUEST " + hoarded.Ticket);
+            Assert.Equal("ERR ticket", await ReadLineAsync(s3));
+            foreach (var c in new[] { c1, c2, c3 }) c.Dispose();
+        }
+        finally
+        {
+            await server.StopAsync(CancellationToken.None);
+            stop.Dispose();
+        }
+    }
 }
