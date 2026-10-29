@@ -1046,7 +1046,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
             const std::uint64_t serial = engine.stage_snapshot() ? engine.stage_snapshot()->serial : 0;
             return (engine_generation << 40) ^ serial;
         };
-        auto own_slot = [&] { return net.active() ? net.local_slot() : 0; };
+        auto own_slot = [&] { return net.active() ? net.local_slot() : engine.view_slot(); }; // (offline: slot 0 unless a seamless co-op test run sets the view slot)
         // Overhead name tags (settings.ini [hud]; test runs: DW4_LABELS=
         // auto|all|others|off, DW4_TRACE_LABELS=N prints their screen
         // positions every N frames, without a window too).
@@ -2167,9 +2167,9 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 const bool hidden = dw4::game::OverheadLabels::hidden(engine);
                 for (const auto& label : labels.current()) {
                     const auto point = dw4::game::project_label(label.head, view);
-                    const bool shown = !hidden && label.hp > 0 && point && dw4::game::label_visible(label_mode(), label.own, labels.players());
-                    std::printf("[%d] label slot=%d '%s' Lv %d HP %d/%d MP %d/%d head=(%.1f, %.1f, %.1f) %.1f above the feet ", frame,
-                                label.slot, label.name.c_str(), label.level, label.hp, label.max_hp, label.mp, label.max_mp, label.head.x,
+                    const bool shown = !hidden && (label.hp > 0 || label.capsule) && point && dw4::game::label_visible(label_mode(), label.own, labels.players());
+                    std::printf("[%d] label slot=%d%s '%s' Lv %d HP %d/%d MP %d/%d head=(%.1f, %.1f, %.1f) %.1f above the feet ", frame,
+                                label.slot, label.capsule ? " capsule" : "", label.name.c_str(), label.level, label.hp, label.max_hp, label.mp, label.max_mp, label.head.x,
                                 label.head.y, label.head.z, label.head.y - label.feet.y);
                     const auto feet = dw4::game::project_label(label.feet, view, 1.0f);
                     if (point)

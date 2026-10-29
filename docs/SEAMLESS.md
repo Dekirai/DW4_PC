@@ -1713,6 +1713,12 @@ the room (up to ten), not the instance. No invites or join secrets for now.
   rounds that change engine code the story runs r25c and nc1 frame-equal with
   main. A union test hook with one camera must also give 4004f056, and the
   extra-renders hook (4.4) must equal headless.
+- The commands since round S1: `det.sh` with `DW4_CAMERAS=1 DW4_CAM_CHECK=1`
+  (4004f056 and "0 of 1902 frames"), with `DW4_LEASH_OFF=1` and with
+  `DW4_EXTRA_RENDERS=2 DW4_EXTRA_WIDEN=1 DW4_EXTRA_PREVIOUS=1` (4004f056 each),
+  and the four-player runs of 4.4 (stag0102 and dng101b1 with
+  `DW4_CAMERAS=15 DW4_ONLINE=15`: the same fingerprint and `DW4_TRACE_CAMERAS`
+  lines headless and with local cameras 0, 2 and 3).
 
 ## 16. Testing
 
