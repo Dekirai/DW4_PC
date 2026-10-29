@@ -9,27 +9,44 @@ internal sealed class RelayGateway : IRelayGateway
 {
     private readonly RelayTickets _tickets;
     private readonly RelayServer? _server;
+    private readonly RelayOptions _options;
 
-    public RelayGateway(RelayTickets tickets, IServiceProvider services)
+    public RelayGateway(RelayTickets tickets, RelayOptions options, IServiceProvider services)
     {
         _tickets = tickets;
+        _options = options;
         _server = services.GetService<RelayServer>(); // registered only with Relay:Enabled
         if (_server is not null) _server.HostDisconnected += channel => HostLost?.Invoke(channel);
     }
 
     public bool Available => _server is not null;
 
-    /// <summary>The port the relay listens on, once it started (Relay:Port 0 picks a free one in tests).</summary>
-    public int? BoundPort => _server?.Started is { IsCompletedSuccessfully: true } started ? started.Result : null;
+    /// <summary>
+    /// The port the relay listens on once it started (Relay:Port 0 picks a free one in tests); before that the configured
+    /// Relay:Port, or null when that is 0.
+    /// </summary>
+    public int? BoundPort => _server?.Started is { IsCompletedSuccessfully: true } started ? started.Result
+        : _server is not null && _options.Port > 0 ? _options.Port : null;
 
     public event Action<string>? HostLost;
 
-    public string IssueTicket(string channel, long accountId, bool host) =>
-        _tickets.Issue(channel, accountId, host ? RelayRoles.Host : RelayRoles.Guest);
+    public RelayTicket IssueTicket(string channel, long accountId, bool host)
+    {
+        var issued = _tickets.Create(channel, accountId, host ? RelayRoles.Host : RelayRoles.Guest);
+        return new RelayTicket(issued.Ticket, issued.Nonce);
+    }
 
     public void CloseChannel(string channel) => _server?.CloseRoom(channel);
 
     public void DropGuest(string channel, long accountId) => _server?.DropGuest(channel, accountId);
+
+    public IReadOnlyCollection<string> OpenChannels => _server?.Channels ?? [];
+
+    public void SetAdmission(Func<RelayAdmission, ValueTask<bool>> check)
+    {
+        if (_server is not null)
+            _server.Admission = claims => check(new RelayAdmission(claims.Room, claims.Account, claims.Role == RelayRoles.Host, claims.Nonce));
+    }
 }
 
 /// <summary>Closes rooms a previous process left open (at start), then times out silent members every few seconds.</summary>

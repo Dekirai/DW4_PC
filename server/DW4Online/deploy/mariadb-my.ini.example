@@ -1,5 +1,6 @@
-# Additions to the [mysqld] section of the MariaDB 11.4 instance's my.ini on the server (see DEPLOY.md, step 1).
+# Additions to the [mysqld] section of the MariaDB 11.4 instance's my.ini on the server (see DEPLOY.md, section 1).
 # Restart only the MariaDB service afterwards: Restart-Service MariaDB
+# (once DW4Online is installed it depends on MariaDB: Stop-Service DW4Online; Restart-Service MariaDB; Start-Service DW4Online)
 [mysqld]
 # Local connections only: the service runs on the same machine; port 3306 stays closed in the firewall.
 bind-address=127.0.0.1

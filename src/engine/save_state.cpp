@@ -132,7 +132,7 @@ void serialize(StateArchive& a, Cheats& v) {
     a.io(v.fast_loading);
     a.io(v.rand_seed);
     a.io(v.rand_enemies);
-    a.io(v.rand_zones);
+    a.io(v.rand_zones); // 1 / 2: the loading zone rule (round 50 added 2; snapshot 42 states hold 0 / 1 and replay as before)
 }
 
 namespace {

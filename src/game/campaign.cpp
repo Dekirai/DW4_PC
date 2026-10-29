@@ -547,16 +547,18 @@ std::span<const Exit> story_exits(const engine::Engine& engine) {
     static std::vector<Exit> table;
     static std::deque<std::string> names; // the remapped targets' text
     static std::uint64_t key = 0;
-    const std::uint64_t now = engine.cheats().zone_shuffle() ? engine::randomizer::sub_seed(engine.cheats().rand_seed, "zones") | 1 : 0;
+    const int rule = engine.cheats().rand_zones;
+    const std::uint64_t now =
+        engine.cheats().zone_shuffle() ? (engine::randomizer::sub_seed(engine.cheats().rand_seed, "zones") ^ std::uint64_t(rule) << 56) | 1 : 0;
     if (!now) return kExits;
     if (now != key) {
         key = now;
         table.assign(std::begin(kExits), std::end(kExits));
         const auto seed = engine::randomizer::sub_seed(engine.cheats().rand_seed, "zones");
         for (auto& exit : table) {
-            auto remap = engine::randomizer::zone_remap(seed, exit.stage, exit.target, 0);
+            auto remap = engine::randomizer::zone_remap(seed, rule, exit.stage, exit.target, 0);
             for (const auto& e : engine::randomizer::zone_entrances())
-                if (!remap && std::string_view(exit.stage) == e.dungeon) remap = engine::randomizer::zone_remap(seed, exit.stage, exit.target, e.back_point);
+                if (!remap && std::string_view(exit.stage) == e.dungeon) remap = engine::randomizer::zone_remap(seed, rule, exit.stage, exit.target, e.back_point);
             if (!remap) continue;
             names.push_back(remap->stage);
             exit.target = names.back().c_str();

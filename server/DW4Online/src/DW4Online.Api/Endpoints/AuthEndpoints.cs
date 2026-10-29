@@ -25,7 +25,7 @@ public static class AuthEndpoints
             if (!string.IsNullOrEmpty(r.Website)) // honeypot field the game and the website never fill
                 return ApiProblems.Of(StatusCodes.Status400BadRequest, "invalid_request", "The request could not be processed.");
             var result = await accounts.RegisterAsync(r.Username, r.Password, r.Email, SessionKind.Game, ctx.Caller(r.DeviceName), ctx.RequestAborted);
-            return ApiProblems.Ok(result, v => Results.Created("/api/v1/me", new
+            return ApiProblems.Ok(result, v => Results.Created(ctx.Request.PathBase + "/api/v1/me", new
             {
                 account = v.Account,
                 recoveryCode = v.RecoveryCode,

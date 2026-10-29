@@ -120,6 +120,64 @@ void migration(const fs::path& root) {
     c = game::choose_save_store({}, root / "test" / "savedata.dat", true, fresh, program);
     check(c.notes.size() == 2 && level_of(c.store.read(0)) == 30 && !fresh.save_migrated, "DW4_MIGRATE_FROM");
     set_env("DW4_MIGRATE_FROM", nullptr);
+    check(c.problems.empty() && c.warnings.empty(), "nothing went wrong");
+}
+
+// A copy that fails (an I/O error) is tried again at the next start; a
+// damaged old save is not, but the player is told at once and the F1 Saves
+// tab keeps saying so while the slot has no save.
+void migration_trouble(const fs::path& root) {
+    set_env("DW4_CARD_DIR", nullptr);
+    set_env("DW4_MIGRATE_FROM", nullptr);
+    const fs::path program = root / "program";
+    const fs::path legacy_a = program / "saves" / "GC" / "USA" / "Card A" / std::string(save::kSaveFileName);
+    const fs::path legacy_b = program / "saves" / "GC" / "USA" / "Card B" / std::string(save::kSaveFileName);
+    write_raw(legacy_a, make_gci("Old", 30));
+    auto damaged = make_gci("OldB", 31);
+    for (std::size_t i = save::kGciEntrySize; i < damaged.size(); i += 7) damaged[i] ^= 0x5A; // both data copies fail their check
+    write_raw(legacy_b, damaged);
+    // The save folder cannot be made: a file stands where it should be.
+    write_raw(program / "blocked", std::vector<std::uint8_t>(4, 1));
+    game::Settings settings;
+    settings.save_file = "blocked/savedata.dat";
+    settings.save_file_b = "blocked/savedata_b.dat";
+    auto c = game::choose_save_store({}, {}, false, settings, program);
+    check(!settings.save_migrated && !c.settings_changed, "a failed copy leaves the flag unset");
+    check(c.problems.size() == 2 && c.warnings.size() == 2 && c.notes.empty(), "both slots are problems: " + std::to_string(c.problems.size()));
+    check(c.problems[0].find("the copy failed") != std::string::npos && c.problems[0].find("tries again at the next start") != std::string::npos,
+          "slot A: the copy failed, tried again: " + c.problems[0]);
+    check(c.warnings[0].find("could not be copied") != std::string::npos && c.warnings[0].find("F1 > Saves") != std::string::npos,
+          "the player hears of it: " + c.warnings[0]);
+    check(c.problems[1].find("damaged") != std::string::npos && c.warnings[1].find("is damaged") != std::string::npos,
+          "slot B: damaged: " + c.problems[1]);
+    check(!c.store.read(0), "this start has no save in slot A");
+    // Next start, the folder can be made now: slot A is copied, the damaged
+    // slot B is not tried again but told once more (it was never copied).
+    fs::remove(program / "blocked");
+    c = game::choose_save_store({}, {}, false, settings, program);
+    check(settings.save_migrated && c.settings_changed, "the retry succeeded: flag set");
+    check(level_of(c.store.read(0)) == 30, "slot A copied on the retry");
+    check(c.notes.size() == 1 && c.problems.size() == 1 && c.warnings.size() == 1, "slot B still damaged");
+    check(!c.store.read(1), "the damaged save was not copied");
+    // Later starts: no migration, no notice, but the F1 Saves tab keeps the
+    // damaged old save in view while slot B has no save.
+    c = game::choose_save_store({}, {}, false, settings, program);
+    check(!c.settings_changed && c.notes.empty() && c.warnings.empty(), "no new notice");
+    check(c.problems.size() == 1 && c.problems[0].find("Card B") != std::string::npos && c.problems[0].find("damaged") != std::string::npos,
+          "the F1 tab still names it");
+    // Once slot B has a save of its own, the old file is no news.
+    std::string error;
+    check(c.store.write(1, make_gci("New", 1), &error), "a new slot B save: " + error);
+    c = game::choose_save_store({}, {}, false, settings, program);
+    check(c.problems.empty(), "nothing left to say");
+    // A damaged old save alone sets the flag at once (nothing to retry).
+    game::Settings other;
+    other.save_file = "other/savedata.dat";
+    other.save_file_b = "other/savedata_b.dat";
+    fs::remove(legacy_a);
+    c = game::choose_save_store({}, {}, false, other, program);
+    check(other.save_migrated && c.settings_changed && c.warnings.size() == 1 && c.problems.size() == 1,
+          "damaged only: flag set, told");
 }
 
 void imports(const fs::path& root) {
@@ -198,6 +256,7 @@ int main() {
         fs::remove_all(root);
         choice(root / "choice");
         migration(root / "migration");
+        migration_trouble(root / "migration_trouble");
         imports(root / "imports");
         session(root / "session");
     } catch (const std::exception& error) {

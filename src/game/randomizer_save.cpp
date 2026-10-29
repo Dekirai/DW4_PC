@@ -15,7 +15,7 @@ void apply_randomizer(const RandomizerConfig& config, engine::Cheats& cheats) {
     cheats.rand_seed = on ? config.seed : 0;
     cheats.drop_seed = on && config.drops ? config.seed : 0;
     cheats.rand_enemies = std::uint8_t(on ? std::clamp(config.enemies, 0, 2) : 0);
-    cheats.rand_zones = std::uint8_t(on ? std::clamp(config.zones, 0, 1) : 0);
+    cheats.rand_zones = std::uint8_t(on ? std::clamp(config.zones, 0, engine::randomizer::kZoneRuleLast) : 0);
 }
 
 RandomizerConfig randomizer_from_cheats(const engine::Cheats& cheats) {
@@ -29,13 +29,13 @@ RandomizerConfig randomizer_from_cheats(const engine::Cheats& cheats) {
 
 std::optional<RandomizerConfig> parse_randomizer(std::string_view text) {
     unsigned seed = 0;
-    int enemies = 1, zones = 1, drops = 1;
+    int enemies = 1, zones = engine::randomizer::kZoneRuleCurrent, drops = 1;
     const std::string copy(text);
     if (std::sscanf(copy.c_str(), "%u,%d,%d,%d", &seed, &enemies, &zones, &drops) < 1) return std::nullopt;
     RandomizerConfig config;
     config.seed = seed;
     config.enemies = std::clamp(enemies, 0, 2);
-    config.zones = std::clamp(zones, 0, 1);
+    config.zones = std::clamp(zones, 0, engine::randomizer::kZoneRuleLast);
     config.drops = drops != 0;
     return config;
 }
@@ -43,6 +43,19 @@ std::optional<RandomizerConfig> parse_randomizer(std::string_view text) {
 std::string randomizer_unique_key(std::uint32_t unique) {
     char text[16];
     std::snprintf(text, sizeof text, "%08X", unique);
+    return text;
+}
+
+std::string describe_randomizer(const RandomizerConfig& config) {
+    if (!config.active()) return "the original game";
+    std::string text = "seed " + std::to_string(config.seed) + " - enemies: ";
+    text += config.enemies == 2 ? "one family per wave" : config.enemies == 1 ? "each on its own" : "original";
+    text += ", loading zones: ";
+    if (config.zones == 0) text += "original";
+    else if (config.zones == engine::randomizer::kZoneRuleCurrent) text += "dungeon entrances";
+    else text += "dungeon entrances (" + std::string(engine::randomizer::zone_rule_text(config.zones)) + ")";
+    text += ", item drops: ";
+    text += config.drops ? "shuffled" : "original";
     return text;
 }
 
@@ -66,7 +79,12 @@ std::optional<RandomizerConfig> load_randomizer_binding(const std::filesystem::p
     config.seed = std::uint32_t(std::max(0, ini->get_int(section, "seed", 0)));
     config.drops = ini->get_bool(section, "drops", false);
     config.enemies = enemy_mode(ini->get_or(section, "enemies", "off"));
-    config.zones = ini->get_or(section, "zones", "off") == "dungeons" ? 1 : 0;
+    // A bond from before the rules were numbered (round 48) has no
+    // zone_rule: rule 1, the table it was played with.
+    config.zones = ini->get_or(section, "zones", "off") == "dungeons"
+                       ? std::clamp(ini->get_int(section, "zone_rule", engine::randomizer::kZoneRuleDerangement), 1,
+                                    engine::randomizer::kZoneRuleLast)
+                       : 0;
     return config;
 }
 
@@ -83,6 +101,8 @@ bool store_randomizer_binding(const std::filesystem::path& folder, std::uint32_t
     ini.set_bool(section, "drops", config.drops);
     ini.set(section, "enemies", enemy_mode_name(config.enemies));
     ini.set(section, "zones", config.zones ? "dungeons" : "off");
+    if (config.zones) ini.set_int(section, "zone_rule", config.zones);
+    else ini.remove(section, "zone_rule");
     return ini.save(folder / "randomizer.ini");
 }
 

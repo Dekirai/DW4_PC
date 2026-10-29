@@ -7,6 +7,10 @@
   (see DEPLOY.md). Needs no restart. -DryRun prints the commands without running them. Does nothing to other services,
   SQL Server or the Pangya servers.
 
+  The service depends on the MariaDB service (sc.exe config depend=): after a reboot Windows starts MariaDB first, and
+  stopping MariaDB stops DW4Online first. Before anything changes the script checks that MariaDB listens on
+  -DatabasePort and only on the loopback address (bind-address=127.0.0.1, DEPLOY.md section 1).
+
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File install-service.ps1 -DryRun
   powershell -ExecutionPolicy Bypass -File install-service.ps1 -OpenPort80
@@ -16,6 +20,8 @@ param(
     [string]$ServiceName = 'DW4Online',
     [int]$HttpsPort = 443,
     [int]$RelayPort = 52041,
+    [string]$DatabaseService = 'MariaDB',
+    [int]$DatabasePort = 3306,
     [switch]$OpenPort80,
     [switch]$DryRun
 )
@@ -37,7 +43,18 @@ if (-not $DryRun) {
     if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { throw 'Run this script elevated.' }
     if (-not (Test-Path $exe)) { throw "$exe not found: extract the release to $app first." }
     if (-not (Test-Path $settings)) { throw "$settings not found: create it from appsettings.Production.example.json first." }
-    if (Get-Service -Name $ServiceName -ErrorAction SilentlyContinue) { throw "Service $ServiceName exists already (updates: see DEPLOY.md, step 8)." }
+    if (Get-Service -Name $ServiceName -ErrorAction SilentlyContinue) { throw "Service $ServiceName exists already (updates: see DEPLOY.md, section 8)." }
+    if (-not (Get-Service -Name $DatabaseService -ErrorAction SilentlyContinue)) {
+        throw "Service $DatabaseService not found: install MariaDB first (DEPLOY.md section 1) or pass -DatabaseService <its service name>."
+    }
+    # MariaDB must answer locally and nowhere else (the database port stays closed to the network).
+    $listen = @(Get-NetTCPConnection -State Listen -LocalPort $DatabasePort -ErrorAction SilentlyContinue)
+    if ($listen.Count -eq 0) { throw "Nothing listens on port ${DatabasePort}: start $DatabaseService (or pass -DatabasePort)." }
+    $open = @($listen | Where-Object { $_.LocalAddress -notin @('127.0.0.1', '::1') })
+    if ($open.Count -gt 0) {
+        $where = ($open | ForEach-Object { $_.LocalAddress } | Sort-Object -Unique) -join ', '
+        throw "Port $DatabasePort listens on ${where}: set bind-address=127.0.0.1 in MariaDB's my.ini and restart it (DEPLOY.md section 1)."
+    }
 }
 
 foreach ($dir in @('config', 'logs', 'backups', 'acme', 'keys')) {
@@ -58,11 +75,15 @@ Step "sc.exe config $ServiceName start= delayed-auto obj= `"$account`" (virtual 
 Step "sc.exe failure ${ServiceName}: restart after 5 s, 30 s, 60 s" {
     & sc.exe failure $ServiceName reset= 86400 actions= restart/5000/restart/30000/restart/60000 | Out-Null
 }
+Step "sc.exe config $ServiceName depend= $DatabaseService (Windows starts MariaDB first)" {
+    & sc.exe config $ServiceName depend= $DatabaseService | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "sc.exe config depend= failed ($LASTEXITCODE)" }
+}
 
 # The virtual account exists once the service does; grant it only what it needs. Every folder drops the permissions
 # inherited from the drive (on a data volume Users may read and Authenticated Users may even change files) and keeps
 # only Administrators and SYSTEM (full control, by SID so localized Windows works too) plus the service's rights. The
-# root goes first: a folder created in it later (the next release's app, see DEPLOY.md step 8) inherits its rights.
+# root goes first: a folder created in it later (the next release's app, see DEPLOY.md section 8) inherits its rights.
 function Set-FolderAcl([string]$path, [string]$serviceRights, [string]$what) {
     $grants = @('*S-1-5-32-544:(OI)(CI)F', '*S-1-5-18:(OI)(CI)F')
     if ($serviceRights) { $grants += "${account}:(OI)(CI)$serviceRights" }

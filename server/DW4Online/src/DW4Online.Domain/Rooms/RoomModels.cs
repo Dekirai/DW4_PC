@@ -134,6 +134,12 @@ public interface IRoomRepository
     Task<int> CloseAllOpenAsync(DateTime now, CancellationToken ct = default);
 }
 
+/// <summary>A one-time relay ticket and its nonce (the room service accepts only the newest ticket per player).</summary>
+public sealed record RelayTicket(string Ticket, string Nonce);
+
+/// <summary>A ticket the relay is about to accept: whose, for which channel and role, and its nonce.</summary>
+public sealed record RelayAdmission(string Channel, long AccountId, bool Host, string Nonce);
+
 /// <summary>The relay as the room service uses it: tickets, closing a channel, dropping one guest.</summary>
 public interface IRelayGateway
 {
@@ -142,11 +148,18 @@ public interface IRelayGateway
     /// <summary>The port the relay listens on once it started (null before; tests bind port 0).</summary>
     int? BoundPort { get; }
     /// <summary>A one-time ticket for <paramref name="channel"/> ("ABC234-1").</summary>
-    string IssueTicket(string channel, long accountId, bool host);
+    RelayTicket IssueTicket(string channel, long accountId, bool host);
     /// <summary>Drops the channel's host control socket and every spliced guest.</summary>
     void CloseChannel(string channel);
     /// <summary>Drops the spliced connections of one guest of the channel.</summary>
     void DropGuest(string channel, long accountId);
+    /// <summary>The channels whose host is connected.</summary>
+    IReadOnlyCollection<string> OpenChannels { get; }
+    /// <summary>
+    /// The check the relay makes before it accepts a valid ticket (signature, expiry and single use are its own): the
+    /// room service answers whether the ticket still belongs to a running instance and is the player's newest.
+    /// </summary>
+    void SetAdmission(Func<RelayAdmission, ValueTask<bool>> check);
     /// <summary>Raised when a channel's host control socket ends (the instance host left or lost the connection).</summary>
     event Action<string>? HostLost;
 }

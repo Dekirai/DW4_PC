@@ -34,6 +34,18 @@ public sealed class RelayServer(RelayOptions options, RelayTickets tickets, Time
     /// <summary>Channels with a connected host.</summary>
     public int RoomCount => _rooms.Count;
 
+    /// <summary>The channels with a connected host (the room service closes the ones without a live stage instance).</summary>
+    public IReadOnlyCollection<string> Channels => _rooms.Keys.ToList();
+
+    /// <summary>
+    /// Asked after a ticket's signature, expiry and single use checked out: true when the room service still expects
+    /// this ticket (the instance runs, the account is its host or a guest of it, and it is the player's newest ticket).
+    /// Null admits every valid ticket (tests of the relay alone).
+    /// </summary>
+    public Func<TicketClaims, ValueTask<bool>>? Admission { get; set; }
+
+    private async ValueTask<bool> AdmitAsync(TicketClaims claims) => Admission is not { } check || await check(claims);
+
     /// <summary>Drops a channel's host control socket and every spliced pair of the channel.</summary>
     public void CloseRoom(string channel)
     {
@@ -178,6 +190,14 @@ public sealed class RelayServer(RelayOptions options, RelayTickets tickets, Time
             await ReplyAsync(stream, "ERR room_taken", stop);
             return false;
         }
+        // Asked once the channel is registered: an instance that ends from now on closes it (no orphaned channel), and
+        // one that ended before (an old host ticket) is refused here.
+        if (!await AdmitAsync(claims))
+        {
+            _rooms.TryRemove(new KeyValuePair<string, HostEntry>(claims.Room, entry));
+            await ReplyAsync(stream, "ERR ticket", stop);
+            return false;
+        }
         await entry.SendAsync("OK " + entry.HostKey, stop);
         log.LogInformation("Relay channel {Room} hosted by account {Account}", claims.Room, claims.Account);
         _ = Task.Run(() => WatchHostAsync(entry, stream, stop), CancellationToken.None);
@@ -209,7 +229,7 @@ public sealed class RelayServer(RelayOptions options, RelayTickets tickets, Time
     private async Task GuestAsync(TcpClient client, NetworkStream stream, string ticket, CancellationToken stop)
     {
         var claims = tickets.Redeem(ticket);
-        if (claims is null || claims.Role != RelayRoles.Guest)
+        if (claims is null || claims.Role != RelayRoles.Guest || !await AdmitAsync(claims))
         {
             await ReplyAsync(stream, "ERR ticket", stop);
             return;

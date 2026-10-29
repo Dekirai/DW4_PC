@@ -133,7 +133,7 @@ public sealed class AccountRepository(Database db) : IAccountRepository
             "UPDATE accounts SET profile_public = @value WHERE id = @id", new { id, value }, cancellationToken: ct));
     }
 
-    public async Task ScrubAsync(long id, string anonymousName, CancellationToken ct = default)
+    public async Task ScrubAsync(long id, string anonymousName, string? nameTag, CancellationToken ct = default)
     {
         string[] owned =
         [
@@ -146,6 +146,10 @@ public sealed class AccountRepository(Database db) : IAccountRepository
             await c.ExecuteAsync(new CommandDefinition($"DELETE FROM {table} WHERE account_id = @id", new { id }, tx, cancellationToken: ct));
         await c.ExecuteAsync(new CommandDefinition(
             "UPDATE audit_log SET ip = NULL WHERE account_id = @id OR actor_id = @id", new { id }, tx, cancellationToken: ct));
+        if (nameTag is not null)
+            await c.ExecuteAsync(new CommandDefinition(
+                "UPDATE audit_log SET ip = NULL, detail = NULL WHERE event = 'login_unknown' AND JSON_VALUE(detail, '$.name') = @tag",
+                new { tag = nameTag }, tx, cancellationToken: ct));
         await c.ExecuteAsync(new CommandDefinition(
             "UPDATE accounts SET username = @name, username_norm = @name, email = NULL, email_norm = NULL, email_verified_at = NULL, " +
             "password_hash = '!', must_change_password = 0, recovery_code_hash = NULL, status = 'deleted', failed_logins = 0, " +

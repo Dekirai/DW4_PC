@@ -25,7 +25,7 @@
         @foreach (var a in Model.Results)
         {
             <tr>
-                <td><a href="/admin/account/@a.Username">@a.Username</a>@(a.MustChangePassword ? " (temporary password)" : "")</td>
+                <td><a href="~/admin/account/@a.Username">@a.Username</a>@(a.MustChangePassword ? " (temporary password)" : "")</td>
                 <td>@a.Role</td>
                 <td>
                     @if (a.Status == "active")

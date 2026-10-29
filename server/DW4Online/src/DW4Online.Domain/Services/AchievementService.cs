@@ -11,7 +11,8 @@ public sealed record AchievementView(
 
 public sealed record UnlockView(string Ruleset, DateTime UnlockedAt, int? Players, bool Flagged);
 
-public sealed record UnlockResult(string Code, string Ruleset, bool NewlyUnlocked, bool NewBestTime);
+/// <summary><paramref name="TimeRejected"/>: the clear's in-game time was below the board's floor (not kept; a new unlock is flagged).</summary>
+public sealed record UnlockResult(string Code, string Ruleset, bool NewlyUnlocked, bool NewBestTime, bool TimeRejected = false);
 
 public sealed record StatsResult(IReadOnlyDictionary<string, long> Totals, IReadOnlyList<string> Unlocked);
 
@@ -70,19 +71,26 @@ public sealed class AchievementService(
         if (!session.Ok) return session.Error!;
         var (room, players) = session.Value;
 
-        var check = new AchievementCheck(definition.Goal ?? 0, evidence, players, room is not null, room?.IsHost == true);
+        var check = new AchievementCheck(definition.Goal ?? 0, evidence, players, room is not null, room?.IsHost == true, play.StoryFloorMs);
         if (AchievementRules.CheckEvent(definition.Code, check) is { } reason)
             return DomainError.Invalid("requirement_not_met", reason);
 
         var now = Clock.Now(time);
         var ruleset = RulesetOf(room, context);
         var evidenceJson = evidence is null ? null : JsonSerializer.Serialize(evidence, Json);
+        // A story clear faster than the board's floor is impossible: no best time, and a new unlock waits for review.
+        var hasBoard = AchievementRules.SpeedrunBoards.TryGetValue(definition.Code, out var board);
+        var igt = evidence?.IgtMs ?? 0;
+        var tooFast = hasBoard && igt > 0 && igt < play.SpeedrunFloorMs(board!);
         var added = await repository.TryUnlockAsync(new UnlockWrite(accountId, definition.Id, ruleset, now, room?.RoomId, players,
-            Truncate(context?.ClientVersion, 32), false, evidenceJson), ct);
+            Truncate(context?.ClientVersion, 32), tooFast, evidenceJson), ct);
         var best = false;
-        if (AchievementRules.SpeedrunBoards.TryGetValue(definition.Code, out var board) && evidence?.IgtMs is > 0 and var igt)
-            best = await repository.SubmitTimeAsync(accountId, board, ruleset, igt, room?.RoomId, now, ct);
-        return new UnlockResult(definition.Code, ruleset, added, best);
+        if (tooFast)
+            await audit.WriteAsync("speedrun_implausible", accountId, null, null,
+                new { code = definition.Code, board, ruleset, igtMs = igt, floorMs = play.SpeedrunFloorMs(board!), flagged = added }, now, ct);
+        else if (hasBoard && igt > 0)
+            best = await repository.SubmitTimeAsync(accountId, board!, ruleset, igt, room?.RoomId, now, ct);
+        return new UnlockResult(definition.Code, ruleset, added, best, tooFast);
     }
 
     /// <summary>

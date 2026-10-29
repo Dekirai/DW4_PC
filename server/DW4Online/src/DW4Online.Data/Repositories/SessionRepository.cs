@@ -69,6 +69,16 @@ public sealed class SessionRepository(Database db) : ISessionRepository
             "WHERE account_id = @a AND revoked_at IS NULL AND expires_at > @now ORDER BY COALESCE(last_used_at, created_at) DESC",
             new { a = accountId, now }, cancellationToken: ct))).AsList();
     }
+
+    public async Task<bool> KnowsAddressAsync(long accountId, byte[] ip, DateTime since, CancellationToken ct = default)
+    {
+        await using var c = await db.OpenAsync(ct);
+        var network = ip.Length == 16 ? ip[..8] : null;
+        return await c.ExecuteScalarAsync<bool>(new CommandDefinition(
+            "SELECT EXISTS (SELECT 1 FROM sessions WHERE account_id = @a AND (created_at >= @since OR last_used_at >= @since) " +
+            "AND (created_ip = @ip OR (@net IS NOT NULL AND LENGTH(created_ip) = 16 AND LEFT(created_ip, 8) = @net)))",
+            new { a = accountId, ip, net = network, since }, cancellationToken: ct));
+    }
 }
 
 public sealed class AuditLog(Database db) : IAuditLog
@@ -85,16 +95,21 @@ public sealed class AuditLog(Database db) : IAuditLog
     }
 }
 
-/// <summary>Housekeeping: audit retention and old sessions.</summary>
+/// <summary>Housekeeping: audit retention, old sessions and the history of reset online characters.</summary>
 public sealed class MaintenanceRepository(Database db)
 {
-    public async Task<(int Audit, int Sessions)> PruneAsync(DateTime now, int auditDays, CancellationToken ct = default)
+    public async Task<(int Audit, int Sessions, int ResetRevisions)> PruneAsync(DateTime now, int auditDays, int resetHistoryDays,
+        CancellationToken ct = default)
     {
         await using var c = await db.OpenAsync(ct);
         var audit = await c.ExecuteAsync(new CommandDefinition(
             "DELETE FROM audit_log WHERE at < @cut LIMIT 10000", new { cut = now.AddDays(-auditDays) }, cancellationToken: ct));
         var sessions = await c.ExecuteAsync(new CommandDefinition(
             "DELETE FROM sessions WHERE expires_at < @cut OR revoked_at < @cut LIMIT 10000", new { cut = now.AddDays(-30) }, cancellationToken: ct));
-        return (audit, sessions);
+        // The revisions of a reset character (ended_at = that reset) stay resetHistoryDays after it, then they go.
+        var revisions = await c.ExecuteAsync(new CommandDefinition(
+            "DELETE FROM online_character_history WHERE ended_at < @cut LIMIT 10000",
+            new { cut = now.AddDays(-Math.Max(0, resetHistoryDays)) }, cancellationToken: ct));
+        return (audit, sessions, revisions);
     }
 }
