@@ -258,6 +258,16 @@ void ModelCtrlManager::add_info(Engine& engine, const ObjectView& info) {
     }
 }
 
+bool ModelCtrlManager::has_sequence(std::string_view model, std::string_view sequence) const {
+    for (const auto& ram : rams_) {
+        if (ram->info_name != model || !ram->sequences) continue;
+        for (const auto& s : *ram->sequences)
+            if (s.name == sequence) return true;
+        return false;
+    }
+    return false;
+}
+
 void ModelCtrlManager::clear_stage(Engine&) {
     rams_.clear();
     player_rams_.clear();

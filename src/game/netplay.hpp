@@ -35,6 +35,8 @@ struct SessionStart {
     int exp_rate = 100, damage_dealt = 100, damage_taken = 100; // rebalancing
     std::uint32_t drop_seed{};                                  // randomizer
     bool fast_loading{};                                        // PC fast loading (Cheats::fast_loading)
+    std::uint32_t rand_seed{};                                  // randomizer master seed (Cheats::rand_seed)
+    std::uint8_t rand_enemies{}, rand_zones{};                  // enemy / loading zone shuffle modes
     std::vector<CardFile> card_a, card_b;
 };
 

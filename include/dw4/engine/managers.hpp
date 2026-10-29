@@ -1192,10 +1192,25 @@ public:
     GeneraterManager() : Manager("beGenerater") {}
     bool accepts(const ObjectView& info) const override { return info.type() == "beGeneraterInfo"; }
     void add_info(Engine& engine, const ObjectView& info) override;
-    void clear_stage(Engine& engine) override { (void)engine; rams_.clear(); }
+    void clear_stage(Engine& engine) override {
+        (void)engine;
+        rams_.clear();
+        shuffle_ready_ = false;
+        pool_.clear();
+    }
     bool command(Engine& engine, Ram& ram, std::string_view command, Packet& packet) override;
     void update(Engine& engine) override;
 
+    // Randomizer (enemy shuffle): the families the stage's shuffled waves
+    // draw from, and the data names of the generators that are shuffled
+    // (made at the first wave of the stage; spoiler log, tests).
+    const std::vector<std::string>& shuffle_pool() const { return pool_; }
+    std::vector<std::string> shuffled_generators() const {
+        std::vector<std::string> out;
+        for (const auto& ram : rams_)
+            if (ram->shuffled && ram->data) out.emplace_back(ram->data.str(2));
+        return out;
+    }
     // Randomizer: a drop's record after the seeded permutation of its table.
     static int randomized_record(Engine& engine, const std::string& table, int record);
     // Each generator's data name and whether its waves were ever cleared (test bot).
@@ -1229,11 +1244,13 @@ public:
     struct Wave {
         std::string name, enemy;
         std::vector<int> members;
+        std::vector<std::string> models; // each member's model (the randomizer mixes them)
     };
     std::vector<Wave> waves() const {
         std::vector<Wave> out;
         for (const auto& ram : rams_)
-            if (ram->data && ram->started && !ram->done && ram->work) out.push_back({std::string(ram->data.str(2)), ram->enemy_name, ram->enemies});
+            if (ram->data && ram->started && !ram->done && ram->work)
+                out.push_back({std::string(ram->data.str(2)), ram->enemy_name, ram->enemies, ram->enemy_models});
         return out;
     }
     // Started "radar" generators still waiting for a player within reach of
@@ -1271,11 +1288,33 @@ private:
         // check, 8031E8BC remove). No command drops them.
         std::optional<NodeTimer> boot_timer, gene_timer;
         int clears{};              // waves cleared so far (test bot)
+        // The model each of `enemies` was generated as (the data's enemy
+        // unless the randomizer swapped it).
+        std::vector<std::string> enemy_models;
+        // Randomizer (enemy shuffle): this generator's enemies come from the
+        // stage's pool; one family per wave: this wave's; the draws so far;
+        // per member the spawn height and the updates it spent in the air
+        // (the watchdog removes one that fell or never lands).
+        bool shuffled{};
+        std::string wave_model;
+        std::uint32_t draws{};
+        struct Watch {
+            float spawn_y{};
+            int airborne{};
+        };
+        std::vector<Watch> watch;
     };
     int spawn(Engine& engine, GeneRam& ram, int count);
     void refresh(Engine& engine, GeneRam& ram, bool last_pass = false);
     void drop(Engine& engine, GeneRam& ram, const Vec3f& position, bool last);
+    void forget(GeneRam& ram, std::size_t member);
+    void prepare_shuffle(Engine& engine);
+    bool shuffle_generator(Engine& engine, const GeneRam& ram) const;
+    std::string draw_model(Engine& engine, GeneRam& ram);
     std::vector<std::unique_ptr<GeneRam>> rams_;
+    bool shuffle_ready_{};
+    std::vector<std::string> pool_;
+    std::set<std::string, std::less<>> fixed_generators_, fixed_families_;
 };
 
 // MATCTRL (beMatCtrl, update 803030A8, commands 80303B14): floor mats. Each
@@ -1613,6 +1652,9 @@ public:
     // 803B0620: a cure ends the poison of a model.
     void clear_poison(ModelRam& ram);
     const std::vector<std::unique_ptr<ModelRam>>& rams() const { return rams_; }
+    // The model info has a sequence of that name (randomizer: a swapped
+    // enemy's entry sequence).
+    bool has_sequence(std::string_view model, std::string_view sequence) const;
     // Changes whenever the RAM list does (never the same value twice, also
     // across engines), for test code that keeps lookups over the list.
     std::uint64_t rams_generation() const { return rams_generation_; }

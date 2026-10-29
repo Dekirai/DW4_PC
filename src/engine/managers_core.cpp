@@ -1,4 +1,5 @@
 #include "dw4/engine/managers.hpp"
+#include "dw4/engine/randomizer.hpp"
 #include "dw4/animation_math.hpp"
 #include "dw4/engine/gekko_math.hpp"
 #include "dw4/engine/save_menu.hpp"
@@ -843,7 +844,22 @@ bool StageCtlManager::command(Engine& engine, Ram&, std::string_view command, Pa
             Packet stop;
             engine.messenger().send(engine, "SOUND", std::nullopt, -1, "SESTOP", stop);
             engine.messenger().send(engine, "SOUND", std::nullopt, -1, "ENVSTOP", stop);
-            engine.request_stage(std::string(packet.string(0)));
+            std::string target(packet.string(0));
+            // Randomizer: a shuffled dungeon entrance (or its way back) leads
+            // to its new stage and player point (SETGENERATEPOS came first).
+            if (engine.cheats().zone_shuffle())
+                if (auto* points = engine.get<PlayerPointManager>()) {
+                    std::string lower = target;
+                    for (auto& c : lower) c = char(std::tolower(static_cast<unsigned char>(c)));
+                    const auto zone_seed = randomizer::sub_seed(engine.cheats().rand_seed, "zones");
+                    if (const auto remap = randomizer::zone_remap(zone_seed, engine.stage_name(), lower, points->point_no())) {
+                        engine.log("randomizer: " + engine.stage_name() + " -> " + lower + " point " + std::to_string(points->point_no()) +
+                                   " now leads to " + remap->stage + " point " + std::to_string(remap->point));
+                        target = remap->stage;
+                        points->set_point_no(remap->point);
+                    }
+                }
+            engine.request_stage(target);
         }
         return true;
     }

@@ -350,9 +350,20 @@ struct Cheats {
     // load timing (the simulated disc drive and loading thread), on takes
     // none of it (Engine::fast_loading). A stage load latches it.
     bool fast_loading{};
+    // Randomizer (settings.ini [randomizer], bound to the save; see
+    // dw4/engine/randomizer.hpp): the master seed the enemy and loading zone
+    // shuffles derive their seeds from (the item drops use it unchanged as
+    // drop_seed), 0 off; the enemy shuffle (0 off, 1 every enemy of a wave
+    // drawn on its own, 2 one family per wave) and the loading zone shuffle
+    // (0 off, 1 dungeon entrances within an area).
+    std::uint32_t rand_seed = 0;
+    std::uint8_t rand_enemies = 0;
+    std::uint8_t rand_zones = 0;
+    bool enemy_shuffle() const { return rand_seed != 0 && rand_enemies != 0; }
+    bool zone_shuffle() const { return rand_seed != 0 && rand_zones != 0; }
     bool original() const {
         return !god && !infinite_mp && !one_hit && exp_rate == 100 && damage_dealt == 100 && damage_taken == 100 && !drop_seed &&
-               !fast_loading;
+               !fast_loading && !enemy_shuffle() && !zone_shuffle();
     }
 };
 
@@ -519,6 +530,9 @@ public:
     bool has_script(std::string_view name) const;
     // That script's compiled chunk contains `text` (a string constant; test bot).
     bool script_mentions(std::string_view name, std::string_view text) const;
+    // Every stage script (name, compiled chunk bytes), stage scripts first
+    // (randomizer: the generators a script starts next to a model name).
+    void for_each_script(const std::function<void(std::string_view name, std::string_view chunk)>& visit) const;
     // Scene graph root management.
     Node* global_root() { return &global_root_; }
     bool soft_reset_allowed() const { return soft_reset_allowed_; }

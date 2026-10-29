@@ -68,7 +68,14 @@ struct Settings {
     bool skip_intro = false;
     // [gameplay]: optional rebalancing and randomizer (100 / 0 = original)
     int exp_rate = 100, damage_dealt = 100, damage_taken = 100;
-    std::uint32_t drop_seed = 0; // boot straight to the title (no logos / opening movie)
+    // [randomizer]: the seed new games bind to their save (0 off; the old
+    // [gameplay] drop_seed migrates as seed + drops), item drops, enemies
+    // (0 off, 1 every enemy on its own, 2 one family per wave) and loading
+    // zones (0 off, 1 dungeon entrances within an area).
+    std::uint32_t rand_seed = 0;
+    bool rand_drops = false;
+    int rand_enemies = 0;
+    int rand_zones = 0;
     // [gameplay] loading = original / fast: stage loads with the GameCube's
     // disc and loading-thread time, or without it (engine::Cheats::fast_loading).
     bool fast_loading = false;

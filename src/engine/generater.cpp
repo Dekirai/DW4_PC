@@ -1,4 +1,5 @@
 #include "dw4/engine/managers.hpp"
+#include "dw4/engine/randomizer.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -7,6 +8,11 @@
 namespace dw4::engine {
 namespace {
 constexpr float kRadiansToDegrees = 57.2958f; // 80425EF4
+// Randomizer watchdog: a swapped enemy that spends this many updates in the
+// air (it fell off a ledge it was not made for, or never lands) or drops this
+// far below its spawn point is removed; it counts as defeated without a drop.
+constexpr int kWatchAirborne = 360;
+constexpr float kWatchDrop = 150.0f;
 
 std::vector<Vec3f> vec3_list(const ObjectView& list) {
     std::vector<Vec3f> out;
@@ -71,12 +77,15 @@ bool GeneraterManager::command(Engine& engine, Ram& base, std::string_view comma
     if (command == "STOPREVERS") {
         if (!ram.work) return true;
         ram.system_freeze = true;
-        for (int index : ram.enemies) {
+        for (std::size_t i = 0; i < ram.enemies.size(); ++i) {
             Packet p;
-            engine.messenger().send(engine, "MODELCTRL", ram.enemy_name, index, "SQ_ERAS", p);
+            engine.messenger().send(engine, "MODELCTRL", i < ram.enemy_models.size() ? ram.enemy_models[i] : ram.enemy_name, ram.enemies[i],
+                                    "SQ_ERAS", p);
         }
         ram.remaining += int(ram.enemies.size());
         ram.enemies.clear();
+        ram.enemy_models.clear();
+        ram.watch.clear();
         if (ram.remaining != 0 && ram.state == 3) ram.state = 2;
         return true;
     }
@@ -86,6 +95,8 @@ bool GeneraterManager::command(Engine& engine, Ram& base, std::string_view comma
         ram.done = false;
         ram.state = 0;
         ram.enemies.clear();
+        ram.enemy_models.clear();
+        ram.watch.clear();
         return true;
     }
     if (command == "RESTART") {
@@ -93,6 +104,8 @@ bool GeneraterManager::command(Engine& engine, Ram& base, std::string_view comma
         ram.work = false;
         ram.state = 0;
         ram.enemies.clear();
+        ram.enemy_models.clear();
+        ram.watch.clear();
         return true;
     }
     if (command == "ONFREEZE" || command == "OFFREEZE") {
@@ -111,11 +124,34 @@ int GeneraterManager::spawn(Engine& engine, GeneRam& ram, int count) {
     if (points.empty()) return 0;
     int spawned = 0;
     for (; spawned < count; ++spawned) {
-        Packet find;
-        engine.messenger().send(engine, "MODELCTRL", ram.enemy_name, -1, "FIND_SPACE", find);
-        if (find.ints.empty()) break;
-        const int index = find.ints[0];
+        std::string model = ram.enemy_name;
+        int index = -1;
+        if (!ram.shuffled) {
+            Packet find;
+            engine.messenger().send(engine, "MODELCTRL", ram.enemy_name, -1, "FIND_SPACE", find);
+            if (find.ints.empty()) break;
+            index = find.ints[0];
+        } else {
+            // Randomizer: the drawn family; with all its RAMs out the next
+            // pool families in order, then the generator's own.
+            const std::string wanted = draw_model(engine, ram);
+            std::vector<std::string> order{wanted};
+            const auto at = std::find(pool_.begin(), pool_.end(), wanted);
+            for (std::size_t k = 1; at != pool_.end() && k < pool_.size(); ++k)
+                order.push_back(pool_[(std::size_t(at - pool_.begin()) + k) % pool_.size()]);
+            order.push_back(ram.enemy_name);
+            for (const auto& candidate : order) {
+                Packet find;
+                engine.messenger().send(engine, "MODELCTRL", candidate, -1, "FIND_SPACE", find);
+                if (find.ints.empty()) continue;
+                model = candidate;
+                index = find.ints[0];
+                break;
+            }
+            if (index < 0) break;
+        }
         ram.enemies.push_back(index);
+        ram.enemy_models.push_back(model);
         const auto point = std::size_t(ram.point) % points.size();
         Vec3f position = points[point];
         if (!ram.data.boolean(4)) {
@@ -123,15 +159,20 @@ int GeneraterManager::spawn(Engine& engine, GeneRam& ram, int count) {
             position = {base.x + position.x, base.y + position.y, base.z + position.z};
         }
         const float turn = point < turns.size() ? turns[point] * kRadiansToDegrees : 0.0f;
-        const auto seq = ram.data.str(8);
+        std::string seq(ram.data.str(8));
+        // A swapped enemy without the generator's entry sequence enters
+        // with SQ_ENTR, which every family has.
+        if (model != ram.enemy_name && !seq.empty())
+            if (auto* models = engine.get<ModelCtrlManager>(); models && !models->has_sequence(model, seq)) seq.clear();
+        ram.watch.push_back({position.y, 0});
         Packet generate;
         generate.vectors = {position, Vec3f{0, turn, 0}};
-        generate.strings.emplace_back(seq.empty() ? std::string("SQ_ENTR") : std::string(seq));
+        generate.strings.emplace_back(seq.empty() ? std::string("SQ_ENTR") : seq);
         generate.ints = {ram.enemy_record, ram.enemy_max_hp};
-        engine.messenger().send(engine, "MODELCTRL", ram.enemy_name, index, "GENERATE", generate);
+        engine.messenger().send(engine, "MODELCTRL", model, index, "GENERATE", generate);
         char at[64];
         std::snprintf(at, sizeof(at), " at (%.0f, %.0f, %.0f)", position.x, position.y, position.z);
-        engine.log("generator " + std::string(ram.data.str(2)) + " spawns " + ram.enemy_name + "#" + std::to_string(index) + at);
+        engine.log("generator " + std::string(ram.data.str(2)) + " spawns " + model + "#" + std::to_string(index) + at);
         ram.point = int((point + 1) % points.size());
     }
     return spawned;
@@ -143,14 +184,104 @@ int GeneraterManager::spawn(Engine& engine, GeneRam& ram, int count) {
 void GeneraterManager::refresh(Engine& engine, GeneRam& ram, bool last_pass) {
     auto* models = engine.get<ModelCtrlManager>();
     for (std::size_t i = 0; i < ram.enemies.size();) {
-        auto* model = models ? models->find(ram.enemy_name, ram.enemies[i]) : nullptr;
-        if (model && model->generated) { ++i; continue; }
+        const std::string& name = i < ram.enemy_models.size() ? ram.enemy_models[i] : ram.enemy_name;
+        auto* model = models ? models->find(name, ram.enemies[i]) : nullptr;
+        if (model && model->generated) {
+            // Randomizer watchdog (shuffled generators only): a swapped enemy
+            // that fell or never lands is erased and counts as defeated
+            // without a drop.
+            if (ram.shuffled && i < ram.watch.size() && model->node) {
+                auto& watch = ram.watch[i];
+                watch.airborne = model->on_ground ? 0 : watch.airborne + 1;
+                if (watch.airborne > kWatchAirborne || model->node->matrix(3, 1) < watch.spawn_y - kWatchDrop) {
+                    engine.log("randomizer: watchdog removes " + name + "#" + std::to_string(ram.enemies[i]) + " of " +
+                               std::string(ram.data.str(2)));
+                    Packet p;
+                    engine.messenger().send(engine, "MODELCTRL", name, ram.enemies[i], "SQ_ERAS", p);
+                    forget(ram, i);
+                    continue;
+                }
+            }
+            ++i;
+            continue;
+        }
         if (model && model->hp <= 0 && model->node) {
             const auto& m = model->node->matrix;
             drop(engine, ram, Vec3f{m(3, 0), m(3, 1), m(3, 2)}, last_pass && ram.enemies.size() == 1);
         }
-        ram.enemies.erase(ram.enemies.begin() + std::ptrdiff_t(i));
+        forget(ram, i);
     }
+}
+
+void GeneraterManager::forget(GeneRam& ram, std::size_t member) {
+    ram.enemies.erase(ram.enemies.begin() + std::ptrdiff_t(member));
+    if (member < ram.enemy_models.size()) ram.enemy_models.erase(ram.enemy_models.begin() + std::ptrdiff_t(member));
+    if (member < ram.watch.size()) ram.watch.erase(ram.watch.begin() + std::ptrdiff_t(member));
+}
+
+// Randomizer (enemy shuffle), made at the stage's first wave: the pool (the
+// shuffleable families the stage loaded), the families that stay (bosses,
+// 1-RAM mid-bosses, a family with a ded_<family>.lua here) and the
+// generators that stay: every one a stage script starts next to an e_ / f_
+// model name (intro and demo fights wait for that model).
+void GeneraterManager::prepare_shuffle(Engine& engine) {
+    shuffle_ready_ = true;
+    pool_.clear();
+    fixed_generators_.clear();
+    fixed_families_.clear();
+    if (!engine.cheats().enemy_shuffle() || randomizer::fixed_stage(engine.stage_name())) return;
+    auto* models = engine.get<ModelCtrlManager>();
+    if (!models) return;
+    std::map<std::string, int, std::less<>> counts;
+    std::set<std::string, std::less<>> named; // every e_ / f_ model info of the stage
+    for (const auto& model : models->rams()) {
+        if (model->info_name.starts_with("e_") || model->info_name.starts_with("f_")) named.insert(model->info_name);
+        if (model->info_name.starts_with("e_") && model->category == "ENEMY") ++counts[model->info_name];
+    }
+    std::vector<std::string> present;
+    for (const auto& [name, count] : counts) {
+        if (randomizer::boss_family(name) || count < 2 || engine.has_script("ded_" + name + ".lua")) fixed_families_.insert(name);
+        else present.push_back(name);
+    }
+    for (const auto& name : named)
+        if (!counts.contains(name)) fixed_families_.insert(name);
+    const auto seed = randomizer::sub_seed(engine.cheats().rand_seed, "enemies");
+    for (const auto& name : randomizer::stage_pool(seed, engine.stage_name(), present, randomizer::kPoolExtra))
+        if (counts.contains(name) && !fixed_families_.contains(name)) pool_.push_back(name);
+    // Lua 4 chunks keep their string constants NUL-terminated.
+    engine.for_each_script([&](std::string_view, std::string_view chunk) {
+        bool model_named = false;
+        for (const auto& name : named)
+            if (chunk.find(name + std::string(1, '\0')) != std::string_view::npos) model_named = true;
+        if (!model_named) return;
+        for (const auto& ram : rams_) {
+            if (!ram->data) continue;
+            const std::string generator(ram->data.str(2));
+            if (chunk.find(generator + std::string(1, '\0')) != std::string_view::npos) fixed_generators_.insert(generator);
+        }
+    });
+    std::string text = "randomizer: pool of " + engine.stage_name() + ":";
+    for (const auto& name : pool_) text += " " + name;
+    if (!fixed_generators_.empty()) {
+        text += "; fixed generators:";
+        for (const auto& name : fixed_generators_) text += " " + name;
+    }
+    engine.log(text);
+}
+
+bool GeneraterManager::shuffle_generator(Engine& engine, const GeneRam& ram) const {
+    if (!engine.cheats().enemy_shuffle() || pool_.size() < 2 || !ram.data) return false;
+    if (!ram.enemy_name.starts_with("e_") || fixed_families_.contains(ram.enemy_name)) return false;
+    return !fixed_generators_.contains(ram.data.str(2));
+}
+
+// The family of the next enemy: one per wave (drawn when the wave starts) or
+// one per enemy, from the seed, the stage, the generator and its draw count.
+std::string GeneraterManager::draw_model(Engine& engine, GeneRam& ram) {
+    if (engine.cheats().rand_enemies == 2 && !ram.wave_model.empty()) return ram.wave_model;
+    const auto seed = randomizer::sub_seed(engine.cheats().rand_seed, "enemies");
+    const std::string name = engine.stage_name() + "/" + std::string(ram.data.str(2));
+    return pool_[std::size_t(randomizer::draw(seed, name, ram.draws++) % pool_.size())];
 }
 
 int GeneraterManager::randomized_record(Engine& engine, const std::string& table, int record) {
@@ -234,6 +365,8 @@ void GeneraterManager::update(Engine& engine) {
             ram.player_count = live_players;
             ram.remaining = 0;
             ram.enemies.clear();
+            ram.enemy_models.clear();
+            ram.watch.clear();
             // _genePoint lives in the beGeneraterInfoWork allocated here, so
             // a restarted generator spawns from its first point again.
             ram.point = 0;
@@ -241,6 +374,20 @@ void GeneraterManager::update(Engine& engine) {
             if (auto* db = engine.get<DatabaseManager>()) {
                 ram.enemy_name = db->text("enemy", ram.enemy_record, "MODEL");
                 ram.enemy_max_hp = db->number("enemy", ram.enemy_record, "HPMAX").value_or(1);
+            }
+            // Randomizer: whether this wave's enemies are swapped (and, one
+            // family per wave, which one).
+            if (engine.cheats().enemy_shuffle()) {
+                if (!shuffle_ready_) prepare_shuffle(engine);
+                ram.shuffled = shuffle_generator(engine, ram);
+                ram.wave_model.clear();
+                if (ram.shuffled && engine.cheats().rand_enemies == 2) {
+                    const auto seed = randomizer::sub_seed(engine.cheats().rand_seed, "enemies");
+                    const std::string name = engine.stage_name() + "/" + std::string(ram.data.str(2)) + "/wave";
+                    ram.wave_model = pool_[std::size_t(randomizer::draw(seed, name, std::uint64_t(ram.clears)) % pool_.size())];
+                }
+            } else {
+                ram.shuffled = false;
             }
         }
         if (ram.freeze || ram.system_freeze) {

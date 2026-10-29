@@ -226,7 +226,17 @@ Settings Settings::parse(IniFile document) {
     settings.exp_rate = std::clamp(ini.get_int("gameplay", "exp_rate", settings.exp_rate), 10, 1000);
     settings.damage_dealt = std::clamp(ini.get_int("gameplay", "damage_dealt", settings.damage_dealt), 10, 1000);
     settings.damage_taken = std::clamp(ini.get_int("gameplay", "damage_taken", settings.damage_taken), 10, 1000);
-    settings.drop_seed = std::uint32_t(std::max(0, ini.get_int("gameplay", "drop_seed", 0)));
+    if (ini.get("randomizer", "seed")) {
+        settings.rand_seed = std::uint32_t(std::max(0, ini.get_int("randomizer", "seed", 0)));
+        settings.rand_drops = ini.get_bool("randomizer", "drops", false);
+        const std::string enemies = ini.get_or("randomizer", "enemies", "off");
+        settings.rand_enemies = enemies == "wave" ? 2 : enemies == "each" ? 1 : 0;
+        settings.rand_zones = ini.get_or("randomizer", "zones", "off") == "dungeons" ? 1 : 0;
+    } else if (const int drop_seed = ini.get_int("gameplay", "drop_seed", 0); drop_seed > 0) {
+        // The item drop seed of earlier versions: the same drops.
+        settings.rand_seed = std::uint32_t(drop_seed);
+        settings.rand_drops = true;
+    }
     {
         std::string loading = ini.get_or("gameplay", "loading", "original");
         for (auto& c : loading) c = char(std::tolower(static_cast<unsigned char>(c)));
@@ -307,7 +317,11 @@ void Settings::store() {
     ini_.set_int("gameplay", "exp_rate", exp_rate);
     ini_.set_int("gameplay", "damage_dealt", damage_dealt);
     ini_.set_int("gameplay", "damage_taken", damage_taken);
-    ini_.set_int("gameplay", "drop_seed", int(drop_seed & 0x7FFFFFFF));
+    ini_.remove("gameplay", "drop_seed");
+    ini_.set_int("randomizer", "seed", int(rand_seed & 0x7FFFFFFF));
+    ini_.set_bool("randomizer", "drops", rand_drops);
+    ini_.set("randomizer", "enemies", rand_enemies == 2 ? "wave" : rand_enemies == 1 ? "each" : "off");
+    ini_.set("randomizer", "zones", rand_zones ? "dungeons" : "off");
     ini_.set("gameplay", "loading", fast_loading ? "fast" : "original");
     // The old combined direction inputs are migrated (parse) and dropped.
     for (const char* legacy : kLegacyDirections) {

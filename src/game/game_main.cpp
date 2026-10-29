@@ -9,11 +9,13 @@
 #include "settings.hpp"
 #include "controls.hpp"
 #include "campaign.hpp"
+#include "randomizer_save.hpp"
 #include "test_path.hpp"
 #include "texture_pack.hpp"
 
 #include "dw4/engine/engine.hpp"
 #include "dw4/engine/managers.hpp"
+#include "dw4/engine/randomizer.hpp"
 #include "dw4/disc.hpp"
 #include "dw4/engine/state_archive.hpp"
 #include <algorithm>
@@ -511,6 +513,12 @@ int run(const Options& options, dw4::game::Settings& settings) {
     else if (const char* dir = std::getenv("DW4_CARD_DIR")) engine.set_card_root(dir);
     else if (!options.smoke_frames && !settings.cards.empty()) engine.set_card_root(settings.cards);
     else if (const char* base = SDL_GetBasePath()) engine.set_card_root(std::filesystem::path(base) / "saves" / "GC" / "USA");
+    // The randomizer's bond to the save (randomizer_save.hpp) lives next to
+    // the save: saves/ beside the program, a test run's card folder.
+    std::filesystem::path randomizer_folder;
+    if (!options.card_dir.empty()) randomizer_folder = options.card_dir;
+    else if (const char* dir = std::getenv("DW4_CARD_DIR")) randomizer_folder = dir;
+    else if (const char* base = SDL_GetBasePath()) randomizer_folder = std::filesystem::path(base) / "saves";
     // What the slots hold: DW4_CARD_A / DW4_CARD_B, else settings.ini [data]
     // card_a / card_b (not in test runs): "none" (an empty slot),
     // "unformatted", "inserted" and / or the card's blocks ("251"; default
@@ -554,22 +562,46 @@ int run(const Options& options, dw4::game::Settings& settings) {
         }
         return settings.fast_loading;
     };
-    // Rebalancing / randomizer (settings.ini [gameplay]; test runs:
-    // DW4_GAMEPLAY=exp,dealt,taken,seed) and the load timing.
+    // The randomizer of new games (settings.ini [randomizer]; test runs:
+    // DW4_RANDOMIZER=seed[,enemies[,zones[,drops]]], or the old
+    // DW4_GAMEPLAY drop seed) and the one bound to player 1's save once a
+    // game started (randomizer_save.hpp).
+    std::optional<dw4::game::RandomizerConfig> randomizer_bound;
+    std::uint32_t randomizer_unique = 0;
+    auto randomizer_settings = [&] {
+        dw4::game::RandomizerConfig config;
+        if (options.smoke_frames) {
+            if (const char* text = std::getenv("DW4_RANDOMIZER")) config = dw4::game::parse_randomizer(text).value_or(config);
+            else if (const char* gameplay = std::getenv("DW4_GAMEPLAY")) {
+                int exp = 0, dealt = 0, taken = 0;
+                unsigned seed = 0;
+                std::sscanf(gameplay, "%d,%d,%d,%u", &exp, &dealt, &taken, &seed);
+                config.seed = seed;
+                config.drops = seed != 0;
+            }
+            return config;
+        }
+        config.seed = settings.rand_seed;
+        config.drops = settings.rand_drops;
+        config.enemies = settings.rand_enemies;
+        config.zones = settings.rand_zones;
+        return config;
+    };
+    // Rebalancing (settings.ini [gameplay]; test runs:
+    // DW4_GAMEPLAY=exp,dealt,taken,seed), the randomizer and the load timing.
     auto apply_gameplay = [&](dw4::engine::Cheats& cheats) {
         cheats.fast_loading = fast_loading_choice();
+        dw4::game::apply_randomizer(randomizer_bound.value_or(randomizer_settings()), cheats);
         if (options.smoke_frames) {
             if (const char* text = std::getenv("DW4_GAMEPLAY")) {
                 unsigned seed = 0;
                 std::sscanf(text, "%d,%d,%d,%u", &cheats.exp_rate, &cheats.damage_dealt, &cheats.damage_taken, &seed);
-                cheats.drop_seed = seed;
             }
             return;
         }
         cheats.exp_rate = settings.exp_rate;
         cheats.damage_dealt = settings.damage_dealt;
         cheats.damage_taken = settings.damage_taken;
-        cheats.drop_seed = settings.drop_seed;
     };
     apply_gameplay(engine.cheats());
     // DW4_PLAYERS=n: test runs start with n joined players.
@@ -612,6 +644,9 @@ int run(const Options& options, dw4::game::Settings& settings) {
         start.damage_taken = engine.cheats().damage_taken;
         start.drop_seed = engine.cheats().drop_seed;
         start.fast_loading = engine.cheats().fast_loading;
+        start.rand_seed = engine.cheats().rand_seed;
+        start.rand_enemies = engine.cheats().rand_enemies;
+        start.rand_zones = engine.cheats().rand_zones;
         std::string status, shown;
         const auto deadline = std::chrono::steady_clock::now() + std::chrono::minutes(options.smoke_frames ? 1 : 30);
         SDL_Init(SDL_INIT_VIDEO);
@@ -656,6 +691,9 @@ int run(const Options& options, dw4::game::Settings& settings) {
         engine.cheats().damage_taken = started.damage_taken;
         engine.cheats().drop_seed = started.drop_seed;
         engine.cheats().fast_loading = started.fast_loading; // the host's choice for everyone
+        engine.cheats().rand_seed = started.rand_seed;      // the host's randomizer too
+        engine.cheats().rand_enemies = started.rand_enemies;
+        engine.cheats().rand_zones = started.rand_zones;
         // Every machine plays from the same card copies.
         session_cards = std::filesystem::temp_directory_path() /
                         ("dw4_session_" + std::to_string(net.local_slot()) + "_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
@@ -875,6 +913,34 @@ int run(const Options& options, dw4::game::Settings& settings) {
         auto state_path = [&](std::size_t slot) { return state_dir / ("state" + std::to_string(slot + 1) + ".dw4state"); };
         if (!options.smoke_frames && !state_dir.empty())
             for (std::size_t slot = 0; slot < state_slots.size(); ++slot) state_slots[slot] = read_state_file(state_path(slot));
+        // The randomizer's bond (randomizer_save.hpp): when player 1's
+        // character changes at the character select (a new game or a called
+        // save), the seed and modes bound to it apply; a character without
+        // one is bound to the current settings when they randomize.
+        auto bind_randomizer = [&] {
+            auto* sys = engine.get<dw4::engine::GameSystem>();
+            if (!sys || !sys->game_started) return;
+            const auto& player = sys->players[0];
+            if (!player.joined || player.unique == 0 || player.unique == randomizer_unique) return;
+            randomizer_unique = player.unique;
+            std::string name;
+            for (const char16_t c : player.name)
+                name.push_back(c >= 0xFF01 && c <= 0xFF5E ? char(c - 0xFEE0) : c == 0x3000 ? ' ' : c < 0x80 ? char(c) : '?');
+            if (const auto bound = dw4::game::load_randomizer_binding(randomizer_folder, player.unique)) {
+                randomizer_bound = bound;
+            } else if (const auto config = randomizer_settings(); config.active()) {
+                randomizer_bound = config;
+                dw4::game::store_randomizer_binding(randomizer_folder, player.unique, name, config);
+                dw4::game::write_randomizer_spoiler(randomizer_folder, player.unique, config);
+            } else {
+                randomizer_bound.reset();
+            }
+            apply_gameplay(engine.cheats());
+            if (randomizer_bound)
+                std::cout << "randomizer: save " << dw4::game::randomizer_unique_key(player.unique) << " plays seed " << randomizer_bound->seed
+                          << " (enemies " << randomizer_bound->enemies << ", zones " << randomizer_bound->zones << ", drops "
+                          << randomizer_bound->drops << ")\n";
+        };
         auto can_save = [&]() -> std::string {
             if (net.active()) return "Save states are off in online sessions.";
             if (engine.rebooting()) return "The console is restarting.";
@@ -958,6 +1024,9 @@ int run(const Options& options, dw4::game::Settings& settings) {
             engine.cheats().damage_taken = started.damage_taken;
             engine.cheats().drop_seed = started.drop_seed;
             engine.cheats().fast_loading = started.fast_loading; // the host's choice for everyone
+            engine.cheats().rand_seed = started.rand_seed;      // the host's randomizer too
+            engine.cheats().rand_enemies = started.rand_enemies;
+            engine.cheats().rand_zones = started.rand_zones;
             session_cards = std::filesystem::temp_directory_path() /
                             ("dw4_session_" + std::to_string(net.local_slot()) + "_" +
                              std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
@@ -1218,6 +1287,9 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 start.damage_taken = engine.cheats().damage_taken;
                 start.drop_seed = engine.cheats().drop_seed;
                 start.fast_loading = engine.cheats().fast_loading;
+                start.rand_seed = engine.cheats().rand_seed;
+                start.rand_enemies = engine.cheats().rand_enemies;
+                start.rand_zones = engine.cheats().rand_zones;
                 std::string error;
                 if (net.lobby(start, lobby_status, error)) {
                     begin_session();
@@ -1509,6 +1581,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     pads = net.take(net_frame);
                 }
                 engine.step(pads);
+                if (!net.active()) bind_randomizer();
                 if (net.active() && (frame_base + engine.frame()) % 60 == 0) net.report_fingerprint(frame_base + engine.frame(), engine.fingerprint());
                 // The input since the running stage's load, for save states.
                 if (const auto* snapshot = engine.stage_snapshot(); snapshot && snapshot->serial != log_serial) {
@@ -1685,7 +1758,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                             // loading).
                             const bool original = !settings.widescreen && !settings.smooth_motion && settings.msaa == 0 &&
                                                   !settings.skip_intro && !settings.fast_loading && settings.exp_rate == 100 &&
-                                                  settings.damage_dealt == 100 && settings.damage_taken == 100 && settings.drop_seed == 0;
+                                                  settings.damage_dealt == 100 && settings.damage_taken == 100 && settings.rand_seed == 0;
                             const bool modernized = settings.widescreen && settings.smooth_motion && settings.msaa >= 4 && settings.skip_intro &&
                                                     settings.fast_loading;
                             int preset = original ? 0 : modernized ? 1 : 2;
@@ -1700,7 +1773,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                                 loading_override.reset();
                                 if (!modern) {
                                     settings.exp_rate = settings.damage_dealt = settings.damage_taken = 100;
-                                    settings.drop_seed = 0;
+                                    settings.rand_seed = 0;
                                 }
                                 // (Online the host's gameplay settings stay.)
                                 if (!net.active()) apply_gameplay(engine.cheats());
@@ -1969,18 +2042,38 @@ int run(const Options& options, dw4::game::Settings& settings) {
                         gameplay_changed |= ImGui::SliderInt("EXP from enemies", &settings.exp_rate, 10, 1000, "%d%%");
                         gameplay_changed |= ImGui::SliderInt("Damage of your hits", &settings.damage_dealt, 10, 1000, "%d%%");
                         gameplay_changed |= ImGui::SliderInt("Damage enemies do", &settings.damage_taken, 10, 1000, "%d%%");
-                        ImGui::SeparatorText("Randomizer (saved; 0 is off)");
-                        int seed = int(settings.drop_seed & 0x7FFFFFFF);
-                        if (ImGui::InputInt("Item drop seed", &seed)) {
-                            settings.drop_seed = std::uint32_t(std::max(0, seed));
+                        ImGui::SeparatorText("Randomizer (saved; seed 0 is off)");
+                        int seed = int(settings.rand_seed & 0x7FFFFFFF);
+                        if (ImGui::InputInt("Seed", &seed)) {
+                            settings.rand_seed = std::uint32_t(std::max(0, seed));
                             gameplay_changed = true;
                         }
                         ImGui::SameLine();
                         if (ImGui::Button("New seed")) {
-                            settings.drop_seed = std::uint32_t(std::chrono::steady_clock::now().time_since_epoch().count() & 0x7FFFFFFF) | 1u;
+                            settings.rand_seed = std::uint32_t(std::chrono::steady_clock::now().time_since_epoch().count() & 0x7FFFFFFF) | 1u;
                             gameplay_changed = true;
                         }
-                        ImGui::TextDisabled("Drops change into other items of the same kind; key items stay. The same seed gives the same drops.");
+                        gameplay_changed |= ImGui::Checkbox("Item drops", &settings.rand_drops);
+                        static const char* enemy_modes[] = {"Off", "Every enemy on its own", "One family per wave"};
+                        gameplay_changed |= ImGui::Combo("Enemies", &settings.rand_enemies, enemy_modes, 3);
+                        static const char* zone_modes[] = {"Off", "Dungeon entrances within an area"};
+                        gameplay_changed |= ImGui::Combo("Loading zones", &settings.rand_zones, zone_modes, 2);
+                        ImGui::PushTextWrapPos(0.0f);
+                        ImGui::TextDisabled("Drops change into other items of the same kind (key items stay). Enemies become other "
+                                            "Digimon with the original enemy's strength, EXP and drops; bosses and story fights stay. "
+                                            "Dungeon entrances of an area lead to each other's dungeons. A new game binds these "
+                                            "settings to its save (saves/randomizer.ini, spoiler log beside it).");
+                        if (randomizer_bound)
+                            ImGui::Text("This save plays seed %u (enemies %s, zones %s, drops %s).", randomizer_bound->seed,
+                                        randomizer_bound->enemies == 2 ? "per wave" : randomizer_bound->enemies ? "each" : "off",
+                                        randomizer_bound->zones ? "dungeons" : "off", randomizer_bound->drops ? "on" : "off");
+                        ImGui::PopTextWrapPos();
+                        if (randomizer_bound && randomizer_unique != 0 && ImGui::Button("Bind these settings to this save")) {
+                            randomizer_bound = randomizer_settings();
+                            dw4::game::store_randomizer_binding(randomizer_folder, randomizer_unique, "", *randomizer_bound);
+                            dw4::game::write_randomizer_spoiler(randomizer_folder, randomizer_unique, *randomizer_bound);
+                            gameplay_changed = true;
+                        }
                         if (gameplay_changed) {
                             apply_gameplay(cheats);
                             settings_changed = true;
