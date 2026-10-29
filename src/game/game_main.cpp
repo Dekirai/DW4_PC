@@ -734,6 +734,13 @@ int run(const Options& options, dw4::game::Settings& settings) {
         if (!error.empty()) throw std::runtime_error("online: " + error);
         const auto& started = net.start();
         first_stage = started.stage;
+        // A guest of a host that started a stage directly (--stage) starts it
+        // directly too: GameSystem::direct_start loads the players' weapon
+        // packages at their GENERATE (without it the guest desynced at the
+        // first attack, SEAMLESS.md 7.1). The boot and title stages are
+        // stagis*.
+        if (!options.net_host && first_stage.rfind("stagis", 0) != 0)
+            if (auto* sys = engine.get<dw4::engine::GameSystem>()) sys->direct_start = true;
         engine.cheats().god = started.cheats & 1;
         engine.cheats().infinite_mp = started.cheats & 2;
         engine.cheats().one_hit = started.cheats & 4;
@@ -879,6 +886,10 @@ int run(const Options& options, dw4::game::Settings& settings) {
         else std::cerr << "audio: " << SDL_GetError() << '\n';
     }
     const char* audio_dump_path = std::getenv("DW4_AUDIO_DUMP");
+    // DW4_AUDIO_MIX=1 (test runs): the mixer runs as with an audio device,
+    // its output is dropped (the streams' decoding positions advance: the
+    // canonical snapshot check, SEAMLESS.md 6.8).
+    const bool audio_mix = options.smoke_frames && std::getenv("DW4_AUDIO_MIX") && std::atoi(std::getenv("DW4_AUDIO_MIX")) != 0;
     std::vector<std::int16_t> audio_dump;
     constexpr int kAudioFrameSamples = dw4::engine::SoundManager::kOutputRate / 60;
     // Output samples of the step that reached `frame`: one NTSC field
@@ -890,7 +901,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
     };
     auto mix_audio = [&](int frames) {
         auto* sound = engine.get<dw4::engine::SoundManager>();
-        if (!sound || (!audio && !audio_dump_path)) return;
+        if (!sound || (!audio && !audio_dump_path && !audio_mix)) return;
         std::vector<std::int16_t> pcm(std::size_t(frames) * 2);
         // A rebooting console is silent (the reset stops the DSP).
         if (!engine.rebooting()) sound->render(pcm.data(), std::size_t(frames));
@@ -1457,6 +1468,39 @@ int run(const Options& options, dw4::game::Settings& settings) {
         // DW4_STAGE_STATES=DIR (test runs): a state file at every stage start
         // (DIR/<frame>_<stage>.dw4state), for resuming long scripted runs.
         const char* stage_states = std::getenv("DW4_STAGE_STATES");
+        // Round S1 test tools (SEAMLESS.md 6.8, 7.1), test runs only:
+        // DW4_SNAPSHOT_DUMP=DIR writes every stage load's snapshot as
+        // DIR/<serial>_<stage>.raw and .canon (SnapshotForm); DW4_PAD_LOG=FILE
+        // records the four pads of every step (the frame before it, then per
+        // pad connected u8, four f32 sticks, u32 buttons); DW4_PAD_REPLAY=FILE
+        // steps with those pads instead of the composed ones wherever the log
+        // has the frame (a run resumed with --load-state replays another
+        // process's session: the cross-process join check).
+        const char* snapshot_dump = options.smoke_frames ? std::getenv("DW4_SNAPSHOT_DUMP") : nullptr;
+        std::unique_ptr<std::FILE, int (*)(std::FILE*)> pad_log(nullptr, &std::fclose);
+        if (const char* path = options.smoke_frames ? std::getenv("DW4_PAD_LOG") : nullptr) pad_log.reset(std::fopen(path, "wb"));
+        std::map<int, std::array<dw4::engine::PadSample, 4>> pad_replay;
+        if (const char* path = options.smoke_frames ? std::getenv("DW4_PAD_REPLAY") : nullptr)
+            if (std::FILE* f = std::fopen(path, "rb")) {
+                std::uint32_t at = 0;
+                while (std::fread(&at, sizeof at, 1, f) == 1) {
+                    std::array<dw4::engine::PadSample, 4> logged{};
+                    bool complete = true;
+                    for (auto& pad : logged) {
+                        std::uint8_t connected = 0;
+                        float sticks[4]{};
+                        complete = complete && std::fread(&connected, 1, 1, f) == 1 && std::fread(sticks, sizeof(float), 4, f) == 4 &&
+                                   std::fread(&pad.buttons, sizeof pad.buttons, 1, f) == 1;
+                        pad.connected = connected != 0;
+                        pad.left = {sticks[0], sticks[1]};
+                        pad.right = {sticks[2], sticks[3]};
+                    }
+                    if (!complete) break;
+                    pad_replay[int(at)] = logged;
+                }
+                std::fclose(f);
+                std::cout << "pad replay: " << pad_replay.size() << " steps\n";
+            }
         // DW4_TRACE_LOADTIME=1 (test runs): for every stage load the fields
         // from the step that took the change to the stage start (first.lua)
         // and to the first step after it in which player 1 has control with
@@ -1904,6 +1948,19 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     net.poll();
                     pads = net.take(net_frame);
                 }
+                if (!pad_replay.empty())
+                    if (const auto logged = pad_replay.find(frame); logged != pad_replay.end()) pads = logged->second;
+                if (pad_log) {
+                    const std::uint32_t at = std::uint32_t(frame);
+                    std::fwrite(&at, sizeof at, 1, pad_log.get());
+                    for (const auto& pad : pads) {
+                        const std::uint8_t connected = pad.connected ? 1 : 0;
+                        const float sticks[4] = {pad.left.x, pad.left.y, pad.right.x, pad.right.y};
+                        std::fwrite(&connected, 1, 1, pad_log.get());
+                        std::fwrite(sticks, sizeof(float), 4, pad_log.get());
+                        std::fwrite(&pad.buttons, sizeof pad.buttons, 1, pad_log.get());
+                    }
+                }
                 // Port events only while achievements, the event trace or the
                 // randomizer's bond (new games) want them.
                 if (const bool collect = achievements_on() || trace_events || (!net.active() && randomizer_settings().active());
@@ -1916,6 +1973,17 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 // The input since the running stage's load, for save states.
                 if (const auto* snapshot = engine.stage_snapshot(); snapshot && snapshot->serial != log_serial) {
                     log_serial = snapshot->serial;
+                    if (snapshot_dump) {
+                        char name[64];
+                        std::snprintf(name, sizeof name, "%03llu_%s", static_cast<unsigned long long>(snapshot->serial), snapshot->stage.c_str());
+                        for (const auto form : {dw4::engine::SnapshotForm::raw, dw4::engine::SnapshotForm::canonical}) {
+                            const auto bytes = engine.snapshot_bytes(form);
+                            const auto file = std::filesystem::path(snapshot_dump) /
+                                              (std::string(name) + (form == dw4::engine::SnapshotForm::raw ? ".raw" : ".canon"));
+                            std::ofstream out(file, std::ios::binary | std::ios::trunc);
+                            out.write(reinterpret_cast<const char*>(bytes.data()), std::streamsize(bytes.size()));
+                        }
+                    }
                     input_log.clear();
                     load_step_drawn = false;
                     last_step_loaded = true;

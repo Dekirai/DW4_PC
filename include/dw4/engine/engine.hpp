@@ -1,6 +1,7 @@
 #pragma once
 
 #include "dw4/engine/igb_view.hpp"
+#include "dw4/engine/online.hpp"
 #include "dw4/engine/port_events.hpp"
 #include "dw4/engine/scene_graph.hpp"
 #include "dw4/card_store.hpp"
@@ -31,6 +32,10 @@ namespace dw4::engine {
 
 class Engine;
 class Manager;
+// online_membership.hpp
+struct PlayerCarry;
+struct BarrierResult;
+struct RoomStory;
 
 // The messenger's delay unit: one nominal frame is 16,666,666 ns (802ECA74 /
 // 803061BC). Delays and frame counts in the data use this constant.
@@ -164,6 +169,9 @@ struct DeferredMessage {
     // record of the original.
     static constexpr std::size_t kPortOnly = static_cast<std::size_t>(-1);
     std::size_t object = kPortOnly;
+    // Online co-op: the trigger slot of the script run that posted it
+    // (Engine::trigger_slot; read only online).
+    int trigger = -1;
 };
 
 class Messenger {
@@ -209,8 +217,11 @@ public:
         Messenger& messenger_;
     };
     const MessageObjects& message_objects() const { return objects_; }
+    // The trigger slot posts take (Engine::TriggerScope).
+    void set_trigger(int slot) { trigger_ = slot; }
 
 private:
+    int trigger_ = -1;
     bool modelling() const { return port_only_ == 0; }
     std::size_t dispatch(Engine& engine, std::string_view category, std::optional<std::string_view> name,
                          std::int32_t index, std::string_view command, Packet& packet, bool model);
@@ -264,6 +275,7 @@ struct DemoRecord {
 struct DemoWork {
     std::vector<DemoRecord> records;
     std::size_t cursor{};
+    int trigger = -1; // the trigger slot of the script run that started it (Engine::trigger_slot)
 };
 
 class DemoManager {
@@ -277,8 +289,11 @@ public:
     void clear();
     std::size_t running() const { return running_.size(); }
     std::vector<std::string> describe() const;
+    // The trigger slot new works take (Engine::TriggerScope).
+    void set_trigger(int slot) { trigger_ = slot; }
 
 private:
+    int trigger_ = -1;
     std::unique_ptr<DemoWork> current_;
     bool in_switch_{};
     std::vector<std::unique_ptr<DemoWork>> running_;
@@ -393,12 +408,20 @@ struct StageSnapshot {
     std::shared_ptr<const void> sound;        // SoundManager streams
     std::uint64_t serial{};                   // counts the snapshots of an engine
     ConsoleReset console_reset;               // the reset button and the controller's combination
+    // Online co-op (online.hpp): the rules of the visit and the present
+    // slots' personal session values (all off / empty offline).
+    OnlineRules online;
+    std::array<std::optional<PersonalSession>, 4> personal;
 };
 
 // Save state files: a snapshot as bytes and back (throws on damaged or
-// foreign data).
-std::vector<std::uint8_t> encode_snapshot(const StageSnapshot& snapshot);
+// foreign data). The canonical form zeroes the presentation-only fields
+// (SnapshotForm); it is for hashes and comparisons and is not meant to be
+// decoded into a running engine.
+std::vector<std::uint8_t> encode_snapshot(const StageSnapshot& snapshot, SnapshotForm form = SnapshotForm::raw);
 StageSnapshot decode_snapshot(std::span<const std::uint8_t> bytes);
+// The snapshot layout version (kSnapshotVersion; protocols follow it).
+std::uint32_t snapshot_version();
 
 class Engine {
 public:
@@ -418,6 +441,113 @@ public:
     ~Engine();
     Engine(const Engine&) = delete;
     Engine& operator=(const Engine&) = delete;
+    // One deterministic engine per process (6.12): the system generator is a
+    // process-wide static that every construction reseeds, so an engine
+    // constructed while an online engine runs would change that engine's
+    // stream. Constructing an engine while an online one lives, or turning
+    // an engine online while another lives, throws std::logic_error.
+    static int live_engines();
+
+    // ---- Seamless online co-op (docs/SEAMLESS.md 7; online.hpp,
+    // online_membership.hpp). Nothing below acts while online().enabled is
+    // off and the camera mask is 0.
+    const OnlineRules& online() const { return online_; }
+    // Only between steps, at a tick every member applies. Turning online on
+    // fixes the cheats to the room's (online_cheats), switches the console
+    // reset off and records the present slots' personal session values.
+    void set_online(const OnlineRules& rules);
+    // Presentation only: whose camera the local picture uses (-1: own).
+    void set_view_slot(int slot) { view_slot_ = slot; }
+    int view_slot() const { return view_slot_; }
+    // Replays (catch-up, resync, resume): the side to take at each fork.
+    void set_fork_sides(std::span<const ForkSide> sides) { fork_sides_.assign(sides.begin(), sides.end()); }
+    // Live play: this machine's slot, which decides its side at a fork
+    // (NETsplit); -1 = none (the side that keeps the instance id).
+    void set_split_identity(int slot) { split_identity_ = slot; }
+    int split_identity() const { return split_identity_; }
+    // A NEXTSTAGE waits for its load step (read-only).
+    std::optional<std::string_view> pending_stage() const {
+        return pending_stage_.empty() ? std::nullopt : std::optional<std::string_view>(pending_stage_);
+    }
+    // 6.5: LEAVE and INTENT wait for a membership-safe step, JOIN for a
+    // joinable one (pad input enabled, no demo record, no SUBWND program,
+    // not loading, presenting, no fork pending; joinable adds: not a hub or
+    // UI stage, no boss lock).
+    bool membership_safe() const;
+    bool joinable() const;
+    // A hub or UI stage (stagML02, stagML11-14, stagIS*): solo instances.
+    static bool hub_stage(std::string_view stage);
+    // The session context (3.7): a hash of the context values (absent = 0).
+    std::uint64_t session_context_hash() const;
+    // The personal session values of a slot (online: the slot's own; the
+    // only present member, or offline: the engine-wide values).
+    PersonalSession personal_session(int slot) const;
+    // A slot's player data for a join, a co-arrival or keeping aside.
+    PlayerCarry carry_player(int slot) const;
+    // Before a step (at the JOIN's tick, when joinable()): the member enters
+    // the running stage at `entrance_point`'s point group (any species: its
+    // packages load now), with SQ_ENTR, its HUD panels and its capsule.
+    void online_join_player(int slot, const PlayerCarry& carry, int entrance_point);
+    // Before a step (LEAVE, when membership_safe()): the slot's player, HUD
+    // panels, quick panel, item label, capsule and weapon go; joined off.
+    void online_remove_player(int slot);
+    // Before a step: a port choice of a present slot (round S3 uses
+    // go_without; give_up forks the defeated member off alone).
+    void online_intent(int slot, IntentKind kind, int argument);
+    // Inside a step (the online overrides, Lua NETsplit): a fork of the
+    // present members; `mask` is the side that continues the script run
+    // (ForkKind). The side rule for defeated members applies. Returns whether
+    // this copy is on that side. The other side's players are despawned at
+    // the end of the step; take_split() reports it once.
+    bool online_split(std::uint8_t mask, ForkKind kind);
+    std::optional<SplitResult> take_split();
+    // While parked after the barrier tick: BARRIER_OK, applied in the load
+    // step right before begin_stage_load.
+    void set_barrier(const BarrierResult& barrier);
+    bool barrier_set() const { return barrier_ != nullptr; }
+    // At game_started only (barriers go through set_barrier): FLAG,
+    // FLAGFOLDER and COUNTER become the room story's.
+    void apply_room_story(const RoomStory& story);
+    // The running stage's load snapshot as bytes (empty before the first).
+    std::vector<std::uint8_t> snapshot_bytes(SnapshotForm form) const;
+    // Catch-up replays: no port events (the host renders no audio).
+    void set_replay(bool on);
+    bool replay() const { return replay_; }
+    // The net fingerprint (6.9): fingerprint() plus the generator state,
+    // the models' rotations, the sound manager's random value, the online
+    // rules, the personal values, the cameras' state and the session context.
+    std::uint64_t net_fingerprint();
+    // boss_lock (6.5): set by boss_mat / boss_intro runs, cleared by
+    // boss_end runs and at every barrier (round S3 wires the scripts).
+    void set_boss_lock(bool on) { online_.boss_lock = on; }
+    // The lowest present slot (0 offline).
+    int leader() const;
+    // SYSsetGateStage ran: the present slots' personal GATESTAGE follows the
+    // engine-wide one (online; 3.7).
+    void online_gate_stage_set();
+    // The trigger slot of the running script (5.1): the member that stepped
+    // on a mat, the player that shot a hit, -1 none. Demo works keep the
+    // trigger of the script run that started them.
+    int trigger_slot() const { return trigger_slot_; }
+    class TriggerScope {
+    public:
+        TriggerScope(Engine& engine, int slot) : engine_(engine), saved_(engine.trigger_slot_) { engine.set_trigger(slot); }
+        ~TriggerScope() { engine_.set_trigger(saved_); }
+        TriggerScope(const TriggerScope&) = delete;
+        TriggerScope& operator=(const TriggerScope&) = delete;
+
+    private:
+        Engine& engine_;
+        int saved_;
+    };
+    // 7.4: the pad a reader of RAM index `index` gets (SelectCtrl windows,
+    // the film skip): offline and in a one-member instance `index` itself;
+    // online, index 0 of a window with a present trigger reads the trigger's
+    // pad, an absent or leaving index or one without a trigger the leader's.
+    int pad_reader_slot(int index, int trigger) const;
+    // Simulation entries that found another MXCSR than 0x1F80 and repaired
+    // it for their duration (diagnostics, 6.12).
+    static std::uint64_t mxcsr_repairs();
 
     // One fixed 60 Hz simulation step.
     void step(const std::array<PadSample, 4>& samples);
@@ -584,8 +714,9 @@ public:
     // kMaxPortEvents wait for the host; more are dropped.
     static constexpr std::size_t kMaxPortEvents = 4096;
     void set_port_events(bool enabled) {
-        port_events_enabled_ = enabled;
-        if (!enabled) port_events_.clear();
+        // (Never while replaying: Engine::set_replay.)
+        port_events_enabled_ = enabled && !replay_;
+        if (!port_events_enabled_) port_events_.clear();
     }
     bool port_events_enabled() const { return port_events_enabled_; }
     void port_event(PortEvent event) {
@@ -815,6 +946,44 @@ private:
     std::vector<DiagnosticCounter> notes_;
     std::vector<ModelScriptContext> model_contexts_;
     std::deque<std::string> log_;
+
+    // ---- Online co-op (online.cpp).
+    OnlineRules online_;
+    std::array<std::optional<PersonalSession>, 4> personal_;
+    // The pads of the barrier tick, which every transition step takes (6.7).
+    std::optional<std::array<PadSample, 4>> barrier_pads_;
+    std::unique_ptr<BarrierResult> barrier_;
+    std::vector<ForkSide> fork_sides_;
+    int split_identity_ = -1;
+    struct PendingFork {
+        std::uint8_t leavers{}, kept{}, other{}; // other: the side this copy despawns
+        bool in_stage{}, take_leavers{};
+    };
+    std::optional<PendingFork> pending_fork_;
+    std::optional<SplitResult> split_;
+    bool replay_{};
+    int view_slot_ = -1;
+    int trigger_slot_ = -1;
+    bool counted_online_{};
+    // The online step's input: absent slots neutral and disconnected,
+    // leaving ones neutral and connected, the transition steps the pads of
+    // the barrier tick.
+    std::array<PadSample, 4> online_samples(const std::array<PadSample, 4>& samples) const;
+    // The end of an online step: a pending fork's despawns, the barrier
+    // tick's pads.
+    void finish_online_step(const std::array<PadSample, 4>& samples);
+    // The load step: BARRIER_OK's membership and rules (before begin_stage_load).
+    void apply_barrier();
+    // Recomputes present from the joined slots, the camera mask and the leash.
+    void membership_changed(std::uint8_t before);
+    void despawn_player(int slot);
+    void install_online_lua();
+    void set_trigger(int slot) {
+        trigger_slot_ = slot;
+        messenger_.set_trigger(slot);
+        demo_.set_trigger(slot);
+    }
+    void step_impl(const std::array<PadSample, 4>& samples);
 };
 
 // Base class for original be* managers. Registration follows the original

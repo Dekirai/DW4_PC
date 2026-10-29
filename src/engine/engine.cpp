@@ -1,9 +1,12 @@
 #include "dw4/engine/engine.hpp"
+#include "online_detail.hpp"
+#include "dw4/engine/online_membership.hpp"
 
 #include "dw4/engine/managers.hpp"
 #include "dw4/packages.hpp"
 
 #include <algorithm>
+#include <bit>
 #include <cctype>
 #include <charconv>
 #include <cstdio>
@@ -327,6 +330,7 @@ void Messenger::post(std::int64_t time, std::string category, std::optional<std:
     if (static const bool trace = std::getenv("DW4_TRACE_POSTS") != nullptr; trace)
         std::printf("post %s %s %s for %lld\n", category.c_str(), name ? name->c_str() : "-", command.c_str(), static_cast<long long>(time));
     DeferredMessage message{time, std::move(category), std::move(name), index, std::move(command), std::move(arguments)};
+    message.trigger = trigger_;
     if (modelling()) {
         // 80305F9C resets the current object (or makes all), the poster's
         // arguments go into it, 803061BC swaps it into the record.
@@ -375,6 +379,7 @@ void Messenger::update(Engine& engine) {
         }
         DeferredMessage message = std::move(deferred_.front());
         deferred_.erase(deferred_.begin());
+        const Engine::TriggerScope trigger(engine, message.trigger);
         std::optional<std::string_view> name;
         if (message.name) name = *message.name;
         if (static const bool trace = std::getenv("DW4_TRACE_POSTS") != nullptr; trace)
@@ -448,6 +453,7 @@ void DemoManager::end_switch() {
 
 void DemoManager::run() {
     if (!current_ || in_switch_) return;
+    current_->trigger = trigger_;
     running_.push_back(std::move(current_));
     current_.reset();
     in_switch_ = false;
@@ -480,6 +486,7 @@ void DemoManager::update(Engine& engine) {
         auto* work = running_[w].get();
         auto& records = work->records;
         std::size_t cursor = work->cursor;
+        const Engine::TriggerScope trigger(engine, work->trigger);
         while (cursor < records.size()) {
             bool block = false;
             const DemoRecord record = records[cursor];
@@ -533,6 +540,7 @@ void DemoManager::update(Engine& engine) {
 Engine::Engine(const std::filesystem::path& data_root) : Engine(MountedResources::open(data_root)) {}
 
 Engine::Engine(MountedResources resources) : resources_(std::move(resources)) {
+    detail::engine_constructed();
     global_root_.kind = NodeKind::group;
     global_root_.name = "GlobalRoot";
     cheats_.god = std::getenv("DW4_GOD") != nullptr;
@@ -545,7 +553,7 @@ Engine::Engine(MountedResources resources) : resources_(std::move(resources)) {
     register_default_managers(*this);
 }
 
-Engine::~Engine() = default;
+Engine::~Engine() { detail::engine_destroyed(counted_online_); }
 
 void Engine::add_manager(std::unique_ptr<Manager> manager) {
     managers_.push_back(std::move(manager));
@@ -682,6 +690,15 @@ void Engine::begin_stage_load(const StageSnapshot* restoring) {
     loader_preliminary_.clear();
     loader_skip_ = 0;
     loader_cost_ = 0;
+    // Online (6.5, 4.4, 4.6): every barrier clears the boss lock; a visit
+    // that starts with one member has the shared camera and the leash.
+    if (online_.enabled && !restoring) {
+        online_.boss_lock = false;
+        if (std::popcount(unsigned(online_.present)) < 2) {
+            online_.player_cameras = 0;
+            online_.leash_off = false;
+        }
+    }
     // The load timing of this load and the stage it starts (a save state's
     // cheats are in place by now).
     loader_fast_ = cheats_.fast_loading;
@@ -709,6 +726,8 @@ void Engine::begin_stage_load(const StageSnapshot* restoring) {
     snapshot.stage_active = stage_active_;
     if (auto* sys = get<GameSystem>()) snapshot.system = std::make_shared<const GameSystem>(*sys);
     if (auto* sound = get<SoundManager>()) snapshot.sound = sound->persistent();
+    snapshot.online = online_;
+    snapshot.personal = personal_;
     snapshot.serial = ++snapshot_serial_;
     snapshot_ = std::move(snapshot);
 }
@@ -728,6 +747,13 @@ void Engine::restore(const StageSnapshot& snapshot) {
     cheats_ = snapshot.cheats;
     pads_ = snapshot.pads;
     console_reset_ = snapshot.console_reset;
+    // Online: the visit's rules and personal values (set_online keeps the
+    // room's cheats and the console reset off, as after any construction).
+    personal_ = snapshot.personal;
+    if (snapshot.online.enabled || online_.enabled) {
+        set_online(snapshot.online);
+        personal_ = snapshot.personal;
+    }
     {
         std::istringstream random(snapshot.random);
         random >> fight::generator();
@@ -1813,6 +1839,19 @@ const std::map<std::uint64_t, std::int64_t>& clock_file() {
 } // namespace
 
 void Engine::step(const std::array<PadSample, 4>& samples) {
+    const detail::MxcsrGuard mxcsr;
+    if (!online_.enabled) {
+        step_impl(samples);
+        return;
+    }
+    // Online (7.4): no console reset however the game sets beSystem +0x5F.
+    if (console_reset_.enabled()) console_reset_.set_enabled(false);
+    const auto effective = online_samples(samples);
+    step_impl(effective);
+    finish_online_step(effective);
+}
+
+void Engine::step_impl(const std::array<PadSample, 4>& samples) {
     torn_down_ = false;
     // The console reloads the game (rebooting): nothing of the old one runs.
     if (rebooting_) {
@@ -1909,6 +1948,8 @@ void Engine::step(const std::array<PadSample, 4>& samples) {
         return;
     }
     if (!pending_stage_.empty()) {
+        // Online: BARRIER_OK's membership and rules first (6.7).
+        if (online_.enabled) apply_barrier();
         begin_stage_load();
         torn_down_ = true;
     }
@@ -2030,6 +2071,7 @@ void Engine::traverse_scene() {
     // time and poses; only the draw items (geometry, particle quads, skin
     // palettes, lights) are left out.
     if (rebooting_) return;
+    const detail::MxcsrGuard mxcsr;
     FrameCamera camera;
     Vec4f clear_color;
     TraversalContext context = frame_context(nullptr, camera, clear_color);
@@ -2038,6 +2080,7 @@ void Engine::traverse_scene() {
 }
 
 void Engine::render(std::vector<DrawItem>& out, FrameCamera& camera, Vec4f& clear_color, ShadowFrame* shadow) {
+    const detail::MxcsrGuard mxcsr;
     out.clear();
     // VISetBlack (0x803162E0): a rebooting console shows black.
     if (rebooting_) {
