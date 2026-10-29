@@ -1598,6 +1598,10 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 rendered_serial = serial;
                 interpolator.reset();
             }
+            // Smooth motion: the picture is drawn between the previous step
+            // and this one (MotionInterpolator::blend below).
+            const bool smooth_blending =
+                (!options.smoke_frames || dev.presenting()) && settings.smooth_motion && present_interval < 1.0 / 75.0;
             // A field the running update covers (Engine::held: the movie's
             // 30 Hz frames) shows the last update's picture again, without a
             // traversal (only a catch-up that left no draw list draws it).
@@ -1616,9 +1620,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 }
                 // Smooth motion draws between the previous step's camera and
                 // this one: the picture's cull keeps what is inside either.
-                const bool blending =
-                    (!options.smoke_frames || dev.presenting()) && settings.smooth_motion && present_interval < 1.0 / 75.0;
-                engine.picture_previous_view = blending ? interpolator.previous_view() : std::nullopt;
+                engine.picture_previous_view = smooth_blending ? interpolator.previous_view() : std::nullopt;
                 engine.render(items, camera, clear, &shadow);
                 dw4::game::dev_hide(dev, items, shadow);
                 items_current = true;
@@ -1643,12 +1645,10 @@ int run(const Options& options, dw4::game::Settings& settings) {
             if (draw) {
                 if (!interpolator.captured()) interpolator.capture(items, camera, shadow);
                 const float present_alpha = float(accumulator / dw4::engine::kFieldSeconds);
-                const bool present_blended =
-                    (!options.smoke_frames || dev.presenting()) && settings.smooth_motion && present_interval < 1.0 / 75.0;
                 // (DW4_DEV_DUMP: what the blend did, for presents.csv.)
                 dw4::game::BlendReport blend_report;
                 const bool report_blend = dev_dumper && dev.dumping(frame);
-                if (present_blended) interpolator.blend(items, camera, shadow, present_alpha, report_blend ? &blend_report : nullptr);
+                if (smooth_blending) interpolator.blend(items, camera, shadow, present_alpha, report_blend ? &blend_report : nullptr);
                 renderer->set_shadow(&shadow);
                 int width = 0, height = 0;
                 SDL_GetWindowSizeInPixels(window, &width, &height);
@@ -2098,7 +2098,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 if (dev_dumper && dev.dumping(frame)) {
                     std::vector<std::uint8_t> pixels(dev.pictures ? std::size_t(width * height * 4) : 0);
                     if (dev.pictures) glReadPixels(0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
-                    dev_dumper->picture(dev_present, frame, steps, present_alpha, present_blended ? &blend_report : nullptr,
+                    dev_dumper->picture(dev_present, frame, steps, present_alpha, smooth_blending ? &blend_report : nullptr,
                                         engine.stage_name(), width, height, pixels);
                     if (dev.ids && dev.pictures) {
                         renderer->set_id_pass(true);
