@@ -2463,8 +2463,8 @@ int run(const Options& options, dw4::game::Settings& settings) {
                         }
                         if (tab.source) {
                             const auto saved = dw4::save::save_time_text(tab.source->gci);
-                            ImGui::Text("%s - %s%s%s", tab.source->container.c_str(), tab.source->detail.c_str(), saved.empty() ? "" : ", saved ",
-                                        saved.c_str());
+                            ImGui::TextWrapped("%s - %s%s%s", tab.source->container.c_str(), tab.source->detail.c_str(),
+                                               saved.empty() ? "" : ", saved ", saved.c_str());
                             const auto boxes = dw4::save::summarize_save(tab.source->gci);
                             static const char* box_names[] = {"Box 1", "Box 2", "Box 3", "Box 4"};
                             for (std::size_t i = 0; boxes && i < boxes->size(); ++i) {
@@ -2479,7 +2479,9 @@ int run(const Options& options, dw4::game::Settings& settings) {
                                 ImGui::Combo("##into", &tab.into[i], box_names, 4);
                                 ImGui::EndDisabled();
                                 ImGui::SameLine();
+                                ImGui::PushTextWrapPos(0.0f);
                                 ImGui::TextUnformatted(dw4::save::describe_box((*boxes)[i]).c_str());
+                                ImGui::PopTextWrapPos();
                                 ImGui::PopID();
                             }
                             static const char* slots[] = {"Slot A", "Slot B"};
@@ -2506,9 +2508,11 @@ int run(const Options& options, dw4::game::Settings& settings) {
                             ImGui::BeginDisabled(net.active());
                             if (ImGui::Button("Replace the whole save")) run_import({});
                             ImGui::EndDisabled();
+                            ImGui::PushTextWrapPos(0.0f);
                             ImGui::TextDisabled("The current save is copied to %s first.",
                                                 dw4::save::backup_folder(player_store).generic_string().c_str());
                             ImGui::TextDisabled("The game reads the card again at the next Call Digimon or save room visit.");
+                            ImGui::PopTextWrapPos();
                         }
                         if (!tab.message.empty()) ImGui::TextWrapped("%s", tab.message.c_str());
                         ImGui::EndTabItem();
@@ -2771,10 +2775,14 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     ImGui::Begin("##achievements", nullptr,
                                  ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoInputs |
                                      ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing);
+                    // Long notices (a save path) wrap instead of running off
+                    // the window's left edge.
+                    ImGui::PushTextWrapPos(std::min(display.x - 40.0f, std::max(360.0f, display.x * 0.4f)));
                     for (const auto& toast : toasts) {
                         ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.3f, 1), "%s", toast.title.c_str());
                         ImGui::TextUnformatted(toast.text.c_str());
                     }
+                    ImGui::PopTextWrapPos();
                     ImGui::End();
                 }
                 ImGui::Render();
