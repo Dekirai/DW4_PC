@@ -53,7 +53,7 @@ public static class CloudSaveEndpoints
             return ApiProblems.Ok(result, meta =>
             {
                 ctx.Response.Headers.ETag = Revisions.ETag(meta.Revision);
-                return expected is null ? Results.Created("/api/v1/cloud-save", Meta(meta)) : Results.Ok(Meta(meta));
+                return expected is null ? Results.Created(ctx.Request.PathBase + "/api/v1/cloud-save", Meta(meta)) : Results.Ok(Meta(meta));
             });
         }).RequireRateLimiting(RateLimitPolicies.CloudWrite);
 

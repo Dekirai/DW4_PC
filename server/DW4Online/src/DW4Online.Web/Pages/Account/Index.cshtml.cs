@@ -120,18 +120,18 @@ public sealed class IndexModel(
         var result = await accounts.DeleteAccountAsync(session, CurrentPassword, HttpContext.Caller(), ct);
         if (!result.Ok) return await ShowAsync(ct, error: result.Error!.Message);
         WebSessions.SignOut(HttpContext);
-        return Redirect("/?deleted=1");
+        return Redirect("~/?deleted=1");
     }
 
     // While a temporary password is in force only the password form works.
-    private IActionResult? Blocked() => HttpContext.WebSession() is { MustChangePassword: true } ? Redirect("/account") : null;
+    private IActionResult? Blocked() => HttpContext.WebSession() is { MustChangePassword: true } ? Redirect("~/account") : null;
 
     private async Task<IActionResult> ShowAsync(CancellationToken ct, string? message = null, string? error = null, bool mustChangeDone = false)
     {
         ModelState.Clear(); // the forms show the stored values, never the posted ones
         Session = HttpContext.WebSession()!;
         var account = await accounts.GetAccountAsync(Session.AccountId, ct);
-        if (account is null) return Redirect("/login");
+        if (account is null) return Redirect("~/login");
         Account = account;
         if (mustChangeDone && account.MustChangePassword) Account = account with { MustChangePassword = false };
         Sessions = await accounts.ListSessionsAsync(Session.AccountId, ct);

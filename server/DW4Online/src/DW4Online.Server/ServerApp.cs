@@ -12,6 +12,7 @@ using DW4Online.Domain.Services;
 using DW4Online.Relay;
 using DW4Online.Web;
 using DW4Online.Web.Auth;
+using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 
 namespace DW4Online.Server;
@@ -112,6 +113,15 @@ public static class ServerApp
                 WebSetup.IsWebPath(ctx.Request.Path) ? WebSessionHandler.SchemeName : TokenAuthenticationHandler.SchemeName);
 
         var app = builder.Build();
+        if (service.BehindProxy)
+        {
+            // Only a proxy on this machine is trusted (the defaults: 127.0.0.0/8 and ::1).
+            app.UseForwardedHeaders(new ForwardedHeadersOptions
+            {
+                ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto,
+            });
+        }
+        if (service.NormalizedPathBase() is { Length: > 0 } pathBase) app.UsePathBase(pathBase);
         app.UseDw4Web(app.Services.GetRequiredService<WebOptions>(), app.Environment.IsDevelopment());
         app.UseDw4Api();
         app.MapDw4Api();

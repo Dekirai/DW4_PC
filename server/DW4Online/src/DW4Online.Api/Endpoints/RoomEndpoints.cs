@@ -37,7 +37,7 @@ public static class RoomEndpoints
             var result = await rooms.CreateAsync(session.AccountId, session.Username,
                 new RoomCreate(r.Name, r.Password, r.MaxPlayers == 0 ? DefaultMaxPlayers : r.MaxPlayers, r.Protocol, r.DataHash, r.ClientVersion, r.Settings),
                 service.Maintenance, ctx.RequestAborted);
-            return ApiProblems.Ok(result, state => Results.Created($"/api/v1/rooms/{state.Room.Code}", Body(state, Relay(ctx, service, relay))));
+            return ApiProblems.Ok(result, state => Results.Created($"{ctx.Request.PathBase}/api/v1/rooms/{state.Room.Code}", Body(state, Relay(ctx, service, relay))));
         }).RequireRateLimiting(RateLimitPolicies.RoomCreate);
 
         // Members get the full state, everyone else the public summary.

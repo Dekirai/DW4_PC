@@ -36,7 +36,7 @@
             <dt>Member since</dt><dd>@Format.Day(Model.Account.CreatedAt)</dd>
             <dt>Last login</dt><dd>@Format.Date(Model.Account.LastLoginAt)</dd>
             <dt>E-mail</dt><dd>@(Model.Account.Email ?? "none")</dd>
-            <dt>Profile</dt><dd><a href="/u/@Model.Account.Username">@(Model.Account.ProfilePublic ? "public" : "private")</a></dd>
+            <dt>Profile</dt><dd><a href="~/u/@Model.Account.Username">@(Model.Account.ProfilePublic ? "public" : "private")</a></dd>
         </dl>
     </div>
     <div class="panel">
@@ -111,7 +111,7 @@
                 <dt>Size</dt><dd>@Format.Number(cloud.Latest.SizeBytes) bytes (@cloud.Latest.Format)</dd>
                 <dt>Older revisions</dt><dd>@cloud.History.Count</dd>
             </dl>
-            <p><a class="button secondary" href="/account?handler=CloudSave">Download</a></p>
+            <p><a class="button secondary" href="~/account?handler=CloudSave">Download</a></p>
             <h3>Delete the cloud save</h3>
             <form method="post" asp-page-handler="DeleteCloud" class="stack">
                 <label>Current password <input type="password" asp-for="CurrentPassword" autocomplete="current-password" required maxlength="128" /></label>
@@ -159,7 +159,7 @@
     <h2>Delete account</h2>
     <div class="panel">
         <p>Deletes your account with its online character, cloud save, achievements, statistics and sessions. This cannot
-            be undone. See the <a href="/privacy">privacy page</a> for what stays (anonymised security logs, backups until
+            be undone. See the <a href="~/privacy">privacy page</a> for what stays (anonymised security logs, backups until
             they roll over).</p>
         <form method="post" asp-page-handler="Delete" class="stack">
             <label>Current password <input type="password" asp-for="CurrentPassword" autocomplete="current-password" required maxlength="128" /></label>

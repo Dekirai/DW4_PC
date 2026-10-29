@@ -84,7 +84,7 @@ and user secrets (Development) work as usual.
 | Section | Keys (defaults) |
 | --- | --- |
 | `Database` | `ConnectionString`, `AutoMigrate` (true): run pending migrations at startup. |
-| `Service` | `Name`, `Motd` (game menu and home page), `Maintenance` (announced; no new rooms), `RelayHost` (empty = the request's host name) / `RelayPort` (default 0 = the port the relay listens on, `Relay:Port`; set it only when clients reach the relay through another public port), announced to clients. |
+| `Service` | `Name`, `Motd` (game menu and home page), `Maintenance` (announced; no new rooms), `RelayHost` (empty = the request's host name) / `RelayPort` (default 0 = the port the relay listens on, `Relay:Port`; set it only when clients reach the relay through another public port), announced to clients; `PathBase` (empty; for example `/dw4online`: website and API below that path, see "Website"), `BehindProxy` (false; true behind a reverse proxy on the same machine: client address and scheme from `X-Forwarded-For` / `X-Forwarded-Proto` of a loopback proxy only). |
 | `Accounts` | `Registration` (open / closed), `PasswordIterations` (220000), `MaxFailedLogins` (10, per user name and address), `LockoutMinutes` (15), `MaxFailedLoginsPerAccount` (50), `KnownAddressDays` (30), `GameSessionDays` (30), `WebSessionDays` (14), `SessionTouchMinutes` (5), `MaxSessionsPerAccount` (20). |
 | `OnlineCharacter` | `HistoryRevisions` (20), `ResetHistoryDays` (30: the revisions of a reset character stay that long), `Rules:MaxLevelsPerPlayHour` (120), `Rules:PlayTimeSlackSeconds` (600). |
 | `CloudSave` | `MaxBytes` (1 MiB), `HistoryRevisions` (5). |
@@ -289,6 +289,11 @@ Razor Pages in `src/DW4Online.Web`, English, one embedded stylesheet (`/css/site
 | `/rooms` | Open rooms, read-only (host away = story paused). |
 | `/admin`, `/admin/account/{name}` | Staff: account search, open rooms (close), lock / unlock, ban / unban, temporary password, flag / unflag / revoke unlocks; admins also set roles and erase accounts. |
 | `/privacy` | What is stored, why, how long, cookies, recipients, rights, deletion (GDPR, server in Germany); the controller from `Web:Operator*`. |
+
+Below a path (`Service:PathBase`, for example `/dw4online` for `https://dekirai.crygod.de/dw4online`) every link,
+redirect, form, `Location` header and cookie stays below it (the session cookie is then `__Secure-dw4_session` with
+`Path=/dw4online` on https instead of `__Host-dw4_session`, so other sites on the host never receive it); requests
+without the prefix keep working at the root, so clients of an earlier root address go on working during a move.
 
 Security: sign-in is a cookie holding an opaque `web` session token (same sessions table as the game: revocable,
 14 days sliding), HttpOnly, SameSite=Lax, Secure and `__Host-` prefixed on https. Every POST carries an anti-forgery

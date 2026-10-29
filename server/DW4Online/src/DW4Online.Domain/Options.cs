@@ -96,4 +96,26 @@ public sealed class ServiceOptions
     /// only when clients reach the relay through a different public port (a port forward).
     /// </summary>
     public int RelayPort { get; set; }
+    /// <summary>
+    /// A path the whole service (website and API) lives below, for a host shared with other sites, e.g. "/dw4online" for
+    /// https://dekirai.crygod.de/dw4online. Requests under it see their links, redirects and cookies below it; requests
+    /// without it keep working at the root (so clients of an earlier root address go on working). Empty = the root.
+    /// </summary>
+    public string PathBase { get; set; } = "";
+    /// <summary>
+    /// Behind a reverse proxy on the same machine (IIS, nginx, Caddy forwarding to 127.0.0.1): take the client address and
+    /// the scheme from X-Forwarded-For / X-Forwarded-Proto, but only from a loopback proxy. Off when Kestrel faces the
+    /// internet itself (a client could fake its address otherwise).
+    /// </summary>
+    public bool BehindProxy { get; set; }
+
+    /// <summary><see cref="PathBase"/> as "/name" (leading slash, no trailing slash), or "" for the root.</summary>
+    public string NormalizedPathBase()
+    {
+        var p = PathBase.Trim().Trim('/');
+        if (p.Length == 0) return "";
+        if (p.Any(c => char.IsWhiteSpace(c) || c is '?' or '#' or '\\' or '%'))
+            throw new InvalidOperationException($"Service:PathBase '{PathBase}' is not a plain path such as /dw4online.");
+        return "/" + p;
+    }
 }
