@@ -542,9 +542,10 @@ refill cycle stands when it starts: Dolphin itself gives 497 or 607 fields
 for dng307b1 at two login times 155 fields apart. Against captures of 15
 loads at both BGM phases (the boot's three: 234 / 61 / 118 fields against
 233.8 / 62 / 121) the port's BGM refills come on the original's fields with
-its sizes; what remains is the loading thread's share of a field (a chunk a
-field early or late now and then, which can swap a chunk with a refill), on
-average -4 fields and 15 fields apart per load. (Round 43 found loads after
+its sizes; what remained was the loading thread's timing (a chunk a field
+early or late now and then, which can swap a chunk with a refill and shift
+the rest of the load), modelled since round 46 from the thread's work and its
+sleep grid. (Round 43 found loads after
 the title whose BGM refills come 2-3 fields before Dolphin's from the load's
 start on, +34 to +115 fields in all, and round 45 staggf03 -> stagML02 +88
 to +91 fields. Round 46 traced both to the comparison, not to the CRI
@@ -559,16 +560,31 @@ port's). With the BGM's phase, the drive's rotation and the DSP's frame
 grid put on Dolphin's at the load's first read (build tools of r46:
 cmpload.sh, loadcmp2.py: a world clock offset, `DW4_DISC_CLOCK`,
 `DW4_AX_PHASE`) every read of a load - loader chunks and refills, times and
-sizes - matches Dolphin's until the first loader request that comes a
-field early or late (the loading thread's share, below); title ->
-dngQ1B1e the first 15 reads to 113 fields, title -> stagML11 the first 25
-to 199 fields and the load's last read on Dolphin's field. Aligned so, the
-load's last loader read after its first one, Dolphin / port in fields:
-stagIS08 174 / 172, stagIS09 39 / 39, stagIS10 107 / 105, dngQ1B1e 616 /
-577, stagML11 466 / 466, dng101b1 493 / 489, stagBS01 733 / 753, stagBS04
-692 / 692, stagBS03 649 / 640, stagGF03 575 / 625, stagML02 after the
-Leomon demo 407 / 428; the first read off Dolphin's is a loader chunk a
-field early in eight of them, 8 early in dngQ1B1e.)
+sizes - matches Dolphin's until the first request that falls on the other
+side of a server pass; title -> stagML11 the first 25 reads to 199 fields
+and the load's last read on Dolphin's field. Round 46's part B put the
+loading thread on the original's work per file content and its sleep grid
+(above) and measured the load set again against new captures with the
+time-neutral DVD log plus hooks on the thread's requests and returns (29 us
+per OSReport, 0.0017 fields; two captures that differ only in those hooks
+still part at a read that slips a whole field at 1482, and Dolphin's own
+lengths of one load differ by up to 47 fields between capture setups:
+dng101b1 493 / 514, staggf03 575 / 622). Aligned, the load's last loader read
+after its first one, Dolphin / port (part A before) in fields: stagIS08 174 /
+175 (172), stagIS09 39 / 39 (39), stagIS10 107 / 107 (105), the soft reset
+dng101b1 -> title 107 / 106 (104), dngQ1B1e 616 / 596 (577), stagML11 466 /
+466 (466), dng101b1 514 / 514 (489), stagBS01 733 / 733 (753, every PLAYING
+and ISALLREADY of its start now on Dolphin's field), stagBS04 690 / 692 (692),
+stagBS03 649 / 640 (640), stagGF03 622 / 543 (625), dng205b3 743 / 744 (712),
+dng308b3 616 / 652 (629), stag0301 765 / 765 (775), and four new games sent
+to stages outside the fit: stagBS02 632 / 673 (632), stag0203 733 / 733
+(764), dng204b1 535 / 591 (591), stag0401 765 / 775 (753) - 10 of 17 within
+2 fields (part A 6). The others part at a single request a fraction of a
+field off: staggf03's fourth chunk of its stage file is asked for 0.12
+fields early, before the pass where the BGM refill comes first, and the load
+ends 79 fields early; dngQ1B1e and dng204b1 part at a refill a field late
+(the DSP grid's estimate). A gate warp stag0101 -> stagML11, natural run:
+494 / 475 (436) fields from the descriptor to the stage's start.)
 The port parses each file when the original asks for it.
 `DW4_TRACE_SOUND=1` logs every simulated read (with the drive's clock
 modulo the 2 s its rotation repeats in, to set beside a capture's DVD
