@@ -780,19 +780,28 @@ shared DAG node keep their own keys when culling or a switch changes which of
 them are drawn (keyed by node, geometry and draw order alone, the stagML11
 benches and pillars slid 20-40 units toward a sister placement for a step
 whenever another placement entered or left the picture); `phase`, which
-changes when a transform sequence above the item wraps (REPEAT / LOOP passing
-the end) or a stepped channel (`_interpolationMethod` NONE) takes another key
-(`TransformSequence::phase`, from evaluate()'s time arithmetic); and
-`sequence_time`, the sum of the times those sequences were evaluated at,
-which only decreases when a clock they run on jumped back (a beModelCtrlNode2
-clock given an earlier origin by ACTION's JOINTSET or a joint loop, a
-beNodeAnim loop). `texture_phase` / `texture_sequence_time` do the same for
-texture transforms, and a texture transform's runtime matrix changes
-`texture_phase` whenever it changes. The interpolator draws an item as it is
-when its phase changed or its sequence time went back (the stagML11 ring
-walls turn 11.25 degrees in 240 steps and start again, 32-fold symmetric;
-blended across the wrap they turned back for two or three presents every
-four seconds), blends the rows of the 3x3 parts at their interpolated lengths
+changes when a transform sequence above the item wraps with a jump (REPEAT
+passing the end where the last key does not place as key 0, LOOP only with
+uniform keys and different end keys: LOOP blends the last key into key 0 up
+to the end) or a stepped channel (`_interpolationMethod` NONE) takes another
+key (`TransformSequence::phase` / `wrap_continuous`, from evaluate()'s time
+arithmetic; holding key 0 before the first key and the last key after a
+CLAMP end is no jump); and `sequence_time`, the sum of the times those
+sequences were evaluated at, which only decreases when a clock they run on
+jumped back (a beModelCtrlNode2 clock given an earlier origin by ACTION's
+JOINTSET or a joint loop, a beNodeAnim loop). Sequences below a
+beMeterCtrlNode run at the meter's value (`Node::fixed_time`), which falls in
+MeterCtrlManager's steps, so they add no sequence time (the boss HP bar keeps
+blending while it falls). `texture_phase` / `texture_sequence_time` do the
+same for texture transforms. The interpolator draws an item as it is, model
+and texture matrix alike, when its phase changed, its sequence time went back
+or it moved or turned too far (the stagML11 ring walls turn 11.25 degrees in
+240 steps and start again, 32-fold symmetric; blended across the wrap they
+turned back for two or three presents every four seconds); a texture matrix
+blends only together with its model (the player's slash trail turns far in
+every swing and is drawn as it is: with a trailing UV it showed a hard edge
+for a present or two), and only while its own sequences run on and it moved
+less than half a texture. It blends the rows of the 3x3 parts at their interpolated lengths
 (no shrinking in a turn), each palette bone on its own (a bone that jumps is
 drawn as it is), and the camera through its placement (the inverse view), so
 the eye moves on the line between its two positions. None of this is read by

@@ -146,8 +146,9 @@ the 2D layers stay 4:3 and full-screen fades stretch), `vsync`,
 60 times a second), `smooth_motion` (above about 75 presents per second the
 picture blends between the last two updates: objects, skinned characters, UV
 scrolls, the camera and the shadow light; each placement of a shared object
-blends on its own, a looping or stepped animation that jumps back or steps is
-drawn as it is in that update instead of being blended backwards, and the
+blends on its own, a looping or stepped animation that jumps back or steps
+(and an object that turns or moves too far in one update) is drawn as it is
+in that update, UV scroll included, instead of being blended backwards, and the
 picture also keeps what the previous update's camera still saw at its edges;
 none of it changes the game) and `msaa` (2/4/8 samples, applied at start-up),
 `[audio] volume` (percent), `[menu] pause` (pause while the menu is open),
