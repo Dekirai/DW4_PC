@@ -357,6 +357,12 @@ void DiscordPresence::Shared::failed(const std::string& what) {
 void DiscordPresence::Shared::connect(std::unique_lock<std::mutex>& lock) {
     const std::string client = client_id;
     const std::uint64_t config = config_serial;
+    // The first attempt after switching on: the F1 status no longer says
+    // "Off" while the handshake waits for an answer (up to reply_timeout).
+    if (state == State::off) {
+        state = State::searching;
+        status = "Connecting to Discord";
+    }
     lock.unlock();
     std::string refused, trouble;
     bool any_pipe = false, stopped = false;
