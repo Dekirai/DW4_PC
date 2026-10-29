@@ -173,7 +173,8 @@ DevDumper::DevDumper(const DevPresent& dev) : dir_(dev.dump_dir) {
     std::filesystem::create_directories(dir_, error);
     csv_.open(dir_ / "presents.csv", std::ios::trunc);
     csv_ << "present,frame,steps,alpha,blended,stage,items,items_blended,unmatched,far,swapped,palettes,palettes_blended,"
-            "palettes_far,palettes_shared,palettes_resized,camera,light,jumps\n";
+            "palettes_far,palettes_shared,palettes_resized,camera,light,jumps,wraps,textures,textures_blended,"
+            "camera_move,camera_turn,camera_move_before,camera_turn_before\n";
 }
 
 void DevDumper::picture(int present, int frame, int steps, float alpha, const BlendReport* report, const std::string& stage,
@@ -188,9 +189,10 @@ void DevDumper::picture(int present, int frame, int steps, float alpha, const Bl
     std::snprintf(line, sizeof line, "%d,%d,%d,%.4f,%d,", present, frame, steps, alpha, report ? 1 : 0);
     csv_ << line << stage;
     const BlendReport r = report ? *report : BlendReport{};
-    std::snprintf(line, sizeof line, ",%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d\n", r.items, r.blended, r.unmatched, r.far,
-                  r.swapped, r.palettes, r.palettes_blended, r.palettes_far, r.palettes_shared, r.palettes_resized,
-                  r.camera ? 1 : 0, r.light ? 1 : 0, r.jumps);
+    std::snprintf(line, sizeof line, ",%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%.4f,%.5f,%.4f,%.5f\n", r.items, r.blended,
+                  r.unmatched, r.far, r.swapped, r.palettes, r.palettes_blended, r.palettes_far, r.palettes_shared,
+                  r.palettes_resized, r.camera ? 1 : 0, r.light ? 1 : 0, r.jumps, r.wraps, r.textures, r.textures_blended,
+                  r.camera_move, r.camera_turn, r.camera_move_before, r.camera_turn_before);
     csv_ << line;
     csv_.flush();
     if (report && !report->flagged.empty()) {
@@ -216,7 +218,8 @@ void DevDumper::ids(int present, int width, int height, const std::vector<std::u
     stbi_write_png_compression_level = 1;
     stbi_write_png(numbered(dir_, "ids", present, "png").string().c_str(), width, height, 3, rgb.data(), width * 3);
     std::ofstream out(numbered(dir_, "items", present, "txt"), std::ios::trunc);
-    out << "# index\tnode\tkind\tfile#ref\ttexture\tflags\tx\ty\tz\tnode_addr\tgeometry_addr\tmodel 3x3 rows\t[uv translation]\n";
+    out << "# index\tnode\tkind\tfile#ref\ttexture\tflags\tx\ty\tz\tnode_addr\tgeometry_addr\tmodel 3x3 rows\t[uv translation]"
+           "\tinst placement phase model texture time model texture\n";
     std::size_t index = 0;
     for (const auto& item : items) {
         ++index;
@@ -254,6 +257,12 @@ void DevDumper::ids(int present, int width, int height, const std::vector<std::u
             std::snprintf(line, sizeof line, "\tuv %.4f %.4f", (*s.texture_matrix)(3, 0), (*s.texture_matrix)(3, 1));
             out << line;
         }
+        // The smooth motion key's placement and the sequences' phases and
+        // times (DrawItem).
+        std::snprintf(line, sizeof line, "\tinst %016llx phase %08x %08x time %lld %lld",
+                      static_cast<unsigned long long>(item.instance), item.phase, item.texture_phase,
+                      static_cast<long long>(item.sequence_time), static_cast<long long>(item.texture_sequence_time));
+        out << line;
         out << '\n';
     }
 }

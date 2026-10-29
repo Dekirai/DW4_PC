@@ -57,7 +57,7 @@ def read_ids(path):
 
 
 class Keys:
-    """Stable draw item keys across presents: (node address, geometry address, occurrence) -> int, and a name."""
+    """Stable draw item keys across presents: (node address, geometry address, placement, occurrence) -> int, and a name."""
 
     def __init__(self):
         self.ids = {}
@@ -76,7 +76,10 @@ class Keys:
                     if len(p) < 11:
                         continue
                     index, node, kind, origin, texture, flags = p[:6]
-                    pair = (p[9], p[10])
+                    # (The placement, "inst ..." in newer dumps, keeps the
+                    # instances of a shared node apart as the blend does.)
+                    inst = next((c.split()[1] for c in p[11:] if c.startswith("inst ")), "")
+                    pair = (p[9], p[10], inst)
                     occurrence = seen[pair]
                     seen[pair] += 1
                     key = (pair, occurrence)

@@ -6,13 +6,18 @@
 Reads DUMP_DIR/presents.csv and blend_NNNNNN.txt (written for every dumped present that was blended;
 DW4_DEV_PICTURES=0 writes only these, fast). Groups the flagged draw items by reason, node name and
 texture and prints how often and at which 60 Hz steps (frames) they were flagged:
-  jump   blended across a change far larger than the step before (a looping transform wrapping to
-         its start is drawn moving backwards for one step: a blink at > 60 presents per second)
-  swap   blended from another occurrence of the same node and geometry (instances culled in or out
-         change the occurrence numbers); 'near' swaps (< 40 units, so blended) slide the item toward
-         another instance's place for one step, 'far' ones are drawn as they are
+  wrap   a transform sequence above the item wrapped or stepped, or its clock went back
+         (DrawItem::phase / sequence_time): drawn as it is (blended, the stagML11 ring walls turned
+         backwards for a step every 240 steps: a blink at > 60 presents per second)
+  jump   blended across a change far larger than the step before that no sequence marked (a snap
+         turn or an animation change drawn over one step; look for an unmarked discontinuity)
+  swap   blended from another occurrence of the same placement, node and geometry; since the
+         placements have their own keys (DrawItem::instance) only repeats within one placement
+         remain. 'near' swaps (< 40 units, so blended) slide the item toward another occurrence's
+         place for one step, 'far' ones are drawn as they are
   far    too far from the previous step: drawn as it is (warps, sudden turns)
-  palette_*  skinning palettes that could not be blended
+  texture_jump  a texture matrix that changed but could not be blended (scroll wrapped, atlas step)
+  palette_*  skinning palettes that could not be blended (palette_far: bones drawn as they are)
 """
 import argparse
 import collections
@@ -26,7 +31,7 @@ def main():
     ap.add_argument("dump")
     ap.add_argument("--from-frame", type=int, default=None)
     ap.add_argument("--to-frame", type=int, default=None)
-    ap.add_argument("--reasons", default="jump,swap,palette_far,palette_resized,palette_shared")
+    ap.add_argument("--reasons", default="wrap,jump,swap,texture_jump,palette_far,palette_resized,palette_shared")
     ap.add_argument("--top", type=int, default=30)
     args = ap.parse_args()
     reasons = set(args.reasons.split(","))
