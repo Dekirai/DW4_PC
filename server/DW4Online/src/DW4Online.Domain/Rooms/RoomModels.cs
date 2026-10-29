@@ -17,6 +17,11 @@ public sealed class RoomOptions
     public int RoomsPerOwner { get; set; } = 1;
     /// <summary>PBKDF2 iterations for room passwords (kept in memory only, never stored).</summary>
     public int PasswordIterations { get; set; } = 20_000;
+    /// <summary>
+    /// How long the relay's ticket check waits for the room service (which holds its lock during database writes);
+    /// longer and the ticket is refused, so a hanging database never keeps relay handshakes open (the client retries).
+    /// </summary>
+    public int AdmissionTimeoutMilliseconds { get; set; } = 5000;
     /// <summary>Largest JSON settings object of a room (difficulty, randomizer seed and options).</summary>
     public int SettingsMaxBytes { get; set; } = 4096;
     /// <summary>
