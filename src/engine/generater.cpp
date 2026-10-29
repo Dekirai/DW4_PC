@@ -234,6 +234,9 @@ void GeneraterManager::update(Engine& engine) {
             ram.player_count = live_players;
             ram.remaining = 0;
             ram.enemies.clear();
+            // _genePoint lives in the beGeneraterInfoWork allocated here, so
+            // a restarted generator spawns from its first point again.
+            ram.point = 0;
             ram.enemy_record = ram.data.i32(7);
             if (auto* db = engine.get<DatabaseManager>()) {
                 ram.enemy_name = db->text("enemy", ram.enemy_record, "MODEL");
