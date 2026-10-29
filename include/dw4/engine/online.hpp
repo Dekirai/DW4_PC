@@ -14,6 +14,7 @@
 #include <cstdint>
 #include <map>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -125,6 +126,10 @@ const std::vector<std::string_view>& online_forbidden_env();
 const std::vector<std::string_view>& online_presentation_env();
 // The forbidden variables that are set in this process.
 std::vector<std::string> online_forbidden_env_set();
+
+// The hash of bytes on the wire (FNV-1a, 64 bit): SNAPHASH is
+// online_hash(Engine::snapshot_bytes(SnapshotForm::canonical)) (6.8).
+std::uint64_t online_hash(std::span<const std::uint8_t> bytes);
 
 // The net fingerprint's camera part (6.9): the cameras lane hashes every
 // slot's PlayerBox state here (round S1 seam; 0 while no PlayerBox exists).

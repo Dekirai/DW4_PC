@@ -1246,6 +1246,28 @@ membership lane runs a cross-process join after a long campaign session (bytes
 equal to the in-process restore after at least 20 stage loads, fingerprints
 equal for 10,000 steps after it).
 
+**Built and measured (round S1).** `serialize_system` writes both fields,
+`kSnapshotVersion` is 43, the ctest `online` checks the bytes, and the CLI
+guest of a `--stage` host starts directly. The state test through a file on a
+direct start with attacks after the save point (`DW4_STATE_TEST=2000`,
+`DW4_STATE_FILE`, `--stage dng101b1`, the spike's input): main of the day
+"differs from frame 2001", round S1 "identical after loading".
+
+The cross-process join after a long session: the k8 segment of the r25c
+story run (28 stage loads, 192,599 frames, the campaign driver) wrote a
+state file at every stage load (`DW4_STAGE_STATES`), the pads of every step
+(`DW4_PAD_LOG`) and the fingerprint with the generator's hash at every frame.
+A second process loaded the state of load 21 (dng310f3, frame 154,813) and
+of load 22 (stagbs03, frame 168,823), replayed the first process's pads
+(`DW4_PAD_REPLAY`) to the end of the session and traced the same: the
+fingerprints and generator hashes are equal at every one of the 37,787 and
+23,778 frames, and the canonical and the raw bytes of all seven (six) later
+stage loads - the boss stage, the lobby, the save room - are equal to the
+first process's. The memory card each process wrote in the save room differs
+in one byte, the GCI header's modification time from the host clock (offset
+0x2B), which the game never reads back; online every member has its own
+virtual card anyway.
+
 ### 7.2 Online rules
 
 Built in round S1 (membership lane, `include/dw4/engine/online.hpp`,
@@ -1275,6 +1297,7 @@ const SessionValueTables& session_value_tables();     // 3.7, equal to data/onli
 const std::vector<std::string_view>& online_forbidden_env();    // 6.12; online_forbidden_env_set() names the set ones
 const std::vector<std::string_view>& online_presentation_env(); // the rest of getenv("DW4_..") in src (ctest)
 std::uint64_t net_fingerprint_cameras(const Engine&);  // seam: the cameras lane hashes the PlayerBox state here
+std::uint64_t online_hash(std::span<const std::uint8_t>); // FNV-1a 64; SNAPHASH = online_hash(snapshot_bytes(canonical))
 
 const OnlineRules& Engine::online() const;
 void Engine::set_online(const OnlineRules&);   // only between steps; on: room cheats, console reset off, NET* Lua globals

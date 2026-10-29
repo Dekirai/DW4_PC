@@ -125,6 +125,15 @@ Cheats online_cheats(const Cheats& room) {
     return cheats;
 }
 
+std::uint64_t online_hash(std::span<const std::uint8_t> bytes) {
+    std::uint64_t h = 0xcbf29ce484222325ull;
+    for (const auto b : bytes) {
+        h ^= b;
+        h *= 0x100000001b3ull;
+    }
+    return h;
+}
+
 // The cameras lane hashes every slot's PlayerBox here (round S1 seam).
 std::uint64_t net_fingerprint_cameras(const Engine& engine) {
     (void)engine;

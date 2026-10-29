@@ -95,6 +95,9 @@ void snapshot_bytes() {
     check(back.online == s.online, "the online rules survive the bytes");
     check(back.personal[2] == personal && !back.personal[0], "the personal values survive the bytes");
     check(encode_snapshot(back) == bytes, "decode + encode gives the same bytes");
+    const std::uint8_t abc[] = {'a', 'b', 'c'};
+    check(online_hash(abc) == 0xe71fa2190541574bull, "online_hash is FNV-1a 64");
+    check(online_hash(bytes) == online_hash(encode_snapshot(back)), "equal bytes, equal hash");
     // Without sound streams the canonical form is the raw form.
     check(encode_snapshot(s, SnapshotForm::canonical) == bytes, "no streams: canonical == raw");
     // A version 42 state no longer loads.
