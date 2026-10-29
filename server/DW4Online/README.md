@@ -36,6 +36,11 @@ this round was built with the installed SDK 11.0.100-rc.3 (no .NET 10 SDK is ins
 or wait for the .NET 11 SDK GA). Packages: MySqlConnector 2.6.1, Dapper 2.1.79 (runtime), xUnit 2.9.3 and
 Microsoft.AspNetCore.TestHost 10.0.0 (tests); everything else comes from the shared framework.
 
+With the 11.0 RC SDK the shared compiler server sometimes generates broken Razor code when it rebuilds
+`DW4Online.Web` a second time (unchanged pages fail with errors such as "IndexModel has no definition for asp" or
+"newline in constant"). Build with `--disable-build-servers` (or run `dotnet build-server shutdown` once) and it
+compiles again; the sources are fine.
+
 ```powershell
 cd server\DW4Online
 dotnet build DW4Online.slnx

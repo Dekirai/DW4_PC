@@ -40,30 +40,42 @@ public sealed class TlsCertificateSource(Func<X509Certificate2Collection> read)
 /// <summary>
 /// Picks the HTTPS certificate from the store. Every read of the store hands out new certificate objects (each holds a
 /// native handle), so the ones not chosen are disposed at once, an unchanged certificate keeps its first object, and a
-/// replaced one stays alive until the next replacement (TLS handshakes that picked it may still be running).
+/// replaced one stays alive until the next replacement (TLS handshakes that picked it may still be running). While
+/// there is no certificate at all (before new-selfsigned-cert.ps1 ran, say) the store is read at most every
+/// <see cref="MissingRetry"/> and the error is logged once per refresh period: port 443 gets handshakes from internet
+/// scanners all the time, and none of them may cost a store read and a log line.
 /// </summary>
 [SupportedOSPlatform("windows")]
 internal sealed class StoreCertificateSelector(TlsOptions options, ILogger log, Func<X509Certificate2Collection>? source = null, TimeProvider? time = null,
     string? host = null)
 {
+    internal static readonly TimeSpan MissingRetry = TimeSpan.FromSeconds(10);
+
     private readonly Lock _gate = new();
     private readonly TimeProvider _time = time ?? TimeProvider.System;
     private readonly string _host = host ?? options.StoreHostName;
     private X509Certificate2? _current;
     private X509Certificate2? _retired;
     private DateTime _nextRefresh;
+    private DateTime _nextMissingRead;
+    private DateTime _nextMissingLog;
 
     public X509Certificate2? Select()
     {
         lock (_gate)
         {
             var now = _time.GetUtcNow().UtcDateTime;
-            if (_current is not null && now < _nextRefresh) return _current;
+            if (now < (_current is not null ? _nextRefresh : _nextMissingRead)) return _current;
             _nextRefresh = now.AddMinutes(Math.Max(1, options.RefreshMinutes));
+            _nextMissingRead = now + MissingRetry;
             var found = PickBest(source?.Invoke() ?? ReadStore(), _host, now);
             if (found is null)
             {
-                if (_current is null) log.LogError("No valid certificate for {Host} in {Location}\\{Store}", _host, options.StoreLocation, options.StoreName);
+                if (_current is null && now >= _nextMissingLog)
+                {
+                    log.LogError("No valid certificate for {Host} in {Location}\\{Store}", _host, options.StoreLocation, options.StoreName);
+                    _nextMissingLog = _nextRefresh;
+                }
                 return _current;
             }
             if (_current is not null && found.Thumbprint == _current.Thumbprint)

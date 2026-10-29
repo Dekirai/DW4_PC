@@ -96,6 +96,55 @@ public class CertificateTests
     }
 
     /// <summary>
+    /// Without any certificate (before the deploy script ran) every handshake asks: the store is read at most every
+    /// 10 seconds and the error is logged once per refresh period, and a certificate added later is found in time.
+    /// </summary>
+    [Fact]
+    public void A_missing_certificate_costs_no_store_read_per_handshake()
+    {
+        var reads = 0;
+        byte[]? inStore = null;
+        var clock = new ManualClock();
+        var log = new CountingLogger();
+        var selector = new StoreCertificateSelector(new TlsOptions { StoreHostName = "88.198.52.221", RefreshMinutes = 10 }, log, () =>
+        {
+            reads++;
+            return inStore is null ? new X509Certificate2Collection() : new X509Certificate2Collection(TestCertificates.Load(inStore));
+        }, clock);
+
+        for (var i = 0; i < 1000; ++i) Assert.Null(selector.Select()); // a burst of scanner handshakes
+        Assert.Equal(1, reads);
+        Assert.Equal(1, log.Errors);
+        for (var s = 0; s < 60; ++s)
+        {
+            clock.Advance(TimeSpan.FromSeconds(1));
+            selector.Select();
+        }
+        Assert.Equal(7, reads); // one at the start, then one per 10 seconds
+        Assert.Equal(1, log.Errors);
+
+        inStore = TestCertificates.SelfSignedPfx("88.198.52.221", Now.AddDays(-1), Now.AddYears(10));
+        clock.Advance(TimeSpan.FromSeconds(10));
+        var cert = selector.Select();
+        Assert.NotNull(cert);
+        Assert.Same(cert, selector.Select());
+        Assert.Equal(8, reads);
+        cert!.Dispose();
+    }
+
+    private sealed class CountingLogger : Microsoft.Extensions.Logging.ILogger
+    {
+        public int Errors;
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(Microsoft.Extensions.Logging.LogLevel logLevel) => true;
+        public void Log<TState>(Microsoft.Extensions.Logging.LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId, TState state,
+            Exception? exception, Func<TState, Exception?, string> formatter)
+        {
+            if (logLevel == Microsoft.Extensions.Logging.LogLevel.Error) Errors++;
+        }
+    }
+
+    /// <summary>
     /// The move from the pinned IP certificate to the domain: a connection to the IP sends no name and gets the IP
     /// certificate, a connection naming the domain gets the domain's, and an unknown name (or a domain whose
     /// certificate is missing) falls back to the IP certificate.
