@@ -29,6 +29,9 @@ public sealed class FakeClientOptions
     public bool UniquePads { get; set; }
     /// <summary>Steps per second while catching up (0 = as fast as it goes); reported in RATE and READY.</summary>
     public int ReplayRate { get; set; } = 3000;
+    /// <summary>The stand-in engine's entry scene and departure (every client of a run must use the same values).</summary>
+    public int EntryTicks { get; set; } = 120;
+    public int DepartTicks { get; set; } = 120;
     public TimeSpan Duration { get; set; } = TimeSpan.FromSeconds(30);
     /// <summary>Receives the client's log as JSON lines (membership events, fingerprints, decisions, stats).</summary>
     public Action<string>? Log { get; set; }
@@ -115,6 +118,7 @@ public sealed class FakeClient
     private bool _wasSafe;
     private long _lastPresence;
     private string? _pendingExitStage;
+    private bool _pendingGroup;
     private byte _pendingExitPoint;
     private string _choice = "wait";
 
@@ -122,6 +126,8 @@ public sealed class FakeClient
     {
         _o = options;
         _engine.Quest = options.Quest;
+        _engine.EntryTicks = options.EntryTicks;
+        _engine.DepartTicks = options.DepartTicks;
         _script = options.Script.OrderBy(a => a.At).ToList();
     }
 
@@ -288,8 +294,10 @@ public sealed class FakeClient
             switch (a.Do)
             {
                 case "exit":
+                case "group_exit":
                     _pendingExitStage = a.Stage;
                     _pendingExitPoint = a.Point;
+                    _pendingGroup = a.Do == "group_exit";
                     break;
                 case "choice":
                     _choice = a.Arg ?? "wait";
@@ -310,7 +318,7 @@ public sealed class FakeClient
         if (_o.UniquePads)
         {
             // Buttons and sticks encode the tick (never the EXIT bit), so a fill is always visible.
-            p = new Pad((ushort)((tick << 2) & 0xFFFC), (sbyte)(tick % 101 - 50), (sbyte)((tick / 101) % 101 - 50), (sbyte)(_o.Seed % 50), 0);
+            p = new Pad((ushort)((tick << 3) & 0xFFF8), (sbyte)(tick % 101 - 50), (sbyte)((tick / 101) % 101 - 50), (sbyte)(_o.Seed % 50), 0);
         }
         else
         {
@@ -321,7 +329,7 @@ public sealed class FakeClient
         if (_pendingExitStage is { } stage)
         {
             var index = Array.FindIndex(FakeEngine.Stages, s => string.Equals(s, stage, StringComparison.OrdinalIgnoreCase));
-            p = new Pad((ushort)(p.Buttons | FakeEngine.ExitBit), (sbyte)Math.Max(0, index), (sbyte)_pendingExitPoint, p.Rx, p.Ry);
+            p = new Pad((ushort)(p.Buttons | (_pendingGroup ? FakeEngine.GroupExitBit : FakeEngine.ExitBit)), (sbyte)Math.Max(0, index), (sbyte)_pendingExitPoint, p.Rx, p.Ry);
             _pendingExitStage = null;
             Log("exit_pressed", ("for_tick", tick), ("to", stage));
         }
@@ -416,10 +424,13 @@ public sealed class FakeClient
         if (_phase == Phase.CatchingUp)
         {
             // An observer replays what came in as fast as its replay rate allows, then reports READY.
-            var budget = _o.ReplayRate <= 0 ? int.MaxValue : Math.Max(1, (int)(_o.ReplayRate * 0.005));
-            while (budget-- > 0 && _buffer.Remove(_engine.Tick, out var item))
+            if (_replayClock == 0) _replayClock = now;
+            _replayBudget = Math.Min(_replayBudget + Ms(now - _replayClock) / 1000.0 * (_o.ReplayRate <= 0 ? 1e9 : _o.ReplayRate), 1e6);
+            _replayClock = now;
+            while (_replayBudget >= 1 && _buffer.Remove(_engine.Tick, out var item))
             {
                 var t = _engine.Tick;
+                _replayBudget -= 1;
                 ExecuteSealed(t, item.Rec, observer: true);
                 if (_phase != Phase.CatchingUp) break;
             }
@@ -461,6 +472,8 @@ public sealed class FakeClient
     }
 
     private long _lastExec;
+    private long _replayClock;
+    private double _replayBudget;
 
     private void ExecuteSealed(uint t, TickRecord rec, bool observer = false)
     {
@@ -486,7 +499,8 @@ public sealed class FakeClient
                 Stats.Delays.Add(_delay);
                 Log("delay", ("d", _delay));
             }
-            if (e.Type == Ev.LeadFrom) _leadFrom = System.Buffers.Binary.BinaryPrimitives.ReadUInt32LittleEndian(e.Payload);
+            // LEAD_FROM is for the member that plays on (live), never for an observer replaying the history.
+            if (e.Type == Ev.LeadFrom && !observer) _leadFrom = System.Buffers.Binary.BinaryPrimitives.ReadUInt32LittleEndian(e.Payload);
         }
         var wasMember = (_engine.Present & (1 << _slot)) != 0;
         _engine.Step(rec);
@@ -558,7 +572,7 @@ public sealed class FakeClient
                 if ((f.Leavers & (1 << _slot)) != 0 && _engine.Departure is { } dep) Send(new HeadingMsg(_inst, dep.Stage, dep.Point, _engine.ContextHash).Frame());
             }
         }
-        else if (live && _phase == Phase.Running && _engine.Departure is { } dep && _engine.DepartLeft == FakeEngine.DepartTicks)
+        else if (live && _phase == Phase.Running && _engine.Departure is { } dep && _engine.DepartLeft == _engine.DepartTicks)
             Send(new HeadingMsg(_inst, dep.Stage, dep.Point, _engine.ContextHash).Frame());
         if (_mode != InstanceMode.Hub && t % 60 == 0)
         {
@@ -701,7 +715,7 @@ public sealed class FakeClient
     private void OnBarrierOk(BarrierOkMsg m)
     {
         if (_phase != Phase.Parked && _phase != Phase.CatchingUp) return;
-        Log("decision", ("decision", m.Decision.ToString()), ("new_inst", m.NewInst), ("new_visit", m.NewVisit), ("slot", m.OwnSlot),
+        Log("decision", ("decision", m.Decision.ToString()), ("to", m.Stage), ("new_inst", m.NewInst), ("new_visit", m.NewVisit), ("slot", m.OwnSlot),
             ("mode", m.Mode.ToString()), ("co_arrivals", m.CoArrivals.Count), ("notice", m.Notice.ToString()));
         _prevInst = _inst;
         _inst = m.NewInst;
@@ -803,10 +817,17 @@ public sealed class FakeClient
             SendOwnPadsUpTo((uint)_delay - 1);
             return;
         }
-        // Join or resync: replay as an observer (no SPLIT, no barrier messages), then READY (join) or play on (resync).
-        _replaying = true;
-        foreach (var rec in blob.Ticks) ExecuteSealed(_engine.Tick, rec, observer: true);
-        _replaying = false;
+        // Join or resync: replay as an observer (no SPLIT, no barrier messages) at the replay rate, then READY (join) or
+        // play on (resync); the blob's ticks join the LIVE ones in the buffer.
+        for (var k = 0; k < blob.Ticks.Count; ++k) _buffer[_engine.Tick + (uint)k] = (blob.Ticks[k], Stopwatch.GetTimestamp());
+        _replayClock = 0;
+        _replayBudget = 0;
+        if (_o.ReplayRate <= 0 || blob.Purpose == StatePurpose.Resync)
+        {
+            _replaying = true;
+            while (_buffer.Remove(_engine.Tick, out var item)) ExecuteSealed(_engine.Tick, item.Rec, observer: true);
+            _replaying = false;
+        }
         if (blob.Purpose == StatePurpose.Resync || (_engine.Present & (1 << _slot)) != 0)
         {
             _phase = Phase.Running;

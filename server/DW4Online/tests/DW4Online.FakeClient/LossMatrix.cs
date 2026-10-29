@@ -36,8 +36,13 @@ public sealed record MatrixResult(MatrixCell Cell, double MeasuredSeconds, IRead
 /// </summary>
 public static class LossMatrix
 {
+    /// <summary>The delay bound of the matrix runs (the server's default is 10).</summary>
+    public static int MaxDelay { get; set; } = 20;
+
     public static IEnumerable<MatrixCell> DefaultCells()
     {
+        // The machine's own noise: the proxy forwarding at once.
+        yield return new MatrixCell(0, 0, 0);
         foreach (var ow in new[] { 10.0, 30.0, 60.0 })
             foreach (var j in new[] { 0.0, 10.0, 30.0 })
                 foreach (var l in new[] { 0.0, 0.001, 0.005, 0.01, 0.02 })
@@ -78,8 +83,10 @@ public static class LossMatrix
         var key = new byte[32];
         Random.Shared.NextBytes(key);
         var tickets = new RelayTickets(key, TimeSpan.FromSeconds(60), TimeProvider.System);
-        var relay = new RelayOptions { Enabled = true, ListenAddress = "127.0.0.1", Port = hubPort, IdleTimeoutSeconds = 120 };
-        var hub = new RelayHub(relay, new SealingOptions(), new InstanceOptions(), tickets, NullLoggerFactory.Instance);
+        // The delay may follow the network beyond the default bound (Sealing:MaxDelayTicks 10) and nobody is taken out for
+        // lag, so every cell measures the transport; the final d says what the delay rule needed.
+        var relay = new RelayOptions { Enabled = true, ListenAddress = "127.0.0.1", Port = hubPort, IdleTimeoutSeconds = 120, LagLeaveSeconds = 600 };
+        var hub = new RelayHub(relay, new SealingOptions { MaxDelayTicks = MaxDelay }, new InstanceOptions(), tickets, NullLoggerFactory.Instance);
         const string room = "MATRIX";
         hub.Admission = a => ValueTask.FromResult<HubAdmitted?>(new HubAdmitted((int)a.AccountId, "m" + a.AccountId, a.AccountId == 0,
             new RoomInfo(room, 43, 1, 0x1234, 10)));
@@ -128,6 +135,13 @@ public static class LossMatrix
             var t0 = Stopwatch.GetTimestamp();
             await Task.Delay(measure, ct);
             var after = Snapshot(hub.Room(room)!, inst);
+            bool changed;
+            lock (hub.Room(room)!.Sync) changed = inst.Ended || inst.Mode != InstanceMode.Sealed || inst.Count != clients;
+            if (changed || after.Any(kv => before.TryGetValue(kv.Key, out var b0) && kv.Value.Sealed < b0.Sealed))
+            {
+                await Task.WhenAll(runs);
+                return new MatrixResult(cell, 0, [], proxies.Sum(p => p.LostSegments), proxies.Sum(p => p.Segments), false, "the instance changed during the window");
+            }
             var hitchesAfter = fakes.Select(f => (f.Stats.Hitches, f.Stats.StallMs)).ToList();
             var seconds = Stopwatch.GetElapsedTime(t0).TotalSeconds;
             var members = new List<MatrixMember>();

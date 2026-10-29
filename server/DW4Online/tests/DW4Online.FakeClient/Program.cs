@@ -10,7 +10,7 @@ using DW4Online.FakeClient;
 //
 //   client  --port N [--host 127.0.0.1] (--ticket T | --api URL --token BEARER --room CODE [--pin BASE64])
 //           [--protocol 43] [--data-hash 1] [--settings-hash HEX] [--name NAME] [--quest N] [--seed N] [--script FILE]
-//           [--duration SECONDS] [--replay-rate N] [--log FILE] [--stats FILE]
+//           [--duration SECONDS] [--replay-rate N] [--entry-ticks 120] [--depart-ticks 120] [--log FILE] [--stats FILE]
 //   proxy   --listen PORT --target PORT [--one-way MS] [--jitter MS] [--loss P]
 //   matrix  [--ports 53100-53199] [--clients 3] [--warmup 20] [--seconds 40] [--parallel 3] [--out FILE.json] [--md FILE.md] [--quick]
 var args2 = args.Skip(1).ToArray();
@@ -74,6 +74,8 @@ switch (args.FirstOrDefault())
             Script = script,
             Duration = TimeSpan.FromSeconds(double.Parse(Opt("--duration", "30"), CultureInfo.InvariantCulture)),
             ReplayRate = int.Parse(Opt("--replay-rate", "3000"), CultureInfo.InvariantCulture),
+            EntryTicks = int.Parse(Opt("--entry-ticks", "120"), CultureInfo.InvariantCulture),
+            DepartTicks = int.Parse(Opt("--depart-ticks", "120"), CultureInfo.InvariantCulture),
             Log = line =>
             {
                 lock (logLock) log?.WriteLine(line);

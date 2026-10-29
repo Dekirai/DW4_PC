@@ -15,10 +15,14 @@ namespace DW4Online.FakeClient;
 /// </summary>
 public sealed class FakeEngine
 {
-    public const int EntryTicks = 120;
-    public const int DepartTicks = 60;
+    /// <summary>The entry scene's length (simulation: every member of a run uses the same value).</summary>
+    public int EntryTicks { get; set; } = 120;
+    /// <summary>From the exit to its NEXTSTAGE (the real game sends HEADING one to two seconds before the barrier).</summary>
+    public int DepartTicks { get; set; } = 120;
+    /// <summary>"I take this exit" (main stick x = stage index, y = point): all present members = the group move, some = a fork.</summary>
     public const ushort ExitBit = 0x0001;
-    public const ushort GiveUpBit = 0x0002;
+    /// <summary>"Everyone on the mat said yes": the whole instance moves (the original group move from one pad).</summary>
+    public const ushort GroupExitBit = 0x0004;
     /// <summary>The stages a fake exit can lead to (main stick x = index). Hub stages dissolve the group.</summary>
     public static readonly string[] Stages = ["stagML11", "stag0101", "stag0102", "stag0201", "dng101b1", "stag0401", "stagBS01", "stagIS12"];
 
@@ -42,6 +46,8 @@ public sealed class FakeEngine
 
     /// <summary>The local slot (live play: which side of a fork this copy takes).</summary>
     public int LocalSlot { get; set; }
+    /// <summary>The slots on this copy's side since its last fork: events for other slots are ignored (SEAMLESS.md 6.7).</summary>
+    public byte SideMask { get; private set; } = 0x0F;
     /// <summary>Replays: the side to take at each fork tick (STATE_DATA fork list).</summary>
     public Dictionary<uint, byte> ForkSides { get; } = [];
 
@@ -78,6 +84,7 @@ public sealed class FakeEngine
         byte joined = 0, left = 0;
         foreach (var e in rec.Events)
         {
+            if (e.Slot >= 0 && (SideMask & (1 << e.Slot)) == 0) continue; // another side's event
             switch (e.Type)
             {
                 case Ev.Join: PendingJoin |= (byte)(1 << e.Payload[0]); break;
@@ -103,22 +110,24 @@ public sealed class FakeEngine
         Hash = FnvMix(Hash, t);
         Hash = FnvMix(Hash, (ulong)Present | ((ulong)Leaving << 8));
         byte exiters = 0;
+        byte group = 0;
         Pad first = default;
         for (var s = 0; s < Wire.MaxSlots; ++s)
         {
             var p = (active & (1 << s)) != 0 && (rec.Mask & (1 << s)) != 0 ? rec.Pads[s] : Pad.Neutral;
             Hash = FnvMix(Hash, p.Buttons | ((ulong)(byte)p.Lx << 16) | ((ulong)(byte)p.Ly << 24) | ((ulong)(byte)p.Rx << 32) | ((ulong)(byte)p.Ry << 40));
-            if ((active & (1 << s)) != 0 && (p.Buttons & ExitBit) != 0)
+            if ((active & (1 << s)) != 0 && (p.Buttons & (ExitBit | GroupExitBit)) != 0)
             {
-                if (exiters == 0) first = p;
-                exiters |= (byte)(1 << s);
+                if (exiters == 0 && group == 0) first = p;
+                if ((p.Buttons & GroupExitBit) != 0) group |= (byte)(1 << s);
+                else exiters |= (byte)(1 << s);
             }
         }
-        if (Departure is null && exiters != 0)
+        if (Departure is null && (exiters != 0 || group != 0))
         {
             var target = Stages[Math.Abs((int)first.Lx) % Stages.Length];
             var point = (byte)Math.Abs((int)first.Ly);
-            if (exiters == active) StartDeparture(target, point);
+            if (group != 0 || exiters == active) StartDeparture(target, point);
             else
             {
                 // A fork at this step: the leavers' copy despawns the stayers and walks to its exit.
@@ -128,9 +137,14 @@ public sealed class FakeEngine
                 if (side == ForkSide.Leave)
                 {
                     Present = (byte)(Present & exiters);
+                    SideMask = exiters;
                     StartDeparture(target, point);
                 }
-                else Present = (byte)(Present & ~exiters);
+                else
+                {
+                    Present = (byte)(Present & ~exiters);
+                    SideMask = (byte)(SideMask & ~exiters & 0x0F);
+                }
                 PendingJoin = 0;
             }
         }
@@ -163,6 +177,7 @@ public sealed class FakeEngine
         Departure = null;
         Barrier = null;
         LastFork = null;
+        SideMask = 0x0F;
         ForkSides.Clear();
         Hash = FnvMix(FnvMix(FnvMix(FnvMix(0xD4D4D4D4UL, stage), point), present), Quest);
     }
@@ -177,6 +192,7 @@ public sealed class FakeEngine
         PendingJoin = 0;
         Departure = null;
         Barrier = null;
+        SideMask = 0x0F;
         ForkSides.Clear();
         Hash = FnvMix(FnvMix(0xA5A5UL, stage), Quest);
     }
@@ -184,7 +200,7 @@ public sealed class FakeEngine
     /// <summary>The snapshot after a load step: the state, the presentation field, 16 KB of filler (like the 17 KB real one).</summary>
     public byte[] Snapshot(bool canonical)
     {
-        var w = new WireWriter(0, 17_000).Str(Stage).U32(Tick).U8(Present).U8(Leaving).U8(PendingJoin).U8(Quest).U64(Hash)
+        var w = new WireWriter(0, 17_000).Str(Stage).U32(Tick).U8(Present).U8(Leaving).U8(PendingJoin).U8(Quest).U8(SideMask).U64(Hash)
             .U32(canonical ? 0 : AudioPosition);
         var filler = new byte[16 * 1024];
         var x = Hash | 1;
@@ -219,6 +235,7 @@ public sealed class FakeEngine
         Leaving = r.U8();
         PendingJoin = r.U8();
         Quest = r.U8();
+        SideMask = r.U8();
         Hash = r.U64();
         r.U32(); // the leader's audio position: presentation only (6.6); this machine keeps its own
         Departure = null;
