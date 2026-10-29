@@ -9,15 +9,17 @@
   1. creates a certificate for the IP address (subject alternative name IP, server authentication, RSA 3072, valid
      -Years, default 10) in LocalMachine\My. Its key cannot be exported: it never leaves this machine.
   2. gives the service account (NT SERVICE\DW4Online) read access to that key; the service runs the TLS handshakes.
-  3. with -SparePfx: creates a second, spare key and certificate, writes them to a password-protected PFX file and
-     removes them from this machine again. Keep that file offline (not on this server). Its pin goes into the client
-     as well, so if this machine or its key is lost, installing the spare (-ImportPfx) keeps every client working
-     without an update.
+  3. with -SparePfx: creates a second, spare key and certificate (in the current user's store, never where the
+     service looks), writes them to a password-protected PFX file and removes them from this machine again. Keep that
+     file offline (not on this server). Its pin goes into the client as well, so if this machine or its key is lost,
+     installing the spare (-ImportPfx) keeps every client working without an update. -SparePfx with -SpareOnly makes
+     only a spare, later, for the certificate already in use (its pin stays; print both pins for the client).
   4. prints both pins (computed here and checked against "DW4Online.Server.exe tls-pin") and the settings for
      appsettings.Production.json.
 
   -ImportPfx installs an existing PFX (the spare, or the certificate of a moved server) instead of creating one, and
-  grants the service its key. -PinFile only prints the pin of a certificate file (.cer / .crt / .pem).
+  grants the service its key. -PinFile only prints the pin of a certificate file (.cer / .crt / .pem; for a PFX use
+  "DW4Online.Server.exe tls-pin --file x.pfx --password-env NAME").
 
   A new key means a new pin, and every client without that pin stops connecting: the script refuses to create a second
   certificate for an address that already has a valid one unless -Force is given. Nothing else changes: no other
@@ -26,6 +28,7 @@
 
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File new-selfsigned-cert.ps1 -SparePfx E:\dw4online-spare.pfx
+  powershell -ExecutionPolicy Bypass -File new-selfsigned-cert.ps1 -SparePfx E:\dw4online-spare.pfx -SpareOnly
   powershell -ExecutionPolicy Bypass -File new-selfsigned-cert.ps1 -ImportPfx E:\dw4online-spare.pfx
   powershell -ExecutionPolicy Bypass -File new-selfsigned-cert.ps1 -PinFile C:\temp\server.cer
 #>
@@ -45,6 +48,7 @@ param(
     [string]$StoreLocation = 'LocalMachine',
     [string]$Exe = (Join-Path (Split-Path -Parent $PSScriptRoot) 'DW4Online.Server.exe'),
     [switch]$Force,
+    [switch]$SpareOnly,
     [switch]$DryRun
 )
 
@@ -93,12 +97,12 @@ function Show-Certificate([System.Security.Cryptography.X509Certificates.X509Cer
 }
 
 # Asks the service's own implementation (tls-pin) for the same pin; a difference stops the script.
-function Assert-ServicePin([string]$thumbprint, [string]$expected) {
+function Assert-ServicePin([string]$thumbprint, [string]$expected, [string]$location = $StoreLocation) {
     if (-not (Test-Path $Exe)) {
         Write-Output "  ($Exe not found: the pin was not cross-checked with 'DW4Online.Server.exe tls-pin'.)"
         return
     }
-    $lines = & $Exe tls-pin --thumbprint $thumbprint --location $StoreLocation
+    $lines = & $Exe tls-pin --thumbprint $thumbprint --location $location
     if ($LASTEXITCODE -ne 0) { throw "DW4Online.Server.exe tls-pin failed ($LASTEXITCODE)." }
     $line = @($lines | Where-Object { $_ -like 'SPKI pin (SHA-256, base64):*' })
     if ($line.Count -ne 1 -or -not $line[0].EndsWith(' ' + $expected)) {
@@ -142,7 +146,11 @@ function Test-ForAddress([System.Security.Cryptography.X509Certificates.X509Cert
 
 $now = Get-Date
 $existing = @(Get-ChildItem $store | Where-Object { $_.HasPrivateKey -and $_.NotAfter -gt $now -and (Test-ForAddress $_) })
-if ($existing.Count -gt 0 -and -not $Force) {
+if ($SpareOnly) {
+    if (-not $SparePfx) { throw '-SpareOnly needs -SparePfx (the file the spare goes to).' }
+    if ($ImportPfx) { throw '-SpareOnly and -ImportPfx do not go together.' }
+    if ($existing.Count -eq 0) { throw "No valid certificate for $IpAddress in ${store}: create one first (without -SpareOnly)." }
+} elseif ($existing.Count -gt 0 -and -not $Force) {
     foreach ($e in $existing) { Show-Certificate $e "Already in ${store}:" (Get-SpkiPin $e) }
     throw ("A valid certificate for $IpAddress exists already (pins above). A new key means a new pin: every client " +
         'without it stops connecting. Pass -Force only if that is what you want.')
@@ -176,7 +184,7 @@ function Read-Password([string]$prompt) {
     return $first
 }
 
-function New-IpCertificate([string]$exportPolicy, [string]$friendly) {
+function New-IpCertificate([string]$exportPolicy, [string]$friendly, [string]$location = $store) {
     $san = "2.5.29.17={text}IPAddress=$IpAddress"
     foreach ($dns in $DnsName) { $san += "&DNS=$dns" }
     $parameters = @{
@@ -184,7 +192,7 @@ function New-IpCertificate([string]$exportPolicy, [string]$friendly) {
         Subject           = "CN=$IpAddress"
         FriendlyName      = $friendly
         TextExtension     = @($san, '2.5.29.37={text}1.3.6.1.5.5.7.3.1') # the address; server authentication
-        CertStoreLocation = $store
+        CertStoreLocation = $location
         NotAfter          = (Get-Date).AddYears($Years)
         HashAlgorithm     = 'SHA256'
         Provider          = 'Microsoft Software Key Storage Provider'
@@ -201,6 +209,11 @@ function New-IpCertificate([string]$exportPolicy, [string]$friendly) {
     return New-SelfSignedCertificate @parameters
 }
 
+if ($DryRun -and $SpareOnly) {
+    Write-Output "Would keep the certificate in use for IP $IpAddress, create a spare $KeyAlgorithm key in Cert:\CurrentUser\My,"
+    Write-Output "write it to $SparePfx, remove it from this machine and print both pins."
+    exit 0
+}
 if ($DryRun) {
     Write-Output "Would create a $KeyAlgorithm certificate for IP $IpAddress (valid $Years years, key not exportable) in $store,"
     Write-Output "grant $ServiceAccount read access to its key$(if ($SparePfx) { ", write a spare key to $SparePfx" })$(if ($ImportPfx) { " (instead: import $ImportPfx)" }) and print the pins."
@@ -209,8 +222,32 @@ if ($DryRun) {
 
 # --- Create or import ---------------------------------------------------------------------------------------------------
 
+# The spare: created in the current user's store (the service reads LocalMachine\My and could pick a fresh certificate
+# there for a moment, one whose key it may not read), exported, then removed with its key.
+function New-Spare {
+    if (Test-Path $SparePfx) { throw "$SparePfx exists already; choose another file." }
+    if ($null -eq $SparePassword) { $script:SparePassword = Read-Password 'Password for the spare PFX' }
+    $spare = New-IpCertificate 'Exportable' "DW4Online $IpAddress (spare)" 'Cert:\CurrentUser\My'
+    try {
+        $script:pins += Get-SpkiPin $spare
+        Show-Certificate $spare 'Spare (exported, then removed from this machine):' $script:pins[-1]
+        Assert-ServicePin $spare.Thumbprint $script:pins[-1] 'CurrentUser'
+        $export = @{ Cert = $spare; FilePath = $SparePfx; Password = $script:SparePassword }
+        if ((Get-Command Export-PfxCertificate).Parameters.ContainsKey('CryptoAlgorithmOption')) { $export.CryptoAlgorithmOption = 'AES256_SHA256' }
+        $null = Export-PfxCertificate @export
+        Write-Output "  Written to ${SparePfx}: move it off this server (offline, with its password kept apart)."
+    } finally {
+        Remove-Item -LiteralPath (Join-Path 'Cert:\CurrentUser\My' $spare.Thumbprint) -DeleteKey
+    }
+}
+
 $pins = @()
-if ($ImportPfx) {
+if ($SpareOnly) {
+    $cert = $existing | Sort-Object NotAfter -Descending | Select-Object -First 1
+    $pins += Get-SpkiPin $cert
+    Show-Certificate $cert "In use in ${store} (kept):" $pins[-1]
+    New-Spare
+} elseif ($ImportPfx) {
     if ($null -eq $ImportPassword) { $ImportPassword = Read-Host -AsSecureString "Password of $ImportPfx" }
     # Not exportable once installed: the PFX file stays the only copy that can leave the machine.
     $imported = @(Import-PfxCertificate -FilePath $ImportPfx -CertStoreLocation $store -Password $ImportPassword)
@@ -228,22 +265,7 @@ if ($ImportPfx) {
     Assert-ServicePin $cert.Thumbprint $pins[-1]
     Grant-KeyRead $cert
 
-    if ($SparePfx) {
-        if (Test-Path $SparePfx) { throw "$SparePfx exists already; choose another file." }
-        if ($null -eq $SparePassword) { $SparePassword = Read-Password 'Password for the spare PFX' }
-        $spare = New-IpCertificate 'Exportable' "DW4Online $IpAddress (spare)"
-        try {
-            $pins += Get-SpkiPin $spare
-            Show-Certificate $spare 'Spare (exported, then removed from this machine):' $pins[-1]
-            Assert-ServicePin $spare.Thumbprint $pins[-1]
-            $export = @{ Cert = $spare; FilePath = $SparePfx; Password = $SparePassword }
-            if ((Get-Command Export-PfxCertificate).Parameters.ContainsKey('CryptoAlgorithmOption')) { $export.CryptoAlgorithmOption = 'AES256_SHA256' }
-            $null = Export-PfxCertificate @export
-            Write-Output "  Written to ${SparePfx}: move it off this server (offline, with its password kept apart)."
-        } finally {
-            Remove-Item -LiteralPath (Join-Path $store $spare.Thumbprint) -DeleteKey
-        }
-    }
+    if ($SparePfx) { New-Spare }
 }
 
 # --- What goes where ------------------------------------------------------------------------------------------------

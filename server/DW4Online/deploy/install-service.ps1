@@ -55,6 +55,13 @@ if (-not $DryRun) {
         $where = ($open | ForEach-Object { $_.LocalAddress } | Sort-Object -Unique) -join ', '
         throw "Port $DatabasePort listens on ${where}: set bind-address=127.0.0.1 in MariaDB's my.ini and restart it (DEPLOY.md section 1)."
     }
+    # ... and it is the service DW4Online will depend on, not another mysqld (a XAMPP one on 3306 while MariaDB has 3307).
+    $dbPid = (Get-CimInstance Win32_Service -Filter "Name='$DatabaseService'").ProcessId
+    $owners = @($listen | ForEach-Object { $_.OwningProcess } | Sort-Object -Unique)
+    if (-not $dbPid -or $owners -notcontains $dbPid) {
+        $who = ($owners | ForEach-Object { $p = Get-Process -Id $_ -ErrorAction SilentlyContinue; if ($p) { "$($p.ProcessName) (PID $_)" } else { "PID $_" } }) -join ', '
+        throw "Port $DatabasePort belongs to $who, not to the service $DatabaseService (PID $dbPid): pass the -DatabasePort of $DatabaseService (or -DatabaseService)."
+    }
 }
 
 foreach ($dir in @('config', 'logs', 'backups', 'acme', 'keys')) {

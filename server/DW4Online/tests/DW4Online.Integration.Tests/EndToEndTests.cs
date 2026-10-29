@@ -278,6 +278,15 @@ public class EndToEndTests(Xunit.Abstractions.ITestOutputHelper log)
             Assert.Contains("PIN FAILURES", output);
             Assert.Equal(before, await AuditRows()); // not even a failed login reached the server
 
+            // A pin with an http:// base is refused before anything is sent (the password would go out in plain text).
+            string[] plain = ["--base", "http://" + service["https://".Length..], "--user", "PinnedTamer", "--password", "pinned test password",
+                "--save", save, "--record", record, "--pin", pin];
+            (exit, output) = await EndToEnd.RunAsync(EndToEnd.ClientPath!, plain, TimeSpan.FromSeconds(120));
+            log.WriteLine("--- pin with http ---" + Environment.NewLine + output);
+            Assert.NotEqual(0, exit);
+            Assert.Contains("--pin needs an https:// --base; nothing was sent", output);
+            Assert.Equal(before, await AuditRows());
+
             // The client pins the key in use and a spare (deploy/new-selfsigned-cert.ps1 prints both); either one passes.
             (exit, output) = await EndToEnd.RunAsync(EndToEnd.ClientPath!, Args("--pin", wrongPin + "," + pin), TimeSpan.FromSeconds(120));
             log.WriteLine("--- pin ---" + Environment.NewLine + output);

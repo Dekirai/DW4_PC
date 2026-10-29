@@ -478,7 +478,9 @@ public sealed partial class RoomService
     /// </summary>
     internal async ValueTask<bool> AdmitAsync(RelayAdmission ticket)
     {
-        await _gate.WaitAsync();
+        // The gate is held during database writes: a hanging database refuses the ticket instead of holding the
+        // handshake (and the address's relay connection) open.
+        if (!await _gate.WaitAsync(TimeSpan.FromMilliseconds(Math.Max(1, _options.AdmissionTimeoutMilliseconds)))) return false;
         try
         {
             if (FindInstance(ticket.Channel) is not (var room, var instance)) return false;

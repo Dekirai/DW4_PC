@@ -182,13 +182,16 @@ pin"), and refuses any other key before it sends a single byte of a request (the
    - creates a certificate for `IP 88.198.52.221` (RSA 3072, server authentication, valid 10 years) in
      `LocalMachine\My` whose key cannot be exported: it never leaves the server;
    - gives `NT SERVICE\DW4Online` read access to that key (the service runs the TLS handshakes);
-   - with `-SparePfx`, creates a second, spare key, writes it to that PFX file (it asks for a password twice) and
-     removes it from the server again;
+   - with `-SparePfx`, creates a second, spare key (in the current user's store, where the service never looks),
+     writes it to that PFX file (it asks for a password twice) and removes it from the server again;
    - prints both pins, checked against the service's own `DW4Online.Server.exe tls-pin`, and the settings of step 2.
 
    It refuses to make a second certificate for an address that already has a valid one: a new key means a new pin,
    and every client without that pin stops connecting (`-Force` overrides this; only use it when a client update with
-   the new pin is out). `-DryRun` shows what it would do.
+   the new pin is out). `-DryRun` shows what it would do. A spare can follow later without a new key:
+   `new-selfsigned-cert.ps1 -SparePfx E:\dw4online-spare.pfx -SpareOnly` keeps the certificate in use and prints its
+   pin and the spare's. `DW4Online.Server.exe tls-pin --file E:\dw4online-spare.pfx --password-env DW4_PFX` prints a
+   PFX's pin with the password from the environment variable `DW4_PFX` (`$env:DW4_PFX = Read-Host` first).
 2. In `appsettings.Production.json` (the example file already holds these values):
 
    ```json
@@ -223,6 +226,13 @@ The service already works below a path: `"Service": { "PathBase": "/dw4online" }
 `/dw4online` (links, redirects, forms, `Location` headers and the session cookie stay below it; `PathBaseTests` and
 the pinned end-to-end test check it). Requests without the prefix keep working at the root, so clients that still use
 `https://88.198.52.221` go on working during the move.
+
+**A path keeps the cookie away from other sites, not their scripts.** Browsers isolate by origin (scheme, host name,
+port), never by path: any page of another site on `dekirai.crygod.de` runs in the same origin as
+`dekirai.crygod.de/dw4online`, can send requests with the visitor's DW4Online cookie and read the answers (anti-forgery
+tokens included). A cross-site-scripting flaw in any other site on that name is then an account takeover in DW4Online.
+If other content lives on that host name (case 2), prefer a host name of its own for DW4Online
+(`dw4.crygod.de`, an A record to 88.198.52.221) with `PathBase` empty or kept.
 
 **Case 1: DW4Online keeps port 443 on this server.** The domain's A record points to 88.198.52.221 and nothing else
 on this machine serves that name. Get a Let's Encrypt certificate for `dekirai.crygod.de` into `LocalMachine\My` (6.3)
@@ -324,6 +334,12 @@ check `/health`, then drop the database.
 
 Rollback: stop the service, swap `app` and `app.previous` back; if the update applied a migration, restore the backup
 from step 3 into `dw4online` first (the old build refuses a database that is newer than itself).
+
+MariaDB updates and restarts: DW4Online depends on the MariaDB service (`sc.exe config DW4Online depend= MariaDB`), so
+`Stop-Service MariaDB` and `Restart-Service MariaDB` refuse while DW4Online runs (without `-Force`, which stops
+DW4Online too), and the MariaDB MSI cannot replace a running server. Stop DW4Online first:
+`Stop-Service DW4Online; Restart-Service MariaDB; Start-Service DW4Online` (for an MSI update: stop both, run the MSI,
+start MariaDB, then DW4Online). The same holds for a my.ini change (section 1).
 
 ## 9. Operating notes
 

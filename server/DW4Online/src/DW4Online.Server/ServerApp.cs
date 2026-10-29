@@ -212,7 +212,10 @@ public static class ServerApp
         }
         if (relay.Enabled && !env.IsDevelopment())
             throw new InvalidOperationException("Relay:TicketKey is not configured (run 'DW4Online.Server gen-relay-key').");
-        if (relay.Enabled) log.LogWarning("Relay:TicketKey is not configured; using a temporary key until the process exits.");
+        // Also with the relay off: the key tags the security log's unknown user names, and a temporary one makes the
+        // tags of earlier runs unmatched (audit-tag finds nothing, an account deletion leaves them).
+        log.LogWarning("Relay:TicketKey is not configured; using a temporary key until the process exits (relay tickets and the " +
+                       "security log's name tags change at every restart; run 'DW4Online.Server gen-relay-key').");
         return RandomNumberGenerator.GetBytes(32);
     }
 }

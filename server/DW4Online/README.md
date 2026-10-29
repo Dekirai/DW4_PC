@@ -121,7 +121,7 @@ DW4Online.Server set-role <user> <role>   player | moderator | admin (bootstraps
 DW4Online.Server reset-password <user>    print a temporary password the user must change (audit actor 0 = console)
 DW4Online.Server gen-relay-key            print a new random Relay:TicketKey
 DW4Online.Server audit-tag <name>         print the security log's tag of a user name (failed logins with unknown names)
-DW4Online.Server tls-pin --host <IP or name> | --thumbprint <hex> | --file <certificate> [--store My] [--location LocalMachine]
+DW4Online.Server tls-pin --host <IP or name> | --thumbprint <hex> | --file <certificate> [--password-env NAME] [--store My] [--location LocalMachine]
                                           print a certificate's SHA-256 SPKI pin (what the game client pins in the IP
                                           phase) and SHA-256 fingerprint; --host = the certificate the service would serve
 ... --settings <file>                      every form: load an extra settings file (the server's secrets live outside the app folder)
@@ -330,8 +330,12 @@ Razor Pages in `src/DW4Online.Web`, English, one embedded stylesheet (`/css/site
 
 Below a path (`Service:PathBase`, for example `/dw4online` for `https://dekirai.crygod.de/dw4online`) every link,
 redirect, form, `Location` header and cookie stays below it (the session cookie is then `__Secure-dw4_session` with
-`Path=/dw4online` on https instead of `__Host-dw4_session`, so other sites on the host never receive it); requests
-without the prefix keep working at the root, so clients of an earlier root address go on working during a move.
+`Path=/dw4online` on https instead of `__Host-dw4_session`, so other sites on the host never receive it, and the login
+returns only to pages below the prefix); requests without the prefix keep working at the root, so clients of an
+earlier root address go on working during a move. The browser's same-origin rule knows no paths, though: pages of
+other sites on the same host name (`https://dekirai.crygod.de/...`) can script DW4Online with the visitor's cookie,
+so a script flaw there would be an account takeover here. Give DW4Online its own host name (a subdomain such as
+`dw4.crygod.de`) when other sites share the name (deploy/DEPLOY.md 6.2).
 
 Security: sign-in is a cookie holding an opaque `web` session token (same sessions table as the game: revocable,
 14 days sliding), HttpOnly, SameSite=Lax, Secure and `__Host-` prefixed on https. Every POST carries an anti-forgery

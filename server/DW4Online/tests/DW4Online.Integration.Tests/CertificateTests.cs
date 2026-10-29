@@ -208,6 +208,27 @@ public class CertificateTests
             Assert.Equal(SpkiPin.Of(first), SpkiPin.Of(renewed));
             Assert.NotEqual(SpkiPin.Of(cert), SpkiPin.Of(first));
 
+            // A PFX with a password (the deploy kit's spare): through an environment variable, never the command line.
+            var pfx = Path.Combine(dir, "spare.pfx");
+            using var spareKey = RSA.Create(2048);
+            using var spare = new CertificateRequest("CN=88.198.52.221", spareKey, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1)
+                .CreateSelfSigned(Now.AddDays(-1), Now.AddYears(10));
+            File.WriteAllBytes(pfx, spare.Export(X509ContentType.Pfx, "spare password 1"));
+            var refused = new StringWriter();
+            Assert.Equal(1, TlsPinCommand.Run(["--file", pfx], TextWriter.Null, refused));
+            Assert.Contains("--password-env", refused.ToString());
+            Environment.SetEnvironmentVariable("DW4ONLINE_TEST_PFX_PASSWORD", "spare password 1");
+            try
+            {
+                var output = new StringWriter();
+                Assert.Equal(0, TlsPinCommand.Run(["--file", pfx, "--password-env", "DW4ONLINE_TEST_PFX_PASSWORD"], output, TextWriter.Null));
+                Assert.Contains("SPKI pin (SHA-256, base64): " + SpkiPin.Of(spare), output.ToString());
+            }
+            finally
+            {
+                Environment.SetEnvironmentVariable("DW4ONLINE_TEST_PFX_PASSWORD", null);
+            }
+
             Assert.Equal(1, TlsPinCommand.Run(["--file", Path.Combine(dir, "missing.cer")], TextWriter.Null, TextWriter.Null));
             Assert.Equal(2, TlsPinCommand.Run([], TextWriter.Null, TextWriter.Null));
         }

@@ -12,6 +12,8 @@
 // use and the spare of deploy/new-selfsigned-cert.ps1, comma-separated). It is checked in WinHTTP's
 // SENDING_REQUEST callback, after the TLS handshake and before any request byte (token, password) leaves the machine;
 // a mismatch closes the request. Only an unknown CA and a name mismatch are ignored then, never an expired certificate.
+// With a pin the base must be https: an http:// base is refused before anything is sent (the password and the token
+// would go out in plain text, unchecked).
 //
 // Build: build.cmd (MSVC, C++20; links winhttp, bcrypt, crypt32, ws2_32). https URLs use Schannel (TLS 1.2+).
 #define WIN32_LEAN_AND_MEAN
@@ -383,6 +385,11 @@ int main(int argc, char** argv) {
     const auto record = read_file(o.record_path);
     step(!save.empty() && record.size() == 3316, "input files", std::to_string(save.size()) + " + " + std::to_string(record.size()) + " bytes");
 
+    if (!o.pin.empty() && _wcsnicmp(o.base.c_str(), L"https://", 8) != 0) {
+        // A pin promises a checked server: never send the password unencrypted instead.
+        step(false, "pinned base is https", "--pin needs an https:// --base; nothing was sent");
+        return finish();
+    }
     Api api(o.base, o.pin);
     step(api.ready(), "winhttp session");
     if (!api.ready()) return finish();

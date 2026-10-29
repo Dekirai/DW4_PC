@@ -70,6 +70,11 @@ public partial class PathBaseTests
         Assert.Equal("/dw4online/u/PathUser", login.Location);
         var signedIn = await web.GetAsync("/login"); // signed in already: on to the account page
         Assert.Equal("/dw4online/account", signedIn.Location);
+        // Another site's path on the shared host is no return address (the review: /elsewhere-on-host was followed).
+        await web.PostAsync("/logout", new(), "/account");
+        Assert.Equal("/dw4online/account", (await web.LoginAsync("PathUser", returnUrl: "/elsewhere-on-host")).Location);
+        await web.PostAsync("/logout", new(), "/account");
+        Assert.Equal("/dw4online/account", (await web.LoginAsync("PathUser", returnUrl: "/dw4onlinex/page")).Location);
 
         // Error pages too.
         var missing = await web.GetAsync("/no-such-page");

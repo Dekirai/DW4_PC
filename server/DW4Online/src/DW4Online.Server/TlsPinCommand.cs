@@ -9,8 +9,10 @@ namespace DW4Online.Server;
 /// <code>
 /// tls-pin --host 88.198.52.221 [--store My] [--location LocalMachine]   the certificate the service would choose
 /// tls-pin --thumbprint &lt;hex&gt; [--store My] [--location LocalMachine]
-/// tls-pin --file &lt;certificate.cer | .crt | .pem | .pfx&gt;
+/// tls-pin --file &lt;certificate.cer | .crt | .pem | .pfx&gt; [--password-env NAME]
 /// </code>
+/// A PFX with a password (the spare of deploy/new-selfsigned-cert.ps1 always has one) is opened with the password in
+/// the environment variable NAME (never on the command line, where other processes could read it).
 /// </summary>
 public static class TlsPinCommand
 {
@@ -25,7 +27,7 @@ public static class TlsPinCommand
         X509Certificate2? cert;
         try
         {
-            cert = Value("--file") is { } file ? Load(file)
+            cert = Value("--file") is { } file ? Load(file, Value("--password-env") is { } name ? Environment.GetEnvironmentVariable(name) ?? "" : null)
                 : Value("--thumbprint") is { } thumbprint ? FromStore(Value("--store"), Value("--location"), c =>
                     string.Equals(c.Thumbprint, thumbprint.Replace(" ", "", StringComparison.Ordinal), StringComparison.OrdinalIgnoreCase))
                 : Value("--host") is { } host ? FromStoreForHost(Value("--store"), Value("--location"), host)
@@ -40,7 +42,7 @@ public static class TlsPinCommand
         {
             error.WriteLine(args.Any(a => a is "--file" or "--thumbprint" or "--host")
                 ? "No such certificate (for --host: valid now, with a private key, the name or IP address in its subject alternative names)."
-                : "Use: tls-pin --host <name or IP> | --thumbprint <hex> | --file <certificate> [--store My] [--location LocalMachine]");
+                : "Use: tls-pin --host <name or IP> | --thumbprint <hex> | --file <certificate> [--password-env NAME] [--store My] [--location LocalMachine]");
             return 2;
         }
         using (cert) Write(cert, output);
@@ -68,12 +70,19 @@ public static class TlsPinCommand
         }
     }
 
-    private static X509Certificate2 Load(string path)
+    private static X509Certificate2 Load(string path, string? password)
     {
         var extension = Path.GetExtension(path).ToLowerInvariant();
-        return extension is ".pfx" or ".p12"
-            ? X509CertificateLoader.LoadPkcs12FromFile(path, null, X509KeyStorageFlags.EphemeralKeySet)
-            : X509CertificateLoader.LoadCertificateFromFile(path);
+        if (extension is not (".pfx" or ".p12")) return X509CertificateLoader.LoadCertificateFromFile(path);
+        try
+        {
+            return X509CertificateLoader.LoadPkcs12FromFile(path, password, X509KeyStorageFlags.EphemeralKeySet);
+        }
+        catch (System.Security.Cryptography.CryptographicException e) when (password is null)
+        {
+            throw new System.Security.Cryptography.CryptographicException(
+                e.Message + " A PFX with a password: put it into an environment variable and pass --password-env <its name>.", e);
+        }
     }
 
     private static X509Certificate2? FromStore(string? store, string? location, Func<X509Certificate2, bool> match)
