@@ -234,10 +234,12 @@ drives three parts, each switched on its own:
   attacks and sounds change. Each enemy stage draws from a pool of up to six
   families: its own, filled up from the whole game weighted by area (a family
   of the stage's own area is eight times as likely as one three areas away).
-  Families a stage does not have are loaded from the smallest stage that holds
-  them (their six model infos, attack effects, hit and AI scripts, sound effect
-  bank and cues), like the original's own enemy packages
-  (`stag0202/separate/e_arachne.igb`). Bosses, the one-of-a-kind mid-bosses
+  Families a stage does not have are loaded from the smallest story stage
+  where they are ordinary enemies (their six model infos, attack effects, hit
+  and AI scripts, sound effect bank and cues), like the original's own enemy
+  packages (`stag0202/separate/e_arachne.igb`); a stage load with the
+  randomizer reads up to five such members more (no extra loading time is
+  simulated). Bosses, the one-of-a-kind mid-bosses
   (Blossomon, Mammothmon, SkullGreymon, Anomalocarimon, Tonosama Gekomon,
   Diaboromon, LordKnightmon), stag0404's Imperialdramon, the boss stages
   (`stagBS*`), the stagGF03 fights, every wave a stage script starts next to a
