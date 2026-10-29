@@ -353,9 +353,20 @@ struct Cheats {
     // load timing (the simulated disc drive and loading thread), on takes
     // none of it (Engine::fast_loading). A stage load latches it.
     bool fast_loading{};
+    // Randomizer (settings.ini [randomizer], bound to the save; see
+    // dw4/engine/randomizer.hpp): the master seed the enemy and loading zone
+    // shuffles derive their seeds from (the item drops use it unchanged as
+    // drop_seed), 0 off; the enemy shuffle (0 off, 1 every enemy of a wave
+    // drawn on its own, 2 one family per wave) and the loading zone shuffle
+    // (0 off, 1 dungeon entrances within an area).
+    std::uint32_t rand_seed = 0;
+    std::uint8_t rand_enemies = 0;
+    std::uint8_t rand_zones = 0;
+    bool enemy_shuffle() const { return rand_seed != 0 && rand_enemies != 0; }
+    bool zone_shuffle() const { return rand_seed != 0 && rand_zones != 0; }
     bool original() const {
         return !god && !infinite_mp && !one_hit && exp_rate == 100 && damage_dealt == 100 && damage_taken == 100 && !drop_seed &&
-               !fast_loading;
+               !fast_loading && !enemy_shuffle() && !zone_shuffle();
     }
 };
 
@@ -526,6 +537,12 @@ public:
     bool has_script(std::string_view name) const;
     // That script's compiled chunk contains `text` (a string constant; test bot).
     bool script_mentions(std::string_view name, std::string_view text) const;
+    // The randomizer's enemy pool of the running stage as the loader made it
+    // (its own families and the donor families it loaded), empty without.
+    const std::vector<std::string>& randomizer_pool() const { return randomizer_pool_; }
+    // Every stage script (name, compiled chunk bytes), stage scripts first
+    // (randomizer: the generators a script starts next to a model name).
+    void for_each_script(const std::function<void(std::string_view name, std::string_view chunk)>& visit) const;
     // Scene graph root management.
     Node* global_root() { return &global_root_; }
     bool soft_reset_allowed() const { return soft_reset_allowed_; }
@@ -709,6 +726,17 @@ private:
     std::vector<ObjectView> deferred_infos_;
     std::vector<ObjectView> lua_infos_;
     std::vector<std::string> common_queue_;
+    // Randomizer enemy pool loads (load_enemy_donors): the stage's pool, the
+    // donor families' infos (registered after the stage's in state 5), their
+    // action starters with the targets they may serve, and their scripts
+    // (consulted after the stage's own).
+    std::vector<std::string> randomizer_pool_;
+    std::vector<ObjectView> donor_infos_;
+    std::vector<std::pair<ObjectView, std::set<std::string, std::less<>>>> donor_starters_;
+    std::vector<ObjectView> donor_scripts_;
+    void load_enemy_donors();
+    // The targets (families and the effects they start) it registered.
+    std::set<std::string, std::less<>> route_donor(const std::shared_ptr<const IgbDocument>& document, const std::vector<std::string>& families);
     std::unique_ptr<Lua4Vm> lua_;
     std::map<std::pair<const void*, std::uint32_t>, Lua4Program> lua_programs_;
     int script_depth_{};

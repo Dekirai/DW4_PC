@@ -8,7 +8,8 @@
 // server. Nothing unlocks or counts while a cheat or a rebalancing value is
 // in use, after a save state was loaded in the running stage, during a save
 // state's replay, in test runs and while the campaign bot plays; a run with
-// the item randomizer unlocks into a category of its own.
+// the randomizer (item drops, enemy or loading zone shuffle) unlocks into a
+// category of its own.
 #include "dw4/engine/port_events.hpp"
 
 #include <array>
@@ -102,7 +103,7 @@ class AchievementTracker {
 public:
     explicit AchievementTracker(AchievementProfile profile = {}) : profile_(std::move(profile)) {}
     // One step: its engine events and the state after it. `randomizer`: the
-    // item randomizer is on (its own category). Returns what unlocked.
+    // randomizer is on (its own category). Returns what unlocked.
     std::vector<AchievementUnlock> observe(const AchievementStep& step, std::span<const engine::PortEvent> events,
                                            AchievementGate gate, bool randomizer, std::int64_t now_unix);
     const AchievementProfile& profile() const { return profile_; }

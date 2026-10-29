@@ -63,6 +63,8 @@ bool Engine::has_script(std::string_view name) const {
     for (const auto& info : lua_infos_)
         for (const auto& data : info.list(7))
             if (data && data.str(2) == name) return true;
+    for (const auto& data : donor_scripts_)
+        if (data.str(2) == name) return true;
     return false;
 }
 
@@ -76,7 +78,28 @@ bool Engine::script_mentions(std::string_view name, std::string_view text) const
             const std::string_view chunk(reinterpret_cast<const char*>(bytes.data()), bytes.size());
             if (chunk.find(text) != std::string_view::npos) return true;
         }
+    for (const auto& data : donor_scripts_) {
+        if (data.str(2) != name || !data.ref(3)) continue;
+        const auto bytes = data.ref(3).memory(3);
+        if (std::string_view(reinterpret_cast<const char*>(bytes.data()), bytes.size()).find(text) != std::string_view::npos) return true;
+    }
     return false;
+}
+
+void Engine::for_each_script(const std::function<void(std::string_view name, std::string_view chunk)>& visit) const {
+    for (const auto& info : lua_infos_)
+        for (const auto& data : info.list(7)) {
+            if (!data) continue;
+            const auto object = data.ref(3);
+            if (!object) continue;
+            const auto bytes = object.memory(3);
+            visit(data.str(2), std::string_view(reinterpret_cast<const char*>(bytes.data()), bytes.size()));
+        }
+    for (const auto& data : donor_scripts_) {
+        if (!data.ref(3)) continue;
+        const auto bytes = data.ref(3).memory(3);
+        visit(data.str(2), std::string_view(reinterpret_cast<const char*>(bytes.data()), bytes.size()));
+    }
 }
 
 bool Engine::run_script(std::string_view name) {
@@ -94,11 +117,25 @@ bool Engine::run_script(std::string_view name) {
         }
     } port_scope{*this, port_script_started(*this, name)};
     bool ran = false;
-    for (const auto& info : lua_infos_) {
-        for (const auto& data : info.list(7)) {
-            if (!data || data.str(2) != name) continue;
+    // The first entry of that name in every script info; the randomizer's
+    // donor scripts only when the stage has none.
+    std::vector<ObjectView> matches;
+    for (const auto& info : lua_infos_)
+        for (const auto& data : info.list(7))
+            if (data && data.str(2) == name) {
+                matches.push_back(data);
+                break;
+            }
+    if (matches.empty())
+        for (const auto& data : donor_scripts_)
+            if (data.str(2) == name) {
+                matches.push_back(data);
+                break;
+            }
+    for (const auto& data : matches) {
+        {
             const auto object = data.ref(3);
-            if (!object) break;
+            if (!object) continue;
             const auto key = std::make_pair(static_cast<const void*>(object.document()), object.reference());
             auto found = lua_programs_.find(key);
             if (found == lua_programs_.end()) {
@@ -151,7 +188,6 @@ bool Engine::run_script(std::string_view name) {
                 }
                 return ran;
             }
-            break; // first match per info only
         }
     }
     if (!ran) note("script not found: " + std::string(name));

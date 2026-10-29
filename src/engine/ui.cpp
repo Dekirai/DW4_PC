@@ -1,4 +1,5 @@
 #include "dw4/engine/managers.hpp"
+#include "dw4/engine/randomizer.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -345,6 +346,10 @@ bool TextCtlManager::command(Engine& engine, Ram& ram, std::string_view command,
         std::optional<std::u16string> value;
         if (packet.strings.size() > 2) value = decode_game_text(packet.string(2));
         else if (!packet.objects.empty()) value = *static_cast<const std::u16string*>(packet.objects[0]); // string object
+        // Randomizer: the exit dialog of a shuffled dungeon entrance names
+        // its new target (the line the target's own entrance shows).
+        if (!value && layer == "STCHGFONT00" && !packet.ints.empty() && engine.cheats().zone_shuffle())
+            value = randomizer::zone_dialog_text(engine, packet.ints[0]);
         for (auto& line : lines_) {
             if (!matches(line)) continue;
             if (!value && !packet.ints.empty()) {
