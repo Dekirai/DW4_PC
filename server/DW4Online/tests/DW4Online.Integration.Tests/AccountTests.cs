@@ -166,6 +166,8 @@ public class AccountTests
         Assert.Equal(HttpStatusCode.Unauthorized, (await host.Client(fresh).GetAsync("/api/v1/me")).StatusCode);
         var bannedLogin = await host.Client().PostAsJsonAsync("/api/v1/auth/login", new { username = "Player1", password = "my own password" });
         Assert.Equal("account_banned", await bannedLogin.ProblemCode());
+        var stranger = await host.Client().PostAsJsonAsync("/api/v1/auth/login", new { username = "Player1", password = "a wrong guess" });
+        Assert.Equal("bad_credentials", await stranger.ProblemCode()); // the ban is not revealed without the password
     }
 
     [DbFact]

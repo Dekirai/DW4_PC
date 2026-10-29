@@ -133,7 +133,8 @@ Authenticated calls send `Authorization: Bearer dw4_<43 characters>`.
 | `GET /health` (no prefix) | - | `{status, schema}` or 503 when the database is unreachable. |
 
 `context` (sent with uploads, unlocks and stats): `{roomCode, players, randomizer, cheats, rebalanced, saveStateLoaded,
-difficulty, protocol, clientVersion}`.
+difficulty, protocol, clientVersion}`. With `Play:MinimumProtocol` / `Play:MinimumClientVersion` set, uploads, unlocks
+and stats must carry `protocol` / `clientVersion` (426 `client_outdated` otherwise); a login checks them when sent.
 
 ## Rules in force
 
@@ -141,7 +142,7 @@ difficulty, protocol, clientVersion}`.
   as `$pbkdf2-sha512$i=...$salt$hash`; stronger settings rehash at the next login. 10-128 characters, not the user name,
   not a common password. Unknown user names cost the same time as wrong passwords.
 - **Lockout**: 10 failed logins or recovery attempts in a row lock the account for 15 minutes (423 with
-  `retryAfterSeconds`); staff locks and bans are separate statuses.
+  `retryAfterSeconds`); staff locks and bans are separate statuses, reported only after a correct password.
 - **Sessions**: 256-bit opaque tokens, only SHA-256 stored, kinds `game` (30 days) and `web` (14 days), sliding
   expiry (moved forward at most every 5 minutes), at most 20 live sessions per account.
 - **Recovery**: a one-time recovery code (100 bits, shown at registration and after each use) or an admin reset

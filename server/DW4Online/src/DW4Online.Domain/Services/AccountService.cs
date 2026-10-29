@@ -70,7 +70,6 @@ public sealed class AccountService(
             await audit.WriteAsync("login_unknown", null, null, caller.Ip, new { username = Truncate(username, 40) }, now, ct);
             return BadCredentials();
         }
-        if (Blocked(account) is { } blocked) return blocked;
         if (account.LockedUntil is { } until && until > now)
             return TemporarilyLocked(until, now);
 
@@ -80,6 +79,7 @@ public sealed class AccountService(
             await FailedAttemptAsync(account, "login_fail", caller, now, ct);
             return BadCredentials();
         }
+        if (Blocked(account) is { } blocked) return blocked; // only told to someone who knows the password
         await accounts.RecordLoginAsync(account.Id, now, check == PasswordCheck.SuccessRehashNeeded ? hasher.Hash(password!) : null, ct);
         var ticket = await CreateSessionAsync(account.Id, kind, caller, now, ct);
         await audit.WriteAsync("login_ok", account.Id, null, caller.Ip, new { kind, device = Truncate(caller.DeviceName, 64) }, now, ct);
@@ -149,7 +149,6 @@ public sealed class AccountService(
         var normalized = RecoveryCode.Normalize(code);
         if (account is null || account.Status == AccountStatus.Deleted)
             return DomainError.Unauthorized("bad_recovery_code", "User name or recovery code is wrong.");
-        if (Blocked(account) is { } blocked) return blocked;
         if (account.LockedUntil is { } until && until > now) return TemporarilyLocked(until, now);
         if (normalized is null || account.RecoveryCodeHash is null ||
             !CryptographicOperations.FixedTimeEquals(RecoveryCode.Hash(normalized), account.RecoveryCodeHash))
@@ -157,6 +156,7 @@ public sealed class AccountService(
             await FailedAttemptAsync(account, "recover_fail", caller, now, ct);
             return DomainError.Unauthorized("bad_recovery_code", "User name or recovery code is wrong.");
         }
+        if (Blocked(account) is { } blocked) return blocked;
         if (PasswordPolicy.Check(newPassword, account.Username) is { } error) return DomainError.Invalid("weak_password", error);
         var next = RecoveryCode.Create();
         await accounts.SetPasswordAsync(account.Id, hasher.Hash(newPassword!), false, now, ct);
