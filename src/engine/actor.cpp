@@ -168,14 +168,14 @@ float motion_source_time(const Clip& clip, std::int64_t local, bool loop) {
 }
 
 namespace {
-// The clip's sampled tracks per bone at node time `time`. A bone the clip
-// does not bind keeps the identity track and stays unbound (identity local).
-bool sample_tracks(AnimationDatabase& database, const std::string& name, std::int64_t start, std::int64_t time,
+// The clip's sampled tracks per bone at the state's time `local`. A bone the
+// clip does not bind keeps the identity track and stays unbound (identity local).
+bool sample_tracks(AnimationDatabase& database, const std::string& name, std::int64_t local,
                    std::vector<BoneTrack>& tracks, std::vector<char>& bound) {
     const Clip* clip = database.clip(name);
     const auto& skel = database.skeleton();
     if (!clip) return false;
-    const float seconds = motion_source_time(*clip, time - start, database.looping(name));
+    const float seconds = motion_source_time(*clip, local, database.looping(name));
     std::vector<EnbayaTransform> samples;
     try {
         samples = sample_enbaya_original(clip->channels, seconds);
@@ -217,10 +217,22 @@ float MotionState::weight(std::int64_t time) const {
 }
 
 void MotionState::update(std::int64_t time) {
+    // 0x801D00D0..0x801D0164, in list order: a MOTIONSET state the combiner
+    // has not evaluated yet (+0x1c) starts again at every update - its base
+    // so that its time is 0 now (a state at speed 0 too: the base becomes 0),
+    // the fade's start +0x48 now, so the weight below starts from 0 again.
+    // The baked pose has no time; the activation's state (combine mode 0) is
+    // skipped and never fresh.
+    if (previous_fresh && !previous_clip.empty()) previous_clock.restart(time);
+    if (fresh) {
+        clock.restart(time);
+        blend_start = time;
+    }
     // A replacing base state (combine mode 0) retires nothing (801CFFB4 skips
     // it); only a fade that reached weight 1 does.
     if (has_previous() && !(weight(time) < 1.0f)) {
         previous_clip.clear();
+        previous_fresh = false;
         previous_pose.clear();
         hidden = false;
     }
@@ -229,7 +241,7 @@ void MotionState::update(std::int64_t time) {
 bool motion_locals(AnimationDatabase& database, const MotionState& motion, std::int64_t time, std::vector<Mat4>& locals) {
     std::vector<BoneTrack> tracks;
     std::vector<char> bound;
-    if (motion.clip.empty() || !sample_tracks(database, motion.clip, motion.start, time, tracks, bound)) return false;
+    if (motion.clip.empty() || !sample_tracks(database, motion.clip, motion.local(time), tracks, bound)) return false;
     if (!motion.fading(time)) {
         // 801D0C14 with one state (0x801D0D38-0x801D0E44): the sampled
         // quaternion through 8012BCDC, the translation into 12..14.
@@ -248,7 +260,7 @@ bool motion_locals(AnimationDatabase& database, const MotionState& motion, std::
             from.resize(motion.previous_pose.size());
             from_bound.assign(motion.previous_pose.size(), 1);
             for (std::size_t b = 0; b < from.size(); ++b) from[b] = matrix_bone_track(motion.previous_pose[b]);
-        } else if (!sample_tracks(database, motion.previous_clip, motion.previous_start, time, from, from_bound)) {
+        } else if (!sample_tracks(database, motion.previous_clip, motion.previous_local(time), from, from_bound)) {
             publish_tracks(tracks, bound, locals);
             return true;
         }

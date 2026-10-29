@@ -1356,17 +1356,14 @@ bool SoundManager::open_stream(Engine& engine, Stream& stream, const std::string
     // (ADXM_SetupThrd 8029D0D8 with the default priorities: the ADXT server
     // thread 8029D434 at 12, the file server thread 8029D3DC at 14, both
     // after VIWaitForRetrace 802648EC, above the main thread's 16; the
-    // threaded registration 8028FBA4..8028FBCC, 0x804CD180 = 1): a start
-    // the port's step makes before its pass - a delivery of the messenger's
-    // pass, the stage loader's scripts - is first seen by the next field's
-    // (Dolphin dngq1b1e: first.lua's ADXT_StartAfs after that field's ADXT
-    // and file server passes, the first read in the next field's file server
-    // pass; stag0203: start.lua's AM_DESER and the posted SOUND PLAY's
-    // AM_VALLE read a field after their starts). A start after the pass (the
-    // managers) reaches the next field's pass anyway.
+    // threaded registration 8028FBA4..8028FBCC, 0x804CD180 = 1): a start in
+    // a frame's update - a delivery, start.lua / first.lua, the demo, a
+    // manager - is first seen by the pass of the next retrace, which the
+    // port runs after the managers (Engine::update_managers; Dolphin
+    // dngq1b1e: first.lua's ADXT_StartAfs after that field's ADXT and file
+    // server passes, the first read in the next field's file server pass).
     const int slot = int(&stream - streams_.data());
     cri_.start(slot, stream_file(engine, archive, entry, stream.decoder->header()));
-    if (engine.frame() != pass_frame_) cri_.handles[std::size_t(slot)].hold = true;
     return true;
 }
 
@@ -1811,13 +1808,14 @@ bool SoundManager::stream_on(std::size_t channel) const {
 // at 30 Hz until the stage's teardown stops the movie.
 //
 // Every step ticks the CRI servers once (server_tick: in a step that
-// updates after the stage loader's update, in a covered field from
-// update_held), and in the drive model's clock a step's tick stands for the
-// servers of the retrace after it (DiscDrive::kDolphinClockOffset): the tick
-// of the MOVIE PLAY step (first.lua runs in the loader's update, before it)
-// is the pass after the open's first VIWaitForRetrace, and the tick of a
-// codec update's step (which comes before the codec update) the pass after
-// the codec's wait.
+// updates after its managers and before this movie player, in a covered
+// field from update_held), and in the drive model's clock a step's tick
+// stands for the servers of the retrace after it
+// (DiscDrive::kDolphinClockOffset): the tick of the MOVIE PLAY step (from
+// first.lua in the loader's update or from a manager, both before it) is
+// the pass after the open's first VIWaitForRetrace, and the tick of a codec
+// update's step (which comes before the codec update) the pass after the
+// codec's wait.
 //
 // Dolphin captures of both opening movies of a boot (work/dref r40movie
 // d_boot1 / d_boot2: OSReport hooks on the codec, the Sofdec sound handler,
@@ -1906,10 +1904,9 @@ void SoundManager::play_movie(Engine& engine, const Ram& ram, const std::string&
         engine.note("movie " + name + ": " + error.what());
     }
     // The open's ADXF_ReadNw of the first ten sectors: the read goes on the
-    // drive in the server pass after this field (this step's server_tick for
-    // a PLAY from the stage loader's first.lua, the next field's for one from
-    // a frame's update); the frame waits for it in the fields after
-    // (update_held).
+    // drive in the server pass after this field (this step's server_tick,
+    // which follows the loader's first.lua and the managers); the frame waits
+    // for it in the fields after (update_held).
     std::uint64_t offset = 0;
     std::uint32_t sectors = 0;
     if (const auto* record = engine.resources().catalog().find(lower(name)); record && record->location) {
@@ -2242,7 +2239,6 @@ std::shared_ptr<const void> SoundManager::persistent() const {
 
 void SoundManager::restore(Engine& engine, const std::shared_ptr<const void>& opaque) {
     if (!opaque) return;
-    pass_frame_ = ~std::uint64_t{}; // (the restored step's pass is still to run)
     const auto& state = *static_cast<const SoundState*>(opaque.get());
     for (std::size_t i = 0; i < streams_.size() && i < state.streams.size(); ++i) {
         const auto& s = state.streams[i];
@@ -2356,6 +2352,7 @@ void SoundManager::serialize_persistent(StateArchive& a, std::shared_ptr<const v
         a.io(h.sj);
         a.io(h.moved);
         a.io(h.reclaimed);
+        a.io(h.aram_base);
         a.io(h.dsp_start);
         a.io(h.played_base);
     }
@@ -2405,23 +2402,23 @@ void SoundManager::serialize_persistent(StateArchive& a, std::shared_ptr<const v
 // running during stage loads.
 void SoundManager::server_tick(Engine& engine) {
     // The CRI servers (ADXT 8029A60C, the file server 80296904) run once per
-    // field after the stage loader's update and before the frame's game
-    // update: the captures put each server pass 0.02 fields after the
-    // frame's world clock (0.63 fields while the loader's update runs first;
-    // the scheduler runs the messenger 80304C58, beCri 802F53B8 and the
-    // loader 802F8A64 before bePadManager 80311F84, the demo and the
-    // managers, r44),
-    // a stream started (ADXT_StartAfs) or paused in a frame's update is seen
-    // by the next field's pass, and the PLAYING (status 3, 0x8029C03C) a pass
-    // sets is what that frame's ISREADY / ISALLREADY (802F6FB0) reads
-    // (stagBS01 2P / 1P, r42: the last stream PLAYING at 49.02 fields after
-    // the stage start, ISALLREADY answering 1 in the same frame). A field an
-    // update covers (Engine::hold_update: the movie's open and codec waits)
-    // has no world clock sample: its pass runs on the retrace's VI time from
-    // update_held, the pass the wait makes (8029D6F0 after the codec's or the
-    // open's VIWaitForRetrace). The VI time leaves out the lateness of the
-    // frames' clock samples while Sofdec decodes (Engine::set_clock_lateness);
-    // outside a movie it is the world time.
+    // field in their threads at the retrace, before the frame's update
+    // (Dolphin r44: the ADXT server 0.013 and the file server 0.003 fields
+    // ahead of the frame's world clock sample): the port runs the pass of the
+    // next retrace after the frame's managers and before the movie player,
+    // whose codec waits for that retrace (Engine::update_managers; the drive
+    // model's tick at the step's time stands for the servers of the retrace
+    // after it, DiscDrive::kDolphinClockOffset). So a stream started
+    // (ADXT_StartAfs) or paused anywhere in a frame's update is seen by the
+    // next field's pass, the loader's request of an update is read from it,
+    // and the PLAYING (status 3, 0x8029C03C) a pass sets is what the next
+    // frame's ISREADY / ISALLREADY (802F6FB0) reads. A field an update covers
+    // (Engine::hold_update: the movie's open and codec waits, the module
+    // reload) has no world clock sample: its pass runs on the retrace's VI
+    // time from update_held, the pass the wait makes (8029D6F0 after the
+    // codec's or the open's VIWaitForRetrace). The VI time leaves out the
+    // lateness of the frames' clock samples while Sofdec decodes
+    // (Engine::set_clock_lateness); outside a movie it is the world time.
     static const bool trace = std::getenv("DW4_TRACE_SOUND") != nullptr;
     // Test tool: DW4_DISC_CLOCK=<ticks> replaces the drive's Dolphin clock
     // offset (DiscDrive::kDolphinClockOffset), to line a run up with a capture
@@ -2432,7 +2429,6 @@ void SoundManager::server_tick(Engine& engine) {
     // (CriStreams::kAxPhase) to line a run up with a capture.
     static const char* ax_phase = std::getenv("DW4_AX_PHASE");
     if (ax_phase && *ax_phase) cri_.ax_phase = std::strtoll(ax_phase, nullptr, 10);
-    pass_frame_ = engine.frame();
     const int inflight_before = cri_.inflight.slot;
     const std::int64_t done_before = cri_.inflight.done;
     std::array<bool, CriStreams::kSlots> playing_before{};
@@ -2566,10 +2562,15 @@ void SoundManager::trace_cri(Engine& engine, int inflight_before, std::int64_t d
             offset = cri_.handles[std::size_t(slot)].file.disc_offset + std::uint64_t(cri_.handles[std::size_t(slot)].pos) * 2048;
         }
         const std::int64_t now = cri_ticks(engine.vi_time());
-        char line[160];
-        std::snprintf(line, sizeof line, "stream read %s %d: %u sectors at disc 0x%llx, %.2f fields, frame %llu",
+        // (The drive's clock modulo the 2 s its rotation repeats in, in
+        // ticks: compare with a capture's DVD command time, TB * 12 + 23.8e6.)
+        const std::int64_t period = 2 * DiscDrive::kTicksPerSecond;
+        const std::int64_t disc = ((now + cri_.drive.clock_offset) % period + period) % period;
+        char line[200];
+        std::snprintf(line, sizeof line, "stream read %s %d: %u sectors at disc 0x%llx, %.2f fields, frame %llu, disc clock %lld",
                       loader ? "loader" : movie ? "movie" : "slot", slot, request, static_cast<unsigned long long>(offset),
-                      double(cri_.inflight.done - now) / double(CriStreams::kFieldTicks), static_cast<unsigned long long>(engine.frame()));
+                      double(cri_.inflight.done - now) / double(CriStreams::kFieldTicks), static_cast<unsigned long long>(engine.frame()),
+                      static_cast<long long>(disc));
         engine.log(line);
         static const bool ring = std::getenv("DW4_TRACE_CRI_RING") != nullptr;
         if (ring && !loader && !movie) {

@@ -67,22 +67,8 @@ exactly n steps. In order:
    `func.lua` / `boot.lua`, common files queued with `CFLsetName`, the wait
    for the loading screen's minimum play time (its beLoadingNode then holds
    its lock time on the LOADING layer until the scripts remove it), info
-   registration, `start.lua`, `first.lua`. Then the CRI servers' field
-   (`SoundManager::server_tick`, the original's ADXT server 8029A60C and file
-   server 80296904): stream reads on the simulated drive, decoding, PLAYING
-   (see the sound section below). The original runs these servers in their
-   own threads at the field's retrace, ahead of the whole frame (ADXT server
-   thread 8029D434 at priority 12, file server thread 8029D3DC at 14, main
-   thread 16), so a stream that a delivery of the messenger's pass or
-   `start.lua` / `first.lua` start is first seen by the next field's pass:
-   the port's pass holds a stream started earlier in the step for the next
-   field's (`CriStreams::Handle::hold`; Dolphin dngq1b1e: first.lua's
-   ADXT_StartAfs after that field's passes, its first read in the next
-   field's). The loader's own reads go out in the step's pass, on which its
-   load model is calibrated. A field a movie frame covers runs only these
-   servers and the SNDF's AX frames (`Engine::hold_update`, see the movie
-   below). Then the demo manager (`DMsetSD` / `DMchkSD` / switch records,
-   one blocking record at a time).
+   registration, `start.lua`, `first.lua`. Then the demo manager (`DMsetSD` /
+   `DMchkSD` / switch records, one blocking record at a time).
 5. The managers' updates in the original scheduler order
    (`Engine::update_managers`, igSerialScheduler 8028B7B0): first beSystem,
    which its plugin schedules at registration, then every manager in the
@@ -95,7 +81,24 @@ exactly n steps. In order:
    its own slot, so the player, from the common `f_m*.igb`, updates after
    the stage's menu managers. Managers without an info in the stage, which
    the original does not run, follow (idle). `DW4_TRACE_SCHEDULE=1` logs the
-   order at each stage start.
+   order at each stage start. Then the CRI servers of the next retrace
+   (`SoundManager::server_tick`, the original's ADXT server 8029A60C and file
+   server 80296904: stream reads on the simulated drive, decoding, PLAYING;
+   see the sound section below) and last the movie player, whose codec
+   update waits for that retrace inside its own update. The original runs
+   these servers in their own threads, woken at every retrace ahead of the
+   frame (ADXM_SetupThrd 8029D0D8: ADXT server thread 8029D434 at priority
+   12, file server thread 8029D3DC at 14, both after VIWaitForRetrace, main
+   thread 16; Dolphin r44: the two passes 0.013 / 0.003 fields before the
+   frame's world clock sample, every field), so the whole update of a frame
+   - the loader's requests and bookings, a stream started or paused by a
+   delivery, `start.lua` / `first.lua`, the demo or a manager, the entries'
+   update and ISREADY / ISALLREADY - lies between the pass of its own
+   retrace and the pass of the next one: a stream's first read comes in the
+   next field whatever started it, and a PLAYING counts from the next
+   update. A field a movie frame or the module reload covers runs only these
+   servers and the SNDF's AX frames (`Engine::hold_update`, see the movie
+   below).
 
 Every random number comes from one generator (`SystemRandom`, beSystem's
 igMersenneTwisterRandomNumber seeded 5150 at boot) through `fight::random()`.
@@ -139,6 +142,42 @@ frustum (the renderer widens perspective projections for widescreen, and a
 debug camera shows everything): a subtree outside the original's frustum but
 in the picture is drawn without its updates (`ActionManager::peek_pose`, copied
 clocks and caches), so the simulation does not depend on the presentation.
+
+An ACTION actor's motion combiner (`MotionState`) keeps each state's clock as
+the original's igAnimationState does (`StateClock`: time = ((T >> 18) * speed
++0x38) << 18 + base +0x40 at node time T, 801D3628). A state that MOTIONSET
+puts in (801D1BCC) is not evaluated yet (+0x1c, `MotionState::fresh`): every
+combiner update restarts it at time 0 with its fade starting at that update
+(801CFFB4 0x801D00D0..0x801D0164) until the traversal's evaluation (801D0C14)
+or the motion phase's update (802F0EB0) marks it evaluated. Because the
+traversal culls, a clip set while its actor is out of view or before the
+stage's first picture starts - and its fade and WAITCHECK 'M' count - from
+the actor's first traversal (n_leomon's wait02 in staggf03 1.95 s later;
+e_rare's trnsIN in dng412b1; the g_b01base1 bases in stagBS01 up to 1.9 s).
+MOTIONSET's field 3 'S' freezes a state at the world time's state time
+(802F1160: the first letter the combiner's first state 0x802F12C0 - the
+previous clip; a baked pose has no time - the second the new clip
+0x802F1370; speed 0, the base moved to keep the time). The frozen new clip is
+still fresh, so the next combiner update restarts it at time 0 on the frozen
+clock: it holds its first picture. Once one state is left, the motion phase
+gives it the node clock's scale again with its time kept (0x802F108C). Only
+two MOTIONSETs of the game data use 'S' (all 6142 records of ndmw.afs and
+area.afs checked): n_leomon's KYRO01 in staggf03 ("RS", action01 holds its
+first picture through the 16 frame fade) and f_apocaly's ACTN05 in stagBS01
+("SS", wait01's first picture for two frames). WAITCHECK 'M' compares the
+state time against the clip's duration unsigned (0x802F03A8). Not modelled:
+the speed and base a reused pool state brings along (801D1BCC resets
+neither) - the port starts the activation's combine mode 0 state at time 0,
+and no 'S' state goes back to the pool frozen in the data. `MotionState` is
+not in the snapshot: a restore replays the stage. A fresh state that the
+widened widescreen picture shows while the original's frustum still culls it
+(`peek_pose`) is drawn as the combiner update would leave it now, on a copy
+of the combiner: its first picture, the fade at weight 0, until the first
+traversal starts the clip from there. (Drawn from its MOTIONSET's time
+instead, the clip ran in the margin and jumped back to time 0 at the first
+traversal: in the cheat story run's widescreen pictures Ophanimon's wait01
+25 s, n_gekoa's in stag0302 8.5 s, the stagBS01 bases 0.6-1.5 s, each only
+a few pixels at the picture's edge.)
 
 ## Messenger and scripts
 
@@ -421,25 +460,41 @@ When a stream is ready matters to the scripts: demos wait with
 802F6FB0), and the original only gets there after the stream's first block
 came off the disc. `dw4::CriStreams` (include/dw4/disc_timing.hpp, in the
 core) models that on the engine clock, once per field from the CRI server
-tick (also during loads), which the frame step runs after the messenger's
-pass and the stage loader, before the demo and the managers (the serial
-scheduler's module order, Dolphin r44: the camera viewer, beSystem,
-beMessenger, beCri, the loader, bePadManager, beDemoManager, then the
-managers). The original runs its servers in their own threads at the
-retrace, ahead of the frame; the port's pass holds a stream that a delivery
-or the loader's scripts started earlier in the step
-(`CriStreams::Handle::hold`), so a stream started in a frame's update is
-first served in the next field there and here (stag0203: start.lua's
-AM_DESER and the posted AM_VALLE read on Dolphin's fields), and a PLAYING
-reached in a field counts for that frame's ISALLREADY (Dolphin, stagBS01 1P:
-AM_BOS01 PLAYING 13, BT_BOSS1 20, bs01_trn 45 and the last PLAYING and
-ISALLREADY 1 49 fields after the stage start; the port 14 / 21 / 45 / 50 in
-a run aligned to Dolphin's NEXTSTAGE, round 44): the six beCri ADXT handles (two stereo 48 kHz for
+tick (also during loads), which the frame step runs after the managers and
+before the movie player: the pass of the next retrace, which in the
+original runs in the server threads before the next frame's update (see
+step 5 above). So a stream started anywhere in a frame's update is first
+read in the next field and a PLAYING counts from the next frame's update,
+as in Dolphin (r44 / r46 time-base logs: ADXT_StartAfs in an update, the
+first read at the next retrace, the PLAYING store at a retrace, ISALLREADY
+1 in the update after it; stag0203: start.lua's AM_DESER, its second read,
+the posted AM_VALLE and both PLAYINGs on Dolphin's passes; staggf03's
+PLAYatPAUSE DM_LEOMN's first read on Dolphin's field against the demo).
+Until r46 the pass ran after the loader's update and held a stream that a
+delivery or the loader's scripts started for the next field's pass
+(`CriStreams::Handle::hold`), so streams started in an update were read a
+field late on the drive's clock while the demo and the managers saw each
+PLAYING a field early, which cancelled in the frames ISALLREADY answers 1.
+The model: the six beCri ADXT handles (two stereo 48 kHz for
 BGM and ambience with a 53-sector input ring, four mono with 13 sectors),
-their ADXSTM readers (one DVD read at a time through gcCi, the lowest handle
-first, 25 sectors before the header is parsed, refills below 85 %), the
-decoder (+72 samples per call), the ARAM renderer (4096 samples, played
-halves given back), the DSP's progress as the renderer reads it (the voice
+their ADXSTM readers (one DVD read at a time through gcCi - 802A5D6C
+refuses a read while any handle's read is on the drive, the exec 802A680C
+at the start and the end of the file server marks it done - the lowest
+handle first, the loader's ADXSTM 8051B1D0 after the six, a finished read
+booked in its handle's pass before that handle asks again, 25 sectors
+before the header is parsed, a refill of the free chunk up to the ring's
+end while the ring holds less than 85 %, 8029B2D0 / 80299248: 45 of 53
+sectors, so a stereo stream reads 8 or 9 sectors every 18 or 20 fields),
+the decoder (one call per server pass, 80290074 / 80293E5C: the least of
+the input's whole frames up to the ring's end and its 36-byte extra area,
+the output SJ's free chunk up to its end capped at the unit of three
+fields, and the frames to the output ring's end), the ARAM renderer (4096
+samples, played halves given back, one DMA per pass of the least of the
+ring's free chunk up to its end and the output SJ's data up to its end and
+96-sample extra area, 802A6DF8; not modelled yet: at a loop's end the
+decoder stops at the loop end sample and the trap 8029C970 / 8029CAFC drops
+the rest of the loop end's sector from the input, 2048 - loop end byte % 2048
+bytes, 8029C1E0 +0x50, while the port decodes on through it), the DSP's progress as the renderer reads it (the voice
 address AX copies back at each 5 ms frame boundary, one frame behind: 240
 samples per frame of a 48 kHz voice, frames of 2427840 ticks at the AI's
 54 MHz / 1686; a pause stops the voices and drops the ARAM ring, 802A7534)
@@ -454,15 +509,39 @@ three captured stage starts (stagBS01, stagBS02, dngQ1B1e) read for read. A
 replaced BGM fades over the original's table (8031D5D0) and stops once the
 fade reaches -21 dB with the stage's base volume (beSoundInfo [9]). The stage
 loader's own reads share the drive: like the original's loading thread
-(igAdxFile 802AA1B0 over a CRI file stream that comes after the ADXT readers
-in each server pass) the loader reads every file of a load in 64-sector
-requests and asks for the next chunk once the thread has used the last one,
-which takes it whole fields more where the chunk holds the reference index,
-the start of the object buffer (the objects are made there, 0.34 fields per
-1000), object records or the start of the memory blocks; after the last
-chunk the file is ready by the time its memory blocks take, then routed in
-the next update. Routing a large member, state 5 and start.lua are long
-updates that cover the retraces after them. A stage change itself starts with
+(igIGBFile::readFile 800528DC through igAdxFile 802AA1B0 over a CRI file
+stream that comes after the ADXT readers in each server pass, a thread below
+the main thread) the loader reads every file of a load in 64-sector requests
+and asks for the next chunk when the parser wants bytes beyond the last one.
+The thread's wait for a chunk (802A9DC4) does not follow the retrace: with
+igAdxFile +0x3C / +0x3D set it sleeps 16666666 ns (+0x58 / +0x5C) between
+looks at the stream, so it takes a chunk up at the first look after the
+server pass marked it done, on a grid that starts at its request and drifts
+against the fields (Dolphin r46, hooks on the requests and the wait's returns
+of 956 chunks: the return is the request + 0.00245 + n * 0.999309 fields
+within 0.002 and never before 0.027 fields after the retrace; the main
+thread and the servers take the first 0.031 fields after each retrace).
+What it does with each chunk follows the file's content
+(`loader_work` in engine.cpp, hooks after each step of 800528DC in 106
+files): the type metadata, the directory entries, the reference index,
+making every object (0.000247 fields each, 9.7 fields for a stage file's
+30000), the object pass through the reader's 128 KB buffer (+0x104,
+refilled by 800506CC: the thread asks for a chunk a buffer ahead of the
+records it reads; 0.000108 fields per record, 3.66e-5 per string byte), the
+memory blocks read in place (1.01e-6 per byte, 0.13 fields a chunk) and the
+passes after the last byte (memory entries, every entry's +0x90 800527D8,
+which grows with the textures' igCharMetaField bytes); walked from each
+chunk's arrival around the main thread's window this puts 941 captured
+chunk times within 0.14 fields (rms). The update after the work after the
+last chunk routes the file, the next update asks for the next one (the
+thread takes it up when that update ends: 0.036 fields after the retrace in
+states 100 and 2, 0.068 in state 4, 0.249 for the loading card, the
+descriptor after the reload's late sample). Routing a large member, state 5
+and start.lua are long updates that cover the retraces after them
+(`loader_register_cost`, `loader_start_cost`: refitted to 14 Dolphin loads,
+-1.888 fields + 0.00315 per model RAM + 0.0028 per info and -4.064 +
+0.00425 per model RAM + 0.0109 per generated model; dng205b3's start.lua
+covers 2 retraces, dng308b3's 1). A stage change itself starts with
 the application loop's module reload: NEXTSTAGE's frame ends the loop's update
 / render loop, and after its picture (the endScene retrace) the loop reloads
 every module (80021944 -> 8040F570 -> 8028A87C: every module's +0x70 reset,
@@ -499,20 +578,53 @@ refill cycle stands when it starts: Dolphin itself gives 497 or 607 fields
 for dng307b1 at two login times 155 fields apart. Against captures of 15
 loads at both BGM phases (the boot's three: 234 / 61 / 118 fields against
 233.8 / 62 / 121) the port's BGM refills come on the original's fields with
-its sizes; what remains is the loading thread's share of a field (a chunk a
-field early or late now and then, which can swap a chunk with a refill), on
-average -4 fields and 15 fields apart per load. (Round 43 found loads after
+its sizes; what remained was the loading thread's timing (a chunk a field
+early or late now and then, which can swap a chunk with a refill and shift
+the rest of the load), modelled since round 46 from the thread's work and its
+sleep grid. (Round 43 found loads after
 the title whose BGM refills come 2-3 fields before Dolphin's from the load's
-start on, +34 to +115 fields in all. The round 44 module reload puts each
-descriptor read on Dolphin's field, a field earlier against the same refill
-cycle, which swaps chunks and refills in other places. In runs aligned to
-Dolphin's NEXTSTAGE: NEXTSTAGE to start.lua from the title, dng101b1 526
-fields against Dolphin's 540 (498 before the reload model); NEXTSTAGE to
-the stage start, stagBS01 784 against 761 (757 before), the main file's
-chunks up to 15 fields off either way; the lobby's AM_LOBBY start 493
-against 503 (460 before).)
+start on, +34 to +115 fields in all, and round 45 staggf03 -> stagML02 +88
+to +91 fields. Round 46 traced both to the comparison, not to the CRI
+model: the drive's rotational latency follows the parity of the whole
+seconds of Dolphin's clock, and the port's world clock stood 240 to 420
+fields behind the captures' (their boots and menus take longer), so every
+seek of a load could cost half a turn (1.05 fields) more or less; the
+NEXTSTAGE of a script's SEND stood 1 to 157 fields off the BGM's file
+position; and Dolphin's sampled world clock delivers a one-frame post a
+frame later now and then (staggf03: NEXTSTAGE an update after the
+port's). With the BGM's phase, the drive's rotation and the DSP's frame
+grid put on Dolphin's at the load's first read (build tools of r46:
+cmpload.sh, loadcmp2.py: a world clock offset, `DW4_DISC_CLOCK`,
+`DW4_AX_PHASE`) every read of a load - loader chunks and refills, times and
+sizes - matches Dolphin's until the first request that falls on the other
+side of a server pass; title -> stagML11 the first 25 reads to 199 fields
+and the load's last read on Dolphin's field. Round 46's part B put the
+loading thread on the original's work per file content and its sleep grid
+(above) and measured the load set again against new captures with the
+time-neutral DVD log plus hooks on the thread's requests and returns (29 us
+per OSReport, 0.0017 fields; two captures that differ only in those hooks
+still part at a read that slips a whole field at 1482, and Dolphin's own
+lengths of one load differ by up to 47 fields between capture setups:
+dng101b1 493 / 514, staggf03 575 / 622). Aligned, the load's last loader read
+after its first one, Dolphin / port (part A before) in fields: stagIS08 174 /
+175 (172), stagIS09 39 / 39 (39), stagIS10 107 / 107 (105), the soft reset
+dng101b1 -> title 107 / 106 (104), dngQ1B1e 616 / 596 (577), stagML11 466 /
+466 (466), dng101b1 514 / 514 (489), stagBS01 733 / 733 (753, every PLAYING
+and ISALLREADY of its start now on Dolphin's field), stagBS04 690 / 692 (692),
+stagBS03 649 / 640 (640), stagGF03 622 / 543 (625), dng205b3 743 / 744 (712),
+dng308b3 616 / 652 (629), stag0301 765 / 765 (775), and four new games sent
+to stages outside the fit: stagBS02 632 / 673 (632), stag0203 733 / 733
+(764), dng204b1 535 / 591 (591), stag0401 765 / 775 (753) - 10 of 17 within
+2 fields (part A 6). The others part at a single request a fraction of a
+field off: staggf03's fourth chunk of its stage file is asked for 0.12
+fields early, before the pass where the BGM refill comes first, and the load
+ends 79 fields early; dngQ1B1e and dng204b1 part at a refill a field late
+(the DSP grid's estimate). A gate warp stag0101 -> stagML11, natural run:
+494 / 475 (436) fields from the descriptor to the stage's start.)
 The port parses each file when the original asks for it.
-`DW4_TRACE_SOUND=1` logs every simulated read,
+`DW4_TRACE_SOUND=1` logs every simulated read (with the drive's clock
+modulo the 2 s its rotation repeats in, to set beside a capture's DVD
+command time TB * 12 + 23.8e6),
 PLAYING, stream start, pause / resume, fade stop and ISREADY / ISALLREADY
 change (`DW4_TRACE_CRI_RING=1` also the ring of each refill and the
 renderer's view of the stereo voices every field),
