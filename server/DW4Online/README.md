@@ -253,7 +253,11 @@ and stats must carry `protocol` / `clientVersion` (426 `client_outdated` otherwi
 
 A channel is one stage instance: `<room code>-<instance>` (for example `K7QW2M-1`). Tickets come from
 `POST /rooms/{code}/stage`: `base64url("channel|account|role|expiry|nonce")` + "." + `base64url(HMAC-SHA256)`, single
-use, 60 s. Every connection starts with one ASCII line ending in `\n`:
+use, 60 s. Before it accepts a valid ticket the relay asks the room service, which keeps the nonce of each player's
+newest ticket per instance: the instance must still run, the account must be its host (host tickets) or one of its
+guests and still in the room, and the ticket must be the newest one (asking `/stage` again replaces it). So tickets
+cannot be hoarded for after a kick, and a host ticket of an ended instance opens no channel; the room sweep (every 5 s)
+also closes any relay channel without a running instance. Every connection starts with one ASCII line ending in `\n`:
 
 1. Host control: `DW4R1 HOST <ticket>` -> `OK <hostKey>`. The relay then sends `GUEST <n> <account>` per arriving
    guest. Closing this socket ends the channel and raises `RelayServer.HostDisconnected`; the room service ends the

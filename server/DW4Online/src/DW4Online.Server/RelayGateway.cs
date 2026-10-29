@@ -30,12 +30,23 @@ internal sealed class RelayGateway : IRelayGateway
 
     public event Action<string>? HostLost;
 
-    public string IssueTicket(string channel, long accountId, bool host) =>
-        _tickets.Issue(channel, accountId, host ? RelayRoles.Host : RelayRoles.Guest);
+    public RelayTicket IssueTicket(string channel, long accountId, bool host)
+    {
+        var issued = _tickets.Create(channel, accountId, host ? RelayRoles.Host : RelayRoles.Guest);
+        return new RelayTicket(issued.Ticket, issued.Nonce);
+    }
 
     public void CloseChannel(string channel) => _server?.CloseRoom(channel);
 
     public void DropGuest(string channel, long accountId) => _server?.DropGuest(channel, accountId);
+
+    public IReadOnlyCollection<string> OpenChannels => _server?.Channels ?? [];
+
+    public void SetAdmission(Func<RelayAdmission, ValueTask<bool>> check)
+    {
+        if (_server is not null)
+            _server.Admission = claims => check(new RelayAdmission(claims.Room, claims.Account, claims.Role == RelayRoles.Host, claims.Nonce));
+    }
 }
 
 /// <summary>Closes rooms a previous process left open (at start), then times out silent members every few seconds.</summary>
