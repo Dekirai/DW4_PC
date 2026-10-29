@@ -141,7 +141,8 @@ void zones() {
 // Rule 1 is the round 48 table, bit for bit (bound games keep their
 // layout): its derangements leave only two layouts, the one of the lanes'
 // story seeds and the one of seeds 5 and 7 (the round 48 review's survey).
-// Rule 2 draws every arrangement of an area, the own dungeon included.
+// Rule 2 draws every arrangement of an area, the own dungeon included, but
+// never the table that changes nothing (47 layouts).
 void zone_rules() {
     auto layout = [](std::uint32_t seed, int rule) { return rnd::zone_permutation(rnd::sub_seed(seed, "zones"), rule); };
     const std::vector<int> round48_a = {1, 0, 3, 2, 5, 6, 4, 8, 7}; // printed by the round 48 build (f915905)
@@ -167,11 +168,23 @@ void zone_rules() {
         }
     }
     check(rule1.size() == 2, "rule 1: two layouts in all, " + std::to_string(rule1.size()));
-    check(rule2.size() == 48, "rule 2: every one of the 2 * 2 * 6 * 2 layouts comes up, " + std::to_string(rule2.size()));
+    check(rule2.size() == 47, "rule 2: every one of the 2 * 2 * 6 * 2 layouts but the unchanged one comes up, " +
+                                  std::to_string(rule2.size()));
+    std::vector<int> unchanged(rnd::zone_entrances().size());
+    for (std::size_t i = 0; i < unchanged.size(); ++i) unchanged[i] = int(i);
+    check(!rule2.contains(unchanged), "rule 2 never draws the table that changes nothing");
+    // Seeds whose first draw is the unchanged table (2 and 16 before the
+    // redraw) draw again; the others keep their first draw.
+    check(layout(2, rnd::kZoneRuleAny) != unchanged && layout(16, rnd::kZoneRuleAny) != unchanged, "seeds 2 and 16 draw again");
+    check(layout(5, rnd::kZoneRuleAny) == std::vector<int>({1, 0, 3, 2, 5, 4, 6, 7, 8}) &&
+              layout(7, rnd::kZoneRuleAny) == std::vector<int>({0, 1, 2, 3, 4, 6, 5, 7, 8}) &&
+              layout(14, rnd::kZoneRuleAny) == std::vector<int>({1, 0, 3, 2, 6, 5, 4, 8, 7}),
+          "the story run seeds keep their rule 2 layouts");
     check(area3.size() == 6, "rule 2: area 3 takes all six arrangements");
     for (int area = 1; area <= 4; ++area) {
         const double share = double(own_area[std::size_t(area - 1)]) / seeds;
-        const double expected = area == 3 ? 1.0 / 6 : 0.5;
+        // Of the 47 layouts, 7 keep area 3 and 23 keep each other area.
+        const double expected = area == 3 ? 7.0 / 47 : 23.0 / 47;
         check(share > expected * 0.85 && share < expected * 1.15,
               "rule 2: area " + std::to_string(area) + " keeps its own dungeons in about " + std::to_string(expected) + " of the seeds");
     }

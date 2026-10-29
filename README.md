@@ -261,8 +261,9 @@ drives three parts, each switched on its own:
 - **Loading zones** (`dungeons`): the dungeon entrances of each area are
   shuffled among the area's dungeons (area 1: Humid Cave / Cliff Dungeon, area
   2: Sand Labyrinth / Ancient Ruins, area 3: Geko Path / Vine Tunnel / Vein,
-  area 4: Mecha Nest / Electro Mine); an entrance may keep its own dungeon, so
-  the seeds give 48 layouts (2 x 2 x 6 x 2), and a dungeon's way out leads
+  area 4: Mecha Nest / Electro Mine); an entrance may keep its own dungeon
+  (but at least one entrance leads somewhere new), so the seeds give 47
+  layouts (2 x 2 x 6 x 2 without the unchanged one), and a dungeon's way out leads
   back to the entrance that was used. The exit prompt names the new target. A
   game bound before this rule (round 48: no entrance kept its own dungeon,
   which left only two layouts) keeps playing its old layout; its bond has no

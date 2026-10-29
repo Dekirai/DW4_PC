@@ -330,7 +330,7 @@ folder, so nothing is written into a Dolphin folder) with one section per
 character, keyed by the record's UNIQUE (offset 4, drawn from the world clock
 when the character is made; `enemies` is off, each or wave, `zones` off or
 dungeons, `zone_rule` the rule the loading zone table is drawn with: 2 now,
-any arrangement within an area; a bond without it was written in round 48
+any arrangement within an area, at least one entrance changed; a bond without it was written in round 48
 and keeps rule 1, no entrance keeping its own dungeon; `seed=0` is a save
 the F1 menu set to play the original game), and
 `randomizer_<UNIQUE>_spoiler.txt` beside it:

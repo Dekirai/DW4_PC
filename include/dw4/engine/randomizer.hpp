@@ -23,7 +23,8 @@
 // (Cheats::rand_zones) names the rule the table is drawn with, so a game
 // bound to an older rule keeps its layout: 1 = rule 1 (round 48: no entrance
 // keeps its own dungeon, which left only two layouts in all), 2 = rule 2
-// (any arrangement within each area, the own dungeon included: 48 layouts).
+// (any arrangement within each area, the own dungeon included, but never the
+// table that changes nothing: 47 layouts).
 #include <array>
 #include <cstdint>
 #include <optional>

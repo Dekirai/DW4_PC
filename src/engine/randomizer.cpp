@@ -206,43 +206,55 @@ std::vector<int> zone_permutation(std::uint64_t zone_seed, int rule) {
     const int count = int(std::size(kZoneEntrances));
     std::vector<int> perm(static_cast<std::size_t>(count));
     for (int i = 0; i < count; ++i) perm[std::size_t(i)] = i;
-    for (int area = 1; area <= 4; ++area) {
-        std::vector<int> members;
-        for (int i = 0; i < count; ++i)
-            if (kZoneEntrances[i].area == area) members.push_back(i);
-        if (members.size() < 2) continue;
-        std::uint64_t state = zone_seed ^ (std::uint64_t(area) * 0x9E3779B97F4A7C15ull);
-        std::vector<int> order = members;
-        if (rule == kZoneRuleDerangement) {
-            // Rule 1 (round 48, kept for the games bound to it): a seeded
-            // shuffle without fixed points, the first derangement of the
-            // seed's shuffles.
-            for (int attempt = 0; attempt < 64; ++attempt) {
-                order = members;
-                for (std::size_t i = order.size() - 1; i > 0; --i) std::swap(order[i], order[std::size_t(splitmix64(state) % (i + 1))]);
-                bool deranged = true;
-                for (std::size_t i = 0; i < order.size(); ++i) deranged &= order[i] != members[i];
-                if (deranged) break;
+    // Each area draws from its own stream.
+    std::array<std::uint64_t, 5> states{};
+    for (int area = 1; area <= 4; ++area) states[std::size_t(area)] = zone_seed ^ (std::uint64_t(area) * 0x9E3779B97F4A7C15ull);
+    // Rule 2 draws all areas again (their streams go on) while the table
+    // would change nothing: a game with the loading zone shuffle on always
+    // has at least one entrance leading somewhere new.
+    for (int attempt = 0; attempt < 64; ++attempt) {
+        for (int area = 1; area <= 4; ++area) {
+            std::vector<int> members;
+            for (int i = 0; i < count; ++i)
+                if (kZoneEntrances[i].area == area) members.push_back(i);
+            if (members.size() < 2) continue;
+            std::uint64_t& state = states[std::size_t(area)];
+            std::vector<int> order = members;
+            if (rule == kZoneRuleDerangement) {
+                // Rule 1 (round 48, kept for the games bound to it): a seeded
+                // shuffle without fixed points, the first derangement of the
+                // seed's shuffles.
+                for (int tries = 0; tries < 64; ++tries) {
+                    order = members;
+                    for (std::size_t i = order.size() - 1; i > 0; --i) std::swap(order[i], order[std::size_t(splitmix64(state) % (i + 1))]);
+                    bool deranged = true;
+                    for (std::size_t i = 0; i < order.size(); ++i) deranged &= order[i] != members[i];
+                    if (deranged) break;
+                }
+            } else {
+                // Rule 2: the area's arrangement drawn uniformly from all of
+                // them (2 for two entrances, 6 for area 3's three): one draw
+                // of the area's stream picks the permutation's index in
+                // lexicographic order.
+                std::uint64_t ways = 1;
+                for (std::size_t n = 2; n <= members.size(); ++n) ways *= n;
+                std::uint64_t index = splitmix64(state) % ways;
+                std::vector<int> pool = members;
+                for (std::size_t i = 0; i < members.size(); ++i) {
+                    std::uint64_t block = 1;
+                    for (std::size_t n = 2; n < pool.size(); ++n) block *= n;
+                    const std::size_t pick = std::size_t(index / block);
+                    index %= block;
+                    order[i] = pool[pick];
+                    pool.erase(pool.begin() + std::ptrdiff_t(pick));
+                }
             }
-        } else {
-            // Rule 2: the area's arrangement drawn uniformly from all of them
-            // (2 for two entrances, 6 for area 3's three): one draw of the
-            // area's own stream picks the permutation's index in
-            // lexicographic order.
-            std::uint64_t ways = 1;
-            for (std::size_t n = 2; n <= members.size(); ++n) ways *= n;
-            std::uint64_t index = splitmix64(state) % ways;
-            std::vector<int> pool = members;
-            for (std::size_t i = 0; i < members.size(); ++i) {
-                std::uint64_t block = 1;
-                for (std::size_t n = 2; n < pool.size(); ++n) block *= n;
-                const std::size_t pick = std::size_t(index / block);
-                index %= block;
-                order[i] = pool[pick];
-                pool.erase(pool.begin() + std::ptrdiff_t(pick));
-            }
+            for (std::size_t i = 0; i < members.size(); ++i) perm[std::size_t(members[i])] = order[i];
         }
-        for (std::size_t i = 0; i < members.size(); ++i) perm[std::size_t(members[i])] = order[i];
+        if (rule == kZoneRuleDerangement) break;
+        bool changed = false;
+        for (int i = 0; i < count; ++i) changed |= perm[std::size_t(i)] != i;
+        if (changed) break;
     }
     return perm;
 }
