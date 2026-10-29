@@ -56,6 +56,33 @@ public class LoginThrottleTests
         Assert.NotNull(throttle.Fail(key));
     }
 
+    /// <summary>The account-wide count only adds up within one window: slow guessing never locks the account.</summary>
+    [Fact]
+    public void The_account_count_locks_only_within_one_window()
+    {
+        var time = new ManualTime(new DateTimeOffset(2026, 11, 1, 12, 0, 0, TimeSpan.Zero));
+        var throttle = new LoginThrottle(new AccountOptions { MaxFailedLogins = 3, MaxFailedLoginsPerAccount = 6, LockoutMinutes = 15 }, time);
+        for (var round = 0; round < 4; ++round) // 5 failures every 16 minutes: 20 in all, never 6 in one window
+        {
+            for (var i = 0; i < 5; ++i) Assert.Null(throttle.FailAccount(42));
+            time.Advance(TimeSpan.FromMinutes(16));
+        }
+        for (var i = 0; i < 5; ++i) Assert.Null(throttle.FailAccount(42));
+        Assert.Equal(time.GetUtcNow().UtcDateTime.AddMinutes(15), throttle.FailAccount(42)); // the 6th in one window
+        Assert.Null(throttle.FailAccount(43)); // another account is not affected
+
+        time.Advance(TimeSpan.FromMinutes(16));
+        for (var i = 0; i < 5; ++i) Assert.Null(throttle.FailAccount(42));
+        throttle.ResetAccount(42); // a success clears the count
+        for (var i = 0; i < 5; ++i) Assert.Null(throttle.FailAccount(42));
+        Assert.NotNull(throttle.FailAccount(42));
+
+        // Account counts and pair counts never mix.
+        var pair = LoginThrottle.Key("42", Ip("203.0.113.5"));
+        Assert.Null(throttle.Fail(pair));
+        Assert.Null(throttle.LockedUntil(pair));
+    }
+
     [Fact]
     public void Audit_name_tags_are_keyed_and_normalised()
     {

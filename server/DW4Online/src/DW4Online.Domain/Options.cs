@@ -16,9 +16,11 @@ public sealed class AccountOptions
     /// <summary>The window of <see cref="MaxFailedLogins"/> and the length of both locks.</summary>
     public int LockoutMinutes { get; set; } = 15;
     /// <summary>
-    /// Failed attempts on one account from all addresses together (reset by a success) before the account is locked for
-    /// <see cref="LockoutMinutes"/> against guessing from many addresses. During that lock only addresses the account
-    /// logged in from within <see cref="KnownAddressDays"/> may still try, so strangers cannot lock the owner out.
+    /// Failed attempts on one account from all addresses together within <see cref="LockoutMinutes"/> (a success clears
+    /// them) before the account is locked for <see cref="LockoutMinutes"/> against guessing from many addresses; slow
+    /// guessing from one address (at most <see cref="MaxFailedLogins"/> per window) never reaches it. During that lock
+    /// only addresses the account logged in from within <see cref="KnownAddressDays"/> may still try, so strangers
+    /// cannot lock the owner out.
     /// </summary>
     public int MaxFailedLoginsPerAccount { get; set; } = 50;
     /// <summary>How long a client address that created a session counts as known for the account-wide lock.</summary>

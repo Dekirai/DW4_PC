@@ -91,6 +91,7 @@ public sealed class AccountService(
             return BadCredentials();
         }
         throttle.Reset(key);
+        throttle.ResetAccount(account.Id);
         if (Blocked(account) is { } blocked) return blocked; // only told to someone who knows the password
         await accounts.RecordLoginAsync(account.Id, now, check == PasswordCheck.SuccessRehashNeeded ? hasher.Hash(password!) : null, ct);
         var ticket = await CreateSessionAsync(account.Id, kind, caller, now, ct);
@@ -192,6 +193,7 @@ public sealed class AccountService(
             return DomainError.Unauthorized("bad_recovery_code", "User name or recovery code is wrong.");
         }
         throttle.Reset(key);
+        throttle.ResetAccount(account.Id);
         if (Blocked(account) is { } blocked) return blocked;
         if (PasswordPolicy.Check(newPassword, account.Username) is { } error) return DomainError.Invalid("weak_password", error);
         var next = RecoveryCode.Create();
@@ -293,6 +295,7 @@ public sealed class AccountService(
         var now = Clock.Now(time);
         await accounts.SetPasswordAsync(target.Id, hasher.Hash(temporary), true, now, ct);
         await accounts.RecordFailedLoginAsync(target.Id, 0, null, ct);
+        throttle.ResetAccount(target.Id);
         await sessions.RevokeAllAsync(target.Id, null, now, ct);
         await audit.WriteAsync("admin_password_reset", target.Id, actor.AccountId, caller.Ip, null, now, ct);
         return temporary;
@@ -343,21 +346,20 @@ public sealed class AccountService(
         TimeSpan.FromDays(kind == SessionKind.Web ? options.WebSessionDays : options.GameSessionDays);
 
     /// <summary>
-    /// A wrong password or code: counts for the pair of name and address (<paramref name="key"/>) and for the account
-    /// (locked for everyone but known addresses at <see cref="AccountOptions.MaxFailedLoginsPerAccount"/>).
+    /// A wrong password or code: counts for the pair of name and address (<paramref name="key"/>) and for the account,
+    /// which is locked for everyone but known addresses at <see cref="AccountOptions.MaxFailedLoginsPerAccount"/>
+    /// failures within <see cref="AccountOptions.LockoutMinutes"/> (<see cref="LoginThrottle.FailAccount"/>). A lock in
+    /// force stays: a known address's wrong password does not end it. accounts.failed_logins keeps the failures since
+    /// the last success for the staff.
     /// </summary>
     private async Task FailedAttemptAsync(AccountRecord account, string evt, string key, CallerInfo caller, DateTime now, CancellationToken ct)
     {
         var addressLocked = throttle.Fail(key) is not null;
-        var failed = account.FailedLogins + 1;
-        DateTime? lockedUntil = null;
-        if (failed >= Math.Max(1, options.MaxFailedLoginsPerAccount))
-        {
-            lockedUntil = now.AddMinutes(options.LockoutMinutes);
-            failed = 0;
-        }
+        var started = throttle.FailAccount(account.Id);
+        var lockedUntil = started ?? (account.LockedUntil is { } held && held > now ? held : null);
+        var failed = Math.Min(account.FailedLogins + 1, ushort.MaxValue);
         await accounts.RecordFailedLoginAsync(account.Id, failed, lockedUntil, ct);
-        await audit.WriteAsync(lockedUntil is null ? evt : evt + "_locked", account.Id, null, caller.Ip,
+        await audit.WriteAsync(started is null ? evt : evt + "_locked", account.Id, null, caller.Ip,
             addressLocked ? new { addressLocked } : null, now, ct);
     }
 
@@ -386,6 +388,7 @@ public sealed class AccountService(
             return DomainError.Invalid("wrong_password", "The current password is wrong.");
         }
         throttle.Reset(key);
+        throttle.ResetAccount(account.Id);
         if (account.FailedLogins > 0 || account.LockedUntil is not null) await accounts.RecordFailedLoginAsync(account.Id, 0, null, ct);
         return null;
     }

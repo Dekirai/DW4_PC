@@ -199,10 +199,14 @@ and stats must carry `protocol` / `clientVersion` (426 `client_outdated` otherwi
     codes or password confirmations within 15 minutes refuse that address for that name for 15 minutes, before any
     password check. A stranger locks out only their own address; a name without an account locks the same way, so the
     answer does not tell whether an account exists. A correct password from the address clears its count.
-  - per account, against guessing from many addresses: 50 failures from all addresses together (reset by a success)
-    lock the account for 15 minutes, but an address the account created or used a session from in the last 30 days
-    may still log in (and its success ends the lock); other addresses wait. Only during such a lock does the answer
-    show that the name exists.
+  - per account, against guessing from many addresses: 50 failures from all addresses together within 15 minutes (a
+    success clears them; one address alone gets at most 10 per window, so slow guessing never adds up to it) lock the
+    account for 15 minutes, but an address the account created or used a session from in the last 30 days may still
+    log in (its success ends the lock, its wrong password does not); other addresses wait. Only during such a lock
+    does the answer show that the name exists.
+  Why not "check the password first, then lock": a lock that only applies after a correct password protects nothing
+  against guessing, and one that applies before it lets anyone lock a public name. Counting per name and address
+  keeps strangers to their own address; the account-wide lock spares the addresses the owner really uses.
   Logins are also limited to 5 per minute per address (rate limit).
 - **Sessions**: 256-bit opaque tokens, only SHA-256 stored, kinds `game` (30 days) and `web` (14 days), sliding
   expiry (moved forward at most every 5 minutes), at most 20 live sessions per account.

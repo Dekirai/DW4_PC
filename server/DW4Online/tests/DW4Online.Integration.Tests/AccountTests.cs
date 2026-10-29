@@ -153,6 +153,44 @@ public class AccountTests
         Assert.Equal(2, await Dapper.SqlMapper.ExecuteScalarAsync<int>(sql, "SELECT COUNT(*) FROM audit_log WHERE event = 'login_fail_locked'"));
     }
 
+    /// <summary>
+    /// One stranger guessing slowly from one address (each time until that address is refused, then again after the
+    /// window) never adds up to the account-wide lock: the owner logs in from a new address as usual.
+    /// </summary>
+    [DbFact]
+    public async Task Slow_guessing_from_one_address_never_locks_the_account()
+    {
+        await using var host = await TestHost.StartAsync(new() { ["Accounts:MaxFailedLogins"] = "3", ["Accounts:MaxFailedLoginsPerAccount"] = "6" });
+        await host.RegisterAsync("Patient");
+        for (var round = 0; round < 4; ++round) // 12 failures in an hour, never 6 within 15 minutes
+        {
+            for (var i = 0; i < 3; ++i)
+                Assert.Equal(HttpStatusCode.Unauthorized, (await Login(host, "198.51.100.77", "Patient", "guess " + i)).StatusCode);
+            Assert.Equal(HttpStatusCode.Locked, (await Login(host, "198.51.100.77", "Patient", "guess 3")).StatusCode);
+            host.Clock.Advance(TimeSpan.FromMinutes(16));
+        }
+        Assert.Equal(HttpStatusCode.OK, (await Login(host, "203.0.113.99", "Patient", "a decent password")).StatusCode);
+        await using var sql = await host.SqlAsync();
+        Assert.Equal(0, await Dapper.SqlMapper.ExecuteScalarAsync<int>(sql, "SELECT COUNT(*) FROM audit_log WHERE event = 'login_fail_locked'"));
+        Assert.Equal(12, await Dapper.SqlMapper.ExecuteScalarAsync<int>(sql, "SELECT COUNT(*) FROM audit_log WHERE event = 'login_fail'"));
+    }
+
+    /// <summary>During an account-wide lock a wrong password from the owner's known address does not end the lock.</summary>
+    [DbFact]
+    public async Task A_known_address_typo_does_not_end_the_account_lock()
+    {
+        await using var host = await TestHost.StartAsync(new() { ["Accounts:MaxFailedLogins"] = "3", ["Accounts:MaxFailedLoginsPerAccount"] = "6" });
+        await host.RegisterAsync("Typo"); // from the default test address 192.0.2.1: known
+        foreach (var ip in new[] { "198.51.100.11", "198.51.100.12", "198.51.100.13" })
+            for (var i = 0; i < 2; ++i)
+                await Login(host, ip, "Typo", "guess " + i);
+        Assert.Equal(HttpStatusCode.Locked, (await Login(host, "198.51.100.200", "Typo", "a decent password")).StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, (await Login(host, "192.0.2.1", "Typo", "a decent passwort")).StatusCode);
+        Assert.Equal(HttpStatusCode.Locked, (await Login(host, "198.51.100.200", "Typo", "a decent password")).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await Login(host, "192.0.2.1", "Typo", "a decent password")).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await Login(host, "198.51.100.200", "Typo", "a decent password")).StatusCode);
+    }
+
     [DbFact]
     public async Task Login_rate_limit_answers_429()
     {
@@ -316,7 +354,7 @@ public class AccountTests
         Assert.Equal(41, status.GetProperty("client").GetProperty("minimumProtocol").GetInt32());
         Assert.Equal("Hello", status.GetProperty("motd").GetString());
         var health = await (await host.Client().GetAsync("/health")).Json();
-        Assert.Equal(5, health.GetProperty("schema").GetInt32());
+        Assert.Equal(6, health.GetProperty("schema").GetInt32());
 
         await host.RegisterAsync("Oldie");
         var old = await host.Client().PostAsJsonAsync("/api/v1/auth/login", new { username = "Oldie", password = "a decent password", protocol = 40 });
