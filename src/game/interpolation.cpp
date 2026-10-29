@@ -134,17 +134,8 @@ void MotionInterpolator::apply(const Map& previous, std::vector<engine::DrawItem
             continue;
         }
         const auto& before = found->second;
-        // The texture matrix (UV scrolls) on its own clocks.
-        if (item.state.texture_matrix && before.texture_matrix) {
-            if (report) ++report->textures;
-            if (before.texture_phase == item.texture_phase && item.texture_sequence_time >= before.texture_sequence_time &&
-                texture_close(*before.texture_matrix, *item.state.texture_matrix)) {
-                item.state.texture_matrix = lerp(*before.texture_matrix, *item.state.texture_matrix, alpha);
-                if (report) ++report->textures_blended;
-            } else if (report && before.texture_matrix->m != item.state.texture_matrix->m) {
-                report->flagged.push_back({&item, "texture_jump", 0.0f});
-            }
-        }
+        const bool textured = item.state.texture_matrix && before.texture_matrix;
+        if (report && textured) ++report->textures;
         if (report) {
             // (Diagnostics: another occurrence of the placement, node and
             // geometry was nearer in the previous step than the one this item
@@ -189,6 +180,20 @@ void MotionInterpolator::apply(const Map& previous, std::vector<engine::DrawItem
                     ++report->jumps;
                     report->flagged.push_back({&item, "jump", move_now, turn_now, turn_before});
                 }
+            }
+        }
+        // The texture matrix (UV scrolls, on its own clocks) only blends with
+        // its model: an item drawn as it is (the wrap and far cases above)
+        // keeps its step's texture matrix too, so the picture is that step's
+        // (the player's slash trail CF_pCylinderShape1 turns far in every
+        // swing; with a trailing UV it showed a hard edge for a present or two).
+        if (textured) {
+            if (before.texture_phase == item.texture_phase && item.texture_sequence_time >= before.texture_sequence_time &&
+                texture_close(*before.texture_matrix, *item.state.texture_matrix)) {
+                item.state.texture_matrix = lerp(*before.texture_matrix, *item.state.texture_matrix, alpha);
+                if (report) ++report->textures_blended;
+            } else if (report && before.texture_matrix->m != item.state.texture_matrix->m) {
+                report->flagged.push_back({&item, "texture_jump", 0.0f});
             }
         }
         item.model = blend_matrix(before.model, item.model, alpha);

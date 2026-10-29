@@ -15,7 +15,8 @@
 // between the steps (DrawItem::phase / texture_phase: a looping sequence
 // wrapping, a stepped key; DrawItem::sequence_time / texture_sequence_time
 // going back: a clock given an earlier origin) are not blended across that
-// step.
+// step. A texture matrix blends only together with its item's model: an
+// item drawn as it is keeps that step's texture matrix as well.
 #include "dw4/engine/scene_graph.hpp"
 
 #include <cstdint>

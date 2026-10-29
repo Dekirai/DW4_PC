@@ -162,6 +162,24 @@ void test_texture_matrices() {
     after.state.texture_matrix = engine::translation(0.75f, 0.0f, 0.0f); // an atlas cell, not a scroll
     blended = step({before}, {after}, 0.5f);
     check(near((*blended[0].state.texture_matrix)(3, 0), 0.75f), "A texture matrix jump is drawn as it is");
+    // The texture matrix goes with its model: an item drawn as it is keeps
+    // its step's texture matrix (the player's slash trail turns far in every
+    // swing; a trailing UV on it showed a hard edge).
+    after.state.texture_matrix = engine::translation(0.12f, 0.0f, 0.0f);
+    after.model = turn_y(1.0f);
+    game::BlendReport far_report;
+    blended = step({before}, {after}, 0.5f, &far_report);
+    check(near(blended[0].model(0, 0), after.model(0, 0)), "(the item turned far: drawn as it is)");
+    check(near((*blended[0].state.texture_matrix)(3, 0), 0.12f), "A texture matrix stays with a model drawn as it is");
+    check(far_report.far == 1 && far_report.textures == 1 && far_report.textures_blended == 0,
+          "The texture matrix of an item drawn as it is is not blended");
+    after.model = before.model;
+    after.phase = 3; // a sequence above the item wrapped
+    blended = step({before}, {after}, 0.5f);
+    check(near((*blended[0].state.texture_matrix)(3, 0), 0.12f), "A wrapped item keeps its step's texture matrix");
+    after.phase = 0;
+    blended = step({before}, {after}, 0.5f);
+    check(near((*blended[0].state.texture_matrix)(3, 0), 0.11f), "(with its model blended the scroll blends)");
 }
 
 // A bone that jumps is drawn as it is; the others still blend.
