@@ -290,18 +290,21 @@ std::array<PadSample, 4> Engine::online_samples(const std::array<PadSample, 4>& 
     return out;
 }
 
+void Engine::apply_pending_fork() {
+    if (!pending_fork_) return;
+    const auto fork = *pending_fork_;
+    pending_fork_.reset();
+    // online_split narrowed `present` to this copy's side at once.
+    const std::uint8_t other = fork.other;
+    const std::uint8_t before = std::uint8_t(online_.present | other);
+    for (int s = 0; s < 4; ++s)
+        if (other & bit(s)) despawn_player(s);
+    split_ = SplitResult{frame_, fork.leavers, fork.kept, fork.in_stage, fork.take_leavers};
+    membership_changed(before);
+}
+
 void Engine::finish_online_step(const std::array<PadSample, 4>& samples) {
-    if (pending_fork_) {
-        const auto fork = *pending_fork_;
-        pending_fork_.reset();
-        // online_split narrowed `present` to this copy's side at once.
-        const std::uint8_t other = fork.other;
-        const std::uint8_t before = std::uint8_t(online_.present | other);
-        for (int s = 0; s < 4; ++s)
-            if (other & bit(s)) despawn_player(s);
-        split_ = SplitResult{frame_, fork.leavers, fork.kept, fork.in_stage, fork.take_leavers};
-        membership_changed(before);
-    }
+    apply_pending_fork();
     if (!pending_stage_.empty()) {
         if (!barrier_pads_) barrier_pads_ = samples;
     } else {
@@ -458,7 +461,7 @@ void Engine::online_intent(int slot, IntentKind kind, int argument) {
         // The defeated member forks off alone; in that copy nobody lives and
         // the stage's game over (end_g_000bcaps.lua) runs as in the original.
         online_split(bit(slot), ForkKind::give_up);
-        if (pending_fork_) finish_online_step(barrier_pads_ ? *barrier_pads_ : std::array<PadSample, 4>{});
+        apply_pending_fork();
         return;
     }
     // go_without: round S3 (boss and story mats).
@@ -502,7 +505,10 @@ bool Engine::online_split(std::uint8_t mask, ForkKind kind) {
         take = (leavers & bit(split_identity_)) != 0;
     // This copy's side from now on; the other side's players are despawned
     // at the end of the step (finish_online_step).
-    pending_fork_ = PendingFork{leavers, kept, take ? stayers : leavers, kind == ForkKind::in_stage, take};
+    // (A second fork in the same step forks the side this copy took; the
+    // despawns of both happen at the end of the step.)
+    const std::uint8_t earlier = pending_fork_ ? pending_fork_->other : std::uint8_t(0);
+    pending_fork_ = PendingFork{leavers, kept, std::uint8_t((take ? stayers : leavers) | earlier), kind == ForkKind::in_stage, take};
     online_.present = take ? leavers : stayers;
     return take;
 }

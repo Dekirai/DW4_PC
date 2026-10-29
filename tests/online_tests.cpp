@@ -501,6 +501,7 @@ struct Recording {
     int generated_players{};
     int max_generated{};
     bool rebooted{};
+    std::size_t carry_bytes{}; // encode_carry of slot 0 at the end
     double seconds{};
 };
 
@@ -626,6 +627,7 @@ Recording run_scenario(const std::filesystem::path& data, const Scenario& sc, co
     if (const auto* models = engine.get<ModelCtrlManager>())
         for (int s = 0; s < 4; ++s)
             if (const auto* p = models->player(s); p && p->generated) ++rec.generated_players;
+    rec.carry_bytes = encode_carry(engine.carry_player(0)).size();
     rec.seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
     engine.set_online(OnlineRules{});
     return rec;
@@ -743,7 +745,8 @@ void data_scenarios(const std::filesystem::path& data) {
     const auto a = run_scenario(data, s1, nullptr);
     std::cout << "  " << s1.name << ": " << a.fingerprints.size() << " steps in " << a.seconds << " s, events at";
     for (const auto& e : a.applied) std::cout << ' ' << e.frame;
-    std::cout << ", final present " << int(a.final_present) << ", generated " << a.generated_players << '\n';
+    std::cout << ", final present " << int(a.final_present) << ", generated " << a.generated_players << ", carry of slot 0 "
+              << a.carry_bytes << " B\n";
     check(a.splits.size() == 1 && a.splits[0].leavers == 0b0010 && !a.splits[0].local_leaves, "the fork: slot 1 left, this copy stayed");
     check(a.final_present == 0b0001 && a.generated_players == 1, "one member left at the end");
     const auto b = run_scenario(data, s1, &a.applied);
@@ -841,6 +844,7 @@ void data_scenarios(const std::filesystem::path& data) {
     std::cout << "  " << s4.name << ": events at";
     for (const auto& e : a4.applied) std::cout << ' ' << e.frame;
     std::cout << ", final stage " << a4.final_stage << ", present " << int(a4.final_present) << ", generated " << a4.generated_players << std::endl;
+    check(a4.max_generated == 2, "the co-arrival is generated in dng101b2 with the base member");
     check(a4.final_stage == "stagml11" && a4.final_present == 1 && a4.generated_players == 1, "dissolved into a solo lobby");
     const auto b4 = run_scenario(data, s4, &a4.applied);
     check(compare(a4, b4, s4.name) == a4.fingerprints.size(), "co-arrival: the second engine agrees");

@@ -972,6 +972,7 @@ private:
     // The end of an online step: a pending fork's despawns, the barrier
     // tick's pads.
     void finish_online_step(const std::array<PadSample, 4>& samples);
+    void apply_pending_fork();
     // The load step: BARRIER_OK's membership and rules (before begin_stage_load).
     void apply_barrier();
     // Recomputes present from the joined slots, the camera mask and the leash.
