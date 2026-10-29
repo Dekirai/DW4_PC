@@ -61,7 +61,7 @@ dotnet run --project src\DW4Online.Server --environment Development   # http://1
 
 `appsettings.json` holds every setting with its default and no secrets. Secrets (the connection string, the relay
 ticket key) go into `appsettings.Local.json` next to the executable (gitignored, never published) or, on the server,
-`appsettings.Production.json` readable only by the service account. Environment variables (`Database__ConnectionString`)
+a settings file outside the app folder passed with `--settings` and readable only by the service account. Environment variables (`Database__ConnectionString`)
 and user secrets (Development) work as usual.
 
 | Section | Keys (defaults) |
@@ -74,7 +74,7 @@ and user secrets (Development) work as usual.
 | `Play` | `RequireRoom` (true), `MinimumProtocol` / `CurrentProtocol` (netplay `kProtocol`), `MinimumClientVersion` / `CurrentClientVersion`. |
 | `RateLimits` | `GlobalPerMinute` 300 (per IP), `LoginPerMinute` 5 (per IP, login + recovery), `RegisterPerHour` 3 (per IP), `CharacterWritesPerMinute` 12, `CloudWritesPerHour` 6, `AchievementsPerMinute` 60, `AccountChangesPerMinute` 10, `StaffPerMinute` 60 (per account). |
 | `Relay` | `Enabled` (false; true in Development), `ListenAddress`, `Port` (52041), `TicketKey` (secret, base64 32 bytes: `DW4Online.Server gen-relay-key`), timeouts and byte budgets. |
-| `Tls` | `StoreHostName`: take HTTPS certificates from the Windows store (renewals without a restart). |
+| `Tls` | `StoreHostName`: take HTTPS certificates from the Windows store (renewals without a restart); `AcmeChallengeDirectory`: serve ACME http-01 files from a folder. |
 | `Logging:File` | `Directory` (empty = off), `MinimumLevel`, `RetainDays`: daily UTC log files for the service. |
 | `Kestrel` | Standard Kestrel endpoints (`http://127.0.0.1:5280` by default). |
 
@@ -87,6 +87,7 @@ DW4Online.Server migrate                  apply pending migrations and exit
 DW4Online.Server set-role <user> <role>   player | moderator | admin (bootstraps the first admin)
 DW4Online.Server reset-password <user>    print a temporary password the user must change (audit actor 0 = console)
 DW4Online.Server gen-relay-key            print a new random Relay:TicketKey
+... --settings <file>                      every form: load an extra settings file (the server's secrets live outside the app folder)
 ```
 
 ## Database

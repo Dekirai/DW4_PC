@@ -77,7 +77,7 @@ public sealed class TestHost : IAsyncDisposable
     public string Database { get; }
     public ManualClock Clock { get; }
 
-    public static async Task<TestHost> StartAsync(Dictionary<string, string?>? overrides = null)
+    public static async Task<TestHost> StartAsync(Dictionary<string, string?>? overrides = null, string? settingsFile = null)
     {
         var database = await TestDb.CreateAsync();
         var clock = new ManualClock();
@@ -99,7 +99,7 @@ public sealed class TestHost : IAsyncDisposable
         };
         if (overrides is not null)
             foreach (var (k, v) in overrides) settings[k] = v;
-        var app = ServerApp.Build(["--environment", "Testing"], configure: builder =>
+        var app = ServerApp.Build(["--environment", "Testing"], settingsFile: settingsFile, configure: builder =>
         {
             builder.WebHost.UseTestServer();
             builder.Configuration.AddInMemoryCollection(settings);

@@ -1,0 +1,14 @@
+# Additions to the [mysqld] section of the MariaDB 11.4 instance's my.ini on the server (see DEPLOY.md, step 1).
+# Restart only the MariaDB service afterwards: Restart-Service MariaDB
+[mysqld]
+# Local connections only: the service runs on the same machine; port 3306 stays closed in the firewall.
+bind-address=127.0.0.1
+# The schema sets utf8mb4_unicode_ci explicitly; the server default matches it (11.x changed its default collation).
+character-set-server=utf8mb4
+collation-server=utf8mb4_unicode_ci
+# The service writes UTC; a UTC session time zone keeps CURRENT_TIMESTAMP defaults consistent.
+default-time-zone='+00:00'
+# Cloud saves are about 90 KB (at most 1 MiB); 16 MB leaves room for dumps and restores.
+max_allowed_packet=16M
+# Enough for tens of thousands of accounts; raise with more players.
+innodb_buffer_pool_size=512M

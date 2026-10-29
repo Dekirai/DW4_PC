@@ -9,6 +9,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 
 namespace DW4Online.Api;
 
@@ -74,6 +75,7 @@ public static class ApiSetup
     /// <summary>Order matters: authentication first, so per-account rate limits know the account.</summary>
     public static WebApplication UseDw4Api(this WebApplication app)
     {
+        if (!app.Environment.IsDevelopment()) app.UseExceptionHandler(); // a problem-details 500, never a stack trace
         app.UseStatusCodePages();
         app.UseAuthentication();
         app.UseRateLimiter();
