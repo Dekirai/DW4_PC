@@ -425,6 +425,10 @@ public:
     // original's cull skips that lie inside the wider picture, without
     // their updates. Presentation only; simulation never reads it.
     float picture_widen = 1.0f;
+    // Smooth motion: the previous step's picture camera view while the host
+    // blends the picture between two steps (TraversalContext::
+    // picture_previous_view). Presentation only, like picture_widen.
+    std::optional<Mat4> picture_previous_view;
     // Per-scene draw statistics for diagnostics.
     std::vector<std::string> scene_report();
 

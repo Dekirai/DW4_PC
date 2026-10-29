@@ -151,6 +151,12 @@ struct TransformSequence {
     Vec3f center{};
     bool valid{};
     Mat4 evaluate(std::int64_t time) const;
+    // Presentation only (DrawItem::phase): a value that changes exactly when
+    // evaluate(time) jumps instead of moving on continuously: REPEAT / LOOP
+    // passing the end (the start key follows the end key at once), and with
+    // a stepped channel (_interpolationMethod NONE) every change of the key
+    // it holds. Time order is not assumed (a clock may restart).
+    std::uint32_t phase(std::int64_t time) const;
     // One key without interpolation (80208084; QS 801E32B8 outside the keys).
     Mat4 key(std::size_t index) const;
     // Keys i and j blended by alpha (80209578; QS 801E32B8).
@@ -310,6 +316,23 @@ struct DrawItem {
     std::uint32_t order{};
     // Optional skinning palette (row-vector matrices) for weighted geometry.
     std::shared_ptr<const std::vector<Mat4>> palette;
+    // Presentation only (smooth motion, game/interpolation.hpp; the original
+    // has no such data and the simulation never reads it):
+    // `instance` names the placement: a hash of the node path from the
+    // traversal's root, so the placements of a shared (DAG) node keep apart
+    // when culling or switches change which of them are drawn.
+    std::uint64_t instance{};
+    // `phase` changes when a transform sequence above the item jumps
+    // (wrapping or stepping, TransformSequence::phase), and `sequence_time`,
+    // the sum of the times those sequences were evaluated at, only decreases
+    // when a clock they run on jumped back (ACTION's JOINTSET or a joint loop
+    // setting a beModelCtrlNode2 clock's origin, a beNodeAnim loop): the
+    // model matrix must not be blended across such a step.
+    // `texture_phase` / `texture_sequence_time` the same for the texture
+    // matrix (texture transform sequences; runtime texture matrices change
+    // the phase whenever they change).
+    std::uint32_t phase{}, texture_phase{};
+    std::int64_t sequence_time{}, texture_sequence_time{};
 };
 
 struct FrameCamera {
@@ -390,6 +413,11 @@ struct TraversalContext {
     // without its updates; false (a debug camera) draws every such subtree.
     bool picture_cull = true;
     float picture_widen = 1.0f;
+    // Smooth motion (Engine::picture_previous_view): the picture is blended
+    // between the previous step's camera and this one, so the picture's cull
+    // also draws a subtree inside the previous step's frustum (with this
+    // step's projection, widened as above), without its updates as above.
+    std::optional<Mat4> picture_previous_view;
     // The projection under the modelview_base of the shadow caster pass
     // (the light's, pushed by 801FDCCC with its view).
     std::optional<Mat4> projection_base;

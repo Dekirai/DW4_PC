@@ -1614,6 +1614,11 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     const int screen_width = height * 4 / 3;
                     engine.picture_widen = (float(screen_width) / float(height)) / (float(width) / float(height));
                 }
+                // Smooth motion draws between the previous step's camera and
+                // this one: the picture's cull keeps what is inside either.
+                const bool blending =
+                    (!options.smoke_frames || dev.presenting()) && settings.smooth_motion && present_interval < 1.0 / 75.0;
+                engine.picture_previous_view = blending ? interpolator.previous_view() : std::nullopt;
                 engine.render(items, camera, clear, &shadow);
                 dw4::game::dev_hide(dev, items, shadow);
                 items_current = true;
