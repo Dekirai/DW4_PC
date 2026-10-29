@@ -793,6 +793,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
     if (!SDL_Init(draw ? SDL_INIT_VIDEO | SDL_INIT_GAMEPAD : SDL_INIT_EVENTS)) throw std::runtime_error(SDL_GetError());
     SDL_Window* window = nullptr;
     SDL_GLContext context = nullptr;
+    ImFont* tag_font = nullptr; // the overhead name tags' font
     int samples = 0;
     if (draw) {
         SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
@@ -804,7 +805,8 @@ int run(const Options& options, dw4::game::Settings& settings) {
         if (options.smoke_frames) flags |= SDL_WINDOW_HIDDEN;
         // Multisampling is chosen with the window (settings.ini msaa, read at
         // start-up); without support the window opens without it.
-        const int msaa = options.smoke_frames ? 0 : settings.msaa;
+        // Test runs: none unless DW4_MSAA=n (screenshots at a player's settings).
+        const int msaa = options.smoke_frames ? (std::getenv("DW4_MSAA") ? std::atoi(std::getenv("DW4_MSAA")) : 0) : settings.msaa;
         SDL_GL_SetAttribute(SDL_GL_MULTISAMPLEBUFFERS, msaa > 1 ? 1 : 0);
         SDL_GL_SetAttribute(SDL_GL_MULTISAMPLESAMPLES, msaa > 1 ? msaa : 0);
         // Test runs ignore settings.ini: 1280x960 unless DW4_WINDOW=WxH, 4:3
@@ -837,6 +839,19 @@ int run(const Options& options, dw4::game::Settings& settings) {
         ImGui::StyleColorsDark();
         ImGui_ImplSDL3_InitForOpenGL(window, context);
         ImGui_ImplOpenGL3_Init("#version 330");
+        // The menus keep ImGui's own font (the first one added is the
+        // default); the overhead name tags take a bold system face when
+        // there is one (Segoe UI Bold, Arial Bold: readable over any
+        // background at their small size), else ImGui's scalable one.
+        auto& fonts = *ImGui::GetIO().Fonts;
+        fonts.AddFontDefaultBitmap(); // what ImGui picks on its own at this size (13 px)
+        if (const char* windows = std::getenv("WINDIR"))
+            for (const char* face : {"segoeuib.ttf", "arialbd.ttf"}) {
+                const auto file = std::filesystem::path(windows) / "Fonts" / face;
+                std::error_code error;
+                if (!tag_font && std::filesystem::is_regular_file(file, error)) tag_font = fonts.AddFontFromFileTTF(file.string().c_str(), 18.0f);
+            }
+        if (!tag_font) tag_font = fonts.AddFontDefaultVector();
     }
 
     // Audio: the SoundManager's streams go to the default playback device
@@ -986,6 +1001,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
         // positions every N frames, without a window too).
         dw4::game::OverheadLabels labels;
         const int trace_labels = options.smoke_frames && std::getenv("DW4_TRACE_LABELS") ? std::atoi(std::getenv("DW4_TRACE_LABELS")) : 0;
+        std::set<std::uint64_t> traced_occlusion; // the labels the last picture hid (traces)
         auto label_mode = [&] {
             if (options.smoke_frames) {
                 const char* mode = std::getenv("DW4_LABELS");
@@ -1970,13 +1986,14 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 for (const auto& label : labels.current()) {
                     const auto point = dw4::game::project_label(label.head, view);
                     const bool shown = !hidden && label.hp > 0 && point && dw4::game::label_visible(label_mode(), label.own, labels.players());
-                    std::printf("[%d] label slot=%d '%s' Lv %d HP %d/%d MP %d/%d head=(%.1f, %.1f, %.1f) ", frame, label.slot, label.name.c_str(),
-                                label.level, label.hp, label.max_hp, label.mp, label.max_mp, label.head.x, label.head.y, label.head.z);
+                    std::printf("[%d] label slot=%d '%s' Lv %d HP %d/%d MP %d/%d head=(%.1f, %.1f, %.1f) %.1f above the feet ", frame,
+                                label.slot, label.name.c_str(), label.level, label.hp, label.max_hp, label.mp, label.max_mp, label.head.x,
+                                label.head.y, label.head.z, label.head.y - label.feet.y);
                     const auto feet = dw4::game::project_label(label.feet, view, 1.0f);
                     if (point)
-                        std::printf("screen=(%.1f, %.1f) feet=(%.1f, %.1f) distance %.0f alpha %.2f%s\n", point->x, point->y,
+                        std::printf("screen=(%.1f, %.1f) feet=(%.1f, %.1f) distance %.0f alpha %.2f%s%s\n", point->x, point->y,
                                     feet ? feet->x : -1.0f, feet ? feet->y : -1.0f, point->distance, dw4::game::label_fade(point->distance),
-                                    shown ? "" : " (hidden)");
+                                    shown ? "" : " (hidden)", traced_occlusion.contains(label.key) ? " (behind the scene)" : "");
                     else
                         std::printf("off screen%s\n", hidden ? " (hidden)" : "");
                 }
@@ -2048,8 +2065,43 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 }
                 // From the step that took a stage change on, the original presents
                 // nothing new: the last picture stays until the loader draws.
+                // Overhead name tags: where they stand on this picture and
+                // whether it hides their players (its depth buffer, read
+                // right after the scene is drawn).
+                const auto tag_mode = label_mode();
+                bool tags_shown = false;
+                std::vector<dw4::game::OverheadLabel> tags;
+                dw4::game::LabelView tag_view;
                 if (engine.presenting() || !renderer->draw_kept_picture(width, height)) {
                     renderer->render(items, camera, clear, screen, wide, width, height);
+                    if (tag_mode != dw4::game::LabelMode::off && !dw4::game::OverheadLabels::hidden(engine)) {
+                        tags_shown = true;
+                        tag_view.camera = camera;
+                        tag_view.widen = wide.width > screen.width && wide.height > 0 && screen.height > 0
+                                             ? (float(screen.width) / float(screen.height)) / (float(wide.width) / float(wide.height))
+                                             : 1.0f;
+                        tag_view.wide_x = float(wide.x);
+                        tag_view.wide_y = float(wide.y);
+                        tag_view.wide_width = float(wide.width);
+                        tag_view.wide_height = float(wide.height);
+                        tag_view.window_height = float(height);
+                        // (Last frame's scale: ImGui sets it with the next NewFrame.)
+                        const ImVec2 scale = ImGui::GetIO().DisplayFramebufferScale;
+                        tag_view.scale_x = scale.x > 0 ? scale.x : 1.0f;
+                        tag_view.scale_y = scale.y > 0 ? scale.y : 1.0f;
+                        const bool smooth = !options.smoke_frames && settings.smooth_motion && present_interval < 1.0 / 75.0;
+                        tags = labels.blended(smooth ? float(accumulator / dw4::engine::kFieldSeconds) : 1.0f);
+                        traced_occlusion.clear();
+                        for (auto& tag : tags) {
+                            if (tag.hp <= 0 || !dw4::game::label_visible(tag_mode, tag.own, labels.players())) continue;
+                            const bool hidden_now = dw4::game::occluded_in_picture(
+                                dw4::game::occlusion_probes(tag.head, tag_view),
+                                [&](float x, float y) { return renderer->read_depth(int(x), height - 1 - int(y), width, height); },
+                                tag_view.camera.projection);
+                            tag.occlusion = labels.ease_occlusion(tag.key, hidden_now);
+                            if (hidden_now) traced_occlusion.insert(tag.key);
+                        }
+                    }
                     // A playing movie covers the screen with its current picture.
                     // After its end Sofdec's last picture stays up until the
                     // stage changes (the opening's end script switches a frame
@@ -2086,25 +2138,10 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 ImGui_ImplSDL3_NewFrame();
                 ImGui::NewFrame();
                 // Overhead name tags over the picture, under the menus.
-                if (const auto mode = label_mode(); mode != dw4::game::LabelMode::off && !dw4::game::OverheadLabels::hidden(engine)) {
-                    dw4::game::LabelView view;
-                    view.camera = camera;
-                    view.widen = wide.width > screen.width && wide.height > 0 && screen.height > 0
-                                     ? (float(screen.width) / float(screen.height)) / (float(wide.width) / float(wide.height))
-                                     : 1.0f;
-                    view.wide_x = float(wide.x);
-                    view.wide_y = float(wide.y);
-                    view.wide_width = float(wide.width);
-                    view.wide_height = float(wide.height);
-                    view.window_height = float(height);
-                    const ImVec2 scale = ImGui::GetIO().DisplayFramebufferScale;
-                    view.scale_x = scale.x > 0 ? scale.x : 1.0f;
-                    view.scale_y = scale.y > 0 ? scale.y : 1.0f;
-                    const bool smooth = !options.smoke_frames && settings.smooth_motion && present_interval < 1.0 / 75.0;
-                    const float alpha = smooth ? float(accumulator / dw4::engine::kFieldSeconds) : 1.0f;
-                    const float size = float(height) / view.scale_y / 960.0f * float(settings.label_scale) / 100.0f;
-                    dw4::game::draw_overhead_labels(ImGui::GetBackgroundDrawList(), labels.blended(alpha), view, mode, labels.players(),
-                                                    std::max(size, 0.5f), settings.label_numbers);
+                if (tags_shown) {
+                    const float size = float(height) / tag_view.scale_y / 960.0f * float(settings.label_scale) / 100.0f;
+                    dw4::game::draw_overhead_labels(ImGui::GetBackgroundDrawList(), tags, tag_view, tag_mode, labels.players(),
+                                                    std::max(size, 0.5f), settings.label_numbers, tag_font);
                 }
                 if (show_menu) {
                     ImGui::SetNextWindowSize(ImVec2(560, 560), ImGuiCond_FirstUseEver);

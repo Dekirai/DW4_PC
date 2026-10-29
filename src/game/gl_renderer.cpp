@@ -379,6 +379,16 @@ void GlRenderer::keep_picture(int window_width, int window_height) {
     glCopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 0, 0, window_width, window_height);
 }
 
+std::optional<float> GlRenderer::read_depth(int x, int y, int window_width, int window_height) {
+    if (x < 0 || y < 0 || x >= window_width || y >= window_height) return std::nullopt;
+    for (int i = 0; i < 16 && glGetError() != GL_NO_ERROR; ++i) {
+    }
+    float depth = 1.0f;
+    glReadPixels(x, y, 1, 1, GL_DEPTH_COMPONENT, GL_FLOAT, &depth);
+    if (glGetError() != GL_NO_ERROR) return std::nullopt;
+    return depth;
+}
+
 bool GlRenderer::draw_kept_picture(int window_width, int window_height) {
     if (!kept_texture_ || window_width != kept_width_ || window_height != kept_height_) return false;
     auto& gl = *gl_;

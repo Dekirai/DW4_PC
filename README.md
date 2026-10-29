@@ -366,17 +366,29 @@ They are drawn by the PC host over the game picture (ImGui, under the F1
 menu) from the players' state after each step, the camera the picture used
 and the widescreen widening; nothing is added to the game's scene, so the
 simulation, save states, online sessions and the Dolphin comparisons are the
-same with them on. The tag sits a little above the highest joint of the
-Digimon's current pose (else above part of its bounding box, else a height per
+same with them on. The tag sits just above the head (a quarter of the
+highest joint's height above that joint of the Digimon's current pose, at
+least 1.8 units; else above part of its bounding box, else a height per
 form), follows the smooth motion above 60 fps, fades with the distance from
 the camera and is hidden during stage loads, demos and cutscenes (pad input
 off), status and shop windows, the title and menu screens, and for a defeated
-player. Players beyond the four local slots (the coming seamless co-op) are
-handed in by the netcode (`OverheadLabels::set_remote_players`) and drawn the
-same way when they are in the same stage. Test runs: `DW4_LABELS=all` and
-`DW4_TRACE_LABELS=N` (every N frames the labels' head point, screen position,
-the feet's screen position and the distance, for the 1280x960 test window or
-`DW4_WINDOW`, without a window too).
+player. Tags that would overlap stack: the nearer player's keeps its place,
+the one behind moves up with a thin line down to its player. A local
+player's name starts with the colour of its HUD ring (red, blue, yellow,
+green). When the picture hides a player (a wall or a pillar between it and
+the camera: the depth buffer just drawn is nearer than three points just
+above its head; the stage's collision cannot tell, it holds invisible walls)
+its tag turns faint over a few frames, so it still shows where the player
+is. The text uses Windows' Segoe UI Bold (else Arial Bold, else ImGui's
+scalable font); the F1 menu keeps its own. Players beyond the four local
+slots (the coming seamless co-op) are handed in by the netcode
+(`OverheadLabels::set_remote_players`) and drawn the same way when they are
+in the same stage. Test runs: `DW4_LABELS=all` and `DW4_TRACE_LABELS=N`
+(every N frames the labels' head point and its height above the feet, screen
+position, the feet's screen position, the distance and whether the last
+picture hid the player, for the 1280x960 test window or `DW4_WINDOW`, without
+a window too); `DW4_MSAA=n` gives a test run's hidden window the
+multisampling of a player's settings (screenshots).
 
 ### Discord Rich Presence
 

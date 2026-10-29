@@ -13,6 +13,7 @@
 #include "dw4/engine/scene_graph.hpp"
 
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -59,6 +60,26 @@ float label_fade(float distance, float near_distance = 350.0f, float far_distanc
 // 16 forms), else 30 units.
 float form_label_height(int species);
 engine::Vec3f head_point(const engine::Node& node, int species, std::optional<float> pose_top = std::nullopt);
+// Whether the picture hides a label's player: read from the depth buffer the
+// renderer just drew (the stage's own collision holds invisible walls, so it
+// cannot tell). The probes sit a little above the head point, at its centre
+// and to either side: each has its framebuffer pixel (origin top left) and
+// its distance along the view axis (the projection's w).
+struct OcclusionProbe {
+    float x{}, y{};
+    float depth{};
+};
+std::vector<OcclusionProbe> occlusion_probes(const engine::Vec3f& head, const LabelView& view);
+// The distance along the view axis of a window depth (0..1) a perspective
+// projection (row-vector layout, GL depth range) wrote; nullopt for an
+// orthographic one or the far plane's clear value.
+std::optional<float> view_distance(float window_depth, const engine::Mat4& projection);
+// Hidden when the picture is nearer than every probe by more than `margin`
+// (world units) at each probe's pixel; a probe without a depth (off the
+// window) counts as seen. `depth_at(x, y)`: the window depth at a
+// framebuffer pixel (origin top left).
+bool occluded_in_picture(const std::vector<OcclusionProbe>& probes, const std::function<std::optional<float>(float, float)>& depth_at,
+                         const engine::Mat4& projection, float margin = 2.0f);
 // The highest joint of a player's pose in world y (ActionManager's last
 // traversed pose of the model's first actor); nullopt without one.
 std::optional<float> player_pose_top(const engine::Engine& engine, std::string_view model, int index, const engine::Node& node);
@@ -75,6 +96,11 @@ struct OverheadLabel {
     std::uint64_t key{};  // local slot 0..3, remote players 0x100 + their id
     int slot = -1;        // GameSystem slot (-1 remote)
     bool own{};           // this machine's player
+    // How far the picture hides the player (occluded_in_picture where the
+    // labels are drawn, eased over a few frames by
+    // OverheadLabels::ease_occlusion): 0 seen .. 1 hidden, the label then
+    // faint, so it still shows where the player is.
+    float occlusion{};
     engine::Vec3f head{};
     engine::Vec3f feet{}; // the model's position
     std::string name;     // ASCII
@@ -103,6 +129,9 @@ public:
     // `local_players` of them joined) and the remote players in `stage`.
     void capture(std::vector<OverheadLabel> local, int local_players, std::string_view stage);
     void reset();
+    // A label's occlusion eased towards `hidden` (an eighth of the way per
+    // presented frame), so a probe that grazes an edge does not blink.
+    float ease_occlusion(std::uint64_t key, bool hidden);
     // The labels between the previous and the current capture (alpha 0..1,
     // the renderer's smooth motion blend; a label that jumped far, appeared
     // or vanished is drawn where it is now).
@@ -119,19 +148,40 @@ public:
 private:
     std::vector<OverheadLabel> previous_, current_;
     std::vector<RemotePlayer> remote_;
+    std::vector<std::pair<std::uint64_t, float>> occlusion_; // eased occlusion per label key
     int players_{};
 };
+
+// The name tags' layout (draw_overhead_labels draws it): each label's box
+// (ImGui units) after the overlap pass, in `labels` order; `shown` false
+// for one that does not show (mode, no HP, off screen, faded out). Its
+// opacity is the distance fade, times 0.35 for a hidden player (eased by
+// `occlusion`).
+struct LabelBox {
+    bool shown{};
+    float x{}, y{}, width{}, height{}; // top left corner and size
+    float anchor_x{}, anchor_y{};      // the head point on the screen
+    float alpha{};
+};
+// `size` gives a label's box size (its bars and texts).
+std::vector<LabelBox> layout_overhead_labels(const std::vector<OverheadLabel>& labels, const LabelView& view, LabelMode mode, int players,
+                                             const std::function<std::pair<float, float>(const OverheadLabel&)>& size);
 
 } // namespace dw4::game
 
 struct ImDrawList;
+struct ImFont;
 
 namespace dw4::game {
 
 // Draws the labels whose mode lets them show (overhead_labels_draw.cpp,
 // ImGui). `scale`: the label size factor (window height / 960 times the
-// setting), `numbers`: HP / MP numbers beside the bars.
+// setting), `numbers`: HP / MP numbers beside the bars. Labels that would
+// overlap move up above each other (the nearer one keeps its place), an
+// occluded one is faint, a local player's name carries the colour of its
+// HUD ring (1 red, 2 blue, 3 yellow, 4 green). `font`: the tags' font (null:
+// ImGui's current one).
 void draw_overhead_labels(ImDrawList* list, const std::vector<OverheadLabel>& labels, const LabelView& view, LabelMode mode,
-                          int players, float scale, bool numbers);
+                          int players, float scale, bool numbers, ImFont* font = nullptr);
 
 } // namespace dw4::game
