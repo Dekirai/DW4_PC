@@ -28,6 +28,11 @@ Output in --out (default DUMP_DIR/flicker[_mode]):
                  draw items owning their event pixels: at the event and the present before it
                  ('A -> B' = another item covered the pixel during the event)
   events.csv     present, frame, steps, alpha, luminance events, owner events
+The owner of a pixel is the last item that wrote it; under a blended owner ([B...] flags) the change
+can come from an item below it. Confirm a suspect with an A/B run that leaves it out
+(DW4_DEV_HIDE=<node or texture name>): its region's events must vanish. Under a moving camera fine
+texture detail sliding past also comes back within a few presents; judge such windows against the
+same run with DW4_DEV_SMOOTH=0 and with tools/blend_report.py.
 Needs numpy and Pillow.
 """
 import argparse
