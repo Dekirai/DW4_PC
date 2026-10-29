@@ -31,6 +31,25 @@ determinism reference (`DW4_TRACE_FINGERPRINT`) and the audio dump are the
 same with collecting on and off (`tests/port_events_tests.cpp` checks the
 fingerprint too).
 
+The randomizer (a PC option, `engine/randomizer.hpp`) is the one feature of
+the PC package that changes the simulation, and only while it is on
+(`Cheats::rand_seed` with `rand_enemies` / `rand_zones`, or `drop_seed` for
+the item drops; all of them are in the snapshot and the online start
+message). Every decision comes from the master seed and the game's own state
+(stage, generator name, spawn count), never from the fight generator or the
+host clock. Its hooks: `GeneraterManager` swaps a wave's family (the
+original enemy record stays) and removes a swapped enemy that never lands;
+`Engine::load_enemy_donors` reads the pool's missing families from their
+donor stage members after boot.lua; `STAGECTL NEXTSTAGE` remaps the coupled
+dungeon entrances and the exit prompt names the new target. With the
+randomizer off none of them runs, so the determinism reference, the story
+runs and the save states are those of the original. The same round fixed one
+1:1 point in the generator that applies always: `_genePoint` lives in the
+beGeneraterInfoWork allocated when a wave starts (802FCFA8), so a restarted
+generator spawns from its first point again (`ram.point = 0`, confirmed in
+Dolphin by round 47 with the stag0302 e_torta wave); it does not change the
+determinism reference or the story runs.
+
 ## Frame step (`Engine::step`)
 
 One step is one original frame, one NTSC field: the world clock advances by

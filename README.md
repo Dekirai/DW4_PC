@@ -97,7 +97,8 @@ quicksand and slippery floors; many smaller managers are still missing. See
 | --- | --- |
 | `include/dw4`, `src` | `dw4_core`: IGB documents, packages and resources, textures, meshes, skinning, Enbaya animation, Lua 4 bytecode, pads and motion primitives |
 | `include/dw4/engine`, `src/engine` | `dw4_engine`: frame step, messenger and demo manager, Lua host, scene graph, and the reconstructed managers (stage loader, scene/layer/camera, model control, actions, text, menus, title, character select, floor mats, collision) |
-| `src/game` | `dw4_game`: SDL3 window, OpenGL renderer, input mapping, settings and the F1 menu |
+| `src/game` | `dw4_game`: SDL3 window, OpenGL renderer, input mapping, settings and the F1 menu, the save store and GC save import, online sessions, Discord Rich Presence, name tags, achievements |
+| `server/DW4Online` | The online backend (ASP.NET Core + MariaDB: accounts, online character, cloud save, achievements, rooms, relay, website), its tests and deployment kit; built with `dotnet`, separate from the CMake build |
 | `tools` | `dw4_inspect` (IGB inspection), `dw4_catalog` (logical resource catalog), `verify_game.py` (read-only ISO identification) |
 | `tests` | Asset-free tests for the core formats and tools |
 | `docs` | Format and module notes; `docs/research` keeps the reverse-engineering notes (DOL addresses, recovered behavior) |
@@ -264,18 +265,22 @@ drives three parts, each switched on its own:
   in stag0301 that led to the Vein still opens with the stag0301 lever and the
   stag0302 console, whatever dungeon now lies behind it).
 
-A new game binds the randomizer it starts with to its save: `saves/randomizer.ini`
-next to the program keeps the seed and modes per saved character (by the
-character's UNIQUE id), so changing the settings later does not change a
-running game, and `saves/randomizer_<UNIQUE>_spoiler.txt` beside it lists the
-seed, the loading zone table and every stage's enemy pool. A save started
-without the randomizer is bound the first time it is played with one; the F1
-section shows the bound seed and can bind the current settings to the running
-save. Delete a character's section in `randomizer.ini` to let it follow the
+A new game binds the randomizer it starts with to its save: `randomizer.ini`
+next to the save (`saves/randomizer.ini` beside `saves/savedata.dat`, or
+beside the `[data] save` / `--save-file` file; the GCI root with `--card-dir`
+/ `DW4_CARD_DIR`; `saves/` next to the program for a `[data] cards` folder,
+so nothing is written into a Dolphin folder) keeps the seed and modes per
+saved character (by the character's UNIQUE id), so changing the settings
+later does not change a running game, and `randomizer_<UNIQUE>_spoiler.txt`
+beside it lists the seed, the loading zone table and every stage's enemy
+pool. A save started without the randomizer is bound the first time it is
+played with one; the F1 section shows the bound seed and can bind the current
+settings to the running save. Delete a character's section in `randomizer.ini` to let it follow the
 settings again. Save states replay with the randomizer they were made with.
 Online, every machine plays the host's randomizer and nothing is bound.
 Randomized games are not the original game (`Cheats::original()`), so they
-count as their own category wherever that matters.
+count as their own category wherever that matters (achievements unlock into
+their own list with any of the three parts on).
 
 Test runs: `DW4_RANDOMIZER=seed[,enemies[,zones[,drops]]]` (a bare seed turns
 everything on), `DW4_RANDOMIZER_SWEEP=1` makes every enemy generator of the
@@ -307,6 +312,30 @@ session ends each owner gets its save back with what was saved. Save states
 are off online; a guest that leaves plays on released, a host that leaves ends
 the session for the others (they play on alone). The host needs the port
 open (router / firewall) for guests outside the local network.
+
+These sessions are the first step. The planned online play goes through the
+project's own server (next section): rooms of up to ten players, everyone in
+the same stage playing it together (at most four per stage instance, shared
+enemies and drops), all traffic relayed by the server so nobody opens a
+port, and an online character per account that starts from zero, separate
+from the local save. The game client for it is not built yet.
+
+### Online server (DW4Online)
+
+`server/DW4Online` is the backend for that: one ASP.NET Core (.NET 10)
+service with MariaDB that holds the accounts (open registration with rate
+limits, optional e-mail, one-time recovery codes, admin resets), the online
+character, one private cloud backup of the local save per account (the
+latest and five earlier revisions), the online achievements (only online
+play counts; cheats, rebalancing and loaded save states never, randomizer
+runs as their own category, speedrun times in in-game time without loading),
+the room list with stage instances, the TCP relay with one-time HMAC tickets
+(port 52041) and the website (accounts, profiles, achievements with their
+rarity, rooms, admin, privacy page). It runs on loopback in its tests and is
+not deployed yet; building, configuration, the deployment kit for a Windows
+server (Windows service, TLS, backups) and the API are described in
+[server/DW4Online/README.md](server/DW4Online/README.md) and
+[server/DW4Online/deploy/DEPLOY.md](server/DW4Online/deploy/DEPLOY.md).
 
 ### Name tags
 
@@ -405,8 +434,8 @@ come with the seamless co-op server. Rules:
   stage, after a save state was loaded in the running stage, while a save
   state replays, in test runs and while the campaign bot or a scripted walk
   plays. Fast loading does not matter.
-- A run with the item randomizer unlocks into its own list (shown beside the
-  date).
+- A run with the randomizer (item drops, enemies or loading zones) unlocks
+  into its own list (shown beside the date).
 - The run achievements (a story clear never defeated, under 8 / 4 hours, only
   rookie forms, Very Hard alone) need a new character tracked since level 1
   that never played with a closed gate (cheats, rebalancing, a loaded state).

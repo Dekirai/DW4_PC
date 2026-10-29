@@ -156,6 +156,32 @@ campaign tools, `det.sh` and the Dolphin comparisons are unchanged),
 - Save states, a console reboot and the end of an online session keep the
   store and the slot settings of the run.
 
+### Other PC files beside the save
+
+The PC version keeps its own files next to the save and never inside it (the
+save stays the original GCI bytes):
+
+| File | What it holds |
+| --- | --- |
+| `randomizer.ini`, `randomizer_<UNIQUE>_spoiler.txt` | the randomizer's bond per character ("Randomizer bond" below), beside the save |
+| `saves/profile.dat` (next to the program) | the local achievements and their counters (text, written through `.tmp` with a `.bak`); offline unlocks stay on this PC |
+| `saves/states/state<N>.dw4state` | save states (snapshot at the stage load plus the input since) |
+| `saves/backups/` (beside the save) | the copy taken before a GC save import |
+
+### Online character and cloud backup (server)
+
+The coming online play (README "Online server") keeps its save on the server
+and apart from the local one: an account's **online character** is one
+3316-byte character record (the layout below), stored with a revision and
+decoded by the server's own port of the record codec (`server/DW4Online`,
+golden vectors from `src/save_data.cpp`); it starts from zero and is never
+read from or written to `savedata.dat`. The **cloud backup** is a private
+copy of the local save, uploaded and downloaded by the player at any time:
+the GCI bytes of `savedata.dat` (90176 bytes, or the bare 90112-byte file),
+with at least one data copy that passes its check, the latest and five
+earlier revisions per account; it is never shown on the website and never
+used for achievements. Neither is part of the game client yet.
+
 ## Importing GC saves
 
 `dw4::save::load_import` / `parse_import` (`include/dw4/save_import.hpp`,
@@ -290,11 +316,14 @@ rank, chips only record/flag/kind. This is `ItemDevice::pack`.
 The randomizer's seed and modes (README "Randomizer") belong to a save, not
 only to settings.ini. The save itself stays the original GCI bytes; the bond
 is a sidecar next to it (`src/game/randomizer_save.cpp`): `randomizer.ini` in
-the folder that holds the save (`saves/` beside the program, a test run's
-`--card-dir` / `DW4_CARD_DIR` folder) with one section per character, keyed
-by the record's UNIQUE (offset 4, drawn from the world clock when the
-character is made; `enemies` is off, each or wave, `zones` off or dungeons),
-and `randomizer_<UNIQUE>_spoiler.txt` beside it:
+the folder that holds the save (the folder of the single save file - `saves/`
+beside the program for `saves/savedata.dat`, else the folder of `[data] save`
+or `--save-file`; the GCI root of `--card-dir` / `DW4_CARD_DIR`; `saves/`
+beside the program for a test run's default folders and for a `[data] cards`
+folder, so nothing is written into a Dolphin folder) with one section per
+character, keyed by the record's UNIQUE (offset 4, drawn from the world clock
+when the character is made; `enemies` is off, each or wave, `zones` off or
+dungeons), and `randomizer_<UNIQUE>_spoiler.txt` beside it:
 
 ```ini
 [character_1A2B3C4D]
