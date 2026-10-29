@@ -1151,11 +1151,29 @@ on, the owner's place stays reserved, the story follows the owner-away setting,
   `model_ctrl.cpp` (11), `lua_host.cpp` atan2, `particles.cpp`,
   `managers_core.cpp` sin / cos / pow, the Lua 4 VM's pow.
   - **Until round S4**: online needs a CPU on which the static CRT takes its
-    FMA3 routines (FMA3 and AVX2 by cpuid; the S1 client lane confirms the
-    exact condition in the CRT source shipped with MSVC). The client checks it
-    at the room join and refuses with "Online play needs a CPU with FMA3
-    (Intel 2013 / AMD 2015 or later)". With a static CRT (/MT) every machine
-    then runs the same code.
+    FMA3 routines. The client checks it at the room join and refuses with
+    "Online play needs a CPU with FMA3 (Intel 2013 / AMD 2015 or later)".
+    With a static CRT (/MT) every machine then runs the same code.
+  - **The exact condition (measured in round S1).** The source of the math
+    library is not part of the UCRT source drop (`ucrt/initializers/
+    fma3_initializer.cpp` only registers `__acrt_initialize_fma3`), so the
+    client lane disassembled `fma3_available.obj` and the dispatchers from the
+    static `libucrt.lib` of the Windows SDK 10.0.26100.0 that the build links
+    (`lib /extract`, `dumpbin /disasm`). `__acrt_initialize_fma3` stores
+    `__use_fma3_lib` = 0 unless CPUID.1:ECX has FMA (bit 12), OSXSAVE (27)
+    and AVX (28) and XGETBV(0) has the XMM and YMM bits (`& 6 == 6`); then 1,
+    and 3 when CPUID.0 reports leaf 7 and CPUID.(7,0):EBX has AVX2 (bit 5).
+    The routines test it in two ways: the assembler routines (`sin`, `cos`,
+    `tan`, `exp`, `log`, `fmod`, `sinf`, `cosf`, `tanf`, `expf`, `logf`,
+    `powf`) take their FMA3 path when it is nonzero, the C routines compiled
+    twice (`acos`, `asin`, `atan`, `atan2`, their float versions, and `pow`
+    from the ARM optimized routines) only when `(value & 3) == 3`. A CPU with
+    FMA3 but without AVX2 (AMD Piledriver / Steamroller) therefore runs a
+    mixed set that matches neither path. The gate wants exactly 3 (FMA3, AVX,
+    OSXSAVE, the OS's YMM state and AVX2) and `_get_FMA3_enable() != 0`;
+    the static build reads the CRT's own `__use_fma3_lib`, and a test checks
+    that the cpuid replication (`src/game/online/cpu_gate.cpp`) gives the same
+    value (3 on the reference Ryzen 7 7800X3D).
   - **Round S4** routes those call sites through `dw4::sim` wrappers that call
     the MSL routines in online sessions (`include/dw4/msl_math.hpp` has sin,
     cos, asin, acos, atan, atan2; tan, pow and exp are added; float callers go

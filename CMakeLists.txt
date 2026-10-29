@@ -51,6 +51,30 @@ else()
   set_source_files_properties(src/engine/gekko_math.cpp PROPERTIES COMPILE_OPTIONS "-fno-fast-math;-ffp-contract=off")
 endif()
 
+# Seamless online co-op client (docs/SEAMLESS.md): the DW4R2 relay protocol,
+# pads on the wire, pacing, the WinHTTP worker with certificate pinning, the
+# DPAPI token, the session state machine and the online gates. No SDL / ImGui.
+# DW4_ONLINE_DEV: a development build may talk to a loopback test server
+# (DW4_ONLINE_SERVER / DW4_ONLINE_PIN); release builds never do.
+option(DW4_ONLINE_DEV "Online client development build (loopback test server allowed)" OFF)
+add_library(dw4_online STATIC
+  src/game/online/cpu_gate.cpp src/game/online/env_check.cpp src/game/online/pad_wire.cpp src/game/online/wire.cpp
+  src/game/online/pacing.cpp)
+target_include_directories(dw4_online PUBLIC src/game)
+target_link_libraries(dw4_online PUBLIC dw4_engine)
+if(DW4_ONLINE_DEV)
+  target_compile_definitions(dw4_online PUBLIC DW4_ONLINE_DEV=1)
+endif()
+if(MSVC)
+  target_compile_options(dw4_online PRIVATE /W4 /permissive- /utf-8)
+  if(DW4_STATIC_RUNTIME)
+    target_compile_definitions(dw4_online PRIVATE DW4_CRT_STATIC=1)
+  endif()
+endif()
+if(WIN32)
+  target_link_libraries(dw4_online PUBLIC winhttp crypt32 bcrypt ws2_32)
+endif()
+
 # Development tools: IGB inspection and logical resource catalog.
 add_executable(dw4_inspect tools/dw4_inspect.cpp)
 target_link_libraries(dw4_inspect PRIVATE dw4_core)
@@ -96,6 +120,13 @@ if(BUILD_TESTING)
   target_include_directories(dw4_achievements_tests PRIVATE src/game)
   target_link_libraries(dw4_achievements_tests PRIVATE dw4_engine)
   add_test(NAME achievements COMMAND dw4_achievements_tests)
+  # The online client (asset free; the env test reads the sources).
+  foreach(suite online_cpu_gate online_env online_wire)
+    add_executable(dw4_${suite}_tests tests/${suite}_tests.cpp)
+    target_link_libraries(dw4_${suite}_tests PRIVATE dw4_online)
+    add_test(NAME ${suite} COMMAND dw4_${suite}_tests)
+  endforeach()
+  target_compile_definitions(dw4_online_env_tests PRIVATE DW4_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 endif()
 
 if(DW4_BUILD_APP)
