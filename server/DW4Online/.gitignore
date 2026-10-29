@@ -1,0 +1,15 @@
+# Build outputs
+bin/
+obj/
+publish/
+TestResults/
+*.user
+
+# Local-only data and secrets: the private test database, local configuration
+.local/
+appsettings.Local.json
+appsettings.*.Local.json
+appsettings.Production.json
+
+# The WinHTTP test tool build (tests/winhttp_client/build.cmd)
+tests/winhttp_client/out/

@@ -1,0 +1,14 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/DW4Online.Domain/DW4Online.Domain.csproj" />
+    <Project Path="src/DW4Online.Data/DW4Online.Data.csproj" />
+    <Project Path="src/DW4Online.Api/DW4Online.Api.csproj" />
+    <Project Path="src/DW4Online.Relay/DW4Online.Relay.csproj" />
+    <Project Path="src/DW4Online.Web/DW4Online.Web.csproj" />
+    <Project Path="src/DW4Online.Server/DW4Online.Server.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/DW4Online.Tests/DW4Online.Tests.csproj" />
+    <Project Path="tests/DW4Online.Integration.Tests/DW4Online.Integration.Tests.csproj" />
+  </Folder>
+</Solution>

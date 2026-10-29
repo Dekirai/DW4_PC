@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Pure game and account rules: no ASP.NET Core, no database driver. -->
+  <PropertyGroup>
+    <RootNamespace>DW4Online.Domain</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="DW4Online.Tests" />
+  </ItemGroup>
+</Project>

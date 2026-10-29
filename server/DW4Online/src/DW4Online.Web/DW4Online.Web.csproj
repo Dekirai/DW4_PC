@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk.Razor">
+  <!-- The website (Razor Pages, server-rendered, no npm build, no scripts). -->
+  <PropertyGroup>
+    <RootNamespace>DW4Online.Web</RootNamespace>
+    <AddRazorSupportForMvc>true</AddRazorSupportForMvc>
+  </PropertyGroup>
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\DW4Online.Domain\DW4Online.Domain.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- One stylesheet served from the assembly at /css/site.css (no static web assets to deploy). -->
+    <EmbeddedResource Include="Assets\site.css" LogicalName="DW4Online.Web.site.css" />
+  </ItemGroup>
+</Project>
