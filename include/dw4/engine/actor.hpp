@@ -63,18 +63,51 @@ struct ActorPose {
     bool bind_pose{}; // true: palette is identity (stored vertices)
 };
 
+// 30.8 fixed time scaling (managers_core.cpp): ((t >> 18) * scale) << 18.
+std::uint64_t scaled_clock(std::int64_t world, float scale);
+
+// One state's clock in the combiner (igAnimationState): its time at node time
+// T is ((T >> 18) * speed (+0x38)) << 18 + base (+0x40) (801D3628, through
+// scaled_clock's float product and truncation).
+struct StateClock {
+    float speed = 1.0f;
+    std::int64_t base{};
+    std::int64_t at(std::int64_t time) const { return static_cast<std::int64_t>(scaled_clock(time, speed)) + base; }
+    // The combiner update's start of a state (801CFFB4 0x801D00F8): time 0
+    // (its start +0x60, which MOTIONSET's loc_801D26FC leaves 0) at `time`.
+    void restart(std::int64_t time) { base = -static_cast<std::int64_t>(scaled_clock(time, speed)); }
+    // A new speed with the time kept at `time`: the base moves by
+    // ((t >> 18) * old) << 18 - ((t >> 18) * new) << 18 (MOTIONSET's 'S'
+    // 0x802F12EC..0x802F1360 / 0x802F138C..0x802F141C, the motion phase's
+    // release 0x802F109C..0x802F1130).
+    void rescale(float to, std::int64_t time) {
+        base += static_cast<std::int64_t>(scaled_clock(time, speed) - scaled_clock(time, to));
+        speed = to;
+    }
+};
+
 // The actor's animation combiner as ACTION's MOTIONSET drives it: the current
 // clip, fading in over `blend` nanoseconds from the state before it - the
 // previous clip, still playing, or a static pose baked from a cross-fade that
 // was still running (loc_801D2840). Loop modes live in the database.
 struct MotionState {
     std::string clip;
-    std::int64_t start{};   // node time when started
+    StateClock clock;       // `clip`'s state time
+    // +0x1c: the state has not been evaluated yet. Every combiner update
+    // restarts such a state (801CFFB4 0x801D00D0..0x801D0164: time 0 and the
+    // fade's start +0x48 at the update's node time) until the traversal's
+    // evaluation (801D0C14 0x801D0E60 / 0x801D0EBC / 0x801D1128) or the motion
+    // phase after its update (802F0EB0 0x802F0F58..0x802F1064) clears it.
+    bool fresh{};
     std::int64_t blend{};   // fade-in of `clip`; 0: weight 1 at once
     std::int64_t blend_start{};
     std::string previous_clip;
-    std::int64_t previous_start{};
+    StateClock previous_clock;
+    bool previous_fresh{};
     std::vector<Mat4> previous_pose; // baked bone locals; when set, the fade source
+    // The states' times at node time `time` (801E52FC samples them).
+    std::int64_t local(std::int64_t time) const { return clock.at(time); }
+    std::int64_t previous_local(std::int64_t time) const { return previous_clock.at(time); }
     // States that stay in the combiner behind `clip` without showing: the
     // activation appends the first animation as a replacing base state
     // (801D2810), which no update retires; the next MOTIONSET's bake removes
@@ -90,9 +123,12 @@ struct MotionState {
     bool layered() const { return has_previous() || hidden; }
     // The fade source still shows in a pose evaluated at `time`.
     bool fading(std::int64_t time) const { return has_previous() && weight(time) < 1.0f; }
-    // The combiner update (801CFFB4): once the current state's weight reaches
-    // 1, the states before it retire (801CFEA8) and one state is left.
+    // The combiner update (801CFFB4): states not evaluated yet restart (see
+    // `fresh`), then once the current state's weight reaches 1, the states
+    // before it retire (801CFEA8) and one state is left.
     void update(std::int64_t time);
+    // The combiner's evaluation or the motion phase's update cleared +0x1c.
+    void evaluated() { fresh = previous_fresh = false; }
 };
 
 // One bone's local transform as a combiner state holds it (801D0C14): the
