@@ -68,7 +68,7 @@ w::TickBody tick_with_events() {
     t.pads[0] = {0x4000, 10, -20, 0, 0, 0};
     t.pads[1] = {0x0008, -74, 74, 3, -3, 1};
     t.pads[3] = {0, 0, 0, 59, 0, 0};
-    w::Event join{w::EventKind::join, 2, 5, {1, 2, 3, 4}};
+    w::Event join{w::EventKind::join, 2, 77, 5, {1, 2, 3, 4}};
     w::Event leave{w::EventKind::leave, 1};
     w::Event intent{w::EventKind::intent, 3};
     intent.intent_kind = 2;
@@ -86,7 +86,7 @@ void messages() {
     const auto t = tick_with_events();
     w::Writer tw;
     w::write_tick(tw, t);
-    check(tw.out.size() == 1 + 3 * 7 + 1 + (1 + 1 + 2 + 4 + 4) + 2 + 7 + 5 + 3, "tick body size");
+    check(tw.out.size() == 1 + 3 * 7 + 1 + (1 + 1 + 4 + 2 + 4 + 4) + 2 + 7 + 5 + 3, "tick body size");
     w::Reader tr{tw.out};
     check(w::read_tick(tr) == t && tr.done(), "tick round trip");
     // Client -> server.
@@ -140,13 +140,14 @@ void messages() {
     ok.new_visit = 1;
     ok.own_slot = 2;
     ok.slot_map = {0, -1, 2, 1};
+    ok.slot_members = {11, 0, 12, 13};
     ok.co_arrivals = {{2, {1}}, {3, {2, 2}}};
     ok.story_revision = 5;
     ok.story = {1, 2, 3};
     ok.rule_flags = 7;
     ok.present = 0b0111;
     auto ok2 = w::decode_barrier_ok(w::encode(ok));
-    check(ok2.decision == w::Decision::co_arrive && ok2.new_inst == 8 && ok2.slot_map == ok.slot_map && ok2.co_arrivals == ok.co_arrivals &&
+    check(ok2.decision == w::Decision::co_arrive && ok2.new_inst == 8 && ok2.slot_map == ok.slot_map && ok2.slot_members == ok.slot_members && ok2.co_arrivals == ok.co_arrivals &&
               ok2.story == ok.story && ok2.dropped.empty() && ok2.present == 7,
           "BARRIER_OK");
     auto wait = w::decode_barrier_wait(w::encode(w::BarrierWait{7, w::WaitReason::entry_scene, 12, {"kim", "lee"}}));
@@ -179,6 +180,8 @@ void messages() {
     check(ping.margin == -2 && ping.delay == 3, "PING");
     check(w::decode_reason(w::encode(w::Reason{"kicked"})).reason == "kicked", "KICK / CLOSE");
     check(w::decode_inst_visit(w::encode(w::InstVisit{4, 5})).visit == 5, "RESYNC");
+    const auto rekey = w::decode_rekey(w::encode(w::Rekey{4, 5, 9, 1}));
+    check(rekey.inst == 4 && rekey.new_inst == 9 && rekey.new_visit == 1, "REKEY");
     // Malformed payloads.
     auto short_input = w::encode(in);
     short_input.pop_back();

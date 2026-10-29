@@ -15,7 +15,7 @@
 //   u8 present | pad (7 B, pad_wire.hpp) for every present slot in slot order |
 //   u8 event count | events
 // and an event is u8 kind followed by
-//   JOIN      u8 slot | i16 entrance point | blob carry
+//   JOIN      u8 slot | u32 member | i16 entrance point | blob carry
 //   LEAVE     u8 slot
 //   INTENT    u8 slot | u8 kind | i32 argument
 //   LEAD_FROM u32 tick (from here the remaining member leads alone)
@@ -33,6 +33,8 @@
 #include <vector>
 
 namespace dw4::game::online::wire {
+
+using dw4::game::online::WirePad;
 
 inline constexpr std::size_t kMaxFrame = 1u << 20;
 inline constexpr std::size_t kStateChunk = 60 * 1024; // STATE_DATA / SNAPSHOT chunk size the client sends and expects
@@ -76,6 +78,7 @@ enum class Type : std::uint8_t {
     ping = 0x4B,
     kick = 0x4C,
     close = 0x4D,
+    rekey = 0x4E,
 };
 const char* type_name(Type type) noexcept;
 
@@ -157,6 +160,7 @@ enum class EventKind : std::uint8_t { join = 1, leave = 2, intent = 3, lead_from
 struct Event {
     EventKind kind{};
     std::uint8_t slot{};
+    std::uint32_t member{};             // JOIN: the member's id (names, notices)
     std::int16_t point{};               // JOIN: the entrance point
     std::vector<std::uint8_t> carry;    // JOIN: the joiner's carry (engine bytes)
     std::uint8_t intent_kind{};         // INTENT
@@ -288,12 +292,13 @@ struct JoinReq {       // inst | visit | u8 slot
     std::uint8_t slot{};
 };
 enum class Decision : std::uint8_t { new_instance = 0, join = 1, dissolve = 2, co_arrive = 3 };
-struct BarrierOk {     // inst | visit | u8 decision | u32 new inst | u32 new visit | u8 own slot | 4 x i8 slot map | u8 n | n x (u8 slot | blob carry) | u32 story revision | blob story | blob dropped | u8 rule flags | u8 present
+struct BarrierOk {     // inst | visit | u8 decision | u32 new inst | u32 new visit | u8 own slot | 4 x i8 slot map | 4 x u32 slot members | u8 n | n x (u8 slot | blob carry) | u32 story revision | blob story | blob dropped | u8 rule flags | u8 present
     std::uint32_t inst{}, visit{};
     Decision decision{};
     std::uint32_t new_inst{}, new_visit{};
     std::uint8_t own_slot{};
     std::array<std::int8_t, 4> slot_map{-1, -1, -1, -1}; // old slot -> new slot (-1: not in the new instance)
+    std::array<std::uint32_t, 4> slot_members{};          // the member in each slot of the new instance (0: empty)
     std::vector<Carry> co_arrivals;
     std::uint32_t story_revision{};
     std::vector<std::uint8_t> story, dropped;
@@ -342,6 +347,12 @@ struct Reason {        // KICK / CLOSE / BYE: str8 reason
 struct InstVisit {     // RESYNC: inst | visit
     std::uint32_t inst{}, visit{};
 };
+// REKEY: the side of a fork that does not keep the instance id continues
+// under a new one (sent to that side's members before the first frame with
+// the new id): u32 old inst | u32 old visit | u32 new inst | u32 new visit
+struct Rekey {
+    std::uint32_t inst{}, visit{}, new_inst{}, new_visit{};
+};
 
 // Encoders return the payload; decoders throw WireError on short or long
 // payloads.
@@ -372,6 +383,7 @@ std::vector<std::uint8_t> encode(const Room&);
 std::vector<std::uint8_t> encode(const Ping&);
 std::vector<std::uint8_t> encode(const Reason&);
 std::vector<std::uint8_t> encode(const InstVisit&);
+std::vector<std::uint8_t> encode(const Rekey&);
 
 Input decode_input(std::span<const std::uint8_t>);
 Log decode_log(std::span<const std::uint8_t>);
@@ -401,6 +413,7 @@ Room decode_room(std::span<const std::uint8_t>);
 Ping decode_ping(std::span<const std::uint8_t>);
 Reason decode_reason(std::span<const std::uint8_t>);
 InstVisit decode_inst_visit(std::span<const std::uint8_t>);
+Rekey decode_rekey(std::span<const std::uint8_t>);
 
 // Splits a large body into chunks of kStateChunk (at least one, also for an
 // empty body).

@@ -40,6 +40,7 @@ const char* type_name(Type type) noexcept {
     case Type::ping: return "PING";
     case Type::kick: return "KICK";
     case Type::close: return "CLOSE";
+    case Type::rekey: return "REKEY";
     }
     return "?";
 }
@@ -218,6 +219,7 @@ void write_tick(Writer& w, const TickBody& tick) {
         switch (e.kind) {
         case EventKind::join:
             w.u8(e.slot);
+            w.u32(e.member);
             w.i16(e.point);
             w.blob(e.carry);
             break;
@@ -250,6 +252,7 @@ TickBody read_tick(Reader& r) {
         switch (e.kind) {
         case EventKind::join:
             e.slot = r.u8();
+            e.member = r.u32();
             e.point = r.i16();
             e.carry = r.blob(kMaxFrame);
             break;
@@ -452,6 +455,7 @@ std::vector<std::uint8_t> encode(const BarrierOk& m) {
     w.u32(m.new_visit);
     w.u8(m.own_slot);
     for (const auto s : m.slot_map) w.i8(s);
+    for (const auto member : m.slot_members) w.u32(member);
     w.u8(std::uint8_t(m.co_arrivals.size()));
     for (const auto& c : m.co_arrivals) {
         w.u8(c.slot);
@@ -512,6 +516,12 @@ std::vector<std::uint8_t> encode(const Reason& m) {
 std::vector<std::uint8_t> encode(const InstVisit& m) {
     Writer w;
     iv(w, m.inst, m.visit);
+    return w.out;
+}
+std::vector<std::uint8_t> encode(const Rekey& m) {
+    Writer w;
+    iv(w, m.inst, m.visit);
+    iv(w, m.new_inst, m.new_visit);
     return w.out;
 }
 
@@ -734,6 +744,7 @@ BarrierOk decode_barrier_ok(std::span<const std::uint8_t> p) {
     m.new_visit = r.u32();
     m.own_slot = r.u8();
     for (auto& s : m.slot_map) s = r.i8();
+    for (auto& member : m.slot_members) member = r.u32();
     const int n = r.u8();
     for (int i = 0; i < n; ++i) {
         Carry c;
@@ -811,6 +822,16 @@ InstVisit decode_inst_visit(std::span<const std::uint8_t> p) {
     auto r = reader(p);
     InstVisit m{r.u32(), 0};
     m.visit = r.u32();
+    r.end();
+    return m;
+}
+Rekey decode_rekey(std::span<const std::uint8_t> p) {
+    auto r = reader(p);
+    Rekey m;
+    m.inst = r.u32();
+    m.visit = r.u32();
+    m.new_inst = r.u32();
+    m.new_visit = r.u32();
     r.end();
     return m;
 }

@@ -52,8 +52,10 @@ void every_name_classified() {
     const auto names = names_in_sources();
     check(names.size() > 100, "the scan found the sources");
     std::string missing;
+    // (Names that are not variables: the program's own name.)
+    const std::set<std::string> not_variables{"DW4_PC"};
     for (const auto& name : names)
-        if (!forbidden.contains(name) && !allowed.contains(name)) missing += " " + name;
+        if (!forbidden.contains(name) && !allowed.contains(name) && !not_variables.contains(name)) missing += " " + name;
     check(missing.empty(), "variables on neither list (add them to src/game/online/env_check.cpp):" + missing);
     // The variables the design names as simulation variables.
     for (const char* name : {"DW4_GOD", "DW4_ONE_HIT", "DW4_INFINITE_MP", "DW4_FIXED_RANDOM", "DW4_CLOCK_FILE", "DW4_DISC_CLOCK",

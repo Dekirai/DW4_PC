@@ -815,6 +815,31 @@ Bounds 1..10. Estimated `d` = 2-3 inside Europe, +1-2 on WLAN. Inputs are
 indexed by tick, so every machine has its own `d_i`, as the direct sessions
 already allow (`game_main.cpp:1853-1856`).
 
+**Measured in round S1 (client lane): the formula misses the playout tick.**
+A member does not execute tick t when SEALED(t) arrives but one playout tick
+later (the pacing below keeps one tick in reserve), plus up to one pass of its
+host loop. With the built client (`src/game/online/session.cpp`, the pacing of
+`pacing.cpp`) against the fake hub of `tests/online_fake_hub.hpp` (server-paced
+sealing, immediate fill, a simulated clock, TCP order kept), the smallest delay
+without a single late pad in 20 s of two-member play
+(`dw4_online_session_tests --delay-table`) was:
+
+| one way | jitter (each way) | needed `d` | `ceil((RTT + J) / f)` | `ceil((RTT + J) / f + 1.5)` |
+| --- | --- | --- | --- | --- |
+| 5 ms | 0 | 3 | 1 | 3 |
+| 10 ms | 0 | 3 | 2 | 3 |
+| 20 ms | 0 | 4 | 3 | 4 |
+| 30 ms | 10 ms | 7 | 5 | 7 |
+| 50 ms | 0 | 8 | 6 | 8 |
+| 50 ms | 20 ms | 10 | 9 | 10 |
+
+So the starting value is `d_i = ceil((RTT_i + J_i) / 16.683 ms + 1.5)`
+(J = the round-trip spread, both directions' jitter), one to two ticks more than
+the formula above; the server's adaptation then works from there. The
+estimate inside Europe becomes 3-4, +1-2 on WLAN. The client takes the
+suggested delay from PING before a sealed start (NEW with two or more members,
+JOIN_AT) and changes it in a sealed instance only through DELAY events.
+
 **Pacing.** A client executes sealed ticks at its own 59.94 Hz pace with a
 playout buffer of one tick. Its pace follows the server's by at most ±0.1 %
 (clock drift of the two crystals is far below that), and the audio device is
