@@ -26,6 +26,8 @@ public sealed class AccountService(
     ISessionRepository sessions,
     IAuditLog audit,
     PasswordHasher hasher,
+    AuditNameHasher names,
+    LoginThrottle throttle,
     AccountOptions options,
     TimeProvider time)
 {
@@ -60,25 +62,36 @@ public sealed class AccountService(
         return new RegisterResult(AccountView.From(account), recovery, ticket);
     }
 
+    /// <summary>
+    /// Logs in. Failed attempts lock the pair of user name and client address (<see cref="LoginThrottle"/>, the same for
+    /// names without an account), and many failures from all addresses lock the account except for addresses it used
+    /// before (<see cref="AccountOptions.MaxFailedLoginsPerAccount"/>): strangers cannot lock the owner out.
+    /// </summary>
     public async Task<Result<LoginResult>> LoginAsync(string? username, string? password, string kind, CallerInfo caller, CancellationToken ct = default)
     {
         var now = Clock.Now(time);
+        var key = LoginThrottle.Key(username, caller.Ip);
+        if (throttle.LockedUntil(key) is { } refused) return TemporarilyLocked(refused, now);
         var account = string.IsNullOrEmpty(username) ? null : await accounts.FindByUsernameAsync(UsernamePolicy.Normalize(username), ct);
         if (account is null || account.Status == AccountStatus.Deleted)
         {
             hasher.VerifyDummy(password ?? "");
-            await audit.WriteAsync("login_unknown", null, null, caller.Ip, new { username = Truncate(username, 40) }, now, ct);
+            throttle.Fail(key);
+            // Never the typed name itself (often a password typed into the wrong field): a keyed hash of it.
+            var tag = names.Tag(Truncate(username, 40));
+            await audit.WriteAsync("login_unknown", null, null, caller.Ip, tag is null ? null : new { name = tag }, now, ct);
             return BadCredentials();
         }
-        if (account.LockedUntil is { } until && until > now)
-            return TemporarilyLocked(until, now);
+        if (await AccountLockAsync(account, caller, now, ct) is { } locked) return locked;
 
         var check = hasher.Verify(account.PasswordHash, password ?? "");
         if (check == PasswordCheck.Failed)
         {
-            await FailedAttemptAsync(account, "login_fail", caller, now, ct);
+            await FailedAttemptAsync(account, "login_fail", key, caller, now, ct);
             return BadCredentials();
         }
+        throttle.Reset(key);
+        throttle.ResetAccount(account.Id);
         if (Blocked(account) is { } blocked) return blocked; // only told to someone who knows the password
         await accounts.RecordLoginAsync(account.Id, now, check == PasswordCheck.SuccessRehashNeeded ? hasher.Hash(password!) : null, ct);
         var ticket = await CreateSessionAsync(account.Id, kind, caller, now, ct);
@@ -132,9 +145,10 @@ public sealed class AccountService(
         await accounts.FindByUsernameAsync(UsernamePolicy.Normalize(username), ct) is { } a ? AccountView.From(a) : null;
 
     /// <summary>
-    /// The current password confirms a destructive action (account deletion, online character reset). A wrong one
-    /// counts like a failed login (the account locks after <see cref="AccountOptions.MaxFailedLogins"/>), and a locked
-    /// account confirms nothing until the lock ends.
+    /// The current password confirms a destructive action (account deletion, online character reset, cloud save
+    /// deletion). A wrong one counts like a failed login (the caller's address locks after
+    /// <see cref="AccountOptions.MaxFailedLogins"/>, the account after <see cref="AccountOptions.MaxFailedLoginsPerAccount"/>),
+    /// and a locked address confirms nothing until the lock ends.
     /// </summary>
     public async Task<Result<bool>> ConfirmPasswordAsync(long accountId, string? password, CallerInfo caller, CancellationToken ct = default)
     {
@@ -162,17 +176,24 @@ public sealed class AccountService(
     public async Task<Result<string>> RecoverAsync(string? username, string? code, string? newPassword, CallerInfo caller, CancellationToken ct = default)
     {
         var now = Clock.Now(time);
+        var key = LoginThrottle.Key(username, caller.Ip);
+        if (throttle.LockedUntil(key) is { } refused) return TemporarilyLocked(refused, now);
         var account = string.IsNullOrEmpty(username) ? null : await accounts.FindByUsernameAsync(UsernamePolicy.Normalize(username), ct);
         var normalized = RecoveryCode.Normalize(code);
         if (account is null || account.Status == AccountStatus.Deleted)
+        {
+            throttle.Fail(key);
             return DomainError.Unauthorized("bad_recovery_code", "User name or recovery code is wrong.");
-        if (account.LockedUntil is { } until && until > now) return TemporarilyLocked(until, now);
+        }
+        if (await AccountLockAsync(account, caller, now, ct) is { } locked) return locked;
         if (normalized is null || account.RecoveryCodeHash is null ||
             !CryptographicOperations.FixedTimeEquals(RecoveryCode.Hash(normalized), account.RecoveryCodeHash))
         {
-            await FailedAttemptAsync(account, "recover_fail", caller, now, ct);
+            await FailedAttemptAsync(account, "recover_fail", key, caller, now, ct);
             return DomainError.Unauthorized("bad_recovery_code", "User name or recovery code is wrong.");
         }
+        throttle.Reset(key);
+        throttle.ResetAccount(account.Id);
         if (Blocked(account) is { } blocked) return blocked;
         if (PasswordPolicy.Check(newPassword, account.Username) is { } error) return DomainError.Invalid("weak_password", error);
         var next = RecoveryCode.Create();
@@ -248,7 +269,8 @@ public sealed class AccountService(
     private async Task ScrubAsync(AccountRecord account, long? actorId, CancellationToken ct)
     {
         var name = UsernamePolicy.DeletedPrefix + account.Id.ToString(System.Globalization.CultureInfo.InvariantCulture);
-        await accounts.ScrubAsync(account.Id, name, ct);
+        // The failed logins under this name before it existed (or typed with spaces) go with it: their tag and IP.
+        await accounts.ScrubAsync(account.Id, name, names.Tag(account.Username), ct);
         // No IP and no detail: the audit row only says that the account was erased and by whom.
         await audit.WriteAsync(actorId is null ? "account_delete" : "admin_account_delete", account.Id, actorId ?? account.Id, null, null, Clock.Now(time), ct);
     }
@@ -273,6 +295,7 @@ public sealed class AccountService(
         var now = Clock.Now(time);
         await accounts.SetPasswordAsync(target.Id, hasher.Hash(temporary), true, now, ct);
         await accounts.RecordFailedLoginAsync(target.Id, 0, null, ct);
+        throttle.ResetAccount(target.Id);
         await sessions.RevokeAllAsync(target.Id, null, now, ct);
         await audit.WriteAsync("admin_password_reset", target.Id, actor.AccountId, caller.Ip, null, now, ct);
         return temporary;
@@ -322,30 +345,51 @@ public sealed class AccountService(
     private TimeSpan Lifetime(string kind) =>
         TimeSpan.FromDays(kind == SessionKind.Web ? options.WebSessionDays : options.GameSessionDays);
 
-    private async Task FailedAttemptAsync(AccountRecord account, string evt, CallerInfo caller, DateTime now, CancellationToken ct)
+    /// <summary>
+    /// A wrong password or code: counts for the pair of name and address (<paramref name="key"/>) and for the account,
+    /// which is locked for everyone but known addresses at <see cref="AccountOptions.MaxFailedLoginsPerAccount"/>
+    /// failures within <see cref="AccountOptions.LockoutMinutes"/> (<see cref="LoginThrottle.FailAccount"/>). A lock in
+    /// force stays: a known address's wrong password does not end it. accounts.failed_logins keeps the failures since
+    /// the last success for the staff.
+    /// </summary>
+    private async Task FailedAttemptAsync(AccountRecord account, string evt, string key, CallerInfo caller, DateTime now, CancellationToken ct)
     {
-        var failed = account.FailedLogins + 1;
-        DateTime? lockedUntil = null;
-        if (failed >= options.MaxFailedLogins)
-        {
-            lockedUntil = now.AddMinutes(options.LockoutMinutes);
-            failed = 0;
-        }
+        var addressLocked = throttle.Fail(key) is not null;
+        var started = throttle.FailAccount(account.Id);
+        var lockedUntil = started ?? (account.LockedUntil is { } held && held > now ? held : null);
+        var failed = Math.Min(account.FailedLogins + 1, ushort.MaxValue);
         await accounts.RecordFailedLoginAsync(account.Id, failed, lockedUntil, ct);
-        await audit.WriteAsync(lockedUntil is null ? evt : evt + "_locked", account.Id, null, caller.Ip, null, now, ct);
+        await audit.WriteAsync(started is null ? evt : evt + "_locked", account.Id, null, caller.Ip,
+            addressLocked ? new { addressLocked } : null, now, ct);
+    }
+
+    /// <summary>
+    /// The account-wide lock (many failures from many addresses): an address the account created or used a session from
+    /// within <see cref="AccountOptions.KnownAddressDays"/> may still try, any other is refused until the lock ends.
+    /// </summary>
+    private async Task<DomainError?> AccountLockAsync(AccountRecord account, CallerInfo caller, DateTime now, CancellationToken ct)
+    {
+        if (account.LockedUntil is not { } until || until <= now) return null;
+        if (caller.Ip is { Length: > 0 } ip && await sessions.KnowsAddressAsync(account.Id, ip, now.AddDays(-options.KnownAddressDays), ct))
+            return null;
+        return TemporarilyLocked(until, now);
     }
 
     /// <summary>Null when the password is the account's current one; a wrong one counts as a failed attempt.</summary>
     private async Task<DomainError?> ConfirmAsync(AccountRecord account, string? password, CallerInfo caller, CancellationToken ct)
     {
         var now = Clock.Now(time);
-        if (account.LockedUntil is { } until && until > now) return TemporarilyLocked(until, now);
+        var key = LoginThrottle.Key(account.Username, caller.Ip);
+        if (throttle.LockedUntil(key) is { } refused) return TemporarilyLocked(refused, now);
+        if (await AccountLockAsync(account, caller, now, ct) is { } locked) return locked;
         if (hasher.Verify(account.PasswordHash, password ?? "") == PasswordCheck.Failed)
         {
-            await FailedAttemptAsync(account, "confirm_fail", caller, now, ct);
+            await FailedAttemptAsync(account, "confirm_fail", key, caller, now, ct);
             return DomainError.Invalid("wrong_password", "The current password is wrong.");
         }
-        if (account.FailedLogins > 0) await accounts.RecordFailedLoginAsync(account.Id, 0, null, ct);
+        throttle.Reset(key);
+        throttle.ResetAccount(account.Id);
+        if (account.FailedLogins > 0 || account.LockedUntil is not null) await accounts.RecordFailedLoginAsync(account.Id, 0, null, ct);
         return null;
     }
 

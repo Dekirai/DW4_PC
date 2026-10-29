@@ -4,7 +4,14 @@
 // leaves and logs out. Every step prints one line; the exit code is 0 only when every step passed.
 //
 //   dw4online_client --base http://127.0.0.1:5280 --user NAME --password PW --save savedata.dat --record record.bin
-//                    [--stage stagD101] [--achievement online_join] [--protocol 42] [--data-hash 1]
+//                    [--stage stagD101] [--achievement online_join] [--protocol 43] [--data-hash 1] [--pin BASE64[,BASE64]]
+//
+// --base may carry a path (https://example.org/dw4online): every API path goes below it.
+// --pin: the server's certificate is self-signed (https://88.198.52.221): instead of the Windows root store, the
+// SHA-256 of its SubjectPublicKeyInfo (base64, "DW4Online.Server tls-pin") must be one of the given pins (the key in
+// use and the spare of deploy/new-selfsigned-cert.ps1, comma-separated). It is checked in WinHTTP's
+// SENDING_REQUEST callback, after the TLS handshake and before any request byte (token, password) leaves the machine;
+// a mismatch closes the request. Only an unknown CA and a name mismatch are ignored then, never an expired certificate.
 //
 // Build: build.cmd (MSVC, C++20; links winhttp, bcrypt, crypt32, ws2_32). https URLs use Schannel (TLS 1.2+).
 #define WIN32_LEAN_AND_MEAN
@@ -16,6 +23,7 @@
 #include <wincrypt.h>
 #include <winhttp.h>
 
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
@@ -33,9 +41,10 @@ struct Options {
     std::string user, password, save_path, record_path;
     std::string stage = "stagD101";
     std::string achievement = "online_join";
-    int protocol = 42;
+    int protocol = 43;
     unsigned long long data_hash = 1;
     std::string client_version = "0.48.0";
+    std::string pin; // base64 SHA-256 SPKI of a pinned (self-signed) server certificate
 };
 
 struct Response {
@@ -45,6 +54,7 @@ struct Response {
 };
 
 int g_failures = 0;
+int g_pin_failures = 0;
 
 void step(bool ok, const char* name, const std::string& detail = {}) {
     std::printf("%s %s%s%s\n", ok ? "ok  " : "FAIL", name, detail.empty() ? "" : ": ", detail.c_str());
@@ -142,19 +152,73 @@ std::string base64(const std::vector<unsigned char>& data) {
     return out;
 }
 
+// The SHA-256 of a certificate's DER SubjectPublicKeyInfo, base64: the same value as "DW4Online.Server tls-pin".
+std::string spki_pin(PCCERT_CONTEXT cert) {
+    BYTE* der = nullptr;
+    DWORD length = 0;
+    if (!CryptEncodeObjectEx(X509_ASN_ENCODING, X509_PUBLIC_KEY_INFO, &cert->pCertInfo->SubjectPublicKeyInfo, CRYPT_ENCODE_ALLOC_FLAG,
+                             nullptr, &der, &length))
+        return {};
+    std::vector<unsigned char> digest(32);
+    const bool hashed = BCRYPT_SUCCESS(BCryptHash(BCRYPT_SHA256_ALG_HANDLE, nullptr, 0, der, length, digest.data(), 32));
+    LocalFree(der);
+    return hashed ? base64(digest) : std::string{};
+}
+
+// True when `pin` is one of the comma-separated pins in `list` (the one in use and the spare).
+bool pin_listed(const std::string& list, const std::string& pin) {
+    for (size_t at = 0; at <= list.size();) {
+        const size_t comma = std::min(list.find(',', at), list.size());
+        if (comma > at && list.compare(at, comma - at, pin) == 0 && comma - at == pin.size()) return true;
+        at = comma + 1;
+    }
+    return false;
+}
+
+// One request's pin check, filled in by the callback.
+struct PinCheck {
+    std::string expected; // comma-separated base64 pins
+    std::string seen;
+    bool checked = false;
+    bool mismatch = false;
+};
+
+// Called after the TLS handshake and before the request is sent: a certificate with another key never gets the
+// request (with its token or password); closing the handle makes WinHttpSendRequest fail.
+void CALLBACK pin_callback(HINTERNET request, DWORD_PTR context, DWORD status, LPVOID, DWORD) {
+    if (status != WINHTTP_CALLBACK_STATUS_SENDING_REQUEST || context == 0) return;
+    auto* check = reinterpret_cast<PinCheck*>(context);
+    PCCERT_CONTEXT cert = nullptr;
+    DWORD size = sizeof cert;
+    if (WinHttpQueryOption(request, WINHTTP_OPTION_SERVER_CERT_CONTEXT, &cert, &size) && cert) {
+        check->seen = spki_pin(cert);
+        CertFreeCertificateContext(cert);
+    }
+    check->checked = true;
+    if (check->seen.empty() || !pin_listed(check->expected, check->seen)) {
+        check->mismatch = true;
+        WinHttpCloseHandle(request);
+    }
+}
+
 class Api {
 public:
-    explicit Api(const std::wstring& base) {
+    Api(const std::wstring& base, std::string pin) : pin_(std::move(pin)) {
         URL_COMPONENTS parts{};
         parts.dwStructSize = sizeof parts;
         wchar_t host[256] = {};
+        wchar_t path[512] = {};
         parts.lpszHostName = host;
         parts.dwHostNameLength = 255;
+        parts.lpszUrlPath = path;
+        parts.dwUrlPathLength = 511;
         parts.dwSchemeLength = DWORD(-1);
         if (!WinHttpCrackUrl(base.c_str(), 0, 0, &parts)) return;
         host_ = host;
         port_ = parts.nPort;
         secure_ = parts.nScheme == INTERNET_SCHEME_HTTPS;
+        for (const wchar_t* p = path; *p; ++p) prefix_ += char(*p); // "/dw4online" below a path base, "" at the root
+        while (!prefix_.empty() && prefix_.back() == '/') prefix_.pop_back();
         session_ = WinHttpOpen(L"DW4_PC-test/dw4online_client", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_NO_PROXY_NAME,
                                WINHTTP_NO_PROXY_BYPASS, 0);
         if (session_) {
@@ -178,15 +242,35 @@ public:
                   const std::wstring& content_type, const std::wstring& extra = {},
                   std::initializer_list<const wchar_t*> want_headers = {}) {
         Response out;
-        HINTERNET req = WinHttpOpenRequest(connect_, method, widen(path).c_str(), nullptr, WINHTTP_NO_REFERER,
+        HINTERNET req = WinHttpOpenRequest(connect_, method, widen(prefix_ + path).c_str(), nullptr, WINHTTP_NO_REFERER,
                                            WINHTTP_DEFAULT_ACCEPT_TYPES, secure_ ? WINHTTP_FLAG_SECURE : 0);
         if (!req) return out;
+        PinCheck check{pin_};
+        const bool pinned = secure_ && !pin_.empty();
+        if (pinned) {
+            // A self-signed certificate: its key is checked by the pin, not by a CA or the name.
+            DWORD flags = SECURITY_FLAG_IGNORE_UNKNOWN_CA | SECURITY_FLAG_IGNORE_CERT_CN_INVALID;
+            WinHttpSetOption(req, WINHTTP_OPTION_SECURITY_FLAGS, &flags, sizeof flags);
+            // FLAG_SEND_REQUEST covers SENDING_REQUEST (checked) and REQUEST_SENT (ignored by the callback).
+            WinHttpSetStatusCallback(req, pin_callback, WINHTTP_CALLBACK_FLAG_SEND_REQUEST, 0);
+        }
         std::wstring headers = extra;
         if (!content_type.empty()) headers += L"Content-Type: " + content_type + L"\r\n";
         if (!token_.empty()) headers += L"Authorization: Bearer " + widen(token_) + L"\r\n";
         const BOOL sent = WinHttpSendRequest(req, headers.empty() ? WINHTTP_NO_ADDITIONAL_HEADERS : headers.c_str(), DWORD(-1),
                                              body.empty() ? WINHTTP_NO_REQUEST_DATA : const_cast<unsigned char*>(body.data()),
-                                             DWORD(body.size()), DWORD(body.size()), 0);
+                                             DWORD(body.size()), DWORD(body.size()), pinned ? reinterpret_cast<DWORD_PTR>(&check) : 0);
+        if (pinned && check.mismatch) { // the callback closed the request before anything was sent
+            out.body = "pin mismatch (server key " + (check.seen.empty() ? std::string("unknown") : check.seen) + ")";
+            ++g_pin_failures;
+            return out;
+        }
+        if (pinned && sent && !check.checked) {
+            out.body = "pin not checked";
+            ++g_pin_failures;
+            WinHttpCloseHandle(req);
+            return out;
+        }
         if (sent && WinHttpReceiveResponse(req, nullptr)) {
             DWORD size = sizeof out.status;
             WinHttpQueryHeaders(req, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER, WINHTTP_HEADER_NAME_BY_INDEX,
@@ -223,6 +307,8 @@ private:
     HINTERNET session_ = nullptr;
     HINTERNET connect_ = nullptr;
     std::wstring host_;
+    std::string prefix_;
+    std::string pin_;
     INTERNET_PORT port_ = 0;
     bool secure_ = false;
     std::string token_;
@@ -271,6 +357,7 @@ bool parse_args(int argc, char** argv, Options& o) {
         else if (key == "--achievement") o.achievement = value;
         else if (key == "--protocol") o.protocol = std::atoi(value.c_str());
         else if (key == "--data-hash") o.data_hash = std::strtoull(value.c_str(), nullptr, 10);
+        else if (key == "--pin") o.pin = value;
         else return false;
     }
     return !o.user.empty() && !o.password.empty() && !o.save_path.empty() && !o.record_path.empty();
@@ -278,20 +365,27 @@ bool parse_args(int argc, char** argv, Options& o) {
 
 } // namespace
 
+// The last lines of every run, also when a failed login or room ends it early.
+int finish() {
+    if (g_pin_failures > 0) std::printf("PIN FAILURES %d: nothing was sent to that server\n", g_pin_failures);
+    std::printf("%s (%d failed)\n", g_failures == 0 ? "ALL PASSED" : "FAILED", g_failures);
+    return g_failures == 0 ? 0 : 1;
+}
+
 int main(int argc, char** argv) {
     Options o;
     if (!parse_args(argc, argv, o)) {
         std::fprintf(stderr, "usage: dw4online_client --base URL --user NAME --password PW --save FILE --record FILE "
-                             "[--stage NAME] [--achievement CODE] [--protocol N] [--data-hash N]\n");
+                             "[--stage NAME] [--achievement CODE] [--protocol N] [--data-hash N] [--pin BASE64[,BASE64]]\n");
         return 2;
     }
     const auto save = read_file(o.save_path);
     const auto record = read_file(o.record_path);
     step(!save.empty() && record.size() == 3316, "input files", std::to_string(save.size()) + " + " + std::to_string(record.size()) + " bytes");
 
-    Api api(o.base);
+    Api api(o.base, o.pin);
     step(api.ready(), "winhttp session");
-    if (!api.ready()) return 1;
+    if (!api.ready()) return finish();
     const std::string context = "\"context\":{\"protocol\":" + std::to_string(o.protocol) + ",\"clientVersion\":\"" + o.client_version + "\"";
 
     auto r = api.json(L"GET", "/api/v1/status");
@@ -303,7 +397,7 @@ int main(int argc, char** argv) {
                      std::to_string(o.protocol) + "}");
     const auto token = json_string(r.body, "token");
     step(r.status == 200 && token.has_value(), "login", std::to_string(r.status));
-    if (!token) return 1;
+    if (!token) return finish();
     api.set_token(*token);
 
     r = api.json(L"GET", "/api/v1/me");
@@ -336,7 +430,7 @@ int main(int argc, char** argv) {
     const size_t room_at = r.body.find("\"room\"");
     const auto code = room_at == std::string::npos ? std::nullopt : json_string(r.body, "code", room_at);
     step(r.status == 201 && code.has_value(), "room create", code.value_or(r.body));
-    if (!code) return 1;
+    if (!code) return finish();
     r = api.json(L"POST", "/api/v1/rooms/" + *code + "/stage", "{\"stage\":\"" + escape_json(o.stage) + "\"}");
     const auto ticket = json_string(r.body, "ticket");
     const size_t relay_at = r.body.find("\"relay\"");
@@ -363,6 +457,5 @@ int main(int argc, char** argv) {
     r = api.json(L"GET", "/api/v1/me");
     step(r.status == 401, "token revoked", std::to_string(r.status));
 
-    std::printf("%s (%d failed)\n", g_failures == 0 ? "ALL PASSED" : "FAILED", g_failures);
-    return g_failures == 0 ? 0 : 1;
+    return finish();
 }

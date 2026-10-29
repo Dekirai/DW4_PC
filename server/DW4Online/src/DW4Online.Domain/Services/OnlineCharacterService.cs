@@ -78,12 +78,19 @@ public sealed class OnlineCharacterService(
     public Task<IReadOnlyList<HistoryEntry>> HistoryAsync(long accountId, CancellationToken ct = default) =>
         characters.ListHistoryAsync(accountId, ct);
 
-    /// <summary>Ends the current online character (kept in the history); the next upload creates a new one.</summary>
+    /// <summary>
+    /// Ends the current online character; the next upload creates a new one. Its revisions stay in the history for
+    /// <see cref="OnlineCharacterOptions.ResetHistoryDays"/> (staff can undo a reset made by mistake or look at a
+    /// flagged character), then the housekeeping deletes them. The audit row keeps whether the character was flagged.
+    /// </summary>
     public async Task<bool> ResetAsync(long accountId, long actorId, byte[]? ip, CancellationToken ct = default)
     {
         var now = Clock.Now(time);
-        var done = await characters.ResetAsync(accountId, now, options.HistoryRevisions, ct);
-        if (done) await audit.WriteAsync("character_reset", accountId, actorId, ip, null, now, ct);
+        var current = await characters.GetAsync(accountId, ct);
+        var done = current is not null && await characters.ResetAsync(accountId, now, options.HistoryRevisions, ct);
+        if (done)
+            await audit.WriteAsync("character_reset", accountId, actorId, ip,
+                new { revision = current!.Revision, flagged = current.Flagged, historyKeptDays = options.ResetHistoryDays }, now, ct);
         return done;
     }
 

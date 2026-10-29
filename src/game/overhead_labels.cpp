@@ -15,9 +15,20 @@ namespace {
 // stage entry): it is not blended.
 constexpr float kJumpDistance = 40.0f;
 // The actors' bounding boxes hold the bind pose (dng101b1: Agumon's box
-// reaches 18.3 above its feet, the figure in its stance about 10): the
+// reaches 18.3 above its feet, the figure in its stance about 7.3): the
 // label sits at this share of the box.
-constexpr float kBoundShare = 0.6f;
+constexpr float kBoundShare = 0.45f;
+// Above the highest joint, this share of the joint's height within these
+// bounds: the bars sit just above the head. The joints sit inside the
+// figure or at its top: Agumon's highest is 5.6 to 5.9 above its feet, the
+// top of its head 7.3 (a 4-player lobby picture); Veemon's highest are the
+// ears' roots at 7.4 to 7.7, the top of its head.
+constexpr float kJointMargin = 0.25f, kJointMarginMin = 1.8f, kJointMarginMax = 6.0f;
+// The occlusion probes: this far above the head point (world units), and
+// to either side by this share of the window height.
+constexpr float kProbeRise = 1.5f, kProbeSpread = 0.012f;
+// A label whose player the picture hides is drawn at this opacity.
+constexpr float kOccludedAlpha = 0.35f;
 
 engine::Vec3f lerp(const engine::Vec3f& a, const engine::Vec3f& b, float t) {
     return {a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t, a.z + (b.z - a.z) * t};
@@ -74,8 +85,8 @@ float label_fade(float distance, float near_distance, float far_distance) {
 
 float form_label_height(int species) {
     // Head heights of the 16 forms (world units above the model's origin),
-    // used when the model has no bounding box.
-    static constexpr float kHeights[16] = {12, 12, 12, 12, 22, 24, 22, 22, 22, 22, 22, 28, 24, 22, 24, 26};
+    // used when the model has no pose and no bounding box (Agumon: 7.3).
+    static constexpr float kHeights[16] = {8, 8, 8, 8, 14, 16, 14, 14, 14, 14, 14, 18, 16, 14, 16, 17};
     return species >= 0 && species < 16 ? kHeights[species] : 30.0f;
 }
 
@@ -83,7 +94,8 @@ engine::Vec3f head_point(const engine::Node& node, int species, std::optional<fl
     const auto& m = node.matrix;
     const engine::Vec3f origin{m(3, 0), m(3, 1), m(3, 2)};
     // The joints sit inside the figure: a margin above the highest.
-    if (pose_top && *pose_top - origin.y > 2.0f && *pose_top - origin.y < 150.0f) return {origin.x, *pose_top + 7.0f, origin.z};
+    if (pose_top && *pose_top - origin.y > 2.0f && *pose_top - origin.y < 150.0f)
+        return {origin.x, *pose_top + std::clamp((*pose_top - origin.y) * kJointMargin, kJointMarginMin, kJointMarginMax), origin.z};
     float top = 0;
     bool found = false;
     bound_top(node, m, 0, top, found);
@@ -91,7 +103,7 @@ engine::Vec3f head_point(const engine::Node& node, int species, std::optional<fl
     // A box that is no figure's height (a level-sized cull box, a flat one)
     // gives way to the table.
     if (!found || height < 4.0f || height > 80.0f) height = form_label_height(species);
-    return {origin.x, origin.y + height + 3.0f, origin.z};
+    return {origin.x, origin.y + height + 1.0f, origin.z};
 }
 
 std::optional<float> player_pose_top(const engine::Engine& engine, std::string_view model, int index, const engine::Node& node) {
@@ -182,7 +194,7 @@ void OverheadLabels::capture(std::vector<OverheadLabel> local, int local_players
         ++players_;
         OverheadLabel label;
         label.key = 0x100 + remote.id;
-        label.head = {remote.position.x, remote.position.y + form_label_height(remote.species) + 3.0f, remote.position.z};
+        label.head = {remote.position.x, remote.position.y + form_label_height(remote.species) + 1.0f, remote.position.z};
         label.feet = remote.position;
         label.name = remote.name;
         label.level = remote.level;
@@ -197,7 +209,19 @@ void OverheadLabels::capture(std::vector<OverheadLabel> local, int local_players
 void OverheadLabels::reset() {
     previous_.clear();
     current_.clear();
+    occlusion_.clear();
     players_ = 0;
+}
+
+float OverheadLabels::ease_occlusion(std::uint64_t key, bool hidden) {
+    auto it = std::find_if(occlusion_.begin(), occlusion_.end(), [&](const auto& entry) { return entry.first == key; });
+    if (it == occlusion_.end()) {
+        occlusion_.emplace_back(key, hidden ? 1.0f : 0.0f);
+        return occlusion_.back().second;
+    }
+    constexpr float kStep = 0.125f;
+    it->second = hidden ? std::min(1.0f, it->second + kStep) : std::max(0.0f, it->second - kStep);
+    return it->second;
 }
 
 std::vector<OverheadLabel> OverheadLabels::blended(float alpha) const {
@@ -210,6 +234,97 @@ std::vector<OverheadLabel> OverheadLabels::blended(float alpha) const {
         label.head = lerp(before->head, label.head, alpha);
     }
     return out;
+}
+
+std::vector<OcclusionProbe> occlusion_probes(const engine::Vec3f& head, const LabelView& view) {
+    std::vector<OcclusionProbe> probes;
+    // Above the head point (it sits just over the head): the picture there
+    // is the scene behind the player unless something stands in front.
+    const engine::Vec3f p{head.x, head.y + kProbeRise, head.z};
+    const engine::Mat4 vp = view.camera.view * view.camera.projection;
+    const float x = p.x * vp(0, 0) + p.y * vp(1, 0) + p.z * vp(2, 0) + vp(3, 0);
+    const float y = p.x * vp(0, 1) + p.y * vp(1, 1) + p.z * vp(2, 1) + vp(3, 1);
+    const float w = p.x * vp(0, 3) + p.y * vp(1, 3) + p.z * vp(2, 3) + vp(3, 3);
+    if (!(w > 1e-4f)) return probes;
+    const float px = view.wide_x + (x / w * view.widen * 0.5f + 0.5f) * view.wide_width;
+    const float py = view.window_height - (view.wide_y + (y / w * 0.5f + 0.5f) * view.wide_height);
+    const float spread = view.window_height * kProbeSpread;
+    for (const float dx : {0.0f, -spread, spread}) probes.push_back({px + dx, py, w});
+    return probes;
+}
+
+std::optional<float> view_distance(float window_depth, const engine::Mat4& projection) {
+    if (!(window_depth < 1.0f) || window_depth < 0.0f || projection(2, 3) == 0.0f) return std::nullopt;
+    // Row vectors: clip z = e.z * P22 + P32, clip w = e.z * P23 + P33.
+    const float ndc = window_depth * 2.0f - 1.0f;
+    const float divisor = ndc * projection(2, 3) - projection(2, 2);
+    if (std::abs(divisor) < 1e-12f) return std::nullopt;
+    const float eye_z = (projection(3, 2) - ndc * projection(3, 3)) / divisor;
+    return eye_z * projection(2, 3) + projection(3, 3);
+}
+
+bool occluded_in_picture(const std::vector<OcclusionProbe>& probes, const std::function<std::optional<float>(float, float)>& depth_at,
+                         const engine::Mat4& projection, float margin) {
+    if (probes.empty()) return false;
+    for (const auto& probe : probes) {
+        const auto depth = depth_at(probe.x, probe.y);
+        if (!depth) return false;
+        const auto distance = view_distance(*depth, projection);
+        // Nothing drawn there (the clear) or the scene lies behind: seen.
+        if (!distance || *distance > probe.depth - margin) return false;
+    }
+    return true;
+}
+
+std::vector<LabelBox> layout_overhead_labels(const std::vector<OverheadLabel>& labels, const LabelView& view, LabelMode mode, int players,
+                                             const std::function<std::pair<float, float>(const OverheadLabel&)>& size) {
+    std::vector<LabelBox> boxes(labels.size());
+    std::vector<float> distance(labels.size());
+    std::vector<std::size_t> order;
+    for (std::size_t i = 0; i < labels.size(); ++i) {
+        const auto& label = labels[i];
+        if (mode == LabelMode::off || label.hp <= 0 || !label_visible(mode, label.own, players)) continue;
+        const auto point = project_label(label.head, view);
+        if (!point) continue;
+        const float alpha = label_fade(point->distance) * (1.0f - (1.0f - kOccludedAlpha) * std::clamp(label.occlusion, 0.0f, 1.0f));
+        if (alpha <= 0.01f) continue;
+        const auto [w, h] = size(label);
+        auto& box = boxes[i];
+        box.shown = true;
+        box.anchor_x = point->x;
+        box.anchor_y = point->y;
+        box.width = w;
+        box.height = h;
+        box.x = point->x - w * 0.5f;
+        box.y = point->y - h; // its bottom (the bars) right above the head
+        box.alpha = alpha;
+        distance[i] = point->distance;
+        order.push_back(i);
+    }
+    // Nearest first: a label that would overlap one already placed moves up
+    // above it (again until it is clear), so tags of players standing
+    // behind each other stack instead of covering each other.
+    std::stable_sort(order.begin(), order.end(), [&](std::size_t a, std::size_t b) { return distance[a] < distance[b]; });
+    std::vector<std::size_t> placed;
+    for (const std::size_t i : order) {
+        auto& box = boxes[i];
+        for (int pass = 0; pass < 8; ++pass) {
+            bool moved = false;
+            for (const std::size_t j : placed) {
+                const auto& other = boxes[j];
+                const float gap = 2.0f;
+                const bool overlap = box.x < other.x + other.width && other.x < box.x + box.width && box.y < other.y + other.height + gap &&
+                                     other.y < box.y + box.height + gap;
+                if (overlap) {
+                    box.y = other.y - box.height - gap;
+                    moved = true;
+                }
+            }
+            if (!moved) break;
+        }
+        placed.push_back(i);
+    }
+    return boxes;
 }
 
 bool OverheadLabels::hidden(engine::Engine& engine) {

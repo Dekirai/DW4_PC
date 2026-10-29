@@ -23,7 +23,7 @@ public sealed class RegisterModel(AccountService accounts, AccountOptions option
     public string? CreatedName { get; private set; }
     public bool Open => string.Equals(options.Registration, "open", StringComparison.OrdinalIgnoreCase);
 
-    public IActionResult OnGet() => HttpContext.WebSession() is null ? Page() : Redirect("/account");
+    public IActionResult OnGet() => HttpContext.WebSession() is null ? Page() : Redirect("~/account");
 
     public async Task<IActionResult> OnPostAsync(CancellationToken ct)
     {

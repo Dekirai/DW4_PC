@@ -33,8 +33,11 @@ public static class RelayRoles
     public const string Guest = "guest";
 }
 
-/// <summary>What a valid ticket says.</summary>
-public sealed record TicketClaims(string Room, long Account, string Role, DateTimeOffset Expires);
+/// <summary>What a valid ticket says. <paramref name="Nonce"/> names this ticket (the room service keeps the live one per player).</summary>
+public sealed record TicketClaims(string Room, long Account, string Role, DateTimeOffset Expires, string Nonce = "");
+
+/// <summary>A new ticket and its nonce.</summary>
+public sealed record IssuedTicket(string Ticket, string Nonce, DateTimeOffset Expires);
 
 /// <summary>
 /// Relay tickets: base64url("channel|account|role|expiry|nonce") + "." + base64url(HMAC-SHA256). Issued by the room
@@ -63,14 +66,17 @@ public sealed partial class RelayTickets
 
     public static bool IsChannel(string channel) => ChannelName().IsMatch(channel);
 
-    public string Issue(string room, long account, string role)
+    public string Issue(string room, long account, string role) => Create(room, account, role).Ticket;
+
+    /// <summary>A new ticket with its nonce (the room service remembers it to accept only the newest ticket per player).</summary>
+    public IssuedTicket Create(string room, long account, string role)
     {
         if (!IsChannel(room)) throw new ArgumentException("Channels are a room code (4-8 of A-Z 0-9) with an optional '-<instance>' (1-9 digits).", nameof(room));
         if (role is not (RelayRoles.Host or RelayRoles.Guest)) throw new ArgumentException("Unknown role.", nameof(role));
         var expires = _time.GetUtcNow().Add(_lifetime).ToUnixTimeSeconds();
         var nonce = Convert.ToHexString(RandomNumberGenerator.GetBytes(12));
         var body = Encoding.ASCII.GetBytes(FormattableString.Invariant($"{room}|{account}|{role}|{expires}|{nonce}"));
-        return B64(body) + "." + B64(HMACSHA256.HashData(_key, body));
+        return new IssuedTicket(B64(body) + "." + B64(HMACSHA256.HashData(_key, body)), nonce, DateTimeOffset.FromUnixTimeSeconds(expires));
     }
 
     /// <summary>Checks signature, expiry and single use. A ticket is consumed by a successful check.</summary>
@@ -96,7 +102,7 @@ public sealed partial class RelayTickets
         if (expires <= now) return null;
         Purge(now);
         if (!_used.TryAdd(parts[4], expires)) return null; // replayed
-        return new TicketClaims(parts[0], account, parts[2], expires);
+        return new TicketClaims(parts[0], account, parts[2], expires, parts[4]);
     }
 
     private void Purge(DateTimeOffset now)
