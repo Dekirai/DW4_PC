@@ -1231,6 +1231,17 @@ public:
             if (ram->shuffled && ram->data) out.emplace_back(ram->data.str(2));
         return out;
     }
+    // Randomizer: the members other families stand in for in the waves of
+    // `family` (model name, RAM), out now. A script's command to every RAM
+    // of a family reaches them as well (Messenger::dispatch).
+    std::vector<std::pair<std::string, int>> stand_ins(std::string_view family) const {
+        std::vector<std::pair<std::string, int>> out;
+        for (const auto& ram : rams_)
+            if (ram->shuffled && ram->enemy_name == family)
+                for (std::size_t i = 0; i < ram->enemies.size() && i < ram->enemy_models.size(); ++i)
+                    if (ram->enemy_models[i] != family) out.emplace_back(ram->enemy_models[i], ram->enemies[i]);
+        return out;
+    }
     // Randomizer: a drop's record after the seeded permutation of its table.
     static int randomized_record(Engine& engine, const std::string& table, int record);
     // Each generator's data name and whether its waves were ever cleared (test bot).

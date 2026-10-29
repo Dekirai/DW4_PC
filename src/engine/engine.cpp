@@ -277,7 +277,33 @@ std::size_t Messenger::dispatch(Engine& engine, std::string_view category, std::
             return true;
         });
     }
+    // Randomizer (enemy shuffle): a command to every RAM of an enemy family
+    // (index -1) that erases, kills, freezes or holds them also reaches the
+    // members other families stand in for in that family's waves - stag0103's
+    // boat mats erase the e_nume left behind, stag0202's a00 / a01 the field's
+    // e_mummy and e_tyrano, stag0302's orb strikes down e_geko and e_otama,
+    // dng205b3's boss start erases the waves of four families. Without them a
+    // stand-in lived on through the scene the script cleared. Port-only
+    // sends (no message object), after the family's own RAMs.
+    std::vector<std::pair<std::string, int>> stand_ins;
+    if (index == -1 && name && name->starts_with("e_") && engine.cheats().enemy_shuffle() && (category == "ENEMY" || category == "MODELCTRL") &&
+        (command == "SQ_ERAS" || command == "SQ_DDMG" || command == "ONFREEZE" || command == "OFFREEZE" || command == "OFCTRL" ||
+         command == "ONCTRL"))
+        if (auto* generators = engine.get<GeneraterManager>()) stand_ins = generators->stand_ins(*name);
+    std::optional<Packet> arguments; // (the command's own, before the family's RAMs answer into it)
+    if (!stand_ins.empty()) arguments = packet;
+    auto reach_stand_ins = [&] {
+        if (stand_ins.empty()) return;
+        std::string text = "randomizer: " + std::string(command) + " to " + std::string(*name) + " reaches";
+        for (const auto& [model, ram] : stand_ins) {
+            Packet copy = *arguments;
+            dispatch(engine, category, model, ram, command, copy, false);
+            text += " " + model + "#" + std::to_string(ram);
+        }
+        engine.log(text);
+    };
     if (recipients.empty()) {
+        reach_stand_ins();
         // 80305A28 calls no handler when no row fits: the message is
         // dropped, its reply lists stay empty and the sender reads "no
         // answer" (8030690C / 80306A30 = 0); sd returns nothing to a script
@@ -311,6 +337,7 @@ std::size_t Messenger::dispatch(Engine& engine, std::string_view category, std::
                 objects_.append(packet.bools[i]);
             }
     }
+    reach_stand_ins();
     return recipients.size();
 }
 
