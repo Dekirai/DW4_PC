@@ -264,10 +264,11 @@ and stats must carry `protocol` / `clientVersion` (426 `client_outdated` otherwi
   board's floor (next point). Offline unlocks stay local in the game.
 - **Speedrun floor**: a story clear takes at least 45 minutes of in-game time (loading excluded) on every board. The
   campaign bot plays the whole Normal story with god mode, one-hit defeats and infinite MP and skips every text box at
-  the fastest rate (`work/campaign`, checkpoint sets r25c and r25t, 59.94 fields per second, loads and `stagis*` menu
-  stages left out): 7.26 to 7.52 hours over 64 stages, the six story boss stages alone 9.6 to 13.3 minutes. 45 minutes
-  is about a tenth of the fastest bot run and a quarter of Speed Demon's 3-hour goal, so no real run gets near it; Hard
-  and Very Hard play the same stages. A clear reported faster keeps no best time, its new unlock is flagged for review
+  the fastest rate (`work/campaign`, checkpoint sets r25c and r25t, four runs, 59.94 fields per second, from "stage
+  started" to the next stage change, loads and `stagis*` menu stages left out): 6.93 to 7.52 hours over the 64 story
+  stages, 6.61 hours for the best time of every stage over those runs added up, the six story boss stages alone 9.6 to
+  13.3 minutes. 45 minutes is about a ninth of that sum and a quarter of Speed Demon's 3-hour goal, so no real run gets
+  near it even with a far better route than the bot's; Hard and Very Hard play the same stages. A clear reported faster keeps no best time, its new unlock is flagged for review
   (answer `timeRejected: true`, audit `speedrun_implausible`), and `speed_6h` / `speed_3h` refuse it
   (`requirement_not_met`). `Play:SpeedrunFloorSeconds` sets the floor per board (calibrate with real online runs).
 

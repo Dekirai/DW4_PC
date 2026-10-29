@@ -50,11 +50,12 @@ public static class AchievementRules
 
     /// <summary>
     /// The least in-game time (seconds, loading excluded) a story clear can take, per board; a faster claim is impossible
-    /// and only comes from a broken or edited client. Derived from the campaign bot's runs of the whole Normal story
-    /// (work/campaign checkpoint sets r25c and r25t: god mode, one-hit defeats, infinite MP, every text box skipped at
-    /// the fastest rate): 7.26 to 7.52 hours of live in-game time over 64 stages, of which the six story boss stages
-    /// alone take 9.6 to 13.3 minutes. 45 minutes is about a tenth of the fastest bot run and a quarter of Speed
-    /// Demon's 3-hour goal, so no real run comes near it. Hard and Very Hard play the same stages, so the same floor
+    /// and only comes from a broken or edited client. Derived from four runs of the whole Normal story by the campaign
+    /// bot (work/campaign, checkpoint sets r25c and r25t: god mode, one-hit defeats, infinite MP, every text box skipped
+    /// at the fastest rate): 6.93 to 7.52 hours of live in-game time over the 64 story stages, and the best time of each
+    /// stage over those runs adds up to 6.61 hours; the six story boss stages alone take 9.6 to 13.3 minutes. 45 minutes
+    /// is about a ninth of that best-of-every-stage sum and a quarter of Speed Demon's 3-hour goal, so no real run comes
+    /// near it even with a much better route than the bot's. Hard and Very Hard play the same stages, so the same floor
     /// applies. Play:SpeedrunFloorSeconds overrides it per board (calibrate with real online runs).
     /// </summary>
     public const long DefaultSpeedrunFloorSeconds = 45 * 60;
