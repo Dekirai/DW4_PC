@@ -368,11 +368,37 @@ public class HubLogicTests
         Assert.False(h.P("a").Has(Msg.Resync));
 
         h.Barrier("a", "stag0101", tick: 50);
-        Assert.Equal(51u, i.Log.Count);
         Assert.False(i.Sealing);
         h.Barrier("b", "stag0101", tick: 50);
         Assert.Equal((BarrierDecision.New, i.Id), (h.Decision("a").Decision, h.Decision("a").NewInst));
         Assert.Equal(0u, i.Log.Count); // the next visit's log
+    }
+
+    /// <summary>A barrier only one member reports (a desync, a forged BARRIER) must not hang the others.</summary>
+    [Fact]
+    public void A_barrier_that_only_some_members_reach_splits_them_off_and_the_others_play_on()
+    {
+        var h = SealedPair(out var inst, new RelayOptions { LagLeaveSeconds = 600 });
+        var i = h.I("a");
+        h.Seal(500);
+        var stoppedAt = i.NextSeal;
+        h.Barrier("a", "stag0102", tick: stoppedAt - 2);
+        Assert.False(i.Sealing);
+        h.Seal(2000);
+        Assert.Equal(stoppedAt, i.NextSeal); // nothing sealed while the barrier waits for b
+        h.Advance(3100);
+        h.Hub.Housekeep(h.Now);
+        var ok = h.Decision("a");
+        Assert.Equal((BarrierDecision.New, "stag0102"), (ok.Decision, ok.Stage));
+        Assert.NotEqual(inst, ok.NewInst);
+        Assert.True(i.Sealing);
+        Assert.Same(i, h.Mem("b").Instance);
+        h.Seal(300);
+        var ticks = h.P("b").Ticks().Where(t => t.Tick >= stoppedAt).ToList();
+        Assert.NotEmpty(ticks);
+        Assert.Contains(ticks, t => t.Rec.Events.Any(e => e.Type == Ev.Leave && e.Slot == 0));
+        Assert.Contains(ticks, t => t.Rec.Events.Any(e => e.Type == Ev.LeadFrom));
+        Assert.Equal(1, h.Hub.Counters["barrier_split"]);
     }
 
     [Fact]

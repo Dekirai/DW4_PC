@@ -199,9 +199,10 @@ public sealed class RoomHub
             else
             {
                 i.Slots[m.Slot] = null;
-                if (i.Streams[m.Slot] is { } s) s.UntilTick = i.NextSeal;
+                if (i.Mode == InstanceMode.Sealed && !i.Sealing) i.Streams[m.Slot] = null; // before tick 0: as if it never came
+                else if (i.Streams[m.Slot] is { } s) s.UntilTick = i.NextSeal;
                 if (i.Count == 0) EndInstance(i, now);
-                else if (i.Mode == InstanceMode.Sealed && i.Count == 1 && !i.Sealing) i.Mode = InstanceMode.SoloLed;
+                else TryStartSealing(i, now);
             }
         }
         m.Instance = null;
@@ -592,10 +593,9 @@ public sealed class RoomHub
         if (i.Barrier is null)
         {
             i.Barrier = new BarrierCollect(msg.Tick, msg.Stage, msg.Point, msg.AliveMask, msg.PresentMask, msg.ContextHash, now);
-            // The server stops sealing the old visit; ticks sealed after B are discarded by every member and by the log.
+            // The server stops sealing the old visit; ticks sealed after B are discarded by every member (and by the
+            // log once the barrier holds for the whole group: a member that never reports it played them, 6.9).
             i.SealStop = msg.Tick;
-            if (i.Log.Count > msg.Tick + 1 && msg.Tick + 1 >= i.Log.PrefixCount) i.Log.TruncateTo(msg.Tick + 1);
-            foreach (var k in i.Ahead.Keys.Where(k => k > msg.Tick).ToList()) i.Ahead.Remove(k);
             i.Sealing = false;
             Note("barrier", i, ("tick", msg.Tick), ("to", msg.Stage), ("point", msg.Point));
         }
@@ -614,6 +614,8 @@ public sealed class RoomHub
     private void Park(HubInstance i, long now)
     {
         var b = i.Barrier!;
+        if (i.Log.Count > b.Tick + 1 && b.Tick + 1 >= i.Log.PrefixCount) i.Log.TruncateTo(b.Tick + 1);
+        foreach (var k in i.Ahead.Keys.Where(k => k > b.Tick).ToList()) i.Ahead.Remove(k);
         var g = new ArrivalGroup { From = i, BarrierTick = b.Tick, Stage = b.Stage, Point = b.Point, Context = b.Context, ParkedAt = now };
         foreach (var (slot, (member, carry)) in b.Reports.OrderBy(kv => kv.Key))
         {
@@ -634,6 +636,38 @@ public sealed class RoomHub
             return;
         }
         Decide(g, now);
+    }
+
+    /// <summary>
+    /// A barrier that only some connected members reported within Instances:BarrierReportSeconds: their engines executed a
+    /// NEXTSTAGE the others did not (a desync, or a forged BARRIER). The reporters arrive as a group of their own (a new
+    /// instance); the others play on: sealing resumes where it stopped, shifted by the stall, and the reporters leave by
+    /// LEAVE events (6.9: a member that cannot stay in sync continues alone).
+    /// </summary>
+    private void SplitBarrier(HubInstance i, long now)
+    {
+        var b = i.Barrier!;
+        ++i.Desyncs;
+        Count("barrier_split");
+        var lone = new HubInstance(0) { Stage = i.Stage, Visit = i.Visit, ContextHash = b.Context, Ended = true };
+        var g = new ArrivalGroup { From = lone, BarrierTick = b.Tick, Stage = b.Stage, Point = b.Point, Context = b.Context, ParkedAt = now };
+        var reporters = b.Reports.OrderBy(kv => kv.Key).Where(kv => kv.Value.Member.Instance == i && kv.Value.Member.Slot == kv.Key).ToList();
+        i.Barrier = null;
+        i.SealStop = null;
+        // The stall moves the schedule: the next tick is due now, as if the stalled time had not been.
+        i.S0 += Math.Max(0, now - Due(i, i.NextSeal));
+        i.Sealing = true;
+        foreach (var (slot, (member, carry)) in reporters)
+        {
+            g.Members.Add(new Arrival(member, slot, carry));
+            StampLeave(i, slot, now);
+            member.Arrival = g;
+            member.PreviousInstanceId = i.Id;
+        }
+        Note("barrier_split", i, ("reporters", reporters.Select(r => r.Key).ToArray()), ("tick", b.Tick));
+        _log.LogWarning("Room {Room} instance {Inst}: only some members reached the barrier at tick {Tick}; they go on alone", Code, i.Id, b.Tick);
+        _sealer?.Invoke();
+        if (g.Members.Count > 0) Decide(g, now);
     }
 
     /// <summary>The decision of SEAMLESS.md 3.4: DISSOLVE, co-arrival, JOIN (with holds), NEW.</summary>
@@ -1352,7 +1386,8 @@ public sealed class RoomHub
             // Barrier reports that do not come.
             if (i.Barrier is { } b && Ms(now - b.FirstAt) >= _inst.BarrierReportSeconds * 1000.0 && !i.Members.Any(x => x.Arrival is not null))
             {
-                if (b.Reports.Count > 0) Park(i, now);
+                if (i.Members.Any(x => x.Connected && !b.Reports.ContainsKey(x.Slot)) && i.Mode == InstanceMode.Sealed) SplitBarrier(i, now);
+                else if (b.Reports.Count > 0) Park(i, now);
             }
             // Lag and disconnects in sealed instances.
             if (i.Mode == InstanceMode.Sealed && i.Sealing)
