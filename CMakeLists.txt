@@ -41,7 +41,8 @@ add_library(dw4_engine src/engine/math.cpp src/engine/gekko_math.cpp src/engine/
   src/engine/mat_ctrl.cpp src/engine/generater.cpp src/engine/randomizer.cpp src/engine/combat.cpp src/engine/status.cpp src/engine/save_game.cpp src/engine/save_util.cpp src/engine/save_menu.cpp src/engine/menu_text.cpp src/engine/shadow.cpp src/engine/particles.cpp src/engine/water.cpp src/engine/change_pos.cpp
   src/engine/hud.cpp src/engine/items.cpp src/engine/panel.cpp
   src/engine/subwnd.cpp src/engine/subwnd_folder.cpp src/engine/subwnd_skill.cpp
-  src/engine/subwnd_shop.cpp src/engine/save_state.cpp src/engine/port_events.cpp src/engine/online.cpp)
+  src/engine/subwnd_shop.cpp src/engine/save_state.cpp src/engine/port_events.cpp src/engine/online.cpp
+  src/engine/online_cameras.cpp src/engine/online_exits.cpp)
 target_link_libraries(dw4_engine PUBLIC dw4_core)
 # The Gekko arithmetic rounds only where the original rounds (no contraction).
 if(MSVC)
@@ -66,8 +67,9 @@ if(BUILD_TESTING)
   add_executable(dw4_scene_tests tests/scene_tests.cpp)
   target_link_libraries(dw4_scene_tests PRIVATE dw4_engine)
   add_test(NAME scene COMMAND dw4_scene_tests)
-  # (pad: the PADINPUT redirect of Engine::pads too)
-  foreach(suite gekko_math messenger pad)
+  # (pad: the PADINPUT redirect of Engine::pads too; online_cameras: the
+  # seamless co-op cameras and exits, docs/SEAMLESS.md 4 and 5.2)
+  foreach(suite gekko_math messenger pad online_cameras)
     add_executable(dw4_${suite}_tests tests/${suite}_tests.cpp)
     target_link_libraries(dw4_${suite}_tests PRIVATE dw4_engine)
     add_test(NAME ${suite} COMMAND dw4_${suite}_tests)

@@ -178,6 +178,12 @@ void TextCtlManager::add_info(Engine& engine, const ObjectView& info) {
     }
 }
 
+const Node* TextCtlManager::line_node(std::string_view layer, std::string_view name) const {
+    for (const auto& line : lines_)
+        if (line.layer == layer && line.name == name) return line.node;
+    return nullptr;
+}
+
 void TextCtlManager::clear_stage(Engine&) {
     rams_.clear();
     lines_.clear();

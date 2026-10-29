@@ -49,6 +49,18 @@ std::vector<MatCtrlManager::MatBox> MatCtrlManager::mat_boxes() const {
     return out;
 }
 
+std::optional<MatCtrlManager::RunningMat> MatCtrlManager::running_mat() const {
+    if (!context_) return std::nullopt;
+    return RunningMat{context_->name, context_->current & 0xFu, context_->previous & 0xFu, live_};
+}
+
+std::uint32_t MatCtrlManager::players_on(std::string_view name) const {
+    for (const auto& ram : rams_)
+        for (const auto& mat : ram->mats)
+            if (mat.name == name) return mat.current & live_ & 0xFu;
+    return 0;
+}
+
 void MatCtrlManager::clear_stage(Engine&) {
     rams_.clear();
     context_ = nullptr;
@@ -124,7 +136,6 @@ void MatCtrlManager::update(Engine& engine) {
 
 bool MatCtrlManager::script_call(Engine& engine, const std::string& method, std::span<const Lua4Value> args,
                                  std::vector<Lua4Value>& out) {
-    (void)engine;
     if (method == "MATsetRun") {
         pending_run_ = !args.empty() && args[0].type() == Lua4Type::Number && args[0].as_number() != 0;
         return true;
@@ -148,6 +159,17 @@ bool MatCtrlManager::script_call(Engine& engine, const std::string& method, std:
         return true;
     }
     if (method == "MATisAllPlayer") {
+        // Seamless co-op, a multi-member instance (docs/SEAMLESS.md 5.1,
+        // 5.2): on an exit mat (its script calls funcStageChange) the port
+        // decides who goes, so the gate opens for a living member who
+        // stepped on in this update; every other mat keeps the original.
+        if (context_ && engine.online_shared()) {
+            if (!context_->exit) context_->exit = engine.script_mentions(context_->name + ".lua", "funcStageChange");
+            if (*context_->exit) {
+                out = {Lua4Value::number((current & ~previous & live_) ? 1 : 0)};
+                return true;
+            }
+        }
         // 80302B40: every live player (manager +0x20..+0x23) on the mat - not
         // every joined one: with a defeated player's bit capsule out, the
         // others can still take an exit (dng411b1 two-player run: player 2

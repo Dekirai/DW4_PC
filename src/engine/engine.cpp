@@ -9,6 +9,7 @@
 #include <bit>
 #include <cctype>
 #include <charconv>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <iostream>
@@ -497,6 +498,16 @@ void DemoManager::update(Engine& engine) {
                 }
             } else if (record.type == 7) {
                 if (record.argument) engine.run_script(*record.argument);
+            } else if (record.type == 8) {
+                block = record.port && record.port(engine) != 0;
+            } else if (record.type == 9) {
+                const std::int32_t value = record.port ? record.port(engine) : 0;
+                while (cursor < records.size()) {
+                    ++cursor;
+                    if (cursor >= records.size()) break;
+                    if (records[cursor].type == 4 && records[cursor].case_value == value) break;
+                    if (records[cursor].type == 5) break;
+                }
             } else if (record.type >= 0 && record.type <= 3) {
                 Packet packet;
                 if (record.argument) parse_packet_arguments(*record.argument, packet);
@@ -635,6 +646,9 @@ void Engine::reset_modules() {
     schedule_.clear();
     messenger_.clear();
     demo_.clear();
+    // Seamless co-op: a running exit ends with the stage.
+    exit_port_.reset();
+    exit_view_ = ExitPromptView{};
 }
 
 void Engine::begin_stage_load(const StageSnapshot* restoring) {
@@ -1967,6 +1981,8 @@ void Engine::step_impl(const std::array<PadSample, 4>& samples) {
     messenger_.update(*this);
     process_stage_loader();
     demo_.update(*this);
+    // Seamless co-op: no leash while OnlineRules::leash_off (a no-op offline).
+    apply_leash_rule();
     update_managers();
 }
 
@@ -2066,12 +2082,68 @@ TraversalContext Engine::frame_context(std::vector<DrawItem>* out, FrameCamera& 
     return context;
 }
 
+namespace {
+// DW4_TRACE_TRAVERSAL_TIME (development measurement, Engine::traversal_ns):
+// the CPU time of each traversal pass. Off, it reads no clock.
+bool trace_traversal_time() {
+    static const bool on = std::getenv("DW4_TRACE_TRAVERSAL_TIME") != nullptr;
+    return on;
+}
+struct PassTimer {
+    std::uint64_t& ns;
+    std::uint64_t& count;
+    bool on = trace_traversal_time();
+    std::chrono::steady_clock::time_point start = on ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+    ~PassTimer() {
+        if (!on) return;
+        ns += std::uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - start).count());
+        ++count;
+    }
+};
+} // namespace
+
+// Per-slot cameras (OnlineRules::player_cameras, docs/SEAMLESS.md 4.2): the
+// simulation pass of the step, culled against the union of every member
+// camera's frustum (the first member's camera first: it takes the
+// view-dependent values), without draw items, and the shadow casters under
+// every member's light. Every machine of an instance computes every member's
+// camera from the lockstep inputs, so the union is the same everywhere. With
+// one camera it is the original traversal.
+void Engine::traverse_union() {
+    if (rebooting_) return;
+    PassTimer timer{traversal_ns[2], traversal_count[2]};
+    FrameCamera camera;
+    Vec4f clear_color;
+    TraversalContext context = frame_context(nullptr, camera, clear_color);
+    if (auto* cameras = get<CameraManager>()) {
+        bool first = true;
+        for (int slot = 0; slot < 4; ++slot) {
+            if (!(online_.player_cameras & (1u << slot))) continue;
+            FrameCamera own;
+            cameras->frame_camera(*this, own, slot);
+            if (first) context.cull_camera = own;
+            else context.extra_cull.push_back(own);
+            first = false;
+        }
+    }
+    context.union_cull = true;
+    traverse(&global_root_, context);
+    if (auto* shadows = get<ShadowManager>()) shadows->traverse(context);
+    union_frame_ = frame_;
+    union_time_ = time_;
+}
+
 void Engine::traverse_scene() {
     // As render(): the same nodes in the same order with the same camera,
     // time and poses; only the draw items (geometry, particle quads, skin
     // palettes, lights) are left out.
     if (rebooting_) return;
     const detail::MxcsrGuard mxcsr;
+    if (online_.player_cameras) {
+        traverse_union();
+        return;
+    }
+    PassTimer timer{traversal_ns[1], traversal_count[1]};
     FrameCamera camera;
     Vec4f clear_color;
     TraversalContext context = frame_context(nullptr, camera, clear_color);
@@ -2088,6 +2160,37 @@ void Engine::render(std::vector<DrawItem>& out, FrameCamera& camera, Vec4f& clea
         if (shadow) shadow->active = false;
         return;
     }
+    if (online_.player_cameras) {
+        // Per-slot cameras: the step's union simulation pass (once per step;
+        // a traversal at the same world time changes nothing), then this
+        // machine's picture with its own camera, which changes nothing
+        // either: every node takes its peek path. The picture keeps the
+        // widescreen widening and the smooth motion rule (the previous
+        // step's view of this camera, set by the host).
+        if (union_frame_ != frame_ || union_time_ != time_) traverse_union();
+        PassTimer timer{traversal_ns[3], traversal_count[3]};
+        TraversalContext context = frame_context(&out, camera, clear_color);
+        FrameCamera local = context.cull_camera;
+        if (auto* cameras = get<CameraManager>()) cameras->frame_camera(*this, local, picture_slot());
+        context.cull_camera = local;
+        context.camera = debug_camera ? *debug_camera : local;
+        camera = context.camera;
+        context.simulate = false;
+        Mat4 inverse_view;
+        if (invert(camera.view, inverse_view)) context.camera_position = {inverse_view(3, 0), inverse_view(3, 1), inverse_view(3, 2)};
+        // A multi-member instance: other members' item name lines and exit
+        // prompts are not this machine's (picture_hidden_roots).
+        picture_hidden_roots(picture_hidden_);
+        if (!picture_hidden_.empty()) context.picture_hidden = &picture_hidden_;
+        traverse(&global_root_, context);
+        std::stable_partition(out.begin(), out.end(), [](const DrawItem& item) { return !item.state.blend_enabled; });
+        if (shadow) {
+            shadow->active = false;
+            if (auto* shadows = get<ShadowManager>()) shadows->render(*this, context, *shadow);
+        }
+        return;
+    }
+    PassTimer timer{traversal_ns[0], traversal_count[0]};
     TraversalContext context = frame_context(&out, camera, clear_color);
     traverse(&global_root_, context);
     // The scene traversal submits its packages to the igSorter it holds at

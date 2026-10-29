@@ -100,6 +100,53 @@ enum class Decision : std::uint8_t { new_instance = 0, join = 1, dissolve = 2, c
 // where the host renders audio; 6.8).
 enum class SnapshotForm : std::uint8_t { raw = 0, canonical = 1 };
 
+// An exit the local copy takes (the funcStageChange port or the gate disc,
+// 5.2): the client sends HEADING with it, one to two seconds before the
+// barrier.
+struct ExitHeading {
+    std::uint64_t frame{};
+    std::string stage;
+    int point{};
+    std::uint8_t leavers{}; // the members that go (everyone present: the original group move)
+};
+
+// What the exit port shows right now (presentation: the client's texts, the
+// draw filter of the prompt). Slots are instance slots, -1 none.
+struct ExitPromptView {
+    bool active{};            // an exit prompt or its departure runs
+    int owner = -1;           // the member who stepped on and answered first
+    int asking = -1;          // the member whose prompt is open (the owner first)
+    std::uint8_t yes{};       // members who said yes so far (the owner included)
+    std::uint8_t stays{};     // present members who would stay if the owner alone went
+    std::uint8_t sees_fade{}; // members whose picture shows the exit's fade (i_fadewn01)
+    std::string stage;        // the destination
+    bool boss_destination{};  // a boss stage (warning text)
+};
+
+// The exit port's prompt owner (5.2): the lowest present, living member whose
+// bit is in current & ~previous of the mat (it stepped on in this update); -1
+// for none: a mask change by a step off, a death or a despawn asks nobody
+// (never MATgetPlayerNo's slot-0 fallback).
+constexpr int exit_prompt_owner(std::uint32_t current, std::uint32_t previous, std::uint32_t living, std::uint8_t present) {
+    const std::uint32_t stepped = current & ~previous & living & present & 0xFu;
+    for (int slot = 0; slot < 4; ++slot)
+        if (stepped & (1u << slot)) return slot;
+    return -1;
+}
+
+// The side rule of an exit-type departure (6.7): the living members among
+// `going` leave; defeated members stay with the living ones who stay; when no
+// living member stays, every present member goes (the original group move,
+// no fork). 0 when no living member goes. Engine::online_split applies the
+// same rule.
+constexpr std::uint8_t exit_leavers(std::uint8_t present, std::uint8_t living, std::uint8_t going) {
+    living &= present;
+    const auto leaving = std::uint8_t(going & living);
+    if (!leaving) return 0;
+    if ((living & ~leaving) == 0) return present;
+    return leaving;
+}
+
 // The engine's view of the room's settings that reach the simulation online
 // (6.12: cheats and rebalancing are refused; the randomizer, the drops and
 // fast loading come from the room).
@@ -131,8 +178,8 @@ std::vector<std::string> online_forbidden_env_set();
 // online_hash(Engine::snapshot_bytes(SnapshotForm::canonical)) (6.8).
 std::uint64_t online_hash(std::span<const std::uint8_t> bytes);
 
-// The net fingerprint's camera part (6.9): the cameras lane hashes every
-// slot's PlayerBox state here (round S1 seam; 0 while no PlayerBox exists).
+// The net fingerprint's camera part (6.9): every slot's PlayerBox state
+// (CameraManager::player_box_hash; 0 without per-slot cameras).
 std::uint64_t net_fingerprint_cameras(const Engine& engine);
 
 } // namespace dw4::engine

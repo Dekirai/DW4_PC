@@ -84,6 +84,15 @@ bool occluded_in_picture(const std::vector<OcclusionProbe>& probes, const std::f
 // traversed pose of the model's first actor); nullopt without one.
 std::optional<float> player_pose_top(const engine::Engine& engine, std::string_view model, int index, const engine::Node& node);
 
+// Seamless co-op notices for this machine's member (presentation only,
+// SEAMLESS.md 4.1 and 5.2; empty unless the instance has two or more
+// members): the defeated member's hint (with the give-up hold so far, of
+// `give_up_frames`), whose camera it watches, and the exit prompt's names
+// (who would stay, a boss warning, whom the owner waits for).
+std::vector<std::string> online_notices(engine::Engine& engine, int give_up_held, int give_up_frames);
+// "Kim", "Kim and Lee", "Kim, Lee and Max".
+std::string join_names(const std::vector<std::string>& names);
+
 enum class LabelMode { automatic, all, others, off };
 LabelMode parse_label_mode(std::string_view text); // "auto", "all", "others", "off"
 const char* label_mode_name(LabelMode mode);
@@ -93,9 +102,12 @@ const char* label_mode_name(LabelMode mode);
 bool label_visible(LabelMode mode, bool own, int players);
 
 struct OverheadLabel {
-    std::uint64_t key{};  // local slot 0..3, remote players 0x100 + their id
+    std::uint64_t key{};  // local slot 0..3, remote players 0x100 + their id, capsules 0x80 + slot
     int slot = -1;        // GameSystem slot (-1 remote)
     bool own{};           // this machine's player
+    // Seamless co-op: a defeated partner's bit capsule (the name over it,
+    // so the others find it for a raise; SEAMLESS.md 4.1).
+    bool capsule{};
     // How far the picture hides the player (occluded_in_picture where the
     // labels are drawn, eased over a few frames by
     // OverheadLabels::ease_occlusion): 0 seen .. 1 hidden, the label then

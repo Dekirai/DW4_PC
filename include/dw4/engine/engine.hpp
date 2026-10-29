@@ -264,6 +264,8 @@ private:
 // beDemoManager record types (802F7580 / 802F7EC0).
 struct DemoRecord {
     int type{};                 // 0 set, 1 wait-while-false, 2 wait-while-true, 3 switch, 4 case, 5 end, 7 lua
+                                // port only (seamless co-op, never in an offline game): 8 wait while `port`
+                                // returns nonzero, 9 switch on `port`'s value
     std::string category;
     std::optional<std::string> name;
     std::int32_t index{};
@@ -271,6 +273,7 @@ struct DemoRecord {
     std::optional<std::string> argument;
     std::int64_t delay_frames{};
     std::int32_t case_value{};
+    std::function<int(Engine&)> port;
 };
 struct DemoWork {
     std::vector<DemoRecord> records;
@@ -285,6 +288,10 @@ public:
     void add_case(std::int32_t value);
     void end_switch();
     void run();
+    // A work built elsewhere starts at once (the seamless co-op exit port;
+    // a script's unfinished work stays as it is). It runs from the next
+    // update on.
+    void start(std::unique_ptr<DemoWork> work) { running_.push_back(std::move(work)); }
     void update(Engine& engine);
     void clear();
     std::size_t running() const { return running_.size(); }
@@ -456,9 +463,19 @@ public:
     // fixes the cheats to the room's (online_cheats), switches the console
     // reset off and records the present slots' personal session values.
     void set_online(const OnlineRules& rules);
-    // Presentation only: whose camera the local picture uses (-1: own).
-    void set_view_slot(int slot) { view_slot_ = slot; }
+    // The slots with their own box camera (OnlineRules::player_cameras); 0:
+    // the one shared camera and the original single traversal.
+    std::uint8_t player_cameras() const { return online_.player_cameras; }
+    // A multi-member instance: online with two or more present members (the
+    // exit port, the gate disc fork and the draw filters act only then).
+    bool online_shared() const;
+    // Presentation only: whose camera this machine's picture uses (the local
+    // member's slot, 0..3). picture_slot() is the camera render() draws: the
+    // view slot, or while its player is defeated the nearest living member's
+    // (4.1); the view slot itself without per-slot cameras.
+    void set_view_slot(int slot) { view_slot_ = slot < 0 || slot > 3 ? 0 : slot; }
     int view_slot() const { return view_slot_; }
+    int picture_slot() const;
     // Replays (catch-up, resync, resume): the side to take at each fork.
     void set_fork_sides(std::span<const ForkSide> sides) { fork_sides_.assign(sides.begin(), sides.end()); }
     // Live play: this machine's slot, which decides its side at a fork
@@ -501,6 +518,15 @@ public:
     // the end of the step; take_split() reports it once.
     bool online_split(std::uint8_t mask, ForkKind kind);
     std::optional<SplitResult> take_split();
+    // An exit the local copy takes (the funcStageChange port or the gate
+    // disc, 5.2), once, for the client's HEADING.
+    std::optional<ExitHeading> take_heading();
+    // The exit port's state for this machine's texts and draw filter.
+    const ExitPromptView& exit_prompt() const { return exit_view_; }
+    // The subtrees this machine's picture leaves out in a multi-member
+    // instance (4.3, 5.2): other members' item name lines and exit prompts.
+    // Presentation only; render()'s picture pass skips them.
+    void picture_hidden_roots(std::vector<const Node*>& out);
     // While parked after the barrier tick: BARRIER_OK, applied in the load
     // step right before begin_stage_load.
     void set_barrier(const BarrierResult& barrier);
@@ -573,6 +599,12 @@ public:
     // blends the picture between two steps (TraversalContext::
     // picture_previous_view). Presentation only, like picture_widen.
     std::optional<Mat4> picture_previous_view;
+    // Development measurement (DW4_TRACE_TRAVERSAL_TIME): the traversals'
+    // accumulated CPU time in ns and their count: [0] the combined pass
+    // (render, the original), [1] traverse_scene (the original), [2] the
+    // union simulation pass, [3] the picture-only pass. Never read by the
+    // simulation; counted only while that variable is set.
+    std::array<std::uint64_t, 4> traversal_ns{}, traversal_count{};
     // Per-scene draw statistics for diagnostics.
     std::vector<std::string> scene_report();
 
@@ -823,6 +855,12 @@ private:
     // The frame's camera, clear colour and traversal context (render,
     // traverse_scene); `out` null: no draw items.
     TraversalContext frame_context(std::vector<DrawItem>* out, FrameCamera& camera, Vec4f& clear_color);
+    // Per-slot cameras (OnlineRules::player_cameras): the simulation pass
+    // culled against the union of the member cameras (no draw items), once
+    // per step, and the frame and world time it last ran on.
+    void traverse_union();
+    std::uint64_t union_frame_ = ~0ull;
+    std::int64_t union_time_ = -1;
     void install_lua();
     std::vector<Lua4Value> lua_call(const Lua4HostCall& call);
 
@@ -962,7 +1000,7 @@ private:
     std::optional<PendingFork> pending_fork_;
     std::optional<SplitResult> split_;
     bool replay_{};
-    int view_slot_ = -1;
+    int view_slot_ = 0;
     int trigger_slot_ = -1;
     bool counted_online_{};
     // The online step's input: absent slots neutral and disconnected,
@@ -975,10 +1013,26 @@ private:
     void apply_pending_fork();
     // The load step: BARRIER_OK's membership and rules (before begin_stage_load).
     void apply_barrier();
-    // Recomputes present from the joined slots, the camera mask and the leash.
-    void membership_changed(std::uint8_t before);
+    // After a membership step: NINZU, the camera mask, the leash, the
+    // personal values (`before`: the rules before the step).
+    void membership_changed(const OnlineRules& before);
     void despawn_player(int slot);
     void install_online_lua();
+    // The camera, leash and Lua side of a rules change (set_online and every
+    // membership step): the camera mask's box hand-over, the leash ring, the
+    // funcStageChange port while two or more members are present.
+    void online_rules_changed(const OnlineRules& before);
+    void apply_online_cameras(const OnlineRules& before);
+    void apply_leash_rule();
+    // The exit port (online_exits.cpp).
+    std::optional<ExitHeading> heading_;
+    ExitPromptView exit_view_;
+    struct ExitPort;
+    std::shared_ptr<ExitPort> exit_port_;     // the running exit prompt (shared with its demo records)
+    std::vector<const Node*> picture_hidden_; // render(): picture_hidden_roots
+    std::vector<Lua4Value> stage_change_port(std::span<const Lua4Value> args);
+    bool gatedisc_fork();
+    friend struct ExitPortAccess;
     void set_trigger(int slot) {
         trigger_slot_ = slot;
         messenger_.set_trigger(slot);

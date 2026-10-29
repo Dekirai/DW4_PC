@@ -1253,7 +1253,7 @@ void ModelCtrlManager::update_player(Engine& engine, ModelRam& ram) {
         // direction; heading = frsp(atan2(fwd.x, fwd.z)) + frsp(atan2(stick
         // x, -stick y)) (double MSL atan2 800A2C74, fadds).
         FrameCamera camera;
-        if (auto* cameras = engine.get<CameraManager>()) cameras->frame_camera(engine, camera);
+        if (auto* cameras = engine.get<CameraManager>()) cameras->frame_camera(engine, camera, ram.index); // per-slot cameras: the player's own
         Mat4 inverse;
         gekko::invert(camera.view, inverse);
         const Vec3f forward = gekko::rotate({0.0f, 0.0f, 1.0f}, inverse);

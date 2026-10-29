@@ -93,7 +93,10 @@ const std::vector<std::string_view>& online_forbidden_env() {
         "DW4_COUNTERS", "DW4_DIFFICULTY", "DW4_ENTRY", "DW4_PLAYERS",
         // the randomizer, load timing, data and cards (the room's settings decide them online)
         "DW4_RANDOMIZER", "DW4_RANDOMIZER_SWEEP", "DW4_FAST_LOADING", "DW4_MODS", "DW4_CARD_DIR", "DW4_CARD_A",
-        "DW4_CARD_B"};
+        "DW4_CARD_B",
+        // the cameras-exits test switches (game_main.cpp: rules, forks and intents of offline test runs)
+        "DW4_CAMERAS", "DW4_CAM_LOCAL", "DW4_LEASH_OFF", "DW4_ONLINE", "DW4_TEST_RULES", "DW4_TEST_GATEDISC",
+        "DW4_TEST_GIVEUP"};
     return names;
 }
 
@@ -107,7 +110,8 @@ const std::vector<std::string_view>& online_presentation_env() {
         "DW4_SCENE_REPORT", "DW4_SEEK_DIRECT", "DW4_SMOKE_STAGES", "DW4_STAGE_STATES", "DW4_STATE_FILE",
         "DW4_STATE_TEST", "DW4_TEXTURE_PACK", "DW4_WIDESCREEN", "DW4_WINDOW",
         // round S1 test tools (game_main.cpp)
-        "DW4_SNAPSHOT_DUMP", "DW4_PAD_LOG", "DW4_PAD_REPLAY", "DW4_EXTRA_RENDERS", "DW4_EXTRA_WIDEN"};
+        "DW4_SNAPSHOT_DUMP", "DW4_PAD_LOG", "DW4_PAD_REPLAY", "DW4_EXTRA_RENDERS", "DW4_EXTRA_WIDEN", "DW4_EXTRA_PREVIOUS",
+        "DW4_CAM_CHECK"};
     return names;
 }
 
@@ -134,10 +138,11 @@ std::uint64_t online_hash(std::span<const std::uint8_t> bytes) {
     return h;
 }
 
-// The cameras lane hashes every slot's PlayerBox here (round S1 seam).
+// Every slot's PlayerBox state (6.9; the shared camera's state is in the
+// scene nodes Engine::fingerprint already covers).
 std::uint64_t net_fingerprint_cameras(const Engine& engine) {
-    (void)engine;
-    return 0;
+    const auto* cameras = engine.get<CameraManager>();
+    return cameras ? cameras->player_box_hash() : 0;
 }
 
 namespace {
@@ -177,21 +182,32 @@ void Engine::set_online(const OnlineRules& rules) {
         counted_online_ = false;
         --detail::g_online_engines;
     }
-    const bool was = online_.enabled;
+    const OnlineRules before = online_;
     online_ = rules;
     if (!online_.enabled) {
         personal_ = {};
         barrier_pads_.reset();
         barrier_.reset();
         pending_fork_.reset();
+        online_rules_changed(before);
         return;
     }
     cheats_ = online_cheats(cheats_);
     console_reset_.set_enabled(false);
-    if (!was && lua_) install_online_lua();
     if (std::popcount(unsigned(online_.present)) >= 2)
         for (int s = 0; s < 4; ++s)
             if ((online_.present & bit(s)) && !personal_[std::size_t(s)]) personal_[std::size_t(s)] = personal_session(s);
+    online_rules_changed(before);
+}
+
+// The camera mask's box hand-over (4.1), the leash ring (4.6) and the
+// funcStageChange port, which exists while two or more members are present
+// (5.2): after set_online and after every membership step.
+void Engine::online_rules_changed(const OnlineRules& before) {
+    apply_online_cameras(before);
+    apply_leash_rule();
+    const bool shared_before = before.enabled && std::popcount(unsigned(before.present)) >= 2;
+    if (before.enabled != online_.enabled || shared_before != online_shared()) install_online_lua();
 }
 
 bool Engine::hub_stage(std::string_view stage) {
@@ -305,7 +321,8 @@ void Engine::apply_pending_fork() {
     pending_fork_.reset();
     // online_split narrowed `present` to this copy's side at once.
     const std::uint8_t other = fork.other;
-    const std::uint8_t before = std::uint8_t(online_.present | other);
+    OnlineRules before = online_;
+    before.present = std::uint8_t(online_.present | other);
     for (int s = 0; s < 4; ++s)
         if (other & bit(s)) despawn_player(s);
     split_ = SplitResult{frame_, fork.leavers, fork.kept, fork.in_stage, fork.take_leavers};
@@ -319,9 +336,8 @@ void Engine::finish_online_step(const std::array<PadSample, 4>& samples) {
     } else {
         barrier_pads_.reset();
     }
-    // The leash ring loads with the stage: off again once the load is done.
-    if (online_.leash_off && !loading())
-        if (auto* hitland = get<HitLandManager>()) hitland->set_child_hit("limit_Circle", false);
+    // (The leash ring that loads with the stage goes in every step's
+    // apply_leash_rule.)
 }
 
 std::optional<SplitResult> Engine::take_split() {
@@ -333,8 +349,7 @@ std::optional<SplitResult> Engine::take_split() {
 // ---------------------------------------------------------------------------
 // Membership
 // ---------------------------------------------------------------------------
-void Engine::membership_changed(std::uint8_t before) {
-    (void)before;
+void Engine::membership_changed(const OnlineRules& before) {
     if (auto* sys = get<GameSystem>()) {
         int ninzu = 0;
         for (const auto& p : sys->players) ninzu += p.joined ? 1 : 0;
@@ -345,10 +360,7 @@ void Engine::membership_changed(std::uint8_t before) {
         // 4.1 / 4.6: every present slot has its own box camera, the leash
         // ring is off until the next stage load.
         online_.player_cameras = online_.present;
-        if (!online_.leash_off) {
-            online_.leash_off = true;
-            if (auto* hitland = get<HitLandManager>()) hitland->set_child_hit("limit_Circle", false);
-        }
+        online_.leash_off = true;
         // Personal values for every present slot (the base member's from the
         // engine-wide ones, before another member's line can touch them).
         for (int s = 0; s < 4; ++s)
@@ -357,6 +369,7 @@ void Engine::membership_changed(std::uint8_t before) {
         // 4.4: back to one member keeps the mask {its slot} until the next load.
         online_.player_cameras = online_.present;
     }
+    online_rules_changed(before);
 }
 
 PlayerCarry Engine::carry_player(int slot) const {
@@ -375,7 +388,7 @@ void Engine::online_join_player(int slot, const PlayerCarry& carry, int entrance
     if (!online_.enabled || slot < 0 || slot > 3 || (online_.present & bit(slot))) return;
     auto* sys = get<GameSystem>();
     if (!sys) return;
-    const std::uint8_t before = online_.present;
+    const OnlineRules before = online_;
     auto& player = sys->players[std::size_t(slot)];
     player = carry.slot;
     player.joined = true;
@@ -458,7 +471,7 @@ void Engine::despawn_player(int slot) {
 
 void Engine::online_remove_player(int slot) {
     if (!online_.enabled || slot < 0 || slot > 3 || !(online_.present & bit(slot))) return;
-    const std::uint8_t before = online_.present;
+    const OnlineRules before = online_;
     despawn_player(slot);
     membership_changed(before);
 }
@@ -609,7 +622,9 @@ void Engine::apply_barrier() {
     rules.player_cameras = 0;
     rules.leash_off = false;
     online_ = rules;
-    membership_changed(0);
+    // (The stage's boxes were cleared with the module reset: every member's
+    // box camera starts with SETBOXCAMERA's first run.)
+    membership_changed(OnlineRules{});
     if (std::popcount(unsigned(online_.present)) < 2) personal_ = {};
 }
 
@@ -677,15 +692,6 @@ std::uint64_t Engine::net_fingerprint() {
     h.value(net_fingerprint_cameras(*this));
     h.value(session_context_hash());
     return h.h;
-}
-
-// ---------------------------------------------------------------------------
-// Lua (registered only online)
-// ---------------------------------------------------------------------------
-void Engine::install_online_lua() {
-    if (!lua_) return;
-    lua_->set_global("NETsplit", Lua4Value::host_function("NETsplit"));
-    lua_->set_global("NETisOnline", Lua4Value::host_function("NETisOnline"));
 }
 
 } // namespace dw4::engine

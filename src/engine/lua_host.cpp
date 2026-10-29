@@ -106,6 +106,9 @@ void Engine::for_each_script(const std::function<void(std::string_view name, std
 
 bool Engine::run_script(std::string_view name) {
     if (!lua_) install_lua();
+    // Seamless online co-op: the gate disc's user forks off first; the
+    // members who stay do not run its script (online_exits.cpp).
+    if (name == "gatedisc.lua" && online_shared() && !gatedisc_fork()) return true;
     // DW4_TRACE_SCRIPT=1 logs every script run (=name: only that one).
     if (static const char* trace = std::getenv("DW4_TRACE_SCRIPT"); trace && (std::string_view(trace) == "1" || name == trace))
         log("script " + std::string(name));
@@ -193,6 +196,8 @@ bool Engine::run_script(std::string_view name) {
         }
     }
     if (!ran) note("script not found: " + std::string(name));
+    // Online: the overrides of func.lua's globals (install_online_lua).
+    if (ran && online_.enabled && name == "func.lua") install_online_lua();
     return ran;
 }
 
@@ -296,6 +301,8 @@ std::vector<Lua4Value> Engine::lua_call(const Lua4HostCall& call) {
         }
         return {Lua4Value::string(out)};
     }
+    // Seamless online co-op (registered only online, install_online_lua).
+    if (name == "funcStageChange" && online_.enabled) return stage_change_port(call.arguments);
     if (!name.starts_with("be.")) {
         note("script function " + name);
         return {};
