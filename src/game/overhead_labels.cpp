@@ -150,6 +150,49 @@ bool label_visible(LabelMode mode, bool own, int players) {
     }
 }
 
+std::string join_names(const std::vector<std::string>& names) {
+    std::string out;
+    for (std::size_t i = 0; i < names.size(); ++i) {
+        if (i) out += i + 1 == names.size() ? " and " : ", ";
+        out += names[i];
+    }
+    return out;
+}
+
+std::vector<std::string> online_notices(engine::Engine& engine, int give_up_held, int give_up_frames) {
+    std::vector<std::string> lines;
+    if (!engine.online_shared()) return lines;
+    auto* sys = engine.get<engine::GameSystem>();
+    auto* models = engine.get<engine::ModelCtrlManager>();
+    if (!sys || !models) return lines;
+    const auto name_of = [&](int slot) {
+        std::string name = ascii_player_name(sys->players[std::size_t(std::clamp(slot, 0, 3))].name);
+        return name.empty() ? "Player " + std::to_string(slot + 1) : name;
+    };
+    const int local = engine.view_slot();
+    if ((engine.online().present & (1u << local)) && !models->player(local)) {
+        lines.push_back("Defeated - wait for a raise, or hold START to give up");
+        if (give_up_held > 0 && give_up_frames > 0)
+            lines.push_back("Giving up... " + std::to_string(std::min(100, give_up_held * 100 / give_up_frames)) + "%");
+        if (const int watched = engine.picture_slot(); watched != local) lines.push_back("Watching " + name_of(watched));
+    }
+    const auto& prompt = engine.exit_prompt();
+    if (prompt.active && prompt.owner == local) {
+        if (prompt.asking == local) {
+            std::vector<std::string> stays;
+            for (int slot = 0; slot < 4; ++slot)
+                if (prompt.stays & (1u << slot)) stays.push_back(name_of(slot));
+            if (!stays.empty()) lines.push_back(join_names(stays) + (stays.size() == 1 ? " stays here" : " stay here") + " unless asked along");
+            if (prompt.boss_destination) lines.push_back("Warning: this way leads to a boss");
+        } else if (prompt.asking >= 0) {
+            lines.push_back("Waiting for " + name_of(prompt.asking));
+        }
+    } else if (prompt.active && prompt.asking == local && prompt.owner >= 0) {
+        lines.push_back(name_of(prompt.owner) + " is leaving this area - come along?");
+    }
+    return lines;
+}
+
 void OverheadLabels::capture(engine::Engine& engine, int own_slot) {
     std::vector<OverheadLabel> local;
     int joined = 0;
@@ -160,7 +203,26 @@ void OverheadLabels::capture(engine::Engine& engine, int own_slot) {
         if (!player.joined) continue;
         ++joined;
         const auto* ram = models->player(slot);
-        if (!ram || !ram->node) continue;
+        if (!ram || !ram->node) {
+            // Seamless co-op: a defeated partner's capsule carries its name.
+            if (!engine.online_shared() || slot == own_slot) continue;
+            const auto* capsule = models->find("g_000bcaps", slot);
+            if (!capsule || !capsule->generated || !capsule->node) continue;
+            OverheadLabel label;
+            label.key = 0x80 + std::uint64_t(slot);
+            label.slot = slot;
+            label.capsule = true;
+            const auto& m = capsule->node->matrix;
+            label.feet = {m(3, 0), m(3, 1), m(3, 2)};
+            label.head = {m(3, 0), m(3, 1) + 18.0f, m(3, 2)};
+            label.name = ascii_player_name(player.name);
+            if (label.name.empty()) label.name = "Player " + std::to_string(slot + 1);
+            label.level = player.stats.level;
+            label.max_hp = player.max_hp;
+            label.max_mp = player.max_mp;
+            local.push_back(std::move(label));
+            continue;
+        }
         OverheadLabel label;
         label.key = std::uint64_t(slot);
         label.slot = slot;
@@ -283,7 +345,7 @@ std::vector<LabelBox> layout_overhead_labels(const std::vector<OverheadLabel>& l
     std::vector<std::size_t> order;
     for (std::size_t i = 0; i < labels.size(); ++i) {
         const auto& label = labels[i];
-        if (mode == LabelMode::off || label.hp <= 0 || !label_visible(mode, label.own, players)) continue;
+        if (mode == LabelMode::off || (label.hp <= 0 && !label.capsule) || !label_visible(mode, label.own, players)) continue;
         const auto point = project_label(label.head, view);
         if (!point) continue;
         const float alpha = label_fade(point->distance) * (1.0f - (1.0f - kOccludedAlpha) * std::clamp(label.occlusion, 0.0f, 1.0f));

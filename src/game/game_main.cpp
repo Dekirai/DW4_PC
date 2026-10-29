@@ -1023,6 +1023,10 @@ int run(const Options& options, dw4::game::Settings& settings) {
         // Smooth motion above 60 presents per second (settings.ini smooth_motion).
         dw4::game::MotionInterpolator interpolator;
         int last_picture_slot = -1; // Engine::picture_slot of the last picture (smooth motion restarts on a change)
+        // Seamless co-op: the steps START is held while the local member is
+        // defeated (give up after kGiveUpFrames).
+        int give_up_held = 0;
+        constexpr int kGiveUpFrames = 120;
         double present_interval = 1.0 / 60.0;
         std::array<float, 240> frame_times{}; // ms per presented frame (F1 graph)
         std::size_t frame_time_at = 0;
@@ -1957,7 +1961,78 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 if (const bool collect = achievements_on() || trace_events || (!net.active() && randomizer_settings().active());
                     engine.port_events_enabled() != collect)
                     engine.set_port_events(collect);
+                // Seamless co-op, a defeated local member (SEAMLESS.md 4.1,
+                // 5): START held for two seconds gives up (a fork into the
+                // original game over). The engine takes the intent before a
+                // step; an online client sends it as INTENT instead and the
+                // server stamps it at a tick (the client lane), so only the
+                // offline test runs (DW4_ONLINE) apply it here.
+                if (engine.online_shared()) {
+                    const int local = engine.view_slot();
+                    auto* models = engine.get<dw4::engine::ModelCtrlManager>();
+                    const bool defeated = (engine.online().present & (1u << local)) && models && !models->player(local);
+                    give_up_held = defeated && (pads[std::size_t(local)].buttons & dw4::pad_button::start) ? give_up_held + 1 : 0;
+                    if (give_up_held == kGiveUpFrames && !net.active()) engine.online_intent(local, dw4::engine::IntentKind::give_up, 0);
+                } else {
+                    give_up_held = 0;
+                }
+                // Test runs of the seamless co-op exits: DW4_TEST_GATEDISC=
+                // frame:slot uses that member's gate disc at the frame (what
+                // the quick panel does, panel.cpp row 8), DW4_TEST_GIVEUP=
+                // frame:slot gives that member up.
+                {
+                    static const auto test_hook = [](const char* name) {
+                        std::pair<int, int> hook{-1, -1};
+                        if (const char* text = std::getenv(name)) std::sscanf(text, "%d:%d", &hook.first, &hook.second);
+                        return hook;
+                    };
+                    static const auto gatedisc = test_hook("DW4_TEST_GATEDISC");
+                    static const auto give_up = test_hook("DW4_TEST_GIVEUP");
+                    if (frame + 1 == gatedisc.first)
+                        if (auto* sys = engine.get<dw4::engine::GameSystem>()) {
+                            sys->gate_stage_name = "Player";
+                            sys->gate_stage_no = std::clamp(gatedisc.second, 0, 3);
+                            engine.run_script("gatedisc.lua");
+                        }
+                    if (frame + 1 == give_up.first) engine.online_intent(std::clamp(give_up.second, 0, 3), dw4::engine::IntentKind::give_up, 0);
+                    // DW4_TEST_RULES=frame:cameras:present: a membership step at
+                    // that frame (the camera mask and the present members; the
+                    // leash goes off from two members).
+                    static const auto rules_step = [] {
+                        std::array<int, 3> step{-1, 0, 0};
+                        if (const char* text = std::getenv("DW4_TEST_RULES")) std::sscanf(text, "%d:%i:%i", &step[0], &step[1], &step[2]);
+                        return step;
+                    }();
+                    if (frame + 1 == rules_step[0]) {
+                        auto rules = engine.online();
+                        rules.player_cameras = std::uint8_t(rules_step[1] & 15);
+                        rules.present = std::uint8_t(rules_step[2] & 15);
+                        rules.enabled = rules.enabled || rules.present != 0;
+                        rules.leash_off = rules.leash_off || std::popcount(unsigned(rules.present)) >= 2;
+                        engine.set_online(rules);
+                    }
+                }
                 engine.step(pads);
+                // DW4_TRACE_ONLINE (test runs of the seamless co-op exits):
+                // forks, headings and the exit prompt's state as they happen.
+                if (static const bool trace_online = std::getenv("DW4_TRACE_ONLINE") != nullptr; trace_online) {
+                    if (const auto split = engine.take_split())
+                        std::printf("[%d] online split leavers %x%s, this copy %s; present %x\n", frame + 1, unsigned(split->leavers),
+                                    split->in_stage ? " in stage" : "", split->local_leaves ? "leaves" : "stays", unsigned(engine.online().present));
+                    if (const auto heading = engine.take_heading())
+                        std::printf("[%d] online heading %s point %d leavers %x\n", frame + 1, heading->stage.c_str(), heading->point,
+                                    unsigned(heading->leavers));
+                    static std::string traced_prompt;
+                    const auto& prompt = engine.exit_prompt();
+                    char line[160];
+                    std::snprintf(line, sizeof line, "active %d owner %d asking %d yes %x stays %x fade %x to %s%s", prompt.active ? 1 : 0, prompt.owner,
+                                  prompt.asking, unsigned(prompt.yes), unsigned(prompt.stays), unsigned(prompt.sees_fade), prompt.stage.c_str(),
+                                  prompt.boss_destination ? " (boss)" : "");
+                    if (line != traced_prompt) {
+                        std::printf("[%d] online exit prompt %s\n", frame + 1, line);
+                        traced_prompt = line;
+                    }
+                }
                 if (engine.port_events_enabled()) observe_step();
                 if (!net.active()) bind_randomizer();
                 if (net.active() && (frame_base + engine.frame()) % 60 == 0) net.report_fingerprint(frame_base + engine.frame(), engine.fingerprint());
@@ -2012,10 +2087,18 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 // fingerprint takes), the online rules and the pictures' slot.
                 if (static const int every = std::getenv("DW4_TRACE_CAMERAS") ? std::atoi(std::getenv("DW4_TRACE_CAMERAS")) : 0;
                     every > 0 && frame % every == 0)
-                    if (auto* cameras = engine.get<dw4::engine::CameraManager>())
-                        std::printf("[%d] cameras %016llx mask %x present %x leash %s\n", frame,
+                    if (auto* cameras = engine.get<dw4::engine::CameraManager>()) {
+                        // (and the picture camera's view and projection, bit for bit)
+                        dw4::engine::FrameCamera picture;
+                        cameras->frame_camera(engine, picture, engine.picture_slot());
+                        std::uint64_t view_hash = 0xcbf29ce484222325ull;
+                        for (float v : picture.view.m) view_hash = (view_hash ^ std::bit_cast<std::uint32_t>(v)) * 0x100000001b3ull;
+                        for (float v : picture.projection.m) view_hash = (view_hash ^ std::bit_cast<std::uint32_t>(v)) * 0x100000001b3ull;
+                        std::printf("[%d] cameras %016llx mask %x present %x leash %s picture %d view %016llx\n", frame,
                                     static_cast<unsigned long long>(cameras->player_box_hash()), unsigned(engine.player_cameras()),
-                                    unsigned(engine.online().present), engine.online().leash_off ? "off" : "on");
+                                    unsigned(engine.online().present), engine.online().leash_off ? "off" : "on", engine.picture_slot(),
+                                    static_cast<unsigned long long>(view_hash));
+                    }
                 // DW4_TRACE_PLAYERS=N (development) prints every player's position every N frames.
                 if (static const int every = std::getenv("DW4_TRACE_PLAYERS") ? std::atoi(std::getenv("DW4_TRACE_PLAYERS")) : 0;
                     every > 0 && frame % every == 0)
@@ -2244,7 +2327,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                         tags = labels.blended(smooth_blending ? present_alpha : 1.0f);
                         traced_occlusion.clear();
                         for (auto& tag : tags) {
-                            if (tag.hp <= 0 || !dw4::game::label_visible(tag_mode, tag.own, labels.players())) continue;
+                            if ((tag.hp <= 0 && !tag.capsule) || !dw4::game::label_visible(tag_mode, tag.own, labels.players())) continue;
                             const bool hidden_now = dw4::game::occluded_in_picture(
                                 dw4::game::occlusion_probes(tag.head, tag_view),
                                 [&](float x, float y) { return renderer->read_depth(int(x), height - 1 - int(y), width, height); },
@@ -2956,6 +3039,18 @@ int run(const Options& options, dw4::game::Settings& settings) {
                                  ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoInputs |
                                      ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing);
                     ImGui::TextUnformatted(state_message.c_str());
+                    ImGui::End();
+                }
+                // Seamless co-op notices, bottom centre (presentation only):
+                // the defeated member's hint, the exit prompt's names.
+                if (const auto lines = dw4::game::online_notices(engine, give_up_held, kGiveUpFrames); !lines.empty()) {
+                    const ImVec2 display = ImGui::GetIO().DisplaySize;
+                    ImGui::SetNextWindowPos(ImVec2(display.x * 0.5f, display.y - 24), ImGuiCond_Always, ImVec2(0.5f, 1));
+                    ImGui::SetNextWindowBgAlpha(0.6f);
+                    ImGui::Begin("##online", nullptr,
+                                 ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoInputs |
+                                     ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing);
+                    for (const auto& line : lines) ImGui::TextUnformatted(line.c_str());
                     ImGui::End();
                 }
                 // Achievement notices, top right.
