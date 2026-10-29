@@ -354,6 +354,16 @@ int Session::steps_allowed(int host_steps, double elapsed) {
     }
 }
 
+bool Session::step_ready() const {
+    switch (mode_) {
+    case Mode::solo:
+    case Mode::transition: return true;
+    case Mode::sealed: return ticks_.contains(tick_) || (lead_from_ && tick_ >= *lead_from_);
+    case Mode::observing: return ticks_.contains(tick_);
+    default: return false;
+    }
+}
+
 std::array<PadSample, 4> Session::pads_of(const w::TickBody& body) const {
     std::array<PadSample, 4> pads{};
     for (int s = 0; s < 4; ++s) {
@@ -638,6 +648,18 @@ void Session::on_barrier_ok(const w::BarrierOk& ok, double now) {
         loading_.clear();
         boss_choice_ = false;
         mode_ = Mode::transition;
+        return;
+    }
+    if (!engine_.supports_barriers() && mode_ == Mode::solo && ok.inst == inst_ && ok.visit + 1 == visit_) {
+        // The answer to a stage load reported afterwards (an engine without
+        // the membership API): the visit goes on under the server's id.
+        inst_ = ok.new_inst;
+        visit_ = ok.new_visit;
+        if (!hub_ && inst_ != 0) {
+            const auto raw = engine_.snapshot_bytes(false);
+            for (const auto& c : w::make_chunks(inst_, visit_, std::uint8_t(slot_), raw)) send(w::Type::snapshot, w::encode(c, false));
+            send(w::Type::snaphash, w::encode(w::SnapHash{inst_, visit_, w::fnv1a64(engine_.snapshot_bytes(true))}));
+        }
         return;
     }
     if (mode_ == Mode::waiting_state || mode_ == Mode::catching_up || mode_ == Mode::observing) {

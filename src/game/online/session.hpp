@@ -92,6 +92,9 @@ public:
     // The session paces the steps (sealed / observing): the host keeps no
     // accumulator of its own.
     bool paces() const { return mode_ == Mode::sealed || mode_ == Mode::observing; }
+    // The next live step may run now (the host checks it before each step of
+    // a pass: a barrier, a missing sealed tick or a restore stops the pass).
+    bool step_ready() const;
     std::array<PadSample, 4> before_step(const PadSample& local, double now);
     void after_step(double now);
 

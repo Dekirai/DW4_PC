@@ -219,6 +219,7 @@ struct Client {
         if (session->paces()) accumulator = 0;
         const int n = session->steps_allowed(host, elapsed);
         for (int i = 0; i < n; ++i) {
+            if (!session->step_ready()) break;
             dw4::PadSample local{true, {0.25f, 0}, {}, input ? input(*this) : 0u};
             const auto pads = session->before_step(local, now);
             engine.step(pads);

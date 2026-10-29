@@ -1722,6 +1722,8 @@ int run(const Options& options, dw4::game::Settings& settings) {
             // Online: a step runs once every player's input for it is here.
             std::uint64_t net_frame = 0;
             for (int i = 0; i < steps; ++i) {
+                // (An online room's barrier, a missing sealed tick or a restore ends the pass.)
+                if (online && !online->session().step_ready()) break;
                 if (net.active()) {
                     net_frame = frame_base + engine.frame() + 1;
                     net.poll();
