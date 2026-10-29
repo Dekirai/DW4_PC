@@ -525,15 +525,19 @@ in headless runs, plus one more `traverse_scene` there), `DW4_EXTRA_WIDEN=1`
 alternates the widening 0.75 / 0.5 between them, `DW4_EXTRA_PREVIOUS=1` gives
 them the previous step's picture camera view as smooth motion's previous view
 (the round 49 rule). Measured with n = 2 and both options, against the same
-run without the hook (fingerprints every 300 frames; for per-slot cameras also
-the `PlayerBox` states, `DW4_TRACE_CAMERAS`):
+run without the hook (md5 of the fingerprint lines every 300 frames; for
+per-slot cameras also of the `PlayerBox` hashes, the third column of the
+`DW4_TRACE_CAMERAS` lines):
 
 | Run | Without the hook | With the hook, headless | With the hook, hidden 1920x1009 widescreen window |
 | --- | --- | --- | --- |
 | newgame_dng101b1, 6000 frames | 4004f056 | 4004f056 | 4004f056 |
 | four players, stag0102, shared camera | 4fa35801 | 4fa35801 | 4fa35801 |
-| four players, stag0102, `DW4_CAMERAS=15 DW4_ONLINE=15` | bd855f57 / cameras d2f83187 | bd855f57 / d2f83187 | bd855f57 / d2f83187 (local camera 2) |
-| four players, dng101b1, `DW4_CAMERAS=15 DW4_ONLINE=15` | 91da4c29 / cameras 996b1661 | - | 91da4c29 / 996b1661 (local camera 3) |
+| four players, stag0102, `DW4_CAMERAS=15 DW4_ONLINE=15` | bd855f57 / boxes 3342acf5 | bd855f57 / 3342acf5 | bd855f57 / 3342acf5 (local camera 2) |
+| four players, dng101b1, `DW4_CAMERAS=15 DW4_ONLINE=15` | 91da4c29 / boxes 22c995df | - | 91da4c29 / 22c995df (local camera 3) |
+
+Without the hook the same four-player runs give these values headless and in
+hidden windows with local camera 0, 2 and 3 alike (the done check of round S1).
 
 The four-player stag0102 value with the shared camera is the one of the
 critique's experiment B on f915905 (4fa35801): rounds 49 and 50 changed
