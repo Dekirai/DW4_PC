@@ -2,8 +2,11 @@
 // area / form tables, and the presence worker against a fake discord-ipc
 // pipe server (Windows), which checks the HANDSHAKE, SET_ACTIVITY with this
 // process id, the send interval, the newest activity winning, a refused
-// application id and the CLOSE at the end. The real client is never used:
-// the pipes have test names.
+// application id and the CLOSE at the end, and that a hung client never
+// blocks: one that never answers (the attempts back off, quitting does not
+// wait), one that sends a header without its payload, one that stops
+// reading (a stuck write ends, quitting takes the CLOSE frame's moment
+// only). The real client is never used: the pipes have test names.
 #include "discord_ipc.hpp"
 #include "discord_presence.hpp"
 #include "presence_data.hpp"
@@ -13,6 +16,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <functional>
+#include <memory>
 #include <iostream>
 #include <set>
 #include <stdexcept>
@@ -140,27 +144,61 @@ void tables() {
 }
 
 #ifdef _WIN32
-// A fake Discord client: one pipe instance, frames in and out.
+// A fake Discord client: one pipe instance, frames in and out. Every
+// transfer is overlapped and bounded, so a test never hangs on the game.
 class FakeDiscord {
 public:
-    explicit FakeDiscord(const std::string& name) {
-        handle_ = CreateNamedPipeA(("\\\\.\\pipe\\" + name).c_str(), PIPE_ACCESS_DUPLEX, PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT, 1,
-                                   65536, 65536, 0, nullptr);
-        check(handle_ != INVALID_HANDLE_VALUE, "the fake pipe opens");
+    explicit FakeDiscord(const std::string& name, DWORD buffer = 65536) {
+        handle_ = CreateNamedPipeA(("\\\\.\\pipe\\" + name).c_str(), PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED,
+                                   PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT, 1, buffer, buffer, 0, nullptr);
+        event_ = CreateEventA(nullptr, TRUE, FALSE, nullptr);
+        check(handle_ != INVALID_HANDLE_VALUE && event_, "the fake pipe opens");
     }
     ~FakeDiscord() {
         if (handle_ != INVALID_HANDLE_VALUE) {
+            CancelIoEx(handle_, nullptr);
             DisconnectNamedPipe(handle_);
             CloseHandle(handle_);
         }
+        if (event_) CloseHandle(event_);
     }
-    // Waits for the game to connect (ConnectNamedPipe blocks; the client
-    // connects within the test's time).
-    bool accept() {
-        const BOOL ok = ConnectNamedPipe(handle_, nullptr);
-        return ok || GetLastError() == ERROR_PIPE_CONNECTED;
+    // Waits for the game to connect.
+    bool accept(std::chrono::milliseconds timeout = std::chrono::seconds(10)) {
+        OVERLAPPED overlapped{};
+        overlapped.hEvent = event_;
+        ResetEvent(event_);
+        if (ConnectNamedPipe(handle_, &overlapped)) return true;
+        const DWORD error = GetLastError();
+        if (error == ERROR_PIPE_CONNECTED) return true;
+        if (error != ERROR_IO_PENDING) return false;
+        return finish(overlapped, timeout);
     }
-    // The next frame within `timeout`, polling (no blocking read).
+    // Ready for the next client after the last one went away.
+    void reset() { DisconnectNamedPipe(handle_); }
+    // The game's end is still open.
+    bool alive() {
+        DWORD available = 0;
+        return PeekNamedPipe(handle_, nullptr, 0, nullptr, &available, nullptr) != 0;
+    }
+    // Waits until the game closed its end. Nothing is read for `quiet`
+    // (the game sees a client that does not read); after that what arrived
+    // is read and dropped, since a closed end shows only once its data is
+    // gone.
+    bool wait_closed(std::chrono::milliseconds timeout, std::chrono::milliseconds quiet = std::chrono::milliseconds(0)) {
+        const auto start = std::chrono::steady_clock::now();
+        const auto deadline = start + timeout;
+        while (std::chrono::steady_clock::now() < deadline) {
+            DWORD available = 0;
+            if (!PeekNamedPipe(handle_, nullptr, 0, nullptr, &available, nullptr)) return true;
+            if (available && std::chrono::steady_clock::now() - start >= quiet) {
+                std::vector<std::uint8_t> sink(available);
+                if (!transfer(false, sink.data(), available, std::chrono::milliseconds(500))) return true;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        return false;
+    }
+    // The next frame within `timeout`.
     std::optional<std::pair<discord::Opcode, std::string>> read(std::chrono::milliseconds timeout) {
         const auto deadline = std::chrono::steady_clock::now() + timeout;
         while (std::chrono::steady_clock::now() < deadline) {
@@ -168,30 +206,53 @@ public:
             if (!PeekNamedPipe(handle_, nullptr, 0, nullptr, &available, nullptr)) return std::nullopt;
             if (available >= 8) {
                 std::uint8_t header[8];
-                DWORD got = 0;
-                if (!ReadFile(handle_, header, 8, &got, nullptr) || got != 8) return std::nullopt;
+                if (!transfer(false, header, 8, std::chrono::seconds(2))) return std::nullopt;
                 const auto decoded = discord::decode_header(header);
                 if (!decoded) return std::nullopt;
                 std::string payload(decoded->length, '\0');
-                std::size_t done = 0;
-                while (done < payload.size()) {
-                    if (!ReadFile(handle_, payload.data() + done, DWORD(payload.size() - done), &got, nullptr) || got == 0) return std::nullopt;
-                    done += got;
-                }
+                if (decoded->length && !transfer(false, payload.data(), DWORD(payload.size()), std::chrono::seconds(2))) return std::nullopt;
                 return std::make_pair(decoded->opcode, payload);
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(5));
         }
         return std::nullopt;
     }
-    void write(discord::Opcode opcode, const std::string& json) {
-        const auto frame = discord::encode_frame(opcode, json);
-        DWORD wrote = 0;
-        WriteFile(handle_, frame.data(), DWORD(frame.size()), &wrote, nullptr);
+    bool write(discord::Opcode opcode, const std::string& json) { return write_raw(discord::encode_frame(opcode, json)); }
+    bool write_raw(const std::vector<std::uint8_t>& bytes) {
+        return transfer(true, const_cast<std::uint8_t*>(bytes.data()), DWORD(bytes.size()), std::chrono::seconds(2));
     }
 
 private:
+    bool finish(OVERLAPPED& overlapped, std::chrono::milliseconds timeout) {
+        DWORD done = 0;
+        if (WaitForSingleObject(event_, DWORD(timeout.count())) == WAIT_OBJECT_0) return GetOverlappedResult(handle_, &overlapped, &done, FALSE) != 0;
+        CancelIoEx(handle_, &overlapped);
+        GetOverlappedResult(handle_, &overlapped, &done, TRUE);
+        return false;
+    }
+    // All `size` bytes in or out within `timeout`.
+    bool transfer(bool writing, void* data, DWORD size, std::chrono::milliseconds timeout) {
+        const auto deadline = std::chrono::steady_clock::now() + timeout;
+        DWORD total = 0;
+        while (total < size) {
+            OVERLAPPED overlapped{};
+            overlapped.hEvent = event_;
+            ResetEvent(event_);
+            auto* at = static_cast<std::uint8_t*>(data) + total;
+            const BOOL ok = writing ? WriteFile(handle_, at, size - total, nullptr, &overlapped) : ReadFile(handle_, at, size - total, nullptr, &overlapped);
+            if (!ok && GetLastError() != ERROR_IO_PENDING) return false;
+            const auto left = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now());
+            if (left.count() <= 0 || !finish(overlapped, left)) return false;
+            DWORD done = 0;
+            GetOverlappedResult(handle_, &overlapped, &done, FALSE);
+            if (done == 0) return false;
+            total += done;
+        }
+        return true;
+    }
+
     HANDLE handle_ = INVALID_HANDLE_VALUE;
+    HANDLE event_ = nullptr;
 };
 
 std::string test_prefix(const char* what) {
@@ -314,25 +375,251 @@ void no_discord() {
     }
     check(std::chrono::steady_clock::now() - t0 < std::chrono::seconds(5), "no waiting without Discord");
 }
+
+using std::chrono::milliseconds;
+using std::chrono::steady_clock;
+
+// Joins a fake's thread however the test leaves its scope (a failed check
+// must report, not terminate on a joinable thread).
+struct Joined {
+    std::thread& thread;
+    ~Joined() {
+        if (thread.joinable()) thread.join();
+    }
+};
+
+long long ms_since(steady_clock::time_point t0) {
+    return std::chrono::duration_cast<milliseconds>(steady_clock::now() - t0).count();
+}
+
+// The first 8 bytes of a frame: a header announcing a payload that never
+// comes.
+std::vector<std::uint8_t> header_only_frame(std::uint32_t length) {
+    auto frame = discord::encode_frame(discord::Opcode::frame, std::string(length, ' '));
+    frame.resize(discord::kHeaderSize);
+    return frame;
+}
+
+const std::string kReady = "{\"cmd\":\"DISPATCH\",\"data\":{\"v\":1,\"config\":{}},\"evt\":\"READY\",\"nonce\":null}";
+
+// A client that takes the connection and never says a word (not even reads
+// the handshake): every attempt ends after reply_timeout, the attempts come
+// later and later (backoff), and quitting while the worker waits for the
+// answer returns at once.
+void silent_discord() {
+    const std::string prefix = test_prefix("silent");
+    FakeDiscord server(prefix + "0");
+    DiscordPresence::Options options;
+    options.pipe_prefix = prefix;
+    options.retry_interval = milliseconds(200);
+    options.max_retry_interval = milliseconds(800);
+    options.reply_timeout = milliseconds(150);
+    options.io_timeout = milliseconds(150);
+    std::vector<steady_clock::time_point> accepted;
+    std::atomic<int> count{0};
+    std::thread fake([&] {
+        while (count < 5) {
+            if (!server.accept(milliseconds(5000))) break;
+            accepted.push_back(steady_clock::now());
+            ++count;
+            server.wait_closed(milliseconds(5000), milliseconds(170)); // past the reply time
+            server.reset();
+        }
+    });
+    Joined join_fake{fake};
+    long long quit_ms = 0;
+    {
+        auto presence = std::make_unique<DiscordPresence>(options);
+        presence->configure(true, "1560921673354453093");
+        const auto deadline = steady_clock::now() + std::chrono::seconds(10);
+        while (count < 5 && steady_clock::now() < deadline) std::this_thread::sleep_for(milliseconds(5));
+        check(count == 5, "the worker keeps trying: " + std::to_string(count.load()) + " attempts, " + presence->status());
+        check(presence->failures() >= 4, "four failed attempts counted: " + std::to_string(presence->failures()));
+        check(contains(presence->status(), "Discord did not answer; trying again in"), "the status says so: " + presence->status());
+        check(presence->sent_count() == 0 && presence->connections() == 0, "never connected");
+        // The fifth attempt waits for READY now: quitting does not wait.
+        std::this_thread::sleep_for(milliseconds(50));
+        const auto t0 = steady_clock::now();
+        presence.reset();
+        quit_ms = ms_since(t0);
+    }
+    fake.join();
+    check(quit_ms < 700, "quitting during the handshake wait is quick: " + std::to_string(quit_ms) + " ms");
+    // Attempt n + 1 starts reply_timeout + the backoff after attempt n:
+    // 200, 400, 800, 800 ms of backoff.
+    std::vector<long long> gaps;
+    for (std::size_t i = 1; i < accepted.size(); ++i)
+        gaps.push_back(std::chrono::duration_cast<milliseconds>(accepted[i] - accepted[i - 1]).count());
+    check(gaps.size() == 4, "four gaps");
+    check(gaps[1] >= gaps[0] + 120 && gaps[2] >= gaps[1] + 250, "the wait doubles: " + std::to_string(gaps[0]) + " / " + std::to_string(gaps[1]) +
+                                                              " / " + std::to_string(gaps[2]) + " / " + std::to_string(gaps[3]) + " ms");
+    check(gaps[3] < gaps[2] + 200, "up to the cap: " + std::to_string(gaps[2]) + " / " + std::to_string(gaps[3]) + " ms");
+}
+
+// A client that answers the handshake with a header and no payload: the
+// read of the payload ends after io_timeout (not the whole reply time), the
+// connection is dropped and the failure counted.
+void header_only_discord() {
+    const std::string prefix = test_prefix("half");
+    FakeDiscord server(prefix + "0");
+    DiscordPresence::Options options;
+    options.pipe_prefix = prefix;
+    options.retry_interval = std::chrono::seconds(30);
+    options.reply_timeout = std::chrono::seconds(5);
+    options.io_timeout = milliseconds(300);
+    std::atomic<bool> handshake{false};
+    std::thread fake([&] {
+        if (!server.accept(milliseconds(5000))) return;
+        if (server.read(milliseconds(5000))) handshake = true;
+        server.write_raw(header_only_frame(100));
+        server.wait_closed(milliseconds(5000));
+    });
+    Joined join_fake{fake};
+    const auto t0 = steady_clock::now();
+    long long failed_ms = 0, quit_ms = 0;
+    {
+        auto presence = std::make_unique<DiscordPresence>(options);
+        presence->configure(true, "1560921673354453093");
+        const auto deadline = steady_clock::now() + std::chrono::seconds(4);
+        while (presence->failures() == 0 && steady_clock::now() < deadline) std::this_thread::sleep_for(milliseconds(5));
+        failed_ms = ms_since(t0);
+        check(presence->failures() == 1, "the half message is a failure: " + presence->status());
+        check(contains(presence->status(), "Discord sent half a message; trying again in 30 s"), "the status says so: " + presence->status());
+        check(presence->state() == DiscordPresence::State::searching && presence->connections() == 0, "not connected");
+        const auto q0 = steady_clock::now();
+        presence.reset();
+        quit_ms = ms_since(q0);
+    }
+    fake.join();
+    check(handshake, "the handshake arrived");
+    check(failed_ms < 2000, "dropped after the payload timeout, not the reply time: " + std::to_string(failed_ms) + " ms");
+    check(quit_ms < 700, "quitting is quick: " + std::to_string(quit_ms) + " ms");
+}
+
+// A client that answers READY and then stops reading (a one-byte pipe
+// buffer): an activity write that cannot finish ends after io_timeout and
+// the worker reconnects later; quitting while such a write hangs returns
+// after the CLOSE frame's short time.
+void deaf_discord() {
+    const std::string prefix = test_prefix("deaf");
+    discord::Activity big;
+    big.details = std::string(120, 'd');
+    big.state = std::string(120, 's');
+    big.large_image = std::string(120, 'l');
+    big.large_text = std::string(120, 't');
+    big.small_image = std::string(120, 'i');
+    big.small_text = std::string(120, 'x');
+    {
+        FakeDiscord server(prefix + "0", 1);
+        DiscordPresence::Options options;
+        options.pipe_prefix = prefix;
+        options.retry_interval = milliseconds(150);
+        options.io_timeout = milliseconds(300);
+        options.send_interval = milliseconds(20);
+        std::atomic<int> accepted{0};
+        std::thread fake([&] {
+            for (int round = 0; round < 2; ++round) {
+                if (!server.accept(milliseconds(5000))) return;
+                ++accepted;
+                if (!server.read(milliseconds(5000))) return;
+                server.write(discord::Opcode::frame, kReady);
+                server.wait_closed(milliseconds(5000), milliseconds(500)); // past the write timeout
+                server.reset();
+            }
+        });
+        Joined join_fake{fake};
+        {
+            DiscordPresence presence(options);
+            presence.set_activity(big);
+            presence.configure(true, "1560921673354453093");
+            const auto deadline = steady_clock::now() + std::chrono::seconds(5);
+            while (presence.failures() == 0 && steady_clock::now() < deadline) std::this_thread::sleep_for(milliseconds(5));
+            check(presence.failures() == 1, "the stuck write is a failure: " + presence.status());
+            check(contains(presence.status(), "Discord stopped reading; trying again in"), "the status says so: " + presence.status());
+            check(presence.connections() == 1, "it had connected");
+            while (accepted < 2 && steady_clock::now() < deadline + std::chrono::seconds(2)) std::this_thread::sleep_for(milliseconds(5));
+            check(accepted == 2, "it connects again after the backoff");
+        }
+        fake.join();
+    }
+    // Quitting right after READY, while the first activity write hangs.
+    {
+        FakeDiscord server(prefix + "5", 1);
+        DiscordPresence::Options options;
+        options.pipe_prefix = prefix;
+        options.io_timeout = std::chrono::seconds(20);
+        options.close_timeout = milliseconds(250);
+        options.shutdown_timeout = milliseconds(500);
+        std::atomic<bool> ready{false};
+        std::thread fake([&] {
+            if (!server.accept(milliseconds(5000))) return;
+            if (!server.read(milliseconds(5000))) return;
+            server.write(discord::Opcode::frame, kReady);
+            ready = true;
+            server.wait_closed(milliseconds(10000), milliseconds(2000)); // past the CLOSE time
+        });
+        Joined join_fake{fake};
+        long long quit_ms = 0;
+        {
+            auto presence = std::make_unique<DiscordPresence>(options);
+            presence->set_activity(big);
+            presence->configure(true, "1560921673354453093");
+            const auto deadline = steady_clock::now() + std::chrono::seconds(5);
+            while (presence->connections() == 0 && steady_clock::now() < deadline) std::this_thread::sleep_for(milliseconds(5));
+            check(presence->connections() == 1, "connected: " + presence->status());
+            std::this_thread::sleep_for(milliseconds(100)); // the activity write is stuck now (20 s io timeout)
+            check(presence->sent_count() == 0, "the write did not finish");
+            const auto t0 = steady_clock::now();
+            presence.reset();
+            quit_ms = ms_since(t0);
+        }
+        fake.join();
+        check(quit_ms < 900, "quitting with a stuck write takes the CLOSE time only: " + std::to_string(quit_ms) + " ms");
+    }
+}
 #endif
 
 #ifdef _WIN32
-// --serve PIPE SECONDS: a fake Discord on \\.\pipe\PIPE for an end-to-end
-// run of the game (DW4_DISCORD_PIPE=<PIPE without its last digit>): answers
-// the handshake with READY and prints every frame until CLOSE or the time
-// is up.
-int serve(const std::string& name, int seconds) {
-    FakeDiscord server(name);
-    std::cout << "fake discord on " << name << std::endl;
-    if (!server.accept()) return 1;
-    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(seconds);
-    while (std::chrono::steady_clock::now() < deadline) {
-        const auto frame = server.read(std::chrono::milliseconds(500));
-        if (!frame) continue;
-        std::cout << "frame " << unsigned(frame->first) << " " << frame->second << std::endl;
-        if (frame->first == discord::Opcode::handshake)
-            server.write(discord::Opcode::frame, "{\"cmd\":\"DISPATCH\",\"data\":{\"v\":1},\"evt\":\"READY\",\"nonce\":null}");
-        if (frame->first == discord::Opcode::close) return 0;
+// --serve PIPE SECONDS [MODE]: a fake Discord on \\.\pipe\PIPE for an
+// end-to-end run of the game (DW4_DISCORD_PIPE=<PIPE without its last
+// digit>). It prints every connection and frame until the time is up.
+// MODE ready (the default) answers the handshake with READY (and ends at
+// the CLOSE), silent takes each connection and never reads or answers,
+// header answers the handshake with a header without its payload, deaf
+// answers READY and then never reads again.
+int serve(const std::string& name, int seconds, const std::string& mode) {
+    FakeDiscord server(name, mode == "deaf" ? 1 : 65536);
+    std::cout << "fake discord on " << name << " (" << mode << ")" << std::endl;
+    const auto deadline = steady_clock::now() + std::chrono::seconds(seconds);
+    auto left = [&] { return std::chrono::duration_cast<milliseconds>(deadline - steady_clock::now()); };
+    for (int connection = 1; left().count() > 0; ++connection) {
+        if (!server.accept(left())) break;
+        std::cout << "connection " << connection << std::endl;
+        if (mode == "ready") {
+            while (left().count() > 0) {
+                const auto frame = server.read(std::min(left(), milliseconds(500)));
+                if (!frame) {
+                    if (!server.alive()) {
+                        std::cout << "closed by the game" << std::endl;
+                        break;
+                    }
+                    continue;
+                }
+                std::cout << "frame " << unsigned(frame->first) << " " << frame->second << std::endl;
+                if (frame->first == discord::Opcode::handshake) server.write(discord::Opcode::frame, kReady);
+                if (frame->first == discord::Opcode::close) return 0;
+            }
+        } else {
+            if (mode != "silent") {
+                if (const auto hello = server.read(left())) std::cout << "frame " << unsigned(hello->first) << " " << hello->second << std::endl;
+                if (mode == "header") server.write_raw(header_only_frame(100));
+                else server.write(discord::Opcode::frame, kReady);
+            }
+            // The game's own waits (reply 3 s, a frame 2 s) are over by then.
+            server.wait_closed(left(), mode == "header" ? milliseconds(0) : milliseconds(6000));
+            std::cout << "closed by the game" << std::endl;
+        }
+        server.reset();
     }
     return 0;
 }
@@ -342,7 +629,7 @@ int serve(const std::string& name, int seconds) {
 
 int main(int argc, char** argv) {
 #ifdef _WIN32
-    if (argc == 4 && std::string(argv[1]) == "--serve") return serve(argv[2], std::atoi(argv[3]));
+    if ((argc == 4 || argc == 5) && std::string(argv[1]) == "--serve") return serve(argv[2], std::atoi(argv[3]), argc == 5 ? argv[4] : "ready");
 #else
     (void)argc;
     (void)argv;
@@ -355,6 +642,9 @@ int main(int argc, char** argv) {
         no_discord();
         fake_client_session();
         refused();
+        silent_discord();
+        header_only_discord();
+        deaf_discord();
 #endif
         std::cout << checks << " presence checks passed\n";
         return 0;

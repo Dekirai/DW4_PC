@@ -13,7 +13,7 @@
             server staff. It is shown <strong>once</strong>; after you use it you get a new one.</p>
         <p class="secret" id="recovery-code">@Model.RecoveryCode</p>
     </div>
-    <p><a class="button" href="/account">Continue to your account</a></p>
+    <p><a class="button" href="~/account">Continue to your account</a></p>
 }
 else
 {
@@ -47,7 +47,7 @@ else
             <div class="hp" aria-hidden="true">
                 <label>Website <input type="text" asp-for="Website" tabindex="-1" autocomplete="off" /></label>
             </div>
-            <p class="muted small">By creating an account you accept that the data listed on the <a href="/privacy">privacy page</a> is stored.</p>
+            <p class="muted small">By creating an account you accept that the data listed on the <a href="~/privacy">privacy page</a> is stored.</p>
             <button type="submit">Create account</button>
         </form>
     }

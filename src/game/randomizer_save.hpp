@@ -6,7 +6,7 @@
 // (keyed by the character record's UNIQUE, the value the game draws from the
 // world clock when the character is made), and a spoiler log beside it:
 //
-//   saves/randomizer.ini                      [character_1A2B3C4D] seed=..., drops=..., enemies=..., zones=...
+//   saves/randomizer.ini                      [character_1A2B3C4D] seed=..., drops=..., enemies=..., zones=..., zone_rule=...
 //   saves/randomizer_1A2B3C4D_spoiler.txt     the seed, the modes, the loading zone table, the enemy pools
 //
 // The folder is the one that holds the save (saves/ next to the program; a
@@ -31,7 +31,7 @@ struct RandomizerConfig {
     std::uint32_t seed{};
     bool drops{};
     int enemies{}; // 0 off, 1 every enemy drawn on its own, 2 one family per wave
-    int zones{};   // 0 off, 1 dungeon entrances within an area
+    int zones{};   // 0 off, else the dungeon entrance shuffle by its rule (randomizer::kZoneRule*: 1 round 48, 2 current)
     bool active() const { return seed != 0 && (drops || enemies != 0 || zones != 0); }
     bool operator==(const RandomizerConfig&) const = default;
 };
@@ -39,15 +39,23 @@ struct RandomizerConfig {
 // The config into the cheats (drop_seed = seed with drops on) and back.
 void apply_randomizer(const RandomizerConfig& config, engine::Cheats& cheats);
 RandomizerConfig randomizer_from_cheats(const engine::Cheats& cheats);
-// "seed[,enemies[,zones[,drops]]]" (test runs: DW4_RANDOMIZER).
+// "seed[,enemies[,zones[,drops]]]" (test runs: DW4_RANDOMIZER; zones is the
+// rule number, 1 the round 48 table; left out: the rule a new game binds).
 std::optional<RandomizerConfig> parse_randomizer(std::string_view text);
 
+// A bond's zones=dungeons without zone_rule (written before the rules were
+// numbered) is rule 1, the table that game was played with. A bond with
+// seed 0 is an explicit "plays the original game" (the F1 menu's choice).
 std::optional<RandomizerConfig> load_randomizer_binding(const std::filesystem::path& folder, std::uint32_t unique);
 bool store_randomizer_binding(const std::filesystem::path& folder, std::uint32_t unique, std::string_view name,
                               const RandomizerConfig& config);
 // Writes randomizer_<UNIQUE>_spoiler.txt for the config; false on an error.
 bool write_randomizer_spoiler(const std::filesystem::path& folder, std::uint32_t unique, const RandomizerConfig& config);
 std::string randomizer_unique_key(std::uint32_t unique);
+// What a config plays, for the F1 menu: "seed 123 - enemies: each on its
+// own, loading zones: dungeon entrances, item drops: shuffled" (the zone
+// rule named when it is not the current one), or "the original game".
+std::string describe_randomizer(const RandomizerConfig& config);
 
 // What player 1's character gets when it comes into play: its bond; else the
 // settings (bound to it) when they randomize and it is a new game (or

@@ -852,7 +852,7 @@ bool StageCtlManager::command(Engine& engine, Ram&, std::string_view command, Pa
                     std::string lower = target;
                     for (auto& c : lower) c = char(std::tolower(static_cast<unsigned char>(c)));
                     const auto zone_seed = randomizer::sub_seed(engine.cheats().rand_seed, "zones");
-                    if (const auto remap = randomizer::zone_remap(zone_seed, engine.stage_name(), lower, points->point_no())) {
+                    if (const auto remap = randomizer::zone_remap(zone_seed, engine.cheats().rand_zones, engine.stage_name(), lower, points->point_no())) {
                         engine.log("randomizer: " + engine.stage_name() + " -> " + lower + " point " + std::to_string(points->point_no()) +
                                    " now leads to " + remap->stage + " point " + std::to_string(remap->point));
                         target = remap->stage;

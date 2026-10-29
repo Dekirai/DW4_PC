@@ -7,7 +7,10 @@ using Microsoft.AspNetCore.TestHost;
 
 namespace DW4Online.Integration.Tests;
 
-/// <summary>Settings that switch the relay on for a test host: a real TCP listener on a free loopback port.</summary>
+/// <summary>
+/// Settings that switch the relay on for a test host: a real TCP listener on a free loopback port. Service:RelayPort
+/// stays at its default, so clients are told the port the relay really listens on.
+/// </summary>
 public static class RelaySettings
 {
     public static Dictionary<string, string?> On(Dictionary<string, string?>? more = null)
@@ -19,7 +22,6 @@ public static class RelaySettings
             ["Relay:Port"] = "0",
             ["Relay:TicketKey"] = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)),
             ["Service:RelayHost"] = "127.0.0.1",
-            ["Service:RelayPort"] = "0",
         };
         if (more is not null)
             foreach (var (k, v) in more) settings[k] = v;
@@ -31,23 +33,39 @@ public static class RelaySettings
 public sealed partial class WebBrowser : IDisposable
 {
     private readonly Uri _base;
+    private readonly string _pathBase;
     private readonly CookieContainer _jar = new();
     private readonly HttpClient _http;
 
-    public WebBrowser(TestHost host) : this(host.App.GetTestServer().CreateHandler(), new Uri("http://localhost/"))
+    /// <summary>A browser for the test server; <paramref name="pathBase"/> ("/dw4online") is put before every "/..." path.</summary>
+    public WebBrowser(TestHost host, string pathBase = "") : this(host.App.GetTestServer().CreateHandler(), new Uri("http://localhost/"), pathBase)
     {
     }
 
     /// <summary>A browser for a real server: <paramref name="inner"/> must neither follow redirects nor keep cookies itself.</summary>
-    public WebBrowser(HttpMessageHandler inner, Uri baseAddress)
+    public WebBrowser(HttpMessageHandler inner, Uri baseAddress, string pathBase = "")
     {
         _base = baseAddress;
-        _http = new HttpClient(new CookieHandler(_jar) { InnerHandler = inner }) { BaseAddress = baseAddress };
+        _pathBase = pathBase;
+        _http = new HttpClient(new CookieHandler(_jar) { InnerHandler = inner, Lines = SetCookieLines }) { BaseAddress = baseAddress };
     }
 
-    public static WebBrowser For(Uri server) => new(new HttpClientHandler { UseCookies = false, AllowAutoRedirect = false }, server);
+    public static WebBrowser For(Uri server, string pathBase = "") =>
+        new(new HttpClientHandler { UseCookies = false, AllowAutoRedirect = false }, server, pathBase);
 
-    public async Task<byte[]> GetBytesAsync(string path) => await _http.GetByteArrayAsync(path);
+    /// <summary>A browser for an https server with a self-signed certificate: the server must present <paramref name="pin"/> (SPKI).</summary>
+    public static WebBrowser ForPinned(Uri server, string pin, string pathBase = "") =>
+        new(new HttpClientHandler
+        {
+            UseCookies = false,
+            AllowAutoRedirect = false,
+            ServerCertificateCustomValidationCallback = (_, cert, _, _) => cert is not null && DW4Online.Server.SpkiPin.Of(cert) == pin,
+        }, server, pathBase);
+
+    private string Full(string path) =>
+        _pathBase.Length > 0 && path.StartsWith('/') && !path.StartsWith(_pathBase + "/", StringComparison.Ordinal) ? _pathBase + path : path;
+
+    public async Task<byte[]> GetBytesAsync(string path) => await _http.GetByteArrayAsync(Full(path));
 
     public sealed record Page(HttpStatusCode Status, string Html, string? Location, HttpResponseMessage Response);
 
@@ -59,7 +77,7 @@ public sealed partial class WebBrowser : IDisposable
 
     public async Task<Page> GetAsync(string path)
     {
-        var response = await _http.GetAsync(path);
+        var response = await _http.GetAsync(Full(path));
         return new Page(response.StatusCode, await response.Content.ReadAsStringAsync(), response.Headers.Location?.OriginalString, response);
     }
 
@@ -74,7 +92,7 @@ public sealed partial class WebBrowser : IDisposable
             Assert.True(token.Success, $"no anti-forgery token on {formPage ?? path} ({form.Status})");
             all["__RequestVerificationToken"] = WebUtility.HtmlDecode(token.Groups[1].Value);
         }
-        var response = await _http.PostAsync(path, new FormUrlEncodedContent(all));
+        var response = await _http.PostAsync(Full(path), new FormUrlEncodedContent(all));
         return new Page(response.StatusCode, await response.Content.ReadAsStringAsync(), response.Headers.Location?.OriginalString, response);
     }
 
@@ -95,19 +113,28 @@ public sealed partial class WebBrowser : IDisposable
 
     public static string? Secret(string html) => SecretField().Match(html) is { Success: true } m ? WebUtility.HtmlDecode(m.Groups[1].Value).Trim() : null;
 
-    public string? Cookie(string name) => _jar.GetCookies(_base)[name]?.Value;
+    public string? Cookie(string name) => _jar.GetCookies(new Uri(_base, _pathBase + "/"))[name]?.Value;
+
+    /// <summary>The Set-Cookie header lines the browser received for <paramref name="name"/> (attributes included).</summary>
+    public List<string> SetCookieLines { get; } = [];
 
     public void Dispose() => _http.Dispose();
 
     private sealed class CookieHandler(CookieContainer jar) : DelegatingHandler
     {
+        public List<string>? Lines { get; init; }
+
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             var header = jar.GetCookieHeader(request.RequestUri!);
             if (header.Length > 0) request.Headers.TryAddWithoutValidation("Cookie", header);
             var response = await base.SendAsync(request, ct);
             if (response.Headers.TryGetValues("Set-Cookie", out var values))
-                foreach (var value in values) jar.SetCookies(request.RequestUri!, value);
+                foreach (var value in values)
+                {
+                    Lines?.Add(value);
+                    jar.SetCookies(request.RequestUri!, value);
+                }
             return response;
         }
     }
