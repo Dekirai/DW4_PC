@@ -684,6 +684,9 @@ the save lives.
 - First start: a save of an older build in `saves/GC/USA/Card A` (or
   `Card B`) is copied into `savedata.dat` (`savedata_b.dat`) once; the old
   file stays where it is (`[data] save_migrated` in settings.ini records it).
+  Should the copy fail, the game says so and tries again at the next start; a
+  damaged old save is not copied, and the game says that too (a notice at the
+  start and the F1 Saves tab).
 - `[data] cards = <folder>` plays from a GCI folder root instead (for example
   Dolphin's `GC/USA` folder, so both play on the same save). `--card-dir`,
   `DW4_CARD_DIR` and test runs use GCI folders too (`saves/GC/USA` next to the

@@ -144,8 +144,14 @@ campaign tools, `det.sh` and the Dolphin comparisons are unchanged),
   builds saved) to `savedata.dat` / `savedata_b.dat` when the target does not
   exist and the GCI holds a data copy that passes its check. The old file is
   never deleted. `[data] save_migrated = true` records that the copy was
-  tried, so a save file deleted later does not come back. With
-  `--save-file`, `DW4_MIGRATE_FROM=<GCI root>` runs the same copy (tests).
+  done, so a save file deleted later does not come back. A copy that failed
+  (an I/O error: the folder cannot be made, the disk is full) leaves the flag
+  unset, so the next start tries again; a damaged old file (neither data copy
+  passes its check) is not copied and not tried again. Both are told to the
+  player at that start (a notice at the top right) and in the F1 Saves tab,
+  which keeps naming a damaged old save while its slot has no save of its
+  own. With `--save-file`, `DW4_MIGRATE_FROM=<GCI root>` runs the same copy
+  (tests).
 - Online sessions share only the DW4 save of each owner's slot A
   (`session_card`): the session copy (a GCI folder in the temp directory)
   gets nothing else, and files of other names from a peer are not written.

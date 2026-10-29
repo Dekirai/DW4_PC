@@ -534,6 +534,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
     if (save_choice.settings_changed && !options.smoke_frames) settings.save();
     engine.set_card_store(save_choice.store);
     for (const auto& note : save_choice.notes) std::cout << "saves: " << note << '\n';
+    for (const auto& problem : save_choice.problems) std::cout << "saves: " << problem << '\n';
     if (save_choice.why == dw4::game::SaveStoreChoice::Why::save_file || save_choice.why == dw4::game::SaveStoreChoice::Why::player)
         std::cout << "saves: slot A " << save_choice.store.describe(0) << ", slot B " << save_choice.store.describe(1) << '\n';
     // The randomizer's bond to the save (randomizer_save.hpp) lives next to
@@ -1057,6 +1058,10 @@ int run(const Options& options, dw4::game::Settings& settings) {
             std::chrono::steady_clock::time_point until;
         };
         std::deque<Toast> toasts;
+        // An old save the one-time move into saves/savedata.dat could not
+        // copy (save_store.cpp): the player hears of it at once.
+        for (const auto& warning : save_choice.warnings)
+            toasts.push_back({"Saves", warning, std::chrono::steady_clock::now() + std::chrono::seconds(15)});
         dw4::game::AchievementGate last_gate = dw4::game::AchievementGate::open;
         std::uint64_t taint_stage = ~0ull;
         bool stage_cheats = false, stage_rebalanced = false;
@@ -2391,6 +2396,11 @@ int run(const Options& options, dw4::game::Settings& settings) {
                                                "save / save_b move the files; [data] cards = a GCI folder (e.g. Dolphin's GC/USA) "
                                                "plays from that folder instead. Slot B holds a card once its file exists.");
                         for (const auto& note : save_choice.notes) ImGui::TextWrapped("%s", note.c_str());
+                        for (const auto& problem : save_choice.problems) {
+                            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 0.6f, 0.4f, 1));
+                            ImGui::TextWrapped("%s", problem.c_str());
+                            ImGui::PopStyleColor();
+                        }
                         if (net.active()) ImGui::TextWrapped("Online, the session plays from shared copies of the cards.");
 
                         ImGui::SeparatorText("Import a GameCube save");
@@ -2923,6 +2933,7 @@ int save_command(const Options& options, dw4::game::Settings& settings) {
     const auto choice = dw4::game::choose_save_store(options.card_dir, options.save_file, false, settings, program_dir());
     if (choice.settings_changed) settings.save();
     for (const auto& note : choice.notes) std::cout << "saves: " << note << '\n';
+    for (const auto& problem : choice.problems) std::cout << "saves: " << problem << '\n';
     const auto outcome = dw4::game::import_save(choice.store, options.import_slot, *source, *moves);
     std::cout << (outcome.ok ? "import: " : "import failed: ") << outcome.message << '\n';
     if (!outcome.ok) return 1;
