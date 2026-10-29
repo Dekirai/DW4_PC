@@ -30,6 +30,7 @@
 // poll().
 #include "engine_link.hpp"
 #include "pacing.hpp"
+#include "presence.hpp"
 #include "transport.hpp"
 #include "wire.hpp"
 
@@ -101,6 +102,8 @@ public:
     std::vector<std::string> take_notices();
     Overlay overlay(double now) const;
     const std::map<std::uint32_t, RemoteMember>& remote() const { return remote_; }
+    // Name tags of room members outside the own instance, interpolated.
+    std::vector<RemoteSample> remote_tags(double now) const { return tracks_.sample(now); }
     std::string member_name(std::uint32_t member) const;
 
     // Facts.
@@ -221,6 +224,7 @@ private:
     double now_ = 0;
 
     std::map<std::uint32_t, RemoteMember> remote_;
+    PresenceTracks tracks_;
     std::map<std::uint32_t, std::string> names_;
     std::vector<std::string> notices_;
     bool engine_replaced_ = false;

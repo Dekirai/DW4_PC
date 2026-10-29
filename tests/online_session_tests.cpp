@@ -132,6 +132,39 @@ void solo_join_fork() {
     check(a.session->present() == 0b01 && b.session->present() == 0b10, "each side despawned the other");
     world.run(3);
     check(a.session->mode() == Mode::solo && b.session->mode() == Mode::solo, "still solo");
+    // Two instances of one stage: each sees the other as a remote name tag.
+    const auto tags = a.session->remote_tags(world.now);
+    check(tags.size() == 1 && tags[0].name == "lee" && tags[0].stage == "stag0101" && tags[0].level == 3, "A sees B's tag from PRESENCE");
+}
+
+void presence_tracks() {
+    PresenceTracks tracks;
+    w::Presence p;
+    p.member = 5;
+    p.stage = "stagml11";
+    p.inst = 1;
+    p.level = 7;
+    for (int i = 0; i <= 5; ++i) {
+        p.x = float(i * 10);
+        tracks.add(p, "kim", i * 0.2);
+    }
+    // At t = 1.1 the tag is drawn at t = 0.9: between the packets of 0.8 and 1.0.
+    auto s = tracks.sample(1.1);
+    check(s.size() == 1 && std::abs(s[0].x - 45.0f) < 0.01f && s[0].name == "kim" && s[0].level == 7, "interpolated one interval behind");
+    s = tracks.sample(1.25);
+    check(s.size() == 1 && std::abs(s[0].x - 50.0f) < 0.01f, "holds the last packet after it");
+    check(tracks.sample(3.1).empty(), "stale after two seconds");
+    p.stage = "stag0101";
+    p.x = 500;
+    tracks.add(p, "kim", 1.3);
+    s = tracks.sample(1.4);
+    check(s.size() == 1 && s[0].x == 500.0f && s[0].stage == "stag0101", "a stage change does not glide");
+    p.flags = w::presence_flag::hidden;
+    tracks.add(p, "kim", 1.5);
+    check(tracks.sample(1.6).empty(), "hidden: no tag");
+    p.flags = w::presence_flag::defeated;
+    tracks.add(p, "kim", 1.7);
+    check(tracks.sample(1.8).empty(), "defeated: no tag");
 }
 
 void co_arrival() {
@@ -268,6 +301,7 @@ int main(int argc, char** argv) {
     try {
         std::cout << "solo, join, fork\n";
         solo_join_fork();
+        presence_tracks();
         std::cout << "co-arrival, reconnect\n";
         co_arrival();
         std::cout << "barrier timeout\n";

@@ -280,6 +280,7 @@ void Session::handle(const w::Frame& frame, double now) {
         if (m.member == member_id_) break;
         auto& r = remote_[m.member];
         r.name = member_name(m.member);
+        tracks_.add(m, r.name, now);
         r.presence = std::move(m);
         r.received_at = now;
         break;
@@ -292,6 +293,7 @@ void Session::handle(const w::Frame& frame, double now) {
         } else if (m.kind == w::RoomEvent::left) {
             if (m.member != member_id_) notice(member_name(m.member) + " left the room");
             remote_.erase(m.member);
+            tracks_.forget(m.member);
         } else if (m.kind == w::RoomEvent::owner_present) {
             notice(m.value ? "The room owner is back" : "The room owner is away");
         }
