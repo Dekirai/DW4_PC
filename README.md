@@ -258,11 +258,15 @@ drives three parts, each switched on its own:
   original) takes the place. A swapped enemy that falls off the stage or never
   lands (six seconds in the air or 150 units below its spawn point) is
   removed and counts as defeated, without a drop.
-- **Loading zones** (`dungeons`): the dungeon entrances of each area lead to
-  each other's dungeons (area 1: Humid Cave / Cliff Dungeon, area 2: Sand
-  Labyrinth / Ancient Ruins, area 3: Geko Path / Vine Tunnel / Vein, area 4:
-  Mecha Nest / Electro Mine), never to their own, and a dungeon's way out leads
-  back to the entrance that was used. The exit prompt names the new target.
+- **Loading zones** (`dungeons`): the dungeon entrances of each area are
+  shuffled among the area's dungeons (area 1: Humid Cave / Cliff Dungeon, area
+  2: Sand Labyrinth / Ancient Ruins, area 3: Geko Path / Vine Tunnel / Vein,
+  area 4: Mecha Nest / Electro Mine); an entrance may keep its own dungeon, so
+  the seeds give 48 layouts (2 x 2 x 6 x 2), and a dungeon's way out leads
+  back to the entrance that was used. The exit prompt names the new target. A
+  game bound before this rule (round 48: no entrance kept its own dungeon,
+  which left only two layouts) keeps playing its old layout; its bond has no
+  `zone_rule` and the F1 menu names it "rule 1".
   Towers, quests, the fortress, boss stages, the lobby gate, Gate Disks and
   defeats keep their targets, and every key item stays reachable (the gate
   in stag0301 that led to the Vein still opens with the stag0301 lever and the
@@ -279,15 +283,19 @@ beside it lists the seed, the loading zone table and every stage's enemy
 pool. Only a new game is bound by itself: a save from before (or one started
 with the randomizer off) keeps playing the original game when it is called
 with the randomizer on, and a notice says so; the F1 section shows what the
-running save plays and can bind the current settings to it. Delete a character's section in `randomizer.ini` to let it follow the
-settings again. Save states replay with the randomizer they were made with.
+running save plays (the seed and modes of its bond, also when the settings or
+the Settings tab's preset say otherwise), can bind the current settings to
+it and can let it play the original game (*Play this save without the
+randomizer*: its bond then says seed 0). Delete a character's section in
+`randomizer.ini` to let it follow the settings again. Save states replay with the randomizer they were made with.
 Online, every machine plays the host's randomizer and nothing is bound.
 Randomized games are not the original game (`Cheats::original()`), so they
 count as their own category wherever that matters (achievements unlock into
 their own list with any of the three parts on).
 
 Test runs: `DW4_RANDOMIZER=seed[,enemies[,zones[,drops]]]` (a bare seed turns
-everything on), `DW4_RANDOMIZER_SWEEP=1` makes every enemy generator of the
+everything on; `zones` is the rule number: 1 the round 48 table, 2 the
+current one, which a bare seed takes), `DW4_RANDOMIZER_SWEEP=1` makes every enemy generator of the
 stage spawn its wave in turn and logs one `sweep` line per generator (models,
 problems such as a missing hit script, a sound without a bank, a model that
 did not start or one the watchdog removed).

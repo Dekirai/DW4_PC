@@ -17,9 +17,13 @@
 // generator a stage script starts next to an e_ / f_ model name (intro and
 // demo fights). See GeneraterManager.
 //
-// Loading zone shuffle (mode 1): the dungeon entrances within an area swap,
-// coupled (the dungeon's way back leads to the entrance used); towers, quests,
-// boss chains, the lobby, gate disks and defeats keep their targets.
+// Loading zone shuffle: the dungeon entrances within an area swap, coupled
+// (the dungeon's way back leads to the entrance used); towers, quests, boss
+// chains, the lobby, gate disks and defeats keep their targets. The mode
+// (Cheats::rand_zones) names the rule the table is drawn with, so a game
+// bound to an older rule keeps its layout: 1 = rule 1 (round 48: no entrance
+// keeps its own dungeon, which left only two layouts in all), 2 = rule 2
+// (any arrangement within each area, the own dungeon included: 48 layouts).
 #include <array>
 #include <cstdint>
 #include <optional>
@@ -73,8 +77,15 @@ std::vector<std::string> stage_pool(std::uint64_t enemy_seed, std::string_view s
                                     int extra);
 
 // ---------------------------------------------------------------------------
-// Loading zones (mode 1: dungeon entrances within an area)
+// Loading zones (dungeon entrances within an area)
 // ---------------------------------------------------------------------------
+// The rules of the table (Cheats::rand_zones; 0 is off).
+constexpr int kZoneRuleDerangement = 1;        // round 48: every entrance leads somewhere new
+constexpr int kZoneRuleAny = 2;                // any arrangement within an area
+constexpr int kZoneRuleCurrent = kZoneRuleAny; // what a new game binds
+constexpr int kZoneRuleLast = kZoneRuleAny;    // the highest rule known
+// "rule 1: no entrance keeps its own dungeon" ... for the spoiler log and the F1 menu.
+const char* zone_rule_text(int rule);
 struct ZoneEntrance {
     const char* field;   // the field stage with the entrance mat
     const char* mat;     // its mat (funcStageChange in mat<name>.lua)
@@ -85,19 +96,20 @@ struct ZoneEntrance {
 };
 std::span<const ZoneEntrance> zone_entrances();
 // For each entrance (zone_entrances() order) the entrance whose dungeon it
-// leads to now: a seeded permutation within every area without fixed points.
-std::vector<int> zone_permutation(std::uint64_t zone_seed);
+// leads to now: a seeded permutation within every area, without fixed points
+// under rule 1, any permutation under rule 2 (a higher rule: as the last known).
+std::vector<int> zone_permutation(std::uint64_t zone_seed, int rule);
 struct StageTarget {
     std::string stage;
     int point{};
 };
 // The stage change (from, target, player point) after the shuffle, or none
 // when it is not one of the shuffled entrances / ways back.
-std::optional<StageTarget> zone_remap(std::uint64_t zone_seed, std::string_view from, std::string_view target, int point);
+std::optional<StageTarget> zone_remap(std::uint64_t zone_seed, int rule, std::string_view from, std::string_view target, int point);
 // The exit dialog of a shuffled entrance or way back names the new target:
 // for the current stage's STCHGFONT00 text index, the stage whose
 // <stage>/separate/usa_pack.igb holds that name and its index there.
-std::optional<StageTarget> zone_dialog_source(std::uint64_t zone_seed, std::string_view stage, int text);
+std::optional<StageTarget> zone_dialog_source(std::uint64_t zone_seed, int rule, std::string_view stage, int text);
 // That name for the running stage's line `text` (read from the other
 // stage's usa_pack.igb once), none when the line is not shuffled.
 std::optional<std::u16string> zone_dialog_text(Engine& engine, int text);

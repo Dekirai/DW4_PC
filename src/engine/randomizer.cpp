@@ -194,7 +194,15 @@ std::vector<std::string> stage_pool(std::uint64_t enemy_seed, std::string_view s
 
 std::span<const ZoneEntrance> zone_entrances() { return kZoneEntrances; }
 
-std::vector<int> zone_permutation(std::uint64_t zone_seed) {
+const char* zone_rule_text(int rule) {
+    switch (rule) {
+    case 0: return "off";
+    case kZoneRuleDerangement: return "rule 1: no entrance keeps its own dungeon";
+    default: return "rule 2: any arrangement, an entrance may keep its own dungeon";
+    }
+}
+
+std::vector<int> zone_permutation(std::uint64_t zone_seed, int rule) {
     const int count = int(std::size(kZoneEntrances));
     std::vector<int> perm(static_cast<std::size_t>(count));
     for (int i = 0; i < count; ++i) perm[std::size_t(i)] = i;
@@ -203,24 +211,44 @@ std::vector<int> zone_permutation(std::uint64_t zone_seed) {
         for (int i = 0; i < count; ++i)
             if (kZoneEntrances[i].area == area) members.push_back(i);
         if (members.size() < 2) continue;
-        // A seeded shuffle without fixed points (every entrance leads
-        // somewhere new): the first derangement of the seed's shuffles.
         std::uint64_t state = zone_seed ^ (std::uint64_t(area) * 0x9E3779B97F4A7C15ull);
         std::vector<int> order = members;
-        for (int attempt = 0; attempt < 64; ++attempt) {
-            order = members;
-            for (std::size_t i = order.size() - 1; i > 0; --i) std::swap(order[i], order[std::size_t(splitmix64(state) % (i + 1))]);
-            bool deranged = true;
-            for (std::size_t i = 0; i < order.size(); ++i) deranged &= order[i] != members[i];
-            if (deranged) break;
+        if (rule == kZoneRuleDerangement) {
+            // Rule 1 (round 48, kept for the games bound to it): a seeded
+            // shuffle without fixed points, the first derangement of the
+            // seed's shuffles.
+            for (int attempt = 0; attempt < 64; ++attempt) {
+                order = members;
+                for (std::size_t i = order.size() - 1; i > 0; --i) std::swap(order[i], order[std::size_t(splitmix64(state) % (i + 1))]);
+                bool deranged = true;
+                for (std::size_t i = 0; i < order.size(); ++i) deranged &= order[i] != members[i];
+                if (deranged) break;
+            }
+        } else {
+            // Rule 2: the area's arrangement drawn uniformly from all of them
+            // (2 for two entrances, 6 for area 3's three): one draw of the
+            // area's own stream picks the permutation's index in
+            // lexicographic order.
+            std::uint64_t ways = 1;
+            for (std::size_t n = 2; n <= members.size(); ++n) ways *= n;
+            std::uint64_t index = splitmix64(state) % ways;
+            std::vector<int> pool = members;
+            for (std::size_t i = 0; i < members.size(); ++i) {
+                std::uint64_t block = 1;
+                for (std::size_t n = 2; n < pool.size(); ++n) block *= n;
+                const std::size_t pick = std::size_t(index / block);
+                index %= block;
+                order[i] = pool[pick];
+                pool.erase(pool.begin() + std::ptrdiff_t(pick));
+            }
         }
         for (std::size_t i = 0; i < members.size(); ++i) perm[std::size_t(members[i])] = order[i];
     }
     return perm;
 }
 
-std::optional<StageTarget> zone_remap(std::uint64_t zone_seed, std::string_view from, std::string_view target, int point) {
-    const auto perm = zone_permutation(zone_seed);
+std::optional<StageTarget> zone_remap(std::uint64_t zone_seed, int rule, std::string_view from, std::string_view target, int point) {
+    const auto perm = zone_permutation(zone_seed, rule);
     const int count = int(std::size(kZoneEntrances));
     for (int i = 0; i < count; ++i) {
         const auto& e = kZoneEntrances[i];
@@ -234,8 +262,8 @@ std::optional<StageTarget> zone_remap(std::uint64_t zone_seed, std::string_view 
     return std::nullopt;
 }
 
-std::optional<StageTarget> zone_dialog_source(std::uint64_t zone_seed, std::string_view stage, int text) {
-    const auto perm = zone_permutation(zone_seed);
+std::optional<StageTarget> zone_dialog_source(std::uint64_t zone_seed, int rule, std::string_view stage, int text) {
+    const auto perm = zone_permutation(zone_seed, rule);
     const int count = int(std::size(kZoneEntrances));
     for (int i = 0; i < count; ++i) {
         const auto& e = kZoneEntrances[i];
@@ -389,7 +417,7 @@ std::set<std::string, std::less<>> Engine::route_donor(const std::shared_ptr<con
 namespace dw4::engine::randomizer {
 
 std::optional<std::u16string> zone_dialog_text(Engine& engine, int text) {
-    const auto source = zone_dialog_source(sub_seed(engine.cheats().rand_seed, "zones"), engine.stage_name(), text);
+    const auto source = zone_dialog_source(sub_seed(engine.cheats().rand_seed, "zones"), engine.cheats().rand_zones, engine.stage_name(), text);
     if (!source) return std::nullopt;
     static std::map<std::pair<std::string, int>, std::u16string> cache;
     const auto key = std::make_pair(source->stage, source->point);
@@ -427,15 +455,18 @@ std::string spoiler(const Cheats& cheats) {
     out << "enemies: "
         << (!cheats.enemy_shuffle() ? "original" : cheats.rand_enemies == 2 ? "one family per wave" : "every enemy drawn on its own")
         << " (stats, EXP and drops of the original enemy; bosses, mid-bosses and story fights stay)\n";
-    out << "loading zones: " << (cheats.zone_shuffle() ? "dungeon entrances within each area (coupled)" : "original") << "\n";
+    out << "loading zones: "
+        << (cheats.zone_shuffle() ? std::string("dungeon entrances within each area (coupled; ") + zone_rule_text(cheats.rand_zones) + ")"
+                                  : std::string("original"))
+        << "\n";
     if (cheats.zone_shuffle()) {
         out << "\n[loading zones]\n";
-        const auto perm = zone_permutation(sub_seed(cheats.rand_seed, "zones"));
+        const auto perm = zone_permutation(sub_seed(cheats.rand_seed, "zones"), cheats.rand_zones);
         for (std::size_t i = 0; i < perm.size(); ++i) {
             const auto& e = kZoneEntrances[i];
             const auto& to = kZoneEntrances[std::size_t(perm[i])];
             out << "area " << e.area << ": " << e.field << " " << e.mat << " (to " << e.dungeon << ") -> " << to.dungeon
-                << ", its way back -> " << e.field << " point " << e.back_point << "\n";
+                << (perm[i] == int(i) ? " (its own)" : "") << ", its way back -> " << e.field << " point " << e.back_point << "\n";
         }
     }
     if (cheats.enemy_shuffle()) {

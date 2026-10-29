@@ -329,7 +329,11 @@ beside the program for a test run's default folders and for a `[data] cards`
 folder, so nothing is written into a Dolphin folder) with one section per
 character, keyed by the record's UNIQUE (offset 4, drawn from the world clock
 when the character is made; `enemies` is off, each or wave, `zones` off or
-dungeons), and `randomizer_<UNIQUE>_spoiler.txt` beside it:
+dungeons, `zone_rule` the rule the loading zone table is drawn with: 2 now,
+any arrangement within an area; a bond without it was written in round 48
+and keeps rule 1, no entrance keeping its own dungeon; `seed=0` is a save
+the F1 menu set to play the original game), and
+`randomizer_<UNIQUE>_spoiler.txt` beside it:
 
 ```ini
 [character_1A2B3C4D]
@@ -338,6 +342,7 @@ seed=20261029
 drops=true
 enemies=each
 zones=dungeons
+zone_rule=2
 ```
 
 When player 1's character changes at the character select (a new game or a
@@ -345,8 +350,9 @@ called box) the bond of its UNIQUE applies. A new game without one (the
 engine's observe-only `new_character` port event names its UNIQUE) is bound
 to the current settings when they randomize; a called box without one plays
 the original game, whatever the settings say, until the F1 menu's "Bind
-these settings to this save" binds them (a notice says so when the settings
-randomize). Test runs bind every character to `DW4_RANDOMIZER` unless
+the settings below to this save" binds them (a notice says so when the
+settings randomize); "Play this save without the randomizer" writes a bond
+with seed 0. Test runs bind every character to `DW4_RANDOMIZER` unless
 `DW4_RANDOMIZER_BIND=new`. Two characters can share a
 UNIQUE only when they were made in the same frame (the same value for every
 player made then); they then share the bond, which is the session's anyway.
