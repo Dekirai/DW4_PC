@@ -1,6 +1,8 @@
 using System.Net;
 using System.Net.Http.Json;
+using Dapper;
 using DW4Online.Domain.Abstractions;
+using DW4Online.Domain.Security;
 using DW4Online.Domain.Services;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -48,6 +50,35 @@ public class AccountTests
         Assert.Equal("bad_credentials", await wrong.ProblemCode());
         var unknown = await host.Client().PostAsJsonAsync("/api/v1/auth/login", new { username = "nobody", password = "not the password" });
         Assert.Equal("bad_credentials", await unknown.ProblemCode());
+    }
+
+    [DbFact]
+    public async Task Unknown_user_names_are_logged_only_as_a_keyed_hash()
+    {
+        await using var host = await TestHost.StartAsync();
+        var names = host.App.Services.GetRequiredService<AuditNameHasher>();
+        // Someone types the password into the name field; someone tries a name that is registered later.
+        await host.Client(ip: "203.0.113.7").PostAsJsonAsync("/api/v1/auth/login", new { username = "MySecretPassw0rd", password = "x" });
+        await host.Client(ip: "203.0.113.8").PostAsJsonAsync("/api/v1/auth/login", new { username = " LaterUser ", password = "x" });
+
+        await using var sql = await host.SqlAsync();
+        var rows = (await sql.QueryAsync<(string Detail, byte[] Ip)>("SELECT detail, ip FROM audit_log WHERE event = 'login_unknown' ORDER BY id")).ToList();
+        Assert.Equal(2, rows.Count);
+        Assert.DoesNotContain("MySecretPassw0rd", rows[0].Detail, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(names.Tag("MySecretPassw0rd")!, rows[0].Detail);
+        Assert.Contains(names.Tag("laterUSER")!, rows[1].Detail); // case and spaces do not matter
+        Assert.Matches("^[0-9a-f]{32}$", names.Tag("x")!);
+        Assert.NotNull(rows[1].Ip);
+
+        // Deleting the account clears the attempts on its name (tag and IP); other rows stay.
+        var (token, _, _) = await host.RegisterAsync("LaterUser");
+        Assert.Equal(HttpStatusCode.NoContent,
+            (await host.Client(token).PostAsJsonAsync("/api/v1/me/delete", new { currentPassword = "a decent password" })).StatusCode);
+        rows = (await sql.QueryAsync<(string Detail, byte[] Ip)>("SELECT detail, ip FROM audit_log WHERE event = 'login_unknown' ORDER BY id")).ToList();
+        Assert.Contains(names.Tag("MySecretPassw0rd")!, rows[0].Detail);
+        Assert.NotNull(rows[0].Ip);
+        Assert.Null(rows[1].Detail);
+        Assert.Null(rows[1].Ip);
     }
 
     [DbFact]
@@ -230,7 +261,7 @@ public class AccountTests
         Assert.Equal(41, status.GetProperty("client").GetProperty("minimumProtocol").GetInt32());
         Assert.Equal("Hello", status.GetProperty("motd").GetString());
         var health = await (await host.Client().GetAsync("/health")).Json();
-        Assert.Equal(4, health.GetProperty("schema").GetInt32());
+        Assert.Equal(5, health.GetProperty("schema").GetInt32());
 
         await host.RegisterAsync("Oldie");
         var old = await host.Client().PostAsJsonAsync("/api/v1/auth/login", new { username = "Oldie", password = "a decent password", protocol = 40 });

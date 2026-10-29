@@ -11,6 +11,7 @@ using DW4Online.Server;
 //   DW4Online.Server set-role <user> <role>  player | moderator | admin (bootstraps the first admin)
 //   DW4Online.Server reset-password <user>   print a temporary password the user must change
 //   DW4Online.Server gen-relay-key           print a new random Relay:TicketKey
+//   DW4Online.Server audit-tag <name>        print the security log's tag of a user name (failed logins with unknown names)
 // Every form takes "--settings <file>": an extra JSON settings file (the server keeps its secrets outside the app folder).
 var command = args.Length > 0 && !args[0].StartsWith('-') ? args[0] : null;
 var rest = (command is null ? args : args[1..]).ToList();
@@ -79,7 +80,14 @@ switch (command)
         Console.WriteLine(result.Ok ? $"Temporary password for {account.Username}: {result.Value}" : result.Error!.Message);
         return result.Ok ? 0 : 1;
     }
+    case "audit-tag" when hostArgs.Length >= 1:
+    {
+        // The same key as the running service (Relay:TicketKey from the settings): search audit_log.detail for the tag.
+        await using var app = ServerApp.Build(hostArgs[1..], settingsFile: settings);
+        Console.WriteLine(app.Services.GetRequiredService<DW4Online.Domain.Security.AuditNameHasher>().Tag(hostArgs[0]));
+        return 0;
+    }
     default:
-        Console.Error.WriteLine("Unknown command. Use: migrate | set-role <user> <role> | reset-password <user> | gen-relay-key | --service | --settings <file>");
+        Console.Error.WriteLine("Unknown command. Use: migrate | set-role <user> <role> | reset-password <user> | gen-relay-key | audit-tag <name> | --service | --settings <file>");
         return 2;
 }

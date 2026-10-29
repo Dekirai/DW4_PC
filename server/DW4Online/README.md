@@ -106,6 +106,7 @@ DW4Online.Server migrate                  apply pending migrations and exit
 DW4Online.Server set-role <user> <role>   player | moderator | admin (bootstraps the first admin)
 DW4Online.Server reset-password <user>    print a temporary password the user must change (audit actor 0 = console)
 DW4Online.Server gen-relay-key            print a new random Relay:TicketKey
+DW4Online.Server audit-tag <name>         print the security log's tag of a user name (failed logins with unknown names)
 ... --settings <file>                      every form: load an extra settings file (the server's secrets live outside the app folder)
 ```
 
@@ -207,7 +208,13 @@ and stats must carry `protocol` / `clientVersion` (426 `client_outdated` otherwi
 - **Account deletion** (GDPR erasure, by the user with the password or by an admin on request): sessions, online
   character and its history, cloud save and history, unlocks, stats, best times, room memberships, bans and e-mail
   tokens are deleted, the account row stays as `deleted_<id>` (no e-mail, no usable password, status `deleted`) so
-  rooms and audit rows keep a valid reference, and the account's audit rows lose their IP addresses. Every password
+  rooms and audit rows keep a valid reference, and the account's audit rows lose their IP addresses (so do the failed
+  logins whose name tag is the account's name, see the next point).
+- **Security log of unknown names**: a failed login with a user name that matches no account (often a password typed
+  into the name field) stores only a tag of the typed name: HMAC-SHA256 with a key derived (HKDF) from
+  `Relay:TicketKey`, of the trimmed lower-case name, 32 hex characters (`audit_log.detail.name`). Repeated attempts on
+  one name stay visible without the name; `DW4Online.Server audit-tag <name> --settings ...` prints a name's tag to
+  search for. A new `Relay:TicketKey` starts new tags. Migration 0005 removed the names older rows held. Every password
   confirmation (password, e-mail, recovery code, deletion, online character reset, cloud save deletion) counts a wrong password like a
   failed login, so the lockout applies. The name prefix
   `deleted_` cannot be registered.

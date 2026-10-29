@@ -78,3 +78,29 @@ public static class TemporaryPassword
         return new string(chars);
     }
 }
+
+/// <summary>
+/// The security log never stores a user name that matches no account (people type their password there by mistake):
+/// a failed login with an unknown name keeps only this keyed hash of the typed name (lower case), so repeated attempts
+/// on one name can still be told apart. The key is derived from a server secret (Relay:TicketKey with HKDF); without
+/// the key nobody can test guesses against the stored tags. Deleting an account clears the tags of its name.
+/// </summary>
+public sealed class AuditNameHasher
+{
+    private static readonly byte[] Info = Encoding.ASCII.GetBytes("DW4Online audit user names v1");
+    private readonly byte[] _key;
+
+    public AuditNameHasher(byte[] serverSecret)
+    {
+        if (serverSecret.Length < 16) throw new ArgumentException("The secret needs at least 16 bytes.", nameof(serverSecret));
+        _key = HKDF.DeriveKey(HashAlgorithmName.SHA256, serverSecret, 32, info: Info);
+    }
+
+    /// <summary>32 hex characters (128 bits of HMAC-SHA256) for the typed name; null for an empty one.</summary>
+    public string? Tag(string? typedName)
+    {
+        if (string.IsNullOrEmpty(typedName)) return null;
+        var mac = HMACSHA256.HashData(_key, Encoding.UTF8.GetBytes(typedName.Trim().ToLowerInvariant()));
+        return Convert.ToHexStringLower(mac.AsSpan(0, 16));
+    }
+}

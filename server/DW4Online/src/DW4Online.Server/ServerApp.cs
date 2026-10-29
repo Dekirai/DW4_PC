@@ -75,8 +75,11 @@ public static class ServerApp
         services.AddSingleton<CloudSaveService>();
         services.AddHostedService<MaintenanceService>();
 
-        services.AddSingleton(sp => new RelayTickets(RelayKey(relay, builder.Environment, sp.GetRequiredService<ILogger<RelayServer>>()),
+        // Relay:TicketKey signs relay tickets and (through HKDF) keys the security log's tags of unknown user names.
+        services.AddSingleton(sp => new ServerSecret(RelayKey(relay, builder.Environment, sp.GetRequiredService<ILogger<RelayServer>>())));
+        services.AddSingleton(sp => new RelayTickets(sp.GetRequiredService<ServerSecret>().Key,
             TimeSpan.FromSeconds(relay.TicketLifetimeSeconds), sp.GetRequiredService<TimeProvider>()));
+        services.AddSingleton(sp => new AuditNameHasher(sp.GetRequiredService<ServerSecret>().Key));
         if (relay.Enabled)
         {
             services.AddSingleton<RelayServer>();
@@ -130,6 +133,9 @@ public static class ServerApp
     }
 
     private const string DefaultScheme = "dw4";
+
+    /// <summary>The server secret (Relay:TicketKey, or a key for this process only in Development / with the relay off).</summary>
+    private sealed record ServerSecret(byte[] Key);
 
     /// <summary>Runs the startup migrator when Database:AutoMigrate is on (the default).</summary>
     public static async Task MigrateIfEnabledAsync(WebApplication app)

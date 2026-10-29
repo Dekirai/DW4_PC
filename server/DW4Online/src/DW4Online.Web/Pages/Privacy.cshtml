@@ -47,7 +47,8 @@
             </tr>
             <tr>
                 <td>Security log: logins, failed logins, account changes, uploads flagged by plausibility checks and staff
-                    actions, each with the IP address</td>
+                    actions, each with the IP address. A failed login with a user name that belongs to no account keeps
+                    only a keyed hash of the typed name, never the name itself</td>
                 <td>Protecting accounts and the service against abuse (Art. 6(1)(f), legitimate interest)</td>
                 <td>180 days</td>
             </tr>
@@ -107,7 +108,8 @@
 <p>You can delete your account at any time in your <a href="/account">account settings</a>, or ask the operator to do
     it. Deleting removes your online character, cloud save, achievements, statistics, best times, sessions and e-mail
     address at once. The account row stays only as an anonymous placeholder ("deleted_" and a number), and the
-    security log keeps its entries without your IP address until they expire after 180 days. Database backups roll over
+    security log keeps its entries without your IP address until they expire after 180 days (failed logins typed with
+    your user name lose its hash and their IP address too). Database backups roll over
     within about two months.</p>
 
 <p class="muted small">Last updated: 29 October 2026.</p>

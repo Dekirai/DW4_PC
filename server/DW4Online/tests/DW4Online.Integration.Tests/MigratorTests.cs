@@ -16,9 +16,9 @@ public class MigratorTests
             await using var db = new Database(TestDb.ConnectionString(name));
             var migrator = new Migrator(db);
             Assert.Equal(0, await migrator.CurrentVersionAsync());
-            Assert.Equal([1, 2, 3, 4], await migrator.MigrateAsync());
+            Assert.Equal([1, 2, 3, 4, 5], await migrator.MigrateAsync());
             Assert.Empty(await migrator.MigrateAsync());
-            Assert.Equal(4, await migrator.CurrentVersionAsync());
+            Assert.Equal(5, await migrator.CurrentVersionAsync());
             await using var c = new MySqlConnection(TestDb.ConnectionString(name));
             Assert.Equal(72, await c.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM achievements"));
             Assert.Equal(16, await c.ExecuteScalarAsync<int>(

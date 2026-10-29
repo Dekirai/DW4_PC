@@ -26,6 +26,7 @@ public sealed class AccountService(
     ISessionRepository sessions,
     IAuditLog audit,
     PasswordHasher hasher,
+    AuditNameHasher names,
     AccountOptions options,
     TimeProvider time)
 {
@@ -67,7 +68,9 @@ public sealed class AccountService(
         if (account is null || account.Status == AccountStatus.Deleted)
         {
             hasher.VerifyDummy(password ?? "");
-            await audit.WriteAsync("login_unknown", null, null, caller.Ip, new { username = Truncate(username, 40) }, now, ct);
+            // Never the typed name itself (often a password typed into the wrong field): a keyed hash of it.
+            var tag = names.Tag(Truncate(username, 40));
+            await audit.WriteAsync("login_unknown", null, null, caller.Ip, tag is null ? null : new { name = tag }, now, ct);
             return BadCredentials();
         }
         if (account.LockedUntil is { } until && until > now)
@@ -248,7 +251,8 @@ public sealed class AccountService(
     private async Task ScrubAsync(AccountRecord account, long? actorId, CancellationToken ct)
     {
         var name = UsernamePolicy.DeletedPrefix + account.Id.ToString(System.Globalization.CultureInfo.InvariantCulture);
-        await accounts.ScrubAsync(account.Id, name, ct);
+        // The failed logins under this name before it existed (or typed with spaces) go with it: their tag and IP.
+        await accounts.ScrubAsync(account.Id, name, names.Tag(account.Username), ct);
         // No IP and no detail: the audit row only says that the account was erased and by whom.
         await audit.WriteAsync(actorId is null ? "account_delete" : "admin_account_delete", account.Id, actorId ?? account.Id, null, null, Clock.Now(time), ct);
     }
