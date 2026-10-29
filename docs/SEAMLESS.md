@@ -860,6 +860,14 @@ masks fit in 16 bits, which S1 checks; else u32 and 9 B) and four int8 sticks;
 `connected` comes from the present mask. About 0.4 KB/s per player and
 direction.
 
+*Checked in S1 (relay lane):* the PC's button masks fit in 16 bits. The
+logical bits are 0x0008-0x8000 (`include/dw4/pad.hpp`, `pad_button`),
+`gamecube_buttons` maps raw PADStatus bits only onto them, and the keyboard
+and controller bindings (`controls.cpp`, `press(PadKey)`) set only those bits;
+the recorded logs of 6.6 use 0x0010-0xFC50. So a pad is 7 B: buttons u16 LE,
+then the main stick x, y and the C-stick x, y as int8 `round(v * 74)`
+(main stick -72..72 after the host's 72/74 scale, C-stick -59..59).
+
 ### 6.5 Events and when they apply
 
 The server stamps JOIN, LEAVE and INTENT at a future tick J (sealed: the
@@ -961,6 +969,39 @@ the longest joinable log. The relay lane measures it with recorded real input
 first. State transfers have their own limit (`Relay:StateBytesPerSecond`,
 default 4 MB/s per connection with a 16 MiB burst), outside the 64 KB/s bucket
 of the game frames.
+
+*Measured in S1 (relay lane), `tools/online_test/log_sizes.py`.* Recorded
+input from save state files (the snapshot plus every step's pads since the
+stage load): the user's own keyboard game (1,492 steps), a campaign bot
+driver run with continuous analog steering (30,743 steps, 8.5 min, 32,793
+distinct stick values) and a shorter bot run (1,349 steps). Player k of n
+replays the recording from offset k·len/n; the log is the relay's tick record
+(present mask, event count, 7 B per present slot); sizes per 600-tick block,
+each compressed on its own (as the relay stores it), scaled to the duration.
+The driver run is the representative one:
+
+| Log | raw | zstd 3 | zlib 6 |
+| --- | --- | --- | --- |
+| 4 players, 20 min, r48 21-byte float pads | 5.90 MB | 1.18 MB (20.0 %) | 1.22 MB |
+| 4 players, 20 min, quantized 7-byte pads | 1.83 MB | 227 KB (12.4 %) | 234 KB |
+| same, with +-24 LSB stick noise before the quantization | 1.83 MB | 239 KB (13.1 %) | 244 KB |
+| 4 players, 30 min, quantized (with noise) | 2.74 MB | 341 KB (359 KB) | 351 KB |
+| 2 players, 20 min, quantized | 0.98 MB | 111 KB | 112 KB |
+| 1 player, 20 min, quantized | 0.56 MB | 54 KB | 53 KB |
+
+The keyboard game compresses to 0.6-0.9 % (three stick values); the short
+bot run to 6-8 %. Quantized pads make the log 5.2 times smaller than the r48
+pads (the critique's 5x), and the controller noise of an int16 axis barely
+survives the GameCube's steps (+5 %). The longest joinable log (30 min, four
+players) is about 0.35 MB compressed and 2.7 MB raw; with the snapshot
+(19.4-20.2 KB raw in these files) a join state stays below 3 MB raw.
+Consequences built on in S1: the relay keeps its log in memory as 600-tick
+blocks compressed with Deflate (zlib 6 is as good as zstd 3 on these blocks
+and is in .NET; about 240 KB per 20-minute four-player visit); STATE_DATA
+sends the tick records raw (codec 0; the client has only a zstd decoder and
+.NET no zstd encoder), which at the default `Relay:StateBytesPerSecond`
+(4 MB/s, 16 MiB burst) is under one second for the longest log and well
+inside the burst; the snapshot travels as the leader uploaded it.
 
 The spike proved spawning only for a joiner of the same species with its
 package already loaded; other species (packages mid-stage, the scheduler's
