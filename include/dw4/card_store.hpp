@@ -67,10 +67,14 @@ private:
 
 // A whole file; none when it cannot be read.
 std::optional<std::vector<std::uint8_t>> read_whole_file(const std::filesystem::path& path);
-// Writes <path>.tmp and renames it over `path`; with `keep_backup` an existing
-// file is first copied to <path>.bak. Creates the parent folder.
+// Writes <path>.tmp (flushed to the disk, closed, then read back and compared)
+// and renames it over `path`; with `keep_backup` an existing file is first
+// copied to <path>.bak, unless `backup_check` rejects it (a damaged file
+// never replaces the last good backup). Creates the parent folder. A failed
+// write leaves `path` and the backup as they were.
+using FileCheck = bool (*)(std::span<const std::uint8_t> bytes);
 bool write_file_atomic(const std::filesystem::path& path, std::span<const std::uint8_t> bytes, bool keep_backup,
-                       std::string* error = nullptr);
+                       std::string* error = nullptr, FileCheck backup_check = nullptr);
 // GCI bytes of a DW4 save: a directory entry and the 90112-byte file with a
 // data copy that passes its checksum and version check (the entry's names
 // are not checked).

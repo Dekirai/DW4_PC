@@ -87,6 +87,16 @@ void profile_file() {
     backup += ".bak";
     check(std::filesystem::exists(backup) && AchievementProfile::load(backup)->stats.at("kills") == 123, "the previous file kept as .bak");
     check(AchievementProfile::load(file)->stats.at("kills") == 124, "the new values");
+    // A profile cut short never replaces the last good .bak.
+    {
+        auto cut = loaded->serialize();
+        cut.resize(cut.size() - 6);
+        std::ofstream(file, std::ios::binary | std::ios::trunc) << cut;
+    }
+    loaded->stats["kills"] = 125;
+    check(loaded->save(file), "saved over a cut file");
+    check(AchievementProfile::load(backup)->stats.at("kills") == 123 && AchievementProfile::load(file)->stats.at("kills") == 125,
+          "the good .bak stays");
     check(!AchievementProfile::load(folder / "missing.dat"), "a missing file");
     std::error_code error;
     std::filesystem::remove_all(folder, error);

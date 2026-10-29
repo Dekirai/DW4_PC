@@ -72,6 +72,22 @@ void single_file(const fs::path& root) {
     check(store.write(0, make_gci(7), &error) && level_of(*save::read_whole_file(root / "saves" / "savedata.dat.bak")) == 6,
           "the .bak follows every write");
 
+    // A damaged save (cut short) never replaces the last good backup.
+    auto cut = make_gci(7);
+    cut.resize(cut.size() / 2);
+    write_raw(root / "saves" / "savedata.dat", cut);
+    check(store.write(0, make_gci(8), &error), "write over a damaged save: " + error);
+    check(level_of(*save::read_whole_file(root / "saves" / "savedata.dat.bak")) == 6 && level_of(*store.read(0)) == 8,
+          "the good .bak stays, the new save is written");
+    // A write that cannot complete leaves the save and its backup alone.
+    fs::create_directories(root / "saves" / "savedata.dat.tmp"); // the temporary file cannot be made
+    check(!store.write(0, make_gci(9), &error) && !error.empty(), "a failed write reports it");
+    check(level_of(*store.read(0)) == 8 && level_of(*save::read_whole_file(root / "saves" / "savedata.dat.bak")) == 6,
+          "a failed write changes nothing");
+    fs::remove(root / "saves" / "savedata.dat.tmp");
+    check(store.write(0, make_gci(7), &error) && level_of(*save::read_whole_file(root / "saves" / "savedata.dat.bak")) == 8,
+          "writes work again");
+
     // Slot B only once its file exists.
     check(store.write(1, make_gci(9), &error) && store.slot_exists(1) && level_of(*store.read(1)) == 9, "slot B file");
 

@@ -9,6 +9,11 @@
 #include <fstream>
 #include <iterator>
 #include <system_error>
+#if defined(_WIN32)
+#include <io.h>
+#else
+#include <unistd.h>
+#endif
 
 namespace dw4::save {
 namespace {
@@ -71,7 +76,7 @@ bool CardStore::write(int slot, std::span<const std::uint8_t> gci, std::string* 
         std::error_code ec;
         std::filesystem::create_directories(slot_folder(slot), ec);
     }
-    return write_file_atomic(save_path(slot), gci, kind_ == Kind::single_file, error);
+    return write_file_atomic(save_path(slot), gci, kind_ == Kind::single_file, error, valid_save_gci);
 }
 
 CardUsage CardStore::usage(int slot) const {
@@ -112,7 +117,30 @@ std::optional<std::vector<std::uint8_t>> read_whole_file(const std::filesystem::
     return std::vector<std::uint8_t>((std::istreambuf_iterator<char>(in)), {});
 }
 
-bool write_file_atomic(const std::filesystem::path& path, std::span<const std::uint8_t> bytes, bool keep_backup, std::string* error) {
+// Writes the whole file, flushes the C library's buffer and the system's
+// cache to the disk (FlushFileBuffers / fsync) and closes it; false when any
+// step fails (a full disk shows at the flush or the close).
+static bool write_durable(const std::filesystem::path& path, std::span<const std::uint8_t> bytes) {
+#if defined(_WIN32)
+    std::FILE* file = nullptr;
+    if (_wfopen_s(&file, path.c_str(), L"wb") != 0) file = nullptr;
+#else
+    std::FILE* file = std::fopen(path.c_str(), "wb");
+#endif
+    if (!file) return false;
+    bool ok = bytes.empty() || std::fwrite(bytes.data(), 1, bytes.size(), file) == bytes.size();
+    ok = std::fflush(file) == 0 && ok;
+#if defined(_WIN32)
+    ok = _commit(_fileno(file)) == 0 && ok;
+#else
+    ok = fsync(fileno(file)) == 0 && ok;
+#endif
+    ok = std::fclose(file) == 0 && ok;
+    return ok;
+}
+
+bool write_file_atomic(const std::filesystem::path& path, std::span<const std::uint8_t> bytes, bool keep_backup, std::string* error,
+                       FileCheck backup_check) {
     auto fail = [&](const std::string& text) {
         if (error) *error = text;
         return false;
@@ -121,19 +149,29 @@ bool write_file_atomic(const std::filesystem::path& path, std::span<const std::u
     if (path.has_parent_path()) std::filesystem::create_directories(path.parent_path(), ec);
     auto temporary = path;
     temporary += ".tmp";
-    {
-        std::ofstream out(temporary, std::ios::binary | std::ios::trunc);
-        if (!out) return fail("cannot create " + path_text(temporary));
-        out.write(reinterpret_cast<const char*>(bytes.data()), std::streamsize(bytes.size()));
-        if (!out) return fail("cannot write " + path_text(temporary));
+    auto drop_temporary = [&] {
+        std::error_code ignored;
+        std::filesystem::remove(temporary, ignored);
+    };
+    if (!write_durable(temporary, bytes)) {
+        drop_temporary();
+        return fail("cannot write " + path_text(temporary) + " (is the disk full?)");
+    }
+    // What reached the disk is what was meant (size and bytes).
+    if (const auto back = read_whole_file(temporary); !back || back->size() != bytes.size() || !std::equal(back->begin(), back->end(), bytes.begin())) {
+        drop_temporary();
+        return fail("cannot write " + path_text(temporary) + ": the file reads back differently");
     }
     if (keep_backup && std::filesystem::is_regular_file(path, ec)) {
         auto backup = path;
         backup += ".bak";
-        std::filesystem::copy_file(path, backup, std::filesystem::copy_options::overwrite_existing, ec);
-        if (ec) {
-            std::filesystem::remove(temporary, ec);
-            return fail("cannot keep the old save as " + path_text(backup));
+        const auto current = backup_check ? read_whole_file(path) : std::nullopt;
+        if (!backup_check || (current && backup_check(*current))) {
+            std::filesystem::copy_file(path, backup, std::filesystem::copy_options::overwrite_existing, ec);
+            if (ec) {
+                drop_temporary();
+                return fail("cannot keep the old save as " + path_text(backup));
+            }
         }
     }
     std::filesystem::rename(temporary, path, ec);

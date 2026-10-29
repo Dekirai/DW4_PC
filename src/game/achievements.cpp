@@ -1,5 +1,7 @@
 #include "achievements.hpp"
 
+#include "dw4/card_store.hpp"
+
 #include <algorithm>
 #include <fstream>
 #include <sstream>
@@ -173,6 +175,7 @@ std::string AchievementProfile::serialize() const {
     for (const auto& [unique, c] : characters)
         out << "char " << unique << ' ' << c.play_frames << ' ' << c.defeats << ' ' << int(c.from_start) << ' ' << int(c.assisted)
             << ' ' << int(c.coop_very_hard) << ' ' << int(c.beyond_rookie) << '\n';
+    out << "end\n"; // a complete file (save: only a complete one becomes the .bak)
     return out.str();
 }
 
@@ -217,23 +220,14 @@ std::optional<AchievementProfile> AchievementProfile::load(const std::filesystem
 }
 
 bool AchievementProfile::save(const std::filesystem::path& file) const {
-    std::error_code error;
-    if (file.has_parent_path()) std::filesystem::create_directories(file.parent_path(), error);
-    auto temporary = file;
-    temporary += ".tmp";
-    {
-        std::ofstream out(temporary, std::ios::binary | std::ios::trunc);
-        const auto text = serialize();
-        out.write(text.data(), std::streamsize(text.size()));
-        if (!out) return false;
-    }
-    if (std::filesystem::exists(file, error)) {
-        auto backup = file;
-        backup += ".bak";
-        std::filesystem::copy_file(file, backup, std::filesystem::copy_options::overwrite_existing, error);
-    }
-    std::filesystem::rename(temporary, file, error);
-    return !error;
+    // The atomic save write (flushed, read back; the previous file becomes the
+    // .bak only when it is a complete profile).
+    const auto text = serialize();
+    const auto complete = [](std::span<const std::uint8_t> bytes) {
+        const std::string_view content(reinterpret_cast<const char*>(bytes.data()), bytes.size());
+        return content.starts_with("DW4PROFILE ") && content.ends_with("\nend\n");
+    };
+    return dw4::save::write_file_atomic(file, std::span(reinterpret_cast<const std::uint8_t*>(text.data()), text.size()), true, nullptr, complete);
 }
 
 bool AchievementTracker::unlocked(std::string_view id, bool randomizer) const {
@@ -428,6 +422,8 @@ std::vector<AchievementUnlock> AchievementTracker::observe(const AchievementStep
         }
         case Kind::level_up:
             break; // levels are read from the state below
+        case Kind::new_character:
+            break; // (the randomizer's bond, game_main)
         }
     }
 
