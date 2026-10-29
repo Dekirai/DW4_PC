@@ -892,6 +892,18 @@ public:
             if (ram->info_name == name && ram->index == index) return ram->width;
         return 2.5f;
     }
+    // The whole cylinder: half-width, the step it climbs and the drop it
+    // walks down without falling (CHECKLAND's window), its wall kinds (the
+    // randomizer's static check).
+    struct DeliveryShape {
+        float width{}, up{}, down{};
+        std::uint32_t flags{};
+    };
+    std::optional<DeliveryShape> delivery_shape(std::string_view name, int index) const {
+        for (const auto& ram : deliveries_)
+            if (ram->info_name == name && ram->index == index) return DeliveryShape{ram->width, ram->up, ram->down, ram->flags};
+        return std::nullopt;
+    }
 
 private:
     struct HitRam : Ram {
@@ -1219,6 +1231,17 @@ public:
             if (ram->shuffled && ram->data) out.emplace_back(ram->data.str(2));
         return out;
     }
+    // Randomizer: the members other families stand in for in the waves of
+    // `family` (model name, RAM), out now. A script's command to every RAM
+    // of a family reaches them as well (Messenger::dispatch).
+    std::vector<std::pair<std::string, int>> stand_ins(std::string_view family) const {
+        std::vector<std::pair<std::string, int>> out;
+        for (const auto& ram : rams_)
+            if (ram->shuffled && ram->enemy_name == family)
+                for (std::size_t i = 0; i < ram->enemies.size() && i < ram->enemy_models.size(); ++i)
+                    if (ram->enemy_models[i] != family) out.emplace_back(ram->enemy_models[i], ram->enemies[i]);
+        return out;
+    }
     // Randomizer: a drop's record after the seeded permutation of its table.
     static int randomized_record(Engine& engine, const std::string& table, int record);
     // Each generator's data name and whether its waves were ever cleared (test bot).
@@ -1318,6 +1341,7 @@ private:
     void forget(GeneRam& ram, std::size_t member);
     void start_work(Engine& engine, GeneRam& ram, int live_players);
     void sweep(Engine& engine);
+    void static_check(Engine& engine);
     std::size_t sweep_index_{};
     int sweep_wait_{}, sweep_wanted_{}, sweep_got_{}, sweep_watchdog_{}, sweep_count_{}, sweep_failures_{};
     bool sweep_reported_{};

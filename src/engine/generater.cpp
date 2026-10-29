@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <limits>
 
 namespace dw4::engine {
 namespace {
@@ -475,6 +476,126 @@ void GeneraterManager::sweep(Engine& engine) {
     sweep_wait_ = 30;
 }
 
+// Test tool (DW4_RANDOMIZER_SWEEP=static, with DW4_RANDOMIZER): the static
+// check of a stage's shuffled waves, once it runs with a player and no wave
+// starts. For every e_ generator whether it is shuffled (else why it stays);
+// for a shuffled one the floor under each spawn point (none, a pit's respawn
+// mat, quicksand: the generator's own family lands there as well) and each
+// pool family against the own one: its land cylinder (HITLANDDELIVER width,
+// the step it climbs, the drop it walks down), its body (above the swing:
+// body boxes from 9 above the root), its hit script, and whether it has the
+// generator's entry sequence (else SQ_ENTR). PROBLEM marks what a stand-in
+// would meet and the own family not: no hit script, hovering, a smaller
+// climb, a deeper drop, no land cylinder.
+void GeneraterManager::static_check(Engine& engine) {
+    if (sweep_reported_) return;
+    auto* models = engine.get<ModelCtrlManager>();
+    auto* db = engine.get<DatabaseManager>();
+    auto* hitland = engine.get<HitLandManager>();
+    if (!models || !db || !hitland) return;
+    int live_players = 0;
+    for (int slot = 0; slot < 4; ++slot) live_players += models->player(slot) ? 1 : 0;
+    if (live_players == 0 || ++sweep_wait_ < 60) return;
+    sweep_reported_ = true;
+    if (!shuffle_ready_) prepare_shuffle(engine);
+    std::vector<MatCtrlManager::MatBox> boxes;
+    if (auto* mats = engine.get<MatCtrlManager>()) boxes = mats->mat_boxes();
+    auto hazard_at = [&](const Vec3f& p) -> std::string {
+        for (const auto& b : boxes) {
+            if (p.x < b.min.x || p.x > b.max.x || p.z < b.min.z || p.z > b.max.z || p.y < b.min.y - 5.0f || p.y > b.max.y + 10.0f) continue;
+            const std::string script = b.name + ".lua";
+            if (engine.script_mentions(script, "ADDHP") && engine.script_mentions(script, "REMOVE")) return "pit";
+            if (engine.script_mentions(script, "QuickSand") || engine.script_mentions(script, "QUICKSAND")) return "sand";
+        }
+        return {};
+    };
+    struct Traits {
+        std::optional<HitLandManager::DeliveryShape> shape;
+        bool hovers{}, hit{};
+    };
+    auto traits = [&](const std::string& family) {
+        Traits t;
+        t.shape = hitland->delivery_shape(family, 0);
+        t.hit = engine.has_script("hit_" + family + ".lua");
+        for (const auto& e : models->rams())
+            if (e->info_name == family && e->hit && !e->hit->boxes.empty()) {
+                float bottom = std::numeric_limits<float>::infinity();
+                for (const auto& [lo, hi] : e->hit->boxes) bottom = std::min({bottom, lo.y, hi.y});
+                t.hovers = bottom > 9.0f;
+                break;
+            }
+        return t;
+    };
+    int generators = 0, problems = 0;
+    for (auto& owned : rams_) {
+        auto& ram = *owned;
+        if (!ram.data) continue;
+        const std::string own = db->text("enemy", ram.data.i32(7), "MODEL");
+        if (!own.starts_with("e_")) continue;
+        ++generators;
+        ram.enemy_name = own; // (no wave runs in this mode)
+        const std::string name(ram.data.str(2));
+        std::string text = "check " + engine.stage_name() + " " + name + " " + own;
+        if (!shuffle_generator(engine, ram)) {
+            const char* why = !engine.cheats().enemy_shuffle() ? "shuffle off"
+                              : fixed_families_.contains(own) ? "family stays"
+                              : !own_families_.contains(own)  ? "dormant"
+                              : fixed_generators_.contains(name) ? "story generator"
+                              : pool_.size() < 2               ? "no pool"
+                                                               : "stays";
+            engine.log(text + " stays (" + why + ")");
+            continue;
+        }
+        const auto points = vec3_list(ram.data.ref(5));
+        const auto base = ram.data.vec3(3).value_or(Vec3f{});
+        int none = 0, pits = 0, sand = 0;
+        for (auto p : points) {
+            if (!ram.data.boolean(4)) p = {base.x + p.x, base.y + p.y, base.z + p.z};
+            const auto land = hitland->world().check_land({p.x, p.y + 1.0f, p.z}, 3.0f, 2.0f, 400.0f);
+            if (!land.found) {
+                ++none;
+                continue;
+            }
+            const auto hazard = hazard_at(land.position);
+            pits += hazard == "pit" ? 1 : 0;
+            sand += hazard == "sand" ? 1 : 0;
+        }
+        text += " shuffled, " + std::to_string(points.size()) + " points";
+        if (none) text += ", " + std::to_string(none) + " over no floor";
+        if (pits) text += ", " + std::to_string(pits) + " over a pit";
+        if (sand) text += ", " + std::to_string(sand) + " on quicksand";
+        text += ":";
+        const auto mine = traits(own);
+        const std::string seq(ram.data.str(8));
+        std::string problem;
+        for (const auto& family : pool_) {
+            if (family == own) continue;
+            const auto t = traits(family);
+            text += " " + family;
+            if (!t.hit) problem += " no hit script for " + family;
+            if (t.hovers && !mine.hovers) problem += " " + family + " hovers above the swing";
+            if (!t.shape) problem += " no land cylinder for " + family;
+            else if (mine.shape) {
+                if (t.shape->up < mine.shape->up) problem += " " + family + " climbs less";
+                if (t.shape->down > mine.shape->down) problem += " " + family + " walks off deeper drops";
+                if (t.shape->width > mine.shape->width) {
+                    char wide[32];
+                    std::snprintf(wide, sizeof wide, "(%.2f wide)", t.shape->width);
+                    text += wide;
+                }
+            }
+            if (!seq.empty() && !models->has_sequence(family, seq)) text += "(enters with SQ_ENTR)";
+        }
+        if (!problem.empty()) {
+            text += " | PROBLEM" + problem;
+            ++problems;
+        }
+        engine.log(text);
+    }
+    engine.log("check done " + engine.stage_name() + ": " + std::to_string(generators) + " generators, " + std::to_string(problems) +
+               " with problems");
+}
+
 // 802FCFA8: a wave starts (the generator's work is allocated): the enemy
 // comes from DATABASE enemy.
 void GeneraterManager::start_work(Engine& engine, GeneRam& ram, int live_players) {
@@ -510,8 +631,9 @@ void GeneraterManager::start_work(Engine& engine, GeneRam& ram, int live_players
 }
 
 void GeneraterManager::update(Engine& engine) {
-    if (static const bool sweeping = std::getenv("DW4_RANDOMIZER_SWEEP") != nullptr; sweeping) {
-        sweep(engine);
+    if (static const char* const sweeping = std::getenv("DW4_RANDOMIZER_SWEEP"); sweeping) {
+        if (std::string_view(sweeping) == "static") static_check(engine);
+        else sweep(engine);
         return;
     }
     for (auto& owned : rams_) {

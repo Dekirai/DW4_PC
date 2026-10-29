@@ -40,7 +40,9 @@ message). Every decision comes from the master seed and the game's own state
 host clock. Its hooks: `GeneraterManager` swaps a wave's family (the
 original enemy record stays; only generators of a family the stage loaded
 itself, so a dormant generator stays dormant) and removes a swapped enemy that
-never lands;
+never lands; `Messenger::dispatch` lets a script's erase, kill, freeze or
+hold of a whole family (index -1) reach the members other families stand in
+for in that family's waves;
 `Engine::load_enemy_donors` reads the pool's missing families from their
 donor stage members after boot.lua; `STAGECTL NEXTSTAGE` remaps the coupled
 dungeon entrances and the exit prompt names the new target. With the
