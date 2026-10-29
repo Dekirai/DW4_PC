@@ -778,6 +778,25 @@ The lanes may refine field layouts; the integration step writes the final
 layout into an appendix of this document and into
 `server/DW4Online/README.md`.
 
+**The client's layouts (round S1, client lane).** `src/game/online/wire.hpp`
+holds every payload byte for byte (little endian; `str8` = u8 length +
+bytes, `blob` = u32 length + bytes; message types 0x01-0x13 client to server,
+0x41-0x4E server to client) and `dw4_online_wire_tests` round-trips each. The
+client needed four additions to the tables above: JOIN carries the member id
+(`u8 slot | u32 member | i16 point | blob carry`, for notices and names);
+BARRIER_OK carries the member of each new slot (`4 x u32` after the slot map);
+a pad's seventh byte is flags, bit 0 set by the server when it filled the pad
+(lag icons come from it, clients send 0 and never simulate it); and REKEY
+(0x4E: `u32 old inst | u32 old visit | u32 new inst | u32 new visit`) tells
+the side of a fork that does not keep the instance id its new one (the server
+routes a member's INPUT and LOG by the member, so frames sent before the REKEY
+still land). Instance 0 is a member's own unregistered instance: the title at
+the session start, and a solo group that went on after five seconds without a
+BARRIER_OK. Every barrier, also into a hub, gets a BARRIER_OK with the new
+instance id and visit. The settings hash of the hello line is FNV-1a 64 over
+`dw4r2-settings|protocol=<p>|data=<dataHash>|difficulty=<d>|camera=<c>|light=<l>|seed=<s>|enemies=<e>|zones=<z>|drops=<0|1>|fast=<0|1>`
+(randomizer fields 0 when it is off, `src/game/online/room_settings.hpp`).
+
 ### 6.4 Ticks, sealing, delay
 
 **Solo-led** (one member). The member steps on its own 59.94 Hz clock
@@ -971,6 +990,36 @@ field log, on a weaker PC about 8-12 minutes; longer stays open a parallel
 instance with a notice (3.4). The minute limit of revision 1 goes. There is no
 mid-stage state to shorten this: a save state is a load snapshot plus its input
 log (`game_main.cpp:2016`), so every catch-up starts at the visit's load.
+
+**The client's calibration and the music position (measured in round S1,
+client lane).** There is no bundled log (it would be game-derived data): the
+calibration direct-starts a field with four joined players (fast loading),
+lets every pad walk a slow circle and attack now and then, and times the
+steps after the load, each step as a catch-up step runs it (the step, the
+picture's traversal, the music position). `dw4_game --online-calibrate STEPS`
+prints it; the room join runs it for 0.5 s before the online engine starts.
+On the reference machine (hidden, other rounds running), main's path without
+the union pass, 6,000 steps:
+
+| Stage | steps / s | without the music position (`DW4_ONLINE_CALIBRATION=nomusic`) |
+| --- | --- | --- |
+| stag0102 | 2,731-2,805 | 4,561 |
+| dng101b1 | 3,066-3,254 | 5,726 |
+| stagBS02 | 4,519-4,646 | 11,598 |
+
+The music position is kept by rendering each replayed step's sound and
+dropping it, as the save state replay does (`load_state`); a seek of the
+streams afterwards would need a stream seek in the sound manager, which does
+not exist. It costs 0.14 ms per step in stag0102, about 40 % of the catch-up
+rate. With the union pass's 0.15-0.18 ms on top, a four-player field would
+replay at about 1,900 steps per second on the reference machine, not 3,000
+(the cameras lane measures the final path). The client reports what it
+measured (RATE after the calibration and after every replay), so the
+server's offers follow the real path either way; a position-only advance of
+the streams (no mixing) is a candidate for round S4's performance lane. Under
+load (two clients calibrating at once while four story segments ran) the
+0.5 s calibration gave 1,372-2,916 steps per second, so the first estimate
+is rough and the replays' own rates replace it.
 
 **State size.** Measured (spike `r51net`, two and three processes, dng101b1,
 stag0101, stagml11): join state 271,387 B after 2,999 steps raw (snapshot

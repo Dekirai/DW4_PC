@@ -787,10 +787,13 @@ int run(const Options& options, dw4::game::Settings& settings) {
     };
     auto calibrate = [&](int steps, double seconds) {
         fresh_engine();
-        const auto result = dw4::game::online::calibrate_replay_rate(engine, options.online_calibrate_stage, steps, seconds);
+        // (DW4_ONLINE_CALIBRATION=nomusic: without the music position, to see what it costs.)
+        const char* mode = std::getenv("DW4_ONLINE_CALIBRATION");
+        const bool music = !(mode && std::string_view(mode) == "nomusic");
+        const auto result = dw4::game::online::calibrate_replay_rate(engine, options.online_calibrate_stage, steps, seconds, music);
         fresh_engine();
-        std::printf("online: replay rate %s: %d steps in %.3f s, %.0f steps per second (four players, union of their cameras not yet)\n",
-                    result.stage.c_str(), result.steps, result.seconds, result.steps_per_second);
+        std::printf("online: replay rate %s%s: %d steps in %.3f s, %.0f steps per second (four players, union of their cameras not yet)\n",
+                    result.stage.c_str(), music ? "" : " without the music position", result.steps, result.seconds, result.steps_per_second);
         return result;
     };
     if (options.online_calibrate) return calibrate(options.online_calibrate, 1e9).ok ? 0 : 1;

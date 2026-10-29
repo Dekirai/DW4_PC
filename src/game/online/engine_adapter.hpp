@@ -96,6 +96,7 @@ struct Calibration {
     std::string stage;
     bool ok = false;
 };
-Calibration calibrate_replay_rate(engine::Engine& engine, const std::string& stage, int max_steps, double max_seconds);
+// `music` false leaves the music position out (to measure what it costs).
+Calibration calibrate_replay_rate(engine::Engine& engine, const std::string& stage, int max_steps, double max_seconds, bool music = true);
 
 } // namespace dw4::game::online

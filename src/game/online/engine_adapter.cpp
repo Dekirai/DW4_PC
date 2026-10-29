@@ -308,7 +308,7 @@ void GameEngineLink::set_view_slot(int slot) {
 #endif
 }
 
-Calibration calibrate_replay_rate(engine::Engine& engine, const std::string& stage, int max_steps, double max_seconds) {
+Calibration calibrate_replay_rate(engine::Engine& engine, const std::string& stage, int max_steps, double max_seconds, bool music) {
     Calibration c;
     c.stage = stage;
     engine.cheats().fast_loading = true;
@@ -339,7 +339,7 @@ Calibration calibrate_replay_rate(engine::Engine& engine, const std::string& sta
         }
         engine.step(pads);
         if (!engine.held()) engine.traverse_scene();
-        advance_music(engine, samples);
+        if (music) advance_music(engine, samples);
     }
     c.seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
     c.steps = steps;
