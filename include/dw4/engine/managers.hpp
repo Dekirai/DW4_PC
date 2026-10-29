@@ -401,7 +401,11 @@ public:
     // Save states: the streams that play on into the next stage, and back.
     std::shared_ptr<const void> persistent() const;
     void restore(Engine& engine, const std::shared_ptr<const void>& state);
-    static void serialize_persistent(class StateArchive& archive, std::shared_ptr<const void>& state);
+    // `canonical`: the hashes' form (SnapshotForm::canonical) writes 0 for the
+    // decoding positions (frames_read: audio only, never read by the game).
+    static void serialize_persistent(class StateArchive& archive, std::shared_ptr<const void>& state, bool canonical = false);
+    // The C library's rand() state (net fingerprint).
+    std::uint32_t random_state() const { return random_; }
 
     // A Cri sound entry's volume fade (disc_timing.hpp).
     using Fade = CriFade;
@@ -1022,6 +1026,7 @@ public:
 private:
     struct SelectRam : Ram {
         bool running{};
+        int trigger = -1; // the trigger slot of the run that opened it (online pad redirect)
         int state{}, sub{}, counter{}, busy{};
         int traced_state = -1, traced_sub = -1; // DW4_TRACE_SELECT
         int cursor{}, items = 1;

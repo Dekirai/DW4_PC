@@ -2648,7 +2648,14 @@ bool ModelCtrlManager::hit_check(Engine& engine, ModelRam& ram, Packet& packet) 
     const float source_x = has_source ? packet.matrices[0](3, 0) : 0.0f, source_z = has_source ? packet.matrices[0](3, 2) : 0.0f;
     const float own_x = m(3, 0), own_z = m(3, 2);
     engine.push_model_context(std::move(context));
-    engine.run_script("hit_" + ram.info_name + ".lua");
+    // The run's trigger slot (online pad redirect, 5.1): a player that shot
+    // the hit (talks: the player that pressed A).
+    int trigger = -1;
+    if (const auto* shooter = find(packet.string(0), packet.integer(1, -1)); shooter && shooter->is_player) trigger = shooter->index;
+    {
+        const Engine::TriggerScope scope(engine, trigger);
+        engine.run_script("hit_" + ram.info_name + ".lua");
+    }
     const auto done = engine.pop_model_context();
     if (done.turn && has_source) {
         // 8030E810..8030E854: with the script's turn flag (byte_80535944) the

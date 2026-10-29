@@ -790,6 +790,9 @@ void StageCtlManager::update(Engine& engine) {
     };
     switch (reset_state_) {
     case 0:
+        // Online the soft reset is off (7.4): one member must not send the
+        // whole instance to the title.
+        if (engine.online().enabled) break;
         if (engine.soft_reset_allowed() && (pad.trigger & pad_button::start) && combination) {
             reset_time_ = engine.time() + 1'000'000'000;
             reset_state_ = 1;
@@ -2378,7 +2381,7 @@ void SoundManager::restore(Engine& engine, const std::shared_ptr<const void>& op
     cri_ = state.cri;
 }
 
-void SoundManager::serialize_persistent(StateArchive& a, std::shared_ptr<const void>& opaque) {
+void SoundManager::serialize_persistent(StateArchive& a, std::shared_ptr<const void>& opaque, bool canonical) {
     bool present = opaque != nullptr;
     a.io(present);
     if (!present) return;
@@ -2392,7 +2395,12 @@ void SoundManager::serialize_persistent(StateArchive& a, std::shared_ptr<const v
     for (auto& s : state->streams) {
         a.io(s.name);
         a.io(s.file);
-        a.io(s.frames_read);
+        if (canonical && !a.reading()) {
+            std::uint64_t none = 0;
+            a.io(none);
+        } else {
+            a.io(s.frames_read);
+        }
         a.io(s.serial);
         a.io(s.priority);
         a.io(s.type);
@@ -2707,7 +2715,8 @@ void SoundManager::update(Engine& engine) {
         // (802AF560); then, when the movie's state is 2 (ended, or gone:
         // 802B1338), the end script of its data runs (80301FA4 at 0x8031ED58)
         // and the name is cleared (0x8031EDE4), so a later PLAY is taken.
-        const auto& pad = engine.pads()[0];
+        // (Online: the leader's pad, 7.4.)
+        const auto& pad = engine.pads()[std::size_t(engine.pad_reader_slot(0, -1))];
         const bool skip = (pad.buttons.trigger & (pad_button::a | pad_button::start)) != 0;
         if (skip) stop_movie(engine);
         if (!movie_ || movie_->phase == Movie::Phase::end) {
@@ -3502,6 +3511,7 @@ bool GameSystem::script_call(Engine& engine, const std::string& method, std::spa
         gate_stage_no = arg_int(1);
         if (!args.empty() && args[0].type() == Lua4Type::Nil) gate_stage_name = std::string();
         else if (!args.empty() && args[0].type() == Lua4Type::String) gate_stage_name = std::string(args[0].as_string());
+        engine.online_gate_stage_set(); // online: the present members' personal GATESTAGE (3.7)
         return true;
     }
     (void)engine;

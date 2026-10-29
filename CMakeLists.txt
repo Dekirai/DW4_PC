@@ -41,7 +41,7 @@ add_library(dw4_engine src/engine/math.cpp src/engine/gekko_math.cpp src/engine/
   src/engine/mat_ctrl.cpp src/engine/generater.cpp src/engine/randomizer.cpp src/engine/combat.cpp src/engine/status.cpp src/engine/save_game.cpp src/engine/save_util.cpp src/engine/save_menu.cpp src/engine/menu_text.cpp src/engine/shadow.cpp src/engine/particles.cpp src/engine/water.cpp src/engine/change_pos.cpp
   src/engine/hud.cpp src/engine/items.cpp src/engine/panel.cpp
   src/engine/subwnd.cpp src/engine/subwnd_folder.cpp src/engine/subwnd_skill.cpp
-  src/engine/subwnd_shop.cpp src/engine/save_state.cpp src/engine/port_events.cpp)
+  src/engine/subwnd_shop.cpp src/engine/save_state.cpp src/engine/port_events.cpp src/engine/online.cpp)
 target_link_libraries(dw4_engine PUBLIC dw4_core)
 # The Gekko arithmetic rounds only where the original rounds (no contraction).
 if(MSVC)
@@ -92,6 +92,14 @@ if(BUILD_TESTING)
   target_include_directories(dw4_labels_tests PRIVATE src/game)
   target_link_libraries(dw4_labels_tests PRIVATE dw4_engine)
   add_test(NAME labels COMMAND dw4_labels_tests)
+  # Seamless online co-op, the engine side. With the game data (a disc image
+  # or an extracted folder, never in the repository) it also plays membership
+  # scenarios in real stages; without, those are skipped.
+  set(DW4_TEST_DATA "" CACHE PATH "Game data for the online engine scenarios (optional)")
+  add_executable(dw4_online_tests tests/online_tests.cpp)
+  target_link_libraries(dw4_online_tests PRIVATE dw4_engine)
+  target_compile_definitions(dw4_online_tests PRIVATE DW4_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+  add_test(NAME online COMMAND dw4_online_tests "${DW4_TEST_DATA}")
   add_executable(dw4_achievements_tests tests/achievements_tests.cpp src/game/achievements.cpp)
   target_include_directories(dw4_achievements_tests PRIVATE src/game)
   target_link_libraries(dw4_achievements_tests PRIVATE dw4_engine)

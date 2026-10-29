@@ -369,11 +369,42 @@ The engine-wide temporary values fall into three classes. A data file
 census of the load-time reads in every stage a quest can reach (the first task
 of the membership lane).
 
-| Class | Values (starting list) | Online rule |
+| Class | Values (census of round S1) | Online rule |
 | --- | --- | --- |
-| context | quest flags 409, 376-381, 384-389, 424, 571-575; COUNTER 0 and 2; flag folder 11 | hashed from the arriving engine at the barrier (BARRIER) and on change (STATE); JOIN and co-arrival only between equal hashes |
-| personal | GATESTAGE and its point (read only by `stagML11_m1__start.lua` and `mate02.lua`, set by the gate disc and the quest boards) | kept aside in the member's carry at a join, written back into the member's engine at DISSOLVE, so a gate disc return never leads to a stranger's stage |
-| instance | every other temporary flag and COUNTER 3-6 | belong to the engine line: a fork keeps them on both sides, a joiner adopts the instance's (documented, not merged) |
+| context (22) | flags 63, 64, 71, 72, 376-381, 384-389, 409, 424, 508, 571; COUNTER 2; flag folder 11 | hashed from the arriving engine at the barrier (BARRIER) and on change (STATE); JOIN and co-arrival only between equal hashes |
+| personal (64) | GATESTAGE and its point (read only by `stagML11_m1__start.lua` and `mate02.lua`, set by the gate disc and the quest boards); the 63 flags only hub stages write and no joinable stage reads (lobby talks, shops and the quest boards' 572-575, the lobby's derived 900-937, 24-34, 85, 328, 336, 352, 364, 374, 375, 415-420, 475-480, 594, 611) | kept aside in the member's carry at a join, written back into the member's engine at DISSOLVE, so a gate disc return never leads to a stranger's stage and a lobby talk never comes back from another member's lobby |
+| instance (290) | every other temporary flag (the dungeon flags 100-299, lever and gate flags, ...) and COUNTER 0 and 3-6 (quest dungeon timers and counters, written and read only inside dngq1-3 and dngq7) | belong to the engine line: a fork keeps them on both sides, a joiner adopts the instance's (documented, not merged) |
+
+**Census (round S1, measured).** `tools/online/session_census.py` reads the
+7,168 decompiled scripts and writes `data/online/session_values.txt` (checked
+in; a ctest compares it with the engine's tables in `src/engine/online.cpp`).
+It takes the temporary values (the flags `gameStart.lua` clears minus the
+story set it restores, the never-merged 0, 503, 508, 611 and 900-937,
+COUNTER 0 and 2-6, folder 11, GATESTAGE) and classes them by where they are
+written and read: *context* = written by a hub program and read by a joinable
+stage (load or run time), or written by a hub program and a joinable stage
+and read back by a hub (409, 424, 571, 384, 388: the quest state the lobby's
+`start.lua` and `mate01.lua` read on the return); *personal* = GATESTAGE and
+every value no joinable stage writes or reads; *instance* = the rest. Against
+the starting list: 63 and 64 are new (a lobby talk in stagML12 / stagML13
+switches an event of stag0202 / stag0302 at its load); 71, 72 (stag0401's
+gate state the quest boards reset) and 508 (the lobby's "came through the
+lobby" flag every field's game over reads) are new; 572-575 move to
+personal (written and read only by the quest boards); COUNTER 0 moves to
+instance (only the quest dungeons that set it read it). COUNTER 2 stays
+context: the dungeons' first floors compare it at load (b1 / f1
+`start.lua`), and every field's game over script (`end_g_000bcaps.lua`)
+reads it to clear the right quest. 64 scripts index the dungeon flags
+100-299 by a computed number; all of them are instance values.
+
+**Personal values in the engine.** Online, the engine keeps every present
+slot's personal values (in the snapshot's online block): a joiner's and a
+co-arrival's come from their carry; SYSsetGateStage writes the engine-wide
+GATESTAGE and the personal GATESTAGE of every present slot (after a gate disc
+fork that is the leaving side); `carry_player` of the only present member
+reads the engine-wide values. DISSOLVE writes the own slot's personal values
+back into the engine-wide ones. The context hash treats an absent flag or
+counter like 0 (FLGisOn creates zero entries).
 
 Why: stag0401 is both the area-4 story field and the start of every board quest.
 `stagML11_m1__quest01..04.lua` set 409 plus 376-379, 571 and 424 and COUNTER 2;
@@ -1071,6 +1102,22 @@ membership lane checks the canonical form first: headless, with audio dump and
 in a hidden window, the canonical bytes are equal at every stage load of the
 r25c story run and the raw bytes differ only in presentation fields.
 
+**Measured (round S1).** All ten segments of the r25c story run, each
+headless and with the audio mixer running (`DW4_AUDIO_MIX=1`: the mixer
+renders every step's samples and drops them, as with a device), and the
+segments `new` and `k8` also in a hidden window that draws every picture
+(`DW4_RENDER=1` with the mixer), each process dumping every stage load's
+snapshot (`DW4_SNAPSHOT_DUMP`; `tools/online/canonical_check.py`): every
+segment reached its checkpoint at the reference frame in every mode; the
+canonical bytes are equal in all modes at all 193 stage loads (54 of them in
+three modes); the raw bytes are equal at 35 loads and differ at 158 in 2-4
+bytes each (502 in all), every one of them inside a stream's `frames_read`,
+the field the canonical form zeroes. No other presentation-only field
+exists. The mixer and the hidden window give byte-equal raw snapshots (the
+smoke runs feed the mixer at the simulation's pace), so only a machine
+without audio output differs. The SNAPHASH is
+`online_hash(snapshot_bytes(SnapshotForm::canonical))` (FNV-1a, 64 bit).
+
 A solo group that went on without the server (3.4) uploads snapshot and log
 when it reconnects.
 
@@ -1215,56 +1262,170 @@ membership lane runs a cross-process join after a long campaign session (bytes
 equal to the in-process restore after at least 20 stage loads, fingerprints
 equal for 10,000 steps after it).
 
+**Built and measured (round S1).** `serialize_system` writes both fields,
+`kSnapshotVersion` is 43, the ctest `online` checks the bytes, and the CLI
+guest of a `--stage` host starts directly. The state test through a file on a
+direct start with attacks after the save point (`DW4_STATE_TEST=2000`,
+`DW4_STATE_FILE`, `--stage dng101b1`, the spike's input): main of the day
+"differs from frame 2001", round S1 "identical after loading".
+
+The cross-process join after a long session: the k8 segment of the r25c
+story run (28 stage loads, 192,599 frames, the campaign driver) wrote a
+state file at every stage load (`DW4_STAGE_STATES`), the pads of every step
+(`DW4_PAD_LOG`) and the fingerprint with the generator's hash at every frame.
+A second process loaded the state of load 21 (dng310f3, frame 154,813) and
+of load 22 (stagbs03, frame 168,823), replayed the first process's pads
+(`DW4_PAD_REPLAY`) to the end of the session and traced the same: the
+fingerprints and generator hashes are equal at every one of the 37,787 and
+23,778 frames, and the canonical and the raw bytes of all seven (six) later
+stage loads - the boss stage, the lobby, the save room - are equal to the
+first process's. The memory card each process wrote in the save room differs
+in one byte, the GCI header's modification time from the host clock (offset
+0x2B), which the game never reads back; online every member has its own
+virtual card anyway.
+
 ### 7.2 Online rules
 
+Built in round S1 (membership lane, `include/dw4/engine/online.hpp`,
+`src/engine/online.cpp`); the integration may rename, the meaning is fixed.
+
 ```cpp
-// include/dw4/engine/online.hpp
+// include/dw4/engine/online.hpp (included by engine.hpp)
 struct OnlineRules {
     bool enabled = false;            // overrides, despawn, pad redirect, input masking
     std::uint8_t player_cameras = 0; // bit per slot with its own box camera; 0 = shared camera (original)
     bool leash_off = false;          // limit_Circle child hit off
     bool scoped_scenes = false;      // proximity rule for local scenes and the status window (round S3)
     bool near_share = false;         // EXP shared by members near the kill (round S3, question 7)
-    std::uint8_t present = 0;        // instance members
+    std::uint8_t present = 0;        // instance members (bit per slot)
     std::uint8_t leaving = 0;        // members with a pending LEAVE
     bool boss_lock = false;          // a boss fight runs (set by boss_mat / boss_intro, cleared by boss_end and barriers)
 };
+struct PersonalSession { std::optional<std::string> gate_stage_name; std::int32_t gate_stage_no; std::map<std::int32_t, std::uint8_t> flags; };
+enum class ForkKind : std::uint8_t { exit = 0, in_stage = 1, give_up = 2 };
+struct ForkSide { std::uint64_t frame; std::uint8_t leavers; bool take_leavers; };
+struct SplitResult { std::uint64_t frame; std::uint8_t leavers, kept; bool in_stage, local_leaves; };
+enum class IntentKind : std::uint8_t { go_without = 0, give_up = 1 };
+enum class Decision : std::uint8_t { new_instance = 0, join = 1, dissolve = 2, co_arrive = 3 };
+enum class SnapshotForm : std::uint8_t { raw = 0, canonical = 1 };
+Cheats online_cheats(const Cheats& room);              // no cheats, no rebalancing; randomizer, drops, fast loading kept
+const SessionValueTables& session_value_tables();     // 3.7, equal to data/online/session_values.txt (ctest)
+const std::vector<std::string_view>& online_forbidden_env();    // 6.12; online_forbidden_env_set() names the set ones
+const std::vector<std::string_view>& online_presentation_env(); // the rest of getenv("DW4_..") in src (ctest)
+std::uint64_t net_fingerprint_cameras(const Engine&);  // seam: the cameras lane hashes the PlayerBox state here
+std::uint64_t online_hash(std::span<const std::uint8_t>); // FNV-1a 64; SNAPHASH = online_hash(snapshot_bytes(canonical))
+
 const OnlineRules& Engine::online() const;
-void Engine::set_online(const OnlineRules&);   // only between steps, at a tick every member applies
-void Engine::set_view_slot(int slot);          // presentation only: whose camera the picture uses
+void Engine::set_online(const OnlineRules&);   // only between steps; on: room cheats, console reset off, NET* Lua globals
+void Engine::set_view_slot(int slot);          // presentation only: whose camera the picture uses (-1 own)
 void Engine::set_fork_sides(std::span<const ForkSide>);  // replays: the side to take at each fork
-void Engine::set_split_identity(int slot);     // live play: the local slot for NETsplit
+void Engine::set_split_identity(int slot);     // live play: the local slot for NETsplit (-1: the side that keeps the instance)
+static int Engine::live_engines();             // an engine constructed while an online one lives throws std::logic_error
+static std::uint64_t Engine::mxcsr_repairs();  // simulation entries that found another MXCSR control word
 ```
 
-`OnlineRules` is part of the StageSnapshot (a joiner restores it) and of the
-net fingerprint, not of `Engine::fingerprint`. Defaults are all off.
+`OnlineRules` and the present slots' `PersonalSession` values are part of
+the StageSnapshot (a joiner restores them) and of the net fingerprint, not of
+`Engine::fingerprint`. Defaults are all off. The membership calls maintain
+`present`, `player_cameras` (every present slot from two members on; back to
+one keeps `{its slot}` until the next load; a visit that starts with one
+member has 0) and `leash_off` (from two members on until the next load; the
+engine switches HitLand's `limit_Circle` off at once and again after every
+load), so every machine changes them at the same step; the cameras lane
+reads them. Every online step switches the console reset off again, the
+STAGECTL soft reset does not arm online, and `restore` of an online snapshot
+goes through `set_online` as well. The MXCSR guard compares the control bits
+(6-15) only: bits 0-5 are the sticky exception flags any arithmetic sets.
 
 ### 7.3 Membership, barriers, forks
 
 ```cpp
 std::optional<std::string_view> Engine::pending_stage() const;  // read-only: a NEXTSTAGE waits for its load step
-bool Engine::membership_safe() const;
-bool Engine::joinable() const;
-std::uint64_t Engine::session_context_hash() const;
-struct PlayerCarry { PlayerSlot slot; BitChip chip; std::array<std::uint8_t, 3316> record; PersonalSession personal; };
-PlayerCarry Engine::carry_player(int slot) const;
-void Engine::online_join_player(int slot, const PlayerCarry&, int entrance_point);  // before a step
-void Engine::online_remove_player(int slot);                                        // before a step
-void Engine::online_intent(int slot, IntentKind, int argument);                     // before a step
-struct SplitResult { std::uint64_t frame; std::uint8_t leavers; bool in_stage; bool local_leaves; };
-std::optional<SplitResult> Engine::take_split();   // after a step; the copy's side is already applied
+bool Engine::membership_safe() const;   // pad input on, no demo record, no SUBWND program, not loading, presenting, no fork pending
+bool Engine::joinable() const;          // membership_safe, not a hub or UI stage, no boss lock
+static bool Engine::hub_stage(std::string_view);
+std::uint64_t Engine::session_context_hash() const;  // FNV-1a over the context values, absent = 0
+PersonalSession Engine::personal_session(int slot) const;
+// online_membership.hpp
+struct PlayerCarry { GameSystem::PlayerSlot slot; GameSystem::BitChip chip; PersonalSession personal; std::vector<std::uint8_t> record; };
+struct RoomStory { std::array<std::uint8_t, 1024> flags; std::array<std::uint8_t, 12> folder; std::array<std::int32_t, 16> counters; std::uint32_t revision; };
+struct StoryKeys { std::vector<std::int32_t> flags, folder; };
 struct BarrierResult { Decision decision; std::array<int, 4> slot_map; std::vector<std::pair<int, PlayerCarry>> co_arrivals;
-                       int own_slot; RoomStory story; StoryKeys dropped; OnlineRules rules; };
+                       int own_slot; std::optional<RoomStory> story; StoryKeys dropped; OnlineRules rules; };
+std::vector<std::uint8_t> encode_carry(const PlayerCarry&);     PlayerCarry decode_carry(std::span<const std::uint8_t>);
+std::vector<std::uint8_t> encode_barrier(const BarrierResult&); BarrierResult decode_barrier(std::span<const std::uint8_t>);
+
+PlayerCarry Engine::carry_player(int slot) const;
+void Engine::online_join_player(int slot, const PlayerCarry&, int entrance_point);  // before a step, when joinable()
+void Engine::online_remove_player(int slot);                                        // before a step, when membership_safe()
+void Engine::online_intent(int slot, IntentKind, int argument);                     // before a step (give_up forks at once)
+bool Engine::online_split(std::uint8_t mask, ForkKind kind);  // inside a step (NETsplit, the port's overrides)
+std::optional<SplitResult> Engine::take_split();   // after a step; the copy's side is already applied
 void Engine::set_barrier(const BarrierResult&);    // while parked after the barrier tick; applied in the load step before begin_stage_load
+bool Engine::barrier_set() const;
 void Engine::apply_room_story(const RoomStory&);   // at game_started only (barriers go through set_barrier)
 std::vector<std::uint8_t> Engine::snapshot_bytes(SnapshotForm) const;  // raw or canonical (presentation fields zeroed)
-void Engine::set_replay(bool);                     // catch-up: no audio rendering, no port events
-std::uint64_t Engine::net_fingerprint() const;
+void Engine::set_replay(bool);                     // catch-up: no port events (the host renders no audio)
+std::uint64_t Engine::net_fingerprint();
+void Engine::set_boss_lock(bool);                  // round S3 wires boss_mat / boss_intro / boss_end
+int Engine::leader() const;                        // the lowest present slot that is not leaving
+int Engine::trigger_slot() const;  class Engine::TriggerScope;  // 5.1: mats, hits, the gate disc; demo works and posts keep it
+int Engine::pad_reader_slot(int index, int trigger) const;      // 7.4
+void Engine::online_gate_stage_set();              // SYSsetGateStage ran: the present slots' personal GATESTAGE follows
 ```
 
-Lua host functions registered only online: `NETsplit(mask)` (returns whether
-this copy continues), `NETisOnline()`. The `funcStageChange` port and the
-`run_script` wrappers (5.1) call into the same functions.
+How they behave (proven by `tests/online_tests.cpp`, ctest `online`):
+
+- **Input.** An online step masks the pads (absent slots neutral and
+  disconnected, leaving slots neutral and connected) and, from the barrier
+  tick to the load step (`pending_stage()` set), gives every present slot the
+  pad it had at the barrier tick (the session's first stage: neutral,
+  connected). The barrier tick's pads are latched at the end of the step
+  that executed NEXTSTAGE.
+- **Join.** `online_join_player` writes the carry into the slot (joined),
+  its capsule and personal values, loads `_common/<species>.igb` (the `q_`
+  variant when the stage loaded `q_` packages) and the weapon packages unless
+  the stage has them, then (in a `Messenger::PortOnly` scope) PLAYER GENERATE
+  with the matrix of `point_matrix(entrance_point, slot)`, PLAYER2 GENESTAGE
+  (its capsule left in this stage), SQ_ENTR, the HUD panels i_stpnl01-05
+  GENERATE at the slot's x and their SQ_OPEN / name / SQ_OPENWN / SQ_WAIT.
+  `first.lua` does not run again.
+- **Remove.** PLAYER REMOVE, PLAYERARMS REMOVE, NDMWPANEL REMOVE (quick
+  panel), the HUD panels' REMOVE, the slot's capsule REMOVE, joined off,
+  `bit_chips[slot]` cleared, NINZU recounted; the item label goes by itself
+  (its owner no longer answers). Calls for slots that are not present are
+  ignored (events for the other side of a fork).
+- **Fork.** `online_split(mask, kind)` applies the side rule (6.7: a side
+  without a living member goes with the other; with living members on both
+  sides the defeated stay with the stayers; `give_up` keeps only defeated
+  members in the mask), returns false when nobody goes on, true without a
+  fork when everyone does, else decides this copy's side (the fork side list
+  for that frame and mask, else the split identity, else the side that keeps
+  the instance: the stayers for `exit` and `give_up`, the mask for
+  `in_stage`), narrows `present` to that side at once (a SYSsetGateStage
+  later in the same script run sees only that side) and despawns the other
+  side's players at the end of the step. `ForkSide.frame` is
+  `SplitResult.frame`, the engine's frame after that step.
+- **Barrier.** `set_barrier` while parked; the load step applies it right
+  before `begin_stage_load`: NEW remaps the slots (`slot_map[old] = new`,
+  -1 not in the group), writes the co-arrivals' carries as joined players
+  (so `boot.lua`, `funcPlayerSet` and the entry scene see them, before any
+  stage script), moves the lowest joined slot to 0 if 0 is free, sets the
+  split identity to `own_slot`; DISSOLVE keeps only `own_slot`, moves it to
+  slot 0 and writes its personal values back; JOIN and CO_ARRIVE leave the
+  load step alone (the client drops the engine after it). `rules` supplies
+  the room switches; present, cameras, leash and boss lock follow from the
+  membership. The room story merge of round S2 goes first (S1 carries
+  `story` and `dropped` but does not apply them).
+- **Personal values.** From two present members on every present slot has its
+  own `PersonalSession` (the base member's taken from the engine-wide values
+  at the first join), so a member's gate disc return and lobby flags never
+  come from another member (3.7).
+
+Lua host functions registered only online: `NETsplit(mask [, kind])` (kind
+0 exit, 1 in-stage, 2 give up; returns 1 when this copy goes on with the
+script run), `NETisOnline()`. The `funcStageChange` port and the
+`run_script` wrappers (5.1) call `Engine::online_split` directly.
 
 ### 7.4 Pads: redirect, resets
 
@@ -1886,3 +2047,57 @@ Depends on: S4 and the answers.
 - Player critique: greps of `work/port-research/dec`; the 141 MATisAllPlayer
   scripts without an exit or NEXTSTAGE were listed in a scratch file of that
   review.
+
+## Appendix: byte layouts of round S1 (membership lane)
+
+All in the save state archive (`include/dw4/engine/state_archive.hpp`):
+little endian, `bool` and `u8` one byte, `int` / `i32` / `u32` four, `u64`
+eight, a string or vector as a u32 count followed by its elements, a
+`std::optional` as a bool then the value, a `std::map` as a u32 count then
+key / value pairs in key order, a `std::array` without a count, an enum as
+its underlying type. The integration copies the final form into
+`server/DW4Online/README.md`.
+
+**Stage snapshot, version 43** (`encode_snapshot`, `src/engine/save_state.cpp`):
+version 42's fields, with the GameSystem block extended by `direct_start`
+(bool) and `text_call` (i32) after `gate_stage_no`, and two blocks after the
+sound state:
+
+| Field | Type |
+| --- | --- |
+| OnlineRules | enabled bool, player_cameras u8, leash_off bool, scoped_scenes bool, near_share bool, present u8, leaving u8, boss_lock bool (8 B) |
+| personal | 4 x optional PersonalSession: gate_stage_name optional string, gate_stage_no i32, flags map i32 -> u8 |
+
+The canonical form (`SnapshotForm::canonical`) writes the same bytes with 0
+for every stream's `frames_read` (u64). An offline snapshot carries 8 B of
+rules (all 0) and 4 B of empty personal values more than version 42.
+
+**PlayerCarry** (`encode_carry` / `decode_carry`): u32 magic 0x59524143
+("CARY"), u32 layout version (43), the PlayerSlot as the snapshot writes it
+(joined, unique, name, digimon, weapons, HP / MP, stats, devices, bank,
+disks, bits, bank bits, XDATA, UPCNT, UPDATA, DOWNDATA, the equipment lists,
+WAZALIST, the BASE_* tables, cards, base flags / folder / counters), the
+BitChip (stage string, position 3 x f32, bits i32, EXP i32, digimon string),
+the PersonalSession, the record (vector u8). Decoding throws on another magic
+or version, a truncated buffer or trailing bytes. Measured: 2,120 B for the
+level-1 Agumon of the dng101b1 test scenario (ctest `online`).
+
+**BarrierResult** (`encode_barrier` / `decode_barrier`): u32 magic 0x52524142
+("BARR"), u32 layout version, decision u8 (0 NEW, 1 JOIN, 2 DISSOLVE,
+3 CO_ARRIVE), slot_map 4 x i32, u32 co-arrival count (at most 4) then per
+co-arrival slot i32 and a carry body (without magic and version), own_slot
+i32, optional RoomStory (flags 1024 x u8, folder 12 x u8, counters 16 x i32,
+revision u32), dropped flags (vector i32), dropped folder (vector i32),
+OnlineRules (8 B).
+
+**Pad log of the test tools** (`DW4_PAD_LOG` / `DW4_PAD_REPLAY`,
+`src/game/game_main.cpp`, test runs only): per step u32 host frame before
+the step, then 4 pads of connected u8, left x / y, right x / y as f32, buttons
+u32 (88 B per step). It is not the relay's pad format (7 B, 6.4).
+
+**Evidence of the membership lane** (worktree `DW4_PC-wt/r52mem`,
+`build/`, not committed): `canon/<mode>/<segment>/` (the r25c segments with
+`DW4_SNAPSHOT_DUMP`; k8 headless also with `DW4_STAGE_STATES`,
+`DW4_PAD_LOG` and `DW4_TRACE_FINGERPRINT=1`), `xjoin/s21`, `xjoin/s22` (the
+cross-process joins), `runs/std_*` (the state test through a file on a
+direct start), `online_data.log` (the ctest scenarios' output).

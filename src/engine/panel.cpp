@@ -355,6 +355,7 @@ std::int64_t PanelManager::select(Engine& engine, PanelRam& ram, List& list) {
         // GATESTAGENAME / GATESTAGENO before gatedisc.lua; 1 closes the panel.
         sys->gate_stage_name = "Player";
         sys->gate_stage_no = ram.index;
+        const Engine::TriggerScope trigger(engine, ram.index);
         engine.run_script("gatedisc.lua");
         close = true;
     }

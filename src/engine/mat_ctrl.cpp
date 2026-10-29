@@ -1,6 +1,7 @@
 #include "dw4/engine/managers.hpp"
 
 #include <algorithm>
+#include <bit>
 
 namespace dw4::engine {
 
@@ -108,6 +109,10 @@ void MatCtrlManager::update(Engine& engine) {
             if (mat.enabled && (mat.current & 0xFu) != (mat.previous & 0xFu)) {
                 context_ = &mat;
                 pending_run_.reset();
+                // The run's trigger slot (online pad redirect, 5.1): the
+                // lowest live player that stepped on in this update.
+                const std::uint32_t stepped_on = mat.current & ~mat.previous & live_ & 0xFu;
+                const Engine::TriggerScope trigger(engine, stepped_on ? std::countr_zero(stepped_on) : -1);
                 engine.run_script(mat.name + ".lua");
                 if (pending_run_) mat.enabled = *pending_run_;
                 context_ = nullptr;
