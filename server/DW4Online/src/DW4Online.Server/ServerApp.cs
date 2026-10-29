@@ -138,12 +138,34 @@ public static class ServerApp
     /// <summary>The server secret (Relay:TicketKey, or a key for this process only in Development / with the relay off).</summary>
     private sealed record ServerSecret(byte[] Key);
 
-    /// <summary>Runs the startup migrator when Database:AutoMigrate is on (the default).</summary>
-    public static async Task MigrateIfEnabledAsync(WebApplication app)
+    /// <summary>
+    /// Runs the startup migrator when Database:AutoMigrate is on (the default). A database that does not answer yet
+    /// (MariaDB still starting after a reboot) is tried again for up to <paramref name="waitForDatabase"/> (20 s, inside
+    /// the 30 s the Service Control Manager waits for a starting service); after that the start fails and the service's
+    /// restart-on-failure actions take over.
+    /// </summary>
+    public static async Task MigrateIfEnabledAsync(WebApplication app, TimeSpan? waitForDatabase = null)
     {
         if (!app.Services.GetRequiredService<DatabaseOptions>().AutoMigrate) return;
         var log = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Migrator");
-        var applied = await new Migrator(app.Services.GetRequiredService<Database>(), m => log.LogInformation("{Message}", m)).MigrateAsync();
+        var migrator = new Migrator(app.Services.GetRequiredService<Database>(), m => log.LogInformation("{Message}", m));
+        var wait = waitForDatabase ?? TimeSpan.FromSeconds(20);
+        var started = System.Diagnostics.Stopwatch.GetTimestamp();
+        IReadOnlyList<int> applied;
+        while (true)
+        {
+            try
+            {
+                applied = await migrator.MigrateAsync();
+                break;
+            }
+            catch (MySqlConnector.MySqlException e) when (e.ErrorCode == MySqlConnector.MySqlErrorCode.UnableToConnectToHost &&
+                                                          System.Diagnostics.Stopwatch.GetElapsedTime(started) < wait)
+            {
+                log.LogWarning("The database does not answer yet ({Message}); trying again in 2 s", e.Message);
+                await Task.Delay(TimeSpan.FromSeconds(2));
+            }
+        }
         log.LogInformation(applied.Count == 0 ? "Database schema is current" : "Applied migrations {Versions}", string.Join(", ", applied));
     }
 

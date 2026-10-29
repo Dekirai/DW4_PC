@@ -24,9 +24,18 @@ yourself in an elevated PowerShell.
 
 1. Download the current **MariaDB 11.4.x** Windows MSI (x64) from <https://mariadb.org/download/> (11.4 is an LTS
    line, community support to May 2029).
-2. Install: service name `MariaDB`, TCP port 3306, a strong root password, leave "Enable access from remote machines
+2. Check that port 3306 is free (another MySQL / MariaDB, for example a XAMPP or a game server's database, may hold it):
+
+   ```powershell
+   Get-NetTCPConnection -State Listen -LocalPort 3306 -ErrorAction SilentlyContinue   # no output = free
+   ```
+
+   If something listens there, leave it alone and give MariaDB another port in the installer (for example 3307); then
+   use that port everywhere below: `Port=3307` in the connection string, `port=3307` in `backup.cnf` (step 7) and
+   `install-service.ps1 -DatabasePort 3307` (step 4).
+3. Install: service name `MariaDB`, that TCP port, a strong root password, leave "Enable access from remote machines
    for 'root' user" **off**. A data folder on D: is fine (for example `D:\Dekirai\Servers\MariaDB\data`).
-3. Add to the `[mysqld]` section of the instance's `my.ini` (see [mariadb-my.ini.example](mariadb-my.ini.example)),
+4. Add to the `[mysqld]` section of the instance's `my.ini` (see [mariadb-my.ini.example](mariadb-my.ini.example)),
    then restart only the MariaDB service (`Restart-Service MariaDB`):
 
    ```ini
@@ -38,7 +47,14 @@ yourself in an elevated PowerShell.
    innodb_buffer_pool_size=512M
    ```
 
-4. Port 3306 is **not** opened in the firewall.
+5. Check that it now listens on the loopback address only (`install-service.ps1` refuses to run otherwise):
+
+   ```powershell
+   Get-NetTCPConnection -State Listen -LocalPort 3306 | Select-Object LocalAddress, OwningProcess   # only 127.0.0.1
+   ```
+
+6. Port 3306 is **not** opened in the firewall. If the installer added an inbound rule for MariaDB, disable it:
+   `Get-NetFirewallRule -Direction Inbound | Where-Object DisplayName -like '*MariaDB*' | Disable-NetFirewallRule`.
 
 ## 2. Database and users
 
@@ -54,9 +70,19 @@ CREATE USER 'dw4online'@'127.0.0.1' IDENTIFIED BY '<service password>';
 GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, INDEX, REFERENCES ON dw4online.* TO 'dw4online'@'localhost';
 GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, INDEX, REFERENCES ON dw4online.* TO 'dw4online'@'127.0.0.1';
 
--- The nightly backup: read only.
+-- The nightly backup: read only. backup.cnf connects to 127.0.0.1 (TCP); a name that resolves to localhost is a
+-- different account in MariaDB, so both exist.
 CREATE USER 'dw4backup'@'localhost' IDENTIFIED BY '<backup password>';
+CREATE USER 'dw4backup'@'127.0.0.1' IDENTIFIED BY '<backup password>';
 GRANT SELECT, SHOW VIEW, TRIGGER, EVENT, LOCK TABLES ON dw4online.* TO 'dw4backup'@'localhost';
+GRANT SELECT, SHOW VIEW, TRIGGER, EVENT, LOCK TABLES ON dw4online.* TO 'dw4backup'@'127.0.0.1';
+```
+
+Check both logins over TCP before you go on (each asks for its password):
+
+```powershell
+mariadb.exe -h 127.0.0.1 -P 3306 -u dw4online -p -e "SELECT CURRENT_USER()"   # dw4online@127.0.0.1
+mariadb.exe -h 127.0.0.1 -P 3306 -u dw4backup -p -e "SELECT CURRENT_USER()"   # dw4backup@127.0.0.1
 ```
 
 ## 3. Publish on the development PC
@@ -91,9 +117,14 @@ SDK; the development PC currently only has the 11.0 RC SDK). The publish restore
    ```
 
    What it does (all reversible, no restart):
+   - First it checks that the `MariaDB` service exists and that its port (3306, `-DatabasePort`) listens on 127.0.0.1
+     only; it stops before changing anything otherwise.
    - `New-Service DW4Online` with the path `"...\app\DW4Online.Server.exe" --service --settings "...\config\appsettings.Production.json"`,
-     then `sc.exe config DW4Online start= delayed-auto obj= "NT SERVICE\DW4Online"` (virtual account, no password) and
-     restart-on-failure actions (5 s, 30 s, 60 s).
+     then `sc.exe config DW4Online start= delayed-auto obj= "NT SERVICE\DW4Online"` (virtual account, no password),
+     restart-on-failure actions (5 s, 30 s, 60 s) and `sc.exe config DW4Online depend= MariaDB` (`-DatabaseService`):
+     after a reboot Windows starts MariaDB first, and the service itself waits up to 20 s for the database to answer
+     before its start fails (then the restart actions try again). Stopping MariaDB now stops DW4Online first; start
+     both again with `Start-Service MariaDB, DW4Online`.
    - ACLs: every folder drops the permissions inherited from the drive and keeps only Administrators and SYSTEM (full
      control) plus the service's rights: the root and `app` read and execute for `NT SERVICE\DW4Online` (a release
      folder made later in the root inherits that), `config` read, `logs`, `acme` and `keys` modify, `backups` nothing
@@ -112,7 +143,7 @@ needed because http.sys is not used).
 ```powershell
 Start-Service DW4Online
 Get-Content D:\Dekirai\Servers\DW4Online\logs\dw4online-*.log -Tail 30
-Invoke-RestMethod https://<host>/health        # {"status":"ok","schema":3}
+Invoke-RestMethod https://<host>/health        # {"status":"ok","schema":5}
 ```
 
 The first start creates the tables (startup migrator). Register your own account on the website
@@ -182,6 +213,7 @@ from an option file readable only by Administrators and SYSTEM:
 user=dw4backup
 password=<backup password>
 host=127.0.0.1
+port=3306
 ```
 
 Schedule it nightly as SYSTEM (elevated PowerShell):
