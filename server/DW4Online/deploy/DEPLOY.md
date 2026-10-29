@@ -12,13 +12,15 @@ stay untouched.
 | Secrets and settings | `D:\Dekirai\Servers\DW4Online\config\appsettings.Production.json` |
 | Logs | `D:\Dekirai\Servers\DW4Online\logs` |
 | Database backups | `D:\Dekirai\Servers\DW4Online\backups` |
-| ACME challenge folder (option A2) | `D:\Dekirai\Servers\DW4Online\acme` |
+| ACME challenge folder (later, section 6.3 A2) | `D:\Dekirai\Servers\DW4Online\acme` |
 | Website Data Protection keys | `D:\Dekirai\Servers\DW4Online\keys` (DPAPI-encrypted for the service account) |
 | Service | `DW4Online`, virtual account `NT SERVICE\DW4Online`, start delayed-auto |
-| Ports | 443 TCP (HTTPS: API and website), 52041 TCP (relay), 80 TCP only for certificate validation; MariaDB 3306 on 127.0.0.1 only |
+| TLS certificate (now) | self-signed for `IP 88.198.52.221` in `LocalMachine\My`, pinned by the game client (section 6.1) |
+| Ports | 443 TCP (HTTPS: API and website), 52041 TCP (relay), 80 TCP only for a later domain's certificate validation; MariaDB 3306 on 127.0.0.1 only |
 
 The scripts in this folder are written for these steps but were **not run** on the server: read them, then run them
-yourself in an elevated PowerShell.
+yourself in an elevated PowerShell. (`new-selfsigned-cert.ps1` was run end to end against a user certificate store
+on the development PC, see the README's tests.)
 
 ## 1. MariaDB 11.4 LTS
 
@@ -31,8 +33,8 @@ yourself in an elevated PowerShell.
    ```
 
    If something listens there, leave it alone and give MariaDB another port in the installer (for example 3307); then
-   use that port everywhere below: `Port=3307` in the connection string, `port=3307` in `backup.cnf` (step 7) and
-   `install-service.ps1 -DatabasePort 3307` (step 4).
+   use that port everywhere below: `Port=3307` in the connection string, `port=3307` in `backup.cnf` (section 7) and
+   `install-service.ps1 -DatabasePort 3307` (section 4).
 3. Install: service name `MariaDB`, that TCP port, a strong root password, leave "Enable access from remote machines
    for 'root' user" **off**. A data folder on D: is fine (for example `D:\Dekirai\Servers\MariaDB\data`).
 4. Add to the `[mysqld]` section of the instance's `my.ini` (see [mariadb-my.ini.example](mariadb-my.ini.example)),
@@ -103,8 +105,8 @@ SDK; the development PC currently only has the 11.0 RC SDK). The publish restore
 1. Copy the zip to the server and extract it to `D:\Dekirai\Servers\DW4Online\app`.
 2. Create `D:\Dekirai\Servers\DW4Online\config\appsettings.Production.json` from
    [appsettings.Production.example.json](appsettings.Production.example.json): the connection string with the service
-   password, a relay ticket key (`app\DW4Online.Server.exe gen-relay-key`), the host name or IP, the TLS option of
-   step 6, and the `Web` section: `RequireHttps` true, `DataProtectionKeysDirectory` = the `keys` folder, and your
+   password, a relay ticket key (`app\DW4Online.Server.exe gen-relay-key`), the IP address (the TLS settings of
+   section 6.1), and the `Web` section: `RequireHttps` true, `DataProtectionKeysDirectory` = the `keys` folder, and your
    name, postal address and a contact in `OperatorName` / `OperatorAddress` / `OperatorContact` (the privacy page names
    the controller, GDPR Art. 13). The relay is on by default (`Relay:Enabled`); it needs `ListenAddress` 0.0.0.0 and
    the ticket key, and `Service:RelayHost` tells clients where it is. This file holds the secrets: never copy it into
@@ -134,6 +136,7 @@ SDK; the development PC currently only has the 11.0 RC SDK). The publish restore
 4. If the hoster has a network firewall in front of the server (for example a Hetzner firewall in the Robot / Cloud
    console), open TCP 443, 52041 (and 80 for certificate validation) there too.
 5. Check that nothing else listens on 443 / 80: `Get-NetTCPConnection -State Listen -LocalPort 80,443`.
+6. Create the TLS certificate for the IP address and note its pins (section 6.1, `new-selfsigned-cert.ps1`).
 
 Kestrel binds the ports itself; on Windows a non-admin account may bind ports below 1024 with sockets (no URL ACL is
 needed because http.sys is not used).
@@ -143,7 +146,8 @@ needed because http.sys is not used).
 ```powershell
 Start-Service DW4Online
 Get-Content D:\Dekirai\Servers\DW4Online\logs\dw4online-*.log -Tail 30
-Invoke-RestMethod https://<host>/health        # {"status":"ok","schema":5}
+curl.exe -k https://88.198.52.221/health      # {"status":"ok","schema":6}; -k: the certificate is self-signed (section 6.1)
+D:\Dekirai\Servers\DW4Online\app\DW4Online.Server.exe tls-pin --host 88.198.52.221   # the served certificate and its pin
 ```
 
 The first start creates the tables (startup migrator). Register your own account on the website
@@ -158,12 +162,99 @@ Log in on the website again: the navigation now shows "Admin" (account search, l
 unlock review, closing rooms, account deletion on request). Read the privacy page once (`/privacy`) and adjust the text
 in `src/DW4Online.Web/Pages/Privacy.cshtml` if your setup differs (for example other log retention).
 
-## 6. TLS options
+## 6. TLS: the IP address now, the domain later
 
-The game client validates certificates against the Windows root store (WinHTTP + Schannel), so a publicly trusted
-certificate is the normal case.
+### 6.1 Now: https://88.198.52.221 with a pinned self-signed certificate
 
-**A. With a domain (recommended).** Create an A record (for example `dw4.<domain>`) pointing to 88.198.52.221.
+There is no domain yet, so no certificate authority vouches for the address. The game client therefore does not ask
+the Windows root store: it pins the server's public key, the SHA-256 of the certificate's SubjectPublicKeyInfo ("SPKI
+pin"), and refuses any other key before it sends a single byte of a request (the end-to-end test
+`Pinned_self_signed_https_at_an_ip_address_below_a_path_base` checks exactly that with the WinHTTP test client).
+
+1. After `install-service.ps1` (section 4; the service account must exist), in an elevated PowerShell:
+
+   ```powershell
+   cd D:\Dekirai\Servers\DW4Online\app\deploy
+   powershell -ExecutionPolicy Bypass -File new-selfsigned-cert.ps1 -SparePfx E:\dw4online-spare.pfx
+   ```
+
+   `E:` stands for a USB stick or any place that is not this server. [new-selfsigned-cert.ps1](new-selfsigned-cert.ps1)
+   - creates a certificate for `IP 88.198.52.221` (RSA 3072, server authentication, valid 10 years) in
+     `LocalMachine\My` whose key cannot be exported: it never leaves the server;
+   - gives `NT SERVICE\DW4Online` read access to that key (the service runs the TLS handshakes);
+   - with `-SparePfx`, creates a second, spare key, writes it to that PFX file (it asks for a password twice) and
+     removes it from the server again;
+   - prints both pins, checked against the service's own `DW4Online.Server.exe tls-pin`, and the settings of step 2.
+
+   It refuses to make a second certificate for an address that already has a valid one: a new key means a new pin,
+   and every client without that pin stops connecting (`-Force` overrides this; only use it when a client update with
+   the new pin is out). `-DryRun` shows what it would do.
+2. In `appsettings.Production.json` (the example file already holds these values):
+
+   ```json
+   "Kestrel": { "Endpoints": { "Https": { "Url": "https://0.0.0.0:443" } } },
+   "Tls": { "StoreHostName": "88.198.52.221" },
+   "Service": { "RelayHost": "88.198.52.221" },
+   "Web": { "RequireHttps": true, "Hsts": false }
+   ```
+
+   then `Restart-Service DW4Online` (or wait: the service re-reads the store every 10 minutes). Its log names the
+   certificate and its pin (`TLS certificate for 88.198.52.221: <thumbprint>, valid until ..., SPKI pin ...`).
+3. Both pins go into the game client's online settings (the first one is in use, the second is the spare). Keep the
+   spare PFX offline and its password somewhere else (for example in your password manager).
+4. Check: `.\DW4Online.Server.exe tls-pin --host 88.198.52.221` (in the app folder) prints the certificate the service
+   serves and its pin; from another PC `curl.exe -k https://88.198.52.221/health` answers `{"status":"ok",...}`.
+
+What players notice: browsers warn about the website's certificate (it is self-signed). Whoever wants to check it
+before accepting compares the browser's SHA-256 fingerprint with the `Certificate fingerprint (SHA-256)` line of
+`tls-pin`; you can publish that line where your players read news. HSTS stays off for the IP address (browsers ignore it
+there anyway). The game itself shows no warning: it checks the pin.
+
+If the server or its key is lost: install the spare on the new server with
+`new-selfsigned-cert.ps1 -ImportPfx E:\dw4online-spare.pfx` (it asks for the password, installs the key without
+export permission and grants the service read access). Every client keeps working because it pins the spare too; ship
+a client update with a new spare pin afterwards (`new-selfsigned-cert.ps1 -Force -SparePfx ...` on the new server
+makes one, but its own new key is then a third pin: the update must carry it before you switch to it). The certificate
+lasts 10 years; by then the service runs under the domain.
+
+### 6.2 Later: https://dekirai.crygod.de/dw4online
+
+The service already works below a path: `"Service": { "PathBase": "/dw4online" }` puts the website and the API under
+`/dw4online` (links, redirects, forms, `Location` headers and the session cookie stay below it; `PathBaseTests` and
+the pinned end-to-end test check it). Requests without the prefix keep working at the root, so clients that still use
+`https://88.198.52.221` go on working during the move.
+
+**Case 1: DW4Online keeps port 443 on this server.** The domain's A record points to 88.198.52.221 and nothing else
+on this machine serves that name. Get a Let's Encrypt certificate for `dekirai.crygod.de` into `LocalMachine\My` (6.3)
+and set:
+
+```json
+"Tls": { "StoreHostName": "88.198.52.221", "AdditionalHostNames": [ "dekirai.crygod.de" ] },
+"Service": { "PathBase": "/dw4online", "RelayHost": "88.198.52.221" }
+```
+
+A connection that names the domain (SNI) gets the Let's Encrypt certificate and is validated normally; a connection to
+the IP address names no host and keeps getting the pinned certificate. New clients use
+`https://dekirai.crygod.de/dw4online`, old ones keep working until they update. (The domain's root then also shows
+the DW4Online website; if other content should live there, see case 2.)
+
+**Case 2: another web server serves dekirai.crygod.de on this machine** (IIS, nginx, Caddy). It forwards
+`/dw4online/...` with the prefix kept to `http://127.0.0.1:5280` and sends `X-Forwarded-For` and `X-Forwarded-Proto`;
+DW4Online then listens only there:
+
+```json
+"Kestrel": { "Endpoints": { "Http": { "Url": "http://127.0.0.1:5280" } } },
+"Service": { "PathBase": "/dw4online", "BehindProxy": true, "RelayHost": "88.198.52.221" }
+```
+
+`BehindProxy` believes those headers only from a proxy on this machine. Port 443 then belongs to that web server, so
+it must also serve the pinned IP certificate to connections without a name (IIS: an https binding on 88.198.52.221
+port 443 without host name, using the same certificate from `LocalMachine\My`, no export needed) and forward them to
+DW4Online as well, or the clients that still pin the IP certificate stop working. The relay keeps its own port 52041
+in both cases.
+
+### 6.3 Let's Encrypt certificates with win-acme (the domain)
+
 Use win-acme (<https://www.win-acme.com/>) to get a Let's Encrypt certificate into `LocalMachine\My`:
 
 - A1, win-acme answers the http-01 challenge itself (its self-hosting validation uses port 80 through http.sys).
@@ -173,32 +264,14 @@ Use win-acme (<https://www.win-acme.com/>) to get a Let's Encrypt certificate in
 
 In both cases choose the certificate store `My` (LocalMachine) and give `NT SERVICE\DW4Online` read access to the
 private key (win-acme's certificate store plugin can set key ACLs, check `wacs.exe --help` for the options of your
-version; otherwise certlm.msc -> the certificate -> All Tasks -> Manage Private Keys). Then set:
+version; otherwise certlm.msc -> the certificate -> All Tasks -> Manage Private Keys). The service re-reads the store
+every 10 minutes and uses the newest valid certificate for each name, so win-acme's scheduled renewals take effect
+**without** restarting the service (a restart would end running co-op sessions). Clients of the domain validate it
+against the Windows root store (WinHTTP + Schannel) and do not pin it, so renewals with new keys are fine.
 
-```json
-"Kestrel": { "Endpoints": { "Https": { "Url": "https://0.0.0.0:443" } } },
-"Tls": { "StoreHostName": "dw4.<domain>" },
-"Service": { "RelayHost": "dw4.<domain>" }
-```
-
-The service re-reads the store every 10 minutes and uses the newest valid certificate for that name, so win-acme's
-scheduled renewals take effect **without** restarting the service (a restart would end running co-op sessions).
-
-**B. Without a domain, an IP certificate.** Let's Encrypt issues certificates for IP addresses since January 2026, but
-only as 6-day certificates through the ACME `shortlived` profile; whether win-acme supports that profile is not
-verified. With a client that does, the same store setup works with `"Tls": { "StoreHostName": "88.198.52.221" }`
-(the selector matches IP addresses in the certificate's SAN). Renewal every few days must be automatic.
-
-**C. Without a domain, a self-signed certificate.** For a closed test group:
-
-```powershell
-New-SelfSignedCertificate -Subject "CN=88.198.52.221" -TextExtension @("2.5.29.17={text}IPAddress=88.198.52.221") `
-  -CertStoreLocation Cert:\LocalMachine\My -NotAfter (Get-Date).AddYears(2) -KeyExportPolicy NonExportable
-```
-
-Browsers warn on the website, and the game would have to pin the certificate's SHA-256 (client work, not done yet).
-
-**D. Plain HTTP** on a non-standard port is only for a short closed test: passwords and tokens travel unencrypted.
+Not chosen: a Let's Encrypt certificate for the IP address (6-day certificates through the ACME `shortlived` profile;
+the client would have to pin a key that changes with every renewal unless the key is reused) and plain HTTP (passwords
+and tokens would travel unencrypted).
 
 ## 7. Backups
 

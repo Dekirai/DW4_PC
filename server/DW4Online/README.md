@@ -60,6 +60,15 @@ leave, logout) and checks that the profile page shows the character and the achi
 and the round-trip time, the owner leaving with the story frozen, the login rate limit). Both tests are skipped when
 the client is not built (`tests\winhttp_client\build.cmd`) or no Python is given (`DW4ONLINE_PYTHON`).
 
+The IP phase is tested the same way: `Pinned_self_signed_https_at_an_ip_address_below_a_path_base` runs the service on
+`https://127.0.0.1` with a self-signed IP certificate below `/dw4online`; the client must refuse the certificate without
+`--pin`, send nothing with a wrong pin (not even a failed login reaches the server) and pass every step with the right
+one, and the website must work over it below the path base and at the root. That test feeds the certificate selector
+from memory (`TlsCertificateSource`), never from a certificate store. With `DW4ONLINE_TEST_CERT_STORE=1`,
+`Deploy_kit_certificate_from_the_store_and_the_pinned_client` also runs `deploy\new-selfsigned-cert.ps1` against the
+current user's store (a `CN=127.0.0.2` test certificate whose key cannot be exported, removed with its key
+afterwards), serves it from the store as the service does and runs the client with the pin the script printed.
+
 `local-db.ps1` uses XAMPP's MariaDB binaries (`-MySqlBin` for others) with its **own** data directory in
 `server/DW4Online/.local` (gitignored), its own port and `--bind-address=127.0.0.1`; it never touches XAMPP's data,
 other databases or services and stops only the `mysqld` it started (by PID). XAMPP ships MariaDB 10.4, whose native
@@ -93,7 +102,7 @@ and user secrets (Development) work as usual.
 | `Rooms` | `MaxRooms` (200), `PlayersPerInstance` (4), `HeartbeatSeconds` (10), `MemberTimeoutSeconds` (35), `RoomsPerOwner` (1), `PasswordIterations` (20000, room passwords live in memory only), `SettingsMaxBytes` (4096), `RankedDataHashes` (empty = every data hash is ranked; decimal or 0x-hex). |
 | `Relay` | `Enabled` (true), `ListenAddress` (127.0.0.1; 0.0.0.0 on the server), `Port` (52041), `TicketKey` (secret, base64 32 bytes: `DW4Online.Server gen-relay-key`; required outside Development), timeouts and byte budgets. |
 | `Web` | `RequireHttps` (false; true on the server: website pages redirect to https, cookies are Secure), `Hsts`, `DataProtectionKeysDirectory` (anti-forgery keys, DPAPI-encrypted on Windows; empty = the service account's profile, `memory` = tests), `OperatorName` / `OperatorAddress` / `OperatorContact` (the controller on the privacy page), `DigimonNames` (display names by model, overriding the built-in list). |
-| `Tls` | `StoreHostName`: take HTTPS certificates from the Windows store (renewals without a restart); `AcmeChallengeDirectory`: serve ACME http-01 files from a folder. |
+| `Tls` | `StoreHostName`: take HTTPS certificates from the Windows store (renewals without a restart); its certificate serves every connection that names no other host (an IP address sends no name: the IP phase's pinned self-signed certificate). `AdditionalHostNames` (empty): host names with their own certificate, chosen by the name the client asks for (SNI), for example the later domain next to the pinned IP certificate. `StoreName` (My), `StoreLocation` (LocalMachine), `RefreshMinutes` (10); `AcmeChallengeDirectory`: serve ACME http-01 files from a folder. |
 | `Logging:File` | `Directory` (empty = off), `MinimumLevel`, `RetainDays`: daily UTC log files for the service. |
 | `Kestrel` | Standard Kestrel endpoints (`http://127.0.0.1:5280` by default). |
 
@@ -107,6 +116,9 @@ DW4Online.Server set-role <user> <role>   player | moderator | admin (bootstraps
 DW4Online.Server reset-password <user>    print a temporary password the user must change (audit actor 0 = console)
 DW4Online.Server gen-relay-key            print a new random Relay:TicketKey
 DW4Online.Server audit-tag <name>         print the security log's tag of a user name (failed logins with unknown names)
+DW4Online.Server tls-pin --host <IP or name> | --thumbprint <hex> | --file <certificate> [--store My] [--location LocalMachine]
+                                          print a certificate's SHA-256 SPKI pin (what the game client pins in the IP
+                                          phase) and SHA-256 fingerprint; --host = the certificate the service would serve
 ... --settings <file>                      every form: load an extra settings file (the server's secrets live outside the app folder)
 ```
 

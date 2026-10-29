@@ -3,7 +3,7 @@
   Nightly MariaDB backup of the DW4Online database: dump, gzip, keep 14 daily + 8 weekly copies, optional off-site copy.
 
 .DESCRIPTION
-  Uses mariadb-dump with an option file for the credentials (see DEPLOY.md, step 7) so no password appears on the
+  Uses mariadb-dump with an option file for the credentials (see DEPLOY.md, section 7) so no password appears on the
   command line. Weekly copies are the Sunday dumps. Exit code 0 on success, 1 on failure (visible in Task Scheduler).
 
 .EXAMPLE

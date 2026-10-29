@@ -70,6 +70,22 @@ public sealed class ClientFactAttribute : FactAttribute
     }
 }
 
+/// <summary>
+/// Opt-in (DW4ONLINE_TEST_CERT_STORE=1): the test runs the deploy kit's new-selfsigned-cert.ps1 against the current
+/// user's certificate store (a CN=127.0.0.2 test certificate, removed again with its key afterwards).
+/// </summary>
+public sealed class CertStoreFactAttribute : FactAttribute
+{
+    public CertStoreFactAttribute()
+    {
+        if (!OperatingSystem.IsWindows()) Skip = "Windows only.";
+        else if (string.IsNullOrEmpty(TestDb.AdminConnectionString)) Skip = "DW4ONLINE_TEST_MYSQL is not set.";
+        else if (EndToEnd.ClientPath is null) Skip = "The WinHTTP test client is not built (tests/winhttp_client/build.cmd).";
+        else if (Environment.GetEnvironmentVariable("DW4ONLINE_TEST_CERT_STORE") != "1")
+            Skip = "DW4ONLINE_TEST_CERT_STORE=1 lets this test add (and remove) a test certificate in the current user's store.";
+    }
+}
+
 public sealed class PythonFactAttribute : FactAttribute
 {
     public PythonFactAttribute()
@@ -102,15 +118,20 @@ public sealed class RealHost : IAsyncDisposable
     /// certificate through the same selector as the Windows store (Tls:StoreHostName 127.0.0.1, an IP certificate like
     /// the server's), read from memory instead of a store; <see cref="BaseUri"/> is then the https address.
     /// </summary>
-    public static async Task<RealHost> StartAsync(Dictionary<string, string?>? overrides = null, byte[]? httpsPfx = null)
+    /// <remarks>
+    /// <paramref name="httpsAddress"/> without <paramref name="httpsPfx"/>: https on that loopback address with the
+    /// certificate from the Windows store (Tls:StoreLocation from the overrides), exactly as the service runs.
+    /// </remarks>
+    public static async Task<RealHost> StartAsync(Dictionary<string, string?>? overrides = null, byte[]? httpsPfx = null, string? httpsAddress = null)
     {
         var database = await TestDb.CreateAsync();
         var settings = TestHost.Settings(database, overrides);
         settings["Kestrel:Endpoints:Http:Url"] = "http://127.0.0.1:0";
-        if (httpsPfx is not null)
+        var https = httpsPfx is not null || httpsAddress is not null;
+        if (https)
         {
-            settings["Kestrel:Endpoints:Https:Url"] = "https://127.0.0.1:0";
-            settings["Tls:StoreHostName"] = "127.0.0.1";
+            settings["Kestrel:Endpoints:Https:Url"] = $"https://{httpsAddress ?? "127.0.0.1"}:0";
+            settings["Tls:StoreHostName"] = httpsAddress ?? "127.0.0.1";
         }
         var handedOut = new List<X509Certificate2>();
         var app = ServerApp.Build(["--environment", "Testing"], configure: builder =>
@@ -129,7 +150,7 @@ public sealed class RealHost : IAsyncDisposable
         });
         await ServerApp.MigrateIfEnabledAsync(app);
         await app.StartAsync();
-        var scheme = httpsPfx is null ? "http://" : "https://";
+        var scheme = https ? "https://" : "http://";
         return new RealHost(app, database, new Uri(app.Urls.First(u => u.StartsWith(scheme, StringComparison.Ordinal)) + "/"), handedOut);
     }
 
@@ -267,6 +288,81 @@ public class EndToEndTests(Xunit.Abstractions.ITestOutputHelper log)
         finally
         {
             Directory.Delete(dir, true);
+        }
+    }
+
+    /// <summary>
+    /// The deploy kit as the server runs it: new-selfsigned-cert.ps1 creates the IP certificate with a key that cannot
+    /// be exported (here in the current user's store, for 127.0.0.2), the service reads it from the store and serves it
+    /// over Schannel, and the C++ client with the pin the script printed passes every step below /dw4online.
+    /// </summary>
+    [CertStoreFact]
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
+    public async Task Deploy_kit_certificate_from_the_store_and_the_pinned_client()
+    {
+        const string address = "127.0.0.2";
+        RemoveTestCertificates(address);
+        try
+        {
+            var script = Path.Combine(EndToEnd.ServerRoot, "deploy", "new-selfsigned-cert.ps1");
+            var exe = Path.Combine(AppContext.BaseDirectory, "DW4Online.Server.exe");
+            var (exit, output) = await EndToEnd.RunAsync("powershell.exe",
+                ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script, "-StoreLocation", "CurrentUser", "-IpAddress", address,
+                    "-ServiceAccount", Environment.UserDomainName + "\\" + Environment.UserName, "-Exe", exe], TimeSpan.FromSeconds(120));
+            log.WriteLine(output);
+            Assert.True(exit == 0, output);
+            Assert.Contains("(the same pin as DW4Online.Server.exe tls-pin)", output);
+            var pin = output.Split('\n').Select(l => l.Trim()).First(l => l.StartsWith("SPKI pin (SHA-256, base64): ", StringComparison.Ordinal))[28..];
+
+            await using var host = await RealHost.StartAsync(RelaySettings.On(new()
+            {
+                ["Service:PathBase"] = "/dw4online",
+                ["Tls:StoreLocation"] = "CurrentUser",
+                ["Relay:ListenAddress"] = address,
+                ["Service:RelayHost"] = "", // the request's host: the IP address the client used
+            }), httpsAddress: address);
+            Assert.StartsWith($"https://{address}:", host.Base);
+            using var web = WebBrowser.ForPinned(host.BaseUri, pin, "/dw4online");
+            await web.RegisterAsync("StoreTamer", "store test password");
+
+            var dir = Path.Combine(Path.GetTempPath(), "dw4online-e2e-" + Guid.NewGuid().ToString("N")[..8]);
+            Directory.CreateDirectory(dir);
+            try
+            {
+                var (save, record, _) = await WriteClientInputsAsync(dir, "STORE");
+                (exit, output) = await EndToEnd.RunAsync(EndToEnd.ClientPath!,
+                    ["--base", host.Base + "/dw4online", "--user", "StoreTamer", "--password", "store test password", "--save", save,
+                        "--record", record, "--pin", pin], TimeSpan.FromSeconds(120));
+                log.WriteLine(output);
+                Assert.True(exit == 0, output);
+                Assert.Contains("ALL PASSED", output);
+                Assert.Contains("ok   relay host handshake", output);
+            }
+            finally
+            {
+                Directory.Delete(dir, true);
+            }
+        }
+        finally
+        {
+            RemoveTestCertificates(address);
+        }
+    }
+
+    /// <summary>Removes the deploy-kit test certificates for <paramref name="address"/> from the current user's store, keys included.</summary>
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
+    private static void RemoveTestCertificates(string address)
+    {
+        using var store = new X509Store(StoreName.My, StoreLocation.CurrentUser);
+        store.Open(OpenFlags.ReadWrite | OpenFlags.OpenExistingOnly);
+        foreach (var cert in store.Certificates)
+        {
+            using (cert)
+            {
+                if (cert.Subject != "CN=" + address || !cert.FriendlyName.StartsWith("DW4Online " + address, StringComparison.Ordinal)) continue;
+                using (var key = cert.GetRSAPrivateKey()) (key as System.Security.Cryptography.RSACng)?.Key.Delete();
+                store.Remove(cert);
+            }
         }
     }
 
