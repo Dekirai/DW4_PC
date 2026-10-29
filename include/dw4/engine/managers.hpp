@@ -892,6 +892,18 @@ public:
             if (ram->info_name == name && ram->index == index) return ram->width;
         return 2.5f;
     }
+    // The whole cylinder: half-width, the step it climbs and the drop it
+    // walks down without falling (CHECKLAND's window), its wall kinds (the
+    // randomizer's static check).
+    struct DeliveryShape {
+        float width{}, up{}, down{};
+        std::uint32_t flags{};
+    };
+    std::optional<DeliveryShape> delivery_shape(std::string_view name, int index) const {
+        for (const auto& ram : deliveries_)
+            if (ram->info_name == name && ram->index == index) return DeliveryShape{ram->width, ram->up, ram->down, ram->flags};
+        return std::nullopt;
+    }
 
 private:
     struct HitRam : Ram {
@@ -1318,6 +1330,7 @@ private:
     void forget(GeneRam& ram, std::size_t member);
     void start_work(Engine& engine, GeneRam& ram, int live_players);
     void sweep(Engine& engine);
+    void static_check(Engine& engine);
     std::size_t sweep_index_{};
     int sweep_wait_{}, sweep_wanted_{}, sweep_got_{}, sweep_watchdog_{}, sweep_count_{}, sweep_failures_{};
     bool sweep_reported_{};

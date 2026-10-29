@@ -15,7 +15,10 @@
 // generator). Fixed: boss stages (stagBS*), the stagGF03 fights, bosses and
 // 1-RAM mid-bosses, a family whose ded_<family>.lua the stage has, and every
 // generator a stage script starts next to an e_ / f_ model name (intro and
-// demo fights). See GeneraterManager.
+// demo fights). See GeneraterManager. Every shuffle family walks with the
+// same land cylinder (up 4, down 4; only the width differs) and none hovers
+// out of the swing, so a stand-in lands, steps and falls where the original
+// family would.
 //
 // Loading zone shuffle: the dungeon entrances within an area swap, coupled
 // (the dungeon's way back leads to the entrance used); towers, quests, boss

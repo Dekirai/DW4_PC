@@ -305,7 +305,11 @@ everything on; `zones` is the rule number: 1 the round 48 table, 2 the
 current one, which a bare seed takes), `DW4_RANDOMIZER_SWEEP=1` makes every enemy generator of the
 stage spawn its wave in turn and logs one `sweep` line per generator (models,
 problems such as a missing hit script, a sound without a bank, a model that
-did not start or one the watchdog removed).
+did not start or one the watchdog removed); `DW4_RANDOMIZER_SWEEP=static` starts no wave and
+logs one `check` line per enemy generator instead: whether it is shuffled (else why not), the floor
+under its spawn points (none, a pit, quicksand) and what a pool family meets that the generator's own
+does not (no hit script, hovering above the swing, a smaller climb or a deeper drop of its land
+cylinder; wider bodies and a missing entry sequence are noted).
 
 ### Online co-op
 
