@@ -147,7 +147,8 @@ Authenticated calls send `Authorization: Bearer dw4_<43 characters>`.
 | `GET /cloud-save` (`?revision=N`) | token | The save bytes (`application/octet-stream`), `ETag`, `X-Sha256`, `X-Save-Format`. |
 | `GET /cloud-save/meta` | token | `{latest, boxes, history}`. |
 | `PUT /cloud-save` | token | Body = save bytes, `X-Sha256` (hex), `If-None-Match: *` or `If-Match: <revision>`, optional `X-Device-Name`, `X-Client-Version`. 413 above `MaxBytes`. |
-| `POST /cloud-save/restore/{revision}`, `DELETE /cloud-save` | token | Make a kept revision the latest again; delete the backup and its history. |
+| `POST /cloud-save/restore/{revision}` | token | Make a kept revision the latest again. |
+| `POST /cloud-save/delete` | token | `{currentPassword}`: delete the backup and its history (a wrong password counts as a failed login). |
 | `GET /achievements` | optional | All definitions (hidden ones masked until unlocked); with a token the caller's unlocks and progress. |
 | `POST /achievements/unlock` | token | `{code, context, evidence: {igtMs?, level?, stage?}}` -> `{code, ruleset, newlyUnlocked, newBestTime}`. |
 | `POST /stats` | token | `{deltas: {enemies_defeated: 12, play_seconds: 60, ...}, context}` -> `{totals, unlocked}`. |
@@ -207,7 +208,7 @@ and stats must carry `protocol` / `clientVersion` (426 `client_outdated` otherwi
   character and its history, cloud save and history, unlocks, stats, best times, room memberships, bans and e-mail
   tokens are deleted, the account row stays as `deleted_<id>` (no e-mail, no usable password, status `deleted`) so
   rooms and audit rows keep a valid reference, and the account's audit rows lose their IP addresses. Every password
-  confirmation (password, e-mail, recovery code, deletion, online character reset) counts a wrong password like a
+  confirmation (password, e-mail, recovery code, deletion, online character reset, cloud save deletion) counts a wrong password like a
   failed login, so the lockout applies. The name prefix
   `deleted_` cannot be registered.
 - **Achievements** (72 definitions, `sql/0002_achievements.sql`, stable ids 1-72): only online play counts, so unlocks
@@ -249,7 +250,7 @@ Razor Pages in `src/DW4Online.Web`, English, one embedded stylesheet (`/css/site
 | `/` | Players online, open rooms, accounts, the message of the day. |
 | `/register` | User name, password twice, optional e-mail, a honeypot field; shows the recovery code once and signs in. |
 | `/login`, `/logout`, `/recover` | Sign in (optionally persistent), sign out (POST), reset a forgotten password with the recovery code (shows the next one). |
-| `/account` | Overview, online character, password (ends every other session), e-mail, new recovery code, public / private profile, cloud save info and download, sessions (log out one or all others), account deletion. A temporary password from an admin must be changed first; every other page redirects here until then. |
+| `/account` | Overview, online character, password (ends every other session), e-mail, new recovery code, public / private profile, cloud save info, download and deletion (with the password), sessions (log out one or all others), account deletion. A temporary password from an admin must be changed first; every other page redirects here until then. |
 | `/u/{name}` | Profile: online character (Digimon, name, level, play time, forms, story clears) and achievements with unlock dates, rulesets, player counts and progress bars. Private profiles show only to the owner and staff; unlocks under review only to them. |
 | `/achievements` | Every definition by category with tier, points and rarity (share of players holding it); hidden ones masked unless the visitor holds them. |
 | `/rooms` | Open rooms, read-only (host away = story paused). |

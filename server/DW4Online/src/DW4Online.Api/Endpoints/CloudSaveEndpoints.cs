@@ -64,10 +64,17 @@ public static class CloudSaveEndpoints
                 return Results.Ok(Meta(meta));
             })).RequireRateLimiting(RateLimitPolicies.CloudWrite);
 
-        group.MapDelete("", async (CloudSaveService saves, HttpContext ctx) =>
-            await saves.DeleteAsync(ctx.Session().AccountId, ctx.IpBytes(), ctx.RequestAborted)
+        // Deletes the backup and every kept revision: like the other destructive actions it needs the current password
+        // (a leaked token alone must not destroy the only backup). A wrong password counts as a failed login.
+        group.MapPost("/delete", async (PasswordConfirmation r, CloudSaveService saves, AccountService accounts, HttpContext ctx) =>
+        {
+            var session = ctx.Session();
+            if (await accounts.ConfirmPasswordAsync(session.AccountId, r.CurrentPassword, ctx.Caller(), ctx.RequestAborted) is { Ok: false } wrong)
+                return ApiProblems.From(wrong.Error!);
+            return await saves.DeleteAsync(session.AccountId, ctx.IpBytes(), ctx.RequestAborted)
                 ? Results.NoContent()
-                : ApiProblems.Of(StatusCodes.Status404NotFound, "no_cloud_save", "There is no cloud save."));
+                : ApiProblems.Of(StatusCodes.Status404NotFound, "no_cloud_save", "There is no cloud save.");
+        }).RequireRateLimiting(RateLimitPolicies.AccountChange);
     }
 
     private static object Meta(Domain.Abstractions.CloudSaveMeta m) => new

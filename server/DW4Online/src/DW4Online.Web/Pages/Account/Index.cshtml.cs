@@ -27,6 +27,7 @@ public sealed class IndexModel(
     [BindProperty] public bool Public { get; set; }
     [BindProperty] public long SessionId { get; set; }
     [BindProperty] public bool ConfirmDelete { get; set; }
+    [BindProperty] public bool ConfirmCloudDelete { get; set; }
 
     public AccountView Account { get; private set; } = null!;
     public AuthenticatedSession Session { get; private set; } = null!;
@@ -94,6 +95,18 @@ public sealed class IndexModel(
         var data = await cloud.DownloadAsync(HttpContext.WebSession()!.AccountId, null, ct);
         if (data is null) return NotFound();
         return File(data.Data, "application/octet-stream", data.Format == "gci" ? "savedata.dat" : "NDMWSaveData.bin");
+    }
+
+    /// <summary>Deletes the cloud save and its kept revisions; needs the current password like the account deletion.</summary>
+    public async Task<IActionResult> OnPostDeleteCloudAsync(CancellationToken ct)
+    {
+        if (Blocked() is { } blocked) return blocked;
+        var session = HttpContext.WebSession()!;
+        if (!ConfirmCloudDelete) return await ShowAsync(ct, error: "Tick the box to confirm that the cloud save and its older revisions should be deleted.");
+        if (await accounts.ConfirmPasswordAsync(session.AccountId, CurrentPassword, HttpContext.Caller(), ct) is { Ok: false } wrong)
+            return await ShowAsync(ct, error: wrong.Error!.Message);
+        var done = await cloud.DeleteAsync(session.AccountId, HttpContext.Caller().Ip, ct);
+        return await ShowAsync(ct, done ? "Your cloud save and its older revisions were deleted." : null, done ? null : "There is no cloud save.");
     }
 
     public async Task<IActionResult> OnPostDeleteAsync(CancellationToken ct)

@@ -112,6 +112,13 @@
                 <dt>Older revisions</dt><dd>@cloud.History.Count</dd>
             </dl>
             <p><a class="button secondary" href="/account?handler=CloudSave">Download</a></p>
+            <h3>Delete the cloud save</h3>
+            <form method="post" asp-page-handler="DeleteCloud" class="stack">
+                <label>Current password <input type="password" asp-for="CurrentPassword" autocomplete="current-password" required maxlength="128" /></label>
+                <label class="check"><input type="checkbox" asp-for="ConfirmCloudDelete" /> Yes, delete the cloud save and its older revisions</label>
+                <button type="submit" class="danger">Delete cloud save</button>
+                <span class="muted small">Your local save in the game stays as it is.</span>
+            </form>
         }
         else
         {
