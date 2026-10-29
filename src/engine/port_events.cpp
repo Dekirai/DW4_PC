@@ -39,6 +39,7 @@ const char* port_event_name(PortEvent::Kind kind) {
     case PortEvent::Kind::player_defeated: return "player_defeated";
     case PortEvent::Kind::critical_hit: return "critical_hit";
     case PortEvent::Kind::story_flag: return "story_flag";
+    case PortEvent::Kind::new_character: return "new_character";
     }
     return "?";
 }

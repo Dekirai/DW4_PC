@@ -540,6 +540,9 @@ public:
     // The randomizer's enemy pool of the running stage as the loader made it
     // (its own families and the donor families it loaded), empty without.
     const std::vector<std::string>& randomizer_pool() const { return randomizer_pool_; }
+    // A family the loader brought from a donor stage for that pool (not one
+    // of the stage's own).
+    bool randomizer_donor(std::string_view family) const { return randomizer_donors_.contains(family); }
     // Every stage script (name, compiled chunk bytes), stage scripts first
     // (randomizer: the generators a script starts next to a model name).
     void for_each_script(const std::function<void(std::string_view name, std::string_view chunk)>& visit) const;
@@ -731,6 +734,7 @@ private:
     // action starters with the targets they may serve, and their scripts
     // (consulted after the stage's own).
     std::vector<std::string> randomizer_pool_;
+    std::set<std::string, std::less<>> randomizer_donors_;
     std::vector<ObjectView> donor_infos_;
     std::vector<std::pair<ObjectView, std::set<std::string, std::less<>>>> donor_starters_;
     std::vector<ObjectView> donor_scripts_;

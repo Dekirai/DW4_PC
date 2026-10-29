@@ -1201,6 +1201,7 @@ public:
         rams_.clear();
         shuffle_ready_ = false;
         pool_.clear();
+        own_families_.clear();
         sweep_index_ = 0;
         sweep_wait_ = sweep_count_ = sweep_failures_ = 0;
         sweep_reported_ = false;
@@ -1329,6 +1330,7 @@ private:
     bool shuffle_ready_{};
     std::vector<std::string> pool_;
     std::set<std::string, std::less<>> fixed_generators_, fixed_families_;
+    std::set<std::string, std::less<>> own_families_; // with RAMs the stage loaded itself
 };
 
 // MATCTRL (beMatCtrl, update 803030A8, commands 80303B14): floor mats. Each

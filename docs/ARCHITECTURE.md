@@ -38,7 +38,9 @@ the item drops; all of them are in the snapshot and the online start
 message). Every decision comes from the master seed and the game's own state
 (stage, generator name, spawn count), never from the fight generator or the
 host clock. Its hooks: `GeneraterManager` swaps a wave's family (the
-original enemy record stays) and removes a swapped enemy that never lands;
+original enemy record stays; only generators of a family the stage loaded
+itself, so a dormant generator stays dormant) and removes a swapped enemy that
+never lands;
 `Engine::load_enemy_donors` reads the pool's missing families from their
 donor stage members after boot.lua; `STAGECTL NEXTSTAGE` remaps the coupled
 dungeon entrances and the exit prompt names the new target. With the

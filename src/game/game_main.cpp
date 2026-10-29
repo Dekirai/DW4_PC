@@ -605,6 +605,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
     // game started (randomizer_save.hpp).
     std::optional<dw4::game::RandomizerConfig> randomizer_bound;
     std::uint32_t randomizer_unique = 0;
+    std::set<std::uint32_t> new_characters; // UNIQUEs of player 1's new games in this session
     auto randomizer_settings = [&] {
         dw4::game::RandomizerConfig config;
         if (options.smoke_frames) {
@@ -1129,6 +1130,9 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 for (const auto& e : events)
                     std::printf("[%d] event %s slot=%d value=%d extra=%d %s\n", frame, dw4::engine::port_event_name(e.kind), e.slot, e.value,
                                 e.extra, e.text.c_str());
+            // Player 1's new games (the randomizer binds only those).
+            for (const auto& e : events)
+                if (e.kind == dw4::engine::PortEvent::Kind::new_character && e.slot == 0) new_characters.insert(std::uint32_t(e.value));
             if (!achievements_on()) return;
             last_gate = achievement_gate();
             const auto unlocked = achievements.observe(achievement_step(), events, last_gate, randomized(), unix_now());
@@ -1157,8 +1161,12 @@ int run(const Options& options, dw4::game::Settings& settings) {
             for (std::size_t slot = 0; slot < state_slots.size(); ++slot) state_slots[slot] = read_state_file(state_path(slot));
         // The randomizer's bond (randomizer_save.hpp): when player 1's
         // character changes at the character select (a new game or a called
-        // save), the seed and modes bound to it apply; a character without
-        // one is bound to the current settings when they randomize.
+        // save), the seed and modes bound to it apply. A new game without one
+        // is bound to the current settings when they randomize; a called save
+        // without one plays the original game (the F1 menu can bind it).
+        // Test runs bind every character to DW4_RANDOMIZER unless
+        // DW4_RANDOMIZER_BIND=new.
+        const bool bind_called_saves = options.smoke_frames && !(std::getenv("DW4_RANDOMIZER_BIND") && std::string_view(std::getenv("DW4_RANDOMIZER_BIND")) == "new");
         auto bind_randomizer = [&] {
             auto* sys = engine.get<dw4::engine::GameSystem>();
             if (!sys || !sys->game_started) return;
@@ -1168,20 +1176,33 @@ int run(const Options& options, dw4::game::Settings& settings) {
             std::string name;
             for (const char16_t c : player.name)
                 name.push_back(c >= 0xFF01 && c <= 0xFF5E ? char(c - 0xFEE0) : c == 0x3000 ? ' ' : c < 0x80 ? char(c) : '?');
-            if (const auto bound = dw4::game::load_randomizer_binding(randomizer_folder, player.unique)) {
-                randomizer_bound = bound;
-            } else if (const auto config = randomizer_settings(); config.active()) {
+            const auto bound = dw4::game::load_randomizer_binding(randomizer_folder, player.unique);
+            const auto config = randomizer_settings();
+            const bool new_game = new_characters.contains(player.unique);
+            switch (dw4::game::choose_randomizer_bond(bound.has_value(), new_game, config.active(), bind_called_saves)) {
+            case dw4::game::BondChoice::use_bond: randomizer_bound = bound; break;
+            case dw4::game::BondChoice::bind_settings:
                 randomizer_bound = config;
                 dw4::game::store_randomizer_binding(randomizer_folder, player.unique, name, config);
                 dw4::game::write_randomizer_spoiler(randomizer_folder, player.unique, config);
-            } else {
-                randomizer_bound.reset();
+                break;
+            case dw4::game::BondChoice::original:
+                // An explicit "off": later changes of the settings are for new games.
+                randomizer_bound = dw4::game::RandomizerConfig{};
+                if (config.active()) {
+                    std::cout << "randomizer: save " << dw4::game::randomizer_unique_key(player.unique)
+                              << " has no bond and plays the original game\n";
+                    toasts.push_back({"Randomizer", "This save has no randomizer bond, so it plays the original game. F1 > Cheats can bind "
+                                                    "the randomizer settings to it.",
+                                      std::chrono::steady_clock::now() + std::chrono::seconds(8)});
+                }
+                break;
             }
             apply_gameplay(engine.cheats());
-            if (randomizer_bound)
+            if (randomizer_bound->active())
                 std::cout << "randomizer: save " << dw4::game::randomizer_unique_key(player.unique) << " plays seed " << randomizer_bound->seed
                           << " (enemies " << randomizer_bound->enemies << ", zones " << randomizer_bound->zones << ", drops "
-                          << randomizer_bound->drops << ")\n";
+                          << randomizer_bound->drops << (new_game ? ", new game" : "") << ")\n";
         };
         auto can_save = [&]() -> std::string {
             if (net.active()) return "Save states are off in online sessions.";
@@ -1836,8 +1857,10 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     net.poll();
                     pads = net.take(net_frame);
                 }
-                // Port events only while achievements or the event trace want them.
-                if (const bool collect = achievements_on() || trace_events; engine.port_events_enabled() != collect)
+                // Port events only while achievements, the event trace or the
+                // randomizer's bond (new games) want them.
+                if (const bool collect = achievements_on() || trace_events || (!net.active() && randomizer_settings().active());
+                    engine.port_events_enabled() != collect)
                     engine.set_port_events(collect);
                 engine.step(pads);
                 if (engine.port_events_enabled()) observe_step();
@@ -2528,14 +2551,20 @@ int run(const Options& options, dw4::game::Settings& settings) {
                         ImGui::PushTextWrapPos(0.0f);
                         ImGui::TextDisabled("Drops change into other items of the same kind (key items stay). Enemies become other "
                                             "Digimon with the original enemy's strength, EXP and drops; bosses and story fights stay. "
-                                            "Dungeon entrances of an area lead to each other's dungeons. A new game binds these "
-                                            "settings to its save (saves/randomizer.ini, spoiler log beside it).");
-                        if (randomizer_bound)
-                            ImGui::Text("This save plays seed %u (enemies %s, zones %s, drops %s).", randomizer_bound->seed,
-                                        randomizer_bound->enemies == 2 ? "per wave" : randomizer_bound->enemies ? "each" : "off",
-                                        randomizer_bound->zones ? "dungeons" : "off", randomizer_bound->drops ? "on" : "off");
+                                            "Dungeon entrances of an area lead to each other's dungeons. Only a new game binds these "
+                                            "settings to its save (saves/randomizer.ini, spoiler log beside it); a save from before "
+                                            "keeps playing the original game until you bind the settings to it below.");
+                        if (randomizer_bound && randomizer_unique != 0) {
+                            if (randomizer_bound->active())
+                                ImGui::Text("This save plays seed %u (enemies %s, zones %s, drops %s).", randomizer_bound->seed,
+                                            randomizer_bound->enemies == 2 ? "per wave" : randomizer_bound->enemies ? "each" : "off",
+                                            randomizer_bound->zones ? "dungeons" : "off", randomizer_bound->drops ? "on" : "off");
+                            else
+                                ImGui::Text("This save plays without the randomizer.");
+                        }
                         ImGui::PopTextWrapPos();
-                        if (randomizer_bound && randomizer_unique != 0 && ImGui::Button("Bind these settings to this save")) {
+                        if (randomizer_bound && randomizer_unique != 0 && !(*randomizer_bound == randomizer_settings()) &&
+                            ImGui::Button("Bind these settings to this save")) {
                             randomizer_bound = randomizer_settings();
                             dw4::game::store_randomizer_binding(randomizer_folder, randomizer_unique, "", *randomizer_bound);
                             dw4::game::write_randomizer_spoiler(randomizer_folder, randomizer_unique, *randomizer_bound);

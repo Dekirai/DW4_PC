@@ -12,6 +12,12 @@
 // The folder is the one that holds the save (saves/ next to the program; a
 // test run's --card-dir / DW4_CARD_DIR folder). Online sessions use the
 // host's settings and bind nothing.
+//
+// Only a NEW game binds the [randomizer] settings by itself; a called save
+// without a bond (one from before, or made with the randomizer off) plays the
+// original game until the player binds the settings to it in the F1 menu
+// (test runs: DW4_RANDOMIZER binds every character unless
+// DW4_RANDOMIZER_BIND=new).
 #include "dw4/engine/engine.hpp"
 
 #include <cstdint>
@@ -42,5 +48,11 @@ bool store_randomizer_binding(const std::filesystem::path& folder, std::uint32_t
 // Writes randomizer_<UNIQUE>_spoiler.txt for the config; false on an error.
 bool write_randomizer_spoiler(const std::filesystem::path& folder, std::uint32_t unique, const RandomizerConfig& config);
 std::string randomizer_unique_key(std::uint32_t unique);
+
+// What player 1's character gets when it comes into play: its bond; else the
+// settings (bound to it) when they randomize and it is a new game (or
+// `bind_called`, test runs); else the original game.
+enum class BondChoice { use_bond, bind_settings, original };
+BondChoice choose_randomizer_bond(bool has_bond, bool new_game, bool settings_active, bool bind_called);
 
 } // namespace dw4::game

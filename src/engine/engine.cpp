@@ -660,6 +660,7 @@ void Engine::begin_stage_load(const StageSnapshot* restoring) {
     lua_infos_.clear();
     common_queue_.clear();
     randomizer_pool_.clear();
+    randomizer_donors_.clear();
     donor_infos_.clear();
     donor_starters_.clear();
     donor_scripts_.clear();

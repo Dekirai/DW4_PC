@@ -232,6 +232,7 @@ void GeneraterManager::prepare_shuffle(Engine& engine) {
     pool_.clear();
     fixed_generators_.clear();
     fixed_families_.clear();
+    own_families_.clear();
     if (!engine.cheats().enemy_shuffle() || randomizer::fixed_stage(engine.stage_name())) return;
     auto* models = engine.get<ModelCtrlManager>();
     if (!models) return;
@@ -257,6 +258,11 @@ void GeneraterManager::prepare_shuffle(Engine& engine) {
     }
     for (const auto& name : named)
         if (!counts.contains(name)) fixed_families_.insert(name);
+    // The families the stage itself loaded (RAMs not from a donor stage): a
+    // generator of any other family finds no RAM in the original (FIND_SPACE)
+    // and never spawns, so it stays dormant here too.
+    for (const auto& [name, count] : counts)
+        if (!engine.randomizer_donor(name)) own_families_.insert(name);
     // The pool the stage loader made (with the donor families it loaded),
     // else the stage's own families.
     const auto seed = randomizer::sub_seed(engine.cheats().rand_seed, "enemies");
@@ -289,12 +295,24 @@ void GeneraterManager::prepare_shuffle(Engine& engine) {
         text += "; fixed generators:";
         for (const auto& name : fixed_generators_) text += " " + name;
     }
+    std::string dormant_families;
+    int dormant = 0;
+    for (const auto& [name, generators] : generators_of)
+        if (name.starts_with("e_") && !own_families_.contains(name)) {
+            dormant_families += " " + name;
+            dormant += int(generators.size());
+        }
+    if (dormant != 0) text += "; dormant generators: " + std::to_string(dormant) + " of" + dormant_families;
     engine.log(text);
 }
 
 bool GeneraterManager::shuffle_generator(Engine& engine, const GeneRam& ram) const {
     if (!engine.cheats().enemy_shuffle() || pool_.size() < 2 || !ram.data) return false;
     if (!ram.enemy_name.starts_with("e_") || fixed_families_.contains(ram.enemy_name)) return false;
+    // A dormant generator (no RAM of its family that the stage loaded
+    // itself) stays dormant, and a boss family's record never goes to a
+    // swapped enemy.
+    if (!own_families_.contains(ram.enemy_name) || randomizer::boss_family(ram.enemy_name)) return false;
     return !fixed_generators_.contains(ram.data.str(2));
 }
 

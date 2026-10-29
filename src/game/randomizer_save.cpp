@@ -46,6 +46,12 @@ std::string randomizer_unique_key(std::uint32_t unique) {
     return text;
 }
 
+BondChoice choose_randomizer_bond(bool has_bond, bool new_game, bool settings_active, bool bind_called) {
+    if (has_bond) return BondChoice::use_bond;
+    if (settings_active && (new_game || bind_called)) return BondChoice::bind_settings;
+    return BondChoice::original;
+}
+
 namespace {
 const char* enemy_mode_name(int mode) { return mode == 2 ? "wave" : mode == 1 ? "each" : "off"; }
 int enemy_mode(std::string_view text) { return text == "wave" ? 2 : text == "each" || text == "1" ? 1 : 0; }
@@ -72,7 +78,7 @@ bool store_randomizer_binding(const std::filesystem::path& folder, std::uint32_t
         "; DW4_PC randomizer: the seed and modes each saved character plays with (by its UNIQUE).\n"
         "; Delete a section to let that character follow the settings again.\n"));
     const std::string section = "character_" + randomizer_unique_key(unique);
-    ini.set(section, "name", name);
+    if (!name.empty() || !ini.get(section, "name")) ini.set(section, "name", name); // (an empty name keeps the stored one)
     ini.set_int(section, "seed", int(config.seed & 0x7FFFFFFF));
     ini.set_bool(section, "drops", config.drops);
     ini.set(section, "enemies", enemy_mode_name(config.enemies));

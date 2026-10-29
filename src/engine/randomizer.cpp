@@ -292,6 +292,9 @@ void Engine::load_enemy_donors() {
             if (const auto* family = rnd::family(name); family && family->donor) by_donor[family->donor].push_back(name);
     std::string text = "randomizer: enemy pool loads for " + stage_name_ + ":";
     for (const auto& [donor, families] : by_donor) {
+        // Not the stage's own families, whether their load succeeds or not
+        // (GeneraterManager::shuffle_generator).
+        randomizer_donors_.insert(families.begin(), families.end());
         try {
             const auto descriptor = load_package_descriptor(resources_, donor + ".igb");
             const PackageMember* main = nullptr;

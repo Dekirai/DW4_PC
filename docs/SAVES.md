@@ -335,8 +335,13 @@ zones=dungeons
 ```
 
 When player 1's character changes at the character select (a new game or a
-called box) the bond of its UNIQUE applies; a character without one is bound
-to the current settings when they randomize. Two characters can share a
+called box) the bond of its UNIQUE applies. A new game without one (the
+engine's observe-only `new_character` port event names its UNIQUE) is bound
+to the current settings when they randomize; a called box without one plays
+the original game, whatever the settings say, until the F1 menu's "Bind
+these settings to this save" binds them (a notice says so when the settings
+randomize). Test runs bind every character to `DW4_RANDOMIZER` unless
+`DW4_RANDOMIZER_BIND=new`. Two characters can share a
 UNIQUE only when they were made in the same frame (the same value for every
 player made then); they then share the bond, which is the session's anyway.
 Online sessions use the host's settings and bind nothing (the online save is

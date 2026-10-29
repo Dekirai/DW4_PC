@@ -48,6 +48,9 @@ struct PortEvent {
         // A stage script changed a story flag (FLGset): value the flag,
         // extra the new value.
         story_flag,
+        // The character select made a new character for slot (a new game;
+        // value: its UNIQUE as int32). The randomizer binds only new games.
+        new_character,
     };
     Kind kind{};
     std::int32_t slot = -1;

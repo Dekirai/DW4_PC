@@ -3,6 +3,7 @@
 #include "dw4/engine/engine.hpp"
 #include "dw4/engine/randomizer.hpp"
 #include "../src/game/randomizer_save.hpp"
+#include "dw4/ini.hpp"
 
 #include <algorithm>
 #include <filesystem>
@@ -169,6 +170,21 @@ void binding() {
     check(parsed && parsed->seed == 17 && parsed->enemies == 2 && parsed->zones == 0 && !parsed->drops, "the test variable");
     const auto plain = parse_randomizer("18");
     check(plain && plain->seed == 18 && plain->enemies == 1 && plain->zones == 1 && plain->drops, "a bare seed turns everything on");
+    // A bond written without a name keeps the stored name (the F1 bind button).
+    check(store_randomizer_binding(folder, 0x1234ABCD, "", RandomizerConfig{5, true, 0, 0}), "a rebind without a name");
+    {
+        const auto ini = dw4::IniFile::load(folder / "randomizer.ini");
+        check(ini && ini->get_or("character_1234ABCD", "name", "") == "TESTER", "the stored name stays");
+        check(ini && ini->get_int("character_1234ABCD", "seed", 0) == 5, "the new seed is stored");
+    }
+    // Who gets bound: only new games (test runs: every character unless DW4_RANDOMIZER_BIND=new).
+    check(choose_randomizer_bond(true, false, true, false) == BondChoice::use_bond, "a bond wins");
+    check(choose_randomizer_bond(true, true, false, false) == BondChoice::use_bond, "a bond wins over inactive settings");
+    check(choose_randomizer_bond(false, true, true, false) == BondChoice::bind_settings, "a new game binds the settings");
+    check(choose_randomizer_bond(false, false, true, false) == BondChoice::original, "a called old save stays original");
+    check(choose_randomizer_bond(false, true, false, false) == BondChoice::original, "settings off: original");
+    check(choose_randomizer_bond(false, false, true, true) == BondChoice::bind_settings, "test runs bind a called save");
+    check(choose_randomizer_bond(false, false, false, true) == BondChoice::original, "test runs without a randomizer");
     std::filesystem::remove_all(folder);
 }
 } // namespace

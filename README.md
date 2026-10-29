@@ -248,8 +248,11 @@ drives three parts, each switched on its own:
   (Blossomon, Mammothmon, SkullGreymon, Anomalocarimon, Tonosama Gekomon,
   Diaboromon, LordKnightmon), stag0404's Imperialdramon, the boss stages
   (`stagBS*`), the stagGF03 fights, every wave a stage script starts next to a
-  model name (intro and demo fights wait for that model) and a family whose
-  only waves in the stage are such fights stay as they are. A wave keeps its
+  model name (intro and demo fights wait for that model), a family whose
+  only waves in the stage are such fights and every generator whose family the
+  stage does not load itself (it never spawns in the original: no RAM for it,
+  e.g. stag0403's e_mecha3 and stag0202's SkullGreymon generators) stay as
+  they are. A wave keeps its
   entry move when the new family has it, else the family's plain entry; when
   all of a family's bodies are out, the next family of the pool (then the
   original) takes the place. A swapped enemy that falls off the stage or never
@@ -273,9 +276,10 @@ so nothing is written into a Dolphin folder) keeps the seed and modes per
 saved character (by the character's UNIQUE id), so changing the settings
 later does not change a running game, and `randomizer_<UNIQUE>_spoiler.txt`
 beside it lists the seed, the loading zone table and every stage's enemy
-pool. A save started without the randomizer is bound the first time it is
-played with one; the F1 section shows the bound seed and can bind the current
-settings to the running save. Delete a character's section in `randomizer.ini` to let it follow the
+pool. Only a new game is bound by itself: a save from before (or one started
+with the randomizer off) keeps playing the original game when it is called
+with the randomizer on, and a notice says so; the F1 section shows what the
+running save plays and can bind the current settings to it. Delete a character's section in `randomizer.ini` to let it follow the
 settings again. Save states replay with the randomizer they were made with.
 Online, every machine plays the host's randomizer and nothing is bound.
 Randomized games are not the original game (`Cheats::original()`), so they
