@@ -62,6 +62,9 @@ public sealed class ServiceOptions
     public bool Maintenance { get; set; }
     /// <summary>Public host name or IP clients use for the relay (announced in the status); empty = the host name of the request.</summary>
     public string RelayHost { get; set; } = "";
-    /// <summary>The relay port announced to clients; 0 = the port the relay actually listens on (tests).</summary>
-    public int RelayPort { get; set; } = 52041;
+    /// <summary>
+    /// The relay port announced to clients; 0 (the default) = the port the relay actually listens on (Relay:Port). Set it
+    /// only when clients reach the relay through a different public port (a port forward).
+    /// </summary>
+    public int RelayPort { get; set; }
 }

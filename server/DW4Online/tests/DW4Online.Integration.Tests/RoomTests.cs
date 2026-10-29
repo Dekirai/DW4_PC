@@ -244,4 +244,24 @@ public class RoomTests
         Assert.Equal(HttpStatusCode.ServiceUnavailable, stage.StatusCode);
         Assert.Equal("relay_unavailable", await stage.ProblemCode());
     }
+
+    [DbFact]
+    public async Task Announced_relay_port_follows_the_bound_port_unless_set()
+    {
+        // Default (Service:RelayPort 0): whatever Relay:Port the relay listens on is announced.
+        await using (var host = await TestHost.StartAsync(RelaySettings.On()))
+        {
+            var bound = await host.App.Services.GetRequiredService<RelayServer>().Started.WaitAsync(TimeSpan.FromSeconds(10));
+            var status = await OkJson(await host.Client().GetAsync("/api/v1/status"));
+            Assert.Equal(bound, status.GetProperty("relay").GetProperty("port").GetInt32());
+            Assert.NotEqual(52041, bound);
+        }
+        // A port forward: clients use another public port.
+        await using (var host = await TestHost.StartAsync(RelaySettings.On(new() { ["Service:RelayPort"] = "45123" })))
+        {
+            await host.App.Services.GetRequiredService<RelayServer>().Started.WaitAsync(TimeSpan.FromSeconds(10));
+            var status = await OkJson(await host.Client().GetAsync("/api/v1/status"));
+            Assert.Equal(45123, status.GetProperty("relay").GetProperty("port").GetInt32());
+        }
+    }
 }

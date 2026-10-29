@@ -85,7 +85,10 @@ public static class RoomEndpoints
             .RequireRateLimiting(RateLimitPolicies.RoomStage);
     }
 
-    /// <summary>Where clients reach the relay: Service:RelayHost (or the host name of the request) and its port.</summary>
+    /// <summary>
+    /// Where clients reach the relay: Service:RelayHost (or the host name of the request) and Service:RelayPort, which by
+    /// default (0) is the port the relay listens on.
+    /// </summary>
     public static object? Relay(HttpContext ctx, ServiceOptions service, IRelayGateway relay) => relay.Available
         ? new
         {

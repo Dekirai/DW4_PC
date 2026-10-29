@@ -9,18 +9,24 @@ internal sealed class RelayGateway : IRelayGateway
 {
     private readonly RelayTickets _tickets;
     private readonly RelayServer? _server;
+    private readonly RelayOptions _options;
 
-    public RelayGateway(RelayTickets tickets, IServiceProvider services)
+    public RelayGateway(RelayTickets tickets, RelayOptions options, IServiceProvider services)
     {
         _tickets = tickets;
+        _options = options;
         _server = services.GetService<RelayServer>(); // registered only with Relay:Enabled
         if (_server is not null) _server.HostDisconnected += channel => HostLost?.Invoke(channel);
     }
 
     public bool Available => _server is not null;
 
-    /// <summary>The port the relay listens on, once it started (Relay:Port 0 picks a free one in tests).</summary>
-    public int? BoundPort => _server?.Started is { IsCompletedSuccessfully: true } started ? started.Result : null;
+    /// <summary>
+    /// The port the relay listens on once it started (Relay:Port 0 picks a free one in tests); before that the configured
+    /// Relay:Port, or null when that is 0.
+    /// </summary>
+    public int? BoundPort => _server?.Started is { IsCompletedSuccessfully: true } started ? started.Result
+        : _server is not null && _options.Port > 0 ? _options.Port : null;
 
     public event Action<string>? HostLost;
 

@@ -7,7 +7,10 @@ using Microsoft.AspNetCore.TestHost;
 
 namespace DW4Online.Integration.Tests;
 
-/// <summary>Settings that switch the relay on for a test host: a real TCP listener on a free loopback port.</summary>
+/// <summary>
+/// Settings that switch the relay on for a test host: a real TCP listener on a free loopback port. Service:RelayPort
+/// stays at its default, so clients are told the port the relay really listens on.
+/// </summary>
 public static class RelaySettings
 {
     public static Dictionary<string, string?> On(Dictionary<string, string?>? more = null)
@@ -19,7 +22,6 @@ public static class RelaySettings
             ["Relay:Port"] = "0",
             ["Relay:TicketKey"] = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)),
             ["Service:RelayHost"] = "127.0.0.1",
-            ["Service:RelayPort"] = "0",
         };
         if (more is not null)
             foreach (var (k, v) in more) settings[k] = v;
