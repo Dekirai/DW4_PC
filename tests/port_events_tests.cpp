@@ -8,11 +8,12 @@
 
 #include <iostream>
 #include <stdexcept>
+#include <string>
 
 namespace {
 using namespace dw4::engine;
 int checks{};
-void check(bool condition, const char* message) {
+void check(bool condition, const std::string& message) {
     ++checks;
     if (!condition) throw std::runtime_error(message);
 }
@@ -22,8 +23,8 @@ void off_by_default() {
     check(!engine.port_events_enabled(), "a new engine collects nothing");
     engine.port_event({PortEvent::Kind::level_up, 0, 5, 0, {}});
     port_flag_changed(engine, 67, 0, 1);
-    port_script_started(engine, "ded_e_blosso.lua");
-    check(engine.take_port_events().empty(), "no events while off");
+    check(!port_script_started(engine, "ded_e_blosso.lua"), "no boss script watched while off");
+    check(engine.take_port_events().empty() && engine.port_boss_scripts().empty(), "no events while off");
 }
 
 void flags_and_scripts() {
@@ -50,18 +51,41 @@ void flags_and_scripts() {
     port_flag_changed(engine, 452, 0, 1);
     events = engine.take_port_events();
     check(events.size() == 2 && events[1].value == 8 && events[1].extra == 2, "452: quest 8 on Very Hard");
-    // Dungeon boss death scripts: only with a player standing.
-    port_script_started(engine, "ded_e_blosso.lua");
+    // Dungeon boss death scripts: the boss falls when the run sets a flag
+    // (ded_e_blosso.lua: FLGset(119, 1) after the victory demo).
+    check(port_script_started(engine, "ded_e_blosso.lua"), "ded_e_blosso is watched");
+    check(engine.take_port_events().empty(), "nothing at the start");
+    port_flag_changed(engine, 119, 0, 1);
+    port_flag_changed(engine, 508, 1, 0);
+    port_script_finished(engine);
     events = engine.take_port_events();
-    check(events.size() == 1 && events[0].kind == PortEvent::Kind::boss_defeated && events[0].text == "blosso", "ded_e_blosso");
-    port_script_started(engine, "ded_g_d1bkwall.lua");
-    port_script_started(engine, "hit_e_nume.lua");
-    check(engine.take_port_events().empty(), "other scripts are no boss");
-    auto* sys = engine.get<GameSystem>();
-    check(sys != nullptr, "GAMERAM");
-    for (auto& player : sys->players) player.hp = 0;
+    check(events.size() == 3 && events[0].kind == PortEvent::Kind::boss_defeated && events[0].text == "blosso", "ded_e_blosso: " +
+          std::to_string(events.size()));
+    check(events[1].kind == PortEvent::Kind::story_flag && events[1].value == 119 && events[2].value == 508, "its flags");
+    check(engine.port_boss_scripts().empty(), "closed");
+    // A group boss's death script runs once per part; only the last sets flags.
+    check(port_script_started(engine, "ded_e_mecha4.lua"), "mecha4");
+    port_script_finished(engine);
+    check(engine.take_port_events().empty(), "a part of the group: no defeat");
+    // A flag already set still ends the boss (FLGset of an unchanged flag).
+    port_script_started(engine, "ded_e_mecha4.lua");
+    port_flag_changed(engine, 157, 1, 1);
+    port_flag_changed(engine, 605, 0, 1);
+    port_script_finished(engine);
+    events = engine.take_port_events();
+    check(events.size() == 2 && events[0].text == "mecha4" && events[1].kind == PortEvent::Kind::story_flag, "reported once per run");
+    // Nested scripts: the inner one's flags belong to the boss script.
+    port_script_started(engine, "ded_e_diabolo.lua");
+    check(!port_script_started(engine, "hit_e_nume.lua"), "other scripts are not watched");
+    port_flag_changed(engine, 1, 0, 1);
+    port_script_finished(engine);
+    events = engine.take_port_events();
+    check(events.size() == 2 && events[0].text == "diabolo", "nested flag");
+    check(!port_script_started(engine, "ded_g_d1bkwall.lua"), "wall death scripts are no boss");
+    // Everyone down: the script returns before its flags.
     port_script_started(engine, "ded_e_mammos.lua");
-    check(engine.take_port_events().empty(), "everyone down: the script returns at once, no defeat");
+    port_script_finished(engine);
+    check(engine.take_port_events().empty(), "no flag, no defeat");
 }
 
 void cards_and_cap() {
@@ -100,7 +124,9 @@ void observe_only() {
         std::vector<dw4::Lua4Value> out;
         sys->script_call(*engine, "SYSctlCardFolder", args, out);
         port_flag_changed(*engine, 68, 0, 1);
-        port_script_started(*engine, "ded_e_skulgrey.lua");
+        const bool watched = port_script_started(*engine, "ded_e_skulgrey.lua");
+        port_flag_changed(*engine, 120, 0, 1);
+        if (watched) port_script_finished(*engine);
     }
     check(!collecting.take_port_events().empty(), "the collecting engine has events");
     check(quiet.fingerprint() == collecting.fingerprint(), "collecting leaves the fingerprint unchanged");

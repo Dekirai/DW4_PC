@@ -84,7 +84,15 @@ bool Engine::run_script(std::string_view name) {
     // DW4_TRACE_SCRIPT=1 logs every script run (=name: only that one).
     if (static const char* trace = std::getenv("DW4_TRACE_SCRIPT"); trace && (std::string_view(trace) == "1" || name == trace))
         log("script " + std::string(name));
-    port_script_started(*this, name); // observe-only (port_events.hpp)
+    // Observe-only (port_events.hpp): a boss death script's run is watched
+    // until it ends.
+    struct PortScope {
+        Engine& engine;
+        bool open;
+        ~PortScope() {
+            if (open) port_script_finished(engine);
+        }
+    } port_scope{*this, port_script_started(*this, name)};
     bool ran = false;
     for (const auto& info : lua_infos_) {
         for (const auto& data : info.list(7)) {

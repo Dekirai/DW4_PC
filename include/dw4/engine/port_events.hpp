@@ -19,8 +19,9 @@ struct PortEvent {
     enum class Kind : std::uint8_t {
         // A boss fell. text: the boss key (the dungeon bosses' ded_e_<key>.lua
         // death scripts: blosso, mammos, skulgrey, anomalo, tonogeko, mecha4,
-        // diabolo, mecha5, ldknight; the boss stages' defeat flags: apocaly
-        // 67, belvam 68, luce 69, devl3 70). value: the difficulty.
+        // diabolo, mecha5, ldknight, reported when the script sets its first
+        // flag; the boss stages' defeat flags: apocaly 67, belvam 68, luce 69,
+        // devl3 70). value: the difficulty.
         boss_defeated,
         // An enemy fell to a hit (BLTcalcEXPUp). slot: the defeating player
         // (-1 none), value: its enemy record, text: its model (e_nume, ...).
@@ -57,10 +58,13 @@ struct PortEvent {
 
 const char* port_event_name(PortEvent::Kind kind);
 
-// FLGset changed flag from `before` to `after`: the story flag event and,
-// on a rising edge, the boss stages' defeat flags and the quests' goals.
+// FLGset set flag from `before` to `after` (called for every FLGset): a
+// running boss death script's boss, and on a change the story flag event
+// and, on a rising edge, the boss stages' defeat flags and the quests' goals.
 void port_flag_changed(Engine& engine, std::int32_t flag, int before, int after);
-// A script starts (Engine::run_script): a dungeon boss's death script.
-void port_script_started(Engine& engine, std::string_view name);
+// A script starts (Engine::run_script): true for a dungeon boss's death
+// script, which port_script_finished must close when the run ends.
+bool port_script_started(Engine& engine, std::string_view name);
+void port_script_finished(Engine& engine);
 
 } // namespace dw4::engine

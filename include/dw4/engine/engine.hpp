@@ -566,6 +566,9 @@ public:
         taken.swap(port_events_);
         return taken;
     }
+    // (port_events.cpp) The boss death scripts running now, innermost last;
+    // an entry is cleared once its boss was reported.
+    std::vector<std::string>& port_boss_scripts() { return port_boss_scripts_; }
 
     // Global game state used by the script bindings.
     std::map<std::int32_t, std::uint8_t>& flags() { return flags_; }
@@ -762,6 +765,7 @@ private:
     bool pad_input_enabled_{};
     bool port_events_enabled_{};          // see set_port_events (host only)
     std::vector<PortEvent> port_events_;
+    std::vector<std::string> port_boss_scripts_;
     std::map<std::int32_t, std::uint8_t> flags_;
     std::map<std::int32_t, std::int32_t> counters_;
     std::vector<DiagnosticCounter> notes_;

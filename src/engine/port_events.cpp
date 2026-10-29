@@ -44,7 +44,16 @@ const char* port_event_name(PortEvent::Kind kind) {
 }
 
 void port_flag_changed(Engine& engine, std::int32_t flag, int before, int after) {
-    if (!engine.port_events_enabled() || before == after) return;
+    if (!engine.port_events_enabled()) return;
+    // A dungeon boss's death script sets its flags only on the run that ends
+    // the fight: not while the group of a multi-part boss still stands
+    // (dng308b3 ded_e_mecha4.lua counts g_bossRest down first) and not when
+    // every joined player is down (the HP sum test at its start returns).
+    if (auto& scripts = engine.port_boss_scripts(); after != 0 && !scripts.empty() && !scripts.back().empty()) {
+        engine.port_event({PortEvent::Kind::boss_defeated, -1, difficulty(engine), 0, scripts.back()});
+        scripts.back().clear();
+    }
+    if (before == after) return;
     engine.port_event({PortEvent::Kind::story_flag, -1, flag, after, {}});
     if (before != 0 || after == 0) return;
     // The boss stages' defeat flags, set by the boss's hit script when its
@@ -71,20 +80,18 @@ void port_flag_changed(Engine& engine, std::int32_t flag, int before, int after)
     }
 }
 
-void port_script_started(Engine& engine, std::string_view name) {
-    if (!engine.port_events_enabled() || !starts_with_folded(name, "ded_e_")) return;
-    // The dungeon bosses' death scripts (ded_e_<key>.lua) return at once
-    // when every joined player is down (the HP sum test at their start), so
-    // only a run with a player standing is a defeat.
-    const auto* sys = engine.get<GameSystem>();
-    if (!sys) return;
-    const bool standing = std::any_of(sys->players.begin(), sys->players.end(), [](const GameSystem::PlayerSlot& p) {
-        return p.joined && p.hp > 0;
-    });
-    if (!standing) return;
+bool port_script_started(Engine& engine, std::string_view name) {
+    if (!engine.port_events_enabled() || !starts_with_folded(name, "ded_e_")) return false;
+    // The dungeon bosses' death scripts (ded_e_<key>.lua): the boss counts
+    // once the run sets a flag (port_flag_changed).
     std::string key(name.substr(6));
     if (key.size() > 4 && key.compare(key.size() - 4, 4, ".lua") == 0) key.resize(key.size() - 4);
-    engine.port_event({PortEvent::Kind::boss_defeated, -1, difficulty(engine), 0, key});
+    engine.port_boss_scripts().push_back(std::move(key));
+    return true;
+}
+
+void port_script_finished(Engine& engine) {
+    if (auto& scripts = engine.port_boss_scripts(); !scripts.empty()) scripts.pop_back();
 }
 
 } // namespace dw4::engine
