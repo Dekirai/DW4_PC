@@ -468,6 +468,9 @@ struct Scenario {
     int identity = 0;         // the split identity of the recorded copy
     std::vector<Planned> plan;
     std::uint64_t join_at{};  // the joiner restores the instance's bytes at this pre-step frame (0: none)
+    // B+X+START on slot 1 from this pre-step frame for 240 frames (0: none).
+    std::uint64_t reset_combo_at{};
+    std::array<PadSample, 4> pads(std::uint64_t frame) const;
 };
 
 PadSample pad_for(std::uint64_t frame, int slot) {
@@ -496,6 +499,8 @@ struct Recording {
     std::uint8_t final_present{};
     std::string final_stage;
     int generated_players{};
+    int max_generated{};
+    bool rebooted{};
     double seconds{};
 };
 
@@ -503,6 +508,13 @@ std::array<PadSample, 4> pads_at(std::uint64_t frame) {
     std::array<PadSample, 4> pads{};
     for (int s = 0; s < 4; ++s) pads[std::size_t(s)] = pad_for(frame, s);
     return pads;
+}
+
+std::array<PadSample, 4> Scenario::pads(std::uint64_t frame) const {
+    auto out = pads_at(frame);
+    if (reset_combo_at && frame >= reset_combo_at && frame < reset_combo_at + 240)
+        out[1].buttons = dw4::pad_button::b | dw4::pad_button::x | dw4::pad_button::start;
+    return out;
 }
 
 bool predicate_for(const Engine& engine, Planned::Kind kind) {
@@ -589,10 +601,17 @@ Recording run_scenario(const std::filesystem::path& data, const Scenario& sc, co
             else apply_planned(engine, p);
             ++next_plan;
         }
-        const auto pads = pads_at(frame);
+        const auto pads = sc.pads(frame);
         host_step(engine, pads, split);
         if (auto s = engine.take_split()) rec.splits.push_back(*s);
         rec.fingerprints[engine.frame()] = engine.net_fingerprint();
+        rec.rebooted = rec.rebooted || engine.rebooting();
+        if (const auto* models = engine.get<ModelCtrlManager>()) {
+            int generated = 0;
+            for (int s = 0; s < 4; ++s)
+                if (const auto* p = models->player(s); p && p->generated) ++generated;
+            rec.max_generated = std::max(rec.max_generated, generated);
+        }
         if (const auto* snapshot = engine.stage_snapshot(); snapshot && snapshot->serial != log_serial) {
             log_serial = snapshot->serial;
             log.clear();
@@ -655,7 +674,7 @@ Recording run_joiner(const std::filesystem::path& data, const Scenario& sc, cons
             else apply_planned(engine, p);
             ++next;
         }
-        host_step(engine, pads_at(frame), split);
+        host_step(engine, sc.pads(frame), split);
         (void)engine.take_split();
         rec.fingerprints[engine.frame()] = engine.net_fingerprint();
         frame = engine.frame();
@@ -766,13 +785,25 @@ void data_scenarios(const std::filesystem::path& data) {
     k3.earliest = 2500;
     k3.slot = 3;
     k3.carry = carry_of("p_dorumon", 6, "");
-    s3.plan = {k1, k2, k3};
+    // An in-stage fork (a story trigger's participants keep the instance).
+    Planned f3;
+    f3.kind = Planned::split;
+    f3.earliest = 3200;
+    f3.mask = 0b0011;
+    f3.fork = ForkKind::in_stage;
+    s3.plan = {k1, k2, k3, f3};
     s3.join_at = 2200;
+    // 7.4: B+X+START held on slot 1 for four seconds reboots nobody online.
+    s3.reset_combo_at = 2700;
     const auto a3 = run_scenario(data, s3, nullptr);
     std::cout << "  " << s3.name << ": events at";
     for (const auto& e : a3.applied) std::cout << ' ' << e.frame;
     std::cout << ", generated " << a3.generated_players << '\n';
-    check(a3.final_present == 0b1111 && a3.generated_players == 4, "four players in stag0102");
+    check(a3.splits.size() == 1 && a3.splits[0].in_stage && a3.splits[0].kept == 0b0011 && a3.splits[0].local_leaves,
+          "the in-stage fork: the participants keep the instance");
+    check(a3.final_present == 0b0011 && a3.generated_players == 2, "two players in stag0102 after the fork");
+    check(a3.max_generated == 4, "four players of four species in stag0102");
+    check(a3.final_stage == "stag0102" && !a3.rebooted, "no console reset online");
     const auto b3 = run_scenario(data, s3, &a3.applied);
     check(compare(a3, b3, s3.name) == a3.fingerprints.size(), "stag0102: the second engine agrees");
     const auto c3 = run_joiner(data, s3, a3);
