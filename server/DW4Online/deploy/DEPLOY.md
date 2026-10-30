@@ -16,7 +16,7 @@ stay untouched.
 | Website Data Protection keys | `D:\Dekirai\Servers\DW4Online\keys` (DPAPI-encrypted for the service account) |
 | Service | `DW4Online`, virtual account `NT SERVICE\DW4Online`, start delayed-auto |
 | TLS certificate (now) | self-signed for `IP 88.198.52.221` in `LocalMachine\My`, pinned by the game client (section 6.1) |
-| Ports | 443 TCP (HTTPS: API and website), 52041 TCP (relay), 80 TCP only for a later domain's certificate validation; MariaDB 3306 on 127.0.0.1 only |
+| Ports | 443 TCP (HTTPS: API and website), 52041 TCP (relay), 80 TCP only for a later domain's certificate validation; MariaDB 3306 on 127.0.0.1 only; plain HTTP on 127.0.0.1:5280 for checks on the server itself (`appsettings.json`'s endpoint, never reachable from outside) |
 
 The scripts in this folder are written for these steps but were **not run** on the server: read them, then run them
 yourself in an elevated PowerShell. (`new-selfsigned-cert.ps1` was run end to end against a user certificate store
@@ -142,7 +142,17 @@ patch a self-contained app): a .NET security release means a new publish and an 
    - Inbound firewall rules for TCP 443 and 52041 (and 80 with `-OpenPort80`), limited to the service executable.
 4. If the hoster has a network firewall in front of the server (for example a Hetzner firewall in the Robot / Cloud
    console), open TCP 443, 52041 (and 80 for certificate validation) there too.
-5. Check that nothing else listens on 443 / 80: `Get-NetTCPConnection -State Listen -LocalPort 80,443`.
+5. Check that nothing else listens on the service's ports (a XAMPP Apache often holds 443 and 80, IIS or another
+   http.sys user shows up as `System`, PID 4):
+
+   ```powershell
+   Get-NetTCPConnection -State Listen -LocalPort 443,52041,5280 -ErrorAction SilentlyContinue   # no output = free
+   ```
+
+   5280 is the plain-HTTP endpoint on 127.0.0.1 that `appsettings.json` defines and the production settings keep
+   (`Kestrel:Endpoints:Http`; `curl.exe http://127.0.0.1:5280/health` works on the server without the certificate).
+   If another program uses 5280, give the endpoint another free loopback port in `appsettings.Production.json`; a
+   port in use stops the service at its start.
 6. Create the TLS certificate for the IP address and note its pins (section 6.1, `new-selfsigned-cert.ps1`).
 
 Kestrel binds the ports itself; on Windows a non-admin account may bind ports below 1024 with sockets (no URL ACL is
