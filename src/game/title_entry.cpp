@@ -147,6 +147,7 @@ bool TitleEntry::apply(std::vector<engine::DrawItem>& items, bool menu_open, boo
         const float y = item.model(3, 1);
         const auto& g = *item.geometry;
         if (g.positions.size() == 12 && y < game_y && y > option_y) {
+            if (band_.size() > 8 && !band_.contains(g.serial.value)) band_.clear(); // (stages loaded again)
             auto& band = band_[g.serial.value];
             if (!band) {
                 band = std::make_shared<engine::GeometryData>(g);
@@ -229,7 +230,6 @@ bool TitleEntry::apply(std::vector<engine::DrawItem>& items, bool menu_open, boo
                         if (split > 0 && i_run.c1 - i_run.c0 >= 2 && stem0 >= 0 && dot0 >= 0) {
                             // Texel -> the "Option" quad's units.
                             const float kx = (option_quad->x1 - option_quad->x0) / (std::fabs(option_quad->u_right - option_quad->u_left) * W);
-                            const float v_lo = lo(option_quad->v_bottom, option_quad->v_top), v_hi = hi(option_quad->v_bottom, option_quad->v_top);
                             // A texture row's v (its lower edge) -> the quad's y.
                             auto y_of_v = [&](float v) {
                                 const float t = (v - option_quad->v_bottom) / (option_quad->v_top - option_quad->v_bottom);
@@ -266,8 +266,6 @@ bool TitleEntry::apply(std::vector<engine::DrawItem>& items, bool menu_open, boo
                                 pieces.push_back({x, x1, y_of_v(vd), y_of_v(vt), u0, u1, vd, vt});
                                 cursor += float(i_run.c1 - i_run.c0 + 1) * kx + 1.5f * kx;
                             };
-                            (void)v_lo;
-                            (void)v_hi;
                             glyph(o_runs[0]); // O
                             glyph(o_runs[4]); // n
                             ell();            // l

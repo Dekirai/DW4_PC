@@ -805,9 +805,14 @@ void draw_online_screens(online::OnlineLobby& lobby, OnlineUiState& state, const
         state.keyboard.open = false;
         state.keyboard.target = nullptr;
     }
-    if (state.focus_pending && (ImGui::GetIO().ConfigFlags & (ImGuiConfigFlags_NavEnableGamepad | ImGuiConfigFlags_NavEnableKeyboard))) {
-        if (ImGuiWindow* window = ImGui::GetCurrentWindow(); window && window == GImGui->NavWindow) ImGui::NavInitWindow(window, true);
-        state.focus_pending = false;
+    // (Not in a window's first frame: an auto-sized window measures itself
+    // hidden then, and the request would find no item. A screen that had no
+    // button yet, the gate still connecting, gets the cursor once it has one.)
+    if ((ImGui::GetIO().ConfigFlags & (ImGuiConfigFlags_NavEnableGamepad | ImGuiConfigFlags_NavEnableKeyboard)) && !ImGui::IsWindowAppearing()) {
+        ImGuiWindow* window = ImGui::GetCurrentWindow();
+        const bool here = window && window == GImGui->NavWindow;
+        if (here && (state.focus_pending || GImGui->NavId == 0)) ImGui::NavInitWindow(window, true);
+        if (here) state.focus_pending = false;
     }
     banner(lobby);
     using online::Gate;
@@ -910,8 +915,10 @@ void draw_title_online(online::OnlineLobby& lobby, OnlineUiState& state, TitleOn
     ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
     ImGui::SetNextWindowSizeConstraints(ImVec2(width, 0), ImVec2(width, io.DisplaySize.y * 0.9f));
     if (screens.focus) {
+        // (Opened: the controller's cursor starts on the screen's first or main button.)
         ImGui::SetNextWindowFocus();
         screens.focus = false;
+        state.focus_pending = true;
     }
     ImGui::Begin("Online##title", nullptr,
                  ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse |

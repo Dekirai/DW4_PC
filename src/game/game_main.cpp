@@ -2937,6 +2937,9 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     auto& io = ImGui::GetIO();
                     if (show_menu || title_online.active) io.ConfigFlags |= nav;
                     else io.ConfigFlags &= ~nav;
+                    // (Over the title the cursor always shows, as in the game's
+                    // own menus: A presses the highlighted button at once.)
+                    io.ConfigNavCursorVisibleAlways = title_online.active && !show_menu;
                 }
                 // (A UI test run's keys: last frame's go up, this frame's go down.)
                 for (const int key : ui_keys_down) ImGui::GetIO().AddKeyEvent(ImGuiKey(key), false);

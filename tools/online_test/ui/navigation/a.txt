@@ -24,9 +24,7 @@ expect-gate open
 wait 10
 expect-screen welcome
 shot welcome
-# (The first press shows the cursor on the default button, Log in; the second moves it.)
-key pad-right
-wait 5
+# (The cursor shows on the default button, Log in, from the start; right moves it to Register.)
 key pad-right
 wait 5
 shot welcome_focus
