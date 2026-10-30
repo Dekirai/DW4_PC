@@ -2501,8 +2501,17 @@ are `src/game/online/lobby_api.hpp`; the ImGui screens are
   apart. `tools/online_test/run.py ui` runs the scenarios of
   `tools/online_test/ui` (navigation: the menu's three entries and the
   keyboard; accounts, rooms with a full room, areas, offline, gate,
-  unreachable) with hidden 1920x1009 widescreen MSAA 4 windows and keeps the
-  screenshots as PNG in its run folder.
+  unreachable; newchars, the S2 done-when: two accounts register in the
+  screens, one creates a room, the other joins, both play new characters with
+  the campaign bot to the save room, then leave) with hidden 1920x1009
+  widescreen MSAA 4 windows and keeps the screenshots as PNG in its run
+  folder. A UI scenario's `"characters"` logs in through the API afterwards
+  and checks each client's online character: entered without one, revision 1
+  from the first stage change, the save room's upload, the leaving save last,
+  `GET /online-character` at that revision and equal to the card cache
+  outside the story bytes (a guest's story bytes empty, the owner's with the
+  room's phase); `"checkpoints"` names the campaign checkpoints its campaign
+  clients save at.
 
 ## 11. Achievements
 
@@ -2695,7 +2704,8 @@ anyway; joining goes through the room list.
 | S12 | latency, jitter and loss proxy matrix | S1 (measure), S4 (tune) |
 | S13 | room of ten: instances 4 + 4 + 2 plus solo members, 30 minutes | S4 |
 | S14 | owner-away policies drop (removal at the barrier, notice) / hold / apply | S2 |
-| S15 | save room upload, 409 from a second machine | S2 |
+| S14p | owner present: a guest's new story value reaches the owner's `online_story` within ten seconds (`scenario.json` "story_saved") and the owner's own instance only at its next barrier | S2 |
+| S15 | save room upload, 409 from a second machine (`character_test.py` C4; C2 the same after a stage change's upload) | S2 |
 | S16 | quest and story in stag0401: a quest-1 member arrives at point 3 while a story member plays there: separate instances, both keep their state; two members on quest 1 share one | S1 |
 | S17 | two members take the area gate 2 s apart (co-arrival, one entry scene) and 8 s apart (hold, then join) | S1 |
 | S18 | exit mat: A answers *No* and stays, B steps off, dies or despawns on the mat: no prompt; A answers *Yes* while B stands on the mat: B is asked; B *No*: only A leaves | S1 |
@@ -2743,7 +2753,12 @@ anyway; joining goes through the room list.
   online story; S16's story member carries the quest members' flags 89 / 714
   for the same reason), `"server": {...}` gives the scenario its own server with those
   settings and its own database (S14h / S14a: `Rooms:StoryWhileOwnerAway`),
-  `"min_shared_ticks"` lowers the shared ticks below (S14: one member plays).
+  `"min_shared_ticks"` lowers the shared ticks below (S14: one member plays),
+  `"story_saved": {"client", "after", "flag", "seconds"}` times the room
+  owner's `online_story` row in the database from that client's log line
+  (S14p: the guest's "505 set" step, ten seconds at most). The condition
+  `roomflag:N` reads the room story the client holds as confirmed (S14p: the
+  owner's machine has the guest's value there while its engine does not).
   Checked per scenario: the net
   fingerprints of every instance equal on every client every 60 ticks, at
   least 10,000 ticks in shared instances,
