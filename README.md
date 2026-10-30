@@ -366,16 +366,20 @@ the `[data]` path of `build\Game\settings.ini`), `-Card` a card folder whose
 saves both start with. Player builds connect only to the project's server
 and do not run yet (its certificate pins are still empty).
 
-The account and room screens are on the title screen (the Online panel at
-the bottom right: click it or press the controller's View button) and in the
-F1 menu's Online tab: log in or register (the recovery code is shown once),
-the account with the online character, the room list, creating a room (name,
-optional password, up to ten players, difficulty, camera and light mode),
-joining one (its password if it has one) and the room itself (who is where,
-kick for the owner, leave). Starting a room from the title ends an offline
-game only after asking; the room plays the online character, never the save
-on this PC, and leaving returns to the offline title. The screens work with
-the mouse, the keyboard and a controller.
+The title menu has a third entry below Game Start and Option: **Online**
+(the same lettering, the cursor moves to it with down from Option). Choosing
+it opens the account and room screens over the title, connected to the
+project's server (fixed in the build): log in or register (the recovery code
+is shown once), the room list (refresh; name, lock, players n/10, owner,
+settings), creating a room (name, optional password, up to ten players,
+difficulty, camera and light mode) or joining one (its password if it has
+one), and the room itself (who is where, kick for the owner, Play, leave).
+The room plays the online character, never the save on this PC; leaving
+returns to the offline title. B (or Esc) goes back a screen and from the
+first one back to the title menu. The screens work with a controller first
+(text fields open an on-screen keyboard), the keyboard and the mouse; the F1
+menu's Online tab shows the same screens, and starting a room from there
+ends an offline game only after asking.
 
 Known limits of the preview:
 

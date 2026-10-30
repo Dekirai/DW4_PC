@@ -2112,10 +2112,12 @@ The default stays `drop` until the user decides (question 2).
 All program UI in English, ImGui, ASCII (account names are ASCII lower case on
 the server).
 
-- **Where.** On the title screen a small *Online* panel (bottom right, only
-  while the title presents and no session runs); the same screens in the F1
-  Online tab, which replaces the direct host / join UI (the `--host` / `--join`
-  command line stays for LAN play and tests).
+- **Where.** The title menu's third entry *Online*, below Game Start and
+  Option (the user's wish of 30.10: it looks like the two original entries),
+  opens the screens over the title; the same screens in the F1 Online tab,
+  which replaces the direct host / join UI (the `--host` / `--join` command
+  line stays for LAN play and tests). (Revision 2 planned a small panel at the
+  bottom right of the title; round S2 built and replaced it.)
 - **Account.** Log in (name, password, remember me), Register (name, password
   twice, optional e-mail; the recovery code is shown once, confirmed with "I
   saved it"), Recover (name, code, new password; a new code is shown), Log out,
@@ -2161,19 +2163,53 @@ scripted HTTP queue in ctest `online_lobby`); the REST calls of the screens
 are `src/game/online/lobby_api.hpp`; the ImGui screens are
 `src/game/online_ui.cpp`.
 
-- *Title panel.* Drawn while the title stage (stagIS10) presents, no room
-  session or direct session runs and the F1 menu is closed. Compact it is one
-  box (logged in as, open rooms, or the gate's banner); a click on it or the
-  controller's View / Back button opens it, a click beside it, Esc or View
-  closes it. Open, it takes the game's input (keyboard and pad), turns on
-  ImGui's keyboard and controller navigation and pauses the title (so no
-  attract movie starts while the player types). Nothing goes over the
-  network before the player opens the panel or the F1 Online tab, except the
-  check of a remembered login.
+- *Title menu entry.* TITLE2 (`src/engine/title.cpp`, case 2) takes the
+  cursor down from Option to a third entry (cursor 2) while the host sets
+  `Engine::title_online_entry`; up goes back to Option, A there sets
+  `Engine::title_online_request` and leaves the menu waiting as it is, B
+  cancels as on the other entries. The moves and the choice play the model's
+  own sounds (SETSOUND `CURSOR_MOVE2`, `CURSOR_START`). The host sets the flag
+  only offline with the online screens (not in an online or direct session,
+  not in a test run without `--online-ui`; `DW4_TITLE_ONLINE=1` shows it in a
+  test run for pictures), and neither field is in a snapshot or the
+  fingerprint.
+- *The third row in the picture* (`src/game/title_entry.cpp`, presentation
+  only: it edits the frame's draw list after `Engine::render`). The model
+  `j_startmenu02` has only two rows, so the third is made of its own pieces:
+  a copy of the Option item (its render state and matrix, so the open
+  animation, colours and fades apply) whose quads are glyphs cut from the
+  same texture row of `mojips` / `mojigc` (O, n, i of "Option", e of "Game
+  Start"; the l is the i's stem drawn up to the top of its dot), one row (the
+  distance Game Start to Option, 50 units) below Option; the band's lower
+  half one row lower; the arrows (the model's own, with their pulse) a row
+  lower while the cursor is on Online, sliding linearly at the model's 2.4
+  units a frame. While the menu is open the logo moves up 30, the menu block
+  33 and the copyright down 16 units (eased over 15 frames, the press start
+  screen keeps the original layout), so the longer band fits between them.
+  The pieces are found by their texture and texture rectangle (measured on
+  the USA data); if they are not found, nothing changes.
+- *Screens over the title.* Choosing Online opens the screens centred on the
+  4:3 picture in the menu's colours (the dark band with its light lines, a
+  dimmed title behind), Segoe UI (Arial, else ImGui's scalable font) at sizes
+  that follow the window. The first screen connects (the version gate, then
+  the remembered login). B, Esc or Back go back a screen and from the first
+  one (welcome logged out, the room list logged in, the room inside one, or a
+  closed gate) back to the title menu, its cursor still on Online; the game's
+  pad then waits until every button is up, so the B that closed them does not
+  cancel the menu. The recovery code screen needs "I saved it". Over the menu
+  the title runs on (it waits for the player anyway); over anything else (a
+  session that could not start returns to the offline title's start) it
+  waits, so no attract movie starts. Nothing goes over the network before the
+  player chooses Online or opens the F1 Online tab.
+- *On-screen keyboard.* A text field the controller activates (A) opens a
+  keyboard: digits, letters, ' - _ . and a symbols page; the D-pad moves, A
+  types, X deletes, Y switches the capitals, B, START or Done close it (a
+  password shows as stars). The keyboard's typing works in every field as
+  always, and the mouse clicks the keys.
 - *F1 Online tab.* The same screens; a direct `--host` / `--join` session
   shows its own state there. The View / Back button opens and closes the F1
-  menu everywhere else (unless a binding gives that button to the game), and
-  the menu has keyboard and controller navigation while it is open.
+  menu (unless a binding gives that button to the game), and the menu has
+  keyboard and controller navigation while it is open.
 - *Screens.* Welcome; log in (remember me: the server's token with DPAPI
   plus the account's name in `saves/online/account.txt`); register (name,
   password twice, optional e-mail; the recovery code shown once with Copy and
@@ -2208,20 +2244,25 @@ are `src/game/online/lobby_api.hpp`; the ImGui screens are
   the offline title with the player's own cards; the lobby shows the room
   list with the reason.
 - *Room view.* The room (name, code, owner and whether away, its settings),
-  this member's slot, instance, mode and delay, the members from the room
+  this member's slot, instance, mode and delay, the online character it plays
+  (or that a new one starts at the title's Game Start), Play (closes the
+  screens over the title or the F1 menu), the members from the room
   state (`GET /rooms/{code}` every three seconds while shown) with each one's
   area, level and connection from the relay's ROSTER (`Session::roster()`,
   once a second; a hidden member in the title's hub instance shows "Title
   screen", a hidden one elsewhere "Loading or in a scene"), the instances
   ("together" for a sealed one), Kick for the owner, Leave.
 - *Test runs.* `--online-ui FILE` (development builds against a loopback
-  server only) drives the screens through the lobby's own calls
-  (`src/game/online_ui_script.hpp`: log in, register, create, join, the
-  View button, navigation keys, form fields, screenshots); `--online-folder`
-  keeps a test run's login apart. `tools/online_test/run.py ui` runs the
-  scenarios of `tools/online_test/ui` (accounts, rooms, areas, offline,
-  gate, unreachable, navigation) with hidden 1920x1009 widescreen MSAA 4
-  windows and keeps the screenshots as PNG in its run folder.
+  server only) presses the game's pad (`to-menu`, `pad DOWN DOWN A`: the
+  title menu's Online entry as a player chooses it), drives the screens
+  through the lobby's own calls (`src/game/online_ui_script.hpp`: log in,
+  register, create, join, the controller's and the keyboard's navigation
+  keys, form fields, screenshots); `--online-folder` keeps a test run's login
+  apart. `tools/online_test/run.py ui` runs the scenarios of
+  `tools/online_test/ui` (navigation: the menu's three entries and the
+  keyboard; accounts, rooms with a full room, areas, offline, gate,
+  unreachable) with hidden 1920x1009 widescreen MSAA 4 windows and keeps the
+  screenshots as PNG in its run folder.
 
 ## 11. Achievements
 
@@ -2300,6 +2341,10 @@ anyway; joining goes through the room list.
 - The Lua overrides and wrappers are registered only online.
 - Draw filters (item label lines, exit prompts, scoped scenes) act only online.
 - New port events are observe-only (not in fingerprint or snapshot).
+- The title menu's third entry exists only while the host sets
+  `Engine::title_online_entry` (offline with the online screens); test runs,
+  replays and online sessions never set it, and the test inputs never reach
+  it (none presses down at Option).
 - The net fingerprint is a separate function; `Engine::fingerprint` stays.
 - No FMA3 switch; the libm routing of round S4 selects the MSL routines only in
   online sessions. Input quantization, the console reset switch and the
@@ -2621,7 +2666,7 @@ progress.
 
 | Lane | Scope |
 | --- | --- |
-| ui | title panel and F1 Online (account screens, room list, create / join with camera and light mode, in-room view), version gate, session start and end from the title, Discord party, member areas from presence |
+| ui | the title menu's third entry Online and F1 Online (account screens, room list, create / join with camera and light mode, in-room view), version gate, session start and end from the title, Discord party, member areas from presence |
 | character | virtual card from the online character, `card_written` and the upload with If-Match and 409 handling, cloud backup in F1 Saves, room difficulty, camera mode and story at `game_started` |
 | story | merge sets and golden vectors (C++ and C#), pending sets against the confirmed room story with STORY / STORY_ACK, the counter line key (after the census of where COUNTER 1 and 7 change), real story application and dropped-value removal at barriers, server `online_story` with composition, plausibility and the owner-away setting with the dropped set |
 | achievements-deploy | catalogue alignment and the client's online sync (unlocks by the local slot, stats, "was there" from live ticks only, story challenges for the owner only), room page with instances, DEPLOY.md fixed key and pin script, pin constants |
