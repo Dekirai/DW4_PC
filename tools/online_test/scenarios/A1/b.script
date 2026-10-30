@@ -1,0 +1,11 @@
+# A1 (S5's run), member b (k2, level 7, a guest): one second after a through the gate, the same fight, then falls as well.
+campaign until stage=stagml11,control
+idle until epoch>=@91
+explore mate00 yes until stage=stag0101,control
+log in the field
+fight 455 15 60 until sealed>=8500 or dead
+die until dead
+log dead
+talk until stage=stagml11,control fail stage=stag0102
+log in the lobby
+idle until frames>=120

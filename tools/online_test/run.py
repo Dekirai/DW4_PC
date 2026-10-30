@@ -27,7 +27,8 @@ campaign bot calls it at the title). Checked for every scenario: the net fingerp
 of every instance are equal on every client at every tick (every 60 ticks) they both report with the same members, the
 canonical snapshot hashes of every NEW (and co-arrival) are equal, the relay logs no desync, mismatch or resync, no client
 was closed or crashed; then the scenario's expected log (in order per source; "!" lines must not appear; "shared: a b >=
-N" asks for N ticks of equal fingerprints with both present in one instance). Network traffic stays on loopback.
+N" asks for N ticks of equal fingerprints with both present in one instance); a scenario's "achievements" asks the
+server for each client account's online achievements afterwards (check_achievements). Network traffic stays on loopback.
 
 Without a scenario every game scenario runs. G1 is the integration's first game run (a new game from the title, both
 meet in the first field).
@@ -570,7 +571,52 @@ def run_real(stack, sc, api, relay_port, pin, diag, lock):
     for name, p in procs:
         if p.poll() is None:
             p.terminate()
-    return evaluate_real(sc, src, out, code, diag, timed_out, exits)
+    problems, notes = evaluate_real(sc, src, out, code, diag, timed_out, exits)
+    if sc.get("achievements"):
+        check_achievements(sc, api, tag, passwords, lock, problems, notes)
+    return problems, notes
+
+
+def check_achievements(sc, api, tag, passwords, lock, problems, notes):
+    """The online account's achievements (SEAMLESS.md 11) a scenario asks for in "achievements": per client, the codes the
+    server must hold ("unlocked", in the "ruleset", standard by default, with "players" per code where given), the codes it
+    must not ("locked"), and the least progress of stat achievements ("progress": code -> the counter's least value)."""
+    for name, want in sorted(sc["achievements"].items()):
+        with lock:
+            s, body = api.call("POST", "/api/v1/auth/login", {"username": tag + name, "password": passwords[name], "deviceName": "online_test",
+                                                              "protocol": 44})
+        if s != 200 or not body or not body.get("token"):
+            problems.append("%s: no login for the achievement check (%s %s)" % (name, s, body))
+            continue
+        with lock:
+            s, items = api.call("GET", "/api/v1/achievements", token=body["token"])
+        if s != 200 or not isinstance(items, list):
+            problems.append("%s: GET /achievements answered %s" % (name, s))
+            continue
+        by_code = {a["code"]: a for a in items}
+        held = sorted(code for code, a in by_code.items() if a.get("unlocks"))
+        notes.append("%s holds online: %s" % (name, ", ".join(held) or "-"))
+        for code in want.get("unlocked", []):
+            unlocks = (by_code.get(code) or {}).get("unlocks") or []
+            if not unlocks:
+                problems.append("%s: the server holds no %s" % (name, code))
+                continue
+            u = unlocks[0]
+            if u.get("ruleset") != want.get("ruleset", "standard"):
+                problems.append("%s: %s in ruleset %s" % (name, code, u.get("ruleset")))
+            players = want.get("players", {}).get(code)
+            if players is not None and u.get("players") != players:
+                problems.append("%s: %s with players %s, expected %s" % (name, code, u.get("players"), players))
+            if u.get("flagged"):
+                problems.append("%s: %s is flagged" % (name, code))
+        for code in want.get("locked", []):
+            if code in held:
+                problems.append("%s: %s must not be unlocked" % (name, code))
+        for code, least in want.get("progress", {}).items():
+            progress = (by_code.get(code) or {}).get("progress")
+            notes.append("%s: %s progress %s" % (name, code, progress))
+            if progress is None or progress < least:
+                problems.append("%s: %s progress %s, expected at least %s" % (name, code, progress, least))
 
 
 def parse_client_log(path):
