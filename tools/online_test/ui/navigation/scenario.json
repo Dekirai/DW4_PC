@@ -1,0 +1,5 @@
+{
+  "desc": "the title menu's Online entry and the screens with the controller: the cursor on each entry, Online, a screen, the on-screen keyboard, B back to the title menu",
+  "timeout": 150,
+  "clients": [{"name": "a", "script": "a.txt"}]
+}

@@ -1,0 +1,8 @@
+{
+  "desc": "the room view with areas: b calls a saved character (campaign bot) and walks into the lobby; a kicks b",
+  "timeout": 420,
+  "clients": [
+    {"name": "a", "script": "a.txt", "registered": true},
+    {"name": "b", "script": "b.txt", "registered": true, "start": 15, "card": "k2", "campaign": true}
+  ]
+}

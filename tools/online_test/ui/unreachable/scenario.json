@@ -1,0 +1,5 @@
+{
+  "desc": "no server at the address: Online says so and offers Try again",
+  "timeout": 120,
+  "clients": [{"name": "a", "script": "a.txt", "env": {"DW4_ONLINE_SERVER": "127.0.0.1:54249"}}]
+}

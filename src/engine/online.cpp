@@ -102,7 +102,10 @@ const std::vector<std::string_view>& online_forbidden_env() {
         // the cloud backup panel's test login and action (F1 Saves, outside rooms only)
         "DW4_MENU_CLOUD",
         // the pad replay of the test tools replaces the sealed pads before the step (game_main.cpp)
-        "DW4_PAD_REPLAY"};
+        "DW4_PAD_REPLAY",
+        // the title menu's third entry in a test run without the online screens (game_main.cpp; it lets
+        // TITLE2's cursor reach it)
+        "DW4_TITLE_ONLINE"};
     return names;
 }
 

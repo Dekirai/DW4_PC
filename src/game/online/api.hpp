@@ -24,7 +24,9 @@ namespace dw4::game::online::api {
 
 struct ServerStatus {
     int current_protocol = 0, minimum_protocol = 0;
+    std::string current_version, minimum_version; // client.currentVersion / minimumVersion ("" = none)
     bool maintenance = false;
+    bool registration_open = true;                // "registration": "open"
     int relay_port = 52041;
     std::string motd;
 };
@@ -39,6 +41,8 @@ struct RoomJoined {
     std::string ticket;  // empty: ask POST /rooms/{code}/ticket
     std::uint32_t member_id = 0;
     int relay_port = 0;  // 0: from GET /status
+    int max_players = 0; // room.maxPlayers (the Discord party size)
+    std::string owner;   // room.owner
 };
 struct CreateRoom {
     std::string name, password;

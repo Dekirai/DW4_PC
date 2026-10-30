@@ -357,6 +357,7 @@ void Session::handle(const w::Frame& frame, double now) {
         const auto m = w::decode_roster(p);
         lagging_members_.clear();
         roster_inst_.clear();
+        roster_ = m.entries;
         for (const auto& e : m.entries) {
             if (e.flags & 2) lagging_members_.insert(e.member);
             roster_inst_[e.member] = e.inst;

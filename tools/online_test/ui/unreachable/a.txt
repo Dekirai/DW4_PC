@@ -1,0 +1,13 @@
+# No server at the address: Online says so and offers Try again; B goes back to the title menu.
+wait-title
+to-menu
+pad DOWN DOWN A
+wait-screens
+sleep 3
+expect-gate unreachable
+wait 10
+shot unreachable
+key pad-b
+sleep 1
+expect-screens closed
+end

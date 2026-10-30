@@ -130,12 +130,30 @@ std::string set_activity_json(std::uint32_t pid, const std::optional<Activity>& 
             first = false;
             json += "\"assets\":{" + assets + "}";
         }
+        if (!activity->party_id.empty() && activity->party_size >= 1 && activity->party_max >= activity->party_size) {
+            json += first ? "" : ",";
+            first = false;
+            json += "\"party\":{\"id\":\"" + json_escape(activity->party_id) + "\",\"size\":[" + std::to_string(activity->party_size) + "," +
+                    std::to_string(activity->party_max) + "]}";
+        }
         // Type 0: "Playing".
         json += first ? "" : ",";
         json += "\"type\":0}";
     }
     json += "},\"nonce\":\"" + std::to_string(nonce) + "\"}";
     return json;
+}
+
+std::string party_id(std::string_view room_code) {
+    std::uint64_t hash = 0xcbf29ce484222325ull;
+    for (const unsigned char c : room_code) {
+        hash ^= c;
+        hash *= 0x100000001b3ull;
+    }
+    static const char* digits = "0123456789abcdef";
+    std::string id = "dw4-";
+    for (int shift = 60; shift >= 0; shift -= 4) id += digits[(hash >> shift) & 15];
+    return id;
 }
 
 std::string json_string_field(std::string_view json, std::string_view key) {

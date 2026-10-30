@@ -313,9 +313,10 @@ cylinder; wider bodies and a missing entry sequence are noted).
 
 ### Online co-op
 
-Up to four machines play one session in lockstep (TCP, the host relays). The
-F1 menu's Online tab hosts (players, port, input delay) or joins a host
-address; everyone then starts at the title together. From the command line:
+Up to four machines play one session in lockstep (TCP, the host relays),
+started from the command line (the F1 menu's Online tab belongs to the
+online rooms below and shows such a session's state); everyone then starts at
+the title together:
 
 ```bat
 dw4_game.exe --host --players 2            rem waits for one guest on port 52040
@@ -364,6 +365,21 @@ closing both windows stops the server. `-Data` names the game data (default:
 the `[data]` path of `build\Game\settings.ini`), `-Card` a card folder whose
 saves both start with. Player builds connect only to the project's server
 and do not run yet (its certificate pins are still empty).
+
+The title menu has a third entry below Game Start and Option: **Online**
+(the same lettering, the cursor moves to it with down from Option). Choosing
+it opens the account and room screens over the title, connected to the
+project's server (fixed in the build): log in or register (the recovery code
+is shown once), the room list (refresh; name, lock, players n/10, owner,
+settings), creating a room (name, optional password, up to ten players,
+difficulty, camera and light mode) or joining one (its password if it has
+one), and the room itself (who is where, kick for the owner, Play, leave).
+The room plays the online character, never the save on this PC; leaving
+returns to the offline title. B (or Esc) goes back a screen and from the
+first one back to the title menu. The screens work with a controller first
+(text fields open an on-screen keyboard), the keyboard and the mouse; the F1
+menu's Online tab shows the same screens, and starting a room from there
+ends an offline game only after asking.
 
 Known limits of the preview:
 

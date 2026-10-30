@@ -240,8 +240,23 @@ void Title2Manager::update_ram(Engine& engine, TitleRam& ram) {
                 ram.step = 1;
                 ram.detail = 0;
             } else if (ram.step == 1) {
+                // The PC's third entry "Online" (Engine::title_online_entry,
+                // set by the host only): cursor 2, below Option. The model has
+                // no sequence for it, so its arrows stay at Option (SQ_LINESL01)
+                // and the picture draws them a row lower (game/title_entry.cpp);
+                // the moves and the choice play the model's own sounds, and the
+                // choice leaves the menu as it is for the host's screens.
+                auto entry_sound = [&](const char* name) {
+                    Packet sound;
+                    sound.strings.emplace_back(std::string(name));
+                    sound.floats.push_back(0.0f);
+                    engine.messenger().send(engine, "MODELCTRL", "j_startmenu02", 0, "SETSOUND", sound);
+                };
                 if (input.up) {
-                    if (ram.cursor == 1) {
+                    if (ram.cursor == 2) {
+                        ram.cursor = 1;
+                        entry_sound("CURSOR_MOVE2");
+                    } else if (ram.cursor == 1) {
                         ram.cursor = 0;
                         models.set(engine, 0, "j_startmenu02", "SQ_LINEUP00", true);
                     }
@@ -251,7 +266,18 @@ void Title2Manager::update_ram(Engine& engine, TitleRam& ram) {
                     if (ram.cursor == 0) {
                         ram.cursor = 1;
                         models.set(engine, 0, "j_startmenu02", "SQ_LINEDW01", true);
+                    } else if (ram.cursor == 1 && engine.title_online_entry) {
+                        ram.cursor = 2;
+                        entry_sound("CURSOR_MOVE2");
                     }
+                    ram.step = 2;
+                    ram.detail = 0;
+                } else if ((input.trigger & dw4::pad_button::a) && ram.cursor == 2) {
+                    if (engine.title_online_entry) {
+                        entry_sound("CURSOR_START");
+                        engine.title_online_request = true;
+                    }
+                    ram.choice = 0;
                     ram.step = 2;
                     ram.detail = 0;
                 } else if (input.trigger & dw4::pad_button::a) {

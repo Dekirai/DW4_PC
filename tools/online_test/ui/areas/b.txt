@@ -1,0 +1,17 @@
+# A guest with a saved character: logs in without the panel, joins, the campaign bot plays; a kicks it.
+open
+login $UI_B_NAME $UI_B_PASSWORD
+wait-room $UI_ROOM
+join $UI_ROOM
+wait-session
+sleep 30
+menu online
+wait 10
+shot guest_view
+menu close
+wait-left 300
+sleep 2
+menu online
+wait 10
+shot kicked
+end

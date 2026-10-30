@@ -62,7 +62,8 @@ add_library(dw4_online STATIC
   src/game/online/cpu_gate.cpp src/game/online/env_check.cpp src/game/online/pad_wire.cpp src/game/online/wire.cpp
   src/game/online/pacing.cpp src/game/online/server_config.cpp src/game/online/http.cpp src/game/online/token_store.cpp
   src/game/online/json.cpp src/game/online/room_settings.cpp src/game/online/api.cpp src/game/online/transport.cpp
-  src/game/online/session.cpp src/game/online/presence.cpp src/game/online/engine_adapter.cpp)
+  src/game/online/session.cpp src/game/online/presence.cpp src/game/online/engine_adapter.cpp src/game/online/lobby_api.cpp
+  src/game/online/lobby.cpp)
 target_include_directories(dw4_online PUBLIC src/game)
 target_link_libraries(dw4_online PUBLIC dw4_engine)
 if(DW4_ONLINE_DEV)
@@ -143,7 +144,7 @@ if(BUILD_TESTING)
   add_test(NAME achievements COMMAND dw4_achievements_tests)
   # The online client (asset free; the env test reads the sources).
   # (online_story: the story sets and golden vectors of data/online, SEAMLESS.md 8.)
-  foreach(suite online_cpu_gate online_env online_wire online_session online_api online_story)
+  foreach(suite online_cpu_gate online_env online_wire online_session online_api online_story online_lobby)
     add_executable(dw4_${suite}_tests tests/${suite}_tests.cpp)
     target_link_libraries(dw4_${suite}_tests PRIVATE dw4_online)
     add_test(NAME ${suite} COMMAND dw4_${suite}_tests)
@@ -209,7 +210,7 @@ if(DW4_BUILD_APP)
   add_executable(dw4_game src/game/game_main.cpp src/game/gl_renderer.cpp src/game/movie_decoder.cpp src/game/settings.cpp src/game/controls.cpp src/game/interpolation.cpp src/game/texture_pack.cpp src/game/rvz.cpp src/game/netplay.cpp src/game/save_store.cpp src/game/mods.cpp src/game/test_path.cpp src/game/campaign.cpp src/game/online_script.cpp
     src/game/discord_ipc.cpp src/game/discord_presence.cpp src/game/presence_data.cpp src/game/presence_art.cpp
     src/game/overhead_labels.cpp src/game/overhead_labels_draw.cpp src/game/achievements.cpp
-    src/game/randomizer_save.cpp src/game/dev_present.cpp src/game/online_run.cpp)
+    src/game/randomizer_save.cpp src/game/dev_present.cpp src/game/online_run.cpp src/game/online_ui.cpp src/game/online_ui_script.cpp src/game/title_entry.cpp)
   target_include_directories(dw4_game PRIVATE ${pl_mpeg_src_SOURCE_DIR} ${stb_src_SOURCE_DIR})
   target_compile_definitions(dw4_game PRIVATE DW4_PC_VERSION="${PROJECT_VERSION}")
   target_link_libraries(dw4_game PRIVATE dw4_engine dw4_online imgui zstd_decoder SDL3::SDL3 OpenGL::GL)

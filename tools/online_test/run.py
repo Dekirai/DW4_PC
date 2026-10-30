@@ -17,6 +17,10 @@ expected events. It stops only the processes it started (by their handles), neve
     python run.py dev --game-exe EXE --data DATA [--hidden [--frames N]] [--dev-card DIR]
                                                            the local stack and two clients in one room (visible windows
                                                            for a person, scripts/online-dev.ps1; --hidden for agents)
+    python run.py ui [SCENARIO ...] --game-exe EXE --data DATA [--cards DIR]
+                                                           the account and room screens (ui/<id>): hidden clients driven by
+                                                           --online-ui scripts through the client's own code paths, with
+                                                           screenshots (PNG) of every screen in the run folder
     common: [--mysql-port 3431] [--ports 53100-53199] [--no-build]
 
 Game scenarios (scenarios/<id>/scenario.json, one .script per client, expected.txt): every client is a hidden
@@ -951,6 +955,101 @@ def run_dev(stack, api, pin):
     return problems, notes
 
 
+UI_DIR = os.path.join(HERE, "ui")
+
+
+def ui_scenarios():
+    names = sorted(d for d in os.listdir(UI_DIR) if os.path.isfile(os.path.join(UI_DIR, d, "scenario.json"))) if os.path.isdir(UI_DIR) else []
+    return [dict(json.load(open(os.path.join(UI_DIR, n, "scenario.json"), encoding="utf-8")), name=n) for n in names]
+
+
+def run_ui(stack, sc, connection, servers):
+    """One UI scenario (ui/<id>): hidden game clients that drive the account and room screens with --online-ui scripts
+    (src/game/online_ui_script.hpp) against the local server, each with its own card folder and login folder, screenshots
+    at 1920x1009 widescreen with MSAA 4 (the round 50 / 54 look). The scripts read their account names, passwords and the
+    room name from UI_<CLIENT>_NAME, UI_<CLIENT>_PASSWORD, UI_ROOM and UI_ROOM_PASSWORD (made up per run, never in the
+    repository). Checked: every client ends with exit code 0 and its script complete; no client printed an error."""
+    a = stack.args
+    if not a.game_exe or not a.data:
+        raise RuntimeError("ui scenarios need --game-exe (a DW4_ONLINE_DEV build) and --data (the game data)")
+    key = json.dumps(sc.get("server", {}), sort_keys=True)
+    if key not in servers:
+        servers[key] = start_server(stack, connection, sc.get("server"), "server%d" % len(servers))
+    base, relay, pin, der, diag = servers[key]
+    api = Api(base, der)
+    src = os.path.join(UI_DIR, sc["name"])
+    out = os.path.join(stack.dir, sc["name"])
+    os.makedirs(out, exist_ok=True)
+    tag = "ui" + secrets.token_hex(3)
+    env = dict(os.environ, DW4_NO_ERROR_BOX="1", DW4_ONLINE_SERVER="127.0.0.1:" + base.rsplit(":", 1)[1], DW4_ONLINE_PIN=pin,
+               DW4_WINDOW=a.ui_window, DW4_WIDESCREEN="1", DW4_MSAA="4", DW4_ONLINE_TRACE="1",
+               UI_ROOM="Room " + tag, UI_ROOM_PASSWORD="pw" + secrets.token_hex(4))
+    for c in sc["clients"]:
+        up = c["name"].upper()
+        env["UI_%s_NAME" % up] = tag + c["name"]
+        env["UI_%s_PASSWORD" % up] = "ui test " + c["name"] + " " + secrets.token_hex(6)
+        if c.get("registered"):
+            s, body = api.call("POST", "/api/v1/auth/register", {"username": env["UI_%s_NAME" % up], "password": env["UI_%s_PASSWORD" % up]})
+            if s != 201:
+                raise RuntimeError("register %s: %s %s" % (c["name"], s, body))
+    campaign = os.path.join(out, "campaign.txt")
+    with open(campaign, "w") as f:
+        f.write("0 SEEK 400000 campaign\n")
+    t0 = time.time()
+    procs = []
+    for c in sorted(sc["clients"], key=lambda c: c.get("start", 0)):
+        while time.time() - t0 < c.get("start", 0):
+            time.sleep(0.1)
+        d = os.path.join(out, c["name"])
+        for sub in ("cards/Card A", "cards/Card B", "online"):
+            os.makedirs(os.path.join(d, sub), exist_ok=True)
+        argv = [a.game_exe, "--data", a.data, "--smoke-test", str(c.get("frames", 400000)), "--card-dir", os.path.join(d, "cards"),
+                "--online-folder", os.path.join(d, "online"), "--online-ui", os.path.join(src, c["script"]),
+                "--screenshot", os.path.join(d, "shot.bmp")] + c.get("args", [])
+        cenv = dict(env)
+        cenv.update(c.get("env", {}))
+        if c.get("card"):
+            folder = c["card"] if os.path.isabs(c["card"]) else os.path.join(a.cards, c["card"])
+            if not os.path.isdir(folder):
+                raise RuntimeError("no card folder %s (--cards)" % folder)
+            argv += ["--online-card", folder]
+            cenv["DW4_CAMPAIGN_LOAD"] = "1"
+        if c.get("campaign"):
+            argv += ["--input", campaign]
+        procs.append((c["name"], stack.spawn(argv, os.path.join(d, "log.txt"), env=cenv)))
+    limit = sc.get("timeout", 300)
+    for name, p in procs:
+        try:
+            p.wait(max(1, limit - (time.time() - t0)))
+        except subprocess.TimeoutExpired:
+            p.kill()
+            p.wait()
+    problems, notes = [], []
+    for name, p in procs:
+        d = os.path.join(out, name)
+        lines = open(os.path.join(d, "log.txt"), encoding="utf-8", errors="replace").read().splitlines()
+        steps = [l for l in lines if l.startswith("online-ui: [")]
+        shots = []
+        for f in sorted(os.listdir(d)):
+            if f.endswith(".bmp"):
+                try:
+                    from PIL import Image
+                    Image.open(os.path.join(d, f)).save(os.path.join(d, f[:-4] + ".png"))
+                    os.remove(os.path.join(d, f))
+                    shots.append(f[:-4])
+                except Exception as e:  # keep the BMP
+                    shots.append(f[:-4] + " (bmp: %s)" % e)
+        notes.append("%s: exit %s, %d script steps, shots: %s" % (name, p.poll(), len(steps), ", ".join(shots) or "none"))
+        if p.poll() != 0:
+            problems.append("%s: exit code %s" % (name, p.poll()))
+        problems += ["%s: %s" % (name, l) for l in lines if l.startswith("error:") or "online-ui line" in l]
+        expected = sum(1 for l in open(os.path.join(src, sc["clients"][[c["name"] for c in sc["clients"]].index(name)]["script"]),
+                                       encoding="utf-8") if l.split("#")[0].strip())
+        if len(steps) < expected:
+            problems.append("%s: %d of %d script lines ran (log %s)" % (name, len(steps), expected, os.path.join(d, "log.txt")))
+    return problems, notes
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("scenarios", nargs="*")
@@ -973,6 +1072,7 @@ def main():
     ap.add_argument("--parallel", type=int, default=1, help="game scenarios run side by side (one room each)")
     ap.add_argument("--hidden", action="store_true", help="dev: hidden clients with the campaign bot for --frames frames")
     ap.add_argument("--dev-card", default="", help="dev: a card folder whose saves both online cards start with")
+    ap.add_argument("--ui-window", default="1920x1009", help="ui: the hidden window's size")
     a = ap.parse_args()
     if a.list:
         for sc in (SCENARIOS if a.fake else game_scenarios()):
@@ -987,6 +1087,34 @@ def main():
         return subprocess.run(["dotnet", dll("tests/DW4Online.FakeClient", "DW4Online.FakeClient.dll"), "matrix", "--ports", a.ports,
                                "--warmup", a.warmup, "--seconds", a.seconds, "--out", os.path.join(out, "matrix.json"), "--md",
                                os.path.join(out, "matrix.md")], creationflags=BELOW_NORMAL | NO_WINDOW).returncode
+    if a.scenarios[:1] == ["ui"]:
+        wanted_ui = [sc for sc in ui_scenarios() if len(a.scenarios) == 1 or sc["name"] in a.scenarios[1:]]
+        unknown = [n for n in a.scenarios[1:] if n not in {sc["name"] for sc in ui_scenarios()}]
+        if unknown:
+            print("unknown ui scenario(s): " + " ".join(unknown))
+            return 2
+        stack = Stack(a)
+        failed = 0
+        try:
+            connection = start_mysql(stack)
+            servers = {}
+            for sc in wanted_ui:
+                t = time.time()
+                try:
+                    problems, notes = run_ui(stack, sc, connection, servers)
+                except Exception as e:
+                    problems, notes = ["%s: %s" % (type(e).__name__, e)], []
+                print("%s ui %-10s %s (%.0f s)" % ("PASS" if not problems else "FAIL", sc["name"], sc.get("desc", ""), time.time() - t), flush=True)
+                for n in notes:
+                    print("       " + n, flush=True)
+                for p in problems:
+                    print("     ! " + p, flush=True)
+                failed += bool(problems)
+        finally:
+            stack.stop()
+        print("run folder (screenshots): " + stack.dir)
+        print("%d of %d ui scenarios passed" % (len(wanted_ui) - failed, len(wanted_ui)))
+        return 1 if failed else 0
     game = "G1" in a.scenarios
     dev = a.scenarios == ["dev"]
     if dev:
