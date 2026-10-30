@@ -1,0 +1,13 @@
+# S11b (SEAMLESS.md 6.9): the desync is on the longer member's machine (a). A two-member vote cannot tell: a wins it and
+# b is resynced; b's READY carries its replay's fingerprint, which contradicts a, so a is resynced too and loses the
+# next votes; equal net fingerprints after (before, b was resynced every ten seconds until it was removed).
+a: online: test desync at tick
+relay: desync
+relay: resync .*slot=1
+relay: resync_ready
+relay: replay_disagrees .*slot=0
+relay: resync .*slot=0
+a: online-trace: resynced inst
+!relay: resync_limit
+!relay: resync_too_long
+shared: a b >= 6000

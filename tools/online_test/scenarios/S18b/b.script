@@ -1,0 +1,11 @@
+# S18b, member b (k10): with a to the west end of stag0101, steps on matz02 and holds its prompt open (its yes waits
+# for three members on the mat), then its script ends: the client leaves the room with the prompt open.
+campaign until stage=stagml11,control
+idle until epoch>=@91
+explore mate00 yes until stage=stag0101,control
+log in the field
+route {route:stag0101_west:-308,-190}
+wander -290 -190 5 until sealed>=1800 fail stagechange
+log b steps on the mat
+mat matz02 yes 3 until prompt=1,frames>=240 fail stagechange
+log b leaves the room with its prompt open

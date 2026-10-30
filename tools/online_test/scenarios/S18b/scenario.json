@@ -1,0 +1,11 @@
+{
+  "desc": "exit mat: B leaves the room while its own exit prompt is open: the prompt closes as No, B's LEAVE applies, A (who only walks) gets its own prompt and leaves by the mat",
+  "card": "k10",
+  "frames": 60000,
+  "timeout": 800,
+  "min_shared_ticks": 1500,
+  "clients": [
+    {"name": "a", "script": "a.script", "start": 0},
+    {"name": "b", "script": "b.script", "start": 3}
+  ]
+}
