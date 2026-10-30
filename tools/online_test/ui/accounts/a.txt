@@ -1,9 +1,8 @@
-# The account screens from the title's Online panel (a new account).
+# The account screens from the title menu's Online entry (a new account).
 wait-title
-sleep 4
-wait 30
-shot title_compact
-panel open
+to-menu
+pad DOWN DOWN A
+wait-screens
 expect-gate open
 wait 10
 shot welcome
@@ -49,7 +48,18 @@ screen recover
 wait 10
 shot recover
 back
-panel close
-wait 30
+expect-screen rooms
+# B on the first screen: back to the title menu (the cursor stays on Online); Online again opens the room list.
+key pad-b
+sleep 1
+expect-screens closed
+wait-menu
+expect-cursor 2
+wait 10
 shot title_logged_in
+pad A
+wait-screens
+expect-screen rooms
+wait 10
+shot rooms_again
 end

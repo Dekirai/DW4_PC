@@ -187,6 +187,9 @@ bool OnlineUiScript::run(const Line& line, UiScriptHost& host) {
         }
         if (host.now < next_press_) return false;
         if (key_at_ >= w.size()) return true;
+        // (The title menu takes a press only while it waits: its cursor
+        // slides take a third of a second.)
+        if (host.menu_open && !host.menu_waiting) return false;
         static const std::pair<const char*, std::uint32_t> names[] = {
             {"A", dw4::pad_button::a},       {"B", dw4::pad_button::b},       {"X", dw4::pad_button::x},
             {"Y", dw4::pad_button::y},       {"START", dw4::pad_button::start}, {"UP", dw4::pad_button::up},

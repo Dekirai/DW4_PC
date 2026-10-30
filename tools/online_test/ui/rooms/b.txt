@@ -1,7 +1,8 @@
 # The guest: the room list, the password prompt, a wrong password, joining.
 wait-title
-sleep 4
-panel open
+to-menu
+pad DOWN DOWN A
+wait-screens
 screen login
 login $UI_B_NAME $UI_B_PASSWORD
 expect-screen rooms
@@ -20,10 +21,13 @@ wait 10
 shot join_wrong
 join $UI_ROOM password=$UI_ROOM_PASSWORD
 wait-session
-menu online
 wait-members 2
 sleep 3
 wait 10
 shot room_guest
+# B closes the room view (the room goes on).
+key pad-b
+sleep 1
+expect-screens closed
 sleep 40
 end

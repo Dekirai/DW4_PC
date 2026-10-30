@@ -1,28 +1,38 @@
-# The owner: log in, create a room with a password, play from the title, look at the room, leave.
+# The owner: log in, create a room for two with a password, the room view, Play, the room in F1, leave.
 wait-title
-sleep 4
-panel open
+to-menu
+pad DOWN DOWN A
+wait-screens
 screen login
 fill login.name $UI_A_NAME
+wait 10
+shot login
 login $UI_A_NAME $UI_A_PASSWORD
 expect-screen rooms
 screen create
 fill create.name $UI_ROOM
 fill create.password $UI_ROOM_PASSWORD
-fill create.players 6
+fill create.players 2
 fill create.camera 1
 wait 10
 shot create
-create $UI_ROOM password=$UI_ROOM_PASSWORD max=6 camera=1 light=1
+create $UI_ROOM password=$UI_ROOM_PASSWORD max=2 camera=1 light=1
 wait-session
 sleep 2
+wait 10
+shot room_started
+# Play (the room view's first button) closes the screens: the online title.
+key pad-a
+sleep 1
+expect-screens closed
+wait 10
 shot online_title
 menu online
 wait-members 2 180
 sleep 3
 wait 10
 shot room_two
-sleep 20
+sleep 45
 fill leave.asked 1
 wait 10
 shot leave_question

@@ -19,7 +19,8 @@
 //   wait-menu [SECONDS]        until the title menu waits for input, the screens closed (120 s)
 //   to-menu [SECONDS]          START at the title until its menu waits (120 s)
 //   pad NAME...                presses on the game's pad, one after the other (a quarter second
-//                              apart, each held three steps): A B X Y START UP DOWN LEFT RIGHT
+//                              apart, each held three steps; on the title menu each waits until the
+//                              menu takes input again): A B X Y START UP DOWN LEFT RIGHT
 //   expect-cursor N            the title menu's cursor (0 Game Start, 1 Option, 2 Online)
 //   wait-screens [SECONDS]     until the online screens show over the title (30 s)
 //   expect-screens open|closed
@@ -71,6 +72,7 @@ struct UiScriptHost {
     std::string& menu_tab;     // the F1 tab to select
     bool online_active = false; // a room session runs
     bool title_shown = false;   // the title presents (press start or the menu)
+    bool menu_open = false;     // the title menu shows (state 2)
     bool menu_waiting = false;  // the title menu waits for input
     int cursor = 0;             // its cursor
     bool title_entry = false;   // the menu has the third entry

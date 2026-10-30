@@ -1,12 +1,15 @@
-# The version gate: the panel and F1 Online say "Update required" and offer nothing else.
+# The version gate: Online says "Update required" and offers nothing else; B goes back to the title menu.
 wait-title
-sleep 4
-panel open
+to-menu
+pad DOWN DOWN A
+wait-screens
 sleep 1
 expect-gate outdated
 wait 10
-shot outdated_panel
-panel close
+shot outdated_screens
+key pad-b
+sleep 1
+expect-screens closed
 menu online
 wait 10
 shot outdated_menu

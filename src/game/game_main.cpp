@@ -2667,6 +2667,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                         const auto* title = engine.get<dw4::engine::Title2Manager>();
                         host.title_shown = stage.size() == 8 && dw4::game::is_menu_stage(stage) && stage.substr(6) == "10" && engine.presenting() &&
                                            !engine.loading() && title && title->state() >= 1;
+                        host.menu_open = host.title_shown && title->menu_open();
                         host.menu_waiting = host.title_shown && title->menu_waiting();
                         host.cursor = title ? title->cursor() : 0;
                         host.title_entry = engine.title_online_entry;
