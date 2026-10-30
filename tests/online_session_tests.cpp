@@ -440,6 +440,7 @@ void taken_out_continues_alone() {
     const auto steps = b.steps;
     world.run(2);
     check(b.steps > steps + 100 && b.session->present() == 0b10, "B plays on");
+    check(b.session->inst() == 0, "unregistered until its next barrier (a lone arrival, answered as instance 0)");
     check(a.session->mode() == Mode::solo && a.engine.present_ == 0b01, "A leads alone");
     bool notice = false;
     for (const auto& n : b.session->take_notices()) notice |= n.find("on your own") != std::string::npos;

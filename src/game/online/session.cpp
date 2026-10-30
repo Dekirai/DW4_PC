@@ -1205,7 +1205,11 @@ void Session::go_alone() {
     resyncing_ = false;
     mode_ = Mode::solo;
     mode_of_instance_ = wire::Mode::solo;
-    hub_ = true; // (unregistered: no LOG, NETFP or STATE until the next barrier)
+    // Unregistered (instance 0, as after the barrier timeout's own NEW): no
+    // LOG, NETFP or STATE, and its next BARRIER is taken as a lone arrival,
+    // whose BARRIER_OK names instance 0.
+    inst_ = 0;
+    hub_ = true;
     log_.clear();
     log_first_ = tick_;
     notice("You were taken out of the group; you continue on your own and meet again at the next stage.");
