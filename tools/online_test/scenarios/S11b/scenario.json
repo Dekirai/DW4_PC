@@ -1,0 +1,25 @@
+{
+  "desc": "an injected desync (test hook) on the longer member: the partner is resynced first, its replay contradicts the longer member, which is resynced, equal net fingerprints after",
+  "card": "k10",
+  "seed_story": true,
+  "frames": 60000,
+  "timeout": 800,
+  "min_shared_ticks": 6000,
+  "allow_resync": true,
+  "min_after_resync": 3000,
+  "clients": [
+    {
+      "name": "a",
+      "script": "a.script",
+      "start": 0,
+      "env": {
+        "DW4_ONLINE_TEST_DESYNC": "1500"
+      }
+    },
+    {
+      "name": "b",
+      "script": "b.script",
+      "start": 3
+    }
+  ]
+}

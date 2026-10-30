@@ -1905,6 +1905,7 @@ void Engine::step(const std::array<PadSample, 4>& samples) {
     // Online (7.4): no console reset however the game sets beSystem +0x5F.
     if (console_reset_.enabled()) console_reset_.set_enabled(false);
     const auto effective = online_samples(samples);
+    close_leaving_prompt();
     step_impl(effective);
     finish_online_step(effective);
 }

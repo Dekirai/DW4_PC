@@ -79,6 +79,19 @@ public sealed class HubMember(int index, long accountId, string name, bool owner
     /// <summary>STORY tokens (Instances:StoryBurst, refilled at StoryMessagesPerMinute) and when they were refilled.</summary>
     public double StoryTokens { get; set; } = -1;
     public long StoryRefilledAt { get; set; }
+    /// <summary>When the member's last BARRIER that arrived alone was decided (at most one per Instances:LoneBarrierMs).</summary>
+    public long LoneBarrierAt { get; set; }
+    /// <summary>The member's state budget (Relay:StateBytesPerMinute): bytes left and when it was last refilled.</summary>
+    public double StateTokens { get; set; } = double.NaN;
+    public long StateStamp { get; set; }
+    /// <summary>When the member's resyncs went out (the last Instances:ResyncWindowMinutes; 6.9).</summary>
+    public Queue<long> ResyncTimes { get; } = new();
+    /// <summary>How often a resync's replay of the log disagreed with this member's own fingerprint: its engine was the one
+    /// off, so it loses the next two-member vote (the longer member no longer wins by default).</summary>
+    public int ReplayMismatches { get; set; }
+    /// <summary>The join that made the member one of its instance, until the instance's log reaches its JOIN (a gap before J
+    /// that never closes sends it back to its own stage as NEW).</summary>
+    public JoinState? JoinedVia { get; set; }
 }
 
 public sealed record Heading(string Stage, byte Point, ulong Context, long At);
@@ -164,7 +177,37 @@ public sealed class BarrierCollect(uint tick, string stage, byte point, byte ali
     public ulong Context { get; } = context;
     public long FirstAt { get; } = firstAt;
     public Dictionary<int, (HubMember Member, byte[] Carry)> Reports { get; } = [];
+    /// <summary>Each report's BARRIER (a fork while the barrier waits splits the reports by side).</summary>
+    public Dictionary<int, BarrierMsg> Messages { get; } = [];
+    /// <summary>The reporting slots in arrival order.</summary>
+    public List<int> Order { get; } = [];
     public int Mismatches { get; set; }
+
+    public void Add(int slot, HubMember member, BarrierMsg msg)
+    {
+        Reports[slot] = (member, msg.Carry);
+        Messages[slot] = msg;
+        Order.Remove(slot);
+        Order.Add(slot);
+    }
+
+    public void Remove(int slot)
+    {
+        Reports.Remove(slot);
+        Messages.Remove(slot);
+        Order.Remove(slot);
+    }
+
+    /// <summary>The reports of <paramref name="slots"/> as a barrier of their own (its fields from the first of them), or null.</summary>
+    public BarrierCollect? Part(byte slots)
+    {
+        var mine = Order.Where(s => (slots & (1 << s)) != 0 && Messages.ContainsKey(s)).ToList();
+        if (mine.Count == 0) return null;
+        var first = Messages[mine[0]];
+        var b = new BarrierCollect(first.Tick, first.Stage, first.Point, first.AliveMask, first.PresentMask, first.ContextHash, FirstAt);
+        foreach (var s in mine) b.Add(s, Reports[s].Member, Messages[s]);
+        return b;
+    }
 }
 
 /// <summary>
@@ -176,6 +219,7 @@ public sealed class SnapshotStore
     private sealed class Upload
     {
         public byte[]? Buffer;
+        public uint Total;
         public int Received;
         public byte[]? Bytes;
         public HubMember? Uploader;
@@ -198,19 +242,31 @@ public sealed class SnapshotStore
     /// <summary>Whether two stores hold the same upload (a parent and its fork children).</summary>
     public bool SharesWith(SnapshotStore other) => ReferenceEquals(_u, other._u);
 
-    /// <summary>Adds a chunk; true when the snapshot just completed.</summary>
+    /// <summary>
+    /// Adds a chunk; true when the snapshot just completed. A visit has one upload: its first chunk fixes the total, and
+    /// the buffer grows with the chunks that came (a new total per 17-byte frame made the relay allocate 4 MiB each).
+    /// </summary>
     public bool AddChunk(uint total, uint offset, byte[] chunk)
     {
         if (Complete) return false;
         if (total > StateBlob.MaxSnapshot) throw new ProtocolException("snapshot too large");
-        if (_u.Buffer is null || _u.Buffer.Length != total)
+        if (_u.Buffer is null)
         {
             if (offset != 0) throw new ProtocolException("snapshot does not start at offset 0");
-            _u.Buffer = new byte[total];
+            _u.Total = total;
+            _u.Buffer = new byte[Math.Min(total, (uint)Math.Max(chunk.Length, 1))];
             _u.Received = 0;
         }
+        else if (total != _u.Total) throw new ProtocolException("the snapshot's total changed during its upload");
         if (offset != _u.Received) throw new ProtocolException("snapshot chunks out of order");
         if (offset + (uint)chunk.Length > total) throw new ProtocolException("snapshot chunk beyond its total");
+        var end = (int)offset + chunk.Length;
+        if (end > _u.Buffer.Length)
+        {
+            var grown = new byte[Math.Min(total, (uint)Math.Max(end, _u.Buffer.Length * 2))];
+            _u.Buffer.AsSpan(0, _u.Received).CopyTo(grown);
+            _u.Buffer = grown;
+        }
         chunk.CopyTo(_u.Buffer, (int)offset);
         _u.Received += chunk.Length;
         if (_u.Received < total) return false;
@@ -277,6 +333,11 @@ public sealed class HubInstance(uint id)
     public SortedDictionary<uint, SplitVote> Splits { get; } = [];
     /// <summary>Ticks whose fingerprints were voted on already (one vote per tick).</summary>
     public HashSet<uint> Voted { get; } = [];
+    /// <summary>Net fingerprints of a resync's replay of the log (its READY): what every member's engine must have had.</summary>
+    public SortedDictionary<uint, ulong> ReplayFp { get; } = [];
+    /// <summary>Members the server took out (LEAVE) that still play: they are sent the ticks up to their LEAVE's tick, so their
+    /// own client sees the LEAVE and continues alone (6.9, 6.10).</summary>
+    public Dictionary<HubMember, uint> Departed { get; } = [];
 
     // Sealed schedule
     public long S0 { get; set; }
@@ -296,6 +357,12 @@ public sealed class HubInstance(uint id)
     public bool LogFull { get; set; }
     public long LastLogAt { get; set; }
     public PendingSoloJoin? SoloJoin { get; set; }
+    /// <summary>The last JOIN_REQ sent to the solo leader: its JOIN_AT is answered even when the joiner went meanwhile (the
+    /// leader's client turned to delayed sampling and waits for SEALED(J)).</summary>
+    public PendingSoloJoin? AskedJoin { get; set; }
+    /// <summary>LEAD_FROM was sealed while the log still waits for the leader's LOG before it: the instance turns solo-led
+    /// once the stream is contiguous up to it.</summary>
+    public bool SoloPending { get; set; }
     /// <summary>When the visit's BARRIER_OK went out (a solo LOG cannot run ahead of the clock from here).</summary>
     public long VisitStartedAt { get; set; }
 

@@ -1,0 +1,16 @@
+# S18b, member a (k10): with b to the west end of stag0101; waits near matz02 without pressing anything while b's prompt
+# is open, then b leaves the room: b's prompt closes by itself (SEAMLESS.md 6.5), b's player goes, and a's own prompt
+# takes it to stag0102. (Before, the prompt read a's pad, which a never pressed: present stayed 3, a got no prompt.)
+campaign until stage=stagml11,control
+idle until epoch>=@90
+explore mate00 yes until stage=stag0101,control
+log in the field
+route {route:stag0101_west:-258,-194}
+wander -262 -191 5 until asking>=1,frames>=120 fail stagechange
+log b holds its prompt
+wander -262 -191 5 until present=1 fail frames>=1800,stagechange
+log b's prompt closed, b is gone
+mat matz02 yes until stage=stag0102,control fail frames>=2400
+log a left by matz02
+wander 330 140 12 until frames>=300
+idle until frames>=60

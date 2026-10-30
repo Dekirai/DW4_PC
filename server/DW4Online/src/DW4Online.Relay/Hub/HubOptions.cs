@@ -48,4 +48,13 @@ public sealed class InstanceOptions
     public int ResyncCooldownSeconds { get; set; } = 10;
     /// <summary>RESUME sends at most this many ticks again (a longer gap is no reconnect: the member is not resumed).</summary>
     public int MaxResumeTicks { get; set; } = 3600;
+    /// <summary>A member's BARRIER that arrives alone (a straggler, a client that went on by itself) is decided at most once in
+    /// this many milliseconds (every decision may build a state transfer; an honest client loads a stage in between).</summary>
+    public int LoneBarrierMs { get; set; } = 1000;
+    /// <summary>Sealed ticks waiting beyond the log for the solo leader's LOG before J (after JOIN_AT): more than this many
+    /// seconds of them, or the leader gone, and the gap can never close (the joiners go back to their own stage as NEW).</summary>
+    public int MaxAheadSeconds { get; set; } = 15;
+    /// <summary>The resyncs a member gets within <see cref="ResyncWindowMinutes"/>; one more lost vote and it continues alone (6.9).</summary>
+    public int ResyncLimit { get; set; } = 3;
+    public int ResyncWindowMinutes { get; set; } = 10;
 }

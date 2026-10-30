@@ -42,6 +42,9 @@ public sealed class TickLog
     /// <summary>Uncompressed bytes of this log's own records.</summary>
     public long RawBytes { get; private set; }
 
+    /// <summary>Uncompressed bytes of the records 0..Count-1 (with a parent's whole log: an upper bound).</summary>
+    public long TotalRawBytes => RawBytes + (_prefix?.TotalRawBytes ?? 0);
+
     /// <summary>Bytes this log's own records take in memory (compressed blocks plus the open block).</summary>
     public long StoredBytes => _blocks.Sum(b => (long)b.Length) + _open.Sum(r => (long)r.Length);
 

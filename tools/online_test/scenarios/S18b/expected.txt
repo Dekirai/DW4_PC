@@ -1,0 +1,9 @@
+# S18b (SEAMLESS.md 6.5): a member leaves the room with its own exit prompt open.
+b: online-script: prompt active=1 owner=1 asking=1
+a: online-script: step .* log: b holds its prompt
+b: online-script: step .* log: b leaves the room with its prompt open
+relay: leave .*slot=1
+a: online-trace: leave applied .*slot=1
+a: online-script: step .* log: b's prompt closed, b is gone
+a: (?i)decision 1 .*stage=stag0102
+a: online-script: step .* log: a left by matz02

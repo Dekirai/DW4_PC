@@ -33,8 +33,14 @@ public sealed class RelayOptions
     /// <summary>State transfers (STATE_DATA and the LIVE frames behind it) per connection, outside the game frames.</summary>
     public int StateBytesPerSecond { get; set; } = 4 * 1024 * 1024;
     public int StateBurstBytes { get; set; } = 16 * 1024 * 1024;
-    /// <summary>A connection whose unsent frames exceed this is closed (it does not read).</summary>
-    public int MaxQueuedBytes { get; set; } = 32 * 1024 * 1024;
+    /// <summary>A connection whose unsent game frames exceed this is closed (it does not read; a member gets about 5 KB/s).</summary>
+    public int MaxQueuedBytes { get; set; } = 4 * 1024 * 1024;
+    /// <summary>A connection whose unsent state transfers (STATE_DATA and the LIVE frames behind it) exceed this is closed.</summary>
+    public int MaxQueuedStateBytes { get; set; } = 24 * 1024 * 1024;
+    /// <summary>State transfers a member may be sent per minute (a burst of this size, refilled over a minute; joins, resyncs).</summary>
+    public int StateBytesPerMinute { get; set; } = 64 * 1024 * 1024;
+    /// <summary>State transfers built at the same time in the whole relay (each decompresses a whole log).</summary>
+    public int MaxConcurrentStateBuilds { get; set; } = 2;
     /// <summary>A sealed member's slot is filled this long after its connection closed, then the server stamps LEAVE.</summary>
     public int ReconnectSeconds { get; set; } = 10;
     /// <summary>After this long of continuous filling the server stamps LEAVE for a lagging member.</summary>

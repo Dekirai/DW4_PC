@@ -124,6 +124,8 @@ const std::vector<std::string_view>& online_presentation_env() {
         "DW4_ONLINE_TRACE", "DW4_ONLINE_SCRIPT_EVERY",
         // the online account's achievement profile of a test run (online_achievements.hpp, round S2)
         "DW4_ONLINE_PROFILE",
+        // the resync scenarios' injected desync (DW4_ONLINE_DEV builds only, game_main.cpp: it is the point of the test)
+        "DW4_ONLINE_TEST_DESYNC",
         // round S1 test tools (game_main.cpp)
         "DW4_SNAPSHOT_DUMP", "DW4_PAD_LOG", "DW4_EXTRA_RENDERS", "DW4_EXTRA_WIDEN", "DW4_EXTRA_PREVIOUS",
         "DW4_CAM_CHECK"};

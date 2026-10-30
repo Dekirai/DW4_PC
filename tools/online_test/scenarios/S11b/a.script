@@ -1,0 +1,8 @@
+# S11b, member a (k10, DW4_ONLINE_TEST_DESYNC=1500: at sealed tick 1500 its engine draws one random number the other machine does not): through the lobby gate with b (a co-arrival), then the goburi east of the entrance.
+campaign until stage=stagml11,control
+idle until epoch>=@90
+explore mate00 yes until stage=stag0101,control
+log in the field
+wander 440 20 40 until sealed>=7200 or present=1,frames>=60
+log enough
+idle until frames>=60

@@ -31,7 +31,9 @@ campaign bot calls it at the title). Checked for every scenario: the net fingerp
 of every instance are equal on every client at every tick (every 60 ticks) they both report with the same members, the
 canonical snapshot hashes of every NEW (and co-arrival) are equal, the relay logs no desync, mismatch or resync, no client
 was closed or crashed; then the scenario's expected log (in order per source; "!" lines must not appear; "shared: a b >=
-N" asks for N ticks of equal fingerprints with both present in one instance); a scenario's "achievements" asks the
+N" asks for N ticks of equal fingerprints with both present in one instance). A scenario with "allow_resync" (S11a, S11b:
+a client's DW4_ONLINE_TEST_DESYNC injects a desync) may differ up to its instance's last resync READY and must then be
+equal for "min_after_resync" ticks; its expected log checks the votes and resyncs. A scenario's "achievements" asks the
 server for each client account's online achievements afterwards (check_achievements). Network traffic stays on loopback. A
 scenario.json with "server": {...} gets its own server with those settings merged over the stack's and its own database
 (S14h / S14a: {"Rooms": {"StoryWhileOwnerAway": "hold"}}); "min_shared_ticks" lowers the 10,000 shared ticks a scenario
@@ -802,6 +804,28 @@ def evaluate_real(sc, src, out, code, diag, timed_out, exits):
     compared = [k for k, per in table.items() if len(per) >= 2]
     differ = [k for k in compared if len(set(table[k].values())) > 1]
     notes.append("%d fingerprint ticks reported by two or more clients, %d differ" % (len(compared), len(differ)))
+    relay = load_jsonl(os.path.join(diag, "room_%s.jsonl" % code))
+    if sc.get("allow_resync"):
+        # A resync scenario (S11a, S11b): the fingerprints may differ from the injected desync up to the instance's last
+        # resync READY; from there on they must be equal for min_after_resync ticks.
+        ready = {}
+        for e in relay:
+            if e.get("ev") == "resync_ready":
+                key = (int(e["inst"]), int(e["visit"]))
+                ready[key] = max(ready.get(key, -1), int(e.get("tick", -1)))
+        healed = [k for k in differ if k[2] <= ready.get((k[0], k[1]), -1)]
+        notes.append("%d differing ticks before the last resync READY (allowed), resync READY at %s" % (len(healed), ready))
+        differ = [k for k in differ if k not in healed]
+        after = 0
+        for (inst, visit), t in ready.items():
+            equal_after = [k[2] for k in compared if (k[0], k[1]) == (inst, visit) and k[2] > t and k not in differ]
+            if equal_after:
+                after = max(after, max(equal_after) - t)
+        notes.append("equal net fingerprints for %d ticks after the resync" % after)
+        if not ready:
+            problems.append("no resync ended (no resync_ready in the relay log)")
+        elif after < sc.get("min_after_resync", 3000):
+            problems.append("only %d ticks of equal net fingerprints after the resync (< %d)" % (after, sc.get("min_after_resync", 3000)))
     for k in sorted(differ)[:4]:
         problems.append("net fingerprints differ at instance %d visit %d tick %d (present %x): %s" % (k[0], k[1], k[2], k[3], table[k]))
     spans = {}
@@ -830,12 +854,13 @@ def evaluate_real(sc, src, out, code, diag, timed_out, exits):
     for k in snap_multi:
         if len(set(stab[k].values())) > 1:
             problems.append("canonical snapshot hashes differ at instance %d visit %d: %s" % (k[0], k[1], stab[k]))
-    relay = load_jsonl(os.path.join(diag, "room_%s.jsonl" % code))
     kinds = {}
     for e in relay:
         kinds[e["ev"]] = kinds.get(e["ev"], 0) + 1
     notes.append("relay: " + ", ".join("%s %d" % kv for kv in sorted(kinds.items())))
     for bad in ("desync", "snaphash_mismatch", "split_mismatch", "barrier_mismatch", "barrier_split", "resync", "ready_mismatch"):
+        if sc.get("allow_resync") and bad in ("desync", "resync"):
+            continue  # (the resync scenarios inject them; their expected.txt checks how they end)
         if kinds.get(bad):
             problems.append("relay logged %d x %s" % (kinds[bad], bad))
     relay_lines = [" ".join([e["ev"]] + ["%s=%s" % (k, v) for k, v in e.items() if k != "ev"]) for e in relay]

@@ -11,7 +11,7 @@ namespace DW4Online.Tests;
 /// clock is a number the test moves. Covers barrier decisions with holds, joins (solo-led and sealed), sealing and
 /// fills, co-arrivals, forks, leaves, dissolves, the barrier's discard and the fingerprint vote.
 /// </summary>
-public class HubLogicTests
+public partial class HubLogicTests
 {
     public delegate T Parser<out T>(ReadOnlySpan<byte> payload);
 

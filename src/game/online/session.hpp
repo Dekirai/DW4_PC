@@ -53,7 +53,8 @@ struct SessionConfig {
     std::string own_name;
     std::uint32_t rate = 3000;          // replay steps per second until measured (RATE)
     double barrier_timeout = 5.0;       // a solo group goes on as NEW without an answer (3.4)
-    double replay_budget = 0.012;       // seconds of catch-up per poll (0: until caught up)
+    double replay_budget = 0.05;        // seconds of catch-up per poll (0: until caught up); the loading screen
+                                        // still gets about 15 pictures a second
     double presence_interval = 0.2;     // PRESENCE five times per second
     double log_interval = 0.1;          // LOG batches every 100 ms
     std::size_t state_limit = 64u << 20; // largest state transfer accepted
@@ -169,6 +170,7 @@ private:
     void report_state(double now, bool force);
     void become_member(double now);
     void finish_resync(double now);
+    void go_alone();
     std::uint32_t roster_member_for(int slot) const;
     void run_catch_up(double now);
     void send_input_ahead(const wire::WirePad& pad);
@@ -242,9 +244,12 @@ private:
     std::map<std::uint32_t, std::uint64_t> replay_fingerprints_;
     bool ready_sent_ = false;
     bool resyncing_ = false;            // RESYNC: the catch-up ends as a member again, without a JOIN
+    std::optional<std::uint32_t> resync_lead_; // a LEAD_FROM the resync's replay reached (the partner left meanwhile)
+    std::uint8_t alone_pending_ = 0;    // taken out of the group: the others' players to remove at a membership-safe step
     std::uint64_t replayed_steps_ = 0;
     double replay_seconds_ = 0;
     double catch_up_started_ = 0;
+    double starved_ = 0, starved_since_ = 0; // catch-up time spent waiting for ticks (not part of the wall-clock rate)
     std::uint32_t gap_traced_ = 0xFFFFFFFFu; // the tick a catch-up waits for, traced once
 
     // Reports.
