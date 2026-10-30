@@ -198,7 +198,8 @@ public partial class AchievementRulesTests
         Assert.Equal("online_raid", seed[71].Code);
     }
 
-    // The catalogue after 0008: the game client's (data/online/achievements.json, exported by the client's
+    // The catalogue after its migration (sql/NNNN_achievement_catalogue.sql, 0008 on this branch; found by name, so a
+    // renumbering at a merge needs no change here): the game client's (data/online/achievements.json, exported by the client's
     // dw4_achievements_tests; its ctest compares the same file with the client's table).
     [GeneratedRegex(@"^\(\s*(\d+),\s*'([a-z0-9_]+)',\s*'((?:[^']|'')*)',\s*'((?:[^']|'')*)',\s*'(\w+)',\s*'(\w+)',\s*(\d+),\s*'(\w+)',\s*(NULL|\d+),\s*(NULL|'\w+'),\s*([01]),\s*(\d+)\)[,;]?\r?$", RegexOptions.Multiline)]
     private static partial Regex CatalogueRow();
@@ -206,12 +207,14 @@ public partial class AchievementRulesTests
     private sealed record CatalogueEntry(int Id, string Code, string Name, string Description, string Category, string Tier, int Points,
         string Kind, long? Goal, string? StatKey, bool Hidden, int SortOrder);
 
-    private static string Sql0008() => File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "sql", "0008_achievement_catalogue.sql"));
+    private static string CatalogueSql() =>
+        // (The newest: a renamed file can stay behind in an incremental build's output folder.)
+        File.ReadAllText(Directory.GetFiles(Path.Combine(AppContext.BaseDirectory, "sql"), "*_achievement_catalogue.sql").Order(StringComparer.Ordinal).Last());
 
     private static List<CatalogueEntry> LoadCatalogue()
     {
         static string Unquote(string s) => s.Replace("''", "'");
-        return CatalogueRow().Matches(Sql0008()).Select(m => new CatalogueEntry(
+        return CatalogueRow().Matches(CatalogueSql()).Select(m => new CatalogueEntry(
             int.Parse(m.Groups[1].Value), m.Groups[2].Value, Unquote(m.Groups[3].Value), Unquote(m.Groups[4].Value), m.Groups[5].Value,
             m.Groups[6].Value, int.Parse(m.Groups[7].Value), m.Groups[8].Value,
             m.Groups[9].Value == "NULL" ? null : long.Parse(m.Groups[9].Value),
@@ -266,7 +269,7 @@ public partial class AchievementRulesTests
         }
         Assert.Equal(52, catalogue.Count(s => seed.ContainsKey(s.Code)));
         // Every 0002 code the client does not have is retired by name (never reused).
-        var sql = Sql0008();
+        var sql = CatalogueSql();
         var retire = sql[sql.IndexOf("UPDATE achievements SET active = 0", StringComparison.Ordinal)..];
         var retired = Regex.Matches(retire, "'([a-z0-9_]+)'").Select(m => m.Groups[1].Value).ToHashSet();
         Assert.Equal(seed.Keys.Where(c => catalogue.All(s => s.Code != c)).Order(), retired.Order());
