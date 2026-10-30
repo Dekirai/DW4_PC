@@ -514,6 +514,19 @@ void DemoManager::update(Engine& engine) {
                 std::optional<std::string_view> name;
                 if (record.name) name = *record.name;
                 if (record.delay_frames > 0) {
+                    // (Online: a departure posted ahead is a solo
+                    // instance's heading, Engine::note_departure.)
+                    if (record.command == "NEXTSTAGE" && record.category == "STAGECTL" && !packet.strings.empty() && engine.online().enabled) {
+                        int point = 0;
+                        for (std::size_t k = cursor; k-- > 0;)
+                            if (records[k].category == "PLAYERPOINT" && records[k].command == "SETGENERATEPOS" && records[k].argument) {
+                                Packet at;
+                                parse_packet_arguments(*records[k].argument, at);
+                                if (!at.ints.empty()) point = int(at.ints[0]);
+                                break;
+                            }
+                        engine.note_departure(packet.string(0), point, record.delay_frames);
+                    }
                     engine.messenger().post(engine.time() + kFrameNs * record.delay_frames, record.category, record.name,
                                             record.index, record.command, std::move(packet));
                 } else {

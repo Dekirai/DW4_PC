@@ -659,7 +659,8 @@ void Session::after_step(double now) {
         // (A side with one member left keeps executing sealed ticks until the
         // server's LEAD_FROM: from that tick it leads alone.)
     }
-    if (const auto heading = engine_.take_heading(); heading && member && !hub_)
+    // (Also from a hub instance: the lobby gate announces a field, 3.4.)
+    if (const auto heading = engine_.take_heading(); heading && member)
         send(w::Type::heading, w::encode(w::Heading{inst_, heading->stage, std::uint8_t(std::clamp(heading->point, 0, 255)),
                                                     engine_.session_context_hash()}));
     if (engine_.supports_barriers()) {
@@ -716,6 +717,8 @@ void Session::report_state(double now, bool force) {
     state_sent_at_ = now;
     state_pending_ = false;
     send(w::Type::state, w::encode(w::State{inst_, visit_, tick_ ? tick_ - 1 : 0, flags, context, joinable ? w::NotJoinable::none : reason}));
+    trace("report inst=%u visit=%u tick=%u joinable=%d reason=%u safe=%d boss=%d", inst_, visit_, tick_ ? tick_ - 1 : 0, joinable ? 1 : 0,
+          joinable ? 0u : unsigned(reason), (flags & w::state_flag::membership_safe) ? 1 : 0, (flags & w::state_flag::boss_lock) ? 1 : 0);
 }
 
 // ---- barrier
@@ -850,6 +853,7 @@ void Session::begin_visit(double now) {
             }
             const auto canonical = engine_.snapshot_bytes(true);
             send(w::Type::snaphash, w::encode(w::SnapHash{inst_, visit_, w::fnv1a64(canonical)}));
+            trace("snaphash inst=%u visit=%u hash=%016llx new", inst_, visit_, static_cast<unsigned long long>(w::fnv1a64(canonical)));
         }
         if (mode_of_instance_ != w::Mode::sealed || decision == w::Decision::dissolve) {
             mode_ = Mode::solo;
@@ -910,11 +914,16 @@ void Session::on_state(w::StateData state, double now) {
     hub_ = is_hub_stage(engine_.stage());
     const bool co_arrival = state.purpose == w::StatePurpose::co_arrival;
     if (co_arrival) {
-        // The base spawned this member in its load step: a member from tick 0.
+        // The base spawned this member in its load step: a member from tick 0,
+        // with the base's members and the other co-arrivals present (the
+        // co-arrival's BARRIER_OK names only the own slot).
+        present_ = engine_.present_mask();
         engine_.set_split_identity(slot_);
         engine_.set_replay(false);
         serial_at_barrier_ = engine_.load_serial();
-        send(w::Type::snaphash, w::encode(w::SnapHash{inst_, visit_, w::fnv1a64(engine_.snapshot_bytes(true))}));
+        const auto hash = w::fnv1a64(engine_.snapshot_bytes(true));
+        send(w::Type::snaphash, w::encode(w::SnapHash{inst_, visit_, hash}));
+        trace("snaphash inst=%u visit=%u hash=%016llx co-arrival", inst_, visit_, static_cast<unsigned long long>(hash));
         loading_.clear();
         if (mode_of_instance_ != w::Mode::sealed) mode_ = Mode::solo;
         else start_sealed(last_own_);
@@ -931,6 +940,7 @@ void Session::on_state(w::StateData state, double now) {
     engine_.set_replay(true);
     replayed_steps_ = 0;
     replay_seconds_ = 0;
+    catch_up_started_ = clock_seconds();
     mode_ = Mode::catching_up;
     run_catch_up(now);
 }
@@ -941,6 +951,10 @@ void Session::run_catch_up(double now) {
     while (mode_ == Mode::catching_up) {
         const auto it = ticks_.find(tick_);
         if (it == ticks_.end()) break;
+        // (DW4_ONLINE_RATE, test runs: a slower machine's replay rate.)
+        if (config_.max_replay_rate > 0 &&
+            double(replayed_steps_ + done) >= (clock_seconds() - catch_up_started_) * double(config_.max_replay_rate))
+            break;
         w::TickBody body = std::move(it->second);
         ticks_.erase(it);
         for (auto& e : body.events) events_.push_back({tick_, std::move(e)});

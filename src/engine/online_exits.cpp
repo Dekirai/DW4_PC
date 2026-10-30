@@ -367,6 +367,11 @@ bool Engine::gatedisc_fork() {
     return true;
 }
 
+void Engine::note_departure(std::string_view stage, int point, std::int64_t delay) {
+    if (!online_.enabled || replay_ || online_shared() || heading_ || delay <= 0 || stage.empty()) return;
+    heading_ = ExitHeading{frame_, std::string(stage), point, online_.present};
+}
+
 std::optional<ExitHeading> Engine::take_heading() {
     auto taken = heading_;
     heading_.reset();

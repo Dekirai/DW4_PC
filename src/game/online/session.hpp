@@ -58,6 +58,7 @@ struct SessionConfig {
     double log_interval = 0.1;          // LOG batches every 100 ms
     std::size_t state_limit = 64u << 20; // largest state transfer accepted
     bool trace = false;                 // DW4_ONLINE_TRACE: decisions, membership, NETFP lines on stdout (test runs)
+    std::uint32_t max_replay_rate = 0;  // DW4_ONLINE_RATE (test runs): replay steps per second at most (0: as fast as it goes)
 };
 
 enum class Mode : std::uint8_t { connecting, solo, sealed, parked, transition, waiting_state, catching_up, observing, lost, closed };
@@ -223,6 +224,7 @@ private:
     bool ready_sent_ = false;
     std::uint64_t replayed_steps_ = 0;
     double replay_seconds_ = 0;
+    double catch_up_started_ = 0;
 
     // Reports.
     std::uint8_t state_flags_ = 0xFF;

@@ -521,6 +521,12 @@ public:
     // An exit the local copy takes (the funcStageChange port or the gate
     // disc, 5.2), once, for the client's HEADING.
     std::optional<ExitHeading> take_heading();
+    // A demo record posted STAGECTL NEXTSTAGE `delay` frames ahead (the
+    // lobby gate's menu, a solo instance's funcStageChange): online, in a
+    // one-member instance, this announces the departure as a heading (3.4:
+    // members who take the same gate within seconds arrive together).
+    // Observe-only (nothing of it is in the fingerprint or the snapshot).
+    void note_departure(std::string_view stage, int point, std::int64_t delay);
     // The exit port's state for this machine's texts and draw filter.
     const ExitPromptView& exit_prompt() const { return exit_view_; }
     // The subtrees this machine's picture leaves out in a multi-member

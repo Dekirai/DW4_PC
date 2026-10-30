@@ -4,6 +4,7 @@
 #include "online/token_store.hpp"
 #include "online/transport.hpp"
 
+#include <algorithm>
 #include <cstdlib>
 #include <iostream>
 
@@ -100,6 +101,12 @@ OnlineRun::OnlineRun(std::unique_ptr<online::HttpWorker> http, OnlineRoom room, 
     config.own_name = room_.account;
     config.rate = rate;
     config.trace = std::getenv("DW4_ONLINE_TRACE") != nullptr;
+    // DW4_ONLINE_RATE=N (test runs): this machine replays at most N steps per
+    // second and reports that rate (a slower machine, SEAMLESS.md 6.6).
+    if (const char* cap = std::getenv("DW4_ONLINE_RATE"); cap && std::atoi(cap) > 0) {
+        config.max_replay_rate = std::uint32_t(std::atoi(cap));
+        config.rate = std::min(config.rate, config.max_replay_rate);
+    }
     session_ = std::make_unique<online::Session>(link_, config);
 }
 
