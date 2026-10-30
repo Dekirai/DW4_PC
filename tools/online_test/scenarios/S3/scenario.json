@@ -1,5 +1,6 @@
 {
   "desc": "three clients: two joins mid-stage, one at a time, then a common stage change",
+  "seed_story": true,
   "frames": 80000,
   "timeout": 1000,
   "clients": [

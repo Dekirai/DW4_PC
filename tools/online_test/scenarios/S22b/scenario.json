@@ -1,5 +1,6 @@
 {
   "desc": "a joiner whose target forks during the catch-up follows the instance id",
+  "seed_story": true,
   "frames": 80000,
   "timeout": 1000,
   "clients": [

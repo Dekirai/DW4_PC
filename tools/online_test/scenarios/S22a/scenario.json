@@ -1,5 +1,6 @@
 {
   "desc": "a joiner whose target leaves the stage during the catch-up falls back to NEW",
+  "seed_story": true,
   "frames": 80000,
   "timeout": 1000,
   "clients": [

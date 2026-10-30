@@ -1,5 +1,6 @@
 {
   "desc": "two members take the area gate 2 s apart: one co-arrival, one entry scene",
+  "seed_story": true,
   "card": "k2",
   "frames": 60000,
   "timeout": 700,

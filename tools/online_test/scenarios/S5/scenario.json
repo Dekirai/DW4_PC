@@ -1,5 +1,6 @@
 {
   "desc": "everybody falls: game over, the group dissolves into solo lobbies",
+  "seed_story": true,
   "frames": 80000,
   "timeout": 1000,
   "clients": [

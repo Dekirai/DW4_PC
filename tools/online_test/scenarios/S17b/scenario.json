@@ -1,5 +1,6 @@
 {
   "desc": "two members take the area gate 8 s apart: the later waits for the entry scene, then joins",
+  "seed_story": true,
   "card": "k2",
   "frames": 60000,
   "timeout": 700,

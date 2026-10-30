@@ -1,5 +1,6 @@
 {
   "desc": "online achievements: S5's run with achievements on; each machine reports its own player with the ranked context, the server holds them",
+  "seed_story": true,
   "frames": 80000,
   "timeout": 1000,
   "env": {"DW4_ACHIEVEMENTS": "1"},

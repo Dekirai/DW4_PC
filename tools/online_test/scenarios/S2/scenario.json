@@ -1,5 +1,6 @@
 {
   "desc": "one member leaves by an exit (fork), the other follows later (join by catch-up), both change stage together",
+  "seed_story": true,
   "frames": 80000,
   "timeout": 1000,
   "clients": [

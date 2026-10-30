@@ -1,5 +1,6 @@
 {
   "desc": "dead partner gives up: A dead holds START (give up): A alone to the lobby (game over in its copy), B plays on",
+  "seed_story": true,
   "frames": 80000,
   "timeout": 1000,
   "clients": [
