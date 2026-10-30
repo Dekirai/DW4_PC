@@ -1,5 +1,6 @@
 # The S2 done-when, the guest: registers in the screens, finds the room in the list, joins it and plays a new
-# character (the campaign bot); after its save room it leaves the room (the automatic save when leaving).
+# character (the campaign bot); right after its save room it leaves the room: the automatic save when leaving finds
+# nothing new (the server holds the save room's revision).
 open
 screen register
 register $UI_B_NAME $UI_B_PASSWORD

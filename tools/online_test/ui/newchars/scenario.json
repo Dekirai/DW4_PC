@@ -1,5 +1,5 @@
 {
-  "desc": "the S2 done-when: a and b register in the screens, a creates a room, b joins it, both make new characters (campaign bot), save in the save room and at stage changes, b then a leave (the leaving save); the server returns both records",
+  "desc": "the S2 done-when: a and b register in the screens, a creates a room, b joins it, both make new characters (campaign bot), save in the save room and at stage changes, b leaves after its save room, a after playing on in stag0101 (the leaving saves); the server returns both records",
   "timeout": 1500,
   "checkpoints": "p2",
   "clients": [
@@ -7,7 +7,7 @@
     {"name": "b", "script": "b.txt", "campaign": true, "start": 20}
   ],
   "characters": {
-    "a": {"phase": 2},
-    "b": {"own_story": "none"}
+    "a": {"phase": 2, "leave_upload": true},
+    "b": {"own_story": "none", "leave_upload": false}
   }
 }

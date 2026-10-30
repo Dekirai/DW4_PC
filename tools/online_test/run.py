@@ -1189,9 +1189,10 @@ def gci_record(path, box=0):
 def check_characters(sc, api, env, out, problems, notes):
     """scenario.json "characters" (SEAMLESS.md 9 and the S2 done-when): per client, its online character as the client
     logged it ("online-character: ..." lines) and as the server holds it. Every client entered without a character (a new
-    game), its first stage change created revision 1, the save room uploaded (card_written), the last upload is the
-    automatic save when it left the room, nothing was refused; GET /online-character (logged in through the API) returns
-    that last revision, and its record equals the client's card cache (online_card.dat, nothing pending) outside the story
+    game), its first stage change created revision 1, the save room uploaded (card_written), the run's last save is the
+    automatic save when it left the room (an upload with "leave_upload": true; otherwise also "unchanged since" the last
+    uploaded revision), nothing was refused; GET /online-character (logged in through the API) returns the last uploaded
+    revision, and its record equals the client's card cache (online_card.dat, nothing pending) outside the story
     bytes, which the server composes from the account's own online story (8.4). "own_story": "none" asks for a record
     whose story bytes are all zero (a guest's own story is untouched by playing in someone else's room); "phase": N for
     the story phase flag N set in the record (the room owner's online story holds the room's progress)."""
@@ -1210,8 +1211,18 @@ def check_characters(sc, api, env, out, problems, notes):
             problems.append("%s: the first stage change did not create the online character as revision 1" % name)
         if "save room" not in reasons:
             problems.append("%s: no upload from the save room" % name)
-        if not reasons or reasons[-1] != "leaving the room":
-            problems.append("%s: the last upload is not the automatic save when leaving the room" % name)
+        # The automatic save when leaving: the last save line of the run. It uploads what changed since the last upload
+        # ("leave_upload": true asks for that) and finds nothing to do when the server holds the character as it is.
+        leave = [l for l in ch if l.startswith(("save (", "saved (", "upload ("))][-1:]
+        left_unchanged = re.match(r"save \(leaving the room\) unchanged since revision (\d+)$", leave[0]) if leave else None
+        if want.get("leave_upload") and (not reasons or reasons[-1] != "leaving the room" or not leave or not leave[0].startswith("saved")):
+            problems.append("%s: the automatic save when leaving the room did not upload last (%s)" % (name, leave))
+        elif not want.get("leave_upload") and not (left_unchanged or (leave and leave[0].startswith("saved (leaving the room)"))):
+            problems.append("%s: the run did not end with the automatic save when leaving the room (%s)" % (name, leave))
+        if left_unchanged and saves and int(left_unchanged.group(1)) != saves[-1][1]:
+            problems.append("%s: the leaving save compared with revision %s, the last upload was %d" % (name, left_unchanged.group(1), saves[-1][1]))
+        if leave:
+            notes.append("%s left the room: %s" % (name, leave[0]))
         for l in ch:
             if l.startswith(("conflict", "refused")) or "not uploaded" in l:
                 problems.append("%s: %s" % (name, l))
