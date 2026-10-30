@@ -2050,9 +2050,20 @@ std::map<std::string, std::string> card_files(const std::filesystem::path& folde
     return files;
 }
 
-std::string card_digest(const std::filesystem::path& folder) {
+// Card A's files wherever the engine keeps them: a GCI folder's .gci files,
+// or the single save file (saves/savedata.dat, an online room's virtual card)
+// under its Dolphin name.
+std::map<std::string, std::string> card_files(const engine::Engine& engine) {
+    const auto& store = engine.card_store();
+    if (store.kind() == save::CardStore::Kind::folder) return card_files(store.root() / "Card A");
+    std::map<std::string, std::string> files;
+    if (const auto bytes = store.read(0)) files[std::string(save::kSaveFileName)] = std::string(bytes->begin(), bytes->end());
+    return files;
+}
+
+std::string card_digest(const engine::Engine& engine) {
     std::string digest;
-    for (const auto& [name, data] : card_files(folder)) digest += name + ":" + std::to_string(std::hash<std::string>{}(data)) + ";";
+    for (const auto& [name, data] : card_files(engine)) digest += name + ":" + std::to_string(std::hash<std::string>{}(data)) + ";";
     return digest;
 }
 
@@ -7026,7 +7037,7 @@ void CampaignBot::checkpoint_update(engine::Engine& engine, int frame) {
     if (!s.due.empty() && changed) {
         // Into the save room: the card as it was; out of it: saved or not.
         if (stage == "stagis12") {
-            s.card_before = card_digest(engine.card_root() / "Card A");
+            s.card_before = card_digest(engine);
             ++s.tries;
         } else if (left == "stagis12") {
             checkpoint_saved(engine, frame);
@@ -7069,9 +7080,8 @@ void CampaignBot::checkpoint_update(engine::Engine& engine, int frame) {
 // (copied to DW4_CAMPAIGN_CHECKPOINTS/<name>), or the save did not happen.
 void CampaignBot::checkpoint_saved(engine::Engine& engine, int frame) {
     auto& s = segment_;
-    const auto card = engine.card_root() / "Card A";
-    const auto files = card_files(card);
-    if (files.empty() || card_digest(card) == s.card_before) {
+    const auto files = card_files(engine);
+    if (files.empty() || card_digest(engine) == s.card_before) {
         std::printf("[%d] campaign: checkpoint %s: the save room left the card unchanged (visit %d)\n", frame, s.due.c_str(), s.tries);
         if (s.tries >= kSaveTries) {
             std::printf("[%d] campaign: checkpoint %s given up\n", frame, s.due.c_str());

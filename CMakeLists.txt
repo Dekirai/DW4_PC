@@ -77,6 +77,9 @@ endif()
 if(WIN32)
   target_link_libraries(dw4_online PUBLIC winhttp crypt32 bcrypt ws2_32)
 endif()
+# The online character (docs/SEAMLESS.md 9): the virtual card, the uploads
+# with If-Match, the automatic saves; the cloud backup of the local save.
+target_sources(dw4_online PRIVATE src/game/online/character.cpp src/game/online/cloud_save.cpp)
 
 # Development tools: IGB inspection and logical resource catalog.
 add_executable(dw4_inspect tools/dw4_inspect.cpp)
@@ -147,6 +150,10 @@ if(BUILD_TESTING)
   endforeach()
   target_compile_definitions(dw4_online_env_tests PRIVATE DW4_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
   target_compile_definitions(dw4_online_story_tests PRIVATE DW4_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+  # The online character and the cloud backup (asset free, no server).
+  add_executable(dw4_online_character_tests tests/online_character_tests.cpp)
+  target_link_libraries(dw4_online_character_tests PRIVATE dw4_online)
+  add_test(NAME online_character COMMAND dw4_online_character_tests)
 endif()
 
 if(DW4_BUILD_APP)
@@ -206,6 +213,8 @@ if(DW4_BUILD_APP)
   target_include_directories(dw4_game PRIVATE ${pl_mpeg_src_SOURCE_DIR} ${stb_src_SOURCE_DIR})
   target_compile_definitions(dw4_game PRIVATE DW4_PC_VERSION="${PROJECT_VERSION}")
   target_link_libraries(dw4_game PRIVATE dw4_engine dw4_online imgui zstd_decoder SDL3::SDL3 OpenGL::GL)
+  # F1 Saves > Cloud backup (the online character's lane, docs/SEAMLESS.md 9).
+  target_sources(dw4_game PRIVATE src/game/cloud_backup_panel.cpp)
   if(WIN32)
     target_link_libraries(dw4_game PRIVATE ws2_32)
   endif()

@@ -172,7 +172,9 @@ save stays the original GCI bytes):
 | `randomizer.ini`, `randomizer_<UNIQUE>_spoiler.txt` | the randomizer's bond per character ("Randomizer bond" below), beside the save |
 | `saves/profile.dat` (next to the program) | the local achievements and their counters (text, written through `.tmp` with a `.bak`); offline unlocks stay on this PC |
 | `saves/states/state<N>.dw4state` | save states (snapshot at the stage load plus the input since) |
-| `saves/backups/` (beside the save) | the copy taken before a GC save import |
+| `saves/backups/` (beside the save) | the copy taken before a GC save import, and before a cloud backup download replaces the save |
+| `saves/online/<account>/online_card.dat` (next to the program) | an online room's memory card A: a cache of the account's online character (the server is the truth), with `online_card.state` (the revision it was built from, play time, a save the server has not confirmed yet) and `backups/` (a cache replaced after a conflict) |
+| `saves/online/<account>.token` | a remembered online login (DPAPI, this Windows user only) |
 
 ### Online character and cloud backup (server)
 
@@ -186,7 +188,17 @@ copy of the local save, uploaded and downloaded by the player at any time:
 the GCI bytes of `savedata.dat` (90176 bytes, or the bare 90112-byte file),
 with at least one data copy that passes its check, the latest and five
 earlier revisions per account; it is never shown on the website and never
-used for achievements. Neither is part of the game client yet.
+used for achievements.
+
+In the game client (docs/SEAMLESS.md 9): an online room plays from a virtual
+memory card, `saves/online/<account>/online_card.dat`, built from the online
+character when the room is entered (the record in box 0, card B absent; no
+online character: an empty card and the original new game). It goes up to
+the server when the save room writes it, at every stage change and when the
+member leaves the room; a save made elsewhere meanwhile is never
+overwritten (the game says so and loads the server's character). F1 > Saves >
+Cloud backup uploads and downloads the local save outside rooms (a download
+copies the current save to `backups/` first).
 
 ## Importing GC saves
 

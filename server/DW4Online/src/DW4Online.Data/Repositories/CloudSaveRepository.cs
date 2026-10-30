@@ -38,10 +38,18 @@ public sealed class CloudSaveRepository(Database db) : ICloudSaveRepository
 
     public async Task<WriteOutcome> SaveAsync(CloudSaveWrite w, int? expectedRevision, int historyKeep, CancellationToken ct = default)
     {
+        for (var attempt = 1; ; ++attempt)
+            if (await SaveOnceAsync(w, expectedRevision, historyKeep, attempt, ct) is { } outcome) return outcome;
+    }
+
+    /// <summary>One attempt of <see cref="SaveAsync"/>; null when another account's write made it a deadlock victim
+    /// that runs again (MySqlErrors.DeadlockAttempts).</summary>
+    private async Task<WriteOutcome?> SaveOnceAsync(CloudSaveWrite w, int? expectedRevision, int historyKeep, int attempt, CancellationToken ct)
+    {
         await using var c = await db.OpenAsync(ct);
         try
         {
-            await using var tx = await c.BeginTransactionAsync(ct);
+            await using var tx = await c.BeginTransactionAsync(MySqlErrors.RevisionedWrite, ct);
             var current = await c.QuerySingleOrDefaultAsync<int?>(new CommandDefinition(
                 "SELECT revision FROM cloud_saves WHERE account_id = @a FOR UPDATE", new { a = w.AccountId }, tx, cancellationToken: ct));
             var values = new
@@ -89,6 +97,10 @@ public sealed class CloudSaveRepository(Database db) : ICloudSaveRepository
             }
             await tx.CommitAsync(ct);
             return new WriteOutcome(WriteStatus.Saved, revision);
+        }
+        catch (MySqlException e) when (MySqlErrors.RetryDeadlock(e, attempt))
+        {
+            return null;
         }
         catch (MySqlException e) when (MySqlErrors.IsDuplicate(e) || MySqlErrors.IsDeadlockOrTimeout(e))
         {

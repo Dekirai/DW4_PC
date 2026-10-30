@@ -14,15 +14,20 @@
 // Release builds talk to the hard-coded server only; DW4_ONLINE_DEV builds
 // may point at a loopback test server (server_config.hpp).
 #include "online/api.hpp"
+#include "online/character.hpp"
 #include "online/engine_adapter.hpp"
 #include "online/http.hpp"
 #include "online/leave_combo.hpp"
 #include "online/session.hpp"
 
+#include "dw4/engine/port_events.hpp"
+
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
+#include <vector>
 
 namespace dw4::game {
 
@@ -51,27 +56,59 @@ class OnlineRun {
 public:
     OnlineRun(std::unique_ptr<online::HttpWorker> http, OnlineRoom room, online::EngineHooks hooks, std::uint64_t data_hash,
               std::uint32_t rate);
+    // The online character (docs/SEAMLESS.md 9), blocking, before the
+    // engine starts: GET /online-character into the virtual card in
+    // `online_folder`/<account> (online_card.dat). The engine plays from
+    // character_card() (card B absent). False with `error` when the server
+    // gave neither the character nor 404.
+    bool load_character(const std::filesystem::path& online_folder, const std::string& client_version, std::string& error);
+    online::CharacterSync* character() { return character_.get(); }
+    // The card store of the online character (slot A the cache file).
+    save::CardStore character_card() const;
     // Connects to the relay (blocking up to five seconds).
     bool connect(double now, std::string& error);
-    // Every loop pass: network, catch-up, reconnects.
+    // Every loop pass: network, catch-up, reconnects, the character's uploads.
     void pass(double now);
+    // After every live step (instead of link().after_live_step()): the room's
+    // modes and story at game_started, the character's play time, and its
+    // automatic save at the barrier tick (the step that executed NEXTSTAGE:
+    // the state the member carries into the next stage).
+    void after_live_step(double now);
+    // The step's port events: card_written of the own slot on card A uploads
+    // the box the save room wrote.
+    void port_events(const std::vector<engine::PortEvent>& events);
+    // The automatic save when the member leaves the room (also when the
+    // server closed the session): the current state's record, then up to
+    // `seconds` for the uploads to finish (what does not arrive stays pending
+    // in the card cache for the next room entry). Once.
+    void save_on_leave(double seconds = 8.0);
     online::Session& session() { return *session_; }
     online::GameEngineLink& link() { return link_; }
     const OnlineRoom& room() const { return room_; }
     // The local pad of each live step: true when B + X + START completed its hold.
     bool leave_combo(std::uint32_t buttons) { return combo_.update(buttons); }
     bool leave_prompt = false;
-    // Leaves the room (BYE, REST leave).
-    void leave();
+    // Leaves the room: the character's automatic save (waiting up to
+    // `save_seconds` for the uploads), then BYE and the REST leave.
+    void leave(double save_seconds = 8.0);
 
 private:
+    void dispatch(std::uint64_t id, const online::HttpResponse& response, double now);
+    void save_character(online::CharacterSync::Why why);
+    online::character_api::Context character_context() const;
+
     std::unique_ptr<online::HttpWorker> http_;
     OnlineRoom room_;
+    std::function<engine::Engine&()> engine_;
     online::GameEngineLink link_;
     std::unique_ptr<online::Session> session_;
+    std::unique_ptr<online::CharacterSync> character_;
+    std::string client_version_;
     online::LeaveCombo combo_;
     std::uint64_t ticket_request_ = 0;
     double next_reconnect_ = 0;
+    bool pending_before_ = false; // the last live step had a NEXTSTAGE pending
+    bool saved_on_leave_ = false;
     bool left_ = false;
 };
 

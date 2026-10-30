@@ -49,4 +49,19 @@ internal static class MySqlErrors
 
     public static bool IsDeadlockOrTimeout(MySqlException e) =>
         e.ErrorCode is MySqlErrorCode.LockDeadlock or MySqlErrorCode.LockWaitTimeout;
+
+    /// <summary>
+    /// The isolation of a revisioned write (online character, cloud save). Under REPEATABLE READ the FOR UPDATE read
+    /// of an account's missing row takes a gap lock, the first writes of two accounts at once lock the same gap and
+    /// their INSERTs deadlock: InnoDB made one the victim, a 409 although nobody else had written that account's data
+    /// (round S2: a client took it for another PC's save). READ COMMITTED takes no gap locks for these reads; the row
+    /// lock of an existing revision and the duplicate key of a concurrent first write still decide every real race.
+    /// </summary>
+    public const System.Data.IsolationLevel RevisionedWrite = System.Data.IsolationLevel.ReadCommitted;
+
+    /// <summary>Attempts of a revisioned write before a deadlock (or a lock wait timeout) counts as a lost race.</summary>
+    public const int DeadlockAttempts = 3;
+
+    /// <summary>A deadlock victim that should run its transaction again.</summary>
+    public static bool RetryDeadlock(MySqlException e, int attempt) => IsDeadlockOrTimeout(e) && attempt < DeadlockAttempts;
 }

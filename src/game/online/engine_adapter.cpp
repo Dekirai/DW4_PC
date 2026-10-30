@@ -8,6 +8,9 @@
 #define DW4_ONLINE_ENGINE_API 1
 #endif
 
+#include "dw4/save_data.hpp"
+
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <sstream>
@@ -414,9 +417,36 @@ void GameEngineLink::after_live_step() {
         return;
     }
     if (modes_applied_) return;
+    // (The character select wrote DIFFICULTY before GAMESTART, 0x803687D4;
+    // gameStart.lua runs a few steps later, once the card worker is gone.)
+    if (room_story_) e().apply_room_story(*room_story_);
+    sys->difficulty = std::clamp(settings_.difficulty, 0, 2);
     sys->camera_mode = settings_.camera_mode;
     sys->light_mode = settings_.light_mode;
     modes_applied_ = true;
+}
+
+bool GameEngineLink::game_started() const {
+    const auto* sys = e().get<engine::GameSystem>();
+    return sys && sys->game_started;
+}
+
+std::optional<std::array<std::uint8_t, 3316>> GameEngineLink::character_record(int slot) const {
+    auto& engine = e();
+    const auto* sys = engine.get<engine::GameSystem>();
+    if (!sys || !sys->game_started || slot < 0 || slot > 3) return std::nullopt;
+    const auto& player = sys->players[std::size_t(slot)];
+    if (!player.joined || !player.stats.ready || player.unique == 0 || player.digimon.empty() || player.hp <= 0) return std::nullopt;
+    // A copy: make_record runs CURRENT2BASE (store_species) first, which the
+    // live engine of every member must not see.
+    engine::GameSystem copy = *sys;
+#ifdef DW4_ONLINE_ENGINE_API
+    copy.players[std::size_t(slot)] = engine.carry_player(slot).slot;
+#endif
+    const auto record = save::encode(copy.make_record(engine, slot));
+    std::array<std::uint8_t, 3316> out{};
+    std::copy(record.begin(), record.end(), out.begin());
+    return out;
 }
 
 Calibration calibrate_replay_rate(engine::Engine& engine, const std::string& stage, int max_steps, double max_seconds, bool music) {
