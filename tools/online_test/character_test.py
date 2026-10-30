@@ -12,13 +12,15 @@ DW4_ONLINE_DEV game clients that log in, open a room each and play their pad fro
       client builds the virtual card from it and calls it at the title (DW4_CAMPAIGN_LOAD), plays the story; after its
       first upload "another PC" saves the character (a PUT through the API); the client's next upload gets 409, shows
       the message, keeps its card cache in backups/, reloads the server's character and never overwrites it.
+  C3  a crash between a save and its upload: the card cache holds a save the server never confirmed (pending, based
+      on the server's revision); the next room entry uploads it first ("an unsent save").
   P1  F1 Saves > Cloud backup outside rooms (no room, the panel's own login through DW4_MENU_CLOUD): an existing
       backup (another PC's, uploaded through the API) is shown, the local save (a GCI folder card) is uploaded over
       it (the revision rises, the SHA-256 is the local file's), a kept revision made the latest again (API) is
       downloaded into the local save (the old one copied to backups/ first); a picture of the panel at 1920x1009
       (widescreen, MSAA 4) is kept in the run folder.
 
-    python character_test.py [C1 C2 P1] --game-exe EXE --data DATA --cards CHECKPOINTS
+    python character_test.py [C1 C2 C3 P1] --game-exe EXE --data DATA --cards CHECKPOINTS
                              [--mysql-port 3455] [--ports 54250-54299] [--keep] [--no-build]
 
 The clients run hidden (--smoke-test, DW4_NO_ERROR_BOX=1, below normal priority); network traffic stays on loopback.
@@ -259,6 +261,58 @@ def run_c2(st, args, api, https_port, pin, out):
     return problems, notes
 
 
+def with_bits(gci, add):
+    """The GCI with box 0's bits raised by `add` in both data copies (checksums rewritten)."""
+    data = bytearray(gci)
+    for copy in COPIES:
+        base = GCI_ENTRY + copy
+        at = base + 8 + 96
+        data[at:at + 4] = (int.from_bytes(data[at:at + 4], "big") + add).to_bytes(4, "big")
+        words = [int.from_bytes(data[base + i:base + i + 4], "big") for i in range(4, 40960, 4)]
+        data[base:base + 4] = (sum(words) & 0xFFFFFFFF).to_bytes(4, "big")
+    return bytes(data)
+
+
+def run_c3(st, args, api, https_port, pin, out):
+    """The unsent save of a crash goes up at the next room entry."""
+    account = "c3" + secrets.token_hex(3)
+    password, token = register(api, account)
+    gci = open(os.path.join(args.cards, args.c2_card, "Card A", "B2-GDJE-NDMWSaveData.gci"), "rb").read()
+    open(os.path.join(out, "k2.gci"), "wb").write(gci)
+    record = record_of(os.path.join(out, "k2.gci"), 0)
+    s, body = put_character(api, token, record, 0, 3600)
+    if s != 201:
+        raise RuntimeError("PUT the starting character: %s %s" % (s, body))
+    # What a crash leaves: the cache with a newer save, pending on revision 1.
+    folder = card_folder(args, account)
+    os.makedirs(folder, exist_ok=True)
+    unsent = with_bits(gci, 1234)
+    open(os.path.join(folder, "online_card.dat"), "wb").write(unsent)
+    unique = int.from_bytes(record[4:8], "big")
+    with open(os.path.join(folder, "online_card.state"), "w") as f:
+        f.write("revision=1\nplay_seconds=3700\npending=1\nbox=0\nunique=%d\n" % unique)
+    script = "idle until frames>=600\n"
+    proc, own = start_client(st, args, out, "c3", account, password, https_port, pin, script, 900, {})
+    proc.wait(300)
+    lines = log_lines(os.path.join(out, "c3.log"))
+    ch = character_lines(lines)
+    problems, notes = [], []
+    common_checks(problems, lines, own, proc.poll())
+    if not any(l.startswith("enter revision 1: an unsent save of box 0 goes up") for l in ch):
+        problems.append("the entry did not take up the unsent save")
+    if not any(l.startswith("saved (an unsent save) revision 2") for l in ch):
+        problems.append("the unsent save was not uploaded as revision 2")
+    s, body = api.call("GET", "/api/v1/online-character", token=token)
+    open(os.path.join(out, "unsent.gci"), "wb").write(unsent)
+    if s != 200 or body["revision"] != 2 or base64.b64decode(body["record"]) != record_of(os.path.join(out, "unsent.gci"), 0):
+        problems.append("the server does not hold the unsent save as revision 2 (%s)" % (body.get("revision") if body else s))
+    state = open(os.path.join(folder, "online_card.state")).read()
+    if "pending=0" not in state or "revision=2" not in state:
+        problems.append("the cache state did not follow: " + state.replace("\n", " "))
+    notes.append("character lines: " + " | ".join(ch))
+    return problems, notes
+
+
 def cloud_put(api, token, data, revision):
     import hashlib
     import json
@@ -350,14 +404,14 @@ def main():
     ap.add_argument("--keep", action="store_true")
     ap.add_argument("--no-build", action="store_true")
     ap.add_argument("--c1-frames", type=int, default=30000)
-    ap.add_argument("--c1-more", type=int, default=27000, help="C1: the frame the story play ends and the member leaves")
+    ap.add_argument("--c1-more", type=int, default=8000, help="C1: frames of story play after the save room, then the member leaves")
     ap.add_argument("--c2-card", default="k2")
     ap.add_argument("--c2-frames", type=int, default=16000)
-    ap.add_argument("--c2-frames-play", type=int, default=14000)
+    ap.add_argument("--c2-frames-play", type=int, default=9000, help="C2: frames of story play in the lobby and on")
     args = ap.parse_args()
     args.impair = ""
-    wanted = args.scenarios or ["C1", "C2", "P1"]
-    if ("C2" in wanted or "P1" in wanted) and not args.cards:
+    wanted = args.scenarios or ["C1", "C2", "C3", "P1"]
+    if any(n in wanted for n in ("C2", "C3", "P1")) and not args.cards:
         print("C2 needs --cards (a campaign checkpoint set such as work/campaign/checkpoints/r25c)")
         return 2
     if not args.no_build:
@@ -382,7 +436,7 @@ def main():
                 problems, notes = ["%s: %s" % (type(e).__name__, e)], []
             results[name] = (problems, notes, time.time() - t)
 
-        threads = [threading.Thread(target=one, args=(n, {"C1": run_c1, "C2": run_c2, "P1": run_p1}[n])) for n in wanted]
+        threads = [threading.Thread(target=one, args=(n, {"C1": run_c1, "C2": run_c2, "C3": run_c3, "P1": run_p1}[n])) for n in wanted]
         for th in threads:
             th.start()
         for th in threads:
