@@ -1,0 +1,8 @@
+# S17a, member a (k2): through the lobby gate two seconds before b.
+campaign until stage=stagml11,control
+idle until epoch>=@90
+explore mate00 yes until stage=stag0101,control
+log in the field
+wander 460 160 25 until present=2,sealed>=10600 or sealed>=600,present=1,frames>=600
+log enough
+idle until frames>=60

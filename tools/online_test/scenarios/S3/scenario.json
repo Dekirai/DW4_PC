@@ -1,0 +1,10 @@
+{
+  "desc": "three clients: two joins mid-stage, one at a time, then a common stage change",
+  "frames": 80000,
+  "timeout": 1000,
+  "clients": [
+    {"name": "a", "script": "a.script", "card": "k10", "start": 0},
+    {"name": "b", "script": "b.script", "card": "k10", "start": 3},
+    {"name": "c", "script": "c.script", "card": "k10", "start": 6}
+  ]
+}

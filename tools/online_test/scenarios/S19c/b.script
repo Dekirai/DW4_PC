@@ -1,0 +1,13 @@
+# S19c, member b (k10, level 21): with a through the lobby gate; stays near the entrance and plays on alone after
+# a gave up (no game over for b, its copy despawns a).
+campaign until stage=stagml11,control
+idle until epoch>=@91
+explore mate00 yes until stage=stag0101,control
+log in the field
+wander 455 170 15 until partnerdead,sealed>=600 fail stagechange
+log partner dead
+wander 455 170 15 until present=1,frames>=60 fail stagechange
+log a gave up
+wander 455 170 15 until frames>=600 fail stagechange
+log b plays on
+idle until frames>=60

@@ -1,0 +1,14 @@
+# S19c: give up (the dead member's port intent, 6.5) forks the defeated member off alone; in its copy nobody lives,
+# so the original end_g_000bcaps.lua runs the game over (stagML11 point 0) and the lobby dissolves it; b's copy
+# despawns a and b plays on alone in the same instance.
+a: (?i)decision 1 .*stage=stag0101
+b: (?i)decision 4 .*stage=stag0101
+a: online-script: step .* log: dead
+relay: intent
+relay: fork
+a: online-trace: split .*local=1
+b: online-trace: split .*local=0
+relay: (?i)barrier .*stage=stag0101 .*to=stagml11 point=0
+a: (?i)decision 3 .*stage=stagml11
+b: online-script: step .* log: a gave up
+b: online-script: step .* log: b plays on

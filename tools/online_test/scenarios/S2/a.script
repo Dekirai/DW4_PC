@@ -1,0 +1,20 @@
+# S2, member a (k10): with b through the lobby gate (a co-arrival), west across stag0101, out by matz02 alone (a
+# fork: b stays); b follows later and joins by catch-up; both go back through stag0102's matz01 together.
+campaign until stage=stagml11,control
+idle until epoch>=@90
+explore mate00 yes until stage=stag0101,control
+log in the field
+route {route:stag0101_west}
+log at the exit
+wander -310 -190 8 until sealed>=7000
+log a leaves alone
+mat matz02 yes until stage=stag0102,control
+log in stag0102 alone
+wander 330 140 15 until present=2,sealed>=300
+log b joined
+wander 330 140 15 until sealed>=900
+mat matz01 yes 2 until stage=stag0101,control
+log together back in stag0101
+wander -310 -170 15 until sealed>=1500
+log enough
+idle until frames>=60

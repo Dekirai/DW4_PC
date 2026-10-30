@@ -1,0 +1,24 @@
+# S18, member a (k10, slot 0): with b through the lobby gate and west to stag0101's matz02 (to stag0102).
+# 1. a steps on and answers No: it stays, on the mat.
+# 2. b steps on (b's own prompt, b says No) and off again: a is never asked meanwhile.
+# 3. a steps off and on again and answers Yes once b stands on the mat too (b is not asked while a's exit runs, then
+#    asked after a's Yes); b says No: only a leaves (a fork).
+campaign until stage=stagml11,control
+idle until epoch>=@90
+explore mate00 yes until stage=stag0101,control
+log in the field
+route {route:stag0101_west}
+wander -310 -190 8 until sealed>=7500
+log case 1: a steps on and answers no
+mat matz02 no until answered>=1,prompt=0,frames>=60 fail stagechange
+log a said no and stays on the mat
+idle until onmat:matz02>=2 fail asked,stagechange
+log b on the mat
+idle until onmat:matz02<=1,frames>=120 fail asked,stagechange
+log b stepped off: no prompt for a
+goto -350 -190 5 fail stagechange
+idle until frames>=180
+log case 3: a steps on again and answers yes once b is on the mat
+mat matz02 yes 2 until stage=stag0102,control
+log a left alone
+idle until frames>=300

@@ -1,0 +1,10 @@
+# S17b: a's instance is not joinable during its entry scene; b's barrier is held, then b joins by catch-up.
+a: (?i)decision 1 .*stage=stag0101
+relay: hold_join
+b: (?i)decision 2 .*stage=stag0101
+b: online-trace: state purpose=1
+b: online-trace: ready
+b: online-trace: join applied
+a: online-trace: join applied
+!b: (?i)decision 4 .*stage=stag0101
+shared: a b >= 10000

@@ -1,0 +1,10 @@
+# S21: the console reset is off online (7.4); the local combo asks "Leave room?" on the holder's machine only; both
+# machines stay in stag0101 with equal net fingerprints.
+a: (?i)decision 1 .*stage=stag0101
+b: (?i)decision 4 .*stage=stag0101
+b: online-script: step .* log: holds the console reset combo
+b: online: leave prompt at frame
+b: online-script: step .* log: held
+!a: online: leave prompt
+b: online-script: step .* log: enough
+a: online-script: step .* log: enough

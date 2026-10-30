@@ -3,24 +3,39 @@
 Starts a private MariaDB (C:/xampp/mysql/bin/mysqld.exe with its own data directory under tools/online_test/.work and
 its own port), the DW4Online server on 127.0.0.1 with a throw-away HTTPS certificate (openssl, pinned by the clients)
 and the DW4R2 relay on a free port, registers accounts through the API, creates and joins a room, starts N hidden
-clients with input scripts (fake DW4R2 clients until the game client exists: tests/DW4Online.FakeClient), optionally
-each behind the latency / jitter / loss proxy, collects every client's net fingerprints and membership log and the
-relay's membership log, compares them per instance and checks each scenario's expected events. It stops only the
-processes it started (by their handles), never anything by name.
+clients with input scripts, optionally each behind the latency / jitter / loss proxy, collects every client's net
+fingerprints and membership log and the relay's membership log, compares them per instance and checks each scenario's
+expected events. It stops only the processes it started (by their handles), never anything by name.
 
-    python run.py [SCENARIO ...] [--list] [--mysql-port 3431] [--ports 53100-53199] [--impair OW,JITTER,LOSS] [--keep]
+    python run.py [SCENARIO ...] --game-exe EXE --data DATA [--cards DIR] [--parallel N] [--list] [--keep]
+                                                           the scenarios with hidden game clients (scenarios/<id>)
+    python run.py --fake [SCENARIO ...] [--impair OW,JITTER,LOSS]
+                                                           the same ideas with fake DW4R2 clients (tests/DW4Online.FakeClient)
     python run.py matrix [--seconds 40] [--warmup 20]      the loss and jitter matrix (in-process hub, SEAMLESS.md 6.4)
     python run.py G1 --game-exe EXE --data DATA [--offset 8] [--frames 22000] [--sealed-ticks 3000]
-                                                           two hidden game clients (a DW4_ONLINE_DEV build) in one stage
+                                                           two hidden game clients with the campaign bot from a new game
+    python run.py dev --game-exe EXE --data DATA [--hidden [--frames N]] [--dev-card DIR]
+                                                           the local stack and two clients in one room (visible windows
+                                                           for a person, scripts/online-dev.ps1; --hidden for agents)
+    common: [--mysql-port 3431] [--ports 53100-53199] [--no-build]
 
-Without a scenario every fake-client scenario of round S1 runs: S1 S2 S3 S5 S16 S17a S17b S22a S22b. G1 runs the real game:
-both clients log in through the pinned HTTPS API, the first creates the room, the second joins it OFFSET seconds later; both
-play a new game with the campaign bot from the title (hub stages dissolve, each field is a barrier), meet in the first field
-(the second joins the first's instance by catch-up), seal and must keep equal net fingerprints (DW4_ONLINE_TRACE netfp lines)
-for at least SEALED_TICKS ticks; the relay's NETFP vote must find no mismatch. Network traffic stays on loopback.
+Game scenarios (scenarios/<id>/scenario.json, one .script per client, expected.txt): every client is a hidden
+DW4_ONLINE_DEV build of dw4_game (--smoke-test, DW4_NO_ERROR_BOX=1, below normal priority) that logs in through the pinned
+HTTPS API; the first creates the room, the others join it at their start offsets; each plays its pad from its script
+(--online-script, src/game/online_script.hpp) and, with a card, starts from that saved character (--online-card, the
+campaign bot calls it at the title). Checked for every scenario: the net fingerprints (DW4_ONLINE_TRACE netfp lines)
+of every instance are equal on every client at every tick (every 60 ticks) they both report with the same members, the
+canonical snapshot hashes of every NEW (and co-arrival) are equal, the relay logs no desync, mismatch or resync, no client
+was closed or crashed; then the scenario's expected log (in order per source; "!" lines must not appear; "shared: a b >=
+N" asks for N ticks of equal fingerprints with both present in one instance). Network traffic stays on loopback.
+
+Without a scenario every game scenario runs. G1 is the integration's first game run (a new game from the title, both
+meet in the first field).
 """
 import argparse
 import base64
+import re
+import threading
 import hashlib
 import json
 import os
@@ -105,9 +120,9 @@ class Stack:
         self.dir = os.path.join(WORK, time.strftime("run_%Y%m%d_%H%M%S"))
         os.makedirs(self.dir, exist_ok=True)
 
-    def spawn(self, argv, log, env=None):
+    def spawn(self, argv, log, env=None, flags=BELOW_NORMAL | NO_WINDOW):
         f = open(log, "w", encoding="utf-8")
-        p = subprocess.Popen(argv, stdout=f, stderr=subprocess.STDOUT, env=env, creationflags=BELOW_NORMAL | NO_WINDOW)
+        p = subprocess.Popen(argv, stdout=f, stderr=subprocess.STDOUT, env=env, creationflags=flags)
         self.procs.append((p, f))
         return p
 
@@ -423,6 +438,223 @@ def evaluate(sc, out, code, diag):
     return problems, notes
 
 
+SCENARIO_DIR = os.path.join(HERE, "scenarios")
+
+
+def game_scenarios():
+    names = sorted(d for d in os.listdir(SCENARIO_DIR) if os.path.isfile(os.path.join(SCENARIO_DIR, d, "scenario.json"))) \
+        if os.path.isdir(SCENARIO_DIR) else []
+    return [dict(json.load(open(os.path.join(SCENARIO_DIR, n, "scenario.json"), encoding="utf-8")), name=n) for n in names]
+
+
+def run_real(stack, sc, api, relay_port, pin, diag, lock):
+    """One game scenario: hidden game clients with scripts in one room."""
+    a = stack.args
+    if not a.game_exe or not a.data:
+        raise RuntimeError("game scenarios need --game-exe (a DW4_ONLINE_DEV build) and --data (the game data)")
+    src = os.path.join(SCENARIO_DIR, sc["name"])
+    out = os.path.join(stack.dir, sc["name"])
+    os.makedirs(out, exist_ok=True)
+    tag = sc["name"].lower() + secrets.token_hex(2)
+    passwords = {}
+    with lock:
+        for c in sc["clients"]:
+            passwords[c["name"]] = "online test " + c["name"] + " " + secrets.token_hex(4)
+            s, body = api.call("POST", "/api/v1/auth/register", {"username": tag + c["name"], "password": passwords[c["name"]]})
+            if s != 201:
+                raise RuntimeError("register %s: %s %s" % (c["name"], s, body))
+    https_port = api.base.rsplit(":", 1)[1]
+    room_name = sc["name"] + " " + tag
+    t0 = time.time()
+
+    def script_for(c):
+        # The client's script with every @N replaced by the scenario start + N seconds (the epoch condition: steps
+        # of several clients that must happen at set times, such as two departures two seconds apart).
+        text = open(os.path.join(src, c["script"]), encoding="utf-8").read()
+        text = re.sub(r"@(\d+(?:\.\d+)?)", lambda m: "%.1f" % (t0 + float(m.group(1))), text)
+
+        # {route:NAME} is the waypoint list of routes/NAME.txt, {route:NAME:X,Z} the same up to the waypoint X,Z.
+        def route(m):
+            lines = open(os.path.join(HERE, "routes", m.group(1) + ".txt"), encoding="utf-8").read().splitlines()
+            points = " ".join(l for l in lines if l.strip() and not l.startswith("#")).split()
+            return " ".join(points[:points.index(m.group(2)) + 1] if m.group(2) else points)
+        text = re.sub(r"\{route:(\w+)(?::(-?\d+,-?\d+))?\}", route, text)
+        path = os.path.join(out, c["name"] + ".script")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(text)
+        return path
+
+    def start(c, room_args):
+        card = os.path.join(out, "card_" + c["name"])
+        for sub_dir in ("Card A", "Card B"):
+            os.makedirs(os.path.join(card, sub_dir), exist_ok=True)
+        env = dict(os.environ, DW4_NO_ERROR_BOX="1", DW4_ONLINE_SERVER="127.0.0.1:" + https_port, DW4_ONLINE_PIN=pin,
+                   DW4_ONLINE_PASSWORD=passwords[c["name"]], DW4_ONLINE_TRACE="1")
+        env.update(sc.get("env", {}))
+        env.update(c.get("env", {}))
+        argv = [a.game_exe, "--data", a.data, "--smoke-test", str(c.get("frames", sc.get("frames", 30000))), "--card-dir", card,
+                "--online-login", tag + c["name"], "--online-script", script_for(c)] + room_args
+        saved = c.get("card", sc.get("card"))
+        if saved:
+            folder = saved if os.path.isabs(saved) else os.path.join(a.cards, saved)
+            if not os.path.isdir(folder):
+                raise RuntimeError("no card folder %s (--cards)" % folder)
+            argv += ["--online-card", folder]
+            env["DW4_CAMPAIGN_LOAD"] = "1"
+        return stack.spawn(argv, os.path.join(out, c["name"] + ".log"), env=env)
+
+    clients = sorted(sc["clients"], key=lambda c: c.get("start", 0))
+    procs = [(clients[0]["name"], start(clients[0], ["--online-create", room_name]))]
+    code = None
+    while time.time() - t0 < 90 and code is None:
+        if procs[0][1].poll() is not None:
+            raise RuntimeError("the first client ended before its room existed (see %s)" % os.path.join(out, clients[0]["name"] + ".log"))
+        with lock:
+            s, rooms = api.call("GET", "/api/v1/rooms")
+        for r in (rooms if isinstance(rooms, list) else (rooms or {}).get("rooms", [])):
+            if r.get("name") == room_name:
+                code = r.get("code")
+        time.sleep(0.2)
+    if not code:
+        raise RuntimeError("the first client's room did not appear")
+    for c in clients[1:]:
+        while time.time() - t0 < c.get("start", 0):
+            time.sleep(0.05)
+        procs.append((c["name"], start(c, ["--online-join", code])))
+    limit = sc.get("timeout", 1200)
+    for name, p in procs:
+        try:
+            p.wait(max(1, limit - (time.time() - t0)))
+        except subprocess.TimeoutExpired:
+            pass
+    timed_out = [name for name, p in procs if p.poll() is None]
+    exits = {name: p.poll() for name, p in procs}
+    for name, p in procs:
+        if p.poll() is None:
+            p.terminate()
+    return evaluate_real(sc, src, out, code, diag, timed_out, exits)
+
+
+def parse_client_log(path):
+    lines = open(path, encoding="utf-8", errors="replace").read().splitlines() if os.path.exists(path) else []
+    fps, snaps = {}, {}
+    for line in lines:
+        if line.startswith("online-trace: netfp "):
+            kv = dict(x.split("=", 1) for x in line[len("online-trace: netfp "):].split())
+            fps[(int(kv["inst"]), int(kv["visit"]), int(kv["tick"]), int(kv["present"], 16))] = kv["fp"]
+        elif line.startswith("online-trace: snaphash "):
+            parts = line[len("online-trace: snaphash "):].split()
+            kv = dict(x.split("=", 1) for x in parts if "=" in x)
+            snaps[(int(kv["inst"]), int(kv["visit"]))] = kv["hash"]
+    return lines, fps, snaps
+
+
+def evaluate_real(sc, src, out, code, diag, timed_out, exits):
+    problems, notes = [], []
+    names = [c["name"] for c in sc["clients"]]
+    logs, fps, snaps = {}, {}, {}
+    for n in names:
+        logs[n], fps[n], snaps[n] = parse_client_log(os.path.join(out, n + ".log"))
+    for n in timed_out:
+        problems.append("%s did not finish within %s s" % (n, sc.get("timeout", 1200)))
+    for n, code_ in exits.items():
+        if code_ not in (0, None):
+            problems.append("%s exited with %s" % (n, code_))
+    for n in names:
+        if not any(l.startswith("online-script: done") for l in logs[n]):
+            problems.append("%s: the script did not finish" % n)
+        for l in logs[n]:
+            if l.startswith("online-trace: close") or l.startswith("error:") or "inputs stopped arriving" in l or l.startswith("online-script: FAIL"):
+                problems.append("%s: %s" % (n, l))
+    # Net fingerprints: equal wherever two clients report the same instance, visit, tick and members.
+    table = {}
+    for n in names:
+        for k, fp in fps[n].items():
+            table.setdefault(k, {})[n] = fp
+    compared = [k for k, per in table.items() if len(per) >= 2]
+    differ = [k for k in compared if len(set(table[k].values())) > 1]
+    notes.append("%d fingerprint ticks reported by two or more clients, %d differ" % (len(compared), len(differ)))
+    for k in sorted(differ)[:4]:
+        problems.append("net fingerprints differ at instance %d visit %d tick %d (present %x): %s" % (k[0], k[1], k[2], k[3], table[k]))
+    spans = {}
+    for k in compared:
+        who = tuple(sorted(table[k]))
+        spans.setdefault((k[0], k[1], who), []).append(k[2])
+    for (inst, visit, who), ticks in sorted(spans.items()):
+        notes.append("instance %d visit %d: %s equal from tick %d to %d (%d comparisons)" % (inst, visit, "+".join(who), min(ticks), max(ticks), len(ticks)))
+    # Every scenario plays at least min_shared_ticks (10,000) ticks in shared instances, compared every 60 ticks.
+    per_visit = {}
+    for k in compared:
+        lo, hi = per_visit.get((k[0], k[1]), (k[2], k[2]))
+        per_visit[(k[0], k[1])] = (min(lo, k[2]), max(hi, k[2]))
+    shared_total = sum(hi - lo for lo, hi in per_visit.values())
+    need = sc.get("min_shared_ticks", 10000)
+    notes.append("%d ticks in shared instances compared (%d needed)" % (shared_total, need))
+    if shared_total < need:
+        problems.append("only %d ticks in shared instances compared (< %d)" % (shared_total, need))
+    # Canonical snapshot hashes of every NEW / co-arrival.
+    stab = {}
+    for n in names:
+        for k, h in snaps[n].items():
+            stab.setdefault(k, {})[n] = h
+    snap_multi = [k for k, per in stab.items() if len(per) >= 2]
+    notes.append("%d snapshot hashes reported by two or more clients" % len(snap_multi))
+    for k in snap_multi:
+        if len(set(stab[k].values())) > 1:
+            problems.append("canonical snapshot hashes differ at instance %d visit %d: %s" % (k[0], k[1], stab[k]))
+    relay = load_jsonl(os.path.join(diag, "room_%s.jsonl" % code))
+    kinds = {}
+    for e in relay:
+        kinds[e["ev"]] = kinds.get(e["ev"], 0) + 1
+    notes.append("relay: " + ", ".join("%s %d" % kv for kv in sorted(kinds.items())))
+    for bad in ("desync", "snaphash_mismatch", "split_mismatch", "barrier_mismatch", "barrier_split", "resync", "ready_mismatch"):
+        if kinds.get(bad):
+            problems.append("relay logged %d x %s" % (kinds[bad], bad))
+    relay_lines = [" ".join([e["ev"]] + ["%s=%s" % (k, v) for k, v in e.items() if k != "ev"]) for e in relay]
+    # The expected log.
+    expected = os.path.join(src, "expected.txt")
+    cursors = {}
+    for raw in (open(expected, encoding="utf-8").read().splitlines() if os.path.exists(expected) else []):
+        line = raw.split(" #", 1)[0].strip()
+        if not line or line.startswith("#"):
+            continue
+        negate = line.startswith("!")
+        if negate:
+            line = line[1:]
+        source, _, pattern = line.partition(":")
+        source, pattern = source.strip(), pattern.strip()
+        if source == "shared":
+            m = re.match(r"(\S+)\s+(\S+)\s*>=\s*(\d+)", pattern)
+            who = tuple(sorted([m.group(1), m.group(2)]))
+            best = 0
+            for (inst, visit, w), ticks in spans.items():
+                if set(who) <= set(w):
+                    best = max(best, max(ticks) - min(ticks))
+            if best < int(m.group(3)):
+                problems.append("expected %s and %s to share an instance with equal fingerprints for %s ticks, got %d" % (who[0], who[1], m.group(3), best))
+            else:
+                notes.append("%s+%s shared %d ticks with equal fingerprints" % (who[0], who[1], best))
+            continue
+        lines = relay_lines if source == "relay" else logs.get(source)
+        if lines is None:
+            problems.append("expected.txt: unknown source %s" % source)
+            continue
+        rx = re.compile(pattern)
+        if negate:
+            hit = next((l for l in lines if rx.search(l)), None)
+            if hit:
+                problems.append("%s logged what it must not (%s): %s" % (source, pattern, hit[:200]))
+            continue
+        at = cursors.get(source, 0)
+        while at < len(lines) and not rx.search(lines[at]):
+            at += 1
+        if at >= len(lines):
+            problems.append("%s: expected /%s/ (in order) not found" % (source, pattern))
+        else:
+            cursors[source] = at + 1
+    return problems, notes
+
+
 def run_game(stack, api, relay_port, pin, diag):
     """G1: two hidden game clients (DW4_ONLINE_DEV) in one room and one stage, sealed, equal net fingerprints."""
     a = stack.args
@@ -532,6 +764,83 @@ def evaluate_game(out, names, code, diag, sealed_ticks):
     return problems, notes
 
 
+def run_dev(stack, api, pin):
+    """dev: the local stack and two game clients in one room (scripts/online-dev.ps1). Visible windows for a person at the
+    PC; --hidden runs both hidden for --frames frames with the campaign bot from the title (the check agents run)."""
+    a = stack.args
+    if not a.game_exe or not a.data:
+        raise RuntimeError("dev needs --game-exe (a DW4_ONLINE_DEV build) and --data (the game data)")
+    out = os.path.join(stack.dir, "dev")
+    os.makedirs(out, exist_ok=True)
+    tag = "dev" + secrets.token_hex(2)
+    names = ["kim", "lee"]
+    passwords = {}
+    for n in names:
+        passwords[n] = "online dev " + n + " " + secrets.token_hex(6)
+        s, body = api.call("POST", "/api/v1/auth/register", {"username": tag + n, "password": passwords[n]})
+        if s != 201:
+            raise RuntimeError("register %s: %s %s" % (n, s, body))
+    https_port = api.base.rsplit(":", 1)[1]
+    room_name = "Dev room " + tag
+    campaign = os.path.join(out, "campaign.txt")
+    with open(campaign, "w") as f:
+        f.write("0 SEEK 200000 campaign\n")
+
+    def start(n, room_args):
+        card = os.path.join(out, "card_" + n)
+        for sub in ("Card A", "Card B"):
+            os.makedirs(os.path.join(card, sub), exist_ok=True)
+        env = dict(os.environ, DW4_ONLINE_SERVER="127.0.0.1:" + https_port, DW4_ONLINE_PIN=pin, DW4_ONLINE_PASSWORD=passwords[n],
+                   DW4_ONLINE_TRACE="1")
+        argv = [a.game_exe, "--data", a.data, "--card-dir", card, "--online-login", tag + n] + room_args
+        if a.dev_card:
+            argv += ["--online-card", a.dev_card]
+        if a.hidden:
+            env["DW4_NO_ERROR_BOX"] = "1"
+            argv += ["--smoke-test", str(a.frames), "--input", campaign]
+            if a.dev_card:
+                env["DW4_CAMPAIGN_LOAD"] = "1"
+            return stack.spawn(argv, os.path.join(out, n + ".log"), env=env)
+        # Visible windows for the person at the PC: normal priority, their own windows.
+        return stack.spawn(argv, os.path.join(out, n + ".log"), env=env, flags=0)
+
+    first = start(names[0], ["--online-create", room_name])
+    code, t0 = None, time.time()
+    while time.time() - t0 < 120 and code is None:
+        if first.poll() is not None:
+            raise RuntimeError("the first client ended before its room existed (see %s)" % os.path.join(out, names[0] + ".log"))
+        s, rooms = api.call("GET", "/api/v1/rooms")
+        for r in (rooms if isinstance(rooms, list) else (rooms or {}).get("rooms", [])):
+            if r.get("name") == room_name:
+                code = r.get("code")
+        time.sleep(0.5)
+    if not code:
+        raise RuntimeError("the first client's room did not appear")
+    print("room %s (code %s): %s created it, %s joins; logs in %s" % (room_name, code, tag + names[0], tag + names[1], out), flush=True)
+    second = start(names[1], ["--online-join", code])
+    if a.hidden:
+        limit = a.frames / 59.94 + 240
+        for p in (first, second):
+            try:
+                p.wait(max(1, limit - (time.time() - t0)))
+            except subprocess.TimeoutExpired:
+                pass
+    else:
+        print("close both game windows to stop the local server", flush=True)
+        for p in (first, second):
+            p.wait()
+    problems, notes = [], []
+    for n, p in zip(names, (first, second)):
+        lines = open(os.path.join(out, n + ".log"), encoding="utf-8", errors="replace").read().splitlines()
+        final = next((l for l in reversed(lines) if l.startswith("online: final")), None)
+        decisions = sum(1 for l in lines if l.startswith("online-trace: decision"))
+        notes.append("%s: exit %s, %d barrier decisions, %s" % (n, p.poll(), decisions, final or "(no final line)"))
+        if not final:
+            problems.append("%s: no final online line" % n)
+        problems += ["%s: %s" % (n, l) for l in lines if l.startswith("online-trace: close") or l.startswith("error:")]
+    return problems, notes
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("scenarios", nargs="*")
@@ -548,9 +857,15 @@ def main():
     ap.add_argument("--offset", type=float, default=8.0, help="G1: seconds between the room's creation and the second client")
     ap.add_argument("--frames", type=int, default=22000, help="G1: frames each client runs (--smoke-test)")
     ap.add_argument("--sealed-ticks", type=int, default=3000, help="G1: sealed ticks with equal net fingerprints needed")
+    ap.add_argument("--fake", action="store_true", help="the fake-client scenarios")
+    ap.add_argument("--cards", default=os.environ.get("DW4_ONLINE_TEST_CARDS", ""),
+                    help="game scenarios: the folder of the saved characters a scenario names (a campaign checkpoint set)")
+    ap.add_argument("--parallel", type=int, default=1, help="game scenarios run side by side (one room each)")
+    ap.add_argument("--hidden", action="store_true", help="dev: hidden clients with the campaign bot for --frames frames")
+    ap.add_argument("--dev-card", default="", help="dev: a card folder whose saves both online cards start with")
     a = ap.parse_args()
     if a.list:
-        for sc in SCENARIOS:
+        for sc in (SCENARIOS if a.fake else game_scenarios()):
             print("%-5s %s" % (sc["name"], sc["desc"]))
         return 0
     if not a.no_build:
@@ -563,7 +878,32 @@ def main():
                                "--warmup", a.warmup, "--seconds", a.seconds, "--out", os.path.join(out, "matrix.json"), "--md",
                                os.path.join(out, "matrix.md")], creationflags=BELOW_NORMAL | NO_WINDOW).returncode
     game = "G1" in a.scenarios
-    wanted = [s for s in SCENARIOS if (not a.scenarios and not game) or s["name"] in a.scenarios]
+    dev = a.scenarios == ["dev"]
+    if dev:
+        stack = Stack(a)
+        try:
+            connection = start_mysql(stack)
+            base, relay, pin, der, diag = start_server(stack, connection)
+            print("local server %s, relay 127.0.0.1:%d" % (base, relay), flush=True)
+            problems, notes = run_dev(stack, Api(base, der), pin)
+        finally:
+            stack.stop()
+        print(("PASS" if not problems else "FAIL") + " dev: two clients in one room", flush=True)
+        for n in notes:
+            print("       " + n, flush=True)
+        for p in problems:
+            print("     ! " + p, flush=True)
+        print("run folder: " + stack.dir)
+        return 1 if problems else 0
+    if a.fake:
+        wanted, real = [s for s in SCENARIOS if not a.scenarios or s["name"] in a.scenarios], []
+    else:
+        wanted = []
+        real = [s for s in game_scenarios() if (not a.scenarios and not game) or s["name"] in a.scenarios]
+        unknown = [n for n in a.scenarios if n != "G1" and n not in {s["name"] for s in real}]
+        if unknown:
+            print("unknown scenario(s): " + " ".join(unknown))
+            return 2
     stack = Stack(a)
     failed = 0
     try:
@@ -572,7 +912,36 @@ def main():
         api = Api(base, der)
         s, status = api.call("GET", "/api/v1/status")
         print("server %s, relay %s:%d (%s), pin %s" % (base, status["relay"]["host"], status["relay"]["port"], status["relay"]["protocol"], pin), flush=True)
-        for sc in wanted:
+        if real:
+            lock = threading.Lock()
+            results = {}
+
+            def one(sc):
+                t = time.time()
+                try:
+                    problems, notes = run_real(stack, sc, api, relay, pin, diag, lock)
+                except Exception as e:  # a broken scenario is a failure, the others go on
+                    problems, notes = ["%s: %s" % (type(e).__name__, e)], []
+                with lock:
+                    results[sc["name"]] = (problems, notes)
+                    print("%s %-5s %s (%.0f s)" % ("PASS" if not problems else "FAIL", sc["name"], sc["desc"], time.time() - t), flush=True)
+                    for n in notes:
+                        print("       " + n, flush=True)
+                    for p in problems:
+                        print("     ! " + p, flush=True)
+
+            pending = list(real)
+            running = []
+            while pending or running:
+                running = [th for th in running if th.is_alive()]
+                while pending and len(running) < max(1, a.parallel):
+                    th = threading.Thread(target=one, args=(pending.pop(0),))
+                    th.start()
+                    running.append(th)
+                time.sleep(0.5)
+            failed += sum(1 for p, _ in results.values() if p)
+            wanted = wanted + real
+        for sc in wanted[:len(wanted) - len(real)]:
             t = time.time()
             problems, notes = run_scenario(stack, sc, api, relay, pin, diag)
             print("%s %-5s %s (%.0f s)" % ("PASS" if not problems else "FAIL", sc["name"], sc["desc"], time.time() - t), flush=True)

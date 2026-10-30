@@ -1,0 +1,10 @@
+# S1, member a (k10): through the lobby gate with b (a co-arrival), then the goburi east of the entrance.
+campaign until stage=stagml11,control
+idle until epoch>=@90
+explore mate00 yes until stage=stag0101,control
+log in the field
+wander 440 20 40 until present=2,apart>200
+log apart
+wander 440 20 40 until sealed>=10600 or present=1,frames>=60
+log enough
+idle until frames>=60

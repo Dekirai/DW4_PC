@@ -1,0 +1,9 @@
+{
+  "desc": "one member leaves by an exit (fork), the other follows later (join by catch-up), both change stage together",
+  "frames": 80000,
+  "timeout": 1000,
+  "clients": [
+    {"name": "a", "script": "a.script", "card": "k10", "start": 0},
+    {"name": "b", "script": "b.script", "card": "k10", "start": 3}
+  ]
+}

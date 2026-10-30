@@ -1,0 +1,15 @@
+# S3, member c (k10): through the lobby gate 15 s after b, into the instance of a and b by a second JOIN; west with
+# the others (behind b) and out by matz02 together.
+campaign until stage=stagml11,control
+idle until epoch>=@120
+explore mate00 yes until stage=stag0101,control
+log in the field
+idle until present=3,frames>=300
+route {route:stag0101_west:-308,-190}
+log at the exit
+wander -320 -197 4 until frames>=600
+mat matz02 yes 3 until stage=stag0102,control
+log in stag0102
+wander 350 110 15 until sealed>=3500 or present<=2,frames>=60
+log enough
+idle until frames>=60

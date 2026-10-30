@@ -1,0 +1,16 @@
+# S18: the exit port's prompt owner and the others on the mat (SEAMLESS.md 5.2). The prompt lines are each
+# machine's view of the instance's exit state (the same on both).
+a: online-script: prompt active=1 owner=0 asking=0
+a: online-script: step .* log: a said no and stays on the mat
+b: online-script: prompt active=1 owner=1 asking=1
+b: online-script: step .* log: b said no
+a: online-script: step .* log: b stepped off: no prompt for a
+b: online-script: prompt active=1 owner=0 asking=0
+b: online-script: prompt active=1 owner=0 asking=1
+b: online-script: step .* log: b said no to a's exit
+a: online-trace: split .*local=1
+b: online-trace: split .*local=0
+relay: fork
+a: (?i)decision 1 .*stage=stag0102
+!b: (?i)decision .*stage=stag0102
+b: online-script: step .* log: b stays

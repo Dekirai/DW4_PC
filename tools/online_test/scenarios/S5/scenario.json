@@ -1,0 +1,9 @@
+{
+  "desc": "everybody falls: game over, the group dissolves into solo lobbies",
+  "frames": 80000,
+  "timeout": 1000,
+  "clients": [
+    {"name": "a", "script": "a.script", "card": "k2", "start": 0},
+    {"name": "b", "script": "b.script", "card": "k2", "start": 3}
+  ]
+}

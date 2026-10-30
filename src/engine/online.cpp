@@ -112,9 +112,9 @@ const std::vector<std::string_view>& online_presentation_env() {
         "DW4_SCENE_REPORT", "DW4_SEEK_DIRECT", "DW4_SMOKE_STAGES", "DW4_STAGE_STATES",
         "DW4_TEXTURE_PACK", "DW4_WIDESCREEN", "DW4_WINDOW",
         // the online client's own switches (src/game/online: development server, pin and password, the
-        // calibration, the rate override, its trace)
+        // calibration, the rate override, its trace, the test driver's position interval)
         "DW4_ONLINE_CALIBRATION", "DW4_ONLINE_PASSWORD", "DW4_ONLINE_PIN", "DW4_ONLINE_RATE", "DW4_ONLINE_SERVER",
-        "DW4_ONLINE_TRACE",
+        "DW4_ONLINE_TRACE", "DW4_ONLINE_SCRIPT_EVERY",
         // round S1 test tools (game_main.cpp)
         "DW4_SNAPSHOT_DUMP", "DW4_PAD_LOG", "DW4_PAD_REPLAY", "DW4_EXTRA_RENDERS", "DW4_EXTRA_WIDEN", "DW4_EXTRA_PREVIOUS",
         "DW4_CAM_CHECK"};

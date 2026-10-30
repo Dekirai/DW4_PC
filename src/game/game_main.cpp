@@ -11,6 +11,7 @@
 #include "settings.hpp"
 #include "controls.hpp"
 #include "campaign.hpp"
+#include "online_script.hpp"
 #include "randomizer_save.hpp"
 #include "test_path.hpp"
 #include "texture_pack.hpp"
@@ -64,6 +65,8 @@ struct Options {
     std::string screenshot;
     std::vector<int> screenshot_frames;
     std::string input_script;
+    std::filesystem::path online_script; // --online-script FILE: the scripted pad of an online room test run (online_script.hpp)
+    std::filesystem::path online_card;   // --online-card FOLDER (DW4_ONLINE_DEV builds): the online card starts with these saves
     std::filesystem::path load_state; // --load-state FILE: start from a save state file
     bool overlay = true;
     std::vector<float> debug_camera; // eye xyz, target xyz
@@ -848,6 +851,26 @@ int run(const Options& options, dw4::game::Settings& settings) {
         session_cards = std::filesystem::temp_directory_path() /
                         ("dw4_online_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
         std::filesystem::create_directories(session_cards / "Card A");
+        // --online-card FOLDER (development builds, test runs): the online
+        // card starts with the saves of FOLDER (its .gci files, or those of
+        // its "Card A"), a character to call at the title instead of a new
+        // one (round S1 keeps nothing online; round S2 brings the server's).
+        if (!options.online_card.empty()) {
+#ifdef DW4_ONLINE_DEV
+            auto from = options.online_card;
+            if (std::filesystem::is_directory(from / "Card A")) from /= "Card A";
+            int copied = 0;
+            for (const auto& entry : std::filesystem::directory_iterator(from))
+                if (entry.path().extension() == ".gci") {
+                    std::filesystem::copy_file(entry.path(), session_cards / "Card A" / entry.path().filename(),
+                                               std::filesystem::copy_options::overwrite_existing);
+                    ++copied;
+                }
+            std::cout << "online: the online card starts with " << copied << " save file(s) of " << from.string() << '\n';
+#else
+            throw std::runtime_error("online: --online-card is a development build option");
+#endif
+        }
         engine.set_card_root(session_cards);
         for (int slot = 0; slot < 2; ++slot) engine.set_card_setting(slot, {});
         const auto data = data_hash(engine.resources());
@@ -1045,6 +1068,13 @@ int run(const Options& options, dw4::game::Settings& settings) {
         std::vector<SDL_Gamepad*> gamepads;
         ScriptedInput scripted;
         if (!options.input_script.empty()) scripted.load(options.input_script);
+        // --online-script FILE (test runs of online rooms, tools/online_test):
+        // this machine's pad from a list of steps (online_script.hpp).
+        dw4::game::OnlineScript online_script;
+        if (!options.online_script.empty()) {
+            std::string error;
+            if (!online_script.load(options.online_script, error)) throw std::runtime_error("online script: " + error);
+        }
         std::vector<dw4::engine::DrawItem> items;
         dw4::engine::ShadowFrame shadow;
         dw4::engine::FrameCamera camera;
@@ -1869,7 +1899,42 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     if (keys & dw4::pad_direction::negative_y) stick_y = -1;
                 }
                 const std::uint32_t before_bots = input;
-                if (const auto* g = scripted.active_goto(frame); g && g->seek && g->target == "campaign" && stick_x == 0 && stick_y == 0) {
+                if (online_script.active() && stick_x == 0 && stick_y == 0) {
+                    // The online test driver plays this member's slot with its
+                    // own camera (online_script.hpp).
+                    dw4::game::OnlineScriptFacts facts;
+                    facts.frame = frame;
+                    if (online) {
+                        facts.own_slot = online->session().own_slot();
+                        facts.present = online->session().present();
+                        facts.mode = dw4::game::online::mode_name(online->session().mode());
+                        facts.tick = online->session().tick();
+                    }
+                    const auto out = online_script.update(engine, facts);
+                    // The run ends once the script is done.
+                    if (online_script.finished()) running = false;
+                    input |= out.buttons;
+                    if (out.push & dw4::pad_direction::negative_x) stick_x = -1;
+                    if (out.push & dw4::pad_direction::positive_x) stick_x = 1;
+                    if (out.push & dw4::pad_direction::positive_y) stick_y = 1;
+                    if (out.push & dw4::pad_direction::negative_y) stick_y = -1;
+                    auto* models = engine.get<dw4::engine::ModelCtrlManager>();
+                    auto* cameras = engine.get<dw4::engine::CameraManager>();
+                    const auto* p = models ? models->player(facts.own_slot) : nullptr;
+                    if (out.walk && p && p->node && cameras) {
+                        const float dx = out.x - p->node->matrix(3, 0), dz = out.z - p->node->matrix(3, 2);
+                        if (dx * dx + dz * dz > out.reach) {
+                            dw4::engine::FrameCamera camera;
+                            cameras->frame_camera(engine, camera, facts.own_slot);
+                            dw4::engine::Mat4 inverse;
+                            if (dw4::engine::invert(camera.view, inverse)) {
+                                const float relative = std::atan2(dx, dz) - std::atan2(inverse(2, 0), inverse(2, 2));
+                                stick_x = std::sin(relative);
+                                stick_y = -std::cos(relative);
+                            }
+                        }
+                    }
+                } else if (const auto* g = scripted.active_goto(frame); g && g->seek && g->target == "campaign" && stick_x == 0 && stick_y == 0) {
                     // SEEK campaign: the story from a new game (src/game/campaign.cpp).
                     static dw4::game::CampaignBot campaign;
                     auto* models = engine.get<dw4::engine::ModelCtrlManager>();
@@ -3669,6 +3734,8 @@ int main(int argc, char** argv) {
                     start = comma + 1;
                 }
             } else if (arg == "--input") options.input_script = next();
+            else if (arg == "--online-script") options.online_script = next();
+            else if (arg == "--online-card") options.online_card = next();
             else if (arg == "--load-state") options.load_state = next();
             else if (arg == "--export-presence-art") options.export_art = next();
             else if (arg == "--loading") {

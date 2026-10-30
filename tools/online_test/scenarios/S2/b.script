@@ -1,0 +1,17 @@
+# S2, member b (k10): one second after a through the gate, west with a, stays when a leaves by matz02 and follows
+# 15 s later (alone in its instance: the original exit, then a JOIN of a's stag0102 instance), back with a.
+campaign until stage=stagml11,control
+idle until epoch>=@91
+explore mate00 yes until stage=stag0101,control
+log in the field
+route {route:stag0101_west:-280,-190}
+wander -280 -190 6 until present=1
+log a left
+wander -280 -190 6 until frames>=900
+mat matz02 yes until stage=stag0102,control
+log in stag0102 with a
+mat matz01 yes 2 until stage=stag0101,control
+log together back in stag0101
+wander -300 -210 15 until sealed>=1500 or present=1,frames>=60
+log enough
+idle until frames>=60

@@ -1,0 +1,18 @@
+# S22b, member a (k10, slot 0): all three through the lobby gate together and west; a and c leave by matz02 at
+# @270 s (b stays: a fork); in stag0102 c leaves alone at @331 s (a fork that keeps a's side as the instance) while
+# b catches up to join them; b follows the instance id and joins a.
+campaign until stage=stagml11,control
+idle until epoch>=@90
+explore mate00 yes until stage=stag0101,control
+log in the field
+route {route:stag0101_west}
+wander -315 -185 4 until epoch>=@270
+log a and c leave
+mat matz02 yes 2 until stage=stag0102,control
+log in stag0102 with c
+wander 330 140 12 until epoch>=@336 fail stagechange
+wander 330 140 12 until present=2,frames>=600 fail stagechange
+log b joined
+wander 330 140 12 until frames>=900 fail stagechange
+log enough
+idle until frames>=60

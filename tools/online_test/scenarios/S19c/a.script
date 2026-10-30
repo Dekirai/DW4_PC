@@ -1,0 +1,16 @@
+# S19c, member a (k2, level 7): with b through the lobby gate; fights the goburi a while, falls, then gives up
+# (holds START as a capsule): it forks off alone, its copy runs the original game over to stagML11 point 0.
+campaign until stage=stagml11,control
+idle until epoch>=@90
+explore mate00 yes until stage=stag0101,control
+log in the field
+fight 455 15 60 until sealed>=7000 or dead
+die until dead
+log dead
+idle until frames>=300
+log gives up
+giveup until frames>=200
+log away from the field
+talk until stage=stagml11,control fail stage=stag0102
+log in the lobby
+idle until frames>=120

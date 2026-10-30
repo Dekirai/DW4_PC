@@ -128,6 +128,12 @@ if(BUILD_TESTING)
   target_link_libraries(dw4_online_tests PRIVATE dw4_engine)
   target_compile_definitions(dw4_online_tests PRIVATE DW4_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
   add_test(NAME online COMMAND dw4_online_tests "${DW4_TEST_DATA}")
+  # The online test driver's script language (src/game/online_script.hpp, tools/online_test).
+  add_executable(dw4_online_script_tests tests/online_script_tests.cpp src/game/online_script.cpp src/game/test_path.cpp src/game/campaign.cpp)
+  target_include_directories(dw4_online_script_tests PRIVATE src/game)
+  target_link_libraries(dw4_online_script_tests PRIVATE dw4_engine)
+  target_compile_definitions(dw4_online_script_tests PRIVATE DW4_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+  add_test(NAME online_script COMMAND dw4_online_script_tests)
   add_executable(dw4_achievements_tests tests/achievements_tests.cpp src/game/achievements.cpp)
   target_include_directories(dw4_achievements_tests PRIVATE src/game)
   target_link_libraries(dw4_achievements_tests PRIVATE dw4_engine)
@@ -191,7 +197,7 @@ if(DW4_BUILD_APP)
     ${imgui_src_SOURCE_DIR}/backends/imgui_impl_opengl3.cpp)
   target_include_directories(imgui PUBLIC ${imgui_src_SOURCE_DIR} ${imgui_src_SOURCE_DIR}/backends)
   target_link_libraries(imgui PUBLIC SDL3::SDL3 OpenGL::GL)
-  add_executable(dw4_game src/game/game_main.cpp src/game/gl_renderer.cpp src/game/movie_decoder.cpp src/game/settings.cpp src/game/controls.cpp src/game/interpolation.cpp src/game/texture_pack.cpp src/game/rvz.cpp src/game/netplay.cpp src/game/save_store.cpp src/game/mods.cpp src/game/test_path.cpp src/game/campaign.cpp
+  add_executable(dw4_game src/game/game_main.cpp src/game/gl_renderer.cpp src/game/movie_decoder.cpp src/game/settings.cpp src/game/controls.cpp src/game/interpolation.cpp src/game/texture_pack.cpp src/game/rvz.cpp src/game/netplay.cpp src/game/save_store.cpp src/game/mods.cpp src/game/test_path.cpp src/game/campaign.cpp src/game/online_script.cpp
     src/game/discord_ipc.cpp src/game/discord_presence.cpp src/game/presence_data.cpp src/game/presence_art.cpp
     src/game/overhead_labels.cpp src/game/overhead_labels_draw.cpp src/game/achievements.cpp
     src/game/randomizer_save.cpp src/game/dev_present.cpp src/game/online_run.cpp)

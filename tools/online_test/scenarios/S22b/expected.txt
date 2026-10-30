@@ -1,0 +1,16 @@
+# S22b: a and c fork off to stag0102 (b stays); b's JOIN of their instance is decided; while it catches up, c forks
+# off alone (the stayers keep the instance id, 6.7); b follows the id, its JOIN applies on a's side.
+a: (?i)decision 1 .*stage=stag0101
+b: (?i)decision 4 .*stage=stag0101
+c: (?i)decision 4 .*stage=stag0101
+b: online-trace: split .*local=0
+a: (?i)decision 1 .*stage=stag0102 .*mode=2
+c: (?i)decision 1 .*stage=stag0102 .*mode=2
+b: (?i)decision 2 .*stage=stag0102
+b: online-trace: state purpose=1
+c: online-trace: split .*local=1
+a: online-trace: split .*local=0
+b: online-trace: join applied .*slot=1
+a: online-trace: join applied .*slot=1
+!relay: fallback_new
+shared: a b >= 600
