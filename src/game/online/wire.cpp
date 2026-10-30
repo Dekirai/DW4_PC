@@ -404,7 +404,7 @@ Heading decode_heading(std::span<const std::uint8_t> b) {
 }
 
 std::vector<std::uint8_t> encode(const Barrier& m) {
-    if (m.carry.size() > kMaxCarry) throw WireError("carry above 64 KiB");
+    if (m.carry.size() > kMaxCarry) throw WireError("carry above 65,533 bytes");
     check_mask(m.alive);
     check_mask(m.present);
     Writer w;
@@ -519,7 +519,7 @@ SnapHash decode_snaphash(std::span<const std::uint8_t> b) {
 }
 
 std::vector<std::uint8_t> encode(const Ready& m) {
-    if (m.carry.size() > kMaxCarry) throw WireError("carry above 64 KiB");
+    if (m.carry.size() > kMaxCarry) throw WireError("carry above 65,533 bytes");
     Writer w;
     w.u32(m.inst);
     w.u32(m.visit);

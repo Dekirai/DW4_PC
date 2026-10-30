@@ -159,6 +159,18 @@ std::string join_names(const std::vector<std::string>& names) {
     return out;
 }
 
+bool online_member_defeated(const engine::Engine& engine, int slot) {
+    if (slot < 0 || slot > 3 || !(engine.online().present & (1u << slot))) return false;
+    const auto* sys = engine.get<engine::GameSystem>();
+    const auto* models = engine.get<engine::ModelCtrlManager>();
+    if (!sys || !models) return false;
+    if (const auto* player = models->player(slot)) return player->hp <= 0; // generated: dying at 0 HP
+    if (sys->players[std::size_t(slot)].joined && sys->players[std::size_t(slot)].hp <= 0) return true;
+    for (const auto& ram : models->rams())
+        if (ram->generated && ram->index == slot && ram->info_name == "g_000bcaps") return true; // the capsule is out
+    return false;
+}
+
 std::vector<std::string> online_notices(engine::Engine& engine, int give_up_held, int give_up_frames) {
     std::vector<std::string> lines;
     if (!engine.online_shared()) return lines;
@@ -170,7 +182,7 @@ std::vector<std::string> online_notices(engine::Engine& engine, int give_up_held
         return name.empty() ? "Player " + std::to_string(slot + 1) : name;
     };
     const int local = engine.view_slot();
-    if ((engine.online().present & (1u << local)) && !models->player(local)) {
+    if (online_member_defeated(engine, local)) {
         lines.push_back("Defeated - wait for a raise, or hold START to give up");
         if (give_up_held > 0 && give_up_frames > 0)
             lines.push_back("Giving up... " + std::to_string(std::min(100, give_up_held * 100 / give_up_frames)) + "%");

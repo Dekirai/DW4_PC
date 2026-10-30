@@ -90,6 +90,10 @@ std::optional<float> player_pose_top(const engine::Engine& engine, std::string_v
 // `give_up_frames`), whose camera it watches, and the exit prompt's names
 // (who would stay, a boss warning, whom the owner waits for).
 std::vector<std::string> online_notices(engine::Engine& engine, int give_up_held, int give_up_frames);
+// Seamless co-op: a present member is defeated while its HP is 0 or its bit
+// capsule is out (not merely while no player model is generated: loading,
+// before SQ_ENTR and during a departure's fade nobody is).
+bool online_member_defeated(const engine::Engine& engine, int slot);
 // "Kim", "Kim and Lee", "Kim, Lee and Max".
 std::string join_names(const std::vector<std::string>& names);
 

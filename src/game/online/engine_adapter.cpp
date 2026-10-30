@@ -231,6 +231,10 @@ bool GameEngineLink::restore(std::span<const std::uint8_t> bytes) {
     hooks_.fresh_engine();
     auto& engine = e();
     engine.restore(snapshot);
+    // The restored load step's picture traversal (it advances simulation
+    // clocks), as the members' live load step had it and as every replayed
+    // step has it (replay_step; a save state's load_step_drawn).
+    if (!engine.held()) engine.traverse_scene();
     start_online(own_slot_, 0);
     return true;
 }
@@ -268,6 +272,7 @@ void GameEngineLink::start_online(int own_slot, std::uint8_t present) {
 }
 
 void GameEngineLink::set_split_identity(int slot) {
+    if (slot >= 0 && slot < 4) own_slot_ = slot; // (a joiner's slot, after its JOIN)
 #ifdef DW4_ONLINE_ENGINE_API
     e().set_split_identity(slot);
 #else
@@ -300,8 +305,27 @@ void GameEngineLink::set_barrier(const wire::BarrierOk& ok) {
     case wire::Decision::co_arrive: result.decision = engine::Decision::co_arrive; break;
     }
     for (int s = 0; s < 4; ++s) result.slot_map[std::size_t(s)] = ok.slot_map[std::size_t(s)];
-    for (const auto& c : ok.co_arrivals) result.co_arrivals.emplace_back(int(c.slot), engine::decode_carry(c.carry));
+    for (const auto& c : ok.co_arrivals) {
+        // A co-arrival's carry is another member's BARRIER blob, passed on by
+        // the relay unchecked: damaged bytes drop that co-arrival (on every
+        // member of the base alike) instead of ending the game.
+        try {
+            result.co_arrivals.emplace_back(int(c.slot), engine::decode_carry(c.carry));
+        } catch (const std::exception&) {
+        }
+    }
+    // The engine's own slot: NEW and the others name the new slot; DISSOLVE
+    // keeps the player of this machine's OLD slot (the relay names the new
+    // slot 0 in own_slot, the old one is the slot map's source of 0).
     result.own_slot = ok.own_slot;
+    if (ok.decision == wire::Decision::dissolve) {
+        result.own_slot = own_slot_;
+        for (int s = 0; s < 4; ++s)
+            if (ok.slot_map[std::size_t(s)] == 0) {
+                result.own_slot = s;
+                break;
+            }
+    }
     result.rules = e().online();
     result.rules.enabled = true;
     result.rules.present = ok.present();
@@ -312,11 +336,28 @@ void GameEngineLink::set_barrier(const wire::BarrierOk& ok) {
 #endif
 }
 
-void GameEngineLink::join_player(int slot, std::span<const std::uint8_t> carry, int point) {
+bool GameEngineLink::join_player(int slot, std::span<const std::uint8_t> carry, int point) {
 #ifdef DW4_ONLINE_ENGINE_API
-    e().online_join_player(slot, engine::decode_carry(carry), point);
+    // The carry is the joiner's READY blob, passed on by the relay unchecked.
+    engine::PlayerCarry decoded;
+    try {
+        decoded = engine::decode_carry(carry);
+    } catch (const std::exception&) {
+        return false;
+    }
+    e().online_join_player(slot, decoded, point);
+    return true;
 #else
     (void)slot, (void)carry, (void)point;
+    return false;
+#endif
+}
+
+void GameEngineLink::mark_leaving(int slot) {
+#ifdef DW4_ONLINE_ENGINE_API
+    e().online_mark_leaving(slot);
+#else
+    (void)slot;
 #endif
 }
 

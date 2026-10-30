@@ -41,6 +41,12 @@ inline std::uint64_t mix(std::uint64_t h, std::uint64_t v) {
 // route), X makes that slot fork away (exit-type fork).
 inline constexpr std::uint32_t kExitButton = dw4::pad_button::z;
 inline constexpr std::uint32_t kForkButton = dw4::pad_button::x;
+// Y opens a prompt owned by that slot (an exit prompt without a time limit:
+// no membership step while it is open); B on the prompt reader's pad closes
+// it. The reader is the owner, or the leader while the owner is leaving
+// (6.5, Engine::pad_reader_slot).
+inline constexpr std::uint32_t kPromptButton = dw4::pad_button::y;
+inline constexpr std::uint32_t kAnswerButton = dw4::pad_button::b;
 
 class Engine final : public EngineLink {
 public:
@@ -55,6 +61,8 @@ public:
     std::optional<SplitInfo> split_;
     std::vector<std::uint8_t> load_snapshot_;
     int identity_ = 0;
+    int prompt_owner_ = -1;
+    std::uint8_t leaving_ = 0;
     bool replay_ = false;
     int restores = 0, replayed = 0;
     std::uint64_t audio_steps = 0;
@@ -81,7 +89,7 @@ public:
         return bytes;
     }
     std::uint64_t net_fingerprint() override { return mix(mix(mix(state_, frame_), present_), std::hash<std::string>{}(stage_)); }
-    bool membership_safe() const override { return !pending_; }
+    bool membership_safe() const override { return !pending_ && prompt_owner_ < 0; }
     bool joinable(w::NotJoinable& reason) const override {
         if (is_hub_stage(stage_)) {
             reason = w::NotJoinable::hub;
@@ -89,6 +97,10 @@ public:
         }
         if (pending_) {
             reason = w::NotJoinable::loading;
+            return false;
+        }
+        if (prompt_owner_ >= 0) {
+            reason = w::NotJoinable::menu;
             return false;
         }
         // The entry scene: the first 120 frames of a visit.
@@ -123,6 +135,8 @@ public:
             pending_.reset();
             ++serial_;
             frame_ = 0;
+            prompt_owner_ = -1;
+            leaving_ = 0;
             if (barrier_) {
                 present_ = barrier_->present();
                 for (const auto& c : barrier_->co_arrivals) state_ = mix(state_, 0x5000 + c.slot + c.carry.size());
@@ -132,14 +146,34 @@ public:
             take_load_snapshot();
             return;
         }
+        auto masked = pads;
+        for (int s = 0; s < 4; ++s)
+            if (leaving_ & (1u << s)) masked[std::size_t(s)] = dw4::PadSample{true, {}, {}, 0}; // leaving: neutral and connected (6.5)
         for (int s = 0; s < 4; ++s) {
-            const auto& p = pads[std::size_t(s)];
+            const auto& p = masked[std::size_t(s)];
             const bool here = (present_ & (1u << s)) != 0;
             if (!here || !p.connected) continue; // absent slots play the neutral pad (6.5)
             state_ = mix(state_, std::uint64_t(s) << 40 | std::uint64_t(p.buttons) << 8 | std::uint64_t(std::uint8_t(std::int8_t(p.left.x * 74.0f))));
         }
+        if (prompt_owner_ < 0) {
+            for (int s = 0; s < 4; ++s)
+                if ((present_ & (1u << s)) && masked[std::size_t(s)].connected && (masked[std::size_t(s)].buttons & kPromptButton)) {
+                    prompt_owner_ = s;
+                    state_ = mix(state_, 0x6000 + std::uint64_t(s));
+                    break;
+                }
+        } else {
+            const std::uint8_t usable = std::uint8_t(present_ & ~leaving_);
+            const int reader = (usable & (1u << prompt_owner_)) ? prompt_owner_ : usable ? std::countr_zero(unsigned(usable)) : prompt_owner_;
+            if (masked[std::size_t(reader)].connected && (masked[std::size_t(reader)].buttons & kAnswerButton)) {
+                prompt_owner_ = -1;
+                state_ = mix(state_, 0x6100 + std::uint64_t(reader));
+            }
+        }
         const int lead = present_ ? std::countr_zero(unsigned(present_)) : 0;
-        if (pads[std::size_t(lead)].connected && (pads[std::size_t(lead)].buttons & kExitButton)) {
+        // (The first ticks of a visit take no exit: a sealed start repeats the
+        // barrier tick's pad for its first d ticks, as the transition steps.)
+        if (frame_ >= 16 && masked[std::size_t(lead)].connected && (masked[std::size_t(lead)].buttons & kExitButton)) {
             const auto it = std::find(route.begin(), route.end(), stage_);
             if (it != route.end() && it + 1 != route.end()) {
                 pending_ = *(it + 1);
@@ -149,7 +183,7 @@ public:
         }
         if (std::popcount(unsigned(present_)) >= 2)
             for (int s = 0; s < 4; ++s)
-                if ((present_ & (1u << s)) && pads[std::size_t(s)].connected && (pads[std::size_t(s)].buttons & kForkButton)) {
+                if ((present_ & (1u << s)) && masked[std::size_t(s)].connected && (masked[std::size_t(s)].buttons & kForkButton)) {
                     SplitInfo split{std::uint8_t(1u << s), false, identity_ == s};
                     const std::uint8_t side = split.local_leaves ? split.leavers : std::uint8_t(present_ & ~split.leavers);
                     present_ &= side;
@@ -177,6 +211,8 @@ public:
         pending_.reset();
         barrier_.reset();
         split_.reset();
+        prompt_owner_ = -1;
+        leaving_ = 0;
         take_load_snapshot();
         ++restores;
         return true;
@@ -186,13 +222,21 @@ public:
     void set_split_identity(int slot) override { identity_ = slot; }
     void set_fork_sides(std::span<const w::Fork>) override {}
     void set_barrier(const w::BarrierOk& ok) override { barrier_ = ok; }
-    void join_player(int slot, std::span<const std::uint8_t> carry, int point) override {
+    bool join_player(int slot, std::span<const std::uint8_t> carry, int point) override {
+        if (carry.empty()) return false; // (a carry the engine cannot read)
         present_ |= std::uint8_t(1u << slot);
         state_ = mix(mix(state_, 0x1000 + std::uint64_t(slot) + std::uint64_t(point)), carry.size());
+        return true;
     }
     void remove_player(int slot) override {
         present_ &= std::uint8_t(~(1u << slot));
+        leaving_ &= std::uint8_t(~(1u << slot));
         state_ = mix(state_, 0x2000 + std::uint64_t(slot));
+    }
+    void mark_leaving(int slot) override {
+        if (!(present_ & (1u << slot)) || (leaving_ & (1u << slot))) return;
+        leaving_ |= std::uint8_t(1u << slot);
+        state_ = mix(state_, 0x4000 + std::uint64_t(slot));
     }
     void intent(int slot, w::IntentKind kind, int argument) override { state_ = mix(state_, 0x3000 + slot * 16 + int(kind) + argument); }
     void set_view_slot(int) override {}
@@ -257,6 +301,7 @@ public:
         double parked_at = 0;
         double last_wait = -10;
         bool lagging = false;
+        bool resyncing = false;
     };
     struct Instance {
         std::uint32_t id = 0, visit = 0;
@@ -278,6 +323,7 @@ public:
         std::map<std::uint32_t, std::map<std::uint32_t, std::uint64_t>> netfp; // tick -> member -> hash
         std::map<std::uint32_t, std::uint64_t> snaphash; // member -> hash
         std::set<std::uint32_t> splits;                  // fork ticks already processed
+        std::map<int, std::uint32_t> leave_at;           // slot -> its LEAVE's tick (sealed through it)
         std::uint8_t present() const {
             std::uint8_t m = 0;
             for (const auto& [s, _] : slots) m |= std::uint8_t(1u << s);
@@ -444,6 +490,13 @@ public:
                 break;
             }
             const std::uint32_t t = inst.next_seal++;
+            for (auto it = inst.leave_at.begin(); it != inst.leave_at.end();)
+                if (t > it->second) {
+                    inst.slots.erase(it->first);
+                    it = inst.leave_at.erase(it);
+                } else {
+                    ++it;
+                }
             w::TickBody body;
             body.present = inst.present();
             for (const auto& [slot, member] : inst.slots) {
@@ -630,6 +683,44 @@ public:
     }
     std::map<std::uint32_t, std::uint32_t> pending_co_arrival; // instance -> late member
 
+    // The relay stamps a member's LEAVE (its connection timed out, or it
+    // left): at the next seal + 8, its pads end with that tick, the remaining
+    // member leads alone after it (LEAD_FROM).
+    std::uint32_t stamp_leave(std::uint32_t member) {
+        auto& m = members[member];
+        auto& inst = instances[m.inst];
+        const std::uint32_t j = inst.next_seal + 8;
+        inst.events[j].push_back(w::Event{w::EventKind::leave, std::uint8_t(m.slot)});
+        inst.leave_at[m.slot] = j;
+        if (inst.slots.size() == 2) {
+            const std::uint32_t lead = j + 1;
+            w::Event e{w::EventKind::lead_from};
+            e.tick = lead;
+            inst.events[lead - 1].push_back(e);
+            inst.lead_from = lead;
+        }
+        log_lines.push_back("leave " + m.name + " at " + std::to_string(j));
+        return j;
+    }
+
+    // A fingerprint vote the member lost (6.9): RESYNC, then the state with
+    // every tick since the snapshot; its pads are filled until it sends again.
+    void resync(std::uint32_t member, double now) {
+        auto& m = members[member];
+        auto& inst = instances[m.inst];
+        send(member, w::Type::resync, w::encode(w::InstVisit{inst.id, inst.visit}), now);
+        w::StateData state;
+        state.purpose = w::StatePurpose::resync;
+        state.slot = std::uint8_t(m.slot);
+        state.snapshot = inst.snapshot;
+        state.first = 0;
+        for (std::uint32_t t = 0; inst.log.contains(t); ++t) state.ticks.push_back(inst.log.at(t));
+        for (const auto& c : w::make_chunks(inst.id, inst.visit, w::encode_state_body(state))) send(member, w::Type::state_data, w::encode(c), now);
+        m.resyncing = true;
+        log_lines.push_back("resync " + m.name + " after " + std::to_string(state.ticks.size()) + " ticks");
+    }
+    std::uint32_t resync_ready = 0;
+
     void leave_instance_if_empty(Instance* inst) {
         if (!inst) return;
         for (auto it = inst->slots.begin(); it != inst->slots.end();) {
@@ -775,6 +866,13 @@ public:
             auto it = instances.find(r.inst);
             if (it == instances.end()) break;
             auto& inst = it->second;
+            if (m.resyncing) {
+                // A resync ends without a JOIN: the member sends its pads again.
+                m.resyncing = false;
+                ++resync_ready;
+                log_lines.push_back("resynced " + m.name + " at tick " + std::to_string(r.tick));
+                break;
+            }
             // Compare with the members' fingerprint of that tick.
             if (const auto fp = inst.netfp.find(r.tick); fp != inst.netfp.end())
                 for (const auto& [member, hash] : fp->second) {

@@ -50,7 +50,7 @@ inline constexpr std::size_t kMaxFrame = 1u << 20;
 inline constexpr std::size_t kStateChunk = 60 * 1024; // SNAPSHOT / STATE_DATA chunks
 inline constexpr std::size_t kMaxInputPads = 32;      // INPUT: 1..32 pads
 inline constexpr std::size_t kMaxLogPads = 1200;      // LOG: 1..1200 pads
-inline constexpr std::size_t kMaxCarry = 64 * 1024;   // BARRIER / READY carry
+inline constexpr std::size_t kMaxCarry = 65535 - 2;   // BARRIER / READY carry (it becomes a JOIN event with a u16 length: slot, point, carry)
 inline constexpr std::size_t kMaxStage = 24;          // stage names
 inline constexpr std::uint32_t kNoTick = 0xFFFFFFFFu; // WELCOME without a last tick
 

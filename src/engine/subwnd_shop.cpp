@@ -96,7 +96,7 @@ void list_marker(Engine& engine, Window& window, int line) {
 
 // Page turns of the shop lists (8037E7A8 / 8037E8C8).
 bool turn_page(Engine& engine, Window& window, int& page, int pages, bool right) {
-    const auto& pad = engine.pads()[std::size_t(std::clamp(window.player, 0, 3))];
+    const auto& pad = engine.pads()[std::size_t(engine.pad_reader_slot(window.player, window.player))]; // (the window owner, or the leader for a leaving one: 6.5)
     const std::uint32_t stick = pad.left_directions.trigger | pad.left_directions.repeat;
     const std::uint32_t buttons = pad.buttons.trigger | pad.buttons.repeat;
     const bool pressed = right ? (stick & pad_direction::positive_x) || (buttons & pad_button::right)
@@ -1154,7 +1154,7 @@ struct ShopEditBit : Window {
                 Packet now;
                 engine.messenger().send(engine, "SELECTCTRL", std::string("i_stcursor03"), player, "ISSELECTNOW", now);
                 if (now.bools.empty() || !now.bools[0]) return;
-                const auto& pad = engine.pads()[std::size_t(std::clamp(player, 0, 3))];
+                const auto& pad = engine.pads()[std::size_t(engine.pad_reader_slot(player, player))]; // (the window owner, or the leader for a leaving one: 6.5)
                 const std::uint32_t stick = pad.left_directions.trigger | pad.left_directions.repeat;
                 const std::uint32_t buttons = pad.buttons.trigger | pad.buttons.repeat;
                 const bool up = (stick & pad_direction::positive_y) || (buttons & pad_button::up);

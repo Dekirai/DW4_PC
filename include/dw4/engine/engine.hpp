@@ -508,6 +508,10 @@ public:
     // Before a step (LEAVE, when membership_safe()): the slot's player, HUD
     // panels, quick panel, item label, capsule and weapon go; joined off.
     void online_remove_player(int slot);
+    // Before a step (a LEAVE that waits for a membership-safe step, 6.5):
+    // the slot plays the neutral, connected pad and its prompts and windows
+    // take the leader's pad until the LEAVE applies.
+    void online_mark_leaving(int slot);
     // Before a step: a port choice of a present slot (round S3 uses
     // go_without; give_up forks the defeated member off alone).
     void online_intent(int slot, IntentKind kind, int argument);

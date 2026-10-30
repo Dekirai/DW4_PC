@@ -65,8 +65,9 @@ public:
     void set_split_identity(int slot) override;
     void set_fork_sides(std::span<const wire::Fork> forks) override;
     void set_barrier(const wire::BarrierOk& decision) override;
-    void join_player(int slot, std::span<const std::uint8_t> carry, int entrance_point) override;
+    bool join_player(int slot, std::span<const std::uint8_t> carry, int entrance_point) override;
     void remove_player(int slot) override;
+    void mark_leaving(int slot) override;
     void intent(int slot, wire::IntentKind kind, int argument) override;
     void set_view_slot(int slot) override;
 

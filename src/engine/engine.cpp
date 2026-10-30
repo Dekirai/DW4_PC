@@ -760,6 +760,9 @@ void Engine::begin_stage_load(const StageSnapshot* restoring) {
 }
 
 void Engine::restore(const StageSnapshot& snapshot) {
+    // The load step's managers run here too (6.12: every entry into the
+    // simulation under the MXCSR the engine expects; a no-op by default).
+    const detail::MxcsrGuard mxcsr;
     time_ = snapshot.time;
     frame_ = snapshot.frame;
     update_frame_ = frame_; // (a stage load starts in a step that updated)
@@ -803,6 +806,7 @@ void Engine::restore(const StageSnapshot& snapshot) {
     messenger_.update(*this);
     process_stage_loader();
     demo_.update(*this);
+    apply_leash_rule(); // as the live load step (a no-op offline and while the leash is on)
     update_managers();
 }
 

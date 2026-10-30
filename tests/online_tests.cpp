@@ -443,6 +443,103 @@ void barrier_without_data() {
     engine.set_online(OnlineRules{});
 }
 
+// DISSOLVE as the relay and the fake hub send it (round S1 review): own_slot
+// names the NEW slot 0, the slot map's source of 0 is this machine's old
+// slot. A member in slot 1 keeps its own character and its own personal
+// values, not slot 0's (S19a on real clients showed a k10 member in the
+// lobby with its k2 partner's level 7). A damaged carry from the network
+// drops its co-arrival or join instead of throwing.
+void dissolve_through_the_link() {
+    namespace w = dw4::game::online::wire;
+    Engine engine{dw4::MountedResources{}};
+    auto* sys = engine.get<GameSystem>();
+    sys->players[0] = sample_player("p_agumon", 7);
+    sys->gate_stage_name = "stag0101";
+    sys->gate_stage_no = 1;
+    engine.flags()[24] = 1;
+    dw4::game::online::EngineHooks hooks;
+    hooks.engine = [&]() -> Engine& { return engine; };
+    dw4::game::online::GameEngineLink link(hooks, {});
+    link.start_online(0, 0b0001);
+    // A NEW with the partner as a co-arrival in slot 1 (its own character and
+    // personal values) and a co-arrival whose carry is damaged in slot 2.
+    PersonalSession mine;
+    mine.gate_stage_name = "stag0302";
+    mine.gate_stage_no = 2;
+    mine.flags = {{25, 1}};
+    PlayerCarry carry;
+    carry.slot = sample_player("p_dorumon", 21);
+    carry.personal = mine;
+    w::BarrierOk arrive;
+    arrive.decision = w::Decision::new_instance;
+    arrive.slot_map = {0, -1, -1, -1};
+    arrive.own_slot = 0;
+    arrive.co_arrivals.push_back({1, 5, encode_carry(carry)});
+    arrive.co_arrivals.push_back({2, 6, {0x44, 0x57, 0x34, 0x00, 0x01, 0x02}});
+    arrive.mode = w::Mode::sealed;
+    engine.request_stage("stagxx01");
+    link.set_barrier(arrive);
+    std::array<PadSample, 4> pads{};
+    for (int i = 0; i < 40 && engine.barrier_set(); ++i) engine.step(pads);
+    check(!engine.barrier_set(), "the NEW applied");
+    check(sys->players[1].joined && sys->players[1].digimon == "p_dorumon" && !sys->players[2].joined,
+          "the readable co-arrival joined, the damaged one was dropped");
+    check(engine.online().present == 0b0011, "two members");
+    check(!link.join_player(3, std::vector<std::uint8_t>{1, 2, 3}, 0) && !sys->players[3].joined, "a damaged JOIN carry is dropped");
+    // This machine is the member in slot 1 (a co-arrival restores the base's
+    // snapshot: the same engine): back to the lobby.
+    link.set_split_identity(1);
+    w::BarrierOk dissolve;
+    dissolve.decision = w::Decision::dissolve;
+    dissolve.own_slot = 0;                 // the new slot (RoomHub.Dissolve, the fake hub)
+    dissolve.slot_map = {-1, 0, -1, -1};   // old slot 1 -> 0
+    dissolve.mode = w::Mode::hub;
+    engine.request_stage("stagml11");
+    link.set_barrier(dissolve);
+    for (int i = 0; i < 40 && engine.barrier_set(); ++i) engine.step(pads);
+    check(!engine.barrier_set(), "the DISSOLVE applied");
+    check(sys->players[0].joined && sys->players[0].digimon == "p_dorumon" && sys->players[0].stats.level == 21,
+          "the member keeps its own character (level 21), not slot 0's");
+    check(!sys->players[1].joined && !sys->players[2].joined && !sys->players[3].joined, "the others are gone");
+    check(sys->gate_stage_name == std::optional<std::string>("stag0302") && sys->gate_stage_no == 2, "its own GATESTAGE");
+    check(engine.flags().count(25) && !engine.flags().count(24), "its own lobby flags");
+    engine.set_online(OnlineRules{});
+}
+
+// 6.5: a LEAVE that waits for a membership-safe step marks the slot leaving:
+// its pad is neutral and connected, and its readers (a prompt it owns, a
+// status window: SUBWND reads window.player through pad_reader_slot) get the
+// leader's pad until the LEAVE applies.
+void leaving_redirect() {
+    Engine engine{dw4::MountedResources{}};
+    auto* sys = engine.get<GameSystem>();
+    sys->players[0] = sample_player("p_agumon", 7);
+    sys->players[1] = sample_player("p_dorumon", 21);
+    OnlineRules rules;
+    rules.enabled = true;
+    rules.present = 0b0011;
+    engine.set_online(rules);
+    check(engine.pad_reader_slot(1, 1) == 1, "slot 1 reads its own pad");
+    engine.online_mark_leaving(1);
+    check(engine.online().leaving == 0b0010, "slot 1 is leaving");
+    check(engine.pad_reader_slot(1, 1) == 0 && engine.leader() == 0, "its readers take the leader's pad");
+    engine.set_pad_input_enabled(true);
+    std::array<PadSample, 4> in{};
+    in[0] = PadSample{true, {}, {}, dw4::pad_button::a};
+    in[1] = PadSample{false, {0.5f, 0.0f}, {}, dw4::pad_button::a}; // (the relay no longer carries it: disconnected)
+    engine.step(in);
+    check(engine.pads()[1].connected && engine.pads()[1].buttons.held == 0, "its pad is neutral and connected");
+    check(engine.pads()[0].buttons.held & dw4::pad_button::a, "the leader plays on");
+    engine.online_mark_leaving(3);
+    check(engine.online().leaving == 0b0010, "an absent slot is not marked");
+    engine.online_remove_player(1);
+    check(engine.online().leaving == 0 && engine.online().present == 0b0001, "the LEAVE clears the mark");
+    engine.set_online(OnlineRules{});
+    Engine offline{dw4::MountedResources{}};
+    offline.online_mark_leaving(1);
+    check(offline.online().leaving == 0 && offline.pad_reader_slot(1, 1) == 1, "nothing offline");
+}
+
 // ---------------------------------------------------------------------------
 // With game data
 // ---------------------------------------------------------------------------
@@ -1014,6 +1111,8 @@ int main(int argc, char** argv) {
         rules_guards();
         rules_replay_and_split_without_players();
         barrier_without_data();
+        dissolve_through_the_link();
+        leaving_redirect();
         std::string data = argc > 1 ? argv[1] : "";
         if (data.empty())
             if (const char* env = std::getenv("DW4_TEST_DATA")) data = env;

@@ -37,13 +37,20 @@ std::optional<OnlineRoom> online_enter_room(online::HttpWorker& http, const Onli
         http.set_token(*token);
         online::HttpRequest me;
         me.path = "/me";
-        if (http.wait(http.submit(me)).ok()) room.token = *token;
-        else online::forget_token(token_folder, options.user);
+        const auto answer = http.wait(http.submit(me));
+        if (answer.ok()) room.token = *token;
+        // Only a refused token is forgotten; a network error keeps it for the next start.
+        else if (answer.status == 401 || answer.status == 403) online::forget_token(token_folder, options.user);
+        else {
+            error = "The server did not answer the login check: " + api::problem_text(answer);
+            return std::nullopt;
+        }
     }
     if (room.token.empty()) {
         const char* password = std::getenv("DW4_ONLINE_PASSWORD");
         if (!password || !*password) {
-            error = "No remembered login for " + options.user + " (set DW4_ONLINE_PASSWORD for a development login).";
+            // (Round S1 has no login screen yet: the password comes from the environment in every build.)
+            error = "No remembered login for " + options.user + " (set DW4_ONLINE_PASSWORD to log in).";
             return std::nullopt;
         }
         const auto response = http.wait(http.submit(api::login_request(options.user, password, client_version, int(kOnlineProtocol))));

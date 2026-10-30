@@ -2153,8 +2153,9 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     // every machine executes it; the others come sealed. The
                     // local B + X + START hold asks "Leave room?" (7.4).
                     if (online->leave_combo(pads[0].buttons)) {
-                        online->leave_prompt = true;
-                        std::cout << "online: leave prompt at frame " << frame << '\n';
+                        // The same hold again closes it ("stay").
+                        online->leave_prompt = !online->leave_prompt;
+                        std::cout << "online: leave prompt " << (online->leave_prompt ? "at" : "closed at") << " frame " << frame << '\n';
                     }
                     pads = online->session().before_step(pads[0], steady_seconds());
                 }
@@ -2184,8 +2185,8 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 // offline test runs (DW4_ONLINE) apply it here.
                 if (engine.online_shared()) {
                     const int local = engine.view_slot();
-                    auto* models = engine.get<dw4::engine::ModelCtrlManager>();
-                    const bool defeated = (engine.online().present & (1u << local)) && models && !models->player(local);
+                    // (Not while no player model is generated: loads, the entry, a departure's fade.)
+                    const bool defeated = dw4::game::online_member_defeated(engine, local);
                     give_up_held = defeated && (pads[std::size_t(local)].buttons & dw4::pad_button::start) ? give_up_held + 1 : 0;
                     // (An online client sends the choice as INTENT: the server stamps it at a tick every member applies.)
                     if (give_up_held == kGiveUpFrames && online) online->session().send_intent(dw4::game::online::wire::IntentKind::give_up, 0);
@@ -2392,7 +2393,11 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 std::string line = overlay.loading;
                 if (line.empty() && overlay.waiting_for_server) line = "Waiting for the server...";
                 if (line.empty() && overlay.slow_uplink) line = "Your connection is slow; the others see you lag.";
-                if (online->leave_prompt) line = "Leave room?  F1 > Online > Leave room, or hold B + X + START again to stay.";
+                if (online->leave_prompt) {
+                    // After the loading or waiting line, never instead of it.
+                    const std::string prompt = "Leave room?  F1 > Online > Leave room, or hold B + X + START again to stay.";
+                    line = line.empty() ? prompt : line + "   " + prompt;
+                }
                 if (!line.empty()) {
                     state_message = line;
                     message_until = std::chrono::steady_clock::now() + std::chrono::milliseconds(300);

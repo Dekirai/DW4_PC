@@ -91,8 +91,14 @@ public:
     virtual void set_split_identity(int slot) = 0; // -1: an observer keeps the side that keeps the instance id
     virtual void set_fork_sides(std::span<const wire::Fork> forks) = 0;
     virtual void set_barrier(const wire::BarrierOk& decision) = 0;
-    virtual void join_player(int slot, std::span<const std::uint8_t> carry, int entrance_point) = 0;
+    // False when the carry could not be decoded (damaged bytes from the
+    // network): the join is dropped, alike on every member (the same bytes).
+    virtual bool join_player(int slot, std::span<const std::uint8_t> carry, int entrance_point) = 0;
     virtual void remove_player(int slot) = 0;
+    // A LEAVE reached its tick but waits for a membership-safe step (6.5):
+    // the slot plays the neutral, connected pad and its prompts and windows
+    // take the leader's pad meanwhile.
+    virtual void mark_leaving(int slot) = 0;
     virtual void intent(int slot, wire::IntentKind kind, int argument) = 0;
     // Presentation only: whose camera the picture uses (a defeated member
     // watches the nearest living member).

@@ -158,6 +158,8 @@ private:
     void park(double now);
     void report_state(double now, bool force);
     void become_member(double now);
+    void finish_resync(double now);
+    std::uint32_t roster_member_for(int slot) const;
     void run_catch_up(double now);
     void send_input_ahead(const wire::WirePad& pad);
     void start_sealed(const wire::WirePad& pad);
@@ -222,6 +224,7 @@ private:
     std::uint32_t state_first_ = 0, state_last_ = 0;
     std::map<std::uint32_t, std::uint64_t> replay_fingerprints_;
     bool ready_sent_ = false;
+    bool resyncing_ = false;            // RESYNC: the catch-up ends as a member again, without a JOIN
     std::uint64_t replayed_steps_ = 0;
     double replay_seconds_ = 0;
     double catch_up_started_ = 0;
@@ -238,6 +241,8 @@ private:
     PaceController pace_;
     std::set<std::uint32_t> lagging_members_;
     std::set<std::uint32_t> known_members_;
+    std::set<std::uint32_t> disconnected_members_;      // ROOM disconnected, not connected again yet
+    std::map<std::uint32_t, std::uint32_t> roster_inst_; // ROSTER: room member -> its instance (or join target)
     bool hello_seen_ = false;
     double last_tick_at_ = 0;
     double now_ = 0;

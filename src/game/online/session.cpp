@@ -71,6 +71,19 @@ std::string Session::member_name(std::uint32_t member) const {
     return member != kNoMember ? "Player " + std::to_string(member + 1) : std::string("A player");
 }
 
+std::uint32_t Session::roster_member_for(int slot) const {
+    // A JOIN names no member: the roster's one member of this instance that
+    // no slot holds yet (the joiner catches up on it).
+    (void)slot;
+    std::uint32_t found = kNoMember;
+    for (const auto& [member, inst] : roster_inst_) {
+        if (inst != inst_ || member == member_id_ || std::find(slot_members_.begin(), slot_members_.end(), member) != slot_members_.end()) continue;
+        if (found != kNoMember) return kNoMember; // more than one: unknown
+        found = member;
+    }
+    return found;
+}
+
 std::string Session::slot_name(int slot) const {
     return slot >= 0 && slot < 4 && slot_members_[std::size_t(slot)] != kNoMember ? member_name(slot_members_[std::size_t(slot)])
                                                                                    : std::string("A player");
@@ -272,6 +285,10 @@ void Session::handle(const w::Frame& frame, double now) {
         const auto m = w::decode_inst_visit(p);
         if (m.inst != inst_ || m.visit != visit_) break;
         notice("Lost sync with the group - catching up again...");
+        trace("resync inst=%u visit=%u tick=%u", inst_, visit_, tick_);
+        resyncing_ = true;
+        ready_sent_ = false;
+        ticks_.clear(); // the state brings every tick from 0 again
         fallback_ = engine_.snapshot_bytes(false);
         own_carry_ = engine_.carry(slot_);
         mode_ = Mode::waiting_state;
@@ -307,8 +324,16 @@ void Session::handle(const w::Frame& frame, double now) {
         case w::RoomEvent::owner_away: notice("The room owner is away"); break;
         case w::RoomEvent::lagging: lagging_members_.insert(m.member); break;
         case w::RoomEvent::lag_over: lagging_members_.erase(m.member); break;
-        case w::RoomEvent::connected: if (!own) notice(member_name(m.member) + " is back"); break;
-        case w::RoomEvent::disconnected: if (!own) notice(member_name(m.member) + " lost the connection"); break;
+        case w::RoomEvent::connected:
+            // (Also sent at a member's first connection: "back" only after a loss.)
+            if (!own && disconnected_members_.erase(m.member)) notice(member_name(m.member) + " is back");
+            break;
+        case w::RoomEvent::disconnected:
+            if (!own) {
+                disconnected_members_.insert(m.member);
+                notice(member_name(m.member) + " lost the connection");
+            }
+            break;
         }
         break;
     }
@@ -316,8 +341,11 @@ void Session::handle(const w::Frame& frame, double now) {
         // Once per second: who lags (the name tags' connection icon).
         const auto m = w::decode_roster(p);
         lagging_members_.clear();
-        for (const auto& e : m.entries)
+        roster_inst_.clear();
+        for (const auto& e : m.entries) {
             if (e.flags & 2) lagging_members_.insert(e.member);
+            roster_inst_[e.member] = e.inst;
+        }
         break;
     }
     case w::Type::ping: {
@@ -505,6 +533,11 @@ bool Session::apply_events(bool replaying) {
             w::NotJoinable reason{};
             held = held || !(e.kind == w::EventKind::join ? engine_.joinable(reason) : engine_.membership_safe());
             if (held) {
+                // 6.5: a LEAVE whose tick came plays the neutral, connected
+                // pad from here, and the leader's pad answers its prompts
+                // and windows, so the step the LEAVE waits for comes (an exit
+                // prompt or a status window it left open has no time limit).
+                if (e.kind == w::EventKind::leave) engine_.mark_leaving(e.slot);
                 ++it;
                 continue;
             }
@@ -512,8 +545,18 @@ bool Session::apply_events(bool replaying) {
         const int slot = e.slot;
         switch (e.kind) {
         case w::EventKind::join:
-            engine_.join_player(slot, e.carry, e.point);
+            if (!engine_.join_player(slot, e.carry, e.point)) {
+                // A carry the engine could not read: every member drops this
+                // join alike (the same bytes).
+                trace("join dropped inst=%u visit=%u tick=%u slot=%d (damaged carry)", inst_, visit_, tick_, slot);
+                if (slot == slot_ && (mode_ == Mode::observing || mode_ == Mode::catching_up)) {
+                    mode_ = Mode::closed;
+                    close_reason_ = "Joining the group failed.";
+                }
+                break;
+            }
             present_ = std::uint8_t(present_ | (1u << slot));
+            if (slot != slot_ && slot_members_[std::size_t(slot)] == kNoMember) slot_members_[std::size_t(slot)] = roster_member_for(slot);
             trace("join applied inst=%u visit=%u tick=%u slot=%d present=%x%s", inst_, visit_, tick_, slot, unsigned(present_),
                   replaying ? " (replay)" : "");
             if (!replaying && slot != slot_) notice(slot_name(slot) + " joined");
@@ -992,7 +1035,19 @@ void Session::run_catch_up(double now) {
         if (tick_ % 60 == 0) replay_fingerprints_[tick_] = engine_.net_fingerprint();
         ++tick_;
         ++done;
-        if (engine_.supports_barriers() && engine_.pending_stage()) break; // the server redirects (co-arrival or NEW)
+        if (engine_.supports_barriers() && engine_.pending_stage()) {
+            if (resyncing_) {
+                // A resyncing member is still one of the instance: it reaches
+                // the group's barrier like the others (after_step's park).
+                send(w::Type::ready, w::encode(w::Ready{inst_, visit_, tick_ - 1, 0, config_.rate, own_carry_}));
+                ready_sent_ = true;
+                replay_seconds_ += clock_seconds() - start;
+                finish_resync(now);
+                park(now);
+                return;
+            }
+            break; // a joiner: the server redirects (co-arrival or NEW)
+        }
         if (config_.replay_budget > 0 && (done & 63) == 0 && clock_seconds() - start > config_.replay_budget) break;
     }
     replay_seconds_ += clock_seconds() - start;
@@ -1016,9 +1071,31 @@ void Session::run_catch_up(double now) {
         engine_.set_replay(false);
         loading_.clear();
         pace_.reset();
-        mode_ = Mode::observing;
         last_tick_at_ = now;
+        if (resyncing_) {
+            // A resync (6.9): this member never left the instance; no JOIN
+            // comes, it sends its pads again from here (the server filled
+            // them meanwhile).
+            finish_resync(now);
+            return;
+        }
+        mode_ = Mode::observing;
     }
+}
+
+void Session::finish_resync(double now) {
+    resyncing_ = false;
+    engine_.set_replay(false);
+    engine_.set_split_identity(slot_);
+    engine_.set_view_slot(slot_);
+    loading_.clear();
+    trace("resynced inst=%u visit=%u tick=%u slot=%d", inst_, visit_, tick_, slot_);
+    input_next_ = tick_;
+    for (int k = 0; k < delay_; ++k) send_input_ahead(last_own_);
+    pace_.reset();
+    mode_ = Mode::sealed;
+    last_tick_at_ = now;
+    notice("Back in sync with the group.");
 }
 
 void Session::become_member(double now) {
@@ -1031,8 +1108,18 @@ void Session::become_member(double now) {
     for (int k = 0; k < delay_; ++k) send_input_ahead(last_own_);
     mode_ = Mode::sealed;
     last_tick_at_ = now;
-    const int other = lowest(std::uint8_t(present_ & ~(1u << slot_)));
-    notice(other >= 0 ? "You joined " + slot_name(other) : std::string("You joined the group"));
+    // Who is there: the roster's members of this instance (a JOIN names no
+    // member), else the slots' known names.
+    std::vector<std::string> names;
+    for (const auto& [member, inst] : roster_inst_)
+        if (inst == inst_ && member != member_id_) names.push_back(member_name(member));
+    if (names.empty()) {
+        const int other = lowest(std::uint8_t(present_ & ~(1u << slot_)));
+        if (other >= 0 && slot_members_[std::size_t(other)] != kNoMember) names.push_back(slot_name(other));
+    }
+    std::string list;
+    for (std::size_t i = 0; i < names.size(); ++i) list += (i ? (i + 1 == names.size() ? " and " : ", ") : "") + names[i];
+    notice(list.empty() ? std::string("You joined the group") : "You joined " + list);
 }
 
 // ---- choices and presentation

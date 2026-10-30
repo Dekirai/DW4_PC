@@ -98,7 +98,9 @@ const std::vector<std::string_view>& online_forbidden_env() {
         "DW4_CAMERAS", "DW4_CAM_LOCAL", "DW4_LEASH_OFF", "DW4_ONLINE", "DW4_TEST_RULES", "DW4_TEST_GATEDISC",
         "DW4_TEST_GIVEUP",
         // state tests, the randomizer's save bond of test runs and the direct netplay menus (the client lane's list)
-        "DW4_STATE_FILE", "DW4_STATE_TEST", "DW4_RANDOMIZER_BIND", "DW4_MENU_HOST", "DW4_MENU_IMPORT", "DW4_MENU_JOIN"};
+        "DW4_STATE_FILE", "DW4_STATE_TEST", "DW4_RANDOMIZER_BIND", "DW4_MENU_HOST", "DW4_MENU_IMPORT", "DW4_MENU_JOIN",
+        // the pad replay of the test tools replaces the sealed pads before the step (game_main.cpp)
+        "DW4_PAD_REPLAY"};
     return names;
 }
 
@@ -116,7 +118,7 @@ const std::vector<std::string_view>& online_presentation_env() {
         "DW4_ONLINE_CALIBRATION", "DW4_ONLINE_PASSWORD", "DW4_ONLINE_PIN", "DW4_ONLINE_RATE", "DW4_ONLINE_SERVER",
         "DW4_ONLINE_TRACE", "DW4_ONLINE_SCRIPT_EVERY",
         // round S1 test tools (game_main.cpp)
-        "DW4_SNAPSHOT_DUMP", "DW4_PAD_LOG", "DW4_PAD_REPLAY", "DW4_EXTRA_RENDERS", "DW4_EXTRA_WIDEN", "DW4_EXTRA_PREVIOUS",
+        "DW4_SNAPSHOT_DUMP", "DW4_PAD_LOG", "DW4_EXTRA_RENDERS", "DW4_EXTRA_WIDEN", "DW4_EXTRA_PREVIOUS",
         "DW4_CAM_CHECK"};
     return names;
 }
@@ -391,6 +393,7 @@ PlayerCarry Engine::carry_player(int slot) const {
 }
 
 void Engine::online_join_player(int slot, const PlayerCarry& carry, int entrance_point) {
+    const detail::MxcsrGuard mxcsr; // (spawns between steps: 6.12)
     if (!online_.enabled || slot < 0 || slot > 3 || (online_.present & bit(slot))) return;
     auto* sys = get<GameSystem>();
     if (!sys) return;
@@ -477,14 +480,25 @@ void Engine::despawn_player(int slot) {
 
 void Engine::online_remove_player(int slot) {
     if (!online_.enabled || slot < 0 || slot > 3 || !(online_.present & bit(slot))) return;
+    const detail::MxcsrGuard mxcsr;
     const OnlineRules before = online_;
     despawn_player(slot);
     membership_changed(before);
 }
 
+void Engine::online_mark_leaving(int slot) {
+    // 6.5: from the LEAVE's tick until it applies, the slot plays the
+    // neutral, connected pad, and pad_reader_slot hands its readers (an exit
+    // prompt it owns, a window) the leader's pad, so the instance reaches the
+    // membership-safe step the LEAVE waits for.
+    if (!online_.enabled || slot < 0 || slot > 3 || !(online_.present & bit(slot)) || (online_.leaving & bit(slot))) return;
+    online_.leaving |= bit(slot);
+}
+
 void Engine::online_intent(int slot, IntentKind kind, int argument) {
     (void)argument;
     if (!online_.enabled || slot < 0 || slot > 3 || !(online_.present & bit(slot))) return;
+    const detail::MxcsrGuard mxcsr;
     if (kind == IntentKind::give_up) {
         // The defeated member forks off alone; in that copy nobody lives and
         // the stage's game over (end_g_000bcaps.lua) runs as in the original.
@@ -526,8 +540,12 @@ bool Engine::online_split(std::uint8_t mask, ForkKind kind) {
     // The recorded side: named by the continuing side or by the side that
     // leaves the instance id (the relay's fork lists).
     const std::uint8_t child = kept == leavers ? stayers : leavers;
+    // ForkSide::frame is the frame after the fork tick's step; a give-up
+    // forks between two steps (online_intent before the step), one frame
+    // earlier than a fork inside the step.
+    const std::uint64_t at = kind == ForkKind::give_up ? frame_ + 1 : frame_;
     for (const auto& side : fork_sides_)
-        if (side.frame == frame_ && (side.leavers == leavers || side.leavers == child)) {
+        if (side.frame == at && (side.leavers == leavers || side.leavers == child)) {
             take = side.leavers == leavers ? side.take_leavers : !side.take_leavers;
             decided = true;
             break;

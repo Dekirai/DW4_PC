@@ -8,6 +8,7 @@
 #include "online_fake_hub.hpp"
 
 #include <cmath>
+#include <cstdlib>
 #include <cstdio>
 #include <iostream>
 #include <stdexcept>
@@ -38,6 +39,7 @@ struct World {
         config.settings_hash = 2;
         config.own_name = name;
         config.replay_budget = 0.004;
+        config.trace = std::getenv("DW4_SESSION_TEST_TRACE") != nullptr; // (debugging a test: the client trace on stdout)
         c->session = std::make_unique<Session>(c->engine, config);
         c->engine.take_load_snapshot();
         c->session->attach(hub.connect(id, name), now);
@@ -298,6 +300,73 @@ void barrier_hold() {
     check(a.session->inst() >= 100, "a registered instance, not the timeout's");
 }
 
+// Two co-arrived members; returns once both play sealed.
+// (Delay 6: no pad of theirs comes late with 20 ms one way.)
+void co_arrive(World& world, fake::Client& a, fake::Client& b) {
+    a.input = press_in({{"stagis10", 20}, {"stagml11", 200}}, fake::kExitButton);
+    b.input = press_in({{"stagis10", 20}, {"stagml11", 230}}, fake::kExitButton);
+    check(world.run_until(20, [&] { return a.session->mode() == Mode::sealed && b.session->mode() == Mode::sealed; }), "both sealed");
+}
+
+// B opens a prompt that only its own pad answers (an exit prompt has no time
+// limit) and leaves the room: its LEAVE waits for a membership-safe step.
+// From the LEAVE's tick B's slot is marked leaving (6.5), so A's pad answers
+// the prompt, the step comes and the LEAVE applies; without the mark nobody
+// could close it and A kept B's player for good.
+void leave_with_open_prompt() {
+    World world;
+    world.hub.co_arrival_hold = 3.0;
+    world.hub.suggested_delay = 6;
+    auto& a = world.add("kim", 1);
+    auto& b = world.add("lee", 2);
+    co_arrive(world, a, b);
+    world.run(3);
+    const std::uint32_t at = b.session->tick() + 30;
+    b.input = [at](const fake::Client& c) -> std::uint32_t { return c.session->tick() == at ? fake::kPromptButton : 0u; };
+    a.input = [](const fake::Client&) -> std::uint32_t { return fake::kAnswerButton; }; // A presses B all the time
+    check(world.run_until(5, [&] { return a.engine.prompt_owner_ == 1; }), "B's prompt is open on A's machine (B: " + std::to_string(b.engine.prompt_owner_) + ", at " + std::to_string(at) + ")");
+    world.run(1);
+    check(a.engine.prompt_owner_ == 1, "A's pad does not answer B's prompt");
+    world.hub.stamp_leave(2);
+    world.hub.drop(2);
+    check(world.run_until(10, [&] { return a.session->present() == 0b01 && a.engine.prompt_owner_ < 0; }),
+          "A's pad closes the prompt of the leaving member and the LEAVE applies");
+    check(a.session->mode() == Mode::solo && a.engine.present_ == 0b01, "A leads alone");
+}
+
+// A member that lost the fingerprint vote (6.9) catches up from the state
+// and goes back to sending its pads as a member: no JOIN comes for a resync
+// (the relay ignores READY of members; S1 review: the client stayed an
+// observer for good and was lag-removed).
+void resync_back_to_member() {
+    World world;
+    world.hub.co_arrival_hold = 3.0;
+    world.hub.suggested_delay = 6;
+    auto& a = world.add("kim", 1);
+    auto& b = world.add("lee", 2);
+    co_arrive(world, a, b);
+    world.run(10);
+    check(world.hub.netfp_mismatches == 0, "equal before");
+    b.engine.state_ ^= 0x55; // a desync on B's machine
+    world.run(2);
+    check(world.hub.netfp_mismatches > 0, "the fingerprints differ");
+    const auto restores = b.engine.restores;
+    world.hub.resync(2, world.now);
+    check(world.run_until(10, [&] { return b.engine.restores > restores && b.session->mode() == Mode::sealed; }), "B caught up and is a member again");
+    check(world.hub.resync_ready == 1, "B told the relay (READY)");
+    world.run(1);
+    const auto mismatches = world.hub.netfp_mismatches;
+    const auto compared = world.hub.netfp_compared;
+    const auto fills = world.hub.fills_total;
+    world.run(15);
+    check(world.hub.netfp_mismatches == mismatches && world.hub.netfp_compared >= compared + 10, "equal fingerprints after the resync");
+    check(world.hub.fills_total == fills && !world.hub.members[2].lagging, "B sends its pads again (none filled)");
+    check(b.session->present() == 0b11 && a.session->present() == 0b11, "both still present");
+    bool notice = false;
+    for (const auto& n : b.session->take_notices()) notice |= n.find("Back in sync") != std::string::npos;
+    check(notice, "B is told");
+}
+
 void pacing_and_lag() {
     World world;
     world.hub.co_arrival_hold = 3.0;
@@ -396,6 +465,10 @@ int main(int argc, char** argv) {
         barrier_timeout();
         std::cout << "barrier hold\n";
         barrier_hold();
+        std::cout << "leave with an open prompt\n";
+        leave_with_open_prompt();
+        std::cout << "resync\n";
+        resync_back_to_member();
         std::cout << "pacing, lag\n";
         pacing_and_lag();
         std::cout << "input delay\n";
