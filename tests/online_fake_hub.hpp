@@ -24,6 +24,7 @@
 #include <optional>
 #include <set>
 #include <string>
+#include <tuple>
 #include <vector>
 
 namespace fake {
@@ -49,6 +50,7 @@ public:
     std::uint8_t present_ = 1;
     std::optional<std::string> pending_;
     int transition_left_ = 0;
+    int transition_steps = 3; // steps from NEXTSTAGE to the load step (a real stage load: about 750)
     std::optional<w::BarrierOk> barrier_;
     std::optional<SplitInfo> split_;
     std::vector<std::uint8_t> load_snapshot_;
@@ -141,7 +143,7 @@ public:
             const auto it = std::find(route.begin(), route.end(), stage_);
             if (it != route.end() && it + 1 != route.end()) {
                 pending_ = *(it + 1);
-                transition_left_ = 3;
+                transition_left_ = transition_steps;
                 return;
             }
         }
@@ -299,6 +301,8 @@ public:
     bool answer_barriers = true;
     double co_arrival_hold = 3.0;
     double state_delay = 0.0; // extra delay of STATE_DATA (a slow state transfer)
+    double state_pacing = 0.0; // STATE_DATA paced like the relay's state delivery: sent this much later, LIVE ticks go first
+    std::vector<std::tuple<double, std::uint32_t, std::vector<std::uint8_t>>> paced_state;
     double wait_hold = 0.0;   // a field barrier is held this long with BARRIER_WAIT every second (a join hold), then decided
     std::vector<std::string> log_lines;
     std::map<std::uint32_t, Member> members;
@@ -364,6 +368,13 @@ public:
     }
 
     void tick(double now) {
+        for (auto it = paced_state.begin(); it != paced_state.end();)
+            if (std::get<0>(*it) <= now) {
+                send(std::get<1>(*it), w::Type::state_data, std::get<2>(*it), now);
+                it = paced_state.erase(it);
+            } else {
+                ++it;
+            }
         for (auto& c : conns) {
             if (c->dropped) continue;
             std::vector<std::uint8_t> bytes;
@@ -571,8 +582,11 @@ public:
             for (std::uint32_t t = 0; target->log.contains(t); ++t) state.ticks.push_back(target->log.at(t));
             const auto body = w::encode_state_body(state);
             for (const auto& c : w::make_chunks(target->id, target->visit, body)) {
-                // A slow transfer (state_delay) holds everything behind it too (TCP order).
-                if (state_delay > 0 && m.conn) {
+                // A slow transfer (state_delay) holds everything behind it too (TCP order);
+                // a paced one (state_pacing) lets the LIVE ticks go first.
+                if (state_pacing > 0) {
+                    paced_state.emplace_back(now + state_pacing, m.id, w::encode(c));
+                } else if (state_delay > 0 && m.conn) {
                     auto& queue = m.conn->outbound;
                     queue.emplace_back(std::max(delay_of(queue, now), now + state_delay), w::encode_frame(w::Type::state_data, w::encode(c)));
                 } else {

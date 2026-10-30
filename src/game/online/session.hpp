@@ -225,6 +225,7 @@ private:
     std::uint64_t replayed_steps_ = 0;
     double replay_seconds_ = 0;
     double catch_up_started_ = 0;
+    std::uint32_t gap_traced_ = 0xFFFFFFFFu; // the tick a catch-up waits for, traced once
 
     // Reports.
     std::uint8_t state_flags_ = 0xFF;

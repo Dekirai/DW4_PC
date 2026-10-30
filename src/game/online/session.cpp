@@ -357,7 +357,13 @@ void Session::handle(const w::Frame& frame, double now) {
 
 void Session::on_sealed(std::uint32_t inst, std::uint32_t visit, std::uint32_t tick, w::TickBody body, double now) {
     if ((inst != inst_ && !(previous_inst_ && inst == previous_inst_)) || visit != visit_) return;
-    if (tick < tick_) return; // executed already, or after the barrier of a visit
+    // Executed already, or after the barrier of a visit. During the
+    // transition steps and while a state is awaited (a join, a co-arrival, a
+    // resync) tick_ still counts the old visit (or 0 before the state's
+    // first tick): the new visit's ticks are kept (the relay sends a joiner
+    // the target's LIVE ticks from its STATE_DATA on, while the joiner still
+    // loads its own stage; on_state drops the ones before the state).
+    if (tick < tick_ && mode_ != Mode::transition && mode_ != Mode::waiting_state) return;
     if (mode_ == Mode::parked) return; // ticks sealed after B are discarded (after BARRIER_OK inst / visit are the new ones)
     ticks_[tick] = std::move(body);
     last_tick_at_ = now;
@@ -950,7 +956,13 @@ void Session::run_catch_up(double now) {
     std::uint32_t done = 0;
     while (mode_ == Mode::catching_up) {
         const auto it = ticks_.find(tick_);
-        if (it == ticks_.end()) break;
+        if (it == ticks_.end()) {
+            if (const auto later = ticks_.upper_bound(tick_); later != ticks_.end() && gap_traced_ != tick_) {
+                gap_traced_ = tick_;
+                trace("catch-up waits for tick %u (next held %u, %zu held)", tick_, later->first, ticks_.size());
+            }
+            break;
+        }
         // (DW4_ONLINE_RATE, test runs: a slower machine's replay rate.)
         if (config_.max_replay_rate > 0 &&
             double(replayed_steps_ + done) >= (clock_seconds() - catch_up_started_) * double(config_.max_replay_rate))
@@ -974,6 +986,9 @@ void Session::run_catch_up(double now) {
     const double rate = replay_seconds_ > 0.05 ? double(replayed_steps_) / replay_seconds_ : double(config_.rate);
     const double behind = rate > 60.0 ? double(remaining) / (rate - 59.94) : 0;
     loading_ = "Joining... (catching up, about " + std::to_string(int(behind + 0.999)) + " s)";
+    if (done > 0 && (tick_ / 600 != (tick_ - done) / 600 || (engine_.supports_barriers() && engine_.pending_stage())))
+        trace("catch-up inst=%u visit=%u tick=%u remaining=%u rate=%.0f%s", inst_, visit_, tick_, remaining, rate,
+              engine_.supports_barriers() && engine_.pending_stage() ? " (stage pending)" : "");
     if (!ready_sent_ && remaining <= 10 && tick_ > state_first_ && !replay_fingerprints_.empty()) {
         const auto last = std::prev(replay_fingerprints_.end());
         if (replayed_steps_ > 600 && replay_seconds_ > 0) config_.rate = std::uint32_t(std::min(1e6, rate));

@@ -234,6 +234,33 @@ void target_moves_on() {
     check(notice, "B is told why");
 }
 
+// The relay sends a joiner the target's state and LIVE ticks at once, while
+// the joiner still runs its own transition steps (a real stage load: about
+// 750 steps, 12 s): the LIVE ticks belong to the new visit and must be kept
+// although the joiner's tick count still runs on the old one (S17b on real
+// game clients waited for good at the first tick after the state's log).
+void live_during_transition() {
+    World world;
+    world.hub.co_arrival_hold = 0.5;
+    world.hub.suggested_delay = 4;
+    // Both start together; B stays in its lobby longer than A has been in the
+    // field, so B's tick count is past A's when the JOIN comes.
+    auto& a = world.add("kim", 1);
+    auto& b = world.add("lee", 2);
+    a.input = press_in({{"stagis10", 30}, {"stagml11", 700}}, fake::kExitButton);
+    b.input = press_in({{"stagis10", 30}, {"stagml11", 2400}}, fake::kExitButton);
+    b.engine.transition_steps = 300;
+    world.hub.state_pacing = 0.3;
+    check(world.run_until(80, [&] { return b.session->mode() == Mode::transition && b.engine.stage() == "stagml11"; }),
+          "B in its transition steps after the JOIN");
+    check(b.session->tick() > a.session->tick(), "B's tick count (the lobby's) is past A's (" + std::to_string(b.session->tick()) + " / " +
+                                                     std::to_string(a.session->tick()) + ")");
+    check(world.run_until(20, [&] { return b.session->mode() == Mode::sealed && a.session->mode() == Mode::sealed; }),
+          "B catches up with the LIVE ticks that came during its transition and joins");
+    world.run(5);
+    check(world.hub.netfp_mismatches == 0 && world.hub.netfp_compared >= 1, "identical net fingerprints");
+}
+
 void barrier_timeout() {
     World world;
     world.hub.answer_barriers = false;
@@ -356,6 +383,8 @@ int main(int argc, char** argv) {
         co_arrival();
         std::cout << "target moves on\n";
         target_moves_on();
+        std::cout << "live during transition\n";
+        live_during_transition();
         std::cout << "barrier timeout\n";
         barrier_timeout();
         std::cout << "barrier hold\n";
