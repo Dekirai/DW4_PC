@@ -2176,6 +2176,16 @@ The default stays `drop` until the user decides (question 2).
   READ COMMITTED and a deadlock victim runs again
   (`MySqlErrors.RevisionedWrite`, `DeadlockAttempts`, `src/DW4Online.Data/Database.cs`);
   integration tests write twelve accounts at once (before: 7 of 12 got 409).
+- Checks of the lane's final state: ctest 41 of 41 (with `online_character`);
+  online off bit-identical (`det.sh` 4004f056 / audio 396cb219, two runs each
+  of the release and the `DW4_ONLINE_DEV` build); r25c 10 of 10 segments,
+  1,748,011 frames, the same story everywhere; the r48int save state tests 17
+  of 17 identical after loading; the S1 scenarios on real clients 14 of 14
+  (every client now plays the virtual card: a new account's first save is a
+  stage change with `If-None-Match: *`, then `If-Match` at the next ones and
+  on leaving); `character_test.py` C1, C2, C3, P1; DW4Online unit tests 130
+  and integration tests 66 (4 skipped: the end-to-end client and the
+  certificate store).
 
 ## 10. Client: account and room UI
 
