@@ -19,7 +19,7 @@ separate work (see "Open ends"); `tests/winhttp_client` shows the client side of
 | `src/DW4Online.Relay` | The DW4R2 relay (port 52041, SEAMLESS.md 6): `Protocol` (frames and messages), `Hub` (one connection per member and room, instances as solo-led and sealed lockstep groups, server-paced sealing on a dedicated high-resolution timer thread, barrier decisions, forks, the tick log, state delivery), HMAC room tickets. |
 | `src/DW4Online.Web` | The Razor Pages website (English, server-rendered, no scripts): home, register, login, recovery, account settings, profiles, achievements, rooms, admin, privacy. |
 | `src/DW4Online.Server` | The executable: composition root, configuration, Windows-service mode, CLI tools, TLS certificate selector, file log. |
-| `sql/` | Numbered migrations `NNNN_description.sql` (0001 schema, 0002 achievement definitions, 0003-0007 see "Database"). |
+| `sql/` | Numbered migrations `NNNN_description.sql` (0001 schema, 0002 achievement definitions, 0003-0008 see "Database"). |
 | `tests/DW4Online.Tests` | Unit tests (no database). |
 | `tests/DW4Online.Integration.Tests` | HTTP + MariaDB tests against a private local instance (API, rooms with the real relay and fake clients, website forms, end to end on real Kestrel). |
 | `tests/DW4Online.FakeClient` | Fake DW4R2 clients (a deterministic stand-in engine that speaks the protocol as the game will), the latency / jitter / loss proxy and the loss matrix; a console tool (`client`, `proxy`, `matrix`) and a library for the tests. |
@@ -119,7 +119,7 @@ and user secrets (Development) work as usual.
 | `Rooms` | `MaxRooms` (200), `PlayersPerInstance` (4), `HeartbeatSeconds` (10), `MemberTimeoutSeconds` (35), `RoomsPerOwner` (1), `PasswordIterations` (20000, room passwords live in memory only), `SettingsMaxBytes` (4096), `RankedDataHashes` (empty = every data hash is ranked; decimal or 0x-hex). |
 | `Relay` | `Enabled` (true), `ListenAddress` (127.0.0.1; 0.0.0.0 on the server), `Port` (52041), `TicketKey` (secret, base64 32 bytes: `DW4Online.Server gen-relay-key`; required outside Development), `TicketLifetimeSeconds` (60), `HandshakeTimeoutSeconds` (10), `IdleTimeoutSeconds` (60), `MaxConnectionsPerIp` (16), `MaxRooms` (200), inbound limits per connection `BytesPerSecond` (65536) / `BurstBytes` (1 MiB) / `FramesPerSecond` (400) / `FrameBurst` (2000), state transfers `StateBytesPerSecond` (4 MB/s) / `StateBurstBytes` (16 MiB), `MaxQueuedBytes` (32 MiB: a connection that does not read is closed), `ReconnectSeconds` (10), `LagLeaveSeconds` (10), `DiagnosticsDirectory` (empty; a folder gets one JSON-lines membership log per room). |
 | `Sealing` | `MaxDelayTicks` (15), `LateTarget` (0.001: d rises when more of the last 3,600 pads were late), `EventMarginTicks` (2: added to the largest member horizon for JOIN, LEAVE, INTENT). |
-| `Instances` | `CoArrivalHoldMs` (3000), `JoinHoldSeconds` (30), `MaxCatchUpSeconds` (30), `DefaultReplayRate` (3000 steps/s for a member that sent no RATE), `HeadingValidMs` (5000), `BarrierReportSeconds` (5). `Rooms:PlayersPerInstance` (4) caps every instance. |
+| `Instances` | `CoArrivalHoldMs` (3000), `JoinHoldSeconds` (30), `MaxCatchUpSeconds` (30), `DefaultReplayRate` (3000 steps/s for a member that sent no RATE), `HeadingValidMs` (5000), `BarrierReportSeconds` (5), `StoryBurst` (10) and `StoryMessagesPerMinute` (60: a member's STORY rate). `Rooms:PlayersPerInstance` (4) caps every instance. `Rooms:StoryWhileOwnerAway` (`drop`, `hold` or `apply`; default drop): story progress made while the room owner is away (SEAMLESS.md 8.6). |
 | `Web` | `RequireHttps` (false; true on the server: website pages redirect to https, cookies are Secure), `Hsts`, `DataProtectionKeysDirectory` (anti-forgery keys, DPAPI-encrypted on Windows; empty = the service account's profile, `memory` = tests), `OperatorName` / `OperatorAddress` / `OperatorContact` (the controller on the privacy page), `DigimonNames` (display names by model, overriding the built-in list). |
 | `Tls` | `StoreHostName`: take HTTPS certificates from the Windows store (renewals without a restart); its certificate serves every connection that names no other host (an IP address sends no name: the IP phase's pinned self-signed certificate). `AdditionalHostNames` (empty): host names with their own certificate, chosen by the name the client asks for (SNI), for example the later domain next to the pinned IP certificate. `StoreName` (My), `StoreLocation` (LocalMachine), `RefreshMinutes` (10); `AcmeChallengeDirectory`: serve ACME http-01 files from a folder. |
 | `Logging:File` | `Directory` (empty = off), `MinimumLevel`, `RetainDays`: daily UTC log files for the service. |
@@ -157,7 +157,9 @@ written by the room service before its memory changes), `audit_log` (pruned afte
 0005 drops the user names old `login_unknown` audit rows held; 0006 `online_character_history.ended_at` (the reset
 that ended a revision's character, filled in for earlier resets); 0007 `sessions.last_used_ip` (the address a session
 was last used from, for the account-wide lock) and `online_character_history.flagged` (each revision's flag, for staff
-restores; earlier revisions take their live character's flag or the one their reset noted).
+restores; earlier revisions take their live character's flag or the one their reset noted); 0008 `online_story` (an
+account's own online story: BASE_FLAG, BASE_FLAGFOLDER, BASE_COUNTER and a revision; a room's story is its owner's row,
+only the relay writes it, newer revisions only; SEAMLESS.md 8).
 
 ## API (`/api/v1`, JSON, errors as problem details)
 
@@ -177,8 +179,8 @@ Authenticated calls send `Authorization: Bearer dw4_<43 characters>`.
 | `GET /me`, `PUT /me/email`, `GET /me/sessions`, `DELETE /me/sessions/{id}` | token | Account, optional e-mail, active sessions. |
 | `PUT /me/profile` | token | `{public}`: show the online character and achievements on the website profile. |
 | `POST /me/delete` | token | `{currentPassword}`: GDPR erasure of the account (see "Rules in force"). |
-| `GET /online-character` | token | `{revision, record (base64), summary, playSeconds, flagged, ...}` with `ETag`; 404 = start from zero. |
-| `PUT /online-character` | token | `{record (base64 3316 bytes), playSeconds, context}`; `If-None-Match: *` creates, `If-Match: <revision>` updates (409 with `currentRevision`, 428 without either). Answers `{revision, summary, warnings, unlocked}`. |
+| `GET /online-character` | token | `{revision, record (base64), summary, playSeconds, flagged, ...}` with `ETag`; 404 = start from zero. The record's story bytes (BASE_FLAG, BASE_FLAGFOLDER, BASE_COUNTER) are the account's own online story (`online_story`). |
+| `PUT /online-character` | token | `{record (base64 3316 bytes), playSeconds, context}`; `If-None-Match: *` creates, `If-Match: <revision>` updates (409 with `currentRevision`, 428 without either). Answers `{revision, summary, warnings, unlocked}`. The uploaded story bytes are ignored: the stored record carries the account's own online story (a guest plays with the room owner's story; its clears never count). |
 | `GET /online-character/history`, `POST /online-character/reset` | token | Kept revisions; end the character (`{currentPassword}`; its revisions stay 30 days for staff, then go). |
 | `GET /cloud-save` (`?revision=N`) | token | The save bytes (`application/octet-stream`), `ETag`, `X-Sha256`, `X-Save-Format`. |
 | `GET /cloud-save/meta` | token | `{latest, boxes, history}`. |
@@ -193,6 +195,7 @@ Authenticated calls send `Authorization: Bearer dw4_<43 characters>`.
 | `GET /rooms/{code}` | token | Members get the room state, others the summary. |
 | `POST /rooms/{code}/join` | token | `{password?, protocol, dataHash, clientVersion}` -> room state with `relayTicket`; repeating it is a heartbeat; the owner always gets back in (no password, place kept) and unfreezes the story; joining leaves any other room. 403 `wrong_room_password` / `kicked`, 409 `room_full` / `incompatible_room`. |
 | `POST /rooms/{code}/ticket` | token | A fresh one-time relay ticket (`relayTicket`, a reconnect); it replaces the member's older ticket. 503 `relay_unavailable` with the relay off. |
+| `GET /rooms/{code}/story` | token | Members: the room story the relay keeps (SEAMLESS.md 8): `{revision, phase (0-7), flags, folder, counters (16), policy, ownerPresent, droppedFlags, droppedFolder, droppedCounters, held}`. 404 `not_in_room`, 404 `no_story` before the room's first relay connection. |
 | `POST /rooms/{code}/heartbeat` | token | Every `heartbeatSeconds` (10) while the relay connection is down (a live relay connection counts as the heartbeat); silent members leave after 35 s. Answers the room state; 404 `not_in_room` means join again. |
 | `POST /rooms/{code}/leave`, `POST /rooms/{code}/kick` `{username}`, `DELETE /rooms/{code}` | token | Leave; the owner (present) kicks a guest (no re-join); the owner closes the room for everyone. |
 | `GET /admin/accounts?query=`, `POST /admin/accounts/{user}/reset-password` (admin), `.../status`, `.../role` (admin), `.../online-character/history`, `.../online-character/restore/{rev}`, `.../online-character/reset` | staff | Moderation; every action is audited. A locked or banned account leaves its room. `status` is active, locked or banned (deleting is `DELETE /admin/accounts/{user}`, admins only); a temporary password only from an admin (whoever knows it owns the account). |

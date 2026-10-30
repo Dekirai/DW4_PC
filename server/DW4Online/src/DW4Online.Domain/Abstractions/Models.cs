@@ -80,6 +80,17 @@ public sealed class OnlineCharacterRow
     public DateTime UpdatedAt { get; init; }
 }
 
+/// <summary>An account's own online story (online_story, SEAMLESS.md 8.4): BASE_FLAG, BASE_FLAGFOLDER, BASE_COUNTER (16 x i32 LE).</summary>
+public sealed class OnlineStoryRow
+{
+    public long AccountId { get; init; }
+    public long Revision { get; init; }
+    public byte[] Flags { get; init; } = [];
+    public byte[] Folder { get; init; } = [];
+    public byte[] Counters { get; init; } = [];
+    public DateTime UpdatedAt { get; init; }
+}
+
 /// <summary>A new online character revision with the server-side summary columns.</summary>
 public sealed record OnlineCharacterWrite(
     long AccountId,

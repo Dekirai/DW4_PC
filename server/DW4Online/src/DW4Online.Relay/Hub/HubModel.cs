@@ -1,3 +1,4 @@
+using DW4Online.Domain.Story;
 using DW4Online.Relay.Protocol;
 
 namespace DW4Online.Relay.Hub;
@@ -11,8 +12,14 @@ public interface IHubPeer
     void Close(CloseReason reason, string text);
 }
 
-/// <summary>What the room service tells the relay about a room when a member connects.</summary>
-public sealed record RoomInfo(string Code, int Protocol, ulong DataHash, ulong SettingsHash, int MaxPlayers);
+/// <summary>What the room service tells the relay about a room when a member connects (the story: when the room has an owner account).</summary>
+public sealed record RoomInfo(string Code, int Protocol, ulong DataHash, ulong SettingsHash, int MaxPlayers, RoomStoryInit? Story = null);
+
+/// <summary>
+/// The room story's start (SEAMLESS.md 8): the owner's account and online story as stored, the room's difficulty (the
+/// story is rebased on it), the owner-away policy and whether the owner is in the room.
+/// </summary>
+public sealed record RoomStoryInit(long OwnerAccountId, RoomStoryData Story, int Difficulty, StoryPolicy Policy, bool OwnerPresent);
 
 /// <summary>A member as the room's state lists it.</summary>
 public sealed record InstanceMemberView(long AccountId, string Username, int Slot, bool Connected, bool Lagging);
@@ -68,6 +75,10 @@ public sealed class HubMember(int index, long accountId, string name, bool owner
     public long ResyncAt { get; set; }
     /// <summary>A state transfer for this member is being built outside the room lock: nothing is pumped to it meanwhile.</summary>
     public StateJob? PendingState { get; set; }
+
+    /// <summary>STORY tokens (Instances:StoryBurst, refilled at StoryMessagesPerMinute) and when they were refilled.</summary>
+    public double StoryTokens { get; set; } = -1;
+    public long StoryRefilledAt { get; set; }
 }
 
 public sealed record Heading(string Stage, byte Point, ulong Context, long At);
@@ -249,6 +260,8 @@ public sealed class HubInstance(uint id)
     public bool Joinable { get; set; }
     public bool MembershipSafe { get; set; }
     public StateReason Reason { get; set; } = StateReason.Loading;
+    /// <summary>The room story's drop epoch when this visit began (a fork's child keeps its parent's: one engine line).</summary>
+    public long StoryEpoch { get; set; }
 
     public TickLog Log { get; set; } = new();
     /// <summary>Sealed records beyond the log's end, waiting for the solo leader's LOG to reach them (1 to 2 members).</summary>

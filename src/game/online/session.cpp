@@ -40,6 +40,12 @@ bool is_hub_stage(std::string_view stage) {
 }
 
 namespace {
+// The UI stages (stagIS*: title, character select, save room, call shop,
+// staff roll): the character select loads a record with its own story before
+// the room story replaces it at game_started, so no STORY goes from them.
+bool ui_stage(std::string_view stage) {
+    return stage.size() >= 6 && (stage[4] == 'I' || stage[4] == 'i') && (stage[5] == 'S' || stage[5] == 's') && stage.substr(0, 4) == "stag";
+}
 int members(std::uint8_t mask) { return std::popcount(unsigned(mask)); }
 int lowest(std::uint8_t mask) { return mask ? std::countr_zero(unsigned(mask)) : -1; }
 double clock_seconds() { return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count(); }
@@ -98,6 +104,11 @@ void Session::attach(std::unique_ptr<Transport> transport, double now, std::stri
     inbox_.clear();
     line_.clear();
     hello_done_ = false;
+    // STORY answers come in order on one connection: those of the old one
+    // never come, so nothing sent on it waits for an answer, and the pending
+    // set goes again on the new one (8.3).
+    story_in_flight_.clear();
+    story_last_ = {};
     const auto hello = w::hello_line(config_.ticket, config_.protocol, config_.data_hash, config_.settings_hash);
     if (!transport_->send(std::span(reinterpret_cast<const std::uint8_t*>(hello.data()), hello.size()))) lose_connection(now);
 }
@@ -202,6 +213,10 @@ void Session::poll(double now) {
     if (mode_ == Mode::solo || mode_ == Mode::sealed) {
         flush_log(now, false);
         if (state_pending_) report_state(now, false);
+        if (now - story_checked_at_ >= config_.story_check_interval) {
+            story_checked_at_ = now;
+            send_story(now, false);
+        }
         if (now - presence_at_ >= config_.presence_interval) {
             presence_at_ = now;
             const auto facts = engine_.presence(slot_);
@@ -362,6 +377,11 @@ void Session::handle(const w::Frame& frame, double now) {
         if (m.inst == inst_ && m.visit == visit_) {
             previous_inst_ = inst_;
             inst_ = m.new_inst;
+            for (auto& line : lines_)
+                if (line.awaiting_id) {
+                    line.inst = m.new_inst;
+                    line.awaiting_id = false;
+                }
             trace("reassign inst=%u -> %u from tick=%u", m.inst, m.new_inst, m.from_tick);
         }
         break;
@@ -378,7 +398,7 @@ void Session::handle(const w::Frame& frame, double now) {
                                                                   : "The relay closed the connection" + (m.text.empty() ? std::string(".") : " (" + m.text + ").");
         break;
     }
-    case w::Type::story_ack: break; // round S2
+    case w::Type::story_ack: on_story_ack(w::decode_story_ack(p)); break;
     default: break;                  // unknown frames from a newer server are skipped
     }
 }
@@ -714,6 +734,27 @@ void Session::after_step(double now) {
         if (member) send(w::Type::split, w::encode(w::Split{inst_, visit_, executed, split->leavers,
                                                              split->in_stage ? w::SplitKind::in_stage : w::SplitKind::exit}));
         present_ = std::uint8_t(present_ & side);
+        if (split->local_leaves && member && !lines_.empty()) {
+            // This copy becomes the child: the parent line ends here (its
+            // growth up to the fork), the child's counts from the fork under
+            // the id REASSIGN brings (8.3).
+            const auto values = engine_.story_values();
+            auto& parent = lines_.back();
+            std::map<std::int32_t, std::int32_t> grown;
+            for (const auto c : engine::story::additive_counters()) {
+                const auto it = values.counters.find(c);
+                grown[c] = std::max(0, (it == values.counters.end() ? 0 : it->second) - parent.base[c]);
+            }
+            parent.final_growth = std::move(grown);
+            CounterLine child;
+            child.visit = visit_;
+            child.awaiting_id = true;
+            for (const auto c : engine::story::additive_counters()) {
+                const auto it = values.counters.find(c);
+                child.base[c] = it == values.counters.end() ? 0 : it->second;
+            }
+            lines_.push_back(std::move(child));
+        }
         trace("split inst=%u visit=%u tick=%u child=%x local=%d present=%x", inst_, visit_, executed, unsigned(split->leavers),
               split->local_leaves ? 1 : 0, unsigned(present_));
         for (int s = 0; s < 4; ++s)
@@ -793,6 +834,13 @@ void Session::park(double now) {
     serial_at_barrier_ = engine_.load_serial();
     group_at_barrier_ = present_;
     own_carry_ = engine_.carry(slot_);
+    // The pending set goes first (the server merges it before it decides, so
+    // BARRIER_OK brings it back in the room story); then everything refused
+    // may be tried again.
+    send_story(now, true);
+    refused_flags_.clear();
+    refused_folder_.clear();
+    refused_phase_ = 0;
     w::Barrier b;
     b.inst = inst_;
     b.visit = visit_;
@@ -821,6 +869,18 @@ void Session::on_barrier_ok(const w::BarrierOk& ok, double now) {
     if (mode_ == Mode::parked) {
         if (ok.inst != inst_ || ok.visit != visit_) return;
         decision_ = ok;
+        // The room story the load step merges, and the values it removes
+        // from this engine because the server dropped them (8.6).
+        if (!ok.story.empty()) {
+            try {
+                const auto room = engine::story::decode_story(ok.story, ok.story_revision);
+                const auto dropped = engine::story::decode_keys(ok.dropped);
+                if (engine::story::holds_dropped(engine_.story_values(), room, dropped))
+                    notice("Story progress was not saved: the room owner is away.");
+                take_story(room);
+            } catch (const std::exception&) {
+            }
+        }
         if (ok.decision == w::Decision::join || ok.decision == w::Decision::co_arrive) {
             // The own engine still loads the stage, as a solo NEW: its load
             // snapshot is the fallback if the target moves on (6.6).
@@ -901,6 +961,7 @@ void Session::begin_visit(double now) {
     serial_at_barrier_ = engine_.load_serial();
     hub_ = mode_of_instance_ == w::Mode::hub || is_hub_stage(engine_.stage());
     state_flags_ = 0xFF;
+    open_line();
     engine_.set_view_slot(slot_);
     trace("visit inst=%u visit=%u stage=%s slot=%d present=%x mode=%u", inst_, visit_, engine_.stage().c_str(), slot_, unsigned(present_),
           unsigned(mode_of_instance_));
@@ -977,6 +1038,7 @@ void Session::on_state(w::StateData state, double now) {
     events_.clear();
     replay_fingerprints_.clear();
     hub_ = is_hub_stage(engine_.stage());
+    open_line(); // the visit's line from its load (a joiner's growth includes the instance's: one line, taken once)
     const bool co_arrival = state.purpose == w::StatePurpose::co_arrival;
     if (co_arrival) {
         // The base spawned this member in its load step: a member from tick 0,
@@ -1151,6 +1213,100 @@ bool Session::take_engine_replaced() {
 }
 
 std::vector<std::string> Session::take_notices() { return std::exchange(notices_, {}); }
+
+// ---- room story (SEAMLESS.md 8.3)
+void Session::take_story(const engine::RoomStory& story) {
+    if (confirmed_ && story.revision < confirmed_->revision) return; // an older one overtaken in flight
+    confirmed_ = story;
+}
+
+void Session::open_line() {
+    CounterLine line;
+    line.inst = inst_;
+    line.visit = visit_;
+    const auto values = engine_.story_values();
+    for (const auto c : engine::story::additive_counters()) {
+        const auto it = values.counters.find(c);
+        line.base[c] = it == values.counters.end() ? 0 : it->second;
+    }
+    lines_.assign(1, std::move(line));
+}
+
+void Session::send_story(double now, bool at_barrier) {
+    if (!confirmed_ || !hello_done_ || !transport_) return;
+    if (ui_stage(engine_.stage())) return;
+    const auto values = engine_.story_values();
+    auto delta = engine::story::pending(*confirmed_, values);
+    if (!at_barrier) {
+        if (delta.phase && delta.phase <= refused_phase_) delta.phase = 0;
+        std::erase_if(delta.flags, [&](std::int32_t f) { return refused_flags_.contains(f); });
+        std::erase_if(delta.folder, [&](std::int32_t k) { return refused_folder_.contains(k); });
+    }
+    std::erase_if(lines_, [](const CounterLine& l) {
+        if (!l.final_growth) return false;
+        for (const auto& [c, g] : *l.final_growth)
+            if (g > (l.taken.contains(c) ? l.taken.at(c) : 0)) return false;
+        return true;
+    });
+    for (auto& line : lines_) {
+        if (line.awaiting_id) continue;
+        for (const auto c : engine::story::additive_counters()) {
+            std::int32_t growth = 0;
+            if (line.final_growth) {
+                growth = line.final_growth->contains(c) ? line.final_growth->at(c) : 0;
+            } else {
+                const auto it = values.counters.find(c);
+                growth = std::max(0, (it == values.counters.end() ? 0 : it->second) - line.base[c]);
+            }
+            if (growth > line.taken[c] && delta.counters.size() < w::kMaxStoryLines)
+                delta.counters.push_back({c, line.inst, line.visit, growth});
+        }
+    }
+    if (delta.empty()) {
+        story_last_ = {};
+        return;
+    }
+    if (!at_barrier && delta == story_last_ && now - story_sent_at_ < config_.story_interval) return;
+    w::Story m{inst_, visit_, confirmed_->revision, std::move(delta)};
+    send(w::Type::story, w::encode(m));
+    trace("story inst=%u visit=%u rev=%u phase=%u flags=%zu keys=%zu counters=%zu%s", inst_, visit_, m.revision, unsigned(m.delta.phase),
+          m.delta.flags.size(), m.delta.folder.size(), m.delta.counters.size(), at_barrier ? " barrier" : "");
+    story_last_ = m.delta;
+    story_sent_at_ = now;
+    story_in_flight_.push_back(std::move(m));
+    if (story_in_flight_.size() > 64) story_in_flight_.pop_front(); // (an old server that never answers)
+}
+
+void Session::on_story_ack(const w::StoryAck& ack) {
+    if (!ack.story.empty()) take_story(engine::story::decode_story(ack.story, ack.revision));
+    if (!(ack.flags & w::StoryAck::answer) || story_in_flight_.empty()) return;
+    const auto sent = std::move(story_in_flight_.front());
+    story_in_flight_.pop_front();
+    std::set<std::int32_t> again; // counters refused for the rate: sent again
+    for (const auto& x : ack.refused) {
+        if (x.reason == engine::StoryRefusal::rate) {
+            if (x.kind == engine::StoryRefused::Kind::counter) again.insert(x.index);
+            continue;
+        }
+        if (x.reason == engine::StoryRefusal::held) {
+            if (!held_noticed_) notice("The room owner is away: your story progress is kept until they return.");
+            held_noticed_ = true;
+            continue; // the server keeps it; the confirmed story brings it once merged
+        }
+        switch (x.kind) {
+        case engine::StoryRefused::Kind::phase: refused_phase_ = std::max<std::uint8_t>(refused_phase_, std::uint8_t(x.index)); break;
+        case engine::StoryRefused::Kind::flag: refused_flags_.insert(x.index); break;
+        case engine::StoryRefused::Kind::folder: refused_folder_.insert(x.index); break;
+        case engine::StoryRefused::Kind::counter: break; // taken as done (dropped ones go back at the barrier)
+        }
+    }
+    trace("story_ack rev=%u refused=%zu", ack.revision, ack.refused.size());
+    for (const auto& g : sent.delta.counters) {
+        if (again.contains(g.counter)) continue;
+        for (auto& line : lines_)
+            if (!line.awaiting_id && line.inst == g.inst && line.visit == g.visit) line.taken[g.counter] = std::max(line.taken[g.counter], g.growth);
+    }
+}
 
 Overlay Session::overlay(double now) const {
     Overlay o;

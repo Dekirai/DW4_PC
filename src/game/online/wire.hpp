@@ -31,6 +31,7 @@
 //               member leads alone from that tick)
 //   DELAY 5     u8 slot | u8 delay
 // Unknown event types are skipped (a newer server).
+#include "dw4/engine/online_story.hpp"
 #include "pad_wire.hpp"
 
 #include <array>
@@ -73,7 +74,7 @@ enum class Type : std::uint8_t {
     netfp = 0x0B,
     state = 0x0C,
     intent = 0x0D,
-    story = 0x0E, // round S2
+    story = 0x0E,
     presence = 0x0F,
     resume = 0x10,
     rate = 0x11,
@@ -89,7 +90,7 @@ enum class Type : std::uint8_t {
     state_data = 0x86,
     presence_of = 0x87,
     resync = 0x88,
-    story_ack = 0x89, // round S2
+    story_ack = 0x89,
     room = 0x8A,
     ping = 0x8B,
     close = 0x8C,
@@ -295,6 +296,32 @@ struct Presence {
     std::uint16_t level{}, hp{}, max_hp{}, mp{}, max_mp{};
     bool operator==(const Presence&) const = default;
 };
+// STORY (SEAMLESS.md 8.3): the member's pending set against the confirmed
+// room story, at every barrier (before BARRIER) and every ten seconds while it
+// is not empty. inst | visit (the member's instance now) | u32 the confirmed
+// revision it was computed against | u8 phase (0: no claim, else the engine's
+// phase index 1-7) | u16 n + n x u16 flags | u8 n + n x u8 keys | u8 n + n x
+// (u8 counter | u32 line inst | u32 line visit | i32 growth): the cumulative
+// growth of an additive counter in an engine line (instance and visit the
+// growth was made in; a fork's child counts from its fork under its own id).
+struct Story {
+    std::uint32_t inst{}, visit{}, revision{};
+    engine::StoryDelta delta;
+};
+inline constexpr std::size_t kMaxStoryLines = 32;
+// STORY_ACK: u32 revision | blob story (1,100 bytes, story::encode_story; empty
+// while the room has none) | u8 flags (1: the answer to this member's STORY) |
+// u16 n + n x (u8 kind | u16 index | u8 reason) refused keys
+// (engine::StoryRefused). The server sends it after WELCOME (the confirmed
+// story to start from), to every connected member whenever the room story's
+// revision rises, and to a STORY's sender with what it refused.
+struct StoryAck {
+    std::uint32_t revision{};
+    std::vector<std::uint8_t> story;
+    std::uint8_t flags{};
+    std::vector<engine::StoryRefused> refused;
+    static constexpr std::uint8_t answer = 1;
+};
 struct Resume {        // inst | visit | u8 slot | u32 last executed tick
     std::uint32_t inst{}, visit{};
     std::uint8_t slot{};
@@ -342,8 +369,10 @@ struct CoArrival {     // u8 slot | u8 member | blob carry
 // BARRIER_OK: old inst | old visit | u8 decision | new inst | new visit |
 // str stage | u8 point | u8 own slot | 4 x i8 slot map (old slot -> new slot
 // or -1) | u8 mode | u8 delay | u8 n + n co-arrivals | u32 story revision |
-// blob story | blob dropped (both empty until S2) | u8 notice | u8 n + n str
-// names.
+// blob story (the room story, 1,100 bytes as in STORY_ACK, the same bytes for
+// every member of the group; empty: none) | blob dropped (the room's dropped
+// set, engine::story::encode_keys: u16 n + n x u16 flags | u8 n + n x u8 keys
+// | u8 n + n x u8 counters; empty: none) | u8 notice | u8 n + n str names.
 struct BarrierOk {
     std::uint32_t inst{}, visit{};
     Decision decision{};
@@ -449,6 +478,8 @@ std::vector<std::uint8_t> encode(const State&);
 std::vector<std::uint8_t> encode(const Intent&);
 std::vector<std::uint8_t> encode(const Presence&, bool with_member);
 std::vector<std::uint8_t> encode(const Resume&);
+std::vector<std::uint8_t> encode(const Story&);
+std::vector<std::uint8_t> encode(const StoryAck&);
 std::vector<std::uint8_t> encode(std::uint32_t rate); // RATE: u32 steps per second
 std::vector<std::uint8_t> encode(const Pong&);
 std::vector<std::uint8_t> encode(const Bye&);
@@ -480,6 +511,8 @@ State decode_state(std::span<const std::uint8_t>);
 Intent decode_intent(std::span<const std::uint8_t>);
 Presence decode_presence(std::span<const std::uint8_t>, bool with_member);
 Resume decode_resume(std::span<const std::uint8_t>);
+Story decode_story(std::span<const std::uint8_t>);
+StoryAck decode_story_ack(std::span<const std::uint8_t>);
 std::uint32_t decode_rate(std::span<const std::uint8_t>);
 Pong decode_pong(std::span<const std::uint8_t>);
 Bye decode_bye(std::span<const std::uint8_t>);

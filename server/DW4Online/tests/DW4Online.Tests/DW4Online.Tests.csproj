@@ -15,6 +15,9 @@
   </ItemGroup>
   <ItemGroup>
     <Content Include="..\..\sql\*.sql" Link="sql\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+    <!-- The room story's census and golden vectors (SEAMLESS.md 8), shared with the game client's ctest online_story. -->
+    <Content Include="..\..\..\..\data\online\story_sets.json" Link="story\story_sets.json" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="..\..\..\..\data\online\story_golden.json" Link="story\story_golden.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
   <ItemGroup>
     <Using Include="Xunit" />

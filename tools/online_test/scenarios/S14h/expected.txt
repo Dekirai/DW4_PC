@@ -1,0 +1,13 @@
+# S14 (hold): the owner leaves; the guest's lobby value 501 is held (story_held with flag 501 alone, the guest is told
+# once), no revision rises while the owner is away, nothing is removed at the barrier (no "not saved" notice, 501 = 1
+# in stag0101).
+relay: ^owner .*present=False
+g: online: The room owner is away
+g: online-trace: story .*rev=1 phase=0 flags=1 keys=0 counters=0
+relay: ^story_held .*keys=flag:501 ms=
+g: online: The room owner is away: your story progress is kept until they return\.
+g: online-script: step .* log: 501 kept
+!relay: ^story_dropped
+!relay: ^story .*revision
+!g: Story progress was not saved
+!g: online-script: FAIL

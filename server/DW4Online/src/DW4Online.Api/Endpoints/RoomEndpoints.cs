@@ -69,6 +69,10 @@ public static class RoomEndpoints
         group.MapDelete("/{code}", async (string code, RoomService rooms, HttpContext ctx) =>
             ApiProblems.Ok(await rooms.CloseAsync(ctx.Session().AccountId, false, code, ctx.IpBytes(), ctx.RequestAborted), _ => Results.NoContent()));
 
+        // The room story (members only; SEAMLESS.md 8): revision, phase, flags, keys, counters, dropped set.
+        group.MapGet("/{code}/story", async (string code, RoomService rooms, HttpContext ctx) =>
+            ApiProblems.Ok(await rooms.StoryAsync(ctx.Session().AccountId, code, ctx.RequestAborted), story => Results.Ok(story)));
+
         // A fresh one-time relay ticket (a reconnect).
         group.MapPost("/{code}/ticket", async (string code, RoomService rooms, ServiceOptions service, IRelayGateway relay, HttpContext ctx) =>
             ApiProblems.Ok(await rooms.TicketAsync(ctx.Session().AccountId, code, ctx.RequestAborted),

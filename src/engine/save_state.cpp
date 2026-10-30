@@ -280,6 +280,7 @@ std::vector<std::uint8_t> encode_barrier(const BarrierResult& barrier) {
     }
     a.io(b.dropped.flags);
     a.io(b.dropped.folder);
+    a.io(b.dropped.counters);
     a.io(b.rules);
     return out;
 }
@@ -313,6 +314,7 @@ BarrierResult decode_barrier(std::span<const std::uint8_t> bytes) {
     }
     a.io(b.dropped.flags);
     a.io(b.dropped.folder);
+    a.io(b.dropped.counters);
     a.io(b.rules);
     if (!a.at_end()) throw std::runtime_error("barrier has trailing bytes");
     return b;

@@ -68,6 +68,7 @@ public static class ServerApp
         services.AddSingleton<ISessionRepository, SessionRepository>();
         services.AddSingleton<IAuditLog, AuditLog>();
         services.AddSingleton<IOnlineCharacterRepository, OnlineCharacterRepository>();
+        services.AddSingleton<IOnlineStoryRepository, OnlineStoryRepository>();
         services.AddSingleton<ICloudSaveRepository, CloudSaveRepository>();
         services.AddSingleton<IAchievementRepository, AchievementRepository>();
         services.AddSingleton<IRoomDirectory, RoomDirectory>();
@@ -78,6 +79,7 @@ public static class ServerApp
         services.AddSingleton<VersionGate>();
         services.AddSingleton<AccountService>();
         services.AddSingleton<AchievementService>();
+        services.AddSingleton<DW4Online.Domain.Story.OnlineStoryService>();
         services.AddSingleton<OnlineCharacterService>();
         services.AddSingleton<CloudSaveService>();
         services.AddHostedService<MaintenanceService>();

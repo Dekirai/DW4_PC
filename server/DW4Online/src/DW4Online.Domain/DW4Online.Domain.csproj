@@ -6,4 +6,8 @@
   <ItemGroup>
     <InternalsVisibleTo Include="DW4Online.Tests" />
   </ItemGroup>
+  <ItemGroup>
+    <!-- The story sets of the census (SEAMLESS.md 8.2), shared with the game client: data/online/story_sets.json. -->
+    <EmbeddedResource Include="..\..\..\..\data\online\story_sets.json" LogicalName="DW4Online.Domain.Story.story_sets.json" />
+  </ItemGroup>
 </Project>

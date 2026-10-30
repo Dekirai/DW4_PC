@@ -42,7 +42,7 @@ add_library(dw4_engine src/engine/math.cpp src/engine/gekko_math.cpp src/engine/
   src/engine/hud.cpp src/engine/items.cpp src/engine/panel.cpp
   src/engine/subwnd.cpp src/engine/subwnd_folder.cpp src/engine/subwnd_skill.cpp
   src/engine/subwnd_shop.cpp src/engine/save_state.cpp src/engine/port_events.cpp src/engine/online.cpp
-  src/engine/online_cameras.cpp src/engine/online_exits.cpp)
+  src/engine/online_cameras.cpp src/engine/online_exits.cpp src/engine/online_story.cpp)
 target_link_libraries(dw4_engine PUBLIC dw4_core)
 # The Gekko arithmetic rounds only where the original rounds (no contraction).
 if(MSVC)
@@ -139,12 +139,14 @@ if(BUILD_TESTING)
   target_link_libraries(dw4_achievements_tests PRIVATE dw4_engine)
   add_test(NAME achievements COMMAND dw4_achievements_tests)
   # The online client (asset free; the env test reads the sources).
-  foreach(suite online_cpu_gate online_env online_wire online_session online_api)
+  # (online_story: the story sets and golden vectors of data/online, SEAMLESS.md 8.)
+  foreach(suite online_cpu_gate online_env online_wire online_session online_api online_story)
     add_executable(dw4_${suite}_tests tests/${suite}_tests.cpp)
     target_link_libraries(dw4_${suite}_tests PRIVATE dw4_online)
     add_test(NAME ${suite} COMMAND dw4_${suite}_tests)
   endforeach()
   target_compile_definitions(dw4_online_env_tests PRIVATE DW4_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+  target_compile_definitions(dw4_online_story_tests PRIVATE DW4_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 endif()
 
 if(DW4_BUILD_APP)

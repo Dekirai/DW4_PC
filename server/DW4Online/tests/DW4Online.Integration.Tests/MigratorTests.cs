@@ -16,12 +16,12 @@ public class MigratorTests
             await using var db = new Database(TestDb.ConnectionString(name));
             var migrator = new Migrator(db);
             Assert.Equal(0, await migrator.CurrentVersionAsync());
-            Assert.Equal([1, 2, 3, 4, 5, 6, 7], await migrator.MigrateAsync());
+            Assert.Equal([1, 2, 3, 4, 5, 6, 7, 8], await migrator.MigrateAsync());
             Assert.Empty(await migrator.MigrateAsync());
-            Assert.Equal(7, await migrator.CurrentVersionAsync());
+            Assert.Equal(8, await migrator.CurrentVersionAsync());
             await using var c = new MySqlConnection(TestDb.ConnectionString(name));
             Assert.Equal(72, await c.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM achievements"));
-            Assert.Equal(16, await c.ExecuteScalarAsync<int>(
+            Assert.Equal(17, await c.ExecuteScalarAsync<int>( // (0008: online_story)
                 "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE()"));
         }
         finally
@@ -62,7 +62,7 @@ public class MigratorTests
             await c.ExecuteAsync(history, new { a = ids[0], r = 1, rec, sha, at = reset });              // never reset
 
             await using var db = new Database(TestDb.ConnectionString(name));
-            Assert.Equal([6, 7], await new Migrator(db).MigrateAsync());
+            Assert.Equal([6, 7, 8], await new Migrator(db).MigrateAsync());
             var rows = (await c.QueryAsync<(long Account, int Revision, DateTime? Ended)>(
                 "SELECT CAST(account_id AS SIGNED), CAST(revision AS SIGNED), ended_at FROM online_character_history ORDER BY account_id, revision")).ToList();
             var expected = new List<(long, int, DateTime?)> { (ids[0], 1, null), (ids[1], 1, reset), (ids[1], 2, reset), (ids[1], 3, null) }
@@ -118,7 +118,7 @@ public class MigratorTests
             await c.ExecuteAsync(live, new { a = ids[1], rec, sha, r = 1, flagged = true, t });
 
             await using var db = new Database(TestDb.ConnectionString(name));
-            Assert.Equal([7], await new Migrator(db).MigrateAsync());
+            Assert.Equal([7, 8], await new Migrator(db).MigrateAsync());
             Assert.Equal(new byte[] { 203, 0, 113, 9 }, await c.ExecuteScalarAsync<byte[]>("SELECT last_used_ip FROM sessions"));
             var flags = (await c.QueryAsync<(long Account, int Revision, bool Flagged)>(
                 "SELECT CAST(account_id AS SIGNED), CAST(revision AS SIGNED), flagged FROM online_character_history ORDER BY account_id, revision")).ToList();

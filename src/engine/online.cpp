@@ -570,7 +570,13 @@ void Engine::apply_barrier() {
     barrier_.reset();
     auto* sys = get<GameSystem>();
     if (!sys) return;
-    // (round S2: the room story merge and the dropped values come first.)
+    // The room story first (8.5, 8.6): its merge into the engine's story and
+    // the removal of the values the server dropped while the room owner was
+    // away. Every member of the group applies the same bytes in this load
+    // step, before the stage's load scripts read the flags and before the
+    // snapshot, so a joiner gets the same state. (JOIN and CO_ARRIVE merge it
+    // into the member's own fallback load.)
+    if (b.story) story::apply(flags_, sys->flag_folder, counters_, *b.story, b.dropped);
     auto rules = b.rules;
     rules.enabled = true;
     rules.leaving = 0;

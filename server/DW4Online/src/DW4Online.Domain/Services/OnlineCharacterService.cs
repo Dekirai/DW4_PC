@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using DW4Online.Domain.Abstractions;
 using DW4Online.Domain.Achievements;
 using DW4Online.Domain.Save;
+using DW4Online.Domain.Story;
 
 namespace DW4Online.Domain.Services;
 
@@ -11,7 +12,10 @@ public sealed record CharacterSaveResult(int Revision, CharacterSummary Summary,
 
 /// <summary>
 /// The online character: one per account, starts from zero, independent of local saves. Uploads are decoded
-/// and validated here; the summary columns come from this decode, never from the client.
+/// and validated here; the summary columns come from this decode, never from the client. The record's story bytes
+/// (BASE_FLAG, BASE_FLAGFOLDER, BASE_COUNTER) are the account's own online story (SEAMLESS.md 8.4): GET composes them
+/// from online_story, PUT replaces the uploaded ones with it (a guest uploads its character with the room owner's story;
+/// state achievements never come from a borrowed story).
 /// </summary>
 public sealed class OnlineCharacterService(
     IOnlineCharacterRepository characters,
@@ -19,14 +23,16 @@ public sealed class OnlineCharacterService(
     IAuditLog audit,
     VersionGate versions,
     OnlineCharacterOptions options,
-    TimeProvider time)
+    TimeProvider time,
+    OnlineStoryService? stories = null)
 {
     public async Task<CharacterView?> GetAsync(long accountId, CancellationToken ct = default)
     {
         var row = await characters.GetAsync(accountId, ct);
         if (row is null) return null;
-        var summary = CharacterSummary.From(RecordCodec.Decode(row.Record));
-        return new CharacterView(row.Revision, row.Record, summary, row.PlaySeconds, row.Flagged, row.CreatedAt, row.UpdatedAt);
+        var record = stories is null ? row.Record : await stories.ComposeAsync(accountId, row.Record, ct);
+        var summary = CharacterSummary.From(RecordCodec.Decode(record));
+        return new CharacterView(row.Revision, record, summary, row.PlaySeconds, row.Flagged, row.CreatedAt, row.UpdatedAt);
     }
 
     /// <summary>
@@ -41,6 +47,12 @@ public sealed class OnlineCharacterService(
 
         var report = RecordValidator.Validate(record, out var decoded);
         if (!report.Ok || decoded is null) return Rejected(report);
+        if (stories is not null)
+        {
+            // The uploaded story bytes are ignored: the stored record carries the account's own story.
+            record = await stories.ComposeAsync(accountId, record, ct);
+            decoded = RecordCodec.Decode(record);
+        }
 
         var now = Clock.Now(time);
         var current = await characters.GetAsync(accountId, ct);

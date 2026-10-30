@@ -1,0 +1,13 @@
+{
+  "desc": "owner away, policy hold (its own server): the guest's new story value is kept by the server and stays in its engine across the barrier",
+  "server": {"Rooms": {"StoryWhileOwnerAway": "hold"}},
+  "card": "k2",
+  "seed_story": true,
+  "frames": 9000,
+  "timeout": 420,
+  "min_shared_ticks": 0,
+  "clients": [
+    {"name": "o", "script": "o.script", "start": 0, "frames": 1700, "card_flags": {"501": 0}},
+    {"name": "g", "script": "g.script", "start": 3}
+  ]
+}

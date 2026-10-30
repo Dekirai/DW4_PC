@@ -25,6 +25,9 @@ public sealed class InstanceOptions
     public int DefaultReplayRate { get; set; } = 3000;
     /// <summary>A HEADING counts for co-arrivals this long after it arrived.</summary>
     public int HeadingValidMs { get; set; } = 5000;
+    /// <summary>STORY messages a member may send per minute beyond <see cref="StoryBurst"/>; more are refused (reason rate) and sent again.</summary>
+    public int StoryMessagesPerMinute { get; set; } = 60;
+    public int StoryBurst { get; set; } = 10;
     /// <summary>After the first BARRIER of a sealed instance, the others' reports are awaited this long.</summary>
     public int BarrierReportSeconds { get; set; } = 5;
     /// <summary>Players in one instance (the engine's four slots).</summary>

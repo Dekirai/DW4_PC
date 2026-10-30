@@ -6,4 +6,8 @@
   <ItemGroup>
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
   </ItemGroup>
+  <ItemGroup>
+    <!-- The room story's rules (SEAMLESS.md 8): DW4Online.Domain.Story. -->
+    <ProjectReference Include="..\DW4Online.Domain\DW4Online.Domain.csproj" />
+  </ItemGroup>
 </Project>

@@ -1,0 +1,19 @@
+# S14h (hold), guest g (k2 with flag 501, set by the lobby's first.lua at the first visit, which the room story
+# lacks: the owner's card without it, seed_story): waits at the title until the owner has left, then enters the lobby:
+# 501 is new to the room and plausible there.
+# Hold keeps it on the server until the owner returns, apply merges it at once; either way the lobby gate's
+# barrier into stag0101 leaves it in g's engine.
+# (Once the title gives every member the room story at game start, g's 501 is gone there and the scenario needs a
+# value g makes in the lobby: k2 without 501 plays the first visit's talk, which stalls in k2's lobby at n_digilff
+# #2's ISSEQNAME SQ_WALK02; tried in round S2.)
+idle until epoch>=@50
+log owner gone
+campaign until stage=stagml11
+talk until control,frames>=60
+log in the lobby
+idle until frames>=300 fail flag:501=0
+explore mate00 yes until stage=stag0101,control
+log in the field
+idle until frames>=120 fail flag:501=0
+log 501 kept
+idle until frames>=60

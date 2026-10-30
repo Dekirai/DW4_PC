@@ -255,6 +255,23 @@ public sealed partial class RoomService
         }
     }
 
+    /// <summary>The room story (members only): what the relay keeps for this room session (SEAMLESS.md 8).</summary>
+    public async Task<Result<RoomStoryState>> StoryAsync(long accountId, string code, CancellationToken ct = default)
+    {
+        await _gate.WaitAsync(ct);
+        try
+        {
+            if (!TryMember(code, accountId, out var room, out _)) return NotInRoom();
+            return _relay.Story(room.Code) is { } story
+                ? story
+                : DomainError.NotFound("no_story", "The room's story starts with its first relay connection.");
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
     /// <summary>Keeps the membership alive (every <see cref="HeartbeatSeconds"/>); answers with the room state.</summary>
     public async Task<Result<RoomState>> HeartbeatAsync(long accountId, string code, CancellationToken ct = default)
     {
@@ -388,7 +405,7 @@ public sealed partial class RoomService
                 room.Playing = true;
             }
             return new RelayAdmitted(member.Slot, member.Username, member.AccountId == room.OwnerId, room.Protocol, room.DataHash, room.SettingsHash,
-                room.MaxPlayers);
+                room.MaxPlayers, room.OwnerId, room.RoomSettings.Difficulty, room.StoryFrozenAt is null, _options.StoryWhileOwnerAway);
         }
         finally
         {
