@@ -198,6 +198,7 @@ public sealed class RelayHub : BackgroundService
     {
         using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(250));
         var lastBeat = Stopwatch.GetTimestamp();
+        var beats = new List<(string Code, List<long> Members)>();
         try
         {
             while (await timer.WaitForNextTickAsync(stop))
@@ -238,17 +239,33 @@ public sealed class RelayHub : BackgroundService
                     {
                         _log.LogError(e, "Relay housekeeping failed for room {Room}", code);
                     }
-                    if (beat && connected.Count > 0 && Heartbeat is { } h)
+                    if (beat && connected.Count > 0) beats.Add((code, connected));
+                }
+                // The heartbeats go to the room service on their own task: it writes to the database, and a slow or
+                // stalled database must never hold up the pings, holds and timeouts of every room (a suspended
+                // database stopped every room's housekeeping for as long as it hung).
+                if (beats.Count > 0 && Heartbeat is { } h)
+                {
+                    if (_heartbeats is { IsCompleted: false }) HeartbeatsSkipped++;
+                    else
                     {
-                        try
+                        var batch = beats.ToList();
+                        _heartbeats = Task.Run(async () =>
                         {
-                            await h(code, connected);
-                        }
-                        catch (Exception e) when (e is not OperationCanceledException)
-                        {
-                            _log.LogDebug(e, "relay heartbeat for room {Room} failed", code);
-                        }
+                            foreach (var (code, members) in batch)
+                            {
+                                try
+                                {
+                                    await h(code, members);
+                                }
+                                catch (Exception e) when (e is not OperationCanceledException)
+                                {
+                                    _log.LogDebug(e, "relay heartbeat for room {Room} failed", code);
+                                }
+                            }
+                        }, CancellationToken.None);
                     }
+                    beats.Clear();
                 }
             }
         }
@@ -257,12 +274,28 @@ public sealed class RelayHub : BackgroundService
         }
     }
 
+    private Task? _heartbeats;
+
+    /// <summary>Heartbeat rounds skipped because the previous one had not finished (a slow database).</summary>
+    public long HeartbeatsSkipped { get; private set; }
+
     private async Task HandleAsync(TcpClient client, CancellationToken stop)
     {
         var ip = (client.Client.RemoteEndPoint as IPEndPoint)?.Address ?? IPAddress.None;
         if (ip.IsIPv4MappedToIPv6) ip = ip.MapToIPv4();
         if (_perIp.AddOrUpdate(ip, 1, (_, n) => n + 1) > _options.MaxConnectionsPerIp)
         {
+            // The address has its connections (a household or a carrier-grade NAT across rooms): the client is told
+            // why instead of seeing a reset.
+            try
+            {
+                using var busy = CancellationTokenSource.CreateLinkedTokenSource(stop);
+                busy.CancelAfter(TimeSpan.FromSeconds(2));
+                await ReplyAsync(client.GetStream(), "ERR busy", busy.Token);
+            }
+            catch (Exception e) when (e is IOException or SocketException or OperationCanceledException or ObjectDisposedException or InvalidOperationException)
+            {
+            }
             Release(ip);
             client.Dispose();
             return;
@@ -382,21 +415,39 @@ public sealed class RelayHub : BackgroundService
     private RoomHub NewRoom(RoomInfo room)
     {
         var hub = new RoomHub(room, _options, _sealing, _instances, _loggers.CreateLogger("DW4Online.Relay.Room." + room.Code), _mlog,
-            job => _ = Task.Run(() => RunStateJob(job)));
+            job => _ = Task.Run(() => RunStateJobAsync(job)));
         hub.OnSealingStarted(_timer.Wake);
         return hub;
     }
 
-    /// <summary>Builds a state transfer on the thread pool (every block decompressed, without the room lock), then sends it.</summary>
-    private void RunStateJob(StateJob job)
+    private SemaphoreSlim? _stateBuilds;
+    private SemaphoreSlim StateBuilds => LazyInitializer.EnsureInitialized(ref _stateBuilds, () => new SemaphoreSlim(Math.Max(1, _options.MaxConcurrentStateBuilds)));
+
+    /// <summary>State transfers whose build was skipped because a newer one for the same member replaced them meanwhile.</summary>
+    public long StateBuildsSkipped => Interlocked.Read(ref _stateBuildsSkipped);
+    private long _stateBuildsSkipped;
+
+    /// <summary>
+    /// Builds a state transfer on the thread pool (every block decompressed, without the room lock), then sends it. At
+    /// most Relay:MaxConcurrentStateBuilds run at once in the whole relay, and a job a newer one replaced meanwhile is not
+    /// built at all (one member's flood of arrivals kept 2.5 cores busy and froze sealed pairs in other rooms).
+    /// </summary>
+    private async Task RunStateJobAsync(StateJob job)
     {
+        var gate = StateBuilds;
+        await gate.WaitAsync();
         try
         {
-            job.Build();
+            if (job.Superseded) Interlocked.Increment(ref _stateBuildsSkipped);
+            else job.Build();
         }
         catch (Exception e)
         {
             _log.LogError(e, "Building a state transfer failed in room {Room}", job.Hub.Code);
+        }
+        finally
+        {
+            gate.Release();
         }
         try
         {

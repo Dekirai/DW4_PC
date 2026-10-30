@@ -1,0 +1,14 @@
+# S11a (SEAMLESS.md 6.9): b's engine draws one extra random number at sealed tick 1500; the next fingerprints differ,
+# the longer member (a) wins the two-member vote, b catches up from the snapshot and the log and is one again; equal
+# net fingerprints from its READY on (run.py: allow_resync, min_after_resync).
+b: online: test desync at tick
+relay: desync
+relay: resync .*slot=1
+b: online-trace: resync inst
+b: online-trace: resynced inst
+relay: resync_ready
+!relay: resync .*slot=0
+!relay: resync_limit
+!relay: resync_too_long
+!a: online-trace: resync inst
+shared: a b >= 6000

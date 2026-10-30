@@ -42,9 +42,9 @@ inline std::uint64_t mix(std::uint64_t h, std::uint64_t v) {
 inline constexpr std::uint32_t kExitButton = dw4::pad_button::z;
 inline constexpr std::uint32_t kForkButton = dw4::pad_button::x;
 // Y opens a prompt owned by that slot (an exit prompt without a time limit:
-// no membership step while it is open); B on the prompt reader's pad closes
-// it. The reader is the owner, or the leader while the owner is leaving
-// (6.5, Engine::pad_reader_slot).
+// no membership step while it is open); B on the owner's pad closes it. A
+// leaving owner's prompt closes by itself as No in the next step (6.5,
+// Engine::close_leaving_prompt): nobody else's pad answers it.
 inline constexpr std::uint32_t kPromptButton = dw4::pad_button::y;
 inline constexpr std::uint32_t kAnswerButton = dw4::pad_button::b;
 
@@ -162,9 +162,11 @@ public:
                     state_ = mix(state_, 0x6000 + std::uint64_t(s));
                     break;
                 }
+        } else if (leaving_ & (1u << prompt_owner_)) {
+            state_ = mix(state_, 0x6200 + std::uint64_t(prompt_owner_)); // closed as No
+            prompt_owner_ = -1;
         } else {
-            const std::uint8_t usable = std::uint8_t(present_ & ~leaving_);
-            const int reader = (usable & (1u << prompt_owner_)) ? prompt_owner_ : usable ? std::countr_zero(unsigned(usable)) : prompt_owner_;
+            const int reader = prompt_owner_;
             if (masked[std::size_t(reader)].connected && (masked[std::size_t(reader)].buttons & kAnswerButton)) {
                 prompt_owner_ = -1;
                 state_ = mix(state_, 0x6100 + std::uint64_t(reader));
@@ -715,7 +717,11 @@ public:
         state.snapshot = inst.snapshot;
         state.first = 0;
         for (std::uint32_t t = 0; inst.log.contains(t); ++t) state.ticks.push_back(inst.log.at(t));
-        for (const auto& c : w::make_chunks(inst.id, inst.visit, w::encode_state_body(state))) send(member, w::Type::state_data, w::encode(c), now);
+        for (const auto& c : w::make_chunks(inst.id, inst.visit, w::encode_state_body(state))) {
+            // (A paced one lets the sealed ticks go first, as the relay builds the state outside its lock.)
+            if (state_pacing > 0) paced_state.emplace_back(now + state_pacing, member, w::encode(c));
+            else send(member, w::Type::state_data, w::encode(c), now);
+        }
         m.resyncing = true;
         log_lines.push_back("resync " + m.name + " after " + std::to_string(state.ticks.size()) + " ticks");
     }

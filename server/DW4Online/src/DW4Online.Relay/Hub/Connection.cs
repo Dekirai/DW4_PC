@@ -23,6 +23,7 @@ internal sealed class Connection : IHubPeer
     private readonly Channel<(byte[] Frame, bool Bulk)> _queue = Channel.CreateUnbounded<(byte[], bool)>(new UnboundedChannelOptions { SingleReader = true });
     private readonly CancellationTokenSource _closed = new();
     private long _queued;
+    private long _queuedBulk;
     private int _closing;
 
     public Connection(TcpClient client, RelayOptions options, ILogger log, IPAddress ip)
@@ -42,7 +43,12 @@ internal sealed class Connection : IHubPeer
     public void Send(byte[] frame, bool bulk = false)
     {
         if (Volatile.Read(ref _closing) != 0) return;
-        if (Interlocked.Add(ref _queued, frame.Length) > _options.MaxQueuedBytes)
+        // Game frames and state transfers have their own limits: a member that does not read is closed before the relay
+        // holds much for it (16 connections of one address could park 512 MiB here).
+        var over = bulk
+            ? Interlocked.Add(ref _queuedBulk, frame.Length) > _options.MaxQueuedStateBytes
+            : Interlocked.Add(ref _queued, frame.Length) > _options.MaxQueuedBytes;
+        if (over)
         {
             _log.LogWarning("Relay connection from {Ip} does not read its frames; closing it", Ip);
             Close(CloseReason.Timeout, "Too many unsent frames.");
@@ -95,7 +101,8 @@ internal sealed class Connection : IHubPeer
                     if (item.Bulk) await state.TakeAsync(item.Frame.Length, _closed.Token);
                     await _stream.WriteAsync(item.Frame, _closed.Token);
                     BytesOut += item.Frame.Length;
-                    Interlocked.Add(ref _queued, -item.Frame.Length);
+                    if (item.Bulk) Interlocked.Add(ref _queuedBulk, -item.Frame.Length);
+                    else Interlocked.Add(ref _queued, -item.Frame.Length);
                 }
             }
             await _stream.FlushAsync(_closed.Token);

@@ -1,0 +1,11 @@
+# S11a, member b (k10, DW4_ONLINE_TEST_DESYNC=1500): one second after a through the gate, then west; at sealed tick 1500
+# its engine draws one random number the other machine does not (the desync the vote finds).
+campaign until stage=stagml11,control
+idle until epoch>=@91
+explore mate00 yes until stage=stag0101,control
+log in the field
+route {route:stag0101_west:154,80}
+log west
+wander 130 88 25 until sealed>=7200 or present=1,frames>=60
+log enough
+idle until frames>=60
