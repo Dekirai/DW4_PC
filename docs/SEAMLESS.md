@@ -2180,16 +2180,41 @@ achievements. `GET /rooms/{code}/story` (members) shows revision, phase,
 flags, keys, counters, policy, owner presence, the dropped set and the held
 count.
 
+**Reconnects.** STORY_ACK answers come in order on one connection, so a new
+connection (`Session::attach`) forgets the STORY frames still waiting for an
+answer on the old one and sends the pending set again at once.
+
+**Relay notes.** The membership log notes the owner's presence (`owner
+present=... held=n`) and what the owner-away policy took from a STORY
+(`story_dropped` / `story_held member=n keys=flag:501,folder:2,...`), beside
+`story revision=n phase=p` for every new revision.
+
 **Tests.** ctest `online_story` (census tables, 26 golden cases, blobs),
 `online` (`story_at_the_barrier`: engine and link), `online_session`
 (`room_story`: the title rule, the one-second path, the other member's
 confirmed story and barrier merge, one counter line for a shared instance,
-the dropped removal with the notice), `online_wire` (golden STORY /
+the dropped removal with the notice, a STORY lost with its connection sent
+again at once after the reconnect), `online_wire` (golden STORY /
 STORY_ACK); server unit tests `StoryGoldenTests`, `RoomStoryKeeperTests`,
 `HubStoryTests` (S14 at the hub: drop with the same story bytes and dropped
 set in a group's BARRIER_OKs, hold merged at the owner's return, apply) and
 integration `OnlineStoryTests` (composition; a guest's lobby flag in the
 owner's `online_story` through the real relay within ten seconds).
+
+**S14 on real game clients** (`tools/online_test/scenarios/S14`, `S14h`,
+`S14a`; drop, hold, apply). The owner (k2 without flag 501; `seed_story`, so
+the room story is that card at revision 1) stays at the title, where no STORY
+goes, and leaves the room when its run ends; the guest (k2 with 501, which
+the lobby's `first.lua` sets at the first visit) waits at the title until
+the owner is away, then enters the lobby: its pending set is 501 alone.
+Drop: `story_dropped keys=flag:501`, 501 stays in the engine for the rest of
+the lobby visit, the lobby gate's barrier into stag0101 removes it and the
+guest sees "Story progress was not saved: the room owner is away." Hold:
+`story_held keys=flag:501`, the guest is told once, no revision, 501 stays
+after the barrier. Apply: revision 2 at once, 501 stays. All three pass
+(about 140 s each, side by side). Without the seed the guest's whole card
+story would be pending against the owner's empty online story, and drop
+would take its key items too.
 
 ## 9. Online character and cloud backup
 
@@ -2420,7 +2445,13 @@ the room (up to ten), not the instance. No invites or join secrets for now.
   `derive_card`, both copies of the save with their checksums) for a
   precondition the r25c campaign never met and that has nothing to do with
   the online play (S16: Digi-Elf 0 freed in stag0103's boat ride, flag 89,
-  stored for the normal difficulty as 714). Checked per scenario: the net
+  stored for the normal difficulty as 714). `"seed_story": true` starts the
+  room story from the room creator's card (`run.py` `seed_story` writes the
+  owner account's `online_story` row from the card's first record before the
+  room opens), `"server": {...}` gives the scenario its own server with those
+  settings and its own database (S14h / S14a: `Rooms:StoryWhileOwnerAway`),
+  `"min_shared_ticks"` lowers the shared ticks below (S14: one member plays).
+  Checked per scenario: the net
   fingerprints of every instance equal on every client every 60 ticks, at
   least 10,000 ticks in shared instances,
   the canonical snapshot hashes of every NEW and co-arrival equal, no desync,
@@ -2680,11 +2711,16 @@ relay (plausibility, drop / hold / apply, the dropped set with drop epochs),
 `online_story` with the record composition and `GET /rooms/{code}/story`.
 Checked: the golden vectors in C++, C# and Python; the session test
 `room_story` and the hub's S14 for all three policies; the guest-to-owner path
-through the real relay and MariaDB in under ten seconds. Not done in the lane:
-S14 with real game clients (a scenario needs a script action that sets a story
-flag; the integration's scenarios), the title's application of
-`Session::confirmed_story()` at `game_started` (character lane), the
-FakeClient's story (the fake clients ignore STORY_ACK).
+through the real relay and MariaDB in under ten seconds; S14, S14h and S14a
+with hidden game clients (8.7); ctest 41/41, server unit tests 147,
+integration and end-to-end 69 (one skipped); online off `det.sh` twice
+4004f056 / 396cb219, the save state suite 17/17, r25c 10/10 (1,748,011
+frames). Not done in the lane: the title's application of
+`Session::confirmed_story()` at `game_started` (character lane; when it is
+wired, every card scenario needs `seed_story` or its members lose their card
+story at game start, and S14's guest needs a value it makes in the lobby: k2
+without 501 stalls in the first visit's talk at n_digilff #2's `ISSEQNAME
+SQ_WALK02`), the FakeClient's story (the fake clients ignore STORY_ACK).
 
 ### Round S3 (r54): stage flow in shared instances
 
