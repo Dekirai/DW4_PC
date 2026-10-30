@@ -25,6 +25,7 @@ shot room_started
 key pad-a
 sleep 1
 expect-screens closed
+sleep 4
 wait 10
 shot online_title
 menu online
