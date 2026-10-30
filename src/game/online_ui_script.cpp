@@ -348,7 +348,11 @@ bool OnlineUiScript::run(const Line& line, UiScriptHost& host) {
     }
     if (c == "wait-members") {
         timed(2, 60);
-        return lobby.room() && int(lobby.room()->members.size()) >= std::atoi(arg(1).c_str());
+        if (!lobby.room()) return false;
+        // N: at least N members; <=N: at most N (the others left).
+        const int members = int(lobby.room()->members.size());
+        const auto& want = arg(1);
+        return want.starts_with("<=") ? members <= std::atoi(want.c_str() + 2) : members >= std::atoi(want.c_str());
     }
     if (c == "wait-stage") {
         timed(2, 120);

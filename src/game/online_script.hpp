@@ -58,6 +58,9 @@
 //         writes @N as its scenario start + N)  answered>=N (exit prompt
 //         answers given in this step)  hp<=N (this member's HP)
 //         level>=N (this member's own character's level)
+//         roomflag:N=V (flag N of the room story this machine holds as
+//         confirmed, docs/SEAMLESS.md 8.3: the server's newest it was sent,
+//         ahead of the engine until the next barrier; 0 without one)
 //
 // Without "until", hold / press / log end by themselves, goto and route when
 // the goal is reached, and the others never end. Every step start, exit prompt change and stage change is traced
@@ -67,6 +70,7 @@
 #include "campaign.hpp"
 
 #include "dw4/engine/engine.hpp"
+#include "dw4/engine/online_story.hpp"
 
 #include <chrono>
 #include <cstdint>
@@ -84,6 +88,7 @@ struct OnlineScriptFacts {
     std::uint8_t present = 1;    // present slots of the instance
     std::string mode = "offline"; // the session mode (session.hpp mode_name)
     std::uint32_t tick = 0;      // the next tick of the visit
+    const engine::RoomStory* room_story = nullptr; // the session's confirmed room story (none yet: nullptr)
 };
 
 class OnlineScript {

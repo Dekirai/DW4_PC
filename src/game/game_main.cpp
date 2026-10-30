@@ -2170,6 +2170,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                         facts.present = online->session().present();
                         facts.mode = dw4::game::online::mode_name(online->session().mode());
                         facts.tick = online->session().tick();
+                        if (const auto& story = online->session().confirmed_story()) facts.room_story = &*story;
                     }
                     const auto out = online_script.update(engine, facts);
                     // The run ends once the script is done.

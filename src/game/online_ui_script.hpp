@@ -47,7 +47,7 @@
 //   confirm | cancel           the "end the offline game" question
 //   select NAME|CODE           a room of the list (the Join button's room)
 //   wait-session [SECONDS]     until the room's session runs (60 s)
-//   wait-members N [SECONDS]   until the room view lists N members (60 s)
+//   wait-members N [SECONDS]   until the room view lists N members or more (60 s; <=N: N or fewer)
 //   wait-stage STAGE [SECONDS] until the engine is in that stage (120 s)
 //   kick NAME | leave | close CODE
 //   wait-left [SECONDS]        until the session ended (60 s)
