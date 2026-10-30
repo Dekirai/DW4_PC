@@ -99,6 +99,8 @@ const std::vector<std::string_view>& online_forbidden_env() {
         "DW4_TEST_GIVEUP",
         // state tests, the randomizer's save bond of test runs and the direct netplay menus (the client lane's list)
         "DW4_STATE_FILE", "DW4_STATE_TEST", "DW4_RANDOMIZER_BIND", "DW4_MENU_HOST", "DW4_MENU_IMPORT", "DW4_MENU_JOIN",
+        // the cloud backup panel's test login and action (F1 Saves, outside rooms only)
+        "DW4_MENU_CLOUD",
         // the pad replay of the test tools replaces the sealed pads before the step (game_main.cpp)
         "DW4_PAD_REPLAY"};
     return names;
