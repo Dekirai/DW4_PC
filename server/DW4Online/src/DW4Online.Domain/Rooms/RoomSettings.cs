@@ -55,7 +55,7 @@ public sealed record RoomSettings(int Difficulty, int CameraMode, int LightMode,
 
     /// <summary>
     /// Reads and validates the room settings object: difficulty 0..2, cameraMode / lightMode 0..1, fastLoading,
-    /// randomizer (true, or {enabled, seed, drops, enemies 0..2, zones 0..2}); cheats and rebalanced rates are refused.
+    /// randomizer ({enabled, seed, drops, enemies 0..2, zones 0..2}; false or null for none); cheats and rebalanced rates are refused.
     /// </summary>
     public static Result<RoomSettings> FromJson(JsonElement? settings)
     {
@@ -83,15 +83,18 @@ public sealed record RoomSettings(int Difficulty, int CameraMode, int LightMode,
                 if (!Int(r, "zones", 0, 2, 0, out zones)) return Bad("randomizer.zones is 0, 1 or 2.");
                 if (!enabled) (seed, drops, enemies, zones) = (0, false, 0, 0);
             }
-            else if (r.ValueKind is not (JsonValueKind.True or JsonValueKind.False or JsonValueKind.Null))
+            // (A bare true would mark the room as a randomizer room while the game ran without one: no seed.)
+            else if (r.ValueKind is not (JsonValueKind.False or JsonValueKind.Null))
                 return Bad("randomizer is an object {enabled, seed, drops, enemies, zones}.");
         }
         return new RoomSettings(difficulty, camera, light, seed, drops, enemies, zones, fast);
     }
 
-    /// <summary>Whether the settings object switches the randomizer on (the ranked ruleset of the room's unlocks).</summary>
-    public static bool RandomizerRequested(JsonElement s) => s.ValueKind == JsonValueKind.Object && s.TryGetProperty("randomizer", out var r) &&
-        (r.ValueKind == JsonValueKind.True || (r.ValueKind == JsonValueKind.Object && r.TryGetProperty("enabled", out var e) && e.ValueKind == JsonValueKind.True));
+    /// <summary>
+    /// Whether the settings run a randomizer (the ranked ruleset of the room's unlocks): exactly when the settings every
+    /// engine runs with have an active one, so the room list never shows a randomizer the simulation does not play.
+    /// </summary>
+    public static bool RandomizerRequested(JsonElement s) => FromJson(s) is { Ok: true } r && r.Value!.RandomizerActive;
 
     private static DomainError Bad(string message) => DomainError.Invalid("invalid_settings", message);
 

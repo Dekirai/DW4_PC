@@ -29,4 +29,20 @@ public sealed class InstanceOptions
     public int BarrierReportSeconds { get; set; } = 5;
     /// <summary>Players in one instance (the engine's four slots).</summary>
     public int PlayersPerInstance { get; set; } = 4;
+    /// <summary>The highest replay rate (steps/s) a member may report (RATE, READY): a forged rate cannot buy a join on a long log.</summary>
+    public int MaxReplayRate { get; set; } = 20000;
+    /// <summary>A solo member's LOG may run this many ticks ahead of the wall clock since its visit began (host step bursts).</summary>
+    public int LogLeadTicks { get; set; } = 600;
+    /// <summary>A visit's solo log stops growing after this many hours (further LOG is dropped, the instance takes no joins).</summary>
+    public double MaxVisitHours { get; set; } = 12;
+    /// <summary>A sealed visit's members whose canonical snapshot hash has not come after this many seconds leave it (6.8).</summary>
+    public int SnapHashSeconds { get; set; } = 60;
+    /// <summary>JOIN_REQ asks to a solo leader that does not answer before the joiner falls back to NEW.</summary>
+    public int JoinRequestTries { get; set; } = 3;
+    /// <summary>A fork reported by members of both sides forks after this wait even when not every member confirmed it.</summary>
+    public int ForkConfirmMs { get; set; } = 2000;
+    /// <summary>A member is resynced at most once in this many seconds (a second lost vote meanwhile is only counted).</summary>
+    public int ResyncCooldownSeconds { get; set; } = 10;
+    /// <summary>RESUME sends at most this many ticks again (a longer gap is no reconnect: the member is not resumed).</summary>
+    public int MaxResumeTicks { get; set; } = 3600;
 }

@@ -60,6 +60,14 @@ internal sealed class Connection : IHubPeer
         _ = Task.Delay(2000).ContinueWith(_ => Abort(), TaskScheduler.Default);
     }
 
+    /// <summary>No more frames (the peer is gone): the writer sends what is queued and ends; a stuck one is cut after two seconds.</summary>
+    public void Finish()
+    {
+        Interlocked.Exchange(ref _closing, 1);
+        _queue.Writer.TryComplete();
+        _ = Task.Delay(2000).ContinueWith(_ => Abort(), TaskScheduler.Default);
+    }
+
     public void Abort()
     {
         Interlocked.Exchange(ref _closing, 1);

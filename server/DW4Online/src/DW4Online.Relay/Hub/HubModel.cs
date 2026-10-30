@@ -59,6 +59,15 @@ public sealed class HubMember(int index, long accountId, string name, bool owner
     public long PingSentAt { get; set; }
     public long LastHeard { get; set; }
     public RttSamples Rtt { get; } = new();
+
+    /// <summary>This connection may send RESUME once (its WELCOME said resumable).</summary>
+    public bool ResumeAllowed { get; set; }
+    /// <summary>A fingerprint vote sent RESYNC: the member catches up from the state until its READY (no JOIN follows).</summary>
+    public bool Resyncing { get; set; }
+    /// <summary>When the last RESYNC went out (at most one per Instances:ResyncCooldownSeconds).</summary>
+    public long ResyncAt { get; set; }
+    /// <summary>A state transfer for this member is being built outside the room lock: nothing is pumped to it meanwhile.</summary>
+    public StateJob? PendingState { get; set; }
 }
 
 public sealed record Heading(string Stage, byte Point, ulong Context, long At);
@@ -89,6 +98,8 @@ public sealed class JoinState(HubInstance target, int slot, ArrivalGroup from, i
     public int OldSlot { get; } = oldSlot;
     public byte[] Carry { get; set; } = [];
     public int Attempts { get; set; }
+    /// <summary>JOIN_REQ sent to the solo leader without its JOIN_AT (a few, then the joiner falls back to NEW).</summary>
+    public int JoinRequests { get; set; }
     public bool StateSent { get; set; }
     /// <summary>READY arrived (the joiner caught up).</summary>
     public bool Ready { get; set; }
@@ -145,45 +156,77 @@ public sealed class BarrierCollect(uint tick, string stage, byte point, byte ali
     public int Mismatches { get; set; }
 }
 
-/// <summary>The visit's load snapshot: the leader's raw bytes and every member's canonical hash.</summary>
+/// <summary>
+/// The visit's load snapshot: the leader's raw bytes and every member's canonical hash. A fork's child shares the bytes
+/// with its parent, also while they still upload: whichever side the uploader went to completes them for both.
+/// </summary>
 public sealed class SnapshotStore
 {
-    private byte[]? _buffer;
-    private int _received;
+    private sealed class Upload
+    {
+        public byte[]? Buffer;
+        public int Received;
+        public byte[]? Bytes;
+        public HubMember? Uploader;
+    }
 
-    public HubMember? Uploader { get; set; }
-    public byte[]? Bytes { get; private set; }
-    public bool Complete => Bytes is not null;
+    private readonly Upload _u;
+
+    public SnapshotStore() : this(new Upload())
+    {
+    }
+
+    private SnapshotStore(Upload upload) => _u = upload;
+
+    public HubMember? Uploader { get => _u.Uploader; set => _u.Uploader = value; }
+    public byte[]? Bytes => _u.Bytes;
+    public bool Complete => _u.Bytes is not null;
     public Dictionary<int, ulong> Hashes { get; } = [];
     public bool HashMismatch { get; set; }
+
+    /// <summary>Whether two stores hold the same upload (a parent and its fork children).</summary>
+    public bool SharesWith(SnapshotStore other) => ReferenceEquals(_u, other._u);
 
     /// <summary>Adds a chunk; true when the snapshot just completed.</summary>
     public bool AddChunk(uint total, uint offset, byte[] chunk)
     {
         if (Complete) return false;
         if (total > StateBlob.MaxSnapshot) throw new ProtocolException("snapshot too large");
-        if (_buffer is null || _buffer.Length != total)
+        if (_u.Buffer is null || _u.Buffer.Length != total)
         {
             if (offset != 0) throw new ProtocolException("snapshot does not start at offset 0");
-            _buffer = new byte[total];
-            _received = 0;
+            _u.Buffer = new byte[total];
+            _u.Received = 0;
         }
-        if (offset != _received) throw new ProtocolException("snapshot chunks out of order");
-        chunk.CopyTo(_buffer, (int)offset);
-        _received += chunk.Length;
-        if (_received < total) return false;
-        Bytes = _buffer;
-        _buffer = null;
+        if (offset != _u.Received) throw new ProtocolException("snapshot chunks out of order");
+        if (offset + (uint)chunk.Length > total) throw new ProtocolException("snapshot chunk beyond its total");
+        chunk.CopyTo(_u.Buffer, (int)offset);
+        _u.Received += chunk.Length;
+        if (_u.Received < total) return false;
+        _u.Bytes = _u.Buffer;
+        _u.Buffer = null;
         return true;
     }
 
-    /// <summary>A snapshot shared with a fork's child (it starts from the same visit).</summary>
-    public SnapshotStore ShareComplete()
+    /// <summary>The snapshot shared with a fork's child (it starts from the same visit; an upload in flight completes both).</summary>
+    public SnapshotStore Share()
     {
-        var s = new SnapshotStore { Bytes = Bytes, Uploader = Uploader };
+        var s = new SnapshotStore(_u);
         foreach (var (k, v) in Hashes) s.Hashes[k] = v;
         return s;
     }
+}
+
+/// <summary>A fork reported by members (SPLIT): it forks once every connected member confirmed it, or after a short wait
+/// once members of both sides did (a single member's report never moves another member, 6.7).</summary>
+public sealed class SplitVote(uint tick, byte mask, SplitKind kind, long firstAt)
+{
+    public uint Tick { get; } = tick;
+    public byte Mask { get; } = mask;
+    public SplitKind Kind { get; } = kind;
+    public long FirstAt { get; } = firstAt;
+    public HashSet<int> Reporters { get; } = [];
+    public bool Done { get; set; }
 }
 
 /// <summary>An instance: a lockstep group of 1-4 members in one stage (SEAMLESS.md 3.2).</summary>
@@ -218,7 +261,9 @@ public sealed class HubInstance(uint id)
     public HashSet<HubMember> CoArrivalPending { get; } = [];
     public SortedDictionary<uint, Dictionary<int, ulong>> Fingerprints { get; } = [];
     public BarrierCollect? Barrier { get; set; }
-    public Dictionary<uint, (byte Mask, SplitKind Kind)> Splits { get; } = [];
+    public SortedDictionary<uint, SplitVote> Splits { get; } = [];
+    /// <summary>Ticks whose fingerprints were voted on already (one vote per tick).</summary>
+    public HashSet<uint> Voted { get; } = [];
 
     // Sealed schedule
     public long S0 { get; set; }
@@ -232,13 +277,28 @@ public sealed class HubInstance(uint id)
     // Solo-led
     /// <summary>The tick from which a solo-led instance became sealed (its leader's LOG still covers the ticks before it).</summary>
     public uint SealedFrom { get; set; }
+    /// <summary>The solo leader whose LOG covers the ticks before <see cref="SealedFrom"/> (JOIN_AT's sender).</summary>
+    public HubMember? LogOwner { get; set; }
+    /// <summary>The solo log reached Instances:MaxVisitHours: further LOG is dropped and nobody joins.</summary>
+    public bool LogFull { get; set; }
     public long LastLogAt { get; set; }
     public PendingSoloJoin? SoloJoin { get; set; }
+    /// <summary>When the visit's BARRIER_OK went out (a solo LOG cannot run ahead of the clock from here).</summary>
+    public long VisitStartedAt { get; set; }
 
     public long CreatedAt { get; set; }
     public long Desyncs { get; set; }
 
     public IEnumerable<HubMember> Members => Slots.Where(m => m is not null)!;
+    /// <summary>The filled slots with their members (by index: never trusts a member's own slot number).</summary>
+    public IEnumerable<(int Slot, HubMember Member)> Seats
+    {
+        get
+        {
+            for (var s = 0; s < Wire.MaxSlots; ++s)
+                if (Slots[s] is { } m) yield return (s, m);
+        }
+    }
     public int Count => Slots.Count(m => m is not null);
     public int FreeSlots => Enumerable.Range(0, Wire.MaxSlots).Count(s => Slots[s] is null && Reserved[s] is null);
     public byte PresentMask => (byte)Enumerable.Range(0, Wire.MaxSlots).Where(s => Slots[s] is not null).Sum(s => 1 << s);

@@ -11,6 +11,7 @@ public sealed record TickEvent(byte Type, byte[] Payload)
 {
     public static TickEvent Join(int slot, int entrancePoint, ReadOnlySpan<byte> carry)
     {
+        if (2 + carry.Length > MaxPayload) throw new ArgumentException("a JOIN carry above the event limit", nameof(carry));
         var p = new byte[2 + carry.Length];
         p[0] = (byte)slot;
         p[1] = (byte)entrancePoint;
@@ -38,6 +39,9 @@ public sealed record TickEvent(byte Type, byte[] Payload)
 
     public static TickEvent Delay(int slot, int delay) => new(Ev.Delay, [(byte)slot, (byte)delay]);
 
+    /// <summary>An event's payload length is a u16.</summary>
+    public const int MaxPayload = ushort.MaxValue;
+
     /// <summary>The slot an event concerns (JOIN, LEAVE, INTENT, DELAY), or -1.</summary>
     public int Slot => Type is Ev.Join or Ev.Leave or Ev.Intent or Ev.Delay && Payload.Length > 0 ? Payload[0] : -1;
 }
@@ -48,6 +52,9 @@ public sealed record TickEvent(byte Type, byte[] Payload)
 /// </summary>
 public sealed class TickRecord
 {
+    /// <summary>The event count is a u8.</summary>
+    public const int MaxEvents = byte.MaxValue;
+
     public byte Mask { get; init; }
     public Pad[] Pads { get; } = new Pad[Wire.MaxSlots];
     public List<TickEvent> Events { get; } = [];
@@ -56,6 +63,10 @@ public sealed class TickRecord
 
     public void Write(WireWriter w)
     {
+        // A record past the format's limits would be unreadable for every member (and the log's blocks with it).
+        if (Events.Count > MaxEvents) throw new InvalidOperationException("more than 255 events in a tick record");
+        foreach (var e in Events)
+            if (e.Payload.Length > TickEvent.MaxPayload) throw new InvalidOperationException("an event payload above 64 KiB");
         w.U8((byte)(Mask & Wire.SlotMask)).U8((byte)Events.Count);
         for (var s = 0; s < Wire.MaxSlots; ++s)
             if ((Mask & (1 << s)) != 0) w.Pad(Pads[s]);
@@ -171,7 +182,8 @@ public sealed record HeadingMsg(uint Inst, string Stage, byte Point, ulong Conte
 /// <summary>BARRIER: after the barrier tick (the step that executed NEXTSTAGE); carry = the sender's own player carry.</summary>
 public sealed record BarrierMsg(uint Inst, uint Visit, uint Tick, string Stage, byte Point, byte AliveMask, byte PresentMask, ulong ContextHash, byte[] Carry)
 {
-    public const int MaxCarry = 64 * 1024;
+    /// <summary>A carry becomes a JOIN event (slot, point, carry) whose length is a u16: at most 65,533 bytes.</summary>
+    public const int MaxCarry = ushort.MaxValue - 2;
 
     public static BarrierMsg Parse(ReadOnlySpan<byte> p)
     {

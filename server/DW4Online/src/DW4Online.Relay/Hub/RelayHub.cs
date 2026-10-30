@@ -67,7 +67,17 @@ public sealed class RelayHub : BackgroundService
     public IReadOnlyList<InstanceView> Views(string code)
     {
         if (!_rooms.TryGetValue(code, out var hub)) return [];
-        lock (hub.Sync) return hub.Views();
+        // A busy room (a burst of frames, a long state) answers with the last housekeeping pass's views (at most a
+        // quarter second old) instead of holding up the room list and the admission.
+        if (!Monitor.TryEnter(hub.Sync, 50)) return hub.CachedViews;
+        try
+        {
+            return hub.Views();
+        }
+        finally
+        {
+            Monitor.Exit(hub.Sync);
+        }
     }
 
     /// <summary>A member left the room: its connection closes and its slot leaves at once.</summary>
@@ -80,7 +90,11 @@ public sealed class RelayHub : BackgroundService
     public void RoomClosed(string code, string text)
     {
         if (!_rooms.TryRemove(code, out var hub)) return;
-        lock (hub.Sync) hub.CloseAll(CloseReason.RoomClosed, text);
+        lock (hub.Sync)
+        {
+            hub.Removed = true;
+            hub.CloseAll(CloseReason.RoomClosed, text);
+        }
     }
 
     public void OwnerPresence(string code, bool present)
@@ -154,13 +168,24 @@ public sealed class RelayHub : BackgroundService
             var next = long.MaxValue;
             foreach (var hub in _rooms.Values)
             {
+                // A room busy under its lock (a burst of frames, a state being sent) is not waited for: the others seal
+                // on time, it seals its due ticks in the next pass a millisecond later (in one batch).
+                if (!Monitor.TryEnter(hub.Sync))
+                {
+                    next = Math.Min(next, now + Stopwatch.Frequency / 1000);
+                    continue;
+                }
                 try
                 {
-                    lock (hub.Sync) next = Math.Min(next, hub.Seal(now));
+                    next = Math.Min(next, hub.Seal(now));
                 }
                 catch (Exception e)
                 {
-                    _log.LogError(e, "Sealing failed in room {Room}", hub.Code);
+                    hub.Fault(e, "sealing");
+                }
+                finally
+                {
+                    Monitor.Exit(hub.Sync);
                 }
             }
             // Nothing sealed: wait for a wake (an instance starts sealing) but look again every 50 ms.
@@ -182,18 +207,37 @@ public sealed class RelayHub : BackgroundService
                 if (beat) lastBeat = now;
                 foreach (var (code, hub) in _rooms.ToList())
                 {
-                    List<long> connected;
-                    var empty = false;
-                    lock (hub.Sync)
+                    List<long> connected = [];
+                    // One room's fault never ends the housekeeping of the others (a task that died silently stopped
+                    // every room's pings, timeouts and heartbeats).
+                    try
                     {
-                        hub.Housekeep(now);
-                        foreach (var m in hub.Members)
-                            if (m.Peer is { } p && (now - m.LastHeard) > (long)_options.IdleTimeoutSeconds * Stopwatch.Frequency)
-                                p.Close(CloseReason.Timeout, "Nothing heard from this connection.");
-                        connected = hub.Members.Where(m => m.Connected).Select(m => m.AccountId).ToList();
-                        empty = hub.Empty;
+                        lock (hub.Sync)
+                        {
+                            try
+                            {
+                                hub.Housekeep(now);
+                            }
+                            catch (Exception e)
+                            {
+                                hub.Fault(e, "housekeeping");
+                            }
+                            foreach (var m in hub.Members)
+                                if (m.Peer is { } p && (now - m.LastHeard) > (long)_options.IdleTimeoutSeconds * Stopwatch.Frequency)
+                                    p.Close(CloseReason.Timeout, "Nothing heard from this connection.");
+                            connected = hub.Members.Where(m => m.Connected).Select(m => m.AccountId).ToList();
+                            if (hub.Empty)
+                            {
+                                // (Under the lock: a handshake that found this hub sees Removed and takes a new one.)
+                                hub.Removed = true;
+                                _rooms.TryRemove(new KeyValuePair<string, RoomHub>(code, hub));
+                            }
+                        }
                     }
-                    if (empty) _rooms.TryRemove(new KeyValuePair<string, RoomHub>(code, hub));
+                    catch (Exception e)
+                    {
+                        _log.LogError(e, "Relay housekeeping failed for room {Room}", code);
+                    }
                     if (beat && connected.Count > 0 && Heartbeat is { } h)
                     {
                         try
@@ -272,25 +316,37 @@ public sealed class RelayHub : BackgroundService
                 await ReplyAsync(stream, "ERR full", stop);
                 return;
             }
-            hub = _rooms.GetOrAdd(room.Code, _ => NewRoom(room));
             conn = new Connection(client, _options, _log, ip);
-            lock (hub.Sync)
+            while (member is null)
             {
-                hub.Info = room;
-                var serverMs = (long)(Stopwatch.GetTimestamp() * 1000.0 / Stopwatch.Frequency);
-                conn.Send(Encoding.ASCII.GetBytes(FormattableString.Invariant($"OK {admitted.MemberIndex} {serverMs}\n")));
-                member = hub.Connect(admitted.MemberIndex, claims.Account, admitted.Username, admitted.Owner, conn, Stopwatch.GetTimestamp());
+                hub = _rooms.GetOrAdd(room.Code, _ => NewRoom(room));
+                lock (hub.Sync)
+                {
+                    // An empty hub the housekeeping removed meanwhile is not joined (nobody would seal or housekeep it).
+                    if (!hub.Removed)
+                    {
+                        hub.Info = room;
+                        var serverMs = (long)(Stopwatch.GetTimestamp() * 1000.0 / Stopwatch.Frequency);
+                        conn.Send(Encoding.ASCII.GetBytes(FormattableString.Invariant($"OK {admitted.MemberIndex} {serverMs}\n")));
+                        member = hub.Connect(admitted.MemberIndex, claims.Account, admitted.Username, admitted.Owner, conn, Stopwatch.GetTimestamp());
+                    }
+                }
+                if (member is null) _rooms.TryRemove(new KeyValuePair<string, RoomHub>(room.Code, hub));
             }
             _log.LogInformation("Relay: account {Account} connected to room {Room} as member {Member}", claims.Account, room.Code, admitted.MemberIndex);
             var writer = Task.Run(conn.WriteLoopAsync, CancellationToken.None);
-            var h = hub;
+            var h = hub!;
             var m = member;
             var graceful = await conn.ReadLoopAsync((type, payload) =>
             {
                 lock (h.Sync) h.Receive(m, type, payload.Span, Stopwatch.GetTimestamp());
             });
-            lock (hub.Sync) hub.Disconnect(member, conn, Stopwatch.GetTimestamp(), graceful);
+            lock (hub!.Sync) hub.Disconnect(member, conn, Stopwatch.GetTimestamp(), graceful);
+            // The writer ends with its queue: BYE gets the goodbye; a connection that ended without one (a crash, a
+            // lost network) gets nothing more, and the queue ends too, or the writer would wait for good and the socket,
+            // the connection and the address's slot would never be released.
             if (graceful) conn.Close(CloseReason.Left, "Goodbye.");
+            else conn.Finish();
             await writer;
         }
         catch (ProtocolException e)
@@ -325,9 +381,31 @@ public sealed class RelayHub : BackgroundService
 
     private RoomHub NewRoom(RoomInfo room)
     {
-        var hub = new RoomHub(room, _options, _sealing, _instances, _loggers.CreateLogger("DW4Online.Relay.Room." + room.Code), _mlog);
+        var hub = new RoomHub(room, _options, _sealing, _instances, _loggers.CreateLogger("DW4Online.Relay.Room." + room.Code), _mlog,
+            job => _ = Task.Run(() => RunStateJob(job)));
         hub.OnSealingStarted(_timer.Wake);
         return hub;
+    }
+
+    /// <summary>Builds a state transfer on the thread pool (every block decompressed, without the room lock), then sends it.</summary>
+    private void RunStateJob(StateJob job)
+    {
+        try
+        {
+            job.Build();
+        }
+        catch (Exception e)
+        {
+            _log.LogError(e, "Building a state transfer failed in room {Room}", job.Hub.Code);
+        }
+        try
+        {
+            lock (job.Hub.Sync) job.Hub.FinishState(job);
+        }
+        catch (Exception e)
+        {
+            lock (job.Hub.Sync) job.Hub.Fault(e, "a state transfer");
+        }
     }
 
     private void Release(IPAddress ip)

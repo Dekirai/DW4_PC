@@ -370,7 +370,9 @@ public class RoomServiceTests
     public void Settings_parser()
     {
         Assert.Equal((null, false, null), RoomService.ParseSettings(null, 100).Value);
-        Assert.True(RoomService.ParseSettings(JsonDocument.Parse("{\"randomizer\":true}").RootElement, 100).Value.Randomizer);
+        Assert.True(RoomService.ParseSettings(JsonDocument.Parse("{\"randomizer\":{\"enabled\":true,\"seed\":3,\"enemies\":1}}").RootElement, 100).Value.Randomizer);
+        Assert.False(RoomService.ParseSettings(JsonDocument.Parse("{\"randomizer\":{\"enabled\":true}}").RootElement, 100).Value.Randomizer); // seed 0: the original game
+        Assert.Equal("invalid_settings", RoomService.ParseSettings(JsonDocument.Parse("{\"randomizer\":true}").RootElement, 100).Error!.Code); // no seed: no randomizer room
         Assert.False(RoomService.ParseSettings(JsonDocument.Parse("{\"randomizer\":{\"enabled\":false}}").RootElement, 100).Value.Randomizer);
         Assert.Equal("invalid_settings", RoomService.ParseSettings(JsonDocument.Parse("{\"x\":\"" + new string('a', 200) + "\"}").RootElement, 100).Error!.Code);
         Assert.Equal("unranked_settings", RoomService.ParseSettings(JsonDocument.Parse("{\"rebalanced\":true}").RootElement, 100).Error!.Code);
@@ -403,5 +405,10 @@ public class RoomServiceTests
         Assert.Equal(new RoomSettings(2, 1, 0, uint.MaxValue, true, 2, 1, true), parsed.Value);
         Assert.Equal(d, RoomSettings.FromJson(JsonDocument.Parse("{\"randomizer\":{\"enabled\":false,\"seed\":7,\"enemies\":1}}").RootElement).Value);
         Assert.Equal(d, RoomSettings.FromJson(null).Value);
+        // A bare "randomizer": true is no randomizer (no seed): refused, never a randomizer room that plays without one.
+        Assert.False(RoomSettings.FromJson(JsonDocument.Parse("{\"randomizer\":true}").RootElement).Ok);
+        Assert.False(RoomSettings.RandomizerRequested(JsonDocument.Parse("{\"randomizer\":true}").RootElement));
+        Assert.True(RoomSettings.RandomizerRequested(JsonDocument.Parse("{\"randomizer\":{\"enabled\":true,\"seed\":5,\"drops\":true}}").RootElement));
+        Assert.False(RoomSettings.RandomizerRequested(JsonDocument.Parse("{\"randomizer\":{\"enabled\":true,\"seed\":5}}").RootElement)); // no mode
     }
 }

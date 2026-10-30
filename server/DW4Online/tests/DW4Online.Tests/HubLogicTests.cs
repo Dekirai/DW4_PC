@@ -47,10 +47,10 @@ public class HubLogicTests
         public long Now { get; private set; } = Stopwatch.Frequency * 1000;
         public Dictionary<string, (HubMember Member, Peer Peer)> M { get; } = [];
 
-        public Harness(InstanceOptions? instances = null, RelayOptions? relay = null)
+        public Harness(InstanceOptions? instances = null, RelayOptions? relay = null, Action<StateJob>? stateRunner = null)
         {
             Hub = new RoomHub(new RoomInfo("ROOM01", 43, 1, 2, 10), relay ?? new RelayOptions(), new SealingOptions(),
-                instances ?? new InstanceOptions(), NullLogger.Instance);
+                instances ?? new InstanceOptions(), NullLogger.Instance, null, stateRunner);
         }
 
         public void Advance(double ms) => Now += (long)(ms * Stopwatch.Frequency / 1000.0);
@@ -175,9 +175,9 @@ public class HubLogicTests
         Assert.Equal(inst.NextSeal, inst.Log.Count);
     }
 
-    private static Harness SealedPair(out uint inst, RelayOptions? relay = null)
+    private static Harness SealedPair(out uint inst, RelayOptions? relay = null, InstanceOptions? instances = null)
     {
-        var h = new Harness(relay: relay);
+        var h = new Harness(instances, relay);
         h.Connect("a", 0);
         h.Connect("b", 1);
         h.Send("a", new HeadingMsg(h.Inst("a"), "stag0201", 0, 5).Frame());
@@ -436,5 +436,322 @@ public class HubLogicTests
         h.Hub.Housekeep(h.Now);
         Assert.True(a.Has(Msg.Ping));
         Assert.Single(a.Last(Msg.Roster, RosterMsg.Parse).Entries);
+    }
+
+    // Round S1 review ---------------------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// A BARRIER naming an instance the server does not have the member in (a client whose own five-second timeout went
+    /// on as NEW, or a forged one) takes the member out of its old instance: no zombie instances with a filled slot, no
+    /// joiner sent to them, and the housekeeping never indexes a slot -1 (it stopped every room's pings).
+    /// </summary>
+    [Fact]
+    public void A_barrier_for_an_unknown_instance_leaves_the_old_one_and_leaves_no_zombies()
+    {
+        var h = new Harness();
+        h.Connect("a", 0);
+        var b = h.Connect("b", 1);
+        h.Barrier("a", "stag0101");
+        h.Snapshot("a");
+        var first = h.I("a");
+        for (var k = 0; k < 500; ++k) h.Send("a", new BarrierMsg(0, 77, 0, "stag0101", 0, 1, 1, 5, [1]).Frame());
+        Assert.True(first.Ended);
+        Assert.True(h.Hub.Instances.Count <= 2, h.Hub.Instances.Count.ToString()); // a's one instance and b's hub
+        foreach (var i in h.Hub.Instances)
+            foreach (var (slot, m) in i.Seats)
+                Assert.Equal((i, slot), (m.Instance!, m.Slot));
+        // The member drops without BYE: past the reconnect window the housekeeping ends its instance and keeps going.
+        h.Hub.Disconnect(h.Mem("a"), h.P("a"), h.Now);
+        var pings = b.All(Msg.Ping, PingMsg.Parse).Count;
+        h.Advance(11_000);
+        h.Hub.Housekeep(h.Now);
+        h.Advance(1_100);
+        h.Hub.Housekeep(h.Now);
+        Assert.True(b.All(Msg.Ping, PingMsg.Parse).Count > pings);
+        Assert.False(h.Hub.Counters.ContainsKey("faults"));
+        Assert.Null(h.Mem("a").Instance);
+    }
+
+    /// <summary>The records stay inside their u8 event count and u16 event length (a broken record broke the whole log).</summary>
+    [Fact]
+    public void Carries_and_intents_keep_every_record_readable()
+    {
+        Assert.Throws<ProtocolException>(() => BarrierMsg.Parse(new BarrierMsg(1, 1, 0, "stag0101", 0, 1, 1, 5, new byte[65534]).Frame()[Wire.HeaderBytes..]));
+        Assert.Equal(65533, BarrierMsg.Parse(new BarrierMsg(1, 1, 0, "stag0101", 0, 1, 1, 5, new byte[65533]).Frame()[Wire.HeaderBytes..]).Carry.Length);
+        Assert.Throws<ProtocolException>(() => ReadyMsg.Parse(new ReadyMsg(1, 1, 0, 0, 0, new byte[65534]).Frame()[Wire.HeaderBytes..]));
+        var full = new TickRecord { Mask = 1 };
+        for (var k = 0; k < 256; ++k) full.Events.Add(TickEvent.Leave(0));
+        Assert.Throws<InvalidOperationException>(() => full.ToBytes());
+        var join = TickRecord.Parse(new TickRecord { Mask = 1, Events = { TickEvent.Join(1, 0, new byte[65533]) } }.ToBytes());
+        Assert.Equal(65535, join.Events.Single().Payload.Length);
+
+        var h = SealedPair(out var inst);
+        var i = h.I("a");
+        h.Seal(200);
+        for (var k = 0; k < 300; ++k) h.Send("a", new IntentMsg(inst, i.Visit, IntentKind.GiveUp, k).Frame());
+        h.Seal(500);
+        var ticks = h.P("b").Ticks(); // every record parses
+        Assert.Single(ticks.SelectMany(t => t.Rec.Events), e => e.Type == Ev.Intent);
+        Assert.Equal(299, h.Hub.Counters["intent_dropped"]);
+    }
+
+    /// <summary>A solo member's LOG follows the game's pace from the visit's start; a reported rate has a ceiling.</summary>
+    [Fact]
+    public void A_solo_log_cannot_run_ahead_of_the_clock_and_a_reported_rate_is_capped()
+    {
+        var h = new Harness();
+        h.Connect("a", 0);
+        h.Barrier("a", "stag0101");
+        h.Snapshot("a");
+        h.Log("a", 0, 600); // within the lead
+        Assert.Throws<ProtocolException>(() => h.Log("a", 600, 600));
+        h.Advance(20_000); // 20 s: about 1,200 ticks more
+        h.Log("a", 600, 1200);
+        Assert.Equal(1800u, h.I("a").Log.Count);
+        h.Send("a", new RateMsg(1_000_000).Frame());
+        Assert.Equal(20000u, h.Mem("a").Rate);
+    }
+
+    /// <summary>After JOIN_AT only the solo leader's LOG fills the ticks before J (a joiner's would rewrite its history).</summary>
+    [Fact]
+    public void Only_the_solo_leader_logs_the_ticks_before_J()
+    {
+        var h = new Harness();
+        h.Connect("a", 0);
+        var b = h.Connect("b", 1);
+        h.Barrier("a", "stag0101");
+        h.Snapshot("a");
+        h.Log("a", 0, 120);
+        h.Joinable("a");
+        h.Barrier("b", "stag0101");
+        var ok = h.Decision("b");
+        h.Send("b", new ReadyMsg(ok.NewInst, ok.NewVisit, 120, 0, 5000, [7]).Frame());
+        var req = h.P("a").Last(Msg.JoinReq, JoinReqMsg.Parse);
+        h.Send("a", new JoinAtMsg(req.Inst, req.Visit, 140).Frame());
+        var inst = h.I("a");
+        Assert.Same(inst, h.Mem("b").Instance);
+        h.Send("b", new LogMsg(inst.Id, inst.Visit, 120, Enumerable.Range(0, 10).Select(_ => new Pad(0x40, 0, 0, 0, 0)).ToArray()).Frame());
+        Assert.Equal(120u, inst.Log.Count);
+        Assert.Equal(1, h.Hub.Counters["log_foreign"]);
+        h.Log("a", 120, 20);
+        Assert.Equal(140u, inst.Log.Count);
+        Assert.Equal((byte)0b01, TickRecord.Parse(inst.Log.At(130)!).Mask);
+    }
+
+    /// <summary>RESUME only after a resumable WELCOME, once; one fingerprint vote per tick, one resync at a time.</summary>
+    [Fact]
+    public void Resume_and_resync_are_bounded()
+    {
+        var h = SealedPair(out var inst, instances: new InstanceOptions { MaxResumeTicks = 60 });
+        var i = h.I("a");
+        h.Seal(3000);
+        // No reconnect: a RESUME is refused (it made the relay send the whole log again, any number of times).
+        var before = h.P("b").Frames.Count;
+        h.Send("b", new ResumeMsg(inst, i.Visit, 1, 0).Frame());
+        Assert.Equal(before, h.P("b").Frames.Count);
+        Assert.Equal(1, h.Hub.Counters["resume_refused"]);
+        // A vote, then more reports of the same tick and another lost vote within the cooldown: one RESYNC.
+        h.Send("a", new NetFpMsg(inst, i.Visit, 60, 1).Frame());
+        h.Send("b", new NetFpMsg(inst, i.Visit, 60, 2).Frame());
+        for (ulong k = 3; k < 23; ++k) h.Send("b", new NetFpMsg(inst, i.Visit, 60, k).Frame());
+        h.Send("a", new NetFpMsg(inst, i.Visit, 120, 1).Frame());
+        h.Send("b", new NetFpMsg(inst, i.Visit, 120, 9).Frame());
+        Assert.Single(h.P("b").All(Msg.Resync, ResyncMsg.Parse));
+        Assert.True(h.Mem("b").Resyncing);
+        // A fingerprint of a tick not sealed yet is no report.
+        h.Send("a", new NetFpMsg(inst, i.Visit, i.NextSeal + 600, 1).Frame());
+        Assert.Equal(1, h.Hub.Counters["netfp_ahead"]);
+        // The resync ends with READY (no JOIN): the member is one again.
+        h.Send("b", new ReadyMsg(inst, i.Visit, 120, 1, 4000, []).Frame());
+        Assert.False(h.Mem("b").Resyncing);
+        Assert.Equal(1, h.Hub.Counters["resync_ready"]);
+        Assert.Same(i, h.Mem("b").Instance);
+        // A reconnect within the window may RESUME once, for the gap only.
+        h.Hub.Disconnect(h.Mem("b"), h.P("b"), h.Now);
+        h.Seal(500);
+        var b2 = h.Connect("b", 1);
+        Assert.Equal(WelcomeMsg.Resumable, b2.Last(Msg.Welcome, WelcomeMsg.Parse).Flags);
+        h.Send("b", new ResumeMsg(inst, i.Visit, 1, 0).Frame()); // the whole log: refused
+        Assert.Equal(2, h.Hub.Counters["resume_refused"]);
+        h.Send("b", new ResumeMsg(inst, i.Visit, 1, i.NextSeal - 30).Frame()); // once per connection
+        Assert.Equal(3, h.Hub.Counters["resume_refused"]);
+    }
+
+    private static Harness CoArrivedPair(out uint inst)
+    {
+        var h = new Harness(relay: new RelayOptions { LagLeaveSeconds = 600 });
+        h.Connect("a", 0);
+        h.Connect("b", 1);
+        h.Send("a", new HeadingMsg(h.Inst("a"), "stag0201", 0, 5).Frame());
+        h.Send("b", new HeadingMsg(h.Inst("b"), "stag0201", 0, 5).Frame());
+        h.Barrier("a", "stag0201");
+        h.Barrier("b", "stag0201");
+        inst = h.Decision("a").NewInst;
+        h.Snapshot("a"); // a's hash is in, b's not yet
+        Assert.False(h.I("a").Sealing);
+        return h;
+    }
+
+    /// <summary>
+    /// A co-arrival that goes before tick 0 (or never sends its hash) was spawned by every engine in the load step: it
+    /// leaves by LEAVE, the other leads alone (LEAD_FROM), and sealing starts without it.
+    /// </summary>
+    [Fact]
+    public void A_co_arrival_gone_before_tick_zero_leaves_by_LEAVE_and_the_base_plays_on()
+    {
+        var h = CoArrivedPair(out _);
+        var i = h.I("a");
+        h.Hub.Disconnect(h.Mem("b"), h.P("b"), h.Now, graceful: true);
+        Assert.True(i.Sealing);
+        h.Seal(500);
+        var ticks = h.P("a").Ticks();
+        Assert.Contains(ticks, t => t.Rec.Events.Any(e => e.Type == Ev.Leave && e.Slot == 1));
+        Assert.Contains(ticks, t => t.Rec.Events.Any(e => e.Type == Ev.LeadFrom));
+        Assert.Equal(InstanceMode.SoloLed, i.Mode);
+
+        // Lost without BYE: sealing starts at once, the reconnect window runs.
+        var g = CoArrivedPair(out _);
+        var gi = g.I("a");
+        g.Hub.Disconnect(g.Mem("b"), g.P("b"), g.Now);
+        Assert.True(gi.Sealing);
+        Assert.Same(gi, g.Mem("b").Instance);
+
+        // Connected but silent: after Instances:SnapHashSeconds it leaves.
+        var s = CoArrivedPair(out _);
+        var si = s.I("a");
+        s.Advance(61_000);
+        s.Hub.Housekeep(s.Now);
+        Assert.Equal(1, s.Hub.Counters["snaphash_timeout"]);
+        Assert.True(si.Sealing);
+        Assert.Null(s.Mem("b").Instance);
+        s.Seal(500);
+        Assert.Contains(s.P("a").Ticks(), t => t.Rec.Events.Any(e => e.Type == Ev.Leave && e.Slot == 1));
+    }
+
+    /// <summary>A single member's SPLIT moves nobody; every member's (or both sides' after a wait) forks.</summary>
+    [Fact]
+    public void A_fork_needs_the_reports_of_its_members()
+    {
+        var h = SealedPair(out var inst);
+        var i = h.I("a");
+        h.Seal(500);
+        h.Send("b", new SplitMsg(inst, i.Visit, i.NextSeal - 5, 0b01, SplitKind.Exit).Frame()); // b names a as the leaver
+        Assert.Same(i, h.I("a"));
+        h.Advance(2100);
+        h.Hub.Housekeep(h.Now);
+        Assert.Same(i, h.I("a"));
+        Assert.Equal(1, h.Hub.Counters["split_unconfirmed"]);
+        h.Send("a", new SplitMsg(inst, i.Visit, i.NextSeal + 5, 0b01, SplitKind.Exit).Frame()); // a tick not sealed yet
+        Assert.Equal(1, h.Hub.Counters["split_out_of_range"]);
+        var k = i.NextSeal - 3;
+        h.Send("a", new SplitMsg(inst, i.Visit, k, 0b01, SplitKind.Exit).Frame());
+        Assert.Same(i, h.I("a"));
+        h.Send("b", new SplitMsg(inst, i.Visit, k, 0b01, SplitKind.Exit).Frame());
+        Assert.NotSame(i, h.I("a"));
+        Assert.Same(i, h.I("b"));
+
+        // Three members, one silent: the two sides' reports fork after Instances:ForkConfirmMs.
+        var t = new Harness();
+        foreach (var (n, index) in new[] { ("a", 0), ("b", 1), ("c", 2) }) t.Connect(n, index);
+        foreach (var n in new[] { "a", "b", "c" }) t.Send(n, new HeadingMsg(t.Inst(n), "stag0102", 0, 5).Frame());
+        foreach (var n in new[] { "a", "b", "c" }) t.Barrier(n, "stag0102");
+        t.Snapshot("a");
+        t.Send("b", new SnapHashMsg(t.Inst("a"), t.I("a").Visit, 0xAA).Frame());
+        t.Send("c", new SnapHashMsg(t.Inst("a"), t.I("a").Visit, 0xAA).Frame());
+        var parent = t.I("a");
+        t.Seal(300);
+        var f = parent.NextSeal - 3;
+        t.Send("a", new SplitMsg(parent.Id, parent.Visit, f, 0b100, SplitKind.Exit).Frame());
+        t.Send("c", new SplitMsg(parent.Id, parent.Visit, f, 0b100, SplitKind.Exit).Frame());
+        Assert.Same(parent, t.I("c"));
+        t.Advance(2100);
+        t.Hub.Housekeep(t.Now);
+        Assert.NotSame(parent, t.I("c"));
+        Assert.Equal(2, parent.Count);
+    }
+
+    /// <summary>A solo leader that never answers JOIN_REQ: after Instances:JoinRequestTries the joiner plays the stage as NEW.</summary>
+    [Fact]
+    public void A_join_request_nobody_answers_ends_in_new()
+    {
+        var h = new Harness();
+        h.Connect("a", 0);
+        var b = h.Connect("b", 1);
+        h.Barrier("a", "stag0101");
+        h.Snapshot("a");
+        h.Log("a", 0, 120);
+        h.Joinable("a");
+        h.Barrier("b", "stag0101");
+        var ok = h.Decision("b");
+        h.Send("b", new ReadyMsg(ok.NewInst, ok.NewVisit, 120, 0, 5000, [7]).Frame());
+        for (var k = 0; k < 4; ++k)
+        {
+            h.Advance(5100);
+            h.Hub.Housekeep(h.Now);
+        }
+        Assert.Equal(3, h.P("a").All(Msg.JoinReq, JoinReqMsg.Parse).Count);
+        var fallback = h.Decision("b");
+        Assert.Equal((BarrierDecision.New, BarrierNotice.JoinFailed), (fallback.Decision, fallback.Notice));
+        Assert.Null(h.Mem("b").Joining);
+    }
+
+    /// <summary>
+    /// A state built outside the room lock (the relay's runner): nothing of the stream reaches the member before it,
+    /// the stream continues from its end; a member that moved on meanwhile gets nothing.
+    /// </summary>
+    [Fact]
+    public void A_state_built_outside_the_lock_keeps_the_stream_in_order()
+    {
+        var jobs = new List<StateJob>();
+        var h = new Harness(relay: new RelayOptions { LagLeaveSeconds = 600 }, stateRunner: jobs.Add);
+        h.Connect("a", 0);
+        h.Connect("b", 1);
+        h.Send("a", new HeadingMsg(h.Inst("a"), "stag0201", 0, 5).Frame());
+        h.Send("b", new HeadingMsg(h.Inst("b"), "stag0201", 0, 5).Frame());
+        h.Barrier("a", "stag0201");
+        h.Barrier("b", "stag0201");
+        var inst = h.Decision("a").NewInst;
+        h.Snapshot("a");
+        Assert.Single(jobs); // b's co-arrival state
+        jobs[0].Build();
+        h.Hub.FinishState(jobs[0]);
+        h.Send("b", new SnapHashMsg(inst, h.I("a").Visit, 0xAA).Frame());
+        var i = h.I("a");
+        h.Seal(2000);
+        h.Send("a", new NetFpMsg(inst, i.Visit, 60, 1).Frame());
+        h.Send("b", new NetFpMsg(inst, i.Visit, 60, 2).Frame());
+        Assert.Equal(2, jobs.Count);
+        var resync = h.P("b").Frames.FindLastIndex(f => f.Type == Msg.Resync);
+        h.Seal(500); // sealed meanwhile: not sent to b yet
+        Assert.DoesNotContain(h.P("b").Frames.Skip(resync + 1), f => f.Type == Msg.Sealed);
+        jobs[1].Build();
+        h.Hub.FinishState(jobs[1]);
+        var after = h.P("b").Frames.Skip(resync + 1).ToList();
+        var firstSealed = after.FindIndex(f => f.Type == Msg.Sealed);
+        Assert.True(after.FindIndex(f => f.Type == Msg.StateData) < firstSealed && firstSealed > 0);
+        Assert.Equal(jobs[1].End, TicksMsg.Parse(Msg.Sealed, after[firstSealed].Payload).FirstTick);
+        Assert.Equal(StatePurpose.Resync, StateBlob.Parse(h.P("b").StateBlob()).Purpose);
+    }
+
+    /// <summary>A fork while the leader's snapshot still uploads: the uploader's side completes it for both sides.</summary>
+    [Fact]
+    public void A_fork_child_shares_a_snapshot_still_uploading()
+    {
+        var h = new Harness();
+        foreach (var (n, index) in new[] { ("a", 0), ("b", 1), ("c", 2) }) h.Connect(n, index);
+        foreach (var n in new[] { "a", "b", "c" }) h.Send(n, new HeadingMsg(h.Inst(n), "stag0102", 0, 5).Frame());
+        foreach (var n in new[] { "a", "b", "c" }) h.Barrier(n, "stag0102");
+        var parent = h.I("a");
+        var bytes = Enumerable.Range(0, 100).Select(x => (byte)x).ToArray();
+        h.Send("a", new SnapshotMsg(parent.Id, parent.Visit, 100, 0, bytes[..50]).Frame());
+        foreach (var n in new[] { "a", "b", "c" }) h.Send(n, new SnapHashMsg(parent.Id, parent.Visit, 0xAA).Frame());
+        h.Seal(300);
+        var f = parent.NextSeal - 3;
+        foreach (var n in new[] { "a", "b", "c" }) h.Send(n, new SplitMsg(parent.Id, parent.Visit, f, 0b001, SplitKind.Exit).Frame());
+        var child = h.I("a");
+        Assert.NotSame(parent, child);
+        h.Send("a", new SnapshotMsg(parent.Id, parent.Visit, 100, 50, bytes[50..]).Frame()); // still names the parent's id
+        Assert.True(child.Snapshot.Complete);
+        Assert.True(parent.Snapshot.Complete);
     }
 }

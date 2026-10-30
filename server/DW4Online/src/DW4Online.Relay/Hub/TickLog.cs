@@ -93,21 +93,16 @@ public sealed class TickLog
 
     public byte[]? At(uint tick) => tick < Count ? Range(tick, tick + 1).First() : null;
 
-    private void CloseBlock()
-    {
-        var raw = new MemoryStream(_open.Sum(r => r.Length));
-        foreach (var r in _open) raw.Write(r);
-        var packed = new MemoryStream();
-        using (var z = new ZLibStream(packed, CompressionLevel.Optimal, leaveOpen: true)) z.Write(raw.GetBuffer(), 0, (int)raw.Length);
-        _blocks.Add(packed.ToArray());
-        _blockRaw.Add((int)raw.Length);
-        _open = new List<byte[]>(BlockTicks);
-    }
+    /// <summary>
+    /// The records 0..Count-1 as they are now, readable without the room lock while this log keeps growing (a state
+    /// transfer is built outside it): the compressed blocks are never changed once made, the open block is copied.
+    /// </summary>
+    public TickLogView Capture() => new(_prefix?.Capture(), _prefixCount, [.. _blocks], [.. _blockRaw], [.. _open], Count);
 
-    private List<byte[]> Decompress(int block)
+    internal static List<byte[]> Unpack(byte[] packed, int rawLength)
     {
-        var raw = new byte[_blockRaw[block]];
-        using (var z = new ZLibStream(new MemoryStream(_blocks[block]), CompressionMode.Decompress))
+        var raw = new byte[rawLength];
+        using (var z = new ZLibStream(new MemoryStream(packed), CompressionMode.Decompress))
             z.ReadExactly(raw);
         var list = new List<byte[]>(BlockTicks);
         var pos = 0;
@@ -120,13 +115,62 @@ public sealed class TickLog
         return list;
     }
 
+    private void CloseBlock()
+    {
+        var raw = new MemoryStream(_open.Sum(r => r.Length));
+        foreach (var r in _open) raw.Write(r);
+        var packed = new MemoryStream();
+        using (var z = new ZLibStream(packed, CompressionLevel.Optimal, leaveOpen: true)) z.Write(raw.GetBuffer(), 0, (int)raw.Length);
+        _blocks.Add(packed.ToArray());
+        _blockRaw.Add((int)raw.Length);
+        _open = new List<byte[]>(BlockTicks);
+    }
+
+    private List<byte[]> Decompress(int block) => Unpack(_blocks[block], _blockRaw[block]);
+
     /// <summary>The length of the tick record at the start of <paramref name="s"/> (the layout of <see cref="TickRecord"/>).</summary>
+    /// <exception cref="ProtocolException">The bytes end inside the record.</exception>
     public static int RecordLength(ReadOnlySpan<byte> s)
     {
+        if (s.Length < 2) throw new ProtocolException("tick record cut short");
         var mask = s[0] & Wire.SlotMask;
         var events = s[1];
         var pos = 2 + Pad.Size * BitOperations.PopCount((uint)mask);
-        for (var i = 0; i < events; ++i) pos += 3 + (s[pos + 1] | (s[pos + 2] << 8));
+        for (var i = 0; i < events; ++i)
+        {
+            if (pos + 3 > s.Length) throw new ProtocolException("tick record cut short");
+            pos += 3 + (s[pos + 1] | (s[pos + 2] << 8));
+        }
+        if (pos > s.Length) throw new ProtocolException("tick record cut short");
         return pos;
+    }
+}
+
+/// <summary>A <see cref="TickLog"/>'s records captured at one moment (<see cref="TickLog.Capture"/>).</summary>
+public sealed class TickLogView(TickLogView? prefix, uint prefixCount, byte[][] blocks, int[] blockRaw, byte[][] open, uint count)
+{
+    public uint Count => count;
+
+    public IEnumerable<byte[]> Range(uint from, uint to)
+    {
+        to = Math.Min(to, count);
+        if (from >= to) yield break;
+        if (from < prefixCount)
+        {
+            foreach (var r in prefix!.Range(from, Math.Min(to, prefixCount))) yield return r;
+            from = prefixCount;
+        }
+        var ownFrom = from - prefixCount;
+        var ownTo = to - prefixCount;
+        var block = (int)(ownFrom / TickLog.BlockTicks);
+        while (ownFrom < ownTo)
+        {
+            IReadOnlyList<byte[]> records = block < blocks.Length ? TickLog.Unpack(blocks[block], blockRaw[block]) : open;
+            var start = (int)(ownFrom - (uint)block * TickLog.BlockTicks);
+            var end = (int)Math.Min((uint)records.Count, ownTo - (uint)block * TickLog.BlockTicks);
+            for (var i = start; i < end; ++i) yield return records[i];
+            ownFrom = (uint)(block + 1) * TickLog.BlockTicks;
+            ++block;
+        }
     }
 }
