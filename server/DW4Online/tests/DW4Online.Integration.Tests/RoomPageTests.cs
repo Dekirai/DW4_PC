@@ -31,7 +31,10 @@ public class RoomPageTests
         Assert.Equal(HttpStatusCode.OK, (await guest.PostAsJsonAsync($"/api/v1/rooms/{code}/join",
             new { protocol = 41, dataHash = 1234567890123UL, clientVersion = "0.48.0" })).StatusCode);
 
-        // Both take the same exit together: one sealed instance in stag0101.
+        // Both take the same exit together: one sealed instance in stag0101. The clients play until the checks are
+        // done (a busy machine needs seconds for the sealing and the logins; a fixed duration let the instance end
+        // before the member's page was read).
+        using var stop = new CancellationTokenSource();
         var clients = new[] { ("owner", owner), ("guest", guest) }.Select((c, k) => new DW4Online.FakeClient.FakeClient(new FakeClientOptions
         {
             Port = relayPort,
@@ -41,36 +44,53 @@ public class RoomPageTests
             SettingsHash = settingsHash,
             Name = c.Item1,
             Seed = k + 1,
-            Duration = TimeSpan.FromSeconds(9),
+            Duration = TimeSpan.FromSeconds(90),
             Script = [new ScriptAction(0.8, "exit", "stag0101", 0)],
         })).ToList();
-        var runs = clients.Select(c => c.RunAsync(CancellationToken.None)).ToList();
-        for (var i = 0; i < 100; ++i)
+        var runs = clients.Select(c => c.RunAsync(stop.Token)).ToList();
+        try
         {
-            await Task.Delay(100);
-            var state = await (await guest.GetAsync($"/api/v1/rooms/{code}")).Json();
-            if (state.GetProperty("instances").EnumerateArray().Any(x => x.GetProperty("mode").GetString() == "sealed")) break;
+            var sealedSeen = false;
+            for (var i = 0; i < 200 && !sealedSeen; ++i)
+            {
+                await Task.Delay(100);
+                var state = await (await guest.GetAsync($"/api/v1/rooms/{code}")).Json();
+                sealedSeen = state.GetProperty("instances").EnumerateArray().Any(x => x.GetProperty("mode").GetString() == "sealed");
+            }
+            Assert.True(sealedSeen, "the two fake clients never shared a sealed instance");
+
+            using var anonymous = new WebBrowser(host);
+            var page = await anonymous.GetAsync("/rooms");
+            Assert.Equal(HttpStatusCode.OK, page.Status);
+            Assert.Contains("Stage tour", page.Html);
+            Assert.Contains("Where they play:", page.Html);
+            Assert.Contains("Death Valley: Goblin Pass", page.Html);
+            Assert.Contains("2 together", page.Html);
+            Assert.DoesNotContain("Companion", page.Html); // the room list names only the room and its host
+
+            using var member = new WebBrowser(host);
+            await member.LoginAsync("Companion");
+            var asMember = await member.GetAsync("/rooms");
+            Assert.Contains("Death Valley: Goblin Pass", asMember.Html);
+            // Names by slot: whoever reached the barrier first holds slot 0.
+            Assert.Matches(@"\((Pathfinder, Companion|Companion, Pathfinder)\)", asMember.Html);
+
+            using var outsider = new WebBrowser(host);
+            await outsider.RegisterAsync("Onlooker");
+            Assert.DoesNotContain("Companion", (await outsider.GetAsync("/rooms")).Html);
         }
-
-        using var anonymous = new WebBrowser(host);
-        var page = await anonymous.GetAsync("/rooms");
-        Assert.Equal(HttpStatusCode.OK, page.Status);
-        Assert.Contains("Stage tour", page.Html);
-        Assert.Contains("Where they play:", page.Html);
-        Assert.Contains("Death Valley: Goblin Pass", page.Html);
-        Assert.Contains("2 together", page.Html);
-        Assert.DoesNotContain("Companion", page.Html); // the room list names only the room and its host
-
-        using var member = new WebBrowser(host);
-        await member.LoginAsync("Companion");
-        var asMember = await member.GetAsync("/rooms");
-        Assert.Contains("Death Valley: Goblin Pass", asMember.Html);
-        Assert.Contains("(Pathfinder, Companion)", asMember.Html);
-
-        using var outsider = new WebBrowser(host);
-        await outsider.RegisterAsync("Onlooker");
-        Assert.DoesNotContain("Companion", (await outsider.GetAsync("/rooms")).Html);
-        await Task.WhenAll(runs);
+        finally
+        {
+            stop.Cancel();
+            try
+            {
+                await Task.WhenAll(runs);
+            }
+            catch (OperationCanceledException)
+            {
+                // (stopped before it connected)
+            }
+        }
     }
 
     [Fact]
