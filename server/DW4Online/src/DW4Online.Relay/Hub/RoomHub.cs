@@ -204,6 +204,7 @@ public sealed class RoomHub
         foreach (var m in _members.Values)
             m.Peer?.Send(new RoomMsg(present ? RoomNotice.OwnerPresent : RoomNotice.OwnerAway, (byte)(owner?.Index ?? 0xFF),
                 (ulong)(owner?.AccountId ?? 0), owner?.Name ?? "", RoomMsg.Owner).Frame());
+        Note("owner", null, ("present", present), ("held", Story.HeldCount));
         // The hold policy merges what was kept when the owner returns.
         if (Story.SetOwnerPresent(present)) StoryChanged(null);
     }
@@ -1575,6 +1576,7 @@ public sealed class RoomHub
         else m.StoryTokens = Math.Min(burst, m.StoryTokens + Ms(now - m.StoryRefilledAt) / 60_000.0 * Math.Max(1, _inst.StoryMessagesPerMinute));
         m.StoryRefilledAt = now;
         StoryTake take;
+        HubInstance? at = null;
         if (m.StoryTokens < 1)
         {
             Count("story_rate");
@@ -1591,7 +1593,7 @@ public sealed class RoomHub
             m.StoryTokens -= 1;
             // The member's instance now decides (its stage and the epoch its visit began in); the frame's ids may be the
             // ones before a fork. A parked or catching-up member sends none (the client sends STORY before BARRIER).
-            var inst = m.Instance is { Ended: false } i && m.Slot >= 0 && m.Joining is null && m.Arrival is null ? i : null;
+            var inst = at = m.Instance is { Ended: false } i && m.Slot >= 0 && m.Joining is null && m.Arrival is null ? i : null;
             var delta = msg.Delta;
             // Lines of instance 0 (a solo group that went on without the server's answer) are this member's own.
             if (delta.Counters.Any(g => g.Inst == 0))
@@ -1603,6 +1605,12 @@ public sealed class RoomHub
             take = keeper.Take(delta, inst?.Stage, inst?.StoryEpoch ?? 0);
         }
         if (take.Refused.Count > 0) Count("story_refused", take.Refused.Count);
+        // The membership log names what the owner-away policy took (the scenarios of SEAMLESS.md 16 check it).
+        foreach (var (why, ev) in new[] { (StoryRefusal.OwnerAway, "story_dropped"), (StoryRefusal.Held, "story_held") })
+        {
+            var keys = take.Refused.Where(r => r.Reason == why).Select(r => r.Kind.ToString().ToLowerInvariant() + ":" + r.Index).ToList();
+            if (keys.Count > 0) Note(ev, at, ("member", m.Index), ("keys", string.Join(",", keys)));
+        }
         m.Peer?.Send(new StoryAckMsg(keeper.Story.Revision, keeper.Story.ToBlob(), StoryAckMsg.Answer, take.Refused).Frame());
         if (take.Changed) StoryChanged(m);
     }

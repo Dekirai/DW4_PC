@@ -1,0 +1,14 @@
+# S14 (drop), guest g (k2): waits at the title until the owner has left, then enters the lobby. Its card's flag 501 (set
+# by the lobby's first.lua) is new to the room and plausible there: the STORY is refused (owner_away) and recorded in
+# the room's dropped set. The engine keeps 501 for the rest of the lobby visit (never mid-stage); the lobby gate's
+# barrier into stag0101 removes it, with the notice.
+idle until epoch>=@50
+log owner gone
+campaign until stage=stagml11,control
+log in the lobby
+idle until frames>=300 fail flag:501=0
+explore mate00 yes until stage=stag0101,control
+log in the field
+idle until frames>=120 fail flag:501=1
+log 501 removed
+idle until frames>=60

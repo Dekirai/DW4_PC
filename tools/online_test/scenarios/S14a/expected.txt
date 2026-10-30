@@ -1,0 +1,10 @@
+# S14 (apply): the owner leaves, the guest's lobby value joins the room story at once (a new revision, saved as the
+# owner's online story), nothing is refused for the owner's absence or removed at the barrier (501 = 1 in stag0101).
+relay: ^owner .*present=False
+g: online: The room owner is away
+relay: ^story .*revision=1
+g: online-script: step .* log: 501 kept
+!relay: ^story_dropped
+!relay: ^story_held
+!g: Story progress was not saved
+!g: online-script: FAIL

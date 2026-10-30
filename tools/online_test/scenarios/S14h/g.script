@@ -1,0 +1,13 @@
+# S14 (hold / apply), guest g (k2): waits at the title until the owner has left, then enters the lobby. Its card's flag
+# 501 (set by the lobby's first.lua) is new to the room and plausible there: hold keeps it on the server until the owner
+# returns, apply merges it at once; either way the lobby gate's barrier into stag0101 leaves it in g's engine.
+idle until epoch>=@50
+log owner gone
+campaign until stage=stagml11,control
+log in the lobby
+idle until frames>=300 fail flag:501=0
+explore mate00 yes until stage=stag0101,control
+log in the field
+idle until frames>=120 fail flag:501=0
+log 501 kept
+idle until frames>=60

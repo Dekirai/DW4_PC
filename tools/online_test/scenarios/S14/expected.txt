@@ -1,0 +1,12 @@
+# S14 (drop): the owner leaves (the relay notes it), the guest's lobby value is dropped (story_dropped with flag 501),
+# the guest is told when the barrier removes it and its engine has 501 = 0 in stag0101 (the script's fail check).
+relay: ^owner .*present=False
+g: online: The room owner is away
+g: online-script: step .* log: in the lobby
+relay: ^story_dropped .*keys=.*flag:501
+g: online-trace: story_ack .*refused=[1-9]
+g: online: Story progress was not saved: the room owner is away\.
+g: online-script: step .* log: 501 removed
+!relay: ^story .*revision
+!relay: ^owner .*present=True
+!g: online-script: FAIL

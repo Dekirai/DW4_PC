@@ -1,0 +1,5 @@
+# S14, room owner o (k2): stays at the title (no STORY comes from the stagIS* stages, so the room story stays the owner's
+# empty online story) and leaves the room when its run ends (frame 1700, about 30 s): the owner is away from then on.
+log at the title
+idle until frames>=1500
+log leaves
