@@ -137,7 +137,7 @@ if(BUILD_TESTING)
   add_executable(dw4_achievements_tests tests/achievements_tests.cpp src/game/achievements.cpp)
   target_include_directories(dw4_achievements_tests PRIVATE src/game)
   target_link_libraries(dw4_achievements_tests PRIVATE dw4_engine)
-  add_test(NAME achievements COMMAND dw4_achievements_tests)
+  add_test(NAME achievements COMMAND dw4_achievements_tests "${CMAKE_CURRENT_SOURCE_DIR}/data/online/achievements.json")
   # The online client (asset free; the env test reads the sources).
   foreach(suite online_cpu_gate online_env online_wire online_session online_api)
     add_executable(dw4_${suite}_tests tests/${suite}_tests.cpp)
