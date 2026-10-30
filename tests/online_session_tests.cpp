@@ -124,10 +124,17 @@ void solo_join_fork() {
     for (const auto& n : notices_a) joined |= n.find("joined") != std::string::npos;
     check(joined, "A is told about the joiner");
     // B forks away (an exit-type fork): both sides go on alone.
-    const std::uint32_t fork_at = b.session->tick() + 60;
+    // The fork executes on a multiple of 60 (a pad sampled at tick t runs at
+    // t + d): the two sides' net fingerprints differ from the fork tick on,
+    // so neither may report that tick's as the instance's (S2 on real game
+    // clients: the relay resynced the stayer).
+    const std::uint32_t fork_at = (b.session->tick() / 60 + 2) * 60 - std::uint32_t(b.session->delay());
     b.input = [fork_at](const fake::Client& c) -> std::uint32_t { return c.session->tick() == fork_at ? fake::kForkButton : 0u; };
+    const auto mismatches_before_fork = world.hub.netfp_mismatches;
     check(world.run_until(10, [&] { return a.session->mode() == Mode::solo && b.session->mode() == Mode::solo; }),
           "both solo after the fork (LEAD_FROM)");
+    check(world.hub.netfp_mismatches == mismatches_before_fork, "no fingerprint vote at the fork tick (" +
+                                                                    std::to_string(world.hub.netfp_mismatches - mismatches_before_fork) + ")");
     world.run(0.2); // the SPLIT frames reach the hub
     check(world.hub.splits == 2, "both members reported the SPLIT (" + std::to_string(world.hub.splits) + ")");
     check(world.hub.reassigns == 1 && b.session->inst() != a.session->inst(), "B continues under a new instance id (REASSIGN)");

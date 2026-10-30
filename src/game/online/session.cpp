@@ -491,13 +491,24 @@ std::array<PadSample, 4> Session::pads_of(const w::TickBody& body) const {
 
 bool Session::apply_events(bool replaying) {
     bool changed = false;
-    while (!events_.empty() && events_.front().tick <= tick_) {
-        const auto& e = events_.front().event;
-        bool allowed = true;
-        w::NotJoinable reason{};
-        if (e.kind == w::EventKind::join) allowed = engine_.joinable(reason);
-        else if (e.kind == w::EventKind::leave || e.kind == w::EventKind::intent) allowed = engine_.membership_safe();
-        if (!allowed) break; // waits for a step the instance allows it (6.5)
+    // A membership event (join, leave, intent) waits for a step the instance
+    // allows it (6.5), and the membership events behind it wait with it in
+    // their order; LEAD_FROM and DELAY are no simulation events and never
+    // wait behind them (a partner who left during the next stage's load:
+    // its LEAVE waits for the end of the entry scene, but LEAD_FROM must
+    // let the remaining member lead alone at its tick, or nobody seals the
+    // ticks it waits for; S19b on real game clients).
+    bool held = false;
+    for (auto it = events_.begin(); it != events_.end() && it->tick <= tick_;) {
+        const auto& e = it->event;
+        if (e.kind == w::EventKind::join || e.kind == w::EventKind::leave || e.kind == w::EventKind::intent) {
+            w::NotJoinable reason{};
+            held = held || !(e.kind == w::EventKind::join ? engine_.joinable(reason) : engine_.membership_safe());
+            if (held) {
+                ++it;
+                continue;
+            }
+        }
         const int slot = e.slot;
         switch (e.kind) {
         case w::EventKind::join:
@@ -534,7 +545,7 @@ bool Session::apply_events(bool replaying) {
             }
             break;
         }
-        events_.pop_front();
+        it = events_.erase(it);
         changed = true;
     }
     return changed;
@@ -622,7 +633,12 @@ void Session::after_step(double now) {
     if (mode_ != Mode::solo && mode_ != Mode::sealed && mode_ != Mode::observing) return;
     const std::uint32_t executed = tick_;
     const bool member = mode_ != Mode::observing;
-    if (member && !hub_ && executed % 60 == 0) {
+    // A fork in this step: from here the two sides' engines differ (each has
+    // despawned the other side), so the fork tick's net fingerprint is not
+    // the instance's (a fork on a multiple of 60 made the relay resync the
+    // stayer, S2 on real game clients).
+    const auto split = engine_.take_split();
+    if (member && !hub_ && executed % 60 == 0 && !split) {
         const auto fp = engine_.net_fingerprint();
         send(w::Type::netfp, w::encode(w::NetFp{inst_, visit_, executed, fp}));
         trace("netfp inst=%u visit=%u tick=%u mode=%s present=%x fp=%016llx", inst_, visit_, executed, mode_name(mode_), unsigned(present_),
@@ -650,7 +666,7 @@ void Session::after_step(double now) {
         trace("sealed from J inst=%u visit=%u tick=%u", inst_, visit_, tick_);
         last_tick_at_ = now;
     }
-    if (const auto split = engine_.take_split()) {
+    if (split) {
         const auto side = split->local_leaves ? std::uint8_t(split->leavers) : std::uint8_t(present_ & ~split->leavers);
         if (member) send(w::Type::split, w::encode(w::Split{inst_, visit_, executed, split->leavers,
                                                              split->in_stage ? w::SplitKind::in_stage : w::SplitKind::exit}));
