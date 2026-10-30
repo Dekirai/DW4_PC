@@ -906,7 +906,7 @@ Client to server:
 | 0x0B | NETFP | inst, visit, tick (a multiple of 60), net fingerprint after that tick | every member of a field instance |
 | 0x0C | STATE | inst, visit, tick, flags (joinable, membership-safe, boss lock), session context hash, reason | on change (the boss lock and the context at once, the rest at most once a second) |
 | 0x0D | INTENT | inst, visit, kind (1 go without, 2 give up), argument | a member's port choice (sealed instances; the server stamps it) |
-| 0x0E | STORY | reserved for round S2 | |
+| 0x0E | STORY | inst, visit, confirmed revision, phase claim, persistent flags, keys, counter growth per engine line (8.3) | before every BARRIER; once a second when the pending set changed, else every ten seconds while it is not empty; never from a stagIS* stage |
 | 0x0F | PRESENCE | stage (empty: hidden), inst, position, yaw, species, level, HP, max HP, MP, max MP | five times per second in a stage (HP 0: defeated) |
 | 0x10 | RESUME | inst, visit, slot, last executed tick | after a reconnect that WELCOME calls resumable |
 | 0x11 | RATE | replay steps per second | after WELCOME (the calibration) and after every replay |
@@ -924,7 +924,7 @@ Server to client:
 | 0x86 | STATE_DATA | inst, visit, total, offset, chunk of the state blob (purpose, slot, snapshot, forks with their sides, first tick, tick records) | join, co-arrival, resync, resume |
 | 0x87 | PRESENCE | member, the fields above | members in the same stage outside the own instance |
 | 0x88 | RESYNC | inst, visit | the member's fingerprint lost the vote (a STATE_DATA follows) |
-| 0x89 | STORY_ACK | reserved for round S2 | |
+| 0x89 | STORY_ACK | revision, the room story (1,100 bytes), flags (answer), refused keys with reasons (8.3) | after WELCOME (the confirmed story to start from), to every other member on each new revision, to a STORY's sender as its answer |
 | 0x8A | ROOM | notice (joined, left, owner present, owner away, lagging, lag over, connected, disconnected), member, account, name, flags (owner) | in-band room changes |
 | 0x8B | PING | nonce, server time, the member's arrival margin in ms, suggested delay | once per second |
 | 0x8C | CLOSE | reason (left, kicked, room closed, replaced, protocol, abuse, timeout, stopping), text | before the server closes |
@@ -2083,6 +2083,114 @@ decision and the freeze was an r48 default, the server gets a setting
 
 The default stays `drop` until the user decides (question 2).
 
+### 8.7 Built in round S2 (story lane)
+
+**Census (measured).** `tools/online/story_census.py` reads the 7,168
+decompiled scripts and writes `data/online/story_sets.json` (shared with the
+server, which embeds it) and the engine's tables
+`src/engine/online_story_sets.inc`; the ctest `online_story` compares them.
+Phase: flags 1-6 and 86, one-hot (stagML02 and stagML11 step it, clearing the
+step before; stagBS06 and stagML11 set 86). Persistent: **109** flags (the
+non-phase working set and every flag a script sets to 1 for good; none of them
+is ever cleared by a script outside the two restore scripts, the census
+stops otherwise); 99 of the 116 phase and persistent flags have exactly one
+setter stage, flag 99 none (a working set flag no script sets), 406-408 come
+from `FLGset(SYSgetDifficulty() + 406, 1)` (stagBS06). Keys: flag folder 0-10.
+Never merged: 445 flags (gameStart.lua's temporaries, 0, 503, 508, 611,
+900-937, the copies 529 / 541 / 553 of the quest item), folder 11, COUNTER 0
+and 2-6.
+
+**Counters.** COUNTER 1 changes only in the engine's junk shop program
+(`subwnd_shop.cpp` ShopJunk), which only `stagML13_m1__junkshop.lua` opens:
+a hub stage, solo. COUNTER 7 changes in `stag0001_m1__gene03.lua` (each
+attempt, read by `matz00.lua` at 10): a **joinable field**, so the line key
+matters. A line is the engine line (instance, visit) the growth was made in;
+every member of an instance reports the same line (a joiner's and a
+co-arrival's base is the counter after the restore: the visit's load), the
+server takes each line's cumulative growth once. A fork's child counts from
+its fork under the id REASSIGN brings; the copy that becomes the child sends
+the parent line's growth up to the fork until the server took it. Lines of
+instance 0 (a solo group that went on without the server's answer) are the
+sender's own on the server.
+
+**Copies are derived.** The design's table above lists the difficulty copies
+as OR-merged. Built: the server never takes a copy from a member; after every
+merge it derives the room difficulty's copies (phase one-hot, working set,
+keys 0-10 into 518 / 530 / 542 + k) from the working set, as stagIS12's
+`start.lua` does, and when a room opens it *rebases* the owner's story on the
+room's difficulty (working set and keys from that difficulty's copies, as
+`gameStart.lua` does). Without the rebase a hard room would merge the normal
+story's working set into the hard copies. The copies are read only by the
+title (`stagIS10` hostLoad and gameStart), so the engine's copies are not
+touched at barriers.
+
+**Pending sets on the client** (`src/game/online/session.cpp`). The pending set
+is computed once a second and sent when it changed, else every ten seconds
+while it is not empty, and always right before BARRIER (the server merges it
+before it decides, so BARRIER_OK brings it back). Never from a stagIS* stage:
+the character select holds a record's own story until the room story replaces
+it at `game_started`. Refused keys (not for the rate) wait for the next
+barrier; held ones are sent again (the server keeps them). The confirmed
+story is `Session::confirmed_story()` (the title's application at
+`game_started`, 8.5).
+
+**Plausibility and policy on the server** (`DW4Online.Domain.Story.
+RoomStoryKeeper`, one per room hub, under the room lock). The sender's
+instance *now* decides: no instance or a stagIS* stage refuses everything
+(not_member); a flag or a phase step only from a stage whose scripts set it
+(stage); the phase rises at most one step beyond the room's (with *hold*: the
+held phase); a counter only from a stage that changes it, growth 0..100,000
+(COUNTER 7) or 0..100,000,000 (COUNTER 1) per line (limit); never-merged
+values refused (not_story); a member's STORY rate is a burst of 10, then 60
+per minute (rate; the client sends again). Then the owner-away policy:
+*apply* merges; *hold* keeps phase, flags, keys and line growth and merges
+them when the owner returns (the phase step by step); *drop* refuses
+(owner_away) and records the keys in the room session's dropped set with a
+drop epoch. Every instance remembers the epoch its visit began in (a fork's
+child its parent's): a dropped value counts again only from a visit that
+began after its drop, that is from an engine whose barrier removed it and that
+set it anew; from older lines it stays refused even with the owner back. The
+dropped set lives for the room session and goes with every BARRIER_OK
+(removal is a no-op where the room has the value by then).
+
+**At the barrier** (`Engine::apply_barrier`, `story::apply`). The phase rises
+one-hot to the room's (a pending phase above it stays unless dropped, then it
+falls back), persistent flags, keys and counters the room has come in,
+dropped values the room lacks are cleared (a dropped counter takes the room's
+value), only keys whose value changes are touched; then the membership. A
+damaged story blob merges nothing, alike on every member. The client shows
+"Story progress was not saved: the room owner is away." when the dropped set
+removes something from its own engine. JOIN and CO_ARRIVE merge into the
+member's own fallback load; the restored target snapshot has the story of the
+target's visit start.
+
+**Golden vectors.** `tools/online/story_golden.py` (a third, independent
+implementation in Python) writes `data/online/story_golden.json`: 14 merge,
+3 pending, 3 rebase and 6 application cases; the C++ ctest `online_story` and
+the C# `StoryGoldenTests` give the same results. STORY / STORY_ACK have golden
+bytes on both sides (`online_wire_tests.cpp`, `WireGoldenTests.cs`).
+
+**Storage.** Migration 0008 adds `online_story (account_id, revision, flags
+VARBINARY(1024), folder BINARY(12), counters BINARY(64) as 16 x i32 LE,
+updated_at)`; only newer revisions replace a row (the relay saves each new
+revision off the room lock). `GET /online-character` composes the record's
+BASE_FLAG / FLAGFOLDER / COUNTER (big endian) from the account's own story,
+`PUT` replaces the uploaded ones with it before validation, summary and state
+achievements. `GET /rooms/{code}/story` (members) shows revision, phase,
+flags, keys, counters, policy, owner presence, the dropped set and the held
+count.
+
+**Tests.** ctest `online_story` (census tables, 26 golden cases, blobs),
+`online` (`story_at_the_barrier`: engine and link), `online_session`
+(`room_story`: the title rule, the one-second path, the other member's
+confirmed story and barrier merge, one counter line for a shared instance,
+the dropped removal with the notice), `online_wire` (golden STORY /
+STORY_ACK); server unit tests `StoryGoldenTests`, `RoomStoryKeeperTests`,
+`HubStoryTests` (S14 at the hub: drop with the same story bytes and dropped
+set in a group's BARRIER_OKs, hold merged at the owner's return, apply) and
+integration `OnlineStoryTests` (composition; a guest's lobby flag in the
+owner's `online_story` through the real relay within ten seconds).
+
 ## 9. Online character and cloud backup
 
 - **Virtual card.** Entering a room, the client builds memory card A as a
@@ -2211,7 +2319,7 @@ the room (up to ten), not the instance. No invites or join secrets for now.
 | Rooms | `RoomService`: instances as lockstep groups (id, stage, visit, context hash, slots, parent and fork frame, departing, boss lock, joinable), barrier decisions DISSOLVE / co-arrival / JOIN / NEW with holds and the boss choice (3.4), catch-up estimates from the members' replay rates, forks of both kinds, in-band JOIN and LEAVE, preferred slots, no instance end when its first member leaves (`EndInstanceLocked` goes), room-scoped relay tickets, the settings hash, the relay connection as heartbeat. `POST /rooms/{code}/stage` and `/stage/leave` are retired; the room state lists instances with stage and members. Room settings gain camera mode and light mode |
 | Story | migration with `online_story`; `StoryMerge` in the domain with the golden vectors; plausibility table from the census; pending sets with STORY_ACK; the owner-away setting with the session's dropped set; `GET /online-character` composes, `PUT` ignores story bytes; `GET /rooms/{code}/story` for the website and debugging |
 | Achievements | catalogue migration to the client's ids and thresholds |
-| Config | `Sealing:MaxDelayTicks` (15, measured in S1, 6.4), `Sealing:LateTarget` (0.001), `Relay:ReconnectSeconds` (10), `Relay:LagLeaveSeconds` (10), `Relay:StateBytesPerSecond`, `Instances:CoArrivalHoldMs` (3000), `Instances:JoinHoldSeconds` (30, measured in S1, 3.4), `Instances:MaxCatchUpSeconds` (30), `Rooms:StoryWhileOwnerAway`; `Play:CurrentProtocol` follows the client. `Sealing:StallMs` and `Instances:MaxJoinLogMinutes` of revision 1 are gone |
+| Config | `Sealing:MaxDelayTicks` (15, measured in S1, 6.4), `Sealing:LateTarget` (0.001), `Relay:ReconnectSeconds` (10), `Relay:LagLeaveSeconds` (10), `Relay:StateBytesPerSecond`, `Instances:CoArrivalHoldMs` (3000), `Instances:JoinHoldSeconds` (30, measured in S1, 3.4), `Instances:MaxCatchUpSeconds` (30), `Rooms:StoryWhileOwnerAway` (drop, built in S2), `Instances:StoryBurst` (10) and `Instances:StoryMessagesPerMinute` (60, S2); `Play:CurrentProtocol` follows the client. `Sealing:StallMs` and `Instances:MaxJoinLogMinutes` of revision 1 are gone |
 | Website | the room page shows instances per stage |
 | Deploy | fixed-key self-signed certificate and the pin script (10); port 52041 as before |
 | Tests | unit tests for sealing schedules and fills, events, forks, barrier decisions (holds, co-arrival, context key) and merge vectors; integration tests with scripted fake clients; end-to-end tests with the real game client (16) |
@@ -2563,6 +2671,21 @@ section 15 hold.
 
 Depends on: S1.
 
+**Story lane (round S2, branch `feat-r56story`).** Built as 8.7 describes:
+the census and its sets, the merge rules in C++ (`include/dw4/engine/
+online_story.hpp`) and C# (`DW4Online.Domain.Story`) with golden vectors,
+STORY / STORY_ACK, pending sets and counter lines on the client, the barrier
+merge and dropped-value removal in the engine, the room story keeper on the
+relay (plausibility, drop / hold / apply, the dropped set with drop epochs),
+`online_story` with the record composition and `GET /rooms/{code}/story`.
+Checked: the golden vectors in C++, C# and Python; the session test
+`room_story` and the hub's S14 for all three policies; the guest-to-owner path
+through the real relay and MariaDB in under ten seconds. Not done in the lane:
+S14 with real game clients (a scenario needs a script action that sets a story
+flag; the integration's scenarios), the title's application of
+`Session::confirmed_story()` at `game_started` (character lane), the
+FakeClient's story (the fake clients ignore STORY_ACK).
+
 ### Round S3 (r54): stage flow in shared instances
 
 Goal: every case of the table in section 5 behaves as decided.
@@ -2794,6 +2917,8 @@ level-1 Agumon of the dng101b1 test scenario (ctest `online`).
 co-arrival slot i32 and a carry body (without magic and version), own_slot
 i32, optional RoomStory (flags 1024 x u8, folder 12 x u8, counters 16 x i32,
 revision u32), dropped flags (vector i32), dropped folder (vector i32),
+dropped counters (vector i32, round S2; nothing persists these bytes, so the
+layout version still follows the snapshot's),
 OnlineRules (8 B).
 
 **Pad log of the test tools** (`DW4_PAD_LOG` / `DW4_PAD_REPLAY`,
@@ -2855,7 +2980,7 @@ Client to server:
 | 0x0B | NETFP | inst u32, visit u32, tick u32 (tick % 60 == 0), hash u64 |
 | 0x0C | STATE | inst u32, visit u32, tick u32, flags u8 (1 joinable, 2 membership-safe, 4 boss lock), context hash u64, reason u8 (0 none, 1 entry scene, 2 scene, 3 menu, 4 loading, 5 boss, 6 fork pending, 7 hub) |
 | 0x0D | INTENT | inst u32, visit u32, kind u8 (1 go without, 2 give up), argument i32 (sealed instances only) |
-| 0x0E | STORY | reserved for round S2 (accepted and ignored) |
+| 0x0E | STORY | inst u32, visit u32, confirmed revision u32, phase u8 (0 no claim, else 1-7: flags 1-6, 86), flag count u16 + u16 flags (< 1024), key count u8 + u8 keys (< 12), line count u8 (at most 32) + (counter u8 (< 16), line inst u32, line visit u32, growth i32) each (round S2, 8.7) |
 | 0x0F | PRESENCE | stage str (may be empty), inst u32, x f32, y f32, z f32, yaw f32, species u8, level u16, hp u16, max hp u16, mp u16, max mp u16 (at most every 150 ms) |
 | 0x10 | RESUME | inst u32, visit u32, slot u8, last executed tick u32 |
 | 0x11 | RATE | replay rate u32 (steps per second) |
@@ -2869,12 +2994,12 @@ Server to client:
 | 0x80 | WELCOME | member u8, inst u32, visit u32, slot u8, mode u8 (0 hub, 1 solo-led, 2 sealed), stage str, last tick u32 (0xFFFFFFFF none), delay u8, max catch-up seconds u16, flags u8 (1 resumable: the member still holds that slot; send RESUME) |
 | 0x81 / 0x82 | SEALED / LIVE | inst u32, visit u32, first tick u32, count u16, tick records (SEALED to members, LIVE to observers catching up) |
 | 0x83 | JOIN_REQ | inst u32, visit u32, slot u8, leader's delay u8 |
-| 0x84 | BARRIER_OK | old inst u32, old visit u32, decision u8 (1 NEW, 2 JOIN, 3 DISSOLVE, 4 CO_ARRIVE), new inst u32, new visit u32, stage str, point u8, own slot u8, slot map 4 x i8 (old slot -> new slot or -1), mode u8, delay u8, co-arrival count u8 + (slot u8, member u8, carry blob) each, story revision u32, story blob, dropped blob (both empty until S2), notice u8 (0 none, 1 other context, 2 full, 3 too long to catch up, 4 hold expired, 5 went alone, 6 join failed), name count u8 + names |
+| 0x84 | BARRIER_OK | old inst u32, old visit u32, decision u8 (1 NEW, 2 JOIN, 3 DISSOLVE, 4 CO_ARRIVE), new inst u32, new visit u32, stage str, point u8, own slot u8, slot map 4 x i8 (old slot -> new slot or -1), mode u8, delay u8, co-arrival count u8 + (slot u8, member u8, carry blob) each, story revision u32, story blob (1,100 bytes: flags 1024, folder 12, counters 16 x i32; the same bytes for every member of a group; empty: none), dropped blob (u16 flag count + u16 flags, u8 key count + u8 keys, u8 counter count + u8 counters; empty: none), notice u8 (0 none, 1 other context, 2 full, 3 too long to catch up, 4 hold expired, 5 went alone, 6 join failed), name count u8 + names |
 | 0x85 | BARRIER_WAIT | inst u32, reason u8 (1 co-arrival, 2 not joinable, 3 boss lock, 4 snapshot), seconds left u16, name count u8 + names, flags u8 (1 = send BARRIER_CHOICE) |
 | 0x86 | STATE_DATA | inst u32, visit u32, total u32, offset u32, chunk (at most 60 KiB): the state blob |
 | 0x87 | PRESENCE | member u8, then the PRESENCE fields (members in the same stage outside the own instance) |
 | 0x88 | RESYNC | inst u32, visit u32 (a STATE_DATA with purpose resync follows) |
-| 0x89 | STORY_ACK | reserved for round S2 |
+| 0x89 | STORY_ACK | revision u32, story blob (1,100 bytes or empty), flags u8 (1 the answer to this member's STORY), refused count u16 + (kind u8: 0 phase, 1 flag, 2 key, 3 counter; index u16; reason u8: 1 owner away (dropped), 2 held, 3 stage, 4 phase jump, 5 rate, 6 not a member, 7 not story, 8 limit) each (round S2, 8.7) |
 | 0x8A | ROOM | notice u8 (1 joined, 2 left, 3 owner present, 4 owner away, 5 lagging, 6 lag over, 7 connected, 8 disconnected), member u8, account u64, name str, flags u8 (1 owner) |
 | 0x8B | PING | nonce u32, server ms u64, margin ms i16 (the member's 0.1 % arrival margin), suggested delay u8 (once per second) |
 | 0x8C | CLOSE | reason u8 (1 left, 2 kicked, 3 room closed, 4 replaced, 5 protocol, 6 abuse, 7 timeout, 8 server stopping), text str |
