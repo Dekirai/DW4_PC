@@ -12,10 +12,10 @@ public class AchievementTests
         await using var host = await TestHost.StartAsync();
         var list = await (await host.Client().GetAsync("/api/v1/achievements")).Json();
         Assert.Equal(72, list.GetArrayLength());
-        var lucemon = list.EnumerateArray().Single(a => a.GetProperty("code").GetString() == "boss_lucemon");
+        var lucemon = list.EnumerateArray().Single(a => a.GetProperty("code").GetString() == "story_lucemon");
         Assert.Equal("Hidden achievement", lucemon.GetProperty("name").GetString());
         var first = list[0];
-        Assert.Equal("New Recruit", first.GetProperty("name").GetString());
+        Assert.Equal("Tower Toppler", first.GetProperty("name").GetString());
     }
 
     [DbFact]
@@ -26,37 +26,37 @@ public class AchievementTests
         var (_, _, guest) = await host.RegisterAsync("Buddy");
         var client = host.Client(token);
 
-        var noRoom = await client.PostAsJsonAsync("/api/v1/achievements/unlock", new { code = "story_briefing" });
+        var noRoom = await client.PostAsJsonAsync("/api/v1/achievements/unlock", new { code = "story_apocalymon" });
         Assert.Equal(HttpStatusCode.Forbidden, noRoom.StatusCode);
         Assert.Equal("room_required", await noRoom.ProblemCode());
 
         var room = await host.CreateRoomAsync(id, [guest]);
         var notMine = await host.CreateRoomAsync(guest, []);
         Assert.Equal("not_in_room", await (await client.PostAsJsonAsync("/api/v1/achievements/unlock",
-            new { code = "story_briefing", context = new { roomCode = notMine } })).ProblemCode());
+            new { code = "story_apocalymon", context = new { roomCode = notMine } })).ProblemCode());
 
-        var ok = await client.PostAsJsonAsync("/api/v1/achievements/unlock", new { code = "story_briefing", context = new { roomCode = room, players = 2 } });
+        var ok = await client.PostAsJsonAsync("/api/v1/achievements/unlock", new { code = "story_apocalymon", context = new { roomCode = room, players = 2 } });
         Assert.Equal(HttpStatusCode.OK, ok.StatusCode);
         Assert.True((await ok.Json()).GetProperty("newlyUnlocked").GetBoolean());
-        var repeat = await (await client.PostAsJsonAsync("/api/v1/achievements/unlock", new { code = "story_briefing", context = new { roomCode = room } })).Json();
+        var repeat = await (await client.PostAsJsonAsync("/api/v1/achievements/unlock", new { code = "story_apocalymon", context = new { roomCode = room } })).Json();
         Assert.False(repeat.GetProperty("newlyUnlocked").GetBoolean());
 
         var randomizer = await (await client.PostAsJsonAsync("/api/v1/achievements/unlock",
-            new { code = "story_briefing", context = new { roomCode = room, randomizer = true } })).Json();
+            new { code = "story_apocalymon", context = new { roomCode = room, randomizer = true } })).Json();
         Assert.Equal("randomizer", randomizer.GetProperty("ruleset").GetString());
         Assert.True(randomizer.GetProperty("newlyUnlocked").GetBoolean());
 
         Assert.Equal("unranked_save_state", await (await client.PostAsJsonAsync("/api/v1/achievements/unlock",
-            new { code = "story_restore", context = new { roomCode = room, saveStateLoaded = true } })).ProblemCode());
+            new { code = "story_belphemon", context = new { roomCode = room, saveStateLoaded = true } })).ProblemCode());
         Assert.Equal("server_tracked", await (await client.PostAsJsonAsync("/api/v1/achievements/unlock",
             new { code = "lv_999", context = new { roomCode = room } })).ProblemCode());
         Assert.Equal("unknown_achievement", await (await client.PostAsJsonAsync("/api/v1/achievements/unlock",
             new { code = "nope", context = new { roomCode = room } })).ProblemCode());
         Assert.Equal("requirement_not_met", await (await client.PostAsJsonAsync("/api/v1/achievements/unlock",
-            new { code = "speed_3h", context = new { roomCode = room }, evidence = new { igtMs = 4 * 3600 * 1000L } })).ProblemCode());
+            new { code = "speed_fast", context = new { roomCode = room }, evidence = new { igtMs = 5 * 3600 * 1000L } })).ProblemCode());
         // Ten players claimed, but the room has two members: the count is capped by the room.
         Assert.Equal("requirement_not_met", await (await client.PostAsJsonAsync("/api/v1/achievements/unlock",
-            new { code = "online_ten", context = new { roomCode = room, players = 10 } })).ProblemCode());
+            new { code = "online_host", context = new { roomCode = room, players = 1, roomPlayers = 10 } })).ProblemCode());
 
         var clear = await (await client.PostAsJsonAsync("/api/v1/achievements/unlock",
             new { code = "clear_normal", context = new { roomCode = room, players = 2 }, evidence = new { igtMs = 5 * 3600 * 1000L } })).Json();
@@ -67,10 +67,10 @@ public class AchievementTests
 
         var unranked = await host.CreateRoomAsync(id, [], ranked: false);
         Assert.Equal("unranked_room", await (await client.PostAsJsonAsync("/api/v1/achievements/unlock",
-            new { code = "story_plugs", context = new { roomCode = unranked } })).ProblemCode());
+            new { code = "story_daemon", context = new { roomCode = unranked } })).ProblemCode());
 
         var mine = await (await client.GetAsync("/api/v1/achievements")).Json();
-        var briefing = mine.EnumerateArray().Single(a => a.GetProperty("code").GetString() == "story_briefing");
+        var briefing = mine.EnumerateArray().Single(a => a.GetProperty("code").GetString() == "story_apocalymon");
         Assert.Equal(2, briefing.GetProperty("unlocks").GetArrayLength());
 
         await using var c = await host.SqlAsync();
@@ -95,7 +95,7 @@ public class AchievementTests
         Assert.False(fake.GetProperty("newBestTime").GetBoolean());
         Assert.True(fake.GetProperty("timeRejected").GetBoolean());
         Assert.Equal("requirement_not_met", await (await client.PostAsJsonAsync("/api/v1/achievements/unlock",
-            new { code = "speed_3h", context = new { roomCode = room }, evidence = new { igtMs = 1L } })).ProblemCode());
+            new { code = "speed_fast", context = new { roomCode = room }, evidence = new { igtMs = 1L } })).ProblemCode());
 
         // A plausible time afterwards is kept (the unlock stays as it is).
         var real = await (await client.PostAsJsonAsync("/api/v1/achievements/unlock",
@@ -103,7 +103,7 @@ public class AchievementTests
         Assert.True(real.GetProperty("newBestTime").GetBoolean());
         Assert.False(real.GetProperty("timeRejected").GetBoolean());
         var speed = await client.PostAsJsonAsync("/api/v1/achievements/unlock",
-            new { code = "speed_3h", context = new { roomCode = room }, evidence = new { igtMs = 2L * 3600 * 1000 } });
+            new { code = "speed_fast", context = new { roomCode = room }, evidence = new { igtMs = 2L * 3600 * 1000 } });
         Assert.Equal(HttpStatusCode.OK, speed.StatusCode);
 
         // A per-board override: 50 minutes is below Hard's configured hour.
@@ -198,5 +198,49 @@ public class AchievementTests
         await using var c = await host.SqlAsync();
         Assert.Equal(["randomizer"], (await c.QueryAsync<string>(
             "SELECT u.ruleset FROM achievement_unlocks u JOIN achievements a ON a.id = u.achievement_id WHERE u.account_id = @id AND a.code = 'kills_100'", new { id })).ToList());
+    }
+
+    /// <summary>
+    /// The catalogue is the game client's (data/online/achievements.json, SEAMLESS.md 11): its ids in its order, the retired
+    /// codes of 0002 unknown; story challenges only for the room owner, the plain clear for everybody who was there; Room
+    /// Host and Raid Night count the room's members (roomPlayers), the couch goals the reporter's instance (players).
+    /// </summary>
+    [DbFact]
+    public async Task The_catalogue_is_the_clients_and_the_owner_gets_the_story_challenges()
+    {
+        await using var host = await TestHost.StartAsync();
+        var list = await (await host.Client().GetAsync("/api/v1/achievements")).Json();
+        using var json = System.Text.Json.JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory, "data", "achievements.json")));
+        var ids = json.RootElement.GetProperty("achievements").EnumerateArray().Select(a => a.GetProperty("id").GetString()).ToList();
+        Assert.Equal(ids, list.EnumerateArray().Select(a => a.GetProperty("code").GetString()));
+
+        var (ownerToken, _, owner) = await host.RegisterAsync("Leader");
+        var (guestToken, _, guest) = await host.RegisterAsync("Follower");
+        var (_, _, third) = await host.RegisterAsync("Third");
+        var room = await host.CreateRoomAsync(owner, [guest, third]);
+        var ownerClient = host.Client(ownerToken);
+        var guestClient = host.Client(guestToken);
+        Assert.Equal("unknown_achievement", await (await ownerClient.PostAsJsonAsync("/api/v1/achievements/unlock",
+            new { code = "story_briefing", context = new { roomCode = room } })).ProblemCode());
+
+        var evidence = new { igtMs = 3L * 3600 * 1000 };
+        Assert.Equal("requirement_not_met", await (await guestClient.PostAsJsonAsync("/api/v1/achievements/unlock",
+            new { code = "speed_fast", context = new { roomCode = room, players = 2, roomPlayers = 3 }, evidence })).ProblemCode());
+        var guestClear = await guestClient.PostAsJsonAsync("/api/v1/achievements/unlock",
+            new { code = "clear_normal", context = new { roomCode = room, players = 2, roomPlayers = 3 } });
+        Assert.Equal(HttpStatusCode.OK, guestClear.StatusCode);
+        var ownerSpeed = await ownerClient.PostAsJsonAsync("/api/v1/achievements/unlock",
+            new { code = "speed_fast", context = new { roomCode = room, players = 2, roomPlayers = 3 }, evidence });
+        Assert.Equal(HttpStatusCode.OK, ownerSpeed.StatusCode);
+
+        // Room Host: the owner, three in the room, alone in its own stage instance.
+        Assert.Equal(HttpStatusCode.OK, (await ownerClient.PostAsJsonAsync("/api/v1/achievements/unlock",
+            new { code = "online_host", context = new { roomCode = room, players = 1, roomPlayers = 3 } })).StatusCode);
+        Assert.Equal("requirement_not_met", await (await guestClient.PostAsJsonAsync("/api/v1/achievements/unlock",
+            new { code = "online_host", context = new { roomCode = room, players = 1, roomPlayers = 3 } })).ProblemCode());
+        Assert.Equal(HttpStatusCode.OK, (await guestClient.PostAsJsonAsync("/api/v1/achievements/unlock",
+            new { code = "online_raid", context = new { roomCode = room, players = 1, roomPlayers = 3 } })).StatusCode);
+        Assert.Equal("requirement_not_met", await (await guestClient.PostAsJsonAsync("/api/v1/achievements/unlock",
+            new { code = "mp_fullhouse", context = new { roomCode = room, players = 3, roomPlayers = 3 } })).ProblemCode());
     }
 }

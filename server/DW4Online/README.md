@@ -19,7 +19,7 @@ separate work (see "Open ends"); `tests/winhttp_client` shows the client side of
 | `src/DW4Online.Relay` | The DW4R2 relay (port 52041, SEAMLESS.md 6): `Protocol` (frames and messages), `Hub` (one connection per member and room, instances as solo-led and sealed lockstep groups, server-paced sealing on a dedicated high-resolution timer thread, barrier decisions, forks, the tick log, state delivery), HMAC room tickets. |
 | `src/DW4Online.Web` | The Razor Pages website (English, server-rendered, no scripts): home, register, login, recovery, account settings, profiles, achievements, rooms, admin, privacy. |
 | `src/DW4Online.Server` | The executable: composition root, configuration, Windows-service mode, CLI tools, TLS certificate selector, file log. |
-| `sql/` | Numbered migrations `NNNN_description.sql` (0001 schema, 0002 achievement definitions, 0003-0007 see "Database"). |
+| `sql/` | Numbered migrations `NNNN_description.sql` (0001 schema, 0002 achievement definitions, 0003-0008 see "Database"). |
 | `tests/DW4Online.Tests` | Unit tests (no database). |
 | `tests/DW4Online.Integration.Tests` | HTTP + MariaDB tests against a private local instance (API, rooms with the real relay and fake clients, website forms, end to end on real Kestrel). |
 | `tests/DW4Online.FakeClient` | Fake DW4R2 clients (a deterministic stand-in engine that speaks the protocol as the game will), the latency / jitter / loss proxy and the loss matrix; a console tool (`client`, `proxy`, `matrix`) and a library for the tests. |
@@ -157,7 +157,8 @@ written by the room service before its memory changes), `audit_log` (pruned afte
 0005 drops the user names old `login_unknown` audit rows held; 0006 `online_character_history.ended_at` (the reset
 that ended a revision's character, filled in for earlier resets); 0007 `sessions.last_used_ip` (the address a session
 was last used from, for the account-wide lock) and `online_character_history.flagged` (each revision's flag, for staff
-restores; earlier revisions take their live character's flag or the one their reset noted).
+restores; earlier revisions take their live character's flag or the one their reset noted); 0008 the game client's
+achievement catalogue (see "Achievements").
 
 ## API (`/api/v1`, JSON, errors as problem details)
 
@@ -186,7 +187,7 @@ Authenticated calls send `Authorization: Bearer dw4_<43 characters>`.
 | `POST /cloud-save/restore/{revision}` | token | Make a kept revision the latest again. |
 | `POST /cloud-save/delete` | token | `{currentPassword}`: delete the backup and its history (a wrong password counts as a failed login). |
 | `GET /achievements` | optional | All definitions (hidden ones masked until unlocked); with a token the caller's unlocks and progress. |
-| `POST /achievements/unlock` | token | `{code, context, evidence: {igtMs?, level?, stage?}}` -> `{code, ruleset, newlyUnlocked, newBestTime, timeRejected}`. |
+| `POST /achievements/unlock` | token | `{code, context: {roomCode, players, roomPlayers, randomizer, cheats, rebalanced, saveStateLoaded, difficulty, protocol, clientVersion}, evidence: {igtMs?, level?, stage?}}` -> `{code, ruleset, newlyUnlocked, newBestTime, timeRejected}`. |
 | `POST /stats` | token | `{deltas: {enemies_defeated: 12, play_seconds: 60, ...}, context}` -> `{totals, unlocked}`. |
 | `GET /rooms?protocol=&dataHash=` | - | Open rooms (compatible ones only when filtered, like the HELLO check): code, name, owner, `ownerPresent`, `storyFrozen`, `hasPassword`, players / maxPlayers, ranked, randomizer, difficulty, instances. |
 | `POST /rooms` | token | `{name, password?, maxPlayers (2..10, default 4), protocol, dataHash, clientVersion, settings?}` -> 201 room state with `relayTicket`. `settings` is a JSON object: `difficulty` 0..2, `cameraMode` 0..1, `lightMode` 0..1 (default 1), `fastLoading`, `randomizer: {enabled, seed (u32), drops, enemies 0..2, zones 0..2}`; `cheats` / `rebalanced` are refused. One owned room per account. |
@@ -284,11 +285,19 @@ and stats must carry `protocol` / `clientVersion` (426 `client_outdated` otherwi
   confirmation (password, e-mail, recovery code, deletion, online character reset, cloud save deletion) counts a wrong password like a
   failed login, so the lockout applies. The name prefix
   `deleted_` cannot be registered.
-- **Achievements** (72 definitions, `sql/0002_achievements.sql`, stable ids 1-72): only online play counts, so unlocks
+- **Achievements** (72 active definitions: the game client's catalogue, SEAMLESS.md 11): `sql/0002_achievements.sql` made
+  ids 1-72, `sql/0008_achievement_catalogue.sql` adopts the client's ids, titles, descriptions and thresholds (52 codes
+  keep their ids, the client's 20 others are ids 73-92, the 20 codes the client does not have are retired with
+  `active = 0`; ids and codes are never reused). The client exports its table as `data/online/achievements.json`;
+  `AchievementRulesTests` compare 0008 with that file and the rules with 0008, the client's ctest compares the file
+  with its table, so a change on one side fails both until the other follows. Only online play counts, so unlocks
   and stats need a room the account is a member of (`Play:RequireRoom`); a report with cheats, rebalanced rates or a
   save-state load is refused (`unranked_*`), and so is an unranked room. Randomizer runs are their own ruleset (a second
   unlock row). `event` achievements come from the game (some checked against the goal or the room: speed limits on
-  in-game time without loading, low-level limits, player counts capped by the room's members), `stat` achievements unlock
+  in-game time without loading, low-level limits, player counts capped by the room's members: `context.players` is the
+  reporter's stage instance, `context.roomPlayers` the room's members for Room Host and Raid Night; the story challenges
+  `deathless_clear`, `solo_veryhard`, `speed_normal`, `speed_fast` and `rookie_clear` only from the room owner, whose
+  story it is), `stat` achievements unlock
   when `player_stats` reaches the goal (deltas bounded per counter by a token bucket: the counter's rate per minute of
   real time since the last batch - for the first batch since the account was made -, at most 15 minutes saved up; one
   account's batches are checked one at a time), `state` achievements unlock
@@ -303,7 +312,7 @@ and stats must carry `protocol` / `clientVersion` (426 `client_outdated` otherwi
   stages, 6.61 hours for the best time of every stage over those runs added up, the six story boss stages alone 9.6 to
   13.3 minutes. 45 minutes is about a ninth of that sum and a quarter of Speed Demon's 3-hour goal, so no real run gets
   near it even with a far better route than the bot's; Hard and Very Hard play the same stages. A clear reported faster keeps no best time, its new unlock is flagged for review
-  (answer `timeRejected: true`, audit `speedrun_implausible`), and `speed_6h` / `speed_3h` refuse it
+  (answer `timeRejected: true`, audit `speedrun_implausible`), and `speed_normal` / `speed_fast` (8 h / 4 h) refuse it
   (`requirement_not_met`). `Play:SpeedrunFloorSeconds` sets the floor per board (calibrate with real online runs).
 
 ## Relay protocol (DW4R2, TCP, default port 52041)

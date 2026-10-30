@@ -24,8 +24,9 @@ public sealed class UnlockEvidence
 }
 
 /// <summary>
-/// The server-side rules behind the achievement definitions (sql/0002_achievements.sql). Definitions carry the
-/// display data, the kind, the goal and the stat key; this class knows how to check them.
+/// The server-side rules behind the achievement definitions (sql/0002_achievements.sql, aligned with the game client's
+/// catalogue by sql/0008_achievement_catalogue.sql and data/online/achievements.json). Definitions carry the display data,
+/// the kind, the goal and the stat key; this class knows how to check them.
 /// </summary>
 public static class AchievementRules
 {
@@ -73,34 +74,46 @@ public static class AchievementRules
         ["lv_500"] = HighestLevel,
         ["lv_999"] = HighestLevel,
         ["form_rookies"] = (r, _) => Enumerable.Range(0, Species.RookieCount).All(s => r.BaseIsUse[s] != 0),
-        ["form_mega"] = (r, _) => Enumerable.Range(Species.RookieCount, Species.Count - Species.RookieCount).Any(s => r.BaseIsUse[s] != 0),
-        ["form_all16"] = (r, _) => r.BaseIsUse.All(b => b != 0),
+        ["form_eight"] = FormCount,
+        ["form_all"] = FormCount,
         ["form_susanoomon"] = (r, _) => r.BaseIsUse[Species.RowOf("p_susanoo")] != 0,
-        ["form_master"] = (r, goal) => Enumerable.Range(0, Species.Count).All(s => r.BaseIsUse[s] != 0 && FormLevel(r, s) >= goal),
+        // goal = how many forms (all 16) stand at level 99.
+        ["form_master"] = (r, goal) => Enumerable.Range(0, Species.Count).Count(s => r.BaseIsUse[s] != 0 && FormLevel(r, s) >= 99) >= goal,
         ["card_first"] = CardCount,
         ["card_25"] = CardCount,
         ["card_50"] = CardCount,
-        ["item_rank5"] = (r, goal) => AllDevices(r).Any(d => d.Rank >= goal),
-        ["item_pink"] = (r, goal) => AllDevices(r).Any(d => d.Value >= goal),
+        // Devices the character holds: its folder (the client's rule; the bank does not count).
+        ["item_rank5"] = (r, goal) => FolderDevices(r).Any(d => d.Rank >= goal),
+        ["item_pink"] = (r, goal) => FolderDevices(r).Any(d => d.Value >= goal),
+        ["bits_100k"] = (r, goal) => (long)r.Bits + r.BankBits >= goal,
         ["bits_1m"] = (r, goal) => (long)r.Bits + r.BankBits >= goal,
-        ["bits_max"] = (r, goal) => r.Bits >= goal || r.BankBits >= goal,
+        ["bits_max"] = (r, goal) => r.Bits >= goal, // in the wallet
         ["hoarder"] = (r, goal) => r.Devices.Count(w => w != -1) >= goal,
+    };
+
+    /// <summary>
+    /// The story challenges (SEAMLESS.md 11): online the story is the room owner's, so only the owner's machine reports
+    /// them, computed from the owner's online character; a guest gets the plain clear.
+    /// </summary>
+    public static readonly IReadOnlySet<string> OwnerOnlyCodes = new HashSet<string>(StringComparer.Ordinal)
+    {
+        "deathless_clear", "solo_veryhard", "speed_normal", "speed_fast", "rookie_clear",
     };
 
     /// <summary>Codes whose event reports need a check against the definition's goal or the context.</summary>
     private static readonly Dictionary<string, Func<AchievementCheck, string?>> EventRequirements = new(StringComparer.Ordinal)
     {
-        ["speed_6h"] = SpeedLimit,
-        ["speed_3h"] = SpeedLimit,
+        ["speed_normal"] = c => Owner(c) ?? SpeedLimit(c),
+        ["speed_fast"] = c => Owner(c) ?? SpeedLimit(c),
+        ["deathless_clear"] = Owner,
+        ["rookie_clear"] = Owner,
+        ["solo_veryhard"] = c => Owner(c) ?? ((c.RoomPlayers ?? c.Players) == 1 ? null : "Lone Tamer needs a run with one player."),
         ["lowlevel_apocalymon"] = c => c.Evidence?.Level is { } l && l >= 1 && l <= c.Goal ? null : "The level is missing or above the limit.",
-        ["lowlevel_daemon"] = c => c.Evidence?.Level is { } l && l >= 1 && l <= c.Goal ? null : "The level is missing or above the limit.",
-        ["solo_veryhard"] = c => c.Players == 1 ? null : "Lone Tamer needs a run with one player.",
         ["mp_couch"] = c => c.Players >= 2 ? null : "Needs at least two players.",
         ["mp_fullhouse"] = c => c.Players >= 4 ? null : "Needs four players.",
         ["online_join"] = c => c.InRoom ? null : "Needs an online room.",
-        ["online_host"] = c => c.InRoom && c.IsHost && c.Players >= 4 ? null : "Needs a hosted room with at least three guests.",
-        ["online_ten"] = c => c.InRoom && c.Players >= 10 ? null : "Needs a room with ten players.",
-        ["online_raid"] = c => c.InRoom && c.Players >= 2 ? null : "Needs at least two online players in the room.",
+        ["online_host"] = c => c.InRoom && c.IsHost && (c.RoomPlayers ?? c.Players) >= 3 ? null : "Needs a hosted room with at least three players.",
+        ["online_raid"] = c => c.InRoom && (c.RoomPlayers ?? c.Players) >= 2 ? null : "Needs at least two online players in the room.",
     };
 
     public static IReadOnlyCollection<string> StateCodes => StateRules.Keys;
@@ -113,6 +126,10 @@ public static class AchievementRules
     /// <summary>Null when the event report satisfies the code's requirement, otherwise the reason.</summary>
     public static string? CheckEvent(string code, AchievementCheck check) =>
         EventRequirements.TryGetValue(code, out var rule) ? rule(check) : null;
+
+    /// <summary>A story challenge in a room: the room owner's only.</summary>
+    private static string? Owner(AchievementCheck c) =>
+        c.InRoom && !c.IsHost ? "Story challenges count only for the room owner (the story is the owner's)." : null;
 
     /// <summary>Speed goals: the in-game time is given, at most the goal and not below the story's floor.</summary>
     private static string? SpeedLimit(AchievementCheck c) => c.Evidence?.IgtMs switch
@@ -136,12 +153,16 @@ public static class AchievementRules
 
     private static bool CardCount(SaveRecord r, long goal) => r.Cards.Count(c => c != 0) >= Math.Max(goal, 1);
 
-    private static IEnumerable<PackedDevice> AllDevices(SaveRecord r) =>
-        r.Devices.Concat(r.Bank).Select(w => new PackedDevice(w)).Where(d => !d.Empty && d.WellFormed);
+    private static bool FormCount(SaveRecord r, long goal) => r.BaseIsUse.Count(b => b != 0) >= goal;
+
+    private static IEnumerable<PackedDevice> FolderDevices(SaveRecord r) =>
+        r.Devices.Select(w => new PackedDevice(w)).Where(d => !d.Empty && d.WellFormed);
 }
 
 /// <summary>
-/// The facts an event requirement is checked against. <paramref name="StoryFloorMs"/>: the least in-game time of a story
-/// clear on any board (speed goals below it are impossible).
+/// The facts an event requirement is checked against. <paramref name="Players"/>: the players of the reporter's stage
+/// instance; <paramref name="RoomPlayers"/>: the room's members (both capped at the room's real member count).
+/// <paramref name="StoryFloorMs"/>: the least in-game time of a story clear on any board (speed goals below it are impossible).
 /// </summary>
-public sealed record AchievementCheck(long Goal, UnlockEvidence? Evidence, int? Players, bool InRoom, bool IsHost, long StoryFloorMs = 0);
+public sealed record AchievementCheck(long Goal, UnlockEvidence? Evidence, int? Players, bool InRoom, bool IsHost, long StoryFloorMs = 0,
+    int? RoomPlayers = null);

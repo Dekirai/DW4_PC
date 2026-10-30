@@ -7,6 +7,9 @@ namespace DW4Online.Integration.Tests;
 
 public class MigratorTests
 {
+    /// <summary>The embedded migrations from <paramref name="version"/> on (later rounds add their own).</summary>
+    private static List<int> From(int version) => Migrator.LoadEmbedded().Select(m => m.Version).Where(v => v >= version).ToList();
+
     [DbFact]
     public async Task Migrates_an_empty_database_once()
     {
@@ -16,11 +19,16 @@ public class MigratorTests
             await using var db = new Database(TestDb.ConnectionString(name));
             var migrator = new Migrator(db);
             Assert.Equal(0, await migrator.CurrentVersionAsync());
-            Assert.Equal([1, 2, 3, 4, 5, 6, 7], await migrator.MigrateAsync());
+            Assert.Equal(From(1), await migrator.MigrateAsync());
             Assert.Empty(await migrator.MigrateAsync());
-            Assert.Equal(7, await migrator.CurrentVersionAsync());
+            Assert.Equal(From(1).Last(), await migrator.CurrentVersionAsync());
+            Assert.True(From(1).Last() >= 8); // 0008: the achievement catalogue
             await using var c = new MySqlConnection(TestDb.ConnectionString(name));
-            Assert.Equal(72, await c.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM achievements"));
+            // 0002's 72 and the game client's 20 others (0008); 72 active: the client's catalogue.
+            Assert.Equal(92, await c.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM achievements"));
+            Assert.Equal(72, await c.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM achievements WHERE active = 1"));
+            Assert.Equal(0, await c.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM achievements WHERE active = 1 AND code IN ('speed_6h', 'online_ten')"));
+            Assert.Equal(12, await c.ExecuteScalarAsync<int>("SELECT goal FROM achievements WHERE code = 'lowlevel_apocalymon'"));
             Assert.Equal(16, await c.ExecuteScalarAsync<int>(
                 "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE()"));
         }
@@ -62,7 +70,7 @@ public class MigratorTests
             await c.ExecuteAsync(history, new { a = ids[0], r = 1, rec, sha, at = reset });              // never reset
 
             await using var db = new Database(TestDb.ConnectionString(name));
-            Assert.Equal([6, 7], await new Migrator(db).MigrateAsync());
+            Assert.Equal(From(6), await new Migrator(db).MigrateAsync());
             var rows = (await c.QueryAsync<(long Account, int Revision, DateTime? Ended)>(
                 "SELECT CAST(account_id AS SIGNED), CAST(revision AS SIGNED), ended_at FROM online_character_history ORDER BY account_id, revision")).ToList();
             var expected = new List<(long, int, DateTime?)> { (ids[0], 1, null), (ids[1], 1, reset), (ids[1], 2, reset), (ids[1], 3, null) }
@@ -118,7 +126,7 @@ public class MigratorTests
             await c.ExecuteAsync(live, new { a = ids[1], rec, sha, r = 1, flagged = true, t });
 
             await using var db = new Database(TestDb.ConnectionString(name));
-            Assert.Equal([7], await new Migrator(db).MigrateAsync());
+            Assert.Equal(From(7), await new Migrator(db).MigrateAsync());
             Assert.Equal(new byte[] { 203, 0, 113, 9 }, await c.ExecuteScalarAsync<byte[]>("SELECT last_used_ip FROM sessions"));
             var flags = (await c.QueryAsync<(long Account, int Revision, bool Flagged)>(
                 "SELECT CAST(account_id AS SIGNED), CAST(revision AS SIGNED), flagged FROM online_character_history ORDER BY account_id, revision")).ToList();

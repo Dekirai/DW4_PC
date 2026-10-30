@@ -10,6 +10,11 @@ public sealed class PlayContext
     public string? RoomCode { get; set; }
     /// <summary>Players in the stage instance (1-4) or the room (up to 10), as the client sees it.</summary>
     public int? Players { get; set; }
+    /// <summary>
+    /// The room's members (1-10) as the client sees it (SEAMLESS.md 11: Players is the reporter's stage instance; the
+    /// room-wide goals Room Host and Raid Night read this). Older clients leave it out: Players stands in.
+    /// </summary>
+    public int? RoomPlayers { get; set; }
     /// <summary>The host's randomizer setting: randomizer runs are their own ruleset.</summary>
     public bool Randomizer { get; set; }
     public bool Cheats { get; set; }
@@ -42,6 +47,7 @@ public static class RankedRules
         if (context.Rebalanced) return ("unranked_rebalanced", "Rebalanced rates were on: nothing counts for the online account.");
         if (context.SaveStateLoaded) return ("unranked_save_state", "A save state was loaded in this stage: nothing counts for the online account.");
         if (context.Players is < 1 or > 10) return ("invalid_players", "The player count is outside 1..10.");
+        if (context.RoomPlayers is < 1 or > 10) return ("invalid_players", "The room's player count is outside 1..10.");
         if (context.Difficulty is < 0 or > 2) return ("invalid_difficulty", "The difficulty is outside 0..2.");
         return null;
     }
