@@ -29,6 +29,15 @@ public sealed class RoomOptions
     /// hash is ranked (until the release ships its official hash).
     /// </summary>
     public List<string> RankedDataHashes { get; set; } = [];
+    /// <summary>
+    /// Story progress the members make while the room owner is away (SEAMLESS.md 8.6): "drop" (refused; the next barrier
+    /// takes it back out of the engines with a notice), "hold" (kept and merged when the owner returns) or "apply"
+    /// (merged at once). Default drop until the owner of the server decides otherwise.
+    /// </summary>
+    public string StoryWhileOwnerAway { get; set; } = "drop";
+    /// <summary>STORY messages one member may send per minute beyond <see cref="StoryBurst"/> (more are refused with "rate").</summary>
+    public int StoryMessagesPerMinute { get; set; } = 60;
+    public int StoryBurst { get; set; } = 10;
 }
 
 public static class RoomLimits
@@ -148,8 +157,13 @@ public sealed record RelayTicket(string Ticket, string Nonce);
 /// <summary>A ticket the relay is about to accept: the room, the account and the ticket's nonce.</summary>
 public sealed record RelayAdmission(string Room, long AccountId, string Nonce);
 
-/// <summary>The room service's answer: the member's room slot (0-9), name, owner flag and the room's compatibility data.</summary>
-public sealed record RelayAdmitted(int MemberIndex, string Username, bool Owner, int Protocol, ulong DataHash, ulong SettingsHash, int MaxPlayers);
+/// <summary>
+/// The room service's answer: the member's room slot (0-9), name, owner flag and the room's compatibility data; for the
+/// room story (SEAMLESS.md 8) the owner's account, the room's difficulty, whether the owner is in the room and the
+/// owner-away policy (Rooms:StoryWhileOwnerAway).
+/// </summary>
+public sealed record RelayAdmitted(int MemberIndex, string Username, bool Owner, int Protocol, ulong DataHash, ulong SettingsHash, int MaxPlayers,
+    long OwnerAccountId = 0, int Difficulty = 0, bool OwnerPresent = true, string StoryPolicy = "drop");
 
 /// <summary>The DW4R2 relay as the room service uses it (SEAMLESS.md 6.2, 14).</summary>
 public interface IRelayGateway

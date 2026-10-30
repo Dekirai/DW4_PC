@@ -82,6 +82,14 @@ public interface IOnlineCharacterRepository
     Task<DateTime?> GetStartAsync(long accountId, CancellationToken ct = default);
 }
 
+/// <summary>online_story: only the room service writes it (the relay saves each new revision of a room's story).</summary>
+public interface IOnlineStoryRepository
+{
+    Task<OnlineStoryRow?> GetAsync(long accountId, CancellationToken ct = default);
+    /// <summary>Writes the row when it is new or its revision is higher than the stored one; false when nothing changed.</summary>
+    Task<bool> SaveAsync(OnlineStoryRow row, CancellationToken ct = default);
+}
+
 public interface ICloudSaveRepository
 {
     Task<CloudSaveMeta?> GetMetaAsync(long accountId, CancellationToken ct = default);

@@ -388,7 +388,7 @@ public sealed partial class RoomService
                 room.Playing = true;
             }
             return new RelayAdmitted(member.Slot, member.Username, member.AccountId == room.OwnerId, room.Protocol, room.DataHash, room.SettingsHash,
-                room.MaxPlayers);
+                room.MaxPlayers, room.OwnerId, room.RoomSettings.Difficulty, room.StoryFrozenAt is null, _options.StoryWhileOwnerAway);
         }
         finally
         {
