@@ -1,5 +1,6 @@
 # The owner: log in, create a room with a password, play from the title, look at the room, leave.
 wait-title
+sleep 4
 panel open
 screen login
 fill login.name $UI_A_NAME

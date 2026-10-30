@@ -227,10 +227,11 @@ def openssl():
     raise RuntimeError("openssl not found (Git for Windows ships one)")
 
 
-def make_certificate(stack):
+def make_certificate(stack, name="server"):
     """A throw-away P-256 certificate for 127.0.0.1 (PEM for Kestrel), its SPKI pin and its DER."""
     o = openssl()
-    cert, key = os.path.join(stack.dir, "cert.pem"), os.path.join(stack.dir, "key.pem")
+    # (One pair of files per server: Kestrel reloads a certificate file that changes.)
+    cert, key = os.path.join(stack.dir, name + "-cert.pem"), os.path.join(stack.dir, name + "-key.pem")
     subprocess.run([o, "req", "-x509", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:P-256", "-nodes", "-keyout", key, "-out", cert,
                     "-days", "2", "-subj", "/CN=127.0.0.1", "-addext", "subjectAltName=IP:127.0.0.1"], check=True, capture_output=True,
                    creationflags=NO_WINDOW)
@@ -288,7 +289,7 @@ def merge(into, extra):
 
 def start_server(stack, connection, extra=None, name="server"):
     https, relay = free_port(stack), free_port(stack)
-    cert, key, pin, der = make_certificate(stack)
+    cert, key, pin, der = make_certificate(stack, name)
     diag = os.path.join(stack.dir, "relay")
     settings = {
         "Database": {"ConnectionString": connection, "AutoMigrate": True},

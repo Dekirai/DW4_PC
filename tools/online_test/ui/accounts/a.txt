@@ -1,5 +1,6 @@
 # The account screens from the title's Online panel (a new account).
 wait-title
+sleep 4
 wait 30
 shot title_compact
 panel open

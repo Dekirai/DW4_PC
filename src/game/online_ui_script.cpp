@@ -86,7 +86,7 @@ void OnlineUiScript::update(UiScriptHost& host) {
     }
     const Line& line = lines_[at_];
     // A command starts once the lobby has nothing in flight.
-    if (!sent_ && host.lobby.busy()) return;
+    if (!sent_ && (host.lobby.busy() || host.lobby.gate() == online::Gate::checking)) return;
     if (!run(line, host)) return;
     const auto& w = line.words;
     // (Secrets stay out of the log: only the command and its first word.)
@@ -161,6 +161,15 @@ bool OnlineUiScript::run(const Line& line, UiScriptHost& host) {
             if (!lobby.opened()) lobby.open();
         }
         return true;
+    }
+    if (c == "open") {
+        // The lobby without a panel or menu (the version gate, the remembered login).
+        if (!sent_) {
+            lobby.open();
+            sent_ = true;
+            return false;
+        }
+        return lobby.gate() != online::Gate::checking && !lobby.busy();
     }
     if (c == "screen") {
         const auto screen = online::screen_from_name(arg(1));

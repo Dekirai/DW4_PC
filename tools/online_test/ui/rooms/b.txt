@@ -1,5 +1,6 @@
 # The guest: the room list, the password prompt, a wrong password, joining.
 wait-title
+sleep 4
 panel open
 screen login
 login $UI_B_NAME $UI_B_PASSWORD

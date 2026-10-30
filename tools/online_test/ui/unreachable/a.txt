@@ -1,4 +1,5 @@
 wait-title
+sleep 4
 panel open
 sleep 3
 expect-gate unreachable

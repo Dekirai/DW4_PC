@@ -255,7 +255,7 @@ void account(online::OnlineLobby& lobby) {
         } else {
             wrapped("No online character yet: your first online game starts a new one at level 1 (your local save stays as it is).");
         }
-        label_cell("Your rooms");
+        label_cell("Room difficulty");
         ImGui::Text("up to %s", kDifficulties[lobby.max_difficulty()]);
     } else {
         ImGui::TextDisabled("Loading...");
@@ -334,7 +334,7 @@ void rooms(online::OnlineLobby& lobby, OnlineUiState& s, int protocol, std::uint
             else {
                 std::string game = r.difficulty ? kDifficulties[std::clamp(*r.difficulty, 0, 2)] : "Normal";
                 if (r.randomizer) game += ", randomizer";
-                if (r.story_frozen) game += ", story paused";
+                if (r.story_frozen) game += ", owner away";
                 ImGui::TextUnformatted(game.c_str());
             }
             if (!compatible) ImGui::PopStyleColor();
@@ -493,7 +493,7 @@ void in_room(online::OnlineLobby& lobby, OnlineUiState& s, const RoomLive* live)
     struct Row {
         int slot = 0;
         std::string name, stage;
-        bool owner = false, you = false, connected = false, lagging = false, live = false;
+        bool owner = false, you = false, connected = false, lagging = false, live = false, hub = false;
         int level = 0, hp = 0, max_hp = 0;
         std::uint32_t inst = 0;
     };
@@ -530,6 +530,23 @@ void in_room(online::OnlineLobby& lobby, OnlineUiState& s, const RoomLive* live)
             found->you = found->you || m.member == live->member;
         }
     std::sort(rows.begin(), rows.end(), [](const Row& a, const Row& b) { return a.slot < b.slot; });
+    // A member that shows no stage (presence hidden): the stage of its
+    // instance from the room state, and whether that is the title's hub.
+    const auto instance_of = [&](std::uint32_t id) -> const online::api::InstanceInfo* {
+        if (view)
+            for (const auto& i : view->instances)
+                if (i.id == id) return &i;
+        return nullptr;
+    };
+    for (auto& r : rows) {
+        if (!r.inst && view)
+            for (const auto& m : view->members)
+                if (m.slot == r.slot && m.instance) r.inst = *m.instance;
+        if (const auto* i = instance_of(r.inst)) {
+            r.hub = i->mode == "hub";
+            if (r.stage.empty() && !i->stage.empty() && r.hub) r.stage = i->stage;
+        }
+    }
     const bool owner = lobby.room_owner();
     if (rows.empty()) {
         ImGui::TextDisabled("Loading...");
@@ -543,14 +560,11 @@ void in_room(online::OnlineLobby& lobby, OnlineUiState& s, const RoomLive* live)
         for (const auto& r : rows) {
             ImGui::TableNextRow();
             ImGui::TableNextColumn();
-            if (r.you) ImGui::TextColored(kAccent, "%s (you)", r.name.c_str());
-            else ImGui::TextUnformatted(r.name.c_str());
-            if (r.owner) {
-                ImGui::SameLine();
-                ImGui::TextDisabled("owner");
-            }
+            const std::string tags = r.you && r.owner ? " (you, owner)" : r.you ? " (you)" : r.owner ? " (owner)" : "";
+            if (r.you) ImGui::TextColored(kAccent, "%s%s", r.name.c_str(), tags.c_str());
+            else ImGui::Text("%s%s", r.name.c_str(), tags.c_str());
             ImGui::TableNextColumn();
-            if (r.live) ImGui::TextUnformatted(area_line(r.stage).c_str());
+            if (r.live || r.hub) ImGui::TextUnformatted(area_line(r.stage, r.hub).c_str());
             else ImGui::TextDisabled("-");
             ImGui::TableNextColumn();
             if (r.live && r.level > 0) ImGui::Text("%d", r.level);
@@ -578,9 +592,9 @@ void in_room(online::OnlineLobby& lobby, OnlineUiState& s, const RoomLive* live)
         for (const auto& i : view->instances) {
             std::string names;
             for (const auto& m : i.members) names += (names.empty() ? "" : ", ") + m.name;
-            const std::string mode = i.mode == "sealed" ? "together" : i.mode == "hub" ? "alone (hub)" : i.mode == "solo" ? "alone" : i.mode;
-            ImGui::BulletText("%s: %s (%s%s%s)", area_line(i.stage).c_str(), names.c_str(), mode.c_str(), i.boss_lock ? ", boss fight" : "",
-                              i.departing ? ", leaving" : "");
+            const std::string mode = i.mode == "sealed" ? "together" : "on their own";
+            ImGui::BulletText("%s: %s (%s%s%s)", area_line(i.stage, i.mode == "hub").c_str(), names.c_str(), mode.c_str(),
+                              i.boss_lock ? ", boss fight" : "", i.departing ? ", leaving" : "");
         }
     }
     ImGui::Spacing();
@@ -641,17 +655,18 @@ bool set_ui_field(OnlineUiState& s, const std::string& f, const std::string& val
     return true;
 }
 
-std::string area_line(const std::string& stage) {
-    if (stage.empty()) return "Loading or in a scene";
+std::string area_line(const std::string& stage, bool hub) {
+    if (stage.empty()) return hub ? "Title screen" : "Loading or in a scene";
     if (is_menu_stage(stage)) return "Menus";
     if (const auto* area = find_area(stage)) return area_display_name(*area);
     return stage;
 }
 
-// The title's Options names them by the camera data they pick (aaaCamera /
-// aaaCameraL) and the light switch; the server keeps 0 / 1.
-const char* camera_mode_name(int mode) { return mode == 1 ? "Type B" : "Type A"; }
-const char* light_mode_name(int mode) { return mode == 1 ? "On" : "Off"; }
+// The title's Options switches (the server keeps 0 / 1): "Normal" is a new
+// game's setting (camera 0 = the aaaCamera data, light 1), "Alternative"
+// the other one (camera 1 = aaaCameraL, light 0).
+const char* camera_mode_name(int mode) { return mode == 1 ? "Alternative" : "Normal"; }
+const char* light_mode_name(int mode) { return mode == 1 ? "Normal" : "Alternative"; }
 
 void draw_online_screens(online::OnlineLobby& lobby, OnlineUiState& state, const RoomLive* live) {
     // A new screen: the controller's focus moves to its first (or primary) item.
@@ -665,8 +680,17 @@ void draw_online_screens(online::OnlineLobby& lobby, OnlineUiState& state, const
         state.focus_pending = false;
     }
     banner(lobby);
-    if (lobby.gate() == online::Gate::unknown) {
-        ImGui::TextDisabled("Connecting to the server...");
+    using online::Gate;
+    const Gate gate = lobby.gate();
+    // A closed gate shows only its banner (and what to do), except inside a
+    // room, which runs on whatever the REST side says.
+    if (!lobby.in_room() && gate != Gate::open) {
+        if (gate == Gate::unknown) ImGui::TextDisabled("Connecting to the server...");
+        else if (gate == Gate::outdated)
+            wrapped_disabled("Install the newest version of DW4_PC to play online (your saves and settings stay). Offline play is not "
+                             "affected.");
+        else if (gate == Gate::not_set_up)
+            wrapped_disabled("Offline play and local co-op are not affected.");
         return;
     }
     // (The in-room view also while the server cannot be reached: the room runs on.)

@@ -1,5 +1,6 @@
 # The version gate: the panel and F1 Online say "Update required" and offer nothing else.
 wait-title
+sleep 4
 panel open
 sleep 1
 expect-gate outdated

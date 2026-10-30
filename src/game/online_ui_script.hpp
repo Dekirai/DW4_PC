@@ -16,6 +16,7 @@
 //   sleep SECONDS              real time
 //   wait-title [SECONDS]       until the title shows its Online panel (120 s)
 //   panel open|close           the title's Online panel (active or compact)
+//   open                       the lobby without a panel (version gate, remembered login)
 //   menu online|close          the F1 menu on its Online tab
 //   screen NAME                go to a screen (welcome login register account password rooms create join ...)
 //   back                       the Back button

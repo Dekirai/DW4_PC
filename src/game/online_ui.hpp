@@ -67,8 +67,9 @@ struct OnlineUiState {
 bool set_ui_field(OnlineUiState& state, const std::string& field, const std::string& value);
 
 // One area line for a stage folder: "Death Valley: Humid Cave", "Menus" for
-// the title and save screens, "Loading or in a scene" for a hidden member.
-std::string area_line(const std::string& stage);
+// the title and save screens, "Loading or in a scene" for a hidden member
+// ("Title screen" for the title's hub instance, which has no stage).
+std::string area_line(const std::string& stage, bool hub = false);
 
 // The names of the title options as the room settings use them.
 const char* camera_mode_name(int mode);
