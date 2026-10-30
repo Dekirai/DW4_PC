@@ -46,3 +46,11 @@ __pycache__/
 *.pdb
 *.obj
 *.zip
+
+# Keys and certificates never enter the repository (the server's TLS keys stay
+# offline, server/DW4Online/deploy/DEPLOY.md 6.1); the client's pins come from
+# the build (local/online_pins.txt or -DDW4_ONLINE_PINS).
+*.pem
+*.pfx
+*.p12
+*.key

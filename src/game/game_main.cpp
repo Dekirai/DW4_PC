@@ -26,6 +26,7 @@
 #include "online_ui_script.hpp"
 #include "title_entry.hpp"
 #include "online/lobby.hpp"
+#include "online_achievements.hpp"
 #include "online/cpu_gate.hpp"
 #include "online/env_check.hpp"
 
@@ -494,6 +495,29 @@ std::filesystem::path program_dir() {
     return base ? std::filesystem::path(std::u8string(reinterpret_cast<const char8_t*>(base))) : std::filesystem::path();
 }
 
+// The online account's achievements of a room (online_achievements.hpp):
+// their own HTTPS worker with the room's login, the account's profile in
+// saves/online/<account>/achievements.dat (test runs: DW4_ONLINE_PROFILE,
+// else none).
+std::unique_ptr<dw4::game::OnlineAchievements> make_online_achievements(dw4::game::OnlineRun& online, bool created, bool test_run,
+                                                                        const std::filesystem::path& online_folder) {
+    const auto& room = online.room();
+    auto worker = std::make_unique<dw4::game::online::HttpWorker>(room.endpoint, std::string("DW4_PC/") + DW4_PC_VERSION);
+    worker->set_token(room.token);
+    dw4::game::OnlineAchievementConfig config;
+    config.room_code = room.code;
+    config.owner_hint = created;
+    config.randomizer = room.settings.randomizer();
+    config.protocol = int(dw4::game::kOnlineProtocol);
+    config.client_version = DW4_PC_VERSION;
+    std::string account;
+    for (const char c : room.account) account += std::isalnum(static_cast<unsigned char>(c)) || c == '_' || c == '-' ? char(std::tolower(c)) : '_';
+    if (!test_run && !account.empty()) config.profile_file = online_folder / account / "achievements.dat";
+    else if (const char* file = std::getenv("DW4_ONLINE_PROFILE"); test_run && file && *file) config.profile_file = file;
+    return std::make_unique<dw4::game::OnlineAchievements>(std::make_unique<dw4::game::online::achievements::HttpQueue>(std::move(worker)),
+                                                           std::move(config));
+}
+
 // The import preview: one line per box of the save in `source`.
 std::vector<std::string> import_preview(const dw4::save::ImportSource& source) {
     std::vector<std::string> lines;
@@ -821,7 +845,16 @@ int run(const Options& options, dw4::game::Settings& settings) {
     // engine starts again at the title in online mode with the room's
     // settings and an empty online card (round S1 keeps nothing online).
     std::unique_ptr<dw4::game::OnlineRun> online;
+    // The online account's achievements in the room (online_achievements.hpp).
+    std::unique_ptr<dw4::game::OnlineAchievements> online_achievements;
     const auto steady_seconds = [] { return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count(); };
+    // Leaves the room: the online account's last counters and open unlocks
+    // first (they need the room membership), then the online character's
+    // automatic save, BYE and the REST leave (OnlineRun::leave).
+    auto leave_room = [&] {
+        if (online_achievements) online_achievements->flush(steady_seconds(), 2.0);
+        online->leave();
+    };
     if (options.online_calibrate || options.online.wanted()) {
         if (const auto refusal = dw4::game::online::online_cpu_refusal()) throw std::runtime_error("online: " + *refusal);
         if (const auto variable = dw4::game::online::first_forbidden_env([](const char* name) -> const char* { return std::getenv(name); }))
@@ -862,7 +895,8 @@ int run(const Options& options, dw4::game::Settings& settings) {
     // saves/online/<account>/online_card.dat, built from the server's
     // character (OnlineRun::load_character), card B is absent; every engine
     // of the session plays from it, never from the player's own saves.
-    auto open_room = [&](dw4::game::OnlineRoom room, std::unique_ptr<dw4::game::online::HttpWorker> http, std::string& error) -> bool {
+    auto open_room = [&](dw4::game::OnlineRoom room, std::unique_ptr<dw4::game::online::HttpWorker> http, bool created,
+                         std::string& error) -> bool {
         std::cout << "online: room " << room.code << " '" << room.room_name << "' as " << room.account << " (difficulty "
                   << room.settings.difficulty << ", camera " << room.settings.camera_mode << ", light " << room.settings.light_mode << ")\n";
         room.endpoint = http->endpoint();
@@ -922,6 +956,8 @@ int run(const Options& options, dw4::game::Settings& settings) {
             online.reset();
             return false;
         }
+        // The online account's achievements in the room (SEAMLESS.md 11).
+        online_achievements = make_online_achievements(*online, created, options.smoke_frames != 0, online_folder);
         return true;
     };
     if (options.online.wanted()) {
@@ -930,7 +966,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
         std::string error;
         auto room = dw4::game::online_enter_room(*http, options.online, data_hash(engine.resources()), DW4_PC_VERSION, online_folder, error);
         if (!room) throw std::runtime_error("online: " + error);
-        if (!open_room(std::move(*room), std::move(http), error)) throw std::runtime_error("online: " + error);
+        if (!open_room(std::move(*room), std::move(http), !options.online.create.empty(), error)) throw std::runtime_error("online: " + error);
         first_stage = "stagis10"; // the title, as every online session starts
     }
     // The account and room screens (online_ui.hpp): the title's Online panel
@@ -1421,13 +1457,23 @@ int run(const Options& options, dw4::game::Settings& settings) {
             step.hosting = net.active() && net.role() == dw4::game::NetSession::Role::host;
             step.online_players = net.active() ? net.start().players : 0;
             step.stage_serial = stage_key();
+            // An online room (SEAMLESS.md 11): this machine's slot only, the
+            // story is the room owner's, the room's members count.
+            const int room_slot = online ? std::clamp(own_slot(), 0, 3) : 0;
+            if (online) {
+                step.online = true;
+                step.own_slot = room_slot;
+                step.shared_story = true;
+                step.story_owner = step.hosting = online_achievements && online_achievements->owner();
+                step.online_players = online_achievements ? online_achievements->room_members() : 1;
+            }
             if (const auto* sys = engine.get<dw4::engine::GameSystem>()) {
                 step.difficulty = sys->difficulty;
                 for (int slot = 0; slot < 4; ++slot) {
                     const auto& player = sys->players[std::size_t(slot)];
                     auto& seen = step.players[std::size_t(slot)];
                     seen.joined = player.joined && player.stats.ready;
-                    seen.local = !net.active() || slot == net.local_slot();
+                    seen.local = online ? slot == room_slot : !net.active() || slot == net.local_slot();
                     seen.unique = player.unique;
                     seen.level = player.stats.level;
                     seen.exp = player.stats.exp;
@@ -1446,7 +1492,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     seen.form_levels = player.base_level;
                     seen.techniques = int(player.wazalist.size());
                 }
-                for (const auto& [card, owned] : sys->players[0].cards) step.cards += owned == 1 ? 1 : 0;
+                for (const auto& [card, owned] : sys->players[std::size_t(room_slot)].cards) step.cards += owned == 1 ? 1 : 0;
             }
             // (find, not operator[]: a read must not add entries.)
             for (std::int32_t flag = 89; flag <= 98; ++flag)
@@ -1473,7 +1519,19 @@ int run(const Options& options, dw4::game::Settings& settings) {
             if (online) online->port_events(events);
             if (!achievements_on()) return;
             last_gate = achievement_gate();
-            const auto unlocked = achievements.observe(achievement_step(), events, last_gate, randomized(), unix_now());
+            const auto step = achievement_step();
+            const auto unlocked = achievements.observe(step, events, last_gate, randomized(), unix_now());
+            // The online account (SEAMLESS.md 11): only the member's own live
+            // ticks ("was there"); a catch-up replays without port events.
+            if (online_achievements && online && !engine.replay()) {
+                using Mode = dw4::game::online::Mode;
+                const auto mode = online->session().mode();
+                if (mode == Mode::solo || mode == Mode::sealed || mode == Mode::transition)
+                    for (const auto& unlock : online_achievements->observe(step, events, last_gate, randomized(), unix_now(), steady_seconds()))
+                        if (unlock.def && options.smoke_frames)
+                            std::printf("[%d] online achievement %s (%s)\n", frame, unlock.def->id,
+                                        dw4::game::achievement_online_kind_name(dw4::game::find_achievement_online(unlock.def->id)->kind));
+            }
             for (const auto& unlock : unlocked) {
                 if (!unlock.def) continue;
                 if (options.smoke_frames)
@@ -2034,6 +2092,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
             // none).
             if (online) {
                 online->pass(steady_seconds());
+                if (online_achievements) online_achievements->pass(steady_seconds());
                 steps = online->session().steps_allowed(steps, pass_seconds);
                 if (online->session().paces()) accumulator = 0;
                 if (options.smoke_frames && steps == 0) std::this_thread::sleep_for(std::chrono::milliseconds(1));
@@ -2596,6 +2655,13 @@ int run(const Options& options, dw4::game::Settings& settings) {
                         std::cout << "online: character: " << notice << '\n';
                         toasts.push_back({"Online character", notice, std::chrono::steady_clock::now() + std::chrono::seconds(10)});
                     }
+                // The online account's achievements: new unlocks as toasts, refusals in the log.
+                if (online_achievements)
+                    for (auto& notice : online_achievements->take_notices()) {
+                        std::cout << "online: " << notice << '\n';
+                        if (notice.rfind("Online achievement: ", 0) == 0 && (settings.achievement_popups || options.smoke_frames))
+                            toasts.push_back({"Online", notice, std::chrono::steady_clock::now() + std::chrono::seconds(6)});
+                    }
                 // The loading screen's line, the connection, the leave prompt.
                 const auto overlay = session.overlay(online_now);
                 std::string line = overlay.loading;
@@ -2626,6 +2692,9 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     const auto reason = dw4::game::online::tidy_reason(session.close_reason());
                     std::cout << "online: " << reason << '\n';
                     toasts.push_back({"Online", reason, std::chrono::steady_clock::now() + std::chrono::seconds(8)});
+                    // (Out of the room: open reports wait in the account's profile for the next one.)
+                    if (online_achievements) online_achievements->save();
+                    online_achievements.reset();
                     online.reset();
                     if (audio) SDL_SetAudioStreamFrequencyRatio(audio, 1.0f);
                     online_audio_ratio = 1.0f;
@@ -2652,7 +2721,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 lobby->update(steady_seconds(), title_online_shown || (show_menu && online_tab_shown) || ui_script.active());
                 if (online && lobby->take_leave_request()) {
                     online->leave_prompt = false;
-                    online->leave();
+                    leave_room();
                 }
                 if (auto ready = lobby->take_ready()) {
                     dw4::game::OnlineRoom room;
@@ -2671,7 +2740,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     std::string error;
                     bool opened = false;
                     try {
-                        opened = open_room(room, std::move(http), error);
+                        opened = open_room(room, std::move(http), ready->created, error);
                     } catch (const std::exception& e) {
                         error = e.what();
                     }
@@ -3449,7 +3518,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                                         dw4::game::online::mode_name(online->session().mode()), online->session().delay());
                             if (auto* character = online->character()) ImGui::TextDisabled("%s", character->status_text().c_str());
                             if (online->leave_prompt) ImGui::TextColored(ImVec4(1, 0.85f, 0.3f, 1), "Leave room?");
-                            if (ImGui::Button("Leave room")) online->leave();
+                            if (ImGui::Button("Leave room")) leave_room();
                             if (online->leave_prompt && ImGui::Button("Stay")) online->leave_prompt = false;
                         }
                         ImGui::EndTabItem();
@@ -3880,7 +3949,8 @@ int run(const Options& options, dw4::game::Settings& settings) {
                         dw4::game::online::mode_name(online->session().mode()), online->session().inst(), online->session().visit(),
                         online->session().tick(), online->session().own_slot(), online->session().present(),
                         static_cast<unsigned long long>(online->link().net_fingerprint()));
-            online->leave();
+            leave_room();
+            online_achievements.reset();
             online.reset();
             std::error_code ignored;
             if (!session_cards.empty()) std::filesystem::remove_all(session_cards, ignored);

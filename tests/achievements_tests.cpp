@@ -1,6 +1,9 @@
 // Local achievements: the rule list, the profile file, and the tracker's
 // rules and gates (cheats, rebalancing, save states, tests and bots, the
-// randomizer's own category) on synthetic steps and engine events.
+// randomizer's own category) on synthetic steps and engine events; the
+// online catalogue against data/online/achievements.json (argument 1) and
+// the rules of online rooms (own slot, owner, "was there").
+// `dw4_achievements_tests --export FILE` writes the catalogue file.
 #include "achievements.hpp"
 
 #include <cstdlib>
@@ -8,6 +11,7 @@
 #include <fstream>
 #include <iostream>
 #include <set>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 
@@ -299,16 +303,138 @@ void counters_and_state() {
     check(tracker.dirty(), "changes mark the profile for saving");
 }
 
+// The online catalogue (docs/SEAMLESS.md 11): one online form per
+// achievement, its goals in the server's units agree with the local goals,
+// and the checked-in JSON the server's tests read is this table.
+void online_catalogue(const std::string& json_file) {
+    const auto list = achievement_list();
+    const auto online = achievement_online_list();
+    check(online.size() == list.size() && list.size() == 72, "72 achievements, each with its online form");
+    std::set<std::string> server_stats;
+    for (const auto& c : achievement_online_counters()) server_stats.insert(c.server_stat);
+    for (std::size_t i = 0; i < list.size(); ++i) {
+        const auto& def = list[i];
+        const auto& o = online[i];
+        const std::string id = def.id;
+        check(id == o.id, "the same order: " + id);
+        check(find_achievement_online(id) == &o, "online lookup " + id);
+        check((o.kind == AchievementOnlineKind::stat) == (o.server_stat != nullptr), "a server counter exactly for stats: " + id);
+        if (o.kind == AchievementOnlineKind::stat) {
+            check(o.goal > 0 && server_stats.count(o.server_stat), "a stat's counter is batched: " + id);
+            // The local goal in the server's units.
+            const std::string local = def.stat ? def.stat : "";
+            const std::int64_t expected = local == "play_minutes" ? def.goal * 60 : def.goal;
+            check(o.goal == expected, "the server's goal is the local one: " + id);
+        }
+        if (o.kind == AchievementOnlineKind::state && def.stat)
+            check(o.goal == def.goal, "a state's goal is the local one: " + id);
+        if (o.owner_only) check(o.kind == AchievementOnlineKind::event && def.category == AchievementCategory::challenge, "owner only: story challenges " + id);
+        check(*achievement_category_key(def.category), "a server category: " + id);
+    }
+    check(find_achievement_online("speed_normal")->goal == 8 * 3600 && find_achievement_online("speed_fast")->goal == 4 * 3600,
+          "the speed limits of the client: 8 h and 4 h");
+    check(find_achievement_online("lowlevel_apocalymon")->goal == 12, "Underdog at level 12");
+    const auto text = achievement_catalogue_json();
+    check(text.find('\r') == std::string::npos && text.ends_with("]\n}\n"), "LF, complete");
+    if (json_file.empty()) return;
+    std::ifstream in(json_file, std::ios::binary);
+    check(bool(in), "the checked-in catalogue " + json_file);
+    std::ostringstream file;
+    file << in.rdbuf();
+    std::string checked_in = file.str();
+    std::erase(checked_in, '\r'); // (a checkout with CRLF line ends)
+    check(checked_in == text, "data/online/achievements.json is the client's catalogue (regenerate: dw4_achievements_tests --export FILE)");
+}
+
+// Online rooms: this machine's slot is the story character, the owner alone
+// gets the story challenges, a story collection counts only when it rises here.
+void online_rooms() {
+    auto room_step = [](int own, bool owner) {
+        AchievementStep step;
+        step.stage = "stagBS06";
+        step.live = true;
+        step.stage_serial = 7;
+        step.online = true;
+        step.online_players = 2;
+        step.shared_story = true;
+        step.own_slot = own;
+        step.story_owner = owner;
+        for (int s = 0; s < 2; ++s) {
+            auto& p = step.players[std::size_t(s)];
+            p.joined = true;
+            p.local = s == own;
+            p.unique = 100 + std::uint32_t(s);
+            p.level = 1;
+            p.hp = p.max_hp = 100;
+        }
+        return step;
+    };
+    // The guest in slot 1 (slot 0 is the owner): the clear, not the challenges.
+    {
+        AchievementTracker guest;
+        auto step = room_step(1, false);
+        guest.observe(step, {}, AchievementGate::open, false, 1);
+        check(guest.profile().characters.count(101) && !guest.profile().characters.count(100), "only the own slot's character");
+        step.players[1].level = 10;
+        step.players[0].level = 90;
+        const PortEvent daemon[] = {boss("devl3", 0), {Kind::story_flag, -1, 406, 1, {}}};
+        const auto unlocks = guest.observe(step, daemon, AchievementGate::open, false, 2);
+        check(has(unlocks, "story_daemon") && has(unlocks, "clear_normal"), "was there");
+        check(!has(unlocks, "speed_fast") && !has(unlocks, "deathless_clear") && !has(unlocks, "rookie_clear"), "a guest: no story challenges");
+        const PortEvent apocalymon[] = {boss("apocaly")};
+        check(has(guest.observe(step, apocalymon, AchievementGate::open, false, 3), "lowlevel_apocalymon"), "the own slot's level (10), not slot 0's (90)");
+    }
+    // The owner in slot 1: its own character's run.
+    {
+        AchievementTracker owner;
+        auto step = room_step(1, true);
+        owner.observe(step, {}, AchievementGate::open, false, 1);
+        const PortEvent clear[] = {{Kind::story_flag, -1, 406, 1, {}}};
+        const auto unlocks = owner.observe(step, clear, AchievementGate::open, false, 2);
+        check(has(unlocks, "clear_normal") && has(unlocks, "speed_fast") && has(unlocks, "deathless_clear"), "the owner's challenges");
+        const PortEvent card[] = {{Kind::card, 0, 9, 2, {}}};
+        check(!has(owner.observe(step, card, AchievementGate::open, false, 3), "card_rare"), "slot 0's card is not this machine's");
+    }
+    // Numemon: the room story's flags count only when one rises here.
+    {
+        AchievementTracker member;
+        auto step = room_step(0, false);
+        step.numemon_freed = 10;
+        check(!has(member.observe(step, {}, AchievementGate::open, false, 1), "numemon_free"), "flags from the room story");
+        const PortEvent freed[] = {{Kind::story_flag, -1, 95, 1, {}}};
+        check(has(member.observe(step, freed, AchievementGate::open, false, 2), "numemon_free"), "the tenth freed here");
+        AchievementTracker offline;
+        auto local = live_step();
+        local.numemon_freed = 10;
+        check(has(offline.observe(local, {}, AchievementGate::open, false, 1), "numemon_free"), "offline: the flags count as they are");
+    }
+    // Bosses are counted for the online counters.
+    {
+        AchievementTracker t;
+        const PortEvent e[] = {boss("blosso")};
+        t.observe(live_step(), e, AchievementGate::open, false, 1);
+        check(t.profile().stat("bosses") == 1, "a boss counted");
+    }
+}
+
 } // namespace
 
-int main() {
+int main(int argc, char** argv) {
     try {
+        // dw4_achievements_tests --export FILE: writes data/online/achievements.json.
+        if (argc >= 3 && std::string(argv[1]) == "--export") {
+            std::ofstream(argv[2], std::ios::binary | std::ios::trunc) << achievement_catalogue_json();
+            std::cout << "wrote " << argv[2] << '\n';
+            return 0;
+        }
         rule_list();
         profile_file();
         bosses_and_gates();
         damage_and_stages();
         story_runs();
         counters_and_state();
+        online_catalogue(argc >= 2 ? argv[1] : "");
+        online_rooms();
         std::cout << checks << " achievement checks passed\n";
         return 0;
     } catch (const std::exception& error) {

@@ -18,6 +18,8 @@
     <!-- The room story's census and golden vectors (SEAMLESS.md 8), shared with the game client's ctest online_story. -->
     <Content Include="..\..\..\..\data\online\story_sets.json" Link="story\story_sets.json" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="..\..\..\..\data\online\story_golden.json" Link="story\story_golden.json" CopyToOutputDirectory="PreserveNewest" />
+    <!-- The game client's achievement catalogue (src/game/achievements.cpp, docs/SEAMLESS.md 11). -->
+    <Content Include="..\..\..\..\data\online\achievements.json" Link="data\achievements.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
   <ItemGroup>
     <Using Include="Xunit" />

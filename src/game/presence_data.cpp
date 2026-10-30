@@ -174,6 +174,17 @@ std::string area_display_name(const AreaInfo& area) {
     return std::string(area.region) + ": " + area.place;
 }
 
+std::string area_names_json() {
+    std::string out = "{\n  \"format\": \"dw4-areas/1\",\n  \"source\": \"src/game/presence_data.cpp (dw4_presence_tests --export-areas)\",\n";
+    out += "  \"areas\": [\n";
+    for (std::size_t i = 0; i < std::size(kAreas); ++i) {
+        // (Folders and names are plain ASCII without quotes or backslashes.)
+        out += std::string("    {\"stage\": \"") + kAreas[i].folder + "\", \"name\": \"" + area_display_name(kAreas[i]) + "\"}";
+        out += i + 1 < std::size(kAreas) ? ",\n" : "\n";
+    }
+    return out + "  ]\n}\n";
+}
+
 bool is_menu_stage(std::string_view stage) {
     return stage.size() >= 6 && equal_folded(stage.substr(0, 6), "stagis");
 }

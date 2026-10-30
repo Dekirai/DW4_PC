@@ -69,9 +69,10 @@ public sealed class AchievementService(
             return DomainError.Invalid("server_tracked", "The server unlocks this achievement itself.");
         var session = await CheckSessionAsync(accountId, context, ct);
         if (!session.Ok) return session.Error!;
-        var (room, players) = session.Value;
+        var (room, players, roomPlayers) = session.Value;
 
-        var check = new AchievementCheck(definition.Goal ?? 0, evidence, players, room is not null, room?.IsHost == true, play.StoryFloorMs);
+        var check = new AchievementCheck(definition.Goal ?? 0, evidence, players, room is not null, room?.IsHost == true, play.StoryFloorMs,
+            roomPlayers);
         if (AchievementRules.CheckEvent(definition.Code, check) is { } reason)
             return DomainError.Invalid("requirement_not_met", reason);
 
@@ -160,7 +161,7 @@ public sealed class AchievementService(
     {
         var session = await CheckSessionAsync(accountId, context, ct);
         if (!session.Ok) return [];
-        var (room, players) = session.Value;
+        var (room, players, _) = session.Value;
         var ruleset = RulesetOf(room, context);
         var now = Clock.Now(time);
         var unlocked = new List<string>();
@@ -216,8 +217,11 @@ public sealed class AchievementService(
 
     private static DomainError UnknownUnlock() => DomainError.NotFound("unlock_not_found", "The account has no such unlock.");
 
-    /// <summary>Ranked rules, version gate and the room check shared by unlocks and stats.</summary>
-    private async Task<Result<(RoomMembership? Room, int? Players)>> CheckSessionAsync(long accountId, PlayContext? context, CancellationToken ct)
+    /// <summary>
+    /// Ranked rules, version gate and the room check shared by unlocks and stats; the instance's and the room's player counts
+    /// as the client reported them, at most the room's real member count.
+    /// </summary>
+    private async Task<Result<(RoomMembership? Room, int? Players, int? RoomPlayers)>> CheckSessionAsync(long accountId, PlayContext? context, CancellationToken ct)
     {
         if (RankedRules.Check(context) is { } unranked) return DomainError.Invalid(unranked.Code, unranked.Message);
         if (versions.Check(context) is { } outdated) return outdated;
@@ -233,8 +237,10 @@ public sealed class AchievementService(
             return DomainError.Forbidden("room_required", "Achievements count only in online rooms.");
         }
         int? players = context?.Players;
+        int? roomPlayers = context?.RoomPlayers;
         if (room is not null && players is not null) players = Math.Min(players.Value, room.Members);
-        return (room, players);
+        if (room is not null && roomPlayers is not null) roomPlayers = Math.Min(roomPlayers.Value, room.Members);
+        return (room, players, roomPlayers);
     }
 
     /// <summary>The room's randomizer setting decides (a client cannot report a randomizer room as standard).</summary>

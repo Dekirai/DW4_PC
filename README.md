@@ -364,7 +364,11 @@ leaves the PC), builds a development client (`build\OnlineDev`, needs
 closing both windows stops the server. `-Data` names the game data (default:
 the `[data]` path of `build\Game\settings.ini`), `-Card` a card folder whose
 saves both start with. Player builds connect only to the project's server
-and do not run yet (its certificate pins are still empty).
+and take its certificate pins from the build (`local/online_pins.txt` or
+`-DDW4_ONLINE_PINS`, [server/DW4Online/deploy/DEPLOY.md](server/DW4Online/deploy/DEPLOY.md)
+6.4); a build without them refuses the server. In a room, achievements also
+count for the online account (only your own player; the story challenges
+only for the room owner, whose story it is), shown on the server's website.
 
 The title menu has a third entry below Game Start and Option: **Online**
 (the same lettering, the cursor moves to it with down from Option). Choosing

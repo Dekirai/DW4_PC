@@ -193,3 +193,8 @@ dl.facts dd { margin: 0; }
 .w-points { width: 5.5rem; }
 .w-rarity { width: 6rem; }
 .w-you { width: 6.5rem; }
+
+/* The room page: where a room's players are (its instances per stage). */
+ul.stages { margin: 0.25rem 0 0; padding-left: 1.2rem; }
+ul.stages li { margin: 0.1rem 0; }
+tr.room-row td { border-bottom: none; }

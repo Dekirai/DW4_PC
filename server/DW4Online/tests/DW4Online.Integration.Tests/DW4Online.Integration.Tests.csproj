@@ -24,6 +24,10 @@
     <Compile Include="..\DW4Online.Tests\Samples.cs" Link="Samples.cs" />
   </ItemGroup>
   <ItemGroup>
+    <!-- The game client's achievement catalogue (src/game/achievements.cpp, docs/SEAMLESS.md 11). -->
+    <Content Include="..\..\..\..\data\online\achievements.json" Link="data\achievements.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+  <ItemGroup>
     <Using Include="Xunit" />
   </ItemGroup>
 </Project>

@@ -63,7 +63,7 @@ add_library(dw4_online STATIC
   src/game/online/pacing.cpp src/game/online/server_config.cpp src/game/online/http.cpp src/game/online/token_store.cpp
   src/game/online/json.cpp src/game/online/room_settings.cpp src/game/online/api.cpp src/game/online/transport.cpp
   src/game/online/session.cpp src/game/online/presence.cpp src/game/online/engine_adapter.cpp src/game/online/lobby_api.cpp
-  src/game/online/lobby.cpp)
+  src/game/online/lobby.cpp src/game/online/achievement_api.cpp)
 target_include_directories(dw4_online PUBLIC src/game)
 target_link_libraries(dw4_online PUBLIC dw4_engine)
 if(DW4_ONLINE_DEV)
@@ -81,6 +81,57 @@ endif()
 # The online character (docs/SEAMLESS.md 9): the virtual card, the uploads
 # with If-Match, the automatic saves; the cloud backup of the local save.
 target_sources(dw4_online PRIVATE src/game/online/character.cpp src/game/online/cloud_save.cpp)
+# The SPKI pins of the DW4Online server's certificate (docs/SEAMLESS.md 10,
+# server/DW4Online/deploy/DEPLOY.md 6.1), a build step: never a key in the
+# repository. DW4_ONLINE_PINS="<in use>,<spare>" or, when it is empty, the
+# pins in DW4_ONLINE_PINS_FILE (default local/online_pins.txt, gitignored;
+# deploy/print-pins.ps1 -Out writes it: one pin per line, # comments). A pin
+# is the base64 SHA-256 of the certificate's SubjectPublicKeyInfo (44
+# characters). Without pins the client refuses the server (fail closed);
+# DW4_ONLINE_REQUIRE_PINS=ON makes that a configure error (release packages).
+set(DW4_ONLINE_PINS "" CACHE STRING "SPKI pins of the DW4Online server: in use[,spare] (DEPLOY.md 6.1)")
+set(DW4_ONLINE_PINS_FILE "${CMAKE_CURRENT_SOURCE_DIR}/local/online_pins.txt" CACHE FILEPATH "SPKI pins of the DW4Online server, one per line (DEPLOY.md 6.1)")
+option(DW4_ONLINE_REQUIRE_PINS "Fail the configure step without DW4Online server pins (release packages)" OFF)
+set(DW4_PIN_LIST "")
+set(dw4_pins_source "DW4_ONLINE_PINS")
+if(NOT DW4_ONLINE_PINS STREQUAL "")
+  string(REPLACE "," ";" DW4_PIN_LIST "${DW4_ONLINE_PINS}")
+elseif(EXISTS "${DW4_ONLINE_PINS_FILE}")
+  set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${DW4_ONLINE_PINS_FILE}")
+  file(STRINGS "${DW4_ONLINE_PINS_FILE}" dw4_pin_lines)
+  foreach(line IN LISTS dw4_pin_lines)
+    if(NOT line MATCHES "^[ \t]*#")
+      list(APPEND DW4_PIN_LIST "${line}")
+    endif()
+  endforeach()
+  set(dw4_pins_source "${DW4_ONLINE_PINS_FILE}")
+endif()
+list(TRANSFORM DW4_PIN_LIST STRIP)
+list(REMOVE_ITEM DW4_PIN_LIST "")
+list(LENGTH DW4_PIN_LIST dw4_pin_count)
+if(dw4_pin_count GREATER 2)
+  message(FATAL_ERROR "DW4Online server pins: at most two (in use, spare), ${dw4_pin_count} in ${dw4_pins_source}")
+endif()
+foreach(pin IN LISTS DW4_PIN_LIST)
+  string(LENGTH "${pin}" pin_length)
+  if(NOT pin MATCHES "^[A-Za-z0-9+/]+=$" OR NOT pin_length EQUAL 44)
+    message(FATAL_ERROR "DW4Online server pin '${pin}' (${dw4_pins_source}) is not a base64 SHA-256 (44 characters ending in '=')")
+  endif()
+endforeach()
+if(dw4_pin_count GREATER 0)
+  list(GET DW4_PIN_LIST 0 dw4_pin_in_use)
+  target_compile_definitions(dw4_online PRIVATE "DW4_SERVER_PIN_IN_USE=\"${dw4_pin_in_use}\"")
+  if(dw4_pin_count GREATER 1)
+    list(GET DW4_PIN_LIST 1 dw4_pin_spare)
+    target_compile_definitions(dw4_online PRIVATE "DW4_SERVER_PIN_SPARE=\"${dw4_pin_spare}\"")
+  endif()
+  message(STATUS "DW4Online server pins: ${dw4_pin_count} (${dw4_pins_source})")
+elseif(DW4_ONLINE_REQUIRE_PINS)
+  message(FATAL_ERROR "DW4Online server pins missing: set DW4_ONLINE_PINS or write ${DW4_ONLINE_PINS_FILE} (server/DW4Online/deploy/DEPLOY.md 6.1)")
+else()
+  message(STATUS "DW4Online server pins: none (the online client refuses the server until they are set, DEPLOY.md 6.1)")
+endif()
+string(REPLACE ";" "," DW4_PINS_JOINED "${DW4_PIN_LIST}")
 
 # Development tools: IGB inspection and logical resource catalog.
 add_executable(dw4_inspect tools/dw4_inspect.cpp)
@@ -119,7 +170,7 @@ if(BUILD_TESTING)
   add_test(NAME port_events COMMAND dw4_port_events_tests)
   add_executable(dw4_presence_tests tests/presence_tests.cpp src/game/discord_ipc.cpp src/game/discord_presence.cpp src/game/presence_data.cpp)
   target_include_directories(dw4_presence_tests PRIVATE src/game)
-  add_test(NAME presence COMMAND dw4_presence_tests)
+  add_test(NAME presence COMMAND dw4_presence_tests "${CMAKE_CURRENT_SOURCE_DIR}/data/online/areas.json")
   add_executable(dw4_labels_tests tests/labels_tests.cpp src/game/overhead_labels.cpp src/game/presence_data.cpp)
   target_include_directories(dw4_labels_tests PRIVATE src/game)
   target_link_libraries(dw4_labels_tests PRIVATE dw4_engine)
@@ -141,7 +192,12 @@ if(BUILD_TESTING)
   add_executable(dw4_achievements_tests tests/achievements_tests.cpp src/game/achievements.cpp)
   target_include_directories(dw4_achievements_tests PRIVATE src/game)
   target_link_libraries(dw4_achievements_tests PRIVATE dw4_engine)
-  add_test(NAME achievements COMMAND dw4_achievements_tests)
+  add_test(NAME achievements COMMAND dw4_achievements_tests "${CMAKE_CURRENT_SOURCE_DIR}/data/online/achievements.json")
+  # The online account's achievements (docs/SEAMLESS.md 11) against a fake request queue.
+  add_executable(dw4_online_achievements_tests tests/online_achievements_tests.cpp src/game/online_achievements.cpp src/game/achievements.cpp)
+  target_include_directories(dw4_online_achievements_tests PRIVATE src/game)
+  target_link_libraries(dw4_online_achievements_tests PRIVATE dw4_online)
+  add_test(NAME online_achievements COMMAND dw4_online_achievements_tests)
   # The online client (asset free; the env test reads the sources).
   # (online_story: the story sets and golden vectors of data/online, SEAMLESS.md 8.)
   foreach(suite online_cpu_gate online_env online_wire online_session online_api online_story online_lobby)
@@ -155,6 +211,8 @@ if(BUILD_TESTING)
   add_executable(dw4_online_character_tests tests/online_character_tests.cpp)
   target_link_libraries(dw4_online_character_tests PRIVATE dw4_online)
   add_test(NAME online_character COMMAND dw4_online_character_tests)
+  # (The server pins this build carries, for the endpoint check.)
+  target_compile_definitions(dw4_online_api_tests PRIVATE "DW4_EXPECTED_PINS=\"${DW4_PINS_JOINED}\"")
 endif()
 
 if(DW4_BUILD_APP)
@@ -210,7 +268,8 @@ if(DW4_BUILD_APP)
   add_executable(dw4_game src/game/game_main.cpp src/game/gl_renderer.cpp src/game/movie_decoder.cpp src/game/settings.cpp src/game/controls.cpp src/game/interpolation.cpp src/game/texture_pack.cpp src/game/rvz.cpp src/game/netplay.cpp src/game/save_store.cpp src/game/mods.cpp src/game/test_path.cpp src/game/campaign.cpp src/game/online_script.cpp
     src/game/discord_ipc.cpp src/game/discord_presence.cpp src/game/presence_data.cpp src/game/presence_art.cpp
     src/game/overhead_labels.cpp src/game/overhead_labels_draw.cpp src/game/achievements.cpp
-    src/game/randomizer_save.cpp src/game/dev_present.cpp src/game/online_run.cpp src/game/online_ui.cpp src/game/online_ui_script.cpp src/game/title_entry.cpp)
+    src/game/randomizer_save.cpp src/game/dev_present.cpp src/game/online_run.cpp src/game/online_ui.cpp src/game/online_ui_script.cpp src/game/title_entry.cpp
+    src/game/online_achievements.cpp)
   target_include_directories(dw4_game PRIVATE ${pl_mpeg_src_SOURCE_DIR} ${stb_src_SOURCE_DIR})
   target_compile_definitions(dw4_game PRIVATE DW4_PC_VERSION="${PROJECT_VERSION}")
   target_link_libraries(dw4_game PRIVATE dw4_engine dw4_online imgui zstd_decoder SDL3::SDL3 OpenGL::GL)

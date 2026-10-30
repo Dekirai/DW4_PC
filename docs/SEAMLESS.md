@@ -2369,6 +2369,18 @@ the server).
   (`New-SelfSignedCertificate ... NonExportable`) makes a new key, hence a new
   pin, on every renewal. DEPLOY.md switches to a key made once with openssl and
   kept, and gets a script that prints the pin the client build needs.
+  *Built in round S2:* `deploy/tls-key.ps1` makes two keys once on the
+  development PC (in use and spare, RSA 3072 under a passphrase, kept offline)
+  and certificates on a kept key (a PFX that `new-selfsigned-cert.ps1
+  -ImportPfx` installs on the server), so a renewal or a new server keeps the
+  pin; `deploy/print-pins.ps1` prints the pins of keys, certificates, PFX files
+  or a running server (a handshake only) and writes `local/online_pins.txt`
+  (gitignored). The pins reach `server_pins.hpp` by a build step: CMake takes
+  `DW4_ONLINE_PINS` or that file, checks the form (two base64 SHA-256 at most)
+  and passes them to `dw4_online` only; `DW4_ONLINE_REQUIRE_PINS=ON` fails a
+  release configure without them (DEPLOY.md 6.1 and 6.4). No key ever enters
+  the repository (`.gitignore` and `publish.ps1` refuse key and certificate
+  files). The relay ticket key is made once and kept as well (DEPLOY.md 4).
 
 **Built in round S2 (r56, UI lane).** The model is
 `src/game/online/lobby.hpp` (`OnlineLobby`, no ImGui, tested over a
@@ -2505,6 +2517,63 @@ are `src/game/online/lobby_api.hpp`; the ImGui screens are
   boss falls gets the plain "was there" credit, never "under 4 hours".
 - Offline unlocks stay local in the F1 Achievements tab (r48 default).
 
+**Built in round S2 (achievements-deploy lane).**
+
+- *One catalogue.* Every client achievement has its online form in
+  `src/game/achievements.cpp` (`AchievementOnline`: kind, the server's goal in its
+  units, the server counter of a stat, owner-only), and `dw4_achievements_tests
+  --export` writes the catalogue as `data/online/achievements.json` (`format`
+  `dw4-achievements/1`; per achievement `id`, `title`, `description`, `category`
+  as the server's key, `kind` event / stat / state, `goal`, `stat`, `ownerOnly`).
+  The ctest `achievements` compares the file with the table, the server's
+  `AchievementRulesTests` compare it with migration
+  `server/DW4Online/sql/0008_achievement_catalogue.sql` and the rules with 0008,
+  and an integration test compares it with the migrated database. 0008 keeps the
+  ids of the 52 shared codes (their text, kind, goal and counter become the
+  client's), adds the client's other 20 as ids 73-92 and retires the 20 server-only
+  codes of 0002 (`active = 0`, never reused); tiers, points and the hidden flag
+  stay the server's. Kinds: 42 events (story, bosses, challenges, Digivolution!,
+  techniques, Lucky Draw, Numemon Liberator, quests, Ouch, Second Chance,
+  together), 10 stats (`enemies_defeated`, `critical_hits`, `numemon_defeated`,
+  `play_seconds` 3,600 / 36,000 / 360,000 / 1,800,000), 20 states (levels, forms,
+  cards, bits, devices; the server's rules now follow the client: eight and all
+  forms, Form Master = 16 forms at level 99, Bit Tycoon in the wallet, devices in
+  the folder). Speed goals 8 h / 4 h (`speed_normal` / `speed_fast`, seconds of
+  in-game time), Underdog level 12.
+- *Online sync* (`src/game/online_achievements.hpp`, `online/achievement_api.hpp`):
+  a second `AchievementTracker` with a profile per account
+  (`saves/online/<account>/achievements.dat`; test runs `DW4_ONLINE_PROFILE`)
+  counts this machine's player with the local rules. The achievement step of a
+  room (the local tracker's too) marks only the own slot as local
+  (`AchievementStep::own_slot`), takes the own slot's cards, and is
+  `shared_story`: the story challenges need `story_owner`, a Numemon freed counts
+  only when its flag rises in a live step here, a card only in slot 0 (the shops
+  are solo hub stages). Event unlocks go out at once with the ranked context
+  (`roomCode`, `players` = the own stage instance, `roomPlayers` = the room,
+  the room's randomizer, difficulty, protocol, client version; never cheats,
+  rebalancing or save states) and evidence (`igtMs` = the owner's character's
+  live fields for speed goals and its clears, `level` for Underdog, `stage`), at
+  most four in flight; the six counters (`kills`, `criticals`, `numemon_kills`,
+  `bosses`, `defeats`, `play_fields` as seconds) as deltas every 60 s against the
+  profile's `sent.<key>`; `GET /rooms/{code}` every 30 s for the room's members
+  and `you.owner`. An unanswered report (no answer, 401, 408, 429, 5xx) is tried
+  again (10 s, doubling, at most 5 min), a refused one dropped and logged; F1's
+  *Leave room* and the end of the game send the last counters and open unlocks
+  (two seconds at most), a closed session keeps them in `<profile>.pending` for
+  the next room. The online tracker sees only steps the session runs as the
+  member's own live ticks (solo, sealed, transition), never a catch-up
+  (`Engine::replay`) or an observer's tick before its JOIN.
+- *Server.* `PlayContext.roomPlayers` (1-10, capped at the room's members like
+  `players`): Room Host (owner, three or more in the room) and Raid Night (two
+  or more) read it, the couch goals read the instance's `players`; the story
+  challenges are refused from anyone but the room owner
+  (`AchievementRules.OwnerOnlyCodes`), the plain clears count for everybody who
+  was there.
+- *Checked:* ctest `achievements` and `online_achievements` (a fake request
+  queue: bodies, context, events only, the own slot, the owner, batches,
+  retries, refusals, the pending file); server unit 133, integration and
+  end-to-end 70 + 1 skipped; scenario A1 on real hidden clients (section 16).
+
 ## 12. Name tags and presence
 
 - Members of the own instance are engine players: the existing overhead labels
@@ -2542,10 +2611,10 @@ anyway; joining goes through the room list.
 | Relay | `DW4Online.Relay`: DW4R2 hub replacing the splice: one connection per member, frames, instance groups (solo-led and sealed), server-paced sealing at 59.94 Hz on a dedicated timer thread with immediate fill, delay suggestions from the arrival margins, event stamping, snapshot and log store with canonical hashes and fork lists (6.8), state delivery for join / co-arrival / resync / resume with its own rate limit, fingerprint vote, presence fan-out, pings, the 64 KB/s bucket for game frames |
 | Rooms | `RoomService`: instances as lockstep groups (id, stage, visit, context hash, slots, parent and fork frame, departing, boss lock, joinable), barrier decisions DISSOLVE / co-arrival / JOIN / NEW with holds and the boss choice (3.4), catch-up estimates from the members' replay rates, forks of both kinds, in-band JOIN and LEAVE, preferred slots, no instance end when its first member leaves (`EndInstanceLocked` goes), room-scoped relay tickets, the settings hash, the relay connection as heartbeat. `POST /rooms/{code}/stage` and `/stage/leave` are retired; the room state lists instances with stage and members. Room settings gain camera mode and light mode |
 | Story | migration with `online_story`; `StoryMerge` in the domain with the golden vectors; plausibility table from the census; pending sets with STORY_ACK; the owner-away setting with the session's dropped set; `GET /online-character` composes, `PUT` ignores story bytes; `GET /rooms/{code}/story` for the website and debugging |
-| Achievements | catalogue migration to the client's ids and thresholds |
+| Achievements | catalogue migration to the client's ids and thresholds (built in S2: migration 0009 (0008 is `online_story`), `data/online/achievements.json`, `roomPlayers`, owner-only story challenges; 11) |
 | Config | `Sealing:MaxDelayTicks` (15, measured in S1, 6.4), `Sealing:LateTarget` (0.001), `Relay:ReconnectSeconds` (10), `Relay:LagLeaveSeconds` (10), `Relay:StateBytesPerSecond`, `Instances:CoArrivalHoldMs` (3000), `Instances:JoinHoldSeconds` (30, measured in S1, 3.4), `Instances:MaxCatchUpSeconds` (30), `Rooms:StoryWhileOwnerAway` (drop, built in S2), `Instances:StoryBurst` (10) and `Instances:StoryMessagesPerMinute` (60, S2); `Play:CurrentProtocol` follows the client. `Sealing:StallMs` and `Instances:MaxJoinLogMinutes` of revision 1 are gone |
-| Website | the room page shows instances per stage |
-| Deploy | fixed-key self-signed certificate and the pin script (10); port 52041 as before |
+| Website | the room page shows instances per stage (built in S2: `/rooms` lists each room's instances by stage with the client's stage names from `data/online/areas.json`, "2 together" / "alone" / boss fight / leaving, the hub stages last; names only for signed-in members of the room) |
+| Deploy | fixed-key self-signed certificate and the pin script (10); port 52041 as before (built in S2: `tls-key.ps1`, `print-pins.ps1`, the pin build step, DEPLOY.md 4, 6.1, 6.4) |
 | Tests | unit tests for sealing schedules and fills, events, forks, barrier decisions (holds, co-arrival, context key) and merge vectors; integration tests with scripted fake clients; end-to-end tests with the real game client (16) |
 
 ## 15. Online off stays bit-identical
@@ -2620,6 +2689,7 @@ anyway; joining goes through the room list.
 | S23 | boss-locked target: *Wait for them* (joins after the boss falls) and *Go alone* | S3 |
 | S24 | map recorder (dng102b3) read far from the partner (scoped, local freeze) and near (original) | S3 |
 | S25 | Trailmon ride (dng412b3) with one member not aboard: no fork, the rider moves alone | S3 |
+| A1 | online achievements: S5's run with achievements on; each machine reports its own player (online_join in its solo lobby, first_defeat in the sealed field) with the ranked context, the counters at the end; the server holds them (`scenario.json` "achievements") | S2 |
 
 - **Real game clients** (round S1 integration): `run.py G1 --game-exe EXE
   --data DATA` starts two hidden `DW4_ONLINE_DEV` game clients instead of fake
@@ -2977,6 +3047,58 @@ wired, every card scenario needs `seed_story` or its members lose their card
 story at game start, and S14's guest needs a value it makes in the lobby: k2
 without 501 stalls in the first visit's talk at n_digilff #2's `ISSEQNAME
 SQ_WALK02`), the FakeClient's story (the fake clients ignore STORY_ACK).
+
+**Achievements-deploy lane (round S2, branch `feat-r56ach`).** Built as
+section 11 ("Built in round S2"), 10 (the deployment detail) and 14 (website,
+deploy) describe: the one catalogue (`data/online/achievements.json`, server
+migration 0008), the online tracker per account with its reports, the room
+page with instances, `tls-key.ps1` / `print-pins.ps1` and the pins as a build
+step. Checked:
+
+- Online off: `det.sh` twice 4004f056 / 396cb219; the save state suite 17/17
+  and states through a file (direct start, new game frame 4500) identical
+  after loading; r25c 10/10 with 1,748,011 frames in all (the reference); ctest
+  41/41 (the new `online_achievements`; `achievements` and `presence` compare
+  the checked-in JSON files).
+- Server: unit 133, integration and end-to-end 70 + 1 skipped against a
+  private MariaDB, twice in full (with the story lane's pause in the Python
+  relay spike test, `feat-r56story` 6164e7e: on a busy machine its barrier
+  overtook the other connection's HEADING; this branch leaves that script
+  alone, and without the pause it fails in full runs here and passes alone;
+  the room page test plays its fake clients until its checks are done and
+  takes the names in either slot order); the new tests: the catalogue against the JSON
+  and the migrated database, owner-only story challenges, `roomPlayers`, the
+  rules of the new and changed state achievements, the room page with two
+  fake relay clients in one sealed instance (names only for members).
+- Scenario A1 on real hidden game clients (S5's run, k2 cards,
+  `DW4_ACHIEVEMENTS=1`): both members report `online_join` from their solo
+  lobbies (players 1) and `first_defeat` from the sealed field (players 2;
+  neither machine counts the other's death), the server confirms each
+  ("Online achievement: Connected / Ouch"), the last counter batch at the end
+  of the game gives `play_seconds` 220 and 222; `online_host`, `online_raid`
+  and `mp_couch` stay locked; 10,440 shared ticks with equal fingerprints.
+- The pin path with throwaway keys outside the repository: the key's pin
+  (OpenSSL), its PFX's (`print-pins.ps1`) and `DW4Online.Server tls-pin` agree,
+  a renewed certificate on the same key keeps it, `print-pins.ps1 -Server`
+  finds the key in use on a live TLS listener and refuses another; a build with
+  `local/online_pins.txt` carries both pins, a malformed pin fails the
+  configure step, `DW4_ONLINE_REQUIRE_PINS=ON` fails it without pins.
+
+For the other lanes: the barrier's story merge (story lane) must not raise
+`story_flag` port events (a guest would get the clear credit for the room
+story it receives); the story lane's migration is 0008 as well
+(`0008_online_story.sql`, its tests expect schema 8) and the migrator takes
+1..n without gaps, so the merge renames this lane's file to
+`0009_achievement_catalogue.sql` (`AchievementRulesTests` find it by name, the
+migrator and health tests here take the embedded list; the table count is the
+story lane's 17); the online character upload
+(character lane) sends `achievements::context_json(report_context())` as its
+context, so its state achievements unlock in the room; the title and F1 room
+UI (ui lane) creates the room's `OnlineAchievements` with
+`make_online_achievements(*online, created, test_run, online_folder)` right
+after its `connect` succeeds, calls `flush(now, 2.0)` before every
+`online->leave()` (F1 *Leave room*, the lobby's leave request, the end of the
+game) and `save()` + `reset()` where it drops a closed session.
 
 ### Round S3 (r54): stage flow in shared instances
 
