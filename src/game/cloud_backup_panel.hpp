@@ -29,6 +29,10 @@ public:
     // `available`: no online room or session runs (the cloud backup is the
     // local save's).
     void draw(const save::CardStore& store, bool available);
+    // Test runs (DW4_MENU_CLOUD=account:password[:upload|download]): log in
+    // at the first draw and, once the backup was read, run that action as if
+    // confirmed.
+    void set_test(const std::string& account, const std::string& password, const std::string& action);
 
 private:
     void poll();
@@ -52,6 +56,8 @@ private:
     // An overwrite waiting for its "Yes": 1 upload, 2 download, 3 restore.
     int confirm_ = 0;
     int confirm_revision_ = 0;
+    bool test_login_ = false;
+    std::string test_action_;
 };
 
 } // namespace dw4::game

@@ -12,8 +12,13 @@ DW4_ONLINE_DEV game clients that log in, open a room each and play their pad fro
       client builds the virtual card from it and calls it at the title (DW4_CAMPAIGN_LOAD), plays the story; after its
       first upload "another PC" saves the character (a PUT through the API); the client's next upload gets 409, shows
       the message, keeps its card cache in backups/, reloads the server's character and never overwrites it.
+  P1  F1 Saves > Cloud backup outside rooms (no room, the panel's own login through DW4_MENU_CLOUD): an existing
+      backup (another PC's, uploaded through the API) is shown, the local save (a GCI folder card) is uploaded over
+      it (the revision rises, the SHA-256 is the local file's), a kept revision made the latest again (API) is
+      downloaded into the local save (the old one copied to backups/ first); a picture of the panel at 1920x1009
+      (widescreen, MSAA 4) is kept in the run folder.
 
-    python character_test.py [C1 C2] --game-exe EXE --data DATA --cards CHECKPOINTS
+    python character_test.py [C1 C2 P1] --game-exe EXE --data DATA --cards CHECKPOINTS
                              [--mysql-port 3455] [--ports 54250-54299] [--keep] [--no-build]
 
 The clients run hidden (--smoke-test, DW4_NO_ERROR_BOX=1, below normal priority); network traffic stays on loopback.
@@ -254,6 +259,86 @@ def run_c2(st, args, api, https_port, pin, out):
     return problems, notes
 
 
+def cloud_put(api, token, data, revision):
+    import hashlib
+    import json
+    import urllib.error
+    import urllib.request
+    req = urllib.request.Request(api.base + "/api/v1/cloud-save", data=data, method="PUT")
+    req.add_header("Content-Type", "application/octet-stream")
+    req.add_header("Authorization", "Bearer " + token)
+    req.add_header("X-Sha256", hashlib.sha256(data).hexdigest())
+    req.add_header("X-Device-Name", "other-pc")
+    if revision:
+        req.add_header("If-Match", '"%d"' % revision)
+    else:
+        req.add_header("If-None-Match", "*")
+    try:
+        with urllib.request.urlopen(req, timeout=15, context=api.ctx) as r:
+            return r.status, json.loads(r.read() or b"null")
+    except urllib.error.HTTPError as e:
+        raw = e.read()
+        return e.code, json.loads(raw) if raw else None
+
+
+def panel_run(st, args, out, name, https_port, pin, cloud, card, frames, dump):
+    """A hidden client without a room: the F1 Saves tab open, the cloud panel logs in and runs its test action."""
+    pictures = os.path.join(out, name + "_pictures")
+    os.makedirs(pictures, exist_ok=True)
+    env = dict(os.environ, DW4_NO_ERROR_BOX="1", DW4_ONLINE_SERVER="127.0.0.1:" + https_port, DW4_ONLINE_PIN=pin, DW4_OPEN_MENU="1",
+               DW4_MENU_TAB="Saves", DW4_MENU_CLOUD=cloud, DW4_RENDER="1", DW4_DEV_PRESENT="60", DW4_DEV_WINDOW="1920x1009",
+               DW4_DEV_WIDESCREEN="1", DW4_DEV_MSAA="4", DW4_DEV_DUMP="%d-%d" % (dump, dump), DW4_DEV_DUMP_DIR=pictures)
+    argv = [args.game_exe, "--data", args.data, "--smoke-test", str(frames), "--card-dir", card]
+    proc = st.spawn(argv, os.path.join(out, name + ".log"), env=env)
+    proc.wait(600)
+    return proc.poll(), pictures
+
+
+def run_p1(st, args, api, https_port, pin, out):
+    """The cloud backup panel: show, upload over another PC's backup, download a restored revision."""
+    import hashlib
+    account = "p1" + secrets.token_hex(3)
+    password, token = register(api, account)
+    other = open(os.path.join(args.cards, "k10", "Card A", "B2-GDJE-NDMWSaveData.gci"), "rb").read()
+    mine = open(os.path.join(args.cards, args.c2_card, "Card A", "B2-GDJE-NDMWSaveData.gci"), "rb").read()
+    s, body = cloud_put(api, token, other, 0)
+    if s != 201:
+        raise RuntimeError("the other PC's cloud backup: %s %s" % (s, body))
+    card = os.path.join(out, "local_card")
+    os.makedirs(os.path.join(card, "Card A"), exist_ok=True)
+    os.makedirs(os.path.join(card, "Card B"), exist_ok=True)
+    local = os.path.join(card, "Card A", "B2-GDJE-NDMWSaveData.gci")
+    open(local, "wb").write(mine)
+    problems, notes = [], []
+    code, pictures = panel_run(st, args, out, "upload", https_port, pin, "%s:%s:upload" % (account, password), card, 2400, 2390)
+    lines = log_lines(os.path.join(out, "upload.log"))
+    if code not in (0, None):
+        problems.append("the upload run exited with %s" % code)
+    if not any(l.startswith("cloud backup test: upload") for l in lines):
+        problems.append("the panel did not run its upload (login or overview failed?)")
+    s, meta = api.call("GET", "/api/v1/cloud-save/meta", token=token)
+    if s != 200 or meta["latest"]["revision"] != 2 or meta["latest"]["sha256"].lower() != hashlib.sha256(mine).hexdigest():
+        problems.append("the cloud backup is not this PC's save as revision 2: %s %s" % (s, meta and meta.get("latest")))
+    shots = sorted(f for f in os.listdir(pictures) if f.endswith(".png"))
+    notes.append("upload run: %s" % (", ".join(shots) or "no picture"))
+    # Another PC makes revision 1 (k10) the latest again; this PC downloads it.
+    s, _ = api.call("POST", "/api/v1/cloud-save/restore/1", token=token)
+    if s != 200:
+        problems.append("restore through the API answered %s" % s)
+    code, pictures2 = panel_run(st, args, out, "download", https_port, pin, "%s:%s:download" % (account, password), card, 2400, 2390)
+    if code not in (0, None):
+        problems.append("the download run exited with %s" % code)
+    if open(local, "rb").read() != other:
+        problems.append("the local save is not the downloaded revision")
+    backups = os.path.join(card, "backups")
+    kept = [f for f in os.listdir(backups)] if os.path.isdir(backups) else []
+    if not any(open(os.path.join(backups, f), "rb").read() == mine for f in kept):
+        problems.append("the replaced local save was not copied to backups/ (%s)" % kept)
+    notes.append("download run: local save = revision 3 (k10), backups %s" % kept)
+    notes.append("pictures: %s, %s" % (pictures, pictures2))
+    return problems, notes
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("scenarios", nargs="*")
@@ -271,8 +356,8 @@ def main():
     ap.add_argument("--c2-frames-play", type=int, default=14000)
     args = ap.parse_args()
     args.impair = ""
-    wanted = args.scenarios or ["C1", "C2"]
-    if "C2" in wanted and not args.cards:
+    wanted = args.scenarios or ["C1", "C2", "P1"]
+    if ("C2" in wanted or "P1" in wanted) and not args.cards:
         print("C2 needs --cards (a campaign checkpoint set such as work/campaign/checkpoints/r25c)")
         return 2
     if not args.no_build:
@@ -297,7 +382,7 @@ def main():
                 problems, notes = ["%s: %s" % (type(e).__name__, e)], []
             results[name] = (problems, notes, time.time() - t)
 
-        threads = [threading.Thread(target=one, args=(n, {"C1": run_c1, "C2": run_c2}[n])) for n in wanted]
+        threads = [threading.Thread(target=one, args=(n, {"C1": run_c1, "C2": run_c2, "P1": run_p1}[n])) for n in wanted]
         for th in threads:
             th.start()
         for th in threads:

@@ -9,6 +9,7 @@
 #include <imgui.h>
 
 #include <algorithm>
+#include <utility>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -35,6 +36,14 @@ CloudBackupPanel::CloudBackupPanel(std::filesystem::path online_folder, std::str
     : folder_(std::move(online_folder)), version_(std::move(client_version)), protocol_(protocol) {}
 
 CloudBackupPanel::~CloudBackupPanel() = default;
+
+void CloudBackupPanel::set_test(const std::string& account, const std::string& password, const std::string& action) {
+    std::snprintf(account_, sizeof account_, "%s", account.c_str());
+    std::snprintf(password_, sizeof password_, "%s", password.c_str());
+    remember_ = false;
+    test_login_ = true;
+    test_action_ = action;
+}
 
 void CloudBackupPanel::ensure_worker() {
     if (http_) return;
@@ -127,6 +136,7 @@ void CloudBackupPanel::draw(const save::CardStore& store, bool available) {
         ImGui::TextWrapped("Not while you play online: the cloud backup is your local save's. Leave the room or session first.");
         return;
     }
+    if (std::exchange(test_login_, false)) log_in();
     ImGui::PushTextWrapPos(0.0f);
     if (!logged_in_) {
         ImGui::TextDisabled("One backup of your local save per online account, plus its five earlier revisions.");
@@ -221,6 +231,14 @@ void CloudBackupPanel::draw(const save::CardStore& store, bool available) {
     if (ImGui::Button("Upload this save as the cloud backup##cloud")) confirm_ = 1;
     ImGui::EndDisabled();
 
+    // (Test runs: the action of DW4_MENU_CLOUD once the backup was read.)
+    if (!test_action_.empty() && cloud.known() && !busy) {
+        const auto action = std::exchange(test_action_, std::string());
+        std::printf("cloud backup test: %s\n", action.c_str());
+        std::fflush(stdout);
+        if (action == "upload" && local) cloud.upload(*local);
+        else if (action == "download" && overview) cloud.download(0, store, save::backup_folder(store));
+    }
     // Every overwrite is asked for.
     if (confirm_) {
         std::string question;

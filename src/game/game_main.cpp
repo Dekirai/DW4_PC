@@ -1141,6 +1141,15 @@ int run(const Options& options, dw4::game::Settings& settings) {
         // F1 Saves > Cloud backup (docs/SEAMLESS.md 9; outside rooms only).
         dw4::game::CloudBackupPanel cloud_panel((program_dir().empty() ? std::filesystem::path(".") : program_dir()) / "saves" / "online",
                                                 DW4_PC_VERSION, int(dw4::game::kOnlineProtocol));
+        // DW4_MENU_CLOUD=account:password[:upload|download] (test runs): the
+        // cloud backup panel logs in at its first draw and runs the action.
+        if (const char* cloud_test = std::getenv("DW4_MENU_CLOUD"); cloud_test && options.smoke_frames) {
+            const std::string text = cloud_test;
+            const auto a = text.find(':'), b = a == std::string::npos ? a : text.find(':', a + 1);
+            if (a != std::string::npos)
+                cloud_panel.set_test(text.substr(0, a), text.substr(a + 1, b == std::string::npos ? std::string::npos : b - a - 1),
+                                     b == std::string::npos ? std::string() : text.substr(b + 1));
+        }
         std::optional<KeyCapture> capture;
         auto next_present = std::chrono::steady_clock::now();
         float online_audio_ratio = 1.0f; // the audio stream's frequency ratio in an online room
