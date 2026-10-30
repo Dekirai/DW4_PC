@@ -2,11 +2,12 @@
   "desc": "owner away, policy apply (its own server): the guest's new story value joins the room story at once and stays in its engine",
   "server": {"Rooms": {"StoryWhileOwnerAway": "apply"}},
   "card": "k2",
+  "seed_story": true,
   "frames": 9000,
   "timeout": 420,
   "min_shared_ticks": 0,
   "clients": [
-    {"name": "o", "script": "o.script", "start": 0, "frames": 1700},
+    {"name": "o", "script": "o.script", "start": 0, "frames": 1700, "card_flags": {"501": 0}},
     {"name": "g", "script": "g.script", "start": 3}
   ]
 }
