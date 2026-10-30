@@ -3234,6 +3234,71 @@ calibration of the achievement goals on real online runs; the .NET 10 SDK of
 the development PC is broken (only its Roslyn folder is left), so the server
 builds with the 11.0 RC SDK and `--disable-build-servers` (round 57).
 
+**The done-when on the integrated tree (round 56 verification).** Each part
+of the done-when above, driven through the client's own code paths with
+hidden clients on the local stack (its own MariaDB and ports):
+
+- *Two accounts, a room, new characters, saves*: `run.py ui newchars`. Both
+  accounts register in the screens, the first creates a room, the second
+  finds it and joins, both play new characters with the campaign bot (each
+  "enter without a character"); for each, the first stage change makes
+  revision 1, changed stage changes upload, the campaign's checkpoint p2
+  saves in the save room (revision 4). The guest leaves right after its save
+  room, so its leaving save finds nothing new ("unchanged since revision 4").
+  The owner plays on into stag0101 and leaves there: its leaving save uploads
+  revision 6. `GET /online-character` returns both records at those
+  revisions, equal to the card caches outside the story bytes. The guest's
+  story bytes are empty (its own story is untouched), the owner's hold phase
+  2. `character_test.py` C1 shows the same for one member with every kind of
+  upload.
+- *A guest's story flag*: S14p. The guest's stag0101 flag 505 was in the
+  owner's `online_story` 0.5 s after the guest's engine set it. The owner's
+  machine held it in its confirmed room story while its lobby engine kept
+  505 = 0 for another 180 frames, and its next barrier (into stagml12)
+  brought it.
+- *S14*: S14, S14h and S14a (drop, hold, apply) pass on real clients.
+- *S15*: `character_test.py` C4. Another PC saves while the client walks to
+  the save room, so the save room's upload gets the 409. The player is told,
+  the cache is kept in `backups/`, the other PC's revision is reloaded and
+  stays on the server. C2 shows the same for a stage change's upload.
+- *Golden vectors*: C++ `online_story` (ctest), C# `StoryGoldenTests`, and
+  `story_golden.py --check` (equal).
+- *Achievements*: A1 (`online_join` in the solo lobby with players 1,
+  `first_defeat` in the sealed field with players 2, `hoarder` from an
+  upload).
+- *Everything else*: all 19 game scenarios pass with the final development
+  build (the 14 of S1, S14, S14h, S14a, S14p and A1), with no differing
+  fingerprint. So do the 8 UI scenarios, `character_test.py` C1-C4 and P1,
+  and ctest 44 of 44. The server builds, and its tests give 150 unit tests
+  and 74 integration and end-to-end tests passed, 1 skipped.
+- *Section 15*: `det.sh` gives 4004f056 / 396cb219 in every run: plain, with
+  `DW4_CAMERAS=1 DW4_CAM_CHECK=1` (0 of 1902 frames), with
+  `DW4_LEASH_OFF=1` and with the extra renders hook. The four-player runs
+  (stag0102 ded601be / boxes 1f1b3b50, dng101b1 586f711d / e4da6a4e) are
+  equal headless and with local cameras 0, 2 and 3, as in round 52. The
+  save state suite is 17 of 17 with both builds, and the states through a
+  file (direct start dng101b1 frame 2000, new game frame 4500) are
+  identical. r25c is 10 of 10 with 1,748,011 frames, every segment as in the
+  integration's run.
+
+Found and fixed in the verification: the room view told a player who was
+already playing "Your online character starts new: Play, then START and Game
+Start at the title", even after several saves. Once the game runs it now
+shows the session's save state ("Online character: saved (revision N)").
+New test hooks: the script condition `roomflag:N`, `wait-members <=N` in UI
+scripts, and the scenario keys "story_saved", "characters" and
+"checkpoints".
+
+Still open:
+- When a member leaves on purpose (BYE), the hub sends the others
+  `Disconnected` before `MemberLeft` (`RoomHub.Disconnect`), so they see
+  "X lost the connection" just before "X left the room".
+- The story runs nc1 were not run in this round.
+- main has since taken `fix-r55s1` (0950c69). A merge of main into this
+  branch conflicts in `RoomHub.cs`, `RelayHub.cs`, `HubModel.cs`,
+  `online.cpp`, `online_session_tests.cpp`, `run.py` and this file. Every
+  check above has to be run again after that merge.
+
 ### Round S3 (r54): stage flow in shared instances
 
 Goal: every case of the table in section 5 behaves as decided.
