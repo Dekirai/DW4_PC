@@ -49,6 +49,13 @@ std::optional<std::string> GameEngineLink::pending_stage() const {
 }
 
 int GameEngineLink::pending_point() const {
+    // The player point the stage change leads to: PLAYERPOINT's point number,
+    // which the exit's SETGENERATEPOS sets before its NEXTSTAGE (and a zone
+    // remap of the randomizer with it). The stage snapshot holds the point the
+    // current stage was entered at: at a barrier (the next stage pending) that
+    // was the departing stage's, so a joiner who came through stag0401 point 3
+    // was put in at point 0, across the field from its instance.
+    if (const auto* points = e().get<engine::PlayerPointManager>()) return int(points->point_no());
     const auto* snapshot = e().stage_snapshot();
     return snapshot ? int(snapshot->point_no) : 0;
 }

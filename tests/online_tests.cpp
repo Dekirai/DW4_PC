@@ -11,6 +11,7 @@
 #include "dw4/engine/managers.hpp"
 #include "dw4/engine/online.hpp"
 #include "dw4/engine/online_membership.hpp"
+#include "online/engine_adapter.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -777,6 +778,46 @@ void transition_pads(const std::filesystem::path& data) {
     check(quiet.fingerprints == noisy.fingerprints, "and the machines stay equal");
 }
 
+// The point a barrier names (BARRIER, the entrance a JOIN puts the joiner in
+// at): the one the exit leads to, which its SETGENERATEPOS set before its
+// NEXTSTAGE, not the one the departing stage was entered at (the stage
+// snapshot's; that put a quest member who came through stag0401 point 3 in at
+// point 0, across the field from its instance: S16 with real clients).
+void barrier_point(const std::filesystem::path& data) {
+    Engine engine(data);
+    engine.set_card_root(std::filesystem::temp_directory_path() / "dw4_online_tests_cards");
+    engine.get<GameSystem>()->direct_start = true;
+    OnlineRules rules;
+    rules.enabled = true;
+    rules.present = 0b0001;
+    engine.set_online(rules);
+    engine.set_split_identity(0);
+    engine.request_stage("dng101b1");
+    dw4::game::online::EngineHooks hooks;
+    hooks.engine = [&]() -> Engine& { return engine; };
+    const dw4::game::online::GameEngineLink link(hooks, {});
+    bool posted = false;
+    // (Until the exit's stage is pending: dng101b1's own request is pending at first.)
+    for (int i = 0; i < 3000 && !(posted && engine.pending_stage()); ++i) {
+        if (!posted && engine.frame() >= 1100 && engine.membership_safe()) {
+            // An exit's pair of messages, as the lobby gate's (mate00.lua: point 3 of stag0401).
+            Packet point;
+            point.ints.push_back(3);
+            engine.messenger().post(engine.time() + kFrameNs, "PLAYERPOINT", std::nullopt, -1, "SETGENERATEPOS", std::move(point));
+            Packet next;
+            next.strings.emplace_back("stag0401");
+            engine.messenger().post(engine.time() + kFrameNs, "STAGECTL", std::nullopt, -1, "NEXTSTAGE", std::move(next));
+            posted = true;
+        }
+        host_step(engine, pads_at(engine.frame()), nullptr);
+    }
+    check(engine.pending_stage() && *engine.pending_stage() == "stag0401", "the exit's NEXTSTAGE is pending (the barrier)");
+    check(engine.stage_snapshot() && engine.stage_snapshot()->point_no == 0, "dng101b1 was entered at point 0");
+    check(link.pending_point() == 3, "the barrier names the point the exit leads to (3), not the departing stage's entrance (" +
+                                         std::to_string(link.pending_point()) + ")");
+    engine.set_online(OnlineRules{});
+}
+
 void data_scenarios(const std::filesystem::path& data) {
     // 1. dng101b1: Agumon alone, a Dorumon joins mid-stage (another species:
     // its package loads now), a Veemon joins as the third, the Dorumon leaves
@@ -953,6 +994,8 @@ void data_scenarios(const std::filesystem::path& data) {
 
     // 6. The transition steps take the pads of the barrier tick.
     transition_pads(data);
+    // 7. The barrier names the point the exit leads to.
+    barrier_point(data);
 }
 
 } // namespace

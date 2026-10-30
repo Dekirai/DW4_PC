@@ -125,7 +125,7 @@ if(BUILD_TESTING)
   # scenarios in real stages; without, those are skipped.
   set(DW4_TEST_DATA "" CACHE PATH "Game data for the online engine scenarios (optional)")
   add_executable(dw4_online_tests tests/online_tests.cpp)
-  target_link_libraries(dw4_online_tests PRIVATE dw4_engine)
+  target_link_libraries(dw4_online_tests PRIVATE dw4_engine dw4_online) # (dw4_online: the GameEngineLink checks)
   target_compile_definitions(dw4_online_tests PRIVATE DW4_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
   add_test(NAME online COMMAND dw4_online_tests "${DW4_TEST_DATA}")
   # The online test driver's script language (src/game/online_script.hpp, tools/online_test).
