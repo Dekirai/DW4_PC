@@ -39,6 +39,10 @@ public:
     // frame (the slides and the layout move per frame, as the model's own
     // animations do). Returns whether the third row was drawn.
     bool apply(std::vector<engine::DrawItem>& items, bool menu_open, bool cursor_online, std::uint64_t frame);
+    // The texture had no usable glyphs (other data, a different layout):
+    // the host leaves the entry out then, so the cursor never reaches an
+    // entry that cannot be drawn.
+    bool failed() const { return text_failed_; }
     // DW4_TRACE_TITLE_ENTRY=1 (test runs): the 2D items (texture, place, vertices).
     static void trace(const std::vector<engine::DrawItem>& items, std::uint64_t frame);
 

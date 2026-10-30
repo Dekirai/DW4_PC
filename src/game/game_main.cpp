@@ -2019,7 +2019,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
             // a direct session or a test run without --online-ui; DW4_TITLE_ONLINE=1
             // shows it in a test run without them, for pictures of the menu).
             static const bool title_online_test = options.smoke_frames && std::getenv("DW4_TITLE_ONLINE") != nullptr;
-            engine.title_online_entry = (lobby || title_online_test) && !online && !net.active() && !net.in_lobby();
+            engine.title_online_entry = (lobby || title_online_test) && !online && !net.active() && !net.in_lobby() && !title_entry.failed();
             // Online: a step runs once every player's input for it is here.
             std::uint64_t net_frame = 0;
             for (int i = 0; i < steps; ++i) {
