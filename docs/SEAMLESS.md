@@ -2652,6 +2652,78 @@ pass, so on a 60 Hz window it reaches about 70 % of its reported rate; a full
 instance (four) still leaves the first arrival alone when five arrive at once
 (the base holds only when every announced member fits).
 
+**Second review and fix round (round 55, branch `fix-r55s1`).** A second review
+(game and server, live attacks on a private stack, probes on real clients)
+checked the first fix round: 3 blockers and 8 should-fix faults, all fixed now
+with a test or a scenario each, together with the S1 leftovers above and the
+cheap minors:
+
+- *Relay floods (6.7, 6.8, 6.10)*: one member's BARRIER frames that each
+  arrived alone built state after state (4,276 BARRIER, 2.5 cores, a sealed
+  pair in another room frozen for over a minute): lone decisions at most once
+  a second and none while a state is built, replaced states not built, two
+  builds relay-wide, a state budget per member, separate queue limits for game
+  frames and states; a snapshot upload keeps its first total and grows with
+  its chunks (13 GB allocated in 20 s); the room heartbeat on its own task (a
+  suspended database stopped every room's pings); `ERR busy` for the address
+  limit. Server tests `A_flood_of_lone_barriers_...`,
+  `A_snapshot_upload_keeps_its_total_...`, `A_stalled_heartbeat_does_not_stop_the_pings`,
+  `An_address_with_all_its_connections_gets_err_busy`.
+- *A fork confirmed at a barrier (6.7)*: the reports go with their side, the
+  other side plays on, a side of one leads alone; Park never ends an instance
+  with members (`A_fork_confirmed_while_the_parent_waits_...`, two and four
+  members; before, the child never sealed and the stayer froze for good).
+- *Joins (6.6)*: a gap before J that never closes sends the joiners back to
+  their own stage; a JOIN_AT whose joiner went seals J with the leader alone and
+  LEAD_FROM (`A_gap_before_J_...`, `A_join_at_whose_joiner_went_...` with BYE,
+  a barrier and the JOIN_REQ tries); a LOG frame lost with the connection goes
+  again after the RESUME.
+- *Resyncs (6.9)*: RESYNC and a state that reach a parked member are ignored
+  (the session test `resync_while_parked` fails without it: the member landed
+  in the stage it had left, as in the review's Y4); a resync whose partner
+  left during the catch-up leads alone (`resync_then_alone`); a member taken
+  out continues alone (`taken_out_continues_alone`, the relay sends it the
+  ticks up to its LEAVE); the replay's READY judges two-member votes; three
+  resyncs in ten minutes, then alone; one NETFP per member and tick; no resync
+  at a barrier; an unconfirmed SPLIT only delays a vote; STATE from one member
+  (`The_replay_decides_who_is_off_...`, `A_second_fingerprint_...`,
+  `An_unconfirmed_split_...`, `Only_one_member_reports_...`).
+- *Exits (6.5)*: a leaving member's exit prompt closes as No. Real-client
+  scenario S18b: b holds its prompt open and leaves the room, the prompt
+  closes, b's LEAVE applies 42 frames later and a, who only walks, leaves by
+  matz02 itself; with main's client the same run fails (present stays 3, a's
+  step runs out after 1,800 frames: the review's L1).
+- *Leftovers*: the catch-up reports the wall clock's rate (6.6; in the hidden
+  runs, where nothing is drawn, the reported rates stay as before, 3,100-4,200
+  steps per second; the capped slow joiner of S22b now reports 300 for its
+  measured 290, where main reported 2,958); five arrivals hold for those that
+  fit (3.4, `Five_arrivals_at_once_hold_for_those_that_fit`); the real-client
+  resync scenarios S11a (the desync on the shorter member: one vote, b
+  resynced in 0.5 s, READY equal to a's fingerprint) and S11b (on the longer
+  member: b resynced first, its READY contradicts a, `replay_disagrees`, a
+  resynced, equal after), each with 5,700 ticks of equal net fingerprints after
+  the resync.
+- *Minors*: a sealed visit past `Instances:MaxVisitHours` takes no joins (its
+  log is still kept whole: about 5.6 MB per hour of four random pads); giving
+  up counts the local START; a co-arrival's BARRIER_OK names its partners;
+  "left" only for members that were there; neutral pads after a resync and its
+  own DELAY from the replay.
+
+Checked on the fixed code: online off `det.sh` four times 4004f056 / 396cb219
+(two exes: the client change after the first is online only), the save state
+suite 17/17, r25c 10/10 with 1,748,011 frames (the reference of round 53),
+ctest 40/40; server unit tests 140, integration and end-to-end 69 (one skipped,
+as before); the fake-client scenarios 9/9; the scenarios on real game clients
+17/17 in one run (five at a time): the 14 of round S1 with 10,140 to 13,860
+shared ticks each and S18b, S11a, S11b; 2,886 fingerprint ticks compared by two
+clients, the only two that differ are the injected desyncs before their
+resync's READY.
+
+Not fixed (minor, listed): a member that never sends NETFP still blocks the
+votes of its instance (the expected reporters are every connected member); a
+sealed visit's log is not trimmed past what a join or resync could replay; the
+status window of a leaving member still reads the leader's pad (6.5).
+
 ### Round S2 (r53): accounts, online character, room story
 
 Goal: the real loop from the title: log in, pick or create a room, play the
