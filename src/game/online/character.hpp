@@ -28,7 +28,9 @@
 // A 409 (the account saved from another PC meanwhile) never overwrites: the
 // uploads stop for this room session, the server's character is loaded into
 // the card cache again (the local cache is kept in backups/ first) and the
-// player is told. A record of another character (another UNIQUE) is not
+// player is told (a 409 that names the revision the save was based on is a
+// race lost inside the server, a database deadlock, and goes again after 2 s,
+// at most three times in a row). A record of another character (another UNIQUE) is not
 // uploaded (the server would refuse it: reset the online character first).
 #include "http.hpp"
 
@@ -230,6 +232,7 @@ private:
     std::uint64_t reload_ = 0;        // the GET after a conflict
     bool blocked_ = false;
     double retry_at_ = -1;            // a retry is due then (-1: none)
+    int races_ = 0;                   // 409s at the revision the save was based on (lost server races) in a row
     double now_ = 0;
     std::uint64_t uploads_ = 0;
     std::string last_problem_;

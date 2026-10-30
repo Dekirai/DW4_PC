@@ -280,8 +280,14 @@ void retries_and_recovery() {
         sync.on_response(id2, answer(0, ""));
         sync.tick(40);
         auto [id3, third] = http.take();
-        (void)id3;
         check(body_record(third) == r, "after a network error too");
+        // A 409 naming the save's own base revision is a lost race on the server (a deadlock), not another PC.
+        sync.on_response(id3, answer(409, "{\"code\":\"revision_conflict\",\"currentRevision\":3}"));
+        check(!sync.blocked() && http.sent.empty(), "a lost server race waits briefly");
+        sync.tick(43);
+        auto [id4, fourth] = http.take();
+        (void)id4;
+        check(body_record(fourth) == r && header(fourth, "If-Match") == "\"3\"", "and goes again");
         // The PC crashes now: the cache holds the pending save.
     }
     check(card.state().pending && card.state().revision == 3, "pending save of revision 3 in the cache");

@@ -535,6 +535,7 @@ bool CharacterSync::on_response(std::uint64_t id, const HttpResponse& response) 
         confirmed_ = flying_.record;
         ++uploads_;
         last_problem_.clear();
+        races_ = 0;
         card.set_state({revision_, play_seconds(), waiting_.has_value(), box_, unique_});
         trace(std::string("saved (") + why_name(flying_.why) + ") revision " + std::to_string(revision_));
         if (flying_.why == Why::save_room) notice("Online character saved.");
@@ -548,6 +549,16 @@ bool CharacterSync::on_response(std::uint64_t id, const HttpResponse& response) 
     }
     const auto code = api::problem_code(response);
     const std::string text = online::api::problem_text(response);
+    // A 409 that names the very revision this save was based on is no save
+    // from elsewhere: the server's write lost a race (a database deadlock
+    // with another account's write). The same save goes again shortly.
+    if (response.status == 409 && api::current_revision(response) == revision_ && races_ < 3) {
+        ++races_;
+        if (!waiting_) waiting_ = flying_;
+        retry_at_ = now_ + 2.0;
+        trace("409 at the same revision " + std::to_string(revision_) + " (a lost race on the server): retry in 2 s");
+        return true;
+    }
     if (response.status == 409 || (response.status == 404 && revision_ > 0)) {
         // Saved from another PC (or reset) meanwhile: never overwrite it.
         blocked_ = true;
