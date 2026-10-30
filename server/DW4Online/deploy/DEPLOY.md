@@ -169,8 +169,11 @@ needed because http.sys is not used).
 Start-Service DW4Online
 Get-Content D:\Dekirai\Servers\DW4Online\logs\dw4online-*.log -Tail 30
 curl.exe -k https://88.198.52.221/health      # {"status":"ok","schema":7}; -k: the certificate is self-signed (section 6.1)
-D:\Dekirai\Servers\DW4Online\app\DW4Online.Server.exe tls-pin --host 88.198.52.221   # the served certificate and its pin
+D:\Dekirai\Servers\DW4Online\app\DW4Online.Server.exe tls-pin --host 88.198.52.221   # the certificate the service picks from the store, and its pin
+powershell -ExecutionPolicy Bypass -File D:\Dekirai\Servers\DW4Online\app\deploy\new-selfsigned-cert.ps1 -PinServedBy 88.198.52.221   # the pin of the certificate port 443 really serves
 ```
+
+Both pins must equal the first pin `new-selfsigned-cert.ps1` printed when it made the certificate (section 6.1).
 
 The first start creates the tables (startup migrator). Register your own account on the website
 (`https://<host>/register`, keep the recovery code) or in the game, then make it the admin from an elevated console:
@@ -231,7 +234,10 @@ pin"), and refuses any other key before it sends a single byte of a request (the
 3. Both pins go into the game client's online settings (the first one is in use, the second is the spare). Keep the
    spare PFX offline and its password somewhere else (for example in your password manager).
 4. Check: `.\DW4Online.Server.exe tls-pin --host 88.198.52.221` (in the app folder) prints the certificate the service
-   serves and its pin; from another PC `curl.exe -k https://88.198.52.221/health` answers `{"status":"ok",...}`.
+   picks from the store (the same selection, read from the store, no connection) and its pin;
+   `new-selfsigned-cert.ps1 -PinServedBy 88.198.52.221` connects to port 443 as the game client does (no host name)
+   and prints the pin of the certificate actually served; from another PC `curl.exe -k https://88.198.52.221/health`
+   answers `{"status":"ok",...}`.
 
 What players notice: browsers warn about the website's certificate (it is self-signed). Whoever wants to check it
 before accepting compares the browser's SHA-256 fingerprint with the `Certificate fingerprint (SHA-256)` line of
