@@ -104,6 +104,11 @@ void Session::attach(std::unique_ptr<Transport> transport, double now, std::stri
     inbox_.clear();
     line_.clear();
     hello_done_ = false;
+    // STORY answers come in order on one connection: those of the old one
+    // never come, so nothing sent on it waits for an answer, and the pending
+    // set goes again on the new one (8.3).
+    story_in_flight_.clear();
+    story_last_ = {};
     const auto hello = w::hello_line(config_.ticket, config_.protocol, config_.data_hash, config_.settings_hash);
     if (!transport_->send(std::span(reinterpret_cast<const std::uint8_t*>(hello.data()), hello.size()))) lose_connection(now);
 }

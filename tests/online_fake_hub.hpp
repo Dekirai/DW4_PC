@@ -375,6 +375,7 @@ public:
     dw4::engine::story::StoryLines story_lines;
     dw4::engine::StoryKeys dropped;
     bool owner_away = false; // with the drop policy: pending values are refused and recorded in `dropped`
+    bool story_lost = false; // STORY frames are counted and then lost (no merge, no answer), as on a dying connection
     int stories = 0, story_acks = 0;
     w::BarrierOk with_story(w::BarrierOk ok) const {
         ok.story_revision = room_story.revision;
@@ -388,6 +389,7 @@ public:
     }
     void on_story(Member& m, const w::Story& s, double now) {
         ++stories;
+        if (story_lost) return;
         w::StoryAck answer{0, {}, w::StoryAck::answer, {}};
         using K = dw4::engine::StoryRefused::Kind;
         bool changed = false;

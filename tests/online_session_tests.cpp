@@ -380,6 +380,24 @@ void room_story() {
     for (const auto& n : b.session->take_notices()) told_b |= n.find("Story progress was not saved") != std::string::npos;
     for (const auto& n : a.session->take_notices()) told_a |= n.find("Story progress was not saved") != std::string::npos;
     check(told_b && !told_a, "only B is told");
+    // The owner is back. B's STORY with new growth is lost with its dying
+    // connection (never answered): after the reconnect the pending set goes
+    // again at once, not ten seconds after the lost one.
+    world.hub.owner_away = false;
+    world.hub.story_lost = true;
+    const auto lost_before = world.hub.stories;
+    b.engine.story.counters[7] = 3;
+    check(world.run_until(3, [&] { return world.hub.stories > lost_before; }), "B sends the growth");
+    world.hub.drop(2);
+    world.hub.story_lost = false;
+    world.run(1.0);
+    check(b.session->wants_transport(), "B asks for a new connection");
+    b.session->attach(world.hub.connect(2, "lee"), world.now, "t-lee-3");
+    const double t1 = world.now;
+    check(world.run_until(8, [&] { return world.hub.room_story.counters[7] == 3; }), "the growth reaches the room story after the reconnect");
+    check(world.now - t1 < 4.0, "soon after the reconnect (" + std::to_string(world.now - t1) + " s)");
+    world.run(12);
+    check(world.hub.room_story.counters[7] == 3, "counted once");
 }
 
 // Two co-arrived members; returns once both play sealed.
