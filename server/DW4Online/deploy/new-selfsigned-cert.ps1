@@ -19,7 +19,10 @@
 
   -ImportPfx installs an existing PFX (the spare, or the certificate of a moved server) instead of creating one, and
   grants the service its key. -PinFile only prints the pin of a certificate file (.cer / .crt / .pem; for a PFX use
-  "DW4Online.Server.exe tls-pin --file x.pfx --password-env NAME").
+  "DW4Online.Server.exe tls-pin --file x.pfx --password-env NAME"). -PinServedBy <address> only connects to
+  <address>:443 (-PinServedPort) the way the game client does (TLS without a host name, no certificate check) and
+  prints the pin of the certificate the running service actually serves: it must be the first pin printed at creation.
+  Neither needs elevation; nothing is changed.
 
   A new key means a new pin, and every client without that pin stops connecting: the script refuses to create a second
   certificate for an address that already has a valid one unless -Force is given. Nothing else changes: no other
@@ -31,6 +34,7 @@
   powershell -ExecutionPolicy Bypass -File new-selfsigned-cert.ps1 -SparePfx E:\dw4online-spare.pfx -SpareOnly
   powershell -ExecutionPolicy Bypass -File new-selfsigned-cert.ps1 -ImportPfx E:\dw4online-spare.pfx
   powershell -ExecutionPolicy Bypass -File new-selfsigned-cert.ps1 -PinFile C:\temp\server.cer
+  powershell -ExecutionPolicy Bypass -File new-selfsigned-cert.ps1 -PinServedBy 88.198.52.221
 #>
 param(
     [string]$IpAddress = '88.198.52.221',
@@ -44,6 +48,8 @@ param(
     [string]$ImportPfx = '',
     [System.Security.SecureString]$ImportPassword = $null,
     [string]$PinFile = '',
+    [string]$PinServedBy = '',
+    [int]$PinServedPort = 443,
     [ValidateSet('LocalMachine', 'CurrentUser')]
     [string]$StoreLocation = 'LocalMachine',
     [string]$Exe = (Join-Path (Split-Path -Parent $PSScriptRoot) 'DW4Online.Server.exe'),
@@ -114,6 +120,20 @@ function Assert-ServicePin([string]$thumbprint, [string]$expected, [string]$loca
 if ($PinFile) {
     $cert = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2 -ArgumentList (Resolve-Path $PinFile).Path
     try { Show-Certificate $cert "Certificate $PinFile" (Get-SpkiPin $cert) } finally { $cert.Dispose() }
+    exit 0
+}
+
+if ($PinServedBy) {
+    # Like the game client: no host name (an IP address sends no SNI), any certificate accepted here, then its pin.
+    $tcp = New-Object System.Net.Sockets.TcpClient($PinServedBy, $PinServedPort)
+    try {
+        $tls = New-Object System.Net.Security.SslStream($tcp.GetStream(), $false, { $true })
+        try {
+            $tls.AuthenticateAsClient($PinServedBy)
+            $cert = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2 -ArgumentList $tls.RemoteCertificate
+            try { Show-Certificate $cert "Served by ${PinServedBy}:$PinServedPort ($($tls.SslProtocol)):" (Get-SpkiPin $cert) } finally { $cert.Dispose() }
+        } finally { $tls.Dispose() }
+    } finally { $tcp.Dispose() }
     exit 0
 }
 

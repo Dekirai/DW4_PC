@@ -16,7 +16,7 @@ stay untouched.
 | Website Data Protection keys | `D:\Dekirai\Servers\DW4Online\keys` (DPAPI-encrypted for the service account) |
 | Service | `DW4Online`, virtual account `NT SERVICE\DW4Online`, start delayed-auto |
 | TLS certificate (now) | self-signed for `IP 88.198.52.221` in `LocalMachine\My`, pinned by the game client (section 6.1) |
-| Ports | 443 TCP (HTTPS: API and website), 52041 TCP (relay), 80 TCP only for a later domain's certificate validation; MariaDB 3306 on 127.0.0.1 only |
+| Ports | 443 TCP (HTTPS: API and website), 52041 TCP (relay), 80 TCP only for a later domain's certificate validation; MariaDB 3306 on 127.0.0.1 only; plain HTTP on 127.0.0.1:5280 for checks on the server itself (`appsettings.json`'s endpoint, never reachable from outside) |
 
 The scripts in this folder are written for these steps but were **not run** on the server: read them, then run them
 yourself in an elevated PowerShell. (`new-selfsigned-cert.ps1` was run end to end against a user certificate store
@@ -61,7 +61,8 @@ on the development PC, see the README's tests.)
 ## 2. Database and users
 
 Generate two long random passwords (for example `-join ((48..57)+(65..90)+(97..122) | Get-Random -Count 32 | % {[char]$_})`)
-and run in `mariadb.exe -u root -p`:
+and run in `mariadb.exe -u root -p` (if PowerShell does not find `mariadb.exe`, add the client folder for this
+session: `$env:PATH += ';C:\Program Files\MariaDB 11.4\bin'`):
 
 ```sql
 CREATE DATABASE dw4online CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
@@ -83,9 +84,13 @@ GRANT SELECT, SHOW VIEW, TRIGGER, EVENT, LOCK TABLES ON dw4online.* TO 'dw4backu
 Check both logins over TCP before you go on (each asks for its password):
 
 ```powershell
-mariadb.exe -h 127.0.0.1 -P 3306 -u dw4online -p -e "SELECT CURRENT_USER()"   # dw4online@127.0.0.1
-mariadb.exe -h 127.0.0.1 -P 3306 -u dw4backup -p -e "SELECT CURRENT_USER()"   # dw4backup@127.0.0.1
+mariadb.exe -h 127.0.0.1 -P 3306 -u dw4online -p -e "SELECT CURRENT_USER()"   # dw4online@localhost or dw4online@127.0.0.1
+mariadb.exe -h 127.0.0.1 -P 3306 -u dw4backup -p -e "SELECT CURRENT_USER()"   # dw4backup@localhost or dw4backup@127.0.0.1
 ```
+
+Which of the two accounts answers depends on MariaDB's name resolution (127.0.0.1 resolves to `localhost` unless
+`skip-name-resolve` is set); both exist with the same password and rights, so either line is right. "Access denied"
+is not: check the password and that both `CREATE USER` lines ran.
 
 ## 3. Publish on the development PC
 
@@ -98,7 +103,14 @@ This runs the tests, publishes `DW4Online.Server` self-contained for `win-x64` (
 `dist\DW4Online-<version>.zip` at the repository root (gitignored). Use a GA .NET SDK for release builds (the .NET 10
 SDK; the development PC currently only has the 11.0 RC SDK). The publish restores the .NET 10 runtime packs
 (Microsoft.NETCore.App / Microsoft.AspNetCore.App runtime for win-x64) from nuget.org on the first run.
-`appsettings.Development.json` and `appsettings.Local.json` are never part of the publish.
+`appsettings.Development.json` and `appsettings.Local.json` are never part of the publish. The script builds without
+the shared compiler server (`--disable-build-servers`): the 11.0 RC SDK's server generated broken Razor code on the
+second build of `DW4Online.Web` in a row (see the README) and stopped the publish at the integration tests.
+
+What an RC SDK build means: the compiler and build tools are a release candidate, the program itself is not. The zip
+carries the GA .NET 10 runtime it was published with (`DW4Online.Server.runtimeconfig.json` names it, 10.0.14 for the
+first release) and the server needs no .NET installation. That runtime does not update itself (Windows Update does not
+patch a self-contained app): a .NET security release means a new publish and an update (section 8).
 
 ## 4. Install on the server
 
@@ -135,7 +147,17 @@ SDK; the development PC currently only has the 11.0 RC SDK). The publish restore
    - Inbound firewall rules for TCP 443 and 52041 (and 80 with `-OpenPort80`), limited to the service executable.
 4. If the hoster has a network firewall in front of the server (for example a Hetzner firewall in the Robot / Cloud
    console), open TCP 443, 52041 (and 80 for certificate validation) there too.
-5. Check that nothing else listens on 443 / 80: `Get-NetTCPConnection -State Listen -LocalPort 80,443`.
+5. Check that nothing else listens on the service's ports (a XAMPP Apache often holds 443 and 80, IIS or another
+   http.sys user shows up as `System`, PID 4):
+
+   ```powershell
+   Get-NetTCPConnection -State Listen -LocalPort 443,52041,5280 -ErrorAction SilentlyContinue   # no output = free
+   ```
+
+   5280 is the plain-HTTP endpoint on 127.0.0.1 that `appsettings.json` defines and the production settings keep
+   (`Kestrel:Endpoints:Http`; `curl.exe http://127.0.0.1:5280/health` works on the server without the certificate).
+   If another program uses 5280, give the endpoint another free loopback port in `appsettings.Production.json`; a
+   port in use stops the service at its start.
 6. Create the TLS certificate for the IP address and note its pins (section 6.1, `new-selfsigned-cert.ps1`).
 
 Kestrel binds the ports itself; on Windows a non-admin account may bind ports below 1024 with sockets (no URL ACL is
@@ -146,9 +168,12 @@ needed because http.sys is not used).
 ```powershell
 Start-Service DW4Online
 Get-Content D:\Dekirai\Servers\DW4Online\logs\dw4online-*.log -Tail 30
-curl.exe -k https://88.198.52.221/health      # {"status":"ok","schema":6}; -k: the certificate is self-signed (section 6.1)
-D:\Dekirai\Servers\DW4Online\app\DW4Online.Server.exe tls-pin --host 88.198.52.221   # the served certificate and its pin
+curl.exe -k https://88.198.52.221/health      # {"status":"ok","schema":7}; -k: the certificate is self-signed (section 6.1)
+D:\Dekirai\Servers\DW4Online\app\DW4Online.Server.exe tls-pin --host 88.198.52.221   # the certificate the service picks from the store, and its pin
+powershell -ExecutionPolicy Bypass -File D:\Dekirai\Servers\DW4Online\app\deploy\new-selfsigned-cert.ps1 -PinServedBy 88.198.52.221   # the pin of the certificate port 443 really serves
 ```
+
+Both pins must equal the first pin `new-selfsigned-cert.ps1` printed when it made the certificate (section 6.1).
 
 The first start creates the tables (startup migrator). Register your own account on the website
 (`https://<host>/register`, keep the recovery code) or in the game, then make it the admin from an elevated console:
@@ -178,7 +203,10 @@ pin"), and refuses any other key before it sends a single byte of a request (the
    powershell -ExecutionPolicy Bypass -File new-selfsigned-cert.ps1 -SparePfx E:\dw4online-spare.pfx
    ```
 
-   `E:` stands for a USB stick or any place that is not this server. [new-selfsigned-cert.ps1](new-selfsigned-cert.ps1)
+   `E:` stands for a USB stick or any place that is not this server. On a rented server reached over Remote Desktop
+   that is your own PC: with drive redirection on, write it there directly (`-SparePfx \\tsclient\C\Users\<you>\Desktop\dw4online-spare.pfx`),
+   otherwise write it to the server's desktop, copy it to your PC through the Remote Desktop clipboard and delete it on
+   the server (`Remove-Item`). [new-selfsigned-cert.ps1](new-selfsigned-cert.ps1)
    - creates a certificate for `IP 88.198.52.221` (RSA 3072, server authentication, valid 10 years) in
      `LocalMachine\My` whose key cannot be exported: it never leaves the server;
    - gives `NT SERVICE\DW4Online` read access to that key (the service runs the TLS handshakes);
@@ -206,7 +234,10 @@ pin"), and refuses any other key before it sends a single byte of a request (the
 3. Both pins go into the game client's online settings (the first one is in use, the second is the spare). Keep the
    spare PFX offline and its password somewhere else (for example in your password manager).
 4. Check: `.\DW4Online.Server.exe tls-pin --host 88.198.52.221` (in the app folder) prints the certificate the service
-   serves and its pin; from another PC `curl.exe -k https://88.198.52.221/health` answers `{"status":"ok",...}`.
+   picks from the store (the same selection, read from the store, no connection) and its pin;
+   `new-selfsigned-cert.ps1 -PinServedBy 88.198.52.221` connects to port 443 as the game client does (no host name)
+   and prints the pin of the certificate actually served; from another PC `curl.exe -k https://88.198.52.221/health`
+   answers `{"status":"ok",...}`.
 
 What players notice: browsers warn about the website's certificate (it is self-signed). Whoever wants to check it
 before accepting compares the browser's SHA-256 fingerprint with the `Certificate fingerprint (SHA-256)` line of
@@ -288,7 +319,8 @@ and tokens would travel unencrypted).
 [backup-db.ps1](backup-db.ps1) runs `mariadb-dump --single-transaction --quick --hex-blob --routines --events
 --no-tablespaces dw4online`, compresses the dump (gzip) into `backups\daily`, keeps 14 daily and 8 weekly (Sunday)
 copies and can copy each new file to a second folder (`-CopyTo`, for example a mounted share). The credentials come
-from an option file readable only by Administrators and SYSTEM:
+from an option file in the `config` folder (Administrators and SYSTEM; the service account may read it as well, it
+holds a stronger password of its own anyway), so no password appears on a command line:
 
 ```ini
 # D:\Dekirai\Servers\DW4Online\config\backup.cnf
@@ -312,28 +344,61 @@ Also keep a copy of `config\appsettings.Production.json` (it holds the database 
 encrypted. The `keys` folder needs no backup: its keys are DPAPI-encrypted for this machine's service account and only
 protect anti-forgery tokens; if it is lost, open website forms simply have to be reloaded.
 
-Restore drill (once, and after schema changes):
+Run the backup once by hand and check the file (elevated PowerShell; `Start-ScheduledTask 'DW4Online DB backup'` runs
+it as SYSTEM the same way):
 
 ```powershell
-mariadb.exe -u root -p -e "CREATE DATABASE dw4online_restore CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
-& 'C:\Program Files\7-Zip\7z.exe' e -so backups\daily\dw4online-<date>.sql.gz | mariadb.exe -u root -p dw4online_restore
+powershell -ExecutionPolicy Bypass -File D:\Dekirai\Servers\DW4Online\app\deploy\backup-db.ps1   # "Backup written: ...sql.gz (.. KB)"
 ```
 
-(Any gzip tool works; the dump is plain SQL.) Point a test instance's connection string at `dw4online_restore` and
-check `/health`, then drop the database.
+Restore drill (once, and after schema changes) with [restore-db.ps1](restore-db.ps1), which asks for the MariaDB root
+password once and prints the restored database's account count and schema version:
+
+```powershell
+cd D:\Dekirai\Servers\DW4Online
+$latest = (Get-ChildItem backups\daily\*.sql.gz | Sort-Object Name | Select-Object -Last 1).FullName
+powershell -ExecutionPolicy Bypass -File app\deploy\restore-db.ps1 -Backup $latest     # into dw4online_restore
+mariadb.exe -u root -p -e "DROP DATABASE dw4online_restore"
+```
+
+Do not pipe a dump into the client in Windows PowerShell 5.1 (`7z e -so x.sql.gz | mariadb.exe ...`): the pipe
+re-encodes the text and silently turns every non-ASCII character into `?` (the rehearsal restored "PC von Jürgen" as
+"PC von J??rgen"). `restore-db.ps1` decompresses to a file and lets cmd.exe feed it unchanged; by hand that is
+`cmd /c "mariadb.exe -u root -p dw4online_restore < dump.sql"`.
 
 ## 8. Updates and rollback
 
-1. Announce the update (set `Service:Motd`, optionally `Service:Maintenance` true so no new rooms open), pick a quiet
-   time: stopping the service ends running co-op sessions and rooms (they close with `server_restart` at the next start).
-2. `Stop-Service DW4Online`
-3. Run `deploy\backup-db.ps1` once by hand (migrations commit DDL implicitly; a failed one leaves the schema between
-   versions and the backup is the way back).
-4. `Rename-Item app app.previous` (remove the older `app.previous` first), extract the new zip to `app`.
-5. `Start-Service DW4Online`; the startup migrator applies new migrations; check the log and `/health`.
+1. Announce the update and pick a quiet time: stopping the service ends running co-op sessions and rooms (they close
+   with `server_restart` at the next start). The service reads its settings only when it starts, so `Service:Motd` or
+   `Service:Maintenance` (no new rooms) take effect only after a restart: announce elsewhere, or set them for a
+   restart some time before the update.
+2. In an elevated PowerShell, with the new zip on the server (for example `C:\Users\Administrator\Desktop\DW4Online-<version>.zip`):
+
+   ```powershell
+   cd D:\Dekirai\Servers\DW4Online
+   Stop-Service DW4Online
+   powershell -ExecutionPolicy Bypass -File app\deploy\backup-db.ps1      # migrations commit DDL implicitly: this backup is the way back
+   if (Test-Path app.previous) { Remove-Item -Recurse -Force app.previous }
+   Rename-Item app app.previous
+   Expand-Archive C:\Users\Administrator\Desktop\DW4Online-<version>.zip -DestinationPath app
+   Start-Service DW4Online
+   Get-Content (Get-ChildItem logs\dw4online-*.log | Sort-Object Name | Select-Object -Last 1).FullName -Tail 20   # "Database schema is current" or "Applied migrations ..."
+   curl.exe -k https://88.198.52.221/health
+   ```
+
+   The new `app` folder inherits the root's permissions (service read and execute), and the firewall rules and the
+   service name the same path, so nothing else changes.
 
 Rollback: stop the service, swap `app` and `app.previous` back; if the update applied a migration, restore the backup
-from step 3 into `dw4online` first (the old build refuses a database that is newer than itself).
+from step 2 into `dw4online` first (the old build refuses a database that is newer than itself):
+
+```powershell
+cd D:\Dekirai\Servers\DW4Online
+Stop-Service DW4Online
+Rename-Item app app.failed; Rename-Item app.previous app
+powershell -ExecutionPolicy Bypass -File app\deploy\restore-db.ps1 -Backup backups\daily\dw4online-<date>.sql.gz -Database dw4online -Replace   # only after a migration
+Start-Service DW4Online
+```
 
 MariaDB updates and restarts: DW4Online depends on the MariaDB service (`sc.exe config DW4Online depend= MariaDB`), so
 `Stop-Service MariaDB` and `Restart-Service MariaDB` refuse while DW4Online runs (without `-Force`, which stops
