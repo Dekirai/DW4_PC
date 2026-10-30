@@ -136,12 +136,20 @@ void api_calls() {
     check(api::problem_text(none) == "WinHTTP error 12029", "transport errors");
 }
 
+#ifndef DW4_EXPECTED_PINS
+#define DW4_EXPECTED_PINS ""
+#endif
+
 void endpoints() {
     const auto release = release_endpoint();
 #ifndef DW4_ONLINE_USE_DOMAIN
     check(release.host == "88.198.52.221" && release.port == 443 && release.base_path == "/api/v1" && release.pinned && !release.development,
           "the hard-coded IP endpoint, pinned");
     check(release.url() == "https://88.198.52.221/api/v1", "url");
+    // The pins come from the build step (CMake DW4_ONLINE_PINS or local/online_pins.txt, DEPLOY.md 6.1).
+    check(release.pins == split_pins(DW4_EXPECTED_PINS), "the build's pins");
+    for (const auto& pin : release.pins) check(pin.size() == 44 && pin.back() == '=', "a pin is a base64 SHA-256");
+    std::cout << "server pins in this build: " << release.pins.size() << '\n';
 #endif
     const auto dev = development_endpoint("127.0.0.1:53210", "AAA=, BBB=");
     check(dev && dev->host == "127.0.0.1" && dev->port == 53210 && dev->pins.size() == 2 && dev->pins[1] == "BBB=" && dev->development,

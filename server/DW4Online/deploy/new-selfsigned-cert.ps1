@@ -271,7 +271,7 @@ if ($SpareOnly) {
 # --- What goes where ------------------------------------------------------------------------------------------------
 
 Write-Output ''
-Write-Output 'For the game client (pin every line, the first is in use):'
+Write-Output 'For the game client build (DEPLOY.md 6.4: print-pins.ps1 -Out writes local/online_pins.txt; the first is in use):'
 foreach ($pin in $pins) { Write-Output "  $pin" }
 Write-Output ''
 Write-Output 'appsettings.Production.json:'

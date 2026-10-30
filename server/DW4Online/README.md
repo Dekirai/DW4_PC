@@ -395,8 +395,9 @@ minute per IP, registrations to 3 per hour, on top of the account lockout. Websi
   F1 room UI and the online character in place of the card.
 - Round S2: STORY / STORY_ACK and the room story; round S4: the resync path completed, RESUME with missing ticks after
   a crash-free reconnect, UDP for INPUT / SEALED (the S1 loss matrix, SEAMLESS.md 6.4).
-  For the IP phase it talks to `https://88.198.52.221` and pins the two SPKI pins `deploy/new-selfsigned-cert.ps1`
-  prints (in use and spare), checked in WinHTTP's SENDING_REQUEST callback exactly like `dw4online_client --pin`;
+  For the IP phase it talks to `https://88.198.52.221` and pins the two SPKI pins of the kept TLS keys (in use and
+  spare; `deploy/tls-key.ps1` makes the keys and their certificates, `deploy/print-pins.ps1` writes the pins for the
+  client build, DEPLOY.md 6.1 and 6.4), checked in WinHTTP's SENDING_REQUEST callback exactly like `dw4online_client --pin`;
   for the later domain (`https://dekirai.crygod.de/dw4online`) it validates normally and puts every API path below
   the base URL's path.
 - Achievement goals that need calibration on real runs (speed limits, Minimalist level, stat rates, level-rate warning).
