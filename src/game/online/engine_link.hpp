@@ -9,6 +9,7 @@
 // Live steps run in the host loop (pictures, audio, achievements); the client
 // only runs replay steps itself (catch-up). Every call that changes the
 // simulation is made between steps, at a step every member makes it.
+#include "dw4/engine/online_story.hpp"
 #include "dw4/pad.hpp"
 #include "wire.hpp"
 
@@ -76,6 +77,9 @@ public:
     virtual std::optional<SplitInfo> take_split() = 0;
     virtual std::optional<HeadingInfo> take_heading() { return std::nullopt; }
     virtual PresenceFacts presence(int slot) const = 0;
+    // The engine's story values (FLAG, FLAGFOLDER, COUNTER; SEAMLESS.md 8.3):
+    // the pending set against the confirmed room story comes from them.
+    virtual engine::StoryValues story_values() const { return {}; }
 
     // ---- changes between steps
     // A replay step (catch-up): the step, the picture's traversal, the music

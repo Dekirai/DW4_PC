@@ -57,6 +57,7 @@ public:
     std::optional<SplitInfo> take_split() override;
     std::optional<HeadingInfo> take_heading() override;
     PresenceFacts presence(int slot) const override;
+    engine::StoryValues story_values() const override;
 
     void replay_step(const std::array<PadSample, 4>& pads) override;
     bool restore(std::span<const std::uint8_t> snapshot) override;

@@ -212,6 +212,15 @@ PresenceFacts GameEngineLink::presence(int slot) const {
     return f;
 }
 
+engine::StoryValues GameEngineLink::story_values() const {
+    auto& engine = e();
+    engine::StoryValues v;
+    v.flags = engine.flags();
+    v.counters = engine.counters();
+    if (const auto* sys = engine.get<engine::GameSystem>()) v.folder.insert(sys->flag_folder.begin(), sys->flag_folder.end());
+    return v;
+}
+
 void GameEngineLink::replay_step(const std::array<PadSample, 4>& pads) {
     auto& engine = e();
     engine.step(pads);
@@ -325,6 +334,18 @@ void GameEngineLink::set_barrier(const wire::BarrierOk& ok) {
                 result.own_slot = s;
                 break;
             }
+    }
+    // The room story and the dropped set (SEAMLESS.md 8.5, 8.6): every member
+    // of the group gets the same bytes, so a damaged blob fails alike on every
+    // member (no merge this time) instead of ending the game.
+    if (!ok.story.empty()) {
+        try {
+            result.story = engine::story::decode_story(ok.story, ok.story_revision);
+            result.dropped = engine::story::decode_keys(ok.dropped);
+        } catch (const std::exception&) {
+            result.story.reset();
+            result.dropped = {};
+        }
     }
     result.rules = e().online();
     result.rules.enabled = true;
