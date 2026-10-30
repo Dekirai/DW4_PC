@@ -7,9 +7,9 @@ b: online-script: step .* log: b said no
 a: online-script: step .* log: b stepped off: no prompt for a
 b: online-script: prompt active=1 owner=0 asking=0
 b: online-script: prompt active=1 owner=0 asking=1
-b: online-script: step .* log: b said no to a's exit
 a: online-trace: split .*local=1
 b: online-trace: split .*local=0
+b: online-script: step .* log: b said no to a's exit
 relay: fork
 a: (?i)decision 1 .*stage=stag0102
 !b: (?i)decision .*stage=stag0102
