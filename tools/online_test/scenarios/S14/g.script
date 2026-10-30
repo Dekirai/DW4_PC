@@ -1,19 +1,25 @@
-# S14 (drop), guest g (k2 with flag 501, set by the lobby's first.lua at the first visit, which the room story
-# lacks: the owner's card without it, seed_story): waits at the title until the owner has left, then enters the lobby:
-# 501 is new to the room and plausible there.
+# S14 (drop), guest g (a k10 character: k2 dies on the route's rock slope): the title gives it the room story at game
+# start (the owner's card, without flag 505), so its engine lacks 505 as well although its own card has it (the
+# lobby's check). It waits at the title until the owner has left, goes through the lobby into stag0101 and steps on
+# matb01, whose hint panel sets 505: new to the room and plausible there (stag0101 sets it).
 # Drop refuses it (owner_away) and records it in the room's dropped set; the engine keeps it for the rest of the
-# lobby visit (never mid-stage) and the lobby gate's barrier into stag0101 removes it, with the notice.
-# (Once the title gives every member the room story at game start, g's 501 is gone there and the scenario needs a
-# value g makes in the lobby: k2 without 501 plays the first visit's talk, which stalls in k2's lobby at n_digilff
-# #2's ISSEQNAME SQ_WALK02; tried in round S2.)
+# stag0101 visit (never mid-stage) and the barrier into stag0102 removes it, with the notice.
+# (matb01 lies on the west route at 229,-35: the route goes on from there to the exit matz02.)
 idle until epoch>=@50
 log owner gone
 campaign until stage=stagml11
 talk until control,frames>=60
 log in the lobby
-idle until frames>=300 fail flag:501=0
+idle until frames>=300 fail flag:505=1
+log 505 not in the lobby
 explore mate00 yes until stage=stag0101,control
 log in the field
-idle until frames>=120 fail flag:501=1
-log 501 removed
+mat matb01 no until flag:505=1
+log 505 set
+talk until control,frames>=60
+route {route:stag0101_west>218,-26}
+mat matz02 yes until stage=stag0102,control
+log in stag0102
+idle until frames>=120 fail flag:505=1
+log 505 removed
 idle until frames>=60

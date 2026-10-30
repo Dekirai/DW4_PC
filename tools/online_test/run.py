@@ -572,12 +572,15 @@ def run_real(stack, sc, api, relay_port, pin, diag, lock, connection):
         text = open(os.path.join(src, c["script"]), encoding="utf-8").read()
         text = re.sub(r"@(\d+(?:\.\d+)?)", lambda m: "%.1f" % (t0 + float(m.group(1))), text)
 
-        # {route:NAME} is the waypoint list of routes/NAME.txt, {route:NAME:X,Z} the same up to the waypoint X,Z.
+        # {route:NAME} is the waypoint list of routes/NAME.txt, {route:NAME:X,Z} the same up to the waypoint X,Z,
+        # {route:NAME>X,Z} the same from the waypoint X,Z on (S14: on along the route after a detour).
         def route(m):
             lines = open(os.path.join(HERE, "routes", m.group(1) + ".txt"), encoding="utf-8").read().splitlines()
             points = " ".join(l for l in lines if l.strip() and not l.startswith("#")).split()
+            if m.group(3):
+                return " ".join(points[points.index(m.group(3)):])
             return " ".join(points[:points.index(m.group(2)) + 1] if m.group(2) else points)
-        text = re.sub(r"\{route:(\w+)(?::(-?\d+,-?\d+))?\}", route, text)
+        text = re.sub(r"\{route:(\w+)(?::(-?\d+,-?\d+)|>(-?\d+,-?\d+))?\}", route, text)
         path = os.path.join(out, c["name"] + ".script")
         with open(path, "w", encoding="utf-8") as f:
             f.write(text)

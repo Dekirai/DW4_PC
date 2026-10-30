@@ -1,6 +1,6 @@
-# S14h, room owner o (k2 without flag 501, which the room story starts from: seed_story): stays at the title (no
-# STORY comes from the stagIS* stages) and leaves the room when its run ends (frame 1700, about 30 s): the owner is
-# away from then on.
+# S14h, room owner o (k2 without flag 505, stag0101's matb01 hint panel; the room story starts from that card:
+# seed_story): stays at the title (no STORY comes from the stagIS* stages) and leaves the room when its run ends
+# (frame 1700, about 30 s): the owner is away from then on.
 log at the title
 idle until frames>=1500
 log leaves
