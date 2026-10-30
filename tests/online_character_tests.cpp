@@ -121,6 +121,7 @@ void requests() {
     character_api::Context ctx;
     ctx.room_code = "ABC123";
     ctx.players = 3;
+    ctx.room_players = 7;
     ctx.difficulty = 1;
     ctx.protocol = 44;
     ctx.client_version = "0.56.0";
@@ -133,8 +134,14 @@ void requests() {
     check(v && (*v)["playSeconds"].i64() == 130, "play seconds");
     check((*v)["context"]["roomCode"].str() == "ABC123" && (*v)["context"]["players"].i64() == 3 && (*v)["context"]["difficulty"].i64() == 1 &&
               (*v)["context"]["cheats"].flag() == false && (*v)["context"]["saveStateLoaded"].flag() == false &&
-              (*v)["context"]["protocol"].i64() == 44,
+              (*v)["context"]["protocol"].i64() == 44 && (*v)["context"]["roomPlayers"].i64() == 7,
           "the ranked play context");
+    {
+        auto alone = ctx;
+        alone.room_players = 0;
+        const auto a = json::parse(character_api::put_request(record, 7, 130, alone).body);
+        check(a && !(*a)["context"].find("roomPlayers"), "no roomPlayers when the room's size is unknown");
+    }
     check(body_record(update) == record, "the record travels as base64");
 
     const auto c = character_api::parse_character(answer(200, character_json(4, record, 999)));

@@ -7,6 +7,7 @@
 #include "dw4/engine/managers.hpp"
 
 #include <algorithm>
+#include <bit>
 #include <chrono>
 #include <cstdlib>
 #include <iostream>
@@ -156,7 +157,10 @@ void OnlineRun::dispatch(std::uint64_t id, const online::HttpResponse& response,
 online::character_api::Context OnlineRun::character_context() const {
     online::character_api::Context c;
     c.room_code = room_.code;
-    c.players = std::clamp(int(session_->remote().size()) + 1, 1, 10);
+    // (The same numbers as the online achievements' reports: the own stage
+    // instance, and the room from the relay's ROSTER or else the presence.)
+    c.players = std::clamp(std::popcount(unsigned(session_->present())), 1, 4);
+    c.room_players = std::clamp(std::max(int(session_->roster().size()), int(session_->remote().size()) + 1), 1, 10);
     c.randomizer = room_.settings.randomizer();
     c.difficulty = room_.settings.difficulty;
     c.protocol = int(kOnlineProtocol);
@@ -192,6 +196,14 @@ void OnlineRun::save_character(online::CharacterSync::Why why) {
 }
 
 void OnlineRun::after_live_step(double now) {
+    // The title starts a game: the confirmed room story replaces the
+    // character's FLAG / FLAGFOLDER / COUNTER before gameStart.lua runs
+    // (GameEngineLink applies it with the room's modes on this very step).
+    // Without a confirmed story yet the character's own stays until the
+    // first barrier's merge.
+    const bool started = link_.game_started();
+    if (started && !started_before_) link_.set_room_story(session_->confirmed_story());
+    started_before_ = started;
     link_.after_live_step();
     if (!character_) return;
     auto& engine = engine_();
@@ -209,8 +221,10 @@ void OnlineRun::after_live_step(double now) {
 void OnlineRun::port_events(const std::vector<engine::PortEvent>& events) {
     if (!character_) return;
     for (const auto& e : events)
-        if (e.kind == engine::PortEvent::Kind::card_written && e.slot == session_->own_slot() && e.value == 0 && e.extra >= 0)
+        if (e.kind == engine::PortEvent::Kind::card_written && e.slot == session_->own_slot() && e.value == 0 && e.extra >= 0) {
+            character_->set_context(character_context());
             character_->card_written(e.extra);
+        }
 }
 
 void OnlineRun::save_on_leave(double seconds) {

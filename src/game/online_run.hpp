@@ -31,7 +31,11 @@
 
 namespace dw4::game {
 
-inline constexpr std::uint32_t kOnlineProtocol = 44; // DW4R2, the first seamless protocol (the REST "protocol" too)
+// DW4R2, the seamless protocol (the REST "protocol" too): 44 round S1, 45
+// round S2 (the room story in BARRIER_OK, STORY / STORY_ACK, the story at
+// game start; an S1 client in an S2 room would desynchronize at its first
+// barrier, so the rooms of the two never mix).
+inline constexpr std::uint32_t kOnlineProtocol = 45;
 
 struct OnlineOptions {
     std::string user, create, join;
@@ -71,7 +75,9 @@ public:
     // Every loop pass: network, catch-up, reconnects, the character's uploads.
     void pass(double now);
     // After every live step (instead of link().after_live_step()): the room's
-    // modes and story at game_started, the character's play time, and its
+    // modes and story at game_started (the session's confirmed room story,
+    // handed to the link on the step that set game_started, SEAMLESS.md 8.5),
+    // the character's play time, and its
     // automatic save at the barrier tick (the step that executed NEXTSTAGE:
     // the state the member carries into the next stage).
     void after_live_step(double now);
@@ -109,6 +115,7 @@ private:
     std::uint64_t ticket_request_ = 0;
     double next_reconnect_ = 0;
     bool pending_before_ = false; // the last live step had a NEXTSTAGE pending
+    bool started_before_ = false; // the last live step's GameSystem::game_started
     bool saved_on_leave_ = false;
     bool left_ = false;
 };

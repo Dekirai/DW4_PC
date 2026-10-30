@@ -119,6 +119,7 @@ HttpRequest put_request(const CharacterRecord& record, int revision, std::int64_
                       std::to_string(std::clamp(context.difficulty, 0, 2)) + ",\"protocol\":" + std::to_string(context.protocol) +
                       ",\"clientVersion\":" + json::quote(context.client_version);
     if (!context.room_code.empty()) ctx += ",\"roomCode\":" + json::quote(context.room_code);
+    if (context.room_players > 0) ctx += ",\"roomPlayers\":" + std::to_string(std::clamp(context.room_players, 1, 10));
     ctx += "}";
     r.body = "{\"record\":\"" + base64_encode(record) + "\",\"playSeconds\":" + std::to_string(std::max<std::int64_t>(0, play_seconds)) +
              ",\"context\":" + ctx + "}";

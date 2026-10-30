@@ -61,7 +61,8 @@ namespace character_api {
 // play has no cheats, no rebalancing and no save states).
 struct Context {
     std::string room_code;
-    int players = 1;          // members of the room as this machine sees them
+    int players = 1;          // members of this machine's stage instance (1-4)
+    int room_players = 0;     // members of the room (1-10; 0: not sent), as the achievements report it
     bool randomizer = false;  // the room's randomizer setting
     int difficulty = 0;       // the room's difficulty
     int protocol = 0;
