@@ -2521,6 +2521,17 @@ attacks on a private stack) found, and this round fixed with a test each:
   DW4_PAD_REPLAY allowed online, a give-up's fork side not found in a replay;
   S18's asked member now answers itself (not the prompt's timeout).
 
+Checked on the fixed code: online off `det.sh` twice 4004f056 / 396cb219
+(also with `DW4_CAMERAS=1` and the extra renders), the save state suite
+17/17 and states through a file identical, r25c 10/10 with every segment's
+frame count unchanged (1,758,666); ctest 40/40; server unit tests 130,
+integration and end-to-end 67 (one skipped, as before); the fake-client
+scenarios 9/9; the scenarios on real game clients 14/14 (S18 in a second run
+after its scripts were refitted: b's own No comes 92 ticks after it is asked,
+so the fork comes earlier and both play 600 ticks longer for 10,500 shared
+ticks). S19a's b reaches the lobby with its own 880 HP (the bug showed its
+partner's 240 and level 7).
+
 Not fixed (minor, listed): a joiner's catch-up gets about 12 ms of each host
 pass, so on a 60 Hz window it reaches about 70 % of its reported rate; a full
 instance (four) still leaves the first arrival alone when five arrive at once
