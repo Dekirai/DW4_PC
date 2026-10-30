@@ -376,10 +376,18 @@ They are drawn by the PC host over the game picture (ImGui, under the F1
 menu) from the players' state after each step, the camera the picture used
 and the widescreen widening; nothing is added to the game's scene, so the
 simulation, save states, online sessions and the Dolphin comparisons are the
-same with them on. The tag sits just above the head (a quarter of the
-highest joint's height above that joint of the Digimon's current pose, at
-least 1.8 units; else above part of its bounding box, else a height per
-form), follows the smooth motion above 60 fps, fades with the distance from
+same with them on. The tag sits just above the head: one unit above the
+form's head height, measured for each of the 16 forms from the drawn figure
+in its stance (the head with its horns, ears, a collar or wings close to
+it; weapons held up and wing tips further out are left out), over the head
+joint (followed smoothly sideways, at most 3.5 units from the Digimon's
+position). Raised arms and weapons do not move it; when the head itself
+rises (a jump, the leap of a charged attack, the bounce of a run) the tag
+goes up with it at once, so the head never pushes through the bars, holds
+that height for half a second (a run keeps it steady at the stride's top)
+and then eases back down (a model of no known form: above its highest
+joint, else part of its bounding box). It follows the smooth
+motion above 60 fps, fades with the distance from
 the camera and is hidden during stage loads, demos and cutscenes (pad input
 off), status and shop windows, the title and menu screens, and for a defeated
 player. Tags that would overlap stack: the nearer player's keeps its place,
