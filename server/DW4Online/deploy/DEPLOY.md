@@ -61,7 +61,8 @@ on the development PC, see the README's tests.)
 ## 2. Database and users
 
 Generate two long random passwords (for example `-join ((48..57)+(65..90)+(97..122) | Get-Random -Count 32 | % {[char]$_})`)
-and run in `mariadb.exe -u root -p`:
+and run in `mariadb.exe -u root -p` (if PowerShell does not find `mariadb.exe`, add the client folder for this
+session: `$env:PATH += ';C:\Program Files\MariaDB 11.4\bin'`):
 
 ```sql
 CREATE DATABASE dw4online CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
@@ -83,9 +84,13 @@ GRANT SELECT, SHOW VIEW, TRIGGER, EVENT, LOCK TABLES ON dw4online.* TO 'dw4backu
 Check both logins over TCP before you go on (each asks for its password):
 
 ```powershell
-mariadb.exe -h 127.0.0.1 -P 3306 -u dw4online -p -e "SELECT CURRENT_USER()"   # dw4online@127.0.0.1
-mariadb.exe -h 127.0.0.1 -P 3306 -u dw4backup -p -e "SELECT CURRENT_USER()"   # dw4backup@127.0.0.1
+mariadb.exe -h 127.0.0.1 -P 3306 -u dw4online -p -e "SELECT CURRENT_USER()"   # dw4online@localhost or dw4online@127.0.0.1
+mariadb.exe -h 127.0.0.1 -P 3306 -u dw4backup -p -e "SELECT CURRENT_USER()"   # dw4backup@localhost or dw4backup@127.0.0.1
 ```
+
+Which of the two accounts answers depends on MariaDB's name resolution (127.0.0.1 resolves to `localhost` unless
+`skip-name-resolve` is set); both exist with the same password and rights, so either line is right. "Access denied"
+is not: check the password and that both `CREATE USER` lines ran.
 
 ## 3. Publish on the development PC
 
@@ -163,7 +168,7 @@ needed because http.sys is not used).
 ```powershell
 Start-Service DW4Online
 Get-Content D:\Dekirai\Servers\DW4Online\logs\dw4online-*.log -Tail 30
-curl.exe -k https://88.198.52.221/health      # {"status":"ok","schema":6}; -k: the certificate is self-signed (section 6.1)
+curl.exe -k https://88.198.52.221/health      # {"status":"ok","schema":7}; -k: the certificate is self-signed (section 6.1)
 D:\Dekirai\Servers\DW4Online\app\DW4Online.Server.exe tls-pin --host 88.198.52.221   # the served certificate and its pin
 ```
 
@@ -195,7 +200,10 @@ pin"), and refuses any other key before it sends a single byte of a request (the
    powershell -ExecutionPolicy Bypass -File new-selfsigned-cert.ps1 -SparePfx E:\dw4online-spare.pfx
    ```
 
-   `E:` stands for a USB stick or any place that is not this server. [new-selfsigned-cert.ps1](new-selfsigned-cert.ps1)
+   `E:` stands for a USB stick or any place that is not this server. On a rented server reached over Remote Desktop
+   that is your own PC: with drive redirection on, write it there directly (`-SparePfx \\tsclient\C\Users\<you>\Desktop\dw4online-spare.pfx`),
+   otherwise write it to the server's desktop, copy it to your PC through the Remote Desktop clipboard and delete it on
+   the server (`Remove-Item`). [new-selfsigned-cert.ps1](new-selfsigned-cert.ps1)
    - creates a certificate for `IP 88.198.52.221` (RSA 3072, server authentication, valid 10 years) in
      `LocalMachine\My` whose key cannot be exported: it never leaves the server;
    - gives `NT SERVICE\DW4Online` read access to that key (the service runs the TLS handshakes);
