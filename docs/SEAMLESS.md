@@ -2646,8 +2646,12 @@ step. Checked:
   41/41 (the new `online_achievements`; `achievements` and `presence` compare
   the checked-in JSON files).
 - Server: unit 133, integration and end-to-end 70 + 1 skipped against a
-  private MariaDB (the Python relay spike test, untouched, failed once while
-  the r25c run loaded the machine and passed twice alone); the new tests: the catalogue against the JSON
+  private MariaDB, twice in full (with the story lane's pause in the Python
+  relay spike test, `feat-r56story` 6164e7e: on a busy machine its barrier
+  overtook the other connection's HEADING; this branch leaves that script
+  alone, and without the pause it fails in full runs here and passes alone;
+  the room page test plays its fake clients until its checks are done and
+  takes the names in either slot order); the new tests: the catalogue against the JSON
   and the migrated database, owner-only story challenges, `roomPlayers`, the
   rules of the new and changed state achievements, the room page with two
   fake relay clients in one sealed instance (names only for members).
