@@ -1,0 +1,27 @@
+# The S2 done-when, the room owner: registers in the screens (no panel: the campaign bot plays the title), creates a
+# room and plays a new character (the campaign bot from a new game, --input): its first stage change creates the online
+# character, every changed stage change uploads it, the campaign's checkpoint p2 saves it in the save room (stagIS12,
+# back in stagML12). It waits in the room until b has left (the F1 Online tab refreshes the room view), then leaves
+# (the automatic save when leaving).
+open
+screen register
+register $UI_A_NAME $UI_A_PASSWORD
+expect-screen registered
+ack
+expect-screen rooms
+create $UI_ROOM max=4
+wait-session
+wait-stage stagis12 1200
+wait-stage stagml12 300
+menu online
+sleep 4
+wait 10
+shot owner_room
+wait-members <=1 900
+sleep 2
+wait 10
+shot owner_alone
+leave
+wait-left 120
+sleep 2
+end

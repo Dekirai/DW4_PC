@@ -539,6 +539,48 @@ def seed_story(stack, connection, account_id, folder):
                     db, "-e", sql], check=True, capture_output=True, creationflags=NO_WINDOW)
 
 
+def stored_story_flag(stack, connection, account_id, flag):
+    """(revision, value of `flag`) of the account's online_story row as the database holds it now; (0, 0) without one."""
+    db = dict(kv.split("=", 1) for kv in connection.split(";") if "=" in kv)["Database"]
+    port, pw = stack.mysql
+    sql = "SELECT revision, ORD(SUBSTRING(flags, %d, 1)) FROM online_story WHERE account_id = %d" % (int(flag) + 1, int(account_id))
+    out = subprocess.run([os.path.join(MYSQL_BIN, "mysql.exe"), "--protocol=tcp", "-h", "127.0.0.1", "-P", str(port), "-u", "root", "--password=" + pw,
+                          "-N", "-B", db, "-e", sql], check=True, capture_output=True, text=True, creationflags=NO_WINDOW).stdout.split()
+    return (int(out[0]), int(out[1])) if len(out) >= 2 else (0, 0)
+
+
+def watch_story_saved(stack, sc, out, connection, owner_id, result, stop):
+    """scenario.json "story_saved": {"client", "after", "flag", "seconds"}: the time from the client's log line that
+    contains "after" (the script step that saw the flag set in its engine; step lines are flushed at once) until the
+    room owner's online_story row in the database holds the flag (SEAMLESS.md 17 S2: within ten seconds). The log is
+    read every 0.1 s, the database every 0.2 s; result["seconds"] is that time, None if it never came within 60 s."""
+    spec = sc["story_saved"]
+    log = os.path.join(out, spec["client"] + ".log")
+    seen, at, text = None, 0, ""
+    while not stop.is_set():
+        if seen is None:
+            if os.path.exists(log):
+                with open(log, encoding="utf-8", errors="replace") as f:
+                    f.seek(at)
+                    chunk = f.read()
+                    at = f.tell()
+                text = (text + chunk)[-4096:]
+                if spec["after"] in text:
+                    seen = time.time()
+                    result["before"] = stored_story_flag(stack, connection, owner_id, spec["flag"])
+                    continue
+            time.sleep(0.1)
+            continue
+        revision, value = stored_story_flag(stack, connection, owner_id, spec["flag"])
+        if value:
+            result["seconds"], result["revision"] = time.time() - seen, revision
+            return
+        if time.time() - seen > 60:
+            result["seconds"] = None
+            return
+        time.sleep(0.2)
+
+
 def game_scenarios():
     names = sorted(d for d in os.listdir(SCENARIO_DIR) if os.path.isfile(os.path.join(SCENARIO_DIR, d, "scenario.json"))) \
         if os.path.isdir(SCENARIO_DIR) else []
@@ -623,6 +665,11 @@ def run_real(stack, sc, api, relay_port, pin, diag, lock, connection):
         with lock:
             seed_story(stack, connection, accounts[clients[0]["name"]], owner_card)
     procs = [(clients[0]["name"], start(clients[0], ["--online-create", room_name]))]
+    story_saved, stop_watch = {}, threading.Event()
+    if sc.get("story_saved"):
+        watcher = threading.Thread(target=watch_story_saved, args=(stack, sc, out, connection, accounts[clients[0]["name"]], story_saved, stop_watch),
+                                   daemon=True)
+        watcher.start()
     code = None
     while time.time() - t0 < 90 and code is None:
         if procs[0][1].poll() is not None:
@@ -650,7 +697,25 @@ def run_real(stack, sc, api, relay_port, pin, diag, lock, connection):
     for name, p in procs:
         if p.poll() is None:
             p.terminate()
+    stop_watch.set()
     problems, notes = evaluate_real(sc, src, out, code, diag, timed_out, exits)
+    if sc.get("story_saved"):
+        spec = sc["story_saved"]
+        seconds = story_saved.get("seconds")
+        if "before" not in story_saved:
+            problems.append("story_saved: %s never logged '%s'" % (spec["client"], spec["after"]))
+        elif story_saved["before"][1]:
+            problems.append("story_saved: the owner's online_story had flag %s before %s set it (%s)" % (spec["flag"], spec["client"],
+                                                                                                    story_saved["before"]))
+        elif seconds is None:
+            problems.append("story_saved: flag %s never reached the owner's online_story" % spec["flag"])
+        else:
+            # The log is read every 0.1 s: the flag may have been set up to 0.1 s before the line was seen.
+            notes.append("story_saved: flag %s in the owner's online_story (revision %d) %.1f s after %s set it (at most %s s)" % (
+                spec["flag"], story_saved["revision"], seconds, spec["client"], spec["seconds"]))
+            if seconds + 0.1 > spec["seconds"]:
+                problems.append("story_saved: flag %s took %.1f s to reach the owner's online_story (> %s s)" % (spec["flag"], seconds,
+                                                                                                             spec["seconds"]))
     if sc.get("achievements"):
         check_achievements(sc, api, tag, passwords, lock, problems, notes)
     return problems, notes
@@ -1065,6 +1130,10 @@ def run_ui(stack, sc, connection, servers):
             cenv["DW4_CAMPAIGN_LOAD"] = "1"
         if c.get("campaign"):
             argv += ["--input", campaign]
+            if sc.get("checkpoints"):
+                # The campaign bot saves like a player at these checkpoints (the save Digi-Elf, the save room stagIS12).
+                cenv["DW4_CAMPAIGN_CHECKPOINTS"] = os.path.join(d, "checkpoints")
+                cenv["DW4_CAMPAIGN_CHECKPOINT_LIST"] = sc["checkpoints"]
         procs.append((c["name"], stack.spawn(argv, os.path.join(d, "log.txt"), env=cenv)))
     limit = sc.get("timeout", 300)
     for name, p in procs:
@@ -1096,7 +1165,87 @@ def run_ui(stack, sc, connection, servers):
                                        encoding="utf-8") if l.split("#")[0].strip())
         if len(steps) < expected:
             problems.append("%s: %d of %d script lines ran (log %s)" % (name, len(steps), expected, os.path.join(d, "log.txt")))
+    if sc.get("characters"):
+        check_characters(sc, api, env, out, problems, notes)
     return problems, notes
+
+
+UI_RECORD_SIZE, UI_STORY = 3316, (792, 1892)  # the character record; its story bytes (BASE_FLAG .. BASE_COUNTER, SEAMLESS.md 8.1)
+
+
+def gci_record(path, box=0):
+    """Box `box` of the first data copy of a DW4 save file whose version and checksum hold (save_data.cpp)."""
+    data = open(path, "rb").read()
+    for copy in CARD_COPIES:
+        base = GCI_ENTRY + copy
+        block = data[base:base + CARD_COPY_SIZE]
+        words = struct.unpack(">%dI" % ((CARD_COPY_SIZE - 4) // 4), block[4:])
+        if struct.unpack(">I", block[4:8])[0] == 4 and struct.unpack(">I", block[0:4])[0] == sum(words) & 0xFFFFFFFF:
+            at = 8 + box * 0x2000
+            return block[at:at + UI_RECORD_SIZE]
+    raise RuntimeError("no valid data copy in " + path)
+
+
+def check_characters(sc, api, env, out, problems, notes):
+    """scenario.json "characters" (SEAMLESS.md 9 and the S2 done-when): per client, its online character as the client
+    logged it ("online-character: ..." lines) and as the server holds it. Every client entered without a character (a new
+    game), its first stage change created revision 1, the save room uploaded (card_written), the last upload is the
+    automatic save when it left the room, nothing was refused; GET /online-character (logged in through the API) returns
+    that last revision, and its record equals the client's card cache (online_card.dat, nothing pending) outside the story
+    bytes, which the server composes from the account's own online story (8.4). "own_story": "none" asks for a record
+    whose story bytes are all zero (a guest's own story is untouched by playing in someone else's room); "phase": N for
+    the story phase flag N set in the record (the room owner's online story holds the room's progress)."""
+    for name, want in sorted(sc["characters"].items()):
+        up = name.upper()
+        account, password = env["UI_%s_NAME" % up], env["UI_%s_PASSWORD" % up]
+        log = os.path.join(out, name, "log.txt")
+        lines = open(log, encoding="utf-8", errors="replace").read().splitlines() if os.path.exists(log) else []
+        ch = [l[len("online-character: "):] for l in lines if l.startswith("online-character: ")]
+        if not any(l.startswith("enter without a character") for l in ch):
+            problems.append("%s: the room entry did not start without a character (a new game)" % name)
+        saves = [(m.group(1), int(m.group(2))) for m in (re.match(r"saved \((.+)\) revision (\d+)$", l) for l in ch) if m]
+        notes.append("%s uploads: %s" % (name, ", ".join("%s r%d" % s for s in saves) or "none"))
+        reasons = [r for r, _ in saves]
+        if not saves or saves[0] != ("stage change", 1):
+            problems.append("%s: the first stage change did not create the online character as revision 1" % name)
+        if "save room" not in reasons:
+            problems.append("%s: no upload from the save room" % name)
+        if not reasons or reasons[-1] != "leaving the room":
+            problems.append("%s: the last upload is not the automatic save when leaving the room" % name)
+        for l in ch:
+            if l.startswith(("conflict", "refused")) or "not uploaded" in l:
+                problems.append("%s: %s" % (name, l))
+        s, body = api.call("POST", "/api/v1/auth/login", {"username": account, "password": password, "deviceName": "online_test", "protocol": 45})
+        if s != 200 or not body or not body.get("token"):
+            problems.append("%s: no login for the character check (%s)" % (name, s))
+            continue
+        s, body = api.call("GET", "/api/v1/online-character", token=body["token"])
+        if s != 200 or not body:
+            problems.append("%s: GET /online-character answered %s" % (name, s))
+            continue
+        record = base64.b64decode(body["record"])
+        summary = body.get("summary") or {}
+        notes.append("%s on the server: revision %s, %s level %s, play %s s" % (name, body["revision"], summary.get("digimon"), summary.get("level"),
+                                                                              body.get("playSeconds")))
+        if saves and body["revision"] != saves[-1][1]:
+            problems.append("%s: the server holds revision %s, the client saved revision %s last" % (name, body["revision"], saves[-1][1]))
+        folder = os.path.join(out, name, "online", re.sub(r"[^a-z0-9_-]", "_", account.lower()))
+        cache, state_file = os.path.join(folder, "online_card.dat"), os.path.join(folder, "online_card.state")
+        state = open(state_file).read() if os.path.exists(state_file) else ""
+        if "pending=0" not in state:
+            problems.append("%s: the card cache has a pending save: %s" % (name, state.replace("\n", " ")))
+        box = int(re.search(r"box=(\d)", state).group(1)) if "box=" in state else 0
+        if not os.path.exists(cache):
+            problems.append("%s: no card cache %s" % (name, cache))
+        else:
+            mine = gci_record(cache, box)
+            if record[:UI_STORY[0]] + record[UI_STORY[1]:] != mine[:UI_STORY[0]] + mine[UI_STORY[1]:]:
+                problems.append("%s: the server's record differs from the card cache's outside the story bytes" % name)
+        story = record[UI_STORY[0]:UI_STORY[1]]
+        if want.get("own_story") == "none" and any(story):
+            problems.append("%s: the record's story bytes are not empty (a guest's own story must stay untouched)" % name)
+        if "phase" in want and record[UI_STORY[0] + int(want["phase"])] != 1:
+            problems.append("%s: the record's story lacks the phase flag %s" % (name, want["phase"]))
 
 
 def main():
