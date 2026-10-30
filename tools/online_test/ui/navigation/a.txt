@@ -5,6 +5,10 @@ view
 expect-gate open
 wait 10
 expect-screen welcome
+# (The first arrow shows the cursor on the default button, Log in; the second moves it.)
+key right
+wait 5
+shot nav_cursor
 key right
 wait 5
 shot nav_focus
