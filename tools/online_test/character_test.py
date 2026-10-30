@@ -14,13 +14,17 @@ DW4_ONLINE_DEV game clients that log in, open a room each and play their pad fro
       the message, keeps its card cache in backups/, reloads the server's character and never overwrites it.
   C3  a crash between a save and its upload: the card cache holds a save the server never confirmed (pending, based
       on the server's revision); the next room entry uploads it first ("an unsent save").
+  C4  S15 from the save room: a new character as in C1; once it is back in the lobby from the Digi-Lab (its last
+      changed stage change uploaded; the stage changes to the save room leave the record unchanged), "another PC"
+      saves the character (a PUT through the API), so the save room's upload is the one that gets 409: the client
+      tells the player, keeps its card cache in backups/, reloads the other PC's character and never overwrites it.
   P1  F1 Saves > Cloud backup outside rooms (no room, the panel's own login through DW4_MENU_CLOUD): an existing
       backup (another PC's, uploaded through the API) is shown, the local save (a GCI folder card) is uploaded over
       it (the revision rises, the SHA-256 is the local file's), a kept revision made the latest again (API) is
       downloaded into the local save (the old one copied to backups/ first); a picture of the panel at 1920x1009
       (widescreen, MSAA 4) is kept in the run folder.
 
-    python character_test.py [C1 C2 C3 P1] --game-exe EXE --data DATA --cards CHECKPOINTS
+    python character_test.py [C1 C2 C3 C4 P1] --game-exe EXE --data DATA --cards CHECKPOINTS
                              [--mysql-port 3455] [--ports 54250-54299] [--keep] [--no-build]
 
 The clients run hidden (--smoke-test, DW4_NO_ERROR_BOX=1, below normal priority); network traffic stays on loopback.
@@ -270,6 +274,89 @@ def run_c2(st, args, api, https_port, pin, out):
     return problems, notes
 
 
+def run_c4(st, args, api, https_port, pin, out):
+    """S15 from the save room: another PC saves the new character while the client walks to the save room."""
+    account = "c4" + secrets.token_hex(3)
+    password, token = register(api, account)
+    script = "\n".join([
+        "# C4: a new game from the title (as C1); another PC saves once this client is back in the lobby from the Digi-Lab",
+        "campaign until stage=stagml02",
+        "log in the Digi-Lab",
+        "campaign until stage=stagml11,control",
+        "log back in the lobby",
+        "campaign until stage=stagis12",
+        "log in the save room",
+        "campaign until stage=stagml12,control",
+        "log back from the save room",
+        "idle until frames>=30",
+    ]) + "\n"
+    env = {"DW4_CAMPAIGN_CHECKPOINTS": os.path.join(out, "c4_checkpoints"), "DW4_CAMPAIGN_CHECKPOINT_LIST": "p2"}
+    proc, own = start_client(st, args, out, "c4", account, password, https_port, pin, script, args.c1_frames, env)
+    log = os.path.join(out, "c4.log")
+    other, other_record, client_revision = None, None, None
+    deadline = time.time() + args.c1_frames / 59.94 + 300
+    while proc.poll() is None and time.time() < deadline:
+        lines = log_lines(log)
+        if other is None and any("log: back in the lobby" in l for l in lines):
+            saved = [m for m in (re.match(r"saved \((.+)\) revision (\d+)", l) for l in character_lines(lines)) if m]
+            if not saved:
+                break
+            client_revision = int(saved[-1].group(2))
+            s, cur = api.call("GET", "/api/v1/online-character", token=token)
+            if s != 200 or cur["revision"] != client_revision:
+                raise RuntimeError("the server's character before the other PC's save: %s %s" % (s, cur and cur.get("revision")))
+            rec = bytearray(base64.b64decode(cur["record"]))
+            rec[96:100] = (int.from_bytes(rec[96:100], "big") + 7).to_bytes(4, "big")  # a little richer (bits)
+            s, put = put_character(api, token, bytes(rec), cur["revision"], cur["playSeconds"] + 5)
+            if s != 200:
+                raise RuntimeError("the other PC's PUT: %s %s" % (s, put))
+            other, other_record = put["revision"], bytes(rec)
+            print("       C4: another PC saved revision %d after the client's revision %d" % (other, client_revision), flush=True)
+        time.sleep(0.2)
+    if proc.poll() is None:
+        proc.wait(60)
+    lines = log_lines(log)
+    ch = character_lines(lines)
+    problems, notes = [], []
+    common_checks(problems, lines, own, proc.poll())
+    if not any(l.startswith("enter without a character") for l in ch):
+        problems.append("the first entry did not start without a character (404)")
+    if other is None:
+        problems.append("the client never came back to the lobby with an upload, so the other PC never saved")
+        return problems, notes + ["character lines: " + " | ".join(ch)]
+    after = ch[next(i for i, l in enumerate(ch) if l.startswith("saved") and l.endswith("revision %d" % client_revision)) + 1:]
+    conflict = [i for i, l in enumerate(after) if l.startswith("conflict")]
+    if not conflict:
+        problems.append("no 409 after the other PC's save")
+    else:
+        uploads = [l for l in after[:conflict[0]] if l.startswith("upload")]
+        if not uploads or not uploads[-1].startswith("upload (save room) if-match %d" % client_revision):
+            problems.append("the 409 did not answer the save room's upload (uploads before it: %s)" % uploads)
+        if any(l.startswith("saved") for l in after[:conflict[0]]):
+            problems.append("an upload went through after the other PC's save: " + "; ".join(l for l in after if l.startswith("saved")))
+    if not any(l.startswith("notice Your online character was saved on another PC") for l in ch):
+        problems.append("the player was not told about the conflict")
+    if not any(l.startswith("reloaded revision %d" % other) for l in ch):
+        problems.append("the other PC's revision %d was not reloaded" % other)
+    if not any("campaign: checkpoint p2" in l and "unchanged" not in l for l in lines):
+        notes.append("(no campaign checkpoint p2 line)")
+    s, body = api.call("GET", "/api/v1/online-character", token=token)
+    if s != 200 or body["revision"] != other:
+        problems.append("the other PC's character was overwritten: revision %s, expected %s" % (body.get("revision") if body else s, other))
+    else:
+        record = base64.b64decode(body["record"])
+        if not same_character(record, other_record):
+            problems.append("the server's record is not the other PC's")
+        cache = os.path.join(card_folder(args, account), "online_card.dat")
+        if not same_character(record, record_of(cache, 0)):
+            problems.append("the card cache does not hold the reloaded character")
+    backups = os.path.join(card_folder(args, account), "backups")
+    if not (os.path.isdir(backups) and os.listdir(backups)):
+        problems.append("the local card cache was not kept in backups/")
+    notes.append("the client saved revision %d, the other PC %d; character lines after it: %s" % (client_revision, other, " | ".join(after[:8])))
+    return problems, notes
+
+
 def with_bits(gci, add):
     """The GCI with box 0's bits raised by `add` in both data copies (checksums rewritten)."""
     data = bytearray(gci)
@@ -419,7 +506,7 @@ def main():
     ap.add_argument("--c2-frames-play", type=int, default=9000, help="C2: frames of story play in the lobby and on")
     args = ap.parse_args()
     args.impair = ""
-    wanted = args.scenarios or ["C1", "C2", "C3", "P1"]
+    wanted = args.scenarios or ["C1", "C2", "C3", "C4", "P1"]
     if any(n in wanted for n in ("C2", "C3", "P1")) and not args.cards:
         print("C2 needs --cards (a campaign checkpoint set such as work/campaign/checkpoints/r25c)")
         return 2
@@ -445,7 +532,7 @@ def main():
                 problems, notes = ["%s: %s" % (type(e).__name__, e)], []
             results[name] = (problems, notes, time.time() - t)
 
-        threads = [threading.Thread(target=one, args=(n, {"C1": run_c1, "C2": run_c2, "C3": run_c3, "P1": run_p1}[n])) for n in wanted]
+        threads = [threading.Thread(target=one, args=(n, {"C1": run_c1, "C2": run_c2, "C3": run_c3, "C4": run_c4, "P1": run_p1}[n])) for n in wanted]
         for th in threads:
             th.start()
         for th in threads:
