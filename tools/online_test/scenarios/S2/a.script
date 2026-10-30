@@ -15,6 +15,6 @@ log b joined
 wander 330 140 15 until sealed>=900
 mat matz01 yes 2 until stage=stag0101,control
 log together back in stag0101
-wander -310 -170 15 until sealed>=1500
+wander -310 -170 15 until sealed>=2400
 log enough
 idle until frames>=60

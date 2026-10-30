@@ -10,6 +10,6 @@ log at the exit
 wander -300 -190 4 until frames>=600
 mat matz02 yes 3 until stage=stag0102,control
 log in stag0102
-wander 340 120 15 until sealed>=3500 or present<=2,frames>=60
+wander 340 120 15 until sealed>=4200 or present<=2,frames>=60
 log enough
 idle until frames>=60

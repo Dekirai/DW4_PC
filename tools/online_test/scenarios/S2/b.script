@@ -12,6 +12,6 @@ mat matz02 yes until stage=stag0102,control
 log in stag0102 with a
 mat matz01 yes 2 until stage=stag0101,control
 log together back in stag0101
-wander -300 -210 15 until sealed>=1500 or present=1,frames>=60
+wander -300 -210 15 until sealed>=2400 or present=1,frames>=60
 log enough
 idle until frames>=60
