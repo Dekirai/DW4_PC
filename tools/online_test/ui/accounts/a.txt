@@ -1,0 +1,54 @@
+# The account screens from the title's Online panel (a new account).
+wait-title
+wait 30
+shot title_compact
+panel open
+expect-gate open
+wait 10
+shot welcome
+screen register
+fill register.name $UI_A_NAME
+fill register.password $UI_A_PASSWORD
+fill register.again $UI_A_PASSWORD
+wait 10
+shot register
+register $UI_A_NAME $UI_A_PASSWORD
+expect-screen registered
+wait 10
+shot registered
+ack
+expect-screen rooms
+expect-logged-in
+refresh
+wait 10
+shot rooms_empty
+screen account
+sleep 1
+wait 10
+shot account
+screen password
+wait 10
+shot password
+back
+expect-screen account
+logout
+expect-logged-out
+expect-screen welcome
+wait 10
+shot logged_out
+screen login
+fill login.name $UI_A_NAME
+login $UI_A_NAME not-the-password
+expect-error User name or password is wrong.
+wait 10
+shot login_error
+login $UI_A_NAME $UI_A_PASSWORD remember
+expect-screen rooms
+screen recover
+wait 10
+shot recover
+back
+panel close
+wait 30
+shot title_logged_in
+end

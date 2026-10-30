@@ -1,0 +1,8 @@
+{
+  "desc": "two players: a creates a room with a password, b finds it, is asked for the password, joins; the room view; a leaves",
+  "timeout": 420,
+  "clients": [
+    {"name": "a", "script": "a.txt", "registered": true},
+    {"name": "b", "script": "b.txt", "registered": true, "start": 25}
+  ]
+}

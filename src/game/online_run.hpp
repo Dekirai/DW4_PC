@@ -43,6 +43,7 @@ struct OnlineRoom {
     std::uint32_t member_id = 0;
     int relay_port = 52041;
     online::RoomSettings settings;
+    int max_players = 0; // the room's size (the Discord party)
 };
 std::optional<OnlineRoom> online_enter_room(online::HttpWorker& http, const OnlineOptions& options, std::uint64_t data_hash,
                                             const std::string& client_version, const std::filesystem::path& token_folder, std::string& error);

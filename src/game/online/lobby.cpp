@@ -80,13 +80,28 @@ const char* screen_name(Screen screen) {
     return "?";
 }
 
+const char* gate_name(Gate gate) {
+    switch (gate) {
+    case Gate::unknown: return "unknown";
+    case Gate::checking: return "checking";
+    case Gate::open: return "open";
+    case Gate::unreachable: return "unreachable";
+    case Gate::maintenance: return "maintenance";
+    case Gate::outdated: return "outdated";
+    case Gate::not_set_up: return "not_set_up";
+    }
+    return "?";
+}
+
 std::optional<Screen> screen_from_name(const std::string& name) {
     for (const auto& s : kScreens)
         if (name == s.name) return s.screen;
     return std::nullopt;
 }
 
-OnlineLobby::OnlineLobby(std::unique_ptr<HttpQueue> http, LobbyConfig config) : http_(std::move(http)), config_(std::move(config)) {}
+OnlineLobby::OnlineLobby(std::unique_ptr<HttpQueue> http, LobbyConfig config) : http_(std::move(http)), config_(std::move(config)) {
+    remembers_login_ = !read_account(config_.folder).empty();
+}
 
 bool OnlineLobby::busy() const {
     return std::any_of(inflight_.begin(), inflight_.end(), [](const Pending& p) { return p.foreground; });
@@ -331,6 +346,7 @@ void OnlineLobby::handle(const Pending& pending, const HttpResponse& response) {
         std::stable_partition(rooms_.begin(), rooms_.end(),
                               [&](const api::RoomListing& r) { return r.compatible(config_.protocol, config_.data_hash); });
         rooms_loaded_ = true;
+        ++rooms_serial_;
         return;
     }
     case Call::create:
@@ -415,6 +431,7 @@ void OnlineLobby::become_logged_in(const std::string& account, const std::string
         if (lower(read_account(config_.folder)) == lower(account_)) remove_account(config_.folder);
         remembered_ = false;
     }
+    remembers_login_ = remembered_;
     send(Call::me, api::me_request());
 }
 
@@ -426,6 +443,7 @@ void OnlineLobby::become_logged_out(const std::string& why) {
     token_.clear();
     http_->set_token({});
     remembered_ = false;
+    remembers_login_ = !read_account(config_.folder).empty();
     info_.reset();
     character_.reset();
     start_.reset();

@@ -111,6 +111,10 @@ public:
     // Name tags of room members outside the own instance, interpolated.
     std::vector<RemoteSample> remote_tags(double now) const { return tracks_.sample(now); }
     std::string member_name(std::uint32_t member) const;
+    // The relay's ROSTER (once per second): every room member's stage (empty:
+    // hidden), instance, level, HP and flags (1 connected, 2 lagging, 4
+    // owner), for the room view's areas (docs/SEAMLESS.md 10, 12).
+    const std::vector<wire::RosterEntry>& roster() const { return roster_; }
 
     // Facts.
     Mode mode() const { return mode_; }
@@ -243,6 +247,7 @@ private:
     std::set<std::uint32_t> known_members_;
     std::set<std::uint32_t> disconnected_members_;      // ROOM disconnected, not connected again yet
     std::map<std::uint32_t, std::uint32_t> roster_inst_; // ROSTER: room member -> its instance (or join target)
+    std::vector<wire::RosterEntry> roster_;              // the last ROSTER as it came
     bool hello_seen_ = false;
     double last_tick_at_ = 0;
     double now_ = 0;

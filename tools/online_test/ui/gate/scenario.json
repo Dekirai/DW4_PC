@@ -1,0 +1,6 @@
+{
+  "desc": "the version gate: a server that needs a newer protocol and version",
+  "timeout": 120,
+  "server": {"Play": {"MinimumProtocol": 99, "CurrentProtocol": 99, "MinimumClientVersion": "9.0.0", "CurrentClientVersion": "9.1.0"}},
+  "clients": [{"name": "a", "script": "a.txt"}]
+}

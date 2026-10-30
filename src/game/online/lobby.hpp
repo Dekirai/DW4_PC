@@ -78,6 +78,7 @@ enum class Gate {
     outdated,         // the server needs a newer protocol or version
     not_set_up,       // this build has no pin for the server's certificate
 };
+const char* gate_name(Gate gate); // "open", "outdated", ... (test runs)
 
 struct LobbyConfig {
     int protocol = 0;                    // kOnlineProtocol
@@ -142,6 +143,7 @@ public:
     const std::string& recover_name() const { return recover_name_; }
     const std::vector<api::RoomListing>& rooms() const { return rooms_; }
     bool rooms_loaded() const { return rooms_loaded_; }
+    std::uint64_t rooms_serial() const { return rooms_serial_; } // counts the room lists that arrived
     const std::optional<api::RoomListing>& join_target() const { return join_target_; }
     const std::optional<api::RoomView>& room() const { return room_view_; }
     const std::string& room_code() const { return room_code_; }
@@ -151,6 +153,10 @@ public:
     // Create and join: the server is open, the account logged in, this PC may play online.
     bool can_play() const { return gate_ == Gate::open && logged_in() && config_.refusal.empty(); }
     const std::string& refusal() const { return config_.refusal; }
+    int protocol() const { return config_.protocol; }
+    std::uint64_t data_hash() const { return config_.data_hash; }
+    // A login this PC remembers (read at construction): the host may open the lobby at the title.
+    bool remembers_login() const { return remembers_login_; }
 
     // The host says whether an offline game would end (an engine past the
     // title): then create and join ask first.
@@ -215,6 +221,7 @@ private:
     std::unique_ptr<HttpQueue> http_;
     LobbyConfig config_;
     bool opened_ = false;
+    bool remembers_login_ = false;
     Screen screen_ = Screen::welcome;
     std::vector<Screen> history_;
     Gate gate_ = Gate::unknown;
@@ -232,6 +239,7 @@ private:
 
     std::vector<api::RoomListing> rooms_;
     bool rooms_loaded_ = false;
+    std::uint64_t rooms_serial_ = 0;
     double rooms_at_ = -1e9;
     std::optional<api::RoomListing> join_target_;
 

@@ -1,0 +1,7 @@
+wait-title
+panel open
+sleep 3
+expect-gate unreachable
+wait 10
+shot unreachable
+end

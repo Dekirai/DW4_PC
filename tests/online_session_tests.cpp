@@ -376,6 +376,18 @@ void pacing_and_lag() {
     b.input = press_in({{"stagis10", 20}, {"stagml11", 120}}, fake::kExitButton);
     check(world.run_until(20, [&] { return a.session->mode() == Mode::sealed && b.session->mode() == Mode::sealed; }), "sealed");
     world.run(30);
+    // The room view's roster: the relay's ROSTER as it came (areas, levels, flags).
+    {
+        w::Roster roster;
+        roster.entries.push_back({1, "stag0101", 7, 12, 300, 320, 1 | 4});
+        roster.entries.push_back({2, "", 7, 9, 0, 250, 1 | 2});
+        world.hub.send(1, w::Type::roster, w::encode(roster), world.now);
+        world.run(0.5);
+        const auto& seen = a.session->roster();
+        check(seen.size() == 2 && seen[0].stage == "stag0101" && seen[0].level == 12 && seen[0].flags == 5 && seen[1].stage.empty() &&
+                  seen[1].max_hp == 250,
+              "the roster reaches the room view");
+    }
     const double ratio = a.session->audio_ratio();
     check(ratio >= 0.999 && ratio <= 1.001, "the audio ratio stays within 0.1 %");
     // Lag: the server fills B's pads when they stop (B's uplink gone, its downlink alive).

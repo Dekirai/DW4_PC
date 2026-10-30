@@ -83,6 +83,7 @@ std::optional<OnlineRoom> online_enter_room(online::HttpWorker& http, const Onli
     room.room_name = joined->name;
     room.settings = joined->settings;
     room.member_id = joined->member_id;
+    room.max_players = joined->max_players;
     if (joined->relay_port) room.relay_port = joined->relay_port;
     room.ticket = joined->ticket;
     if (room.ticket.empty()) {

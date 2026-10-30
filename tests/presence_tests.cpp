@@ -83,6 +83,21 @@ void json() {
           "assets");
     check(contains(set, "\"nonce\":\"7\""), "nonce");
     check(contains(discord::set_activity_json(1, std::nullopt, 2), "\"activity\":null"), "clearing");
+    check(!contains(set, "party"), "no party offline");
+    // An online room's party: a hashed id and the room's size, never the code or a secret.
+    discord::Activity room = activity;
+    room.party_id = discord::party_id("ABCD12");
+    room.party_size = 3;
+    room.party_max = 10;
+    const auto party = discord::set_activity_json(1, room, 4);
+    check(room.party_id.size() == 20 && room.party_id.rfind("dw4-", 0) == 0 && room.party_id == discord::party_id("ABCD12") &&
+              room.party_id != discord::party_id("ABCD13"),
+          "party id");
+    check(contains(party, "\"party\":{\"id\":\"" + room.party_id + "\",\"size\":[3,10]}") && !contains(party, "ABCD12") &&
+              !contains(party, "secret"),
+          "party size, no room code, no join secret");
+    room.party_size = 11;
+    check(!contains(discord::set_activity_json(1, room, 5), "party"), "a size above the maximum is left out");
     discord::Activity menus;
     menus.details = "In Menus";
     const auto menu_json = discord::set_activity_json(1, menus, 3);
