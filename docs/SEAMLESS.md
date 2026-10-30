@@ -2671,13 +2671,19 @@ step. Checked:
 
 For the other lanes: the barrier's story merge (story lane) must not raise
 `story_flag` port events (a guest would get the clear credit for the room
-story it receives); the server migration of the story lane follows 0008
-(the migrator tests take the embedded list); the online character upload
+story it receives); the story lane's migration is 0008 as well
+(`0008_online_story.sql`, its tests expect schema 8) and the migrator takes
+1..n without gaps, so the merge renames this lane's file to
+`0009_achievement_catalogue.sql` (`AchievementRulesTests` find it by name, the
+migrator and health tests here take the embedded list; the table count is the
+story lane's 17); the online character upload
 (character lane) sends `achievements::context_json(report_context())` as its
 context, so its state achievements unlock in the room; the title and F1 room
 UI (ui lane) creates the room's `OnlineAchievements` with
-`make_online_achievements` after `connect` and calls `flush` before its
-*Leave room*.
+`make_online_achievements(*online, created, test_run, online_folder)` right
+after its `connect` succeeds, calls `flush(now, 2.0)` before every
+`online->leave()` (F1 *Leave room*, the lobby's leave request, the end of the
+game) and `save()` + `reset()` where it drops a closed session.
 
 ### Round S3 (r54): stage flow in shared instances
 
