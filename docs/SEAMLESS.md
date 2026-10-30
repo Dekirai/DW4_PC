@@ -2384,14 +2384,14 @@ the room (up to ten), not the instance. No invites or join secrets for now.
 | S8 | status window of one member while the other fights far away (scoped) and near (original) | S3 |
 | S9 | pit: one member falls and respawns alone, no fade on the other screen | S3 |
 | S10 | disconnect and reconnect within ten seconds; and after the timeout | S4 |
-| S11 | injected desync (test hook) and resync; a resync beyond the limit continues alone | S4 |
+| S11 | injected desync (test hook) and resync; a resync beyond the limit continues alone | S1 (S11a, S11b: `DW4_ONLINE_TEST_DESYNC` on the shorter / the longer member, resync, equal after), S4 |
 | S12 | latency, jitter and loss proxy matrix | S1 (measure), S4 (tune) |
 | S13 | room of ten: instances 4 + 4 + 2 plus solo members, 30 minutes | S4 |
 | S14 | owner-away policies drop (removal at the barrier, notice) / hold / apply | S2 |
 | S15 | save room upload, 409 from a second machine | S2 |
 | S16 | quest and story in stag0401: a quest-1 member arrives at point 3 while a story member plays there: separate instances, both keep their state; two members on quest 1 share one | S1 |
 | S17 | two members take the area gate 2 s apart (co-arrival, one entry scene) and 8 s apart (hold, then join) | S1 |
-| S18 | exit mat: A answers *No* and stays, B steps off, dies or despawns on the mat: no prompt; A answers *Yes* while B stands on the mat: B is asked; B *No*: only A leaves | S1 |
+| S18 | exit mat: A answers *No* and stays, B steps off, dies or despawns on the mat: no prompt; A answers *Yes* while B stands on the mat: B is asked; B *No*: only A leaves; S18b: B leaves the room with its own prompt open: it closes as *No*, A leaves by the mat | S1 |
 | S19 | dead partner: A dead, B (the only living member) takes an exit or the gate disc: A goes with B, no game over; A gives up: A alone to the lobby | S1 (exit, gate disc), S3 (story trigger) |
 | S20 | dng103f2 dwbutton2 with a member who just arrived (15-frame window as in local co-op); a puzzle mat shows *Waiting for* | S3 |
 | S21 | B+X+START held for 4 s on slot 1: no reboot anywhere, *Leave room?* on slot 1's machine | S1 |
