@@ -1155,9 +1155,29 @@ SPLIT still carry the leavers' pads). So a window waiting for a leaving slot
 cannot hang the instance (the pad redirect, 7.4, does the rest), and no remote
 pad reaches the console reset (which is off online anyway, 7.4).
 
+A slot is *leaving* from the tick of its LEAVE until the LEAVE applies: when
+the LEAVE's tick comes in a step that is not membership-safe, every machine
+marks the slot (`Engine::online_mark_leaving`, before that step; the client's
+`apply_events`), so its pad is neutral and connected and its readers take the
+leader's pad (`pad_reader_slot`: an exit prompt it owns, which has no time
+limit, and its status window, whose page turns and digit cursors read
+`window.player` through `pad_reader_slot` too). The step the LEAVE waits for
+then comes. (Round S1 review: nothing set the mark, and a member that left
+with its own exit prompt or status window open froze the instance for the
+rest of the stage; the session test `leave_with_open_prompt`.)
+
 Members report `STATE` so that the server knows when an instance is joinable
 and why not; a JOIN into an instance that turns unjoinable simply waits (the
 joiner sees "Waiting for the scene to end").
+
+**Record limits.** A tick record holds at most 255 events (a u8 count) and an
+event at most 65,535 bytes (a u16 length). The relay keeps one INTENT of a
+member open at a time (more are dropped and counted, `intent_dropped`), seals
+at most 200 events into one record (the rest follow in the next ticks;
+LEAD_FROM is never deferred) and refuses a BARRIER or READY carry above
+65,533 bytes (it becomes a JOIN event: slot, point, carry). A record past
+these limits broke every member's SEALED frame and the log's compressed block
+(round S1 review: 300 INTENT in one burst, a 64 KiB carry).
 
 ### 6.6 Mid-stage join
 
@@ -1354,6 +1374,21 @@ is simulation, so all members of a sealed instance park at the same B. The
 server stops sealing the old visit at the first BARRIER it receives; ticks it
 had already sealed after B are discarded by every member and by the log.
 
+A single BARRIER (a desync, or a forged one) therefore stops the sealing for
+every member of the instance until `Instances:BarrierReportSeconds` (5 s)
+ends the wait: their pictures freeze that long (measured in the round S1
+review: 5.17 s), then the reporters leave as a group of their own (NEW) and
+the others play on (LEAVE, LEAD_FROM). A BARRIER that names an instance the
+server does not have the member in (a straggler whose group was decided
+without it, a client whose own five-second timeout went on as NEW, a forged
+one) arrives alone and first takes the member out of the instance the server
+still had it in (LEAVE when sealed); a BARRIER while the server still parks
+the member, or while it catches up on a target the BARRIER does not name,
+ends that wait. (Before: the old slot stayed filled, one member made 20,001
+instances in 83 s, an honest arrival was sent to such a zombie to join a
+leader that played elsewhere, and the housekeeping's index -1 stopped every
+room's pings.)
+
 **Transition steps.** The steps from B to the load step (the module reload's
 step with `reset_modules`, its held fields with `console_reset_.hold`, the load
 step with `pads_.update` and `begin_stage_load`; `engine.cpp:1843-1914`) take,
@@ -1393,7 +1428,14 @@ pads are the pads of B.
 disc, story or boss participants, give up) at step F, so every machine knows the
 two sides without a message. Each copy despawns the other side's players at the
 end of step F and from F+1 needs only its own side's pads. Every member sends
-SPLIT(F, mask); the server checks that they agree (a disagreement is a desync).
+SPLIT(F, mask). The server forks when every connected member of the instance
+reported the same fork, or after `Instances:ForkConfirmMs` (2 s) when members
+of both sides did; F must be a sealed tick at most 600 ticks back. A single
+member's SPLIT moves nobody (round S1 review: one forged SPLIT moved its
+partner into a child its engine never forked); a disagreement is a desync.
+Until the fork, both sides still execute the instance's sealed ticks (each
+copy already despawned the other side's players, so it plays only its own
+side's pads), and the fingerprints from F on are not compared.
 
 - **Side rule.** A side without a living member does not stand alone: its
   members go with the other side (the dead travel with the living, as
@@ -1468,6 +1510,33 @@ without audio output differs. The SNAPHASH is
 A solo group that went on without the server (3.4) uploads snapshot and log
 when it reconnects.
 
+**Limits of the store (round S1 review).** A solo member steps at the game's
+pace, so its LOG may run at most 2 % plus `Instances:LogLeadTicks` (600) ahead
+of the wall clock since its visit's BARRIER_OK; more is a protocol fault (a
+forged LOG wrote 860,400 ticks in 60 s). Only the member that leads the solo
+stretch logs it, also the ticks before J after JOIN_AT (a joiner's LOG wrote
+its own pads and slot into the leader's history). A solo log stops at
+`Instances:MaxVisitHours` (12 h): further LOG is dropped and the instance
+takes no joins. RATE and READY's rate are capped at `Instances:MaxReplayRate`
+(20,000 steps/s), so a forged rate cannot buy a join on a long log. A fork's
+child shares the parent's snapshot also while it still uploads: whichever side
+the uploader went to completes it for both (before, a child forked before the
+upload finished never became joinable). A sealed visit's member whose
+canonical hash has not come after `Instances:SnapHashSeconds` (60 s) leaves
+it by LEAVE, and sealing starts without it; so does a member that goes before
+tick 0 (a co-arrival every engine spawned in its load step), and a lost one
+no longer holds the others' start (the reconnect window runs from tick 0).
+
+**State transfers outside the room lock.** A STATE_DATA (join, co-arrival,
+resync) is captured under the room lock (the compressed blocks are never
+changed once made, the open block is copied, `TickLog.Capture`) and built on
+the thread pool; nothing of the stream is pumped to the member until it went
+out, so the ticks follow it in order. The sealing thread does not wait for a
+busy room (`Monitor.TryEnter`; that room seals its due ticks a millisecond
+later in one batch), and the room API answers a busy room with the last
+housekeeping pass's view. (Round S1 review: a join of a 523k-tick log held a
+sealed pair in another room up to 53 ms, a join every 2 s up to 153 ms.)
+
 ### 6.9 Fingerprints and desync
 
 Every member sends a *net fingerprint* every 60 ticks: `Engine::fingerprint`
@@ -1490,6 +1559,16 @@ the same 47549cdd for stag0102.) The server compares per tick:
   same happens after three resyncs of one member within ten minutes. The
   server keeps both fingerprint lines and the last ticks for diagnosis.
 - A mismatch at READY restarts the catch-up once, then falls back (6.6).
+- **One vote per tick.** Only sealed ticks count, every tick is voted on once,
+  a member is resynced at most once at a time and once per
+  `Instances:ResyncCooldownSeconds` (10 s; further lost votes meanwhile are
+  only counted), and the relay does not lag-remove a member while it catches
+  up. A resync ends with the member's READY: no JOIN follows (it never left
+  the instance), the client goes back to sending its pads from the tick it
+  reached (`Session::finish_resync`; a replay that reaches the group's stage
+  change parks with the group). (Round S1 review: the client waited for a JOIN
+  as an observer for good and was lag-removed; 20 NETFP per second for one
+  tick sent 12 states of 2.4 MB in a second.)
 
 ### 6.10 Lag, disconnects, reconnect
 
@@ -1511,6 +1590,17 @@ the same 47549cdd for stag0102.) The server compares per tick:
 - After the room's member timeout (35 s) the server removes it from the room;
   the client returns to the title with a message. The online character keeps
   its last upload.
+- RESUME is taken once per connection, only after a resumable WELCOME, and
+  only for a reconnect's gap (at most `Instances:MaxResumeTicks`, 3,600 ticks,
+  before what the member was sent); the ticks go out under the state budget.
+  (Round S1 review: 20 RESUME per second resent a 523k-tick log, 272 MB in
+  15 s.) A connection that ends without BYE releases its address's slot at
+  once (before, the relay's writer waited for good: after
+  `Relay:MaxConnectionsPerIp` crashes or lost networks the address could not
+  connect until a restart).
+- A solo leader that does not answer JOIN_REQ is asked again every five
+  seconds, `Instances:JoinRequestTries` (3) times; then the joiner plays the
+  stage as NEW ("Joining ... failed").
 
 ### 6.11 Instance host and room owner
 
@@ -2404,6 +2494,38 @@ connection were dropped from their rooms; five at a time pass.
 the hidden variant passes (two clients from the title, sealed together in
 stag0001, equal final fingerprints).
 
+**Review and fix round (round S1).** The review (game and server, live
+attacks on a private stack) found, and this round fixed with a test each:
+
+- *DISSOLVE kept the wrong character*: the relay names the new slot 0 in
+  BARRIER_OK's own slot, the engine read it as the old slot, so every member
+  not in slot 0 kept slot 0's player (name, level, items, bits, capsule) and
+  personal values after each game over or return to a lobby (S19a on real
+  clients: the k10 member showed the k2 partner's level 7). The adapter now
+  hands the engine the slot map's source of 0 (`online` test
+  `dissolve_through_the_link`; S19a's b fails below level 21).
+- *Relay*: zombie instances from BARRIER with an unknown instance; a
+  housekeeping task that died silently for every room on a slot -1; leaked
+  connections without BYE; records past their u8 / u16 limits (64 KiB carry,
+  300 INTENT); LOG faster than the game; RESUME and fingerprint floods; heavy
+  state transfers under the room lock (6.5, 6.7-6.10). Plus a co-arrival that
+  goes before tick 0, a joiner's LOG in the leader's history, a single
+  member's SPLIT, JOIN_REQ without end, a fork child that never got its
+  snapshot, a hub removed under a handshake, a bare `"randomizer": true`.
+- *Client*: no leaving mark (6.5), RESYNC that never ended (6.9), a damaged
+  carry ending the game, "Defeated" during every load and departure (now HP 0
+  or the capsule out), the leave prompt that the combo could not close and
+  that hid every loading line, notices without names, the login token
+  forgotten on any network error, the MXCSR guard and the leash rule missing
+  in restore, the load step's traversal missing after a restore,
+  DW4_PAD_REPLAY allowed online, a give-up's fork side not found in a replay;
+  S18's asked member now answers itself (not the prompt's timeout).
+
+Not fixed (minor, listed): a joiner's catch-up gets about 12 ms of each host
+pass, so on a 60 Hz window it reaches about 70 % of its reported rate; a full
+instance (four) still leaves the first arrival alone when five arrive at once
+(the base holds only when every announced member fits).
+
 ### Round S2 (r53): accounts, online character, room story
 
 Goal: the real loop from the title: log in, pick or create a room, play the
@@ -2712,12 +2834,12 @@ Client to server:
 | 0x01 | INPUT | inst u32, visit u32, first tick u32, count u8 (1-32), pads |
 | 0x02 | LOG | inst u32, visit u32, first tick u32, count u16 (1-1200), pads (contiguous from the log's end; overlap is ignored, a gap closes the connection) |
 | 0x03 | HEADING | inst u32, stage str, point u8, context hash u64 |
-| 0x04 | BARRIER | inst u32, visit u32, barrier tick u32, stage str, point u8, alive mask u8, present mask u8, context hash u64, own carry blob (at most 64 KiB) |
+| 0x04 | BARRIER | inst u32, visit u32, barrier tick u32, stage str, point u8, alive mask u8, present mask u8, context hash u64, own carry blob (at most 65,533 bytes: it becomes a JOIN event, whose length is a u16) |
 | 0x05 | BARRIER_CHOICE | inst u32, choice u8 (0 wait, 1 alone) |
 | 0x06 | SPLIT | inst u32, visit u32, fork tick u32, leaver mask u8 (the side that moves to the child), kind u8 (0 exit, 1 in-stage) |
 | 0x07 | SNAPSHOT | inst u32, visit u32, total u32 (at most 4 MiB), offset u32, chunk (the rest; chunks in order from 0) |
 | 0x08 | SNAPHASH | inst u32, visit u32, canonical hash u64 |
-| 0x09 | READY | inst u32, visit u32, tick u32 (a multiple of 60), net fingerprint u64, replay rate u32, carry blob |
+| 0x09 | READY | inst u32, visit u32, tick u32 (a multiple of 60), net fingerprint u64, replay rate u32, carry blob (at most 65,533 bytes); also a resync's end (no JOIN follows) |
 | 0x0A | JOIN_AT | inst u32, visit u32, tick J u32 |
 | 0x0B | NETFP | inst u32, visit u32, tick u32 (tick % 60 == 0), hash u64 |
 | 0x0C | STATE | inst u32, visit u32, tick u32, flags u8 (1 joinable, 2 membership-safe, 4 boss lock), context hash u64, reason u8 (0 none, 1 entry scene, 2 scene, 3 menu, 4 loading, 5 boss, 6 fork pending, 7 hub) |
