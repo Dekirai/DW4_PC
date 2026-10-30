@@ -53,13 +53,33 @@ engine::Vec3f camera_eye(const engine::Mat4& view);
 // Label opacity by distance: 1 up to `near`, 0 from `far`, linear between.
 float label_fade(float distance, float near_distance = 350.0f, float far_distance = 700.0f);
 
-// The head point above the model's node position: the highest joint of
-// its last traversed pose (`pose_top`, world y) plus a margin, else part of
-// its actors' bounding box (the bind pose's box is about twice the height
-// the figure shows), else a height for the form (`species`, a table of the
-// 16 forms), else 30 units.
+// The head height of each of the 16 forms (`species`, the "shinka" row):
+// world units above the model's origin, measured in round 54 from the
+// skinned figure the renderer draws (hidden 4-player runs in dng101b1 and
+// the lobby, the initial weapons): the highest point within 2 units
+// (horizontally) of the head joint in the stance, which takes horns, ears,
+// a collar or wings close to the head and leaves out weapons, raised arms
+// and wing tips further out. 30 for another species.
 float form_label_height(int species);
-engine::Vec3f head_point(const engine::Node& node, int species, std::optional<float> pose_top = std::nullopt);
+// The head point: for a form of the table its head height plus a gap above
+// the model's origin, moved horizontally by `head_offset` (the head joint's
+// offset, OverheadLabels follows it smoothly), so the tag keeps still
+// whatever the pose does (attacks, a run's bounce, raised weapons). A model
+// of no known form: the highest joint of its last traversed pose
+// (`pose_top`, world y) plus a margin, else part of its actors' bounding box
+// (the bind pose's box is about twice the height the figure shows), else
+// 30 units.
+engine::Vec3f head_point(const engine::Node& node, int species, std::optional<float> pose_top = std::nullopt,
+                         std::optional<engine::Vec3f> head_offset = std::nullopt);
+// One capture of the head point's horizontal follow (OverheadLabels, once
+// per simulation step): the head joint's offset from the model's origin
+// (`target`, y ignored) cut to 2 units, `current` moved a twentieth of the
+// way there (no current: the target itself).
+engine::Vec3f follow_head_offset(std::optional<engine::Vec3f> current, engine::Vec3f target);
+// The world position of a player's head joint in its last traversed pose
+// ("Head" in the rookies' skeletons, "Head01" in the others'); nullopt
+// without one.
+std::optional<engine::Vec3f> player_head_joint(const engine::Engine& engine, std::string_view model, int index, const engine::Node& node);
 // Whether the picture hides a label's player: read from the depth buffer the
 // renderer just drew (the stage's own collision holds invisible walls, so it
 // cannot tell). The probes sit a little above the head point, at its centre
@@ -149,6 +169,11 @@ public:
     static bool hidden(engine::Engine& engine);
 
 private:
+    // The head joint's horizontal offset from a local player's origin, as
+    // the head point follows it (head_point's `head_offset`), per label key.
+    std::vector<std::pair<std::uint64_t, engine::Vec3f>> head_offsets_;
+    std::optional<engine::Vec3f> follow_head(std::uint64_t key, const engine::Node& node, std::optional<engine::Vec3f> joint);
+
     std::vector<OverheadLabel> previous_, current_;
     std::vector<RemotePlayer> remote_;
     struct Occlusion {

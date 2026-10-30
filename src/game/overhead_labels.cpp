@@ -18,12 +18,19 @@ constexpr float kJumpDistance = 40.0f;
 // reaches 18.3 above its feet, the figure in its stance about 7.3): the
 // label sits at this share of the box.
 constexpr float kBoundShare = 0.45f;
-// Above the highest joint, this share of the joint's height within these
-// bounds: the bars sit just above the head. The joints sit inside the
-// figure or at its top: Agumon's highest is 5.6 to 5.9 above its feet, the
-// top of its head 7.3 (a 4-player lobby picture); Veemon's highest are the
-// ears' roots at 7.4 to 7.7, the top of its head.
+// A model of no known form: above its highest joint, this share of the
+// joint's height within these bounds (the joints sit inside the figure).
 constexpr float kJointMargin = 0.25f, kJointMarginMin = 1.8f, kJointMarginMax = 6.0f;
+// The bars' bottom this far above the form's head height (world units; the
+// remote players' head points in OverheadLabels::capture add the same 1).
+constexpr float kHeadGap = 1.0f;
+// The head point stands over the head joint, not over the model's origin
+// (the head sits up to 2 units beside it in a stance, which a camera that
+// looks down turns into a height): the joint's horizontal offset from the
+// origin, at most kHeadReach long, followed by this share per step (some
+// 20 steps to settle after a turn; the sway of a run and the lunge of an
+// attack move the tag a little and smoothly).
+constexpr float kHeadReach = 2.0f, kHeadFollow = 0.05f;
 // The occlusion probes: this far above the head point (world units), and
 // to either side by this share of the window height.
 constexpr float kProbeRise = 1.5f, kProbeSpread = 0.012f;
@@ -84,16 +91,42 @@ float label_fade(float distance, float near_distance, float far_distance) {
 }
 
 float form_label_height(int species) {
-    // Head heights of the 16 forms (world units above the model's origin),
-    // used when the model has no pose and no bounding box (Agumon: 7.3).
-    static constexpr float kHeights[16] = {8, 8, 8, 8, 14, 16, 14, 14, 14, 14, 14, 18, 16, 14, 16, 17};
+    // The skinned figure's highest point within 2 units of the head joint in
+    // the stance (SQ_WAIT in dng101b1 and in the lobby, the higher of the
+    // two), round 54; tests/labels_tests.cpp keeps the whole measurement.
+    static constexpr float kHeights[16] = {
+        8.3f,  // Agumon
+        9.2f,  // Veemon (its horn and ears)
+        9.6f,  // Guilmon
+        8.2f,  // Dorumon
+        13.8f, // WereGarurumon (the head in the lobby; its field stance crouches below the collar)
+        14.0f, // H-Kabuterimon (the horn's tip reaches 16.4, further out ahead)
+        12.8f, // WarGreymon
+        12.7f, // Cl-Angemon (the wings beside the head reach 15.7)
+        13.8f, // Beelzemon BM (the raised gun reaches 25.5 beside it)
+        13.2f, // Alphamon
+        12.8f, // BK WarGreymon
+        13.7f, // IPDramon FM
+        14.0f, // IPDramon PM
+        13.7f, // MetalGarurumon
+        13.3f, // Gallantmon CM
+        13.6f, // Susanomon
+    };
     return species >= 0 && species < 16 ? kHeights[species] : 30.0f;
 }
 
-engine::Vec3f head_point(const engine::Node& node, int species, std::optional<float> pose_top) {
+engine::Vec3f head_point(const engine::Node& node, int species, std::optional<float> pose_top, std::optional<engine::Vec3f> head_offset) {
     const auto& m = node.matrix;
     const engine::Vec3f origin{m(3, 0), m(3, 1), m(3, 2)};
-    // The joints sit inside the figure: a margin above the highest.
+    // A form of the table: its head height, whatever the pose does (a raised
+    // weapon or arm, the lunge or the leap of an attack, the bounce of a run:
+    // the highest joint, which round 50 followed, made the tag hop with all
+    // of them).
+    if (species >= 0 && species < 16) {
+        const engine::Vec3f offset = head_offset.value_or(engine::Vec3f{});
+        return {origin.x + offset.x, origin.y + form_label_height(species) + kHeadGap, origin.z + offset.z};
+    }
+    // Else the joints, which sit inside the figure: a margin above the highest.
     if (pose_top && *pose_top - origin.y > 2.0f && *pose_top - origin.y < 150.0f)
         return {origin.x, *pose_top + std::clamp((*pose_top - origin.y) * kJointMargin, kJointMarginMin, kJointMarginMax), origin.z};
     float top = 0;
@@ -121,6 +154,50 @@ std::optional<float> player_pose_top(const engine::Engine& engine, std::string_v
         if (std::isfinite(p.y) && (!top || p.y > *top)) top = p.y;
     }
     return top;
+}
+
+std::optional<engine::Vec3f> player_head_joint(const engine::Engine& engine, std::string_view model, int index, const engine::Node& node) {
+    const auto* actions = engine.get<engine::ActionManager>();
+    const auto* ram = actions ? actions->find(model, index) : nullptr;
+    if (!ram || ram->actors.empty() || !ram->actors.front()) return std::nullopt;
+    const auto& pose = ram->traversed;
+    if (!pose.skeleton || pose.bind_pose) return std::nullopt;
+    // The rookies' skeletons name it "Head", the other forms' "Head01".
+    const auto& names = pose.skeleton->names;
+    for (std::size_t bone = 0; bone < names.size() && bone < pose.bone_world.size(); ++bone) {
+        std::string name = names[bone];
+        for (auto& c : name) c = char(std::tolower(static_cast<unsigned char>(c)));
+        if (name != "head" && name != "head01") continue;
+        const auto p = engine::transform_point({0, 0, 0}, pose.bone_world[bone] * ram->actors.front()->actor_matrix * node.matrix);
+        if (std::isfinite(p.x) && std::isfinite(p.y) && std::isfinite(p.z)) return p;
+    }
+    return std::nullopt;
+}
+
+engine::Vec3f follow_head_offset(std::optional<engine::Vec3f> current, engine::Vec3f target) {
+    target.y = 0.0f;
+    if (const float length = std::sqrt(target.x * target.x + target.z * target.z); length > kHeadReach)
+        target = target * (kHeadReach / length);
+    if (!current) return target;
+    const engine::Vec3f from{current->x, 0.0f, current->z};
+    return from + (target - from) * kHeadFollow;
+}
+
+// The head joint's offset as the head point follows it, per label key (none
+// without a joint).
+std::optional<engine::Vec3f> OverheadLabels::follow_head(std::uint64_t key, const engine::Node& node, std::optional<engine::Vec3f> joint) {
+    auto it = std::find_if(head_offsets_.begin(), head_offsets_.end(), [&](const auto& entry) { return entry.first == key; });
+    if (!joint) {
+        if (it != head_offsets_.end()) head_offsets_.erase(it);
+        return std::nullopt;
+    }
+    const engine::Vec3f target{joint->x - node.matrix(3, 0), 0.0f, joint->z - node.matrix(3, 2)};
+    if (it == head_offsets_.end()) {
+        head_offsets_.emplace_back(key, follow_head_offset(std::nullopt, target));
+        return head_offsets_.back().second;
+    }
+    it->second = follow_head_offset(it->second, target);
+    return it->second;
 }
 
 LabelMode parse_label_mode(std::string_view text) {
@@ -167,8 +244,13 @@ void OverheadLabels::capture(engine::Engine& engine, int own_slot) {
         label.own = slot == own_slot;
         const int species = player.stats.ready ? player.stats.species : -1;
         const auto* form = form_by_model(player.digimon);
-        label.head = head_point(*ram->node, species >= 0 ? species : form ? form->species : -1,
-                                player_pose_top(engine, ram->info_name, slot, *ram->node));
+        // The form of the model in the picture first: a digivolution in the
+        // Digi-Lab changes the player's form at once, the model only with the
+        // next stage load.
+        const auto* drawn = form_by_model(ram->info_name);
+        label.head = head_point(*ram->node, drawn ? drawn->species : species >= 0 ? species : form ? form->species : -1,
+                                player_pose_top(engine, ram->info_name, slot, *ram->node),
+                                follow_head(label.key, *ram->node, player_head_joint(engine, ram->info_name, slot, *ram->node)));
         label.feet = {ram->node->matrix(3, 0), ram->node->matrix(3, 1), ram->node->matrix(3, 2)};
         label.name = ascii_player_name(player.name);
         if (label.name.empty()) label.name = "Player " + std::to_string(slot + 1);
@@ -210,6 +292,7 @@ void OverheadLabels::reset() {
     previous_.clear();
     current_.clear();
     occlusion_.clear();
+    head_offsets_.clear();
     players_ = 0;
 }
 

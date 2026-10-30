@@ -7,6 +7,7 @@
 #include "dw4/engine/engine.hpp"
 #include "dw4/engine/managers.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <optional>
 #include <iostream>
@@ -89,27 +90,110 @@ void fade_and_modes() {
     check(!label_visible(LabelMode::off, false, 4), "off");
 }
 
+// Round 54's measurement of the 16 forms (world units above the model's
+// origin; hidden 4-player runs with the initial weapons, DW4_RENDER=1, every
+// second frame): the skinned figure as the renderer draws it (the vertices
+// through the palette, as the shader does) and the pose's joints. "field" is
+// the SQ_WAIT stance in dng101b1, "lobby" the one in stagML11 (another idle
+// for some forms). head top: the highest vertex that moves with the head
+// joint (Head / Head01 and below); near top: the highest vertex (weapons
+// left out) within 2 units of the head joint horizontally, which also takes
+// a collar or wings beside the head - the form's table height is the higher
+// of the two stances. Highest joint: any joint, the stance (both), a run
+// (SQ_WALK), the combo (SQ_ATCK1 V*), holding A to charge (SQ_ATCK1 K*), the
+// charged attack's leap (SQ_ATCKTM; the model's origin stays on the ground)
+// and a technique (SQ_WAZA). Round 50's rule put the tag a quarter of the
+// highest joint above it (1.8 at least): its range in the stance, in a run
+// and its highest anywhere in those actions. While digivolving no player
+// model is drawn (the Digi-Lab window hides the tags; the evolution scene
+// stagML14 shows its own panels).
+struct MeasuredForm {
+    const char* name;
+    float head_top_field, head_top_lobby, near_top_field, near_top_lobby, head_joint_field, head_joint_lobby;
+    float joint_stance, joint_run, joint_attack, joint_charge, joint_leap, joint_technique;
+    float r50_stance_low, r50_stance_high, r50_run_low, r50_run_high, r50_actions_high;
+};
+constexpr MeasuredForm kMeasured[16] = {
+    {"Agumon", 8.3f, 8.3f, 8.3f, 8.3f, 6.0f, 6.0f, 6.0f, 8.0f, 9.1f, 5.8f, 17.2f, 6.0f, 7.2f, 7.8f, 6.2f, 10.0f, 21.5f},
+    {"Veemon", 9.7f, 8.7f, 9.2f, 8.7f, 6.1f, 6.0f, 7.8f, 8.0f, 7.3f, 5.8f, 17.2f, 7.1f, 9.0f, 9.7f, 6.2f, 10.0f, 21.5f},
+    {"Guilmon", 9.6f, 9.9f, 8.7f, 9.6f, 5.1f, 6.0f, 7.8f, 8.0f, 6.1f, 5.8f, 17.2f, 6.0f, 6.2f, 9.7f, 6.2f, 10.0f, 21.5f},
+    {"Dorumon", 8.4f, 8.2f, 8.2f, 8.2f, 5.1f, 6.0f, 7.8f, 8.0f, 7.1f, 5.8f, 17.2f, 6.0f, 6.2f, 9.7f, 6.2f, 10.0f, 21.5f},
+    {"WereGarurumon", 11.3f, 13.8f, 11.9f, 13.8f, 8.6f, 11.2f, 11.2f, 10.6f, 11.2f, 11.9f, 24.0f, 9.2f, 11.0f, 14.0f, 11.1f, 13.2f, 30.0f},
+    {"H-Kabuterimon", 16.4f, 16.0f, 13.9f, 14.0f, 11.2f, 11.2f, 11.2f, 11.2f, 14.2f, 11.9f, 24.0f, 10.7f, 14.0f, 14.1f, 11.7f, 14.0f, 30.0f},
+    {"WarGreymon", 12.1f, 13.4f, 12.1f, 12.8f, 9.4f, 10.8f, 10.8f, 12.1f, 12.8f, 10.6f, 11.4f, 9.4f, 11.4f, 13.4f, 11.8f, 15.1f, 16.0f},
+    {"Cl-Angemon", 12.6f, 12.7f, 12.6f, 12.7f, 11.1f, 11.3f, 11.3f, 11.1f, 11.1f, 11.9f, 24.0f, 16.1f, 13.9f, 14.1f, 11.7f, 13.9f, 30.0f},
+    {"Beelzemon BM", 13.7f, 13.8f, 13.7f, 13.8f, 11.2f, 11.2f, 13.2f, 12.9f, 13.1f, 8.8f, 10.3f, 11.9f, 16.2f, 16.5f, 11.8f, 16.1f, 16.3f},
+    {"Alphamon", 14.3f, 14.4f, 13.2f, 13.2f, 11.3f, 11.3f, 11.3f, 11.3f, 11.3f, 11.9f, 24.0f, 10.8f, 14.1f, 14.1f, 11.7f, 14.1f, 30.0f},
+    {"BK WarGreymon", 12.1f, 13.4f, 12.1f, 12.8f, 9.4f, 10.8f, 10.8f, 12.1f, 12.8f, 10.6f, 11.4f, 16.1f, 11.4f, 13.4f, 11.8f, 15.1f, 20.1f},
+    {"IPDramon FM", 13.7f, 13.5f, 13.7f, 13.5f, 11.2f, 11.2f, 13.5f, 11.2f, 11.2f, 8.8f, 10.3f, 16.1f, 14.0f, 16.9f, 11.8f, 14.1f, 20.1f},
+    {"IPDramon PM", 14.0f, 13.7f, 14.0f, 13.7f, 11.2f, 11.2f, 13.6f, 11.2f, 11.2f, 9.4f, 24.0f, 16.1f, 14.0f, 17.0f, 11.7f, 14.1f, 30.0f},
+    {"MetalGarurumon", 14.3f, 14.3f, 13.7f, 13.7f, 11.3f, 11.3f, 11.3f, 11.1f, 11.2f, 8.4f, 10.3f, 16.1f, 14.0f, 14.2f, 11.1f, 13.9f, 20.1f},
+    {"Gallantmon CM", 13.3f, 13.4f, 13.3f, 13.3f, 11.2f, 11.2f, 11.2f, 11.2f, 11.2f, 9.4f, 24.0f, 16.1f, 14.0f, 14.1f, 11.7f, 14.1f, 30.0f},
+    {"Susanomon", 13.6f, 13.6f, 13.6f, 13.6f, 11.2f, 11.2f, 11.7f, 11.2f, 14.2f, 9.4f, 24.0f, 16.1f, 14.0f, 14.7f, 11.7f, 14.1f, 30.0f},
+};
+
 void heads() {
     dw4::engine::Node node;
     node.matrix = dw4::engine::translation(10, 5, -3);
     const auto table = head_point(node, 0);
-    check(near(table.x, 10) && near(table.z, -3) && near(table.y, 5 + form_label_height(0) + 1), "no box: the form's height");
-    check(form_label_height(0) < 10.0f, "a rookie's table height is about its figure (Agumon 7.3)");
+    check(near(table.x, 10) && near(table.z, -3) && near(table.y, 5 + form_label_height(0) + 1), "a form: its height, 1 above");
     check(form_label_height(-1) == 30.0f && form_label_height(16) == 30.0f, "unknown form");
+    // A form's tag keeps its height whatever the pose does: a raised weapon
+    // arm, an attack's leap, a run's bounce (round 50 followed the highest
+    // joint: Agumon's tag hopped 6.2..10.0 in a run, up to 21.5 in a leap).
+    for (const float joint : {5.6f, 9.1f, 17.2f, 1.0f, 40.0f})
+        check(near(head_point(node, 0, 5.0f + joint).y, 5 + form_label_height(0) + 1), "the pose does not move a form's tag");
+    // The head point stands over the head joint: the followed offset moves it
+    // sideways only.
+    const auto over = head_point(node, 3, std::nullopt, Vec3f{1.5f, 7.0f, -0.5f});
+    check(near(over.x, 11.5f) && near(over.z, -3.5f) && near(over.y, 5 + form_label_height(3) + 1), "over the head joint, the height kept");
+    // A model of no known form: the bounding box, the highest joint, else 30.
     dw4::engine::Node body;
     body.has_bound = true;
     body.bound_min = {-5, 0, -5};
     body.bound_max = {5, 26, 5};
     node.children.push_back(&body);
-    const auto boxed = head_point(node, 0);
-    check(near(boxed.y, 5 + 26 * 0.45f + 1), "a share of the bounding box's top");
+    check(near(head_point(node, 0).y, 5 + form_label_height(0) + 1), "a form ignores its bounding box");
+    check(near(head_point(node, -1).y, 5 + 26 * 0.45f + 1), "no form: a share of the bounding box's top");
     body.bound_max.y = 900; // a cull box of a whole level
-    check(near(head_point(node, 11).y, 5 + form_label_height(11) + 1), "an absurd box gives way to the table");
-    check(near(head_point(node, 11, 5.0f + 14.0f).y, 5 + 14 + 14 * 0.25f), "the highest joint wins, a share of its height above");
-    check(near(head_point(node, 0, 5.0f + 5.6f).y, 5 + 5.6f + 1.8f), "Agumon: just above its head (7.3), not a body above");
-    check(near(head_point(node, 1, 5.0f + 7.7f).y, 5 + 7.7f + 7.7f * 0.25f), "Veemon: just above its ears' roots (its head's top)");
-    check(near(head_point(node, 11, 5.0f + 40.0f).y, 5 + 40 + 6), "a tall figure: the margin stays small");
-    check(near(head_point(node, 11, 5.0f + 1.0f).y, 5 + form_label_height(11) + 1), "a joint at the feet is no head");
+    check(near(head_point(node, -1).y, 5 + 30 + 1), "an absurd box gives way to 30 units");
+    check(near(head_point(node, -1, 5.0f + 14.0f).y, 5 + 14 + 14 * 0.25f), "no form: the highest joint, a share of its height above");
+    check(near(head_point(node, 16, 5.0f + 5.6f).y, 5 + 5.6f + 1.8f), "no form: at least 1.8 above the joint");
+    check(near(head_point(node, -1, 5.0f + 40.0f).y, 5 + 40 + 6), "no form, a tall figure: the margin stays small");
+    check(near(head_point(node, -1, 5.0f + 1.0f).y, 5 + 30 + 1), "no form: a joint at the feet is no head");
+}
+
+void measured_forms() {
+    for (int species = 0; species < 16; ++species) {
+        const auto& m = kMeasured[species];
+        const std::string name = m.name;
+        const float height = form_label_height(species), tag = height + 1.0f;
+        // The table is the measured height near the head, the higher stance.
+        check(near(height, std::max(m.near_top_field, m.near_top_lobby), 0.01f), name + ": the table is the measured height");
+        // The bars clear the head and what is close to it in both stances,
+        // and do not float far above either.
+        check(tag >= m.near_top_field + 0.99f && tag >= m.near_top_lobby + 0.99f, name + ": the bars clear the head in both stances");
+        check(tag - std::min(m.near_top_field, m.near_top_lobby) <= 3.0f, name + ": not far above the head in either stance");
+        // The head joint (the follow's reference) sits inside the figure.
+        check(m.head_joint_field < m.head_top_field && m.head_joint_lobby < m.head_top_lobby, name + ": the head joint below its top");
+        // Round 50's tag moved with the highest joint: a run alone moved it
+        // by more than a unit for every form, the actions far above the head.
+        check(m.r50_run_high - m.r50_run_low > 1.0f && m.r50_actions_high > tag, name + ": round 50's tag hopped");
+    }
+    // Left out on purpose: weapons held up beside the head (Beelzemon BM's
+    // gun at 25.5) and horns further out ahead (H-Kabuterimon's at 16.4).
+    check(form_label_height(8) + 1.0f < 25.5f && form_label_height(5) < kMeasured[5].head_top_field, "left out: weapons, far horns");
+    // The horizontal follow: cut to 2 units, a twentieth of the way per step,
+    // the height never followed.
+    const auto start = follow_head_offset(std::nullopt, Vec3f{6.0f, 9.0f, 8.0f});
+    check(near(start.x, 1.2f, 0.001f) && near(start.z, 1.6f, 0.001f) && start.y == 0.0f, "a new label: the joint's offset, at most 2 long");
+    const auto step = follow_head_offset(Vec3f{0.0f, 3.0f, 0.0f}, Vec3f{1.0f, 0.0f, 0.0f});
+    check(near(step.x, 0.05f, 0.001f) && step.y == 0.0f && near(step.z, 0.0f), "a twentieth of the way");
+    Vec3f offset{};
+    for (int i = 0; i < 20; ++i) offset = follow_head_offset(offset, Vec3f{5.0f, 0.0f, 0.0f});
+    check(offset.x > 1.2f && offset.x < 1.4f, "some 20 steps for most of the way");
+    for (int i = 0; i < 200; ++i) offset = follow_head_offset(offset, Vec3f{5.0f, 0.0f, 0.0f});
+    check(near(offset.x, 2.0f, 0.01f), "never past 2 units");
 }
 
 OverheadLabel label(std::uint64_t key, Vec3f head) {
@@ -253,6 +337,7 @@ int main() {
         projection();
         fade_and_modes();
         heads();
+        measured_forms();
         blending();
         engine_capture();
         occlusion();
