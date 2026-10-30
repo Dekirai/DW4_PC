@@ -2131,8 +2131,9 @@ before it decides, so BARRIER_OK brings it back). Never from a stagIS* stage:
 the character select holds a record's own story until the room story replaces
 it at `game_started`. Refused keys (not for the rate) wait for the next
 barrier; held ones are sent again (the server keeps them). The confirmed
-story is `Session::confirmed_story()` (the title's application at
-`game_started`, 8.5).
+story is `Session::confirmed_story()`; `OnlineRun::after_live_step` hands it
+to `GameEngineLink::set_room_story` on the step that sets `game_started`
+(the title's application, 8.5; wired at the integration of round 56).
 
 **Plausibility and policy on the server** (`DW4Online.Domain.Story.
 RoomStoryKeeper`, one per room hub, under the room lock). The sender's
@@ -2202,19 +2203,25 @@ integration `OnlineStoryTests` (composition; a guest's lobby flag in the
 owner's `online_story` through the real relay within ten seconds).
 
 **S14 on real game clients** (`tools/online_test/scenarios/S14`, `S14h`,
-`S14a`; drop, hold, apply). The owner (k2 without flag 501; `seed_story`, so
-the room story is that card at revision 1) stays at the title, where no STORY
-goes, and leaves the room when its run ends; the guest (k2 with 501, which
-the lobby's `first.lua` sets at the first visit) waits at the title until
-the owner is away, then enters the lobby: its pending set is 501 alone.
-Drop: `story_dropped keys=flag:501`, 501 stays in the engine for the rest of
-the lobby visit, the lobby gate's barrier into stag0101 removes it and the
-guest sees "Story progress was not saved: the room owner is away." Hold:
-`story_held keys=flag:501`, the guest is told once, no revision, 501 stays
-after the barrier. Apply: revision 2 at once, 501 stays. All three pass
-(about 140 s each, side by side). Without the seed the guest's whole card
-story would be pending against the owner's empty online story, and drop
-would take its key items too.
+`S14a`; drop, hold, apply; rebuilt at the integration of round 56, when the
+title began to apply the room story). The owner (k2 without flag 505, the
+hint panel of stag0101's matb01; `seed_story`, so the room story is that card
+at revision 1) stays at the title, where no STORY goes, and leaves the room
+when its run ends. The guest (k2, whose own card has 505) waits at the title
+until the owner is away and starts its game: the title gives it the room
+story ("the game starts with the room story (revision 1)"), so 505 is 0 in
+its lobby (a fail check). In stag0101 it steps on matb01, whose panel sets
+505 again: its pending set is 505 alone, and stag0101 sets it (plausible).
+Drop: `story_dropped keys=flag:505`, 505 stays for the rest of the stag0101
+visit, the barrier into stag0102 removes it and the guest sees "Story progress
+was not saved: the room owner is away." Hold: `story_held keys=flag:505`, the
+guest is told once, no revision, 505 stays after the barrier. Apply: revision 2
+at once, 505 stays. (The lane's first form used flag 501 of the lobby's
+`first.lua`: with the title's application the guest no longer brings it from its
+card, and k2 without 501 stalls in the first visit's talk at n_digilff #2's
+`ISSEQNAME SQ_WALK02`, a state the original never reaches.) Without the seed
+the guest's whole card story would be pending against the owner's empty
+online story, and drop would take its key items too.
 
 ## 9. Online character and cloud backup
 
@@ -2247,8 +2254,12 @@ would take its key items too.
   Context) / reset_request / parse_character / parse_saved / problem_code /
   current_revision` (revision 0 = create with `If-None-Match: *`, else
   `If-Match: "<revision>"`; the body `{record: base64, playSeconds, context:
-  {roomCode, players, randomizer, cheats: false, rebalanced: false,
-  saveStateLoaded: false, difficulty, protocol, clientVersion}}`).
+  {roomCode, players, roomPlayers, randomizer, cheats: false, rebalanced:
+  false, saveStateLoaded: false, difficulty, protocol, clientVersion}}`; since
+  the integration `players` is the own stage instance (1-4) and `roomPlayers`
+  the room (the relay's ROSTER, else the presence; `Context::room_players`, 0
+  leaves it out), the numbers the online achievements report, refreshed at
+  every save, so the state achievements of an upload see the room).
 - The card cache `OnlineCard` (`online_card_folder(saves/online, account)`):
   `online_card.dat` is the single-file card store of slot A (slot B a file
   that is never written, `Engine::set_card_setting(1, none)` as well),
@@ -2277,7 +2288,9 @@ would take its key items too.
 - The engine: the observe-only port event `PortEvent::Kind::card_written`
   (slot = the panel's player, value = card 0/1, extra = box 0-3, -1 for
   FILEMAKE) from `SaveCommon::write` / `create` (`src/engine/save_menu.cpp`).
-- The game: `OnlineRun::load_character(saves/online, version, error)` before
+- The game: `OnlineRun::load_character(online_folder, version, error)` (the
+  host's `online_folder`: `saves/online` beside the program, `--online-folder`
+  in test runs) before
   the engine starts (the engine and every engine of the session play from
   `character_card()`), `after_live_step(now)` (replaces
   `link().after_live_step()`: the room's difficulty, camera and light mode
@@ -2527,8 +2540,10 @@ are `src/game/online/lobby_api.hpp`; the ImGui screens are
   as the server's key, `kind` event / stat / state, `goal`, `stat`, `ownerOnly`).
   The ctest `achievements` compares the file with the table, the server's
   `AchievementRulesTests` compare it with migration
-  `server/DW4Online/sql/0008_achievement_catalogue.sql` and the rules with 0008,
-  and an integration test compares it with the migrated database. 0008 keeps the
+  `server/DW4Online/sql/0009_achievement_catalogue.sql` and the rules with 0009
+  (0008 in the lane, renumbered at the integration: 0008 is the story lane's
+  `online_story`), and an integration test compares it with the migrated
+  database. 0009 keeps the
   ids of the 52 shared codes (their text, kind, goal and counter become the
   client's), adds the client's other 20 as ids 73-92 and retires the 20 server-only
   codes of 0002 (`active = 0`, never reused); tiers, points and the hidden flag
@@ -2557,8 +2572,10 @@ are `src/game/online/lobby_api.hpp`; the ImGui screens are
   `bosses`, `defeats`, `play_fields` as seconds) as deltas every 60 s against the
   profile's `sent.<key>`; `GET /rooms/{code}` every 30 s for the room's members
   and `you.owner`. An unanswered report (no answer, 401, 408, 429, 5xx) is tried
-  again (10 s, doubling, at most 5 min), a refused one dropped and logged; F1's
-  *Leave room* and the end of the game send the last counters and open unlocks
+  again (10 s, doubling, at most 5 min), a refused one dropped and logged; every
+  leave (`leave_room()` in `game_main.cpp`: the room view's and F1's *Leave
+  room*, the B + X + START prompt's, the end of the game) sends the last
+  counters and open unlocks
   (two seconds at most), a closed session keeps them in `<profile>.pending` for
   the next room. The online tracker sees only steps the session runs as the
   member's own live ticks (solo, sealed, transition), never a catch-up
@@ -2721,7 +2738,10 @@ anyway; joining goes through the room list.
   stored for the normal difficulty as 714). `"seed_story": true` starts the
   room story from the room creator's card (`run.py` `seed_story` writes the
   owner account's `online_story` row from the card's first record before the
-  room opens), `"server": {...}` gives the scenario its own server with those
+  room opens; since the title applies the room story at game start, every
+  card scenario has it, or its members would start from the owner's empty
+  online story; S16's story member carries the quest members' flags 89 / 714
+  for the same reason), `"server": {...}` gives the scenario its own server with those
   settings and its own database (S14h / S14a: `Rooms:StoryWhileOwnerAway`),
   `"min_shared_ticks"` lowers the shared ticks below (S14: one member plays).
   Checked per scenario: the net
@@ -3099,6 +3119,105 @@ UI (ui lane) creates the room's `OnlineAchievements` with
 after its `connect` succeeds, calls `flush(now, 2.0)` before every
 `online->leave()` (F1 *Leave room*, the lobby's leave request, the end of the
 game) and `save()` + `reset()` where it drops a closed session.
+
+**Integration (round 56, branch `dref-r56int`).** The four lanes merged
+with `--no-ff` into the main of round 57 (its deployment kit included) in the
+order story, character, UI, achievements-deploy; each merge commit names its
+conflicts and their solutions. `fix-r55s1` (the S1 re-check round) was not in
+main yet and is not part of this integration: its `session.cpp` /
+`RoomHub.cs` changes meet the story lane's STORY handling and the UI lane's
+ROSTER at its own merge. The interfaces as pinned:
+
+- *Session start* (`src/game/game_main.cpp`): `open_room(OnlineRoom room,
+  std::unique_ptr<HttpWorker> http, bool created, std::string& error) -> bool`
+  is the one start of the command line (`--online-create` / `--online-join`,
+  `created` = a create) and of the title's screens and F1 Online
+  (`LobbyRoom::created`): the replay rate calibration, `OnlineRun`,
+  `OnlineRun::load_character(online_folder, DW4_PC_VERSION, error)`, the
+  online card store in the engine and in `EngineHooks::fresh_engine` (card A
+  the cache `online_card.dat`, card B `CardSetting::Mode::none`),
+  `--online-card` (development builds) writing one DW4 save into the cache,
+  `link().start_online(0, 1)`, `connect`, then `make_online_achievements(
+  *online, created, test_run, online_folder)`. A failure at any point resets
+  `online` and returns false with the reason; the title path then shows it
+  and returns to the offline title. The UI lane's interim
+  `online_card_root(room)` is gone. `online_folder` is `saves/online` beside
+  the program (`--online-folder` in test runs) and holds the remembered login,
+  the online card cache, the achievements profile and the cloud backup
+  panel's login.
+- *Leaving* (`leave_room()` in `game_main.cpp`): `OnlineAchievements::
+  flush(now, 2.0)`, then `OnlineRun::leave()` (the online character's
+  automatic save, up to 8 s for its upload, BYE, the REST leave): the room
+  view's and F1's *Leave room*, the lobby's leave request, the end of the
+  game. A session the server closes: `OnlineRun::save_on_leave()`, the tidy
+  reason (toast, `OnlineLobby::session_ended`), `OnlineAchievements::save()`
+  and reset, `online.reset()`, the offline title.
+- *The room story at game start* (8.5): `OnlineRun::after_live_step(now)`
+  hands `Session::confirmed_story()` to `GameEngineLink::set_room_story` on
+  the step that sets `GameSystem::game_started` and prints "online: the game
+  starts with the room story (revision N)" (or "without a room story yet");
+  `GameEngineLink::after_live_step()` applies it on that step with the room's
+  difficulty, camera and light mode, before `gameStart.lua`. The barrier's
+  merge (`story::apply`) and `Engine::apply_room_story` write the maps
+  directly and raise no `story_flag` port events (the achievement lane's
+  condition). A room whose owner has no `online_story` row has the empty
+  story (revision 0): a new owner's game starts from a new game's story, and
+  so does every member's.
+- *Protocol*: `kOnlineProtocol` 45 (round S2; 44 was S1) for the REST
+  `protocol`, the settings hash and the rooms. The server lists and admits
+  only rooms of the client's own protocol, so S1 and S2 clients never meet
+  (an S1 client would desynchronize at its first barrier).
+- *Uploads and reports*: the online character's PUT context and the
+  achievements' reports carry the same numbers: `players` the own stage
+  instance (1-4), `roomPlayers` the room (1-10).
+- *Engine and port events*: `PortEvent::Kind::card_written` follows
+  `new_character` (observe-only); `Engine::title_online_entry` /
+  `title_online_request` are host fields outside snapshots and the
+  fingerprint; `Title2Manager::menu_open() / menu_waiting() / cursor()`.
+- *Server*: migrations 0008 `online_story` (story lane) and 0009 the
+  achievement catalogue (the achievements lane's 0008, renamed; the migrator
+  takes 1..n without gaps): schema 9 (`/health`), 17 tables. The online
+  character and cloud save writes run in READ COMMITTED with the deadlock
+  retry; `online_story` is written by the relay's story saver.
+- *Deployment*: DEPLOY.md keeps the achievements lane's kept-key flow
+  (`tls-key.ps1`, the PFX, `new-selfsigned-cert.ps1 -ImportPfx`,
+  `print-pins.ps1 -Out` into `local/online_pins.txt`, the CMake pin step) with
+  round 57's corrections (the loopback check endpoint 127.0.0.1:5280, the port
+  check, the Remote Desktop path for the PFX, `-PinServedBy`,
+  `restore-db.ps1`, `--disable-build-servers`).
+- *Test stack*: `run.py start_server(stack, connection, extra, name)` gives
+  every named server its own folder (certificate, settings, log, relay
+  diagnostics): the UI scenarios' shared servers `server0`, `server1`, ...,
+  a scenario's own server by its name. Every card scenario has
+  `seed_story`; S14 / S14h / S14a use stag0101's flag 505 (8.7).
+
+Checked on the integrated tree: the release build with tests and the
+`DW4_ONLINE_DEV` build (Ninja, MSVC); ctest 44 of 44; online off `det.sh`
+4004f056 / audio 396cb219 in all eight runs (twice before and twice after the
+last code commit), the save state suite 17 of 17 identical after loading
+(both builds), r25c 10 of 10 segments with 1,748,011 frames (every segment's
+count as in the lanes' runs and main; the build of f696838, before the log
+line of 41eec76, which only an online session reaches); the server with the 11.0 RC SDK and
+`--disable-build-servers`: no build errors, unit tests 150, integration and
+end-to-end 74 passed and 1 skipped (the certificate store test) against a
+private MariaDB; on the local stack with hidden game clients: the 14 S1
+scenarios (S1, S2, S3, S5, S16, S17a, S17b, S18, S19a-c, S21, S22a, S22b:
+equal fingerprints in every shared instance, no desync), S14, S14h and S14a,
+A1 (both members hold `online_join` and `first_defeat` with the ranked
+context, and `hoarder` from the state check of a character upload), the
+seven UI scenarios at 1920x1009 widescreen MSAA 4 (the room view with Play,
+the online title after Play, the F1 room with areas and the room list after
+leaving looked at), `character_test.py` C1, C2, C3 and P1. C1, C2 and C3
+compare the server's record with the card cache outside the story bytes
+since the integration: the server keeps the account's own story there (8.4).
+
+Open after the integration: the reset of the online character in the UI
+(`character_api::reset_request` exists, the notice names the Online tab);
+release builds stay "not set up" until `local/online_pins.txt` holds the
+server's pins (DEPLOY.md 6.1, 6.4); the fake clients ignore STORY_ACK; the
+calibration of the achievement goals on real online runs; the .NET 10 SDK of
+the development PC is broken (only its Roslyn folder is left), so the server
+builds with the 11.0 RC SDK and `--disable-build-servers` (round 57).
 
 ### Round S3 (r54): stage flow in shared instances
 

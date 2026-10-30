@@ -378,8 +378,11 @@ is shown once), the room list (refresh; name, lock, players n/10, owner,
 settings), creating a room (name, optional password, up to ten players,
 difficulty, camera and light mode) or joining one (its password if it has
 one), and the room itself (who is where, kick for the owner, Play, leave).
-The room plays the online character, never the save on this PC; leaving
-returns to the offline title. B (or Esc) goes back a screen and from the
+The room plays the online character, never the save on this PC: a new
+account starts a new game, and the character is saved on the server when the
+save room writes, at every stage change and when leaving the room. The room's
+story is the owner's: everybody's story progress counts for it, and every
+member starts the game with it. Leaving returns to the offline title. B (or Esc) goes back a screen and from the
 first one back to the title menu. The screens work with a controller first
 (text fields open an on-screen keyboard), the keyboard and the mouse; the F1
 menu's Online tab shows the same screens, and starting a room from there
@@ -390,8 +393,10 @@ Known limits of the preview:
 - Talks, the map recorders, camera tours and the status window still pause
   the whole instance (every member in it), as in local co-op.
 - Pits still darken every member's screen in the instance.
-- Nothing is saved online yet: every room starts from the title with a new
-  game (or the `-Card` saves), and nothing comes back into the local save.
+- Story progress made while the room owner is away is not kept (the
+  server's default; the player is told at the next stage change).
+- Nothing of a room comes back into the local save; F1 > Saves > Cloud backup
+  keeps one copy of the local save on the server (outside rooms).
 - Online needs a CPU with FMA3 (every machine must compute alike); the game
   refuses online play without it.
 
