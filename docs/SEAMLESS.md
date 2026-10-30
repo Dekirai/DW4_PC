@@ -2328,11 +2328,11 @@ appendix, golden bytes on both sides). Checked on the integrated code:
   it).
 
 **Scenarios on real game clients (round S1, `tools/online_test/scenarios`).**
-Every scenario of the round except S16 passes with hidden game clients
-(section 16, `run.py` with the r25c checkpoint cards): S1, S2, S3, S5, S17a,
-S17b, S18, S19a (gate disc), S19b (exit), S19c (give up), S21, S22a and S22b
-in one run, 13 of 13,
-each with 10,080 to 13,860 ticks of equal net fingerprints in shared
+Every scenario of the round passes with hidden game clients (section 16,
+`run.py` with the r25c checkpoint cards): S1, S2, S3, S5, S16, S17a, S17b,
+S18, S19a (gate disc), S19b (exit), S19c (give up), S21, S22a and S22b in one
+run, 14 of 14 (five at a time),
+each with 10,080 to 13,920 ticks of equal net fingerprints in shared
 instances (every 60 ticks, no difference anywhere), the canonical snapshot
 hashes of every NEW and co-arrival equal, no desync, mismatch or resync in
 the relay log. Earlier runs kept two instances sealed and equal for 54,060
@@ -2350,6 +2350,16 @@ ticks (S2, S5 while their scripts were stuck). What they show:
   one barrier for all three.
 - S5: both fall, the game over window (the leader's pad) is one barrier of
   the group, dissolved into two lobbies.
+- S16: a story member enters stag0401 at point 0 and plays there; a member
+  who took quest 1 at the lobby Digi-Elf (`errand talk:n_digilfm#1`, its
+  "yes": `quest01.lua` sets the context flags) leaves the lobby gate 40 s
+  later, which offers only point 3, and gets a NEW beside the story
+  member's instance (notice OtherContext); a second quest-1 member 40 s
+  after it joins the first's instance by catch-up at point 3 and they share
+  10,620 ticks. Flag 409 stays set on the quest side and off on the story
+  side throughout (the scripts' fail checks). The quest members' card is
+  k10 with Digi-Elf 0 freed (flag 89 / 714, `card_flags`): the quest's
+  precondition, which the r25c campaign never met.
 - S18: the exit port's owner and asked members exactly as 5.2 (No stays on
   the mat and is not asked again; another member stepping on and off asks
   nobody else; Yes asks a member who stepped on during the prompt; its No
@@ -2375,13 +2385,19 @@ for good (`live_during_transition`); a fork on a multiple of 60 sent both
 sides' fingerprints as the instance's and made the relay resync the stayer
 (no NETFP at a fork tick); a LEAVE that had to wait for a membership-safe
 step held back the LEAD_FROM behind it, so the remaining member waited for
-ticks nobody sealed.
+ticks nobody sealed; a BARRIER named the point the departing stage was
+entered at instead of the one its exit leads to (`GameEngineLink::
+pending_point` read the stage snapshot; it now reads PLAYERPOINT's point,
+which SETGENERATEPOS sets before NEXTSTAGE), so every joiner came in at the
+point its *previous* stage was entered at: S16's second quest member
+appeared at stag0401 point 0, walked back across the story field's
+generators and fell with its partner (the online engine test now checks
+the barrier's point; S2's return through stag0102 matz01 and the gate disc
+now report points 4 and 3).
 
-Not covered yet: S16 with real clients (taking a quest at the Digi-Elf
-needs a talk driver the test scripts do not have; the fake clients pass S16
-on the hub), the S12 matrix with real clients (the relay lane's fake-client
-matrix, 6.4, stands), visual checks of the online presentation (hidden runs
-only). Running ten scenarios at once overloaded the PC: joiners that needed
+Not covered yet: the S12 matrix with real clients (the relay lane's
+fake-client matrix, 6.4, stands), visual checks of the online presentation
+(hidden runs only). Running ten scenarios at once overloaded the PC: joiners that needed
 more than `Rooms:MemberTimeoutSeconds` (35) between the API join and the relay
 connection were dropped from their rooms; five at a time pass.
 `scripts/online-dev.ps1` and the README note "Online co-op (preview)" exist;
