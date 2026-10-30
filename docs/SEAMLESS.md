@@ -2192,7 +2192,9 @@ are `src/game/online/lobby_api.hpp`; the ImGui screens are
   4:3 picture in the menu's colours (the dark band with its light lines, a
   dimmed title behind), Segoe UI (Arial, else ImGui's scalable font) at sizes
   that follow the window. The first screen connects (the version gate, then
-  the remembered login). B, Esc or Back go back a screen and from the first
+  the remembered login). The controller's cursor always shows there and
+  starts on each screen's main button (A presses it at once, as in the
+  game's menus). B, Esc or Back go back a screen and from the first
   one (welcome logged out, the room list logged in, the room inside one, or a
   closed gate) back to the title menu, its cursor still on Online; the game's
   pad then waits until every button is up, so the B that closed them does not
@@ -2671,8 +2673,9 @@ progress.
 | story | merge sets and golden vectors (C++ and C#), pending sets against the confirmed room story with STORY / STORY_ACK, the counter line key (after the census of where COUNTER 1 and 7 change), real story application and dropped-value removal at barriers, server `online_story` with composition, plausibility and the owner-away setting with the dropped set |
 | achievements-deploy | catalogue alignment and the client's online sync (unlocks by the local slot, stats, "was there" from live ticks only, story challenges for the owner only), room page with instances, DEPLOY.md fixed key and pin script, pin constants |
 
-**UI lane (round 56, branch `feat-r56ui`).** Built as section 10 says. For
-the other lanes:
+**UI lane (round 56, branch `feat-r56ui`).** Built as section 10 says,
+with the user's wish of 30.10: the title menu's third entry *Online* (it
+replaces the planned title panel). For the other lanes:
 
 - *character*: the online card comes from `online_card_root(room)` in
   `game_main.cpp` (today a new temporary card, `--online-card` in
@@ -2687,15 +2690,39 @@ the other lanes:
   (`room.ownerPresent`, "away: story progress is not saved"); a notice from
   STORY_ACK can go through `Session::take_notices` as today.
 - *achievements*: nothing of the UI depends on them.
+- *engine* (every lane that touches TITLE2 or the title stage): the third
+  entry is `Engine::title_online_entry` (host-set, off in every new engine)
+  and `Engine::title_online_request` (TITLE2 sets it, the host clears it);
+  `Title2Manager::menu_open()`, `menu_waiting()` and `cursor()` (2 = Online)
+  are the host's view of the menu. Neither field is in a snapshot or the
+  fingerprint; a lane that adds title or menu state keeps it that way.
+- *host* (`game_main.cpp`): the screens over the title are `TitleOnline
+  title_online` with `open_title_online()`, drawn by `draw_title_online`
+  (`online_ui.hpp`); `OnlineUiState::close_requested` is the room view's
+  Play; `pad_latch` holds the game's pad after they close. A screen another
+  lane adds to the lobby goes into `draw_online_screens` (both places show
+  it) and, if it has a way back, into `OnlineLobby::back` / `can_back`.
 - Wire and REST: unchanged except that `GET /status` is read for
   `client.minimumVersion`, `currentVersion` and `registration`, and the
   create / join answers for `room.maxPlayers` and `room.owner`
   (`api::RoomJoined::max_players`, `owner`).
 
-Checked: ctest (the new suite `online_lobby` and the ROSTER, Discord party
-and close reason checks); online off `det.sh` twice 4004f056 / 396cb219; the
-UI scenarios on the local stack with hidden windows, every screen looked at
-in its screenshot.
+Checked: ctest 41/41 (the new suite `online_lobby`, the ROSTER, Discord
+party and close reason checks, `DW4_TITLE_ONLINE` on the forbidden list of
+`online_env`); online off `det.sh` twice 4004f056 / 396cb219 (four runs),
+r25c 10/10 with 1,748,011 frames (every segment as on main), the save state suite
+17/17; the seven UI
+scenarios on the local stack with hidden 1920x1009 widescreen MSAA 4
+windows, every screen looked at in its screenshot: the title menu with the
+cursor on each of the three entries (also after B back from the screens),
+welcome, register, the on-screen keyboard, the recovery code, the account,
+change password, log out, a wrong password, recover, the room list, create,
+the password prompt and a wrong password, a full room, the room view over
+the online title with Play, the room in F1 with areas, kick, leave, the
+version gate (over the title and in F1) and an unreachable server. No test
+or bot input reaches the third entry: the test runs without `--online-ui`
+never turn it on, and neither the input scripts (det.sh, r25c) nor the
+campaign bot's title presses (START, A) press down at Option.
 
 Done when: on the local stack, driven through the client's own code paths in a
 headless test mode: two accounts register, one creates and one joins a room,
