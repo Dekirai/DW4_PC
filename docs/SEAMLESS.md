@@ -2107,6 +2107,65 @@ The default stays `drop` until the user decides (question 2).
   the current file first (`.bak`), restore of the five earlier revisions; the
   endpoints exist (`/cloud-save`, `/cloud-save/meta`, `/cloud-save/restore/{n}`).
 
+**Built in round S2 (character lane).**
+
+- `src/game/online/character.{hpp,cpp}` (library `dw4_online`, no SDL):
+  `character_api::get_request / put_request(record, revision, play_seconds,
+  Context) / reset_request / parse_character / parse_saved / problem_code /
+  current_revision` (revision 0 = create with `If-None-Match: *`, else
+  `If-Match: "<revision>"`; the body `{record: base64, playSeconds, context:
+  {roomCode, players, randomizer, cheats: false, rebalanced: false,
+  saveStateLoaded: false, difficulty, protocol, clientVersion}}`).
+- The card cache `OnlineCard` (`online_card_folder(saves/online, account)`):
+  `online_card.dat` is the single-file card store of slot A (slot B a file
+  that is never written, `Engine::set_card_setting(1, none)` as well),
+  `online_card.state` is text (`revision=`, `play_seconds=`, `pending=0|1`,
+  `box=`, `unique=`), `backups/online_card-YYYYMMDD-HHMMSS.dat` keeps a cache
+  a conflict or a reset replaces. `card_with_record(base, record, box,
+  keep_others, modified)` writes a record into both data copies (checksum,
+  version 4; the entry and the 8 KB header of a valid base stay).
+- `CharacterSync`: `enter(GET answer)` builds the card (200: the record in box
+  0 and nothing else; 404: no file, the new game flow; else the room is not
+  entered); a save left `pending` by a crash is uploaded first when the server
+  still has the revision it was based on, else kept in `backups/` with a
+  notice. `card_written(box)` uploads the box the save room wrote,
+  `auto_save(record, Why::stage_change | leave)` writes the record into the
+  cache's character box first. One PUT at a time, the newest waiting save
+  wins, a record equal to the last confirmed one is skipped, a record of
+  another UNIQUE is never uploaded (the server would answer
+  `unique_changed`). 409 (and 404 on an update): the uploads stop for the
+  room session, the cache goes to `backups/`, `GET` reloads the server's
+  character into the card, the player gets a notice; 429, 5xx and network
+  errors retry after 20 / 10 s; 401, 403, 426 stop with a notice; 422 drops
+  that save with the server's text. The play time is the server's plus the
+  live steps in a started game outside loads (`kFieldSeconds` each).
+- The engine: the observe-only port event `PortEvent::Kind::card_written`
+  (slot = the panel's player, value = card 0/1, extra = box 0-3, -1 for
+  FILEMAKE) from `SaveCommon::write` / `create` (`src/engine/save_menu.cpp`).
+- The game: `OnlineRun::load_character(saves/online, version, error)` before
+  the engine starts (the engine and every engine of the session play from
+  `character_card()`), `after_live_step(now)` (replaces
+  `link().after_live_step()`: the room's difficulty, camera and light mode
+  and `GameEngineLink::set_room_story` at `game_started`, the play time, the
+  automatic save on the rising edge of `pending_stage()` from
+  `GameEngineLink::character_record(own slot)`, which is `make_record` on a
+  copy of `GameSystem` with `carry_player`'s slot, none before a game started
+  or for a defeated member), `port_events(events)` (card_written of the own
+  slot on card A), `save_on_leave()` (from `leave()` and when the server
+  closes the session; up to 8 s for the uploads, the rest stays pending).
+  Notices are toasts ("Online character"); the F1 Online tab shows
+  `CharacterSync::status_text()`.
+- The cloud backup: `src/game/online/cloud_save.{hpp,cpp}` (`cloud::
+  meta_request / download_request / upload_request / restore_request /
+  parse_meta / parse_uploaded`, `CloudBackup`, `sha256_hex`) and the F1 Saves
+  section `src/game/cloud_backup_panel.{hpp,cpp}` (log in or a remembered
+  login, overview with boxes and history, upload / download / restore each
+  confirmed in the panel; an upload carries the revision shown, a 409 asks to
+  refresh). Tests: ctest `online_character`; on the local stack
+  `tools/online_test/character_test.py` (C1 a new character: created at the
+  first stage change, the save room, leaving; C2 = S15: a called character,
+  another PC's save, 409, reload, no overwrite).
+
 ## 10. Client: account and room UI
 
 All program UI in English, ImGui, ASCII (account names are ASCII lower case on
