@@ -57,13 +57,22 @@ def record_of(gci_path, box=0):
     raise RuntimeError("no valid data copy in " + gci_path)
 
 
+STORY = (792, 1892)  # BASE_FLAG, BASE_FLAGFOLDER, BASE_COUNTER (SEAMLESS.md 8.1)
+
+
+def same_character(a, b):
+    """Two records equal outside the story bytes: the server stores the account's own story there (8.4: PUT replaces
+    the uploaded story bytes, GET composes them), so a cache may differ from the server's record in them alone."""
+    return a[:STORY[0]] + a[STORY[1]:] == b[:STORY[0]] + b[STORY[1]:]
+
+
 def put_character(api, token, record, revision, play_seconds):
     """PUT /online-character through the API (another PC): If-None-Match: * for revision 0."""
     import json
     import urllib.error
     import urllib.request
     body = json.dumps({"record": base64.b64encode(record).decode(), "playSeconds": play_seconds,
-                       "context": {"players": 1, "protocol": 44, "clientVersion": "0.56.0"}}).encode()
+                       "context": {"players": 1, "protocol": 45, "clientVersion": "0.56.0"}}).encode()
     req = urllib.request.Request(api.base + "/api/v1/online-character", data=body, method="PUT")
     req.add_header("Content-Type", "application/json")
     req.add_header("Authorization", "Bearer " + token)
@@ -176,7 +185,7 @@ def run_c1(st, args, api, https_port, pin, out):
         if "pending=0" not in state:
             problems.append("the card cache still has a pending save: " + state.replace("\n", " "))
         box = int(re.search(r"box=(\d)", state).group(1)) if "box=" in state else 0
-        if os.path.exists(cache) and base64.b64decode(body["record"]) != record_of(cache, box):
+        if os.path.exists(cache) and not same_character(base64.b64decode(body["record"]), record_of(cache, box)):
             problems.append("the server's record differs from the card cache's")
         summary = body.get("summary") or {}
         notes.append("server: revision %s, %s Lv %s, play %s s" % (body["revision"], summary.get("digimon"), summary.get("level"),
@@ -250,7 +259,7 @@ def run_c2(st, args, api, https_port, pin, out):
                                                                                                   other_revision))
         else:
             cache = os.path.join(card_folder(args, account), "online_card.dat")
-            if base64.b64decode(body["record"]) != record_of(cache, 0):
+            if not same_character(base64.b64decode(body["record"]), record_of(cache, 0)):
                 problems.append("the card cache does not hold the reloaded character")
         backups = os.path.join(card_folder(args, account), "backups")
         if not (os.path.isdir(backups) and os.listdir(backups)):
@@ -304,7 +313,7 @@ def run_c3(st, args, api, https_port, pin, out):
         problems.append("the unsent save was not uploaded as revision 2")
     s, body = api.call("GET", "/api/v1/online-character", token=token)
     open(os.path.join(out, "unsent.gci"), "wb").write(unsent)
-    if s != 200 or body["revision"] != 2 or base64.b64decode(body["record"]) != record_of(os.path.join(out, "unsent.gci"), 0):
+    if s != 200 or body["revision"] != 2 or not same_character(base64.b64decode(body["record"]), record_of(os.path.join(out, "unsent.gci"), 0)):
         problems.append("the server does not hold the unsent save as revision 2 (%s)" % (body.get("revision") if body else s))
     state = open(os.path.join(folder, "online_card.state")).read()
     if "pending=0" not in state or "revision=2" not in state:
