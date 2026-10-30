@@ -211,6 +211,8 @@ if(DW4_BUILD_APP)
   target_include_directories(dw4_game PRIVATE ${pl_mpeg_src_SOURCE_DIR} ${stb_src_SOURCE_DIR})
   target_compile_definitions(dw4_game PRIVATE DW4_PC_VERSION="${PROJECT_VERSION}")
   target_link_libraries(dw4_game PRIVATE dw4_engine dw4_online imgui zstd_decoder SDL3::SDL3 OpenGL::GL)
+  # F1 Saves > Cloud backup (the online character's lane, docs/SEAMLESS.md 9).
+  target_sources(dw4_game PRIVATE src/game/cloud_backup_panel.cpp)
   if(WIN32)
     target_link_libraries(dw4_game PRIVATE ws2_32)
   endif()

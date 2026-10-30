@@ -240,6 +240,7 @@ bool CloudBackup::on_response(std::uint64_t id, const HttpResponse& response) {
     const Busy what = busy_;
     busy_ = Busy::none;
     id_ = 0;
+    last_status_ = response.status;
     switch (what) {
     case Busy::meta:
         if (const auto o = parse_meta(response)) {

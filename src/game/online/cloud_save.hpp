@@ -92,6 +92,8 @@ public:
     const std::optional<Overview>& overview() const { return overview_; }
     const std::string& message() const { return message_; }
     bool message_is_error() const { return error_; }
+    // The HTTP status of the last answer (401: the login is no longer valid).
+    int last_status() const { return last_status_; }
 
 private:
     void start(Busy what, HttpRequest request);
@@ -105,6 +107,7 @@ private:
     std::optional<Overview> overview_;
     std::string message_;
     bool error_ = false;
+    int last_status_ = 0;
     int download_revision_ = 0;
     std::string download_sha_;
     save::CardStore download_store_;
