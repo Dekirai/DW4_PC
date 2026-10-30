@@ -100,7 +100,8 @@ engine::Vec3f head_point(const engine::Node& node, int species, std::optional<fl
 struct HeadFollow {
     engine::Vec3f offset{}; // y 0
     float lift{};
-    int hold{}; // steps the lift keeps its height before it eases down
+    int hold{};   // steps the lift keeps its height before it eases down
+    float rise{}; // the last capture's rise
 };
 // One capture of the follow after `steps` simulation steps towards the head
 // joint's `offset` from the model's origin (y ignored, cut to 3.5 units;
@@ -108,7 +109,9 @@ struct HeadFollow {
 // (form_head_rise): a higher rise is taken at once and held for 30 steps,
 // as again by a rise of three quarters of the held one or more (a run's
 // stride takes some 20 steps, its tops differ a little), then the lift
-// eases down a tenth of the way per step. No `current`: the target itself.
+// eases down a tenth of the way per step. A rise faster than half a unit
+// per step is led by the excess (the pose a capture reads is a step old).
+// No `current`: the target itself.
 HeadFollow advance_head_follow(std::optional<HeadFollow> current, engine::Vec3f offset, float rise, int steps = 1);
 // The world position of a player's head joint in its last traversed pose
 // ("Head" in the rookies' skeletons, "Head01" in the others'); nullopt

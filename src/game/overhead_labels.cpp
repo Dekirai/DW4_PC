@@ -41,6 +41,11 @@ constexpr float kHeadReach = 3.5f, kHeadFollow = 0.05f;
 // landing).
 constexpr int kLiftHold = 30;
 constexpr float kLiftRenew = 0.75f, kLiftEase = 0.1f;
+// The pose a capture reads is the one traversed for the last picture, a step
+// old: a head that rose faster than this per step (the leap of a charged
+// attack, up to 2.1) is led by the excess, a jump's (0.3) or a run's (0.5)
+// is not.
+constexpr float kLiftLeadFree = 0.5f;
 // The occlusion probes: this far above the head point (world units), and
 // to either side by this share of the window height.
 constexpr float kProbeRise = 1.5f, kProbeSpread = 0.012f;
@@ -207,19 +212,22 @@ HeadFollow advance_head_follow(std::optional<HeadFollow> current, engine::Vec3f 
     if (const float length = std::sqrt(offset.x * offset.x + offset.z * offset.z); length > kHeadReach)
         offset = offset * (kHeadReach / length);
     rise = std::max(0.0f, rise);
-    if (!current) return {offset, rise, kLiftHold};
+    if (!current) return {offset, rise, kLiftHold, rise};
+    steps = std::clamp(steps, 1, 240);
     HeadFollow next = *current;
+    const float target = rise + std::max(0.0f, (rise - current->rise) / float(steps) - kLiftLeadFree);
+    next.rise = rise;
     // Each of the steps towards the same target (a catch-up update runs a
     // few; a long stall settles fully within some 200).
-    for (int step = 0; step < std::clamp(steps, 1, 240); ++step) {
+    for (int step = 0; step < steps; ++step) {
         next.offset = next.offset + (offset - next.offset) * kHeadFollow;
-        if (rise >= next.lift * kLiftRenew) {
-            next.lift = std::max(next.lift, rise);
+        if (target >= next.lift * kLiftRenew) {
+            next.lift = std::max(next.lift, target);
             next.hold = kLiftHold;
         } else if (next.hold > 0) {
             --next.hold;
         } else {
-            next.lift += (rise - next.lift) * kLiftEase;
+            next.lift += (target - next.lift) * kLiftEase;
         }
     }
     next.offset.y = 0.0f;

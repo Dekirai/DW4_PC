@@ -244,13 +244,16 @@ constexpr float kAgumonLeapTop[] = {7.3f,  7.2f,  7.2f,  7.1f, 7.0f, 7.0f, 7.0f,
                                     6.9f,  6.8f,  6.6f,  6.5f, 6.5f, 6.4f, 6.3f, 6.6f, 6.9f, 7.1f, 7.3f, 7.6f, 7.8f, 8.0f};
 
 // The tag's bars (above the origin) along a trace, `steps` simulation steps
-// per sample; `worst` the most the head's top reached over them.
-std::vector<float> follow_trace(int species, const float* joint, const float* top, std::size_t count, int steps, float& worst) {
+// per sample; `worst` the most the head's top reached over them. `late`: the
+// tag reads the pose a sample late (as a capture does, the pose traversed
+// for the last picture).
+std::vector<float> follow_trace(int species, const float* joint, const float* top, std::size_t count, int steps, float& worst,
+                                bool late = false) {
     std::vector<float> bars;
     std::optional<HeadFollow> follow;
     worst = -100.0f;
     for (std::size_t i = 0; i < count; ++i) {
-        follow = advance_head_follow(follow, Vec3f{}, form_head_rise(species, joint[i]), steps);
+        follow = advance_head_follow(follow, Vec3f{}, form_head_rise(species, joint[late && i > 0 ? i - 1 : i]), steps);
         bars.push_back(form_head(species)->height + 1.0f + follow->lift);
         worst = std::max(worst, top[i] - bars.back());
     }
@@ -274,6 +277,12 @@ void rising_heads() {
     check(near(bars.front(), steady_guilmon) && *std::max_element(bars.begin(), bars.end()) > steady_guilmon + 1.8f, "the jump lifts the tag");
     bars = follow_trace(0, kAgumonLeapJoint, kAgumonLeapTop, std::size(kAgumonLeapJoint), 1, worst);
     check(worst <= 0.0f, "Agumon's leap: the head below the bars, " + std::to_string(worst));
+    // The pose a step late: the leap's fast rise is led (without the lead
+    // the head would be 1.6 over the bars).
+    follow_trace(0, kAgumonLeapJoint, kAgumonLeapTop, std::size(kAgumonLeapJoint), 1, worst, true);
+    check(worst <= 0.5f, "Agumon's leap a step late: at most grazing, " + std::to_string(worst));
+    follow_trace(2, kGuilmonJumpJoint, kGuilmonJumpTop, std::size(kGuilmonJumpJoint), 1, worst, true);
+    check(worst <= 0.25f, "Guilmon's jump a step late, " + std::to_string(worst));
     bars = follow_trace(0, kAgumonRunJoint, kAgumonRunTop, std::size(kAgumonRunJoint), 2, worst);
     check(worst <= 0.0f, "Agumon's run: the head below the bars, " + std::to_string(worst));
     // From the first stride's top to the stop the tag keeps still.
@@ -290,11 +299,20 @@ void rising_heads() {
     // A rise back to three quarters of the held one renews the hold (a
     // stride's slightly lower top), a smaller one does not.
     follow = advance_head_follow(std::nullopt, Vec3f{}, 2.0f);
-    for (int i = 0; i < 25; ++i) follow = advance_head_follow(follow, Vec3f{}, 0.0f);
+    for (int i = 0; i < 25; ++i) follow = advance_head_follow(follow, Vec3f{}, 1.4f);
+    check(follow.hold == 5 && near(follow.lift, 2.0f, 0.001f), "a smaller rise lets the hold run down");
     follow = advance_head_follow(follow, Vec3f{}, 1.6f);
     check(follow.hold == 30 && near(follow.lift, 2.0f, 0.001f), "a stride's lower top renews the hold, the lift kept");
-    for (int i = 0; i < 30; ++i) follow = advance_head_follow(follow, Vec3f{}, 1.4f);
-    check(follow.hold == 0 && near(follow.lift, 2.0f, 0.001f), "a smaller rise lets the hold run out");
+    // A head that rose faster than half a unit in a step is led by the
+    // excess, a slower one is not.
+    HeadFollow lead = advance_head_follow(advance_head_follow(std::nullopt, Vec3f{}, 0.0f), Vec3f{}, 2.0f);
+    check(near(lead.lift, 3.5f, 0.001f) && near(lead.rise, 2.0f), "a fast rise led by its excess");
+    lead = advance_head_follow(lead, Vec3f{}, 2.3f);
+    check(near(lead.lift, 3.5f, 0.001f) && lead.hold == 29, "then held (the slower rise below three quarters)");
+    const auto slow = advance_head_follow(advance_head_follow(std::nullopt, Vec3f{}, 0.0f), Vec3f{}, 0.4f);
+    check(near(slow.lift, 0.4f, 0.001f), "a jump's slow rise is not led");
+    check(near(advance_head_follow(advance_head_follow(std::nullopt, Vec3f{}, 0.0f), Vec3f{}, 2.0f, 4).lift, 2.0f, 0.001f),
+          "over four steps 2.0 is a slow rise");
     // The horizontal follow: cut to 3.5 units, a twentieth of the way per
     // step, the height never followed.
     const auto start = advance_head_follow(std::nullopt, Vec3f{6.0f, 9.0f, 8.0f}, 0.0f);
@@ -326,9 +344,9 @@ void label_follow() {
     node.matrix = dw4::engine::translation(10, 5, -3);
     const auto first = labels.follow_head(1, node, 0, Vec3f{12.0f, 5.0f + 6.0f, -3.0f});
     check(first && near(first->x, 2.0f) && near(first->y, 0.0f) && near(first->z, 0.0f), "a new label: the joint's offset, standing");
-    const auto jump = labels.follow_head(1, node, 0, Vec3f{13.0f, 5.0f + 8.0f, -3.0f});
-    check(jump && near(jump->x, 2.05f, 0.001f) && near(jump->y, 2.0f, 0.001f), "the head's rise at once, the offset smoothly");
-    check(near(head_point(node, 0, std::nullopt, jump).y, 5 + form_head(0)->height + 1 + 2.0f), "the head point lifted");
+    const auto rising = labels.follow_head(1, node, 0, Vec3f{13.0f, 5.0f + 6.4f, -3.0f});
+    check(rising && near(rising->x, 2.05f, 0.001f) && near(rising->y, 0.4f, 0.001f), "the head's rise at once, the offset smoothly");
+    check(near(head_point(node, 0, std::nullopt, rising).y, 5 + form_head(0)->height + 1 + 0.4f), "the head point lifted");
     const auto other = labels.follow_head(2, node, 0, Vec3f{10.0f, 5.0f + 6.0f, -1.0f});
     check(other && near(other->z, 2.0f) && near(other->y, 0.0f), "another key follows on its own");
     check(!labels.follow_head(1, node, 0, std::nullopt), "no joint: none");
