@@ -40,6 +40,10 @@ struct Evidence {
     std::string stage;                  // the stage folder (stored as evidence only)
 };
 
+// The context as the server's PlayContext JSON ({"roomCode", "players", "roomPlayers", "randomizer", "cheats",
+// "rebalanced", "saveStateLoaded", "difficulty", "protocol", "clientVersion"}): also the "context" of an online
+// character upload (PUT /online-character), whose state achievements the server unlocks in that room.
+std::string context_json(const ReportContext& context);
 HttpRequest unlock_request(const std::string& code, const ReportContext& context, const Evidence& evidence);
 // Counter deltas by the server's keys (enemies_defeated, play_seconds, ...); zero entries are left out.
 HttpRequest stats_request(const std::map<std::string, std::int64_t>& deltas, const ReportContext& context);

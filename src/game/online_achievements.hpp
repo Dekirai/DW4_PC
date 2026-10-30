@@ -56,6 +56,9 @@ public:
     // The facts the host puts into the step (AchievementStep.story_owner, hosting, online_players).
     bool owner() const { return owner_; }
     int room_members() const { return room_members_; }
+    // The ranked context of a report now (the room, the instance's and the room's players, the room's
+    // randomizer, the difficulty of the last step): also the context of an online character upload.
+    online::achievements::ReportContext report_context() const;
 
     // One live step of this machine's member (after the local tracker, with
     // the same events). Returns the unlocks of the online tracker (all kinds;
@@ -83,7 +86,6 @@ public:
     std::size_t in_flight() const { return unlocks_in_flight_.size() + (stats_in_flight_ ? 1 : 0) + (room_in_flight_ ? 1 : 0); }
 
 private:
-    online::achievements::ReportContext context() const;
     std::map<std::string, std::int64_t> counters() const; // the server's keys, cumulative
     void send_stats(double now);
     void submit_unlocks(double now);

@@ -31,7 +31,7 @@ OnlineAchievements::OnlineAchievements(std::unique_ptr<api::RequestQueue> queue,
     load_pending();
 }
 
-api::ReportContext OnlineAchievements::context() const {
+api::ReportContext OnlineAchievements::report_context() const {
     api::ReportContext c;
     c.room_code = config_.room_code;
     c.players = std::clamp(instance_players_, 1, 4);
@@ -92,7 +92,7 @@ void OnlineAchievements::submit_unlocks(double now) {
             ++it;
             continue;
         }
-        const auto id = queue_->submit(api::unlock_request(it->code, context(), it->evidence));
+        const auto id = queue_->submit(api::unlock_request(it->code, report_context(), it->evidence));
         unlocks_in_flight_[id] = std::move(*it);
         it = pending_.erase(it);
     }
@@ -108,7 +108,7 @@ void OnlineAchievements::send_stats(double) {
     }
     if (deltas.empty()) return;
     stats_sending_ = now_counters;
-    stats_in_flight_ = queue_->submit(api::stats_request(deltas, context()));
+    stats_in_flight_ = queue_->submit(api::stats_request(deltas, report_context()));
 }
 
 void OnlineAchievements::answer(std::uint64_t id, const online::HttpResponse& response, double now) {
