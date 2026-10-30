@@ -314,9 +314,9 @@ public partial class HubLogicTests
         Assert.True(h.P("b").Has(Msg.Resync));
     }
 
-    /// <summary>The instance's flags and context come from its lowest connected member only.</summary>
+    /// <summary>The instance's flags and context come from one member (the longest connected one, then the lowest slot).</summary>
     [Fact]
-    public void Only_the_lowest_member_reports_the_instance_state()
+    public void Only_one_member_reports_the_instance_state()
     {
         var h = SealedPair(out var inst);
         var i = h.I("a");

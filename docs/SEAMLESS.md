@@ -1663,7 +1663,8 @@ the same 47549cdd for stag0102.) The server compares per tick:
   tick delays that tick's vote until it is confirmed or runs out
   (`Instances:ForkConfirmMs`), then the tick is compared (a forged SPLIT every
   two seconds hid every comparison). The instance's flags and context (STATE)
-  come from its lowest connected member only.
+  come from one member only, the connected one that has been in the instance
+  longest (then the lowest slot).
 - **One vote per tick.** Only sealed ticks count, every tick is voted on once,
   a member is resynced at most once at a time and once per
   `Instances:ResyncCooldownSeconds` (10 s; further lost votes meanwhile are

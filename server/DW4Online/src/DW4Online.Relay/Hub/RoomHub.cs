@@ -771,9 +771,11 @@ public sealed class RoomHub
     private void OnState(HubMember m, StateMsg msg, long now)
     {
         if (Mine(m, msg.Inst, msg.Visit) is not { } i) return;
-        // The flags and the context come from one member, the lowest connected one: every engine computes them alike, and
-        // another member's STATE marked the shared instance boss-locked or not joinable, or changed its context, at will.
-        if (i.Seats.Where(x => x.Member.Connected).Select(x => x.Member).FirstOrDefault() is { } reporter && reporter != m)
+        // The flags and the context come from one member, the connected one that has been in the instance longest (then
+        // the lowest slot; a joiner still catching up sends none): every engine computes them alike, and another member's
+        // STATE marked the shared instance boss-locked or not joinable, or changed its context, at will.
+        if (i.Seats.Where(x => x.Member.Connected).OrderBy(x => x.Member.InstanceSince).ThenBy(x => x.Slot).Select(x => x.Member).FirstOrDefault() is { } reporter &&
+            reporter != m)
         {
             Count("state_ignored");
             return;
