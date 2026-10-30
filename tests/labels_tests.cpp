@@ -1,6 +1,7 @@
 // Overhead name tags: the projection onto the window (the game camera, the
-// renderer's widescreen widening, the window's pixel scale), the head point,
-// the distance fade, which labels show in which mode, and the smooth-motion
+// renderer's widescreen widening, the window's pixel scale), the head point
+// and its follow of the head (traces of a jump, a run and a leap), the
+// distance fade, which labels show in which mode, and the smooth-motion
 // blend with jumps and remote players.
 #include "overhead_labels.hpp"
 
@@ -9,10 +10,13 @@
 
 #include <algorithm>
 #include <cmath>
-#include <optional>
 #include <iostream>
+#include <iterator>
+#include <optional>
 #include <stdexcept>
 #include <string>
+#include <tuple>
+#include <vector>
 
 namespace {
 using namespace dw4::game;
@@ -143,10 +147,15 @@ void heads() {
     // joint: Agumon's tag hopped 6.2..10.0 in a run, up to 21.5 in a leap).
     for (const float joint : {5.6f, 9.1f, 17.2f, 1.0f, 40.0f})
         check(near(head_point(node, 0, 5.0f + joint).y, 5 + form_label_height(0) + 1), "the pose does not move a form's tag");
-    // The head point stands over the head joint: the followed offset moves it
-    // sideways only.
-    const auto over = head_point(node, 3, std::nullopt, Vec3f{1.5f, 7.0f, -0.5f});
-    check(near(over.x, 11.5f) && near(over.z, -3.5f) && near(over.y, 5 + form_label_height(3) + 1), "over the head joint, the height kept");
+    // The head point stands over the head joint (the followed offset moves
+    // it sideways) and rises with the head (the followed lift).
+    const auto over = head_point(node, 3, std::nullopt, Vec3f{1.5f, 0.0f, -0.5f});
+    check(near(over.x, 11.5f) && near(over.z, -3.5f) && near(over.y, 5 + form_head(3)->height + 1), "over the head joint at its height");
+    check(near(head_point(node, 3, std::nullopt, Vec3f{1.5f, 2.5f, -0.5f}).y, 5 + form_head(3)->height + 1 + 2.5f), "lifted with the head");
+    check(near(head_point(node, 3, std::nullopt, Vec3f{0.0f, -4.0f, 0.0f}).y, over.y), "never below its height");
+    // Without a pose (no head joint): the higher stance's height.
+    check(near(head_point(node, 4).y, 5 + form_label_height(4) + 1) && form_label_height(4) > form_head(4)->height + 1.5f,
+          "no pose: the higher stance (WereGarurumon's upright lobby stance)");
     // A model of no known form: the bounding box, the highest joint, else 30.
     dw4::engine::Node body;
     body.has_bound = true;
@@ -167,33 +176,177 @@ void measured_forms() {
     for (int species = 0; species < 16; ++species) {
         const auto& m = kMeasured[species];
         const std::string name = m.name;
-        const float height = form_label_height(species), tag = height + 1.0f;
-        // The table is the measured height near the head, the higher stance.
-        check(near(height, std::max(m.near_top_field, m.near_top_lobby), 0.01f), name + ": the table is the measured height");
-        // The bars clear the head and what is close to it in both stances,
-        // and do not float far above either.
-        check(tag >= m.near_top_field + 0.99f && tag >= m.near_top_lobby + 0.99f, name + ": the bars clear the head in both stances");
-        check(tag - std::min(m.near_top_field, m.near_top_lobby) <= 3.0f, name + ": not far above the head in either stance");
+        const auto* head = form_head(species);
+        check(head != nullptr, name + ": in the table");
+        // The joint is the measured standing height (the higher stance).
+        check(near(head->joint, std::max(m.head_joint_field, m.head_joint_lobby), 0.01f), name + ": the head joint's standing height");
+        // The tag in each stance (the head joint at its standing height
+        // there): the bars clear the head and what is close to it, and do
+        // not float above it by more than a unit (round 54 put WereGarurumon's
+        // 2.9 above its field stance's head).
+        for (const auto& [joint, top, stance] : {std::tuple{m.head_joint_field, m.near_top_field, "field"},
+                                                 std::tuple{m.head_joint_lobby, m.near_top_lobby, "lobby"}}) {
+            const float rest = head->height + form_head_rise(species, joint);
+            check(rest >= top - 0.01f, name + ": the bars clear the head in the " + stance + " stance");
+            check(rest - top <= 1.0f, name + ": not far above the head in the " + stance + " stance");
+        }
+        // Without a pose the higher stance, both covered.
+        check(form_label_height(species) >= std::max(m.near_top_field, m.near_top_lobby) - 0.01f &&
+                  form_label_height(species) <= std::max(m.near_top_field, m.near_top_lobby) + 1.0f,
+              name + ": no pose: the higher stance");
         // The head joint (the follow's reference) sits inside the figure.
         check(m.head_joint_field < m.head_top_field && m.head_joint_lobby < m.head_top_lobby, name + ": the head joint below its top");
-        // Round 50's tag moved with the highest joint: a run alone moved it
-        // by more than a unit for every form, the actions far above the head.
-        check(m.r50_run_high - m.r50_run_low > 1.0f && m.r50_actions_high > tag, name + ": round 50's tag hopped");
     }
     // Left out on purpose: weapons held up beside the head (Beelzemon BM's
     // gun at 25.5) and horns further out ahead (H-Kabuterimon's at 16.4).
     check(form_label_height(8) + 1.0f < 25.5f && form_label_height(5) < kMeasured[5].head_top_field, "left out: weapons, far horns");
-    // The horizontal follow: cut to 2 units, a twentieth of the way per step,
-    // the height never followed.
-    const auto start = follow_head_offset(std::nullopt, Vec3f{6.0f, 9.0f, 8.0f});
-    check(near(start.x, 1.2f, 0.001f) && near(start.z, 1.6f, 0.001f) && start.y == 0.0f, "a new label: the joint's offset, at most 2 long");
-    const auto step = follow_head_offset(Vec3f{0.0f, 3.0f, 0.0f}, Vec3f{1.0f, 0.0f, 0.0f});
-    check(near(step.x, 0.05f, 0.001f) && step.y == 0.0f && near(step.z, 0.0f), "a twentieth of the way");
-    Vec3f offset{};
-    for (int i = 0; i < 20; ++i) offset = follow_head_offset(offset, Vec3f{5.0f, 0.0f, 0.0f});
-    check(offset.x > 1.2f && offset.x < 1.4f, "some 20 steps for most of the way");
-    for (int i = 0; i < 200; ++i) offset = follow_head_offset(offset, Vec3f{5.0f, 0.0f, 0.0f});
-    check(near(offset.x, 2.0f, 0.01f), "never past 2 units");
+    check(!form_head(-1) && !form_head(16) && form_head_rise(16, 50.0f) == 0.0f, "another species: no head");
+    // WereGarurumon rests on its field stance (the reviewed 3.6 to 3.9 above
+    // the head in every dungeon), its upright lobby stance lifts the tag.
+    check(form_head(4)->height + 1.0f - kMeasured[4].head_top_field < 1.7f, "WereGarurumon's field tag at its head");
+    check(form_head_rise(4, kMeasured[4].head_joint_lobby) > 1.5f && form_head_rise(4, kMeasured[4].head_joint_field) == 0.0f,
+          "WereGarurumon's lobby stance lifts it");
+}
+
+// Round 54's trace of the figure (world units above the model's origin): the
+// head joint and the head's top (its highest vertex), every frame unless
+// noted.
+// Guilmon's jump in the lobby (J4, frames 612..680: the ears flap up to
+// 12.6, 2.0 over the bars of a steady tag).
+constexpr float kGuilmonJumpJoint[] = {6.0f, 5.9f, 5.9f, 5.9f, 5.9f, 5.8f, 5.8f, 5.8f, 5.8f, 5.8f, 6.0f, 6.3f, 6.5f, 6.8f, 7.1f, 7.3f, 7.6f, 7.9f,
+                                       7.9f, 7.9f, 7.9f, 7.9f, 7.9f, 7.9f, 7.9f, 7.9f, 7.9f, 7.9f, 7.9f, 7.9f, 7.9f, 7.9f, 7.9f, 7.9f, 7.9f, 7.8f,
+                                       7.8f, 7.8f, 7.8f, 7.8f, 7.7f, 7.7f, 7.8f, 7.8f, 7.8f, 7.8f, 7.8f, 7.8f, 7.8f, 7.7f, 7.2f, 6.7f, 6.1f, 5.6f,
+                                       5.1f, 4.6f, 4.1f, 4.4f, 4.6f, 4.9f, 5.1f, 5.3f, 5.5f, 5.7f, 5.8f, 5.8f, 5.8f, 5.8f, 5.8f};
+constexpr float kGuilmonJumpTop[] = {9.8f,  9.8f,  9.8f,  9.7f,  9.7f,  9.7f,  9.6f,  9.6f,  9.5f,  9.5f,  9.5f,  9.7f,  9.9f,  10.1f,
+                                     10.2f, 10.3f, 10.4f, 10.5f, 10.6f, 10.7f, 10.8f, 10.9f, 10.9f, 10.8f, 10.8f, 10.7f, 10.7f, 10.6f,
+                                     10.6f, 10.8f, 11.0f, 11.2f, 11.4f, 11.8f, 12.1f, 12.4f, 12.6f, 12.5f, 12.4f, 12.2f, 12.1f, 12.1f,
+                                     12.2f, 12.3f, 12.3f, 12.4f, 12.5f, 12.5f, 12.5f, 12.3f, 11.8f, 11.2f, 10.4f, 9.8f,  9.3f,  8.8f,
+                                     8.2f,  8.5f,  8.8f,  9.0f,  9.2f,  9.4f,  9.5f,  9.6f,  9.6f,  9.6f,  9.5f,  9.5f,  9.4f};
+// Agumon's run in dng101b1 (h1, every second frame 600..760; a short stop
+// near the end): each stride bounces the head 3.6 units.
+constexpr float kAgumonRunJoint[] = {5.9f, 6.1f, 6.4f, 6.1f, 5.3f, 4.6f, 4.6f, 5.3f, 6.3f, 7.3f, 7.9f, 7.9f, 7.3f, 6.3f, 5.3f, 4.6f, 4.7f,
+                                     5.4f, 6.5f, 7.4f, 7.9f, 8.0f, 7.6f, 6.7f, 5.6f, 4.8f, 4.4f, 4.9f, 5.8f, 6.9f, 7.7f, 8.0f, 7.7f, 6.8f,
+                                     5.8f, 4.8f, 4.5f, 4.9f, 5.9f, 7.0f, 7.8f, 8.0f, 7.8f, 7.1f, 6.1f, 5.2f, 4.6f, 4.7f, 5.4f, 6.4f, 7.3f,
+                                     7.9f, 7.9f, 7.2f, 6.3f, 5.3f, 4.6f, 4.7f, 5.5f, 6.5f, 7.5f, 7.7f, 7.3f, 6.6f, 6.0f, 5.9f, 5.8f, 5.8f,
+                                     5.7f, 5.7f, 5.6f, 5.9f, 6.2f, 6.0f, 5.3f, 4.6f, 4.6f, 5.3f, 6.3f, 7.3f, 7.9f};
+constexpr float kAgumonRunTop[] = {8.2f, 8.5f,  8.8f,  8.5f, 7.7f, 6.9f, 6.9f, 7.6f,  8.7f,  9.6f,  10.2f, 10.2f, 9.6f, 8.6f, 7.6f, 6.9f, 7.0f,
+                                   7.7f, 8.8f,  9.7f,  10.2f, 10.3f, 9.9f, 9.0f, 8.0f,  7.1f,  6.7f,  7.2f, 8.1f, 9.2f, 10.0f, 10.3f, 10.0f, 9.1f,
+                                   8.1f, 7.1f,  6.7f,  7.2f, 8.2f, 9.3f, 10.1f, 10.3f, 10.1f, 9.4f,  8.5f,  7.5f, 6.9f, 6.9f, 7.7f, 8.7f, 9.6f,
+                                   10.2f, 10.2f, 9.5f, 8.6f, 7.6f, 6.9f, 7.0f, 7.8f,  8.8f,  9.8f,  10.0f, 9.6f, 8.9f, 8.4f, 8.2f, 8.1f, 8.1f,
+                                   8.0f, 8.0f,  7.9f,  8.2f, 8.6f, 8.4f, 7.6f, 6.9f,  6.9f,  7.6f,  8.7f,  9.6f, 10.2f};
+// Agumon's charged attack in dng101b1 (F4, frames 955..1000): the leap
+// carries the head 8.3 over the bars of a steady tag.
+constexpr float kAgumonLeapJoint[] = {5.1f, 5.0f,  4.9f,  4.9f,  4.8f, 4.8f, 4.8f,  6.9f,  8.5f, 8.6f, 9.9f, 11.5f, 13.6f, 15.1f, 15.3f, 14.3f,
+                                      12.5f, 10.7f, 9.9f, 9.6f, 10.3f, 10.4f, 9.8f, 7.8f, 4.8f, 4.6f, 4.5f, 4.6f,  4.6f,  4.6f,  4.6f,  4.9f,
+                                      4.8f, 4.6f,  4.4f,  4.3f,  4.2f, 4.1f, 4.1f,  4.3f,  4.6f, 4.9f, 5.1f, 5.3f,  5.6f,  5.7f};
+constexpr float kAgumonLeapTop[] = {7.3f,  7.2f,  7.2f,  7.1f, 7.0f, 7.0f, 7.0f, 9.2f, 10.5f, 10.0f, 11.1f, 13.9f, 16.4f, 17.4f, 17.6f, 16.6f,
+                                    14.4f, 12.0f, 10.8f, 11.3f, 12.9f, 13.3f, 12.0f, 10.1f, 6.9f, 6.7f, 6.5f, 6.7f, 6.7f, 6.7f, 6.7f, 7.0f,
+                                    6.9f,  6.8f,  6.6f,  6.5f, 6.5f, 6.4f, 6.3f, 6.6f, 6.9f, 7.1f, 7.3f, 7.6f, 7.8f, 8.0f};
+
+// The tag's bars (above the origin) along a trace, `steps` simulation steps
+// per sample; `worst` the most the head's top reached over them.
+std::vector<float> follow_trace(int species, const float* joint, const float* top, std::size_t count, int steps, float& worst) {
+    std::vector<float> bars;
+    std::optional<HeadFollow> follow;
+    worst = -100.0f;
+    for (std::size_t i = 0; i < count; ++i) {
+        follow = advance_head_follow(follow, Vec3f{}, form_head_rise(species, joint[i]), steps);
+        bars.push_back(form_head(species)->height + 1.0f + follow->lift);
+        worst = std::max(worst, top[i] - bars.back());
+    }
+    return bars;
+}
+
+// The head's rise: up at once, held, eased back down; the run steady.
+void rising_heads() {
+    float worst = 0;
+    static_assert(std::size(kGuilmonJumpJoint) == std::size(kGuilmonJumpTop) && std::size(kAgumonRunJoint) == std::size(kAgumonRunTop) &&
+                  std::size(kAgumonLeapJoint) == std::size(kAgumonLeapTop));
+    // A steady tag (round 54) had the jump's ears 2.0 over the bars, the
+    // leap's head 8.3, the run's 1.0.
+    const float steady_guilmon = form_head(2)->height + 1.0f, steady_agumon = form_head(0)->height + 1.0f;
+    check(*std::max_element(std::begin(kGuilmonJumpTop), std::end(kGuilmonJumpTop)) - steady_guilmon > 1.9f &&
+              *std::max_element(std::begin(kAgumonLeapTop), std::end(kAgumonLeapTop)) - steady_agumon > 8.0f &&
+              *std::max_element(std::begin(kAgumonRunTop), std::end(kAgumonRunTop)) - steady_agumon > 0.9f,
+          "a steady tag: the head through the bars");
+    auto bars = follow_trace(2, kGuilmonJumpJoint, kGuilmonJumpTop, std::size(kGuilmonJumpJoint), 1, worst);
+    check(worst <= 0.15f, "Guilmon's jump: the ears at most graze the bars, " + std::to_string(worst));
+    check(near(bars.front(), steady_guilmon) && *std::max_element(bars.begin(), bars.end()) > steady_guilmon + 1.8f, "the jump lifts the tag");
+    bars = follow_trace(0, kAgumonLeapJoint, kAgumonLeapTop, std::size(kAgumonLeapJoint), 1, worst);
+    check(worst <= 0.0f, "Agumon's leap: the head below the bars, " + std::to_string(worst));
+    bars = follow_trace(0, kAgumonRunJoint, kAgumonRunTop, std::size(kAgumonRunJoint), 2, worst);
+    check(worst <= 0.0f, "Agumon's run: the head below the bars, " + std::to_string(worst));
+    // From the first stride's top to the stop the tag keeps still.
+    const auto [low, high] = std::minmax_element(bars.begin() + 10, bars.begin() + 63);
+    check(*high - *low <= 0.11f, "the run's tag steady, " + std::to_string(*high - *low));
+    // Held, then eased back down: half a second after a landing.
+    HeadFollow follow = advance_head_follow(std::nullopt, Vec3f{}, 2.0f);
+    for (int i = 0; i < 30; ++i) follow = advance_head_follow(follow, Vec3f{}, 0.0f);
+    check(near(follow.lift, 2.0f, 0.001f), "held for 30 steps");
+    follow = advance_head_follow(follow, Vec3f{}, 0.0f);
+    check(near(follow.lift, 1.8f, 0.001f), "then a tenth of the way down per step");
+    for (int i = 0; i < 30; ++i) follow = advance_head_follow(follow, Vec3f{}, 0.0f);
+    check(follow.lift < 0.1f, "down after another half second");
+    // A rise back to three quarters of the held one renews the hold (a
+    // stride's slightly lower top), a smaller one does not.
+    follow = advance_head_follow(std::nullopt, Vec3f{}, 2.0f);
+    for (int i = 0; i < 25; ++i) follow = advance_head_follow(follow, Vec3f{}, 0.0f);
+    follow = advance_head_follow(follow, Vec3f{}, 1.6f);
+    check(follow.hold == 30 && near(follow.lift, 2.0f, 0.001f), "a stride's lower top renews the hold, the lift kept");
+    for (int i = 0; i < 30; ++i) follow = advance_head_follow(follow, Vec3f{}, 1.4f);
+    check(follow.hold == 0 && near(follow.lift, 2.0f, 0.001f), "a smaller rise lets the hold run out");
+    // The horizontal follow: cut to 3.5 units, a twentieth of the way per
+    // step, the height never followed.
+    const auto start = advance_head_follow(std::nullopt, Vec3f{6.0f, 9.0f, 8.0f}, 0.0f);
+    check(near(start.offset.x, 2.1f, 0.001f) && near(start.offset.z, 2.8f, 0.001f) && start.offset.y == 0.0f && start.lift == 0.0f,
+          "a new label: the joint's offset, at most 3.5 long");
+    const auto step = advance_head_follow(HeadFollow{Vec3f{0.0f, 3.0f, 0.0f}}, Vec3f{1.0f, 0.0f, 0.0f}, 0.0f);
+    check(near(step.offset.x, 0.05f, 0.001f) && step.offset.y == 0.0f && near(step.offset.z, 0.0f), "a twentieth of the way");
+    HeadFollow side{};
+    for (int i = 0; i < 20; ++i) side = advance_head_follow(side, Vec3f{5.0f, 0.0f, 0.0f}, 0.0f);
+    check(side.offset.x > 2.1f && side.offset.x < 2.4f, "some 20 steps for most of the way");
+    for (int i = 0; i < 200; ++i) side = advance_head_follow(side, Vec3f{5.0f, 0.0f, 0.0f}, 0.0f);
+    check(near(side.offset.x, 3.5f, 0.01f), "never past 3.5 units");
+    // A catch-up update of several steps moves as far as single steps.
+    HeadFollow one = advance_head_follow(std::nullopt, Vec3f{1.0f, 0.0f, 0.0f}, 2.0f), four = one;
+    for (int round = 0; round < 12; ++round) {
+        for (int i = 0; i < 4; ++i) one = advance_head_follow(one, Vec3f{-2.0f, 0.0f, 1.0f}, 0.2f);
+        four = advance_head_follow(four, Vec3f{-2.0f, 0.0f, 1.0f}, 0.2f, 4);
+        check(near(one.offset.x, four.offset.x, 1e-4f) && near(one.offset.z, four.offset.z, 1e-4f) && near(one.lift, four.lift, 1e-4f) &&
+                  one.hold == four.hold,
+              "four steps at once as four single steps");
+    }
+    check(four.lift < 1.0f, "and the lift eased in them");
+}
+
+// OverheadLabels::follow_head: per label key, forgotten without a joint.
+void label_follow() {
+    OverheadLabels labels;
+    dw4::engine::Node node;
+    node.matrix = dw4::engine::translation(10, 5, -3);
+    const auto first = labels.follow_head(1, node, 0, Vec3f{12.0f, 5.0f + 6.0f, -3.0f});
+    check(first && near(first->x, 2.0f) && near(first->y, 0.0f) && near(first->z, 0.0f), "a new label: the joint's offset, standing");
+    const auto jump = labels.follow_head(1, node, 0, Vec3f{13.0f, 5.0f + 8.0f, -3.0f});
+    check(jump && near(jump->x, 2.05f, 0.001f) && near(jump->y, 2.0f, 0.001f), "the head's rise at once, the offset smoothly");
+    check(near(head_point(node, 0, std::nullopt, jump).y, 5 + form_head(0)->height + 1 + 2.0f), "the head point lifted");
+    const auto other = labels.follow_head(2, node, 0, Vec3f{10.0f, 5.0f + 6.0f, -1.0f});
+    check(other && near(other->z, 2.0f) && near(other->y, 0.0f), "another key follows on its own");
+    check(!labels.follow_head(1, node, 0, std::nullopt), "no joint: none");
+    check(near(head_point(node, 0, std::nullopt, std::nullopt).y, 5 + form_label_height(0) + 1), "and the tag at the form's height");
+    const auto again = labels.follow_head(1, node, 0, Vec3f{7.0f, 5.0f + 6.0f, -3.0f});
+    check(again && near(again->x, -3.0f) && near(again->y, 0.0f), "the joint back: started afresh, not eased from before");
+    const auto kept = labels.follow_head(2, node, 0, Vec3f{10.0f, 5.0f + 6.0f, -1.0f}, 3);
+    check(kept && near(kept->z, 2.0f), "the other key kept");
+    labels.reset();
+    const auto reset = labels.follow_head(1, node, 0, Vec3f{12.0f, 5.0f + 6.0f, -3.0f});
+    check(reset && near(reset->x, 2.0f), "reset forgets the follows");
+    // The form a tag measures: the drawn model first (a Digi-Lab
+    // digivolution changes the player's form at once, the model only with
+    // the next stage load), the stats' species, the player's model name.
+    check(label_species("p_agumon", "p_wargrey", 6) == 0, "the drawn model's form first");
+    check(label_species("P_WEREGARU", "", -1) == 4, "model names fold case");
+    check(label_species("e_unknown", "p_wargrey", 3) == 3 && label_species("e_unknown", "p_wargrey", -1) == 6, "then the stats, then the name");
+    check(label_species("e_unknown", "", -1) == -1, "none");
 }
 
 OverheadLabel label(std::uint64_t key, Vec3f head) {
@@ -338,6 +491,8 @@ int main() {
         fade_and_modes();
         heads();
         measured_forms();
+        rising_heads();
+        label_follow();
         blending();
         engine_capture();
         occlusion();

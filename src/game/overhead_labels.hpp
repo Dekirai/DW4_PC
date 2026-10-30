@@ -53,29 +53,63 @@ engine::Vec3f camera_eye(const engine::Mat4& view);
 // Label opacity by distance: 1 up to `near`, 0 from `far`, linear between.
 float label_fade(float distance, float near_distance = 350.0f, float far_distance = 700.0f);
 
-// The head height of each of the 16 forms (`species`, the "shinka" row):
-// world units above the model's origin, measured in round 54 from the
-// skinned figure the renderer draws (hidden 4-player runs in dng101b1 and
-// the lobby, the initial weapons): the highest point within 2 units
-// (horizontally) of the head joint in the stance, which takes horns, ears,
-// a collar or wings close to the head and leaves out weapons, raised arms
-// and wing tips further out. 30 for another species.
+// The head of each of the 16 forms (`species`, the "shinka" row), world
+// units above the model's origin, measured in round 54 from the skinned
+// figure the renderer draws (hidden 4-player runs in dng101b1 and the
+// lobby, the initial weapons). The head's top: the highest point within 2
+// units (horizontally) of the head joint, which takes horns, ears, a collar
+// or wings close to the head and leaves out weapons, raised arms and wing
+// tips further out.
+struct FormHead {
+    // The head's top the tag rests on: the higher of the field's stance and
+    // the lobby's, or the lower one where the head joint's rise (`reach`)
+    // covers the other (WereGarurumon stands up in the lobby).
+    float height;
+    float reach; // how far the head's top stands above the head joint (the more of the two stances)
+    float joint; // the head joint's highest standing height (the higher stance)
+};
+const FormHead* form_head(int species); // nullptr for another species
+// The head's top without a pose to follow (remote players): the higher
+// stance's, the larger of `height` and `joint + reach`. 30 for another
+// species.
 float form_label_height(int species);
-// The head point: for a form of the table its head height plus a gap above
-// the model's origin, moved horizontally by `head_offset` (the head joint's
-// offset, OverheadLabels follows it smoothly), so the tag keeps still
-// whatever the pose does (attacks, a run's bounce, raised weapons). A model
-// of no known form: the highest joint of its last traversed pose
-// (`pose_top`, world y) plus a margin, else part of its actors' bounding box
-// (the bind pose's box is about twice the height the figure shows), else
-// 30 units.
+// How far a form's head rises above its height with the head joint at
+// `joint_height` above the model's origin (a jump, the leap of a charged
+// attack, a run's bounce, the upright stance of a form whose height is
+// the other's): `joint_height + reach - height`, at least 0.
+float form_head_rise(int species, float joint_height);
+// The form a player's tag measures: the drawn model's first (a Digi-Lab
+// digivolution changes the player's form at once, the model only with the
+// next stage load), else the stats' species (-1: none), else the player's
+// model name's; -1 for none.
+int label_species(std::string_view drawn_model, std::string_view player_model, int stats_species);
+// The head point: for a form of the table its height, the head's rise as
+// followed (`head`'s y) and a gap above the model's origin, moved
+// horizontally by `head`'s x and z (the head joint's offset as followed;
+// OverheadLabels::follow_head), so the tag keeps still whatever arms and
+// weapons do and moves with the head when it rises; without `head` (no
+// pose) form_label_height. A model of no known form: the highest joint of
+// its last traversed pose (`pose_top`, world y) plus a margin, else part of
+// its actors' bounding box (the bind pose's box is about twice the height
+// the figure shows), else 30 units.
 engine::Vec3f head_point(const engine::Node& node, int species, std::optional<float> pose_top = std::nullopt,
-                         std::optional<engine::Vec3f> head_offset = std::nullopt);
-// One capture of the head point's horizontal follow (OverheadLabels, once
-// per simulation step): the head joint's offset from the model's origin
-// (`target`, y ignored) cut to 2 units, `current` moved a twentieth of the
-// way there (no current: the target itself).
-engine::Vec3f follow_head_offset(std::optional<engine::Vec3f> current, engine::Vec3f target);
+                         std::optional<engine::Vec3f> head = std::nullopt);
+// The head point's follow of the head, per label: the head joint's
+// horizontal offset from the model's origin and the head's rise, both as
+// shown.
+struct HeadFollow {
+    engine::Vec3f offset{}; // y 0
+    float lift{};
+    int hold{}; // steps the lift keeps its height before it eases down
+};
+// One capture of the follow after `steps` simulation steps towards the head
+// joint's `offset` from the model's origin (y ignored, cut to 3.5 units;
+// each step moves a twentieth of the way) and the head's `rise`
+// (form_head_rise): a higher rise is taken at once and held for 30 steps,
+// as again by a rise of three quarters of the held one or more (a run's
+// stride takes some 20 steps, its tops differ a little), then the lift
+// eases down a tenth of the way per step. No `current`: the target itself.
+HeadFollow advance_head_follow(std::optional<HeadFollow> current, engine::Vec3f offset, float rise, int steps = 1);
 // The world position of a player's head joint in its last traversed pose
 // ("Head" in the rookies' skeletons, "Head01" in the others'); nullopt
 // without one.
@@ -141,10 +175,10 @@ public:
     void set_remote_players(std::vector<RemotePlayer> players) { remote_ = std::move(players); }
     const std::vector<RemotePlayer>& remote_players() const { return remote_; }
 
-    // After the simulation advanced (once per presented update): the
-    // labels at the step's state become current, the last ones previous.
-    // `own_slot`: this machine's GameSystem slot.
-    void capture(engine::Engine& engine, int own_slot);
+    // After the simulation advanced (once per presented update, `steps`
+    // simulation steps): the labels at the step's state become current, the
+    // last ones previous. `own_slot`: this machine's GameSystem slot.
+    void capture(engine::Engine& engine, int own_slot, int steps = 1);
     // The same from labels already made: `local` (this engine's players,
     // `local_players` of them joined) and the remote players in `stage`.
     void capture(std::vector<OverheadLabel> local, int local_players, std::string_view stage);
@@ -168,11 +202,17 @@ public:
     // title and menu stages.
     static bool hidden(engine::Engine& engine);
 
+    // The head point's follow of a local player's head (head_point's
+    // `head`: the offset's x and z, the lift as y) for label `key` after
+    // `steps` simulation steps (advance_head_follow): `joint` the head joint
+    // in the world, `species` the form whose head it is. Without a joint
+    // none, and the label's follow is forgotten (the next one starts at the
+    // joint itself).
+    std::optional<engine::Vec3f> follow_head(std::uint64_t key, const engine::Node& node, int species, std::optional<engine::Vec3f> joint,
+                                             int steps = 1);
+
 private:
-    // The head joint's horizontal offset from a local player's origin, as
-    // the head point follows it (head_point's `head_offset`), per label key.
-    std::vector<std::pair<std::uint64_t, engine::Vec3f>> head_offsets_;
-    std::optional<engine::Vec3f> follow_head(std::uint64_t key, const engine::Node& node, std::optional<engine::Vec3f> joint);
+    std::vector<std::pair<std::uint64_t, HeadFollow>> head_follows_; // per label key
 
     std::vector<OverheadLabel> previous_, current_;
     std::vector<RemotePlayer> remote_;

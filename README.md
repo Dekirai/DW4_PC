@@ -380,10 +380,13 @@ same with them on. The tag sits just above the head: one unit above the
 form's head height, measured for each of the 16 forms from the drawn figure
 in its stance (the head with its horns, ears, a collar or wings close to
 it; weapons held up and wing tips further out are left out), over the head
-joint (followed smoothly sideways, at most 2 units from the Digimon's
-position) and at a steady height, so attacks, a raised weapon, a run's
-bounce or a leap do not make it hop (a model of no known form: above its
-highest joint, else part of its bounding box). It follows the smooth
+joint (followed smoothly sideways, at most 3.5 units from the Digimon's
+position). Raised arms and weapons do not move it; when the head itself
+rises (a jump, the leap of a charged attack, the bounce of a run) the tag
+goes up with it at once, so the head never pushes through the bars, holds
+that height for half a second (a run keeps it steady at the stride's top)
+and then eases back down (a model of no known form: above its highest
+joint, else part of its bounding box). It follows the smooth
 motion above 60 fps, fades with the distance from
 the camera and is hidden during stage loads, demos and cutscenes (pad input
 off), status and shop windows, the title and menu screens, and for a defeated

@@ -1974,7 +1974,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 if (engine.reboot_due()) reboot_console();
             }
             if (steps > 0 && draw) interpolator.advance();
-            if (steps > 0 && (label_mode() != dw4::game::LabelMode::off || trace_labels)) labels.capture(engine, own_slot());
+            if (steps > 0 && (label_mode() != dw4::game::LabelMode::off || trace_labels)) labels.capture(engine, own_slot(), steps);
             if (discord) {
                 discord->configure(options.smoke_frames ? true : settings.discord, settings.discord_client_id);
                 const auto activity = presence_activity();
