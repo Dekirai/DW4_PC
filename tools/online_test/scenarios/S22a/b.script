@@ -1,0 +1,15 @@
+# S22a, member b (k10, replaying at most 300 steps a second): with a west; stays when a leaves; follows at @322 s:
+# a JOIN of a's stag0102 instance (about 50 s of ticks, a catch-up of about 12 s), whose only member leaves the
+# stage meanwhile: b falls back to NEW in stag0102.
+campaign until stage=stagml11,control
+idle until epoch>=@91
+explore mate00 yes until stage=stag0101,control
+log in the field
+route {route:stag0101_west:-280,-190}
+wander -280 -190 6 until present=1 fail stagechange
+log a left
+wander -280 -190 6 until epoch>=@322 fail stagechange
+log b follows
+mat matz02 yes until stage=stag0102,control
+log in stag0102 on its own
+idle until frames>=600

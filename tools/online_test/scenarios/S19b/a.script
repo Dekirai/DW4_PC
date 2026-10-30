@@ -1,0 +1,14 @@
+# S19b, member a (k2, level 7): with b through the lobby gate; fights the goburi east of the entrance a while, then
+# walks into them until it falls and waits as a capsule; b's exit at the far west end takes it along.
+campaign until stage=stagml11,control
+idle until epoch>=@90
+explore mate00 yes until stage=stag0101,control
+log in the field
+fight 455 15 60 until sealed>=5000 or dead
+die until dead
+log dead
+idle until stagechange
+log away from stag0101
+idle until stage=stag0102 fail stage=stagml11
+log in stag0102 with b
+idle until frames>=300

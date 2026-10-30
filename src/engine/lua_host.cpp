@@ -57,6 +57,8 @@ void Engine::install_lua() {
         result.completed = true;
         return result;
     });
+    // Online only (7.3): NETsplit(mask [, kind]) and NETisOnline().
+    if (online_.enabled) install_online_lua();
 }
 
 bool Engine::has_script(std::string_view name) const {
@@ -104,6 +106,9 @@ void Engine::for_each_script(const std::function<void(std::string_view name, std
 
 bool Engine::run_script(std::string_view name) {
     if (!lua_) install_lua();
+    // Seamless online co-op: the gate disc's user forks off first; the
+    // members who stay do not run its script (online_exits.cpp).
+    if (name == "gatedisc.lua" && online_shared() && !gatedisc_fork()) return true;
     // DW4_TRACE_SCRIPT=1 logs every script run (=name: only that one).
     if (static const char* trace = std::getenv("DW4_TRACE_SCRIPT"); trace && (std::string_view(trace) == "1" || name == trace))
         log("script " + std::string(name));
@@ -191,6 +196,8 @@ bool Engine::run_script(std::string_view name) {
         }
     }
     if (!ran) note("script not found: " + std::string(name));
+    // Online: the overrides of func.lua's globals (install_online_lua).
+    if (ran && online_.enabled && name == "func.lua") install_online_lua();
     return ran;
 }
 
@@ -206,6 +213,16 @@ std::vector<Lua4Value> Engine::lua_call(const Lua4HostCall& call) {
         if (value.type() != Lua4Type::Number) return std::string(value.as_string());
         return value.describe();
     };
+    if (name == "NETisOnline") return {Lua4Value::number(online_.enabled ? 1 : 0)};
+    if (name == "NETsplit") {
+        // NETsplit(mask [, kind]): a fork with `mask` as the side that goes
+        // on (ForkKind: 0 exit, 1 in-stage, 2 give up); 1 when this copy is
+        // on that side.
+        const auto mask = std::uint8_t(call.arguments.empty() ? 0 : int(to_number(call.arguments[0])) & 0xF);
+        const int kind = call.arguments.size() > 1 ? int(to_number(call.arguments[1])) : 0;
+        const bool goes_on = online_split(mask, kind == 1 ? ForkKind::in_stage : kind == 2 ? ForkKind::give_up : ForkKind::exit);
+        return {Lua4Value::number(goes_on ? 1 : 0)};
+    }
     if (name == "gsub") {
         if (call.arguments.size() < 3) return {};
         std::string value = text_of(call.arguments[0]);
@@ -284,6 +301,8 @@ std::vector<Lua4Value> Engine::lua_call(const Lua4HostCall& call) {
         }
         return {Lua4Value::string(out)};
     }
+    // Seamless online co-op (registered only online, install_online_lua).
+    if (name == "funcStageChange" && online_.enabled) return stage_change_port(call.arguments);
     if (!name.starts_with("be.")) {
         note("script function " + name);
         return {};

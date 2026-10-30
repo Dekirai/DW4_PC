@@ -1,11 +1,15 @@
 #include "dw4/engine/engine.hpp"
+#include "online_detail.hpp"
+#include "dw4/engine/online_membership.hpp"
 
 #include "dw4/engine/managers.hpp"
 #include "dw4/packages.hpp"
 
 #include <algorithm>
+#include <bit>
 #include <cctype>
 #include <charconv>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <iostream>
@@ -354,6 +358,7 @@ void Messenger::post(std::int64_t time, std::string category, std::optional<std:
     if (static const bool trace = std::getenv("DW4_TRACE_POSTS") != nullptr; trace)
         std::printf("post %s %s %s for %lld\n", category.c_str(), name ? name->c_str() : "-", command.c_str(), static_cast<long long>(time));
     DeferredMessage message{time, std::move(category), std::move(name), index, std::move(command), std::move(arguments)};
+    message.trigger = trigger_;
     if (modelling()) {
         // 80305F9C resets the current object (or makes all), the poster's
         // arguments go into it, 803061BC swaps it into the record.
@@ -402,6 +407,7 @@ void Messenger::update(Engine& engine) {
         }
         DeferredMessage message = std::move(deferred_.front());
         deferred_.erase(deferred_.begin());
+        const Engine::TriggerScope trigger(engine, message.trigger);
         std::optional<std::string_view> name;
         if (message.name) name = *message.name;
         if (static const bool trace = std::getenv("DW4_TRACE_POSTS") != nullptr; trace)
@@ -475,6 +481,7 @@ void DemoManager::end_switch() {
 
 void DemoManager::run() {
     if (!current_ || in_switch_) return;
+    current_->trigger = trigger_;
     running_.push_back(std::move(current_));
     current_.reset();
     in_switch_ = false;
@@ -507,6 +514,7 @@ void DemoManager::update(Engine& engine) {
         auto* work = running_[w].get();
         auto& records = work->records;
         std::size_t cursor = work->cursor;
+        const Engine::TriggerScope trigger(engine, work->trigger);
         while (cursor < records.size()) {
             bool block = false;
             const DemoRecord record = records[cursor];
@@ -517,12 +525,35 @@ void DemoManager::update(Engine& engine) {
                 }
             } else if (record.type == 7) {
                 if (record.argument) engine.run_script(*record.argument);
+            } else if (record.type == 8) {
+                block = record.port && record.port(engine) != 0;
+            } else if (record.type == 9) {
+                const std::int32_t value = record.port ? record.port(engine) : 0;
+                while (cursor < records.size()) {
+                    ++cursor;
+                    if (cursor >= records.size()) break;
+                    if (records[cursor].type == 4 && records[cursor].case_value == value) break;
+                    if (records[cursor].type == 5) break;
+                }
             } else if (record.type >= 0 && record.type <= 3) {
                 Packet packet;
                 if (record.argument) parse_packet_arguments(*record.argument, packet);
                 std::optional<std::string_view> name;
                 if (record.name) name = *record.name;
                 if (record.delay_frames > 0) {
+                    // (Online: a departure posted ahead is a solo
+                    // instance's heading, Engine::note_departure.)
+                    if (record.command == "NEXTSTAGE" && record.category == "STAGECTL" && !packet.strings.empty() && engine.online().enabled) {
+                        int point = 0;
+                        for (std::size_t k = cursor; k-- > 0;)
+                            if (records[k].category == "PLAYERPOINT" && records[k].command == "SETGENERATEPOS" && records[k].argument) {
+                                Packet at;
+                                parse_packet_arguments(*records[k].argument, at);
+                                if (!at.ints.empty()) point = int(at.ints[0]);
+                                break;
+                            }
+                        engine.note_departure(packet.string(0), point, record.delay_frames);
+                    }
                     engine.messenger().post(engine.time() + kFrameNs * record.delay_frames, record.category, record.name,
                                             record.index, record.command, std::move(packet));
                 } else {
@@ -560,6 +591,7 @@ void DemoManager::update(Engine& engine) {
 Engine::Engine(const std::filesystem::path& data_root) : Engine(MountedResources::open(data_root)) {}
 
 Engine::Engine(MountedResources resources) : resources_(std::move(resources)) {
+    detail::engine_constructed();
     global_root_.kind = NodeKind::group;
     global_root_.name = "GlobalRoot";
     cheats_.god = std::getenv("DW4_GOD") != nullptr;
@@ -572,7 +604,7 @@ Engine::Engine(MountedResources resources) : resources_(std::move(resources)) {
     register_default_managers(*this);
 }
 
-Engine::~Engine() = default;
+Engine::~Engine() { detail::engine_destroyed(counted_online_); }
 
 void Engine::add_manager(std::unique_ptr<Manager> manager) {
     managers_.push_back(std::move(manager));
@@ -654,6 +686,9 @@ void Engine::reset_modules() {
     schedule_.clear();
     messenger_.clear();
     demo_.clear();
+    // Seamless co-op: a running exit ends with the stage.
+    exit_port_.reset();
+    exit_view_ = ExitPromptView{};
 }
 
 void Engine::begin_stage_load(const StageSnapshot* restoring) {
@@ -709,6 +744,15 @@ void Engine::begin_stage_load(const StageSnapshot* restoring) {
     loader_preliminary_.clear();
     loader_skip_ = 0;
     loader_cost_ = 0;
+    // Online (6.5, 4.4, 4.6): every barrier clears the boss lock; a visit
+    // that starts with one member has the shared camera and the leash.
+    if (online_.enabled && !restoring) {
+        online_.boss_lock = false;
+        if (std::popcount(unsigned(online_.present)) < 2) {
+            online_.player_cameras = 0;
+            online_.leash_off = false;
+        }
+    }
     // The load timing of this load and the stage it starts (a save state's
     // cheats are in place by now).
     loader_fast_ = cheats_.fast_loading;
@@ -736,11 +780,16 @@ void Engine::begin_stage_load(const StageSnapshot* restoring) {
     snapshot.stage_active = stage_active_;
     if (auto* sys = get<GameSystem>()) snapshot.system = std::make_shared<const GameSystem>(*sys);
     if (auto* sound = get<SoundManager>()) snapshot.sound = sound->persistent();
+    snapshot.online = online_;
+    snapshot.personal = personal_;
     snapshot.serial = ++snapshot_serial_;
     snapshot_ = std::move(snapshot);
 }
 
 void Engine::restore(const StageSnapshot& snapshot) {
+    // The load step's managers run here too (6.12: every entry into the
+    // simulation under the MXCSR the engine expects; a no-op by default).
+    const detail::MxcsrGuard mxcsr;
     time_ = snapshot.time;
     frame_ = snapshot.frame;
     update_frame_ = frame_; // (a stage load starts in a step that updated)
@@ -755,6 +804,13 @@ void Engine::restore(const StageSnapshot& snapshot) {
     cheats_ = snapshot.cheats;
     pads_ = snapshot.pads;
     console_reset_ = snapshot.console_reset;
+    // Online: the visit's rules and personal values (set_online keeps the
+    // room's cheats and the console reset off, as after any construction).
+    personal_ = snapshot.personal;
+    if (snapshot.online.enabled || online_.enabled) {
+        set_online(snapshot.online);
+        personal_ = snapshot.personal;
+    }
     {
         std::istringstream random(snapshot.random);
         random >> fight::generator();
@@ -777,6 +833,7 @@ void Engine::restore(const StageSnapshot& snapshot) {
     messenger_.update(*this);
     process_stage_loader();
     demo_.update(*this);
+    apply_leash_rule(); // as the live load step (a no-op offline and while the leash is on)
     update_managers();
 }
 
@@ -1840,6 +1897,19 @@ const std::map<std::uint64_t, std::int64_t>& clock_file() {
 } // namespace
 
 void Engine::step(const std::array<PadSample, 4>& samples) {
+    const detail::MxcsrGuard mxcsr;
+    if (!online_.enabled) {
+        step_impl(samples);
+        return;
+    }
+    // Online (7.4): no console reset however the game sets beSystem +0x5F.
+    if (console_reset_.enabled()) console_reset_.set_enabled(false);
+    const auto effective = online_samples(samples);
+    step_impl(effective);
+    finish_online_step(effective);
+}
+
+void Engine::step_impl(const std::array<PadSample, 4>& samples) {
     torn_down_ = false;
     // The console reloads the game (rebooting): nothing of the old one runs.
     if (rebooting_) {
@@ -1936,6 +2006,8 @@ void Engine::step(const std::array<PadSample, 4>& samples) {
         return;
     }
     if (!pending_stage_.empty()) {
+        // Online: BARRIER_OK's membership and rules first (6.7).
+        if (online_.enabled) apply_barrier();
         begin_stage_load();
         torn_down_ = true;
     }
@@ -1953,6 +2025,8 @@ void Engine::step(const std::array<PadSample, 4>& samples) {
     messenger_.update(*this);
     process_stage_loader();
     demo_.update(*this);
+    // Seamless co-op: no leash while OnlineRules::leash_off (a no-op offline).
+    apply_leash_rule();
     update_managers();
 }
 
@@ -2052,11 +2126,68 @@ TraversalContext Engine::frame_context(std::vector<DrawItem>* out, FrameCamera& 
     return context;
 }
 
+namespace {
+// DW4_TRACE_TRAVERSAL_TIME (development measurement, Engine::traversal_ns):
+// the CPU time of each traversal pass. Off, it reads no clock.
+bool trace_traversal_time() {
+    static const bool on = std::getenv("DW4_TRACE_TRAVERSAL_TIME") != nullptr;
+    return on;
+}
+struct PassTimer {
+    std::uint64_t& ns;
+    std::uint64_t& count;
+    bool on = trace_traversal_time();
+    std::chrono::steady_clock::time_point start = on ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+    ~PassTimer() {
+        if (!on) return;
+        ns += std::uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - start).count());
+        ++count;
+    }
+};
+} // namespace
+
+// Per-slot cameras (OnlineRules::player_cameras, docs/SEAMLESS.md 4.2): the
+// simulation pass of the step, culled against the union of every member
+// camera's frustum (the first member's camera first: it takes the
+// view-dependent values), without draw items, and the shadow casters under
+// every member's light. Every machine of an instance computes every member's
+// camera from the lockstep inputs, so the union is the same everywhere. With
+// one camera it is the original traversal.
+void Engine::traverse_union() {
+    if (rebooting_) return;
+    PassTimer timer{traversal_ns[2], traversal_count[2]};
+    FrameCamera camera;
+    Vec4f clear_color;
+    TraversalContext context = frame_context(nullptr, camera, clear_color);
+    if (auto* cameras = get<CameraManager>()) {
+        bool first = true;
+        for (int slot = 0; slot < 4; ++slot) {
+            if (!(online_.player_cameras & (1u << slot))) continue;
+            FrameCamera own;
+            cameras->frame_camera(*this, own, slot);
+            if (first) context.cull_camera = own;
+            else context.extra_cull.push_back(own);
+            first = false;
+        }
+    }
+    context.union_cull = true;
+    traverse(&global_root_, context);
+    if (auto* shadows = get<ShadowManager>()) shadows->traverse(context);
+    union_frame_ = frame_;
+    union_time_ = time_;
+}
+
 void Engine::traverse_scene() {
     // As render(): the same nodes in the same order with the same camera,
     // time and poses; only the draw items (geometry, particle quads, skin
     // palettes, lights) are left out.
     if (rebooting_) return;
+    const detail::MxcsrGuard mxcsr;
+    if (online_.player_cameras) {
+        traverse_union();
+        return;
+    }
+    PassTimer timer{traversal_ns[1], traversal_count[1]};
     FrameCamera camera;
     Vec4f clear_color;
     TraversalContext context = frame_context(nullptr, camera, clear_color);
@@ -2065,6 +2196,7 @@ void Engine::traverse_scene() {
 }
 
 void Engine::render(std::vector<DrawItem>& out, FrameCamera& camera, Vec4f& clear_color, ShadowFrame* shadow) {
+    const detail::MxcsrGuard mxcsr;
     out.clear();
     // VISetBlack (0x803162E0): a rebooting console shows black.
     if (rebooting_) {
@@ -2072,6 +2204,37 @@ void Engine::render(std::vector<DrawItem>& out, FrameCamera& camera, Vec4f& clea
         if (shadow) shadow->active = false;
         return;
     }
+    if (online_.player_cameras) {
+        // Per-slot cameras: the step's union simulation pass (once per step;
+        // a traversal at the same world time changes nothing), then this
+        // machine's picture with its own camera, which changes nothing
+        // either: every node takes its peek path. The picture keeps the
+        // widescreen widening and the smooth motion rule (the previous
+        // step's view of this camera, set by the host).
+        if (union_frame_ != frame_ || union_time_ != time_) traverse_union();
+        PassTimer timer{traversal_ns[3], traversal_count[3]};
+        TraversalContext context = frame_context(&out, camera, clear_color);
+        FrameCamera local = context.cull_camera;
+        if (auto* cameras = get<CameraManager>()) cameras->frame_camera(*this, local, picture_slot());
+        context.cull_camera = local;
+        context.camera = debug_camera ? *debug_camera : local;
+        camera = context.camera;
+        context.simulate = false;
+        Mat4 inverse_view;
+        if (invert(camera.view, inverse_view)) context.camera_position = {inverse_view(3, 0), inverse_view(3, 1), inverse_view(3, 2)};
+        // A multi-member instance: other members' item name lines and exit
+        // prompts are not this machine's (picture_hidden_roots).
+        picture_hidden_roots(picture_hidden_);
+        if (!picture_hidden_.empty()) context.picture_hidden = &picture_hidden_;
+        traverse(&global_root_, context);
+        std::stable_partition(out.begin(), out.end(), [](const DrawItem& item) { return !item.state.blend_enabled; });
+        if (shadow) {
+            shadow->active = false;
+            if (auto* shadows = get<ShadowManager>()) shadows->render(*this, context, *shadow);
+        }
+        return;
+    }
+    PassTimer timer{traversal_ns[0], traversal_count[0]};
     TraversalContext context = frame_context(&out, camera, clear_color);
     traverse(&global_root_, context);
     // The scene traversal submits its packages to the igSorter it holds at

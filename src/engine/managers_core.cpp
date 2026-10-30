@@ -313,6 +313,10 @@ void CameraManager::clear_stage(Engine&) {
     centre_moved_ = false;
     blend_ = 0.0f;
     box_ = previous_box_ = 0;
+    // Per-slot cameras: the boxes start again with the stage.
+    player_box_ = {};
+    player_frame_ = {};
+    viewer_events_ = demo_event_ = 0;
 }
 
 bool CameraManager::named_demo_running(const Engine& engine) const {
@@ -368,6 +372,99 @@ Mat4 camera_projection(float fov_x_degrees, float near_plane, float far_plane) {
 // cleared, the first step adds nothing) and becomes the current viewer.
 void CameraManager::set_viewer(const CameraRam& ram, const CameraPath& path, std::int64_t duration) {
     viewer_ = Viewer{&ram, &path, 0, duration, 0, false};
+    // Per-slot cameras: a demo viewer replaces every slot's box camera.
+    ++viewer_events_;
+    if (!ram.box) demo_event_ = viewer_events_;
+}
+
+// Per-slot cameras: 802F2BC0 for one slot, on that slot's own box state and
+// live pivot / eye / target matrices (the shared nodes stay the shared
+// camera's). A slot without a generated player (defeated) stands still.
+// The centre is the slot's player alone (one player: the sum, no division),
+// so with one player this is the original update step for step. It runs
+// before update_box, which steps the shared SHAKE timers, so both read the
+// same pattern digit.
+void CameraManager::update_player_box(Engine& engine, CameraRam& ram, int slot, bool fresh) {
+    auto& box = *ram.box;
+    auto& pb = player_box_[std::size_t(slot)];
+    if (!pb.started) {
+        pb.pivot = box.pivot->matrix;
+        pb.eye = box.eyes[0]->matrix;
+        pb.target = box.targets[0]->matrix;
+        pb.started = true;
+    }
+    if (fresh) {
+        pb.centre = {-1.0f, -1.0f, -1.0f};
+        pb.box = 0;
+    }
+    const ModelCtrlManager::ModelRam* player = nullptr;
+    if (auto* models = engine.get<ModelCtrlManager>())
+        for (const auto& model : models->rams())
+            if (model->is_player && model->generated && model->node && model->index == slot) { player = model.get(); break; }
+    if (!player) return;
+    Vec3f centre{};
+    centre = centre + translation_of(player->node->matrix);
+    pb.centre_moved = centre.x != pb.centre.x || centre.y != pb.centre.y || centre.z != pb.centre.z;
+    if (pb.centre_moved) pb.centre = centre;
+    if (ram.shake && !ram.shake->fresh) {
+        set_translation(pb.eye, pb.shake_eye);
+        set_translation(pb.target, pb.shake_target);
+    }
+    if (pb.centre_moved) {
+        set_translation(pb.pivot, pb.centre);
+        int found = 0;
+        for (std::size_t k = 1; k < box.boxes.size(); ++k) {
+            const auto& [lo, hi] = box.boxes[k];
+            if (pb.centre.x >= lo.x && pb.centre.y >= lo.y && pb.centre.z >= lo.z && pb.centre.x <= hi.x &&
+                pb.centre.y <= hi.y && pb.centre.z <= hi.z) {
+                found = int(k);
+                break;
+            }
+        }
+        if (found != 0 && found != pb.box) {
+            pb.previous_box = pb.box;
+            pb.box = found;
+            pb.saved_eye = pb.eye;
+            pb.saved_target = pb.target;
+            pb.blend = 0.0f;
+            if (!ram.paths.empty()) pb.box_event = ++viewer_events_;
+        }
+    }
+    const std::size_t k = std::size_t(pb.box);
+    if (pb.box != pb.previous_box && k < box.eyes.size() && k < box.targets.size() && box.eyes[k] && box.targets[k]) {
+        if (pb.previous_box == 0 || pb.blend >= 120.0f) {
+            pb.previous_box = pb.box;
+            pb.eye = box.eyes[k]->matrix;
+            pb.target = box.targets[k]->matrix;
+            pb.hokan.reset();
+        } else {
+            const float t = pb.blend / 120.0f;
+            blend_transform(pb.eye, pb.saved_eye, box.eyes[k]->matrix, t);
+            blend_transform(pb.target, pb.saved_target, box.targets[k]->matrix, t);
+            if (!pb.hokan) timer_start(pb.hokan.emplace(), engine.time());
+            const float frames = timer_frames(*pb.hokan, engine.time());
+            pb.blend = pb.centre_moved ? pb.blend + frames : std::fma(1.5f, frames, pb.blend);
+        }
+    }
+    if (ram.shake) {
+        const auto& shake = *ram.shake;
+        const char c = shake.index < shake.pattern.size() ? shake.pattern[shake.index] : '0';
+        const int digit = std::clamp(c - '0', 0, 8);
+        pb.shake_eye = translation_of(pb.eye);
+        pb.shake_target = translation_of(pb.target);
+        for (Mat4* m : {&pb.eye, &pb.target}) {
+            Vec3f p = translation_of(*m);
+            p.x += kShakeX[digit] * shake.amplitude;
+            p.y += kShakeY[digit] * shake.amplitude;
+            set_translation(*m, p);
+        }
+        // update_box ends the shake in this update when SHAKEALL ran out
+        // (0x802F34D4) and puts the unshaken translations back.
+        if (timer_expired(shake.all, engine.time())) {
+            set_translation(pb.eye, pb.shake_eye);
+            set_translation(pb.target, pb.shake_target);
+        }
+    }
 }
 
 // 802F2BC0: the box camera. The pivot stands at the players' centre; the
@@ -606,7 +703,16 @@ void CameraManager::update(Engine& engine) {
     for (auto& ram : rams_) {
         if (!ram->active) continue;
         if (ram->box) {
-            if (!box_done && !named_demo_running(engine)) update_box(engine, *ram);
+            if (!box_done && !named_demo_running(engine)) {
+                // Per-slot cameras: each slot's own box camera first (it
+                // reads the shake digit before update_box steps it).
+                if (const auto mask = engine.player_cameras()) {
+                    const bool fresh = ram->state == 0;
+                    for (int slot = 0; slot < 4; ++slot)
+                        if (mask & (1u << slot)) update_player_box(engine, *ram, slot, fresh);
+                }
+                update_box(engine, *ram);
+            }
             box_done = true;
         } else if (ram->demo_data && ram->state == 0) {
             // 802F3568 state 0: the viewer plays the demo path from 0 for the
@@ -641,6 +747,34 @@ void CameraManager::begin_frame(Engine& engine) {
     FrameCamera camera;
     compute_camera(engine, camera);
     frame_ = camera;
+    // Per-slot cameras: every slot's own camera of this frame.
+    player_frame_ = {};
+    if (const auto mask = engine.player_cameras()) {
+        static const bool check = std::getenv("DW4_CAM_CHECK") != nullptr;
+        int players = 0;
+        bool player0 = false;
+        if (check)
+            if (auto* models = engine.get<ModelCtrlManager>())
+                for (const auto& model : models->rams())
+                    if (model->is_player && model->generated && model->node) {
+                        ++players;
+                        player0 = player0 || model->index == 0;
+                    }
+        for (int slot = 0; slot < 4; ++slot) {
+            if (!(mask & (1u << slot))) continue;
+            FrameCamera own;
+            compute_camera(engine, own, &player_box_[std::size_t(slot)], slot);
+            player_frame_[std::size_t(slot)] = own;
+            // DW4_CAM_CHECK: with player 1 alone, slot 0's camera must be
+            // the shared one bit for bit (the original's one-player case).
+            if (check && slot == 0 && players == 1 && player0) {
+                ++check_frames_;
+                if (std::memcmp(own.view.m.data(), camera.view.m.data(), sizeof(float) * 16) != 0 ||
+                    std::memcmp(own.projection.m.data(), camera.projection.m.data(), sizeof(float) * 16) != 0)
+                    ++check_mismatches_;
+            }
+        }
+    }
 }
 
 void CameraManager::frame_camera(Engine& engine, FrameCamera& camera) {
@@ -648,21 +782,134 @@ void CameraManager::frame_camera(Engine& engine, FrameCamera& camera) {
     else compute_camera(engine, camera);
 }
 
-void CameraManager::compute_camera(Engine& engine, FrameCamera& camera) {
+void CameraManager::frame_camera(Engine& engine, FrameCamera& camera, int slot) {
+    if (slot < 0 || slot > 3 || !(engine.player_cameras() & (1u << slot))) {
+        frame_camera(engine, camera);
+        return;
+    }
+    if (player_frame_[std::size_t(slot)]) camera = *player_frame_[std::size_t(slot)];
+    else compute_camera(engine, camera, &player_box_[std::size_t(slot)], slot);
+}
+
+void CameraManager::set_player_cameras(Engine& engine, std::uint8_t before, std::uint8_t after, std::uint8_t heirs) {
+    (void)engine;
+    const CameraRam* box_ram = nullptr;
+    for (const auto& ram : rams_)
+        if (!box_ram && ram->active && ram->box) box_ram = ram.get();
+    for (int slot = 0; slot < 4; ++slot) {
+        const auto bit = std::uint8_t(1u << slot);
+        auto& pb = player_box_[std::size_t(slot)];
+        player_frame_[std::size_t(slot)].reset();
+        if (!(after & bit)) {
+            pb = PlayerBox{};
+            continue;
+        }
+        if (before & bit) continue; // it keeps its box
+        pb = PlayerBox{};
+        if (before != 0 || !(heirs & bit) || !box_ram) continue; // a first run: its box comes directly
+        // The member that played with the shared camera takes its state over:
+        // the centre, the boxes, the blend and its CAMHOKAN step, the saved
+        // and live matrices, the shake's unshaken translations. Its picture
+        // goes on as before (with the shared viewer: a box path shows its
+        // box, a demo stays the demo until SETBOXCAMERA).
+        const auto& box = *box_ram->box;
+        pb.started = true;
+        pb.centre = centre_;
+        pb.centre_moved = centre_moved_;
+        pb.blend = blend_;
+        pb.box = box_;
+        pb.previous_box = previous_box_;
+        pb.saved_eye = saved_eye_;
+        pb.saved_target = saved_target_;
+        pb.pivot = box.pivot->matrix;
+        pb.eye = box.eyes[0]->matrix;
+        pb.target = box.targets[0]->matrix;
+        pb.hokan = box_ram->hokan;
+        if (box_ram->shake) {
+            pb.shake_eye = box_ram->shake->eye;
+            pb.shake_target = box_ram->shake->target;
+        }
+    }
+}
+
+std::uint64_t CameraManager::player_box_hash() const {
+    std::uint64_t h = 0xcbf29ce484222325ull;
+    auto mix = [&](const void* data, std::size_t size) {
+        const auto* bytes = static_cast<const unsigned char*>(data);
+        for (std::size_t i = 0; i < size; ++i) {
+            h ^= bytes[i];
+            h *= 0x100000001b3ull;
+        }
+    };
+    auto mix_value = [&](auto value) { mix(&value, sizeof value); };
+    auto mix_matrix = [&](const Mat4& m) { mix(m.m.data(), sizeof(float) * m.m.size()); };
+    mix_value(viewer_events_);
+    mix_value(demo_event_);
+    for (const auto& pb : player_box_) {
+        mix_value(pb.started);
+        if (!pb.started) continue;
+        for (float v : {pb.centre.x, pb.centre.y, pb.centre.z, pb.blend, pb.shake_eye.x, pb.shake_eye.y, pb.shake_eye.z,
+                        pb.shake_target.x, pb.shake_target.y, pb.shake_target.z})
+            mix_value(v);
+        mix_value(pb.centre_moved);
+        mix_value(pb.box);
+        mix_value(pb.previous_box);
+        mix_value(pb.box_event);
+        for (const Mat4* m : {&pb.saved_eye, &pb.saved_target, &pb.pivot, &pb.eye, &pb.target}) mix_matrix(*m);
+        mix_value(pb.hokan.has_value());
+        if (pb.hokan) {
+            mix_value(pb.hokan->scale);
+            mix_value(pb.hokan->bias);
+            mix_value(pb.hokan->end);
+            mix_value(pb.hokan->saved_world);
+            mix_value(pb.hokan->cached_frames);
+            mix_value(pb.hokan->previous);
+        }
+    }
+    return h;
+}
+
+const Vec3f* CameraManager::player_box_centre(int slot) const {
+    if (slot < 0 || slot > 3 || !player_box_[std::size_t(slot)].started) return nullptr;
+    return &player_box_[std::size_t(slot)].centre;
+}
+
+void CameraManager::compute_camera(Engine& engine, FrameCamera& camera, const PlayerBox* own, int slot) {
     camera.projection = camera_projection(54.4322f, 10.0f, 2000.0f);
     camera.view = look_at({0, 50, 300}, {0, 0, 0}, {0, 1, 0});
+    // Per-slot cameras (`own`): the slot sees its own box camera when its box
+    // made the box path its viewer after the last demo viewer, or when the
+    // current viewer is a box path anyway; a demo viewer is everyone's.
+    bool own_box = false;
+    const CameraRam* box_ram = nullptr;
+    if (own) {
+        for (const auto& ram : rams_)
+            if (!box_ram && !ram->paths.empty() && ram->box && ram->active) box_ram = ram.get();
+        own_box = box_ram && own->started && (own->box_event > demo_event_ || (viewer_ && viewer_->ram->box));
+    }
+    const bool use_viewer = viewer_ && !own_box;
     // The current viewer's path at its clock. Before the box or a demo camera
     // has set one, the stage's scene camera (8040E7DC): the active box
     // camera's path, else the first camera with a path.
-    const CameraRam* chosen = viewer_ ? viewer_->ram : nullptr;
+    const CameraRam* chosen = own_box ? box_ram : viewer_ ? viewer_->ram : nullptr;
     for (const auto& ram : rams_)
         if (!chosen && !ram->paths.empty() && ram->box && ram->active) chosen = ram.get();
     for (const auto& ram : rams_)
         if (!chosen && !ram->paths.empty()) chosen = ram.get();
     if (chosen) {
         const CameraRam* ram = chosen;
-        const auto& path = viewer_ ? *viewer_->path : ram->paths.front();
-        const std::int64_t at = viewer_ ? viewer_->time : 0;
+        const auto& path = use_viewer ? *viewer_->path : ram->paths.front();
+        const std::int64_t at = use_viewer ? viewer_->time : 0;
+        // A slot's box path takes that slot's live pivot / eye / target.
+        const BoxData* box = own && ram->box && own->started ? &*ram->box : nullptr;
+        auto matrix_of = [&](const Node* node) -> const Mat4& {
+            if (box) {
+                if (node == box->pivot) return own->pivot;
+                if (node == box->eyes[0]) return own->eye;
+                if (node == box->targets[0]) return own->target;
+            }
+            return node->matrix;
+        };
         // World matrices along the path (801EA990): from the identity, each
         // transform whose _target is 0 (+0x60; others are skipped) takes its
         // matrix at the viewer's time (vfunc +0x9C) and is applied before
@@ -679,7 +926,7 @@ void CameraManager::compute_camera(Engine& engine, FrameCamera& camera) {
         for (auto* node : path.nodes) {
             if (!applies(node)) continue;
             if (node == last_transform) pivot = world;
-            gekko::premultiply(world, node->sequence && node->sequence->valid ? node->sequence->evaluate(at) : node->matrix);
+            gekko::premultiply(world, node->sequence && node->sequence->valid ? node->sequence->evaluate(at) : matrix_of(node));
         }
         if (path.camera) {
             // igCamera fields (804B0F14): _horizontalFieldOfView (default 45,
@@ -689,11 +936,11 @@ void CameraManager::compute_camera(Engine& engine, FrameCamera& camera) {
             const float far_plane = path.camera->object.f32(10, 2000.0f);
             camera.projection = camera_projection(fov, near_plane, far_plane);
         }
-        // Without a viewer and box data: follow the first player with the
-        // authored angle and distance.
+        // Without a viewer and box data: follow the first player (a slot's
+        // camera: its own player) with the authored angle and distance.
         if (!viewer_ && !ram->box) {
             if (auto* models = engine.get<ModelCtrlManager>()) {
-                if (const auto* player = models->player(0); player && player->node) {
+                if (const auto* player = models->player(own ? slot : 0); player && player->node) {
                     const auto& pm = player->node->matrix;
                     const Vec3f offset{world(3, 0) - pivot(3, 0), world(3, 1) - pivot(3, 1), world(3, 2) - pivot(3, 2)};
                     const Vec3f pivot_local{pivot(3, 0), pivot(3, 1), pivot(3, 2)};
@@ -707,7 +954,8 @@ void CameraManager::compute_camera(Engine& engine, FrameCamera& camera) {
         // Euler angles (8012947C, then 80129134 with the translation put
         // back), and the view matrix is its orthonormal inverse (8012A860),
         // published to the viewer parameters (+0x6C) the player input reads.
-        static const bool trace = std::getenv("DW4_TRACE_VIEW") != nullptr;
+        static const bool trace_view = std::getenv("DW4_TRACE_VIEW") != nullptr;
+        const bool trace = trace_view && !own;
         auto print_matrix = [&](const char* letter) {
             std::printf("[%llu] %s", static_cast<unsigned long long>(engine.frame()), letter);
             for (int row = 0; row < 4; ++row)
@@ -790,6 +1038,9 @@ void StageCtlManager::update(Engine& engine) {
     };
     switch (reset_state_) {
     case 0:
+        // Online the soft reset is off (7.4): one member must not send the
+        // whole instance to the title.
+        if (engine.online().enabled) break;
         if (engine.soft_reset_allowed() && (pad.trigger & pad_button::start) && combination) {
             reset_time_ = engine.time() + 1'000'000'000;
             reset_state_ = 1;
@@ -2378,7 +2629,7 @@ void SoundManager::restore(Engine& engine, const std::shared_ptr<const void>& op
     cri_ = state.cri;
 }
 
-void SoundManager::serialize_persistent(StateArchive& a, std::shared_ptr<const void>& opaque) {
+void SoundManager::serialize_persistent(StateArchive& a, std::shared_ptr<const void>& opaque, bool canonical) {
     bool present = opaque != nullptr;
     a.io(present);
     if (!present) return;
@@ -2392,7 +2643,12 @@ void SoundManager::serialize_persistent(StateArchive& a, std::shared_ptr<const v
     for (auto& s : state->streams) {
         a.io(s.name);
         a.io(s.file);
-        a.io(s.frames_read);
+        if (canonical && !a.reading()) {
+            std::uint64_t none = 0;
+            a.io(none);
+        } else {
+            a.io(s.frames_read);
+        }
         a.io(s.serial);
         a.io(s.priority);
         a.io(s.type);
@@ -2707,7 +2963,8 @@ void SoundManager::update(Engine& engine) {
         // (802AF560); then, when the movie's state is 2 (ended, or gone:
         // 802B1338), the end script of its data runs (80301FA4 at 0x8031ED58)
         // and the name is cleared (0x8031EDE4), so a later PLAY is taken.
-        const auto& pad = engine.pads()[0];
+        // (Online: the leader's pad, 7.4.)
+        const auto& pad = engine.pads()[std::size_t(engine.pad_reader_slot(0, -1))];
         const bool skip = (pad.buttons.trigger & (pad_button::a | pad_button::start)) != 0;
         if (skip) stop_movie(engine);
         if (!movie_ || movie_->phase == Movie::Phase::end) {
@@ -3502,6 +3759,7 @@ bool GameSystem::script_call(Engine& engine, const std::string& method, std::spa
         gate_stage_no = arg_int(1);
         if (!args.empty() && args[0].type() == Lua4Type::Nil) gate_stage_name = std::string();
         else if (!args.empty() && args[0].type() == Lua4Type::String) gate_stage_name = std::string(args[0].as_string());
+        engine.online_gate_stage_set(); // online: the present members' personal GATESTAGE (3.7)
         return true;
     }
     (void)engine;

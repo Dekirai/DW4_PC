@@ -1,0 +1,16 @@
+# S3, member a (k10): first into stag0101 (NEW); b joins about 15 s later, c 15 s after b; then all three go west
+# and out by matz02 together (one group move).
+campaign until stage=stagml11,control
+idle until epoch>=@90
+explore mate00 yes until stage=stag0101,control
+log in the field
+wander 460 170 15 until present=3,sealed>=300
+log all three here
+route {route:stag0101_west}
+log at the exit
+wander -320 -184 4 until frames>=900
+mat matz02 yes 3 until stage=stag0102,control
+log in stag0102
+wander 330 140 15 until sealed>=4200
+log enough
+idle until frames>=60

@@ -1,0 +1,12 @@
+# S3: two JOINs into the same instance one after the other (slots 1 and 2), then one barrier for all three.
+a: (?i)decision 1 .*stage=stag0101
+b: (?i)decision 2 .*stage=stag0101
+a: online-trace: join applied .*slot=1
+c: (?i)decision 2 .*stage=stag0101
+a: online-trace: join applied .*slot=2
+b: online-trace: join applied .*slot=2
+a: (?i)decision 1 .*stage=stag0102 .*mode=2
+b: (?i)decision 1 .*stage=stag0102 .*mode=2
+c: (?i)decision 1 .*stage=stag0102 .*mode=2
+!a: online-trace: split
+shared: a c >= 3000

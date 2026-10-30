@@ -1,0 +1,16 @@
+# S22b, member c (k10, slot 2): west with the others; leaves by matz02 with a at @270 s; in stag0102 leaves alone by
+# matz01 at @331 s, during b's catch-up.
+campaign until stage=stagml11,control
+idle until epoch>=@92
+explore mate00 yes until stage=stag0101,control
+log in the field
+route {route:stag0101_west:-308,-190}
+wander -315 -197 4 until epoch>=@270
+log a and c leave
+mat matz02 yes 2 until stage=stag0102,control
+log in stag0102 with a
+wander 345 120 10 until epoch>=@331 fail stagechange
+log c leaves alone
+mat matz01 yes until stage=stag0101,control
+log back in stag0101
+idle until frames>=600

@@ -1,0 +1,10 @@
+{
+  "desc": "two members in one stage walk apart (> 200 units), own cameras, enemies on both sides",
+  "card": "k10",
+  "frames": 60000,
+  "timeout": 700,
+  "clients": [
+    {"name": "a", "script": "a.script", "start": 0},
+    {"name": "b", "script": "b.script", "start": 3}
+  ]
+}

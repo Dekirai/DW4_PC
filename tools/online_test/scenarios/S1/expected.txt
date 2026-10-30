@@ -1,0 +1,7 @@
+# S1: both arrive together, walk apart and fight on both sides; 10,000+ ticks of equal net fingerprints.
+a: (?i)decision 1 .*stage=stag0101
+b: (?i)decision 4 .*stage=stag0101
+a: online-script: step .* log: apart
+b: online-script: step .* log: west
+shared: a b >= 10000
+relay: co_arrival

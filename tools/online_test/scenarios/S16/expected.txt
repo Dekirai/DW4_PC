@@ -1,0 +1,22 @@
+# S16: the story member's stag0401 instance and the quest members' stay apart (another session context, notice 1), and
+# the two members on quest 1 share one instance (q2 joins q1's by catch-up); the quest flags (409) stay set on the
+# quest side and off on the story side (the scripts' fail checks). Every barrier names the point the gate leads to
+# (the story field's 0, the quest's 3): the joiner comes in at point 3 beside q1, not across the field.
+q1: online-script: step .* log: quest taken
+q2: online-script: step .* log: quest taken
+s: (?i)decision 1 .*stage=stag0401 .*notice=0
+q1: (?i)decision 1 .*stage=stag0401 .*notice=1
+relay: ^barrier .*to=stag0401 point=0
+relay: ^new .*stage=stag0401 .*notice=None
+relay: ^barrier .*to=stag0401 point=3
+relay: ^new .*stage=stag0401 .*notice=OtherContext
+relay: ^barrier .*to=stag0401 point=3
+relay: ^join_decided .*stage=stag0401
+q2: (?i)decision 2 .*stage=stag0401
+q1: online-trace: join applied .*slot=1
+q2: online-trace: join applied
+!s: online-trace: join applied
+!q1: (?i)decision [24] .*stage=stag0401
+!s: (?i)decision [24] .*stage=stag0401
+!relay: ^barrier .*to=stag0401 point=[12456789]
+shared: q1 q2 >= 10000

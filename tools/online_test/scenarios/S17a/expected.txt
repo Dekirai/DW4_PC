@@ -1,0 +1,11 @@
+# S17a: a's barrier holds for b's HEADING (sent with the lobby gate's departure), b arrives as a co-arrival: one
+# entry scene, the canonical snapshot hash of the NEW equal on both machines, sealed from the first tick.
+a: (?i)decision 1 .*stage=stag0101
+b: (?i)decision 4 .*stage=stag0101
+!b: (?i)decision 2 .*stage=stag0101
+relay: heading
+relay: hold_co_arrival
+relay: co_arrival
+a: online-trace: snaphash .* new
+b: online-trace: snaphash .* co-arrival
+shared: a b >= 10000

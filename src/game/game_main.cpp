@@ -11,6 +11,7 @@
 #include "settings.hpp"
 #include "controls.hpp"
 #include "campaign.hpp"
+#include "online_script.hpp"
 #include "randomizer_save.hpp"
 #include "test_path.hpp"
 #include "texture_pack.hpp"
@@ -19,6 +20,9 @@
 #include "overhead_labels.hpp"
 #include "presence_art.hpp"
 #include "presence_data.hpp"
+#include "online_run.hpp"
+#include "online/cpu_gate.hpp"
+#include "online/env_check.hpp"
 
 #include "dw4/engine/engine.hpp"
 #include "dw4/engine/managers.hpp"
@@ -26,6 +30,7 @@
 #include "dw4/disc.hpp"
 #include "dw4/engine/state_archive.hpp"
 #include <algorithm>
+#include <bit>
 #include <cmath>
 
 #include <SDL3/SDL.h>
@@ -60,6 +65,8 @@ struct Options {
     std::string screenshot;
     std::vector<int> screenshot_frames;
     std::string input_script;
+    std::filesystem::path online_script; // --online-script FILE: the scripted pad of an online room test run (online_script.hpp)
+    std::filesystem::path online_card;   // --online-card FOLDER (DW4_ONLINE_DEV builds): the online card starts with these saves
     std::filesystem::path load_state; // --load-state FILE: start from a save state file
     bool overlay = true;
     std::vector<float> debug_camera; // eye xyz, target xyz
@@ -76,6 +83,12 @@ struct Options {
     bool net_host{};
     std::string net_join;
     int net_port = 52040, net_players = 2, net_delay = 3;
+    // Seamless online rooms (online_run.hpp): --online-login NAME with
+    // --online-create NAME or --online-join CODE; --online-calibrate STEPS
+    // prints the replay rate of this machine and exits.
+    dw4::game::OnlineOptions online;
+    int online_calibrate = 0;
+    std::string online_calibrate_stage = "stag0102";
     // --loading original|fast: this run's load timing instead of settings.ini
     // [gameplay] loading (test runs: else DW4_FAST_LOADING=1).
     std::optional<bool> fast_loading;
@@ -658,6 +671,36 @@ int run(const Options& options, dw4::game::Settings& settings) {
     if (const char* count = std::getenv("DW4_PLAYERS"))
         if (auto* sys = engine.get<dw4::engine::GameSystem>())
             for (int i = 0; i < std::clamp(std::atoi(count), 0, 4); ++i) sys->players[std::size_t(i)].joined = true;
+    // Seamless co-op test switches (development and test runs only; they
+    // change the simulation, so an online session refuses them,
+    // docs/SEAMLESS.md 6.12), applied to every new engine before its first
+    // step:
+    //   DW4_CAMERAS=<mask>   those slots get their own box camera
+    //                        (OnlineRules::player_cameras); two or more bits
+    //                        also switch the leash off
+    //   DW4_CAM_LOCAL=<slot> this machine's view slot and split identity
+    //   DW4_LEASH_OFF=1      the leash off alone (the solo check of 4.6)
+    //   DW4_ONLINE=<mask>    the online overrides on with these slots present
+    //                        (the exit port, the gate disc fork, give up)
+    const auto apply_test_online = [](dw4::engine::Engine& e) {
+        static const char* cameras = std::getenv("DW4_CAMERAS");
+        static const char* local = std::getenv("DW4_CAM_LOCAL");
+        static const char* leash = std::getenv("DW4_LEASH_OFF");
+        static const char* online = std::getenv("DW4_ONLINE");
+        if (!cameras && !local && !leash && !online) return;
+        dw4::engine::OnlineRules rules;
+        if (cameras) rules.player_cameras = std::uint8_t(std::strtol(cameras, nullptr, 0) & 15);
+        rules.leash_off = leash != nullptr || std::popcount(unsigned(rules.player_cameras)) >= 2;
+        if (online) {
+            rules.enabled = true;
+            rules.present = std::uint8_t(std::strtol(online, nullptr, 0) & 15);
+        }
+        const int slot = local ? std::clamp(std::atoi(local), 0, 3) : 0;
+        e.set_view_slot(slot);
+        e.set_split_identity(slot);
+        e.set_online(rules);
+    };
+    apply_test_online(engine);
     // DW4_DIFFICULTY=n: the difficulty a test run plays (0 normal, 1 hard, 2
     // very hard). The character select writes GAMERAM DIFFICULTY before the
     // first stage (80368050 at 0x803687D4, then TITLE2 GAMESTART), so the first
@@ -734,6 +777,13 @@ int run(const Options& options, dw4::game::Settings& settings) {
         if (!error.empty()) throw std::runtime_error("online: " + error);
         const auto& started = net.start();
         first_stage = started.stage;
+        // A guest of a host that started a stage directly (--stage) starts it
+        // directly too: GameSystem::direct_start loads the players' weapon
+        // packages at their GENERATE (without it the guest desynced at the
+        // first attack, SEAMLESS.md 7.1). The boot and title stages are
+        // stagis*.
+        if (!options.net_host && first_stage.rfind("stagis", 0) != 0)
+            if (auto* sys = engine.get<dw4::engine::GameSystem>()) sys->direct_start = true;
         engine.cheats().god = started.cheats & 1;
         engine.cheats().infinite_mp = started.cheats & 2;
         engine.cheats().one_hit = started.cheats & 4;
@@ -757,6 +807,86 @@ int run(const Options& options, dw4::game::Settings& settings) {
         // The shared copies in the usual slots on every machine.
         for (int slot = 0; slot < 2; ++slot) engine.set_card_setting(slot, {});
         std::cout << "online: started as player " << net.local_slot() + 1 << " of " << started.players << ", delay " << started.delay << '\n';
+    }
+    // Seamless online rooms (docs/SEAMLESS.md 10, online_run.hpp): the CPU
+    // gate and the environment check, the login and the room, the replay
+    // rate calibration (a hidden replay, one engine at a time), then the
+    // engine starts again at the title in online mode with the room's
+    // settings and an empty online card (round S1 keeps nothing online).
+    std::unique_ptr<dw4::game::OnlineRun> online;
+    const auto steady_seconds = [] { return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count(); };
+    if (options.online_calibrate || options.online.wanted()) {
+        if (const auto refusal = dw4::game::online::online_cpu_refusal()) throw std::runtime_error("online: " + *refusal);
+        if (const auto variable = dw4::game::online::first_forbidden_env([](const char* name) -> const char* { return std::getenv(name); }))
+            throw std::runtime_error("online: " + dw4::game::online::env_refusal(*variable));
+        if (net.active() || options.net_host || !options.net_join.empty()) throw std::runtime_error("online: a room and --host / --join are exclusive");
+    }
+    auto fresh_engine = [&] {
+        engine_storage.reset();
+        engine_storage.emplace(options.data);
+        engine.set_resource_overrides(mod_folders);
+    };
+    auto calibrate = [&](int steps, double seconds) {
+        fresh_engine();
+        // (DW4_ONLINE_CALIBRATION=nomusic: without the music position, to see what it costs.)
+        const char* mode = std::getenv("DW4_ONLINE_CALIBRATION");
+        const bool music = !(mode && std::string_view(mode) == "nomusic");
+        const auto result = dw4::game::online::calibrate_replay_rate(engine, options.online_calibrate_stage, steps, seconds, music);
+        fresh_engine();
+        std::printf("online: replay rate %s%s: %d steps in %.3f s, %.0f steps per second (four players, union of their cameras not yet)\n",
+                    result.stage.c_str(), music ? "" : " without the music position", result.steps, result.seconds, result.steps_per_second);
+        return result;
+    };
+    if (options.online_calibrate) return calibrate(options.online_calibrate, 1e9).ok ? 0 : 1;
+    if (options.online.wanted()) {
+        auto http = std::make_unique<dw4::game::online::HttpWorker>(dw4::game::online::server_endpoint(), std::string("DW4_PC/") + DW4_PC_VERSION);
+        if (http->endpoint().development) std::cout << "online: development server " << http->endpoint().url() << '\n';
+        std::string error;
+        const auto token_folder = (program_dir().empty() ? std::filesystem::path(".") : program_dir()) / "saves" / "online";
+        auto room = dw4::game::online_enter_room(*http, options.online, data_hash(engine.resources()), DW4_PC_VERSION, token_folder, error);
+        if (!room) throw std::runtime_error("online: " + error);
+        std::cout << "online: room " << room->code << " '" << room->room_name << "' as " << room->account << " (difficulty "
+                  << room->settings.difficulty << ", camera " << room->settings.camera_mode << ", light " << room->settings.light_mode << ")\n";
+        const auto rate = calibrate(100000, 0.5);
+        session_cards = std::filesystem::temp_directory_path() /
+                        ("dw4_online_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+        std::filesystem::create_directories(session_cards / "Card A");
+        // --online-card FOLDER (development builds, test runs): the online
+        // card starts with the saves of FOLDER (its .gci files, or those of
+        // its "Card A"), a character to call at the title instead of a new
+        // one (round S1 keeps nothing online; round S2 brings the server's).
+        if (!options.online_card.empty()) {
+#ifdef DW4_ONLINE_DEV
+            auto from = options.online_card;
+            if (std::filesystem::is_directory(from / "Card A")) from /= "Card A";
+            int copied = 0;
+            for (const auto& entry : std::filesystem::directory_iterator(from))
+                if (entry.path().extension() == ".gci") {
+                    std::filesystem::copy_file(entry.path(), session_cards / "Card A" / entry.path().filename(),
+                                               std::filesystem::copy_options::overwrite_existing);
+                    ++copied;
+                }
+            std::cout << "online: the online card starts with " << copied << " save file(s) of " << from.string() << '\n';
+#else
+            throw std::runtime_error("online: --online-card is a development build option");
+#endif
+        }
+        engine.set_card_root(session_cards);
+        for (int slot = 0; slot < 2; ++slot) engine.set_card_setting(slot, {});
+        const auto data = data_hash(engine.resources());
+        dw4::game::online::EngineHooks hooks;
+        hooks.engine = [&]() -> dw4::engine::Engine& { return engine; };
+        hooks.fresh_engine = [&, session_root = session_cards] {
+            fresh_engine();
+            engine.set_card_root(session_root);
+            for (int slot = 0; slot < 2; ++slot) engine.set_card_setting(slot, {});
+        };
+        hooks.hidden = [&] { return dw4::game::OverheadLabels::hidden(engine); };
+        online = std::make_unique<dw4::game::OnlineRun>(std::move(http), std::move(*room), std::move(hooks), data,
+                                                        rate.ok ? std::uint32_t(rate.steps_per_second) : 3000u);
+        online->link().start_online(0, 1);
+        first_stage = "stagis10"; // the title, as every online session starts
+        if (!online->connect(steady_seconds(), error)) throw std::runtime_error("online: " + error);
     }
     // DW4_ENTRY=n (test runs): the first stage starts at its player point
     // group n, as when arriving from another stage's exit.
@@ -879,6 +1009,10 @@ int run(const Options& options, dw4::game::Settings& settings) {
         else std::cerr << "audio: " << SDL_GetError() << '\n';
     }
     const char* audio_dump_path = std::getenv("DW4_AUDIO_DUMP");
+    // DW4_AUDIO_MIX=1 (test runs): the mixer runs as with an audio device,
+    // its output is dropped (the streams' decoding positions advance: the
+    // canonical snapshot check, SEAMLESS.md 6.8).
+    const bool audio_mix = options.smoke_frames && std::getenv("DW4_AUDIO_MIX") && std::atoi(std::getenv("DW4_AUDIO_MIX")) != 0;
     std::vector<std::int16_t> audio_dump;
     constexpr int kAudioFrameSamples = dw4::engine::SoundManager::kOutputRate / 60;
     // Output samples of the step that reached `frame`: one NTSC field
@@ -890,7 +1024,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
     };
     auto mix_audio = [&](int frames) {
         auto* sound = engine.get<dw4::engine::SoundManager>();
-        if (!sound || (!audio && !audio_dump_path)) return;
+        if (!sound || (!audio && !audio_dump_path && !audio_mix)) return;
         std::vector<std::int16_t> pcm(std::size_t(frames) * 2);
         // A rebooting console is silent (the reset stops the DSP).
         if (!engine.rebooting()) sound->render(pcm.data(), std::size_t(frames));
@@ -934,6 +1068,13 @@ int run(const Options& options, dw4::game::Settings& settings) {
         std::vector<SDL_Gamepad*> gamepads;
         ScriptedInput scripted;
         if (!options.input_script.empty()) scripted.load(options.input_script);
+        // --online-script FILE (test runs of online rooms, tools/online_test):
+        // this machine's pad from a list of steps (online_script.hpp).
+        dw4::game::OnlineScript online_script;
+        if (!options.online_script.empty()) {
+            std::string error;
+            if (!online_script.load(options.online_script, error)) throw std::runtime_error("online script: " + error);
+        }
         std::vector<dw4::engine::DrawItem> items;
         dw4::engine::ShadowFrame shadow;
         dw4::engine::FrameCamera camera;
@@ -988,9 +1129,15 @@ int run(const Options& options, dw4::game::Settings& settings) {
         static SavesTab saves_tab;
         std::optional<KeyCapture> capture;
         auto next_present = std::chrono::steady_clock::now();
+        float online_audio_ratio = 1.0f; // the audio stream's frequency ratio in an online room
         std::uint64_t net_submitted = std::uint64_t(net.active() ? net.start().delay : 0);
         // Smooth motion above 60 presents per second (settings.ini smooth_motion).
         dw4::game::MotionInterpolator interpolator;
+        int last_picture_slot = -1; // Engine::picture_slot of the last picture (smooth motion restarts on a change)
+        // Seamless co-op: the steps START is held while the local member is
+        // defeated (give up after kGiveUpFrames).
+        int give_up_held = 0;
+        constexpr int kGiveUpFrames = 120;
         double present_interval = 1.0 / 60.0;
         std::array<float, 240> frame_times{}; // ms per presented frame (F1 graph)
         std::size_t frame_time_at = 0;
@@ -1010,7 +1157,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
             const std::uint64_t serial = engine.stage_snapshot() ? engine.stage_snapshot()->serial : 0;
             return (engine_generation << 40) ^ serial;
         };
-        auto own_slot = [&] { return net.active() ? net.local_slot() : 0; };
+        auto own_slot = [&] { return net.active() ? net.local_slot() : online ? online->session().own_slot() : engine.view_slot(); }; // (offline: slot 0 unless a seamless co-op test run sets the view slot)
         // Overhead name tags (settings.ini [hud]; test runs: DW4_LABELS=
         // auto|all|others|off, DW4_TRACE_LABELS=N prints their screen
         // positions every N frames, without a window too).
@@ -1251,7 +1398,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                           << randomizer_bound->drops << (new_game ? ", new game" : "") << ")\n";
         };
         auto can_save = [&]() -> std::string {
-            if (net.active()) return "Save states are off in online sessions.";
+            if (net.active() || online) return "Save states are off in online sessions.";
             if (engine.rebooting()) return "The console is restarting.";
             const auto* snapshot = engine.stage_snapshot();
             if (!snapshot) return "No stage has loaded yet.";
@@ -1270,7 +1417,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
             message_until = std::chrono::steady_clock::now() + std::chrono::seconds(2);
         };
         auto load_state = [&](std::size_t slot) {
-            if (net.active()) {
+            if (net.active() || online) {
                 state_message = "Save states are off in online sessions.";
                 message_until = std::chrono::steady_clock::now() + std::chrono::seconds(2);
                 return;
@@ -1287,15 +1434,30 @@ int run(const Options& options, dw4::game::Settings& settings) {
             engine.set_resource_overrides(mod_folders);
             engine.set_card_store(player_store);
             for (int slot = 0; slot < 2; ++slot) engine.set_card_setting(slot, player_card_settings[std::size_t(slot)]);
+            apply_test_online(engine);
             engine.restore(state.snapshot);
             if (state.load_step_drawn) engine.traverse_scene();
             std::vector<std::int16_t> scratch(std::size_t(kAudioFrameSamples + 1) * 2);
             auto* sound = engine.get<dw4::engine::SoundManager>();
+            const auto replay_started = std::chrono::steady_clock::now();
+            std::chrono::steady_clock::duration audio_time{};
             for (const auto& step : state.inputs) {
                 engine.step(step.pads);
-                if (sound) sound->render(scratch.data(), std::size_t(step_samples(engine.frame()))); // music position
+                if (sound) {
+                    const auto mixed = options.smoke_frames ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+                    sound->render(scratch.data(), std::size_t(step_samples(engine.frame()))); // music position
+                    if (options.smoke_frames) audio_time += std::chrono::steady_clock::now() - mixed;
+                }
                 if (step.drawn) engine.traverse_scene();
             }
+            // (Test runs: the replay's own rate without the engine's start,
+            // and without the music mix, which a catch-up replay leaves out.)
+            const double replay_seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - replay_started).count();
+            const double audio_seconds = std::chrono::duration<double>(audio_time).count();
+            if (options.smoke_frames && !state.inputs.empty())
+                std::printf("state replay: %zu steps in %.3f s (%.3f s music mix), %.0f steps per second, %.0f without the mix\n",
+                            state.inputs.size(), replay_seconds, audio_seconds, double(state.inputs.size()) / std::max(replay_seconds, 1e-9),
+                            double(state.inputs.size()) / std::max(replay_seconds - audio_seconds, 1e-9));
             const bool exact = engine.fingerprint() == state.fingerprint;
             // (No achievement counts in the rest of this stage.)
             ++engine_generation;
@@ -1395,6 +1557,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
             engine.set_card_store(cards);
             for (int slot = 0; slot < 2; ++slot) engine.set_card_setting(slot, slots[std::size_t(slot)]);
             engine.cheats() = cheats;
+            if (!net.active()) apply_test_online(engine);
             engine.request_stage(!net.active() && !options.smoke_frames && settings.skip_intro ? "stagis10" : "stagis08");
             ++engine_generation;
             labels.reset();
@@ -1457,6 +1620,39 @@ int run(const Options& options, dw4::game::Settings& settings) {
         // DW4_STAGE_STATES=DIR (test runs): a state file at every stage start
         // (DIR/<frame>_<stage>.dw4state), for resuming long scripted runs.
         const char* stage_states = std::getenv("DW4_STAGE_STATES");
+        // Round S1 test tools (SEAMLESS.md 6.8, 7.1), test runs only:
+        // DW4_SNAPSHOT_DUMP=DIR writes every stage load's snapshot as
+        // DIR/<serial>_<stage>.raw and .canon (SnapshotForm); DW4_PAD_LOG=FILE
+        // records the four pads of every step (the frame before it, then per
+        // pad connected u8, four f32 sticks, u32 buttons); DW4_PAD_REPLAY=FILE
+        // steps with those pads instead of the composed ones wherever the log
+        // has the frame (a run resumed with --load-state replays another
+        // process's session: the cross-process join check).
+        const char* snapshot_dump = options.smoke_frames ? std::getenv("DW4_SNAPSHOT_DUMP") : nullptr;
+        std::unique_ptr<std::FILE, int (*)(std::FILE*)> pad_log(nullptr, &std::fclose);
+        if (const char* path = options.smoke_frames ? std::getenv("DW4_PAD_LOG") : nullptr) pad_log.reset(std::fopen(path, "wb"));
+        std::map<int, std::array<dw4::engine::PadSample, 4>> pad_replay;
+        if (const char* path = options.smoke_frames ? std::getenv("DW4_PAD_REPLAY") : nullptr)
+            if (std::FILE* f = std::fopen(path, "rb")) {
+                std::uint32_t at = 0;
+                while (std::fread(&at, sizeof at, 1, f) == 1) {
+                    std::array<dw4::engine::PadSample, 4> logged{};
+                    bool complete = true;
+                    for (auto& pad : logged) {
+                        std::uint8_t connected = 0;
+                        float sticks[4]{};
+                        complete = complete && std::fread(&connected, 1, 1, f) == 1 && std::fread(sticks, sizeof(float), 4, f) == 4 &&
+                                   std::fread(&pad.buttons, sizeof pad.buttons, 1, f) == 1;
+                        pad.connected = connected != 0;
+                        pad.left = {sticks[0], sticks[1]};
+                        pad.right = {sticks[2], sticks[3]};
+                    }
+                    if (!complete) break;
+                    pad_replay[int(at)] = logged;
+                }
+                std::fclose(f);
+                std::cout << "pad replay: " << pad_replay.size() << " steps\n";
+            }
         // DW4_TRACE_LOADTIME=1 (test runs): for every stage load the fields
         // from the step that took the change to the stage start (first.lua)
         // and to the first step after it in which player 1 has control with
@@ -1586,9 +1782,11 @@ int run(const Options& options, dw4::game::Settings& settings) {
             // original frame per field; Engine::step adds a field of time).
             const auto now = std::chrono::steady_clock::now();
             // (DW4_DEV_PRESENT: every pass is one present of the virtual refresh.)
-            accumulator += dev.presenting() ? 1.0 / dev.hz : std::chrono::duration<double>(now - last).count();
+            const double pass_seconds = dev.presenting() ? 1.0 / dev.hz : std::chrono::duration<double>(now - last).count();
+            accumulator += pass_seconds;
             last = now;
-            int steps = options.smoke_frames && !dev.presenting() ? (net.in_lobby() ? 0 : 1) : 0;
+            // (Online rooms keep real time in test runs too: the relay seals on its clock.)
+            int steps = options.smoke_frames && !dev.presenting() && !online ? (net.in_lobby() ? 0 : 1) : 0;
             if (options.smoke_frames && net.in_lobby()) std::this_thread::sleep_for(std::chrono::milliseconds(2));
             // DW4_MENU_HOST=port / DW4_MENU_JOIN=port (test runs): the Online
             // tab's Host / Join at frame 100, on loopback.
@@ -1626,7 +1824,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     message_until = std::chrono::steady_clock::now() + std::chrono::milliseconds(500);
                 }
             }
-            const bool paused = (show_menu && settings.pause_in_menu && !options.smoke_frames && !net.active()) || net.in_lobby();
+            const bool paused = (show_menu && settings.pause_in_menu && !options.smoke_frames && !net.active() && !online) || net.in_lobby();
             if (net.active())
                 if (auto message = net.take_message(); !message.empty()) {
                     std::cout << "online: " << message << '\n';
@@ -1634,13 +1832,24 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     message_until = std::chrono::steady_clock::now() + std::chrono::seconds(4);
                 }
             if (paused) accumulator = 0;
-            if ((!options.smoke_frames || dev.presenting()) && !paused) {
+            if ((!options.smoke_frames || dev.presenting() || online) && !paused) {
                 while (accumulator >= dw4::engine::kFieldSeconds && steps < 4) { accumulator -= dw4::engine::kFieldSeconds; ++steps; }
                 if (steps == 4) accumulator = 0;
+            }
+            // Online rooms: the session decides (solo-led: this clock; sealed:
+            // the sealed ticks at the server's pace; parked or catching up:
+            // none).
+            if (online) {
+                online->pass(steady_seconds());
+                steps = online->session().steps_allowed(steps, pass_seconds);
+                if (online->session().paces()) accumulator = 0;
+                if (options.smoke_frames && steps == 0) std::this_thread::sleep_for(std::chrono::milliseconds(1));
             }
             // Online: a step runs once every player's input for it is here.
             std::uint64_t net_frame = 0;
             for (int i = 0; i < steps; ++i) {
+                // (An online room's barrier, a missing sealed tick or a restore ends the pass.)
+                if (online && !online->session().step_ready()) break;
                 if (net.active()) {
                     net_frame = frame_base + engine.frame() + 1;
                     net.poll();
@@ -1690,7 +1899,42 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     if (keys & dw4::pad_direction::negative_y) stick_y = -1;
                 }
                 const std::uint32_t before_bots = input;
-                if (const auto* g = scripted.active_goto(frame); g && g->seek && g->target == "campaign" && stick_x == 0 && stick_y == 0) {
+                if (online_script.active() && stick_x == 0 && stick_y == 0) {
+                    // The online test driver plays this member's slot with its
+                    // own camera (online_script.hpp).
+                    dw4::game::OnlineScriptFacts facts;
+                    facts.frame = frame;
+                    if (online) {
+                        facts.own_slot = online->session().own_slot();
+                        facts.present = online->session().present();
+                        facts.mode = dw4::game::online::mode_name(online->session().mode());
+                        facts.tick = online->session().tick();
+                    }
+                    const auto out = online_script.update(engine, facts);
+                    // The run ends once the script is done.
+                    if (online_script.finished()) running = false;
+                    input |= out.buttons;
+                    if (out.push & dw4::pad_direction::negative_x) stick_x = -1;
+                    if (out.push & dw4::pad_direction::positive_x) stick_x = 1;
+                    if (out.push & dw4::pad_direction::positive_y) stick_y = 1;
+                    if (out.push & dw4::pad_direction::negative_y) stick_y = -1;
+                    auto* models = engine.get<dw4::engine::ModelCtrlManager>();
+                    auto* cameras = engine.get<dw4::engine::CameraManager>();
+                    const auto* p = models ? models->player(facts.own_slot) : nullptr;
+                    if (out.walk && p && p->node && cameras) {
+                        const float dx = out.x - p->node->matrix(3, 0), dz = out.z - p->node->matrix(3, 2);
+                        if (dx * dx + dz * dz > out.reach) {
+                            dw4::engine::FrameCamera camera;
+                            cameras->frame_camera(engine, camera, facts.own_slot);
+                            dw4::engine::Mat4 inverse;
+                            if (dw4::engine::invert(camera.view, inverse)) {
+                                const float relative = std::atan2(dx, dz) - std::atan2(inverse(2, 0), inverse(2, 2));
+                                stick_x = std::sin(relative);
+                                stick_y = -std::cos(relative);
+                            }
+                        }
+                    }
+                } else if (const auto* g = scripted.active_goto(frame); g && g->seek && g->target == "campaign" && stick_x == 0 && stick_y == 0) {
                     // SEEK campaign: the story from a new game (src/game/campaign.cpp).
                     static dw4::game::CampaignBot campaign;
                     auto* models = engine.get<dw4::engine::ModelCtrlManager>();
@@ -1705,7 +1949,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                         const float dx = out.x - p->node->matrix(3, 0), dz = out.z - p->node->matrix(3, 2);
                         if (dx * dx + dz * dz > out.reach) {
                             dw4::engine::FrameCamera camera;
-                            cameras->frame_camera(engine, camera);
+                            cameras->frame_camera(engine, camera, 0); // the bot's player's own camera (per-slot cameras)
                             dw4::engine::Mat4 inverse;
                             if (dw4::engine::invert(camera.view, inverse)) {
                                 const float relative = std::atan2(dx, dz) - std::atan2(inverse(2, 0), inverse(2, 2));
@@ -1858,7 +2102,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                                            (p->control_enabled && p->seq_name.rfind("SQ_DEMO", 0) != 0);
                         if (steer && dx * dx + dz * dz > reach) {
                             dw4::engine::FrameCamera camera;
-                            cameras->frame_camera(engine, camera);
+                            cameras->frame_camera(engine, camera, 0); // the bot's player's own camera (per-slot cameras)
                             dw4::engine::Mat4 inverse;
                             if (dw4::engine::invert(camera.view, inverse)) {
                                 const float heading = std::atan2(inverse(2, 0), inverse(2, 2));
@@ -1904,18 +2148,130 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     net.poll();
                     pads = net.take(net_frame);
                 }
+                if (online) {
+                    // One player per machine: this machine's pad, quantized as
+                    // every machine executes it; the others come sealed. The
+                    // local B + X + START hold asks "Leave room?" (7.4).
+                    if (online->leave_combo(pads[0].buttons)) {
+                        // The same hold again closes it ("stay").
+                        online->leave_prompt = !online->leave_prompt;
+                        std::cout << "online: leave prompt " << (online->leave_prompt ? "at" : "closed at") << " frame " << frame << '\n';
+                    }
+                    pads = online->session().before_step(pads[0], steady_seconds());
+                }
+                if (!pad_replay.empty())
+                    if (const auto logged = pad_replay.find(frame); logged != pad_replay.end()) pads = logged->second;
+                if (pad_log) {
+                    const std::uint32_t at = std::uint32_t(frame);
+                    std::fwrite(&at, sizeof at, 1, pad_log.get());
+                    for (const auto& pad : pads) {
+                        const std::uint8_t connected = pad.connected ? 1 : 0;
+                        const float sticks[4] = {pad.left.x, pad.left.y, pad.right.x, pad.right.y};
+                        std::fwrite(&connected, 1, 1, pad_log.get());
+                        std::fwrite(sticks, sizeof(float), 4, pad_log.get());
+                        std::fwrite(&pad.buttons, sizeof pad.buttons, 1, pad_log.get());
+                    }
+                }
                 // Port events only while achievements, the event trace or the
                 // randomizer's bond (new games) want them.
                 if (const bool collect = achievements_on() || trace_events || (!net.active() && randomizer_settings().active());
                     engine.port_events_enabled() != collect)
                     engine.set_port_events(collect);
+                // Seamless co-op, a defeated local member (SEAMLESS.md 4.1,
+                // 5): START held for two seconds gives up (a fork into the
+                // original game over). The engine takes the intent before a
+                // step; an online client sends it as INTENT instead and the
+                // server stamps it at a tick (the client lane), so only the
+                // offline test runs (DW4_ONLINE) apply it here.
+                if (engine.online_shared()) {
+                    const int local = engine.view_slot();
+                    // (Not while no player model is generated: loads, the entry, a departure's fade.)
+                    const bool defeated = dw4::game::online_member_defeated(engine, local);
+                    give_up_held = defeated && (pads[std::size_t(local)].buttons & dw4::pad_button::start) ? give_up_held + 1 : 0;
+                    // (An online client sends the choice as INTENT: the server stamps it at a tick every member applies.)
+                    if (give_up_held == kGiveUpFrames && online) online->session().send_intent(dw4::game::online::wire::IntentKind::give_up, 0);
+                    else if (give_up_held == kGiveUpFrames && !net.active()) engine.online_intent(local, dw4::engine::IntentKind::give_up, 0);
+                } else {
+                    give_up_held = 0;
+                }
+                // Test runs of the seamless co-op exits: DW4_TEST_GATEDISC=
+                // frame:slot uses that member's gate disc at the frame (what
+                // the quick panel does, panel.cpp row 8), DW4_TEST_GIVEUP=
+                // frame:slot gives that member up.
+                {
+                    static const auto test_hook = [](const char* name) {
+                        std::pair<int, int> hook{-1, -1};
+                        if (const char* text = std::getenv(name)) std::sscanf(text, "%d:%d", &hook.first, &hook.second);
+                        return hook;
+                    };
+                    static const auto gatedisc = test_hook("DW4_TEST_GATEDISC");
+                    static const auto give_up = test_hook("DW4_TEST_GIVEUP");
+                    if (frame + 1 == gatedisc.first)
+                        if (auto* sys = engine.get<dw4::engine::GameSystem>()) {
+                            sys->gate_stage_name = "Player";
+                            sys->gate_stage_no = std::clamp(gatedisc.second, 0, 3);
+                            engine.run_script("gatedisc.lua");
+                        }
+                    if (frame + 1 == give_up.first) engine.online_intent(std::clamp(give_up.second, 0, 3), dw4::engine::IntentKind::give_up, 0);
+                    // DW4_TEST_RULES=frame:cameras:present: a membership step at
+                    // that frame (the camera mask and the present members; the
+                    // leash goes off from two members).
+                    static const auto rules_step = [] {
+                        std::array<int, 3> step{-1, 0, 0};
+                        if (const char* text = std::getenv("DW4_TEST_RULES")) std::sscanf(text, "%d:%i:%i", &step[0], &step[1], &step[2]);
+                        return step;
+                    }();
+                    if (frame + 1 == rules_step[0]) {
+                        auto rules = engine.online();
+                        rules.player_cameras = std::uint8_t(rules_step[1] & 15);
+                        rules.present = std::uint8_t(rules_step[2] & 15);
+                        rules.enabled = rules.enabled || rules.present != 0;
+                        rules.leash_off = rules.leash_off || std::popcount(unsigned(rules.present)) >= 2;
+                        engine.set_online(rules);
+                    }
+                }
                 engine.step(pads);
+                if (online) {
+                    online->session().after_step(steady_seconds());
+                    online->link().after_live_step();
+                }
+                // DW4_TRACE_ONLINE (test runs of the seamless co-op exits):
+                // forks, headings and the exit prompt's state as they happen.
+                if (static const bool trace_online = std::getenv("DW4_TRACE_ONLINE") != nullptr; trace_online && !online) {
+                    if (const auto split = engine.take_split())
+                        std::printf("[%d] online split leavers %x%s, this copy %s; present %x\n", frame + 1, unsigned(split->leavers),
+                                    split->in_stage ? " in stage" : "", split->local_leaves ? "leaves" : "stays", unsigned(engine.online().present));
+                    if (const auto heading = engine.take_heading())
+                        std::printf("[%d] online heading %s point %d leavers %x\n", frame + 1, heading->stage.c_str(), heading->point,
+                                    unsigned(heading->leavers));
+                    static std::string traced_prompt;
+                    const auto& prompt = engine.exit_prompt();
+                    char line[160];
+                    std::snprintf(line, sizeof line, "active %d owner %d asking %d yes %x stays %x fade %x to %s%s", prompt.active ? 1 : 0, prompt.owner,
+                                  prompt.asking, unsigned(prompt.yes), unsigned(prompt.stays), unsigned(prompt.sees_fade), prompt.stage.c_str(),
+                                  prompt.boss_destination ? " (boss)" : "");
+                    if (line != traced_prompt) {
+                        std::printf("[%d] online exit prompt %s\n", frame + 1, line);
+                        traced_prompt = line;
+                    }
+                }
                 if (engine.port_events_enabled()) observe_step();
-                if (!net.active()) bind_randomizer();
+                if (!net.active() && !online) bind_randomizer();
                 if (net.active() && (frame_base + engine.frame()) % 60 == 0) net.report_fingerprint(frame_base + engine.frame(), engine.fingerprint());
                 // The input since the running stage's load, for save states.
                 if (const auto* snapshot = engine.stage_snapshot(); snapshot && snapshot->serial != log_serial) {
                     log_serial = snapshot->serial;
+                    if (snapshot_dump) {
+                        char name[64];
+                        std::snprintf(name, sizeof name, "%03llu_%s", static_cast<unsigned long long>(snapshot->serial), snapshot->stage.c_str());
+                        for (const auto form : {dw4::engine::SnapshotForm::raw, dw4::engine::SnapshotForm::canonical}) {
+                            const auto bytes = engine.snapshot_bytes(form);
+                            const auto file = std::filesystem::path(snapshot_dump) /
+                                              (std::string(name) + (form == dw4::engine::SnapshotForm::raw ? ".raw" : ".canon"));
+                            std::ofstream out(file, std::ios::binary | std::ios::trunc);
+                            out.write(reinterpret_cast<const char*>(bytes.data()), std::streamsize(bytes.size()));
+                        }
+                    }
                     input_log.clear();
                     load_step_drawn = false;
                     last_step_loaded = true;
@@ -1959,6 +2315,44 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     std::printf("[%d] fingerprint %016llx random %016zx\n", frame, static_cast<unsigned long long>(engine.fingerprint()),
                                 std::hash<std::string>{}(random.str()));
                 }
+                // DW4_TRACE_CAMERAS=N (test runs, seamless co-op): every N
+                // frames the per-slot camera state (the box hash the net
+                // fingerprint takes), the online rules and the pictures' slot.
+                if (static const int every = std::getenv("DW4_TRACE_CAMERAS") ? std::atoi(std::getenv("DW4_TRACE_CAMERAS")) : 0;
+                    every > 0 && frame % every == 0)
+                    if (auto* cameras = engine.get<dw4::engine::CameraManager>()) {
+                        // (and the picture camera's view and projection, bit for bit)
+                        dw4::engine::FrameCamera picture;
+                        cameras->frame_camera(engine, picture, engine.picture_slot());
+                        std::uint64_t view_hash = 0xcbf29ce484222325ull;
+                        for (float v : picture.view.m) view_hash = (view_hash ^ std::bit_cast<std::uint32_t>(v)) * 0x100000001b3ull;
+                        for (float v : picture.projection.m) view_hash = (view_hash ^ std::bit_cast<std::uint32_t>(v)) * 0x100000001b3ull;
+                        std::printf("[%d] cameras %016llx mask %x present %x leash %s picture %d view %016llx\n", frame,
+                                    static_cast<unsigned long long>(cameras->player_box_hash()), unsigned(engine.player_cameras()),
+                                    unsigned(engine.online().present), engine.online().leash_off ? "off" : "on", engine.picture_slot(),
+                                    static_cast<unsigned long long>(view_hash));
+                    }
+                // DW4_TRACE_PLAYERS=N (development) prints every player's position every N frames.
+                if (static const int every = std::getenv("DW4_TRACE_PLAYERS") ? std::atoi(std::getenv("DW4_TRACE_PLAYERS")) : 0;
+                    every > 0 && frame % every == 0)
+                    if (auto* models = engine.get<dw4::engine::ModelCtrlManager>()) {
+                        std::printf("[%d] players", frame);
+                        for (int slot = 0; slot < 4; ++slot)
+                            if (const auto* p = models->player(slot); p && p->node)
+                                std::printf(" %d:(%.0f,%.0f,%.0f)%s", slot + 1, p->node->matrix(3, 0), p->node->matrix(3, 1),
+                                            p->node->matrix(3, 2), p->control_enabled ? "" : "*");
+                        // The players' limit circle: L on, l off, - none in this stage.
+                        if (auto* hitland = engine.get<dw4::engine::HitLandManager>()) {
+                            const auto circle = hitland->child_hit("limit_Circle");
+                            std::printf(" %s", !circle ? "-" : *circle ? "L" : "l");
+                        }
+                        // Cumulative traversal ns / passes (render, traverse, union, picture).
+                        std::printf(" | t");
+                        for (int i = 0; i < 4; ++i)
+                            std::printf(" %llu/%llu", (unsigned long long)engine.traversal_ns[std::size_t(i)],
+                                        (unsigned long long)engine.traversal_count[std::size_t(i)]);
+                        std::printf("\n");
+                    }
                 // DW4_TRACE_PLAYER=N prints player 1's sequence and position every N frames.
                 if (trace_player > 0 && frame % trace_player == 0)
                     if (auto* models = engine.get<dw4::engine::ModelCtrlManager>())
@@ -1972,6 +2366,79 @@ int run(const Options& options, dw4::game::Settings& settings) {
                                                 e->node->matrix(3, 2));
                         }
                 if (engine.reboot_due()) reboot_console();
+            }
+            if (online) {
+                auto& session = online->session();
+                const double online_now = steady_seconds();
+                // A catch-up or co-arrival restored another engine.
+                if (session.take_engine_replaced()) {
+                    ++engine_generation;
+                    labels.reset();
+                    input_log.clear();
+                    log_serial = engine.stage_snapshot() ? engine.stage_snapshot()->serial : 0;
+                    load_step_drawn = last_step_loaded = false;
+                    movie_decoder.reset();
+                    movie_serial = 0;
+                    movie_stage.clear();
+                    if (renderer) renderer->clear_cache();
+                    interpolator.reset();
+                    rendered_stage.clear();
+                }
+                for (auto& notice : session.take_notices()) {
+                    std::cout << "online: " << notice << '\n';
+                    toasts.push_back({"Online", notice, std::chrono::steady_clock::now() + std::chrono::seconds(5)});
+                }
+                // The loading screen's line, the connection, the leave prompt.
+                const auto overlay = session.overlay(online_now);
+                std::string line = overlay.loading;
+                if (line.empty() && overlay.waiting_for_server) line = "Waiting for the server...";
+                if (line.empty() && overlay.slow_uplink) line = "Your connection is slow; the others see you lag.";
+                if (online->leave_prompt) {
+                    // After the loading or waiting line, never instead of it.
+                    const std::string prompt = "Leave room?  F1 > Online > Leave room, or hold B + X + START again to stay.";
+                    line = line.empty() ? prompt : line + "   " + prompt;
+                }
+                if (!line.empty()) {
+                    state_message = line;
+                    message_until = std::chrono::steady_clock::now() + std::chrono::milliseconds(300);
+                }
+                // Room members in this stage outside the own instance: name tags.
+                std::vector<dw4::game::OverheadLabels::RemotePlayer> remote;
+                for (const auto& tag : session.remote_tags(online_now))
+                    remote.push_back({tag.member, tag.name, tag.stage, {tag.x, tag.y, tag.z}, tag.species, tag.level, tag.hp, tag.max_hp, tag.mp,
+                                      tag.max_mp});
+                labels.set_remote_players(std::move(remote));
+                // The audio device follows the simulation's pace (6.4).
+                if (audio) {
+                    const float ratio = float(session.audio_ratio());
+                    if (ratio != online_audio_ratio && SDL_SetAudioStreamFrequencyRatio(audio, ratio)) online_audio_ratio = ratio;
+                }
+                if (session.closed()) {
+                    std::cout << "online: " << session.close_reason() << '\n';
+                    toasts.push_back({"Online", session.close_reason(), std::chrono::steady_clock::now() + std::chrono::seconds(8)});
+                    online.reset();
+                    if (audio) SDL_SetAudioStreamFrequencyRatio(audio, 1.0f);
+                    online_audio_ratio = 1.0f;
+                    labels.set_remote_players({});
+                    if (options.smoke_frames) {
+                        running = false;
+                    } else {
+                        // Back to the offline title with the player's own cards.
+                        fresh_engine();
+                        engine.set_card_store(player_store);
+                        for (int slot = 0; slot < 2; ++slot) engine.set_card_setting(slot, player_card_settings[std::size_t(slot)]);
+                        apply_gameplay(engine.cheats());
+                        engine.request_stage("stagis10");
+                        ++engine_generation;
+                        labels.reset();
+                        input_log.clear();
+                        log_serial = 0;
+                        load_step_drawn = last_step_loaded = false;
+                        if (renderer) renderer->clear_cache();
+                        interpolator.reset();
+                        rendered_stage.clear();
+                    }
+                }
             }
             if (steps > 0 && draw) interpolator.advance();
             if (steps > 0 && (label_mode() != dw4::game::LabelMode::off || trace_labels)) labels.capture(engine, own_slot());
@@ -1992,7 +2459,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 int width = 1280, height = 960;
                 if (const char* size = std::getenv("DW4_WINDOW")) std::sscanf(size, "%dx%d", &width, &height);
                 dw4::game::LabelView view;
-                if (auto* cameras = engine.get<dw4::engine::CameraManager>()) cameras->frame_camera(engine, view.camera);
+                if (auto* cameras = engine.get<dw4::engine::CameraManager>()) cameras->frame_camera(engine, view.camera, engine.picture_slot());
                 const bool wider = width * 3 > height * 4;
                 const int screen_width = wider ? height * 4 / 3 : width;
                 const int screen_height = wider ? height : width * 3 / 4;
@@ -2006,9 +2473,9 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 const bool hidden = dw4::game::OverheadLabels::hidden(engine);
                 for (const auto& label : labels.current()) {
                     const auto point = dw4::game::project_label(label.head, view);
-                    const bool shown = !hidden && label.hp > 0 && point && dw4::game::label_visible(label_mode(), label.own, labels.players());
-                    std::printf("[%d] label slot=%d '%s' Lv %d HP %d/%d MP %d/%d head=(%.1f, %.1f, %.1f) %.1f above the feet ", frame,
-                                label.slot, label.name.c_str(), label.level, label.hp, label.max_hp, label.mp, label.max_mp, label.head.x,
+                    const bool shown = !hidden && (label.hp > 0 || label.capsule) && point && dw4::game::label_visible(label_mode(), label.own, labels.players());
+                    std::printf("[%d] label slot=%d%s '%s' Lv %d HP %d/%d MP %d/%d head=(%.1f, %.1f, %.1f) %.1f above the feet ", frame,
+                                label.slot, label.capsule ? " capsule" : "", label.name.c_str(), label.level, label.hp, label.max_hp, label.mp, label.max_mp, label.head.x,
                                 label.head.y, label.head.z, label.head.y - label.feet.y);
                     const auto feet = dw4::game::project_label(label.feet, view, 1.0f);
                     if (point)
@@ -2053,11 +2520,52 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 // Smooth motion draws between the previous step's camera and
                 // this one: the picture's cull keeps what is inside either.
                 engine.picture_previous_view = smooth_blending ? interpolator.previous_view() : std::nullopt;
+                // Seamless co-op: a new picture camera (a defeated member
+                // watches a partner) starts its smooth motion anew.
+                if (const int slot = engine.picture_slot(); slot != last_picture_slot) {
+                    if (last_picture_slot >= 0) interpolator.reset();
+                    last_picture_slot = slot;
+                    engine.picture_previous_view = std::nullopt;
+                }
                 engine.render(items, camera, clear, &shadow);
                 dw4::game::dev_hide(dev, items, shadow);
                 items_current = true;
             } else {
                 engine.traverse_scene();
+            }
+            // The idempotence check of the pictures (docs/SEAMLESS.md 4.4, a
+            // permanent check of test runs): DW4_EXTRA_RENDERS=n draws the
+            // same world time n more times, as a machine presenting faster
+            // than 60 Hz does between two steps (into a scratch list, headless
+            // runs too); DW4_EXTRA_WIDEN=1 alternates the widescreen widening
+            // between them and DW4_EXTRA_PREVIOUS=1 gives them the previous
+            // step's picture camera as smooth motion's previous view (the
+            // round 49 rule). The fingerprints must equal a run without.
+            if (static const int extra_renders = std::getenv("DW4_EXTRA_RENDERS") ? std::atoi(std::getenv("DW4_EXTRA_RENDERS")) : 0;
+                extra_renders > 0 && steps > 0 && !engine.held()) {
+                static const bool extra_widen = std::getenv("DW4_EXTRA_WIDEN") != nullptr;
+                static const bool extra_previous = std::getenv("DW4_EXTRA_PREVIOUS") != nullptr;
+                static std::optional<dw4::engine::Mat4> previous_step_view;
+                const float widen = engine.picture_widen;
+                const auto previous = engine.picture_previous_view;
+                std::vector<dw4::engine::DrawItem> scratch_items;
+                dw4::engine::FrameCamera scratch_camera;
+                dw4::engine::Vec4f scratch_clear;
+                dw4::engine::ShadowFrame scratch_shadow;
+                for (int k = 0; k < extra_renders; ++k) {
+                    if (extra_widen) engine.picture_widen = (k & 1) ? 0.5f : 0.75f;
+                    if (extra_previous) engine.picture_previous_view = previous_step_view;
+                    engine.render(scratch_items, scratch_camera, scratch_clear, &scratch_shadow);
+                }
+                if (!draw) engine.traverse_scene();
+                engine.picture_widen = widen;
+                engine.picture_previous_view = previous;
+                if (extra_previous)
+                    if (auto* cameras = engine.get<dw4::engine::CameraManager>()) {
+                        dw4::engine::FrameCamera now;
+                        cameras->frame_camera(engine, now, engine.picture_slot());
+                        previous_step_view = now.view;
+                    }
             }
             if (steps > 0 && !engine.held()) {
                 if (last_step_loaded) load_step_drawn = true;
@@ -2125,7 +2633,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                         tags = labels.blended(smooth_blending ? present_alpha : 1.0f);
                         traced_occlusion.clear();
                         for (auto& tag : tags) {
-                            if (tag.hp <= 0 || !dw4::game::label_visible(tag_mode, tag.own, labels.players())) continue;
+                            if ((tag.hp <= 0 && !tag.capsule) || !dw4::game::label_visible(tag_mode, tag.own, labels.players())) continue;
                             const bool hidden_now = dw4::game::occluded_in_picture(
                                 dw4::game::occlusion_probes(tag.head, tag_view),
                                 [&](float x, float y) { return renderer->read_depth(int(x), height - 1 - int(y), width, height); },
@@ -2593,7 +3101,15 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     if (ImGui::BeginTabItem("Online", nullptr, tab_flags("Online"))) {
                         static int players = 2, port = 52040, delay = 3;
                         static char address[128] = "127.0.0.1";
-                        if (net.active()) {
+                        if (online) {
+                            const auto& room = online->room();
+                            ImGui::Text("Room %s (%s) as %s", room.code.c_str(), room.room_name.c_str(), room.account.c_str());
+                            ImGui::Text("Instance %u, slot %d, %s, input delay %d", online->session().inst(), online->session().own_slot() + 1,
+                                        dw4::game::online::mode_name(online->session().mode()), online->session().delay());
+                            if (online->leave_prompt) ImGui::TextColored(ImVec4(1, 0.85f, 0.3f, 1), "Leave room?");
+                            if (ImGui::Button("Leave room")) online->leave();
+                            if (online->leave_prompt && ImGui::Button("Stay")) online->leave_prompt = false;
+                        } else if (net.active()) {
                             ImGui::Text("Playing online as player %d of %d (input delay %d steps).", net.local_slot() + 1, net.start().players,
                                         net.start().delay);
                             if (net.desync()) ImGui::TextColored(ImVec4(1, 0.4f, 0.4f, 1), "Desync at step %llu.", (unsigned long long)*net.desync());
@@ -2839,6 +3355,18 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     ImGui::TextUnformatted(state_message.c_str());
                     ImGui::End();
                 }
+                // Seamless co-op notices, bottom centre (presentation only):
+                // the defeated member's hint, the exit prompt's names.
+                if (const auto lines = dw4::game::online_notices(engine, give_up_held, kGiveUpFrames); !lines.empty()) {
+                    const ImVec2 display = ImGui::GetIO().DisplaySize;
+                    ImGui::SetNextWindowPos(ImVec2(display.x * 0.5f, display.y - 24), ImGuiCond_Always, ImVec2(0.5f, 1));
+                    ImGui::SetNextWindowBgAlpha(0.6f);
+                    ImGui::Begin("##online", nullptr,
+                                 ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoInputs |
+                                     ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing);
+                    for (const auto& line : lines) ImGui::TextUnformatted(line.c_str());
+                    ImGui::End();
+                }
                 // Achievement notices, top right.
                 while (!toasts.empty() && std::chrono::steady_clock::now() > toasts.front().until) toasts.pop_front();
                 if (!toasts.empty()) {
@@ -2978,12 +3506,48 @@ int run(const Options& options, dw4::game::Settings& settings) {
         // draw count and DW4_DRAW_DUMP.
         if (!draw) engine.render(items, camera, clear, &shadow);
         std::cout << "stage " << engine.stage_name() << ", frame " << engine.frame() << ", draws " << items.size() << '\n';
+        // DW4_TRACE_TRAVERSAL_TIME (development): traversal times; DW4_CAM_CHECK
+        // (test runs): the one-player camera check of the per-slot cameras.
+        if (std::getenv("DW4_TRACE_TRAVERSAL_TIME")) {
+            static constexpr const char* kNames[4] = {"render (sim+picture)", "traverse_scene", "union sim pass", "picture-only pass"};
+            for (int i = 0; i < 4; ++i)
+                if (engine.traversal_count[std::size_t(i)])
+                    std::printf("traversal %s: %llu passes, %.1f us each, %.3f s total\n", kNames[i],
+                                (unsigned long long)engine.traversal_count[std::size_t(i)],
+                                double(engine.traversal_ns[std::size_t(i)]) / 1000.0 / double(engine.traversal_count[std::size_t(i)]),
+                                double(engine.traversal_ns[std::size_t(i)]) * 1e-9);
+        }
+        if (std::getenv("DW4_TRACE_TRAVERSAL_TIME"))
+            if (auto* models = engine.get<dw4::engine::ModelCtrlManager>())
+                for (int slot = 0; slot < 4; ++slot)
+                    if (const auto* p = models->player(slot); p && p->node) {
+                        dw4::engine::FrameCamera own;
+                        if (auto* cameras = engine.get<dw4::engine::CameraManager>()) cameras->frame_camera(engine, own, slot);
+                        dw4::engine::Mat4 inverse;
+                        dw4::engine::invert(own.view, inverse);
+                        std::printf("player %d at (%.1f, %.1f, %.1f), its camera at (%.1f, %.1f, %.1f)\n", slot + 1, p->node->matrix(3, 0),
+                                    p->node->matrix(3, 1), p->node->matrix(3, 2), inverse(3, 0), inverse(3, 1), inverse(3, 2));
+                    }
+        if (std::getenv("DW4_CAM_CHECK"))
+            if (auto* cameras = engine.get<dw4::engine::CameraManager>())
+                std::printf("camera check: slot 0's own camera differed from the shared one in %llu of %llu frames\n",
+                            (unsigned long long)cameras->check_mismatches(), (unsigned long long)cameras->check_frames());
         if (net.active()) {
             std::cout << "online: final fingerprint " << std::hex << engine.fingerprint() << std::dec
                       << (net.desync() ? " (desync at step " + std::to_string(*net.desync()) + ")" : "") << '\n';
             // The owner keeps what the session saved on its card.
             if (options.smoke_frames) own_card_name.clear();
             end_session();
+        }
+        if (online) {
+            std::printf("online: final mode %s, instance %u visit %u tick %u, slot %d of %x, net fingerprint %016llx\n",
+                        dw4::game::online::mode_name(online->session().mode()), online->session().inst(), online->session().visit(),
+                        online->session().tick(), online->session().own_slot(), online->session().present(),
+                        static_cast<unsigned long long>(online->link().net_fingerprint()));
+            online->leave();
+            online.reset();
+            std::error_code ignored;
+            if (!session_cards.empty()) std::filesystem::remove_all(session_cards, ignored);
         }
         if (auto* models = engine.get<dw4::engine::ModelCtrlManager>())
             if (const auto* p = models->player(0); p && p->node)
@@ -3142,7 +3706,17 @@ int main(int argc, char** argv) {
                     options.net_port = std::stoi(options.net_join.substr(colon + 1));
                     options.net_join.resize(colon);
                 }
-            } else if (arg == "--port") options.net_port = std::stoi(next());
+            } else if (arg == "--online-login") options.online.user = next();
+            else if (arg == "--online-create") options.online.create = next();
+            else if (arg == "--online-join") options.online.join = next();
+            else if (arg == "--online-max") options.online.max_players = std::clamp(std::stoi(next()), 2, 10);
+            else if (arg == "--online-difficulty") options.online.settings.difficulty = std::clamp(std::stoi(next()), 0, 2);
+            else if (arg == "--online-camera") options.online.settings.camera_mode = std::clamp(std::stoi(next()), 0, 1);
+            else if (arg == "--online-light") options.online.settings.light_mode = std::clamp(std::stoi(next()), 0, 1);
+            else if (arg == "--online-fast") options.online.settings.fast_loading = true;
+            else if (arg == "--online-calibrate") options.online_calibrate = std::max(60, std::stoi(next()));
+            else if (arg == "--online-calibrate-stage") options.online_calibrate_stage = next();
+            else if (arg == "--port") options.net_port = std::stoi(next());
             else if (arg == "--players") options.net_players = std::stoi(next());
             else if (arg == "--net-delay") options.net_delay = std::stoi(next());
             else if (arg == "--convert-rvz") {
@@ -3165,6 +3739,8 @@ int main(int argc, char** argv) {
                     start = comma + 1;
                 }
             } else if (arg == "--input") options.input_script = next();
+            else if (arg == "--online-script") options.online_script = next();
+            else if (arg == "--online-card") options.online_card = next();
             else if (arg == "--load-state") options.load_state = next();
             else if (arg == "--export-presence-art") options.export_art = next();
             else if (arg == "--loading") {

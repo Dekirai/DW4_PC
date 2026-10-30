@@ -178,6 +178,12 @@ void TextCtlManager::add_info(Engine& engine, const ObjectView& info) {
     }
 }
 
+const Node* TextCtlManager::line_node(std::string_view layer, std::string_view name) const {
+    for (const auto& line : lines_)
+        if (line.layer == layer && line.name == name) return line.node;
+    return nullptr;
+}
+
 void TextCtlManager::clear_stage(Engine&) {
     rams_.clear();
     lines_.clear();
@@ -464,6 +470,7 @@ bool SelectCtrlManager::command(Engine& engine, Ram& base, std::string_view comm
     auto& ram = static_cast<SelectRam&>(base);
     if (command == "GENERATE") {
         ram.running = true;
+        ram.trigger = engine.trigger_slot(); // online pad redirect (7.4)
         ram.state = ram.sub = ram.counter = ram.busy = 0;
         ram.cursor = 0;
         if (!packet.ints.empty()) {
@@ -535,7 +542,9 @@ void SelectCtrlManager::update(Engine& engine) {
             ram.traced_state = ram.state;
             ram.traced_sub = ram.sub;
         }
-        const auto& pad = engine.pads()[std::size_t(std::clamp(ram.index, 0, 3))];
+        // (Online: the trigger's or the leader's pad for index 0 and absent
+        // slots, Engine::pad_reader_slot.)
+        const auto& pad = engine.pads()[std::size_t(engine.pad_reader_slot(ram.index, ram.trigger))];
         // 803132C0: held stick / d-pad directions move the cursor once the
         // previous line sequence has ended.
         const std::uint32_t sticks = pad.left_directions.held;

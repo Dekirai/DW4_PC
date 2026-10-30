@@ -1,0 +1,11 @@
+{
+  "desc": "quest and story in stag0401: a quest-1 member arrives at point 3 while a story member plays there (separate instances, both keep their state); a second member on quest 1 shares the first's",
+  "card": "k10",
+  "frames": 60000,
+  "timeout": 800,
+  "clients": [
+    {"name": "s", "script": "s.script", "start": 0},
+    {"name": "q1", "script": "q1.script", "start": 3, "card_flags": {"89": 1, "714": 1}},
+    {"name": "q2", "script": "q2.script", "start": 6, "card_flags": {"89": 1, "714": 1}}
+  ]
+}

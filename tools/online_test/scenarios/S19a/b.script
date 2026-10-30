@@ -1,0 +1,14 @@
+# S19a, member b (k10, level 21): with a through the lobby gate; stays near the entrance (away from the goburi)
+# until a has fallen, then uses the Gate Disk of its L panel: everyone goes to the lobby (stagML11 point 3).
+campaign until stage=stagml11,control
+idle until epoch>=@91
+explore mate00 yes until stage=stag0101,control
+log in the field
+wander 455 170 15 until partnerdead,sealed>=10200
+log partner dead
+disk 8 until stagechange
+log away from the field
+idle until stage=stagml11,control
+log in the lobby
+# (Its own character came back with the DISSOLVE, level 21: not its partner's level 7.)
+idle until frames>=120 fail level<=20

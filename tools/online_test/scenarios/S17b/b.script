@@ -1,0 +1,8 @@
+# S17b, member b (k2): through the lobby gate eight seconds after a: held while a's entry scene runs, then a join.
+campaign until stage=stagml11,control
+idle until epoch>=@98
+explore mate00 yes until stage=stag0101,control
+log in the field
+wander 440 190 20 until sealed>=10600 or present=1,frames>=60
+log enough
+idle until frames>=60

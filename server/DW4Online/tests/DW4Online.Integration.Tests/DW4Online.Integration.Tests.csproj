@@ -18,6 +18,7 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\src\DW4Online.Server\DW4Online.Server.csproj" />
+    <ProjectReference Include="..\DW4Online.FakeClient\DW4Online.FakeClient.csproj" />
   </ItemGroup>
   <ItemGroup>
     <Compile Include="..\DW4Online.Tests\Samples.cs" Link="Samples.cs" />

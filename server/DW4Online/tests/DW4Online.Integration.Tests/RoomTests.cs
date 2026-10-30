@@ -4,12 +4,14 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using Dapper;
 using DW4Online.Domain.Services;
-using DW4Online.Relay;
+using DW4Online.FakeClient;
+using DW4Online.Relay.Hub;
+using DW4Online.Relay.Protocol;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace DW4Online.Integration.Tests;
 
-/// <summary>The room API and the TCP relay together: HTTP on the test server, the relay on a real loopback port.</summary>
+/// <summary>The room API and the DW4R2 relay together: HTTP on the test server, the relay on a real loopback port.</summary>
 public class RoomTests
 {
     private static object NewRoom(string name = "Night run", string? password = null, int maxPlayers = 4, object? settings = null) =>
@@ -24,10 +26,10 @@ public class RoomTests
     }
 
     [DbFact]
-    public async Task Create_join_stage_and_relay_splice()
+    public async Task Create_join_tickets_and_two_members_on_the_relay()
     {
         await using var host = await TestHost.StartAsync(RelaySettings.On());
-        var relayPort = await host.App.Services.GetRequiredService<RelayServer>().Started.WaitAsync(TimeSpan.FromSeconds(10));
+        var relayPort = await host.App.Services.GetRequiredService<RelayHub>().Started.WaitAsync(TimeSpan.FromSeconds(10));
         var (hostToken, _, hostId) = await host.RegisterAsync("Hoster");
         var (guestToken, _, guestId) = await host.RegisterAsync("Guesty");
         var owner = host.Client(hostToken);
@@ -35,13 +37,18 @@ public class RoomTests
 
         Assert.Equal(HttpStatusCode.Unauthorized, (await host.Client().PostAsJsonAsync("/api/v1/rooms", NewRoom())).StatusCode);
         Assert.Equal("invalid_max_players", await (await owner.PostAsJsonAsync("/api/v1/rooms", NewRoom(maxPlayers: 11))).ProblemCode());
-        var created = await OkJson(await owner.PostAsJsonAsync("/api/v1/rooms", NewRoom(password: "dw4dw4", settings: new { difficulty = 1 })), HttpStatusCode.Created);
+        var created = await OkJson(await owner.PostAsJsonAsync("/api/v1/rooms", NewRoom(password: "dw4dw4", settings: new { difficulty = 1, lightMode = 0 })),
+            HttpStatusCode.Created);
         var code = created.GetProperty("room").GetProperty("code").GetString()!;
         Assert.Equal(1, created.GetProperty("room").GetProperty("difficulty").GetInt32());
         Assert.Equal(10, created.GetProperty("heartbeatSeconds").GetInt32());
         Assert.Equal("127.0.0.1", created.GetProperty("relay").GetProperty("host").GetString());
         Assert.Equal(relayPort, created.GetProperty("relay").GetProperty("port").GetInt32());
+        Assert.Equal("DW4R2", created.GetProperty("relay").GetProperty("protocol").GetString());
         Assert.Equal(relayPort, (await (await host.Client().GetAsync("/api/v1/status")).Json()).GetProperty("relay").GetProperty("port").GetInt32());
+        var settingsHash = created.GetProperty("settingsHash").GetString()!;
+        Assert.Equal(new DW4Online.Domain.Rooms.RoomSettings(1, 0, 0, 0, false, 0, 0, false).Hash(41, 1234567890123UL).ToString("x16"), settingsHash);
+        var ownerTicket = created.GetProperty("relayTicket").GetString()!;
 
         // Public list, filtered like the HELLO check.
         var list = await OkJson(await host.Client().GetAsync("/api/v1/rooms?protocol=41&dataHash=1234567890123"));
@@ -53,8 +60,10 @@ public class RoomTests
         var joined = await OkJson(await guest.PostAsJsonAsync($"/api/v1/rooms/{code}/join", Join("dw4dw4")));
         Assert.Equal(1, joined.GetProperty("you").GetProperty("slot").GetInt32());
         Assert.Equal(2, joined.GetProperty("members").GetArrayLength());
+        var hoarded = joined.GetProperty("relayTicket").GetString()!;
         var asMember = await OkJson(await guest.GetAsync($"/api/v1/rooms/{code}"));
         Assert.Equal(2, asMember.GetProperty("members").GetArrayLength());
+        Assert.False(asMember.TryGetProperty("relayTicket", out var none) && none.ValueKind == JsonValueKind.String);
         var (otherToken, _, _) = await host.RegisterAsync("Watcher");
         var outsider = await OkJson(await host.Client(otherToken).GetAsync($"/api/v1/rooms/{code}"));
         Assert.False(outsider.TryGetProperty("members", out _));
@@ -70,58 +79,85 @@ public class RoomTests
                 "SELECT COUNT(*) FROM room_members m JOIN rooms r ON r.id = m.room_id WHERE r.public_code = @code AND m.left_at IS NULL", new { code }));
         }
 
-        // Both enter the same stage: the owner hosts instance 1, the guest joins it. Asking twice leaves the guest only
-        // the newest ticket (no hoarding).
-        var hostStage = await OkJson(await owner.PostAsJsonAsync($"/api/v1/rooms/{code}/stage", new { stage = "stagD101" }));
-        var hoarded = await OkJson(await guest.PostAsJsonAsync($"/api/v1/rooms/{code}/stage", new { stage = "stagD101" }));
-        var guestStage = await OkJson(await guest.PostAsJsonAsync($"/api/v1/rooms/{code}/stage", new { stage = "stagD101" }));
-        Assert.Equal("host", hostStage.GetProperty("role").GetString());
-        Assert.Equal("guest", guestStage.GetProperty("role").GetString());
-        var channel = hostStage.GetProperty("channel").GetString()!;
-        Assert.Equal(code + "-1", channel);
-        Assert.Equal(channel, guestStage.GetProperty("channel").GetString());
-
-        // The relay: host control, guest, host data, frames both ways and a START-sized burst.
-        await using var control = await RelayConnection.OpenAsync(relayPort, "DW4R1 HOST " + hostStage.GetProperty("ticket").GetString());
-        var ok = await control.ReadLineAsync();
-        Assert.StartsWith("OK ", ok, StringComparison.Ordinal);
-        await using (var old = await RelayConnection.OpenAsync(relayPort, "DW4R1 GUEST " + hoarded.GetProperty("ticket").GetString()))
+        // The handshake: a ticket replaced by a newer one, a wrong settings hash, a used ticket are refused.
+        var guestTicket = (await OkJson(await guest.PostAsync($"/api/v1/rooms/{code}/ticket", null))).GetProperty("relayTicket").GetString()!;
+        await using (var old = await RelayConnection.OpenAsync(relayPort, $"DW4R2 {hoarded} 41 1234567890123 {settingsHash}"))
             Assert.Equal("ERR ticket", await old.ReadLineAsync());
-        await using var guestSocket = await RelayConnection.OpenAsync(relayPort, "DW4R1 GUEST " + guestStage.GetProperty("ticket").GetString());
-        var notice = (await control.ReadLineAsync()).Split(' ');
-        Assert.Equal(["GUEST", notice[1], guestId.ToString(System.Globalization.CultureInfo.InvariantCulture)], notice);
-        await using var data = await RelayConnection.OpenAsync(relayPort, $"DW4R1 DATA {channel} {notice[1]} {ok[3..]}");
-        Assert.Equal("OK", await guestSocket.ReadLineAsync());
-        var hello = new byte[] { 1, 5, 0, 0, 0 }.Concat("HELLO"u8.ToArray()).ToArray();
-        await guestSocket.Stream.WriteAsync(hello);
-        Assert.Equal(hello, await data.ReadExactlyAsync(hello.Length));
-        var start = RandomNumberGenerator.GetBytes(90_176);
-        await data.Stream.WriteAsync(start);
-        Assert.Equal(start, await guestSocket.ReadExactlyAsync(start.Length));
-
-        // A used ticket does not work twice.
-        await using (var replay = await RelayConnection.OpenAsync(relayPort, "DW4R1 GUEST " + guestStage.GetProperty("ticket").GetString()))
+        var wrongSettings = (await OkJson(await guest.PostAsync($"/api/v1/rooms/{code}/ticket", null))).GetProperty("relayTicket").GetString()!;
+        await using (var bad = await RelayConnection.OpenAsync(relayPort, $"DW4R2 {wrongSettings} 41 1234567890123 0000000000000001"))
+            Assert.Equal("ERR settings", await bad.ReadLineAsync());
+        await using (var garbage = await RelayConnection.OpenAsync(relayPort, "DW4R1 HOST x"))
+            Assert.Equal("ERR protocol", await garbage.ReadLineAsync());
+        guestTicket = (await OkJson(await guest.PostAsync($"/api/v1/rooms/{code}/ticket", null))).GetProperty("relayTicket").GetString()!;
+        await using (var conn = await RelayConnection.OpenAsync(relayPort, $"DW4R2 {guestTicket} 41 1234567890123 {settingsHash}"))
+        {
+            var ok = (await conn.ReadLineAsync()).Split(' ');
+            Assert.Equal(("OK", "1"), (ok[0], ok[1]));
+            var header = await conn.ReadExactlyAsync(Wire.HeaderBytes);
+            Assert.Equal(Msg.Welcome, header[0]);
+            var welcome = WelcomeMsg.Parse(await conn.ReadExactlyAsync((int)BitConverter.ToUInt32(header, 1)));
+            Assert.Equal((InstanceMode.Hub, (byte)1), (welcome.Mode, welcome.Member));
+        }
+        await using (var replay = await RelayConnection.OpenAsync(relayPort, $"DW4R2 {guestTicket} 41 1234567890123 {settingsHash}"))
             Assert.Equal("ERR ticket", await replay.ReadLineAsync());
+
+        // Two fake clients enter one stage together (co-arrival, sealed) and run with equal fingerprints.
+        var tickets = new Dictionary<string, Func<Task<string>>>
+        {
+            ["owner"] = async () => (await (await owner.PostAsync($"/api/v1/rooms/{code}/ticket", null)).Json()).GetProperty("relayTicket").GetString()!,
+            ["guest"] = async () => (await (await guest.PostAsync($"/api/v1/rooms/{code}/ticket", null)).Json()).GetProperty("relayTicket").GetString()!,
+        };
+        _ = ownerTicket;
+        var fakeLog = new System.Collections.Concurrent.ConcurrentQueue<string>();
+        var fakes = tickets.Select((t, k) => new DW4Online.FakeClient.FakeClient(new FakeClientOptions
+        {
+            Port = relayPort,
+            Ticket = _ => t.Value(),
+            Protocol = 41,
+            DataHash = 1234567890123UL,
+            SettingsHash = ulong.Parse(settingsHash, System.Globalization.NumberStyles.AllowHexSpecifier),
+            Name = t.Key,
+            Seed = k + 1,
+            Duration = TimeSpan.FromSeconds(9),
+            Script = [new ScriptAction(0.8, "exit", "stag0101", 0)],
+            Log = line => fakeLog.Enqueue(line),
+        })).ToList();
+        var runs = fakes.Select(f => f.RunAsync(CancellationToken.None)).ToList();
+        JsonElement beat = default;
+        for (var i = 0; i < 100; ++i)
+        {
+            await Task.Delay(100);
+            beat = await OkJson(await guest.PostAsync($"/api/v1/rooms/{code}/heartbeat", null));
+            if (beat.GetProperty("instances").EnumerateArray().Any(x => x.GetProperty("mode").GetString() == "sealed")) break;
+        }
+        Assert.True(beat.GetProperty("instances").EnumerateArray().Count(x => x.GetProperty("mode").GetString() == "sealed") == 1,
+            beat + Environment.NewLine + string.Join(Environment.NewLine, fakeLog.Where(l => !l.Contains("\"script\"")).Take(60)));
+        var sealedGroup = beat.GetProperty("instances").EnumerateArray().Single(x => x.GetProperty("mode").GetString() == "sealed");
+        Assert.Equal("stag0101", sealedGroup.GetProperty("stage").GetString());
+        Assert.Equal(new[] { hostId, guestId }.OrderBy(x => x),
+            sealedGroup.GetProperty("members").EnumerateArray().Select(m => m.GetProperty("accountId").GetInt64()).OrderBy(x => x));
+        Assert.Equal(sealedGroup.GetProperty("id").GetUInt32(), beat.GetProperty("you").GetProperty("instance").GetUInt32());
+        var stats = await Task.WhenAll(runs);
+        var common = stats[0].Fingerprints.Keys.Intersect(stats[1].Fingerprints.Keys).ToList();
+        Assert.True(common.Count >= 4, $"{common.Count} common fingerprints");
+        Assert.All(common, key => Assert.Equal(stats[0].Fingerprints[key], stats[1].Fingerprints[key]));
 
         // Membership counts for achievements: the room is ranked and both are members.
         var unlock = await OkJson(await guest.PostAsJsonAsync("/api/v1/achievements/unlock",
             new { code = "online_join", context = new { roomCode = code, players = 2 } }));
         Assert.True(unlock.GetProperty("newlyUnlocked").GetBoolean());
 
-        // The instance host's control socket closes: the instance ends, the guest's pair is dropped, the room stays.
-        await control.DisposeAsync();
-        Assert.True(await guestSocket.ClosedAsync());
-        JsonElement beat = default;
-        for (var i = 0; i < 100; ++i)
+        // A kicked member's relay connection closes with the reason.
+        var third = new DW4Online.FakeClient.FakeClient(new FakeClientOptions
         {
-            beat = await OkJson(await guest.PostAsync($"/api/v1/rooms/{code}/heartbeat", null));
-            if (beat.GetProperty("instances").GetArrayLength() == 0) break;
-            await Task.Delay(20);
-        }
-        Assert.Equal(0, beat.GetProperty("instances").GetArrayLength());
-        Assert.Equal(JsonValueKind.Null, beat.GetProperty("you").GetProperty("instance").ValueKind);
-        Assert.Equal(2, beat.GetProperty("members").GetArrayLength());
-        _ = hostId;
+            Port = relayPort, Ticket = _ => tickets["guest"](), Protocol = 41, DataHash = 1234567890123UL,
+            SettingsHash = ulong.Parse(settingsHash, System.Globalization.NumberStyles.AllowHexSpecifier), Name = "kicked", Duration = TimeSpan.FromSeconds(10),
+        });
+        var thirdRun = third.RunAsync(CancellationToken.None);
+        await Task.Delay(800);
+        Assert.Equal(HttpStatusCode.NoContent, (await owner.PostAsJsonAsync($"/api/v1/rooms/{code}/kick", new { username = "Guesty" })).StatusCode);
+        var thirdStats = await thirdRun.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.StartsWith("Kicked", thirdStats.CloseReason);
     }
 
     [DbFact]
@@ -196,7 +232,7 @@ public class RoomTests
             await sql.ExecuteAsync("UPDATE accounts SET role = 'moderator' WHERE username = 'Moddy'");
         var owner = host.Client(ownerToken);
         var code = (await OkJson(await owner.PostAsJsonAsync("/api/v1/rooms",
-            NewRoom(settings: new { randomizer = new { enabled = true, seed = "DIGI-1234" } })), HttpStatusCode.Created))
+            NewRoom(settings: new { randomizer = new { enabled = true, seed = 1234, zones = 2 } })), HttpStatusCode.Created))
             .GetProperty("room").GetProperty("code").GetString()!;
 
         // The room setting decides the ruleset, whatever the client reports.
@@ -236,17 +272,18 @@ public class RoomTests
     }
 
     [DbFact]
-    public async Task Stage_needs_the_relay()
+    public async Task Tickets_need_the_relay()
     {
         await using var host = await TestHost.StartAsync(); // relay off
         var (token, _, _) = await host.RegisterAsync("Lonely");
         var client = host.Client(token);
         var created = await OkJson(await client.PostAsJsonAsync("/api/v1/rooms", NewRoom()), HttpStatusCode.Created);
         Assert.Equal(JsonValueKind.Null, created.GetProperty("relay").ValueKind);
+        Assert.Equal(JsonValueKind.Null, created.GetProperty("relayTicket").ValueKind);
         var code = created.GetProperty("room").GetProperty("code").GetString()!;
-        var stage = await client.PostAsJsonAsync($"/api/v1/rooms/{code}/stage", new { stage = "stagD101" });
-        Assert.Equal(HttpStatusCode.ServiceUnavailable, stage.StatusCode);
-        Assert.Equal("relay_unavailable", await stage.ProblemCode());
+        var ticket = await client.PostAsync($"/api/v1/rooms/{code}/ticket", null);
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, ticket.StatusCode);
+        Assert.Equal("relay_unavailable", await ticket.ProblemCode());
     }
 
     [DbFact]
@@ -255,7 +292,7 @@ public class RoomTests
         // Default (Service:RelayPort 0): whatever Relay:Port the relay listens on is announced.
         await using (var host = await TestHost.StartAsync(RelaySettings.On()))
         {
-            var bound = await host.App.Services.GetRequiredService<RelayServer>().Started.WaitAsync(TimeSpan.FromSeconds(10));
+            var bound = await host.App.Services.GetRequiredService<RelayHub>().Started.WaitAsync(TimeSpan.FromSeconds(10));
             var status = await OkJson(await host.Client().GetAsync("/api/v1/status"));
             Assert.Equal(bound, status.GetProperty("relay").GetProperty("port").GetInt32());
             Assert.NotEqual(52041, bound);
@@ -263,7 +300,7 @@ public class RoomTests
         // A port forward: clients use another public port.
         await using (var host = await TestHost.StartAsync(RelaySettings.On(new() { ["Service:RelayPort"] = "45123" })))
         {
-            await host.App.Services.GetRequiredService<RelayServer>().Started.WaitAsync(TimeSpan.FromSeconds(10));
+            await host.App.Services.GetRequiredService<RelayHub>().Started.WaitAsync(TimeSpan.FromSeconds(10));
             var status = await OkJson(await host.Client().GetAsync("/api/v1/status"));
             Assert.Equal(45123, status.GetProperty("relay").GetProperty("port").GetInt32());
         }

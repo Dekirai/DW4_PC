@@ -1,0 +1,48 @@
+namespace DW4Online.Relay.Hub;
+
+/// <summary>Sealing (configuration section "Sealing", SEAMLESS.md 6.4).</summary>
+public sealed class SealingOptions
+{
+    /// <summary>Upper bound of a member's input delay d (ticks).</summary>
+    public int MaxDelayTicks { get; set; } = 15;
+    /// <summary>The share of late pads above which d rises (0.1 %).</summary>
+    public double LateTarget { get; set; } = 0.001;
+    /// <summary>Ticks added to the largest member horizon when the server stamps JOIN, LEAVE or INTENT.</summary>
+    public int EventMarginTicks { get; set; } = 2;
+}
+
+/// <summary>Instance decisions (configuration section "Instances", SEAMLESS.md 3.4, 6.6).</summary>
+public sealed class InstanceOptions
+{
+    /// <summary>How long a parked group waits for a group that announced (HEADING) the same target.</summary>
+    public int CoArrivalHoldMs { get; set; } = 3000;
+    /// <summary>How long an arriving group waits for a target that is not joinable for a while (its stage load and entry scene: 23 s
+    /// measured from a NEW in stag0101, SEAMLESS.md 3.4).</summary>
+    public int JoinHoldSeconds { get; set; } = 30;
+    /// <summary>A JOIN (and a resync) is offered only when the slowest member catches up within this many seconds.</summary>
+    public int MaxCatchUpSeconds { get; set; } = 30;
+    /// <summary>The replay rate (steps/s) assumed for a member that has not reported one (RATE).</summary>
+    public int DefaultReplayRate { get; set; } = 3000;
+    /// <summary>A HEADING counts for co-arrivals this long after it arrived.</summary>
+    public int HeadingValidMs { get; set; } = 5000;
+    /// <summary>After the first BARRIER of a sealed instance, the others' reports are awaited this long.</summary>
+    public int BarrierReportSeconds { get; set; } = 5;
+    /// <summary>Players in one instance (the engine's four slots).</summary>
+    public int PlayersPerInstance { get; set; } = 4;
+    /// <summary>The highest replay rate (steps/s) a member may report (RATE, READY): a forged rate cannot buy a join on a long log.</summary>
+    public int MaxReplayRate { get; set; } = 20000;
+    /// <summary>A solo member's LOG may run this many ticks ahead of the wall clock since its visit began (host step bursts).</summary>
+    public int LogLeadTicks { get; set; } = 600;
+    /// <summary>A visit's solo log stops growing after this many hours (further LOG is dropped, the instance takes no joins).</summary>
+    public double MaxVisitHours { get; set; } = 12;
+    /// <summary>A sealed visit's members whose canonical snapshot hash has not come after this many seconds leave it (6.8).</summary>
+    public int SnapHashSeconds { get; set; } = 60;
+    /// <summary>JOIN_REQ asks to a solo leader that does not answer before the joiner falls back to NEW.</summary>
+    public int JoinRequestTries { get; set; } = 3;
+    /// <summary>A fork reported by members of both sides forks after this wait even when not every member confirmed it.</summary>
+    public int ForkConfirmMs { get; set; } = 2000;
+    /// <summary>A member is resynced at most once in this many seconds (a second lost vote meanwhile is only counted).</summary>
+    public int ResyncCooldownSeconds { get; set; } = 10;
+    /// <summary>RESUME sends at most this many ticks again (a longer gap is no reconnect: the member is not resumed).</summary>
+    public int MaxResumeTicks { get; set; } = 3600;
+}

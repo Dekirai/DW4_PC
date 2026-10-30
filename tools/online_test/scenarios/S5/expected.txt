@@ -1,0 +1,13 @@
+# S5: both fall in one sealed instance; the game over (stagML11 point 0) is one barrier of the whole group that
+# dissolves it into two solo lobby instances. No fork on the way.
+a: (?i)decision 1 .*stage=stag0101
+b: (?i)decision 4 .*stage=stag0101
+a: online-script: step .* log: dead
+b: online-script: step .* log: dead
+relay: (?i)barrier .*stage=stag0101 .*to=stagml11 point=0
+a: (?i)decision 3 .*stage=stagml11
+b: (?i)decision 3 .*stage=stagml11
+relay: dissolve
+relay: dissolve
+!a: online-trace: split
+!b: online-trace: split

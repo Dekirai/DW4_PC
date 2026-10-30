@@ -126,11 +126,11 @@ public sealed class RealHost : IAsyncDisposable
     {
         var database = await TestDb.CreateAsync();
         var settings = TestHost.Settings(database, overrides);
-        settings["Kestrel:Endpoints:Http:Url"] = "http://127.0.0.1:0";
+        settings["Kestrel:Endpoints:Http:Url"] = $"http://127.0.0.1:{TestPorts.Next()}";
         var https = httpsPfx is not null || httpsAddress is not null;
         if (https)
         {
-            settings["Kestrel:Endpoints:Https:Url"] = $"https://{httpsAddress ?? "127.0.0.1"}:0";
+            settings["Kestrel:Endpoints:Https:Url"] = $"https://{httpsAddress ?? "127.0.0.1"}:{TestPorts.Next()}";
             settings["Tls:StoreHostName"] = httpsAddress ?? "127.0.0.1";
         }
         var handedOut = new List<X509Certificate2>();
@@ -197,7 +197,7 @@ public class EndToEndTests(Xunit.Abstractions.ITestOutputHelper log)
             log.WriteLine(output);
             Assert.True(exit == 0, output);
             Assert.Contains("ALL PASSED", output);
-            Assert.Contains("ok   relay host handshake", output);
+            Assert.Contains("ok   relay handshake", output);
 
             // What the client did shows on the website.
             using var visitor = WebBrowser.For(host.BaseUri);
@@ -292,7 +292,7 @@ public class EndToEndTests(Xunit.Abstractions.ITestOutputHelper log)
             log.WriteLine("--- pin ---" + Environment.NewLine + output);
             Assert.True(exit == 0, output);
             Assert.Contains("ALL PASSED", output);
-            Assert.Contains("ok   relay host handshake", output);
+            Assert.Contains("ok   relay handshake", output);
             Assert.DoesNotContain("PIN FAILURES", output);
         }
         finally
@@ -346,7 +346,7 @@ public class EndToEndTests(Xunit.Abstractions.ITestOutputHelper log)
                 log.WriteLine(output);
                 Assert.True(exit == 0, output);
                 Assert.Contains("ALL PASSED", output);
-                Assert.Contains("ok   relay host handshake", output);
+                Assert.Contains("ok   relay handshake", output);
             }
             finally
             {
@@ -402,6 +402,6 @@ public class EndToEndTests(Xunit.Abstractions.ITestOutputHelper log)
         log.WriteLine(output);
         Assert.True(exit == 0, output);
         Assert.Contains("ALL PASSED", output);
-        Assert.Contains("relay round trip ms", output);
+        Assert.Contains("relay ping round trip ms", output);
     }
 }

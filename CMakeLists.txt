@@ -41,7 +41,8 @@ add_library(dw4_engine src/engine/math.cpp src/engine/gekko_math.cpp src/engine/
   src/engine/mat_ctrl.cpp src/engine/generater.cpp src/engine/randomizer.cpp src/engine/combat.cpp src/engine/status.cpp src/engine/save_game.cpp src/engine/save_util.cpp src/engine/save_menu.cpp src/engine/menu_text.cpp src/engine/shadow.cpp src/engine/particles.cpp src/engine/water.cpp src/engine/change_pos.cpp
   src/engine/hud.cpp src/engine/items.cpp src/engine/panel.cpp
   src/engine/subwnd.cpp src/engine/subwnd_folder.cpp src/engine/subwnd_skill.cpp
-  src/engine/subwnd_shop.cpp src/engine/save_state.cpp src/engine/port_events.cpp)
+  src/engine/subwnd_shop.cpp src/engine/save_state.cpp src/engine/port_events.cpp src/engine/online.cpp
+  src/engine/online_cameras.cpp src/engine/online_exits.cpp)
 target_link_libraries(dw4_engine PUBLIC dw4_core)
 # The Gekko arithmetic rounds only where the original rounds (no contraction).
 if(MSVC)
@@ -49,6 +50,32 @@ if(MSVC)
   set_source_files_properties(src/engine/gekko_math.cpp PROPERTIES COMPILE_OPTIONS /fp:strict)
 else()
   set_source_files_properties(src/engine/gekko_math.cpp PROPERTIES COMPILE_OPTIONS "-fno-fast-math;-ffp-contract=off")
+endif()
+
+# Seamless online co-op client (docs/SEAMLESS.md): the DW4R2 relay protocol,
+# pads on the wire, pacing, the WinHTTP worker with certificate pinning, the
+# DPAPI token, the session state machine and the online gates. No SDL / ImGui.
+# DW4_ONLINE_DEV: a development build may talk to a loopback test server
+# (DW4_ONLINE_SERVER / DW4_ONLINE_PIN); release builds never do.
+option(DW4_ONLINE_DEV "Online client development build (loopback test server allowed)" OFF)
+add_library(dw4_online STATIC
+  src/game/online/cpu_gate.cpp src/game/online/env_check.cpp src/game/online/pad_wire.cpp src/game/online/wire.cpp
+  src/game/online/pacing.cpp src/game/online/server_config.cpp src/game/online/http.cpp src/game/online/token_store.cpp
+  src/game/online/json.cpp src/game/online/room_settings.cpp src/game/online/api.cpp src/game/online/transport.cpp
+  src/game/online/session.cpp src/game/online/presence.cpp src/game/online/engine_adapter.cpp)
+target_include_directories(dw4_online PUBLIC src/game)
+target_link_libraries(dw4_online PUBLIC dw4_engine)
+if(DW4_ONLINE_DEV)
+  target_compile_definitions(dw4_online PUBLIC DW4_ONLINE_DEV=1)
+endif()
+if(MSVC)
+  target_compile_options(dw4_online PRIVATE /W4 /permissive- /utf-8)
+  if(DW4_STATIC_RUNTIME)
+    target_compile_definitions(dw4_online PRIVATE DW4_CRT_STATIC=1)
+  endif()
+endif()
+if(WIN32)
+  target_link_libraries(dw4_online PUBLIC winhttp crypt32 bcrypt ws2_32)
 endif()
 
 # Development tools: IGB inspection and logical resource catalog.
@@ -66,8 +93,9 @@ if(BUILD_TESTING)
   add_executable(dw4_scene_tests tests/scene_tests.cpp)
   target_link_libraries(dw4_scene_tests PRIVATE dw4_engine)
   add_test(NAME scene COMMAND dw4_scene_tests)
-  # (pad: the PADINPUT redirect of Engine::pads too)
-  foreach(suite gekko_math messenger pad)
+  # (pad: the PADINPUT redirect of Engine::pads too; online_cameras: the
+  # seamless co-op cameras and exits, docs/SEAMLESS.md 4 and 5.2)
+  foreach(suite gekko_math messenger pad online_cameras)
     add_executable(dw4_${suite}_tests tests/${suite}_tests.cpp)
     target_link_libraries(dw4_${suite}_tests PRIVATE dw4_engine)
     add_test(NAME ${suite} COMMAND dw4_${suite}_tests)
@@ -92,10 +120,31 @@ if(BUILD_TESTING)
   target_include_directories(dw4_labels_tests PRIVATE src/game)
   target_link_libraries(dw4_labels_tests PRIVATE dw4_engine)
   add_test(NAME labels COMMAND dw4_labels_tests)
+  # Seamless online co-op, the engine side. With the game data (a disc image
+  # or an extracted folder, never in the repository) it also plays membership
+  # scenarios in real stages; without, those are skipped.
+  set(DW4_TEST_DATA "" CACHE PATH "Game data for the online engine scenarios (optional)")
+  add_executable(dw4_online_tests tests/online_tests.cpp)
+  target_link_libraries(dw4_online_tests PRIVATE dw4_engine dw4_online) # (dw4_online: the GameEngineLink checks)
+  target_compile_definitions(dw4_online_tests PRIVATE DW4_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+  add_test(NAME online COMMAND dw4_online_tests "${DW4_TEST_DATA}")
+  # The online test driver's script language (src/game/online_script.hpp, tools/online_test).
+  add_executable(dw4_online_script_tests tests/online_script_tests.cpp src/game/online_script.cpp src/game/test_path.cpp src/game/campaign.cpp)
+  target_include_directories(dw4_online_script_tests PRIVATE src/game)
+  target_link_libraries(dw4_online_script_tests PRIVATE dw4_engine)
+  target_compile_definitions(dw4_online_script_tests PRIVATE DW4_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+  add_test(NAME online_script COMMAND dw4_online_script_tests)
   add_executable(dw4_achievements_tests tests/achievements_tests.cpp src/game/achievements.cpp)
   target_include_directories(dw4_achievements_tests PRIVATE src/game)
   target_link_libraries(dw4_achievements_tests PRIVATE dw4_engine)
   add_test(NAME achievements COMMAND dw4_achievements_tests)
+  # The online client (asset free; the env test reads the sources).
+  foreach(suite online_cpu_gate online_env online_wire online_session online_api)
+    add_executable(dw4_${suite}_tests tests/${suite}_tests.cpp)
+    target_link_libraries(dw4_${suite}_tests PRIVATE dw4_online)
+    add_test(NAME ${suite} COMMAND dw4_${suite}_tests)
+  endforeach()
+  target_compile_definitions(dw4_online_env_tests PRIVATE DW4_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 endif()
 
 if(DW4_BUILD_APP)
@@ -148,13 +197,13 @@ if(DW4_BUILD_APP)
     ${imgui_src_SOURCE_DIR}/backends/imgui_impl_opengl3.cpp)
   target_include_directories(imgui PUBLIC ${imgui_src_SOURCE_DIR} ${imgui_src_SOURCE_DIR}/backends)
   target_link_libraries(imgui PUBLIC SDL3::SDL3 OpenGL::GL)
-  add_executable(dw4_game src/game/game_main.cpp src/game/gl_renderer.cpp src/game/movie_decoder.cpp src/game/settings.cpp src/game/controls.cpp src/game/interpolation.cpp src/game/texture_pack.cpp src/game/rvz.cpp src/game/netplay.cpp src/game/save_store.cpp src/game/mods.cpp src/game/test_path.cpp src/game/campaign.cpp
+  add_executable(dw4_game src/game/game_main.cpp src/game/gl_renderer.cpp src/game/movie_decoder.cpp src/game/settings.cpp src/game/controls.cpp src/game/interpolation.cpp src/game/texture_pack.cpp src/game/rvz.cpp src/game/netplay.cpp src/game/save_store.cpp src/game/mods.cpp src/game/test_path.cpp src/game/campaign.cpp src/game/online_script.cpp
     src/game/discord_ipc.cpp src/game/discord_presence.cpp src/game/presence_data.cpp src/game/presence_art.cpp
     src/game/overhead_labels.cpp src/game/overhead_labels_draw.cpp src/game/achievements.cpp
-    src/game/randomizer_save.cpp src/game/dev_present.cpp)
+    src/game/randomizer_save.cpp src/game/dev_present.cpp src/game/online_run.cpp)
   target_include_directories(dw4_game PRIVATE ${pl_mpeg_src_SOURCE_DIR} ${stb_src_SOURCE_DIR})
   target_compile_definitions(dw4_game PRIVATE DW4_PC_VERSION="${PROJECT_VERSION}")
-  target_link_libraries(dw4_game PRIVATE dw4_engine imgui zstd_decoder SDL3::SDL3 OpenGL::GL)
+  target_link_libraries(dw4_game PRIVATE dw4_engine dw4_online imgui zstd_decoder SDL3::SDL3 OpenGL::GL)
   if(WIN32)
     target_link_libraries(dw4_game PRIVATE ws2_32)
   endif()

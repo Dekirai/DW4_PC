@@ -101,7 +101,7 @@ first task of the round that needs it (17).
 | Snapshot bytes hold the audio position | hashes use a canonical form without presentation fields; a mismatch is a desync vote | 6.8 |
 | Resume tick after a barrier undefined | barrier tick B, transition steps with the pads of B, barrier applied in the load step, tick 0 = first step after the load step | 6.7 |
 | Sealing waits up to 150 ms on p95, the delay rule misses the own return path, loss unmeasured | server-paced sealing at 59.94 Hz with immediate fill; `d_i` from the member's own round trip at p99.9; loss matrix in S1 | 6.4 |
-| int16 sticks make join states 5x larger | online pads quantized to the GameCube's stick steps (7 B per player); state transfers get their own limit | 6.4, 6.6 |
+| int16 sticks make join states 5x larger | online pads quantized to the GameCube's stick steps (6 B per player, round S1); state transfers get their own limit | 6.4, 6.6 |
 | Catch-up numbers optimistic, RESYNC unbounded | clients report their replay rate; joins and resyncs limited by the expected catch-up time; beyond it a member continues alone; S1 measures the final path | 6.6, 6.9 |
 | Console reset (B+X+START) reboots every machine | off online; the local combo opens *Leave room?* | 7.4 |
 | Auto-join surprises at puzzle mats and NINZU timers | auto-join stays (user decision); arrival notices, *Waiting for* hints, question 8 (play alone) | 5 |
@@ -292,12 +292,24 @@ in this order:
    - **Hold until joinable.** A target that is not joinable only for a while
      (its entry scene, `first.lua`, a talk; the STATE reason says which) holds
      the arriving group's barrier until it is joinable, at most
-     `Instances:JoinHoldSeconds` (default 15), with "Joining <name>..." on the
+     `Instances:JoinHoldSeconds` (default 30), with "Joining <name>..." on the
      loading screen. Entry scenes last 70 to about 190 frames
      (`funcStageIn`, `stag0101_m1__func.lua`), up to 630 with an enemy intro
      (`stag0201_m1__first.lua`), so friends who arrive a few seconds apart
      meet in the same instance. A hold that runs out ends in NEW with a
      notice.
+     *Measured in S1 (real game clients, `tools/online_test`):* a new
+     instance is not joinable for its whole stage load plus the entry scene
+     (STATE reason `loading` throughout): stag0101 from the lobby gate 1,384
+     ticks (23.1 s: about 750 ticks of loading, then the entry until the
+     player has control), stag0001 1,294 ticks (G1). With the first default
+     of 15 s a member who took the gate 8 s after its friend (just outside
+     the co-arrival window) was held until 0.1 s before the target became
+     joinable and then started alone (scenario S17b). The default is
+     therefore 30 s: it covers the measured 23 s from a NEW plus the longest
+     enemy intro (630 frames against stag0101's ~190, 7 s more); a hold never
+     starts earlier than about 3 s after the target's NEW, because closer
+     arrivals are co-arrivals.
    - **Boss-locked target.** The arriving member chooses on the loading
      screen: *Wait for <names>* (held until the lock clears, then JOIN; can be
      cancelled) or *Go alone* (NEW). The choice travels as BARRIER_CHOICE; the
@@ -369,11 +381,42 @@ The engine-wide temporary values fall into three classes. A data file
 census of the load-time reads in every stage a quest can reach (the first task
 of the membership lane).
 
-| Class | Values (starting list) | Online rule |
+| Class | Values (census of round S1) | Online rule |
 | --- | --- | --- |
-| context | quest flags 409, 376-381, 384-389, 424, 571-575; COUNTER 0 and 2; flag folder 11 | hashed from the arriving engine at the barrier (BARRIER) and on change (STATE); JOIN and co-arrival only between equal hashes |
-| personal | GATESTAGE and its point (read only by `stagML11_m1__start.lua` and `mate02.lua`, set by the gate disc and the quest boards) | kept aside in the member's carry at a join, written back into the member's engine at DISSOLVE, so a gate disc return never leads to a stranger's stage |
-| instance | every other temporary flag and COUNTER 3-6 | belong to the engine line: a fork keeps them on both sides, a joiner adopts the instance's (documented, not merged) |
+| context (22) | flags 63, 64, 71, 72, 376-381, 384-389, 409, 424, 508, 571; COUNTER 2; flag folder 11 | hashed from the arriving engine at the barrier (BARRIER) and on change (STATE); JOIN and co-arrival only between equal hashes |
+| personal (64) | GATESTAGE and its point (read only by `stagML11_m1__start.lua` and `mate02.lua`, set by the gate disc and the quest boards); the 63 flags only hub stages write and no joinable stage reads (lobby talks, shops and the quest boards' 572-575, the lobby's derived 900-937, 24-34, 85, 328, 336, 352, 364, 374, 375, 415-420, 475-480, 594, 611) | kept aside in the member's carry at a join, written back into the member's engine at DISSOLVE, so a gate disc return never leads to a stranger's stage and a lobby talk never comes back from another member's lobby |
+| instance (290) | every other temporary flag (the dungeon flags 100-299, lever and gate flags, ...) and COUNTER 0 and 3-6 (quest dungeon timers and counters, written and read only inside dngq1-3 and dngq7) | belong to the engine line: a fork keeps them on both sides, a joiner adopts the instance's (documented, not merged) |
+
+**Census (round S1, measured).** `tools/online/session_census.py` reads the
+7,168 decompiled scripts and writes `data/online/session_values.txt` (checked
+in; a ctest compares it with the engine's tables in `src/engine/online.cpp`).
+It takes the temporary values (the flags `gameStart.lua` clears minus the
+story set it restores, the never-merged 0, 503, 508, 611 and 900-937,
+COUNTER 0 and 2-6, folder 11, GATESTAGE) and classes them by where they are
+written and read: *context* = written by a hub program and read by a joinable
+stage (load or run time), or written by a hub program and a joinable stage
+and read back by a hub (409, 424, 571, 384, 388: the quest state the lobby's
+`start.lua` and `mate01.lua` read on the return); *personal* = GATESTAGE and
+every value no joinable stage writes or reads; *instance* = the rest. Against
+the starting list: 63 and 64 are new (a lobby talk in stagML12 / stagML13
+switches an event of stag0202 / stag0302 at its load); 71, 72 (stag0401's
+gate state the quest boards reset) and 508 (the lobby's "came through the
+lobby" flag every field's game over reads) are new; 572-575 move to
+personal (written and read only by the quest boards); COUNTER 0 moves to
+instance (only the quest dungeons that set it read it). COUNTER 2 stays
+context: the dungeons' first floors compare it at load (b1 / f1
+`start.lua`), and every field's game over script (`end_g_000bcaps.lua`)
+reads it to clear the right quest. 64 scripts index the dungeon flags
+100-299 by a computed number; all of them are instance values.
+
+**Personal values in the engine.** Online, the engine keeps every present
+slot's personal values (in the snapshot's online block): a joiner's and a
+co-arrival's come from their carry; SYSsetGateStage writes the engine-wide
+GATESTAGE and the personal GATESTAGE of every present slot (after a gate disc
+fork that is the leaving side); `carry_player` of the only present member
+reads the engine-wide values. DISSOLVE writes the own slot's personal values
+back into the engine-wide ones. The context hash treats an absent flag or
+counter like 0 (FLGisOn creates zero entries).
 
 Why: stag0401 is both the area-4 story field and the start of every board quest.
 `stagML11_m1__quest01..04.lua` set 409 plus 376-379, 571 and 424 and COUNTER 2;
@@ -419,6 +462,13 @@ over the shared state (centre, box, blend, saved matrices, timer), so its
 picture does not cut; the newcomer starts with the first-run rule of
 SETBOXCAMERA (direct cut). The camera mask is simulation state and changes only
 at the step where a JOIN, LEAVE or fork applies, identically on every machine.
+
+Measured in round S1 (branch `feat-r52cam`, `CameraManager::set_player_cameras`,
+test switch `DW4_TEST_RULES=frame:cameras:present`): one player walking in
+stag0102 through a camera box change (box 1 to 2 at frame 885, a 120-frame
+blend) with the mask going from 0 to {0} at frame 1000 (inside the blend),
+1350 or 2150 gives the same picture camera (view and projection, bit for bit)
+in all 2,600 frames as the run without the change, and the same fingerprint.
 
 **A defeated member.** While a slot has no generated player, its `PlayerBox`
 stands still at the capsule (`update_player_box` returns, spike r51cam
@@ -494,6 +544,12 @@ shared one in all 1,902 frames of the check. An instance that drops back to one
 member keeps the mask `{its slot}` until its next stage load (equal to the
 original by the same proof); a new solo instance starts with 0.
 
+Round S1 (r52, `feat-r52cam` on main 92b82f8 with round 50): `det.sh`
+4004f056 / 396cb219 twice with online off, with `DW4_CAMERAS=1` (the slot
+camera and the union pass with one camera; `DW4_CAM_CHECK`: 0 of 1,902
+frames differ) and with `DW4_CAMERAS=1 DW4_ONLINE=1` (a solo online instance:
+the online rules on, one member present).
+
 **Idempotent pictures.** A solo-led instance presents as often as its monitor
 asks (about 2.4 picture passes per step at 144 Hz), a joiner replays the same
 ticks headless with none; both must end in the same state. The netcode critique
@@ -505,6 +561,30 @@ once per step and blend only without `smoke_frames`
 test hook (`DW4_EXTRA_RENDERS=<n>`, `DW4_EXTRA_WIDEN=1`, plus an emulated r49
 previous-view peek) to the checks of section 15 and compares against headless
 with the net fingerprint.
+
+The hook is in `game_main.cpp` (round S1): `DW4_EXTRA_RENDERS=n` renders the
+same world time n more times after every step (into a scratch draw list, also
+in headless runs, plus one more `traverse_scene` there), `DW4_EXTRA_WIDEN=1`
+alternates the widening 0.75 / 0.5 between them, `DW4_EXTRA_PREVIOUS=1` gives
+them the previous step's picture camera view as smooth motion's previous view
+(the round 49 rule). Measured with n = 2 and both options, against the same
+run without the hook (md5 of the fingerprint lines every 300 frames; for
+per-slot cameras also of the `PlayerBox` hashes, the third column of the
+`DW4_TRACE_CAMERAS` lines):
+
+| Run | Without the hook | With the hook, headless | With the hook, hidden 1920x1009 widescreen window |
+| --- | --- | --- | --- |
+| newgame_dng101b1, 6000 frames | 4004f056 | 4004f056 | 4004f056 |
+| four players, stag0102, shared camera | 4fa35801 | 4fa35801 | 4fa35801 |
+| four players, stag0102, `DW4_CAMERAS=15 DW4_ONLINE=15` | bd855f57 / boxes 3342acf5 | bd855f57 / 3342acf5 | bd855f57 / 3342acf5 (local camera 2) |
+| four players, dng101b1, `DW4_CAMERAS=15 DW4_ONLINE=15` | 91da4c29 / boxes 22c995df | - | 91da4c29 / 22c995df (local camera 3) |
+
+Without the hook the same four-player runs give these values headless and in
+hidden windows with local camera 0, 2 and 3 alike (the done check of round S1).
+
+The four-player stag0102 value with the shared camera is the one of the
+critique's experiment B on f915905 (4fa35801): rounds 49 and 50 changed
+nothing in it.
 
 ### 4.5 Cost
 
@@ -533,6 +613,29 @@ floating point contraction like `frustum_cull_code`; the exact original test
 stays for solo instances. S4 re-measures this table after the libm routing
 (6.12).
 
+Re-measured in round S1 on the production code (`feat-r52cam`, the same
+scenario: four players, `DW4_LEVEL=200`, `spread4.txt`, 2400 frames, a hidden
+1920x1009 widescreen window, `DW4_TRACE_TRAVERSAL_TIME=1`; the one-camera
+split with `DW4_CAMERAS=1 DW4_LEASH_OFF=1`, four cameras with
+`DW4_CAMERAS=15`). Two sequential runs a / b while other rounds used about
+half of the machine; the 4-camera no-cull probe of round 51 is gone (plan B
+only):
+
+| Stage | today | 1 camera split | 4 cameras |
+| --- | --- | --- | --- |
+| stag0102 | 215 / 200 | 123 / 116 + 155 / 152 | 309 / 282 + 175 / 152 |
+| dng101b1 | 166 / 174 | 90 / 90 + 121 / 118 | 217 / 232 + 110 / 125 |
+| stag0201 | 218 / 186 | 95 / 100 + 134 / 155 | 232 / 246 + 126 / 149 |
+| dng205b1 | 176 / 188 | 104 / 98 + 129 / 128 | 224 / 220 + 129 / 137 |
+| stagBS02 | 109 / 108 | 53 / 51 + 73 / 71 | 74 / 74 + 71 / 72 |
+
+The better of the two runs is within 10 % of the round 51 table for 28 of the
+30 values; the exceptions are stag0102's one-camera simulation pass (116
+against 100-107, the two runs themselves differ by 6 %) and stagBS02's
+one-camera picture pass (71 against 80, faster). The four-camera simulation
+pass costs 2.0-2.6x the one-camera pass in the fields and dungeons and 1.4x in
+the boss arena, as before.
+
 ### 4.6 No leash
 
 The leash is `beChangePosTransform` (`src/engine/change_pos.cpp:24-58`), which
@@ -549,6 +652,15 @@ where it is on again exactly when the instance starts with one member.
 ChangePos itself is unchanged. Whether anything besides the ring hangs under
 the ChangePos transform (or whether enemies query the ring) is unchecked; round
 S1 checks it with a solo run with the ring off against the reference.
+
+Checked in round S1 (`DW4_LEASH_OFF=1`, the ring off in every stage, also
+after each stage load): `det.sh` 4004f056 / 396cb219, and one player with the
+ring on and off gives the same fingerprint every 100 frames walking in stag0102
+and stag0201 (2600 frames) and with the explore bot fighting through dng101b1
+(6000 frames, the player defeated on the way). Nothing besides the ring acts
+on a solo player. The engine applies the rule itself: while
+`OnlineRules::leash_off` is set, every step switches the child hit off once
+the stage's HitLand infos are there (`Engine::apply_leash_rule`).
 
 The local co-op spread of about 92 units is also the yardstick for "near" in
 this design (`kNearUnits = 100`): what members within it experience is what a
@@ -660,6 +772,41 @@ players) and changes who is asked, who is frozen and who leaves:
 - The randomizer's exit text remap happens on TEXTCTL in `ui.cpp`; the port
   sends the same TEXTCTL messages, so it keeps working.
 
+Built in round S1 (`src/engine/online_exits.cpp`, `feat-r52cam`):
+
+- The port replaces the Lua global `funcStageChange` after every `func.lua`
+  while the instance has two or more present members; the original function
+  stays under a hidden global and comes back when the instance drops to one
+  member, so a solo instance runs the original script (det with a solo online
+  instance: 4004f056).
+- On an exit mat (a mat script whose chunk names `funcStageChange`, found by
+  `Engine::script_mentions`) `MATisAllPlayer` is true online when a living
+  member stepped on in this update; every other mat keeps the original rule.
+  The 20 direct-NEXTSTAGE exits keep the original until S3.
+- The owner's prompt is a demo work with the original's records; after its
+  answer one port record (demo record type 8, port only) steps a state
+  machine: the other members' prompts one after another (600 frames each, then
+  SELECTCTRL REMOVE, a No), then the departure: `exit_leavers` (the side rule),
+  the group move when every living member goes, otherwise
+  `Engine::online_split` and, on the leavers' copy, the original departure
+  records as a new demo work; the stayers' copy fades the hidden half fade
+  back.
+- Draw filter: the picture pass skips another member's `i_zzstchgwb` /
+  `i_zzstchgwn`, and while an exit runs `i_fadewn01` and the STCHGFONT00 line
+  for members who do not see the prompt (`Engine::picture_hidden_roots`).
+- Limits in S1, as in the original: the owner's own prompt has no time limit;
+  a member who steps on while another member's exit runs (`DMgetCount()`
+  is not 0) gets no prompt until it steps off and on again.
+- Checked with two members in dng101b1 (both copies of every fork): an exit
+  taken alone (the leaver arrives in stag0101 alone, the stayer keeps
+  dng101b1, the fingerprints equal up to the fork), the partner on the mat
+  asked (yes: the group move without a fork; no, or no answer for 600 frames:
+  the fork), a defeated partner taken along by the only living member (no
+  fork, no game over), the gate disc (its user forks off to stagML11 point 3;
+  with a defeated partner everyone goes), give up (the defeated member's copy
+  runs the original game over into stagML11 point 0, the partner's copy
+  despawns it).
+
 ### 5.3 Scoped scenes (round S3)
 
 Scenes that concern one member pause the whole engine in the original. Online
@@ -731,52 +878,79 @@ equals. It never runs the game.
 
 ### 6.3 Messages
 
-Client to server (`inst` = instance id, `visit` = its stage load count):
+**Pinned in round S1 (integration).** One layout for the C++ client
+(`src/game/online/wire.hpp`), the C# relay hub and its fake clients
+(`server/DW4Online/src/DW4Online.Relay/Protocol`) and the Python test client
+(`server/DW4Online/tests/e2e/relay_spike_test.py`); the byte layout of every
+field is in the appendix "DW4R2 wire layout". Golden byte vectors check it on
+both sides (`tests/online_wire_tests.cpp`,
+`server/DW4Online/tests/DW4Online.Tests/WireGoldenTests.cs`): a change on one
+side fails both until the other follows. Message types 0x01-0x13 go client to
+server, 0x80-0x8E server to client; a pad is 6 bytes (6.4); `inst` is the
+instance id, `visit` its stage load count, both u32.
 
-| Message | Fields | When |
-| --- | --- | --- |
-| INPUT | inst, visit, tick u32, pad (7 B, 6.4) | sealed instance: every step, `d_i` ticks ahead |
-| LOG | inst, visit, first tick, count, pads | solo-led instance: the pads it applied, batched every 100 ms |
-| HEADING | inst, stage, point | a member confirmed an exit or the gate disc (one to two seconds before its barrier) |
-| BARRIER | inst, visit, barrier tick, stage, point, alive and present masks, session context hash, carries | after the barrier tick |
-| BARRIER_CHOICE | inst, wait or alone | the arriving member's choice at a boss-locked target |
-| SPLIT | inst, visit, tick, leaver mask, in-stage or exit | after the step of a fork (verification and bookkeeping) |
-| SNAPSHOT / SNAPHASH | inst, visit, chunked bytes / canonical hash | after the load step: the leader uploads, the others send the canonical hash (6.8) |
-| READY | inst, visit, tick (a multiple of 60), net fingerprint, carry, replay rate | a joiner that caught up |
-| JOIN_AT | inst, visit, tick | the leader of a solo-led instance answering JOIN_REQ |
-| NETFP | inst, visit, tick, hash | every 60 ticks, every member |
-| STATE | inst, visit, joinable, membership-safe, boss lock, session context hash, reason | on change, debounced to one second (the boss lock and the context at once) |
-| INTENT | inst, visit, kind (go_without, give_up), argument | a member's port choice |
-| STORY | pending story set, counter growth per engine line (8.3) | at every barrier and every 10 s while not empty |
-| PRESENCE | stage, inst, position, yaw, species, level, HP, max HP, MP, max MP | five times per second while in a stage |
-| RESUME | inst, visit, slot, last executed tick | after a reconnect |
-| RATE | replay rate (steps per second) | after the calibration at the room join and after every replay |
-| PONG / BYE | nonce, client time / reason | |
+Client to server:
+
+| Type | Message | Fields | When |
+| --- | --- | --- | --- |
+| 0x01 | INPUT | inst, visit, first tick, 1-32 pads | sealed instance: every step, `d_i` ticks ahead (the first `d` together with SNAPHASH) |
+| 0x02 | LOG | inst, visit, first tick, 1-1200 pads | solo-led instance: the pads it applied, batched every 100 ms, contiguous from tick 0 (hub instances send none) |
+| 0x03 | HEADING | inst, stage, point, session context hash | an exit or the gate disc this copy takes (`Engine::take_heading`), one to two seconds before its barrier |
+| 0x04 | BARRIER | inst, visit, barrier tick, stage, point, alive and present masks, session context hash, own carry | after the barrier tick |
+| 0x05 | BARRIER_CHOICE | inst, wait or alone | the arriving member's choice at a boss-locked target (BARRIER_WAIT flag 1) |
+| 0x06 | SPLIT | inst, visit, fork tick, leaver mask (the side that moves to the child: `SplitResult::child`), kind (exit, in-stage) | after the step of a fork |
+| 0x07 | SNAPSHOT | inst, visit, total, offset, chunk (at most 60 KiB) | after the load step of a NEW: the base group's member in the lowest new slot only |
+| 0x08 | SNAPHASH | inst, visit, canonical hash | after the load step (NEW) or the restore (co-arrival): every member |
+| 0x09 | READY | inst, visit, tick (a multiple of 60), net fingerprint, replay rate, carry | a joiner within ten ticks of the newest tick |
+| 0x0A | JOIN_AT | inst, visit, tick J | the solo leader's answer to JOIN_REQ |
+| 0x0B | NETFP | inst, visit, tick (a multiple of 60), net fingerprint after that tick | every member of a field instance |
+| 0x0C | STATE | inst, visit, tick, flags (joinable, membership-safe, boss lock), session context hash, reason | on change (the boss lock and the context at once, the rest at most once a second) |
+| 0x0D | INTENT | inst, visit, kind (1 go without, 2 give up), argument | a member's port choice (sealed instances; the server stamps it) |
+| 0x0E | STORY | reserved for round S2 | |
+| 0x0F | PRESENCE | stage (empty: hidden), inst, position, yaw, species, level, HP, max HP, MP, max MP | five times per second in a stage (HP 0: defeated) |
+| 0x10 | RESUME | inst, visit, slot, last executed tick | after a reconnect that WELCOME calls resumable |
+| 0x11 | RATE | replay steps per second | after WELCOME (the calibration) and after every replay |
+| 0x12 / 0x13 | PONG / BYE | nonce, client time / reason | |
 
 Server to client:
 
-| Message | Fields | When |
-| --- | --- | --- |
-| SEALED | inst, visit, tick, present mask, pads, events | every tick of a sealed instance at its due time (batched when behind) |
-| LIVE | the leader's LOG batches or the SEALED ticks | to observers (joiners catching up) |
-| JOIN_REQ | inst, visit, slot | to the leader of a solo-led instance: choose J |
-| BARRIER_OK | inst, visit, decision (NEW, JOIN, DISSOLVE, CO_ARRIVE), new inst and visit, slot map, co-arrivals' carries, story revision, bytes and dropped set, rules | answer to BARRIER |
-| BARRIER_WAIT | inst, reason (co-arrival, entry scene, boss lock), names, seconds left | while a barrier is held (loading screen text) |
-| STATE_DATA | inst, visit, slot, snapshot, log, events, fork sides (chunked) | join, co-arrival, resync |
-| RESYNC | inst, visit | the member's fingerprint lost the vote |
-| STORY_ACK | revision, room story bytes, accepted, refused with reason | answer to STORY |
-| PRESENCE | member, the fields above | others in the same stage outside the own instance; a one-per-second roster for the room UI |
-| ROOM | member joined or left, owner present, story frozen, story revision | in-band room changes |
-| PING | nonce, server time, arrival margin, suggested delay | once per second |
-| KICK / CLOSE | reason | |
+| Type | Message | Fields | When |
+| --- | --- | --- | --- |
+| 0x80 | WELCOME | member (the room slot 0-9), inst, visit, slot, mode (hub, solo-led, sealed), stage, last tick, delay, max catch-up seconds, flags (resumable) | the first frame after OK: a fresh member's solo hub instance (the title, stage ""), or the instance it still holds |
+| 0x81 / 0x82 | SEALED / LIVE | inst, visit, first tick, count, tick records | SEALED to members at each tick's due time (batched when behind), LIVE to observers (the leader's LOG or the sealed ticks) |
+| 0x83 | JOIN_REQ | inst, visit, slot, suggested delay | to the leader of a solo-led instance: choose J |
+| 0x84 | BARRIER_OK | old inst and visit, decision (1 NEW, 2 JOIN, 3 DISSOLVE, 4 CO_ARRIVE), new inst and visit, stage, point, own slot, slot map, mode, delay, co-arrivals (slot, member, carry), story revision, story, dropped set, notice, names | answer to BARRIER |
+| 0x85 | BARRIER_WAIT | inst, reason (co-arrival, not joinable, boss lock, snapshot), seconds left, names, flags (choice needed) | while a barrier is held (the loading screen's line) |
+| 0x86 | STATE_DATA | inst, visit, total, offset, chunk of the state blob (purpose, slot, snapshot, forks with their sides, first tick, tick records) | join, co-arrival, resync, resume |
+| 0x87 | PRESENCE | member, the fields above | members in the same stage outside the own instance |
+| 0x88 | RESYNC | inst, visit | the member's fingerprint lost the vote (a STATE_DATA follows) |
+| 0x89 | STORY_ACK | reserved for round S2 | |
+| 0x8A | ROOM | notice (joined, left, owner present, owner away, lagging, lag over, connected, disconnected), member, account, name, flags (owner) | in-band room changes |
+| 0x8B | PING | nonce, server time, the member's arrival margin in ms, suggested delay | once per second |
+| 0x8C | CLOSE | reason (left, kicked, room closed, replaced, protocol, abuse, timeout, stopping), text | before the server closes |
+| 0x8D | ROSTER | every member: stage, inst, level, HP, max HP, flags (connected, lagging, owner) | once per second (the room UI) |
+| 0x8E | REASSIGN | old inst, visit, new inst, from tick, mode, flags (departing) | after a fork: this member's copy is the child |
 
-Events inside SEALED (and inside a solo leader's LOG stream for its own JOIN):
-JOIN (slot, carry, entrance point), LEAVE (slot), INTENT (slot, kind, argument),
-LEAD_FROM (tick: from here the remaining member leads alone), DELAY (slot, d).
+Events inside a tick record: JOIN (slot, entrance point, carry), LEAVE (slot),
+INTENT (slot, kind, argument), LEAD_FROM (tick: the remaining member leads
+alone from it; stamped on the tick before), DELAY (slot, d). A client takes
+LEAD_FROM and DELAY only live and only for itself (never from a replayed
+history or while it observes before its own JOIN) and ignores events for
+slots that are not on its side of a fork.
 
-The lanes may refine field layouts; the integration step writes the final
-layout into an appendix of this document and into
-`server/DW4Online/README.md`.
+What the integration changed against the lanes: the client lane's layout
+(server types 0x41-0x4E, 7-byte pads with a fill flag, the member id in JOIN
+and in BARRIER_OK, REKEY, instance 0 for the title, decisions 0-3, a decimal
+settings hash) gave way to the relay lane's, which the hub, the fake clients
+and the Python client already shared: WELCOME names the title's hub
+instance, REASSIGN replaces REKEY, a side of one member after a fork stays
+sealed until the server's LEAD_FROM, the lag icons come from ROOM / ROSTER,
+a hidden or defeated member's tag comes from PRESENCE's empty stage or HP 0,
+and the settings hash is the relay's canonical text (appendix) sent as 16 hex
+digits. Two client-side facts stay: a solo group whose barrier gets no answer
+for five seconds goes on as NEW under instance 0 (not offered to joiners),
+and the wire's numbering of decisions (1-4) and intents (1-2) maps onto the
+engine's (`Decision` 0-3, `IntentKind` 0-1) in `src/game/online/engine_adapter.cpp`.
 
 ### 6.4 Ticks, sealing, delay
 
@@ -811,9 +985,38 @@ one when more than 0.1 % of the last 3,600 pads were late and lowers it by one
 when the 0.1 % quantile of the margin stayed above one tick for 30 s; a change
 is a DELAY event at a sealed tick (the member repeats or skips one sample;
 deterministic, because the sealed pads are what every machine executes).
-Bounds 1..10. Estimated `d` = 2-3 inside Europe, +1-2 on WLAN. Inputs are
+Bounds 1..15 (`Sealing:MaxDelayTicks`; revision 2 said 10, which the S1 loss
+matrix below showed too small above about 110 ms of round trip). The starting
+value is `ceil((RTT + spread) / 16.683 ms) + 1`, the +1 for the client's
+one-tick playout buffer; measured `d` without loss: 3 at 21 ms RTT, 5 at 61 ms,
+7 at 71 ms with 10 ms jitter, 11 at 121 ms. Inputs are
 indexed by tick, so every machine has its own `d_i`, as the direct sessions
 already allow (`game_main.cpp:1853-1856`).
+
+**Measured in round S1 (client lane): the formula misses the playout tick.**
+A member does not execute tick t when SEALED(t) arrives but one playout tick
+later (the pacing below keeps one tick in reserve), plus up to one pass of its
+host loop. With the built client (`src/game/online/session.cpp`, the pacing of
+`pacing.cpp`) against the fake hub of `tests/online_fake_hub.hpp` (server-paced
+sealing, immediate fill, a simulated clock, TCP order kept), the smallest delay
+without a single late pad in 20 s of two-member play
+(`dw4_online_session_tests --delay-table`) was:
+
+| one way | jitter (each way) | needed `d` | `ceil((RTT + J) / f)` | `ceil((RTT + J) / f + 1.5)` |
+| --- | --- | --- | --- | --- |
+| 5 ms | 0 | 3 | 1 | 3 |
+| 10 ms | 0 | 3 | 2 | 3 |
+| 20 ms | 0 | 4 | 3 | 4 |
+| 30 ms | 10 ms | 7 | 5 | 7 |
+| 50 ms | 0 | 8 | 6 | 8 |
+| 50 ms | 20 ms | 10 | 9 | 10 |
+
+So the starting value is `d_i = ceil((RTT_i + J_i) / 16.683 ms + 1.5)`
+(J = the round-trip spread, both directions' jitter), one to two ticks more than
+the formula above; the server's adaptation then works from there. The
+estimate inside Europe becomes 3-4, +1-2 on WLAN. The client takes the
+suggested delay from PING before a sealed start (NEW with two or more members,
+JOIN_AT) and changes it in a sealed instance only through DELAY events.
 
 **Pacing.** A client executes sealed ticks at its own 59.94 Hz pace with a
 playout buffer of one tick. Its pace follows the server's by at most ±0.1 %
@@ -837,6 +1040,63 @@ on Windows loopback, and real TCP loss on loopback where a netem-capable
 environment exists. The result decides whether round S4 carries a UDP
 transport for the game frames.
 
+*Measured in S1 (relay lane; scenario S12 of 16):* `DW4Online.FakeClient matrix` (also
+`tools/online_test/run.py matrix`). Per cell an in-process DW4R2 relay on
+loopback and three fake clients that arrive together in one sealed instance,
+each behind its own impairment proxy with the same one-way time, jitter and
+loss in both directions. Windows loopback has no netem and the development PC
+no WSL, so the head-of-line model is the measurement: every read from the
+sender is one segment, delivered after one-way + U(0, jitter) and never before
+an earlier one (TCP keeps the order, so jitter adds latency); a lost segment
+arrives one fast retransmission later (RTT + three segment gaps, about RTT +
+50 ms at 60 segments per second), a lost retransmission adds a 300 ms RTO
+(doubling), and everything behind it waits. 20 s warm-up (the delay rule
+settles; for the matrix its bound is 20 and nobody leaves for lag), then 40 s
+measured, machine about 25 % busy with other rounds. Each cell: the mean of the
+three members' fill rate (pads the relay filled), final `d` (range), hitches
+per minute (ticks that reached the client after their playout time; one tick
+of playout buffer above the 99th percentile arrival, moved by at most 0.1 % of
+the pace) and stall seconds per minute:
+
+| one-way / jitter (RTT) | 0 % loss | 0.1 % loss | 0.5 % loss | 1 % loss | 2 % loss |
+| --- | --- | --- | --- | --- | --- |
+| 0 / 0 (0.3 ms), proxy only | 0 %, d 2, 0/min, 0 s | | | | |
+| 10 / 0 ms (21 ms) | 0 %, d 3, 0/min, 0 s | 0.33 %, d 5-6, 2.0/min, 0.10 s | 0.32 %, d 9, 18.5/min, 0.39 s | 0.35 %, d 10, 27.5/min, 0.46 s | 1.40 %, d 11, 52.0/min, 1.19 s |
+| 10 / 10 ms (32 ms) | 0 %, d 4, 0/min, 0 s | 0.28 %, d 7-8, 4.0/min, 0.21 s | 0.51 %, d 10-11, 20.5/min, 0.65 s | 0.76 %, d 11, 34.0/min, 0.98 s | 1.26 %, d 12-17, 44.0/min, 1.46 s |
+| 10 / 30 ms (57 ms) | 0.11 %, d 8-9, 1.0/min, 0 s | 0.42 %, d 9-11, 1.5/min, 0.10 s | 0.44 %, d 13, 15.0/min, 0.83 s | 1.07 %, d 14, 31.0/min, 1.45 s | 1.24 %, d 14-20, 49.5/min, 3.04 s |
+| 30 / 0 ms (61 ms) | 0 %, d 5, 0/min, 0 s | 0.50 %, d 9-10, 3.5/min, 0.30 s | 0.50 %, d 14, 18.5/min, 1.03 s | 0.39 %, d 15, 31.5/min, 1.81 s | 1.50 %, d 15-16, 61.0/min, 4.05 s |
+| 30 / 10 ms (71 ms) | 0 %, d 7, 0/min, 0 s | 0.61 %, d 11-13, 3.5/min, 0.31 s | 0.79 %, d 15-16, 17.5/min, 1.19 s | 0.93 %, d 16, 35.5/min, 2.55 s | 1.47 %, d 16-18, 59.0/min, 4.45 s |
+| 30 / 30 ms (95 ms) | 0 %, d 9, 0/min, 0 s | 0.65 %, d 13-15, 2.5/min, 0.26 s | 0.85 %, d 18, 19.5/min, 1.77 s | 1.01 %, d 18-19, 29.0/min, 2.84 s | 1.47 %, d 18-20, 61.5/min, 6.06 s |
+| 60 / 0 ms (121 ms) | 0.40 %, d 11, 1.5/min, 0 s | 0.99 %, d 14-17, 4.5/min, 0.56 s | 1.03 %, d 20, 15.0/min, 1.78 s | 1.28 %, d 20, 31.5/min, 3.75 s | 4.66 %, d 20, 60.5/min, 7.73 s |
+| 60 / 10 ms (132 ms) | 0 %, d 10-11, 0/min, 0 s | 1.14 %, d 15-18, 4.5/min, 0.54 s | 1.86 %, d 20, 16.5/min, 2.12 s | 2.91 %, d 20, 36.0/min, 4.84 s | 6.52 %, d 20, 61.0/min, 8.42 s |
+| 60 / 30 ms (155 ms) | 0.22 %, d 13, 0/min, 0 s | 1.14 %, d 19-20, 5.0/min, 0.58 s | 3.84 %, d 20, 20.5/min, 2.86 s | 37.5 %, d 20, 27.5/min, 3.77 s | 13.8 %, d 20, 58.0/min, 10.27 s |
+
+Only the impaired member pays: with 2 % loss on one member's link only (30 /
+10 ms), that member had 0.54 % fills, d 16, 63 hitches and 4.3 s of stalls per
+minute while the two clean members had 0.04 % fills, d 7-8, 0-1.5 hitches and no
+stall (60 / 30 ms: 13.6 % against 0-0.17 %, the clean ones at d 13 and without
+hitches). Server-paced sealing keeps a loss local, as designed.
+
+What TCP costs: without loss nothing (no fill, no hitch). With loss the delay
+rule keeps the fill rate low (at most 1.5 % up to 2 % loss at 30 ms) by raising
+`d` far above the clean value (0.5 % loss: 9-18 instead of 3-9 ticks, 100 to
+150 ms more input delay), and every lost segment on a member's downlink stalls
+its picture for about one round trip plus 50 ms: 15-20 hitches and 0.4-1.8 s of
+stall per minute at 0.5 % loss, 28-36 and 0.5-3.8 s at 1 %, 44-62 and 1.2-8 s at
+2 %. A first run on a fully loaded machine (every core busy with other rounds,
+not used for the table) showed the same picture plus a few scheduling
+hitches.
+
+**Decision: round S4 carries UDP for INPUT and SEALED**, with redundancy (each
+INPUT datagram repeats the member's pads not yet sealed, each SEALED datagram
+the last few ticks, so an isolated loss costs nothing and only a burst longer
+than the redundancy waits), the ticket as the session key, the TCP connection
+kept for everything else and as the fallback when UDP does not get through.
+The loss rates of WLAN and busy home links (0.5-2 %) would otherwise cost the
+affected player 100-150 ms of extra input delay and 15-60 picture stalls per
+minute. Until then TCP works: the relay's delay rule and fill keep everyone
+else unaffected.
+
 **1 → 2 members.** The server sends JOIN_REQ to the solo leader; the leader
 answers JOIN_AT(J) with `J = current tick + d`, switches to delayed sampling at
 once and repeats its last pad for the ticks before `J` it has no sample for
@@ -859,6 +1119,17 @@ Offline input is unchanged. A pad is then 7 B: buttons as u16 (if the PC's
 masks fit in 16 bits, which S1 checks; else u32 and 9 B) and four int8 sticks;
 `connected` comes from the present mask. About 0.4 KB/s per player and
 direction.
+
+*Checked in S1 (relay lane):* the PC's button masks fit in 16 bits. The
+logical bits are 0x0008-0x8000 (`include/dw4/pad.hpp`, `pad_button`),
+`gamecube_buttons` maps raw PADStatus bits only onto them, and the keyboard
+and controller bindings (`controls.cpp`, `press(PadKey)`) set only those bits;
+the recorded logs of 6.6 use 0x0010-0xFC50. So a pad is buttons u16 LE, then
+the main stick x, y and the C-stick x, y as int8 `round(v * 74)` (main stick
+-72..72 after the host's 72/74 scale, C-stick -59..59): 6 B, not the 7 B
+counted above, since `connected` comes from the present mask and nothing else
+needs a byte (the u32 case would have been 8 B). The relay lane's independent
+Python client found the miscount: the wire layout in the appendix is 6 B.
 
 ### 6.5 Events and when they apply
 
@@ -884,9 +1155,29 @@ SPLIT still carry the leavers' pads). So a window waiting for a leaving slot
 cannot hang the instance (the pad redirect, 7.4, does the rest), and no remote
 pad reaches the console reset (which is off online anyway, 7.4).
 
+A slot is *leaving* from the tick of its LEAVE until the LEAVE applies: when
+the LEAVE's tick comes in a step that is not membership-safe, every machine
+marks the slot (`Engine::online_mark_leaving`, before that step; the client's
+`apply_events`), so its pad is neutral and connected and its readers take the
+leader's pad (`pad_reader_slot`: an exit prompt it owns, which has no time
+limit, and its status window, whose page turns and digit cursors read
+`window.player` through `pad_reader_slot` too). The step the LEAVE waits for
+then comes. (Round S1 review: nothing set the mark, and a member that left
+with its own exit prompt or status window open froze the instance for the
+rest of the stage; the session test `leave_with_open_prompt`.)
+
 Members report `STATE` so that the server knows when an instance is joinable
 and why not; a JOIN into an instance that turns unjoinable simply waits (the
 joiner sees "Waiting for the scene to end").
+
+**Record limits.** A tick record holds at most 255 events (a u8 count) and an
+event at most 65,535 bytes (a u16 length). The relay keeps one INTENT of a
+member open at a time (more are dropped and counted, `intent_dropped`), seals
+at most 200 events into one record (the rest follow in the next ticks;
+LEAD_FROM is never deferred) and refuses a BARRIER or READY carry above
+65,533 bytes (it becomes a JOIN event: slot, point, carry). A record past
+these limits broke every member's SEALED frame and the log's compressed block
+(round S1 review: 300 INTENT in one burst, a 64 KiB carry).
 
 ### 6.6 Mid-stage join
 
@@ -947,6 +1238,80 @@ instance with a notice (3.4). The minute limit of revision 1 goes. There is no
 mid-stage state to shorten this: a save state is a load snapshot plus its input
 log (`game_main.cpp:2016`), so every catch-up starts at the visit's load.
 
+**Measured on the final path (round S1).** The replay of a save state
+(`DW4_STATE_TEST=5400`: a new engine restores the stage snapshot and replays
+the 5,399 logged steps with their traversals, headless, as a catch-up does),
+four players (`DW4_PLAYERS=4 DW4_LEVEL=200`, `spread4x.txt`: they walk apart
+for 6000 frames), the CRT's FMA3 routines, the production union pass
+(`DW4_CAMERAS=15 DW4_ONLINE=15`) against the shared camera; the state test
+found every replay identical. The save state replay also mixes the music for
+its stream positions, which a catch-up leaves out (`set_replay`), so the rate
+without the mix is the catch-up rate. Steps per second, the range of two
+sequential runs (three with the mix; the machine shared with other rounds,
+about half loaded):
+
+| Stage | shared camera, without the mix | 4 cameras, without the mix | 4 cameras, with the mix |
+| --- | --- | --- | --- |
+| stag0102 (field) | 5,710-5,760 | 2,370-2,390 | 1,790-1,810 |
+| dng101b1 (dungeon) | 7,320-7,480 | 2,870-3,330 | 1,980-2,320 |
+| stagBS02 (boss) | 10,230-10,650 | 6,640-8,290 | 3,280-4,040 |
+
+A live four-member step costs the same (0.42 ms in stag0102, about 2.5 % of a
+core at 60 Hz). The field with four cameras is the slowest case: about 2,400
+steps per second on the reference machine, a fifth below the estimate above.
+Decisions from it:
+
+- `Instances:MaxCatchUpSeconds` stays **30**. With 2,400 steps per second a
+  30-second catch-up admits `30 x (2,400 - 59.94)`, about 70,000 ticks or 19
+  minutes of a four-player field log on the reference machine (dungeon about
+  23, boss arena about 55); a PC at half that speed about 9 minutes. Longer
+  stays open a parallel instance with a notice (3.4); the loading screen never
+  waits more than half a minute for a join.
+- The client's **initial rate estimate**, before its calibration replay has
+  reported (RATE), is **1,200 steps per second**: half the reference machine's
+  slowest case, so a fresh client on a weaker PC is not offered a join it
+  cannot finish in time; the calibration replaces it within the first second
+  in the room.
+
+**The client's calibration and the music position (measured in round S1,
+client lane).** There is no bundled log (it would be game-derived data): the
+calibration direct-starts a field with four joined players (fast loading),
+lets every pad walk a slow circle and attack now and then, and times the
+steps after the load, each step as a catch-up step runs it (the step, the
+picture's traversal, the music position). `dw4_game --online-calibrate STEPS`
+prints it; the room join runs it for 0.5 s before the online engine starts.
+On the reference machine (hidden, other rounds running), main's path without
+the union pass, 6,000 steps:
+
+| Stage | steps / s | without the music position (`DW4_ONLINE_CALIBRATION=nomusic`) |
+| --- | --- | --- |
+| stag0102 | 2,731-2,805 | 4,561 |
+| dng101b1 | 3,066-3,254 | 5,726 |
+| stagBS02 | 4,519-4,646 | 11,598 |
+
+The music position is kept by rendering each replayed step's sound and
+dropping it, as the save state replay does (`load_state`); a seek of the
+streams afterwards would need a stream seek in the sound manager, which does
+not exist. It costs 0.14 ms per step in stag0102, about 40 % of the catch-up
+rate. With the union pass's 0.15-0.18 ms on top, a four-player field would
+replay at about 1,900 steps per second on the reference machine, not 3,000
+(the cameras lane measures the final path). The client reports what it
+measured (RATE after the calibration and after every replay), so the
+server's offers follow the real path either way; a position-only advance of
+the streams (no mixing) is a candidate for round S4's performance lane. Under
+load (two clients calibrating at once while four story segments ran) the
+0.5 s calibration gave 1,372-2,916 steps per second, so the first estimate
+is rough and the replays' own rates replace it.
+
+**Integration (round S1).** The client keeps the music position by rendering
+and dropping each replayed step's sound, so a catch-up runs at the cameras
+lane's "with the mix" column (about 1,800 steps per second in a four-player
+field on the reference machine), not the "without the mix" one. The decisions
+above stand: 30 s still admit about 14 minutes of a four-player field log on
+the reference machine, and the client's RATE reports what its replays really
+reach, so the server's offers follow the real path. A position-only advance
+of the streams (round S4) would give the "without the mix" rates back.
+
 **State size.** Measured (spike `r51net`, two and three processes, dng101b1,
 stag0101, stagml11): join state 271,387 B after 2,999 steps raw (snapshot
 16.4-17.7 KB + 85 B per step with 21-byte pads + events), fingerprints
@@ -962,6 +1327,39 @@ first. State transfers have their own limit (`Relay:StateBytesPerSecond`,
 default 4 MB/s per connection with a 16 MiB burst), outside the 64 KB/s bucket
 of the game frames.
 
+*Measured in S1 (relay lane), `tools/online_test/log_sizes.py`.* Recorded
+input from save state files (the snapshot plus every step's pads since the
+stage load): the user's own keyboard game (1,492 steps), a campaign bot
+driver run with continuous analog steering (30,743 steps, 8.5 min, 32,793
+distinct stick values) and a shorter bot run (1,349 steps). Player k of n
+replays the recording from offset k·len/n; the log is the relay's tick record
+(present mask, event count, 6 B per present slot); sizes per 600-tick block,
+each compressed on its own (as the relay stores it), scaled to the duration.
+The driver run is the representative one:
+
+| Log | raw | zstd 3 | zlib 6 |
+| --- | --- | --- | --- |
+| 4 players, 20 min, r48 21-byte float pads | 5.90 MB | 1.18 MB (20.0 %) | 1.22 MB |
+| 4 players, 20 min, quantized 6-byte pads | 1.83 MB | 227 KB (12.4 %) | 234 KB |
+| same, with +-24 LSB stick noise before the quantization | 1.83 MB | 239 KB (13.1 %) | 244 KB |
+| 4 players, 30 min, quantized (with noise) | 2.74 MB | 341 KB (359 KB) | 351 KB |
+| 2 players, 20 min, quantized | 0.98 MB | 111 KB | 112 KB |
+| 1 player, 20 min, quantized | 0.56 MB | 54 KB | 53 KB |
+
+The keyboard game compresses to 0.6-0.9 % (three stick values); the short
+bot run to 6-8 %. Quantized pads make the log 5.2 times smaller than the r48
+pads (the critique's 5x), and the controller noise of an int16 axis barely
+survives the GameCube's steps (+5 %). The longest joinable log (30 min, four
+players) is about 0.35 MB compressed and 2.7 MB raw; with the snapshot
+(19.4-20.2 KB raw in these files) a join state stays below 3 MB raw.
+Consequences built on in S1: the relay keeps its log in memory as 600-tick
+blocks compressed with Deflate (zlib 6 is as good as zstd 3 on these blocks
+and is in .NET; about 240 KB per 20-minute four-player visit); STATE_DATA
+sends the tick records raw (codec 0; the client has only a zstd decoder and
+.NET no zstd encoder), which at the default `Relay:StateBytesPerSecond`
+(4 MB/s, 16 MiB burst) is under one second for the longest log and well
+inside the burst; the snapshot travels as the leader uploaded it.
+
 The spike proved spawning only for a joiner of the same species with its
 package already loaded; other species (packages mid-stage, the scheduler's
 "next frame" registration), the `q_` packages from three players up, the HUD's
@@ -975,6 +1373,21 @@ last tick of the visit. Every member parks after B and sends BARRIER. NEXTSTAGE
 is simulation, so all members of a sealed instance park at the same B. The
 server stops sealing the old visit at the first BARRIER it receives; ticks it
 had already sealed after B are discarded by every member and by the log.
+
+A single BARRIER (a desync, or a forged one) therefore stops the sealing for
+every member of the instance until `Instances:BarrierReportSeconds` (5 s)
+ends the wait: their pictures freeze that long (measured in the round S1
+review: 5.17 s), then the reporters leave as a group of their own (NEW) and
+the others play on (LEAVE, LEAD_FROM). A BARRIER that names an instance the
+server does not have the member in (a straggler whose group was decided
+without it, a client whose own five-second timeout went on as NEW, a forged
+one) arrives alone and first takes the member out of the instance the server
+still had it in (LEAVE when sealed); a BARRIER while the server still parks
+the member, or while it catches up on a target the BARRIER does not name,
+ends that wait. (Before: the old slot stayed filled, one member made 20,001
+instances in 83 s, an honest arrival was sent to such a zombie to join a
+leader that played elsewhere, and the housekeeping's index -1 stopped every
+room's pings.)
 
 **Transition steps.** The steps from B to the load step (the module reload's
 step with `reset_modules`, its held fields with `console_reset_.hold`, the load
@@ -1015,7 +1428,14 @@ pads are the pads of B.
 disc, story or boss participants, give up) at step F, so every machine knows the
 two sides without a message. Each copy despawns the other side's players at the
 end of step F and from F+1 needs only its own side's pads. Every member sends
-SPLIT(F, mask); the server checks that they agree (a disagreement is a desync).
+SPLIT(F, mask). The server forks when every connected member of the instance
+reported the same fork, or after `Instances:ForkConfirmMs` (2 s) when members
+of both sides did; F must be a sealed tick at most 600 ticks back. A single
+member's SPLIT moves nobody (round S1 review: one forged SPLIT moved its
+partner into a child its engine never forked); a disagreement is a desync.
+Until the fork, both sides still execute the instance's sealed ticks (each
+copy already despawned the other side's players, so it plays only its own
+side's pads), and the fingerprints from F on are not compared.
 
 - **Side rule.** A side without a living member does not stand alone: its
   members go with the other side (the dead travel with the living, as
@@ -1071,8 +1491,51 @@ membership lane checks the canonical form first: headless, with audio dump and
 in a hidden window, the canonical bytes are equal at every stage load of the
 r25c story run and the raw bytes differ only in presentation fields.
 
+**Measured (round S1).** All ten segments of the r25c story run, each
+headless and with the audio mixer running (`DW4_AUDIO_MIX=1`: the mixer
+renders every step's samples and drops them, as with a device), and the
+segments `new` and `k8` also in a hidden window that draws every picture
+(`DW4_RENDER=1` with the mixer), each process dumping every stage load's
+snapshot (`DW4_SNAPSHOT_DUMP`; `tools/online/canonical_check.py`): every
+segment reached its checkpoint at the reference frame in every mode; the
+canonical bytes are equal in all modes at all 193 stage loads (54 of them in
+three modes); the raw bytes are equal at 35 loads and differ at 158 in 2-4
+bytes each (502 in all), every one of them inside a stream's `frames_read`,
+the field the canonical form zeroes. No other presentation-only field
+exists. The mixer and the hidden window give byte-equal raw snapshots (the
+smoke runs feed the mixer at the simulation's pace), so only a machine
+without audio output differs. The SNAPHASH is
+`online_hash(snapshot_bytes(SnapshotForm::canonical))` (FNV-1a, 64 bit).
+
 A solo group that went on without the server (3.4) uploads snapshot and log
 when it reconnects.
+
+**Limits of the store (round S1 review).** A solo member steps at the game's
+pace, so its LOG may run at most 2 % plus `Instances:LogLeadTicks` (600) ahead
+of the wall clock since its visit's BARRIER_OK; more is a protocol fault (a
+forged LOG wrote 860,400 ticks in 60 s). Only the member that leads the solo
+stretch logs it, also the ticks before J after JOIN_AT (a joiner's LOG wrote
+its own pads and slot into the leader's history). A solo log stops at
+`Instances:MaxVisitHours` (12 h): further LOG is dropped and the instance
+takes no joins. RATE and READY's rate are capped at `Instances:MaxReplayRate`
+(20,000 steps/s), so a forged rate cannot buy a join on a long log. A fork's
+child shares the parent's snapshot also while it still uploads: whichever side
+the uploader went to completes it for both (before, a child forked before the
+upload finished never became joinable). A sealed visit's member whose
+canonical hash has not come after `Instances:SnapHashSeconds` (60 s) leaves
+it by LEAVE, and sealing starts without it; so does a member that goes before
+tick 0 (a co-arrival every engine spawned in its load step), and a lost one
+no longer holds the others' start (the reconnect window runs from tick 0).
+
+**State transfers outside the room lock.** A STATE_DATA (join, co-arrival,
+resync) is captured under the room lock (the compressed blocks are never
+changed once made, the open block is copied, `TickLog.Capture`) and built on
+the thread pool; nothing of the stream is pumped to the member until it went
+out, so the ticks follow it in order. The sealing thread does not wait for a
+busy room (`Monitor.TryEnter`; that room seals its due ticks a millisecond
+later in one batch), and the room API answers a busy room with the last
+housekeeping pass's view. (Round S1 review: a join of a 523k-tick log held a
+sealed pair in another room up to 53 ms, a join every 2 s up to 153 ms.)
 
 ### 6.9 Fingerprints and desync
 
@@ -1096,6 +1559,16 @@ the same 47549cdd for stag0102.) The server compares per tick:
   same happens after three resyncs of one member within ten minutes. The
   server keeps both fingerprint lines and the last ticks for diagnosis.
 - A mismatch at READY restarts the catch-up once, then falls back (6.6).
+- **One vote per tick.** Only sealed ticks count, every tick is voted on once,
+  a member is resynced at most once at a time and once per
+  `Instances:ResyncCooldownSeconds` (10 s; further lost votes meanwhile are
+  only counted), and the relay does not lag-remove a member while it catches
+  up. A resync ends with the member's READY: no JOIN follows (it never left
+  the instance), the client goes back to sending its pads from the tick it
+  reached (`Session::finish_resync`; a replay that reaches the group's stage
+  change parks with the group). (Round S1 review: the client waited for a JOIN
+  as an observer for good and was lag-removed; 20 NETFP per second for one
+  tick sent 12 states of 2.4 MB in a second.)
 
 ### 6.10 Lag, disconnects, reconnect
 
@@ -1117,6 +1590,17 @@ the same 47549cdd for stag0102.) The server compares per tick:
 - After the room's member timeout (35 s) the server removes it from the room;
   the client returns to the title with a message. The online character keeps
   its last upload.
+- RESUME is taken once per connection, only after a resumable WELCOME, and
+  only for a reconnect's gap (at most `Instances:MaxResumeTicks`, 3,600 ticks,
+  before what the member was sent); the ticks go out under the state budget.
+  (Round S1 review: 20 RESUME per second resent a 523k-tick log, 272 MB in
+  15 s.) A connection that ends without BYE releases its address's slot at
+  once (before, the relay's writer waited for good: after
+  `Relay:MaxConnectionsPerIp` crashes or lost networks the address could not
+  connect until a restart).
+- A solo leader that does not answer JOIN_REQ is asked again every five
+  seconds, `Instances:JoinRequestTries` (3) times; then the joiner plays the
+  stage as NEW ("Joining ... failed").
 
 ### 6.11 Instance host and room owner
 
@@ -1151,11 +1635,29 @@ on, the owner's place stays reserved, the story follows the owner-away setting,
   `model_ctrl.cpp` (11), `lua_host.cpp` atan2, `particles.cpp`,
   `managers_core.cpp` sin / cos / pow, the Lua 4 VM's pow.
   - **Until round S4**: online needs a CPU on which the static CRT takes its
-    FMA3 routines (FMA3 and AVX2 by cpuid; the S1 client lane confirms the
-    exact condition in the CRT source shipped with MSVC). The client checks it
-    at the room join and refuses with "Online play needs a CPU with FMA3
-    (Intel 2013 / AMD 2015 or later)". With a static CRT (/MT) every machine
-    then runs the same code.
+    FMA3 routines. The client checks it at the room join and refuses with
+    "Online play needs a CPU with FMA3 (Intel 2013 / AMD 2015 or later)".
+    With a static CRT (/MT) every machine then runs the same code.
+  - **The exact condition (measured in round S1).** The source of the math
+    library is not part of the UCRT source drop (`ucrt/initializers/
+    fma3_initializer.cpp` only registers `__acrt_initialize_fma3`), so the
+    client lane disassembled `fma3_available.obj` and the dispatchers from the
+    static `libucrt.lib` of the Windows SDK 10.0.26100.0 that the build links
+    (`lib /extract`, `dumpbin /disasm`). `__acrt_initialize_fma3` stores
+    `__use_fma3_lib` = 0 unless CPUID.1:ECX has FMA (bit 12), OSXSAVE (27)
+    and AVX (28) and XGETBV(0) has the XMM and YMM bits (`& 6 == 6`); then 1,
+    and 3 when CPUID.0 reports leaf 7 and CPUID.(7,0):EBX has AVX2 (bit 5).
+    The routines test it in two ways: the assembler routines (`sin`, `cos`,
+    `tan`, `exp`, `log`, `fmod`, `sinf`, `cosf`, `tanf`, `expf`, `logf`,
+    `powf`) take their FMA3 path when it is nonzero, the C routines compiled
+    twice (`acos`, `asin`, `atan`, `atan2`, their float versions, and `pow`
+    from the ARM optimized routines) only when `(value & 3) == 3`. A CPU with
+    FMA3 but without AVX2 (AMD Piledriver / Steamroller) therefore runs a
+    mixed set that matches neither path. The gate wants exactly 3 (FMA3, AVX,
+    OSXSAVE, the OS's YMM state and AVX2) and `_get_FMA3_enable() != 0`;
+    the static build reads the CRT's own `__use_fma3_lib`, and a test checks
+    that the cpuid replication (`src/game/online/cpu_gate.cpp`) gives the same
+    value (3 on the reference Ryzen 7 7800X3D).
   - **Round S4** routes those call sites through `dw4::sim` wrappers that call
     the MSL routines in online sessions (`include/dw4/msl_math.hpp` has sin,
     cos, asin, acos, atan, atan2; tan, pow and exp are added; float callers go
@@ -1194,8 +1696,9 @@ on, the owner's place stays reserved, the story follows the owner-away setting,
 ## 7. Engine interface
 
 Everything below exists only with `Engine::online().enabled` (or a nonzero
-camera mask). The rounds build against these names; the integration of round S1
-fixes the final signatures in this section.
+camera mask). The signatures below are the final ones of round S1 (pinned by
+the integration; `include/dw4/engine/online.hpp`, `online_membership.hpp`,
+`engine.hpp`, `managers.hpp`); later rounds extend them.
 
 ### 7.1 Snapshot completeness (also an offline fix)
 
@@ -1215,56 +1718,227 @@ membership lane runs a cross-process join after a long campaign session (bytes
 equal to the in-process restore after at least 20 stage loads, fingerprints
 equal for 10,000 steps after it).
 
+**Built and measured (round S1).** `serialize_system` writes both fields,
+`kSnapshotVersion` is 43, the ctest `online` checks the bytes, and the CLI
+guest of a `--stage` host starts directly. The state test through a file on a
+direct start with attacks after the save point (`DW4_STATE_TEST=2000`,
+`DW4_STATE_FILE`, `--stage dng101b1`, the spike's input): main of the day
+"differs from frame 2001", round S1 "identical after loading".
+
+The cross-process join after a long session: the k8 segment of the r25c
+story run (28 stage loads, 192,599 frames, the campaign driver) wrote a
+state file at every stage load (`DW4_STAGE_STATES`), the pads of every step
+(`DW4_PAD_LOG`) and the fingerprint with the generator's hash at every frame.
+A second process loaded the state of load 21 (dng310f3, frame 154,813) and
+of load 22 (stagbs03, frame 168,823), replayed the first process's pads
+(`DW4_PAD_REPLAY`) to the end of the session and traced the same: the
+fingerprints and generator hashes are equal at every one of the 37,787 and
+23,778 frames, and the canonical and the raw bytes of all seven (six) later
+stage loads - the boss stage, the lobby, the save room - are equal to the
+first process's. The memory card each process wrote in the save room differs
+in one byte, the GCI header's modification time from the host clock (offset
+0x2B), which the game never reads back; online every member has its own
+virtual card anyway.
+
 ### 7.2 Online rules
 
+Built in round S1 (membership and cameras-exits lanes, joined by the
+integration into one implementation: `src/engine/online.cpp`,
+`online_cameras.cpp`, `online_exits.cpp`).
+
 ```cpp
-// include/dw4/engine/online.hpp
+// include/dw4/engine/online.hpp (included by engine.hpp)
 struct OnlineRules {
     bool enabled = false;            // overrides, despawn, pad redirect, input masking
     std::uint8_t player_cameras = 0; // bit per slot with its own box camera; 0 = shared camera (original)
     bool leash_off = false;          // limit_Circle child hit off
     bool scoped_scenes = false;      // proximity rule for local scenes and the status window (round S3)
     bool near_share = false;         // EXP shared by members near the kill (round S3, question 7)
-    std::uint8_t present = 0;        // instance members
+    std::uint8_t present = 0;        // instance members (bit per slot)
     std::uint8_t leaving = 0;        // members with a pending LEAVE
     bool boss_lock = false;          // a boss fight runs (set by boss_mat / boss_intro, cleared by boss_end and barriers)
+    bool operator==(const OnlineRules&) const = default;
 };
+struct PersonalSession { std::optional<std::string> gate_stage_name; std::int32_t gate_stage_no; std::map<std::int32_t, std::uint8_t> flags; };
+enum class ForkKind : std::uint8_t { exit = 0, in_stage = 1, give_up = 2 };
+struct ForkSide { std::uint64_t frame; std::uint8_t leavers; bool take_leavers; };  // `leavers` names either side (below)
+struct SplitResult { std::uint64_t frame; std::uint8_t leavers, kept; bool in_stage, local_leaves; std::uint8_t child; };
+enum class IntentKind : std::uint8_t { go_without = 0, give_up = 1 };
+enum class Decision : std::uint8_t { new_instance = 0, join = 1, dissolve = 2, co_arrive = 3 };
+enum class SnapshotForm : std::uint8_t { raw = 0, canonical = 1 };
+struct ExitHeading { std::uint64_t frame; std::string stage; int point; std::uint8_t leavers; };   // HEADING's data
+struct ExitPromptView { bool active; int owner = -1, asking = -1; std::uint8_t yes, stays, sees_fade; std::string stage; bool boss_destination; };
+constexpr int exit_prompt_owner(std::uint32_t current, std::uint32_t previous, std::uint32_t living, std::uint8_t present);  // 5.2, -1 none
+constexpr std::uint8_t exit_leavers(std::uint8_t present, std::uint8_t living, std::uint8_t going);  // the side rule of 6.7
+Cheats online_cheats(const Cheats& room);              // no cheats, no rebalancing; randomizer, drops, fast loading kept
+const SessionValueTables& session_value_tables();     // 3.7, equal to data/online/session_values.txt (ctest)
+const std::vector<std::string_view>& online_forbidden_env();    // 6.12; the one list (the client's env check delegates to it)
+const std::vector<std::string_view>& online_presentation_env(); // the rest of the program's DW4_* names ('*' = prefix)
+std::vector<std::string> online_forbidden_env_set();
+std::uint64_t online_hash(std::span<const std::uint8_t>); // FNV-1a 64; SNAPHASH = online_hash(snapshot_bytes(canonical))
+std::uint64_t net_fingerprint_cameras(const Engine&);  // CameraManager::player_box_hash()
+
 const OnlineRules& Engine::online() const;
-void Engine::set_online(const OnlineRules&);   // only between steps, at a tick every member applies
-void Engine::set_view_slot(int slot);          // presentation only: whose camera the picture uses
+void Engine::set_online(const OnlineRules&);   // only between steps; on: room cheats, console reset off; then the camera, leash and Lua side
+std::uint8_t Engine::player_cameras() const;   // OnlineRules::player_cameras
+bool Engine::online_shared() const;            // online with two or more present members
+void Engine::set_view_slot(int slot);          // presentation only: the local member's slot (0..3)
+int Engine::view_slot() const;
+int Engine::picture_slot() const;              // the camera render() draws: the view slot, the nearest living member's while defeated
 void Engine::set_fork_sides(std::span<const ForkSide>);  // replays: the side to take at each fork
-void Engine::set_split_identity(int slot);     // live play: the local slot for NETsplit
+void Engine::set_split_identity(int slot);     // live play: the local slot for forks (-1: the side that keeps the instance id)
+int Engine::split_identity() const;
+static int Engine::live_engines();             // an engine constructed while an online one lives throws std::logic_error
+static std::uint64_t Engine::mxcsr_repairs();  // simulation entries that found another MXCSR control word
+// managers.hpp, CameraManager (per-slot box cameras, 4.1)
+void CameraManager::frame_camera(Engine&, FrameCamera&, int slot);
+void CameraManager::set_player_cameras(Engine&, std::uint8_t before, std::uint8_t after, std::uint8_t heirs);
+std::uint64_t CameraManager::player_box_hash() const;
+const Vec3f* CameraManager::player_box_centre(int slot) const;
 ```
 
-`OnlineRules` is part of the StageSnapshot (a joiner restores it) and of the
-net fingerprint, not of `Engine::fingerprint`. Defaults are all off.
+**One implementation (integration).** `set_online` and every membership
+step (join, remove, fork, barrier: `membership_changed`) end in
+`online_rules_changed(before)`: `apply_online_cameras(before)` hands the
+camera mask over (`set_player_cameras(before.player_cameras,
+after.player_cameras, heirs = before.present)`: members that played with
+the shared camera keep its box state, new ones start with SETBOXCAMERA's
+first run; at a barrier the boxes were cleared with the module reset, so
+every member starts fresh), `apply_leash_rule()` switches `limit_Circle` off
+while `leash_off` (it also runs in every step, after the demo update, for
+the ring a stage load brings back), and the online Lua globals are
+reinstalled when online or the sharing changes (the `funcStageChange` port
+only while `online_shared()`).
+
+`OnlineRules` and the present slots' `PersonalSession` values are part of
+the StageSnapshot (a joiner restores them) and of the net fingerprint, not of
+`Engine::fingerprint`. Defaults are all off. The membership calls maintain
+`present`, `player_cameras` (every present slot from two members on; back to
+one keeps `{its slot}` until the next load; a visit that starts with one
+member has 0) and `leash_off` (from two members on until the next load; the
+engine switches HitLand's `limit_Circle` off at once and again after every
+load), so every machine changes them at the same step; the cameras lane
+reads them. Every online step switches the console reset off again, the
+STAGECTL soft reset does not arm online, and `restore` of an online snapshot
+goes through `set_online` as well. The MXCSR guard compares the control bits
+(6-15) only: bits 0-5 are the sticky exception flags any arithmetic sets.
 
 ### 7.3 Membership, barriers, forks
 
 ```cpp
 std::optional<std::string_view> Engine::pending_stage() const;  // read-only: a NEXTSTAGE waits for its load step
-bool Engine::membership_safe() const;
-bool Engine::joinable() const;
-std::uint64_t Engine::session_context_hash() const;
-struct PlayerCarry { PlayerSlot slot; BitChip chip; std::array<std::uint8_t, 3316> record; PersonalSession personal; };
-PlayerCarry Engine::carry_player(int slot) const;
-void Engine::online_join_player(int slot, const PlayerCarry&, int entrance_point);  // before a step
-void Engine::online_remove_player(int slot);                                        // before a step
-void Engine::online_intent(int slot, IntentKind, int argument);                     // before a step
-struct SplitResult { std::uint64_t frame; std::uint8_t leavers; bool in_stage; bool local_leaves; };
-std::optional<SplitResult> Engine::take_split();   // after a step; the copy's side is already applied
+bool Engine::membership_safe() const;   // pad input on, no demo record, no SUBWND program, not loading, presenting, no fork pending
+bool Engine::joinable() const;          // membership_safe, not a hub or UI stage, no boss lock
+static bool Engine::hub_stage(std::string_view);
+std::uint64_t Engine::session_context_hash() const;  // FNV-1a over the context values, absent = 0
+PersonalSession Engine::personal_session(int slot) const;
+// online_membership.hpp
+struct PlayerCarry { GameSystem::PlayerSlot slot; GameSystem::BitChip chip; PersonalSession personal; std::vector<std::uint8_t> record; };
+struct RoomStory { std::array<std::uint8_t, 1024> flags; std::array<std::uint8_t, 12> folder; std::array<std::int32_t, 16> counters; std::uint32_t revision; };
+struct StoryKeys { std::vector<std::int32_t> flags, folder; };
 struct BarrierResult { Decision decision; std::array<int, 4> slot_map; std::vector<std::pair<int, PlayerCarry>> co_arrivals;
-                       int own_slot; RoomStory story; StoryKeys dropped; OnlineRules rules; };
+                       int own_slot; std::optional<RoomStory> story; StoryKeys dropped; OnlineRules rules; };
+std::vector<std::uint8_t> encode_carry(const PlayerCarry&);     PlayerCarry decode_carry(std::span<const std::uint8_t>);
+std::vector<std::uint8_t> encode_barrier(const BarrierResult&); BarrierResult decode_barrier(std::span<const std::uint8_t>);
+
+PlayerCarry Engine::carry_player(int slot) const;
+void Engine::online_join_player(int slot, const PlayerCarry&, int entrance_point);  // before a step, when joinable()
+void Engine::online_remove_player(int slot);                                        // before a step, when membership_safe()
+void Engine::online_intent(int slot, IntentKind, int argument);                     // before a step (give_up forks at once)
+bool Engine::online_split(std::uint8_t mask, ForkKind kind);  // inside a step (NETsplit, the exit port, the gate disc)
+std::optional<SplitResult> Engine::take_split();   // after a step; the copy's side is already applied
+std::optional<ExitHeading> Engine::take_heading(); // after a step: an exit this copy takes (the client's HEADING)
+const ExitPromptView& Engine::exit_prompt() const; // the exit port's state (texts, the picture filter)
+void Engine::picture_hidden_roots(std::vector<const Node*>&);  // presentation: other members' item lines and exit prompts
 void Engine::set_barrier(const BarrierResult&);    // while parked after the barrier tick; applied in the load step before begin_stage_load
+bool Engine::barrier_set() const;
 void Engine::apply_room_story(const RoomStory&);   // at game_started only (barriers go through set_barrier)
 std::vector<std::uint8_t> Engine::snapshot_bytes(SnapshotForm) const;  // raw or canonical (presentation fields zeroed)
-void Engine::set_replay(bool);                     // catch-up: no audio rendering, no port events
-std::uint64_t Engine::net_fingerprint() const;
+void Engine::set_replay(bool);                     // catch-up: no port events (the host renders no audio)
+std::uint64_t Engine::net_fingerprint();           // fingerprint + generator + rotations + sound random + rules + personal + PlayerBoxes + context
+void Engine::set_boss_lock(bool);                  // round S3 wires boss_mat / boss_intro / boss_end
+int Engine::leader() const;                        // the lowest present slot that is not leaving
+int Engine::trigger_slot() const;  class Engine::TriggerScope;  // 5.1: mats, hits, the gate disc; demo works and posts keep it
+int Engine::pad_reader_slot(int index, int trigger) const;      // 7.4
+void Engine::online_gate_stage_set();              // SYSsetGateStage ran: the present slots' personal GATESTAGE follows
 ```
 
-Lua host functions registered only online: `NETsplit(mask)` (returns whether
-this copy continues), `NETisOnline()`. The `funcStageChange` port and the
-`run_script` wrappers (5.1) call into the same functions.
+**Fork sides and the relay (integration).** `SplitResult::child` is the side
+that leaves the instance id (exit and give up: the leavers; in-stage: the
+others): the relay's SPLIT and its fork lists name that side. A
+`ForkSide::leavers` may name either side; the engine matches it against the
+continuing side or the child side of the fork at that frame and takes the
+named side when `take_leavers`. `ForkSide::frame` is the engine's frame after
+the fork's step: tick t of a visit runs in the step after the load step's
+frame plus t, so the client converts a fork list's tick with `load frame + t
++ 1` (`GameEngineLink::set_fork_sides`). The exit port and the gate disc call
+`online_split(mask, ForkKind::exit)`: `present` narrows at once (the
+departure's records cover only this copy's side) and the other side's
+players go at the end of the step.
+
+**The client's side.** The DW4R2 session drives the engine through
+`dw4::game::online::EngineLink` (`src/game/online/engine_link.hpp`; the game's
+`GameEngineLink` in `engine_adapter.cpp`, the tests' fake engine in
+`tests/online_fake_hub.hpp`): the facts after a step (stage, pending stage
+and point, load serial, snapshot bytes, net fingerprint, membership-safe,
+joinable with the STATE reason, boss lock, context hash, alive and present
+masks, carry, `take_split` as the relay's child side, `take_heading`,
+presence) and the changes between steps (replay steps with the music
+position, restore into a fresh engine, replay mode, `start_online`, split
+identity, fork sides, `set_barrier`, join, remove, intent, view slot).
+
+How they behave (proven by `tests/online_tests.cpp`, ctest `online`):
+
+- **Input.** An online step masks the pads (absent slots neutral and
+  disconnected, leaving slots neutral and connected) and, from the barrier
+  tick to the load step (`pending_stage()` set), gives every present slot the
+  pad it had at the barrier tick (the session's first stage: neutral,
+  connected). The barrier tick's pads are latched at the end of the step
+  that executed NEXTSTAGE.
+- **Join.** `online_join_player` writes the carry into the slot (joined),
+  its capsule and personal values, loads `_common/<species>.igb` (the `q_`
+  variant when the stage loaded `q_` packages) and the weapon packages unless
+  the stage has them, then (in a `Messenger::PortOnly` scope) PLAYER GENERATE
+  with the matrix of `point_matrix(entrance_point, slot)`, PLAYER2 GENESTAGE
+  (its capsule left in this stage), SQ_ENTR, the HUD panels i_stpnl01-05
+  GENERATE at the slot's x and their SQ_OPEN / name / SQ_OPENWN / SQ_WAIT.
+  `first.lua` does not run again.
+- **Remove.** PLAYER REMOVE, PLAYERARMS REMOVE, NDMWPANEL REMOVE (quick
+  panel), the HUD panels' REMOVE, the slot's capsule REMOVE, joined off,
+  `bit_chips[slot]` cleared, NINZU recounted; the item label goes by itself
+  (its owner no longer answers). Calls for slots that are not present are
+  ignored (events for the other side of a fork).
+- **Fork.** `online_split(mask, kind)` applies the side rule (6.7: a side
+  without a living member goes with the other; with living members on both
+  sides the defeated stay with the stayers; `give_up` keeps only defeated
+  members in the mask), returns false when nobody goes on, true without a
+  fork when everyone does, else decides this copy's side (the fork side list
+  for that frame and mask, else the split identity, else the side that keeps
+  the instance: the stayers for `exit` and `give_up`, the mask for
+  `in_stage`), narrows `present` to that side at once (a SYSsetGateStage
+  later in the same script run sees only that side) and despawns the other
+  side's players at the end of the step. `ForkSide.frame` is
+  `SplitResult.frame`, the engine's frame after that step.
+- **Barrier.** `set_barrier` while parked; the load step applies it right
+  before `begin_stage_load`: NEW remaps the slots (`slot_map[old] = new`,
+  -1 not in the group), writes the co-arrivals' carries as joined players
+  (so `boot.lua`, `funcPlayerSet` and the entry scene see them, before any
+  stage script), moves the lowest joined slot to 0 if 0 is free, sets the
+  split identity to `own_slot`; DISSOLVE keeps only `own_slot`, moves it to
+  slot 0 and writes its personal values back; JOIN and CO_ARRIVE leave the
+  load step alone (the client drops the engine after it). `rules` supplies
+  the room switches; present, cameras, leash and boss lock follow from the
+  membership. The room story merge of round S2 goes first (S1 carries
+  `story` and `dropped` but does not apply them).
+- **Personal values.** From two present members on every present slot has its
+  own `PersonalSession` (the base member's taken from the engine-wide values
+  at the first join), so a member's gate disc return and lobby flags never
+  come from another member (3.7).
+
+Lua host functions registered only online: `NETsplit(mask [, kind])` (kind
+0 exit, 1 in-stage, 2 give up; returns 1 when this copy goes on with the
+script run), `NETisOnline()`. The `funcStageChange` port and the
+`run_script` wrappers (5.1) call `Engine::online_split` directly.
 
 ### 7.4 Pads: redirect, resets
 
@@ -1537,7 +2211,7 @@ the room (up to ten), not the instance. No invites or join secrets for now.
 | Rooms | `RoomService`: instances as lockstep groups (id, stage, visit, context hash, slots, parent and fork frame, departing, boss lock, joinable), barrier decisions DISSOLVE / co-arrival / JOIN / NEW with holds and the boss choice (3.4), catch-up estimates from the members' replay rates, forks of both kinds, in-band JOIN and LEAVE, preferred slots, no instance end when its first member leaves (`EndInstanceLocked` goes), room-scoped relay tickets, the settings hash, the relay connection as heartbeat. `POST /rooms/{code}/stage` and `/stage/leave` are retired; the room state lists instances with stage and members. Room settings gain camera mode and light mode |
 | Story | migration with `online_story`; `StoryMerge` in the domain with the golden vectors; plausibility table from the census; pending sets with STORY_ACK; the owner-away setting with the session's dropped set; `GET /online-character` composes, `PUT` ignores story bytes; `GET /rooms/{code}/story` for the website and debugging |
 | Achievements | catalogue migration to the client's ids and thresholds |
-| Config | `Sealing:MaxDelayTicks` (10), `Sealing:LateTarget` (0.001), `Relay:ReconnectSeconds` (10), `Relay:LagLeaveSeconds` (10), `Relay:StateBytesPerSecond`, `Instances:CoArrivalHoldMs` (3000), `Instances:JoinHoldSeconds` (15), `Instances:MaxCatchUpSeconds` (30), `Rooms:StoryWhileOwnerAway`; `Play:CurrentProtocol` follows the client. `Sealing:StallMs` and `Instances:MaxJoinLogMinutes` of revision 1 are gone |
+| Config | `Sealing:MaxDelayTicks` (15, measured in S1, 6.4), `Sealing:LateTarget` (0.001), `Relay:ReconnectSeconds` (10), `Relay:LagLeaveSeconds` (10), `Relay:StateBytesPerSecond`, `Instances:CoArrivalHoldMs` (3000), `Instances:JoinHoldSeconds` (30, measured in S1, 3.4), `Instances:MaxCatchUpSeconds` (30), `Rooms:StoryWhileOwnerAway`; `Play:CurrentProtocol` follows the client. `Sealing:StallMs` and `Instances:MaxJoinLogMinutes` of revision 1 are gone |
 | Website | the room page shows instances per stage |
 | Deploy | fixed-key self-signed certificate and the pin script (10); port 52041 as before |
 | Tests | unit tests for sealing schedules and fills, events, forks, barrier decisions (holds, co-arrival, context key) and merge vectors; integration tests with scripted fake clients; end-to-end tests with the real game client (16) |
@@ -1562,6 +2236,12 @@ the room (up to ten), not the instance. No invites or join secrets for now.
   rounds that change engine code the story runs r25c and nc1 frame-equal with
   main. A union test hook with one camera must also give 4004f056, and the
   extra-renders hook (4.4) must equal headless.
+- The commands since round S1: `det.sh` with `DW4_CAMERAS=1 DW4_CAM_CHECK=1`
+  (4004f056 and "0 of 1902 frames"), with `DW4_LEASH_OFF=1` and with
+  `DW4_EXTRA_RENDERS=2 DW4_EXTRA_WIDEN=1 DW4_EXTRA_PREVIOUS=1` (4004f056 each),
+  and the four-player runs of 4.4 (stag0102 and dng101b1 with
+  `DW4_CAMERAS=15 DW4_ONLINE=15`: the same fingerprint and `DW4_TRACE_CAMERAS`
+  lines headless and with local cameras 0, 2 and 3).
 
 ## 16. Testing
 
@@ -1605,11 +2285,45 @@ the room (up to ten), not the instance. No invites or join secrets for now.
 | S24 | map recorder (dng102b3) read far from the partner (scoped, local freeze) and near (original) | S3 |
 | S25 | Trailmon ride (dng412b3) with one member not aboard: no fork, the rider moves alone | S3 |
 
+- **Real game clients** (round S1 integration): `run.py G1 --game-exe EXE
+  --data DATA` starts two hidden `DW4_ONLINE_DEV` game clients instead of fake
+  ones. Both log in over the pinned HTTPS API (`DW4_ONLINE_SERVER`,
+  `DW4_ONLINE_PIN`, `DW4_ONLINE_PASSWORD`), the first creates the room, the
+  second joins it `--offset` seconds later; both play a new game with the
+  campaign bot from the title (every hub stage a DISSOLVE), meet in the first
+  field (the second joins the first's instance by catch-up) and must keep equal
+  net fingerprints (`DW4_ONLINE_TRACE` netfp lines) for `--sealed-ticks` ticks;
+  the relay's membership log must show no desync, mismatch or resync.
+- **Scenarios on real game clients** (round S1): `run.py [ID ...] --game-exe
+  EXE --data DATA --cards CHECKPOINTS` runs `tools/online_test/scenarios/<ID>`
+  (a `scenario.json`, one script per client, an `expected.txt`). Every client
+  is a hidden `DW4_ONLINE_DEV` game that calls a saved character of a campaign
+  checkpoint set at the title (`--online-card`, the r25c set: k2 = level 7
+  for deaths, k10 = level 21 for the long walks) and plays its pad from a
+  script (`--online-script`, `src/game/online_script.hpp`): steps with
+  `until` groups and `fail` checks over the instance (stage, present members,
+  sealed ticks, exit prompts, mats, deaths, flags, the wall clock for timed
+  departures), actions such as `route` (known waypoints, `routes/*.txt`),
+  `mat` (answers exit prompts), `fight`, `die`, `giveup`, `disk`, `gate`,
+  `hold`, `errand` (one step of the campaign bot, such as
+  `talk:n_digilfm#1`: up to the model's talk box, the messages moved on,
+  choices answered with their first entry). A client's `card_flags` in
+  `scenario.json` sets story flags in a copy of its card (`run.py`
+  `derive_card`, both copies of the save with their checksums) for a
+  precondition the r25c campaign never met and that has nothing to do with
+  the online play (S16: Digi-Elf 0 freed in stag0103's boat ride, flag 89,
+  stored for the normal difficulty as 714). Checked per scenario: the net
+  fingerprints of every instance equal on every client every 60 ticks, at
+  least 10,000 ticks in shared instances,
+  the canonical snapshot hashes of every NEW and co-arrival equal, no desync,
+  mismatch or resync in the relay log, no client closed, every script done,
+  and the scenario's expected log in order (`!` lines must not appear).
 - **Checks outside the stack**: the extra-renders hook (4.4), the canonical
   snapshot check (6.8), the cross-process join after a long campaign session
   (7.1), the console reset test (7.4).
 - **For the user**: `scripts/online-dev.ps1` starts the local stack and two
-  visible game windows (agents run only the hidden variant).
+  visible game windows (agents run only the hidden variant, `-Hidden`, which
+  plays both with the campaign bot; `run.py dev`).
 
 ## 17. Round plan
 
@@ -1671,6 +2385,157 @@ Done when:
   CPU.
 
 Depends on: this design; main with rounds 49 and 50 joined.
+
+**Integration (round S1, branch `dref-r52int`).** The four lanes are joined
+on main with round 50 (merge order membership, cameras-exits, client, relay)
+and fitted to one engine API (7.2, 7.3) and one wire layout (6.3 and the
+appendix, golden bytes on both sides). Checked on the integrated code:
+
+- Online off: `det.sh` twice 4004f056 / 396cb219, also with `DW4_CAMERAS=1`
+  (the one-camera union) and with the extra-renders hook (`DW4_EXTRA_RENDERS=2`,
+  widen, previous view); the save state suite 17/17 and states through a file
+  (direct start, new game frame 4500) identical after loading; r25c 10/10 with
+  every segment's frame count equal to main's run (1,758,666 frames in all);
+  ctest green, the online suite with the game data included.
+- Server: unit tests (with the golden wire and settings-hash tests),
+  integration and end-to-end tests (the C++ WinHTTP client and the Python
+  DW4R2 client) green against a private MariaDB; the fake-client scenarios
+  S1, S2, S3, S5, S16, S17a, S17b, S22a and S22b pass again on the integrated
+  hub (`run.py`).
+- Real game clients (`run.py G1`, offset 10 s): both clients reach stag0001
+  (frame 10,870) from the title through four DISSOLVEs; the first gets NEW (its
+  hub instance with the next visit), the second's barrier is held 12.8 s until
+  the first's instance is joinable (1,294 ticks after its load), then JOIN:
+  STATE_DATA with the snapshot and 1,294 ticks, a catch-up at 5,970 steps per
+  second, READY at tick 1,260 with the members' fingerprint, JOIN_REQ /
+  JOIN_AT 1,330, the JOIN event at tick 1,330 on both machines, sealed from
+  there: equal net fingerprints at all 163 compared ticks from 1,380 to 11,100
+  (9,720 sealed ticks); when the first left, LEAVE and LEAD_FROM let the second
+  lead alone. The first two runs found two integration faults that the fake
+  clients could not: BARRIER_OK of a NEW named the reused instance's next visit
+  as the old one (the hub, fixed), and the client's five-second barrier
+  timeout ran out during the relay's join hold (a BARRIER_WAIT now restarts
+  it).
+
+**Scenarios on real game clients (round S1, `tools/online_test/scenarios`).**
+Every scenario of the round passes with hidden game clients (section 16,
+`run.py` with the r25c checkpoint cards): S1, S2, S3, S5, S16, S17a, S17b,
+S18, S19a (gate disc), S19b (exit), S19c (give up), S21, S22a and S22b in one
+run, 14 of 14 (five at a time),
+each with 10,080 to 13,920 ticks of equal net fingerprints in shared
+instances (every 60 ticks, no difference anywhere), the canonical snapshot
+hashes of every NEW and co-arrival equal, no desync, mismatch or resync in
+the relay log. Earlier runs kept two instances sealed and equal for 54,060
+ticks (S2, S5 while their scripts were stuck). What they show:
+
+- S1 / S17a: two members who leave the lobby gate 1 or 2 s apart start the
+  field together (HEADING, `hold_co_arrival`, one entry scene, sealed from
+  tick 0), then walk 300 units apart with enemies on both sides.
+- S17b: 8 s apart, the later member's barrier is held while the first's
+  instance loads and runs its entry (23.1 s, 3.4), then it joins by catch-up.
+- S2: a fork at stag0101's matz02 (the leaver's copy leaves, the stayer's
+  stays), the stayer follows 15 s later and joins the leaver's stag0102
+  instance by catch-up, then both go back through matz01 as one group.
+- S3: two joins into one instance one after the other (slots 1 and 2), then
+  one barrier for all three.
+- S5: both fall, the game over window (the leader's pad) is one barrier of
+  the group, dissolved into two lobbies.
+- S16: a story member enters stag0401 at point 0 and plays there; a member
+  who took quest 1 at the lobby Digi-Elf (`errand talk:n_digilfm#1`, its
+  "yes": `quest01.lua` sets the context flags) leaves the lobby gate 40 s
+  later, which offers only point 3, and gets a NEW beside the story
+  member's instance (notice OtherContext); a second quest-1 member 40 s
+  after it joins the first's instance by catch-up at point 3 and they share
+  10,620 ticks. Flag 409 stays set on the quest side and off on the story
+  side throughout (the scripts' fail checks). The quest members' card is
+  k10 with Digi-Elf 0 freed (flag 89 / 714, `card_flags`): the quest's
+  precondition, which the r25c campaign never met.
+- S18: the exit port's owner and asked members exactly as 5.2 (No stays on
+  the mat and is not asked again; another member stepping on and off asks
+  nobody else; Yes asks a member who stepped on during the prompt; its No
+  forks off only the owner).
+- S19a / S19b / S19c: a defeated member goes along with the only living
+  member through the gate disc (lobby point 210,120, not the game over's
+  60,-30) and through an exit (the group move, no fork); giving up forks it
+  off alone into its own game over while the partner plays on.
+- S21: B+X+START for 4 s asks "Leave room?" on the holder's machine only, no
+  reboot anywhere.
+- S22a / S22b: a slow joiner (`DW4_ONLINE_RATE=300`) falls back to NEW when
+  its target leaves the stage during the catch-up, and follows the instance
+  id when its target forks.
+
+Faults the scenarios found and fixed (the session tests' fake hub now shows
+two of them): a solo instance never announced its departure (HEADING), so no
+two members ever co-arrived from the lobby (`Engine::note_departure`); a
+co-arrival believed it was alone (its BARRIER_OK names only its own slot; the
+present slots now come from the restored engine); `JoinHoldSeconds` 15 was
+shorter than a new instance's load and entry (now 30, 3.4); a joiner dropped
+the target's LIVE ticks that came during its own transition steps and waited
+for good (`live_during_transition`); a fork on a multiple of 60 sent both
+sides' fingerprints as the instance's and made the relay resync the stayer
+(no NETFP at a fork tick); a LEAVE that had to wait for a membership-safe
+step held back the LEAD_FROM behind it, so the remaining member waited for
+ticks nobody sealed; a BARRIER named the point the departing stage was
+entered at instead of the one its exit leads to (`GameEngineLink::
+pending_point` read the stage snapshot; it now reads PLAYERPOINT's point,
+which SETGENERATEPOS sets before NEXTSTAGE), so every joiner came in at the
+point its *previous* stage was entered at: S16's second quest member
+appeared at stag0401 point 0, walked back across the story field's
+generators and fell with its partner (the online engine test now checks
+the barrier's point; S2's return through stag0102 matz01 and the gate disc
+now report points 4 and 3).
+
+Not covered yet: the S12 matrix with real clients (the relay lane's
+fake-client matrix, 6.4, stands), visual checks of the online presentation
+(hidden runs only). Running ten scenarios at once overloaded the PC: joiners that needed
+more than `Rooms:MemberTimeoutSeconds` (35) between the API join and the relay
+connection were dropped from their rooms; five at a time pass.
+`scripts/online-dev.ps1` and the README note "Online co-op (preview)" exist;
+the hidden variant passes (two clients from the title, sealed together in
+stag0001, equal final fingerprints).
+
+**Review and fix round (round S1).** The review (game and server, live
+attacks on a private stack) found, and this round fixed with a test each:
+
+- *DISSOLVE kept the wrong character*: the relay names the new slot 0 in
+  BARRIER_OK's own slot, the engine read it as the old slot, so every member
+  not in slot 0 kept slot 0's player (name, level, items, bits, capsule) and
+  personal values after each game over or return to a lobby (S19a on real
+  clients: the k10 member showed the k2 partner's level 7). The adapter now
+  hands the engine the slot map's source of 0 (`online` test
+  `dissolve_through_the_link`; S19a's b fails below level 21).
+- *Relay*: zombie instances from BARRIER with an unknown instance; a
+  housekeeping task that died silently for every room on a slot -1; leaked
+  connections without BYE; records past their u8 / u16 limits (64 KiB carry,
+  300 INTENT); LOG faster than the game; RESUME and fingerprint floods; heavy
+  state transfers under the room lock (6.5, 6.7-6.10). Plus a co-arrival that
+  goes before tick 0, a joiner's LOG in the leader's history, a single
+  member's SPLIT, JOIN_REQ without end, a fork child that never got its
+  snapshot, a hub removed under a handshake, a bare `"randomizer": true`.
+- *Client*: no leaving mark (6.5), RESYNC that never ended (6.9), a damaged
+  carry ending the game, "Defeated" during every load and departure (now HP 0
+  or the capsule out), the leave prompt that the combo could not close and
+  that hid every loading line, notices without names, the login token
+  forgotten on any network error, the MXCSR guard and the leash rule missing
+  in restore, the load step's traversal missing after a restore,
+  DW4_PAD_REPLAY allowed online, a give-up's fork side not found in a replay;
+  S18's asked member now answers itself (not the prompt's timeout).
+
+Checked on the fixed code: online off `det.sh` twice 4004f056 / 396cb219
+(also with `DW4_CAMERAS=1` and the extra renders), the save state suite
+17/17 and states through a file identical, r25c 10/10 with every segment's
+frame count unchanged (1,758,666); ctest 40/40; server unit tests 130,
+integration and end-to-end 67 (one skipped, as before); the fake-client
+scenarios 9/9; the scenarios on real game clients 14/14 (S18 in a second run
+after its scripts were refitted: b's own No comes 92 ticks after it is asked,
+so the fork comes earlier and both play 600 ticks longer for 10,500 shared
+ticks). S19a's b reaches the lobby with its own 880 HP (the bug showed its
+partner's 240 and level 7).
+
+Not fixed (minor, listed): a joiner's catch-up gets about 12 ms of each host
+pass, so on a 60 Hz window it reaches about 70 % of its reported rate; a full
+instance (four) still leaves the first arrival alone when five arrive at once
+(the base holds only when every announced member fits).
 
 ### Round S2 (r53): accounts, online character, room story
 
@@ -1830,8 +2695,10 @@ Depends on: S4 and the answers.
   FMA3 gate excludes CPUs without FMA3 (older than about 2013-2015); the MSL
   routing then has to prove itself on two machines the user owns.
 - **Latency over TCP**: losses cause head-of-line delays. Server-paced sealing
-  keeps them local to the member they hit, but that member loses its inputs
-  for that time. The S1 matrix decides about UDP.
+  keeps them local to the member they hit (measured in S1), but that member
+  pays with a much larger input delay and picture stalls (0.5 % loss: about
+  +100-150 ms and 15-20 stalls per minute). The S1 matrix decided: round S4
+  carries UDP with redundancy for INPUT and SEALED (6.4).
 - **Server timing**: the 59.94 Hz schedule depends on the server's timer and
   garbage collector; a pause of the server hitches every member of every
   sealed instance equally. A dedicated timer thread and the server GC settings
@@ -1886,3 +2753,155 @@ Depends on: S4 and the answers.
 - Player critique: greps of `work/port-research/dec`; the 141 MATisAllPlayer
   scripts without an exit or NEXTSTAGE were listed in a scratch file of that
   review.
+
+## Appendix: byte layouts of round S1 (membership lane)
+
+All in the save state archive (`include/dw4/engine/state_archive.hpp`):
+little endian, `bool` and `u8` one byte, `int` / `i32` / `u32` four, `u64`
+eight, a string or vector as a u32 count followed by its elements, a
+`std::optional` as a bool then the value, a `std::map` as a u32 count then
+key / value pairs in key order, a `std::array` without a count, an enum as
+its underlying type. The integration copies the final form into
+`server/DW4Online/README.md`.
+
+**Stage snapshot, version 43** (`encode_snapshot`, `src/engine/save_state.cpp`):
+version 42's fields, with the GameSystem block extended by `direct_start`
+(bool) and `text_call` (i32) after `gate_stage_no`, and two blocks after the
+sound state:
+
+| Field | Type |
+| --- | --- |
+| OnlineRules | enabled bool, player_cameras u8, leash_off bool, scoped_scenes bool, near_share bool, present u8, leaving u8, boss_lock bool (8 B) |
+| personal | 4 x optional PersonalSession: gate_stage_name optional string, gate_stage_no i32, flags map i32 -> u8 |
+
+The canonical form (`SnapshotForm::canonical`) writes the same bytes with 0
+for every stream's `frames_read` (u64). An offline snapshot carries 8 B of
+rules (all 0) and 4 B of empty personal values more than version 42.
+
+**PlayerCarry** (`encode_carry` / `decode_carry`): u32 magic 0x59524143
+("CARY"), u32 layout version (43), the PlayerSlot as the snapshot writes it
+(joined, unique, name, digimon, weapons, HP / MP, stats, devices, bank,
+disks, bits, bank bits, XDATA, UPCNT, UPDATA, DOWNDATA, the equipment lists,
+WAZALIST, the BASE_* tables, cards, base flags / folder / counters), the
+BitChip (stage string, position 3 x f32, bits i32, EXP i32, digimon string),
+the PersonalSession, the record (vector u8). Decoding throws on another magic
+or version, a truncated buffer or trailing bytes. Measured: 2,120 B for the
+level-1 Agumon of the dng101b1 test scenario (ctest `online`).
+
+**BarrierResult** (`encode_barrier` / `decode_barrier`): u32 magic 0x52524142
+("BARR"), u32 layout version, decision u8 (0 NEW, 1 JOIN, 2 DISSOLVE,
+3 CO_ARRIVE), slot_map 4 x i32, u32 co-arrival count (at most 4) then per
+co-arrival slot i32 and a carry body (without magic and version), own_slot
+i32, optional RoomStory (flags 1024 x u8, folder 12 x u8, counters 16 x i32,
+revision u32), dropped flags (vector i32), dropped folder (vector i32),
+OnlineRules (8 B).
+
+**Pad log of the test tools** (`DW4_PAD_LOG` / `DW4_PAD_REPLAY`,
+`src/game/game_main.cpp`, test runs only): per step u32 host frame before
+the step, then 4 pads of connected u8, left x / y, right x / y as f32, buttons
+u32 (88 B per step). It is not the relay's pad format (6 B, 6.4).
+
+**Evidence of the membership lane** (worktree `DW4_PC-wt/r52mem`,
+`build/`, not committed): `canon/<mode>/<segment>/` (the r25c segments with
+`DW4_SNAPSHOT_DUMP`; k8 headless also with `DW4_STAGE_STATES`,
+`DW4_PAD_LOG` and `DW4_TRACE_FINGERPRINT=1`), `xjoin/s21`, `xjoin/s22` (the
+cross-process joins), `runs/std_*` (the state test through a file on a
+direct start), `online_data.log` (the ctest scenarios' output).
+
+## Appendix: DW4R2 wire layout (round S1, pinned)
+
+The one layout of round S1, built by the relay lane (`server/DW4Online/src/DW4Online.Relay/Protocol`) and pinned by
+the integration: the game client (`src/game/online/wire.hpp`), the fake clients (`tests/DW4Online.FakeClient`) and the
+independent Python client (`tests/e2e/relay_spike_test.py`) speak it; golden byte vectors in
+`tests/online_wire_tests.cpp` and `server/DW4Online/tests/DW4Online.Tests/WireGoldenTests.cs` hold both sides to it. All integers little endian; `str` = u8
+length + printable ASCII; `blob` = u32 length + bytes; `pad` = 6 B (6.4); masks use bits 0-3 (slots 0-3).
+
+**Room REST.** `POST /rooms` and `POST /rooms/{code}/join` answer with `relayTicket` (one-time, 60 s, role
+`member`) and `settingsHash` (16 hex digits); `POST /rooms/{code}/ticket` gives a fresh ticket (a reconnect). `GET
+/status` and the room state's `relay` are `{host, port, protocol: "DW4R2"}`. The room state's `instances` are the
+relay's groups `{id, stage, visit, mode: hub|solo|sealed, members: [{accountId, username, slot, connected, lagging}],
+departing, bossLock, joinable, ticks, parent}`; `members[].instance` names each member's. Room settings: `difficulty`
+0-2, `cameraMode` 0-1 (default 0), `lightMode` 0-1 (default 1), `fastLoading`, `randomizer: {enabled, seed (u32),
+drops, enemies 0-2, zones 0-2}`.
+
+**Settings hash.** FNV-1a 64 (offset basis 0xcbf29ce484222325, prime 0x100000001b3) of the ASCII text
+`DW4R2-settings/1;protocol=P;data=D;difficulty=N;camera=N;light=N;rand=SEED,DROPS,ENEMIES,ZONES;fast=N` (decimal
+numbers; DROPS and fast 0/1; `rand=0,0,0,0` while the randomizer is not active, that is seed 0 or no mode on).
+
+**Handshake.** `DW4R2 <ticket> <protocol> <dataHash decimal> <settingsHash hex>\n` -> `OK <member> <serverMs>\n`
+(member = the room slot 0-9) or `ERR <code>\n` with code `protocol` (bad line or protocol differs), `ticket`, `data`,
+`settings`, `full`. Then frames: type u8, payload length u32, payload; at most 1 MiB; WELCOME is the first frame.
+
+**Tick record** (SEALED, LIVE, STATE_DATA): mask u8 (slots whose pads follow), event count u8, pads (slot order),
+events: type u8, length u16, payload. Events: JOIN 1 (slot u8, entrance point u8, carry bytes), LEAVE 2 (slot u8),
+INTENT 3 (slot u8, kind u8, argument i32), LEAD_FROM 4 (tick u32: the last sealed tick; the remaining member leads
+alone from that tick), DELAY 5 (slot u8, d u8: only that member's sampler uses it). The mask only says which pads
+follow; the engine's own present / leaving masks (from JOIN / LEAVE) decide what a pad does (6.5).
+
+Client to server:
+
+| Type | Name | Payload |
+| --- | --- | --- |
+| 0x01 | INPUT | inst u32, visit u32, first tick u32, count u8 (1-32), pads |
+| 0x02 | LOG | inst u32, visit u32, first tick u32, count u16 (1-1200), pads (contiguous from the log's end; overlap is ignored, a gap closes the connection) |
+| 0x03 | HEADING | inst u32, stage str, point u8, context hash u64 |
+| 0x04 | BARRIER | inst u32, visit u32, barrier tick u32, stage str, point u8, alive mask u8, present mask u8, context hash u64, own carry blob (at most 65,533 bytes: it becomes a JOIN event, whose length is a u16) |
+| 0x05 | BARRIER_CHOICE | inst u32, choice u8 (0 wait, 1 alone) |
+| 0x06 | SPLIT | inst u32, visit u32, fork tick u32, leaver mask u8 (the side that moves to the child), kind u8 (0 exit, 1 in-stage) |
+| 0x07 | SNAPSHOT | inst u32, visit u32, total u32 (at most 4 MiB), offset u32, chunk (the rest; chunks in order from 0) |
+| 0x08 | SNAPHASH | inst u32, visit u32, canonical hash u64 |
+| 0x09 | READY | inst u32, visit u32, tick u32 (a multiple of 60), net fingerprint u64, replay rate u32, carry blob (at most 65,533 bytes); also a resync's end (no JOIN follows) |
+| 0x0A | JOIN_AT | inst u32, visit u32, tick J u32 |
+| 0x0B | NETFP | inst u32, visit u32, tick u32 (tick % 60 == 0), hash u64 |
+| 0x0C | STATE | inst u32, visit u32, tick u32, flags u8 (1 joinable, 2 membership-safe, 4 boss lock), context hash u64, reason u8 (0 none, 1 entry scene, 2 scene, 3 menu, 4 loading, 5 boss, 6 fork pending, 7 hub) |
+| 0x0D | INTENT | inst u32, visit u32, kind u8 (1 go without, 2 give up), argument i32 (sealed instances only) |
+| 0x0E | STORY | reserved for round S2 (accepted and ignored) |
+| 0x0F | PRESENCE | stage str (may be empty), inst u32, x f32, y f32, z f32, yaw f32, species u8, level u16, hp u16, max hp u16, mp u16, max mp u16 (at most every 150 ms) |
+| 0x10 | RESUME | inst u32, visit u32, slot u8, last executed tick u32 |
+| 0x11 | RATE | replay rate u32 (steps per second) |
+| 0x12 | PONG | nonce u32, client ms u64 |
+| 0x13 | BYE | reason u8 (leaves the relay at once; the room membership stays) |
+
+Server to client:
+
+| Type | Name | Payload |
+| --- | --- | --- |
+| 0x80 | WELCOME | member u8, inst u32, visit u32, slot u8, mode u8 (0 hub, 1 solo-led, 2 sealed), stage str, last tick u32 (0xFFFFFFFF none), delay u8, max catch-up seconds u16, flags u8 (1 resumable: the member still holds that slot; send RESUME) |
+| 0x81 / 0x82 | SEALED / LIVE | inst u32, visit u32, first tick u32, count u16, tick records (SEALED to members, LIVE to observers catching up) |
+| 0x83 | JOIN_REQ | inst u32, visit u32, slot u8, leader's delay u8 |
+| 0x84 | BARRIER_OK | old inst u32, old visit u32, decision u8 (1 NEW, 2 JOIN, 3 DISSOLVE, 4 CO_ARRIVE), new inst u32, new visit u32, stage str, point u8, own slot u8, slot map 4 x i8 (old slot -> new slot or -1), mode u8, delay u8, co-arrival count u8 + (slot u8, member u8, carry blob) each, story revision u32, story blob, dropped blob (both empty until S2), notice u8 (0 none, 1 other context, 2 full, 3 too long to catch up, 4 hold expired, 5 went alone, 6 join failed), name count u8 + names |
+| 0x85 | BARRIER_WAIT | inst u32, reason u8 (1 co-arrival, 2 not joinable, 3 boss lock, 4 snapshot), seconds left u16, name count u8 + names, flags u8 (1 = send BARRIER_CHOICE) |
+| 0x86 | STATE_DATA | inst u32, visit u32, total u32, offset u32, chunk (at most 60 KiB): the state blob |
+| 0x87 | PRESENCE | member u8, then the PRESENCE fields (members in the same stage outside the own instance) |
+| 0x88 | RESYNC | inst u32, visit u32 (a STATE_DATA with purpose resync follows) |
+| 0x89 | STORY_ACK | reserved for round S2 |
+| 0x8A | ROOM | notice u8 (1 joined, 2 left, 3 owner present, 4 owner away, 5 lagging, 6 lag over, 7 connected, 8 disconnected), member u8, account u64, name str, flags u8 (1 owner) |
+| 0x8B | PING | nonce u32, server ms u64, margin ms i16 (the member's 0.1 % arrival margin), suggested delay u8 (once per second) |
+| 0x8C | CLOSE | reason u8 (1 left, 2 kicked, 3 room closed, 4 replaced, 5 protocol, 6 abuse, 7 timeout, 8 server stopping), text str |
+| 0x8D | ROSTER | count u8 + (member u8, stage str, inst u32, level u16, hp u16, max hp u16, flags u8: 1 connected, 2 lagging, 4 owner) (once per second) |
+| 0x8E | REASSIGN | old inst u32, visit u32, new inst u32, from tick u32, mode u8, flags u8 (1 departing): after a fork the receiver's copy is the child; its stream comes with the new id from that tick |
+
+**State blob** (reassembled STATE_DATA): purpose u8 (1 join, 2 co-arrival, 3 resync, 4 resume), slot u8, codec u8
+(0 = raw records), snapshot blob (as the leader uploaded it), fork count u8 + (tick u32, leaver mask u8, kind u8,
+side u8: 0 stayers, 1 leavers = the side that leads to this instance), first tick u32 (0), tick count u32, tick
+records. LIVE frames continue with the next tick; they come after the blob on the same ordered queue.
+
+**Rules the client must follow** (found while building the relay):
+
+- Pads of a sealed NEW for ticks 0..d-1 may (and should) go out together with SNAPHASH; the relay accepts INPUT
+  before it starts sealing (S(0) = the last hash + the largest round trip + two ticks).
+- A joiner replays LEAVE, LEAD_FROM and DELAY of the history like any record, but it takes LEAD_FROM and DELAY only
+  for itself and only live (a LEAD_FROM in the replayed history is for whoever played then; taking it desynced the
+  fake joiner of S22b).
+- Every copy ignores events for slots not on its side of a fork (6.7); a JOIN goes with the side that keeps the id.
+- The barrier: send BARRIER after the barrier tick; ticks of the old visit that still arrive are discarded. A
+  member whose report does not arrive within `Instances:BarrierReportSeconds` (5) is left out of the group and
+  arrives alone with its next BARRIER (it is told by its decision).
+- After REASSIGN, frames in flight that name the old id are still taken for the new instance.
+- BARRIER_OK names the instance and visit the member parked in (old inst and visit, also when a NEW reuses the instance
+  with the next visit); a client takes only an answer to its own barrier.
+- A held barrier is an answer: a solo client's five seconds without a BARRIER_OK (then NEW as instance 0) count from
+  the last BARRIER_WAIT; a boss choice waits without a limit.
+- The solo leader answers JOIN_REQ with JOIN_AT(J), samples ahead from then on, repeats its last pad for the solo
+  ticks before J, logs them and flushes the LOG up to J-1; from J it executes only SEALED ticks.
+- HEADING carries the session context hash: co-arrivals need equal contexts.

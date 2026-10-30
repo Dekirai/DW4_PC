@@ -1,0 +1,13 @@
+# S19b, member b (k10, level 21): with a through the lobby gate, first along the route west; waits near matz02 until
+# a has fallen, then takes the exit alone among the living: a goes along (the group move, no fork, no game over).
+campaign until stage=stagml11,control
+idle until epoch>=@91
+explore mate00 yes until stage=stag0101,control
+log in the field
+route {route:stag0101_west}
+log at the exit
+wander -320 -190 8 until partnerdead,sealed>=9500
+log partner dead
+mat matz02 yes until stage=stag0102,control
+log in stag0102
+idle until frames>=300

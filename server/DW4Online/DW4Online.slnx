@@ -10,5 +10,6 @@
   <Folder Name="/tests/">
     <Project Path="tests/DW4Online.Tests/DW4Online.Tests.csproj" />
     <Project Path="tests/DW4Online.Integration.Tests/DW4Online.Integration.Tests.csproj" />
+    <Project Path="tests/DW4Online.FakeClient/DW4Online.FakeClient.csproj" />
   </Folder>
 </Solution>

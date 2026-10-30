@@ -7,7 +7,7 @@ public sealed class RoomOptions
 {
     /// <summary>Open rooms on the whole server.</summary>
     public int MaxRooms { get; set; } = 200;
-    /// <summary>Players in one stage instance (the engine has four player slots; netplay.cpp clamps to 1..4).</summary>
+    /// <summary>Players in one stage instance (the engine has four player slots); the relay groups at most this many.</summary>
     public int PlayersPerInstance { get; set; } = 4;
     /// <summary>How often clients send a heartbeat (announced in every room state).</summary>
     public int HeartbeatSeconds { get; set; } = 10;
@@ -56,12 +56,6 @@ public static class LeaveReasons
     public const string RoomClosed = "room_closed";
 }
 
-public static class StageRoles
-{
-    public const string Host = "host";
-    public const string Guest = "guest";
-}
-
 /// <summary>A room as the public room list and the website show it.</summary>
 public sealed record RoomSummary(
     string Code,
@@ -82,26 +76,35 @@ public sealed record RoomSummary(
     int Instances,
     DateTime CreatedAt);
 
-public sealed record RoomMemberView(long AccountId, string Username, int Slot, bool Owner, int? Instance, DateTime JoinedAt);
+/// <summary>A room member; <paramref name="Instance"/> = the relay instance it plays in (null while not connected to the relay).</summary>
+public sealed record RoomMemberView(long AccountId, string Username, int Slot, bool Owner, uint? Instance, DateTime JoinedAt);
+
+/// <summary>A member of an instance group: its account, engine slot, and whether its relay connection is up or lagging.</summary>
+public sealed record InstanceGroupMember(long AccountId, string Username, int Slot, bool Connected, bool Lagging);
 
 /// <summary>
-/// A stage instance: the players of one room who are in the same stage share enemies and drops (at most four). The
-/// instance host's machine is the centre of the lockstep star; the relay channel is "&lt;room&gt;-&lt;instance&gt;".
+/// An instance as the relay runs it (SEAMLESS.md 3.2): a lockstep group of 1-4 members in one stage, mode "hub" (hub and UI
+/// stages: solo, not logged), "solo" (one member leads on its own clock) or "sealed" (the server seals every tick);
+/// departing = a forked group walking to its exit; ticks = the visit's current tick.
 /// </summary>
-public sealed record StageInstanceView(int Id, string Stage, string Channel, long HostAccountId, string HostName,
-    IReadOnlyList<long> Players, int Capacity, DateTime CreatedAt);
+public sealed record InstanceGroupView(uint Id, string Stage, uint Visit, string Mode, IReadOnlyList<InstanceGroupMember> Members, bool Departing,
+    bool BossLock, bool Joinable, uint Ticks, uint? Parent);
 
-/// <summary>What a member sees: the room, its settings, members and stage instances, and the member itself.</summary>
+/// <summary>
+/// What a member sees: the room, its settings and their hash (DW4R2 handshake, 16 hex digits), the members, the instance
+/// groups and the member itself; after create, join and /ticket also a one-time relay ticket for this member.
+/// </summary>
 public sealed record RoomState(
     RoomSummary Room,
     JsonElement? Settings,
     IReadOnlyList<RoomMemberView> Members,
-    IReadOnlyList<StageInstanceView> Instances,
+    IReadOnlyList<InstanceGroupView> Instances,
     RoomMemberView You,
-    int HeartbeatSeconds);
-
-/// <summary>The answer to "I enter this stage": the instance, the caller's role in it and a one-time relay ticket.</summary>
-public sealed record StageAssignment(StageInstanceView Instance, string Role, string Ticket, string Channel);
+    int HeartbeatSeconds)
+{
+    public string SettingsHash { get; init; } = "";
+    public string? RelayTicket { get; init; }
+}
 
 /// <summary>The parameters of a new room.</summary>
 public sealed record RoomCreate(string? Name, string? Password, int MaxPlayers, int Protocol, ulong DataHash, string? ClientVersion, JsonElement? Settings);
@@ -139,32 +142,34 @@ public interface IRoomRepository
     Task<int> CloseAllOpenAsync(DateTime now, CancellationToken ct = default);
 }
 
-/// <summary>A one-time relay ticket and its nonce (the room service accepts only the newest ticket per player).</summary>
+/// <summary>A one-time relay ticket and its nonce (the room service accepts only the newest ticket per member).</summary>
 public sealed record RelayTicket(string Ticket, string Nonce);
 
-/// <summary>A ticket the relay is about to accept: whose, for which channel and role, and its nonce.</summary>
-public sealed record RelayAdmission(string Channel, long AccountId, bool Host, string Nonce);
+/// <summary>A ticket the relay is about to accept: the room, the account and the ticket's nonce.</summary>
+public sealed record RelayAdmission(string Room, long AccountId, string Nonce);
 
-/// <summary>The relay as the room service uses it: tickets, closing a channel, dropping one guest.</summary>
+/// <summary>The room service's answer: the member's room slot (0-9), name, owner flag and the room's compatibility data.</summary>
+public sealed record RelayAdmitted(int MemberIndex, string Username, bool Owner, int Protocol, ulong DataHash, ulong SettingsHash, int MaxPlayers);
+
+/// <summary>The DW4R2 relay as the room service uses it (SEAMLESS.md 6.2, 14).</summary>
 public interface IRelayGateway
 {
-    /// <summary>False when the relay is switched off (Relay:Enabled); stage instances then cannot start.</summary>
+    /// <summary>False when the relay is switched off (Relay:Enabled): rooms work, nobody plays together.</summary>
     bool Available { get; }
     /// <summary>The port the relay listens on once it started (null before; tests bind port 0).</summary>
     int? BoundPort { get; }
-    /// <summary>A one-time ticket for <paramref name="channel"/> ("ABC234-1").</summary>
-    RelayTicket IssueTicket(string channel, long accountId, bool host);
-    /// <summary>Drops the channel's host control socket and every spliced guest.</summary>
-    void CloseChannel(string channel);
-    /// <summary>Drops the spliced connections of one guest of the channel.</summary>
-    void DropGuest(string channel, long accountId);
-    /// <summary>The channels whose host is connected.</summary>
-    IReadOnlyCollection<string> OpenChannels { get; }
-    /// <summary>
-    /// The check the relay makes before it accepts a valid ticket (signature, expiry and single use are its own): the
-    /// room service answers whether the ticket still belongs to a running instance and is the player's newest.
-    /// </summary>
-    void SetAdmission(Func<RelayAdmission, ValueTask<bool>> check);
-    /// <summary>Raised when a channel's host control socket ends (the instance host left or lost the connection).</summary>
-    event Action<string>? HostLost;
+    /// <summary>A one-time room ticket (60 s) for the member's relay connection.</summary>
+    RelayTicket IssueTicket(string roomCode, long accountId);
+    /// <summary>The member left the room (leave, kick, timeout, staff): its relay connection closes, its slot leaves at once.</summary>
+    void MemberLeft(string roomCode, long accountId, string reason);
+    /// <summary>The room closed: every connection of it closes.</summary>
+    void RoomClosed(string roomCode);
+    /// <summary>The owner came back or went away (the members' ROOM notice).</summary>
+    void OwnerPresence(string roomCode, bool present);
+    /// <summary>The room's instance groups as the relay runs them.</summary>
+    IReadOnlyList<InstanceGroupView> Instances(string roomCode);
+    /// <summary>The check the relay makes after a ticket's signature, expiry and single use checked out.</summary>
+    void SetAdmission(Func<RelayAdmission, ValueTask<RelayAdmitted?>> check);
+    /// <summary>The relay connection is the room heartbeat: the accounts connected per room, every few seconds.</summary>
+    void SetHeartbeat(Func<string, IReadOnlyCollection<long>, ValueTask> beat);
 }

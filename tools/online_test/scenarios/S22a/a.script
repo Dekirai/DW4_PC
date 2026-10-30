@@ -1,0 +1,16 @@
+# S22a, member a (k10): with b through the lobby gate and west; out by matz02 alone (a fork) at @270 s; in stag0102
+# alone it leaves again by matz01 at @331 s, while b (a slow machine: DW4_ONLINE_RATE=300) still catches up to join it.
+campaign until stage=stagml11,control
+idle until epoch>=@90
+explore mate00 yes until stage=stag0101,control
+log in the field
+route {route:stag0101_west}
+wander -310 -190 8 until epoch>=@270
+log a leaves alone
+mat matz02 yes until stage=stag0102,control
+log in stag0102 alone
+wander 330 140 12 until epoch>=@331
+log a leaves stag0102 during b's catch-up
+mat matz01 yes until stage=stag0101,control
+log back in stag0101
+idle until frames>=600

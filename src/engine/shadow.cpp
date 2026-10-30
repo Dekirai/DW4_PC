@@ -102,6 +102,20 @@ void ShadowManager::update(Engine& engine) {
         ++count;
     }
     if (count) light_ = Vec3f{sum.x / float(count), sum.y / float(count) + 200.0f, sum.z / float(count)};
+    // Per-slot cameras (seamless co-op): every member has its own light, as
+    // 8031C1FC with that member's player alone (its position + 200 up); the
+    // union pass traverses the casters under each, the picture uses the
+    // light of the picture's camera.
+    player_cameras_ = engine.player_cameras();
+    player_lights_ = {};
+    if (player_cameras_)
+        for (int i = 0; i < 4; ++i) {
+            if (!(player_cameras_ & (1u << i))) continue;
+            const auto* player = models->player(i);
+            if (!player || !player->node || !player->generated) continue;
+            const auto& m = player->node->runtime_matrix ? *player->node->runtime_matrix : player->node->matrix;
+            player_lights_[std::size_t(i)] = Vec3f{m(3, 0), m(3, 1) + 200.0f, m(3, 2)};
+        }
     // A shadow proxy only casts while the instance it copies is out.
     for (auto* root : casters_)
         for (std::size_t i = 0; i < root->children.size(); ++i) {
@@ -155,10 +169,35 @@ Mat4 ShadowManager::light_projection() const {
 }
 
 void ShadowManager::traverse(const TraversalContext& context) {
-    if (active()) traverse(context, nullptr, nullptr);
+    if (!active()) return;
+    if (player_cameras_ && context.union_cull) {
+        // Per-slot cameras: the casters under every member's light (the
+        // traversal is idempotent at one world time, so a caster two lights
+        // see is simulated once). A defeated member has no light.
+        const auto shared = light_;
+        bool any = false;
+        for (const auto& light : player_lights_) {
+            if (!light) continue;
+            light_ = light;
+            traverse(context, nullptr, nullptr);
+            any = true;
+        }
+        light_ = shared;
+        if (any) return;
+    }
+    traverse(context, nullptr, nullptr);
 }
 
 void ShadowManager::render(Engine& engine, const TraversalContext& context, ShadowFrame& frame) {
+    // Per-slot cameras: the light of the picture's camera.
+    const auto shared = light_;
+    if (player_cameras_)
+        if (const auto& own = player_lights_[std::size_t(engine.picture_slot())]) light_ = own;
+    struct Restore {
+        std::optional<Vec3f>& light;
+        std::optional<Vec3f> value;
+        ~Restore() { light = value; }
+    } restore{light_, shared};
     frame.casters.clear();
     frame.receivers.clear();
     frame.active = active();

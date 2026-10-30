@@ -151,6 +151,30 @@ public:
     void begin_frame(Engine& engine);
     // The camera of this frame (begin_frame's), or the live one before it ran.
     void frame_camera(Engine& engine, FrameCamera& camera);
+    // Per-slot cameras (seamless co-op, docs/SEAMLESS.md 4.1): a box camera
+    // for every slot of Engine::player_cameras(). Each runs the original box
+    // camera logic (802F2BC0) with the centre at its own player, which is
+    // the original's one-player case exactly; a demo viewer, the SHAKE
+    // pattern and SETBOXCAMERA are shared by every slot. Without per-slot
+    // cameras (or for a slot without one) this is frame_camera(engine, camera).
+    void frame_camera(Engine& engine, FrameCamera& camera, int slot);
+    // The camera mask changes (Engine::set_online, at a membership step,
+    // identically on every machine): slots that leave the mask lose their
+    // box, `heirs` (the members that played with the shared camera until
+    // now, when the mask was 0) take over the shared box state so their
+    // picture does not cut, and every other new slot starts with the first
+    // run of SETBOXCAMERA (a direct cut to its box).
+    void set_player_cameras(Engine& engine, std::uint8_t before, std::uint8_t after, std::uint8_t heirs);
+    // A hash of every slot's box state (the membership lane's net
+    // fingerprint; not in Engine::fingerprint).
+    std::uint64_t player_box_hash() const;
+    // Where a slot's box camera centres (its player's last position; the
+    // capsule's surroundings while it is defeated). Null without a box.
+    const Vec3f* player_box_centre(int slot) const;
+    // DW4_CAM_CHECK (a check of test runs): steps where slot 0's own camera
+    // differed from the shared one while player 1 was the only player.
+    std::uint64_t check_mismatches() const { return check_mismatches_; }
+    std::uint64_t check_frames() const { return check_frames_; }
 
     struct CameraPath {
         std::string name;
@@ -220,9 +244,33 @@ private:
     int box_{}, previous_box_{};
     Mat4 saved_eye_, saved_target_;
     std::optional<FrameCamera> frame_;
+    // Per-slot cameras: the box state of 802F2BC0 (manager +2C..+D4) per
+    // player slot, with that slot's own live pivot / eye / target matrices
+    // in place of the shared scene nodes (which only the shared camera writes).
+    struct PlayerBox {
+        bool started{};
+        Vec3f centre{-1.0f, -1.0f, -1.0f};
+        bool centre_moved{};
+        float blend{};
+        int box{}, previous_box{};
+        Mat4 saved_eye, saved_target;
+        Mat4 pivot, eye, target;
+        std::optional<NodeTimer> hokan;
+        Vec3f shake_eye{}, shake_target{};
+        // The viewer event at which this slot's box made the box path its
+        // viewer (802F2F70..802F30E8 per slot): later than the last demo
+        // viewer, the slot sees its box camera.
+        std::uint64_t box_event{};
+    };
+    std::uint64_t viewer_events_{}, demo_event_{};
+    std::array<PlayerBox, 4> player_box_{};
+    std::array<std::optional<FrameCamera>, 4> player_frame_{};
+    std::uint64_t check_mismatches_{}, check_frames_{};
+    void update_player_box(Engine& engine, CameraRam& ram, int slot, bool fresh);
     void update_box(Engine& engine, CameraRam& ram);
     void set_viewer(const CameraRam& ram, const CameraPath& path, std::int64_t duration);
-    void compute_camera(Engine& engine, FrameCamera& camera);
+    // The frame's camera: the shared one (`own` null) or a slot's.
+    void compute_camera(Engine& engine, FrameCamera& camera, const PlayerBox* own = nullptr, int slot = 0);
     bool named_demo_running(const Engine& engine) const;
 };
 
@@ -401,7 +449,11 @@ public:
     // Save states: the streams that play on into the next stage, and back.
     std::shared_ptr<const void> persistent() const;
     void restore(Engine& engine, const std::shared_ptr<const void>& state);
-    static void serialize_persistent(class StateArchive& archive, std::shared_ptr<const void>& state);
+    // `canonical`: the hashes' form (SnapshotForm::canonical) writes 0 for the
+    // decoding positions (frames_read: audio only, never read by the game).
+    static void serialize_persistent(class StateArchive& archive, std::shared_ptr<const void>& state, bool canonical = false);
+    // The C library's rand() state (net fingerprint).
+    std::uint32_t random_state() const { return random_; }
 
     // A Cri sound entry's volume fade (disc_timing.hpp).
     using Fade = CriFade;
@@ -778,6 +830,7 @@ private:
     void push(Water& w, const Vec3f& p, float strength);
     void step(Water& w);
     bool visible(Engine& engine, const Water& w) const;
+    static bool visible_from(const FrameCamera& camera, const Water& w);
     void flatten(Water& w);
     void restart_move(Engine& engine, Water& w);
     void surface_update(Engine& engine, Water& w);
@@ -832,6 +885,10 @@ private:
     Vec3f up_{1, 0, 0};                 // [29] _upVector
     Vec3f direction_{0, -1, 0};         // the light's direction
     std::optional<Vec3f> light_;
+    // Per-slot cameras: every member's own light (8031C1FC with its player
+    // alone: the position + 200 up), for the union pass and the picture.
+    std::array<std::optional<Vec3f>, 4> player_lights_{};
+    std::uint8_t player_cameras_{};
     bool active() const { return shader_ && light_.has_value() && !casters_.empty() && !receivers_.empty(); }
     Mat4 light_view() const; // only while active()
     Mat4 light_projection() const;
@@ -986,6 +1043,9 @@ public:
     void add_info(Engine& engine, const ObjectView& info) override;
     void clear_stage(Engine& engine) override;
     bool command(Engine& engine, Ram& ram, std::string_view command, Packet& packet) override;
+    // The node of a text line (layer, line name such as "ITNAMEFONT",
+    // "font01"), null without (the picture filter of seamless co-op).
+    const Node* line_node(std::string_view layer, std::string_view name) const;
 
 private:
     struct Line {
@@ -1034,6 +1094,7 @@ public:
 private:
     struct SelectRam : Ram {
         bool running{};
+        int trigger = -1; // the trigger slot of the run that opened it (online pad redirect)
         int state{}, sub{}, counter{}, busy{};
         int traced_state = -1, traced_sub = -1; // DW4_TRACE_SELECT
         int cursor{}, items = 1;
@@ -1378,6 +1439,16 @@ public:
         Vec3f min, max;
     };
     std::vector<MatBox> mat_boxes() const;
+    // Seamless co-op (the funcStageChange port): the mat whose script runs
+    // now, its player bits of this update and the live players.
+    struct RunningMat {
+        std::string name;
+        std::uint32_t current{}, previous{}, live{};
+    };
+    std::optional<RunningMat> running_mat() const;
+    // The live players on a mat (by its name, as RunningMat::name) at the
+    // last update.
+    std::uint32_t players_on(std::string_view name) const;
 
 private:
     struct Mat {
@@ -1385,6 +1456,7 @@ private:
         Vec3f min{}, max{};
         bool enabled = true;
         std::uint32_t current{}, previous{};
+        std::optional<bool> exit; // its script calls funcStageChange (seamless co-op)
     };
     struct MatRam : Ram {
         bool running = true;  // RAM +20: PAUSE / RESTART

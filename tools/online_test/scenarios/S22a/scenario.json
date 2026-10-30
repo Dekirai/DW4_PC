@@ -1,0 +1,9 @@
+{
+  "desc": "a joiner whose target leaves the stage during the catch-up falls back to NEW",
+  "frames": 80000,
+  "timeout": 1000,
+  "clients": [
+    {"name": "a", "script": "a.script", "card": "k10", "start": 0},
+    {"name": "b", "script": "b.script", "card": "k10", "start": 3, "env": {"DW4_ONLINE_RATE": "300"}}
+  ]
+}

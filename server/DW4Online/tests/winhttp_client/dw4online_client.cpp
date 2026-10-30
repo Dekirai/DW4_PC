@@ -1,6 +1,6 @@
 // dw4online_client: an end-to-end test tool for the DW4Online API over WinHTTP (the HTTP stack the game client will
 // use; nothing here is part of the game yet). It logs in, uploads and downloads the cloud save, writes and reads the
-// online character, opens a room, enters a stage and checks the relay handshake, unlocks an achievement in the room,
+// online character, opens a room and checks the DW4R2 relay handshake with the room ticket, unlocks an achievement in the room,
 // leaves and logs out. Every step prints one line; the exit code is 0 only when every step passed.
 //
 //   dw4online_client --base http://127.0.0.1:5280 --user NAME --password PW --save savedata.dat --record record.bin
@@ -316,8 +316,10 @@ private:
     std::string token_;
 };
 
-// The relay handshake of an instance host: "DW4R1 HOST <ticket>\n" -> "OK <hostKey>\n".
-std::string relay_host_handshake(const std::string& host, int port, const std::string& ticket) {
+// The DW4R2 relay handshake of a room member: "DW4R2 <ticket> <protocol> <dataHash> <settingsHash>\n" ->
+// "OK <member> <serverTimeMs>\n", then the first frame (type u8, length u32 LE) must be WELCOME (0x80).
+std::string relay_handshake(const std::string& host, int port, const std::string& ticket, int protocol, unsigned long long data_hash,
+                            const std::string& settings_hash) {
     WSADATA wsa;
     if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0) return "WSAStartup failed";
     std::string result;
@@ -330,10 +332,18 @@ std::string relay_host_handshake(const std::string& host, int port, const std::s
         DWORD timeout = 10000;
         setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&timeout), sizeof timeout);
         if (s != INVALID_SOCKET && connect(s, found->ai_addr, int(found->ai_addrlen)) == 0) {
-            const std::string line = "DW4R1 HOST " + ticket + "\n";
+            const std::string line = "DW4R2 " + ticket + " " + std::to_string(protocol) + " " + std::to_string(data_hash) + " " + settings_hash + "\n";
             send(s, line.data(), int(line.size()), 0);
             char c = 0;
             while (recv(s, &c, 1, 0) == 1 && c != '\n') result += c;
+            unsigned char header[5]{};
+            int got = 0;
+            while (result.rfind("OK ", 0) == 0 && got < 5) {
+                const int n = recv(s, reinterpret_cast<char*>(header) + got, 5 - got, 0);
+                if (n <= 0) break;
+                got += n;
+            }
+            if (result.rfind("OK ", 0) == 0) result += got == 5 && header[0] == 0x80 ? " WELCOME" : " no WELCOME";
         } else {
             result = "connect failed";
         }
@@ -430,7 +440,7 @@ int main(int argc, char** argv) {
     step(r.status == 200 && json_string(r.body, "record") == record64, "online character read",
          json_string(r.body, "digimon").value_or("?") + " level " + std::to_string(json_number(r.body, "level").value_or(0)));
 
-    // A room, a stage instance and the relay handshake as its host.
+    // A room and the relay handshake with the member's room ticket.
     r = api.json(L"POST", "/api/v1/rooms",
                  "{\"name\":\"WinHTTP room\",\"maxPlayers\":4,\"protocol\":" + std::to_string(o.protocol) + ",\"dataHash\":" +
                      std::to_string(o.data_hash) + ",\"clientVersion\":\"" + o.client_version + "\"}");
@@ -438,18 +448,18 @@ int main(int argc, char** argv) {
     const auto code = room_at == std::string::npos ? std::nullopt : json_string(r.body, "code", room_at);
     step(r.status == 201 && code.has_value(), "room create", code.value_or(r.body));
     if (!code) return finish();
-    r = api.json(L"POST", "/api/v1/rooms/" + *code + "/stage", "{\"stage\":\"" + escape_json(o.stage) + "\"}");
-    const auto ticket = json_string(r.body, "ticket");
+    const auto ticket = json_string(r.body, "relayTicket");
+    const auto settings_hash = json_string(r.body, "settingsHash");
     const size_t relay_at = r.body.find("\"relay\"");
     const auto relay_host = relay_at == std::string::npos ? std::nullopt : json_string(r.body, "host", relay_at);
     const auto relay_port = relay_at == std::string::npos ? std::nullopt : json_number(r.body, "port", relay_at);
-    step(r.status == 200 && ticket && json_string(r.body, "role") == "host", "stage enter",
-         json_string(r.body, "channel").value_or(r.body));
-    if (ticket && relay_host && relay_port) {
-        const std::string answer = relay_host_handshake(*relay_host, int(*relay_port), *ticket);
-        step(answer.rfind("OK ", 0) == 0, "relay host handshake", answer.substr(0, 3) + "<hostKey>");
+    step(ticket.has_value() && settings_hash.has_value(), "room ticket", settings_hash.value_or(r.body));
+    if (ticket && settings_hash && relay_host && relay_port) {
+        const std::string answer = relay_handshake(*relay_host, int(*relay_port), *ticket, o.protocol, o.data_hash, *settings_hash);
+        step(answer.rfind("OK 0 ", 0) == 0 && answer.find(" WELCOME") != std::string::npos, "relay handshake",
+             answer.substr(0, 4) + answer.substr(answer.rfind(' ')));
     } else {
-        step(false, "relay host handshake", "no ticket or relay address");
+        step(false, "relay handshake", "no ticket or relay address");
     }
 
     // An achievement in the room (online play only).

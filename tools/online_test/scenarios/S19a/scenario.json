@@ -1,0 +1,9 @@
+{
+  "desc": "dead partner and the gate disc: A dead, B (the only living member) uses the gate disc: A goes with B, no game over",
+  "frames": 80000,
+  "timeout": 1000,
+  "clients": [
+    {"name": "a", "script": "a.script", "card": "k2", "start": 0},
+    {"name": "b", "script": "b.script", "card": "k10", "start": 3}
+  ]
+}

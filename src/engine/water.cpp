@@ -128,8 +128,23 @@ void WaterPlainManager::push(Water& w, const Vec3f& p, float strength) {
 // (1) or partly inside (3 / 5), which both count as visible.
 bool WaterPlainManager::visible(Engine& engine, const Water& w) const {
     FrameCamera camera;
-    if (auto* cameras = engine.get<CameraManager>()) cameras->frame_camera(engine, camera);
-    else return true;
+    auto* cameras = engine.get<CameraManager>();
+    if (!cameras) return true;
+    // Per-slot cameras (seamless co-op): the surface runs while any member's
+    // camera sees it (the union, as the scene traversal).
+    if (const auto mask = engine.player_cameras()) {
+        for (int slot = 0; slot < 4; ++slot) {
+            if (!(mask & (1u << slot))) continue;
+            cameras->frame_camera(engine, camera, slot);
+            if (visible_from(camera, w)) return true;
+        }
+        return false;
+    }
+    cameras->frame_camera(engine, camera);
+    return visible_from(camera, w);
+}
+
+bool WaterPlainManager::visible_from(const FrameCamera& camera, const Water& w) {
     const Mat4 m = camera.view * camera.projection;
     // 80317EEC..80317F28: corner a = origin + [28] x/z, y - 1; b = origin + [27] x/z, y + 1.
     const Vec3f a{w.origin.x + w.min.x, w.origin.y - 1.0f, w.origin.z + w.min.z};

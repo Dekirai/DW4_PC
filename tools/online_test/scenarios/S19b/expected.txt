@@ -1,0 +1,12 @@
+# S19b: the only living member's exit takes the defeated member along (5.2 departure + the side rule of 6.7): every
+# present living member leaves, so it is the original group move: one barrier, both arrive in stag0102 together.
+a: (?i)decision 1 .*stage=stag0101
+b: (?i)decision 4 .*stage=stag0101
+a: online-script: step .* log: dead
+b: online-script: step .* log: partner dead
+relay: (?i)barrier .*stage=stag0101 .*to=stag0102
+a: (?i)decision 1 .*stage=stag0102 .*mode=2
+b: (?i)decision 1 .*stage=stag0102 .*mode=2
+!relay: (?i)barrier .*stage=stag0101 .*to=stagml11
+!a: online-trace: split
+!b: online-trace: split
