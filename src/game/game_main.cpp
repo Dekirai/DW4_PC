@@ -23,6 +23,7 @@
 #include "online_run.hpp"
 #include "online_ui.hpp"
 #include "online_ui_script.hpp"
+#include "title_entry.hpp"
 #include "online/lobby.hpp"
 #include "online/cpu_gate.hpp"
 #include "online/env_check.hpp"
@@ -1312,6 +1313,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
         // The account and room screens (online_ui.hpp): the title panel, the
         // F1 Online tab, the test run's script (--online-ui).
         dw4::game::OnlineUiState online_ui;
+        dw4::game::TitleEntry title_entry; // the title menu's third entry in the picture
         dw4::game::TitlePanel title_panel;
         bool title_panel_shown = false; // the title shows it (the last frame)
         bool online_tab_shown = false;  // F1 shows the Online tab (the last frame)
@@ -1986,6 +1988,12 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 // (A UI test run keeps real time without a vsync of its own.)
                 std::this_thread::sleep_for(std::chrono::milliseconds(1));
             }
+            // The title menu's third entry "Online" (Engine::title_online_entry):
+            // offline with the online screens only (never in an online session,
+            // a direct session or a test run without --online-ui; DW4_TITLE_ONLINE=1
+            // shows it in a test run without them, for pictures of the menu).
+            static const bool title_online_test = options.smoke_frames && std::getenv("DW4_TITLE_ONLINE") != nullptr;
+            engine.title_online_entry = (lobby || title_online_test) && !online && !net.active() && !net.in_lobby();
             // Online: a step runs once every player's input for it is here.
             std::uint64_t net_frame = 0;
             for (int i = 0; i < steps; ++i) {
@@ -2719,6 +2727,13 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 }
                 engine.render(items, camera, clear, &shadow);
                 dw4::game::dev_hide(dev, items, shadow);
+                // The title menu's third entry "Online" (title_entry.hpp).
+                if (static const bool trace = std::getenv("DW4_TRACE_TITLE_ENTRY") != nullptr; trace && options.smoke_frames)
+                    dw4::game::TitleEntry::trace(items, engine.frame());
+                if (engine.title_online_entry) {
+                    const auto* title = engine.get<dw4::engine::Title2Manager>();
+                    title_entry.apply(items, title && title->menu_open(), title && title->menu_open() && title->cursor() == 2, engine.frame());
+                }
                 items_current = true;
             } else {
                 engine.traverse_scene();
