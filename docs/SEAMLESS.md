@@ -280,7 +280,11 @@ in this order:
    loading screen shows "Waiting for <name>...". HEADING is sent when a member
    confirms an exit (5.2), one to two seconds before its barrier, so members
    who take the same gate within about three seconds of each other arrive
-   together.
+   together. When more groups are announced than fit, the base holds for
+   those that fit, the earliest announced first; a group another base already
+   waits for is that base's. (Round S1, second review: the base held only when
+   every announced member fit, so with five arrivals at once the first one
+   played alone.)
 3. **JOIN** if an instance of the target stage with the same session context
    has places for the whole group, is joinable, and the expected catch-up of
    the slowest arriving member (6.6) is at most `Instances:MaxCatchUpSeconds`
@@ -1166,6 +1170,16 @@ then comes. (Round S1 review: nothing set the mark, and a member that left
 with its own exit prompt or status window open froze the instance for the
 rest of the stage; the session test `leave_with_open_prompt`.)
 
+An exit prompt of a leaving member (its own prompt, or the one asking it)
+does not wait for the leader's pad: it closes as No in the step after the
+LEAVE's tick, on every machine alike (`Engine::close_leaving_prompt`, a
+SELECTCTRL REMOVE as the prompt's own timeout uses it). Other members do not
+see that prompt (its picture is filtered), so the leader's pad answered it
+only by chance: a leader who only walked kept the instance in it for good,
+with joins blocked and no prompt of its own, and a stray press answered it
+Yes (round S1, second review; real-client scenario S18b). Status windows keep
+the leader's pad.
+
 Members report `STATE` so that the server knows when an instance is joinable
 and why not; a JOIN into an instance that turns unjoinable simply waits (the
 joiner sees "Waiting for the scene to end").
@@ -1312,6 +1326,35 @@ the reference machine, and the client's RATE reports what its replays really
 reach, so the server's offers follow the real path. A position-only advance
 of the streams (round S4) would give the "without the mix" rates back.
 
+**The catch-up's wall clock (round S1, second review).** A catch-up runs in
+the host loop: each pass replays for `replay_budget` and then draws the
+loading screen. With 12 ms a pass a 60 Hz window got about 70 % of the rate
+the client reported (steps per second inside the replay only), so the
+server's estimates were a third too short. Now a pass replays for 50 ms (the
+loading screen still gets about 15 pictures a second, the share is about
+75-85 % with vsync) and the client reports steps per second of the wall
+clock since the catch-up began, the host's passes included and only the
+waits for ticks left out: the rate the server plans with is the one the
+catch-up reaches. Before its first catch-up the calibration's rate counts
+for the share of a pass, `budget / (budget + 1/59.94 s)`.
+
+**Before J (round S1, second review).** From JOIN_AT the instance is sealed
+from J while the log before J still comes from the leader's LOG; the ticks
+from J wait beyond the log until it does. If the leader goes before its LOG
+reached J (a crash or a lost connection right after JOIN_AT, past the
+reconnect window), or the waiting ticks pass `Instances:MaxAheadSeconds`
+(15 s), that gap can never close: the joiners' engines never got their JOIN,
+so the relay sends them back to their own load snapshot as NEW ("Joining ...
+failed") and drops the waiting ticks; a leader still there is closed (its
+client waits for ticks that cannot come). (Before, the joiner waited on its
+loading screen for good while the instance sealed into memory.) A client
+keeps the LOG pads a broken connection did not send and sends them again
+after its RESUME. A JOIN_AT whose joiner went meanwhile (BYE, a lost
+connection, its own barrier, the JOIN_REQ tries ran out) is answered all the
+same: the relay seals J with the leader alone and LEAD_FROM J+1, so the
+leader's client, which switched to delayed sampling and waits for SEALED(J),
+leads alone again (the instance turns solo-led once the log reaches J).
+
 **State size.** Measured (spike `r51net`, two and three processes, dng101b1,
 stag0101, stagml11): join state 271,387 B after 2,999 steps raw (snapshot
 16.4-17.7 KB + 85 B per step with 21-byte pads + events), fingerprints
@@ -1388,6 +1431,26 @@ ends that wait. (Before: the old slot stayed filled, one member made 20,001
 instances in 83 s, an honest arrival was sent to such a zombie to join a
 leader that played elsewhere, and the housekeeping's index -1 stopped every
 room's pings.)
+
+A BARRIER that is decided alone may send a whole state (a join), so a member
+gets at most one such decision per `Instances:LoneBarrierMs` (1 s) and none
+while its last state is still being built; more are dropped (an honest
+client loads a stage in between). (Round S1, second review: one member's
+4,276 BARRIER built states for minutes, kept 2.5 cores busy and froze a
+sealed pair in another room for over a minute.)
+
+**A fork confirmed at a barrier (round S1, second review).** A member that
+takes an exit reaches its stage change about two seconds after the fork tick
+(110 ticks in the real runs); if a partner's SPLIT comes later than that (a
+WLAN dropout, a TCP back-off), the leaver's BARRIER reaches the parent before
+the fork is confirmed and stops its sealing. When the fork comes, the
+barrier's reports go with their side: the side that reported waits for its
+own members (or parks at once), the side without reports plays on at once,
+its sealing shifted by the stall, and a side of one member leads alone
+(LEAD_FROM). A barrier none of whose reporters is still in the instance never
+ends it while it has members: they play on. (Before, the child copied the
+stopped sealing and never started, and the parent's barrier ended its last
+member's instance without LEAVE or LEAD_FROM: frozen for good.)
 
 **Transition steps.** The steps from B to the load step (the module reload's
 step with `reset_modules`, its held fields with `console_reset_.hold`, the load
@@ -1527,6 +1590,20 @@ it by LEAVE, and sealing starts without it; so does a member that goes before
 tick 0 (a co-arrival every engine spawned in its load step), and a lost one
 no longer holds the others' start (the reconnect window runs from tick 0).
 
+**Floods (round S1, second review).** A visit has one snapshot upload: its
+first chunk fixes the total (at most 4 MiB), another total is a protocol
+fault, and the buffer grows with the chunks that came (a new total per
+17-byte frame made the relay allocate 4 MiB each, 13 GB in 20 s). Every member
+has a budget of state bytes (`Relay:StateBytesPerMinute`, 64 MiB, a burst of a
+minute's worth refilled over a minute; a single larger state passes when the
+budget is full); a member past it is closed as abuse. At most
+`Relay:MaxConcurrentStateBuilds` (2) states are built at once in the whole
+relay, and a state that a newer one for the same member replaced is not
+built. A connection's unsent game frames are limited to
+`Relay:MaxQueuedBytes` (4 MiB, a member is sent about 5 KB/s) and its unsent
+state transfers to `Relay:MaxQueuedStateBytes` (24 MiB): one address with
+its 16 connections could park 512 MiB before.
+
 **State transfers outside the room lock.** A STATE_DATA (join, co-arrival,
 resync) is captured under the room lock (the compressed blocks are never
 changed once made, the open block is copied, `TickLog.Capture`) and built on
@@ -1547,7 +1624,8 @@ the session context hash. It is a separate function, so
 coarse fingerprints prove little on their own: in r51cam every cull variant gave
 the same 47549cdd for stag0102.) The server compares per tick:
 
-- A majority (two or more equal) wins. With two members the longer member wins.
+- A majority (two or more equal) wins. Without one (two members) the member
+  whose engine no resync's replay contradicted wins, then the longer member.
 - The others get RESYNC: they rebuild by replay from snapshot and log (6.6
   rules, with the fork sides), keep their slot, and the server fills their
   pads meanwhile; the member sees the progress and the expected duration.
@@ -1556,9 +1634,36 @@ the same 47549cdd for stag0102.) The server compares per tick:
   the member's slot and its machine continues the stage alone from its own
   state (it despawns the others, a solo instance from then on) with "Lost sync
   with the group - you continue alone; you meet again at the next stage". The
-  same happens after three resyncs of one member within ten minutes. The
-  server keeps both fingerprint lines and the last ticks for diagnosis.
+  same happens after `Instances:ResyncLimit` (3) resyncs of one member within
+  `Instances:ResyncWindowMinutes` (10): one more lost vote and it continues
+  alone. The server keeps both fingerprint lines and the last ticks for
+  diagnosis.
+- **The replay judges (round S1, second review).** A resync's READY carries
+  the fingerprint of its replay of the server's log at that tick: what every
+  engine of the instance must have had. A member whose own report of that
+  tick differs (now or when it comes) is the one that is off: it is resynced
+  and loses the next two-member votes. (Before, the longer member always won:
+  a desync on its machine resynced the healthy partner every ten seconds,
+  each catch-up a longer freeze, until the healthy one was removed.)
+- **Continue alone.** The member's LEAVE is stamped like any other; a member
+  taken out while it still plays (a resync too long or too many, lag, a
+  missing hash) is sent the ticks up to its LEAVE, and its client, seeing its
+  own LEAVE live, plays on alone from its own state: the others' players are
+  marked leaving and removed at the first membership-safe step, nothing is
+  logged or compared, and its next barrier arrives alone (6.7). (Before, it
+  was sent nothing after its removal and waited for ticks for good.)
 - A mismatch at READY restarts the catch-up once, then falls back (6.6).
+- **One report per member and tick, no resync at a barrier.** A second NETFP
+  of a member for the same tick is dropped (one for a tick already compared
+  equal started a vote against its partner at will). While the instance waits
+  at a barrier nobody is resynced, and a client takes RESYNC only while it
+  plays the instance's sealed ticks and drops a state that reaches it parked
+  (a resync that reached a member after its BARRIER threw it back into the
+  stage it had left, restored as its load). A fork reported at or before a
+  tick delays that tick's vote until it is confirmed or runs out
+  (`Instances:ForkConfirmMs`), then the tick is compared (a forged SPLIT every
+  two seconds hid every comparison). The instance's flags and context (STATE)
+  come from its lowest connected member only.
 - **One vote per tick.** Only sealed ticks count, every tick is voted on once,
   a member is resynced at most once at a time and once per
   `Instances:ResyncCooldownSeconds` (10 s; further lost votes meanwhile are
@@ -1566,7 +1671,9 @@ the same 47549cdd for stag0102.) The server compares per tick:
   up. A resync ends with the member's READY: no JOIN follows (it never left
   the instance), the client goes back to sending its pads from the tick it
   reached (`Session::finish_resync`; a replay that reaches the group's stage
-  change parks with the group). (Round S1 review: the client waited for a JOIN
+  change parks with the group; a LEAD_FROM the replay reaches, after the
+  partner left during the catch-up, makes it lead alone, and its own DELAY
+  events of the replay count). (Round S1 review: the client waited for a JOIN
   as an observer for good and was lag-removed; 20 NETFP per second for one
   tick sent 12 states of 2.4 MB in a second.)
 
@@ -1601,6 +1708,13 @@ the same 47549cdd for stag0102.) The server compares per tick:
 - A solo leader that does not answer JOIN_REQ is asked again every five
   seconds, `Instances:JoinRequestTries` (3) times; then the joiner plays the
   stage as NEW ("Joining ... failed").
+- The relay's room heartbeat (the members' last-seen times in the database)
+  runs on its own task: a slow or stalled database no longer holds up the
+  pings, holds, timeouts and rosters of every room (round S1, second review:
+  a suspended database stopped them for as long as it hung). The address limit
+  (`Relay:MaxConnectionsPerIp`) answers `ERR busy` before it closes.
+- Giving up counts the local START held for two seconds, not the sealed
+  ticks (under lag a filled tick reset the count).
 
 ### 6.11 Instance host and room owner
 
@@ -2211,7 +2325,7 @@ the room (up to ten), not the instance. No invites or join secrets for now.
 | Rooms | `RoomService`: instances as lockstep groups (id, stage, visit, context hash, slots, parent and fork frame, departing, boss lock, joinable), barrier decisions DISSOLVE / co-arrival / JOIN / NEW with holds and the boss choice (3.4), catch-up estimates from the members' replay rates, forks of both kinds, in-band JOIN and LEAVE, preferred slots, no instance end when its first member leaves (`EndInstanceLocked` goes), room-scoped relay tickets, the settings hash, the relay connection as heartbeat. `POST /rooms/{code}/stage` and `/stage/leave` are retired; the room state lists instances with stage and members. Room settings gain camera mode and light mode |
 | Story | migration with `online_story`; `StoryMerge` in the domain with the golden vectors; plausibility table from the census; pending sets with STORY_ACK; the owner-away setting with the session's dropped set; `GET /online-character` composes, `PUT` ignores story bytes; `GET /rooms/{code}/story` for the website and debugging |
 | Achievements | catalogue migration to the client's ids and thresholds |
-| Config | `Sealing:MaxDelayTicks` (15, measured in S1, 6.4), `Sealing:LateTarget` (0.001), `Relay:ReconnectSeconds` (10), `Relay:LagLeaveSeconds` (10), `Relay:StateBytesPerSecond`, `Instances:CoArrivalHoldMs` (3000), `Instances:JoinHoldSeconds` (30, measured in S1, 3.4), `Instances:MaxCatchUpSeconds` (30), `Rooms:StoryWhileOwnerAway`; `Play:CurrentProtocol` follows the client. `Sealing:StallMs` and `Instances:MaxJoinLogMinutes` of revision 1 are gone |
+| Config | `Sealing:MaxDelayTicks` (15, measured in S1, 6.4), `Sealing:LateTarget` (0.001), `Relay:ReconnectSeconds` (10), `Relay:LagLeaveSeconds` (10), `Relay:StateBytesPerSecond`, `Instances:CoArrivalHoldMs` (3000), `Instances:JoinHoldSeconds` (30, measured in S1, 3.4), `Instances:MaxCatchUpSeconds` (30), the flood and recovery limits of the S1 reviews (`Relay:MaxQueuedBytes` 4 MiB, `Relay:MaxQueuedStateBytes` 24 MiB, `Relay:StateBytesPerMinute` 64 MiB, `Relay:MaxConcurrentStateBuilds` 2, `Instances:LoneBarrierMs` 1000, `Instances:MaxAheadSeconds` 15, `Instances:ResyncLimit` 3 in `Instances:ResyncWindowMinutes` 10, 6.6-6.10), `Rooms:StoryWhileOwnerAway`; `Play:CurrentProtocol` follows the client. `Sealing:StallMs` and `Instances:MaxJoinLogMinutes` of revision 1 are gone |
 | Website | the room page shows instances per stage |
 | Deploy | fixed-key self-signed certificate and the pin script (10); port 52041 as before |
 | Tests | unit tests for sealing schedules and fills, events, forks, barrier decisions (holds, co-arrival, context key) and merge vectors; integration tests with scripted fake clients; end-to-end tests with the real game client (16) |
@@ -2830,7 +2944,8 @@ numbers; DROPS and fast 0/1; `rand=0,0,0,0` while the randomizer is not active, 
 
 **Handshake.** `DW4R2 <ticket> <protocol> <dataHash decimal> <settingsHash hex>\n` -> `OK <member> <serverMs>\n`
 (member = the room slot 0-9) or `ERR <code>\n` with code `protocol` (bad line or protocol differs), `ticket`, `data`,
-`settings`, `full`. Then frames: type u8, payload length u32, payload; at most 1 MiB; WELCOME is the first frame.
+`settings`, `full`, `busy` (the address has `Relay:MaxConnectionsPerIp` connections). Then frames: type u8, payload
+length u32, payload; at most 1 MiB; WELCOME is the first frame.
 
 **Tick record** (SEALED, LIVE, STATE_DATA): mask u8 (slots whose pads follow), event count u8, pads (slot order),
 events: type u8, length u16, payload. Events: JOIN 1 (slot u8, entrance point u8, carry bytes), LEAVE 2 (slot u8),
@@ -2905,3 +3020,8 @@ records. LIVE frames continue with the next tick; they come after the blob on th
 - The solo leader answers JOIN_REQ with JOIN_AT(J), samples ahead from then on, repeats its last pad for the solo
   ticks before J, logs them and flushes the LOG up to J-1; from J it executes only SEALED ticks.
 - HEADING carries the session context hash: co-arrivals need equal contexts.
+- A CO_ARRIVE's co-arrival list names the instance's other members by slot (empty carries): names only, its engine
+  comes from the base's snapshot.
+- RESYNC is taken only while sealed; a STATE_DATA that reaches a parked member is dropped. The member's own LEAVE in a
+  live SEALED tick means it continues alone (unregistered until its next barrier).
+- One NETFP per tick; a JOIN_AT is answered even when its joiner went (the leader leads alone from J+1).
