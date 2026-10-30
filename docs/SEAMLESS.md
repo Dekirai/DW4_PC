@@ -2135,7 +2135,9 @@ The default stays `drop` until the user decides (question 2).
   another UNIQUE is never uploaded (the server would answer
   `unique_changed`). 409 (and 404 on an update): the uploads stop for the
   room session, the cache goes to `backups/`, `GET` reloads the server's
-  character into the card, the player gets a notice; 429, 5xx and network
+  character into the card, the player gets a notice; a 409 whose
+  `currentRevision` is the revision the save was based on is a race lost
+  inside the server and goes again after 2 s (three times at most); 429, 5xx and network
   errors retry after 20 / 10 s; 401, 403, 426 stop with a notice; 422 drops
   that save with the server's text. The play time is the server's plus the
   live steps in a started game outside loads (`kFieldSeconds` each).
@@ -2164,7 +2166,16 @@ The default stays `drop` until the user decides (question 2).
   refresh). Tests: ctest `online_character`; on the local stack
   `tools/online_test/character_test.py` (C1 a new character: created at the
   first stage change, the save room, leaving; C2 = S15: a called character,
-  another PC's save, 409, reload, no overwrite).
+  another PC's save, 409, reload, no overwrite; C3 the unsent save of a crash
+  uploaded at the next entry; P1 the cloud panel: show, upload over another
+  PC's backup, download a restored revision, with a picture of the panel).
+- The server (found by those runs): the first writes of two accounts at
+  once deadlocked under REPEATABLE READ (gap locks of the `FOR UPDATE` reads
+  of missing rows) and InnoDB's victim answered 409 although nobody else had
+  written that account's data. Online character and cloud save writes run in
+  READ COMMITTED and a deadlock victim runs again
+  (`MySqlErrors.RevisionedWrite`, `DeadlockAttempts`, `src/DW4Online.Data/Database.cs`);
+  integration tests write twelve accounts at once (before: 7 of 12 got 409).
 
 ## 10. Client: account and room UI
 
