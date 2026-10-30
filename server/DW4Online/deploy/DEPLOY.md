@@ -295,7 +295,8 @@ and tokens would travel unencrypted).
 [backup-db.ps1](backup-db.ps1) runs `mariadb-dump --single-transaction --quick --hex-blob --routines --events
 --no-tablespaces dw4online`, compresses the dump (gzip) into `backups\daily`, keeps 14 daily and 8 weekly (Sunday)
 copies and can copy each new file to a second folder (`-CopyTo`, for example a mounted share). The credentials come
-from an option file readable only by Administrators and SYSTEM:
+from an option file in the `config` folder (Administrators and SYSTEM; the service account may read it as well, it
+holds a stronger password of its own anyway), so no password appears on a command line:
 
 ```ini
 # D:\Dekirai\Servers\DW4Online\config\backup.cnf
@@ -319,28 +320,61 @@ Also keep a copy of `config\appsettings.Production.json` (it holds the database 
 encrypted. The `keys` folder needs no backup: its keys are DPAPI-encrypted for this machine's service account and only
 protect anti-forgery tokens; if it is lost, open website forms simply have to be reloaded.
 
-Restore drill (once, and after schema changes):
+Run the backup once by hand and check the file (elevated PowerShell; `Start-ScheduledTask 'DW4Online DB backup'` runs
+it as SYSTEM the same way):
 
 ```powershell
-mariadb.exe -u root -p -e "CREATE DATABASE dw4online_restore CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
-& 'C:\Program Files\7-Zip\7z.exe' e -so backups\daily\dw4online-<date>.sql.gz | mariadb.exe -u root -p dw4online_restore
+powershell -ExecutionPolicy Bypass -File D:\Dekirai\Servers\DW4Online\app\deploy\backup-db.ps1   # "Backup written: ...sql.gz (.. KB)"
 ```
 
-(Any gzip tool works; the dump is plain SQL.) Point a test instance's connection string at `dw4online_restore` and
-check `/health`, then drop the database.
+Restore drill (once, and after schema changes) with [restore-db.ps1](restore-db.ps1), which asks for the MariaDB root
+password once and prints the restored database's account count and schema version:
+
+```powershell
+cd D:\Dekirai\Servers\DW4Online
+$latest = (Get-ChildItem backups\daily\*.sql.gz | Sort-Object Name | Select-Object -Last 1).FullName
+powershell -ExecutionPolicy Bypass -File app\deploy\restore-db.ps1 -Backup $latest     # into dw4online_restore
+mariadb.exe -u root -p -e "DROP DATABASE dw4online_restore"
+```
+
+Do not pipe a dump into the client in Windows PowerShell 5.1 (`7z e -so x.sql.gz | mariadb.exe ...`): the pipe
+re-encodes the text and silently turns every non-ASCII character into `?` (the rehearsal restored "PC von Jürgen" as
+"PC von J??rgen"). `restore-db.ps1` decompresses to a file and lets cmd.exe feed it unchanged; by hand that is
+`cmd /c "mariadb.exe -u root -p dw4online_restore < dump.sql"`.
 
 ## 8. Updates and rollback
 
-1. Announce the update (set `Service:Motd`, optionally `Service:Maintenance` true so no new rooms open), pick a quiet
-   time: stopping the service ends running co-op sessions and rooms (they close with `server_restart` at the next start).
-2. `Stop-Service DW4Online`
-3. Run `deploy\backup-db.ps1` once by hand (migrations commit DDL implicitly; a failed one leaves the schema between
-   versions and the backup is the way back).
-4. `Rename-Item app app.previous` (remove the older `app.previous` first), extract the new zip to `app`.
-5. `Start-Service DW4Online`; the startup migrator applies new migrations; check the log and `/health`.
+1. Announce the update and pick a quiet time: stopping the service ends running co-op sessions and rooms (they close
+   with `server_restart` at the next start). The service reads its settings only when it starts, so `Service:Motd` or
+   `Service:Maintenance` (no new rooms) take effect only after a restart: announce elsewhere, or set them for a
+   restart some time before the update.
+2. In an elevated PowerShell, with the new zip on the server (for example `C:\Users\Administrator\Desktop\DW4Online-<version>.zip`):
+
+   ```powershell
+   cd D:\Dekirai\Servers\DW4Online
+   Stop-Service DW4Online
+   powershell -ExecutionPolicy Bypass -File app\deploy\backup-db.ps1      # migrations commit DDL implicitly: this backup is the way back
+   if (Test-Path app.previous) { Remove-Item -Recurse -Force app.previous }
+   Rename-Item app app.previous
+   Expand-Archive C:\Users\Administrator\Desktop\DW4Online-<version>.zip -DestinationPath app
+   Start-Service DW4Online
+   Get-Content (Get-ChildItem logs\dw4online-*.log | Sort-Object Name | Select-Object -Last 1).FullName -Tail 20   # "Database schema is current" or "Applied migrations ..."
+   curl.exe -k https://88.198.52.221/health
+   ```
+
+   The new `app` folder inherits the root's permissions (service read and execute), and the firewall rules and the
+   service name the same path, so nothing else changes.
 
 Rollback: stop the service, swap `app` and `app.previous` back; if the update applied a migration, restore the backup
-from step 3 into `dw4online` first (the old build refuses a database that is newer than itself).
+from step 2 into `dw4online` first (the old build refuses a database that is newer than itself):
+
+```powershell
+cd D:\Dekirai\Servers\DW4Online
+Stop-Service DW4Online
+Rename-Item app app.failed; Rename-Item app.previous app
+powershell -ExecutionPolicy Bypass -File app\deploy\restore-db.ps1 -Backup backups\daily\dw4online-<date>.sql.gz -Database dw4online -Replace   # only after a migration
+Start-Service DW4Online
+```
 
 MariaDB updates and restarts: DW4Online depends on the MariaDB service (`sc.exe config DW4Online depend= MariaDB`), so
 `Stop-Service MariaDB` and `Restart-Service MariaDB` refuse while DW4Online runs (without `-Force`, which stops
