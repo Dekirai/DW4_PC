@@ -1,12 +1,15 @@
 # S19a: the only living member's gate disc takes the defeated member along (the side rule, 6.7): one barrier of the
-# whole instance to stagML11 point 3 (the gate disc's point), dissolved into two lobbies; no fork, no game over.
+# whole instance to stagML11, dissolved into two lobbies; no fork, no game over. Both arrive at the gate disc's
+# lobby point (210,120), not at the game over's (60,-30); the relay's barrier line names point 0 for both.
 a: (?i)decision 1 .*stage=stag0101
 b: (?i)decision 4 .*stage=stag0101
 a: online-script: step .* log: dead
 b: online-script: step .* log: partner dead
-relay: (?i)barrier .*stage=stag0101 .*to=stagml11 point=3
+relay: (?i)barrier .*stage=stag0101 .*to=stagml11
 a: (?i)decision 3 .*stage=stagml11
 b: (?i)decision 3 .*stage=stagml11
-!relay: (?i)barrier .*stage=stag0101 .*to=stagml11 point=0
+a: online-script: step .* log: in the lobby .* at 210,120\)
+b: online-script: step .* log: in the lobby .* at 210,120\)
+!a: online-script: step .* log: in the lobby .* at 60,-30\)
 !a: online-trace: split
 !b: online-trace: split

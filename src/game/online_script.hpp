@@ -15,6 +15,7 @@
 //   campaign            the story bot (src/game/campaign.cpp; it plays slot 0,
 //                       so only while this member is slot 0)
 //   idle                no input
+//   gate MAT N          onto a lobby gate mat, N times down in its menu, A
 //   talk                A now and then while this member's player has no
 //                       control (talk windows, messages)
 //   goto X Z [R]        walk to within R (4) of (X, Z) over the stage collision
@@ -45,6 +46,7 @@
 //         time>=S (seconds since the start)  prompt=0|1  asking=N (-1: none)
 //         onmat:NAME>=N (present members on the mat)  onme:NAME  offme:NAME
 //         stagechange (the stage differs from the one the step began in)
+//         flag:N=V (the engine's flag N, an absent flag counts as 0)
 //         epoch>=S (the system clock, seconds since 1970: tools/online_test
 //         writes @N as its scenario start + N)  answered>=N (exit prompt
 //         answers given in this step)  hp<=N (this member's HP)
@@ -133,6 +135,7 @@ private:
     bool step_reached_ = false; // goto / route: the goal reached (the step ends without "until")
     std::string step_stage_;    // the stage the step began in (stagechange)
     bool failed_ = false;       // a fail condition of this step held (traced once)
+    int menu_at_ = -1;          // the gate action: the frame the menu came up
     // The route action: where this member stood 40 frames ago, held up.
     engine::Vec3f stuck_at_{};
     int stuck_frame_ = -1000;

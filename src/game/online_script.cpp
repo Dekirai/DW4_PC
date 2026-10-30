@@ -73,7 +73,7 @@ bool playing(engine::Engine& engine, const OnlineScriptFacts& facts) {
 } // namespace
 
 bool OnlineScript::known_action(std::string_view name) {
-    static constexpr std::string_view names[] = {"campaign", "idle",  "talk", "goto", "route", "follow",  "mat",  "explore",
+    static constexpr std::string_view names[] = {"campaign", "idle", "talk", "gate", "goto", "route", "follow", "mat", "explore",
                                                  "fight",    "wander", "die",  "hold", "press", "giveup", "disk", "log"};
     return std::find(std::begin(names), std::end(names), name) != std::end(names);
 }
@@ -83,6 +83,7 @@ bool OnlineScript::known_condition(std::string_view key) {
                                                  "slot",  "sealed",  "time",    "epoch",  "answered", "hp",          "prompt",
                                                  "asking", "asked",  "partnerdead", "apart", "near", "stagechange"};
     if (key.starts_with("onmat:") || key.starts_with("onme:") || key.starts_with("offme:")) return key.find(':') + 1 < key.size();
+    if (key.starts_with("flag:")) return key.size() > 5 && key.find_first_not_of("0123456789", 5) == std::string_view::npos;
     return std::find(std::begin(names), std::end(names), key) != std::end(names);
 }
 
@@ -109,8 +110,8 @@ bool OnlineScript::load(const std::filesystem::path& file, std::string& error) {
             // The rest of the line is the text (no conditions).
             std::string text;
             std::getline(words, text);
-            text.erase(0, text.find_first_not_of(" 	"));
-            while (!text.empty() && (text.back() == ' ' || text.back() == '	' || text.back() == '')) text.pop_back();
+            text.erase(0, text.find_first_not_of(" \t"));
+            while (!text.empty() && (text.back() == ' ' || text.back() == '\t' || text.back() == '\r')) text.pop_back();
             step.args = {text};
             steps_.push_back(std::move(step));
             continue;
@@ -181,6 +182,10 @@ bool OnlineScript::holds(engine::Engine& engine, const OnlineScriptFacts& facts,
     };
     if (c.key == "stage") return playing(engine, facts) && lower(engine.stage_name()) == lower(c.text);
     if (c.key == "stagechange") return lower(engine.stage_name()) != step_stage_;
+    if (c.key.rfind("flag:", 0) == 0) {
+        const auto found = engine.flags().find(std::atoi(c.key.c_str() + 5));
+        return compare(found != engine.flags().end() ? found->second : 0);
+    }
     if (c.key == "present") return compare(std::popcount(unsigned(facts.present)));
     if (c.key == "frames") return compare(step_frames_);
     if (c.key == "dead") return playing(engine, facts) && defeated(engine, facts.own_slot);
@@ -322,6 +327,24 @@ OnlineScript::Output OnlineScript::act(engine::Engine& engine, const OnlineScrip
         // player has no control.
         if (!me || !me->control_enabled || me->seq_name.rfind("SQ_DEMO", 0) == 0)
             if (frame % 40 < 3) out.buttons = dw4::pad_button::a;
+        return out;
+    }
+    if (step.action == "gate") {
+        // A lobby gate (the original's area menu, not the exit port): onto the
+        // mat, then N times down in the menu and A.
+        if (!me) return out;
+        const bool menu = !me->control_enabled || me->seq_name.rfind("SQ_DEMO", 0) == 0;
+        if (!menu) {
+            menu_at_ = -1;
+            const auto* mats = engine.get<engine::MatCtrlManager>();
+            if (const auto centre = mats && !step.args.empty() ? mats->mat_centre(step.args[0]) : std::nullopt)
+                walk_to(engine, *me, centre->x, centre->z, 2.0f, frame, out, flat(*centre, position(*me)) < 120.0f);
+            return out;
+        }
+        if (menu_at_ < 0) menu_at_ = frame;
+        const int t = frame - menu_at_, downs = int(arg(1));
+        if (t >= 40 && t < 40 + 20 * downs && (t - 40) % 20 < 3) out.buttons = dw4::pad_button::down;
+        else if (t >= 50 + 20 * downs && t < 53 + 20 * downs) out.buttons = dw4::pad_button::a;
         return out;
     }
     if (step.action == "hold" || step.action == "press") {

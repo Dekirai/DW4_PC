@@ -8,7 +8,7 @@ idle until epoch>=@90
 explore mate00 yes until stage=stag0101,control
 log in the field
 route {route:stag0101_west}
-wander -310 -190 8 until sealed>=7500
+wander -310 -190 8 until sealed>=8800
 log case 1: a steps on and answers no
 mat matz02 no until answered>=1,prompt=0,frames>=60 fail stagechange
 log a said no and stays on the mat

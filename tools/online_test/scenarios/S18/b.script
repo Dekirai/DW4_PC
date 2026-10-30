@@ -5,7 +5,7 @@ idle until epoch>=@91
 explore mate00 yes until stage=stag0101,control
 log in the field
 route {route:stag0101_west:-308,-190}
-wander -285 -190 6 until sealed>=7500
+wander -285 -190 6 until sealed>=8800
 idle until onmat:matz02>=1,prompt=0,frames>=120
 log b steps on after a's no
 mat matz02 no until answered>=1,prompt=0,frames>=60 fail stagechange
