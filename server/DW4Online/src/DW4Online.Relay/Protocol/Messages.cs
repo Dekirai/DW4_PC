@@ -1,4 +1,5 @@
 using System.Numerics;
+using DW4Online.Domain.Story;
 
 namespace DW4Online.Relay.Protocol;
 
@@ -479,13 +480,107 @@ public sealed record JoinReqMsg(uint Inst, uint Visit, byte Slot, byte Delay)
     public byte[] Frame() => new WireWriter(Msg.JoinReq).U32(Inst).U32(Visit).U8(Slot).U8(Delay).Frame();
 }
 
+/// <summary>
+/// STORY (SEAMLESS.md 8.3): a member's pending set against the confirmed room story, at every barrier (before BARRIER) and
+/// while it is not empty. inst, visit (the member's instance now), the confirmed revision, phase u8 (0: no claim), u16 n +
+/// n x u16 flags, u8 n + n x u8 keys, u8 n + n x (u8 counter, u32 line inst, u32 line visit, i32 growth).
+/// </summary>
+public sealed record StoryMsg(uint Inst, uint Visit, uint Revision, StoryDelta Delta)
+{
+    public const int MaxLines = 32;
+
+    public static StoryMsg Parse(ReadOnlySpan<byte> p)
+    {
+        var r = new WireReader(p);
+        var inst = r.U32();
+        var visit = r.U32();
+        var revision = r.U32();
+        var d = new StoryDelta { Phase = r.U8() };
+        var nf = r.U16();
+        if (nf > StorySets.FlagCount) throw new ProtocolException("story: too many flags");
+        for (var i = 0; i < nf; ++i)
+        {
+            var f = r.U16();
+            if (f >= StorySets.FlagCount) throw new ProtocolException("story: flag out of range");
+            d.Flags.Add(f);
+        }
+        var nk = r.U8();
+        if (nk > StorySets.FolderCount) throw new ProtocolException("story: too many keys");
+        for (var i = 0; i < nk; ++i)
+        {
+            var k = r.U8();
+            if (k >= StorySets.FolderCount) throw new ProtocolException("story: key out of range");
+            d.Folder.Add(k);
+        }
+        var nc = r.U8();
+        if (nc > MaxLines) throw new ProtocolException("story: too many counter lines");
+        for (var i = 0; i < nc; ++i)
+        {
+            var counter = r.U8();
+            if (counter >= StorySets.CounterCount) throw new ProtocolException("story: counter out of range");
+            d.Counters.Add(new CounterGrowth(counter, r.U32(), r.U32(), r.I32()));
+        }
+        r.End();
+        return new StoryMsg(inst, visit, revision, d);
+    }
+
+    public byte[] Frame()
+    {
+        var w = new WireWriter(Msg.Story, 16 + 2 * Delta.Flags.Count + Delta.Folder.Count + 13 * Delta.Counters.Count)
+            .U32(Inst).U32(Visit).U32(Revision).U8(Delta.Phase).U16((ushort)Delta.Flags.Count);
+        foreach (var f in Delta.Flags) w.U16((ushort)f);
+        w.U8((byte)Delta.Folder.Count);
+        foreach (var k in Delta.Folder) w.U8((byte)k);
+        w.U8((byte)Delta.Counters.Count);
+        foreach (var g in Delta.Counters) w.U8((byte)g.Counter).U32(g.Inst).U32(g.Visit).I32(g.Growth);
+        return w.Frame();
+    }
+}
+
+/// <summary>
+/// STORY_ACK: the room story's revision and blob (1,100 bytes; empty: none), flags (1: the answer to this member's STORY)
+/// and the refused keys (kind u8, index u16, reason u8). After WELCOME, to every member on each new revision, and to a
+/// STORY's sender.
+/// </summary>
+public sealed record StoryAckMsg(uint Revision, byte[] Story, byte Flags, IReadOnlyList<StoryRefused> Refused)
+{
+    public const byte Answer = 1;
+
+    public static StoryAckMsg Parse(ReadOnlySpan<byte> p)
+    {
+        var r = new WireReader(p);
+        var revision = r.U32();
+        var story = r.Blob(RoomStoryData.BlobBytes);
+        if (story.Length != 0 && story.Length != RoomStoryData.BlobBytes) throw new ProtocolException("story_ack: story blob size");
+        var flags = r.U8();
+        var n = r.U16();
+        var refused = new List<StoryRefused>(n);
+        for (var i = 0; i < n; ++i)
+        {
+            var kind = r.U8();
+            if (kind > 3) throw new ProtocolException("story_ack: unknown key kind");
+            refused.Add(new StoryRefused((StoryKeyKind)kind, r.U16(), (StoryRefusal)r.U8()));
+        }
+        r.End();
+        return new StoryAckMsg(revision, story, flags, refused);
+    }
+
+    public byte[] Frame()
+    {
+        var w = new WireWriter(Msg.StoryAck, 16 + Story.Length + 4 * Refused.Count).U32(Revision).Blob(Story).U8(Flags).U16((ushort)Refused.Count);
+        foreach (var x in Refused) w.U8((byte)x.Kind).U16((ushort)x.Index).U8((byte)x.Reason);
+        return w.Frame();
+    }
+}
+
 /// <summary>A co-arrival in the base's BARRIER_OK: its slot in the new instance, its room member index and its carry.</summary>
 public sealed record CoArrival(byte Slot, byte Member, byte[] Carry);
 
 /// <summary>
 /// BARRIER_OK: the server's decision for a parked member. SlotMap[old slot] = the new slot of that engine player or -1
 /// (NEW: the group's engine continues with these slots; DISSOLVE: only the own player stays, at slot 0). CoArrivals: the
-/// players the base engine spawns in its load step. Story bytes and the dropped set are empty until round S2. Notice and
+/// players the base engine spawns in its load step. Story: the room story's 1,100-byte blob (the same bytes for every member
+/// of the group; empty: none) and its revision; Dropped: the room's dropped set (StoryKeys blob, SEAMLESS.md 8.6). Notice and
 /// names say why a NEW opened next to an instance of the same stage.
 /// </summary>
 public sealed record BarrierOkMsg(uint Inst, uint Visit, BarrierDecision Decision, uint NewInst, uint NewVisit, string Stage, byte Point, byte OwnSlot,

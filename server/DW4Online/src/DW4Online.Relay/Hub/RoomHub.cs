@@ -1,5 +1,7 @@
 using System.Diagnostics;
 using System.Numerics;
+using DW4Online.Domain.Rooms;
+using DW4Online.Domain.Story;
 using DW4Online.Relay.Protocol;
 using Microsoft.Extensions.Logging;
 
@@ -30,6 +32,7 @@ public sealed class RoomHub
     private readonly Dictionary<uint, HubInstance> _instances = [];
     private readonly List<ArrivalGroup> _holds = [];
     private uint _nextInstance = 1;
+    private RoomStoryKeeper? _story;
     private uint _pingNonce;
     private long _lastPing;
     private long _lastRoster;
@@ -47,6 +50,14 @@ public sealed class RoomHub
         _mlog = mlog;
         _stateRunner = stateRunner;
     }
+
+    /// <summary>Saves a new revision of the room story as the owner's online story (the account, a copy); set by the relay.</summary>
+    public Action<long, RoomStoryData>? StorySaver { get; set; }
+
+    /// <summary>The room story of this session (SEAMLESS.md 8.3-8.6), from the owner's story the first connection brought.</summary>
+    public RoomStoryKeeper Story => _story ??= Info.Story is { } s
+        ? new RoomStoryKeeper(s.Story, s.Difficulty, s.Policy, s.OwnerPresent)
+        : new RoomStoryKeeper(new RoomStoryData(), 0, StoryPolicy.Drop, ownerPresent: true);
 
     /// <summary>The views as the last housekeeping pass saw them (the room API's answer while the room is busy).</summary>
     public IReadOnlyList<InstanceView> CachedViews { get; private set; } = [];
@@ -128,6 +139,8 @@ public sealed class RoomHub
         peer.Send(new WelcomeMsg((byte)m.Index, inst.Id, inst.Visit, (byte)m.Slot, inst.Mode, inst.Stage,
             resumable && m.Cursor > 0 ? m.Cursor - 1 : WelcomeMsg.NoTick, (byte)(inst.Streams[m.Slot]?.Delay.Current ?? 0),
             (ushort)_inst.MaxCatchUpSeconds, resumable ? WelcomeMsg.Resumable : (byte)0).Frame());
+        // The confirmed room story to start from (the title applies it at game start; SEAMLESS.md 8.5).
+        peer.Send(new StoryAckMsg(Story.Story.Revision, Story.Story.ToBlob(), 0, []).Frame());
         foreach (var other in _members.Values)
         {
             peer.Send(new RoomMsg(RoomNotice.MemberJoined, (byte)other.Index, (ulong)other.AccountId, other.Name, Flags(other)).Frame());
@@ -191,6 +204,8 @@ public sealed class RoomHub
         foreach (var m in _members.Values)
             m.Peer?.Send(new RoomMsg(present ? RoomNotice.OwnerPresent : RoomNotice.OwnerAway, (byte)(owner?.Index ?? 0xFF),
                 (ulong)(owner?.AccountId ?? 0), owner?.Name ?? "", RoomMsg.Owner).Frame());
+        // The hold policy merges what was kept when the owner returns.
+        if (Story.SetOwnerPresent(present)) StoryChanged(null);
     }
 
     /// <summary>
@@ -262,7 +277,7 @@ public sealed class RoomHub
             case Msg.NetFp: OnNetFp(m, NetFpMsg.Parse(p), now); break;
             case Msg.State: OnState(m, StateMsg.Parse(p), now); break;
             case Msg.Intent: OnIntent(m, IntentMsg.Parse(p), now); break;
-            case Msg.Story: Count("story_ignored"); break; // round S2
+            case Msg.Story: OnStory(m, StoryMsg.Parse(p), now); break;
             case Msg.Presence: OnPresence(m, PresenceMsg.Parse(p), now); break;
             case Msg.Resume: OnResume(m, ResumeMsg.Parse(p), now); break;
             case Msg.Rate: m.Rate = Math.Min(RateMsg.Parse(p).StepsPerSecond, MaxReplayRate); break;
@@ -992,7 +1007,7 @@ public sealed class RoomHub
             DetachFromOld(g.From, m);
             Place(m, hub, 0, now);
             m.Peer?.Send(new BarrierOkMsg(g.From.Id, g.From.Visit, BarrierDecision.Dissolve, hub.Id, hub.Visit, g.Stage, g.Point, 0, map,
-                InstanceMode.Hub, 0, [], 0, [], []).Frame());
+                InstanceMode.Hub, 0, [], Story.Story.Revision, Story.Story.ToBlob(), Story.Dropped.ToBlob()).Frame());
             Note("dissolve", hub, ("member", m.Index), ("from", g.From.Id));
         }
         EndIfEmpty(g.From, now);
@@ -1069,6 +1084,10 @@ public sealed class RoomHub
         foreach (var c in coMembers) coList.Add(new CoArrival((byte)map[c.Member], (byte)c.Member.Index, c.Carry));
         foreach (var f in followers) coList.Add(new CoArrival((byte)map[f], (byte)f.Index, f.Joining!.Carry.Length > 0 ? f.Joining.Carry : FindCarry(f)));
 
+        // Every member of the group gets the same story bytes (their engines apply them in the same load step).
+        var story = Story.Story;
+        var storyBlob = story.ToBlob();
+        var dropped = Story.Dropped.ToBlob();
         foreach (var a in g.Members)
         {
             var m = a.Member;
@@ -1077,7 +1096,7 @@ public sealed class RoomHub
             Array.Fill(slotMap, (sbyte)-1);
             foreach (var b in g.Members) slotMap[b.Slot] = (sbyte)map[b.Member];
             m.Peer?.Send(new BarrierOkMsg(fromId, fromVisit, BarrierDecision.New, inst.Id, inst.Visit, g.Stage, g.Point, (byte)map[m], slotMap,
-                inst.Mode, (byte)(inst.Mode == InstanceMode.Sealed ? delays[m] : 0), coList, 0, [], [], notice, noticeNames).Frame());
+                inst.Mode, (byte)(inst.Mode == InstanceMode.Sealed ? delays[m] : 0), coList, story.Revision, storyBlob, dropped, notice, noticeNames).Frame());
         }
         foreach (var c in g.CoArrivals)
         {
@@ -1110,7 +1129,7 @@ public sealed class RoomHub
         Array.Fill(none, (sbyte)-1);
         m.Cursor = 0;
         m.Peer?.Send(new BarrierOkMsg(from.Id, from.Visit, BarrierDecision.CoArrive, inst.Id, inst.Visit, inst.Stage, point, (byte)slot, none,
-            inst.Mode, (byte)delay, [], 0, [], []).Frame());
+            inst.Mode, (byte)delay, [], Story.Story.Revision, Story.Story.ToBlob(), Story.Dropped.ToBlob()).Frame());
         Note("co_arrive", inst, ("member", m.Index), ("slot", slot));
     }
 
@@ -1149,6 +1168,7 @@ public sealed class RoomHub
         i.SoloJoin = null;
         i.LastLogAt = now;
         i.VisitStartedAt = now;
+        i.StoryEpoch = Story.Epoch;
         i.LogOwner = null;
         i.LogFull = false;
         i.Voted.Clear();
@@ -1159,7 +1179,10 @@ public sealed class RoomHub
         var id = _nextInstance;
         while (_instances.ContainsKey(id) || id == 0) id = id >= 999_999_999 ? 1 : id + 1;
         _nextInstance = id >= 999_999_999 ? 1 : id + 1;
-        var i = new HubInstance(id) { Mode = mode, Stage = stage, Visit = visit, ContextHash = context, CreatedAt = now, LastLogAt = now, VisitStartedAt = now };
+        var i = new HubInstance(id)
+        {
+            Mode = mode, Stage = stage, Visit = visit, ContextHash = context, CreatedAt = now, LastLogAt = now, VisitStartedAt = now, StoryEpoch = Story.Epoch,
+        };
         _instances[id] = i;
         return i;
     }
@@ -1217,7 +1240,8 @@ public sealed class RoomHub
             var none = new sbyte[Wire.MaxSlots];
             Array.Fill(none, (sbyte)-1);
             m.Peer?.Send(new BarrierOkMsg(g.From.Id, g.From.Visit, BarrierDecision.Join, target.Id, target.Visit, g.Stage, g.Point, (byte)slot, none,
-                target.Mode, (byte)DelayController.FromRoundTrips(m.Rtt.All, _sealing.MaxDelayTicks), [], 0, [], []).Frame());
+                target.Mode, (byte)DelayController.FromRoundTrips(m.Rtt.All, _sealing.MaxDelayTicks), [], Story.Story.Revision, Story.Story.ToBlob(),
+                Story.Dropped.ToBlob()).Frame());
             Note("join_decided", target, ("member", m.Index), ("slot", slot));
             DeliverState(m, now);
         }
@@ -1403,7 +1427,8 @@ public sealed class RoomHub
         Array.Fill(map, (sbyte)-1);
         map[j.OldSlot] = 0;
         m.Peer?.Send(new BarrierOkMsg(j.Target.Id, j.Target.Visit, BarrierDecision.New, inst.Id, inst.Visit, inst.Stage, j.From.Point, 0, map,
-            InstanceMode.SoloLed, 0, [], 0, [], [], notice == BarrierNotice.None ? BarrierNotice.HoldExpired : notice, []).Frame());
+            InstanceMode.SoloLed, 0, [], Story.Story.Revision, Story.Story.ToBlob(), Story.Dropped.ToBlob(),
+            notice == BarrierNotice.None ? BarrierNotice.HoldExpired : notice, []).Frame());
         Note("fallback_new", inst, ("member", m.Index), ("from", j.Target.Id));
     }
 
@@ -1487,6 +1512,7 @@ public sealed class RoomHub
         foreach (var (t, rec) in i.Ahead) child.Ahead[t] = rec;
         child.Snapshot = i.Snapshot.Share();
         child.VisitStartedAt = i.VisitStartedAt;
+        child.StoryEpoch = i.StoryEpoch;
         child.Parent = i.Id;
         child.ForkTick = f;
         child.Departing = kind == SplitKind.Exit;
@@ -1535,6 +1561,72 @@ public sealed class RoomHub
         }
         Note("fork", i, ("tick", f), ("leavers", leavers), ("kind", kind.ToString()), ("child", child.Id), ("from", from));
         _sealer?.Invoke();
+    }
+
+    // Room story (SEAMLESS.md 8.3-8.6) ---------------------------------------------------------------------------------------
+
+    private void OnStory(HubMember m, StoryMsg msg, long now)
+    {
+        var keeper = Story;
+        Count("story");
+        // A burst, then Instances:StoryMessagesPerMinute (the client sends again what the rate refused).
+        var burst = Math.Max(1, _inst.StoryBurst);
+        if (m.StoryTokens < 0) m.StoryTokens = burst;
+        else m.StoryTokens = Math.Min(burst, m.StoryTokens + Ms(now - m.StoryRefilledAt) / 60_000.0 * Math.Max(1, _inst.StoryMessagesPerMinute));
+        m.StoryRefilledAt = now;
+        StoryTake take;
+        if (m.StoryTokens < 1)
+        {
+            Count("story_rate");
+            var refused = new List<StoryRefused>();
+            var d = msg.Delta;
+            if (d.Phase != 0) refused.Add(new StoryRefused(StoryKeyKind.Phase, d.Phase, StoryRefusal.Rate));
+            refused.AddRange(d.Flags.Select(f => new StoryRefused(StoryKeyKind.Flag, f, StoryRefusal.Rate)));
+            refused.AddRange(d.Folder.Select(k => new StoryRefused(StoryKeyKind.Folder, k, StoryRefusal.Rate)));
+            refused.AddRange(d.Counters.Select(g => new StoryRefused(StoryKeyKind.Counter, g.Counter, StoryRefusal.Rate)));
+            take = new StoryTake(refused, false);
+        }
+        else
+        {
+            m.StoryTokens -= 1;
+            // The member's instance now decides (its stage and the epoch its visit began in); the frame's ids may be the
+            // ones before a fork. A parked or catching-up member sends none (the client sends STORY before BARRIER).
+            var inst = m.Instance is { Ended: false } i && m.Slot >= 0 && m.Joining is null && m.Arrival is null ? i : null;
+            var delta = msg.Delta;
+            // Lines of instance 0 (a solo group that went on without the server's answer) are this member's own.
+            if (delta.Counters.Any(g => g.Inst == 0))
+                delta = new StoryDelta
+                {
+                    Phase = delta.Phase, Flags = delta.Flags, Folder = delta.Folder,
+                    Counters = delta.Counters.Select(g => g.Inst == 0 ? g with { Inst = 0x8000_0000u | (uint)m.Index } : g).ToList(),
+                };
+            take = keeper.Take(delta, inst?.Stage, inst?.StoryEpoch ?? 0);
+        }
+        if (take.Refused.Count > 0) Count("story_refused", take.Refused.Count);
+        m.Peer?.Send(new StoryAckMsg(keeper.Story.Revision, keeper.Story.ToBlob(), StoryAckMsg.Answer, take.Refused).Frame());
+        if (take.Changed) StoryChanged(m);
+    }
+
+    /// <summary>A new revision: every other member's confirmed story follows (STORY_ACK), the owner's online story is saved.</summary>
+    private void StoryChanged(HubMember? sender)
+    {
+        var story = Story.Story;
+        var frame = new StoryAckMsg(story.Revision, story.ToBlob(), 0, []).Frame();
+        foreach (var other in _members.Values)
+            if (other != sender) other.Peer?.Send(frame);
+        Note("story", null, ("revision", story.Revision), ("phase", StoryMerge.Phase(story)));
+        if (Info.Story is { OwnerAccountId: > 0 } s) StorySaver?.Invoke(s.OwnerAccountId, story.Clone());
+    }
+
+    /// <summary>The room story as the room API shows it.</summary>
+    public RoomStoryState StoryState()
+    {
+        var k = Story;
+        var s = k.Story;
+        var dropped = k.Dropped;
+        return new RoomStoryState(s.Revision, StoryMerge.Phase(s), Enumerable.Range(0, StorySets.FlagCount).Where(f => s.Flags[f] != 0).ToList(),
+            Enumerable.Range(0, StorySets.FolderCount).Where(f => s.Folder[f] != 0).ToList(), [.. s.Counters], k.Policy.ToString().ToLowerInvariant(),
+            k.OwnerPresent, dropped.Flags, dropped.Folder, dropped.Counters, k.HeldCount);
     }
 
     // Resume ---------------------------------------------------------------------------------------------------------------

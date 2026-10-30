@@ -35,9 +35,6 @@ public sealed class RoomOptions
     /// (merged at once). Default drop until the owner of the server decides otherwise.
     /// </summary>
     public string StoryWhileOwnerAway { get; set; } = "drop";
-    /// <summary>STORY messages one member may send per minute beyond <see cref="StoryBurst"/> (more are refused with "rate").</summary>
-    public int StoryMessagesPerMinute { get; set; } = 60;
-    public int StoryBurst { get; set; } = 10;
 }
 
 public static class RoomLimits
@@ -165,6 +162,14 @@ public sealed record RelayAdmission(string Room, long AccountId, string Nonce);
 public sealed record RelayAdmitted(int MemberIndex, string Username, bool Owner, int Protocol, ulong DataHash, ulong SettingsHash, int MaxPlayers,
     long OwnerAccountId = 0, int Difficulty = 0, bool OwnerPresent = true, string StoryPolicy = "drop");
 
+/// <summary>
+/// The room story as GET /rooms/{code}/story shows it (SEAMLESS.md 8): its revision and phase index (0-7), the flags, keys
+/// and the 16 counters it holds, the owner-away policy, whether the owner is in the room, the session's dropped set and how
+/// many values are held for the owner's return.
+/// </summary>
+public sealed record RoomStoryState(uint Revision, int Phase, IReadOnlyList<int> Flags, IReadOnlyList<int> Folder, IReadOnlyList<int> Counters,
+    string Policy, bool OwnerPresent, IReadOnlyList<int> DroppedFlags, IReadOnlyList<int> DroppedFolder, IReadOnlyList<int> DroppedCounters, int Held);
+
 /// <summary>The DW4R2 relay as the room service uses it (SEAMLESS.md 6.2, 14).</summary>
 public interface IRelayGateway
 {
@@ -182,6 +187,8 @@ public interface IRelayGateway
     void OwnerPresence(string roomCode, bool present);
     /// <summary>The room's instance groups as the relay runs them.</summary>
     IReadOnlyList<InstanceGroupView> Instances(string roomCode);
+    /// <summary>The room story as the relay keeps it (null: no relay room yet).</summary>
+    RoomStoryState? Story(string roomCode) => null;
     /// <summary>The check the relay makes after a ticket's signature, expiry and single use checked out.</summary>
     void SetAdmission(Func<RelayAdmission, ValueTask<RelayAdmitted?>> check);
     /// <summary>The relay connection is the room heartbeat: the accounts connected per room, every few seconds.</summary>

@@ -60,6 +60,24 @@ public sealed class RelayHub : BackgroundService
     /// <summary>Called every few seconds with the accounts connected per room (the relay connection is the room heartbeat).</summary>
     public Func<string, IReadOnlyCollection<long>, ValueTask>? Heartbeat { get; set; }
 
+    /// <summary>Saves a room story's new revision as its owner's online story (account, copy; called under the room lock: only queue).</summary>
+    public Action<long, DW4Online.Domain.Story.RoomStoryData>? StorySaver { get; set; }
+
+    /// <summary>The room story as the room API shows it (null: no hub for that room).</summary>
+    public DW4Online.Domain.Rooms.RoomStoryState? Story(string code)
+    {
+        if (!_rooms.TryGetValue(code, out var hub)) return null;
+        if (!Monitor.TryEnter(hub.Sync, 50)) return null;
+        try
+        {
+            return hub.StoryState();
+        }
+        finally
+        {
+            Monitor.Exit(hub.Sync);
+        }
+    }
+
     public bool HighResolutionTimer => _timer.HighResolution;
     public IReadOnlyCollection<string> Rooms => _rooms.Keys.ToList();
     public RoomHub? Room(string code) => _rooms.GetValueOrDefault(code);
@@ -382,7 +400,10 @@ public sealed class RelayHub : BackgroundService
     private RoomHub NewRoom(RoomInfo room)
     {
         var hub = new RoomHub(room, _options, _sealing, _instances, _loggers.CreateLogger("DW4Online.Relay.Room." + room.Code), _mlog,
-            job => _ = Task.Run(() => RunStateJob(job)));
+            job => _ = Task.Run(() => RunStateJob(job)))
+        {
+            StorySaver = (owner, story) => StorySaver?.Invoke(owner, story),
+        };
         hub.OnSealingStarted(_timer.Wake);
         return hub;
     }
