@@ -5,7 +5,7 @@
 }
 <h1>Rooms online</h1>
 <p class="muted">Open rooms right now. Join them from the game's online menu with the room code. A room holds up to ten
-    players; everyone in the same stage plays together, up to four per stage.</p>
+    players; everyone in the same stage plays together, up to four per stage. Lobbies and menus are played alone.</p>
 
 @if (Model.Rooms.Count == 0)
 {
@@ -21,7 +21,8 @@ else
             <tbody>
             @foreach (var r in Model.Rooms)
             {
-                <tr>
+                var hasStages = Model.Stages.TryGetValue(r.Code, out var stages);
+                <tr class="@(hasStages ? "room-row" : "")">
                     <td>
                         <strong>@r.Name</strong>
                         @if (r.HasPassword)
@@ -52,6 +53,51 @@ else
                     </td>
                     <td>@Format.Ago(r.CreatedAt, Model.Now)</td>
                 </tr>
+                @if (hasStages)
+                {
+                    <tr>
+                        <td colspan="6">
+                            <span class="muted small">Where they play:</span>
+                            <ul class="stages">
+                            @foreach (var s in stages!)
+                            {
+                                var names = s.Instances.Where(i => i.Names is not null).SelectMany(i => i.Names!).ToList();
+                                <li>
+                                    <strong>@s.Name</strong>
+                                    @if (s.Hub)
+                                    {
+                                        @(s.Players == 1 ? ": 1 player" : $": {s.Players} players, each on their own")
+                                        @if (names.Count > 0)
+                                        {
+                                            <span class="muted small">(@string.Join(", ", names))</span>
+                                        }
+                                    }
+                                    else
+                                    {
+                                        @for (var i = 0; i < s.Instances.Count; ++i)
+                                        {
+                                            var line = s.Instances[i];
+                                            @(i == 0 ? ": " : "; ")@RoomsModel.Describe(line)
+                                            @if (line.BossLock)
+                                            {
+                                                <span class="badge warn">boss fight</span>
+                                            }
+                                            @if (line.Departing)
+                                            {
+                                                <span class="badge">leaving the stage</span>
+                                            }
+                                            @if (line.Names is { Count: > 0 })
+                                            {
+                                                <span class="muted small">(@string.Join(", ", line.Names))</span>
+                                            }
+                                        }
+                                    }
+                                </li>
+                            }
+                            </ul>
+                        </td>
+                    </tr>
+                }
             }
             </tbody>
         </table>

@@ -12,6 +12,8 @@
 #include "presence_data.hpp"
 
 #include <atomic>
+#include <fstream>
+#include <iterator>
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
@@ -625,19 +627,38 @@ int serve(const std::string& name, int seconds, const std::string& mode) {
 }
 #endif
 
+// The stage names the website's room page reads (data/online/areas.json).
+void area_file(const std::string& file) {
+    const auto text = dw4::game::area_names_json();
+    check(text.find("\"stage\": \"stag0101\", \"name\": \"Death Valley: Goblin Pass\"") != std::string::npos, "an area line");
+    check(text.find('\r') == std::string::npos && text.ends_with("]\n}\n"), "LF, complete");
+    for (const auto& area : dw4::game::area_table())
+        for (const char* c = area.place; *c; ++c) check(*c != '"' && *c != '\\' && static_cast<unsigned char>(*c) < 0x80, "plain ASCII names");
+    if (file.empty()) return;
+    std::ifstream in(file, std::ios::binary);
+    check(bool(in), "the checked-in area names " + file);
+    std::string checked_in((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    std::erase(checked_in, '\r'); // (a checkout with CRLF line ends)
+    check(checked_in == text, "data/online/areas.json is the client's table (regenerate: dw4_presence_tests --export-areas FILE)");
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
 #ifdef _WIN32
     if ((argc == 4 || argc == 5) && std::string(argv[1]) == "--serve") return serve(argv[2], std::atoi(argv[3]), argc == 5 ? argv[4] : "ready");
-#else
-    (void)argc;
-    (void)argv;
 #endif
+    // --export-areas FILE: writes data/online/areas.json.
+    if (argc == 3 && std::string(argv[1]) == "--export-areas") {
+        std::ofstream(argv[2], std::ios::binary | std::ios::trunc) << dw4::game::area_names_json();
+        std::cout << "wrote " << argv[2] << '\n';
+        return 0;
+    }
     try {
         framing();
         json();
         tables();
+        area_file(argc == 2 ? argv[1] : "");
 #ifdef _WIN32
         no_discord();
         fake_client_session();
