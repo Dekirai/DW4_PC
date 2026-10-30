@@ -551,20 +551,21 @@ void in_room(online::OnlineLobby& lobby, OnlineUiState& s, const RoomLive* live)
     if (rows.empty()) {
         ImGui::TextDisabled("Loading...");
     } else if (ImGui::BeginTable("members", owner ? 5 : 4, ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp)) {
-        ImGui::TableSetupColumn("Player", ImGuiTableColumnFlags_WidthStretch, 1.7f);
-        ImGui::TableSetupColumn("Area", ImGuiTableColumnFlags_WidthStretch, 3.2f);
-        ImGui::TableSetupColumn("Level", ImGuiTableColumnFlags_WidthStretch, 0.7f);
-        ImGui::TableSetupColumn("Status", ImGuiTableColumnFlags_WidthStretch, 1.2f);
-        if (owner) ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed, 60.0f);
+        ImGui::TableSetupColumn("Player", ImGuiTableColumnFlags_WidthStretch, 2.0f);
+        ImGui::TableSetupColumn("Area", ImGuiTableColumnFlags_WidthStretch, 3.0f);
+        ImGui::TableSetupColumn("Lv", ImGuiTableColumnFlags_WidthStretch, 0.45f);
+        ImGui::TableSetupColumn("Status", ImGuiTableColumnFlags_WidthStretch, 1.1f);
+        if (owner) ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed, 40.0f);
         ImGui::TableHeadersRow();
         for (const auto& r : rows) {
             ImGui::TableNextRow();
             ImGui::TableNextColumn();
+            // (Long names and areas wrap inside their columns.)
             const std::string tags = r.you && r.owner ? " (you, owner)" : r.you ? " (you)" : r.owner ? " (owner)" : "";
-            if (r.you) ImGui::TextColored(kAccent, "%s%s", r.name.c_str(), tags.c_str());
-            else ImGui::Text("%s%s", r.name.c_str(), tags.c_str());
+            if (r.you) wrapped_colored(kAccent, r.name + tags);
+            else wrapped((r.name + tags).c_str());
             ImGui::TableNextColumn();
-            if (r.live || r.hub) ImGui::TextUnformatted(area_line(r.stage, r.hub).c_str());
+            if (r.live || r.hub) wrapped(area_line(r.stage, r.hub).c_str());
             else ImGui::TextDisabled("-");
             ImGui::TableNextColumn();
             if (r.live && r.level > 0) ImGui::Text("%d", r.level);

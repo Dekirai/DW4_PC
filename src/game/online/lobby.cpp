@@ -80,6 +80,19 @@ const char* screen_name(Screen screen) {
     return "?";
 }
 
+std::string tidy_reason(const std::string& reason) {
+    const auto open = reason.find(" (");
+    if (open == std::string::npos || reason.size() < open + 4 || reason.compare(reason.size() - 2, 2, ").") != 0) return reason;
+    auto head = reason.substr(0, open);
+    auto inner = reason.substr(open + 2, reason.size() - open - 4);
+    const auto bare = [](std::string text) {
+        while (!text.empty() && (text.back() == '.' || text.back() == ' ')) text.pop_back();
+        return text;
+    };
+    if (bare(head) == bare(inner)) return bare(head) + ".";
+    return reason;
+}
+
 const char* gate_name(Gate gate) {
     switch (gate) {
     case Gate::unknown: return "unknown";
@@ -737,7 +750,7 @@ void OnlineLobby::session_ended(const std::string& reason) {
     leave_requested_ = false;
     set_screen(logged_in() ? Screen::rooms : Screen::welcome);
     error_.clear();
-    info_text_ = reason;
+    info_text_ = tidy_reason(reason);
     refresh_rooms();
     // (The online character changed while playing.)
     if (logged_in() && !in_flight(Call::character)) send(Call::character, api::character_request());

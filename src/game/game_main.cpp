@@ -1329,6 +1329,19 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     if (input.kind == dw4::game::PadInput::Kind::button && input.code == SDL_GAMEPAD_BUTTON_BACK) return false;
             return true;
         };
+        auto view_button = [&] {
+            if (title_panel_shown && !show_menu) {
+                title_panel.active = !title_panel.active;
+                title_panel.focus = title_panel.active;
+                if (lobby && title_panel.active && !lobby->opened()) lobby->open();
+            } else {
+                show_menu = !show_menu;
+                capture.reset();
+                if (!show_menu && settings_changed && settings.save()) settings_changed = false;
+            }
+        };
+        // Keys a UI test run presses into the menus (pressed one frame, released the next).
+        std::vector<int> ui_keys, ui_keys_down;
         // An old save the one-time move into saves/savedata.dat could not
         // copy (save_store.cpp): the player hears of it at once.
         for (const auto& warning : save_choice.warnings)
@@ -1844,18 +1857,8 @@ int run(const Options& options, dw4::game::Settings& settings) {
                             break;
                         }
                 }
-                if (event.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN && event.gbutton.button == SDL_GAMEPAD_BUTTON_BACK && back_button_free()) {
-                    if (title_panel_shown && !show_menu) {
-                        title_panel.active = !title_panel.active;
-                        title_panel.focus = title_panel.active;
-                        if (lobby && title_panel.active && !lobby->opened()) lobby->open();
-                    } else {
-                        show_menu = !show_menu;
-                        capture.reset();
-                        if (show_menu && lobby && online_tab_shown && !lobby->opened()) lobby->open();
-                        if (!show_menu && settings_changed && settings.save()) settings_changed = false;
-                    }
-                }
+                if (event.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN && event.gbutton.button == SDL_GAMEPAD_BUTTON_BACK && back_button_free())
+                    view_button();
                 // Esc closes the active title panel (outside a text field).
                 if (event.type == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_ESCAPE && title_panel.active && draw && !ImGui::GetIO().WantTextInput)
                     title_panel.active = false;
@@ -2552,7 +2555,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     if (ratio != online_audio_ratio && SDL_SetAudioStreamFrequencyRatio(audio, ratio)) online_audio_ratio = ratio;
                 }
                 if (session.closed()) {
-                    const auto reason = session.close_reason();
+                    const auto reason = dw4::game::online::tidy_reason(session.close_reason());
                     std::cout << "online: " << reason << '\n';
                     toasts.push_back({"Online", reason, std::chrono::steady_clock::now() + std::chrono::seconds(8)});
                     online.reset();
@@ -2622,6 +2625,8 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     host.now = steady_seconds();
                     ui_script.update(host);
                     if (!host.shot.empty()) ui_shot = host.shot;
+                    if (host.view_button) view_button();
+                    ui_keys.insert(ui_keys.end(), host.keys.begin(), host.keys.end());
                     if (host.end) running = false;
                 }
             }
@@ -2868,6 +2873,11 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     if (show_menu || title_panel.active) io.ConfigFlags |= nav;
                     else io.ConfigFlags &= ~nav;
                 }
+                // (A UI test run's keys: last frame's go up, this frame's go down.)
+                for (const int key : ui_keys_down) ImGui::GetIO().AddKeyEvent(ImGuiKey(key), false);
+                ui_keys_down.clear();
+                for (const int key : ui_keys) ImGui::GetIO().AddKeyEvent(ImGuiKey(key), true);
+                ui_keys_down.swap(ui_keys);
                 ImGui_ImplOpenGL3_NewFrame();
                 ImGui_ImplSDL3_NewFrame();
                 ImGui::NewFrame();

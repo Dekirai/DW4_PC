@@ -1,5 +1,7 @@
 #include "online_ui_script.hpp"
 
+#include <imgui.h>
+
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
@@ -180,6 +182,33 @@ bool OnlineUiScript::run(const Line& line, UiScriptHost& host) {
     if (c == "back") {
         lobby.back();
         return true;
+    }
+    if (c == "view") {
+        host.view_button = true;
+        return true;
+    }
+    if (c == "key") {
+        // One key per pass, so each is pressed and released on its own.
+        if (!sent_) {
+            key_at_ = 1;
+            sent_ = true;
+        }
+        if (key_at_ >= w.size()) return true;
+        static const std::pair<const char*, ImGuiKey> names[] = {
+            {"up", ImGuiKey_UpArrow},        {"down", ImGuiKey_DownArrow},        {"left", ImGuiKey_LeftArrow},
+            {"right", ImGuiKey_RightArrow},  {"enter", ImGuiKey_Enter},           {"space", ImGuiKey_Space},
+            {"escape", ImGuiKey_Escape},     {"tab", ImGuiKey_Tab},               {"pad-up", ImGuiKey_GamepadDpadUp},
+            {"pad-down", ImGuiKey_GamepadDpadDown}, {"pad-left", ImGuiKey_GamepadDpadLeft}, {"pad-right", ImGuiKey_GamepadDpadRight},
+            {"pad-a", ImGuiKey_GamepadFaceDown}, {"pad-b", ImGuiKey_GamepadFaceRight},
+        };
+        const auto& name = w[key_at_];
+        const auto found = std::find_if(std::begin(names), std::end(names), [&](const auto& n) { return name == n.first; });
+        if (found == std::end(names)) fail("unknown key " + name);
+        // (Every other pass: the key goes up in between.)
+        if ((passes_ & 1) == 0) return false;
+        host.keys.push_back(int(found->second));
+        ++key_at_;
+        return false;
     }
     if (c == "fill") {
         std::string value;

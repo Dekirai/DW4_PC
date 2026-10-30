@@ -546,6 +546,10 @@ void rooms(const std::filesystem::path& root) {
     h.lobby->adopt_room("kim", "TOKEN-KIM", "ABCD12", "Kim's room");
     h.pass();
     check(h.lobby->in_room() && h.lobby->screen() == Screen::in_room && h.lobby->room() && h.lobby->room()->room.code == "ABCD12", "adopted room");
+    check(tidy_reason("You were removed from the room (You were removed from the room.).") == "You were removed from the room." &&
+              tidy_reason("You were removed from the room (spam).") == "You were removed from the room (spam)." &&
+              tidy_reason("You left the room.") == "You left the room.",
+          "close reasons");
     check(screen_from_name("rooms") == Screen::rooms && std::string(screen_name(Screen::in_room)) == "room" && !screen_from_name("nope"),
           "screen names");
 }

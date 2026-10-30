@@ -80,6 +80,10 @@ enum class Gate {
 };
 const char* gate_name(Gate gate); // "open", "outdated", ... (test runs)
 
+// A session's close reason for people: "X (X.)" (the relay's CLOSE text that
+// repeats the client's own sentence) becomes "X.".
+std::string tidy_reason(const std::string& reason);
+
 struct LobbyConfig {
     int protocol = 0;                    // kOnlineProtocol
     std::uint64_t data_hash = 0;

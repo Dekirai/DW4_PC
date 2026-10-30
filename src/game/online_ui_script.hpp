@@ -20,6 +20,9 @@
 //   menu online|close          the F1 menu on its Online tab
 //   screen NAME                go to a screen (welcome login register account password rooms create join ...)
 //   back                       the Back button
+//   view                       the controller's View / Back button (opens / closes the title panel or the F1 menu)
+//   key NAME...                keys for the menus' navigation: up down left right enter space escape tab,
+//                              pad-up pad-down pad-left pad-right pad-a pad-b (one frame each, in order)
 //   fill FIELD VALUE...        a form field (online_ui.hpp set_ui_field: login.name, create.players, ...)
 //   login NAME PASSWORD [remember]
 //   register NAME PASSWORD [EMAIL]
@@ -63,6 +66,8 @@ struct UiScriptHost {
     int frame = 0;
     double now = 0;             // seconds
     std::string shot;           // out: a screenshot name for this frame
+    bool view_button = false;   // out: the controller's View / Back button
+    std::vector<int> keys;      // out: ImGui keys to press (the menus' keyboard and controller navigation)
     bool end = false;           // out: the run ends
 };
 
@@ -89,6 +94,7 @@ private:
     bool sent_ = false;            // the current line's request went out
     double refreshed_at_ = -1;
     std::uint64_t serial_ = 0;     // the room list a refresh waits to replace
+    std::size_t key_at_ = 1;       // the next word of a key command
 };
 
 } // namespace dw4::game

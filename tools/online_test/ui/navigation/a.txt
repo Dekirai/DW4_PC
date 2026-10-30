@@ -1,0 +1,18 @@
+# The title panel without a mouse: View opens it (and the lobby), the navigation keys move and press.
+wait-title
+sleep 4
+view
+expect-gate open
+wait 10
+expect-screen welcome
+key right
+wait 5
+shot nav_focus
+key enter
+wait 10
+expect-screen register
+shot nav_register
+view
+wait 10
+shot nav_closed
+end
