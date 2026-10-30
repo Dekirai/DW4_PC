@@ -602,6 +602,99 @@ State decode_state(std::span<const std::uint8_t> b) {
     return m;
 }
 
+std::vector<std::uint8_t> encode(const Story& m) {
+    const auto& d = m.delta;
+    if (d.flags.size() > 1024 || d.folder.size() > 12 || d.counters.size() > kMaxStoryLines) throw WireError("story set too large");
+    Writer w;
+    w.u32(m.inst);
+    w.u32(m.visit);
+    w.u32(m.revision);
+    w.u8(d.phase);
+    w.u16(std::uint16_t(d.flags.size()));
+    for (const auto f : d.flags) w.u16(std::uint16_t(f));
+    w.u8(std::uint8_t(d.folder.size()));
+    for (const auto k : d.folder) w.u8(std::uint8_t(k));
+    w.u8(std::uint8_t(d.counters.size()));
+    for (const auto& g : d.counters) {
+        w.u8(std::uint8_t(g.counter));
+        w.u32(g.inst);
+        w.u32(g.visit);
+        w.i32(g.growth);
+    }
+    return std::move(w.out);
+}
+Story decode_story(std::span<const std::uint8_t> b) {
+    Reader r{b};
+    Story m;
+    m.inst = r.u32();
+    m.visit = r.u32();
+    m.revision = r.u32();
+    auto& d = m.delta;
+    d.phase = r.u8();
+    const auto nf = r.u16();
+    if (nf > 1024) throw WireError("story: too many flags");
+    for (unsigned i = 0; i < nf; ++i) {
+        const auto f = r.u16();
+        if (f >= 1024) throw WireError("story: flag out of range");
+        d.flags.push_back(f);
+    }
+    const auto nk = r.u8();
+    if (nk > 12) throw WireError("story: too many keys");
+    for (unsigned i = 0; i < nk; ++i) {
+        const auto k = r.u8();
+        if (k >= 12) throw WireError("story: key out of range");
+        d.folder.push_back(k);
+    }
+    const auto nc = r.u8();
+    if (nc > kMaxStoryLines) throw WireError("story: too many counter lines");
+    for (unsigned i = 0; i < nc; ++i) {
+        engine::CounterGrowth g;
+        g.counter = r.u8();
+        if (g.counter >= 16) throw WireError("story: counter out of range");
+        g.inst = r.u32();
+        g.visit = r.u32();
+        g.growth = r.i32();
+        d.counters.push_back(g);
+    }
+    r.end();
+    return m;
+}
+std::vector<std::uint8_t> encode(const StoryAck& m) {
+    if (!m.story.empty() && m.story.size() != engine::story::kStoryBytes) throw WireError("story_ack: story blob size");
+    if (m.refused.size() > 0xFFFF) throw WireError("story_ack: too many refused keys");
+    Writer w;
+    w.u32(m.revision);
+    w.blob(m.story);
+    w.u8(m.flags);
+    w.u16(std::uint16_t(m.refused.size()));
+    for (const auto& x : m.refused) {
+        w.u8(std::uint8_t(x.kind));
+        w.u16(std::uint16_t(x.index));
+        w.u8(std::uint8_t(x.reason));
+    }
+    return std::move(w.out);
+}
+StoryAck decode_story_ack(std::span<const std::uint8_t> b) {
+    Reader r{b};
+    StoryAck m;
+    m.revision = r.u32();
+    m.story = r.blob(engine::story::kStoryBytes);
+    if (!m.story.empty() && m.story.size() != engine::story::kStoryBytes) throw WireError("story_ack: story blob size");
+    m.flags = r.u8();
+    const auto n = r.u16();
+    for (unsigned i = 0; i < n; ++i) {
+        engine::StoryRefused x;
+        const auto kind = r.u8();
+        if (kind > 3) throw WireError("story_ack: unknown key kind");
+        x.kind = engine::StoryRefused::Kind(kind);
+        x.index = r.u16();
+        x.reason = engine::StoryRefusal(r.u8());
+        m.refused.push_back(x);
+    }
+    r.end();
+    return m;
+}
+
 std::vector<std::uint8_t> encode(const Intent& m) {
     Writer w;
     w.u32(m.inst);

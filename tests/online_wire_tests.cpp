@@ -253,6 +253,42 @@ void messages() {
     small.ticks = {w::TickBody{}};
     check(hex(w::encode_state_body(small)) == "02010002000000aabb0120030000020001000000000100000000" "00",
           "golden STATE_DATA blob " + hex(w::encode_state_body(small)));
+    // STORY / STORY_ACK (SEAMLESS.md 8.3; the same bytes in WireGoldenTests.cs).
+    w::Story story{7, 2, 12, {}};
+    story.delta.phase = 3;
+    story.delta.flags = {19, 392};
+    story.delta.folder = {1};
+    story.delta.counters = {{7, 4, 2, 1}};
+    check(hex(w::encode(story)) == "07000000" "02000000" "0c000000" "03" "0200" "1300" "8801" "01" "01" "01" "07" "04000000" "02000000" "01000000",
+          "golden STORY " + hex(w::encode(story)));
+    const auto story_back = w::decode_story(w::encode(story));
+    check(story_back.inst == 7 && story_back.visit == 2 && story_back.revision == 12 && story_back.delta == story.delta, "STORY round trip");
+    w::StoryAck ack;
+    ack.revision = 13;
+    ack.flags = w::StoryAck::answer;
+    ack.refused = {{dw4::engine::StoryRefused::Kind::flag, 23, dw4::engine::StoryRefusal::not_story},
+                   {dw4::engine::StoryRefused::Kind::phase, 5, dw4::engine::StoryRefusal::phase_jump}};
+    check(hex(w::encode(ack)) == "0d000000" "00000000" "01" "0200" "01" "1700" "07" "00" "0500" "04", "golden STORY_ACK " + hex(w::encode(ack)));
+    dw4::engine::RoomStory room_story;
+    room_story.flags[3] = 1;
+    room_story.counters[1] = 500;
+    ack.story = dw4::engine::story::encode_story(room_story);
+    ack.refused.clear();
+    const auto ack_bytes = w::encode(ack);
+    check(ack_bytes.size() == 4 + 4 + 1100 + 1 + 2, "STORY_ACK with the story");
+    const auto ack_back = w::decode_story_ack(ack_bytes);
+    check(ack_back.revision == 13 && dw4::engine::story::decode_story(ack_back.story, ack_back.revision).counters[1] == 500, "STORY_ACK round trip");
+    auto bad_ack = ack_bytes;
+    bad_ack[4] = 0x4B; // a story blob of 1,099 bytes
+    bad_ack[5] = 0x04;
+    check(throws([&] { w::decode_story_ack(bad_ack); }), "a story blob of the wrong size is refused");
+    auto bad_story = w::encode(story);
+    bad_story[13] = 0x01;
+    bad_story[14] = 0x04; // 1025 flags
+    check(throws([&] { w::decode_story(bad_story); }), "too many story flags are refused");
+    bad_story = w::encode(story);
+    bad_story[18] = 0x04; // flag 0x0488
+    check(throws([&] { w::decode_story(bad_story); }), "a story flag beyond 1023 is refused");
     // Malformed payloads.
     auto short_input = w::encode(in);
     short_input.pop_back();
