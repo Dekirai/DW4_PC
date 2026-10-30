@@ -4,9 +4,13 @@
 #include "online/token_store.hpp"
 #include "online/transport.hpp"
 
+#include "dw4/engine/managers.hpp"
+
 #include <algorithm>
+#include <chrono>
 #include <cstdlib>
 #include <iostream>
+#include <thread>
 
 namespace dw4::game {
 
@@ -99,7 +103,7 @@ std::optional<OnlineRoom> online_enter_room(online::HttpWorker& http, const Onli
 
 OnlineRun::OnlineRun(std::unique_ptr<online::HttpWorker> http, OnlineRoom room, online::EngineHooks hooks, std::uint64_t data_hash,
                      std::uint32_t rate)
-    : http_(std::move(http)), room_(std::move(room)), link_(std::move(hooks), room_.settings) {
+    : http_(std::move(http)), room_(std::move(room)), engine_(hooks.engine), link_(std::move(hooks), room_.settings) {
     online::SessionConfig config;
     config.ticket = room_.ticket;
     config.protocol = kOnlineProtocol;
@@ -126,23 +130,106 @@ bool OnlineRun::connect(double now, std::string& error) {
 
 void OnlineRun::pass(double now) {
     session_->poll(now);
+    while (auto done = http_->poll()) dispatch(done->first, done->second, now);
+    if (character_) character_->tick(now);
     if (left_ || session_->closed() || !session_->wants_transport()) return;
     // Reconnect: a new one-time ticket, then the relay again (6.10).
     if (ticket_request_ == 0 && now >= next_reconnect_) ticket_request_ = http_->submit(online::api::ticket_request(room_.code));
-    while (auto done = http_->poll()) {
-        if (done->first != ticket_request_) continue;
-        ticket_request_ = 0;
-        next_reconnect_ = now + 2.0;
-        const auto ticket = online::api::parse_ticket(done->second);
-        if (!ticket) continue;
-        std::string error;
-        if (auto transport = online::connect_tcp(room_.endpoint.host, room_.relay_port, 2000, error))
-            session_->attach(std::move(transport), now, *ticket);
-    }
 }
 
-void OnlineRun::leave() {
+void OnlineRun::dispatch(std::uint64_t id, const online::HttpResponse& response, double now) {
+    if (character_ && character_->on_response(id, response)) return;
+    if (id != ticket_request_) return;
+    ticket_request_ = 0;
+    next_reconnect_ = now + 2.0;
+    const auto ticket = online::api::parse_ticket(response);
+    if (!ticket || left_ || session_->closed() || !session_->wants_transport()) return;
+    std::string error;
+    if (auto transport = online::connect_tcp(room_.endpoint.host, room_.relay_port, 2000, error))
+        session_->attach(std::move(transport), now, *ticket);
+}
+
+// ---------------------------------------------------------------------------
+// The online character (docs/SEAMLESS.md 9)
+// ---------------------------------------------------------------------------
+online::character_api::Context OnlineRun::character_context() const {
+    online::character_api::Context c;
+    c.room_code = room_.code;
+    c.players = std::clamp(int(session_->remote().size()) + 1, 1, 10);
+    c.randomizer = room_.settings.randomizer();
+    c.difficulty = room_.settings.difficulty;
+    c.protocol = int(kOnlineProtocol);
+    c.client_version = client_version_;
+    return c;
+}
+
+bool OnlineRun::load_character(const std::filesystem::path& online_folder, const std::string& client_version, std::string& error) {
+    client_version_ = client_version;
+    online::CharacterSync::Config config;
+    config.card = online::OnlineCard(online::online_card_folder(online_folder, room_.account));
+    config.context = character_context();
+    config.submit = [http = http_.get()](online::HttpRequest request) { return http->submit(std::move(request)); };
+    config.trace = std::getenv("DW4_ONLINE_TRACE") != nullptr;
+    character_ = std::make_unique<online::CharacterSync>(std::move(config));
+    const auto response = http_->wait(http_->submit(online::character_api::get_request()));
+    if (!character_->enter(response, error)) {
+        if (response.status != 0 && response.status != 200 && response.status != 404) error += " (" + online::api::problem_text(response) + ")";
+        character_.reset();
+        return false;
+    }
+    return true;
+}
+
+save::CardStore OnlineRun::character_card() const {
+    return character_ ? character_->card().store() : save::CardStore{};
+}
+
+void OnlineRun::save_character(online::CharacterSync::Why why) {
+    if (!character_) return;
+    character_->set_context(character_context());
+    if (const auto record = link_.character_record(session_->own_slot())) character_->auto_save(*record, why);
+}
+
+void OnlineRun::after_live_step(double now) {
+    link_.after_live_step();
+    if (!character_) return;
+    auto& engine = engine_();
+    // Play time without loads, as the server compares it with real time.
+    if (link_.game_started() && engine.presenting() && !engine.loading()) character_->add_play_time(engine::kFieldSeconds);
+    // The barrier tick (the step that executed NEXTSTAGE, SEAMLESS.md 6.7):
+    // the state the member carries into the next stage is saved, so a crash
+    // loses at most the stage it happens in.
+    const bool pending = link_.pending_stage().has_value();
+    if (pending && !pending_before_) save_character(online::CharacterSync::Why::stage_change);
+    pending_before_ = pending;
+    character_->tick(now);
+}
+
+void OnlineRun::port_events(const std::vector<engine::PortEvent>& events) {
+    if (!character_) return;
+    for (const auto& e : events)
+        if (e.kind == engine::PortEvent::Kind::card_written && e.slot == session_->own_slot() && e.value == 0 && e.extra >= 0)
+            character_->card_written(e.extra);
+}
+
+void OnlineRun::save_on_leave(double seconds) {
+    if (!character_ || saved_on_leave_) return;
+    saved_on_leave_ = true;
+    save_character(online::CharacterSync::Why::leave);
+    const auto clock = [] { return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count(); };
+    const double until = clock() + seconds;
+    while (!character_->idle() && clock() < until) {
+        while (auto done = http_->poll()) dispatch(done->first, done->second, clock());
+        character_->tick(clock());
+        if (!character_->idle()) std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    if (!character_->idle())
+        std::cout << "online: the online character's last save did not reach the server; the next room entry uploads it\n";
+}
+
+void OnlineRun::leave(double save_seconds) {
     if (left_) return;
+    save_on_leave(save_seconds);
     left_ = true;
     session_->leave();
     http_->wait(http_->submit(online::api::leave_request(room_.code)));

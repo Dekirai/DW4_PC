@@ -467,10 +467,13 @@ void CharacterSync::request(const Save& save, bool write_cache) {
         if (!card.write(gci, &problem)) trace("the card cache could not be written: " + problem);
     }
     card.set_state({revision_, play_seconds(), true, box_, unique_ ? unique_ : record_unique(save.record)});
-    if (in_flight_) {
-        waiting_ = save; // the newest wins
+    // One upload at a time, and none before a retry is due (a rate limit):
+    // the newest save waits and replaces an older waiting one.
+    if (in_flight_ || (retry_at_ >= 0 && now_ < retry_at_)) {
+        waiting_ = save;
         return;
     }
+    waiting_.reset();
     send(save);
 }
 

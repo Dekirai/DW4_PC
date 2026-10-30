@@ -21,6 +21,7 @@
 #include "presence_art.hpp"
 #include "presence_data.hpp"
 #include "online_run.hpp"
+#include "cloud_backup_panel.hpp"
 #include "online/cpu_gate.hpp"
 #include "online/env_check.hpp"
 
@@ -848,42 +849,52 @@ int run(const Options& options, dw4::game::Settings& settings) {
         std::cout << "online: room " << room->code << " '" << room->room_name << "' as " << room->account << " (difficulty "
                   << room->settings.difficulty << ", camera " << room->settings.camera_mode << ", light " << room->settings.light_mode << ")\n";
         const auto rate = calibrate(100000, 0.5);
-        session_cards = std::filesystem::temp_directory_path() /
-                        ("dw4_online_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
-        std::filesystem::create_directories(session_cards / "Card A");
-        // --online-card FOLDER (development builds, test runs): the online
-        // card starts with the saves of FOLDER (its .gci files, or those of
-        // its "Card A"), a character to call at the title instead of a new
-        // one (round S1 keeps nothing online; round S2 brings the server's).
-        if (!options.online_card.empty()) {
-#ifdef DW4_ONLINE_DEV
-            auto from = options.online_card;
-            if (std::filesystem::is_directory(from / "Card A")) from /= "Card A";
-            int copied = 0;
-            for (const auto& entry : std::filesystem::directory_iterator(from))
-                if (entry.path().extension() == ".gci") {
-                    std::filesystem::copy_file(entry.path(), session_cards / "Card A" / entry.path().filename(),
-                                               std::filesystem::copy_options::overwrite_existing);
-                    ++copied;
-                }
-            std::cout << "online: the online card starts with " << copied << " save file(s) of " << from.string() << '\n';
-#else
-            throw std::runtime_error("online: --online-card is a development build option");
-#endif
-        }
-        engine.set_card_root(session_cards);
-        for (int slot = 0; slot < 2; ++slot) engine.set_card_setting(slot, {});
+        // The online character's virtual card (docs/SEAMLESS.md 9): card A is
+        // saves/online/<account>/online_card.dat, built from the server's
+        // character (load_character below), card B is absent; every engine
+        // of the session plays from it, never from the player's own saves.
+        auto online_card = std::make_shared<dw4::save::CardStore>();
+        const auto use_online_card = [&engine, online_card] {
+            engine.set_card_store(*online_card);
+            engine.set_card_setting(0, {});
+            dw4::engine::CardSetting absent;
+            absent.mode = dw4::engine::CardSetting::Mode::none;
+            engine.set_card_setting(1, absent);
+        };
         const auto data = data_hash(engine.resources());
         dw4::game::online::EngineHooks hooks;
         hooks.engine = [&]() -> dw4::engine::Engine& { return engine; };
-        hooks.fresh_engine = [&, session_root = session_cards] {
+        hooks.fresh_engine = [&, use_online_card] {
             fresh_engine();
-            engine.set_card_root(session_root);
-            for (int slot = 0; slot < 2; ++slot) engine.set_card_setting(slot, {});
+            use_online_card();
         };
         hooks.hidden = [&] { return dw4::game::OverheadLabels::hidden(engine); };
         online = std::make_unique<dw4::game::OnlineRun>(std::move(http), std::move(*room), std::move(hooks), data,
                                                         rate.ok ? std::uint32_t(rate.steps_per_second) : 3000u);
+        if (!online->load_character(token_folder, DW4_PC_VERSION, error)) throw std::runtime_error("online: " + error);
+        *online_card = online->character_card();
+        // --online-card FOLDER (development builds, test runs): the card
+        // starts with the DW4 save of FOLDER (or of its "Card A") instead of
+        // the server's character, a character to call at the title; its
+        // saves go up as the online character (a new account's first one).
+        if (!options.online_card.empty()) {
+#ifdef DW4_ONLINE_DEV
+            auto from = options.online_card;
+            if (std::filesystem::is_directory(from / "Card A")) from /= "Card A";
+            std::filesystem::path save = from / dw4::save::kSaveFileName;
+            if (!std::filesystem::exists(save))
+                for (const auto& entry : std::filesystem::directory_iterator(from))
+                    if (entry.path().extension() == ".gci") save = entry.path();
+            const auto bytes = dw4::save::read_whole_file(save);
+            if (!bytes || !dw4::save::valid_save_gci(*bytes) || !online->character()->card().write(*bytes))
+                throw std::runtime_error("online: --online-card: no valid save in " + from.string());
+            std::cout << "online: the online card starts with " << save.string() << '\n';
+#else
+            throw std::runtime_error("online: --online-card is a development build option");
+#endif
+        }
+        use_online_card();
+        std::cout << "online: " << online->character()->status_text() << " (card " << online->character()->card().file().string() << ")\n";
         online->link().start_online(0, 1);
         first_stage = "stagis10"; // the title, as every online session starts
         if (!online->connect(steady_seconds(), error)) throw std::runtime_error("online: " + error);
@@ -1127,6 +1138,9 @@ int run(const Options& options, dw4::game::Settings& settings) {
             std::atomic<bool> dialog_done{false};
         };
         static SavesTab saves_tab;
+        // F1 Saves > Cloud backup (docs/SEAMLESS.md 9; outside rooms only).
+        dw4::game::CloudBackupPanel cloud_panel((program_dir().empty() ? std::filesystem::path(".") : program_dir()) / "saves" / "online",
+                                                DW4_PC_VERSION, int(dw4::game::kOnlineProtocol));
         std::optional<KeyCapture> capture;
         auto next_present = std::chrono::steady_clock::now();
         float online_audio_ratio = 1.0f; // the audio stream's frequency ratio in an online room
@@ -1319,6 +1333,8 @@ int run(const Options& options, dw4::game::Settings& settings) {
             // Player 1's new games (the randomizer binds only those).
             for (const auto& e : events)
                 if (e.kind == dw4::engine::PortEvent::Kind::new_character && e.slot == 0) new_characters.insert(std::uint32_t(e.value));
+            // The online character: the save room's card writes go up (SEAMLESS.md 9).
+            if (online) online->port_events(events);
             if (!achievements_on()) return;
             last_gate = achievement_gate();
             const auto unlocked = achievements.observe(achievement_step(), events, last_gate, randomized(), unix_now());
@@ -2172,9 +2188,10 @@ int run(const Options& options, dw4::game::Settings& settings) {
                         std::fwrite(&pad.buttons, sizeof pad.buttons, 1, pad_log.get());
                     }
                 }
-                // Port events only while achievements, the event trace or the
-                // randomizer's bond (new games) want them.
-                if (const bool collect = achievements_on() || trace_events || (!net.active() && randomizer_settings().active());
+                // Port events only while achievements, the event trace, the
+                // randomizer's bond (new games) or the online character
+                // (card_written) want them.
+                if (const bool collect = achievements_on() || trace_events || (!net.active() && randomizer_settings().active()) || online;
                     engine.port_events_enabled() != collect)
                     engine.set_port_events(collect);
                 // Seamless co-op, a defeated local member (SEAMLESS.md 4.1,
@@ -2233,7 +2250,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 engine.step(pads);
                 if (online) {
                     online->session().after_step(steady_seconds());
-                    online->link().after_live_step();
+                    online->after_live_step(steady_seconds());
                 }
                 // DW4_TRACE_ONLINE (test runs of the seamless co-op exits):
                 // forks, headings and the exit prompt's state as they happen.
@@ -2388,6 +2405,11 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     std::cout << "online: " << notice << '\n';
                     toasts.push_back({"Online", notice, std::chrono::steady_clock::now() + std::chrono::seconds(5)});
                 }
+                if (auto* character = online->character())
+                    for (auto& notice : character->take_notices()) {
+                        std::cout << "online: character: " << notice << '\n';
+                        toasts.push_back({"Online character", notice, std::chrono::steady_clock::now() + std::chrono::seconds(10)});
+                    }
                 // The loading screen's line, the connection, the leave prompt.
                 const auto overlay = session.overlay(online_now);
                 std::string line = overlay.loading;
@@ -2414,6 +2436,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     if (ratio != online_audio_ratio && SDL_SetAudioStreamFrequencyRatio(audio, ratio)) online_audio_ratio = ratio;
                 }
                 if (session.closed()) {
+                    online->save_on_leave(); // (the automatic save when leaving the room, SEAMLESS.md 9)
                     std::cout << "online: " << session.close_reason() << '\n';
                     toasts.push_back({"Online", session.close_reason(), std::chrono::steady_clock::now() + std::chrono::seconds(8)});
                     online.reset();
@@ -3096,6 +3119,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                             ImGui::PopTextWrapPos();
                         }
                         if (!tab.message.empty()) ImGui::TextWrapped("%s", tab.message.c_str());
+                        cloud_panel.draw(player_store, !online && !net.active() && !net.in_lobby());
                         ImGui::EndTabItem();
                     }
                     if (ImGui::BeginTabItem("Online", nullptr, tab_flags("Online"))) {
@@ -3106,6 +3130,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                             ImGui::Text("Room %s (%s) as %s", room.code.c_str(), room.room_name.c_str(), room.account.c_str());
                             ImGui::Text("Instance %u, slot %d, %s, input delay %d", online->session().inst(), online->session().own_slot() + 1,
                                         dw4::game::online::mode_name(online->session().mode()), online->session().delay());
+                            if (auto* character = online->character()) ImGui::TextDisabled("%s", character->status_text().c_str());
                             if (online->leave_prompt) ImGui::TextColored(ImVec4(1, 0.85f, 0.3f, 1), "Leave room?");
                             if (ImGui::Button("Leave room")) online->leave();
                             if (online->leave_prompt && ImGui::Button("Stay")) online->leave_prompt = false;

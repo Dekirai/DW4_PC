@@ -2171,7 +2171,7 @@ public:
         // flag_folder, Engine::counters()), which BASE2CURRENT points at them
         // (link_common). New player data (8036CE1C, 0x8036D148-0x8036D174)
         // has BASE_FLAG[960] = 1, the constant byte at 80561411.
-        std::map<std::int32_t, std::uint8_t> base_flags{{960, 1}};
+        std::map<std::int32_t, std::uint8_t> base_flags{{960, std::uint8_t(1)}};
         std::map<int, std::uint8_t> base_flag_folder;
         std::map<std::int32_t, std::int32_t> base_counters;
     };
