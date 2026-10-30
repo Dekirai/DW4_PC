@@ -202,7 +202,12 @@ void OnlineRun::after_live_step(double now) {
     // Without a confirmed story yet the character's own stays until the
     // first barrier's merge.
     const bool started = link_.game_started();
-    if (started && !started_before_) link_.set_room_story(session_->confirmed_story());
+    if (started && !started_before_) {
+        const auto& story = session_->confirmed_story();
+        link_.set_room_story(story);
+        if (story) std::cout << "online: the game starts with the room story (revision " << story->revision << ")\n";
+        else std::cout << "online: the game starts without a room story yet (the character's own until the first barrier)\n";
+    }
     started_before_ = started;
     link_.after_live_step();
     if (!character_) return;
