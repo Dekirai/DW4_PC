@@ -2148,6 +2148,10 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     net.poll();
                     pads = net.take(net_frame);
                 }
+                // (The local START, before the session hands out the sealed pads:
+                // giving up counts the held button, not the sealed ticks, of
+                // which a lagging member's are filled.)
+                const bool local_start = (pads[0].buttons & dw4::pad_button::start) != 0;
                 if (online) {
                     // One player per machine: this machine's pad, quantized as
                     // every machine executes it; the others come sealed. The
@@ -2187,7 +2191,10 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     const int local = engine.view_slot();
                     // (Not while no player model is generated: loads, the entry, a departure's fade.)
                     const bool defeated = dw4::game::online_member_defeated(engine, local);
-                    give_up_held = defeated && (pads[std::size_t(local)].buttons & dw4::pad_button::start) ? give_up_held + 1 : 0;
+                    // Online the local START counts (a filled sealed tick, up to six repeats then neutral under lag,
+                    // reset the count, so a member with a poor uplink could hardly give up).
+                    const bool start_held = online ? local_start : (pads[std::size_t(local)].buttons & dw4::pad_button::start) != 0;
+                    give_up_held = defeated && start_held ? give_up_held + 1 : 0;
                     // (An online client sends the choice as INTENT: the server stamps it at a tick every member applies.)
                     if (give_up_held == kGiveUpFrames && online) online->session().send_intent(dw4::game::online::wire::IntentKind::give_up, 0);
                     else if (give_up_held == kGiveUpFrames && !net.active()) engine.online_intent(local, dw4::engine::IntentKind::give_up, 0);
@@ -2230,6 +2237,26 @@ int run(const Options& options, dw4::game::Settings& settings) {
                         engine.set_online(rules);
                     }
                 }
+#ifdef DW4_ONLINE_DEV
+                // DW4_ONLINE_TEST_DESYNC=TICK (development builds; the resync
+                // scenarios of tools/online_test): before this member's first
+                // live sealed tick at or after TICK, one draw of the system
+                // generator that no other machine makes: a desync the relay's
+                // fingerprint vote finds and a resync repairs (6.9).
+                if (online) {
+                    static const long long desync_tick = [] {
+                        const char* text = std::getenv("DW4_ONLINE_TEST_DESYNC");
+                        return text && *text ? std::atoll(text) : -1LL;
+                    }();
+                    static bool desynced = false;
+                    if (!desynced && desync_tick >= 0 && online->session().mode() == dw4::game::online::Mode::sealed &&
+                        online->session().tick() >= std::uint64_t(desync_tick)) {
+                        desynced = true;
+                        (void)dw4::engine::fight::random();
+                        std::printf("online: test desync at tick %u\n", online->session().tick());
+                    }
+                }
+#endif
                 engine.step(pads);
                 if (online) {
                     online->session().after_step(steady_seconds());

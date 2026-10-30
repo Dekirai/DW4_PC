@@ -45,7 +45,16 @@ int lowest(std::uint8_t mask) { return mask ? std::countr_zero(unsigned(mask)) :
 double clock_seconds() { return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count(); }
 } // namespace
 
-Session::Session(EngineLink& engine, SessionConfig config) : engine_(engine), config_(std::move(config)) {}
+Session::Session(EngineLink& engine, SessionConfig config) : engine_(engine), config_(std::move(config)) {
+    // The rate the server plans joins and resyncs with is steps per second of
+    // the wall clock. Before a catch-up measured it, the calibration's steps
+    // per second of pure replay count for the share of a host pass the
+    // catch-up gets: its budget out of the budget plus one 60 Hz picture
+    // (SEAMLESS.md 6.6: a 12 ms budget gave about 70 % of the reported rate).
+    if (config_.max_replay_rate == 0 && config_.replay_budget > 0)
+        config_.rate = std::max<std::uint32_t>(
+            1, std::uint32_t(double(config_.rate) * config_.replay_budget / (config_.replay_budget + kFieldSeconds)));
+}
 
 void Session::send(w::Type type, const std::vector<std::uint8_t>& payload) {
     if (!transport_ || !hello_done_) return;
@@ -266,7 +275,11 @@ void Session::handle(const w::Frame& frame, double now) {
     }
     case w::Type::state_data: {
         const auto chunk = w::decode_chunk(p);
-        if (mode_ == Mode::solo || mode_ == Mode::sealed || mode_ == Mode::connecting) break;
+        // (Parked, nothing is awaited: a state comes after BARRIER_OK. One
+        // that reaches a member after its BARRIER belongs to a resync of the
+        // visit it left, and restored at the next load it threw the member
+        // back into the old stage.)
+        if (mode_ == Mode::solo || mode_ == Mode::sealed || mode_ == Mode::connecting || mode_ == Mode::parked) break;
         if (chunk.inst != inst_ || chunk.visit != visit_) break;
         if (auto body = assembler_.add(chunk, config_.state_limit)) {
             auto state = w::decode_state_body(*body);
@@ -284,6 +297,14 @@ void Session::handle(const w::Frame& frame, double now) {
     case w::Type::resync: {
         const auto m = w::decode_inst_visit(p);
         if (m.inst != inst_ || m.visit != visit_) break;
+        // Only a member that plays the instance's sealed ticks catches up
+        // again: one parked after its barrier (its BARRIER is out; the state
+        // would throw it back into the stage it left, restored as its load),
+        // one leading alone or still catching up has nothing to repair.
+        if (mode_ != Mode::sealed) {
+            trace("resync ignored inst=%u visit=%u tick=%u mode=%s", inst_, visit_, tick_, mode_name(mode_));
+            break;
+        }
         notice("Lost sync with the group - catching up again...");
         trace("resync inst=%u visit=%u tick=%u", inst_, visit_, tick_);
         resyncing_ = true;
@@ -529,6 +550,12 @@ bool Session::apply_events(bool replaying) {
     bool held = false;
     for (auto it = events_.begin(); it != events_.end() && it->tick <= tick_;) {
         const auto& e = it->event;
+        if (e.kind == w::EventKind::leave && e.slot == slot_ && !replaying && mode_ == Mode::sealed) {
+            // The server took this member out (6.9, 6.10: lag, a resync too
+            // long, too many resyncs, a missing hash): it plays on alone.
+            go_alone();
+            return true;
+        }
         if (e.kind == w::EventKind::join || e.kind == w::EventKind::leave || e.kind == w::EventKind::intent) {
             w::NotJoinable reason{};
             held = held || !(e.kind == w::EventKind::join ? engine_.joinable(reason) : engine_.membership_safe());
@@ -564,18 +591,25 @@ bool Session::apply_events(bool replaying) {
             break;
         case w::EventKind::leave:
             trace("leave applied inst=%u visit=%u tick=%u slot=%d", inst_, visit_, tick_, slot);
-            if (!replaying && slot != slot_) notice(slot_name(slot) + " left");
+            // (Only for a member that was there: a joiner whose carry every
+            // engine dropped never was.)
+            if (!replaying && slot != slot_ && (present_ & (1u << slot))) notice(slot_name(slot) + " left");
             engine_.remove_player(slot);
             present_ = std::uint8_t(present_ & ~(1u << slot));
             slot_members_[std::size_t(slot)] = kNoMember;
             break;
         case w::EventKind::intent: engine_.intent(slot, w::IntentKind(e.intent_kind), e.argument); break;
         // LEAD_FROM and DELAY are for the member that plays now: never from a
-        // replayed history or while observing (a joiner before its JOIN).
+        // replayed history or while observing (a joiner before its JOIN). A
+        // resync replays the member's own instance: a LEAD_FROM there that
+        // the replay reaches is its own (the partner left during the
+        // catch-up; finish_resync leads alone), and its own DELAY counts.
         case w::EventKind::lead_from:
             if (!replaying && mode_ == Mode::sealed) lead_from_ = e.tick;
+            else if (replaying && resyncing_) resync_lead_ = e.tick;
             break;
         case w::EventKind::delay:
+            if (slot == slot_ && replaying && resyncing_) delay_ = std::clamp(int(e.delay), 1, 15);
             if (slot == slot_ && !replaying && mode_ == Mode::sealed) {
                 // The member repeats or skips one sample (6.4).
                 const int d = std::clamp(int(e.delay), 1, 15);
@@ -637,6 +671,14 @@ std::array<PadSample, 4> Session::before_step(const PadSample& local, double now
         break;
     }
     case Mode::solo: {
+        if (alone_pending_ && engine_.membership_safe()) {
+            // Taken out of the group: the others' players go at the first
+            // step that allows it (until then they stand, leaving).
+            for (int s = 0; s < 4; ++s)
+                if (alone_pending_ & (1u << s)) engine_.remove_player(s);
+            trace("alone inst=%u tick=%u removed=%x", inst_, tick_, unsigned(alone_pending_));
+            alone_pending_ = 0;
+        }
         apply_events(false);
         w::WirePad pad = own;
         if (join_at_) {
@@ -754,6 +796,15 @@ void Session::flush_log(double now, bool force) {
         w::Log m{inst_, visit_, log_first_ + std::uint32_t(at), {}};
         m.pads.assign(log_.begin() + std::ptrdiff_t(at), log_.begin() + std::ptrdiff_t(std::min(log_.size(), at + w::kMaxLogPads)));
         send(w::Type::log, w::encode(m));
+        if (!transport_) {
+            // The connection broke in this frame: the pads from it on go
+            // again after the reconnect's RESUME (the relay skips an overlap;
+            // a gap would never close, and a joiner sealed from J would wait
+            // for those ticks for good).
+            log_.erase(log_.begin(), log_.begin() + std::ptrdiff_t(at));
+            log_first_ += std::uint32_t(at);
+            return;
+        }
     }
     log_first_ += std::uint32_t(log_.size());
     log_.clear();
@@ -1005,6 +1056,8 @@ void Session::on_state(w::StateData state, double now) {
     engine_.set_replay(true);
     replayed_steps_ = 0;
     replay_seconds_ = 0;
+    starved_ = 0;
+    starved_since_ = 0;
     catch_up_started_ = clock_seconds();
     mode_ = Mode::catching_up;
     run_catch_up(now);
@@ -1012,6 +1065,11 @@ void Session::on_state(w::StateData state, double now) {
 
 void Session::run_catch_up(double now) {
     const double start = clock_seconds();
+    // The wall clock of the catch-up counts the host's time between passes
+    // (its picture, the frame pacing) but not the time it waited for ticks:
+    // the rate it reports is the one the server can plan with.
+    if (starved_since_ > 0) starved_ += start - starved_since_;
+    starved_since_ = 0;
     std::uint32_t done = 0;
     while (mode_ == Mode::catching_up) {
         const auto it = ticks_.find(tick_);
@@ -1020,12 +1078,15 @@ void Session::run_catch_up(double now) {
                 gap_traced_ = tick_;
                 trace("catch-up waits for tick %u (next held %u, %zu held)", tick_, later->first, ticks_.size());
             }
+            starved_since_ = clock_seconds();
             break;
         }
         // (DW4_ONLINE_RATE, test runs: a slower machine's replay rate.)
         if (config_.max_replay_rate > 0 &&
             double(replayed_steps_ + done) >= (clock_seconds() - catch_up_started_) * double(config_.max_replay_rate))
             break;
+        // A record from the LEAD_FROM's tick on: the instance went on past it.
+        if (resync_lead_ && tick_ >= *resync_lead_) resync_lead_.reset();
         w::TickBody body = std::move(it->second);
         ticks_.erase(it);
         for (auto& e : body.events) events_.push_back({tick_, std::move(e)});
@@ -1054,7 +1115,11 @@ void Session::run_catch_up(double now) {
     replayed_steps_ += done;
     const std::uint32_t newest = ticks_.empty() ? tick_ : ticks_.rbegin()->first + 1;
     const std::uint32_t remaining = newest > tick_ ? newest - tick_ : 0;
-    const double rate = replay_seconds_ > 0.05 ? double(replayed_steps_) / replay_seconds_ : double(config_.rate);
+    // Steps per second of the wall clock (SEAMLESS.md 6.6): a pass replays
+    // for config_.replay_budget, the host's picture and pacing take the
+    // rest; the time the catch-up waited for ticks does not count.
+    const double wall = clock_seconds() - catch_up_started_ - starved_ - (starved_since_ > 0 ? clock_seconds() - starved_since_ : 0.0);
+    const double rate = wall > 0.05 && replayed_steps_ > 0 ? double(replayed_steps_) / wall : double(config_.rate);
     const double behind = rate > 60.0 ? double(remaining) / (rate - 59.94) : 0;
     loading_ = "Joining... (catching up, about " + std::to_string(int(behind + 0.999)) + " s)";
     if (done > 0 && (tick_ / 600 != (tick_ - done) / 600 || (engine_.supports_barriers() && engine_.pending_stage())))
@@ -1089,13 +1154,61 @@ void Session::finish_resync(double now) {
     engine_.set_split_identity(slot_);
     engine_.set_view_slot(slot_);
     loading_.clear();
+    pace_.reset();
+    last_tick_at_ = now;
+    // (The pads held before the resync are no input of now: neutral until the next sample.)
+    last_own_ = {};
+    if (resync_lead_ && tick_ >= *resync_lead_) {
+        // The partner left during the catch-up: the replay reached the
+        // LEAD_FROM, nobody seals the ticks from here; this member leads
+        // alone (before, it waited sealed for good).
+        trace("resynced inst=%u visit=%u tick=%u slot=%d, leads alone", inst_, visit_, tick_, slot_);
+        resync_lead_.reset();
+        mode_ = Mode::solo;
+        mode_of_instance_ = wire::Mode::solo;
+        ticks_.clear();
+        log_.clear();
+        log_first_ = tick_;
+        notice("Back in sync; you continue on your own.");
+        return;
+    }
+    resync_lead_.reset();
     trace("resynced inst=%u visit=%u tick=%u slot=%d", inst_, visit_, tick_, slot_);
     input_next_ = tick_;
     for (int k = 0; k < delay_; ++k) send_input_ahead(last_own_);
-    pace_.reset();
     mode_ = Mode::sealed;
-    last_tick_at_ = now;
     notice("Back in sync with the group.");
+}
+
+void Session::go_alone() {
+    // 6.9 / 6.10: the server took this member out of its group (its LEAVE
+    // came as a sealed tick it executes no more). Its engine plays on alone
+    // from its own state, unregistered until its next barrier, where the
+    // server takes it as an arrival of its own: the others' players go at
+    // the first membership-safe step (marked leaving meanwhile: neutral pads,
+    // their prompts closed), nothing is logged or compared.
+    trace("alone inst=%u visit=%u tick=%u slot=%d present=%x", inst_, visit_, tick_, slot_, unsigned(present_));
+    const std::uint8_t others = std::uint8_t(present_ & ~(1u << slot_));
+    for (int s = 0; s < 4; ++s)
+        if (others & (1u << s)) {
+            engine_.mark_leaving(s);
+            slot_members_[std::size_t(s)] = kNoMember;
+        }
+    alone_pending_ = others;
+    present_ = std::uint8_t(1u << slot_);
+    ticks_.clear();
+    events_.clear();
+    lead_from_.reset();
+    join_at_.reset();
+    delayed_.clear();
+    previous_inst_.reset();
+    resyncing_ = false;
+    mode_ = Mode::solo;
+    mode_of_instance_ = wire::Mode::solo;
+    hub_ = true; // (unregistered: no LOG, NETFP or STATE until the next barrier)
+    log_.clear();
+    log_first_ = tick_;
+    notice("You were taken out of the group; you continue on your own and meet again at the next stage.");
 }
 
 void Session::become_member(double now) {

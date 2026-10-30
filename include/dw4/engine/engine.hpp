@@ -1042,6 +1042,8 @@ private:
     std::vector<const Node*> picture_hidden_; // render(): picture_hidden_roots
     std::vector<Lua4Value> stage_change_port(std::span<const Lua4Value> args);
     bool gatedisc_fork();
+    // 6.5: the exit prompt of a leaving member closes as No (before each online step).
+    void close_leaving_prompt();
     friend struct ExitPortAccess;
     void set_trigger(int slot) {
         trigger_slot_ = slot;

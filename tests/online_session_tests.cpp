@@ -310,9 +310,10 @@ void co_arrive(World& world, fake::Client& a, fake::Client& b) {
 
 // B opens a prompt that only its own pad answers (an exit prompt has no time
 // limit) and leaves the room: its LEAVE waits for a membership-safe step.
-// From the LEAVE's tick B's slot is marked leaving (6.5), so A's pad answers
-// the prompt, the step comes and the LEAVE applies; without the mark nobody
-// could close it and A kept B's player for good.
+// From the LEAVE's tick B's slot is marked leaving (6.5) and its prompt closes
+// as No by itself, the step comes and the LEAVE applies; without the mark
+// nobody could close it and A kept B's player for good (A does not even see
+// B's prompt: its pad must not answer it, second S1 review).
 void leave_with_open_prompt() {
     World world;
     world.hub.co_arrival_hold = 3.0;
@@ -327,10 +328,11 @@ void leave_with_open_prompt() {
     check(world.run_until(5, [&] { return a.engine.prompt_owner_ == 1; }), "B's prompt is open on A's machine (B: " + std::to_string(b.engine.prompt_owner_) + ", at " + std::to_string(at) + ")");
     world.run(1);
     check(a.engine.prompt_owner_ == 1, "A's pad does not answer B's prompt");
+    a.input = nullptr; // A only walks
     world.hub.stamp_leave(2);
     world.hub.drop(2);
     check(world.run_until(10, [&] { return a.session->present() == 0b01 && a.engine.prompt_owner_ < 0; }),
-          "A's pad closes the prompt of the leaving member and the LEAVE applies");
+          "the leaving member's prompt closes by itself and the LEAVE applies");
     check(a.session->mode() == Mode::solo && a.engine.present_ == 0b01, "A leads alone");
 }
 
@@ -364,6 +366,83 @@ void resync_back_to_member() {
     check(b.session->present() == 0b11 && a.session->present() == 0b11, "both still present");
     bool notice = false;
     for (const auto& n : b.session->take_notices()) notice |= n.find("Back in sync") != std::string::npos;
+    check(notice, "B is told");
+}
+
+// A RESYNC that reaches a member parked after its barrier is no resync: the
+// visit it was about ended there (second S1 review: the state threw the
+// member back into the stage it had left, restored as its load).
+void resync_while_parked() {
+    World world;
+    world.hub.co_arrival_hold = 3.0;
+    world.hub.suggested_delay = 6;
+    auto& a = world.add("kim", 1);
+    auto& b = world.add("lee", 2);
+    co_arrive(world, a, b);
+    world.run(3);
+    const std::uint32_t at = a.session->tick() + 30;
+    a.input = [at](const fake::Client& c) -> std::uint32_t { return c.engine.stage() == "stag0101" && c.session->tick() == at ? fake::kExitButton : 0u; };
+    world.hub.answer_barriers = false;
+    check(world.run_until(5, [&] { return b.session->mode() == Mode::parked && a.session->mode() == Mode::parked; }), "both park at the group's barrier");
+    world.run(0.2);
+    // B's fingerprint lost a vote just before the relay saw its BARRIER: RESYNC reaches it parked, the group's
+    // decision (B is the base: NEW) comes right after, the old visit's state after that.
+    world.hub.members[2].parked_at = 0;
+    world.hub.state_pacing = 0.3;
+    world.hub.resync(2, world.now);
+    world.hub.co_arrival_hold = 0.05;
+    world.hub.answer_barriers = true;
+    check(world.run_until(20, [&] { return b.engine.stage() == "stag0102" && b.session->mode() == Mode::sealed && a.session->mode() == Mode::sealed; }),
+          "B ignores the RESYNC and goes on to the next stage with A");
+    world.run(5);
+    check(b.engine.stage() == "stag0102" && b.session->inst() == a.session->inst(), "one instance in stag0102");
+}
+
+// The partner leaves while a member catches up after a RESYNC: the LEAD_FROM
+// is in the ticks the replay runs, and the member leads alone afterwards
+// (second S1 review: it went back to sealed and waited for good).
+void resync_then_alone() {
+    World world;
+    world.hub.co_arrival_hold = 3.0;
+    world.hub.suggested_delay = 6;
+    auto& a = world.add("kim", 1);
+    auto& b = world.add("lee", 2);
+    co_arrive(world, a, b);
+    world.run(5);
+    b.engine.state_ ^= 0x55; // a desync on B's machine
+    world.hub.state_pacing = 0.6; // the state comes after the partner's LEAVE and LEAD_FROM
+    world.hub.resync(2, world.now);
+    world.run(0.05);
+    world.hub.stamp_leave(1);
+    world.hub.drop(1);
+    check(world.run_until(10, [&] { return b.session->mode() == Mode::solo; }), "B leads alone after the resync");
+    const auto tick = b.session->tick();
+    world.run(2);
+    check(b.session->mode() == Mode::solo && b.session->tick() > tick + 60, "B plays on");
+    check(world.hub.resync_ready == 1, "B ended its resync (READY)");
+}
+
+// The server took a member out while it plays (its own LEAVE comes as a
+// sealed tick): it continues alone from its own state, the others' players
+// go, nothing more is sealed for it (before, it removed its own player and
+// waited for ticks nobody sent).
+void taken_out_continues_alone() {
+    World world;
+    world.hub.co_arrival_hold = 3.0;
+    world.hub.suggested_delay = 6;
+    auto& a = world.add("kim", 1);
+    auto& b = world.add("lee", 2);
+    co_arrive(world, a, b);
+    world.run(3);
+    world.hub.stamp_leave(2);
+    check(world.run_until(5, [&] { return b.session->mode() == Mode::solo && b.engine.present_ == 0b10; }),
+          "B continues alone with its own player only (present " + std::to_string(b.engine.present_) + ")");
+    const auto steps = b.steps;
+    world.run(2);
+    check(b.steps > steps + 100 && b.session->present() == 0b10, "B plays on");
+    check(a.session->mode() == Mode::solo && a.engine.present_ == 0b01, "A leads alone");
+    bool notice = false;
+    for (const auto& n : b.session->take_notices()) notice |= n.find("on your own") != std::string::npos;
     check(notice, "B is told");
 }
 
@@ -469,6 +548,12 @@ int main(int argc, char** argv) {
         leave_with_open_prompt();
         std::cout << "resync\n";
         resync_back_to_member();
+        std::cout << "resync while parked\n";
+        resync_while_parked();
+        std::cout << "resync, then alone\n";
+        resync_then_alone();
+        std::cout << "taken out, continues alone\n";
+        taken_out_continues_alone();
         std::cout << "pacing, lag\n";
         pacing_and_lag();
         std::cout << "input delay\n";

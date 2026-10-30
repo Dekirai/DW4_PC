@@ -348,6 +348,30 @@ std::vector<Lua4Value> Engine::stage_change_port(std::span<const Lua4Value> args
     return {};
 }
 
+// 6.5: a member that leaves the room (its LEAVE waits for a membership-safe
+// step) while its own exit prompt is open, or while it is asked, answers No:
+// its selection closes as cancelled in the step after its LEAVE's tick, on
+// every machine alike (`leaving` is simulation state). Handing the prompt the
+// leader's pad (pad_reader_slot) let a member answer a prompt it does not see
+// (other members' prompts are not drawn): a leader who only walked kept the
+// instance in that prompt for good, with joins blocked, and a stray press
+// answered it Yes.
+void Engine::close_leaving_prompt() {
+    if (!exit_port_ || !online_.leaving) return;
+    using State = ExitPort::State;
+    const auto& exit = *exit_port_;
+    int slot = -1;
+    if (exit.state == State::decide) slot = exit.owner; // the owner's own prompt (its demo records run it)
+    else if (exit.state == State::ask_open || exit.state == State::ask_window || exit.state == State::ask_answer) slot = exit.asking;
+    if (slot < 0 || slot > 3 || !(online_.leaving & (1u << slot))) return;
+    const Messenger::PortOnly port_only(messenger_); // (no counterpart in the original: the message objects keep their state)
+    Packet selecting;
+    messenger_.send(*this, "SELECTCTRL", "i_zzstchgwn", slot, "ISSELECTNOW", selecting);
+    if (selecting.bools.empty() || !selecting.bools[0]) return; // not open yet, or answered already
+    Packet remove;
+    messenger_.send(*this, "SELECTCTRL", "i_zzstchgwn", slot, "REMOVE", remove);
+}
+
 // The gate disc in a multi-member instance (SEAMLESS.md 5): its user forks
 // off first (with every defeated member when no living one would stay), then
 // gatedisc.lua runs in the user's copy only; the others play on. Returns
