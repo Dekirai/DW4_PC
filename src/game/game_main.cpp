@@ -3069,6 +3069,8 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     room_live.mode = dw4::game::online::mode_name(session.mode());
                     room_live.delay = session.delay();
                     room_live.leave_prompt = online->leave_prompt;
+                    room_live.in_game = online->link().game_started();
+                    if (auto* character = online->character()) room_live.character = character->status_text();
                     for (const auto& e : session.roster())
                         room_live.members.push_back({e.member, session.member_name(e.member), e.stage, e.inst, e.level, e.hp, e.max_hp,
                                                      (e.flags & 1) != 0, (e.flags & 2) != 0, (e.flags & 4) != 0});

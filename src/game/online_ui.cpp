@@ -620,9 +620,13 @@ void in_room(online::OnlineLobby& lobby, OnlineUiState& s, const RoomLive* live)
     }
     ImGui::Spacing();
     // The online character this machine plays (round S2's character lane
-    // brings the server's; a new one starts at the title's Game Start).
+    // brings the server's; a new one starts at the title's Game Start). Once
+    // the game runs, how it is saved (the lobby's account view was read
+    // before the room and does not follow the saves).
     if (live && live->active) {
-        if (const auto& c = lobby.character(); c && c->exists)
+        if (live->in_game) {
+            if (!live->character.empty()) wrapped_disabled(live->character.c_str());
+        } else if (const auto& c = lobby.character(); c && c->exists)
             wrapped_disabled(("You play " + (c->name.empty() ? std::string("your online character") : c->name) + " (" + c->digimon + ", level " +
                               std::to_string(c->level) + "): Play, then START and Game Start at the title to continue.")
                                  .c_str());
