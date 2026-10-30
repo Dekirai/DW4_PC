@@ -166,6 +166,11 @@ void OnlineLobby::back() {
     set_screen(in_room() ? Screen::in_room : logged_in() ? Screen::rooms : Screen::welcome);
 }
 
+bool OnlineLobby::can_back() const {
+    const Screen root = in_room() ? Screen::in_room : logged_in() ? Screen::rooms : Screen::welcome;
+    return screen_ != root && screen_ != Screen::starting;
+}
+
 void OnlineLobby::open() {
     opened_ = true;
     error_.clear();

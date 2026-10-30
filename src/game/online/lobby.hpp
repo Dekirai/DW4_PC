@@ -127,6 +127,9 @@ public:
     Screen screen() const { return screen_; }
     void go(Screen screen);
     void back();
+    // back() leads somewhere: this is not the first screen (the room list
+    // logged in, the welcome logged out, the room inside one).
+    bool can_back() const;
 
     // Facts for the screens.
     Gate gate() const { return gate_; }

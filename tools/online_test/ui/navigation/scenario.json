@@ -1,5 +1,5 @@
 {
-  "desc": "keyboard and controller navigation: the View button opens the title panel, arrow keys move, Enter presses, View closes",
-  "timeout": 120,
+  "desc": "the title menu's Online entry and the screens with the controller: the cursor on each entry, Online, a screen, the on-screen keyboard, B back to the title menu",
+  "timeout": 150,
   "clients": [{"name": "a", "script": "a.txt"}]
 }

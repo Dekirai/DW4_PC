@@ -1,16 +1,19 @@
 #pragma once
 
-// The account and room screens (docs/SEAMLESS.md 10) in ImGui: the small
-// Online panel at the bottom right of the title screen and the F1 Online tab
-// draw the same screens of one OnlineLobby (online/lobby.hpp). Everything is
-// English and ASCII; the screens work with the mouse, the keyboard and a
-// controller (ImGui's navigation: the D-pad or stick moves, A presses, B goes
-// back; the controller's View / Back button opens and closes the title panel
-// and the F1 menu).
+// The account and room screens (docs/SEAMLESS.md 10) in ImGui: the title
+// menu's third entry "Online" opens them over the title (large, in the
+// game's colours), and the F1 Online tab draws the same screens of one
+// OnlineLobby (online/lobby.hpp). Everything is English and ASCII; the
+// screens work with a controller first (the D-pad or stick moves, A presses,
+// B goes back a screen and from the first one to the title menu, text fields
+// open an on-screen keyboard), the keyboard (arrows, Enter, Esc, typing) and
+// the mouse.
 //
 // Presentation only: nothing here touches the engine. The host (game_main)
 // starts and ends the session the lobby prepares.
 #include "online/lobby.hpp"
+
+struct ImFont;
 
 #include <array>
 #include <cstdint>
@@ -60,6 +63,17 @@ struct OnlineUiState {
     bool leave_asked = false;            // "Leave room?" in the room view
     online::Screen last_screen = online::Screen::welcome;
     bool focus_pending = false;          // put the controller's focus on the new screen's first item
+    bool close_requested = false;        // out: "Play" in the room view (the host closes the screens)
+    // The on-screen keyboard: a text field the controller activated.
+    struct Keyboard {
+        bool open = false;
+        char* target = nullptr;          // the field's buffer
+        std::size_t size = 0;
+        std::string label;
+        bool secret = false;             // a password: shown as dots
+        bool shift = false, symbols = false;
+        bool focus = false;              // the controller's focus goes to the first key
+    } keyboard;
 };
 
 // Sets a form field by its script name ("login.name", "create.players", ...);
@@ -75,19 +89,22 @@ std::string area_line(const std::string& stage, bool hub = false);
 const char* camera_mode_name(int mode);
 const char* light_mode_name(int mode);
 
-// The screens of the lobby (the body of the F1 Online tab and of the active
-// title panel). `live`: the running room (nullptr when none).
+// The screens of the lobby (the body of the F1 Online tab and of the title's
+// online screens). `live`: the running room (nullptr when none).
 void draw_online_screens(online::OnlineLobby& lobby, OnlineUiState& state, const RoomLive* live);
 
-// The title screen's panel at the bottom right of the display. Inactive it
-// is one compact box (the mouse or the View button opens it); active it
-// shows the screens and takes the input. Returns whether it is active after
-// this frame (the host blocks the game's input while it is).
-struct TitlePanel {
-    bool active = false;
+// The online screens over the title (the title menu's third entry opens
+// them): centred on the 4:3 picture, in the game's colours, with `heading`
+// and `body` (null: ImGui's own) at sizes that follow the window's height.
+// B, Esc or Back go back a screen; from the first screen (or a closed gate)
+// they ask the host to close the screens: `close` is set, and the title menu
+// takes the input again.
+struct TitleOnline {
+    bool active = false;                 // shown over the title, takes the input
     bool focus = false;                  // give it the keyboard / controller focus this frame
-    bool hovered = false;                // the mouse is over it (the host's click rule)
+    bool close = false;                  // out: back from the first screen
 };
-void draw_title_panel(online::OnlineLobby& lobby, OnlineUiState& state, TitlePanel& panel);
+void draw_title_online(online::OnlineLobby& lobby, OnlineUiState& state, TitleOnline& screens, const RoomLive* live, ImFont* heading,
+                       ImFont* body);
 
 } // namespace dw4::game

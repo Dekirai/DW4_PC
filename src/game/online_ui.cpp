@@ -48,13 +48,33 @@ void wrapped_disabled(const char* text) {
     ImGui::PopStyleColor();
 }
 
+// The on-screen keyboard of the screens being drawn (draw_online_screens).
+OnlineUiState::Keyboard* g_keyboard = nullptr;
+
+// The label column's width: wider with a larger font.
+float label_width() { return kLabelWidth * ImGui::GetFontSize() / 13.0f; }
+
 // A labelled text field across the line; true when Enter was pressed in it.
+// The controller's A on it opens the on-screen keyboard (the keyboard's
+// typing works in it as always).
 bool field(const char* label, const char* id, char* buffer, std::size_t size, ImGuiInputTextFlags flags = 0) {
     ImGui::AlignTextToFramePadding();
     ImGui::TextUnformatted(label);
-    ImGui::SameLine(kLabelWidth);
+    ImGui::SameLine(label_width());
     ImGui::SetNextItemWidth(-1);
-    return ImGui::InputText(id, buffer, size, flags | ImGuiInputTextFlags_EnterReturnsTrue);
+    const bool entered = ImGui::InputText(id, buffer, size, flags | ImGuiInputTextFlags_EnterReturnsTrue);
+    if (g_keyboard && ImGui::IsItemActivated() &&
+        (GImGui->ActiveIdSource == ImGuiInputSource_Gamepad || ImGui::IsKeyDown(ImGuiKey_GamepadFaceDown) || ImGui::IsKeyDown(ImGuiKey_GamepadFaceUp))) {
+        ImGui::ClearActiveID();
+        g_keyboard->open = true;
+        g_keyboard->target = buffer;
+        g_keyboard->size = size;
+        g_keyboard->label = label;
+        g_keyboard->secret = (flags & ImGuiInputTextFlags_Password) != 0;
+        g_keyboard->shift = g_keyboard->symbols = false;
+        g_keyboard->focus = true;
+    }
+    return entered;
 }
 template <std::size_t N> bool field(const char* label, const char* id, char (&buffer)[N], ImGuiInputTextFlags flags = 0) {
     return field(label, id, buffer, N, flags);
@@ -67,7 +87,7 @@ template <std::size_t N> bool secret(const char* label, const char* id, char (&b
 void label_cell(const char* label) {
     ImGui::AlignTextToFramePadding();
     ImGui::TextUnformatted(label);
-    ImGui::SameLine(kLabelWidth);
+    ImGui::SameLine(label_width());
 }
 
 // A button that is greyed out (and does nothing) when not enabled.
@@ -555,7 +575,7 @@ void in_room(online::OnlineLobby& lobby, OnlineUiState& s, const RoomLive* live)
         ImGui::TableSetupColumn("Area", ImGuiTableColumnFlags_WidthStretch, 3.0f);
         ImGui::TableSetupColumn("Lv", ImGuiTableColumnFlags_WidthStretch, 0.45f);
         ImGui::TableSetupColumn("Status", ImGuiTableColumnFlags_WidthStretch, 1.1f);
-        if (owner) ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed, 40.0f);
+        if (owner) ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed, ImGui::CalcTextSize("Kick").x + ImGui::GetStyle().FramePadding.x * 4);
         ImGui::TableHeadersRow();
         for (const auto& r : rows) {
             ImGui::TableNextRow();
@@ -599,8 +619,23 @@ void in_room(online::OnlineLobby& lobby, OnlineUiState& s, const RoomLive* live)
         }
     }
     ImGui::Spacing();
+    // The online character this machine plays (round S2's character lane
+    // brings the server's; a new one starts at the title's Game Start).
+    if (live && live->active) {
+        if (const auto& c = lobby.character(); c && c->exists)
+            wrapped_disabled(("You play " + (c->name.empty() ? std::string("your online character") : c->name) + " (" + c->digimon + ", level " +
+                              std::to_string(c->level) + "): Play, then START and Game Start at the title to continue.")
+                                 .c_str());
+        else
+            wrapped_disabled("Your online character starts new: Play, then START and Game Start at the title (your save on this PC is not "
+                             "used).");
+    }
     if (live && live->leave_prompt) wrapped_colored(kAccent, "Leave room? (you held B + X + START)");
     if (!s.leave_asked && !(live && live->leave_prompt)) {
+        if (live && live->active) {
+            if (button("Play", true, true)) s.close_requested = true;
+            ImGui::SameLine();
+        }
         if (button("Leave room", !lobby.busy())) s.leave_asked = true;
     } else {
         wrapped("Leave the room? The online game ends and you return to the title; your online character is saved first.");
@@ -611,6 +646,94 @@ void in_room(online::OnlineLobby& lobby, OnlineUiState& s, const RoomLive* live)
         ImGui::SameLine();
         if (button("Stay", !lobby.busy())) s.leave_asked = false;
     }
+}
+
+// The on-screen keyboard (a modal over the screens): the keys in a grid the
+// D-pad moves through, A types the focused key; X deletes, Y switches the
+// capitals, B, START or Done close it. The mouse clicks the keys too.
+void keyboard_popup(OnlineUiState::Keyboard& k) {
+    if (!k.open || !k.target) return;
+    if (!ImGui::IsPopupOpen("##keyboard")) ImGui::OpenPopup("##keyboard");
+    const ImGuiViewport* viewport = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + viewport->WorkSize.x * 0.5f, viewport->WorkPos.y + viewport->WorkSize.y * 0.5f),
+                            ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    if (!ImGui::BeginPopupModal("##keyboard", nullptr,
+                                ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoTitleBar |
+                                    ImGuiWindowFlags_NoSavedSettings))
+        return;
+    const std::size_t length = std::strlen(k.target);
+    auto type = [&](char c) {
+        const std::size_t n = std::strlen(k.target);
+        if (n + 1 < k.size) {
+            k.target[n] = c;
+            k.target[n + 1] = 0;
+        }
+    };
+    auto erase = [&] {
+        const std::size_t n = std::strlen(k.target);
+        if (n) k.target[n - 1] = 0;
+    };
+    bool done = false;
+    const float key = ImGui::GetFrameHeight() * 1.6f;
+    const float row_width = key * 10 + ImGui::GetStyle().ItemSpacing.x * 9;
+    ImGui::TextUnformatted(k.label.c_str());
+    {
+        // The text so far (a password as stars), with the cursor.
+        std::string shown = k.secret ? std::string(length, '*') : std::string(k.target);
+        shown += "_";
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, ImGui::GetStyleColorVec4(ImGuiCol_FrameBg));
+        ImGui::BeginChild("##typed", ImVec2(row_width, ImGui::GetFrameHeightWithSpacing()), ImGuiChildFlags_None, ImGuiWindowFlags_NoNav);
+        ImGui::SetCursorPos(ImVec2(ImGui::GetStyle().FramePadding.x, ImGui::GetStyle().FramePadding.y));
+        ImGui::TextColored(kAccent, "%s", shown.c_str());
+        ImGui::EndChild();
+        ImGui::PopStyleColor();
+    }
+    static const char* const kLetters[4] = {"1234567890", "qwertyuiop", "asdfghjkl'", "zxcvbnm-_."};
+    static const char* const kSymbols[4] = {"!@#$%&*()=", "+/\\:;,?\"~^", "[]{}<>|`.-", "_'@#!?.,-+"};
+    for (int row = 0; row < 4; ++row) {
+        const char* keys = k.symbols ? kSymbols[row] : kLetters[row];
+        for (int col = 0; keys[col]; ++col) {
+            char c = keys[col];
+            if (k.shift && c >= 'a' && c <= 'z') c = char(c - 'a' + 'A');
+            const char label[2] = {c, 0};
+            ImGui::PushID(row * 16 + col);
+            if (col) ImGui::SameLine();
+            if (ImGui::Button(label, ImVec2(key, key))) type(c);
+            if (row == 1 && col == 0) {
+                ImGui::SetItemDefaultFocus();
+                if (k.focus) {
+                    ImGui::SetKeyboardFocusHere(-1);
+                    k.focus = false;
+                }
+            }
+            ImGui::PopID();
+        }
+    }
+    const float wide = (row_width - ImGui::GetStyle().ItemSpacing.x * 4) / 5;
+    if (ImGui::Button(k.shift ? "abc" : "ABC", ImVec2(wide, key))) k.shift = !k.shift;
+    ImGui::SameLine();
+    if (ImGui::Button(k.symbols ? "Letters" : "Symbols", ImVec2(wide, key))) k.symbols = !k.symbols;
+    ImGui::SameLine();
+    if (ImGui::Button("Space", ImVec2(wide, key))) type(' ');
+    ImGui::SameLine();
+    if (ImGui::Button("Delete", ImVec2(wide, key))) erase();
+    ImGui::SameLine();
+    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.16f, 0.42f, 0.78f, 1.0f));
+    if (ImGui::Button("Done", ImVec2(wide, key))) done = true;
+    ImGui::PopStyleColor();
+    // The controller's shortcuts (and the keyboard's Esc / Backspace).
+    if (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceLeft) || ImGui::IsKeyPressed(ImGuiKey_Backspace)) erase();
+    if (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceUp, false)) k.shift = !k.shift;
+    if (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadStart, false) ||
+        ImGui::IsKeyPressed(ImGuiKey_Escape, false))
+        done = true;
+    ImGui::TextDisabled("A  Type     X  Delete     Y  Capitals     B  Done");
+    if (done) {
+        k.open = false;
+        k.target = nullptr;
+        ImGui::CloseCurrentPopup();
+    }
+    ImGui::EndPopup();
 }
 
 } // namespace
@@ -670,11 +793,17 @@ const char* camera_mode_name(int mode) { return mode == 1 ? "Alternative" : "Nor
 const char* light_mode_name(int mode) { return mode == 1 ? "Normal" : "Alternative"; }
 
 void draw_online_screens(online::OnlineLobby& lobby, OnlineUiState& state, const RoomLive* live) {
+    g_keyboard = &state.keyboard;
+    struct Reset {
+        ~Reset() { g_keyboard = nullptr; }
+    } reset;
     // A new screen: the controller's focus moves to its first (or primary) item.
     if (lobby.screen() != state.last_screen) {
         state.last_screen = lobby.screen();
         state.focus_pending = true;
         if (lobby.screen() != Screen::in_room) state.leave_asked = false;
+        state.keyboard.open = false;
+        state.keyboard.target = nullptr;
     }
     if (state.focus_pending && (ImGui::GetIO().ConfigFlags & (ImGuiConfigFlags_NavEnableGamepad | ImGuiConfigFlags_NavEnableKeyboard))) {
         if (ImGuiWindow* window = ImGui::GetCurrentWindow(); window && window == GImGui->NavWindow) ImGui::NavInitWindow(window, true);
@@ -692,6 +821,8 @@ void draw_online_screens(online::OnlineLobby& lobby, OnlineUiState& state, const
                              "affected.");
         else if (gate == Gate::not_set_up)
             wrapped_disabled("Offline play and local co-op are not affected.");
+        else if (gate == Gate::unreachable || gate == Gate::maintenance)
+            wrapped_disabled("Online play needs the DW4Online server. Offline play is not affected.");
         return;
     }
     // (The in-room view also while the server cannot be reached: the room runs on.)
@@ -714,45 +845,105 @@ void draw_online_screens(online::OnlineLobby& lobby, OnlineUiState& state, const
     }
     ImGui::Spacing();
     footer(lobby);
+    keyboard_popup(state.keyboard);
 }
 
-void draw_title_panel(online::OnlineLobby& lobby, OnlineUiState& state, TitlePanel& panel) {
+void draw_title_online(online::OnlineLobby& lobby, OnlineUiState& state, TitleOnline& screens, const RoomLive* live, ImFont* heading,
+                       ImFont* body) {
     const ImGuiIO& io = ImGui::GetIO();
-    const float margin = std::max(16.0f, io.DisplaySize.y * 0.025f);
-    ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x - margin, io.DisplaySize.y - margin), ImGuiCond_Always, ImVec2(1, 1));
-    const float width = std::clamp(io.DisplaySize.x * 0.3f, 380.0f, 560.0f);
-    ImGui::SetNextWindowSizeConstraints(ImVec2(width, 0), ImVec2(width, io.DisplaySize.y - 2 * margin));
-    ImGui::SetNextWindowBgAlpha(panel.active ? 0.94f : 0.72f);
-    if (panel.focus) {
+    // Sizes follow the window's height (22 px text at 1009 lines, the
+    // round 50 / 54 screenshots' window), on the 4:3 picture.
+    const float scale = std::max(0.6f, io.DisplaySize.y / 1009.0f);
+    const float text = std::round(22.0f * scale), title = std::round(34.0f * scale);
+    const float picture_width = std::min(io.DisplaySize.x, io.DisplaySize.y * 4.0f / 3.0f);
+    const float width = std::min(picture_width * 0.86f, 1000.0f * scale);
+
+    // B, Esc: back a screen; from the first one, back to the title menu.
+    // (Not while a text field, a list or the on-screen keyboard takes it.)
+    const bool back = !state.keyboard.open && !io.WantTextInput && !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId) &&
+                      (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false) || ImGui::IsKeyPressed(ImGuiKey_Escape, false));
+    const bool first = (lobby.gate() != online::Gate::open && !lobby.in_room()) || !lobby.can_back();
+    if (back && !lobby.busy()) {
+        const auto screen = lobby.screen();
+        if (state.leave_asked) state.leave_asked = false;
+        else if (screen == Screen::registered || screen == Screen::recovered) {} // the code is confirmed with "I saved it"
+        else if (screen == Screen::confirm) lobby.cancel_start();
+        else if (!first) lobby.back();
+        else screens.close = true;
+    }
+
+    // The game's colours: the title menu's dark band and its light lines,
+    // white text, square corners.
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.04f, 0.04f, 0.06f, 0.92f));
+    ImGui::PushStyleColor(ImGuiCol_PopupBg, ImVec4(0.06f, 0.06f, 0.09f, 0.97f));
+    ImGui::PushStyleColor(ImGuiCol_ModalWindowDimBg, ImVec4(0.0f, 0.0f, 0.0f, 0.45f));
+    ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.78f, 0.80f, 0.90f, 0.85f));
+    ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(1.0f, 1.0f, 1.0f, 0.08f));
+    ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, ImVec4(1.0f, 1.0f, 1.0f, 0.14f));
+    ImGui::PushStyleColor(ImGuiCol_FrameBgActive, ImVec4(1.0f, 1.0f, 1.0f, 0.2f));
+    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(1.0f, 1.0f, 1.0f, 0.10f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(1.0f, 1.0f, 1.0f, 0.22f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(1.0f, 1.0f, 1.0f, 0.32f));
+    ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(1.0f, 1.0f, 1.0f, 0.14f));
+    ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(1.0f, 1.0f, 1.0f, 0.22f));
+    ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4(1.0f, 1.0f, 1.0f, 0.3f));
+    ImGui::PushStyleColor(ImGuiCol_Separator, ImVec4(0.78f, 0.80f, 0.90f, 0.5f));
+    ImGui::PushStyleColor(ImGuiCol_NavCursor, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_TableHeaderBg, ImVec4(1.0f, 1.0f, 1.0f, 0.08f));
+    ImGui::PushStyleColor(ImGuiCol_TableRowBgAlt, ImVec4(1.0f, 1.0f, 1.0f, 0.04f));
+    constexpr int kColors = 17;
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 0.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_PopupRounding, 0.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_PopupBorderSize, 2.0f * scale);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(28.0f * scale, 24.0f * scale));
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(10.0f * scale, 6.0f * scale));
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(10.0f * scale, 8.0f * scale));
+    ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, ImVec2(6.0f * scale, 4.0f * scale));
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 0.0f);
+    constexpr int kVars = 10;
+    ImGui::PushFont(body, text);
+
+    // The title behind them steps back (as under the game's own windows).
+    ImGui::GetBackgroundDrawList()->AddRectFilled(ImVec2(0, 0), io.DisplaySize, IM_COL32(0, 0, 0, 120));
+    ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSizeConstraints(ImVec2(width, 0), ImVec2(width, io.DisplaySize.y * 0.9f));
+    if (screens.focus) {
         ImGui::SetNextWindowFocus();
-        panel.focus = false;
+        screens.focus = false;
     }
     ImGui::Begin("Online##title", nullptr,
-                 ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_AlwaysAutoResize |
-                     ImGuiWindowFlags_NoSavedSettings | (panel.active ? 0 : ImGuiWindowFlags_NoNav));
-    panel.hovered = ImGui::IsWindowHovered(ImGuiHoveredFlags_RootAndChildWindows | ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
-    if (!panel.active) {
-        // The compact box: who is logged in, and how to open it.
-        if (lobby.gate() != online::Gate::open && lobby.gate() != online::Gate::unknown) wrapped_colored(kWarn, lobby.gate_text());
-        else if (lobby.logged_in()) {
-            ImGui::Text("Logged in as %s", lobby.account().c_str());
-            const auto count = std::count_if(lobby.rooms().begin(), lobby.rooms().end(),
-                                             [&](const online::api::RoomListing& r) { return r.compatible(lobby.protocol(), lobby.data_hash()); });
-            if (lobby.rooms_loaded()) ImGui::TextDisabled("%d open room%s", int(count), count == 1 ? "" : "s");
-        } else if (lobby.busy()) {
-            ImGui::TextDisabled("%s", lobby.busy_text().c_str());
-        } else {
-            wrapped("Play together online: rooms of up to ten players.");
-        }
-        ImGui::TextDisabled("Click here or press the controller's View button");
-    } else {
-        draw_online_screens(lobby, state, nullptr);
-        ImGui::Separator();
-        if (ImGui::Button("Close")) panel.active = false;
-        ImGui::SameLine();
-        ImGui::TextDisabled("(View button, Esc)");
+                 ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse |
+                     ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings);
+    // The band's light lines above and below, as on the title menu.
+    {
+        ImDrawList* draw = ImGui::GetWindowDrawList();
+        const ImVec2 at = ImGui::GetWindowPos(), size = ImGui::GetWindowSize();
+        const float line = std::max(2.0f, 4.0f * scale), gap = std::max(2.0f, 5.0f * scale);
+        const ImU32 color = ImGui::GetColorU32(ImVec4(0.80f, 0.82f, 0.92f, 0.9f));
+        draw->AddRectFilled(ImVec2(at.x, at.y + gap), ImVec2(at.x + size.x, at.y + gap + line), color);
+        draw->AddRectFilled(ImVec2(at.x, at.y + size.y - gap - line), ImVec2(at.x + size.x, at.y + size.y - gap), color);
     }
+    // The heading in the title menu's manner.
+    ImGui::PushFont(heading, title);
+    const char* name = lobby.in_room() ? "Online Room" : "Online";
+    ImGui::SetCursorPosX((ImGui::GetWindowSize().x - ImGui::CalcTextSize(name).x) * 0.5f);
+    ImGui::TextUnformatted(name);
+    ImGui::PopFont();
+    ImGui::Spacing();
+    draw_online_screens(lobby, state, live);
+    ImGui::Spacing();
+    ImGui::Separator();
+    // What the buttons do (controller first).
+    const bool code = lobby.screen() == Screen::registered || lobby.screen() == Screen::recovered;
+    const char* back_text = code ? "" : first ? (lobby.in_room() ? "     B  Close" : "     B  Title menu") : "     B  Back";
+    ImGui::TextDisabled("A  Select%s     (keyboard: arrows, Enter, Esc; or the mouse)", back_text);
     ImGui::End();
+
+    ImGui::PopFont();
+    ImGui::PopStyleVar(kVars);
+    ImGui::PopStyleColor(kColors);
 }
 
 } // namespace dw4::game

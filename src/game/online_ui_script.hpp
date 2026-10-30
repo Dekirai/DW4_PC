@@ -1,9 +1,10 @@
 #pragma once
 
 // The account and room screens in a test run (--online-ui FILE, development
-// builds against a loopback server only): a script drives the lobby through
-// the same calls the screens make, opens the title panel or the F1 Online
-// tab, fills form fields for the screenshots and takes them. tools/online_test
+// builds against a loopback server only): a script presses the game's pad
+// (the title menu's third entry opens the screens as a player does), drives
+// the lobby through the same calls the screens make, opens the F1 Online tab,
+// fills form fields for the screenshots and takes them. tools/online_test
 // (run.py ui) runs it with hidden windows; the S2 done-when "driven through
 // the client's own code paths in a headless test mode" uses it as well.
 //
@@ -14,15 +15,23 @@
 //
 //   wait N                     N passes of the game loop (pictures; also while the engine waits)
 //   sleep SECONDS              real time
-//   wait-title [SECONDS]       until the title shows its Online panel (120 s)
-//   panel open|close           the title's Online panel (active or compact)
+//   wait-title [SECONDS]       until the title presents (its press start or its menu; 120 s)
+//   wait-menu [SECONDS]        until the title menu waits for input, the screens closed (120 s)
+//   to-menu [SECONDS]          START at the title until its menu waits (120 s)
+//   pad NAME...                presses on the game's pad, one after the other (a quarter second
+//                              apart, each held three steps): A B X Y START UP DOWN LEFT RIGHT
+//   expect-cursor N            the title menu's cursor (0 Game Start, 1 Option, 2 Online)
+//   wait-screens [SECONDS]     until the online screens show over the title (30 s)
+//   expect-screens open|closed
+//   panel open|close           the online screens over the title, opened without the menu
 //   open                       the lobby without a panel (version gate, remembered login)
 //   menu online|close          the F1 menu on its Online tab
 //   screen NAME                go to a screen (welcome login register account password rooms create join ...)
 //   back                       the Back button
-//   view                       the controller's View / Back button (opens / closes the title panel or the F1 menu)
+//   view                       the controller's View / Back button (opens / closes the F1 menu)
 //   key NAME...                keys for the menus' navigation: up down left right enter space escape tab,
-//                              pad-up pad-down pad-left pad-right pad-a pad-b (one frame each, in order)
+//                              pad-up pad-down pad-left pad-right pad-a pad-b pad-x pad-y pad-start (the
+//                              controller's, also without one; one frame each, in order)
 //   fill FIELD VALUE...        a form field (online_ui.hpp set_ui_field: login.name, create.players, ...)
 //   login NAME PASSWORD [remember]
 //   register NAME PASSWORD [EMAIL]
@@ -57,16 +66,22 @@ namespace dw4::game {
 struct UiScriptHost {
     online::OnlineLobby& lobby;
     OnlineUiState& state;
-    TitlePanel& panel;
+    TitleOnline& screens;      // the online screens over the title
     bool& show_menu;
     std::string& menu_tab;     // the F1 tab to select
     bool online_active = false; // a room session runs
-    bool title_shown = false;   // the title shows its Online panel (the last frame)
+    bool title_shown = false;   // the title presents (press start or the menu)
+    bool menu_waiting = false;  // the title menu waits for input
+    int cursor = 0;             // its cursor
+    bool title_entry = false;   // the menu has the third entry
+    bool screens_shown = false; // the online screens showed over the title (the last frame)
     std::string stage;          // the engine's stage
     int frame = 0;
     double now = 0;             // seconds
     std::string shot;           // out: a screenshot name for this frame
     bool view_button = false;   // out: the controller's View / Back button
+    bool open_screens = false;  // out: open the online screens over the title
+    std::uint32_t pad = 0;      // out: game pad buttons to press (dw4::pad_button bits)
     std::vector<int> keys;      // out: ImGui keys to press (the menus' keyboard and controller navigation)
     bool end = false;           // out: the run ends
 };
@@ -94,7 +109,8 @@ private:
     bool sent_ = false;            // the current line's request went out
     double refreshed_at_ = -1;
     std::uint64_t serial_ = 0;     // the room list a refresh waits to replace
-    std::size_t key_at_ = 1;       // the next word of a key command
+    std::size_t key_at_ = 1;       // the next word of a key or pad command
+    double next_press_ = -1;       // seconds: the next pad press
 };
 
 } // namespace dw4::game

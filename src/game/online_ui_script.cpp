@@ -1,5 +1,7 @@
 #include "online_ui_script.hpp"
 
+#include "dw4/pad.hpp"
+
 #include <imgui.h>
 
 #include <algorithm>
@@ -148,18 +150,65 @@ bool OnlineUiScript::run(const Line& line, UiScriptHost& host) {
         timed(1, 120);
         return host.title_shown;
     }
+    if (c == "wait-menu") {
+        timed(1, 120);
+        return host.menu_waiting && !host.screens.active;
+    }
+    if (c == "to-menu") {
+        // START at the title (again every second) until its menu waits.
+        timed(1, 120);
+        if (host.menu_waiting) return true;
+        if (host.title_shown && host.now >= next_press_) {
+            host.pad = dw4::pad_button::start;
+            next_press_ = host.now + 1.0;
+        }
+        return false;
+    }
+    if (c == "wait-screens") {
+        timed(1, 30);
+        return host.screens_shown;
+    }
+    if (c == "expect-screens") {
+        if (host.screens.active != (arg(1) == "open")) fail("expected the online screens " + arg(1));
+        return true;
+    }
+    if (c == "expect-cursor") {
+        if (!host.title_entry) fail("the title menu has no Online entry");
+        if (host.cursor != std::atoi(arg(1).c_str())) fail("expected the title menu's cursor at " + arg(1) + ", it is at " + std::to_string(host.cursor));
+        return true;
+    }
+    if (c == "pad") {
+        // One press per word, a quarter second apart (the engine steps at
+        // its own pace in a UI run; the host holds each for three steps).
+        if (!sent_) {
+            key_at_ = 1;
+            next_press_ = host.now;
+            sent_ = true;
+        }
+        if (host.now < next_press_) return false;
+        if (key_at_ >= w.size()) return true;
+        static const std::pair<const char*, std::uint32_t> names[] = {
+            {"A", dw4::pad_button::a},       {"B", dw4::pad_button::b},       {"X", dw4::pad_button::x},
+            {"Y", dw4::pad_button::y},       {"START", dw4::pad_button::start}, {"UP", dw4::pad_button::up},
+            {"DOWN", dw4::pad_button::down}, {"LEFT", dw4::pad_button::left}, {"RIGHT", dw4::pad_button::right},
+        };
+        const auto& name = w[key_at_];
+        const auto found = std::find_if(std::begin(names), std::end(names), [&](const auto& n) { return name == n.first; });
+        if (found == std::end(names)) fail("unknown pad button " + name);
+        host.pad = found->second;
+        ++key_at_;
+        next_press_ = host.now + 0.25;
+        return false;
+    }
     if (c == "panel") {
-        host.panel.active = arg(1) != "close";
-        host.panel.focus = host.panel.active;
-        if (host.panel.active) host.show_menu = false;
-        if (host.panel.active && !lobby.opened()) lobby.open();
+        if (arg(1) != "close") host.open_screens = true;
+        else host.screens.active = false;
         return true;
     }
     if (c == "menu") {
         host.show_menu = arg(1) != "close";
         if (host.show_menu) {
             host.menu_tab = "Online";
-            host.panel.active = false;
             if (!lobby.opened()) lobby.open();
         }
         return true;
@@ -199,7 +248,8 @@ bool OnlineUiScript::run(const Line& line, UiScriptHost& host) {
             {"right", ImGuiKey_RightArrow},  {"enter", ImGuiKey_Enter},           {"space", ImGuiKey_Space},
             {"escape", ImGuiKey_Escape},     {"tab", ImGuiKey_Tab},               {"pad-up", ImGuiKey_GamepadDpadUp},
             {"pad-down", ImGuiKey_GamepadDpadDown}, {"pad-left", ImGuiKey_GamepadDpadLeft}, {"pad-right", ImGuiKey_GamepadDpadRight},
-            {"pad-a", ImGuiKey_GamepadFaceDown}, {"pad-b", ImGuiKey_GamepadFaceRight},
+            {"pad-a", ImGuiKey_GamepadFaceDown}, {"pad-b", ImGuiKey_GamepadFaceRight}, {"pad-x", ImGuiKey_GamepadFaceLeft},
+            {"pad-y", ImGuiKey_GamepadFaceUp}, {"pad-start", ImGuiKey_GamepadStart},
         };
         const auto& name = w[key_at_];
         const auto found = std::find_if(std::begin(names), std::end(names), [&](const auto& n) { return name == n.first; });

@@ -1,22 +1,57 @@
-# The title panel without a mouse: View opens it (and the lobby), the navigation keys move and press.
+# The title menu's third entry and the screens without a mouse: the game's pad moves the menu's cursor
+# to Online and chooses it; the controller moves through the screens, A presses, a text field opens the
+# on-screen keyboard, B goes back a screen and from the first one to the title menu.
 wait-title
-sleep 4
-view
+to-menu
+wait 30
+expect-cursor 0
+shot menu_game_start
+pad DOWN
+sleep 1
+expect-cursor 1
+shot menu_option
+pad DOWN
+sleep 1
+expect-cursor 2
+shot menu_online
+pad UP
+sleep 1
+expect-cursor 1
+pad DOWN A
+wait-screens
+expect-screens open
 expect-gate open
 wait 10
 expect-screen welcome
-# (The first arrow shows the cursor on the default button, Log in; the second moves it.)
-key right
+shot welcome
+# (The first press shows the cursor on the default button, Log in; the second moves it.)
+key pad-right
 wait 5
-shot nav_cursor
-key right
+key pad-right
 wait 5
-shot nav_focus
-key enter
+shot welcome_focus
+key pad-a
 wait 10
 expect-screen register
-shot nav_register
-view
+shot register
+# A on the first field opens the on-screen keyboard: q, w, the capitals, down to S.
+key pad-a
 wait 10
-shot nav_closed
+shot keyboard
+key pad-a pad-right pad-a pad-y pad-down pad-a
+wait 10
+shot keyboard_typed
+key pad-b
+wait 10
+shot register_typed
+key pad-b
+wait 10
+expect-screen welcome
+key pad-b
+sleep 1
+expect-screens closed
+wait-menu
+expect-cursor 2
+wait 10
+shot menu_back
 end

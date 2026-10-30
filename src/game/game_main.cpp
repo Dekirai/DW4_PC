@@ -994,7 +994,8 @@ int run(const Options& options, dw4::game::Settings& settings) {
     if (!SDL_Init(draw ? SDL_INIT_VIDEO | SDL_INIT_GAMEPAD : SDL_INIT_EVENTS)) throw std::runtime_error(SDL_GetError());
     SDL_Window* window = nullptr;
     SDL_GLContext context = nullptr;
-    ImFont* tag_font = nullptr; // the overhead name tags' font
+    ImFont* tag_font = nullptr;  // the overhead name tags' font (also the online screens' headings)
+    ImFont* body_font = nullptr; // the online screens' text over the title
     int samples = 0;
     if (draw) {
         SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
@@ -1057,6 +1058,15 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 if (!tag_font && std::filesystem::is_regular_file(file, error)) tag_font = fonts.AddFontFromFileTTF(file.string().c_str(), 18.0f);
             }
         if (!tag_font) tag_font = fonts.AddFontDefaultVector();
+        // The online screens over the title: a regular system face beside
+        // the bold one (Segoe UI, Arial), else ImGui's scalable one.
+        if (const char* windows = std::getenv("WINDIR"))
+            for (const char* face : {"segoeui.ttf", "arial.ttf"}) {
+                const auto file = std::filesystem::path(windows) / "Fonts" / face;
+                std::error_code error;
+                if (!body_font && std::filesystem::is_regular_file(file, error)) body_font = fonts.AddFontFromFileTTF(file.string().c_str(), 18.0f);
+            }
+        if (!body_font) body_font = fonts.AddFontDefaultVector();
     }
 
     // Audio: the SoundManager's streams go to the default playback device
@@ -1310,21 +1320,29 @@ int run(const Options& options, dw4::game::Settings& settings) {
             std::chrono::steady_clock::time_point until;
         };
         std::deque<Toast> toasts;
-        // The account and room screens (online_ui.hpp): the title panel, the
-        // F1 Online tab, the test run's script (--online-ui).
+        // The account and room screens (online_ui.hpp): over the title (its
+        // menu's third entry "Online" opens them), the F1 Online tab, the test
+        // run's script (--online-ui).
         dw4::game::OnlineUiState online_ui;
         dw4::game::TitleEntry title_entry; // the title menu's third entry in the picture
-        dw4::game::TitlePanel title_panel;
-        bool title_panel_shown = false; // the title shows it (the last frame)
-        bool online_tab_shown = false;  // F1 shows the Online tab (the last frame)
+        dw4::game::TitleOnline title_online;
+        bool title_online_shown = false; // the screens over the title (the last frame)
+        bool online_tab_shown = false;   // F1 shows the Online tab (the last frame)
+        // After the screens close, the game's pad waits until every button
+        // is up (the B that closed them must not also cancel the menu).
+        bool pad_latch = false;
+        // A UI test run's presses on the game's pad (dw4::pad_button bits),
+        // held until that engine frame.
+        std::uint32_t ui_pad = 0;
+        std::uint64_t ui_pad_until = 0;
         std::string ui_shot;            // a screenshot the script asked for this frame
         dw4::game::OnlineUiScript ui_script;
         if (!options.online_ui.empty()) {
             std::string error;
             if (!ui_script.load(options.online_ui, error)) throw std::runtime_error("online-ui: " + error);
         }
-        // The controller's View / Back button opens the title panel or the F1
-        // menu, unless a binding gives it to a game button.
+        // The controller's View / Back button opens and closes the F1 menu,
+        // unless a binding gives it to a game button.
         const auto back_button_free = [&] {
             for (const auto& inputs : settings.pad)
                 for (const auto& input : inputs)
@@ -1332,15 +1350,17 @@ int run(const Options& options, dw4::game::Settings& settings) {
             return true;
         };
         auto view_button = [&] {
-            if (title_panel_shown && !show_menu) {
-                title_panel.active = !title_panel.active;
-                title_panel.focus = title_panel.active;
-                if (lobby && title_panel.active && !lobby->opened()) lobby->open();
-            } else {
-                show_menu = !show_menu;
-                capture.reset();
-                if (!show_menu && settings_changed && settings.save()) settings_changed = false;
-            }
+            show_menu = !show_menu;
+            capture.reset();
+            if (!show_menu && settings_changed && settings.save()) settings_changed = false;
+        };
+        // Opens the online screens over the title (the menu's Online entry;
+        // a test run's "panel open").
+        auto open_title_online = [&] {
+            if (!lobby) return;
+            title_online.active = title_online.focus = true;
+            show_menu = false;
+            if (!lobby->opened()) lobby->open();
         };
         // Keys a UI test run presses into the menus (pressed one frame, released the next).
         std::vector<int> ui_keys, ui_keys_down;
@@ -1861,9 +1881,6 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 }
                 if (event.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN && event.gbutton.button == SDL_GAMEPAD_BUTTON_BACK && back_button_free())
                     view_button();
-                // Esc closes the active title panel (outside a text field).
-                if (event.type == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_ESCAPE && title_panel.active && draw && !ImGui::GetIO().WantTextInput)
-                    title_panel.active = false;
                 if (event.type == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_F1) {
                     show_menu = !show_menu;
                     capture.reset();
@@ -1904,7 +1921,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 if (keys[SDL_SCANCODE_E]) free_eye.y += speed;
                 if (keys[SDL_SCANCODE_Q]) free_eye.y -= speed;
                 engine.debug_camera = make_camera(free_eye, free_eye + forward);
-            } else if (!show_menu && !title_panel.active) {
+            } else if (!show_menu && !title_online.active) {
                 // Keyboard: the bound keys of settings.ini [keyboard];
                 // controllers: [gamepad] and the sticks.
                 live[0] = dw4::game::keyboard_input(settings, SDL_GetKeyboardState(nullptr));
@@ -1912,6 +1929,13 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     const auto pad = dw4::game::gamepad_input(settings, dw4::game::read_gamepad(gamepads[i]));
                     if (i == 0) dw4::merge(live[0], pad);
                     else live[i] = pad;
+                }
+                if (pad_latch) {
+                    bool held = false;
+                    for (const auto& in : live)
+                        held = held || in.buttons || in.stick_directions || in.c_stick_directions || in.stick.x != 0 || in.stick.y != 0;
+                    if (held) live = {};
+                    else pad_latch = false;
                 }
             }
             // Fixed-step simulation at the NTSC field rate (59.94 Hz, one
@@ -1961,10 +1985,12 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     message_until = std::chrono::steady_clock::now() + std::chrono::milliseconds(500);
                 }
             }
-            // (The active title panel is a menu over the title: it waits, so no
-            // attract movie starts while the player types.)
+            // (The online screens over an offline title wait while the title is
+            // no menu, so no attract movie starts while the player types; over
+            // the menu the title runs on: it waits for the player anyway.)
+            const auto* title_menu = engine.get<dw4::engine::Title2Manager>();
             const bool paused = (show_menu && settings.pause_in_menu && !options.smoke_frames && !net.active() && !online) || net.in_lobby() ||
-                                (title_panel.active && !online);
+                                (title_online.active && !online && !(title_menu && title_menu->menu_open()));
             if (net.active())
                 if (auto message = net.take_message(); !message.empty()) {
                     std::cout << "online: " << message << '\n';
@@ -2038,7 +2064,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 // bots. stick_x / stick_y are the main stick in host units
                 // (a live analog stick or movement keys, else a bot's
                 // steering); the bots steer only while it is centred.
-                std::uint32_t input = live[0].buttons | scripted.held(frame);
+                std::uint32_t input = live[0].buttons | scripted.held(frame) | (engine.frame() < ui_pad_until ? ui_pad : 0u);
                 float stick_x = live[0].stick.x, stick_y = live[0].stick.y;
                 if (stick_x == 0 && stick_y == 0) {
                     const auto keys = live[0].stick_directions;
@@ -2576,13 +2602,20 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     else offline_title();
                 }
             }
+            // The title menu's third entry was chosen: the online screens open
+            // over the menu (which stays, its cursor on Online).
+            if (engine.title_online_request) {
+                engine.title_online_request = false;
+                if (lobby) open_title_online();
+                else std::cout << "title: Online chosen (this run has no online screens)\n";
+            }
             // The account and room screens: the lobby's answers, the session it
-            // prepared (the title or F1 Online), the leave it asks for, and a
-            // UI test run's script.
+            // prepared (over the title or in F1 Online), the leave it asks for,
+            // and a UI test run's script.
             if (lobby) {
                 const auto* sys = engine.get<dw4::engine::GameSystem>();
                 lobby->set_offline_game(!online && ((sys && sys->game_started) || !dw4::game::is_menu_stage(engine.stage_name())));
-                lobby->update(steady_seconds(), title_panel_shown || (show_menu && online_tab_shown) || ui_script.active());
+                lobby->update(steady_seconds(), title_online_shown || (show_menu && online_tab_shown) || ui_script.active());
                 if (online && lobby->take_leave_request()) {
                     online->leave_prompt = false;
                     online->leave();
@@ -2612,12 +2645,14 @@ int run(const Options& options, dw4::game::Settings& settings) {
                         // Every online session starts at the title, with the online character's card.
                         engine.request_stage("stagis10");
                         restart_presentation();
-                        title_panel.active = false;
+                        // (The screens over the title show the room: its Play
+                        // closes them, B too.)
                         show_menu = false;
                         lobby->session_started();
                         std::cout << "online: the session of room " << room.code << " starts at the title\n";
-                        toasts.push_back({"Online", "Room \"" + room.room_name + "\": press START to play your online character.",
-                                          std::chrono::steady_clock::now() + std::chrono::seconds(6)});
+                        if (!title_online.active)
+                            toasts.push_back({"Online", "Room \"" + room.room_name + "\": press START to play your online character.",
+                                              std::chrono::steady_clock::now() + std::chrono::seconds(6)});
                     } else {
                         std::cout << "online: the session did not start: " << error << '\n';
                         offline_title();
@@ -2625,15 +2660,29 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     }
                 }
                 if (ui_script.active()) {
-                    dw4::game::UiScriptHost host{*lobby, online_ui, title_panel, show_menu, menu_tab};
+                    dw4::game::UiScriptHost host{*lobby, online_ui, title_online, show_menu, menu_tab};
                     host.online_active = online != nullptr;
-                    host.title_shown = title_panel_shown;
+                    {
+                        const std::string stage = engine.stage_name();
+                        const auto* title = engine.get<dw4::engine::Title2Manager>();
+                        host.title_shown = stage.size() == 8 && dw4::game::is_menu_stage(stage) && stage.substr(6) == "10" && engine.presenting() &&
+                                           !engine.loading() && title && title->state() >= 1;
+                        host.menu_waiting = host.title_shown && title->menu_waiting();
+                        host.cursor = title ? title->cursor() : 0;
+                        host.title_entry = engine.title_online_entry;
+                    }
+                    host.screens_shown = title_online_shown;
                     host.stage = engine.stage_name();
                     host.frame = frame;
                     host.now = steady_seconds();
                     ui_script.update(host);
                     if (!host.shot.empty()) ui_shot = host.shot;
                     if (host.view_button) view_button();
+                    if (host.open_screens) open_title_online();
+                    if (host.pad) {
+                        ui_pad = host.pad;
+                        ui_pad_until = engine.frame() + 3; // held for three steps, as an input script's "A 3"
+                    }
                     ui_keys.insert(ui_keys.end(), host.keys.begin(), host.keys.end());
                     if (host.end) running = false;
                 }
@@ -2885,7 +2934,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 {
                     constexpr ImGuiConfigFlags nav = ImGuiConfigFlags_NavEnableKeyboard | ImGuiConfigFlags_NavEnableGamepad;
                     auto& io = ImGui::GetIO();
-                    if (show_menu || title_panel.active) io.ConfigFlags |= nav;
+                    if (show_menu || title_online.active) io.ConfigFlags |= nav;
                     else io.ConfigFlags &= ~nav;
                 }
                 // (A UI test run's keys: last frame's go up, this frame's go down.)
@@ -2895,6 +2944,8 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 ui_keys_down.swap(ui_keys);
                 ImGui_ImplOpenGL3_NewFrame();
                 ImGui_ImplSDL3_NewFrame();
+                // (A UI test run's controller keys count as a controller's.)
+                if (ui_script.loaded()) ImGui::GetIO().BackendFlags |= ImGuiBackendFlags_HasGamepad;
                 ImGui::NewFrame();
                 // The running room for the screens (the relay's roster).
                 dw4::game::RoomLive room_live;
@@ -3564,25 +3615,26 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     ImGui::End();
                 }
                 online_tab_shown = show_menu && online_tab_now;
-                // The title's Online panel (bottom right): on the title screen
-                // while no session runs and the F1 menu is closed. A click on it
-                // (or the View button) opens it, a click beside it closes it.
-                {
-                    const std::string stage = engine.stage_name();
-                    const bool title = stage.size() == 8 && dw4::game::is_menu_stage(stage) && stage.substr(6) == "10" && engine.presenting() &&
-                                       !engine.loading() && !engine.rebooting();
-                    title_panel_shown = lobby && !show_menu && !online && !net.active() && !net.in_lobby() && title;
-                    if (title_panel_shown) {
-                        if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
-                            if (!title_panel.active && title_panel.hovered) title_panel.active = title_panel.focus = true;
-                            else if (title_panel.active && !ImGui::GetIO().WantCaptureMouse) title_panel.active = false;
-                        }
-                        if (!lobby->opened() && (lobby->remembers_login() || title_panel.active)) lobby->open();
-                        dw4::game::draw_title_panel(*lobby, online_ui, title_panel);
-                    } else {
-                        title_panel.active = false;
-                        title_panel.hovered = false;
+                // The online screens over the title (its menu's third entry
+                // opens them; a room started from them shows there until Play).
+                if (online_ui.close_requested) {
+                    // ("Play" in the room view, here or in F1 Online.)
+                    online_ui.close_requested = false;
+                    if (title_online.active) pad_latch = true;
+                    title_online.active = false;
+                    show_menu = false;
+                }
+                title_online_shown = false;
+                if (title_online.active && lobby && !show_menu) {
+                    if (!lobby->opened()) lobby->open();
+                    dw4::game::draw_title_online(*lobby, online_ui, title_online, online ? &room_live : nullptr, tag_font, body_font);
+                    title_online_shown = true;
+                    if (title_online.close || online_ui.close_requested) {
+                        title_online.active = title_online.close = online_ui.close_requested = false;
+                        pad_latch = true;
                     }
+                } else if (title_online.active && !lobby) {
+                    title_online.active = false;
                 }
                 if (!state_message.empty() && std::chrono::steady_clock::now() < message_until) {
                     ImGui::SetNextWindowPos(ImVec2(12, 12));
