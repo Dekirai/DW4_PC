@@ -337,7 +337,39 @@ project's own server (next section): rooms of up to ten players, everyone in
 the same stage playing it together (at most four per stage instance, shared
 enemies and drops), all traffic relayed by the server so nobody opens a
 port, and an online character per account that starts from zero, separate
-from the local save. The game client for it is not built yet.
+from the local save.
+
+### Online co-op (preview)
+
+The seamless online co-op ([docs/SEAMLESS.md](docs/SEAMLESS.md)) runs as a
+preview on one PC against a local server: every player has their own camera
+and walks wherever they like (no leash); members in the same field, dungeon
+or boss stage play one shared stage instance (up to four), a member who
+arrives later joins it mid-stage, exits and the gate disc take only the
+members who say yes, and members who leave the lobby together a few seconds
+apart start the field together. Lobby and menu stages stay single player.
+
+```bat
+powershell -ExecutionPolicy Bypass -File scripts\online-dev.ps1
+```
+
+starts a private database and the DW4Online server on 127.0.0.1 (nothing
+leaves the PC), builds a development client (`build\OnlineDev`, needs
+`DW4_ONLINE_DEV`) the first time, and opens two game windows in one room;
+closing both windows stops the server. `-Data` names the game data (default:
+the `[data]` path of `build\Game\settings.ini`), `-Card` a card folder whose
+saves both start with. Player builds connect only to the project's server
+and do not run yet (its certificate pins are still empty).
+
+Known limits of the preview:
+
+- Talks, the map recorders, camera tours and the status window still pause
+  the whole instance (every member in it), as in local co-op.
+- Pits still darken every member's screen in the instance.
+- Nothing is saved online yet: every room starts from the title with a new
+  game (or the `-Card` saves), and nothing comes back into the local save.
+- Online needs a CPU with FMA3 (every machine must compute alike); the game
+  refuses online play without it.
 
 ### Online server (DW4Online)
 

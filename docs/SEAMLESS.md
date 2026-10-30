@@ -1040,7 +1040,7 @@ on Windows loopback, and real TCP loss on loopback where a netem-capable
 environment exists. The result decides whether round S4 carries a UDP
 transport for the game frames.
 
-*Measured in S1 (relay lane):* `DW4Online.FakeClient matrix` (also
+*Measured in S1 (relay lane; scenario S12 of 16):* `DW4Online.FakeClient matrix` (also
 `tools/online_test/run.py matrix`). Per cell an in-process DW4R2 relay on
 loopback and three fake clients that arrive together in one sealed instance,
 each behind its own impairment proxy with the same one-way time, jitter and
@@ -2204,11 +2204,28 @@ the room (up to ten), not the instance. No invites or join secrets for now.
   field (the second joins the first's instance by catch-up) and must keep equal
   net fingerprints (`DW4_ONLINE_TRACE` netfp lines) for `--sealed-ticks` ticks;
   the relay's membership log must show no desync, mismatch or resync.
+- **Scenarios on real game clients** (round S1): `run.py [ID ...] --game-exe
+  EXE --data DATA --cards CHECKPOINTS` runs `tools/online_test/scenarios/<ID>`
+  (a `scenario.json`, one script per client, an `expected.txt`). Every client
+  is a hidden `DW4_ONLINE_DEV` game that calls a saved character of a campaign
+  checkpoint set at the title (`--online-card`, the r25c set: k2 = level 7
+  for deaths, k10 = level 21 for the long walks) and plays its pad from a
+  script (`--online-script`, `src/game/online_script.hpp`): steps with
+  `until` groups and `fail` checks over the instance (stage, present members,
+  sealed ticks, exit prompts, mats, deaths, flags, the wall clock for timed
+  departures), actions such as `route` (known waypoints, `routes/*.txt`),
+  `mat` (answers exit prompts), `fight`, `die`, `giveup`, `disk`, `gate`,
+  `hold`. Checked per scenario: the net fingerprints of every instance equal
+  on every client every 60 ticks, at least 10,000 ticks in shared instances,
+  the canonical snapshot hashes of every NEW and co-arrival equal, no desync,
+  mismatch or resync in the relay log, no client closed, every script done,
+  and the scenario's expected log in order (`!` lines must not appear).
 - **Checks outside the stack**: the extra-renders hook (4.4), the canonical
   snapshot check (6.8), the cross-process join after a long campaign session
   (7.1), the console reset test (7.4).
 - **For the user**: `scripts/online-dev.ps1` starts the local stack and two
-  visible game windows (agents run only the hidden variant).
+  visible game windows (agents run only the hidden variant, `-Hidden`, which
+  plays both with the campaign bot; `run.py dev`).
 
 ## 17. Round plan
 
@@ -2302,12 +2319,66 @@ appendix, golden bytes on both sides). Checked on the integrated code:
   timeout ran out during the relay's join hold (a BARRIER_WAIT now restarts
   it).
 
-Not covered by the integration (the review and fix phase or later rounds):
-the scenarios S2-S22 with real game clients (the fake clients pass them on
-the hub; co-arrivals need HEADING, which a solo instance's original
-`funcStageChange` does not give), `scripts/online-dev.ps1` and the README note
-"Online co-op (preview)", visual checks of the online presentation (hidden
-runs only).
+**Scenarios on real game clients (round S1, `tools/online_test/scenarios`).**
+Every scenario of the round except S16 passes with hidden game clients
+(section 16, `run.py` with the r25c checkpoint cards): S1, S2, S3, S5, S17a,
+S17b, S18, S19a (gate disc), S19b (exit), S19c (give up), S21, S22a and S22b
+in one run, 13 of 13,
+each with 10,080 to 13,860 ticks of equal net fingerprints in shared
+instances (every 60 ticks, no difference anywhere), the canonical snapshot
+hashes of every NEW and co-arrival equal, no desync, mismatch or resync in
+the relay log. Earlier runs kept two instances sealed and equal for 54,060
+ticks (S2, S5 while their scripts were stuck). What they show:
+
+- S1 / S17a: two members who leave the lobby gate 1 or 2 s apart start the
+  field together (HEADING, `hold_co_arrival`, one entry scene, sealed from
+  tick 0), then walk 300 units apart with enemies on both sides.
+- S17b: 8 s apart, the later member's barrier is held while the first's
+  instance loads and runs its entry (23.1 s, 3.4), then it joins by catch-up.
+- S2: a fork at stag0101's matz02 (the leaver's copy leaves, the stayer's
+  stays), the stayer follows 15 s later and joins the leaver's stag0102
+  instance by catch-up, then both go back through matz01 as one group.
+- S3: two joins into one instance one after the other (slots 1 and 2), then
+  one barrier for all three.
+- S5: both fall, the game over window (the leader's pad) is one barrier of
+  the group, dissolved into two lobbies.
+- S18: the exit port's owner and asked members exactly as 5.2 (No stays on
+  the mat and is not asked again; another member stepping on and off asks
+  nobody else; Yes asks a member who stepped on during the prompt; its No
+  forks off only the owner).
+- S19a / S19b / S19c: a defeated member goes along with the only living
+  member through the gate disc (lobby point 210,120, not the game over's
+  60,-30) and through an exit (the group move, no fork); giving up forks it
+  off alone into its own game over while the partner plays on.
+- S21: B+X+START for 4 s asks "Leave room?" on the holder's machine only, no
+  reboot anywhere.
+- S22a / S22b: a slow joiner (`DW4_ONLINE_RATE=300`) falls back to NEW when
+  its target leaves the stage during the catch-up, and follows the instance
+  id when its target forks.
+
+Faults the scenarios found and fixed (the session tests' fake hub now shows
+two of them): a solo instance never announced its departure (HEADING), so no
+two members ever co-arrived from the lobby (`Engine::note_departure`); a
+co-arrival believed it was alone (its BARRIER_OK names only its own slot; the
+present slots now come from the restored engine); `JoinHoldSeconds` 15 was
+shorter than a new instance's load and entry (now 30, 3.4); a joiner dropped
+the target's LIVE ticks that came during its own transition steps and waited
+for good (`live_during_transition`); a fork on a multiple of 60 sent both
+sides' fingerprints as the instance's and made the relay resync the stayer
+(no NETFP at a fork tick); a LEAVE that had to wait for a membership-safe
+step held back the LEAD_FROM behind it, so the remaining member waited for
+ticks nobody sealed.
+
+Not covered yet: S16 with real clients (taking a quest at the Digi-Elf
+needs a talk driver the test scripts do not have; the fake clients pass S16
+on the hub), the S12 matrix with real clients (the relay lane's fake-client
+matrix, 6.4, stands), visual checks of the online presentation (hidden runs
+only). Running ten scenarios at once overloaded the PC: joiners that needed
+more than `Rooms:MemberTimeoutSeconds` (35) between the API join and the relay
+connection were dropped from their rooms; five at a time pass.
+`scripts/online-dev.ps1` and the README note "Online co-op (preview)" exist;
+the hidden variant passes (two clients from the title, sealed together in
+stag0001, equal final fingerprints).
 
 ### Round S2 (r53): accounts, online character, room story
 
