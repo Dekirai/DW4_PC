@@ -57,6 +57,7 @@
 //         epoch>=S (the system clock, seconds since 1970: tools/online_test
 //         writes @N as its scenario start + N)  answered>=N (exit prompt
 //         answers given in this step)  hp<=N (this member's HP)
+//         level>=N (this member's own character's level)
 //
 // Without "until", hold / press / log end by themselves, goto and route when
 // the goal is reached, and the others never end. Every step start, exit prompt change and stage change is traced

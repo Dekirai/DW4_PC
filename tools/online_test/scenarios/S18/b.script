@@ -1,5 +1,6 @@
 # S18, member b (k10, slot 1): with a to the west end of stag0101; steps on the mat while a stands on it (after a's
-# No), answers its own prompt No and steps off; then steps on while a's second prompt runs and answers No when asked.
+# No), answers its own prompt No and steps off; then steps on while a's second prompt runs and answers No when asked
+# (its own answer, not the prompt's timeout).
 campaign until stage=stagml11,control
 idle until epoch>=@91
 explore mate00 yes until stage=stag0101,control
@@ -15,7 +16,8 @@ log b off the mat
 idle until onmat:matz02<=0,frames>=60 fail stagechange
 idle until prompt=1,frames>=30 fail stagechange
 log a's prompt runs: b steps on
-mat matz02 no until answered>=1 fail stagechange
+# (b presses until the prompt no longer asks it: its own No, well before the prompt's 600-frame timeout says No for it.)
+mat matz02 no until answered>=1,asking<=0 fail stagechange,frames>=400
 log b said no to a's exit
 idle until present=1,frames>=60 fail stagechange
 log b stays

@@ -81,7 +81,7 @@ bool OnlineScript::known_action(std::string_view name) {
 bool OnlineScript::known_condition(std::string_view key) {
     static constexpr std::string_view names[] = {"stage", "present", "frames",  "dead",   "alive",    "control",     "mode",
                                                  "slot",  "sealed",  "time",    "epoch",  "answered", "hp",          "prompt",
-                                                 "asking", "asked",  "partnerdead", "apart", "near", "stagechange"};
+                                                 "asking", "asked",  "partnerdead", "apart", "near", "stagechange", "level"};
     if (key.starts_with("onmat:") || key.starts_with("onme:") || key.starts_with("offme:")) return key.find(':') + 1 < key.size();
     if (key.starts_with("flag:")) return key.size() > 5 && key.find_first_not_of("0123456789", 5) == std::string_view::npos;
     return std::find(std::begin(names), std::end(names), key) != std::end(names);
@@ -208,6 +208,11 @@ bool OnlineScript::holds(engine::Engine& engine, const OnlineScriptFacts& facts,
     if (c.key == "hp") {
         const auto* sys = engine.get<engine::GameSystem>();
         return playing(engine, facts) && compare(me && sys ? sys->players[std::size_t(facts.own_slot & 3)].hp : 0);
+    }
+    if (c.key == "level") {
+        // This machine's own character's level (a DISSOLVE that kept the partner's showed the partner's).
+        const auto* sys = engine.get<engine::GameSystem>();
+        return playing(engine, facts) && sys && compare(sys->players[std::size_t(facts.own_slot & 3)].stats.level);
     }
     if (c.key == "prompt") return compare(engine.exit_prompt().active ? 1 : 0);
     if (c.key == "asking") return compare(engine.exit_prompt().active ? engine.exit_prompt().asking : -1);

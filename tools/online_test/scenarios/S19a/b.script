@@ -10,4 +10,5 @@ disk 8 until stagechange
 log away from the field
 idle until stage=stagml11,control
 log in the lobby
-idle until frames>=120
+# (Its own character came back with the DISSOLVE, level 21: not its partner's level 7.)
+idle until frames>=120 fail level<=20
