@@ -2712,10 +2712,12 @@ relay (plausibility, drop / hold / apply, the dropped set with drop epochs),
 Checked: the golden vectors in C++, C# and Python; the session test
 `room_story` and the hub's S14 for all three policies; the guest-to-owner path
 through the real relay and MariaDB in under ten seconds; S14, S14h and S14a
-with hidden game clients (8.7); ctest 41/41, server unit tests 147,
-integration and end-to-end 69 (one skipped); online off `det.sh` twice
-4004f056 / 396cb219, the save state suite 17/17, r25c 10/10 (1,748,011
-frames). Not done in the lane: the title's application of
+with hidden game clients (8.7); S2, S3, S5 and S17a with hidden game clients
+and the nine fake-client scenarios still pass with the room story in every
+BARRIER_OK; ctest 41/41, server unit tests 147, integration and end-to-end 69
+(one skipped); online off `det.sh` twice 4004f056 / 396cb219, the save state
+suite 17/17, r25c 10/10 (1,748,011 frames, every segment's count unchanged).
+Not done in the lane: the title's application of
 `Session::confirmed_story()` at `game_started` (character lane; when it is
 wired, every card scenario needs `seed_story` or its members lose their card
 story at game start, and S14's guest needs a value it makes in the lobby: k2
