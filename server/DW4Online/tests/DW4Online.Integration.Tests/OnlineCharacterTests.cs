@@ -40,7 +40,9 @@ public class OnlineCharacterTests
         Assert.Equal("character_exists", await again.ProblemCode());
 
         var stored = await (await client.GetAsync("/api/v1/online-character")).Json();
-        Assert.Equal(RecordCodec.Encode(character), Convert.FromBase64String(stored.GetProperty("record").GetString()!));
+        // The story bytes are the account's own online story (none yet: zero), never the uploaded ones (SEAMLESS.md 8.4).
+        Assert.Equal(DW4Online.Domain.Story.StoryRecord.Compose(RecordCodec.Encode(character), new DW4Online.Domain.Story.RoomStoryData()),
+            Convert.FromBase64String(stored.GetProperty("record").GetString()!));
         Assert.Equal(600, stored.GetProperty("playSeconds").GetInt64());
 
         character.Level = 12;

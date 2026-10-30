@@ -380,6 +380,11 @@ public class EndToEndTests(Xunit.Abstractions.ITestOutputHelper log)
     private static async Task<(string Save, string Record, byte[] SaveBytes)> WriteClientInputsAsync(string dir, string name)
     {
         var character = Samples.Fresh(name);
+        // No story bytes: the server stores the account's own online story in them (none: zero), so the client's
+        // write-then-read check sees its own bytes again (SEAMLESS.md 8.4).
+        Array.Clear(character.Flags);
+        Array.Clear(character.FlagFolder);
+        Array.Clear(character.Counters);
         var record = Path.Combine(dir, "record.bin");
         await File.WriteAllBytesAsync(record, RecordCodec.Encode(character));
         var saveBytes = new GciEntry().Encode()

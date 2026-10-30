@@ -5,9 +5,10 @@
 CREATE TABLE online_story (
   account_id   BIGINT UNSIGNED NOT NULL PRIMARY KEY,
   revision     INT UNSIGNED NOT NULL,
-  flags        BINARY(1024) NOT NULL,
+  flags        VARBINARY(1024) NOT NULL,
   folder       BINARY(12)   NOT NULL,
   counters     BINARY(64)   NOT NULL,
   updated_at   DATETIME(3)  NOT NULL,
+  CONSTRAINT ck_online_story_flags CHECK (LENGTH(flags) = 1024),
   CONSTRAINT fk_online_story_account FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
