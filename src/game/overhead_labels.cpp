@@ -272,11 +272,16 @@ bool label_visible(LabelMode mode, bool own, int players) {
     }
 }
 
-void OverheadLabels::capture(engine::Engine& engine, int own_slot, int steps) {
+void OverheadLabels::capture(engine::Engine& engine, int own_slot) {
     std::vector<OverheadLabel> local;
     int joined = 0;
     auto* sys = engine.get<engine::GameSystem>();
     auto* models = engine.get<engine::ModelCtrlManager>();
+    // The simulation steps since the last capture (a catch-up update runs
+    // several; a frame counter that went back, a state load: one).
+    const std::uint64_t frame = engine.frame();
+    const int steps = follow_frame_ && frame > *follow_frame_ ? int(std::min<std::uint64_t>(frame - *follow_frame_, 240)) : 1;
+    follow_frame_ = frame;
     for (int slot = 0; sys && models && slot < 4; ++slot) {
         const auto& player = sys->players[std::size_t(slot)];
         if (!player.joined) continue;
@@ -332,6 +337,7 @@ void OverheadLabels::reset() {
     current_.clear();
     occlusion_.clear();
     head_follows_.clear();
+    follow_frame_.reset();
     players_ = 0;
 }
 

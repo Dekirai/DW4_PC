@@ -175,10 +175,10 @@ public:
     void set_remote_players(std::vector<RemotePlayer> players) { remote_ = std::move(players); }
     const std::vector<RemotePlayer>& remote_players() const { return remote_; }
 
-    // After the simulation advanced (once per presented update, `steps`
-    // simulation steps): the labels at the step's state become current, the
-    // last ones previous. `own_slot`: this machine's GameSystem slot.
-    void capture(engine::Engine& engine, int own_slot, int steps = 1);
+    // After the simulation advanced (once per presented update): the
+    // labels at the step's state become current, the last ones previous.
+    // `own_slot`: this machine's GameSystem slot.
+    void capture(engine::Engine& engine, int own_slot);
     // The same from labels already made: `local` (this engine's players,
     // `local_players` of them joined) and the remote players in `stage`.
     void capture(std::vector<OverheadLabel> local, int local_players, std::string_view stage);
@@ -213,6 +213,9 @@ public:
 
 private:
     std::vector<std::pair<std::uint64_t, HeadFollow>> head_follows_; // per label key
+    // The engine frame of the last capture: the follows advance by the
+    // simulation steps since (a catch-up update runs several).
+    std::optional<std::uint64_t> follow_frame_;
 
     std::vector<OverheadLabel> previous_, current_;
     std::vector<RemotePlayer> remote_;
