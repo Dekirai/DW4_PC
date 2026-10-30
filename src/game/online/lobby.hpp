@@ -135,6 +135,9 @@ public:
     bool newer_version() const;          // the server knows a newer client
     bool logged_in() const { return !token_.empty(); }
     const std::string& account() const { return account_; }
+    // The session token of the login (empty: logged out): other panels that
+    // talk to the server for this account (the cloud backup) can share it.
+    const std::string& token() const { return token_; }
     const std::optional<api::AccountInfo>& account_info() const { return info_; }
     const std::optional<api::CharacterInfo>& character() const { return character_; }
     int max_difficulty() const;          // what a created room may use
