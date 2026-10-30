@@ -21,20 +21,27 @@ public sealed class OnlineCharacterRepository(Database db) : IOnlineCharacterRep
 
     public async Task<WriteOutcome> SaveAsync(OnlineCharacterWrite w, int? expectedRevision, int historyKeep, CancellationToken ct = default)
     {
-        await using var c = await db.OpenAsync(ct);
-        try
+        for (var attempt = 1; ; ++attempt)
         {
-            await using var tx = await c.BeginTransactionAsync(ct);
-            if (await CheckRevisionAsync(c, tx, w.AccountId, expectedRevision, ct) is { } refused) return refused;
-            var revision = await WriteRevisionAsync(c, tx, w, expectedRevision, historyKeep, ct);
-            await tx.CommitAsync(ct);
-            return new WriteOutcome(WriteStatus.Saved, revision);
-        }
-        catch (MySqlException e) when (MySqlErrors.IsDuplicate(e) || MySqlErrors.IsDeadlockOrTimeout(e))
-        {
-            // A concurrent upload won the race.
-            var now = await GetAsync(w.AccountId, ct);
-            return new WriteOutcome(WriteStatus.Conflict, now?.Revision ?? 0);
+            await using var c = await db.OpenAsync(ct);
+            try
+            {
+                await using var tx = await c.BeginTransactionAsync(MySqlErrors.RevisionedWrite, ct);
+                if (await CheckRevisionAsync(c, tx, w.AccountId, expectedRevision, ct) is { } refused) return refused;
+                var revision = await WriteRevisionAsync(c, tx, w, expectedRevision, historyKeep, ct);
+                await tx.CommitAsync(ct);
+                return new WriteOutcome(WriteStatus.Saved, revision);
+            }
+            catch (MySqlException e) when (MySqlErrors.RetryDeadlock(e, attempt))
+            {
+                // Another account's write locked the same gap: this one runs again.
+            }
+            catch (MySqlException e) when (MySqlErrors.IsDuplicate(e) || MySqlErrors.IsDeadlockOrTimeout(e))
+            {
+                // A concurrent upload won the race.
+                var now = await GetAsync(w.AccountId, ct);
+                return new WriteOutcome(WriteStatus.Conflict, now?.Revision ?? 0);
+            }
         }
     }
 
