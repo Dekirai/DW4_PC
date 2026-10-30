@@ -43,6 +43,7 @@ import secrets
 import shutil
 import socket
 import ssl
+import struct
 import subprocess
 import sys
 import time
@@ -440,6 +441,41 @@ def evaluate(sc, out, code, diag):
 
 SCENARIO_DIR = os.path.join(HERE, "scenarios")
 
+# The card format (docs/SAVES.md, src/save_data.cpp): a Dolphin GCI file is a 64-byte directory entry and the 90,112-byte
+# NDMWSaveData file, which holds two copies (at 0x2000 and 0xC000) of a 40,960-byte block: a checksum (the sum of the
+# big-endian words after it), the version word 4 and four character records 0x2000 apart from offset 8; a record's
+# BASE_FLAG bytes start at 792 (one byte a flag).
+GCI_ENTRY, CARD_COPIES, CARD_COPY_SIZE, RECORD_FLAGS = 64, (0x2000, 0xC000), 40960, 792
+
+
+def derive_card(src, dst, flags):
+    """A copy of the card folder src (its .gci files, or those of its "Card A") in dst with the story flags
+    {flag: value} set in the first character record of both copies (checksums updated). A scenario's precondition
+    that has nothing to do with the online play (S16: Digi-Elf 0 freed in stag0103's boat ride, which the lobby
+    Digi-Elf's first quest asks for and the r25c campaign never did: flag 89, stored for the normal difficulty as 714,
+    which stagIS10 gameStart.lua copies back into 89 when the game starts); the run folder keeps the copy."""
+    if os.path.isdir(os.path.join(src, "Card A")):
+        src = os.path.join(src, "Card A")
+    os.makedirs(dst, exist_ok=True)
+    done = 0
+    for name in os.listdir(src):
+        if not name.endswith(".gci"):
+            continue
+        data = bytearray(open(os.path.join(src, name), "rb").read())
+        for copy in CARD_COPIES:
+            base = GCI_ENTRY + copy
+            if struct.unpack(">I", data[base + 4:base + 8])[0] != 4 or not data[base + 8]:
+                raise RuntimeError("%s: copy at 0x%x has no character in its first record" % (name, copy))
+            for flag, value in flags.items():
+                data[base + 8 + RECORD_FLAGS + int(flag)] = int(value)
+            words = struct.unpack(">%dI" % ((CARD_COPY_SIZE - 4) // 4), bytes(data[base + 4:base + CARD_COPY_SIZE]))
+            data[base:base + 4] = struct.pack(">I", sum(words) & 0xFFFFFFFF)
+        open(os.path.join(dst, name), "wb").write(bytes(data))
+        done += 1
+    if not done:
+        raise RuntimeError("no .gci file in " + src)
+    return dst
+
 
 def game_scenarios():
     names = sorted(d for d in os.listdir(SCENARIO_DIR) if os.path.isfile(os.path.join(SCENARIO_DIR, d, "scenario.json"))) \
@@ -499,6 +535,8 @@ def run_real(stack, sc, api, relay_port, pin, diag, lock):
             folder = saved if os.path.isabs(saved) else os.path.join(a.cards, saved)
             if not os.path.isdir(folder):
                 raise RuntimeError("no card folder %s (--cards)" % folder)
+            if c.get("card_flags"):
+                folder = derive_card(folder, os.path.join(out, "card_from_" + c["name"]), c["card_flags"])
             argv += ["--online-card", folder]
             env["DW4_CAMPAIGN_LOAD"] = "1"
         return stack.spawn(argv, os.path.join(out, c["name"] + ".log"), env=env)

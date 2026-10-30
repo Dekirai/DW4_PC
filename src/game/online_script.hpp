@@ -10,10 +10,17 @@
 //
 // (the step ends when every condition of one group holds; a fail condition
 // that holds while the step runs prints "online-script: FAIL ...", which
-// tools/online_test counts as a failed check)
+// tools/online_test counts as a failed check; '#' at a line's start or after
+// a blank begins a comment, inside a word it is part of it: n_digilfm#1)
 //
 //   campaign            the story bot (src/game/campaign.cpp; it plays slot 0,
 //                       so only while this member is slot 0)
+//   errand ACTION [STAGE] one step of the story bot instead of its
+//                       objectives (CampaignBot::set_errand; slot 0 too):
+//                       "talk:n_digilfm#1" walks up to that model's talk box
+//                       the way the campaign does, presses A, moves the
+//                       messages on and answers choices with their first
+//                       entry; in STAGE (default: the step's stage)
 //   idle                no input
 //   gate MAT N          onto a lobby gate mat, N times down in its menu, A
 //   talk                A now and then while this member's player has no

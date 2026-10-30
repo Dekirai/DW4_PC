@@ -73,8 +73,8 @@ bool playing(engine::Engine& engine, const OnlineScriptFacts& facts) {
 } // namespace
 
 bool OnlineScript::known_action(std::string_view name) {
-    static constexpr std::string_view names[] = {"campaign", "idle", "talk", "gate", "goto", "route", "follow", "mat", "explore",
-                                                 "fight",    "wander", "die",  "hold", "press", "giveup", "disk", "log"};
+    static constexpr std::string_view names[] = {"campaign", "errand", "idle", "talk",   "gate",   "goto", "route", "follow", "mat",
+                                                 "explore",  "fight",  "wander", "die", "hold", "press", "giveup", "disk", "log"};
     return std::find(std::begin(names), std::end(names), name) != std::end(names);
 }
 
@@ -96,7 +96,13 @@ bool OnlineScript::load(const std::filesystem::path& file, std::string& error) {
     int number = 0;
     for (std::string line; std::getline(in, line);) {
         ++number;
-        if (const auto hash = line.find('#'); hash != std::string::npos) line.resize(hash);
+        // A comment starts with '#' at the line's start or after a blank (a
+        // model's "#N" belongs to its name: talk:n_digilfm#1).
+        for (std::size_t at = 0; at < line.size(); ++at)
+            if (line[at] == '#' && (at == 0 || line[at - 1] == ' ' || line[at - 1] == '\t')) {
+                line.resize(at);
+                break;
+            }
         std::istringstream words(line);
         Step step;
         step.line = number;
@@ -311,8 +317,12 @@ OnlineScript::Output OnlineScript::act(engine::Engine& engine, const OnlineScrip
         }
         return best;
     };
-    if (step.action == "campaign") {
+    if (step.action == "campaign" || step.action == "errand") {
+        // (errand: the campaign bot's step ACTION in STAGE, by default the
+        // stage the step began in; campaign: its own objectives.)
         if (!campaign_) campaign_ = std::make_unique<CampaignBot>();
+        if (step.action == "errand") campaign_->set_errand(step.args.size() > 1 ? step.args[1] : step_stage_, step.args.empty() ? "" : step.args[0]);
+        else campaign_->set_errand("", "");
         const auto c = campaign_->update(engine, models ? models->player(0) : nullptr, frame);
         out.buttons = c.buttons;
         out.walk = c.walk;

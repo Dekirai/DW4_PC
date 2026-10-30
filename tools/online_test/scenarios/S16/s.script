@@ -1,0 +1,10 @@
+# S16, story member s (k10): through the lobby gate to stag0401 point 0 (the area 4 story field) first, and plays there
+# while q1 and q2 arrive at point 3 on quest 1 (its own instance: the quest flags are another session context).
+campaign until stage=stagml11,control
+idle until epoch>=@95
+explore mate00 until onme:mate00
+gate mate00 3 until stage=stag0401,control fail flag:409=1
+log story field
+wander 640 100 20 until epoch>=@390 fail flag:409=1,stagechange
+log enough
+idle until frames>=60

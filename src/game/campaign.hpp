@@ -49,6 +49,13 @@ public:
     // (test tooling, see campaign_memory_save).
     void save_memory(std::ostream& out) const;
     void load_memory(std::istream& in);
+    // Test drivers (online_script.hpp's errand action): a step taken instead
+    // of the objectives' next one, with the stage and the action as in
+    // kObjectives (e.g. "stagml11", "talk:n_digilfm#1": the bot goes there,
+    // walks up to the model's talk box, presses A, moves the messages on and
+    // answers talk choices with their first entry). Only a due checkpoint
+    // save comes before it; an empty action hands back to the objectives.
+    void set_errand(const std::string& stage, const std::string& action);
 
 private:
     // The driver's controls for the next frame (update lets go of them while
@@ -313,6 +320,7 @@ private:
         bool finished = false;         // DW4_CAMPAIGN_STOP: the run's work is done
     };
     Segment segment_;
+    std::string errand_stage_, errand_action_; // set_errand (empty: none)
     void checkpoint_update(engine::Engine& engine, int frame);
     std::optional<Output> checkpoint_boot(engine::Engine& engine, int frame);
     void checkpoint_saved(engine::Engine& engine, int frame);

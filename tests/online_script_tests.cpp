@@ -32,12 +32,13 @@ void parse_steps() {
                                             "wander 440 20 40 until present=2,apart>200 or sealed>=600,present<=1 fail stagechange,asked\n"
                                             "log a said no until or fail\n"
                                             "mat matz02 yes 2 until onmat:matz02>=2\n"
-                                            "hold B+X+START 240 fail stagechange\n");
+                                            "hold B+X+START 240 fail stagechange\n"
+                                            "errand talk:n_digilfm#1 until flag:409=1 # a model's #N is no comment\n");
     OnlineScript script;
     std::string error;
     check(script.load(path, error), "the script loads: " + error);
     const auto& steps = script.steps();
-    check(steps.size() == 6, "six steps (comments and empty lines skipped)");
+    check(steps.size() == 7, "seven steps (comments and empty lines skipped)");
     check(steps[0].action == "campaign" && steps[0].line == 2, "line numbers count every line");
     check(steps[0].until.size() == 1 && steps[0].until[0].size() == 2, "one group of two conditions");
     check(steps[0].until[0][0].key == "stage" && steps[0].until[0][0].op == "=" && steps[0].until[0][0].text == "stagml11", "stage=NAME");
@@ -53,6 +54,9 @@ void parse_steps() {
           "a log line keeps its text, keywords included");
     check(steps[4].args.size() == 3 && steps[4].until[0][0].key == "onmat:matz02" && steps[4].until[0][0].value == 2, "onmat:NAME>=N");
     check(steps[5].until.empty() && steps[5].fail.size() == 1, "fail without until");
+    check(steps[6].action == "errand" && steps[6].args.size() == 1 && steps[6].args[0] == "talk:n_digilfm#1",
+          "'#' inside a word is part of it (a model's index)");
+    check(steps[6].until.size() == 1 && steps[6].until[0].size() == 1 && steps[6].until[0][0].key == "flag:409", "a comment after a blank");
 }
 
 void unknown_names() {

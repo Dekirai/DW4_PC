@@ -1,0 +1,13 @@
+# S16, quest member q2 (k10 with Digi-Elf 0 freed): takes quest 1 too and arrives at stag0401 point 3 40 s after q1:
+# a JOIN into q1's instance (the same context), not into s's.
+campaign until stage=stagml11,control
+errand talk:n_digilfm#1 until flag:409=1 fail stagechange
+log quest taken
+talk until control,frames>=60
+idle until epoch>=@175
+explore mate00 until onme:mate00
+gate mate00 0 until stage=stag0401,control fail flag:409=0
+log quest start
+wander 140 115 20 until sealed>=10600 or present=1,frames>=60 fail flag:409=0,stagechange
+log enough
+idle until frames>=60

@@ -1,0 +1,13 @@
+# S16, quest member q1 (k10 with Digi-Elf 0 freed): takes quest 1 at the lobby's Digi-Elf (n_digilfm#1, "yes"), then the
+# lobby gate offers only stag0401 point 3: a NEW beside s's instance (another context), joined by q2 later.
+campaign until stage=stagml11,control
+errand talk:n_digilfm#1 until flag:409=1 fail stagechange
+log quest taken
+talk until control,frames>=60
+idle until epoch>=@135
+explore mate00 until onme:mate00
+gate mate00 0 until stage=stag0401,control fail flag:409=0
+log quest start
+wander 150 100 20 until present=2,sealed>=10600 or sealed>=600,present=1,frames>=600 or epoch>=@700 fail flag:409=0,stagechange
+log enough
+idle until frames>=60

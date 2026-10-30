@@ -2215,8 +2215,16 @@ the room (up to ten), not the instance. No invites or join secrets for now.
   sealed ticks, exit prompts, mats, deaths, flags, the wall clock for timed
   departures), actions such as `route` (known waypoints, `routes/*.txt`),
   `mat` (answers exit prompts), `fight`, `die`, `giveup`, `disk`, `gate`,
-  `hold`. Checked per scenario: the net fingerprints of every instance equal
-  on every client every 60 ticks, at least 10,000 ticks in shared instances,
+  `hold`, `errand` (one step of the campaign bot, such as
+  `talk:n_digilfm#1`: up to the model's talk box, the messages moved on,
+  choices answered with their first entry). A client's `card_flags` in
+  `scenario.json` sets story flags in a copy of its card (`run.py`
+  `derive_card`, both copies of the save with their checksums) for a
+  precondition the r25c campaign never met and that has nothing to do with
+  the online play (S16: Digi-Elf 0 freed in stag0103's boat ride, flag 89,
+  stored for the normal difficulty as 714). Checked per scenario: the net
+  fingerprints of every instance equal on every client every 60 ticks, at
+  least 10,000 ticks in shared instances,
   the canonical snapshot hashes of every NEW and co-arrival equal, no desync,
   mismatch or resync in the relay log, no client closed, every script done,
   and the scenario's expected log in order (`!` lines must not appear).

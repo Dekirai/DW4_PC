@@ -3226,6 +3226,12 @@ std::optional<CampaignBot::Step> CampaignBot::next_step(engine::Engine& engine) 
     // Leaving the lobby with bits: into the bank first.
     if (banking && slot->bits >= kBankDust && !lobby(objective->stage) && objective->stage[0] != 0)
         objective = here == "stagml13" ? &kDepositErrand13 : &kDepositErrand12;
+    // A test driver's errand (set_errand) before all of the above.
+    if (!errand_action_.empty()) {
+        static Objective errand{"", "", "", ""};
+        errand = Objective{"a test driver's errand", "", errand_stage_.c_str(), errand_action_.c_str()};
+        objective = &errand;
+    }
     // A checkpoint reached is saved before anything else (segment runs).
     if (!segment_.due.empty()) objective = &kSaveErrand;
     // The maze region of a place: from the point it was entered at, for the
@@ -4992,6 +4998,11 @@ void CampaignBot::save_memory(std::ostream& out) const {
     out << "timers " << heal_at_ << " " << gate_disk_at_ << " " << last_attack_ << " " << aggressive_until_ << " " << held_presses_ << " "
         << guard_held_ << " " << tech_end_ << " " << panel_ready_at_ << " " << big_hit_ << " " << big_hit_at_ << " " << train_exp_ << " "
         << train_exp_at_ << "\n";
+}
+
+void CampaignBot::set_errand(const std::string& stage, const std::string& action) {
+    errand_stage_ = lower(stage);
+    errand_action_ = action;
 }
 
 void CampaignBot::load_memory(std::istream& in) {
