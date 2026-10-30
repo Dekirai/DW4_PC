@@ -98,7 +98,14 @@ This runs the tests, publishes `DW4Online.Server` self-contained for `win-x64` (
 `dist\DW4Online-<version>.zip` at the repository root (gitignored). Use a GA .NET SDK for release builds (the .NET 10
 SDK; the development PC currently only has the 11.0 RC SDK). The publish restores the .NET 10 runtime packs
 (Microsoft.NETCore.App / Microsoft.AspNetCore.App runtime for win-x64) from nuget.org on the first run.
-`appsettings.Development.json` and `appsettings.Local.json` are never part of the publish.
+`appsettings.Development.json` and `appsettings.Local.json` are never part of the publish. The script builds without
+the shared compiler server (`--disable-build-servers`): the 11.0 RC SDK's server generated broken Razor code on the
+second build of `DW4Online.Web` in a row (see the README) and stopped the publish at the integration tests.
+
+What an RC SDK build means: the compiler and build tools are a release candidate, the program itself is not. The zip
+carries the GA .NET 10 runtime it was published with (`DW4Online.Server.runtimeconfig.json` names it, 10.0.14 for the
+first release) and the server needs no .NET installation. That runtime does not update itself (Windows Update does not
+patch a self-contained app): a .NET security release means a new publish and an update (section 8).
 
 ## 4. Install on the server
 

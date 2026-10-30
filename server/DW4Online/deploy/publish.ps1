@@ -25,11 +25,15 @@ $out = Join-Path $repoRoot "dist\$name"
 $zip = Join-Path $repoRoot "dist\$name.zip"
 
 Write-Output "dotnet SDK: $(dotnet --version)"
+# No shared compiler server: with the 11.0 RC SDK it generates broken Razor code when DW4Online.Web is built a second
+# time in a row (unit tests, integration tests and the win-x64 publish each build it; see the README). Separate
+# compiler processes per build are slower but always compile the unchanged pages.
+$noServer = '--disable-build-servers'
 if (-not $SkipTests) {
-    dotnet test (Join-Path $serverRoot 'tests\DW4Online.Tests') -c $Configuration
+    dotnet test (Join-Path $serverRoot 'tests\DW4Online.Tests') -c $Configuration $noServer
     if ($LASTEXITCODE -ne 0) { throw 'Unit tests failed.' }
     if ($env:DW4ONLINE_TEST_MYSQL) {
-        dotnet test (Join-Path $serverRoot 'tests\DW4Online.Integration.Tests') -c $Configuration
+        dotnet test (Join-Path $serverRoot 'tests\DW4Online.Integration.Tests') -c $Configuration $noServer
         if ($LASTEXITCODE -ne 0) { throw 'Integration tests failed.' }
     } else {
         Write-Output 'DW4ONLINE_TEST_MYSQL is not set: integration tests skipped (scripts\local-db.ps1 start / env).'
@@ -37,7 +41,7 @@ if (-not $SkipTests) {
 }
 
 if (Test-Path $out) { Remove-Item -Recurse -Force $out }
-dotnet publish $project -c $Configuration -r win-x64 --self-contained true -o $out
+dotnet publish $project -c $Configuration -r win-x64 --self-contained true -o $out $noServer
 if ($LASTEXITCODE -ne 0) { throw 'Publish failed.' }
 
 foreach ($leak in @('appsettings.Development.json', 'appsettings.Local.json', 'appsettings.Production.json')) {
