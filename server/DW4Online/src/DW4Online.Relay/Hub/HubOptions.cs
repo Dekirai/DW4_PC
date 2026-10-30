@@ -16,8 +16,9 @@ public sealed class InstanceOptions
 {
     /// <summary>How long a parked group waits for a group that announced (HEADING) the same target.</summary>
     public int CoArrivalHoldMs { get; set; } = 3000;
-    /// <summary>How long an arriving group waits for a target that is not joinable for a while (its entry scene).</summary>
-    public int JoinHoldSeconds { get; set; } = 15;
+    /// <summary>How long an arriving group waits for a target that is not joinable for a while (its stage load and entry scene: 23 s
+    /// measured from a NEW in stag0101, SEAMLESS.md 3.4).</summary>
+    public int JoinHoldSeconds { get; set; } = 30;
     /// <summary>A JOIN (and a resync) is offered only when the slowest member catches up within this many seconds.</summary>
     public int MaxCatchUpSeconds { get; set; } = 30;
     /// <summary>The replay rate (steps/s) assumed for a member that has not reported one (RATE).</summary>

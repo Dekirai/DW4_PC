@@ -292,12 +292,24 @@ in this order:
    - **Hold until joinable.** A target that is not joinable only for a while
      (its entry scene, `first.lua`, a talk; the STATE reason says which) holds
      the arriving group's barrier until it is joinable, at most
-     `Instances:JoinHoldSeconds` (default 15), with "Joining <name>..." on the
+     `Instances:JoinHoldSeconds` (default 30), with "Joining <name>..." on the
      loading screen. Entry scenes last 70 to about 190 frames
      (`funcStageIn`, `stag0101_m1__func.lua`), up to 630 with an enemy intro
      (`stag0201_m1__first.lua`), so friends who arrive a few seconds apart
      meet in the same instance. A hold that runs out ends in NEW with a
      notice.
+     *Measured in S1 (real game clients, `tools/online_test`):* a new
+     instance is not joinable for its whole stage load plus the entry scene
+     (STATE reason `loading` throughout): stag0101 from the lobby gate 1,384
+     ticks (23.1 s: about 750 ticks of loading, then the entry until the
+     player has control), stag0001 1,294 ticks (G1). With the first default
+     of 15 s a member who took the gate 8 s after its friend (just outside
+     the co-arrival window) was held until 0.1 s before the target became
+     joinable and then started alone (scenario S17b). The default is
+     therefore 30 s: it covers the measured 23 s from a NEW plus the longest
+     enemy intro (630 frames against stag0101's ~190, 7 s more); a hold never
+     starts earlier than about 3 s after the target's NEW, because closer
+     arrivals are co-arrivals.
    - **Boss-locked target.** The arriving member chooses on the loading
      screen: *Wait for <names>* (held until the lock clears, then JOIN; can be
      cancelled) or *Go alone* (NEW). The choice travels as BARRIER_CHOICE; the
@@ -2109,7 +2121,7 @@ the room (up to ten), not the instance. No invites or join secrets for now.
 | Rooms | `RoomService`: instances as lockstep groups (id, stage, visit, context hash, slots, parent and fork frame, departing, boss lock, joinable), barrier decisions DISSOLVE / co-arrival / JOIN / NEW with holds and the boss choice (3.4), catch-up estimates from the members' replay rates, forks of both kinds, in-band JOIN and LEAVE, preferred slots, no instance end when its first member leaves (`EndInstanceLocked` goes), room-scoped relay tickets, the settings hash, the relay connection as heartbeat. `POST /rooms/{code}/stage` and `/stage/leave` are retired; the room state lists instances with stage and members. Room settings gain camera mode and light mode |
 | Story | migration with `online_story`; `StoryMerge` in the domain with the golden vectors; plausibility table from the census; pending sets with STORY_ACK; the owner-away setting with the session's dropped set; `GET /online-character` composes, `PUT` ignores story bytes; `GET /rooms/{code}/story` for the website and debugging |
 | Achievements | catalogue migration to the client's ids and thresholds |
-| Config | `Sealing:MaxDelayTicks` (15, measured in S1, 6.4), `Sealing:LateTarget` (0.001), `Relay:ReconnectSeconds` (10), `Relay:LagLeaveSeconds` (10), `Relay:StateBytesPerSecond`, `Instances:CoArrivalHoldMs` (3000), `Instances:JoinHoldSeconds` (15), `Instances:MaxCatchUpSeconds` (30), `Rooms:StoryWhileOwnerAway`; `Play:CurrentProtocol` follows the client. `Sealing:StallMs` and `Instances:MaxJoinLogMinutes` of revision 1 are gone |
+| Config | `Sealing:MaxDelayTicks` (15, measured in S1, 6.4), `Sealing:LateTarget` (0.001), `Relay:ReconnectSeconds` (10), `Relay:LagLeaveSeconds` (10), `Relay:StateBytesPerSecond`, `Instances:CoArrivalHoldMs` (3000), `Instances:JoinHoldSeconds` (30, measured in S1, 3.4), `Instances:MaxCatchUpSeconds` (30), `Rooms:StoryWhileOwnerAway`; `Play:CurrentProtocol` follows the client. `Sealing:StallMs` and `Instances:MaxJoinLogMinutes` of revision 1 are gone |
 | Website | the room page shows instances per stage |
 | Deploy | fixed-key self-signed certificate and the pin script (10); port 52041 as before |
 | Tests | unit tests for sealing schedules and fills, events, forks, barrier decisions (holds, co-arrival, context key) and merge vectors; integration tests with scripted fake clients; end-to-end tests with the real game client (16) |
