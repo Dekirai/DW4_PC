@@ -1,5 +1,7 @@
 #include "online_run.hpp"
 
+#include "online/host_priority.hpp"
+
 #include "online/room_settings.hpp"
 #include "online/token_store.hpp"
 #include "online/transport.hpp"
@@ -123,8 +125,20 @@ OnlineRun::OnlineRun(std::unique_ptr<online::HttpWorker> http, OnlineRoom room, 
     session_ = std::make_unique<online::Session>(link_, config);
 }
 
+namespace {
+// The relay port to connect to: the room's, or (development builds, the
+// latency scenarios of tools/online_test) DW4_ONLINE_RELAY_PORT, a latency /
+// jitter / loss proxy in front of the loopback relay.
+int relay_port_for(int port) {
+#ifdef DW4_ONLINE_DEV
+    if (const char* text = std::getenv("DW4_ONLINE_RELAY_PORT"); text && std::atoi(text) > 0 && std::atoi(text) < 65536) return std::atoi(text);
+#endif
+    return port;
+}
+} // namespace
+
 bool OnlineRun::connect(double now, std::string& error) {
-    auto transport = online::connect_tcp(room_.endpoint.host, room_.relay_port, 5000, error);
+    auto transport = online::connect_tcp(room_.endpoint.host, relay_port_for(room_.relay_port), 5000, error);
     if (!transport) return false;
     session_->attach(std::move(transport), now);
     return true;
@@ -139,16 +153,49 @@ void OnlineRun::pass(double now) {
     if (ticket_request_ == 0 && now >= next_reconnect_) ticket_request_ = http_->submit(online::api::ticket_request(room_.code));
 }
 
+void OnlineRun::open_log(const std::filesystem::path& path, const std::string& client_version) {
+    if (!log_.open(path)) {
+        std::cout << "online: the online log " << path.string() << " cannot be written\n";
+        return;
+    }
+    log_.line("---- online session: game %s, protocol %u, server %s:%d (%s), relay port %d, account %s, room '%s' (max %d players, "
+              "difficulty %d)",
+              client_version.c_str(), unsigned(kOnlineProtocol), room_.endpoint.host.c_str(), room_.endpoint.port,
+              room_.endpoint.development ? "development" : "release", room_.relay_port, room_.account.c_str(), room_.room_name.c_str(),
+              room_.max_players, room_.settings.difficulty);
+    session_->set_log(&log_);
+    status_request_ = http_->submit(online::api::status_request());
+    // (A game in the background, such as the second of two on one PC, keeps its pace: online/host_priority.hpp.)
+    log_.line("background throttling of this process: %s", online::keep_full_speed_in_background() ? "off" : "left to the system");
+}
+
 void OnlineRun::dispatch(std::uint64_t id, const online::HttpResponse& response, double now) {
     if (character_ && character_->on_response(id, response)) return;
+    if (id == status_request_ && status_request_ != 0) {
+        status_request_ = 0;
+        if (const auto status = online::api::parse_status(response)) {
+            log_.line("server: version %s, protocol %d (minimum %d), relay port %d%s", status->current_version.empty() ? "?" : status->current_version.c_str(),
+                      status->current_protocol, status->minimum_protocol, status->relay_port,
+                      status->current_protocol != 0 && status->current_protocol != int(kOnlineProtocol)
+                          ? " - the server is set for another protocol than this game: update the server or the game"
+                          : "");
+        } else {
+            log_.line("server: no status (%s)", online::api::problem_text(response).c_str());
+        }
+        return;
+    }
     if (id != ticket_request_) return;
     ticket_request_ = 0;
     next_reconnect_ = now + 2.0;
     const auto ticket = online::api::parse_ticket(response);
     if (!ticket || left_ || session_->closed() || !session_->wants_transport()) return;
     std::string error;
-    if (auto transport = online::connect_tcp(room_.endpoint.host, room_.relay_port, 2000, error))
+    if (auto transport = online::connect_tcp(room_.endpoint.host, relay_port_for(room_.relay_port), 2000, error)) {
+        log_.line("reconnected to the relay");
         session_->attach(std::move(transport), now, *ticket);
+    } else {
+        log_.line("reconnect failed: %s", error.c_str());
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -256,6 +303,13 @@ void OnlineRun::leave(double save_seconds) {
     if (left_) return;
     save_on_leave(save_seconds);
     left_ = true;
+    {
+        const auto& t = session_->stats().total();
+        log_.line("leaving the room: %llu own pads ran, %llu not sealed as sent, latency avg %.0f ms p95 %.0f ms max %.0f ms, input delay %d, "
+                  "reconnects %d, resyncs %d",
+                  static_cast<unsigned long long>(t.samples), static_cast<unsigned long long>(t.dropped), t.exec_avg() * 1000.0,
+                  t.exec_quantile(0.95) * 1000.0, t.exec_max * 1000.0, session_->delay(), session_->net().reconnects, session_->net().resyncs);
+    }
     session_->leave();
     http_->wait(http_->submit(online::api::leave_request(room_.code)));
 }

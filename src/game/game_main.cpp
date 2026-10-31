@@ -919,6 +919,12 @@ int run(const Options& options, dw4::game::Settings& settings) {
         hooks.hidden = [&] { return dw4::game::OverheadLabels::hidden(engine); };
         online = std::make_unique<dw4::game::OnlineRun>(std::move(http), std::move(room), std::move(hooks), data,
                                                         rate.ok ? std::uint32_t(rate.steps_per_second) : 3000u);
+        {
+            // saves/online.log (round 62): what to send in when online play lags (DW4_ONLINE_LOG: another file, test runs).
+            const char* log_override = std::getenv("DW4_ONLINE_LOG");
+            online->open_log(log_override && *log_override ? std::filesystem::path(log_override) : online_folder.parent_path() / "online.log",
+                             DW4_PC_VERSION);
+        }
         if (!online->load_character(online_folder, DW4_PC_VERSION, error)) {
             online.reset();
             return false;
@@ -3272,6 +3278,8 @@ int run(const Options& options, dw4::game::Settings& settings) {
                             if (ImGui::Checkbox("Achievements", &settings.achievements)) settings_changed = true;
                             ImGui::SameLine();
                             if (ImGui::Checkbox("Unlock notices", &settings.achievement_popups)) settings_changed = true;
+                            if (ImGui::Checkbox("Network indicator in online sessions", &settings.net_indicator)) settings_changed = true;
+                            ImGui::TextDisabled("Ping and input delay in the lower left corner while you play online (details in F1 > Online).");
                         }
                         if (ImGui::CollapsingHeader("Keyboard (player 1)", ImGuiTreeNodeFlags_DefaultOpen)) {
                             ImGui::TextDisabled("Click a key to change it, right-click to clear it.");
@@ -3557,6 +3565,46 @@ int run(const Options& options, dw4::game::Settings& settings) {
                             if (ImGui::Button("Leave room")) leave_room();
                             if (online->leave_prompt && ImGui::Button("Stay")) online->leave_prompt = false;
                         }
+                        // The connection of a room session (round 62): what the
+                        // indicator shows, with the details to report a lag.
+                        if (online) {
+                            const auto& session = online->session();
+                            const auto& net = session.net();
+                            const auto& recent = session.stats().recent();
+                            const auto& total = session.stats().total();
+                            const bool playing = session.mode() == dw4::game::online::Mode::sealed;
+                            const auto quality = dw4::game::online::link_quality(playing ? session.delay() : 0, net.rtt_ms, recent.drop_rate(),
+                                                                                 session.overlay(steady_seconds()).waiting_for_server);
+                            ImGui::SeparatorText("Connection");
+                            const ImVec4 colour = quality == dw4::game::online::LinkQuality::good   ? ImVec4(0.45f, 0.9f, 0.45f, 1)
+                                                  : quality == dw4::game::online::LinkQuality::fair ? ImVec4(1.0f, 0.85f, 0.3f, 1)
+                                                                                                    : ImVec4(1.0f, 0.4f, 0.4f, 1);
+                            ImGui::TextColored(colour, "Link: %s", dw4::game::online::link_quality_name(quality));
+                            if (net.rtt_ms >= 0)
+                                ImGui::Text("Ping (round trip to the server): %.0f ms%s", net.rtt_ms,
+                                            net.from_relay ? (" (spread " + std::to_string(int(net.rtt_spread_ms)) + " ms)").c_str() : " (TCP estimate)");
+                            else
+                                ImGui::TextDisabled("Ping: not measured yet");
+                            if (playing)
+                                ImGui::Text("Input delay: %d ticks (%.0f ms) - with others in your stage every input waits this long",
+                                            session.delay(), session.delay() * dw4::engine::kFieldSeconds * 1000.0);
+                            else
+                                ImGui::Text("Input delay: none (you play this stage on your own)");
+                            if (recent.samples)
+                                ImGui::Text("Your inputs, last seconds: %.0f ms until they run (max %.0f), %.1f %% came too late for the server",
+                                            recent.exec_avg() * 1000.0, recent.exec_max * 1000.0, recent.drop_rate() * 100.0);
+                            if (net.from_relay && net.sealed)
+                                ImGui::Text("Server: %llu of your inputs filled in, %llu late, of %llu in this stage",
+                                            static_cast<unsigned long long>(net.filled), static_cast<unsigned long long>(net.late),
+                                            static_cast<unsigned long long>(net.sealed));
+                            ImGui::TextDisabled("Session: %llu inputs, latency avg %.0f ms, %d reconnects, %d resyncs, %zu stalls caught up",
+                                                static_cast<unsigned long long>(total.samples), total.exec_avg() * 1000.0, net.reconnects, net.resyncs,
+                                                session.backlog_runs());
+                            if (online->log().is_open()) {
+                                ImGui::TextDisabled("Log: %s", online->log().path().string().c_str());
+                                ImGui::TextDisabled("When online play lags, send this file (it holds no password).");
+                            }
+                        }
                         ImGui::EndTabItem();
                     }
                     if (ImGui::BeginTabItem("Cheats", nullptr, tab_flags("Cheats"))) {
@@ -3811,6 +3859,31 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     for (const auto& line : lines) ImGui::TextUnformatted(line.c_str());
                     ImGui::End();
                 }
+                // The network indicator of a room session (round 62), lower
+                // left: ping and input delay, coloured by the link's quality.
+                if (online && settings.net_indicator && !online->session().closed()) {
+                    const auto& session = online->session();
+                    const auto& net = session.net();
+                    const bool playing = session.mode() == dw4::game::online::Mode::sealed;
+                    const auto overlay_now = session.overlay(steady_seconds());
+                    const auto quality = dw4::game::online::link_quality(playing ? session.delay() : 0, net.rtt_ms, session.stats().recent().drop_rate(),
+                                                                         overlay_now.waiting_for_server || overlay_now.connection_lost);
+                    const ImVec4 colour = quality == dw4::game::online::LinkQuality::good   ? ImVec4(0.45f, 0.9f, 0.45f, 1)
+                                          : quality == dw4::game::online::LinkQuality::fair ? ImVec4(1.0f, 0.85f, 0.3f, 1)
+                                                                                            : ImVec4(1.0f, 0.4f, 0.4f, 1);
+                    const ImVec2 display = ImGui::GetIO().DisplaySize;
+                    ImGui::SetNextWindowPos(ImVec2(12, display.y - 12), ImGuiCond_Always, ImVec2(0, 1));
+                    ImGui::SetNextWindowBgAlpha(0.45f);
+                    ImGui::Begin("##net", nullptr,
+                                 ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoInputs |
+                                     ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing);
+                    std::string text = net.rtt_ms >= 0 ? "Ping " + std::to_string(int(net.rtt_ms + 0.5)) + " ms" : std::string("Ping -");
+                    if (playing)
+                        text += "  Delay " + std::to_string(session.delay()) + " (" +
+                                std::to_string(int(session.delay() * dw4::engine::kFieldSeconds * 1000.0 + 0.5)) + " ms)";
+                    ImGui::TextColored(colour, "%s", text.c_str());
+                    ImGui::End();
+                }
                 // Achievement notices, top right.
                 while (!toasts.empty() && std::chrono::steady_clock::now() > toasts.front().until) toasts.pop_front();
                 if (!toasts.empty()) {
@@ -3877,6 +3950,12 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     if (queued < kAudioFrameSamples * 2) mix_audio(kAudioFrameSamples * 3 - queued);
                 }
                 SDL_GL_SwapWindow(window);
+                if (online) online->session().presented(steady_seconds());
+                // A minimized window's swap does not wait for the display: the
+                // loop would spin and take the CPU from a second game on this
+                // PC (two games for one online room, round 62). Its passes are
+                // spaced 4 ms apart (the steps keep their own clock).
+                if (SDL_GetWindowFlags(window) & (SDL_WINDOW_MINIMIZED | SDL_WINDOW_OCCLUDED)) SDL_DelayPrecise(4'000'000);
                 {
                     const auto now = std::chrono::steady_clock::now();
                     const double seconds = std::chrono::duration<double>(now - last_present).count();
@@ -3886,6 +3965,8 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     frame_times[frame_time_at++ % frame_times.size()] = float(seconds * 1000.0);
                 }
             }
+            // (A run without pictures: the pass's end stands for the present, for the input latency of online test runs.)
+            if (!draw && online) online->session().presented(steady_seconds());
             if (trace_loadtime && steps > 0) {
                 const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - pass_start).count();
                 if (const auto* snapshot = engine.stage_snapshot(); snapshot && snapshot->serial != load_timing.serial) {
@@ -3907,6 +3988,26 @@ int run(const Options& options, dw4::game::Settings& settings) {
                             print_load_timing();
                         }
             }
+#ifdef DW4_ONLINE_DEV
+            // DW4_ONLINE_TEST_STALL=PERIOD_MS:STALL_MS[:PASS_MS] (development
+            // builds, the latency scenarios of tools/online_test): this client
+            // behaves like a window Windows throttles in the background, its
+            // host loop stalled for STALL_MS every PERIOD_MS and each pass
+            // taking at least PASS_MS (SEAMLESS.md 6.4, round 62).
+            if (online) {
+                static const auto stall = [] {
+                    std::array<int, 3> v{0, 0, 0};
+                    if (const char* text = std::getenv("DW4_ONLINE_TEST_STALL")) std::sscanf(text, "%d:%d:%d", &v[0], &v[1], &v[2]);
+                    return v;
+                }();
+                static auto next_stall = std::chrono::steady_clock::now() + std::chrono::milliseconds(stall[0]);
+                if (stall[2] > 0) std::this_thread::sleep_for(std::chrono::milliseconds(stall[2]));
+                if (stall[0] > 0 && stall[1] > 0 && std::chrono::steady_clock::now() >= next_stall) {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(stall[1]));
+                    next_stall = std::chrono::steady_clock::now() + std::chrono::milliseconds(stall[0]);
+                }
+            }
+#endif
             // Frame limit (settings.ini fps_limit): presents are spaced out;
             // the simulation keeps its fixed 60 Hz steps.
             if (!options.smoke_frames && settings.fps_limit > 0) {
@@ -3993,6 +4094,14 @@ int run(const Options& options, dw4::game::Settings& settings) {
                         dw4::game::online::mode_name(online->session().mode()), online->session().inst(), online->session().visit(),
                         online->session().tick(), online->session().own_slot(), online->session().present(),
                         static_cast<unsigned long long>(online->link().net_fingerprint()));
+            {
+                const auto& t = online->session().stats().total();
+                std::printf("online: final latency samples %llu dropped %llu exec avg %.1f ms p50 %.1f p95 %.1f max %.1f, present avg %.1f ms, "
+                            "steps %.2f, delay %d, backlogs %zu, starved %zu\n",
+                            static_cast<unsigned long long>(t.samples), static_cast<unsigned long long>(t.dropped), t.exec_avg() * 1000.0,
+                            t.exec_quantile(0.5) * 1000.0, t.exec_quantile(0.95) * 1000.0, t.exec_max * 1000.0, t.present_avg() * 1000.0,
+                            t.steps_avg(), online->session().delay(), online->session().backlog_runs(), online->session().starved_steps());
+            }
             leave_room();
             online_achievements.reset();
             online.reset();

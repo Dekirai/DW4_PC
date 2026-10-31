@@ -2,13 +2,19 @@
 // round trip, golden bytes shared with the relay's C# tests (one layout:
 // server/DW4Online/tests/DW4Online.Tests/WireGoldenTests.cs), the handshake
 // lines, framing with partial reads and the 1 MiB limit, chunked state
-// transfers; the +-0.1 % pacing of sealed instances; the local leave combo.
+// transfers; the +-0.1 % pacing of sealed instances; the local leave combo;
+// the input latency statistics, the link quality and the rotated online log
+// of round 62.
 #include "online/leave_combo.hpp"
+#include "online/net_log.hpp"
+#include "online/net_stats.hpp"
 #include "online/pacing.hpp"
 #include "online/pad_wire.hpp"
 #include "online/wire.hpp"
 
 #include <cmath>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <random>
 #include <stdexcept>
@@ -210,6 +216,14 @@ void messages() {
     check(room.kind == w::RoomEvent::joined && room.member == 3 && room.account == 99 && room.name == "kim" && room.flags == 1, "ROOM");
     auto ping = w::decode_ping(w::encode(w::Ping{9, 1000, -2, 3}));
     check(ping.margin_ms == -2 && ping.delay == 3, "PING");
+    // NETSTAT (round 62): golden bytes shared with WireGoldenTests.cs.
+    check(hex(w::encode(w::NetStat{24, 6, 3, -2, 1000, 5, 7, w::NetStat::in_stream})) == "1800" "0600" "03" "feff" "e8030000" "05000000" "07000000" "01",
+          "golden NETSTAT");
+    const auto netstat = w::decode_netstat(w::encode(w::NetStat{24, 6, 3, -2, 1000, 5, 7, 1}));
+    check(netstat.rtt_ms == 24 && netstat.spread_ms == 6 && netstat.delay == 3 && netstat.margin_ms == -2 && netstat.sealed == 1000 &&
+              netstat.filled == 5 && netstat.late == 7 && netstat.flags == 1,
+          "NETSTAT round trip");
+    check(std::uint8_t(w::Type::netstat) == 0x8F && std::string(w::type_name(w::Type::netstat)) == "NETSTAT", "NETSTAT type");
     auto close = w::decode_close(w::encode(w::Close{w::CloseReason::kicked, "bye"}));
     check(close.reason == w::CloseReason::kicked && close.text == "bye", "CLOSE");
     w::Roster roster{{{1, "stag0101", 8, 3, 50, 60, 3}, {2, "", 9, 1, 1, 1, 0}}};
@@ -398,6 +412,27 @@ void pacing() {
     check(pace.due_steps(0.01, 2) == 1, "starts with one tick in reserve");
     const int burst = pace.due_steps(0.3, 19);
     check(pace.catching_up() && burst == 18, "a backlog above three ticks runs at once, keeping one");
+    // Round 62: an excess below the backlog rule that lasts (a join's long step left three ticks waiting) drains by
+    // extra steps within about a second instead of 17 s per tick at +0.1 %.
+    {
+        PaceController p;
+        double now = 0, next_arrival = 0;
+        std::size_t arrived = 0, executed = 0;
+        const double pass = 1.0 / 60.0;
+        // Steady arrivals, but the first second's ticks pile up to three waiting (below the backlog rule).
+        while (now < 10.0) {
+            now += pass;
+            while (next_arrival <= now) {
+                ++arrived;
+                next_arrival += kFieldSeconds;
+            }
+            if (now < 0.06) continue; // the long step: nothing runs
+            executed += std::size_t(p.due_steps(pass, arrived - executed));
+            if (now > 6.0) check(arrived - executed <= 2, "the excess drained (" + std::to_string(arrived - executed) + " waiting at " + std::to_string(now) + ")");
+        }
+        check(p.drained() >= 1 && p.drained() <= 3, "a few extra steps (" + std::to_string(p.drained()) + ")");
+        check(!p.catching_up(), "no backlog run for it");
+    }
 }
 
 void leave_combo() {
@@ -416,6 +451,67 @@ void leave_combo() {
 }
 } // namespace
 
+void net_stats() {
+    // A pad sampled at step 10 for tick 13 runs at step 13 (three ticks of input delay, 50 ms); its picture follows.
+    NetStats stats;
+    const WirePad a{0x0100, 1, 2, 3, 4}, b{0x0200, 0, 0, 0, 0};
+    stats.sampled(1, 13, 1.000, 10, a);
+    stats.sampled(1, 14, 1.017, 11, b);
+    stats.executed(1, 13, 1.050, 13, a);
+    stats.presented(1.060);
+    stats.executed(1, 14, 1.067, 14, a); // the relay sealed a fill (the previous pad): this input was lost
+    stats.presented(1.080);
+    const auto w = stats.take_window();
+    check(w.samples == 2 && w.dropped == 1, "two inputs ran, one not as sent");
+    check(std::abs(w.exec_avg() - 0.050) < 1e-9 && std::abs(w.steps_avg() - 3.0) < 1e-9, "50 ms, three steps");
+    check(w.presented == 2 && std::abs(w.present_avg() - 0.0615) < 1e-9, "the pictures after them");
+    check(std::abs(w.exec_quantile(0.5) - 3 * kFieldSeconds) < 1e-9, "the median is three fields");
+    check(stats.take_window().samples == 0 && stats.total().samples == 2, "a window starts afresh, the total stays");
+    // A tick that never runs here (a new visit) is forgotten, not counted.
+    stats.sampled(1, 20, 2.0, 20, a);
+    stats.forget_in_flight();
+    stats.executed(1, 20, 2.05, 23, a);
+    check(stats.total().samples == 2, "forgotten samples do not count");
+    // The rolling window holds the last seconds only.
+    stats.sampled(2, 1, 10.0, 30, a);
+    stats.executed(2, 1, 10.0, 30, a);
+    stats.roll_recent(10.5);
+    check(stats.recent().samples == 1, "the recent window");
+    stats.roll_recent(20.0);
+    check(stats.recent().samples == 0, "the recent window forgets");
+
+    check(link_quality(3, 25, 0, false) == LinkQuality::good, "d 3 at 25 ms is good");
+    check(link_quality(5, 40, 0, false) == LinkQuality::fair, "d 5 is fair");
+    check(link_quality(3, 25, 0.02, false) == LinkQuality::fair, "2 % lost inputs are fair");
+    check(link_quality(8, 25, 0, false) == LinkQuality::poor, "d 8 is poor");
+    check(link_quality(3, 200, 0, false) == LinkQuality::poor, "200 ms is poor");
+    check(link_quality(0, -1, 0, true) == LinkQuality::poor, "waiting for the server is poor");
+    check(link_quality(0, -1, 0, false) == LinkQuality::good, "solo, nothing known yet");
+}
+
+void online_log() {
+    // saves/online.log: appended, rotated above its size (online.1.log ... online.3.log, the oldest goes).
+    const auto folder = std::filesystem::temp_directory_path() / ("dw4_online_log_test_" + std::to_string(std::random_device{}()));
+    std::filesystem::remove_all(folder);
+    const auto path = folder / "online.log";
+    {
+        OnlineLog log;
+        check(log.open(path, 4096, 3), "the log opens (and makes its folder)");
+        for (int i = 0; i < 400; ++i) log.line("line %d of the link: input delay %d ticks", i, i % 9);
+    }
+    check(std::filesystem::exists(path), "online.log");
+    check(std::filesystem::exists(rotated_log_name(path, 1)) && std::filesystem::exists(rotated_log_name(path, 3)), "rotated files");
+    check(!std::filesystem::exists(rotated_log_name(path, 4)), "at most three old ones");
+    check(std::filesystem::file_size(path) <= 4096 + 200, "the current file stays small");
+    check(rotated_log_name(path, 2).filename() == "online.2.log", "rotated names");
+    std::ifstream in(path);
+    std::string first;
+    std::getline(in, first);
+    check(first.size() > 24 && first[4] == '-' && first[10] == ' ' && first[19] == '.' && first.find("of the link") != std::string::npos,
+          "lines carry the date and time: " + first);
+    std::filesystem::remove_all(folder);
+}
+
 int main() {
     try {
         pads();
@@ -423,6 +519,8 @@ int main() {
         handshake_and_frames();
         pacing();
         leave_combo();
+        net_stats();
+        online_log();
     } catch (const std::exception& error) {
         std::cerr << "FAIL: " << error.what() << '\n';
         return 1;

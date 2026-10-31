@@ -388,6 +388,16 @@ first one back to the title menu. The screens work with a controller first
 menu's Online tab shows the same screens, and starting a room from there
 ends an offline game only after asking.
 
+While a room plays, a small box in the lower left corner shows the ping (the
+round trip to the server) and, while others share your stage, the input delay:
+every member's input waits this many 60 Hz ticks so that all machines run the
+same frames, about the ping plus 25 ms (3 ticks, 50 ms, at 20 ms of ping). It
+is green, yellow or red by how the link holds up; F1 > Settings can hide it,
+F1 > Online shows the details. Every online session writes `saves/online.log`
+(the versions and protocols, the input delay and why it changed, the link
+every ten seconds, losses and resyncs; no password, token or room code;
+rotated at about 1 MB): send that file when online play lags.
+
 Known limits of the preview:
 
 - Talks, the map recorders, camera tours and the status window still pause

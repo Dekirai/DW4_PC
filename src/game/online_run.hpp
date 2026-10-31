@@ -98,6 +98,11 @@ public:
     // Leaves the room: the character's automatic save (waiting up to
     // `save_seconds` for the uploads), then BYE and the REST leave.
     void leave(double save_seconds = 8.0);
+    // saves/online.log (online/net_log.hpp, round 62): opened for the
+    // session, its first lines are the versions and protocols (the server's
+    // come with its status); the session logs into it from here.
+    void open_log(const std::filesystem::path& path, const std::string& client_version);
+    const online::OnlineLog& log() const { return log_; }
 
 private:
     void dispatch(std::uint64_t id, const online::HttpResponse& response, double now);
@@ -113,6 +118,8 @@ private:
     std::string client_version_;
     online::LeaveCombo combo_;
     std::uint64_t ticket_request_ = 0;
+    std::uint64_t status_request_ = 0; // the server's status for the log
+    online::OnlineLog log_;
     double next_reconnect_ = 0;
     bool pending_before_ = false; // the last live step had a NEXTSTAGE pending
     bool saved_on_leave_ = false;
