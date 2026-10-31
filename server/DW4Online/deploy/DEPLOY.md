@@ -676,7 +676,8 @@ the one thing the start never risks), so `Stop-Service` fails with "cannot accep
    `Stop-Process -Id (Get-CimInstance Win32_Service -Filter "Name='mysql'").ProcessId -Force`, then
    `Start-Service mysql`: InnoDB recovers at its next start (its error log, `<XAMPP>\mysql\data\mysql_error.log`,
    shows the recovery). Every database on that MariaDB is unavailable meanwhile. Before the restart, add the line of
-   section 1.1 step 2 if it is missing.
+   section 1.1 step 2 if it is missing. (In the rehearsal the first start after such a crash ended again within a
+   second, a failed redo log write; `Start-Service mysql` once more recovered and ran from then on.)
 3. The interrupted migration's mark stays in `schema_version`: go the way out of the table above (the backup from
    before the update, or for 0001 on a fresh database DROP / CREATE), then `migrate` in the console again.
 
