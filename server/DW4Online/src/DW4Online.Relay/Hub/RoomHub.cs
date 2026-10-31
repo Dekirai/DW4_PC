@@ -56,8 +56,8 @@ public sealed class RoomHub
 
     /// <summary>The room story of this session (SEAMLESS.md 8.3-8.6), from the owner's story the first connection brought.</summary>
     public RoomStoryKeeper Story => _story ??= Info.Story is { } s
-        ? new RoomStoryKeeper(s.Story, s.Difficulty, s.Policy, s.OwnerPresent)
-        : new RoomStoryKeeper(new RoomStoryData(), 0, StoryPolicy.Drop, ownerPresent: true);
+        ? new RoomStoryKeeper(s.Story, s.Difficulty, s.Policy, s.OwnerPresent) { MinVisitSeconds = _inst.StoryMinVisitSeconds }
+        : new RoomStoryKeeper(new RoomStoryData(), 0, StoryPolicy.Drop, ownerPresent: true) { MinVisitSeconds = _inst.StoryMinVisitSeconds };
 
     /// <summary>The views as the last housekeeping pass saw them (the room API's answer while the room is busy).</summary>
     public IReadOnlyList<InstanceView> CachedViews { get; private set; } = [];
@@ -131,6 +131,7 @@ public sealed class RoomHub
         m.ResumeAllowed = resumable;
         if (!resumable)
         {
+            MarkLone(m);
             DetachLocked(m, now, leaveNow: true);
             var hub = NewInstance(InstanceMode.Hub, "", 1, 0, now);
             Place(m, hub, 0, now);
@@ -152,6 +153,25 @@ public sealed class RoomHub
 
     private static byte Flags(HubMember m) => m.Owner ? RoomMsg.Owner : (byte)0;
 
+    /// <summary>
+    /// The server is about to lose the member's place (a reconnect without resuming, a lost connection in a lobby or at a
+    /// barrier): its client plays on in its stage alone, or goes on as NEW into its barrier's target. Its STORY counts
+    /// against that stage until the server places it again (8.7).
+    /// </summary>
+    private static void MarkLone(HubMember m)
+    {
+        if (m.Arrival is { } parked)
+        {
+            m.LoneStage = parked.Stage;
+            m.LoneSince = parked.ParkedAt;
+        }
+        else if (m.Instance is { Ended: false } was && !string.IsNullOrEmpty(was.Stage) && m.Slot >= 0)
+        {
+            m.LoneStage = was.Stage;
+            m.LoneSince = Math.Max(m.InstanceSince, was.VisitStartedAt);
+        }
+    }
+
     /// <summary>A member's connection closed (its slot stays filled for Relay:ReconnectSeconds in a logged instance).</summary>
     public void Disconnect(HubMember m, IHubPeer peer, long now, bool graceful = false)
     {
@@ -162,7 +182,11 @@ public sealed class RoomHub
             other.Peer?.Send(new RoomMsg(RoomNotice.Disconnected, (byte)m.Index, (ulong)m.AccountId, m.Name, Flags(m)).Frame());
         Note("disconnect", m.Instance, ("member", m.Index), ("graceful", graceful));
         if (graceful || m.Joining is not null || m.Arrival is not null || m.Instance is null || m.Instance.Mode == InstanceMode.Hub || m.Instance.Barrier is not null)
+        {
+            // (A lobby or a parked barrier: the client plays on there alone, its STORY after the reconnect counts there.)
+            if (!graceful) MarkLone(m);
             DetachLocked(m, now, leaveNow: true);
+        }
         else if (m.Instance is { Mode: InstanceMode.Sealed, Sealing: false, Barrier: null, Ended: false } waiting)
             TryStartSealing(waiting, now); // (its hash is not awaited from a gone member; the reconnect window runs from tick 0)
     }
@@ -573,6 +597,9 @@ public sealed class RoomHub
         {
             m.Instance = null;
             m.Slot = -1;
+            // Its client plays on alone in this stage until its next barrier: its STORY counts against it (8.7).
+            m.LoneStage = i.Stage;
+            m.LoneSince = Math.Max(m.InstanceSince, i.VisitStartedAt);
             // A member taken out while it still plays (lag, a resync too long or too many, a missing hash) gets the ticks
             // up to its LEAVE: its client sees it and continues alone until its next barrier (before, it waited for
             // ticks nobody sent it). A member that parks, joins or reconnects meanwhile drops out of this (PumpAll).
@@ -1384,6 +1411,14 @@ public sealed class RoomHub
         if (m.Instance != i) m.InstanceSince = now;
         m.Instance = i;
         m.Slot = slot;
+        m.VisitEpoch = i.StoryEpoch;
+        if (!string.IsNullOrEmpty(i.Stage))
+        {
+            m.LoneStage = null;
+            // The engine line this visit's counters grow in: besides its own instance 0 lines the only kind of line the
+            // member may report (8.7).
+            AllowLine(m, i.Id, i.Visit);
+        }
         m.Cursor = 0;
         m.Heading = null;
         m.Resyncing = false;
@@ -1798,6 +1833,7 @@ public sealed class RoomHub
             i.Slots[s] = null;
             m.Instance = child;
             m.PreviousInstanceId = i.Id;
+            AllowLine(m, child.Id, child.Visit); // (the parent's line is the member's already: it counts up to the fork)
             m.Peer?.Send(new ReassignMsg(i.Id, i.Visit, child.Id, from, childMode, child.Departing ? ReassignMsg.Departing : (byte)0).Frame());
         }
         // Pending events: JOIN stays with the instance id; LEAVE, INTENT and DELAY follow their slot.
@@ -1864,7 +1900,8 @@ public sealed class RoomHub
         m.StoryRefilledAt = now;
         StoryTake take;
         HubInstance? at = null;
-        if (m.StoryTokens < 1)
+        var rated = m.StoryTokens < 1;
+        if (rated)
         {
             Count("story_rate");
             var refused = new List<StoryRefused>();
@@ -1878,18 +1915,13 @@ public sealed class RoomHub
         else
         {
             m.StoryTokens -= 1;
-            // The member's instance now decides (its stage and the epoch its visit began in); the frame's ids may be the
-            // ones before a fork. A parked or catching-up member sends none (the client sends STORY before BARRIER).
-            var inst = at = m.Instance is { Ended: false } i && m.Slot >= 0 && m.Joining is null && m.Arrival is null ? i : null;
-            var delta = msg.Delta;
-            // Lines of instance 0 (a solo group that went on without the server's answer) are this member's own.
-            if (delta.Counters.Any(g => g.Inst == 0))
-                delta = new StoryDelta
-                {
-                    Phase = delta.Phase, Flags = delta.Flags, Folder = delta.Folder,
-                    Counters = delta.Counters.Select(g => g.Inst == 0 ? g with { Inst = 0x8000_0000u | (uint)m.Index } : g).ToList(),
-                };
-            take = keeper.Take(delta, inst?.Stage, inst?.StoryEpoch ?? 0);
+            // Where the member plays now decides (its stage, the epoch its visit began in, the visit); the frame's ids may
+            // be the ones before a fork. A parked or catching-up member sends none (the client sends STORY before BARRIER).
+            var (stage, epoch, visit, inst) = StoryOrigin(m, now);
+            at = inst;
+            var (delta, lines) = OwnLines(m, msg.Delta);
+            take = keeper.Take(delta, stage, epoch, visit);
+            if (lines.Count > 0) take = take with { Refused = [.. take.Refused, .. lines] };
         }
         if (take.Refused.Count > 0) Count("story_refused", take.Refused.Count);
         // The membership log names what the owner-away policy took (the scenarios of SEAMLESS.md 16 check it).
@@ -1898,8 +1930,64 @@ public sealed class RoomHub
             var keys = take.Refused.Where(r => r.Reason == why).Select(r => r.Kind.ToString().ToLowerInvariant() + ":" + r.Index).ToList();
             if (keys.Count > 0) Note(ev, at, ("member", m.Index), ("keys", string.Join(",", keys)));
         }
-        m.Peer?.Send(new StoryAckMsg(keeper.Story.Revision, keeper.Story.ToBlob(), StoryAckMsg.Answer, take.Refused).Frame());
+        // (A STORY refused for the rate changed nothing: its answer carries no story, 21 bytes of request were 1,120 of answer.)
+        m.Peer?.Send(new StoryAckMsg(keeper.Story.Revision, rated ? [] : keeper.Story.ToBlob(), StoryAckMsg.Answer, take.Refused).Frame());
         if (take.Changed) StoryChanged(m);
+    }
+
+    /// <summary>
+    /// Where a member's STORY comes from (SEAMLESS.md 8.7): its instance's stage, visit and age while the server has it in
+    /// one; while its client plays alone where the server has no instance with a stage for it, the stage it plays in: the
+    /// target of a barrier it went on from after the five seconds (its arrival is still parked here), or the stage it was
+    /// taken out of its group in (lag, resync limits) or reconnected in without resuming. A member alone counts from the
+    /// epoch of its last instance visit (its engine was cleaned at that barrier, not at the one it went on from).
+    /// </summary>
+    private (string? Stage, long Epoch, StoryVisit? Visit, HubInstance? Inst) StoryOrigin(HubMember m, long now)
+    {
+        if (m.Joining is not null) return (null, 0, null, null);
+        if (m.Instance is { Ended: false } i && m.Slot >= 0 && m.Arrival is null && !string.IsNullOrEmpty(i.Stage))
+        {
+            var since = Math.Max(m.InstanceSince, i.VisitStartedAt);
+            return (i.Stage, i.StoryEpoch, new StoryVisit(m.Index, (ulong)i.Id << 32 | i.Visit, Ms(now - since) / 1000.0), i);
+        }
+        if (m.Arrival is { } a)
+            return (a.Stage, m.VisitEpoch, new StoryVisit(m.Index, 1UL << 63 | (ulong)a.ParkedAt, Ms(now - a.ParkedAt) / 1000.0), null);
+        if (m.LoneStage is { } lone)
+            return (lone, m.VisitEpoch, new StoryVisit(m.Index, 1UL << 63 | (ulong)m.LoneSince, Ms(now - m.LoneSince) / 1000.0), null);
+        return (null, 0, null, null);
+    }
+
+    private static void AllowLine(HubMember m, uint inst, uint visit)
+    {
+        if (!m.StoryLines.Add((inst, visit))) return;
+        m.StoryLineOrder.Enqueue((inst, visit));
+        while (m.StoryLineOrder.Count > HubMember.StoryLineLimit) m.StoryLines.Remove(m.StoryLineOrder.Dequeue());
+    }
+
+    /// <summary>
+    /// The counter lines a member may report (SEAMLESS.md 8.7): the engine lines the server put it in (the last
+    /// <see cref="HubMember.StoryLineLimit"/>: a growth sent again after the barrier still counts), and lines of instance 0
+    /// (a group that went on alone) as its own namespace, <see cref="HubMember.LoneLineLimit"/> of them a session. Other
+    /// lines are refused (limit): a client could otherwise invent lines and multiply a counter's growth.
+    /// </summary>
+    private (StoryDelta Delta, List<StoryRefused> Refused) OwnLines(HubMember m, StoryDelta delta)
+    {
+        var refused = new List<StoryRefused>();
+        if (delta.Counters.Count == 0) return (delta, refused);
+        var own = new List<CounterGrowth>(delta.Counters.Count);
+        foreach (var g in delta.Counters)
+        {
+            if (g.Inst == 0)
+            {
+                if (m.LoneLineVisits.Contains(g.Visit) || m.LoneLineVisits.Count < HubMember.LoneLineLimit && m.LoneLineVisits.Add(g.Visit))
+                    own.Add(g with { Inst = 0x8000_0000u | (uint)m.Index });
+                else refused.Add(new StoryRefused(StoryKeyKind.Counter, g.Counter, StoryRefusal.Limit));
+            }
+            else if (m.StoryLines.Contains((g.Inst, g.Visit))) own.Add(g);
+            else refused.Add(new StoryRefused(StoryKeyKind.Counter, g.Counter, StoryRefusal.Limit));
+        }
+        if (refused.Count > 0) Count("story_line_refused", refused.Count);
+        return (new StoryDelta { Phase = delta.Phase, Flags = delta.Flags, Folder = delta.Folder, Counters = own }, refused);
     }
 
     /// <summary>A new revision: every other member's confirmed story follows (STORY_ACK), the owner's online story is saved.</summary>

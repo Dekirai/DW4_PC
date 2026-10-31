@@ -79,6 +79,23 @@ public sealed class HubMember(int index, long accountId, string name, bool owner
     /// <summary>STORY tokens (Instances:StoryBurst, refilled at StoryMessagesPerMinute) and when they were refilled.</summary>
     public double StoryTokens { get; set; } = -1;
     public long StoryRefilledAt { get; set; }
+    /// <summary>The engine lines (instance, visit) the server put this member in (every visit it was placed in, a fork's
+    /// child): besides its own instance 0 lines the only counter lines it may report, the last <see cref="StoryLineLimit"/>
+    /// of them (SEAMLESS.md 8.7).</summary>
+    public HashSet<(uint Inst, uint Visit)> StoryLines { get; } = [];
+    public Queue<(uint Inst, uint Visit)> StoryLineOrder { get; } = new();
+    public const int StoryLineLimit = 16;
+    /// <summary>The visits of instance 0 (a group that went on alone) the member reported lines of, at most
+    /// <see cref="LoneLineLimit"/> in a room session.</summary>
+    public HashSet<uint> LoneLineVisits { get; } = [];
+    public const int LoneLineLimit = 8;
+    /// <summary>The story epoch of the member's last instance visit (its engine was cleaned at that barrier).</summary>
+    public long VisitEpoch { get; set; }
+    /// <summary>The stage the member plays alone in while the server has no instance with a stage for it (taken out of its
+    /// group, its connection lost in a lobby or at a barrier, a reconnect without resuming), and since when: its STORY counts
+    /// against that stage (SEAMLESS.md 8.7).</summary>
+    public string? LoneStage { get; set; }
+    public long LoneSince { get; set; }
     /// <summary>When the member's last BARRIER that arrived alone was decided (at most one per Instances:LoneBarrierMs).</summary>
     public long LoneBarrierAt { get; set; }
     /// <summary>The member's state budget (Relay:StateBytesPerMinute): bytes left and when it was last refilled.</summary>

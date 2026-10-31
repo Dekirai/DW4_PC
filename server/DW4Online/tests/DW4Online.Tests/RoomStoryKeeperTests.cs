@@ -146,4 +146,46 @@ public class RoomStoryKeeperTests
         Assert.True(k.Take(Flags(392), "stagML12", 0).Changed);
         Assert.Empty(k.Dropped.Flags);
     }
+
+    [Fact]
+    public void A_visit_gives_one_phase_step_and_one_key_item_once_it_is_old_enough()
+    {
+        var k = Keeper();
+        var young = new StoryVisit(1, 77, 3);
+        // Younger than MinVisitSeconds: everything waits (the client sends it again).
+        var t = k.Take(new StoryDelta { Phase = 1, Flags = [22], Folder = [0] }, "stagML02", 0, young);
+        Assert.False(t.Changed);
+        Assert.Equal(3, t.Refused.Count(r => r.Reason == StoryRefusal.Wait));
+        // Old enough: the phase step, the flag and one key item.
+        var old = young with { Seconds = 12 };
+        t = k.Take(new StoryDelta { Phase = 1, Flags = [22], Folder = [0, 1, 2] }, "stagML02", 0, old);
+        Assert.True(t.Changed);
+        Assert.Equal(1, StoryMerge.Phase(k.Story));
+        Assert.Equal(1, k.Story.Flags[22]);
+        Assert.Equal([1, 0, 0], k.Story.Folder[..3]);
+        Assert.Equal([1, 2], t.Refused.Where(r => r is { Kind: StoryKeyKind.Folder, Reason: StoryRefusal.Wait }).Select(r => r.Index));
+        // A second step in the same visit waits, however long it lasts.
+        t = k.Take(new StoryDelta { Phase = 2, Folder = [1] }, "stagML02", 0, old with { Seconds = 600 });
+        Assert.Equal(2, t.Refused.Count(r => r.Reason == StoryRefusal.Wait));
+        Assert.False(t.Changed);
+        // The member's next visit takes the next step and the next key; another member's visit counts on its own.
+        t = k.Take(new StoryDelta { Phase = 2, Folder = [1, 2] }, "stagML02", 0, new StoryVisit(1, 78, 11));
+        Assert.Equal(2, StoryMerge.Phase(k.Story));
+        Assert.Equal(new StoryRefused(StoryKeyKind.Folder, 2, StoryRefusal.Wait), t.Refused.Single());
+        Assert.True(k.Take(new StoryDelta { Folder = [2] }, "dng101b1", 0, new StoryVisit(2, 78, 11)).Changed);
+        Assert.Equal(1, k.Story.Folder[2]);
+    }
+
+    [Fact]
+    public void A_room_takes_only_the_clear_flag_of_its_own_difficulty_and_counters_within_the_wallet()
+    {
+        var hard = Keeper(difficulty: 1);
+        var t = hard.Take(Flags(406, 407, 408), "stagBS06", 0);
+        Assert.True(t.Changed);
+        Assert.Equal(1, hard.Story.Flags[407]);
+        Assert.Equal([406, 408], t.Refused.Where(r => r.Reason == StoryRefusal.Stage).Select(r => r.Index).Order());
+        // COUNTER 1 counts donated bits (wallet and bank hold at most 9,999,999 each).
+        Assert.Equal(StoryRefusal.Limit, hard.Take(new StoryDelta { Counters = [new CounterGrowth(1, 3, 1, 20_000_001)] }, "stagML13", 0).Refused.Single().Reason);
+        Assert.True(hard.Take(new StoryDelta { Counters = [new CounterGrowth(1, 3, 1, 19_999_998)] }, "stagML13", 0).Changed);
+    }
 }

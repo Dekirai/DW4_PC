@@ -25,6 +25,13 @@ public static class StoryPolicies
 public sealed record StoryTake(IReadOnlyList<StoryRefused> Refused, bool Changed);
 
 /// <summary>
+/// The sender's visit as the relay knows it (SEAMLESS.md 8.7): the member, a key that changes with every visit (an
+/// instance visit, or a visit the member plays alone) and how long the member has been in it. The per-visit rules
+/// (<see cref="RoomStoryKeeper.Take"/>) count per member and visit.
+/// </summary>
+public readonly record struct StoryVisit(int Member, ulong Key, double Seconds);
+
+/// <summary>
 /// The room story of one room session (SEAMLESS.md 8.3-8.6): the owner's online story rebased on the room's difficulty,
 /// the members' pending sets checked for plausibility (the sender's instance stage must set the flag or change the
 /// counter, the phase rises at most one step, counter growth within limits) and taken by the owner-away policy: merged,
@@ -34,11 +41,26 @@ public sealed record StoryTake(IReadOnlyList<StoryRefused> Refused, bool Changed
 /// </summary>
 public sealed class RoomStoryKeeper
 {
-    /// <summary>The largest growth one engine line may report: COUNTER 1 counts donated bits, COUNTER 7 stag0001's attempts.</summary>
-    public static int MaxGrowth(int counter) => counter == 7 ? 100_000 : 100_000_000;
+    /// <summary>
+    /// The largest growth one engine line may report: COUNTER 1 counts the bits donated in stagML13's junk shop (a wallet
+    /// and a bank of at most 9,999,999 each), COUNTER 7 stag0001's training attempts.
+    /// </summary>
+    public static int MaxGrowth(int counter) => counter == 7 ? 100_000 : 20_000_000;
+
+    /// <summary>The clear flags: stagBS06 sets FLGset(SYSgetDifficulty() + 406, 1), so a room sets only its own difficulty's.</summary>
+    public const int FirstClearFlag = 406;
 
     private readonly StorySets _sets;
     private readonly Dictionary<StoryLineKey, int> _lines = [];
+    // Per member: its current visit and what that visit gave (one phase step, one key item).
+    private readonly Dictionary<int, VisitTally> _visits = [];
+
+    private sealed class VisitTally(ulong key)
+    {
+        public ulong Key { get; } = key;
+        public int PhaseSteps { get; set; }
+        public int Keys { get; set; }
+    }
     // Dropped keys with the epoch of their last drop.
     private readonly SortedDictionary<int, long> _droppedFlags = [];
     private readonly SortedDictionary<int, long> _droppedFolder = [];
@@ -64,6 +86,11 @@ public sealed class RoomStoryKeeper
     public int Difficulty { get; }
     public StoryPolicy Policy { get; }
     public bool OwnerPresent { get; private set; }
+    /// <summary>
+    /// Phase steps, flags and key items count only from a visit at least this old (Instances:StoryMinVisitSeconds; the
+    /// client sends them again): a client that hops from stage to stage gets nothing from a visit it did not play.
+    /// </summary>
+    public double MinVisitSeconds { get; init; } = 10;
     /// <summary>Rises with every drop; an instance remembers the epoch its visit began in.</summary>
     public long Epoch { get; private set; }
     public int HeldCount => (_heldPhase > 0 ? 1 : 0) + _heldFlags.Count + _heldFolder.Count + _heldLines.Count;
@@ -77,11 +104,14 @@ public sealed class RoomStoryKeeper
     };
 
     /// <summary>
-    /// One member's pending set. <paramref name="stage"/> is the sender's instance stage now (null or a UI stage: the
-    /// title's character select holds a record's own story); <paramref name="visitEpoch"/> the <see cref="Epoch"/> its
-    /// instance's visit began in. Counter lines must already name the sender's own namespace for instance 0.
+    /// One member's pending set. <paramref name="stage"/> is the sender's stage now (null or a UI stage: the title's
+    /// character select holds a record's own story); <paramref name="visitEpoch"/> the <see cref="Epoch"/> its visit began
+    /// in. Counter lines must already be the sender's own (the relay refuses lines it never put the member in and names
+    /// instance 0 lines by the member). With <paramref name="visit"/> (the relay always gives it) the per-visit rules apply:
+    /// phase steps, flags and keys only from a visit at least <see cref="MinVisitSeconds"/> old, one phase step and one key
+    /// item per member and visit (the rest waits, reason Wait, and counts from a later visit).
     /// </summary>
-    public StoryTake Take(StoryDelta delta, string? stage, long visitEpoch)
+    public StoryTake Take(StoryDelta delta, string? stage, long visitEpoch, StoryVisit? visit = null)
     {
         var refused = new List<StoryRefused>();
         if (string.IsNullOrEmpty(stage) || stage.StartsWith("stagis", StringComparison.OrdinalIgnoreCase))
@@ -106,6 +136,8 @@ public sealed class RoomStoryKeeper
             if (!_sets.IsPersistent(f)) refused.Add(new(StoryKeyKind.Flag, f, StoryRefusal.NotStory));
             else if (Story.Flags[f] != 0) { }
             else if (!_sets.SetsFlag(stage, f)) refused.Add(new(StoryKeyKind.Flag, f, StoryRefusal.Stage));
+            else if (f is >= FirstClearFlag and < FirstClearFlag + StorySets.Difficulties && f != FirstClearFlag + Difficulty)
+                refused.Add(new(StoryKeyKind.Flag, f, StoryRefusal.Stage)); // another difficulty's clear
             else ok.Flags.Add(f);
         }
         foreach (var k in delta.Folder.Distinct())
@@ -143,6 +175,7 @@ public sealed class RoomStoryKeeper
             refused.Add(new(StoryKeyKind.Counter, g.Counter, StoryRefusal.OwnerAway));
             ok.Counters.Remove(g);
         }
+        if (visit is { } v) PerVisit(ok, v, refused);
         if (ok.IsEmpty) return new StoryTake(refused, false);
         if (!OwnerPresent && Policy == StoryPolicy.Drop)
         {
@@ -200,6 +233,48 @@ public sealed class RoomStoryKeeper
         _heldFolder.Clear();
         _heldLines.Clear();
         return changed;
+    }
+
+    /// <summary>
+    /// The per-visit rules (SEAMLESS.md 8.7): what a STORY may take from one member's visit. The plausibility check above
+    /// works per message; without these a client that BARRIERs into stagML02 and sends six STORY messages climbs six phases
+    /// in milliseconds. Phase, flags and keys wait (reason Wait, the client sends them again) until the visit is
+    /// <see cref="MinVisitSeconds"/> old; a visit gives one phase step and one key item (the original's phase steps follow
+    /// whole dungeons, and key items come one pickup at a time); counters are bound to their lines by the relay.
+    /// </summary>
+    private void PerVisit(StoryDelta ok, StoryVisit v, List<StoryRefused> refused)
+    {
+        if (!_visits.TryGetValue(v.Member, out var tally) || tally.Key != v.Key) _visits[v.Member] = tally = new VisitTally(v.Key);
+        if (v.Seconds < MinVisitSeconds)
+        {
+            if (ok.Phase != 0) refused.Add(new(StoryKeyKind.Phase, ok.Phase, StoryRefusal.Wait));
+            foreach (var f in ok.Flags) refused.Add(new(StoryKeyKind.Flag, f, StoryRefusal.Wait));
+            foreach (var k in ok.Folder) refused.Add(new(StoryKeyKind.Folder, k, StoryRefusal.Wait));
+            ok.Phase = 0;
+            ok.Flags.Clear();
+            ok.Folder.Clear();
+            return;
+        }
+        if (ok.Phase != 0)
+        {
+            if (tally.PhaseSteps > 0)
+            {
+                refused.Add(new(StoryKeyKind.Phase, ok.Phase, StoryRefusal.Wait));
+                ok.Phase = 0;
+            }
+            else tally.PhaseSteps = 1;
+        }
+        var keys = ok.Folder.ToList();
+        ok.Folder.Clear();
+        foreach (var k in keys)
+        {
+            if (tally.Keys > 0) refused.Add(new(StoryKeyKind.Folder, k, StoryRefusal.Wait));
+            else
+            {
+                ok.Folder.Add(k);
+                tally.Keys = 1;
+            }
+        }
     }
 
     private static void RefuseAll(StoryDelta d, StoryRefusal why, List<StoryRefused> into)

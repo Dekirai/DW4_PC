@@ -28,6 +28,9 @@ public sealed class InstanceOptions
     /// <summary>STORY messages a member may send per minute beyond <see cref="StoryBurst"/>; more are refused (reason rate) and sent again.</summary>
     public int StoryMessagesPerMinute { get; set; } = 60;
     public int StoryBurst { get; set; } = 10;
+    /// <summary>Phase steps, flags and key items count only from a visit the member has been in this long (the client sends
+    /// them again meanwhile, reason wait); a visit gives one phase step and one key item (SEAMLESS.md 8.7).</summary>
+    public double StoryMinVisitSeconds { get; set; } = 10;
     /// <summary>After the first BARRIER of a sealed instance, the others' reports are awaited this long.</summary>
     public int BarrierReportSeconds { get; set; } = 5;
     /// <summary>Players in one instance (the engine's four slots).</summary>

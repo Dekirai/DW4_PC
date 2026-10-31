@@ -102,8 +102,11 @@ public enum StoryRefusal : byte
     NotMember = 6,
     /// <summary>Never merged (a temporary, derived or unknown value).</summary>
     NotStory = 7,
-    /// <summary>A counter growth beyond the plausible.</summary>
+    /// <summary>A counter growth beyond the plausible, or a counter line this member was never in.</summary>
     Limit = 8,
+    /// <summary>Not yet (the client sends it again): the sender's visit is younger than Instances:StoryMinVisitSeconds, or it
+    /// already gave its one phase step or key item.</summary>
+    Wait = 9,
 }
 
 public enum StoryKeyKind : byte { Phase = 0, Flag = 1, Folder = 2, Counter = 3 }
