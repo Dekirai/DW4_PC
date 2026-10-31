@@ -18,4 +18,4 @@ idle until ghosts>=2 or frames>=900
 log sees a and b
 idle until frames>=30
 shot c_back
-idle until frames>=120
+idle until frames>=600

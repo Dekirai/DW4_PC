@@ -1314,6 +1314,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
         const int trace_ghosts = options.smoke_frames && std::getenv("DW4_TRACE_GHOSTS") ? std::atoi(std::getenv("DW4_TRACE_GHOSTS")) : 0;
         std::vector<dw4::game::online::RemoteSample> present_remote;
         double ghost_cost_max = 0, present_max = 0; // (DW4_TRACE_GHOSTS: the figures' own milliseconds a pass, the longest present)
+        int ghost_trace_bucket = -1;
         const int trace_labels = options.smoke_frames && std::getenv("DW4_TRACE_LABELS") ? std::atoi(std::getenv("DW4_TRACE_LABELS")) : 0;
         std::set<std::uint64_t> traced_occlusion; // the labels the last picture hid (traces)
         auto label_mode = [&] {
@@ -2788,7 +2789,9 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 ghosts.clear();
             }
             ghost_cost_max = std::max(ghost_cost_max, std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - ghost_update_start).count());
-            if (trace_ghosts > 0 && steps > 0 && frame % trace_ghosts == 0) {
+            // (Every N frames, also when a pass of several steps jumps over the multiple.)
+            if (trace_ghosts > 0 && steps > 0 && frame / trace_ghosts != ghost_trace_bucket) {
+                ghost_trace_bucket = frame / trace_ghosts;
                 std::printf("[%d] ghosts shown %d, forms %zu, stage %s, own cost at most %.2f ms a pass, longest present %.1f ms\n", frame,
                             ghosts.shown(), ghosts.loaded_forms(), engine.stage_name().c_str(), ghost_cost_max, present_max);
                 // (The own player's placement against the figure's rebuild from
