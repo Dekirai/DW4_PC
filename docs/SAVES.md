@@ -200,6 +200,11 @@ overwritten (the game says so and loads the server's character). F1 > Saves >
 Cloud backup uploads and downloads the local save outside rooms (a download
 copies the current save to `backups/` first).
 
+Round 64's design (docs/SEAMLESS.md 9.1) gives an online account the four
+boxes of a card and keeps each online character in readable tables on the
+server: the record below is composed from them when a room is entered and
+decoded into them at every accepted upload, byte for byte.
+
 ## Importing GC saves
 
 `dw4::save::load_import` / `parse_import` (`include/dw4/save_import.hpp`,
