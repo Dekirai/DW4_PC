@@ -402,7 +402,9 @@ rotated at about 1 MB; a second game started from the same folder writes
 Known limits of the preview:
 
 - Talks, the map recorders, camera tours and the status window still pause
-  the whole instance (every member in it), as in local co-op.
+  the whole instance (every member in it), as in local co-op. The status
+  window (START) is to open only on the own screen and pause nothing
+  (decided 31.10; docs/SEAMLESS.md 18).
 - Pits still darken every member's screen in the instance.
 - Story progress made while the room owner is away is not kept (the
   server's default; the player is told at the next stage change).

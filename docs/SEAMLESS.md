@@ -934,6 +934,7 @@ Server to client:
 | 0x8C | CLOSE | reason (left, kicked, room closed, replaced, protocol, abuse, timeout, stopping), text | before the server closes |
 | 0x8D | ROSTER | every member: stage, inst, level, HP, max HP, flags (connected, lagging, owner) | once per second (the room UI) |
 | 0x8E | REASSIGN | old inst, visit, new inst, from tick, mode, flags (departing) | after a fork: this member's copy is the child |
+| 0x8F | NETSTAT | round trip median and spread, d, arrival margin, the stream's sealed / filled / late pads, flags (in a stream) | once per second after PING (round 62: the network indicator and online.log; older clients skip it) |
 
 Events inside a tick record: JOIN (slot, entrance point, carry), LEAVE (slot),
 INTENT (slot, kind, argument), LEAD_FROM (tick: the remaining member leads
@@ -984,16 +985,32 @@ round-trip spread up to its 99.9th percentile. Only the member's own round
 trip counts: the server's schedule is the common clock, so the other members'
 latencies do not enter (they did in the waiting star of revision 1, where the
 formula also lacked the member's own return path). The server measures each
-member's arrival margin (due time minus arrival) directly; it raises `d_i` by
-one when more than 0.1 % of the last 3,600 pads were late and lowers it by one
-when the 0.1 % quantile of the margin stayed above one tick for 30 s; a change
-is a DELAY event at a sealed tick (the member repeats or skips one sample;
-deterministic, because the sealed pads are what every machine executes).
+member's arrival margin (due time minus arrival) directly. Since round 62 it
+looks at the last ten seconds of pads (600): it raises `d_i` by one when late
+pads came in at least three different seconds of them, and at once by up to
+three when most pads of the last second were late (by the median margin of
+that second); it lowers `d_i` after ten seconds without a change by as many
+ticks as the 0.5 % quantile of the margin allows with 0.15 of a tick kept (at
+most three at once). The first `d + 2` ticks of a stream (a JOIN, a sealed
+start, a resync's end) do not count: the client sends those pads at once when
+it learns of the stream, so the first of them are late by design. (Round S1's
+rule raised `d_i` by one on four late pads in a minute and lowered it by one
+per 30 clean seconds: it turned every hiccup into lasting delay, see
+"Measured in round 62" below.) A change is a DELAY event at a sealed tick (the
+member repeats one sample, or skips samples and sends their buttons with the
+next pad; deterministic, because the sealed pads are what every machine
+executes).
 Bounds 1..15 (`Sealing:MaxDelayTicks`; revision 2 said 10, which the S1 loss
 matrix below showed too small above about 110 ms of round trip). The starting
-value is `ceil((RTT + spread) / 16.683 ms) + 1`, the +1 for the client's
-one-tick playout buffer; measured `d` without loss: 3 at 21 ms RTT, 5 at 61 ms,
-7 at 71 ms with 10 ms jitter, 11 at 121 ms. Inputs are
+value is `ceil((RTT + spread) / 16.683 ms + 1.5)` (round 62; S1:
+`ceil((RTT + spread) / 16.683 ms) + 1` with the spread up to the 99.9th
+percentile of 120 round trips), RTT the median and spread the 90th percentile
+above it of the newest 30 PONG round trips, leaving out answers above twice the
+median plus 50 ms: a client answers PING in its host loop, and a stage load, a
+snapshot restore or a catch-up pass delays single answers by hundreds of ms
+(S1 took the largest of the 120 and started a joiner at 6 at 20 ms of round
+trip). Measured `d` without loss in S1: 3 at 21 ms RTT, 5 at 61 ms, 7 at 71 ms
+with 10 ms jitter, 11 at 121 ms. Inputs are
 indexed by tick, so every machine has its own `d_i`, as the direct sessions
 already allow (`game_main.cpp:1853-1856`).
 
@@ -1030,7 +1047,11 @@ sound manager's mapping to the AX frames (`audio_delta_`,
 `managers_core.cpp:2555-2559`) does not move. Revision 1's ±2 % nudge would
 have shifted the audio by one AX frame every 25 fields. A backlog of more than
 three ticks (after a stall on the member's downlink) runs at once without
-pictures, which moves the audio once, as an offline hitch does.
+pictures, which moves the audio once, as an offline hitch does. A smaller
+excess that lasts (the smoothed level 0.75 ticks above its target of 1.5 for
+half a second) runs one extra step (round 62: after a JOIN's long step the
+joiner's level stayed near 2.5 for a minute, draining at +0.1 %, and every tick
+of it made its pads a tick later at the relay).
 
 **Loss.** Over TCP a lost segment holds back everything behind it: about one
 round trip plus 50 ms with fast retransmit, more for a tail loss. With
@@ -1100,6 +1121,110 @@ The loss rates of WLAN and busy home links (0.5-2 %) would otherwise cost the
 affected player 100-150 ms of extra input delay and 15-60 picture stalls per
 minute. Until then TCP works: the relay's delay rule and fill keep everyone
 else unaffected.
+
+**Measured in round 62: the guest's input lag (field report of 31.10).** A
+guest felt massive, constant input lag on the real server ("everything comes
+late"): DW4Online 0.1.0 (the hub of main 890e802, `Play` protocol 43) with a
+client of round 56 (protocol 45), first with a friend, then as his own guest,
+two games on one Windows 11 PC on wired LAN, one window in front and one in
+the background, 20-30 ms of round trip.
+
+*How it was measured.* `tools/online_test` scenario L1: the local stack, every
+hidden game client behind its own impairment proxy (`L1@UP[~DOWN]`, each
+direction `MS,JITTER,LOSS`; `DW4_ONLINE_RELAY_PORT` in development builds),
+the host a into stag0101 first (solo-led), the guest b through the lobby gate
+15 s later, into a's instance by a JOIN with catch-up (JOIN_REQ / JOIN_AT, as
+in the field), then 100 s of sealed play (wander and fight). L2 is L1 with the
+host's game throttled like a background window (`DW4_ONLINE_TEST_STALL`: 30
+passes per second and a 150 ms stall every 3 s). The client measures every own
+pad (`src/game/online/net_stats.hpp`): when it was sampled, the tick it went
+out for (sealed: the executed tick + d), when that tick ran here, when its
+picture came, and whether the relay sealed it as sent (else a fill replaced
+it: the input was lost); `online-trace: net` every 5 s, the delay changes with
+their reason, `latency.json` per scenario. `--server-root` runs the server of
+another checkout (0.1.0 = main 890e802), `--play-protocol 43` its field
+configuration. The clients run hidden at below normal priority on a machine
+busy with other rounds, which is what a background window on a loaded PC
+gets. The latency is sample to tick run here; the picture follows in the same
+host pass (presented within 0.5 ms in these runs without pictures, one
+present later with them).
+
+TABLE
+
+Offline the same input runs in the step of its pass (0 ms); the picture
+follows as offline. "Lost" is the share of own pads the relay replaced by a
+fill.
+
+*Causes, each shown by these runs.*
+
+1. **The starting d took the largest of 120 round trips.** A client answers
+   PING in its host loop: a stage load, the snapshot restore of a join or a
+   catch-up pass delays single PONGs by hundreds of ms, and
+   `FromRoundTrips` took the 99.9th percentile of 120 samples (the largest).
+   The joiner's JOIN came with d 6 at 20 ms of round trip (main, `delay 3 -> 6`
+   at J); on 0.1.0 the solo suggestion was 4-5 before any join.
+2. **Every join raised the joiner's d by one more.** The joiner learns J when
+   it executes J and then sends its first d pads at once; the first of them
+   are late by design, more than three late pads raised d at the next
+   evaluation (main: 6 -> 7 at J + 33).
+3. **The rule ratcheted.** Four late pads in a minute raised d by one, thirty
+   clean seconds lowered it by one. Any hiccup of a client (a load, a
+   background window's stall, a busy CPU) raised it, and before thirty
+   seconds passed the next one came: both members went from 3 to 8 / 9 (main)
+   and 12 / 12 (0.1.0) within about 15 s of load, then stayed for the rest of
+   the stage (200 ms of input delay at 20 ms of round trip). This is the
+   "massive and constant" lag; the protocol mismatch was not involved.
+4. **The joiner's playout buffer stayed a tick too full.** The JOIN step loads
+   the joiner's packages; afterwards its buffer stood near 2.5 ticks (target
+   1.5) and drained at +0.1 %, a tick per 17 s. Every tick of it made its pads
+   a tick later at the relay, so the rule kept its d a tick above the host's.
+5. **Not causes:** the protocol-45 client works with the 0.1.0 hub (one wire
+   layout since S1; 0.1.0 ignores STORY, so the room has no story, `story_ignored`),
+   and its delay rule is main's (SlotStream.cs did not change after 890e802);
+   the relay's sealing timer is high resolution (its log says so) and TCP_NODELAY
+   is set on both ends; the catch-up of the join finished in about one second
+   (3,300-4,200 steps per second). A slow member never slowed the other: in L2
+   the throttled host went to d 13-14, the guest stayed at its own value.
+
+*Fixes (round 62).* Hub: the starting d from the median and the p90 spread of
+the newest 30 round trips with stalls left out, `ceil((RTT + J) / f + 1.5)`;
+no rise from a stream's first `d + 2` ticks; the rule above (rise on late pads
+in three different seconds of ten, at once on a mostly late second; fall after
+ten seconds by the margin, up to three ticks); NETSTAT for the client. Client:
+a lasting playout excess runs an extra step; skipped samples keep their
+buttons; an online session opts out of Windows' background throttling and a
+minimized window's loop sleeps instead of spinning; the measurements above,
+`saves/online.log` and the network indicator.
+
+*What remains inherent.* Lockstep without prediction delays every input by d
+ticks: `ceil((RTT + J) / 16.683 ms + 1.5)`, the 1.5 for the playout tick and
+the host pass. Measured after the fixes: 3 ticks (50 ms) at 20 ms of round
+trip, ROW40, ROW80, ROW150. A game presenting at 60 Hz with vsync adds up to a
+pass (16.7 ms) to its round trip and its pads' way, so at 20-30 ms of ping it
+settles at 3-4 ticks (50-67 ms); at 144 Hz at 3. A member whose PC stalls
+regularly (a throttled background game) raises only its own d. TCP loss still
+costs a lost segment's round trip plus about 50 ms (the S1 matrix); the UDP
+transport of round S4 remains the answer to that.
+
+*Prediction or rollback for the own player: assessed, not built.* The engine
+is deterministic across machines (the net fingerprints agree every 60 ticks
+for 10,000+ ticks in every scenario) and steps without pictures or audio
+(`Engine::set_replay`, 3,300-4,200 steps per second in a catch-up, about
+0.25-0.3 ms per step), so re-simulating d ticks per picture would cost about
+1-2 ms at d 3-6. What it lacks is a state to go back to: a snapshot is the
+stage's load snapshot (21 KB in stag0101) and a state is that snapshot plus
+the pads since the load, restored by loading the stage and replaying every
+step (6,000 ticks into a stage: 1.5-2 s). Rollback needs a copy of the whole
+mutable engine state per tick (the Lua 4 VM heap, every manager, the scene
+graph's matrices, motion and particle state, the sound positions), which the
+engine keeps in pointer-linked heap objects; copying it means either an
+arena for all mutable engine state that is copied and restored as a block
+(its size per stage was not measured here; at memory speed a few MB cost
+about a millisecond) with the read-only resources kept outside, or a
+serializer per manager. Both are a project of several rounds, and the
+presentation side effects inside steps (sounds started, effects spawned) would
+need the replay mode's suppression during every re-simulation. Until then the
+honest number is d.
 
 **1 → 2 members.** The server sends JOIN_REQ to the solo leader; the leader
 answers JOIN_AT(J) with `J = current tick + d`, switches to delayed sampling at
@@ -2816,7 +2941,7 @@ anyway; joining goes through the room list.
 | Rooms | `RoomService`: instances as lockstep groups (id, stage, visit, context hash, slots, parent and fork frame, departing, boss lock, joinable), barrier decisions DISSOLVE / co-arrival / JOIN / NEW with holds and the boss choice (3.4), catch-up estimates from the members' replay rates, forks of both kinds, in-band JOIN and LEAVE, preferred slots, no instance end when its first member leaves (`EndInstanceLocked` goes), room-scoped relay tickets, the settings hash, the relay connection as heartbeat. `POST /rooms/{code}/stage` and `/stage/leave` are retired; the room state lists instances with stage and members. Room settings gain camera mode and light mode |
 | Story | migration with `online_story`; `StoryMerge` in the domain with the golden vectors; plausibility table from the census; pending sets with STORY_ACK; the owner-away setting with the session's dropped set; `GET /online-character` composes, `PUT` ignores story bytes; `GET /rooms/{code}/story` for the website and debugging |
 | Achievements | catalogue migration to the client's ids and thresholds (built in S2: migration 0009 (0008 is `online_story`), `data/online/achievements.json`, `roomPlayers`, owner-only story challenges; 11) |
-| Config | `Sealing:MaxDelayTicks` (15, measured in S1, 6.4), `Sealing:LateTarget` (0.001), `Relay:ReconnectSeconds` (10), `Relay:LagLeaveSeconds` (10), `Relay:StateBytesPerSecond`, `Instances:CoArrivalHoldMs` (3000), `Instances:JoinHoldSeconds` (30, measured in S1, 3.4), `Instances:MaxCatchUpSeconds` (30), the flood and recovery limits of the S1 reviews (`Relay:MaxQueuedBytes` 4 MiB, `Relay:MaxQueuedStateBytes` 24 MiB, `Relay:StateBytesPerMinute` 64 MiB, `Relay:MaxConcurrentStateBuilds` 2, `Instances:LoneBarrierMs` 1000, `Instances:MaxAheadSeconds` 15, `Instances:ResyncLimit` 3 in `Instances:ResyncWindowMinutes` 10, 6.6-6.10), `Rooms:StoryWhileOwnerAway` (drop, built in S2), `Instances:StoryBurst` (10) and `Instances:StoryMessagesPerMinute` (60, S2); `Play:CurrentProtocol` follows the client. `Sealing:StallMs` and `Instances:MaxJoinLogMinutes` of revision 1 are gone |
+| Config | `Sealing:MaxDelayTicks` (15, measured in S1, 6.4), `Sealing:LateTarget` (0.001: since round 62 the share of late pads in the delay rule's ten-second window that counts, with three different seconds), `Relay:ReconnectSeconds` (10), `Relay:LagLeaveSeconds` (10), `Relay:StateBytesPerSecond`, `Instances:CoArrivalHoldMs` (3000), `Instances:JoinHoldSeconds` (30, measured in S1, 3.4), `Instances:MaxCatchUpSeconds` (30), the flood and recovery limits of the S1 reviews (`Relay:MaxQueuedBytes` 4 MiB, `Relay:MaxQueuedStateBytes` 24 MiB, `Relay:StateBytesPerMinute` 64 MiB, `Relay:MaxConcurrentStateBuilds` 2, `Instances:LoneBarrierMs` 1000, `Instances:MaxAheadSeconds` 15, `Instances:ResyncLimit` 3 in `Instances:ResyncWindowMinutes` 10, 6.6-6.10), `Rooms:StoryWhileOwnerAway` (drop, built in S2), `Instances:StoryBurst` (10) and `Instances:StoryMessagesPerMinute` (60, S2); `Play:CurrentProtocol` follows the client. `Sealing:StallMs` and `Instances:MaxJoinLogMinutes` of revision 1 are gone |
 | Website | the room page shows instances per stage (built in S2: `/rooms` lists each room's instances by stage with the client's stage names from `data/online/areas.json`, "2 together" / "alone" / boss fight / leaving, the hub stages last; names only for signed-in members of the room) |
 | Deploy | fixed-key self-signed certificate and the pin script (10); port 52041 as before (built in S2: `tls-key.ps1`, `print-pins.ps1`, the pin build step, DEPLOY.md 4, 6.1, 6.4) |
 | Tests | unit tests for sealing schedules and fills, events, forks, barrier decisions (holds, co-arrival, context key) and merge vectors; integration tests with scripted fake clients; end-to-end tests with the real game client (16) |
@@ -3635,7 +3760,7 @@ Depends on: S1 (S2 for the save room rules), the answers to questions 6 and 7
 | Lane | Scope |
 | --- | --- |
 | resync | the server's vote with diagnostics, resync by replay with the catch-up limit (beyond it: continue alone), RESUME with missing ticks, LEAVE timeouts, catch-up progress with expected duration |
-| latency | delay tuning from the S1 matrix and S12; a UDP transport for INPUT / SEALED if the matrix showed TCP's loss stalls unacceptable; lag indicators |
+| latency | delay tuning from the S1 matrix and S12; a UDP transport for INPUT / SEALED if the matrix showed TCP's loss stalls unacceptable; lag indicators (round 62, `fix-r62netlag`, after the field report of 31.10: the delay rule, the join's grace, the playout drain, the network indicator and `saves/online.log`, measured in 6.4; UDP still open) |
 | determinism | the `dw4::sim` libm routing to MSL routines in online sessions (6.12) and the removal of the FMA3 gate, mod contents in the data hash, version gate, a two-machine test kit and instructions for the user |
 | performance | the cheaper conservative frustum test for extra cameras (strict, no contraction), the picture pass with smooth motion at 144 Hz, cost and replay rate re-measured on the final path (libm routing), a server load test with fake clients (200 rooms) |
 
@@ -3718,6 +3843,18 @@ Depends on: S4 and the answers.
    enemies near it freeze too (the default).
 7. EXP: (a) only members near the kill share it (the default).
 8. Play alone in a room: no switch (the default).
+
+**User, 2026-10-31 (after the first field test), replacing answer 6 for the
+pause menu:** when a member presses START, the status window (the game's pause
+menu) opens only on that member's own screen and pauses nothing: everyone
+plays on, that member included, whose Digimon can still be hit while the menu
+is open, as in an online game. Today the window opens on every screen of the
+instance and freezes it (SUBWND GENERATE: MODELCTRL, GENERATER and SOUND
+ONFREEZE, the messenger paused, one sub window per engine). Building it is the
+status-window part of round S3's scenes lane: a sub window per member slot
+driven by its owner's pad, no freeze online, the owner's player off control
+while it is open, its layers, fonts and fades drawn only on the owner's
+machine.
 
 ## 19. Risks
 
@@ -3930,6 +4067,7 @@ Server to client:
 | 0x8C | CLOSE | reason u8 (1 left, 2 kicked, 3 room closed, 4 replaced, 5 protocol, 6 abuse, 7 timeout, 8 server stopping), text str |
 | 0x8D | ROSTER | count u8 + (member u8, stage str, inst u32, level u16, hp u16, max hp u16, flags u8: 1 connected, 2 lagging, 4 owner) (once per second) |
 | 0x8E | REASSIGN | old inst u32, visit u32, new inst u32, from tick u32, mode u8, flags u8 (1 departing): after a fork the receiver's copy is the child; its stream comes with the new id from that tick |
+| 0x8F | NETSTAT | rtt ms u16 (median of the newest 30 PONG round trips, host-loop stalls out), spread ms u16 (p90 above it), d u8, margin ms i16 (the delay rule's 0.5 % quantile), sealed u32, filled u32, late u32 (the member's current stream), flags u8 (1 in a stream); once per second after PING (round 62; clients skip unknown server frames, so no protocol change) |
 
 **State blob** (reassembled STATE_DATA): purpose u8 (1 join, 2 co-arrival, 3 resync, 4 resume), slot u8, codec u8
 (0 = raw records), snapshot blob (as the leader uploaded it), fork count u8 + (tick u32, leaver mask u8, kind u8,
