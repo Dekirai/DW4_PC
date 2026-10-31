@@ -154,7 +154,12 @@ void OnlineRun::pass(double now) {
 }
 
 void OnlineRun::open_log(const std::filesystem::path& path, const std::string& client_version) {
-    if (!log_.open(path)) {
+    // A second game from the same folder (two games on one PC for one room)
+    // has the file open already: it writes online-2.log (online-3.log, ...).
+    bool opened = log_.open(path);
+    for (int n = 2; !opened && n <= 4; ++n)
+        opened = log_.open(path.parent_path() / (path.stem().string() + "-" + std::to_string(n) + path.extension().string()));
+    if (!opened) {
         std::cout << "online: the online log " << path.string() << " cannot be written\n";
         return;
     }

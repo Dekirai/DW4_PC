@@ -38,6 +38,13 @@ public sealed class SlotStream
     public uint GraceUntil { get; set; }
     /// <summary>Late pads inside the grace (not counted by the delay rule).</summary>
     public long LateInGrace { get; private set; }
+    /// <summary>A JOIN's tick runs the joiner's spawn on every machine (its species and weapon packages load in that step):
+    /// every member's pads of the next two seconds may come late by that step, and the joiner stands in its entry scene
+    /// meanwhile (round 62: a joiner at 40 ms of round trip rose from 5 to 8 in the second after its JOIN).</summary>
+    public const uint JoinGraceTicks = 120;
+
+    /// <summary>Late pads for ticks before <paramref name="tick"/> do not feed the delay rule.</summary>
+    public void GraceThrough(uint tick) => GraceUntil = Math.Max(GraceUntil, tick);
     public DelayController Delay { get; }
 
     public long Sealed { get; private set; }

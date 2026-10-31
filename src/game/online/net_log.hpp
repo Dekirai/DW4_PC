@@ -7,7 +7,9 @@
 // input latency measured here), resyncs, losses and the end. Never tickets,
 // tokens, passwords or room codes. The file is appended to and rotated:
 // online.log grows to about 1 MB, then becomes online.1.log (online.2.log,
-// online.3.log are the older ones; the oldest goes).
+// online.3.log are the older ones; the oldest goes). A second game from the
+// same folder, whose log is open in the first, writes online-2.log
+// (OnlineRun::open_log).
 #include <cstdint>
 #include <cstdio>
 #include <filesystem>

@@ -231,6 +231,12 @@ public class HubCoreTests
         Assert.Equal((0, 0), s.Delay.LateInWindow());
         Assert.Equal(SlotStream.Submit.Late, s.Offer(107, P(1), 110, -5));
         Assert.Equal((1, 1), s.Delay.LateInWindow());
+        // A JOIN extends it (the spawn's long step on every machine), never shortens it.
+        s.GraceThrough(300);
+        s.GraceThrough(200);
+        Assert.Equal(300u, s.GraceUntil);
+        Assert.Equal(SlotStream.Submit.Late, s.Offer(250, P(1), 260, -30));
+        Assert.Equal((1, 1), s.Delay.LateInWindow());
     }
 
     [Fact]

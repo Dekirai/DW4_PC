@@ -1629,6 +1629,8 @@ public sealed class RoomHub
             target.AddEvent(at, TickEvent.Join(j.Slot, j.From.Point, j.Carry));
             target.AddEvent(at, TickEvent.Delay(j.Slot, d));
             target.Streams[j.Slot] = new SlotStream(j.Slot, at, d) { Delay = { Max = _sealing.MaxDelayTicks, LateTarget = _sealing.LateTarget } };
+            foreach (var st in target.Streams)
+                st?.GraceThrough(at + (uint)st.Delay.Current + SlotStream.JoinGraceTicks);
             j.Stamped = true;
             BecomeMember(target, m, j);
             Note("join", target, ("member", m.Index), ("slot", j.Slot), ("tick", at));
@@ -1699,6 +1701,8 @@ public sealed class RoomHub
             i.AddEvent(at, TickEvent.Join(p.Slot, p.Point, p.Carry));
             i.AddEvent(at, TickEvent.Delay(p.Slot, p.JoinerDelay));
             i.AddEvent(at, TickEvent.Delay(m.Slot, p.LeaderDelay));
+            foreach (var st in i.Streams)
+                st?.GraceThrough(at + (uint)st.Delay.Current + SlotStream.JoinGraceTicks);
             BecomeMember(i, p.Joiner, p.Joiner.Joining!);
             Note("join", i, ("member", p.Joiner.Index), ("slot", p.Slot), ("tick", at), ("solo_leader", m.Index));
         }

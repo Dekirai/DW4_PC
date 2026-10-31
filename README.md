@@ -396,7 +396,8 @@ is green, yellow or red by how the link holds up; F1 > Settings can hide it,
 F1 > Online shows the details. Every online session writes `saves/online.log`
 (the versions and protocols, the input delay and why it changed, the link
 every ten seconds, losses and resyncs; no password, token or room code;
-rotated at about 1 MB): send that file when online play lags.
+rotated at about 1 MB; a second game started from the same folder writes
+`saves/online-2.log`): send that file when online play lags.
 
 Known limits of the preview:
 
