@@ -83,6 +83,18 @@ in section 18.
   tab), the online character as a virtual memory card, an upload whenever the
   save room writes, cloud backup in F1 Saves, online achievements, name tags
   for remote members, Discord party size.
+- **The server's character** (round 64 design, 9.1): an account has up to
+  four online characters (the data select's four boxes), kept on the server
+  in readable tables named as the game names the values; the server composes
+  the record the game loads and checks every upload against the game's rules
+  (impossible changes: refused, the member loads the server's character
+  again; improbable: kept and flagged; a new character against the game's
+  own new-character record); staff edit in HeidiSQL or on the website, in
+  the player's game at his next load, merged with the saves of a player who
+  is online meanwhile; the database stores hashes and addresses as text; the
+  website shows player profiles with
+  every Digimon, form, stat and piece of gear in the game's colours, pictures
+  from the user's own game data.
 - **Online off** changes nothing: every new path hangs off `Engine::online()`
   (default off), the camera code with an empty camera mask is today's code,
   `Engine::fingerprint` is untouched, the floating point setup is not changed
@@ -140,6 +152,13 @@ first task of the round that needs it (17).
   port.
 - The online save is a separate online character per account (starts from
   zero, stored on the server); one cloud backup of the local save per account.
+- (31.10) The online character's values (Bits, EXP, level, stats, X Data,
+  forms, items, equipment) live on the server, readable and editable in the
+  database, and the game loads them from there; the database shows no binary
+  garbage; the website gets player profiles with all four save slots, every
+  Digimon and form with its picture, level, stats, Bits, the current weapon,
+  armor, chips and mods in the game's colours, and the current Digimon as the
+  profile picture (9.1).
 - The client talks to the hard-coded address 88.198.52.221 (not changeable; a
   loopback override only in development builds) with a pinned self-signed
   certificate for now, later `https://dekirai.crygod.de/dw4online`.
@@ -2939,7 +2958,8 @@ co-op the owner, player 1, always got it); the guest can take it once more
 in its own story. Per player (the alternative): those flags leave the room
 story; every account keeps the rewards it took in a store of its own
 (`online_rewards`, written by any room it plays in from its pending set,
-composed into its record), the title sets the member's own over the room
+composed into its record; per box once an account has four characters,
+round 64 design 9.1.9), the title sets the member's own over the room
 story, the 3.7 personal mechanism keeps them aside at joins and writes them
 back at DISSOLVE (they are read only in solo hubs), and the room story blob
 carries none. Nobody loses a reward to another player and nobody takes one
@@ -2952,7 +2972,8 @@ twice; it costs one lane (round G, lane hub extras).
   /online-character` (box 0 = the record, header from the save utility); card B
   is absent. 404 gives an empty card: the original new game flow. The original
   character select runs unchanged. The local save store is put back when the
-  room is left (as `end_session` does today).
+  room is left (as `end_session` does today). (Round 64 design, 9.1: all four
+  boxes, composed by the server from its tables, the card in memory.)
 - **Upload.** On `card_written` for the own slot (in the solo save room that is
   slot 0): `make_record` on a copy of GameSystem (it changes state through
   `store_species`), then `PUT /online-character` with If-Match, play seconds and
@@ -3076,6 +3097,1023 @@ server still has the revision it was based on.
   on leaving); `character_test.py` C1, C2, C3, P1; DW4Online unit tests 130
   and integration tests 66 (4 skipped: the end-to-end client and the
   certificate store).
+
+### 9.1 The server's character (round 64 design)
+
+The user's requirements of 31.10: every value the game keeps about the
+player's Digimon lives on the server in readable, editable database columns
+(Bits, EXP, level, the stats, X Data, the forms: "alles was das Spiel halt
+bietet"), the game loads it from there, so cheating gets harder; HeidiSQL no
+longer shows "questionable characters" (hashes, the record blob, binary IP
+addresses); and the website gets real player profiles: all four save slots,
+every Digimon and every digivolution in them with its picture, level, stats,
+Bits, the current weapon, armor, chips and mods with the gear's colour as the
+game shows it (white, blue, purple, ...), the currently played Digimon as the
+profile picture. Base: main eb01aed (round 61 merged with the user's answers:
+quest rewards per player, quest gates (b)). Round 59 (`fix-r59s2`: the port
+event `character_called`, `CharacterSync::character_called`, migration 0011)
+and round G (8.8, 17) come first; nothing here contradicts them, and round G
+is asked to key its reward store by box (9.1.9). This is a design: nothing
+was built, no game, server or network ran.
+
+**Revision 2** (the critique of 63c36d6; every point checked against the
+code before it was taken): the byte mapping stays; what changed is the flow
+around it. A staff edit no longer costs a playing member his session (the
+upload is merged with the edit instead of refused with 409, pins are gone,
+9.1.7); a new character is checked against the game's new-character record
+(9.1.6); the change rules count visits by sequence and by box, never by
+time, and wait for a visit the relay has not closed (9.1.6); the played box
+is a persistent binding, so a restart never sends members out (9.1.1);
+refusal rules refuse only values the upload changed, with a breaker for
+rules that misfire (9.1.6); the quest rewards are kept per box, as round
+61's answer *per player* needs with four characters (9.1.9); concurrent
+HeidiSQL edits are locked, merged after a quiet time and reverted into a
+draft when invalid, never locking the box (9.1.7); the rules that the game
+data settles exactly refuse in round D already (rookie pairs, form rewards,
+drop values, EXP and Bits per visit); hashes and addresses are stored as
+text and the blobs leave the browsed tables (9.1.3); the migration needs no
+RENAME and its data step runs inside the migrator's started mark (9.1.8);
+the Cheats tab, open in seamless rooms today, is closed there first (9.1.10).
+
+**Evidence.** Three read-only research passes of this round (scratchpad tools
+linked against `dw4_core.lib` / `dw4_engine.lib`, the DOL disassembled, the
+game data dumped; nothing committed) and the critique's read-only pass:
+
+- The record map below, offset by offset, with the writer 80364AEC, the reader
+  803657D8 and the packers 803B0D4C ff. Round trip proven byte-exact:
+  `decode -> encode` per box and `read_file -> write_file` per file with the
+  product codec (`src/save_data.cpp`) and with the server's C# codec
+  (`RecordCodec.cs`) over 5,941 GCI files, 47,528 boxes, 0 differences (the
+  user's card, 47 saves of the original game from Dolphin, 5,893 written by
+  the port). Every gap byte was 0 in every sample.
+- The record rules of the table in 9.1.6 checked on all 511 distinct used
+  records (5 of the original, 506 of the port): no violation; no device is
+  in two equipment places, every pocket list is a prefix, card bytes are 0 or
+  1. In none of the 5,941 files is more than one box used, no record has a
+  Mega as its current form, none has bank devices: four boxes and the bank
+  are covered only by the code and synthetic tests.
+- The game's rules (EXP curve 80370DBC, growth tables 804EAD24, RECALCPLAYER,
+  the skill limit, EXP per kill, drops, Bits, death, the shops, form unlocks)
+  from the DOL, the port and the 7,168 decompiled scripts; the gear colours
+  (803B07E0) and the card colours (`subwnd_shop.cpp:2641`); the pictures the
+  game has (charaicon.png, the staff roll's renders, the font's icon glyphs,
+  the card art). `SYSctlShinka SETSHINKA` exists only in
+  `stagML12_m1__sin_digi.lua` (the rookies 0-3) and in ML11 `treasure02-04`
+  / ML12 `treasure06-08` (the forms 4-15).
+
+#### What changes
+
+- An online account has up to **four online characters**, the four boxes of
+  the game's data select (9.1.1). Each lives in readable tables
+  (`online_slots`, `online_forms`, `online_devices`, `online_disks`,
+  `online_cards`, its quest rewards in `online_rewards`) named as the game's
+  menus name things; the 3,316-byte blob is no longer stored as the live
+  state.
+- **The server composes** each box's record from the tables when a room is
+  entered; the client builds its virtual card from that answer only and never
+  plays a local copy online.
+- **Uploads are decoded into the tables** after validation against the
+  game's own rules: impossible changes are refused (the member leaves the
+  room and loads the server's character again), improbable ones are kept and
+  flagged; every refusal and flag is visible and can be undone by staff.
+- **Staff edit** in HeidiSQL or on the website; the edit reaches the player at
+  the next load; the uploads of a player who is online meanwhile are merged
+  with the edit (his progress is added to the staff values), or staff send
+  him back to load it now (*Reload now*); every edit has an audit row.
+- **Readable database**: hashes are stored as hex, IP addresses as text,
+  record and file blobs in side tables; views and virtual columns show the
+  story as phase / flags / keys / counters; secrets stay hashes.
+- **Player profiles** with the four boxes, every form with its picture, stats
+  and gear in the game's colours; the pictures and item names come from the
+  user's own game data at deploy time.
+
+#### 9.1.1 Four boxes
+
+A copy of the game's save file holds exactly four boxes (`kRecordsPerCopy`,
+`include/dw4/save_data.hpp:26`; the loops 80363A64 `cmpwi r24,4` and
+803674C0, stride 0x2000); the second copy is redundancy, card B a second
+file. Each box is a whole character: its own UNIQUE, PLAYERNAME, current form
+(DIGIMONNAME), all 16 forms (BASE_*), folder, bank, disks, cards and story
+bytes. The user's "4 Save Slots" are these boxes. Today an account has one
+online character in box 0 (`online_characters` PRIMARY KEY account_id,
+`sql/0001_initial.sql:84`; `CharacterSync::enter` writes it into box 0 and
+empties boxes 1-3, `character.cpp:383`; a box of another UNIQUE is not
+uploaded, `character.cpp:434`).
+
+**Numbering, pinned once.** The server and the website count boxes 1-4
+(`box` columns, `/online-characters/{box}`, "Box 2" on the profile); the
+client and the engine count 0-3 (`CharacterSync::box_`, the port event's
+`extra`, `online_card.state` `box=`). `character_api` is the only place that
+converts (server box = client box + 1). Today's `online_card.state` with
+`box=0` and today's online character are server box 1.
+
+- **Online card A holds all four boxes** from the server; card B stays absent
+  online (as today). The character select shows them as the original does.
+- **Create Digimon** is allowed while a box is free (round 59's rule "a new
+  character while the account has one is another character" becomes "...
+  while all four boxes are taken": the player is told "All four boxes hold
+  online characters. Reset one on the account page to make a new one.").
+  The new character belongs to the lowest free box; its first save (the
+  first stage change, or the save room) creates it there with
+  `If-None-Match: *`, checked against the new-character record (9.1.6).
+- **The played box is a binding.** At the Game Start the client calls `POST
+  /online-characters/{box}/play` (the box `character_called` of round 59
+  named, or for a new character the lowest free box with `new: true`, the
+  UNIQUE and the record `make_record` gives right after `create_player`).
+  The server keeps the binding in `online_play` (one row per account and
+  room, the room being the upload context's `roomCode`: room membership,
+  box, new-character data, the visit it started at), so a service restart, a
+  re-login after 401 or a reconnect keep it; it ends when the member leaves
+  the room or the room closes. The same account in two rooms (two PCs) has
+  two bindings; two saves of one box from both meet the revision conflict
+  of today. `/play` for the bound box
+  is idempotent; another box is accepted only while the relay has the
+  member in its title instance (stagIS*, where "Continue? No" and the room
+  entry put it), so switching characters needs the title. Uploads:
+  - without a binding: 409 `play_required`; the client sends `/play` again
+    for its box and then the save (no refusal, no leaving);
+  - for another box than the binding's: 422 `wrong_box` (refused, 9.1.6);
+  - the client sends no PUT before its `/play` is confirmed (saves wait in
+    the card cache as pending, as during a retry).
+  Identity by UNIQUE, name and partner would not do: UNIQUE is the frame
+  count of the creation and repeats across fresh sessions, and a player may
+  give every character the same name.
+- **No clones.** A character lives in one box. When the save room writes it
+  into another box (the original allows copies), the client does not upload
+  that box and says "Your online character lives in box n; the copy in box m
+  is not kept online."; a forged upload of it is `wrong_box`. The next room
+  entry shows the server's boxes again. Overwriting a box that holds another
+  online character is refused the same way; deleting one is the account
+  page's *Reset box n* (password, as the reset of today, per box).
+- **The active box** is the box bound last (`last_played_at`), else the box
+  with the newest upload. Its current form is the profile picture.
+- **Story and rewards.** The story bytes of every box are the account's one
+  online story (8.4), as today for box 0: a room plays the owner's story
+  whichever box he calls (8.5, 8.8). The quest line's reward flags (8.8's
+  per-player list) are the exception: each box keeps its own taken rewards
+  in `online_rewards` (round 61's answer 9, *per player*, with four
+  characters per account: 9.1.9). Resetting one box empties its rewards and
+  leaves the story; resetting the last box empties the story with it, as
+  the reset does today (a fresh start stays possible). Question 11 asks
+  whether each box should have its own story instead (the original's
+  model).
+- The local card store and the cloud backup are untouched; the cloud backup's
+  boxes stay private (question 13).
+
+#### 9.1.2 Tables
+
+Naming: columns are named as the game's English menus name the value
+(`txt` of stagML12: *Strength*, *Defense*, *Wisdom*, *Spirit*, *Speed*, *HP
+Max*, *MP Max*, *Blunt* ... *Force*, *¶ Data*, *BITS*, *Item Bank*, *Mods*);
+every column's COMMENT gives the GAMERAM variable and its record offset, so
+HeidiSQL shows both. Every table a person may edit holds only values the
+server takes as input; values the server computes live in `online_slot_stats`
+and in the views, except the forms' stats, whose edit sets the boost (9.1.7).
+Readable columns come first in every table, as HeidiSQL lists them.
+
+| Table | One row per | Holds |
+| --- | --- | --- |
+| `online_slots` | account and box (1-4) | the character: UNIQUE, name, current form, HP, MP, ¶ Data, BITS, BITS Bank, generation and revisions, flags, times |
+| `online_slot_stats` | account and box | computed by the server only (a table COMMENT says so; an edit is overwritten at the next write): level and the current form's stats with its gear, the forms' techniques |
+| `online_forms` | account, box and form (16 rows per box) | BASE_ISUSE, BASE_LEVEL, BASE_EXP, the nine skills, the eleven ¶ Data / Plug boosts; the form's stats without gear (an edit sets the boost), next level's EXP |
+| `online_devices` | device (surrogate `id`) | DEVICEFOLDER (36) and BANKDEVICE (96): kind, record, Mods, +N, its order, where it is equipped; virtual: rarity colour, packed word |
+| `online_disks` | disk slot (surrogate `id`) | the disk (conItem row), its count and its order (12 per box) |
+| `online_cards` | account, box and card held | CARDLIST |
+| `online_rewards` | account, box and reward flag | the quest line's rewards the box took (8.8's per-player flags; round G's store, keyed by box) |
+| `online_play` | account and room | the played box of the room session (9.1.1) |
+| `online_slot_history` | box revision | summary, the changes, the reason, the visit window; blobs in `online_slot_history_records` |
+| `online_rejected_uploads` | refused upload | the issues, the context, the staff decision; the record in `online_rejected_upload_records` |
+| `online_edit_drafts` | HeidiSQL edit that was not applied | the edited rows as JSON, the issues (9.1.7) |
+| `online_visits` | stage visit of a member | sequence number, room, instance and visit, stage, account and box, slot, the members with their boxes, difficulty, times (from the relay) |
+| `online_rule_state` | account, box and rule code | consecutive refusals, the breaker's state (9.1.6); `account_id` 0 for a code's global state |
+| `ref_forms` | form (16) | form row, model name, the name the repo already has (seeded) |
+| `game_*`, `game_data_meta` | row of a game table | the game's tables imported from the deploy-time export (9.1.11) |
+| `util_seq` | n = 0..1023 | a numbers table for the views |
+
+`online_slots` (PRIMARY KEY (account_id, box), FK accounts ON DELETE
+CASCADE):
+
+| Column | Type | Game (record offset) | Notes |
+| --- | --- | --- | --- |
+| `box` | TINYINT UNSIGNED, 1-4 | the data select's box (copy offset 8 + (box-1) * 0x2000) | |
+| `playername` | VARCHAR(8) utf8mb4 | PLAYERNAME (42) | the full-width characters (U+FF01-FF5E, U+3000) the card holds; an ASCII name typed in HeidiSQL is converted (`CardName`, as `save::name_to_card`); `playername_ascii` virtual for the website |
+| `digimonname` | VARCHAR(11), FK `ref_forms.model_name` | DIGIMONNAME (8) | the current form (`p_dorumon`); HeidiSQL offers the 16 names |
+| `hp`, `mp` | INT | HP (76), MP (84) | |
+| `mhp`, `mmp` | INT | MHP (80), MMP (88) | as the game wrote them (it derives them again at load, `recalc_player`); derived again after a staff edit |
+| `xdata` | INT | XDATA (92), *¶ Data* | |
+| `bits` | INT | BIT (96), *BITS* | |
+| `bank_bits` | INT | BANKBIT (728), *BITS Bank* | |
+| `unique_id` | INT UNSIGNED | UNIQUE (4) | identity; not editable |
+| `generation` | CHAR(16) ascii | - | a random 64-bit value in hex, new at every creation of the box; part of the ETag, so a deleted and re-made row never matches an old If-Match |
+| `revision` | INT UNSIGNED | - | per box, every write (upload or staff); keeps counting across a reset |
+| `visit_seq` | BIGINT UNSIGNED | - | the visit the newest accepted upload closed: the next upload's window starts after it (9.1.6) |
+| `served_revision` | INT UNSIGNED | - | the newest revision a client loaded (room entry); the history keeps every revision from the oldest one a client may still name |
+| `layout` | VARCHAR(16) | - | `gdje-v4.1`: GC USA record (card version 4), mapping version 1 (9.1.4) |
+| `play_seconds` | BIGINT UNSIGNED | - | |
+| `flagged`, `flag_reasons` | TINYINT(1), JSON | - | codes and texts of every flag (`grandfathered:<code>` and `migrated:<code>` among them); `reviewed_by`, `reviewed_at`; a flagged box is *under review* on the profile |
+| `tables_sha256` | CHAR(64) ascii | - | the server's fingerprint of the box's rows after its last write (9.1.7) |
+| `written_at` | DATETIME(3) | - | the server's own last write of the box (9.1.7) |
+| `changed_at` | DATETIME(3) ON UPDATE CURRENT_TIMESTAMP(3) | - | as on every `online_*` table of a box: the last change by anyone |
+| `client_version`, `created_at`, `last_upload_at`, `last_played_at` | | - | |
+
+`online_slot_stats` (PRIMARY KEY (account_id, box)): `level` SMALLINT
+(LEVEL (72) = BASE_LEVEL of the current form), `strength`, `defense`,
+`wisdom`, `spirit`, `speed` (TSUYOSA, MAMORI, KASHIKOSA, SEISHIN, SUBAYASA)
+and `res_fire`, `res_ice`, `res_thunder`, `res_dark` (HONOOTEIKO,
+KOORITEIKO, KAMINARITEIKO, YAMITEIKO): the current form with its gear
+(`recalc_player`, `combat.cpp:836-1020`); `techniques` JSON per form (the
+pcTech rows each form knows, TECHn_LEVEL / _SKILLk, `combat.cpp:931-947`);
+`rules_partial` (computed without the game data, 9.1.5).
+
+`online_forms` (PRIMARY KEY (account_id, box, form); 16 rows per box, a
+form never reached has the start values):
+
+| Column | Game (record offset, s = form row) | Notes |
+| --- | --- | --- |
+| `form` TINYINT 0-15, FK `ref_forms.form` | the shinka row | 0 Agumon, 1 Veemon, 2 Guilmon, 3 Dorumon, 4 WereGarurumon, 5 H-Kabuterimon, 6 WarGreymon, 7 Cl-Angemon, 8 Beelzemon BM, 9 Alphamon, 10 BK WarGreymon, 11 IPDramonFM, 12 IPDramonPM, 13 MetalGarurumon, 14 Gallantmon CM, 15 Susanomon (`Species.cs`) |
+| `reached` | BASE_ISUSE (1892 + s) | *digivolve technique* obtained; 0 set in HeidiSQL hides the form (9.1.7) |
+| `level` | BASE_LEVEL (1908 + 4s) | 1-999 |
+| `exp` | BASE_EXP (1972 + 4s) | |
+| `skill_blunt`, `skill_slash`, `skill_stab`, `skill_bash`, `skill_shot`, `skill_crush`, `skill_blast`, `skill_heal`, `skill_force` | BASE_SKILL[s][0..8] (2036 + 36s + 4k) | the skill window's names |
+| `up_hp_max`, `up_mp_max`, `up_strength`, `up_defense`, `up_wisdom`, `up_spirit`, `up_speed`, `up_res_fire`, `up_res_ice`, `up_res_thunder`, `up_res_dark` | BASE_UPCNT[s][0..10] (2612 + 44s + 4k) | what the ¶ Data Keeper and the Plugs added |
+| `max_hp`, `max_mp`, `strength`, `defense`, `wisdom`, `spirit`, `speed`, `res_*` | derived | the form's own values without gear (an edit sets the boost, 9.1.7) |
+| `next_level_exp` | virtual: `IF(level >= 999, NULL, (level + 140) * level * level + 200 * level)` | NEXTEXP (80370DBC) |
+| `changed_at` | DATETIME(3) ON UPDATE CURRENT_TIMESTAMP(3) | 9.1.7 |
+
+`online_devices` (PRIMARY KEY `id` BIGINT AUTO_INCREMENT; KEY (account_id,
+box, folder, sort)):
+
+| Column | Game | Notes |
+| --- | --- | --- |
+| `account_id`, `box` | | the box the device belongs to |
+| `folder` | ENUM('folder','bank'): DEVICEFOLDER (100), BANKDEVICE (344) | *Device Folder*, *Item Bank* |
+| `sort` | the order in the list | not unique: the record's index is the device's rank by (`sort`, `id`), 1-36 / 1-96, without gaps (the reader skips -1, so a gap would move every later index, 803657D8); the server writes `sort` back as 1..n after each processing, so moving a device in HeidiSQL is a one-row edit (`sort = 4.5` is not possible: INT; `sort = 4` beside another 4 orders by `id`) |
+| `kind` | ENUM('weapon','armor1','armor2','abChip'): `_kindNo` (bits 12-15) | the game's table names: *Weapon Unit*, *∋ Armor Board* (Core), *∨ Armor Board* (Board), *Ability Chip* |
+| `record_no` | `_recordNo` (bits 0-9) | the row of that table: weapon 0-276, armor1 0-31, armor2 0-44, abChip 0-185 (CHECK) |
+| `pocket` | `_pocket` (bits 16-19) | chip pockets 0-5, the item text's *Mods: n*; weapon and armor1 only |
+| `plus` | `_revision` (bits 20-30) | the *+N* after the name, 0-2047; not on chips; decides the colour |
+| `equip`, `equip_pos` | POWERSOCKET (732) 1-3, POWERPOCKET (744) 1-5, MAINSLOT (764) 1, MAINPOCKET (768) 1-5, SUBSLOT (788) 1 | where the device is equipped (NULL: in the folder only); `_isEquip` (bit 10) is set exactly for these; no unique key, so two rows can swap places in two edits (two devices in one place at processing time make the edit invalid, 9.1.7) |
+| `rarity` | virtual (803B07E0) | `white`, `blue`, `green`, `yellow`, `orange`, `purple` (9.1.12) |
+| `word_hex` | virtual | the packed word as the record holds it (debugging) |
+| `changed_at` | | 9.1.7 |
+
+Equipment as a role of the device row (instead of index columns) keeps
+HeidiSQL edits safe: deleting or moving a device row cannot leave a list
+pointing at the wrong device, the server renumbers the order and the lists
+follow. All 511 records keep each device in at most one list position and
+every pocket list a prefix (checked); a record with an index twice is
+refused (`equip_duplicate`).
+
+`online_disks` (PRIMARY KEY `id`; KEY (account_id, box, sort)): `sort` is
+the DISKFOLDER slot's order (244; the folder's order, which the player can
+change; not unique, as with devices), `record_no` 0-11 the conItem row (each
+exactly once per box, checked at processing), `count` 0-9 (the word is
+`record | 4 << 12 | count << 16`; all twelve slots always exist).
+`online_cards` (PRIMARY KEY (account_id, box, card_no)): one row per card
+held, `card_no` 0-49 the CARDLIST byte (292 + n; the `card` table's row,
+whose RARE column gives the card's colour, 9.1.12); the two bytes after the
+50 are 0. `online_rewards` (PRIMARY KEY (account_id, box, flag)): `flag` one
+of 8.8's per-player reward flags (392-403, 476, 479, 509-513, 556-558, 561,
+570, 576, 582, 588, 595), `set_at`, `visit_seq` (the visit whose pending set
+brought it).
+
+Key items (impItem 0-11, the Folder's key page) are not inventory but story
+flags (BASE_FLAGFOLDER, 8.8); `v_online_story` shows them. The game's data
+has no DNA or battle digivolution: a form is reached (`reached`) and chosen
+in the Digi-Lab (`digimonname`), whose change takes off the armor and the
+chips and puts on the strongest usable weapon (8039CA4C,
+`subwnd_shop.cpp:2124-2141`).
+
+`online_slot_history` replaces `online_character_history` (PRIMARY KEY
+(account_id, box, revision); reasons: the client's `create`, `upload`,
+`upload_merged`; staff's `staff_edit`, `sql_edit`, `edit_reverted`,
+`admin_restore`, `admin_accept`, `migrate`): `record_sha256` (hex), level,
+form, bits, play time, flagged, `warnings` JSON, the visit window
+(`visit_from`, `visit_to`) and **`changes` JSON**: what changed against the
+previous revision in readable form (`{"bits": [12000, 13506],
+"form:3.exp": [1745778, 1761002], "folder.7": [null, "weapon 19 +4 mods
+2"]}`), so HeidiSQL shows a character's past without decoding. The exact
+record served at that revision and, when a merge made them differ, the
+record the client holds (`client_record`, 9.1.7) are in
+`online_slot_history_records` (an archive for restores, merges and
+debugging; never in a view). `online_rejected_uploads` keeps 30 days,
+`online_visits` 30 days, `online_edit_drafts` until staff close them (the
+privacy page names them).
+
+The game tables (`game_shinka`, `game_weapon`, `game_armor1`,
+`game_armor2`, `game_abchip`, `game_conitem`, `game_insitem`,
+`game_impitem`, `game_pctech`, `game_card`, `game_enemy`, the shop tables
+`game_shopweapon`, `game_shoparmor`, `game_shopchip`, `game_shopjunk`,
+`game_shopdisk`, the identification tables `game_coweapon`, `game_coarmor1`,
+`game_coarmor2`, and `game_stage_enemies`: per stage and difficulty the
+enemy rows of its generators, `<stage>/separate/generator{N,H,V}`, with
+their EXP and Bits bands) have the game's column names and types
+(beDataBase: char, short, int, float, bool, string; names decoded with
+`game_text_utf8`, so a weapon's name keeps its icon glyph, `∈Sword Break`).
+They are empty after the migration and filled at the service start from the
+deploy-time export (9.1.11); `game_data_meta` holds the export's data hash
+and time. No row of an `online_*` table depends on them (no foreign key), so
+the service runs without them (9.1.5).
+
+#### 9.1.3 Readable database (HeidiSQL)
+
+The user's complaint is about the tables themselves, so the fix changes how
+they store values, not only what views show. One migration; a hash stored
+as hex is the same hash (never a secret in clear; `password_hash` is
+already text, `$pbkdf2-sha512$...`):
+
+| Table | Today | After round D |
+| --- | --- | --- |
+| `accounts` | `recovery_code_hash` BINARY(32) | CHAR(64) ascii, lower-case hex |
+| `sessions` | `token_hash` BINARY(32), `created_ip`, `last_used_ip` VARBINARY(16) | `token_hash` CHAR(64) hex (the unique key on it rebuilt); the addresses VARCHAR(45) ascii in the canonical text form (`IPAddress.ToString()`, IPv4 and IPv6) |
+| `email_tokens` | `token_hash` BINARY(32) PRIMARY KEY | CHAR(64) hex PRIMARY KEY |
+| `audit_log` | `ip` VARBINARY(16) | VARCHAR(45) text |
+| `cloud_saves`, `cloud_save_history` | `data` MEDIUMBLOB (the user's save file), `sha256` BINARY(32) | `sha256` CHAR(64) hex; `data` in the side tables `cloud_save_data` / `cloud_save_history_data` (a private file, never in a view) |
+| `online_characters`, `online_character_history` | `record` BLOB, `record_sha256` BINARY(32) | left untouched as legacy (table COMMENT "legacy: replaced by online_slots in 00NN, dropped in round D2"), 9.1.8 |
+| `online_slot_history`, `online_rejected_uploads` | (new) | no blob: the records in their `_records` side tables |
+| `online_story`, `online_story_history` | `flags` VARBINARY(1024), `folder` BINARY(12), `counters` BINARY(64) | stay (the story keeper's working bytes, round G's files); before them the virtual columns `phase` (1-6, 86 as `cleared`), `keys` (`K0,K1,K2`), `counter_1` (junk shop donations), `counter_7` (training attempts); the set flags as a list in `v_online_story` |
+| `schema_version` | `checksum` BINARY(32) | stays (the migrator compares the bytes, and its all-zero started mark); a virtual `checksum_hex` before it |
+
+The conversion happens at the repository boundary only: the domain keeps
+`byte[]` hashes and `IPAddress` values, the Data layer writes and queries
+the text (`Convert.ToHexString(...).ToLowerInvariant()`, `IPAddress.Parse`);
+the columns use `ascii_bin`, so a lookup is an exact match. The migration
+converts in place with `ALTER TABLE ... ADD`, `UPDATE ... LOWER(HEX(x))` /
+`INET6_NTOA(x)`, `DROP COLUMN` and `CHANGE COLUMN` (all under ALTER, no DROP
+privilege) and moves the blobs with `INSERT ... SELECT`.
+
+Views (prefix `v_`, read only, each with readable names instead of ids; the
+HeidiSQL guide in DEPLOY.md starts there): `v_accounts` (role, status,
+profile, recovery code yes/no, boxes, the active box's form and level),
+`v_sessions`, `v_audit_log`, `v_characters` (one row per box: name, form,
+level, HP / MP, the current form's stats with gear, ¶ Data, BITS, BITS Bank,
+forms reached, devices, cards, rewards, flags, under review, last upload),
+`v_character_forms` (with the game's form name and the EXP still needed),
+`v_character_devices` (item name, +N, Mods, colour, where equipped),
+`v_character_equipment` (one row per equipment place: Weapon 1-3 with the
+five chips of weapon 1, the ∋ armor with its five chips, the ∨ armor),
+`v_character_disks`, `v_character_cards` (with the card's colour),
+`v_character_rewards`, `v_character_history` (no blob), `v_rejected_uploads`
+(no blob), `v_character_edits` (the audit rows `character_edit` and the open
+drafts), `v_visits`, `v_online_story` / `v_online_story_history` (phase,
+difficulty copies, the set flags as a list via `util_seq`, keys, counters),
+`v_cloud_saves` (no data), `v_rule_state` (the breakers that are open).
+Item names come from the `game_*` tables; without the export they show
+`weapon #19`.
+
+The migration's first task checks on XAMPP's MariaDB 10.4.32 and on 11.4
+that `INET6_NTOA`, `HEX` and the story expressions are accepted where they
+are used (VIRTUAL columns, the conversion's UPDATE); where one is not, that
+column exists only in the view.
+
+**Privileges (DEPLOY.md 2).** The restricted service user has no DROP today.
+Round D's migration needs none (no RENAME, no DROP TABLE, views made with
+`CREATE VIEW`), only `CREATE VIEW, SHOW VIEW`. Replacing a view in a later
+release (`CREATE OR REPLACE VIEW` and `ALTER VIEW` need DROP) and round D2's
+removal of the legacy tables do: DEPLOY.md 2 gives the service user `CREATE
+VIEW, SHOW VIEW, DROP` on `dw4online.*` from round D on (still nothing
+outside that database; the backup before every update stays the way back),
+and its update notes say to run that GRANT as root before `migrate`. The
+migrator checks the privileges the pending migrations need (`SHOW GRANTS`)
+before the first statement and refuses with the GRANT to run, so no
+migration stops half way for a missing right. Root (2.1, the user's server)
+has them all.
+
+#### 9.1.4 The record and the tables (byte-exact, versioned)
+
+| Record bytes | Table value | Rule |
+| --- | --- | --- |
+| 0 ISUSE | the row exists | 1 |
+| 1-3 | - | 0 (never written or read; an upload with other bytes is refused, `dead_bytes`) |
+| 4 UNIQUE | `online_slots.unique_id` | |
+| 8-39 DIGIMONNAME | `digimonname` | NUL, then zeros (the bytes after the NUL are dead) |
+| 40-41 | - | 0xFFFF (the old byte-string path 802FB59C is refused, `name_marker`) |
+| 42-57 PLAYERNAME | `playername` | 1-8 UTF-16 code units, 0 after the last; 58-71 are 0 |
+| 72 LEVEL | `online_forms.level` of the current form | the upload's LEVEL must equal it (`level_header`); `make_record` runs CURRENT2BASE first (`save_game.cpp:51`) |
+| 76-96 HP, MHP, MP, MMP, XDATA, BIT | `online_slots` | MHP / MMP stored as written (9.1.6 checks them) |
+| 100-243 DEVICEFOLDER | `online_devices` folder rows by (`sort`, `id`), then -1 | `record \| equipped << 10 \| kind << 12 \| pocket << 16 \| plus << 20`, bit 11 0 |
+| 244-291 DISKFOLDER | `online_disks` by (`sort`, `id`) | `record \| 4 << 12 \| count << 16` |
+| 292-341 CARDLIST, 342-343 | `online_cards` | 1 per card held, the pad 0 |
+| 344-727 BANKDEVICE | `online_devices` bank rows | as the folder, never equipped |
+| 728 BANKBIT | `bank_bits` | |
+| 732-791 POWERSOCKET ... SUBSLOT | `equip`, `equip_pos` of the folder rows | index = rank - 1 of the device in that place, else -1 |
+| 792-1891 BASE_FLAG, BASE_FLAGFOLDER, BASE_COUNTER | `online_story` of the account (8.4), the box's `online_rewards` over it: each per-player reward flag is 1 exactly when the box has its row | composed, never taken from an upload (round 61: a guest's uploads keep its own story; the reward flags reach the store through the keeper, 9.1.9) |
+| 1892-3315 BASE_ISUSE ... BASE_UPCNT | `online_forms` (a hidden form, `reached` 0, as the start values) | |
+
+- **Canonical record.** Every record the port writes is canonical (dead bytes
+  0, no gaps, equipped bits = the lists, LEVEL = BASE_LEVEL of the form,
+  disks in canonical words); all 511 distinct records are. The server accepts
+  only canonical uploads, so `encode(tables) == upload` outside 792..1891 for
+  every accepted upload that needed no merge (9.1.7). Each write checks it in
+  the transaction (compose the written rows, compare with the state it meant
+  to write) and refuses with `mapping_mismatch` (an error the server logs as
+  a bug) instead of storing anything else.
+- **Versioned.** `layout` names the record layout and the mapping version
+  (`gdje-v4.1`). A later change (another region's layout, a new column) gets a
+  new version; rows keep theirs until a data step converts them, and the
+  history keeps the exact bytes of every revision whatever the mapping then.
+- **The engine's fixpoint.** By the code `make_record(apply_record(r)) == r`
+  for canonical records whose MHP / MMP equal the derivation
+  (`save_game.cpp:48-160`; `apply_record` compresses the folder and the
+  bank, `make_record` writes them back without gaps, `recalc_player` derives
+  MHP / MMP, so a buffed MHP comes back derived, and HP 0 would be refilled);
+  round D runs it for every record the tests compose (9.1.14).
+- **Same code on both sides.** The C# mapping (tables <-> `SaveRecord` <->
+  bytes) and the C++ codec share golden vectors (synthetic records, no game
+  data) in `data/online/record_golden.json`.
+
+#### 9.1.5 Load path
+
+1. **Entering a room** the client calls `GET /online-characters`. The server
+   first processes a pending staff edit of each box (9.1.7: a load does not
+   wait for the quiet time), then composes each box's record from its tables,
+   the account's story and the box's rewards (`encode`, 9.1.4) and sets
+   `served_revision`. The answer: per box the ETag `"<generation>-<revision>"`,
+   `record` (base64), `summary`, `playSeconds`, `flagged`, `staffEdited` (a
+   staff revision since the client's last load), and `activeBox`.
+2. **The client builds card A in memory** with the four boxes (two copies,
+   checksum, version 4, the 8 KB header of the save utility) and gives the
+   engine a card store over that image; `online_card.dat` is only written as
+   the cache for crash recovery (with the account's own story bytes, as
+   round G keeps every cached record) and is never read for play. (Today
+   `OnlineCard::store()` reads the file, which a player could edit between
+   the room entry and the character select.)
+3. **An unsent save** of the last session (`online_card.state` pending, per
+   box, with the ETag and the visit key it was made at) goes up **before**
+   the card is built, after a `/play` for its box (its binding; `why:
+   recovered`): on 200 the card holds the server's answer, on a refusal or a
+   conflict the server's current record and the cached save goes to
+   `backups/` with a notice. Today the unsent save itself is played
+   (`character.cpp:367-376`).
+4. **The Game Start** binds the box played (`POST
+   /online-characters/{box}/play`, 9.1.1): the box the session's uploads may
+   go to, the visits the change rules count for it, and the active box of
+   the profile.
+5. **Determinism.** The tables reach an engine only through the record at
+   the member's own title (a solo instance, 8.5). From there the character
+   travels as today: in the carry of a JOIN or co-arrival and in the stage
+   snapshot (`PlayerCarry`, `online_membership.hpp:26`), the same bytes on
+   every engine of the instance. A staff edit never reaches a running engine
+   (9.1.7), so no instance sees a member change mid-stage.
+
+**Without the game data export** the server composes and validates the
+structure as before; the rules that need a game table are off and every
+history row they skipped notes `rules_partial`. That is never silent: the
+admin pages show a banner ("Game data missing: N rules are off"), `/health`
+reports `degraded` with the list, and the service log warns at every start.
+`OnlineCharacter:RequireGameData` (default false) refuses character uploads
+with 503 `game_data_missing` instead (the client keeps them pending).
+
+#### 9.1.6 Upload path and the rules
+
+`PUT /online-characters/{box}` with `If-Match: "<generation>-<revision>"`
+(or `If-None-Match: *` for a new box), the record, the play time and the
+context (today's, with `cheats` from the engine's real flags, 9.1.10, plus
+`why`: `save_room | stage_change | leave | recovered`, and `visitKey`: the
+instance and visit of the stage the save closes, as BARRIER_OK named them).
+The server:
+
+1. checks the version and the ranked context (today's), decodes the record
+   and checks the canonical form (9.1.4);
+2. replaces the story bytes with the account's story and the box's rewards
+   (as today, `OnlineCharacterService.cs:48-55`, plus 9.1.9);
+3. checks the binding (9.1.1): none is 409 `play_required`, another box is
+   `wrong_box`;
+4. locks the box and processes a pending staff edit first (9.1.7);
+5. finds the **base** `B` (what the client's game started from) and the
+   **stored state** `S`:
+   - `If-None-Match: *`: the box must be free and the binding a new
+     character with this UNIQUE; `B` = `S` = the new-character record the
+     binding holds (checked at `/play` against `create_player`, `new_template`
+     below). Today a new character is checked only for `play_time_too_fast`,
+     so a forged first upload that is consistent in itself (level 999, every
+     form, 9,999,999 BITS, purple gear) would pass; against this base every
+     such value is a change the window has to explain;
+   - `If-Match` with another generation: 409 `revision_conflict` (the box was
+     reset and made again);
+   - `If-Match` naming the current revision, or a revision after which only
+     staff revisions (`staff_edit`, `sql_edit`, `edit_reverted`,
+     `admin_restore`, `admin_accept`) were written: `B` = the record the
+     client holds at that revision (`client_record`, 9.1.7), `S` = the
+     tables. Today every staff write raises the revision and the player's
+     next save meets 409, stops its uploads for the room session and reloads
+     (`OnlineCharacterService.cs:63`, `character.cpp:597-611`);
+   - any other revision (another PC saved meanwhile): 409
+     `revision_conflict`, handled as today (the client keeps its save in
+     `backups/` and reloads; it never overwrites);
+6. finds the **window**: the visits of this account **and box** whose
+   sequence number lies after the base's (`visit_seq` of `B`'s revision; for
+   a new box the visit the binding started at) up to the visit `visitKey`
+   names, never by time. The client uploads one save at a time and lets the
+   newest waiting save replace older ones (`character.cpp:506`), retries
+   after 2 / 10 / 20 s (`:590`, `:613`), and makes the stage change's save at
+   the rising edge of `pending_stage()`, before the barrier (holds up to 30
+   s): a window by acceptance time would lose visits and refuse honest
+   saves. The relay writes a visit's row when the visit starts, in the
+   barrier decision before BARRIER_OK goes out (and at the title instance's
+   start), and closes it when the member's next barrier is decided (after
+   the keeper took that visit's pending set), when it leaves the room or at
+   the disconnect timeout. So:
+   - a visit still open counts with its end = now for durations;
+   - a `visitKey` the server cannot resolve yet, or a window whose last hub
+     visit is still open while the upload has changes that need the keeper's
+     state of that visit (a new form 4-15, quest Bits), is answered 409
+     `visit_pending` with `Retry-After: 2`; the client retries it like a lost
+     race (never a conflict); after `OnlineCharacter:VisitPendingSeconds`
+     (90; barrier holds end after 30 s, the disconnect timeout after 35 s)
+     the server decides with what it has;
+   - a `visitKey` of another account is refused (`visit_foreign`);
+   - a save without a `visitKey` (a save cached by a client before round D)
+     or with one that never resolved gets the server's own log as its
+     window: every visit of the box after the base up to the newest. The
+     change rules run on it as on any window (refusing), and the box's
+     `visit_seq` stays at the base, so the next save counts those visits
+     again (a missing key can only widen the window, never shrink the next
+     one, and never switch a rule to *flag*);
+   - a box migrated from before round D has no visits before the update:
+     its first upload's change rules flag instead of refusing (once per
+     migrated box; its record rules refuse as always);
+7. merges: `M` = `merge(S, B, U)` (9.1.7), which is the upload `U` itself
+   whenever `S` = `B` (no staff write since the base: the normal case);
+8. checks the **record rules** on `M`, the **change rules** and the
+   **bounds** on the player's own change `B -> U` with the window, and the
+   **rates** on that change per minute of the window's visits;
+9. decides per issue: a rule set to `refuse` refuses **only when one of the
+   fields the issue rests on differs between `S` and `M`** (the upload or
+   the merge changed it); an issue on unchanged fields becomes the flag
+   `grandfathered:<code>`. A state the player did not make (a migrated row,
+   a staff edit, a rule that got stricter, a C# `recalc_player` error for a
+   form that has not changed since) therefore never refuses the next save.
+   Then the breaker (below); a rule set to `flag` keeps the upload and flags
+   the box;
+10. writes only the rows that changed, the slot row, `online_slot_stats`, a
+    history row with `changes`, the window and, when `M` differs from `U`,
+    `client_record` = `U`; `visit_seq` = the window's end; the fingerprint
+    (9.1.7); then the state achievements of that box (as today, per box).
+
+The answer is today's plus the new ETag, `merged` (the field groups a staff
+edit changed under the upload, 9.1.7) and `flagged`. A refusal is 422
+`refused` with the issues and `leaveRoom: true`: the client stops saving,
+leaves the room with "The server refused your online character's save
+(<issue>). It loads again from the server when you rejoin." and the next
+room entry loads the server's character (`OnlineCharacter:LeaveRoomOnRefusal`,
+default on; off: the uploads stop for the session as after a 409, nothing is
+played from a refused state after the next entry either way). The refused
+record goes into `online_rejected_uploads`.
+
+Every rule has a stable code and a configured action
+(`OnlineCharacter:Rules:Actions:<code> = refuse | flag | off`), so a false
+positive is switched off without a release. Defaults:
+
+| Code | Rule | Default |
+| --- | --- | --- |
+| `record_size`, `record_blank`, `record_unused`, `dead_bytes`, `name_marker`, `name_empty`, `name_character`, `name_trailing_data` | structure (9.1.4, today's checks) | refuse |
+| `unknown_form`, `form_not_reached` | DIGIMONNAME is one of the 16 and that form is reached (today a warning) | refuse |
+| `level_header` | LEVEL = BASE_LEVEL of the current form | refuse |
+| `exp_band` | a reached form: NEXTEXP(L-1) <= EXP < NEXTEXP(L), NEXTEXP(L) = (L+140)L² + 200L (80370DBC); level 999: EXP >= NEXTEXP(998) = 1,133,652,152 | refuse |
+| `form_defaults` | a form never reached: level 1, EXP 0, every skill 1, every boost 0 (8036EB0C) | refuse |
+| `skill_range` | 1 <= skill <= limit(L): 30L (L <= 36), 20L + 360 (<= 107), 10L + 1430 (<= 227), else 8L + 1884 | refuse |
+| `boost_range` | every UPCNT >= 0 | refuse |
+| `mhp_derived` | MHP / MMP = the server's RECALCPLAYER of the current form with its gear (growth table 804EAD24, shinka INI / GROW, UPCNT, armor1 / armor2 MAXHP / MAXMP, caps 99999); above it by a power-up buff (UPDATA[6], cleared only by the next GENERATE) | below: refuse; above: flag |
+| `hp_range` | 1 <= HP <= MHP, 0 <= MP <= MMP | refuse |
+| `bits_range` | BITS, BITS Bank 0..9,999,999 | refuse |
+| `xdata_range` | ¶ Data >= 0 (refuse); above 9999 (flag: pickups do not clamp, only a shop opening does) | refuse / flag |
+| `device_*` | folder and bank without gaps; kind 0-3; record inside its table; Mods 0-5 on weapon / armor1, 0 otherwise; no +N on chips; bit 11 0 | refuse |
+| `equip_*` | indices -1 or inside the folder; Weapon in POWERSOCKET, chips in the pockets, armor1 in MAINSLOT, armor2 in SUBSLOT; the equipped bit = listed; no index twice | refuse |
+| `equip_rules` | weapon 1 usable by the form (SOUBI bit) with its skill (SKILLPOINT); armor LVPOINT <= level; pockets used <= the device's Mods; WU chips in the weapon, BLUEAB chips in the armor (game data) | refuse |
+| `equip_stat_twice` | two chips raising the same value in one list (80381D20) | flag |
+| `disks` | twelve disk words, records a permutation of 0-11, counts 0-9, no flag or +N | refuse |
+| `cards` | 0 / 1, the pad 0 | refuse |
+| `new_template` | at `/play` with `new`: the record is `create_player`'s (8036EB0C, `combat.cpp:752-775`) for its rookie: the current form one of the rookies the character select offers, level 1, EXP 0, every skill 1, every boost 0, only INI_WEAPON1-3 of that form in the folder and in POWERSOCKET 1-3, the rest of folder, bank, cards and the disk counts as a fresh port save has them, HP / MP derived; only UNIQUE and PLAYERNAME are free (the rules lane takes the exact template from a fresh port save, not from this text) | refuse (the binding) |
+| `unique_changed`, `form_level_dropped` | today's | refuse |
+| `wrong_box` | an upload for another box than the binding's (9.1.1) | refuse |
+| `visit_foreign` | the `visitKey` belongs to another account | refuse |
+| `skill_dropped`, `boost_dropped`, `form_lost` | skills, boosts and reached forms never go down (`form_lost` today a warning; EXP may fall within the level at a defeat, `combat.cpp:1032-1041`, so EXP has no such rule) | refuse |
+| `lobby_only` | a new form, a new current form, bank or card changes, ¶ Data spent, boosts from the ¶ Data Keeper: only with a window visit to the stage that does it (ML11 / ML12 rewards and Digi-Lab, ML12 / ML13 bank, stagIS11 cards, ML12 keeper) | refuse |
+| `field_only` | EXP, skills, Plug boosts (+1 / +2 each; the MaxMP Plug raises the HP boost as the port has it, `items.cpp:148-152`, not yet checked in the DOL), ¶ Data pickups (+5 / +20 / +100): only with a field, dungeon or boss visit in the window | refuse |
+| `rookie_pair` | a new rookie needs an ML12 visit in the window and its Digi-Lab predecessor reached in `M`: `stagML12_m1__sin_digi.lua` gives Dorumon to Agumon, Veemon to Dorumon, Guilmon to Veemon, Agumon to Guilmon (a chain in one visit is possible, the Digi-Lab changes the form in between); the Digi-Lab opens from the own level 16 (flag 937) | refuse (the level: flag) |
+| `form_reward` | a new form 4-15 needs an ML11 / ML12 visit in the window and a reward flag the box took in the window from a form-giving script (treasure02-04, 06-08); at most as many new forms 4-15 as such flags; the form one that script's branches can give (`data/online/form_rewards.json`, derived from the decompiled scripts like `story_sets.json`, flag numbers and form ids only) | the count: refuse; the form per script: flag until round D2 has checked the table |
+| `drop_plus` | a device new in the window with +N above the highest level among the window's instance members + 1 (803B0AB4 rolls with slot 0's level; each member's level from its box's newest accepted revision) unless it is a shop's, an identification's or a script reward's fixed value (32, 200, 666 ...) | refuse above that + `OnlineCharacter:DropPlusMargin` (10 levels: a member's level-up in the visit whose upload is not in yet); flag between |
+| `exp_bound` | the EXP the window gained <= 10 x the sum over its field, dungeon and boss visits of seconds x the stage's highest enemy EXP for the difficulty (`game_stage_enemies`; without it the game's highest, 6,000) x 130 / 100 (EXPRITSU at its maximum 30): one kill a second of the best enemy there, ten times over | refuse |
+| `bits_bound` | the BITS the window gained outside shop visits <= 10 x the sum over its field visits of seconds x the stage's highest Bits band x 130 / 100 (BITRITSU 30), plus the quest rewards of its hub visits | refuse |
+| `shop_sums` | in a shop visit BITS rise only by what removed devices sell for (KAITORI + 25 * value + rank bonus) and by quest rewards (the devices and `SYSctlBit ADD` of the treasure scripts), added devices come from the shop, identification, keychain or quest reward tables and cost no more than the BITS held (803B08F8); bank moves keep BITS + BITS Bank; the ¶ Data spent is at least what the boosts bought (cost ceil((v-45)/5), 1..400, 80394814) and chip upgrades (NEXTX) cost: a lower bound, the cost follows the stat with gear at the purchase (`xdata_stat`) | flag (refuse after calibration, round D2) |
+| `name_changed` | today's | flag |
+| `exp_rate`, `bits_rate`, `xdata_rate`, `skill_rate`, `level_rate`, `play_time_*` | per minute of the window's visits above calibrated limits (round D2; until then generous) | flag |
+| `missing_upload` | a visit of the bound box that no accepted upload's window covers within a day (the client skips unchanged saves and merges waiting ones, so a visit without its own upload is normal) | flag |
+
+**The breaker.** A rule that refuses an honest save would send that member
+out at every stage change, and *Accept* alone does not help while the box
+plays on. So, per box: when the same code refused the same box twice in a
+row, that box's later uploads with it are kept and flagged (`breaker:<code>`,
+the box *under review*) and the admin page alerts; staff reset it with the
+review. Per code: refusals of three accounts within 24 hours raise an alert
+on the admin page; `OnlineCharacter:Rules:BreakerGlobal` (default off) then
+also switches the code to `flag` for everyone until staff switch it back
+(off by default because three accounts of one cheater would switch it).
+`OnlineCharacter:Rules:BreakerConsecutive` (2, 0 = off) is question 14: the
+price is that a cheater who forges the same thing a third time keeps it,
+flagged and visible, until staff restore the box.
+
+**A false positive** is fixed by staff: a flag by *Reviewed: fine*
+(`reviewed_by`, an audit row; the character stays unflagged until a new
+flag); a refusal by *Accept this upload* on the admin page (the refused
+record is merged like an upload from the revision it named, so it also works
+when the box has moved on, and becomes the next revision `admin_accept`); a
+rule that misfires by setting its action to `flag` or `off`. Achievements
+from flagged uploads stay hidden from rankings until reviewed (as today).
+
+#### 9.1.7 Staff edits
+
+Two ways, the same rules:
+
+- **The website** (`/admin/account/{name}`, a section per box; admins edit,
+  moderators review): every value of 9.1.2 with the game's names, devices
+  picked by item name, *Strength = 2500* as well as the boost; a preview
+  shows every completion the server will make, the destructive ones too
+  (skills lowered, a form's values reset, devices taken off), before the
+  save; the server normalizes, validates, writes a revision (`staff_edit`,
+  the actor) and an audit row.
+- **HeidiSQL**: edit the `online_*` rows directly. HeidiSQL writes each row
+  on its own with autocommit, so the server waits until an edit is done:
+  the fingerprint `tables_sha256` is the hash of every value of the box's
+  rows (not the timestamps) as the server last wrote them; every minute the
+  watcher looks at the boxes whose `changed_at` is newer than the slot's
+  `written_at` and processes a box once its rows have been quiet for
+  `OnlineCharacter:EditQuietSeconds` (120); a load or an upload of the box
+  processes it at once (the admin page only shows a waiting edit, with
+  *Process now*). A different hash is an edit: the
+  server completes it (only completions that destroy nothing, the table
+  below), validates it, writes a revision (`sql_edit`, actor unknown, the
+  changes against the last revision) and an audit row `character_edit`
+  (source `database`). Deleting a row is caught the same way.
+
+**Validation of an edit** runs every record rule of 9.1.6 set to refuse on
+the completed state (the change rules, bounds and rates judge a player's
+play, not staff), with the same "only what changed" test against the last
+revision (a grandfathered flag the edit did not touch stays a flag); the
+website does the same before it saves. An edit the server
+cannot complete without destroying something, or that still breaks a rule,
+is **not applied**: the box is written back to its last revision at once
+(`edit_reverted`), the edited rows are kept in `online_edit_drafts` with the
+issues, and the admin page shows "Your database edit of box 2 was not
+applied: <issues>. Open it as a draft." The website opens the draft with
+the preview and the completions the database path may not make. The box is
+never locked: loads and uploads go on from the last valid revision (the
+first design's 423 kept a waiting save that then met 409 after the fix).
+
+| Edit | Completion |
+| --- | --- |
+| BITS, BITS Bank, ¶ Data | clamped to 0..9,999,999 / 0..9999 |
+| a form's level | EXP set to the level's start (NEXTEXP(level-1)) unless the EXP was edited too and fits; skills above the new level's limit: not applied in HeidiSQL (lowering them destroys values; the website does it with the preview) |
+| a form's EXP | the level follows the EXP (the game's level-up loop, `combat.cpp:1100-1106`, downwards as well); skills as above |
+| a form's derived value (`strength`, `max_hp`, ...) | the boost is set: `up_strength = wanted - (grown + INI)`, at least 0, the stat at most 9999 (HP / MP 99999) |
+| `reached` | 1 adds the form (its hidden values again if it has any, else the start values); 0 hides it: the record composes the start values, the row keeps its numbers until the player reaches the form in the game again (then the game's values count; the old ones stay in the history); the current form cannot be hidden |
+| `digimonname` (current form) | a reached form; the Digi-Lab's change follows (8039CA4C, `subwnd_shop.cpp:2124-2141`): the armor and the chips off, the strongest weapon the form can use on |
+| devices | order renumbered (`sort` 1..n by (`sort`, `id`)); `pocket` / `plus` clamped per kind; equipment completed by the game's rules, the devices staying in the folder: a weapon the form cannot use or whose SKILLPOINT its skill does not reach comes off (the strongest usable one goes into an empty first socket), an armor whose LVPOINT the level does not reach comes off, chips beyond the device's Mods or of the wrong family come off; a wrong kind in a place, two devices in one place, an unknown record: not applied |
+| disks, cards | counts clamped 0-9; a disk record twice or missing: not applied |
+| HP / MP | MHP / MMP derived again, HP / MP clamped |
+| `playername` | an ASCII name converted to the card's full-width form (`CardName`); empty or longer than 8: not applied |
+| `unique_id`, `layout`, `generation`, `revision`, `visit_seq`, hashes, `online_slot_stats` | not editable: the server puts them back (the audit row notes the attempt) |
+
+**Locking.** Every writer of a box (an upload, a load or watcher processing
+an edit, the website's editor, restore, accept, reset) runs in one READ
+COMMITTED transaction that locks the slot row and then reads every child
+row of the box `FOR UPDATE` over its key range (`(account_id, box)`), checks
+the fingerprint of what it read (a difference is an edit, processed first),
+writes, and stores as the new fingerprint the hash of the rows it meant to
+write, computed from its own state, not from a read after the write.
+HeidiSQL's `UPDATE` of a locked row waits for the commit and lands after
+it, and an `INSERT` that slipped in meanwhile (READ COMMITTED has no gap
+locks) does not match that hash: both are an edit at the next check, never
+lost and never taken for the server's own data.
+
+**When the player is online.** The edit is in the tables at once and in his
+game at his next load; his running engine is never changed (determinism,
+9.1.5). His uploads meanwhile name a revision before the edit; the server
+accepts them (9.1.6 step 5) and **merges**: `S` = the tables (with the
+edit), `B` = the record his game started from (`client_record` of the
+revision he named), `U` = his upload, `M` = `merge(S, B, U)`:
+
+- counters (BITS, BITS Bank, ¶ Data, each form's EXP, skills and boosts,
+  disk counts): `S + (U - B)`, clamped to their ranges; each form's level
+  then follows its EXP and its skills are clamped to that level's limit;
+- single values (the current form, the name, each form's `reached`, each
+  card): the staff value where staff changed it (`S` != `B`), else `U`'s; a
+  form the upload reaches newly takes the upload's values;
+- devices of the folder and the bank as multisets of (kind, record, Mods,
+  +N) per list: the staff's change (`S - B`: devices removed and added) is
+  applied to the upload's lists: a removed device is taken out where it
+  still is (one the player sold or upgraded meanwhile is noted,
+  `merge_missing`), an added one goes into the folder (full: the bank; both
+  full: `merge_overflow`, kept for staff in the history's note); the
+  equipment is staff's where staff changed it, for the devices still there,
+  else the upload's, then completed as in the table;
+- the result is validated like any upload.
+
+So a staff edit never costs the player the progress he made meanwhile and
+never makes him lose the session, and nothing he holds overrides the edit:
+BITS staff removed stay removed while his purchases and finds still count.
+The server keeps `U` as `client_record` of the new revision (the record his
+game holds), so his next upload merges from there again; the next room
+entry loads `S` and ends it. The answer lists `merged`, and the client shows
+"Staff changed your online character (BITS, Dorumon). Your progress was
+added to it; you see the change when you next enter a room." once. A merge
+makes his running game differ from the tables until then (bits a cheater
+still holds can be spent in that session, against the staff value): for
+corrections that must take effect now the admin page has **Reload now**,
+which removes the member from its room (reason `character_edited`, the
+client says "Staff changed your online character. Join the room again to
+load it."; its leave save is merged like any other), as a kick does.
+
+**Audit.** Every edit writes `audit_log` `character_edit` with `{box,
+revision, source: website | database, actor, changes: [{field, from, to}],
+completed: [...], merged: [...]}`; a database edit not applied writes
+`character_edit_reverted` with the draft's id and the issues; restores,
+accepts and reviews write `character_restore`, `upload_accepted`,
+`flag_reviewed`. `v_character_edits` lists them with the open drafts.
+
+#### 9.1.8 Migration of today's rows
+
+Migration 00NN (the number at the integration: 0011 is round 59's) creates
+the tables, the references, `util_seq`, the side tables, the virtual columns
+and the views, converts the hash and address columns (9.1.3), and marks
+`online_characters` / `online_character_history` as legacy by their table
+COMMENT. Nothing is renamed or dropped: the service user of DEPLOY.md 2 has
+no DROP (and RENAME TABLE needs it), so round D's migration runs on the
+documented configuration as well as on root.
+
+A **data step** of the migrator (new: a C# step that belongs to a migration
+version) converts the rows. It runs **inside** the migration's started mark
+(`Migrator.cs:30-35`: the mark is replaced by the real checksum only after
+the SQL and the step finished, so a half run is refused as an interrupted
+migration, DEPLOY.md 9), and the step's name and code version are part of
+the migration's checksum (`SHA-256(sql + "\nstep:" + name + ":" + version)`),
+so a step changed after it ran is refused like a changed file and needs a
+new migration. Per legacy row: decode the record, map it into box 1 (today's
+box 0, where `enter` puts it), compose it again and require the same bytes
+outside 792..1891, copy `revision`, play time, flag and times, give a new
+`generation` and `visit_seq` 0, move the history (the blobs into
+`online_slot_history_records`, `changes` computed between neighbours, the
+reason kept), and write an audit row `character_migrated`. Then **every rule
+runs** on the migrated box and on its newest revision against its
+predecessor, as flags only (`migrated:<code>`): what the old checks let
+through (they only warned of `species_not_reached`, `form_lost`,
+`disk_count`, and never checked `equip_rules`, `mhp_derived` or `exp_band`)
+is marked for staff and, by the "only what changed" test of 9.1.6, never
+refuses a later save. A row that does not compose byte-exactly is migrated
+as decoded and flagged (`migrated_inexact`); the migrate output names the
+counts (`Converted 12 online characters, 12 byte-exact, 3 flagged`). Round
+G's `online_rewards` rows go to box 1 (a `box` column added with 1 if round
+G built the store without it). The client treats a cache whose
+`online_card.state` says `box=0` as server box 1 (9.1.1).
+
+A data step that fails stops the migration as a failing SQL migration does
+(DEPLOY.md 9's table: restore the backup, report it). Round D2's migration
+drops the legacy tables (with the DROP right round D grants, 9.1.3); until
+then a rollback (DEPLOY.md 8) restores the backup as always. Queries on the
+old tables move: `AchievementRepository.cs:115`, the account erasure list
+(`AccountRepository.cs:140`), the history housekeeping
+(`SessionRepository.cs:113`).
+
+#### 9.1.9 Guests, rewards and the room story (round 61)
+
+The character tables hold no story: the record's story bytes are the
+account's own `online_story`, composed at load and replaced at upload, so
+round 61's rule holds by construction (a guest's uploads keep its own story;
+its personal values, everything in the tables, are its own wherever it
+plays).
+
+**Rewards per box.** Round 61's answer 9 keeps the quest line's taken
+rewards *per player* in a store of their own (`online_rewards`, round G's
+hub extras lane, 8.8). With four characters per account the player is the
+box: a store per account would let box 1's rewards block box 2 for ever (a
+second character with another partner would never get its partner's weapon,
+and never the forms box 1 already took: `treasure02` gives the forms 4-7 by
+the partner), which contradicts "alle Digivolutions". So `online_rewards` is
+keyed (account, box): the keeper writes the reward flags of a member's
+pending set to the box its binding names, every box's record carries its
+own (9.1.4), and a reset of a box empties its rewards. Round G is asked to
+build the store with the `box` column from the start (always 1 until round
+D); if it is already built without it, round D's migration adds it (9.1.8).
+`form_reward` reads these flags of the uploading box and the visits of its
+window; the room story no longer holds them.
+
+**Visits and quests.** The change rules read the visits of the uploading
+member and box, whoever owns the room: a guest's lobby visits are its own
+solo hubs, its field visits the shared instances (slot 0 there, whose level
+bounds a drop's +N, may be the owner). Round 61's answer 10 (b) gives a
+guest the owner's quest tiers at the boards: they come from the box the
+owner's binding names (its newest accepted revision; without a binding,
+the owner at his title, from his active box), not from "his newest online
+character".
+
+#### 9.1.10 What the rules cannot catch
+
+The server never simulates (1.2: no arbiter engine) and the random numbers
+of drops, +N, Mods, Bits amounts, skill-ups and identification live only in
+the engines' generator. So, plainly:
+
+- **The Cheats tab is open in seamless rooms today.** It disables its
+  controls only for the old direct connection: `BeginDisabled(net.active())`
+  (`game_main.cpp:3566`) and the player buttons with `sys &&
+  !net.active()` (`:3650`), the same on `fix-r59s2`, `fix-r62netlag` and
+  `feat-r63ownmenus`. In a room God mode, Infinite MP, One-hit, the sliders,
+  the randomizer drops, *+1 / +10 levels*, *+100,000 bits* and *Refill* all
+  work: `set_online` resets the cheats only when the engine is built
+  (`online.cpp:212`). They desync the instance, the upload context reports
+  `cheats: false` as a constant (`character.cpp:118`), God mode and One-hit
+  leave no trace in the record, and with round D an honest click on "+10
+  levels" in the lobby would be refused (`field_only`). Fixed before round D
+  (17): the tab's controls disabled and the player buttons hidden whenever
+  `online` is set, and `cheats` in the upload and achievement contexts from
+  the engine's real flags (an upload with cheats on is refused by today's
+  ranked check).
+- Within the game's rules nothing is caught: luckier drops than chance,
+  faster kills inside the bounds, a bot that plays all night, a client that
+  changes values inside the limits (a few more EXP per kill, a better
+  plausible drop), items given between a player's own accounts (giving is a
+  game feature).
+- A modified client plays with modified values until its next upload: at
+  most one stage visit plus the answer's round trip. Members of its instance
+  see it meanwhile; what they gain from it (EXP of kills it made easier, a
+  plausible item it gave them) is theirs. A client that never uploads keeps
+  nothing (`missing_upload` flags it).
+- A refused change never survives a room entry. A **flagged** change does:
+  it stays in the box until staff review or restore it, and the profile
+  shows the box *under review* (no details) meanwhile, so flagged values are
+  never shown as if checked. Above the bounds of 9.1.6 nothing is merely
+  flagged: what the game cannot produce in the window's time is refused.
+- The rates and the shop arithmetic need calibration (round D2); until then
+  they only flag. The per-script form table of `form_reward` flags until D2
+  has checked it (its count refuses).
+- Cheating offline is not a concern: offline saves never reach the server
+  (online characters start from zero, 1.1).
+
+What it does catch: every value the game cannot produce (ranges, packing,
+levels against EXP, skills against level, stats against the formulas, items
+that do not exist or cannot be equipped), every change the place cannot
+produce (a form, a bank or a card outside its lobby, EXP in a lobby, a
+rookie without its Digi-Lab pair, a form without its quest reward), every
+gain the window's time cannot produce, and a new character that does not
+start as the game starts one.
+
+#### 9.1.11 Pictures and names from the user's game data
+
+The game's art and text may not be committed. `dw4_game.exe --data <game
+data> --export-web <folder>` (beside `--export-presence-art`, reusing its
+loaders: `MountedResources`, `read_igb_document`, `decode_igb_texture`,
+`write_png`; about 9 s) writes, from the user's own copy:
+
+| Output | Source |
+| --- | --- |
+| `art/forms/<model>.png` | the 64x64 round faces of charaicon.png (256x256, a 4x4 grid in the order agumon, vmon, girumon, dorumon, angelr, alpha, beelzeb, hekabut, weregaru, wargrey, impdrafm, impdrapm, dukecrim, susanoo, metalgaru, bwargrey, by the AGUMON..BWARGREY actions of `i_stdigiface` / `j_digifacewin`): the soft-halo variant of stagis10 / stagis12 `separate/usa_pack.igb` |
+| `art/forms_full/<model>.png` | the staff roll's 256x256 full-body renders (stagis20 `separate/aus_pack.igb`, j_endroll), named by the model without `p_` (agumon.png ... susanoo.png) except Alphamon, whose render is `alpha8.png` (the exporter maps `p_alpha` to it; a model without a render gets no file, and the page falls back to the face); the game shows them dimmed (texels at most 99/255), the export brightens them by 255 / max (an editorial change, said on the profile page's credits) |
+| `art/cards/card_NN.png`, `back.png` | card01..card50.dds (128x128) of stagis11 `separate/aus_pack.igb`; card NN = row NN-1 |
+| `art/icons/{weapon,armor1,armor2,chip,xdata,fire,ice,thunder,dark,equipped}.png` | the font glyphs ∈ ∋ ∨ ∧ ¶ ⊂ ⊃ ∪ ∩ ⊆ of bectext.igb font00.png (beFontImage metrics as `TextCtlManager::load_fonts`), white with alpha, coloured by the page |
+| `data/game_data.json` | the tables of 9.1.2 (`game_*`, `game_stage_enemies` from the stages' generator files), names through `game_text_utf8` |
+| `manifest.json` | every key written, size, SHA-256, the game data hash, the exporter version |
+
+The operator copies the folder to the server (`GameData:Directory`, DEPLOY.md
+gets the step); the service imports `game_data.json` when its hash differs
+from `game_data_meta`, and serves `art/` under `/art/` (PNG only, keys from
+the manifest, no listing, no path outside the folder, cached a day). A key
+the manifest lacks is never linked: the page shows a placeholder made for
+the site (an outline and the form's name; checked in) instead of a broken
+picture. Serving the game's pictures publicly is the operator's decision, as
+with the Discord assets (13).
+
+#### 9.1.12 Player profiles on the website
+
+`/u/{name}` becomes the player profile; `/u/{name}/box/{n}` shows one box
+in full. The site stays without JavaScript (its CSP is `default-src
+'none'`), so boxes are links, not tabs, and colours are CSS classes
+(`style-src 'self'` forbids inline styles).
+
+- **Header**: the profile picture is the active box's current form
+  (`art/forms_full`, else the face, else the placeholder), with the Tamer
+  name, the form, the level and the box. The same face is the account's
+  small picture in the room list and on the account page.
+- **Boxes 1-4** side by side: face, Tamer name, form, level, play time,
+  *under review* for a flagged box; an empty box says so.
+- **A box**:
+  - *Character*: HP / MP bars, BITS, ¶ Data, the current form's Strength,
+    Defense, Wisdom, Spirit, Speed, HP Max, MP Max and the resistances (⊂
+    fire, ⊃ ice, ∪ thunder, ∩ dark) with the gear included, as the status
+    window shows them.
+  - *Equipment*: Weapon 1-3 (∈, the name and +N in its colour, *Mods: n*,
+    the chips in the pockets of weapon 1), the ∋ armor with its chips, the
+    ∨ armor; each with its icon in the gear colour.
+  - *Digivolutions*: all 16 forms; reached ones with the face, name, level,
+    EXP and the bar to the next level, the nine skills, the boosts, the
+    form's own stats and the techniques it knows; the others greyed with
+    "not reached" (the count "n of 16" as today).
+  - *Collection*: the cards held (card art, else the name; the name in the
+    card's colour), *n of 50*.
+  - *Owner and staff only*: the Device Folder (36, all colours), the Item
+    Bank and BITS Bank, the Disk Folder, the revision history with changes,
+    flags and refusals.
+- **Privacy** (default, question 12): a private profile shows nothing but
+  the name, as today (`profile_public`). A public one shows the header, the
+  four boxes, every form with its values, the equipped gear, BITS, ¶ Data,
+  the cards and the *under review* mark; the folder, the bank, BITS Bank,
+  disks, UNIQUE, history, flags and refusals only to the owner and staff.
+  The privacy page lists what is public.
+- `DigimonNames` gets Cl-Angemon (`p_angelr` is missing in
+  `WebOptions.cs:44-61` and shows its model name today); names come from
+  `game_shinka` when imported.
+
+**Gear colours** exactly as the game's 803B07E0 (`device_color`,
+`items.cpp:51-63`), by +N; chips, disks and the unidentified records
+(weapon 276, armor1 31, armor2 44) always white; Mods do not change the
+colour. The CSS values are the float32 constants times 255, rounded:
+
+| +N | Game RGB | Name on the site | CSS |
+| --- | --- | --- | --- |
+| 0 | 0.9, 0.9, 0.9 | white | `#E5E5E5` |
+| 1-30 | 0.1, 0.9, 1.0 | blue | `#1AE5FF` |
+| 31-100 | 0.4, 1.0, 0.6 | green | `#66FF99` |
+| 101-500 | 0.9, 0.8, 0.1 | yellow | `#E5CC1A` |
+| 501-999 | 1.0, 0.6, 0.1 | orange | `#FF991A` |
+| 1000-2047 | 1.0, 0.0, 0.9 | purple | `#FF00E5` |
+
+**Card colours** as the booster pack shows a card's name
+(`subwnd_shop.cpp:2641`, the `card` table's RARE): 0 common white
+`#FFFFFF`, 1 uncommon yellow `#FFFF00`, 2 rare green `#00FF00`.
+
+The names show on a dark panel as in the game; the icons are white masks
+(`mask-image`) filled with the class's colour. A drop's +N is at most slot
+0's level + 1 (803B0AB4) and script rewards give at most 666, so purple needs
+a level 999 player in slot 0 and a 1-in-6,000 roll.
+
+#### 9.1.13 Performance
+
+A load composes four boxes from about 200 rows each (PRIMARY KEY and key
+ranges, about 2 ms on the XAMPP MariaDB, an estimate); an upload checks in
+well under a millisecond (a merge, rare, a few more) and writes the changed
+rows only (a field visit changes the slot row, one form row and a few
+devices: under 15 rows, about 5-15 ms with the history row and the box's
+row locks, which only that account's writers and a HeidiSQL edit of that box
+ever wait for). The watcher reads one indexed `changed_at` query a minute.
+Storage per box about 15 KB of rows plus about 66 KB of history (20
+revisions); `online_visits` about 15 MB a month for 20 regular players. The
+views scan only the rows they show; `v_online_story` expands 1024 flags per
+account through `util_seq` and is meant for looking at single accounts.
+No extra latency in the game: uploads stay asynchronous as today (a
+`visit_pending` retry delays only the answer).
+
+#### 9.1.14 Tests
+
+- **Server unit**: the mapping both ways for synthetic records and the
+  golden vectors (also with the C++ codec, `record_golden.json`); every rule
+  code with a passing and a failing case; the "only what changed" test
+  (a violation on unchanged fields is `grandfathered`, the same violation
+  after a change refuses); the breaker (two in a row per box, three accounts
+  an alert); the new-character base (`new_template`, and a forged first
+  upload consistent in itself refused); change rules with visit windows by
+  sequence and box (a late answer after 429 / 5xx, a save before its
+  barrier, an open visit, `visit_pending` and its time limit, visits of box
+  1 not counted for box 2, a missing log); the ETag (a staff revision in
+  between merges, another PC's upload is 409, a deleted and re-made box is
+  409); the merge (counters, single values, devices as multisets with
+  `merge_missing` / `merge_overflow`, equipment, a second upload after a
+  merge); the binding (`play_required`, `/play` at the title only, a
+  restart keeps it); rule actions from the configuration; each completion
+  of the edit table, an edit not applied (revert and draft); edit detection
+  by the fingerprint with the quiet time; the derived values
+  (`recalc_player` in C#) against values the C++ engine writes for the same
+  records with the user's game data (skipped without `DW4_DATA`, never
+  committed); the game data import; the bounds against hidden bot runs'
+  visits (no honest visit near the factor); the rarity of every +N boundary
+  and every card colour; art serving (PNG only, no listing, no path outside
+  the folder, the placeholder for a key the manifest lacks).
+- **Server integration** (the local stack's MariaDB): the migration on a
+  database of today's schema with characters (round 59's `character_test.py`
+  data) as root and as the restricted user of DEPLOY.md 2 with the new
+  grants (and refused before the first statement without them): byte-exact
+  conversion, history moved, the rules as `migrated:` flags, the hashes and
+  addresses converted (logins and sessions still work), the client's `GET`
+  gives the same record as before; the views readable and no binary column
+  left in a browsed table outside the legacy, `schema_version` and story
+  ones; concurrent uploads of four boxes; a HeidiSQL-like `UPDATE` and
+  `INSERT` while an upload runs (neither lost, both handled as an edit); the
+  profile pages as anonymous, owner and staff (what each sees).
+- **Client ctests** (`online_character`): four boxes on the card, per-box
+  state and the 0-3 / 1-4 conversion, the card store in memory (an edited
+  cache file is not played), the recovery through the server, new
+  characters into the lowest free box with their `/play`, no PUT before a
+  confirmed `/play`, `play_required` answered by `/play` and the save,
+  `visit_pending` retried, a copy into another box not uploaded, a refusal
+  leaves the room, the merge notice; the Cheats tab disabled online and the
+  context's `cheats` from the engine; the export (`--export-web` on the
+  user's data: every key of the manifest, sizes, the grid order of the
+  faces, `alpha8.png` for Alphamon).
+- **Engine**: `make_record(apply_record(r)) == r` for every record the tests
+  compose and for the 511 distinct records (hidden, with the data).
+- **Scenarios** on hidden real clients, section 16's table: D1-D16.
+
+Online off stays bit-identical: round D changes no engine code
+(`character_called` is round 59's; the Cheats tab fix is UI); the checks of
+section 15 run as always.
 
 ## 10. Client: account and room UI
 
@@ -3387,10 +4425,12 @@ anyway; joining goes through the room list.
 | Relay | `DW4Online.Relay`: DW4R2 hub replacing the splice: one connection per member, frames, instance groups (solo-led and sealed), server-paced sealing at 59.94 Hz on a dedicated timer thread with immediate fill, delay suggestions from the arrival margins, event stamping, snapshot and log store with canonical hashes and fork lists (6.8), state delivery for join / co-arrival / resync / resume with its own rate limit, fingerprint vote, presence fan-out, pings, the 64 KB/s bucket for game frames |
 | Rooms | `RoomService`: instances as lockstep groups (id, stage, visit, context hash, slots, parent and fork frame, departing, boss lock, joinable), barrier decisions DISSOLVE / co-arrival / JOIN / NEW with holds and the boss choice (3.4), catch-up estimates from the members' replay rates, forks of both kinds, in-band JOIN and LEAVE, preferred slots, no instance end when its first member leaves (`EndInstanceLocked` goes), room-scoped relay tickets, the settings hash, the relay connection as heartbeat. `POST /rooms/{code}/stage` and `/stage/leave` are retired; the room state lists instances with stage and members. Room settings gain camera mode and light mode |
 | Story | migration with `online_story`; `StoryMerge` in the domain with the golden vectors; plausibility table from the census; pending sets with STORY_ACK; the owner-away setting with the session's dropped set; `GET /online-character` composes, `PUT` ignores story bytes; `GET /rooms/{code}/story` for the website and debugging |
+| Character | (round 64 design, 9.1) four boxes per account; `online_slots`, `online_slot_stats`, `online_forms`, `online_devices`, `online_disks`, `online_cards`, `online_rewards` by box, the persistent `/play` binding, the history with its changes and the client's record, refused uploads, edit drafts, the relay's visits by sequence and box, the breaker's state; `GET /online-characters` composes, `PUT /online-characters/{box}` (ETag of generation and revision; a staff revision in between is merged, never 409) validates by the rule table (refuse / flag / off per code, refusing only what the upload changed, against the new-character record for a new box), `POST .../{box}/play`, a reset per box; staff edits on the website (with a preview) and in HeidiSQL (after a quiet time, not applied edits kept as drafts) with completions, the merge, *Reload now* and audit rows; box locks for every writer; the migrator's data step converts today's blob rows inside the started mark |
+| Database | (round 64 design, 9.1.3) hashes stored as hex and addresses as text in their tables, record and file blobs in side tables, virtual columns for the story's phase, keys and counters and the migrations' checksums, the `v_` views; the `game_*` tables (with `game_enemy` and `game_stage_enemies`) imported from the deploy-time export |
 | Achievements | catalogue migration to the client's ids and thresholds (built in S2: migration 0009 (0008 is `online_story`), `data/online/achievements.json`, `roomPlayers`, owner-only story challenges; 11) |
-| Config | `Sealing:MaxDelayTicks` (15, measured in S1, 6.4), `Sealing:LateTarget` (0.001), `Relay:ReconnectSeconds` (10), `Relay:LagLeaveSeconds` (10), `Relay:StateBytesPerSecond`, `Instances:CoArrivalHoldMs` (3000), `Instances:JoinHoldSeconds` (30, measured in S1, 3.4), `Instances:MaxCatchUpSeconds` (30), the flood and recovery limits of the S1 reviews (`Relay:MaxQueuedBytes` 4 MiB, `Relay:MaxQueuedStateBytes` 24 MiB, `Relay:StateBytesPerMinute` 64 MiB, `Relay:MaxConcurrentStateBuilds` 2, `Instances:LoneBarrierMs` 1000, `Instances:MaxAheadSeconds` 15, `Instances:ResyncLimit` 3 in `Instances:ResyncWindowMinutes` 10, 6.6-6.10), `Rooms:StoryWhileOwnerAway` (drop, built in S2), `Instances:StoryBurst` (10) and `Instances:StoryMessagesPerMinute` (60, S2); `Play:CurrentProtocol` follows the client. `Sealing:StallMs` and `Instances:MaxJoinLogMinutes` of revision 1 are gone |
-| Website | the room page shows instances per stage (built in S2: `/rooms` lists each room's instances by stage with the client's stage names from `data/online/areas.json`, "2 together" / "alone" / boss fight / leaving, the hub stages last; names only for signed-in members of the room) |
-| Deploy | fixed-key self-signed certificate and the pin script (10); port 52041 as before (built in S2: `tls-key.ps1`, `print-pins.ps1`, the pin build step, DEPLOY.md 4, 6.1, 6.4) |
+| Config | `Sealing:MaxDelayTicks` (15, measured in S1, 6.4), `Sealing:LateTarget` (0.001), `Relay:ReconnectSeconds` (10), `Relay:LagLeaveSeconds` (10), `Relay:StateBytesPerSecond`, `Instances:CoArrivalHoldMs` (3000), `Instances:JoinHoldSeconds` (30, measured in S1, 3.4), `Instances:MaxCatchUpSeconds` (30), the flood and recovery limits of the S1 reviews (`Relay:MaxQueuedBytes` 4 MiB, `Relay:MaxQueuedStateBytes` 24 MiB, `Relay:StateBytesPerMinute` 64 MiB, `Relay:MaxConcurrentStateBuilds` 2, `Instances:LoneBarrierMs` 1000, `Instances:MaxAheadSeconds` 15, `Instances:ResyncLimit` 3 in `Instances:ResyncWindowMinutes` 10, 6.6-6.10), `Rooms:StoryWhileOwnerAway` (drop, built in S2), `Instances:StoryBurst` (10) and `Instances:StoryMessagesPerMinute` (60, S2); round 64 design: `OnlineCharacter:Rules:Actions:<code>` (9.1.6), `OnlineCharacter:Rules:BreakerConsecutive` (2) and `BreakerGlobal` (false), `OnlineCharacter:LeaveRoomOnRefusal` (true), `OnlineCharacter:VisitPendingSeconds` (90), `OnlineCharacter:DropPlusMargin` (10), `OnlineCharacter:EditQuietSeconds` (120), `OnlineCharacter:RequireGameData` (false), `OnlineCharacter:RejectedUploadDays` and `VisitDays` (30), `GameData:Directory`; `Play:CurrentProtocol` follows the client. `Sealing:StallMs` and `Instances:MaxJoinLogMinutes` of revision 1 are gone |
+| Website | the room page shows instances per stage (built in S2: `/rooms` lists each room's instances by stage with the client's stage names from `data/online/areas.json`, "2 together" / "alone" / boss fight / leaving, the hub stages last; names only for signed-in members of the room); round 64 design (9.1.12): player profiles with the four boxes, every form with its picture, stats and gear in the game's colours, the current Digimon as the profile picture, pictures under `/art/` from the export, the admin character editor |
+| Deploy | fixed-key self-signed certificate and the pin script (10); port 52041 as before (built in S2: `tls-key.ps1`, `print-pins.ps1`, the pin build step, DEPLOY.md 4, 6.1, 6.4); round 64 design (9.1.11): `--export-web` on the user's PC, the folder copied to `GameData:Directory`, `CREATE VIEW, SHOW VIEW, DROP` on `dw4online.*` for the restricted database user (checked by the migrator before it starts), the HeidiSQL guide starting at the `v_` views |
 | Tests | unit tests for sealing schedules and fills, events, forks, barrier decisions (holds, co-arrival, context key) and merge vectors; integration tests with scripted fake clients; end-to-end tests with the real game client (16) |
 
 ## 15. Online off stays bit-identical
@@ -3467,6 +4507,22 @@ anyway; joining goes through the room list.
 | S24 | map recorder (dng102b3) read far from the partner (scoped, local freeze) and near (original) | S3 |
 | S25 | Trailmon ride (dng412b3) with one member not aboard: no fork, the rider moves alone | S3 |
 | A1 | online achievements: S5's run with achievements on; each machine reports its own player (online_join in its solo lobby, first_defeat in the sealed field) with the ranked context, the counters at the end; the server holds them (`scenario.json` "achievements") | S2 |
+| D1 | a new account: Create Digimon (its `/play` with the new-character record), the first stage change: box 1's rows in the tables (SQL), `v_characters` and `v_character_devices` readable, the profile shows the box with its face picture | D |
+| D2 | four boxes: characters made in boxes 1 and 2 in two sessions, the character select shows both; the save room's copy of box 1 into box 3 is not uploaded (notice) and gone at the next entry; the profile picture follows the bound box; a forged upload for box 3 is `wrong_box`; `/play` for box 2 inside a stage is refused, at the title after "Continue? No" accepted | D |
+| D3 | a staff edit while the player is offline (an `UPDATE` of BITS and of a form's level, as HeidiSQL sends it, row by row): processed after the quiet time, the next entry's engine has them (trace), an `sql_edit` revision with the completed EXP, an audit row `character_edit` | D |
+| D4 | a staff edit while the player plays (website, then SQL, then *Restore*): every later upload of his is accepted and merged (no 409, no stop of his uploads): the staff values stay, his progress since is added (BITS removed by staff and a purchase of his both count), the notice comes once, the values are in his game after the next entry; *Reload now* takes him out of the room. Counter-proof on main: the first upload after the edit meets 409 and the uploads stop | D |
+| D5 | a forged upload (a `DW4_ONLINE_DEV` switch: EXP beyond its level's band, a chip with +N, a form unlocked in a field, a +2047 drop at level 20, a million EXP in a minute): 422, the refused upload stored, the member leaves the room with the notice, the next entry loads the server's character; staff *Accept* makes it the next revision. Counter-proof on main: main stores the forged record | D |
+| D6 | a flagged upload (rate limits set low in the scenario's server settings): kept and flagged, the profile shows *under review*; *Reviewed: fine* clears it | D |
+| D7 | round 61's G2 (a guest on the owner's story): the guest's tables get its personal progress, its story bytes stay its own, the owner's tables and story are untouched by the guest's uploads; a quest reward the guest takes goes to its bound box's `online_rewards`, the owner can still take it | D |
+| D8 | migration: a database of main's schema with characters (`character_test.py` data) migrated as the restricted user with round D's grants: every record composed byte-exact from the tables, the history moved, the rules as `migrated:` flags, logins and sessions still valid, the client enters with the same record and its next save is accepted | D |
+| D9 | two members in one instance with characters loaded from the tables (S2's run): equal fingerprints, each carry equal to its composed record's values | D |
+| D10 | the website with the export (art and data) and without it: every picture of the manifest shown (Alphamon from `alpha8.png`); placeholders and `weapon #n` names without, the admin banner and `/health` *degraded*; no broken image, no inline style | D |
+| D11 | a forged first upload of a new box (a `DW4_ONLINE_DEV` switch: level 999, every form, 9,999,999 BITS, purple gear, consistent in itself): refused against the new-character record; a forged `/play` record is `new_template`. Counter-proof on main: accepted | D |
+| D12 | the server restarts while two members play (the service stopped and started): their bindings survive, the leave and the next stage change saves are accepted, nobody is sent out with `wrong_box`; a binding deleted by hand gives `play_required`, the client binds again and saves | D |
+| D13 | visit order: the server answers the first save after a lobby visit with 429 (a scenario switch), the member walks lobby -> field -> lobby meanwhile and changes the bank and its form; the delayed and the newer saves are accepted (no `lobby_only`); a save sent before its barrier's visit closed gets `visit_pending` and passes on its retry | D |
+| D14 | box switching: box 1 plays the field and the Digi-Lab, the member goes to the title, binds box 2 and uploads box 2 with new EXP and a new form: refused (box 1's visits do not count for box 2) | D |
+| D15 | grandfathering and the breaker: a migrated box with a violation the old checks let through (`exp_band` on a form) plays three stage changes: accepted with `grandfathered:exp_band`; a rule set to misfire (a scenario setting) refuses one box twice, then flags it and alerts | D |
+| D16 | HeidiSQL while the player plays: a half edit (the current form set before its `reached`) is not processed before the quiet time; an invalid edit (a disk twice) is reverted into a draft at the next upload, the upload is accepted (no 423); an `INSERT` of a device during an upload is neither lost nor taken for the server's own row; the Cheats tab is disabled in the room | D |
 
 - **Real game clients** (round S1 integration): `run.py G1 --game-exe EXE
   --data DATA` starts two hidden `DW4_ONLINE_DEV` game clients instead of fake
@@ -4309,7 +5365,7 @@ story, and it is told whose story it plays.
 | story (sets and keeper) | 503 as a story value (census class and setter, `story_sets.json`, `online_story_sets.inc`, the server's sets, `session_values.txt`); the key setter stages (census from the stage data's item drops and the r25c FLAGFOLDER rises; the keeper refuses a key from another stage); `story::apply` and `holds_dropped` with the barrier's target (503 not into stag0001); the rebase derivation for saved stories (C++, C#, Python, golden vectors); the keeper's queue of earned values (reason *queued*, merged when due by the relay), the owner without round 59's spacing; keeper tests; the protocol version |
 | client | the call shop closed online (`callshop.lua` wrapper, hint) and `Engine::common_rebuilt` with its application; the Game Start's hold until the confirmed story (with G7's dev-build switch); the card store's story override for a guest's session and the entry's rewrite of an old cache; the own story bytes in `CharacterSync` (uploads, recovery, 409 reload); *queued* in the session; the toast, the F1 / room view story line and the "moved on" notice; the online difficulty dialog rule; `numemon_freed` by mask |
 | scenarios | the production-like `seed_story`, G1-G16 with counter-proofs on main (G16 on round 59), the regression S2, S3, S5, S14, S14h, S14a, S14p, S14z, S16, S17a and C1-C3 |
-| hub extras (only if question 9 says per player or question 10 says (b)) | rewards: the `online_rewards` store and its composition, the keeper routing reward flags to the sender's own store, the room story blob without them, the title's overlay and the personal-class extension at joins and DISSOLVE; quest gates: the owner's tiers from his newest online character record in every BARRIER_OK into a hub, the wrapper after the ML11-13 `start.lua` derivation |
+| hub extras (only if question 9 says per player or question 10 says (b)) | rewards: the `online_rewards` store (round 64 design, 9.1.9: keyed by account and box, the box always 1 until round D) and its composition, the keeper routing reward flags to the sender's own store, the room story blob without them, the title's overlay and the personal-class extension at joins and DISSOLVE; quest gates: the owner's tiers from his newest online character record (from round D the box his `/play` binding names, 9.1.9) in every BARRIER_OK into a hub, the wrapper after the ML11-13 `start.lua` derivation |
 
 Done when: G1-G16 pass (G1, G3, G4 and G11 fail on main, G16 on round 59:
 the counter-proofs); the regression scenarios pass; ctest; the server's
@@ -4330,6 +5386,62 @@ queue and the owner's exemption can go into round 59's fix round alone
 (server only and without a protocol change: the keeper answers a queued
 value with *wait* as today, the client's resends do no harm, and the
 keeper merges it when due).
+
+### Before round D: the Cheats tab in rooms (a small fix)
+
+The Cheats tab works in seamless rooms today (9.1.10: `game_main.cpp:3566`
+and `:3650` test only `net.active()`), which desyncs instances and lets
+cheated levels and bits into online saves now, not only after round D.
+Fix in the next client fix round on main after round 63 (the same lines in
+`feat-r63ownmenus`): the tab's controls disabled and its player buttons
+hidden whenever `online` is set, with a line "Cheats are off in online
+rooms."; `cheats` in the character and achievement contexts
+(`character.cpp:118`, `achievement_api.cpp:13`) from the engine's real flags.
+Checks: a hidden room run where the buttons are absent and the context says
+false; online off bit-identical (UI only).
+
+### Round D (after round G): the server's character
+
+Goal: section 9.1. Lanes build against the tables, the mapping, the rule
+codes, the binding, the ETag and the merge pinned there; the integration
+fixes the migration number.
+
+| Lane | Scope |
+| --- | --- |
+| tables | migration 00NN (the `online_*` tables with surrogate ids for devices and disks, `online_slot_stats`, the side tables, `online_play`, `online_edit_drafts`, `online_rule_state`, `ref_forms`, `util_seq`, the empty `game_*` tables, the hash and address columns converted to text and the cloud save blobs moved, the virtual columns, the `v_` views, the legacy COMMENTs; first task: the expressions on MariaDB 10.4.32 and 11.4), the migrator's grant check and its data steps (inside the started mark, versioned in the checksum), the repositories' text conversion of hashes and addresses, the C# mapping tables <-> `SaveRecord` <-> bytes with `data/online/record_golden.json` (and the C++ side of the vectors), the box repository (every writer under the box lock, the fingerprint from the written state, the history with `changes` and `client_record`, refused uploads, visits), the data step for today's rows (box 1, every rule as `migrated:` flags), edit detection (fingerprint, watcher, quiet time), completions, drafts and the merge, `GET /online-characters`, `PUT /online-characters/{box}` with the ETag rules, `.../play` with the persistent binding, the reset per box, the queries of the other services moved |
+| rules | the game data import (`GameData:Directory`, `game_data_meta`, `game_enemy`, `game_stage_enemies`), `recalc_player` in C# (growth table, shinka, gear, caps) checked against the engine with the user's data, the rule table with its codes and configured actions, the "only what changed" test and the breaker, `new_template` from a fresh port save, the change rules on the relay's visit log (`RoomHub` writes `online_visits` at the barrier decision and closes them; windows by sequence and box; `visit_pending`), `rookie_pair`, `form_reward` with `data/online/form_rewards.json` derived from the scripts, `drop_plus`, `exp_bound` and `bits_bound`, the rates (flag only), staff accept (as a merge) and review, the 409 / 422 answers, the game data banner and `/health` |
+| client | four boxes in `CharacterSync` (per-box state in `online_card.state`, the 0-3 / 1-4 conversion in `character_api`, the card in memory, the recovery through the server after its `/play`, new characters into the lowest free box with the new-character record, `/play` at the Game Start and no PUT before it is confirmed, `play_required` and `visit_pending` handled, the ETag, copies into another box not uploaded, a refusal leaves the room, the merge notice), `visitKey` in the context, `--export-web` (faces, staff roll renders brightened with `alpha8.png` for Alphamon, cards, icon glyphs, `game_data.json` with the stages' enemies, `manifest.json`), ctest `online_character` and an export test with the user's data |
+| web | the profile pages (9.1.12: header picture, four boxes, a box in full, gear and card colours, *under review*, privacy), `/art/` with the manifest and the placeholder, the admin character editor (the preview with every completion, drafts of database edits, *Reload now*, history, refused uploads with *Accept*, flags, the breakers, the game data banner), the account page's reset per box, the privacy page, DEPLOY.md (export, copy, the grants, the HeidiSQL guide: start at the `v_` views, what is editable, what the server does with an edit and when) |
+
+Done when: D1-D16 pass on the local stack with hidden clients (D4, D5 and
+D11 also run on main as counter-proofs: 409 and stopped uploads after a staff
+edit, the forged record and the forged first record stored); the regression
+S2, S3, S5, S14, S14p, S16, S17a, round G's G2 and G3 and `character_test.py`
+C1-C4 pass; the server's unit and integration tests and every ctest pass; the
+engine fixpoint holds for every composed record and the 511 distinct records;
+the bounds of 9.1.6 never refuse a visit of the hidden bot runs (r25c
+segments online); online off bit-identical (`det.sh` 4004f056 / audio
+396cb219 twice, r25c 10 of 10 with 1,748,011 frames, the save state suite 17
+of 17); a DW4Online release with the migration.
+
+Depends on: round 59 and round G merged (the same files: `character.cpp`,
+`OnlineCharacterService.cs`, the story keeper; round G's `online_rewards`
+with its `box` column), round 62 merged (`RoomHub`), the Cheats tab fix
+above; the answers to questions 11-14 (defaults otherwise). The user's
+steps: the export on his PC, the folder to the server, a database backup,
+`migrate` (as root on his server; the restricted user of DEPLOY.md 2 needs
+the GRANT first), the client and the server together (the client version
+rises).
+
+### Round D2 (after some weeks of play): calibration
+
+| Lane | Scope |
+| --- | --- |
+| calibrate | the rate limits and the bounds' factor from hidden bot runs (the campaign bot online through the r25c segments, `work/bot_combat`) and the stored visits and revisions of real play; `shop_sums` checked against the port's shops (with the quest rewards; ¶ Data as a lower bound) and set to refuse; the breakers and `grandfathered:` flags real play raised, reviewed |
+| rewards | the per-script form table of `form_reward` checked against every branch of treasure02-08 (difficulty, progress, the rookie with the highest EXP, the reward flags) and set to refuse |
+| cleanup | the migration that drops the legacy tables (with round D's DROP grant); `missing_upload` reviewed; if abuse shows, an option that holds a member's next JOIN until its barrier's upload is accepted (`Instances:HoldJoinUntilSaved`, off by default) |
+
+Depends on: round D deployed.
 
 ## 18. Questions for the user
 
@@ -4422,6 +5534,60 @@ online story starts at zero; online, a member's START menu / status window,
 talks and recorders open only for that member and never pause the
 instance, with no protection (this replaces the answer to question 6).
 
+### Questions of round 64 (2026-10-31)
+
+(Questions 9 and 10 are round 61's and answered. Its answer 9, rewards per
+player, means per box with four characters per account: 9.1.9.)
+
+11. **One story per account or per box?** Online, an account gets the four
+    boxes of the original (9.1.1). In the original every box also has its
+    own story. Should (a) all four online characters share the account's one
+    online story (a new character in box 2 plays on in the story the account
+    has reached, but takes its own quest rewards and forms, 9.1.9; in
+    someone else's room everyone plays the owner's story anyway), or (b) each
+    box keep its own story (a new character starts the story from the
+    beginning; the room's story is then the story of the box the owner
+    plays, chosen when he opens the room)? Default: (a), which rounds 56-61
+    already build on; (b) costs a lane in round D and touches the room story
+    (8.4-8.8).
+12. **What the profile shows to everyone.** Default: a public profile shows
+    the current Digimon as the picture, the four boxes, every form with its
+    level and values, the equipped gear with its colours, BITS, ¶ Data, the
+    cards and an *under review* mark on a flagged box (no details); the
+    Device Folder, the Item Bank and BITS Bank, the disks and the history only
+    to the owner and staff; a private profile (account page) shows only the
+    name. Anything to move between the two?
+13. **Local saves on the profile?** The profile shows the online characters
+    (they start from zero online, 1.1). The private cloud backup of the local
+    save also holds four boxes (for example a level 88 Dorumon). Should the
+    profile also show those, marked as "offline save, not checked by the
+    server"? Default: no (the backup stays private, as promised on the
+    privacy page).
+14. **A rule that keeps refusing the same character** (9.1.6, the breaker).
+    A refused save sends the member out of the room. If a rule is wrong for
+    some honest character, it would do that at every stage change until
+    staff act. Default: after two refusals in a row by the same rule, that
+    character's saves are kept but marked *under review* and staff are
+    alerted (the honest player plays on; a cheater who forges the same thing
+    a third time keeps it, marked and visible, until staff restore it).
+    Alternative: always refuse (no cheater ever keeps a refused value, an
+    honest player hit by a wrong rule cannot save until staff switch the
+    rule off or accept his saves).
+
+### Answers of round 64 (user, 2026-10-31)
+
+11. Story: **one story per box (b)**, as in the original - a new character in
+   another box starts the story anew; a room uses the story of the box its
+   owner plays (the extra lane of round D).
+12. Public profile: **the default** (current Digimon picture, the 4 boxes, all
+   forms with values, the equipped gear in its colours, BITS, Data, cards,
+   "under review"; Device Folder, Item Bank, BITS Bank, disks and history only
+   for the owner and staff).
+13. Local saves of the cloud backup on the profile: **no** (the default).
+14. A rule that keeps refusing: **the breaker** (the default): after two
+   refusals in a row by the same rule the box's saves are accepted, marked
+   "under review", and staff is warned.
+
 ## 19. Risks
 
 - **Multi-camera semantics** have no Dolphin reference: an actor animates when
@@ -4476,6 +5642,28 @@ instance, with no protection (this replaces the answer to question 6).
 - **Scope**: five rounds plus a buffer; S1 is the largest (the blockers of
   revision 1 all land there). The first rounds compete with the
   player-noticeable 1:1 work on main.
+- **Character rules** (round 64 design, 9.1.6) can refuse an honest save
+  when the server's rules and the port disagree (a game rule read wrongly,
+  a C# `recalc_player` error for one form). Such a rule does not refuse
+  once: a wrong rule fails again at every stage change of that character,
+  and each refusal sends the member out of the room. What bounds it: a rule
+  refuses only values the upload changed (a state the player did not make,
+  from the migration or staff, stays a flag), the breaker flags instead
+  after two refusals in a row and alerts staff (question 14), every rule has
+  a code and a configured action, refused uploads are kept for staff to
+  accept (as a merge, also after the box moved on), and the rules whose
+  tables are not yet checked only flag.
+- **The bounds** (`exp_bound`, `bits_bound`, `drop_plus`) rest on the
+  stages' enemy data and a factor of 10 over one kill a second; D's bot runs
+  must stay far below them, and D2 calibrates them from real play.
+- **Direct database edits** are powerful: a HeidiSQL edit is checked when the
+  server processes it (after two quiet minutes, or at the box's next load or
+  upload), not when it is typed; an edit that cannot be applied is reverted
+  into a draft, so a mistake never locks the box but can surprise the
+  editor (the admin page says why).
+- **Merging staff edits into a running session** keeps the player's
+  progress, but his game shows the old values until his next room entry;
+  what must apply at once needs *Reload now* (9.1.7).
 
 ## Appendix: evidence
 
