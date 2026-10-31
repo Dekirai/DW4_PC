@@ -3579,7 +3579,36 @@ both sides kept). The review's findings and their fixes:
   achievement reports; the admission's owner presence is read before the
   story load (not reproduced); a new owner without a story starts from what a
   guest did in the room before (a design question for the user); the cloud
-  panel's *Log out* does not revoke the shared login on the server.
+  panel's *Log out* does not revoke the shared login on the server;
+  `api::unlocked_difficulty` still answers Normal without an online character
+  (since the reset empties the story too, an account without a character has
+  no clears left).
+- Found in the verification and fixed: on a loaded machine (four scenarios at
+  once) A1's two clients stalled together for ten seconds; the hub took both
+  out for lag, the instance ended before either got the ticks up to its LEAVE,
+  and both waited for them for good. Nobody is taken out for lag now while
+  every connected member of the instance lags (`RoomHub`, HubLogicTests);
+  alone A1 passed in 289 s before and after.
+
+Checked on the fix round's tree (the release build with tests and the
+`DW4_ONLINE_DEV` build of a57a68b, the server at its head): ctest 44 of 44;
+online off `det.sh` 4004f056 / audio 396cb219 in every run (plain twice, the
+camera check with 0 of 1902 frames, no leash, the extra renders hook); r25c
+10 of 10 with 1,748,011 frames (every segment as before); the save state
+suite 17 of 17 identical after loading; the server's unit tests 167,
+integration and end-to-end 78 passed and 1 skipped against a private MariaDB
+(a fresh data directory per run: XAMPP's MariaDB 10.4 crashes now and then
+with the breakpoint exception at offset 0x643842 on this PC, eleven times in
+three days, a data directory it left behind read short at its next start);
+22 game scenarios on hidden real clients (the S1 set with r55's S11a, S11b and
+S18b, S14, S14h, S14a, S14p, A1: A1 alone after the run above; with the
+lag rule S1, S2, S3, S5, S11a, S11b, S21 and A1 again, 8 of 8), the 9
+fake-client scenarios, the 8 UI scenarios at 1920x1009 widescreen MSAA 4
+(*areas* now ends with the kicked guest resetting the online character its
+game made: the account, reset and after-reset screens looked at) and
+`character_test.py` C1, C2, C3, C4 and P1. S14p's flag reached the owner's
+`online_story` 0.5 s after the guest set it (its visit was older than ten
+seconds).
 
 ### Round S3 (r54): stage flow in shared instances
 
