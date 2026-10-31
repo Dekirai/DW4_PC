@@ -89,7 +89,10 @@ afterwards), serves it from the store as the service does and runs the client wi
 `local-db.ps1` uses XAMPP's MariaDB binaries (`-MySqlBin` for others) with its **own** data directory in
 `server/DW4Online/.local` (gitignored), its own port and `--bind-address=127.0.0.1`; it never touches XAMPP's data,
 other databases or services and stops only the `mysqld` it started (by PID). XAMPP ships MariaDB 10.4, whose native
-AIO hung `DROP DATABASE` here (an InnoDB latch wait), so the script starts it with `--innodb-use-native-aio=0`.
+AIO hung `DROP DATABASE` here (an InnoDB latch wait), so the script starts it with `--innodb-use-native-aio=0`. The
+same hang is the likely cause of the server's failed first start on 31.10 (migration 0001 stuck in a `CREATE TABLE`),
+so the XAMPP variant of the deploy kit sets that line in the server's `my.ini` too (DEPLOY.md section 1.1), and the
+migrator warns when it talks to a MariaDB before 10.6 on Windows with native AIO on.
 The integration tests create a database `dw4online_it_<random>` per test class and drop it afterwards.
 
 Run the service locally:
@@ -144,8 +147,10 @@ DW4Online.Server tls-pin --host <IP or name> | --thumbprint <hex> | --file <cert
 ## Database
 
 MariaDB 11.4 LTS is the target (developed on a private 10.4 instance; the schema avoids `INET6` / `UUID` so both
-run it; the server installed on 31.10 runs XAMPP's 10.4.32, and the integration tests also pass on a private mysqld
-with XAMPP's own `my.ini` plus bind-address and max_allowed_packet, as the server has it). InnoDB, `utf8mb4_unicode_ci` set explicitly (11.x changed the default), all times UTC
+run it; the server installed on 31.10 runs XAMPP's 10.4.32, and the integration tests pass round after round on a
+private mysqld with XAMPP's own `my.ini` plus the three lines of DEPLOY.md section 1.1: bind-address,
+max_allowed_packet and `innodb_use_native_aio=0`, without which DDL can hang). InnoDB, `utf8mb4_unicode_ci` set
+explicitly (11.x changed the default), all times UTC
 `DATETIME(3)` written by the service. The migrator applies `sql/NNNN_*.sql` in order and records each in
 `schema_version` with the SHA-256 of the file. MariaDB commits DDL implicitly, so before it runs a migration it marks
 it in `schema_version` as started (an all-zero checksum, description "... (started, not finished)") and replaces the
@@ -158,11 +163,15 @@ kit) and run `migrate` in a console before the service starts.
 
 Startup (`ServerStartup`): as a Windows service the process enters the Service Control Manager's dispatcher first and
 reports START_PENDING with a new checkpoint every 5 s (`WindowsServiceLifetime`), then waits for the database (up to
-`Database:StartupWaitSeconds`) and migrates, then starts the host and reports RUNNING. A refused or failed migration
-is a FAIL line in the log and STOPPED with service-specific error 13 (no restart); a database that never answered or a
-host that could not start ends the process without STOPPED, so the service's restart actions run. Release 0.1.0
-migrated before it connected, and a slow first migration on the server outran the SCM's 30 s limit.
-`tests/DW4Online.Tests/ServiceStartTests.cs` runs this against a fake SCM.
+`Database:StartupWaitSeconds`) and migrates, then starts the host and reports RUNNING. A refused or failed migration,
+or a setting the start checks first (`Relay:TicketKey`), is a FAIL line in the log and STOPPED with service-specific
+error 13 (no restart); a database that never answered, a host that could not start (a port in use: Kestrel's or the
+relay's, which binds in `StartAsync` so the error names the port) or a host that stopped after RUNNING without a STOP
+from the SCM (a failed background service) ends the process without STOPPED, so the service's restart actions run.
+The host is started and awaited by `ServerStartup` itself (not `RunAsync`, which disposed the log providers before
+the FAIL line could be written) and disposed only after that line. Release 0.1.0 migrated before it connected; when
+migration 0001 hung on the server, the SCM ended it after 30 s. `tests/DW4Online.Tests/ServiceStartTests.cs` runs
+this against a fake SCM, `tests/DW4Online.Integration.Tests/ServiceHostTests.cs` runs the real host under it.
 
 Tables: `accounts`, `sessions` (only SHA-256 of tokens), `email_tokens` (future SMTP), `account_bans`,
 `online_characters` + `online_character_history`, `cloud_saves` + `cloud_save_history`, `achievements`,

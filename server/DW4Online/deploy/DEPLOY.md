@@ -22,11 +22,21 @@ itself (no IIS). SQL Server Express and the Pangya servers (web port 88) stay un
 defaults: the existing **XAMPP MariaDB 10.4.32** (`C:\Users\Dekirai\xampp\mysql`) as the Windows service `mysql`
 (section 1.1), **root as the only database login** (section 2.1), **HTTPS on port 8443** because a Traefik reverse
 proxy owns 443 (section 4.1); relay 52041, loopback check endpoint 127.0.0.1:5280. Its first `Start-Service` failed:
-release 0.1.0 ran the migrations before it connected to the Service Control Manager, migration 0001 took longer than
-the 30 s the SCM gives a starting process, the SCM ended the process half way, and every later start refused the
-half-migrated database. The way out was `DROP DATABASE` / `CREATE DATABASE` and `DW4Online.Server.exe migrate` in a
-console. Later releases connect to the SCM first and migrate while they report "start pending" (section 9), and
-every refusal names its way out; run `migrate` in a console before a start anyway (sections 5 and 8).
+release 0.1.0 ran the migrations before it connected to the Service Control Manager, and the log stopped after
+"Applying migration 0001 initial" (twice: two start attempts). Migration 0001 takes 0.2 s on the same MariaDB build
+elsewhere, so it did not run slowly: it **hung** in one of its `CREATE TABLE` statements, the SCM ended the process
+after its 30 s, and every later start refused the half-migrated database. The likely cause is still configured on
+that server: MariaDB before 10.6 on Windows with native asynchronous I/O (`innodb_use_native_aio`, on by default),
+which XAMPP's my.ini leaves on. In the review's rehearsal on a private mysqld 10.4.32 with XAMPP's my.ini plus the
+two lines the server got, three of four integration rounds went wrong: `SHUTDOWN` hung after a full run, mysqld died
+in the middle of the migrator tests, and `CREATE TABLE speedrun_times` of 0001 stayed "Killed / Creating table" for
+over 600 s and kept the migration lock; with `innodb_use_native_aio=0` every round passed (the setting
+`scripts/local-db.ps1` has used since `DROP DATABASE` hung there). The hang does not come every time (four later
+rounds with native AIO passed), which fits a server where the same migration then worked from the console. Section 1.1 therefore adds that line, a one-time change for the installed server (section 8). The way
+out on 31.10 was `DROP DATABASE` / `CREATE DATABASE` and `DW4Online.Server.exe migrate` in a console. Later releases
+connect to the SCM first and migrate while they report "start pending" (section 9), every refusal names its way out,
+and `migrate` warns about native AIO on such a MariaDB; run `migrate` in a console before a start anyway (sections 5
+and 8).
 
 The scripts in this folder are meant to be read and then run by you in an elevated PowerShell on the server. (They
 were tested on the development PC as far as that is possible without changing its services, firewall or certificate
@@ -72,31 +82,45 @@ stores: `-DryRun`, the read-only checks, the backup and restore against a privat
 ### 1.1 Variant: an existing XAMPP MariaDB 10.4 as the database service
 
 A XAMPP that already runs on the server brings MariaDB 10.4 (XAMPP 8.x: 10.4.32). DW4Online runs on it: the schema
-avoids the types 10.4 lacks, and every migration and integration test passes against a MariaDB 10.4.32 that runs with
-XAMPP's own `my.ini` plus only the two lines of step 2 (so with its non-strict `sql_mode`,
-`collation-server=utf8mb4_general_ci`, a 16 MB buffer pool and a 5 MB redo log; migrations 1 to 7 took 0.25 s there on
-the development PC). What it costs: MariaDB 10.4 reached its end of life in June 2024 and gets no
-security fixes any more. That is acceptable only because it answers on 127.0.0.1 alone (step 3); move to a supported
-MariaDB (section 1, then a backup and restore) when convenient.
+avoids the types 10.4 lacks, and every migration and integration test passes, round after round, against a MariaDB
+10.4.32 that runs with XAMPP's own `my.ini` plus the **three** lines of step 2 (so with its non-strict `sql_mode`,
+`collation-server=utf8mb4_general_ci`, a 16 MB buffer pool and a 5 MB redo log; migrations 1 to 7 take about 0.25 s
+there on the development PC). Without the third line, `innodb_use_native_aio=0`, they do not: MariaDB before 10.6 on
+Windows uses native asynchronous I/O by default, and with it DDL (`CREATE TABLE`, `DROP DATABASE`) can hang for good
+in an InnoDB latch wait (the top of this document; the server's first start). A hung statement stays "Killed" in the
+process list and keeps its locks, and `Restart-Service mysql` can hang behind it. What the line costs: InnoDB then does
+its file I/O with its own threads instead of Windows' asynchronous I/O, which can make heavy write loads somewhat
+slower for every database on that MariaDB (DW4Online's load is far too small to notice; for the others it depends on
+how much they write). It is your decision because those databases share it; the alternative is a MariaDB 11.4 of its
+own for DW4Online (section 1, then a backup and restore), where the line is not needed. `DW4Online.Server.exe migrate` (and the service log) warn with
+`WARNING: MariaDB 10.4.32-MariaDB on Windows runs with innodb_use_native_aio=ON ...` while the line is missing.
+
+The other cost: MariaDB 10.4 reached its end of life in June 2024 and gets no security fixes any more. That is
+acceptable only because it answers on 127.0.0.1 alone (step 3); move to a supported MariaDB (section 1, then a backup
+and restore) when convenient.
 
 1. Make XAMPP's MySQL a Windows service: start the **XAMPP Control Panel as administrator**, stop MySQL there if it
    runs, tick the **"Svc"** box in the MySQL row and confirm. The Control Panel installs the service **`mysql`**
    (`mysqld.exe --defaults-file=<XAMPP>\mysql\bin\my.ini mysql`, automatic start, LocalSystem). Start it once with the
    Control Panel's Start button or `Start-Service mysql`. From now on start and stop it as a service; with DW4Online
    installed, stop DW4Online first (it depends on `mysql`).
-2. Add two lines at the **end of the `[mysqld]` section** of `<XAMPP>\mysql\bin\my.ini` (just above `[mysqldump]`;
+2. Add three lines at the **end of the `[mysqld]` section** of `<XAMPP>\mysql\bin\my.ini` (just above `[mysqldump]`;
    a later line wins over XAMPP's own `max_allowed_packet=1M` further up) and leave the rest as it is, since other
    databases on this MariaDB rely on it:
 
    ```ini
    bind-address=127.0.0.1
    max_allowed_packet=16M
+   innodb_use_native_aio=0
    ```
 
-3. `Restart-Service mysql`, then check that it listens on the loopback address only:
+3. `Restart-Service mysql` (other databases on it are unavailable for those seconds), then check that it listens on
+   the loopback address only and runs without native AIO (`mysql.exe` asks for the root password; HeidiSQL:
+   `SHOW VARIABLES LIKE 'innodb_use_native_aio'` shows `OFF`):
 
    ```powershell
    Get-NetTCPConnection -State Listen -LocalPort 3306 | Select-Object LocalAddress, OwningProcess   # only 127.0.0.1
+   & '<XAMPP>\mysql\bin\mysql.exe' -h 127.0.0.1 -u root -p -N -e "SELECT @@innodb_use_native_aio"   # 0
    ```
 
 4. XAMPP's root accounts (usually `root@localhost`, `root@127.0.0.1` and `root@::1`) have **no password** out of
@@ -296,7 +320,8 @@ powershell -ExecutionPolicy Bypass -File app\deploy\new-selfsigned-cert.ps1 -Pin
 
 Both pins must equal the first pin `new-selfsigned-cert.ps1` printed when it made the certificate (section 6.1).
 `Start-Service` may print `WARNING: Waiting for service 'DW4Online' to start...` a few times while the service waits
-for the database or migrates: that is the service reporting progress, not an error. The log then says "Database schema
+for the database or migrates: that is the service reporting progress, not an error (for minutes: section 9, "A
+migration or a start that hangs"). The log then says "Database schema
 is current" (or "Applied migrations ..." if it migrated itself), "Now listening on: https://0.0.0.0:443" and the TLS
 certificate line; a ` FAIL ` line names what went wrong (section 9).
 
@@ -535,23 +560,40 @@ re-encodes the text and silently turns every non-ASCII character into `?` (the r
    Start-Service DW4Online
    Get-Content (Get-ChildItem logs\dw4online-*.log | Sort-Object Name | Select-Object -Last 1).FullName -Tail 20   # no " FAIL " line
    curl.exe http://127.0.0.1:5280/health
+   curl.exe http://127.0.0.1:5280/api/v1/status   # "version":"<version>": the release that runs now
    curl.exe -k https://88.198.52.221/health
    ```
 
    `migrate` runs the new release's migrations in the console, before the service starts (section 9): it prints each
    one with its time, and if it refuses or fails, nothing starts and the screen says why and what to do (usually: the
-   rollback below). The new `app` folder inherits the root's permissions (service read and execute), and the firewall
-   rules and the service name the same path, so nothing else changes.
+   rollback below). If it prints `WARNING: MariaDB ... runs with innodb_use_native_aio=ON`, stop there: the line of
+   section 1.1 step 2 is missing (a server installed with release 0.1.0 needs it once; add it while DW4Online is
+   stopped, `Restart-Service mysql`, then run `migrate` again). Each migration takes well under a second; if nothing
+   follows `Applying migration ...` for minutes, see "A migration or a start that hangs" (section 9). The new `app`
+   folder inherits the root's permissions (service read and execute), and the firewall rules and the service name the
+   same path, so nothing else changes.
 
 Rollback: stop the service, swap `app` and `app.previous` back; if the update applied a migration (or one failed half
 way), restore the backup from step 2 into `dw4online` first (the old build refuses a database that is newer than
-itself; XAMPP: add `-MariaDbBin <XAMPP>\mysql\bin -ClientExe mysql.exe`):
+itself). The swap only runs when the service is really stopped (`Stop-Service` cannot stop a start that is still
+pending, and a failed rename would leave the next lines working on the new release):
 
 ```powershell
 cd D:\Dekirai\Servers\DW4Online
 Stop-Service DW4Online
-Rename-Item app app.failed; Rename-Item app.previous app
-powershell -ExecutionPolicy Bypass -File app\deploy\restore-db.ps1 -Backup backups\daily\dw4online-<date>.sql.gz -Database dw4online -Replace   # only after a migration
+if ((Get-Service DW4Online).Status -ne 'Stopped') { 'DW4Online is not stopped (section 9, "A migration or a start that hangs"); nothing was changed.' } else {
+    if (Test-Path app.failed) { Remove-Item -Recurse -Force app.failed }
+    Rename-Item app app.failed -ErrorAction Stop
+    Rename-Item app.previous app -ErrorAction Stop
+    'The previous release is in app again.'
+}
+```
+
+Then, only after that last line appeared (XAMPP: add `-MariaDbBin <XAMPP>\mysql\bin -ClientExe mysql.exe` to the
+restore; the backup file is `dw4online-<yyyyMMdd>-<HHmmss>.sql.gz`, UTC):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File app\deploy\restore-db.ps1 -Backup backups\daily\dw4online-<date>-<time>.sql.gz -Database dw4online -Replace   # only after a migration
 .\app\DW4Online.Server.exe migrate --settings config\appsettings.Production.json   # "The database schema is current."
 Start-Service DW4Online
 ```
@@ -575,8 +617,13 @@ Every release carries its database migrations (`sql/NNNN_*.sql`, inside the exec
 - **at the service start** (`Database:AutoMigrate`, on by default), so a start after a forgotten `migrate` still
   works. The service connects to the Service Control Manager first and reports "start pending" with a new checkpoint
   every 5 s while it waits for the database (up to `Database:StartupWaitSeconds`, 60 s) and migrates, however long
-  that takes; it reports "running" only once it listens. (Release 0.1.0 migrated before it connected, and the SCM
-  ended it after 30 s, see the top of this document.)
+  that takes; it reports "running" only once it listens. (Release 0.1.0 migrated before it connected; when migration
+  0001 hung, the SCM ended it after 30 s, see the top of this document.) The checkpoints count time, not progress:
+  a migration that hangs keeps the start pending without end (see below).
+
+Both warn first when the MariaDB is one whose DDL can hang (`WARNING: MariaDB 10.4.32-MariaDB on Windows runs with
+innodb_use_native_aio=ON ...`, a WARN line in the service log): add the line of section 1.1 step 2 and restart the
+MariaDB before you go on.
 
 Migrations change the schema with DDL, and MariaDB commits every DDL statement at once: a migration stopped half way
 leaves the database between two versions, which no build can work with. The migrator therefore marks each migration
@@ -594,13 +641,51 @@ in the service log) names the state and the way out:
 | `Migration N (...) changed after it was applied` | a build whose migration file differs from the applied one | do not use that build; tell the developers |
 | `Another process is migrating this database` | a second `migrate` or a starting service at the same time | wait until the other one is done, then again |
 | `The database did not answer within 60 s` (service log) | the database service is not running, or the port in the connection string is wrong | start it (`Start-Service mysql` / `MariaDB`); the service's restart actions try again by themselves |
+| nothing after `Applying migration 000N ...` for minutes | a DDL statement hangs inside MariaDB (native AIO on a MariaDB before 10.6, section 1.1) | "A migration or a start that hangs" below |
 
-A service start that the migrator refuses (or that wrong settings stop) ends with `Start-Service` failing ("Failed to
-start service") and the System event log entry 7024 "The DW4Online service terminated with the following
-service-specific error: The data is invalid." (code 13; Windows supplies that text, the log says what is wrong); the
-service is not restarted (an operator has to act). A database that does not answer, or a port that is in use, ends the
-start without that entry ("terminated unexpectedly"), and the restart actions (5 s, 30 s, 60 s) try again. The last
-` FAIL ` line of the log always says which it was.
+How a service start ends, and what the log's last ` FAIL ` line of `DW4Online.Server.Startup` says (the lines of the
+host itself, such as `Hosting failed to start` or `BackgroundService failed`, come before it with the details):
+
+| Last FAIL line | `Start-Service` / System event log | Restart actions |
+| --- | --- | --- |
+| `Start failed: <the migrator's refusal or failure>`, or `Start failed: Relay:TicketKey ...` / `Access denied ...` (a setting the start checks) | "Failed to start service"; 7024 "The DW4Online service terminated with the following service-specific error: The data is invalid." (code 13; Windows supplies that text, the log says what is wrong) | none: an operator has to act |
+| `Start failed: The database did not answer within 60 s ...` | "Failed to start service"; 7034 / 7031 "terminated unexpectedly" | 5 s, 30 s, 60 s |
+| `The host failed: Failed to bind to address https://0.0.0.0:8443: address already in use.` (Kestrel) or `The host failed: Failed to bind the relay to 0.0.0.0:52041 (Relay:ListenAddress, Relay:Port): address already in use.` | as above | 5 s, 30 s, 60 s (they help once the other program lets the port go) |
+| `The host failed: ...` with anything else Kestrel or a background service refuses while the host starts (an invalid `Kestrel:Endpoints` URL, for example) | as above | they run, and fail the same way until the setting is fixed |
+| `The host stopped although the Service Control Manager did not ask it to ...` (after RUNNING; a background service failed, its FAIL / CRIT lines come first) | the service was running; 7034 / 7031 | 5 s, 30 s, 60 s |
+| `The host failed while it stopped: ...` | the stop you asked for ends as stopped | none (you stopped it) |
+
+### A migration or a start that hangs
+
+Each migration takes well under a second. When `migrate` prints nothing after `Applying migration 000N ...` for
+minutes, or `Start-Service DW4Online` keeps printing "Waiting for service 'DW4Online' to start..." for minutes (the
+service log then ends with that `Applying migration` line), a statement hangs inside MariaDB; on XAMPP's 10.4 that is
+the native AIO hang of section 1.1. The migrator gives up on a statement only after 10 minutes (then `Migration 000N
+(...) failed after 600... s: The Command Timeout expired ...`, while MariaDB may keep the killed statement hanging and
+its locks held), and the service accepts no STOP while its start is pending (stopping in the middle of a migration is
+the one thing the start never risks), so `Stop-Service` fails with "cannot accept control messages". Do not wait:
+
+1. End DW4Online: in the console Ctrl+C; the service by its process id (an elevated PowerShell):
+   `Stop-Process -Id (Get-CimInstance Win32_Service -Filter "Name='DW4Online'").ProcessId -Force`. The SCM counts that
+   as a crash and its restart actions start the service again after 5 s; that start refuses within a minute
+   (`Another process is migrating this database` while the hung statement keeps the lock, or the migration's
+   "started, not finished" mark) and stops for good (7024).
+2. Restart MariaDB: `Restart-Service mysql` (or `MariaDB`). A hung statement shows in HeidiSQL's process list as
+   "Killed" with a state such as "Creating table"; MariaDB may not stop while it hangs. If the restart has not finished
+   after two minutes, end it by its process id in a second elevated PowerShell,
+   `Stop-Process -Id (Get-CimInstance Win32_Service -Filter "Name='mysql'").ProcessId -Force`, then
+   `Start-Service mysql`: InnoDB recovers at its next start (its error log, `<XAMPP>\mysql\data\mysql_error.log`,
+   shows the recovery). Every database on that MariaDB is unavailable meanwhile. Before the restart, add the line of
+   section 1.1 step 2 if it is missing.
+3. The interrupted migration's mark stays in `schema_version`: go the way out of the table above (the backup from
+   before the update, or for 0001 on a fresh database DROP / CREATE), then `migrate` in the console again.
+
+A start that fails at once with System events 7009 "A timeout was reached (30000 milliseconds) while waiting for the
+DW4Online service to connect." and 7000 "... did not respond to the start or control request in a timely fashion" is
+a different case: the process did not even reach the SCM within 30 s. Release 0.1.0 did that while it migrated; later
+releases connect before the database step, so only a very slow first start of freshly unpacked files (an antivirus
+scan of the release) is left, and the `migrate` run before the start (sections 5 and 8) has already loaded them once.
+`Start-Service DW4Online` again.
 
 ## 10. Operating notes
 
