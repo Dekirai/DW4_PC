@@ -144,8 +144,8 @@ DW4Online.Server tls-pin --host <IP or name> | --thumbprint <hex> | --file <cert
 ## Database
 
 MariaDB 11.4 LTS is the target (developed on a private 10.4 instance; the schema avoids `INET6` / `UUID` so both
-run it; the server installed on 31.10 runs XAMPP's 10.4.32, and the integration tests pass with XAMPP's unchanged
-`my.ini` settings too). InnoDB, `utf8mb4_unicode_ci` set explicitly (11.x changed the default), all times UTC
+run it; the server installed on 31.10 runs XAMPP's 10.4.32, and the integration tests also pass on a private mysqld
+with XAMPP's own `my.ini` plus bind-address and max_allowed_packet, as the server has it). InnoDB, `utf8mb4_unicode_ci` set explicitly (11.x changed the default), all times UTC
 `DATETIME(3)` written by the service. The migrator applies `sql/NNNN_*.sql` in order and records each in
 `schema_version` with the SHA-256 of the file. MariaDB commits DDL implicitly, so before it runs a migration it marks
 it in `schema_version` as started (an all-zero checksum, description "... (started, not finished)") and replaces the

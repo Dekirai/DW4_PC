@@ -72,9 +72,10 @@ stores: `-DryRun`, the read-only checks, the backup and restore against a privat
 ### 1.1 Variant: an existing XAMPP MariaDB 10.4 as the database service
 
 A XAMPP that already runs on the server brings MariaDB 10.4 (XAMPP 8.x: 10.4.32). DW4Online runs on it: the schema
-avoids the types 10.4 lacks, and every migration and integration test passes against a MariaDB 10.4.32 with XAMPP's
-**unchanged** `my.ini` settings (non-strict `sql_mode`, `collation-server=utf8mb4_general_ci`, a 16 MB buffer pool;
-migrations 1 to 7 took 0.25 s there). What it costs: MariaDB 10.4 reached its end of life in June 2024 and gets no
+avoids the types 10.4 lacks, and every migration and integration test passes against a MariaDB 10.4.32 that runs with
+XAMPP's own `my.ini` plus only the two lines of step 2 (so with its non-strict `sql_mode`,
+`collation-server=utf8mb4_general_ci`, a 16 MB buffer pool and a 5 MB redo log; migrations 1 to 7 took 0.25 s there on
+the development PC). What it costs: MariaDB 10.4 reached its end of life in June 2024 and gets no
 security fixes any more. That is acceptable only because it answers on 127.0.0.1 alone (step 3); move to a supported
 MariaDB (section 1, then a backup and restore) when convenient.
 
