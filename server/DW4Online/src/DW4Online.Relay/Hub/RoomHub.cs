@@ -2204,6 +2204,11 @@ public sealed class RoomHub
         // Lag and disconnects in sealed instances.
         if (i.Mode == InstanceMode.Sealed && i.Sealing)
         {
+            // When every connected member lags, nobody plays ahead of them: the whole group (or this server) stalled, and
+            // nobody is taken out for lag. Taking them all out ended the instance before any of them got the ticks up to its
+            // LEAVE, and every client waited for those ticks for good (round 56 verification: A1 on a loaded machine).
+            var everyoneLags = i.Seats.Where(x => x.Member.Connected)
+                .All(x => i.Streams[x.Slot] is { } xs && xs.FillStreak >= SlotStream.LagFills);
             foreach (var (s, m) in i.Seats.ToList())
             {
                 var st = i.Streams[s];
@@ -2218,7 +2223,7 @@ public sealed class RoomHub
                         o.Peer?.Send(new RoomMsg(lagging ? RoomNotice.Lagging : RoomNotice.LagOk, (byte)m.Index, (ulong)m.AccountId, m.Name, Flags(m)).Frame());
                 }
                 var gone = !m.Connected && Ms(now - m.DisconnectedAt) >= _relay.ReconnectSeconds * 1000.0;
-                var lagOut = lagging && !m.Resyncing && Ms(now - st.FillStreakSince) >= _relay.LagLeaveSeconds * 1000.0;
+                var lagOut = lagging && !everyoneLags && !m.Resyncing && Ms(now - st.FillStreakSince) >= _relay.LagLeaveSeconds * 1000.0;
                 if (gone || lagOut)
                 {
                     Note(gone ? "reconnect_timeout" : "lag_leave", i, ("member", m.Index));
