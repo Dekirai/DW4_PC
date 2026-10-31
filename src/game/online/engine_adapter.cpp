@@ -410,21 +410,20 @@ void GameEngineLink::set_view_slot(int slot) {
 }
 
 void GameEngineLink::after_live_step() {
-    auto* sys = e().get<engine::GameSystem>();
+    auto& engine = e();
+    if (!engine.title_game_start) return;
+    engine.title_game_start = false;
+    auto* sys = engine.get<engine::GameSystem>();
     if (!sys) return;
-    if (!sys->game_started) {
-        modes_applied_ = false;
-        return;
-    }
-    if (modes_applied_) return;
     // (The character select wrote DIFFICULTY before GAMESTART, 0x803687D4;
     // gameStart.lua runs a few steps later, once the card worker is gone.)
-    if (room_story_) e().apply_room_story(*room_story_);
+    if (room_story_) engine.apply_room_story(*room_story_);
     sys->difficulty = std::clamp(settings_.difficulty, 0, 2);
     sys->camera_mode = settings_.camera_mode;
     sys->light_mode = settings_.light_mode;
-    modes_applied_ = true;
 }
+
+bool GameEngineLink::game_start() const { return e().title_game_start; }
 
 bool GameEngineLink::game_started() const {
     const auto* sys = e().get<engine::GameSystem>();

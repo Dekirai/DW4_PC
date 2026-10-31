@@ -1,5 +1,6 @@
 #include "lobby.hpp"
 
+#include "character.hpp"
 #include "token_store.hpp"
 
 #include <algorithm>
@@ -63,7 +64,7 @@ struct ScreenName {
 constexpr ScreenName kScreens[] = {
     {Screen::welcome, "welcome"},   {Screen::login, "login"},       {Screen::register_account, "register"},
     {Screen::registered, "registered"}, {Screen::recover, "recover"}, {Screen::recovered, "recovered"},
-    {Screen::account, "account"},   {Screen::change_password, "password"}, {Screen::rooms, "rooms"},
+    {Screen::account, "account"},   {Screen::change_password, "password"}, {Screen::reset_character, "reset"}, {Screen::rooms, "rooms"},
     {Screen::create_room, "create"}, {Screen::join_room, "join"},   {Screen::confirm, "confirm"},
     {Screen::starting, "starting"}, {Screen::in_room, "room"},
 };
@@ -352,6 +353,18 @@ void OnlineLobby::handle(const Pending& pending, const HttpResponse& response) {
         history_.clear();
         info_text_ = "Password changed. Your other devices are logged out.";
         return;
+    case Call::reset_character:
+        if (handle_common(response, true)) return;
+        if (!response.ok() && response.status != 404) {
+            error_ = problem();
+            return;
+        }
+        set_screen(Screen::account);
+        history_.clear();
+        info_text_ = "The online character was reset. Your next online game starts a new one at level 1, with a new story.";
+        character_.reset();
+        if (!in_flight(Call::character)) send(Call::character, api::character_request());
+        return;
     case Call::rooms: {
         rooms_at_ = now_;
         const auto rooms = api::parse_rooms(response);
@@ -588,6 +601,20 @@ void OnlineLobby::change_password(const std::string& current, const std::string&
         return;
     }
     send(Call::change_password, api::change_password_request(current, next), "Changing the password...");
+}
+
+void OnlineLobby::reset_character(const std::string& current_password) {
+    error_.clear();
+    if (busy() || !logged_in()) return;
+    if (in_room()) {
+        error_ = "Leave the room first.";
+        return;
+    }
+    if (current_password.empty()) {
+        error_ = "Enter your password to confirm.";
+        return;
+    }
+    send(Call::reset_character, character_api::reset_request(current_password), "Resetting the online character...");
 }
 
 void OnlineLobby::refresh_account() {

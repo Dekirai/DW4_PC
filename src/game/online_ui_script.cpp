@@ -96,7 +96,9 @@ void OnlineUiScript::update(UiScriptHost& host) {
     // (Secrets stay out of the log: only the command and its first word.)
     const bool secret = w[0] == "login" || w[0] == "register" || w[0] == "recover" || w[0] == "password" || w[0] == "fill";
     std::string shown = w[0];
-    for (std::size_t i = 1; i < w.size() && (!secret || i < 2); ++i) shown += " " + w[i];
+    // (reset-character's only word is the password; a join's password= option is not shown either.)
+    for (std::size_t i = 1; i < w.size() && (!secret || i < 2) && w[0] != "reset-character"; ++i)
+        shown += " " + (w[i].rfind("password=", 0) == 0 ? std::string("password=...") : w[i]);
     if (w[0] == "fill" && w.size() > 2 && w[1].find("password") == std::string::npos && w[1].find("again") == std::string::npos &&
         w[1].find("code") == std::string::npos)
         shown += " " + w[2];
@@ -279,6 +281,7 @@ bool OnlineUiScript::run(const Line& line, UiScriptHost& host) {
     if (c == "logout") return once([&] { lobby.logout(); });
     if (c == "logout-all") return once([&] { lobby.logout_everywhere(); });
     if (c == "password") return once([&] { lobby.change_password(arg(1), arg(2), arg(2)); });
+    if (c == "reset-character") return once([&] { lobby.reset_character(arg(1)); });
     if (c == "refresh") {
         if (!sent_) {
             serial_ = lobby.rooms_serial();

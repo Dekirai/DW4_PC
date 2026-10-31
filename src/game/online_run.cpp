@@ -201,14 +201,15 @@ void OnlineRun::after_live_step(double now) {
     // (GameEngineLink applies it with the room's modes on this very step).
     // Without a confirmed story yet the character's own stays until the
     // first barrier's merge.
-    const bool started = link_.game_started();
-    if (started && !started_before_) {
+    // (Every Game Start of the session: after "Continue? No" the title
+    // starts the next one with the room story and modes again.)
+    if (link_.game_start()) {
         const auto& story = session_->confirmed_story();
         link_.set_room_story(story);
         if (story) std::cout << "online: the game starts with the room story (revision " << story->revision << ")\n";
         else std::cout << "online: the game starts without a room story yet (the character's own until the first barrier)\n";
+        if (character_) character_->game_started();
     }
-    started_before_ = started;
     link_.after_live_step();
     if (!character_) return;
     auto& engine = engine_();
@@ -225,11 +226,15 @@ void OnlineRun::after_live_step(double now) {
 
 void OnlineRun::port_events(const std::vector<engine::PortEvent>& events) {
     if (!character_) return;
-    for (const auto& e : events)
+    for (const auto& e : events) {
         if (e.kind == engine::PortEvent::Kind::card_written && e.slot == session_->own_slot() && e.value == 0 && e.extra >= 0) {
             character_->set_context(character_context());
             character_->card_written(e.extra);
         }
+        // A character the character select made new (the title is the
+        // member's own solo instance: its slot is this machine's).
+        if (e.kind == engine::PortEvent::Kind::new_character && e.slot == session_->own_slot()) character_->new_game(std::uint32_t(e.value));
+    }
 }
 
 void OnlineRun::save_on_leave(double seconds) {

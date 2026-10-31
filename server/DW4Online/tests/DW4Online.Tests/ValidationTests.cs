@@ -156,7 +156,8 @@ public class ValidationTests
         var after = Samples.Fresh();
         var report = new ValidationReport();
         RecordValidator.CheckTransition(report, before, 3600, after, 7200, 3600, rules);
-        Assert.Contains(report.Warnings, w => w.Code == "form_level_dropped");
+        Assert.Contains(report.Errors, e => e.Code == "form_level_dropped"); // (refused: another character with the same UNIQUE)
+        Assert.False(report.Ok);
         Assert.Contains(report.Warnings, w => w.Code == "form_lost");
     }
 

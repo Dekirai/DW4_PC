@@ -330,6 +330,76 @@ void retries_and_recovery() {
     std::filesystem::remove_all(card.folder());
 }
 
+// Round 56 review: "Create Digimon" (the character select's first option)
+// while the account has an online character. The new character's saves were
+// skipped silently (another UNIQUE) or, with the UNIQUE the frame count gave
+// the old one too, overwrote it. Now the new game is never uploaded and the
+// player is told at once; a Game Start with the card's character saves again.
+void new_game_beside_the_online_character() {
+    const OnlineCard card(fresh_folder("foreign"));
+    FakeHttp http;
+    auto sync = make_sync(card, http);
+    const auto online = make_record(3420661002u, 30, "Kim");
+    std::string error;
+    check(sync.enter(answer(200, character_json(4, online, 9000)), error), "enter with the online character");
+    // The character select makes a new character with the same UNIQUE (the same frame of a fresh engine).
+    sync.new_game(3420661002u);
+    sync.game_started();
+    auto notices = sync.take_notices();
+    check(notices.size() == 1 && notices[0].find("NEW character") != std::string::npos, "the player is told at once");
+    check(sync.status_text().find("not saving") != std::string::npos, "the status line says it");
+    sync.auto_save(make_record(3420661002u, 1, "Kim"), CharacterSync::Why::stage_change);
+    sync.auto_save(make_record(3420661002u, 2, "Kim"), CharacterSync::Why::leave);
+    check(http.sent.empty() && !card.state().pending && card.state().revision == 4, "nothing goes up or into the cache");
+    check(sync.take_notices().empty(), "told once");
+    // Back at the title, the card's character: its saves go up again.
+    sync.game_started();
+    check(sync.status_text().find("saved (revision 4)") != std::string::npos, "the status line is back");
+    sync.auto_save(make_record(3420661002u, 31, "Kim"), CharacterSync::Why::stage_change);
+    auto [id, put] = http.take();
+    check(header(put, "If-Match") == "\"4\"" && body_record(put) == make_record(3420661002u, 31, "Kim"), "the online character saves");
+    sync.on_response(id, answer(200, "{\"revision\":5}"));
+    // A save of another UNIQUE (a second card character): skipped, and the player is told the first time.
+    sync.auto_save(make_record(77, 9, "Lee"), CharacterSync::Why::stage_change);
+    notices = sync.take_notices();
+    check(http.sent.empty() && notices.size() == 1 && notices[0].find("not your online character") != std::string::npos,
+          "another character's first skipped save is told");
+    std::filesystem::remove_all(card.folder());
+}
+
+// Round 56 review: a refused login (Log out everywhere, a password change on
+// another PC) stopped every later save of the session. The saves now go on
+// into the card cache as pending, and the next room entry uploads the newest.
+void refused_login_keeps_saving_into_the_cache() {
+    const OnlineCard card(fresh_folder("auth"));
+    {
+        FakeHttp http;
+        auto sync = make_sync(card, http);
+        std::string error;
+        sync.enter(answer(200, character_json(7, make_record(21, 10), 600)), error);
+        sync.auto_save(make_record(21, 11), CharacterSync::Why::stage_change);
+        auto [id, put] = http.take();
+        sync.on_response(id, answer(401, "{\"code\":\"unauthorized\",\"title\":\"Not logged in.\"}"));
+        check(sync.blocked() && http.sent.empty(), "no upload with a refused login");
+        sync.auto_save(make_record(21, 12), CharacterSync::Why::stage_change);
+        sync.auto_save(make_record(21, 13), CharacterSync::Why::leave);
+        sync.tick(100);
+        check(http.sent.empty(), "nothing is sent later either");
+        check(card.state().pending && card.state().revision == 7 && record_of_box(*card.read(), 0) == make_record(21, 13),
+              "the newest save is pending in the cache, based on revision 7");
+        check(sync.status_text().find("next room entry") != std::string::npos, "the status line says where it goes");
+    }
+    {
+        FakeHttp http;
+        auto sync = make_sync(card, http);
+        std::string error;
+        check(sync.enter(answer(200, character_json(7, make_record(21, 10), 600)), error), "the next room entry");
+        auto [id, put] = http.take();
+        check(header(put, "If-Match") == "\"7\"" && body_record(put) == make_record(21, 13), "the newest save goes up first");
+    }
+    std::filesystem::remove_all(card.folder());
+}
+
 void sha256_vectors() {
     check(sha256_hex({}) == "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "SHA-256 of nothing");
     const std::string abc = "abc";
@@ -421,6 +491,8 @@ int main() {
         new_character();
         save_room_and_conflict();
         retries_and_recovery();
+        new_game_beside_the_online_character();
+        refused_login_keeps_saving_into_the_cache();
         sha256_vectors();
         cloud_backup();
     } catch (const std::exception& e) {

@@ -58,6 +58,7 @@ enum class Screen {
     recovered,        // the new recovery code, shown once
     account,
     change_password,
+    reset_character,  // the online character's reset (password, a warning)
     rooms,            // the room list (logged in)
     create_room,
     join_room,        // the password prompt
@@ -182,6 +183,10 @@ public:
     void logout();
     void logout_everywhere();
     void change_password(const std::string& current, const std::string& next, const std::string& again);
+    // Ends the online character (and empties its online story; the server
+    // closes a room the account owns): the next online game starts a new one.
+    // Not inside a room.
+    void reset_character(const std::string& current_password);
     void refresh_account();
 
     // Rooms.
@@ -208,7 +213,7 @@ public:
 
 private:
     enum class Call {
-        status, me, character, login, register_account, recover, logout, logout_all, change_password, rooms, create, join, ticket,
+        status, me, character, login, register_account, recover, logout, logout_all, change_password, reset_character, rooms, create, join, ticket,
         room_state, kick, close, leave
     };
     struct Pending {

@@ -618,6 +618,12 @@ public:
     // it is the original.
     bool title_online_entry = false;
     bool title_online_request = false;
+    // TITLE2 GAMESTART sets it (the title's Game Start, every time: Game
+    // System::game_started stays set once a game ran, and the option menu's
+    // reload sets that too); an online host applies the room's story and
+    // modes on that step and clears it. Like the two above: not in a snapshot
+    // or the fingerprint, read by nothing in the simulation.
+    bool title_game_start = false;
     // Development measurement (DW4_TRACE_TRAVERSAL_TIME): the traversals'
     // accumulated CPU time in ns and their count: [0] the combined pass
     // (render, the original), [1] traverse_scene (the original), [2] the

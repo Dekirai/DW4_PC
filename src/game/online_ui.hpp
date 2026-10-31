@@ -55,6 +55,7 @@ struct OnlineUiState {
     bool reg_remember = true;
     char rec_name[32]{}, rec_code[96]{}, rec_password[160]{}, rec_again[160]{};
     char pw_current[160]{}, pw_next[160]{}, pw_again[160]{};
+    char reset_password[160]{};
     char room_name[48]{}, room_password[80]{};
     int room_players = 4, room_difficulty = 0, room_camera = 0, room_light = 1;
     bool room_fast = false;
@@ -66,6 +67,7 @@ struct OnlineUiState {
     online::Screen last_screen = online::Screen::welcome;
     bool focus_pending = false;          // put the controller's focus on the new screen's first item
     bool close_requested = false;        // out: "Play" in the room view (the host closes the screens)
+    bool stay_requested = false;         // out: "Stay" answered B + X + START's "Leave room?" (the host closes that prompt)
     // The on-screen keyboard: a text field the controller activated.
     struct Keyboard {
         bool open = false;

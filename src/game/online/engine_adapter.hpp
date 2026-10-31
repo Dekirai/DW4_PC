@@ -85,7 +85,15 @@ public:
     // first stage loads, so every instance of the room uses the same
     // difficulty and camera data (3.1, 8.5). The title is the member's own
     // solo instance, so each machine does it in its own line.
+    // The trigger is the title's GAMESTART (Engine::title_game_start), not
+    // game_started's rising edge: that flag stays set after "Continue? No"
+    // took the player back to the title, and the title's option menu sets it
+    // without a game start, so the next Game Start of the session got neither
+    // the room story nor the room's modes (round 56 review).
     void after_live_step();
+    // A Game Start is waiting for after_live_step (set by the step's
+    // GAMESTART): the host hands the confirmed room story over first.
+    bool game_start() const;
     // The room story for game_started (SEAMLESS.md 8.5): the confirmed room
     // story the session has when the game starts. Without one the
     // character's own story stays until the first barrier's merge (the room
@@ -111,7 +119,6 @@ private:
     RoomSettings settings_;
     std::optional<engine::RoomStory> room_story_;
     bool replay_ = false;
-    bool modes_applied_ = false;
     int own_slot_ = 0;
     std::uint64_t replay_samples_ = 0;
 };

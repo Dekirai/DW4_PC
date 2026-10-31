@@ -3757,6 +3757,14 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 online_tab_shown = show_menu && online_tab_now;
                 // The online screens over the title (its menu's third entry
                 // opens them; a room started from them shows there until Play).
+                if (online_ui.stay_requested) {
+                    // ("Stay" answered B + X + START's "Leave room?".)
+                    online_ui.stay_requested = false;
+                    if (online && online->leave_prompt) {
+                        online->leave_prompt = false;
+                        std::cout << "online: leave prompt closed (Stay) at frame " << frame << '\n';
+                    }
+                }
                 if (online_ui.close_requested) {
                     // ("Play" in the room view, here or in F1 Online.)
                     online_ui.close_requested = false;

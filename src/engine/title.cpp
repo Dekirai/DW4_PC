@@ -138,6 +138,7 @@ bool Title2Manager::command(Engine& engine, Ram& base, std::string_view command,
     }
     if (command == "GAMESTART") {
         if (auto* sys = engine.get<GameSystem>()) sys->game_started = true;
+        engine.title_game_start = true; // (for an online host; Engine::title_game_start)
         return true;
     }
     return false;

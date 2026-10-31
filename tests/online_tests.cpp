@@ -1189,6 +1189,48 @@ void data_scenarios(const std::filesystem::path& data) {
 
 } // namespace
 
+// The room's story and modes at the title's Game Start (SEAMLESS.md 8.5): on
+// the step of every TITLE2 GAMESTART (Engine::title_game_start), not at
+// game_started's rising edge. That flag stays set after "Continue? No" took the
+// player back to the title, and the title's option menu sets it without a game
+// start: the next Game Start of the session got neither (round 56 review).
+void title_application_at_every_game_start() {
+    Engine engine{dw4::MountedResources{}};
+    dw4::game::online::EngineHooks hooks;
+    hooks.engine = [&]() -> Engine& { return engine; };
+    dw4::game::online::RoomSettings settings;
+    settings.difficulty = 2;
+    settings.camera_mode = 1;
+    settings.light_mode = 0;
+    dw4::game::online::GameEngineLink link(hooks, settings);
+    RoomStory room;
+    room.flags[19] = 1;
+    room.revision = 3;
+    link.set_room_story(room);
+    auto* sys = engine.get<GameSystem>();
+    // The option menu's reload: game_started without a game start.
+    sys->game_started = true;
+    sys->difficulty = 0;
+    sys->camera_mode = 0;
+    link.after_live_step();
+    check(!link.game_start() && sys->difficulty == 0 && sys->camera_mode == 0 && !engine.flags().count(19), "no application without GAMESTART");
+    // GAMESTART (TITLE2): the story and the modes on that step, once.
+    engine.title_game_start = true;
+    check(link.game_start(), "the host sees the Game Start");
+    link.after_live_step();
+    check(!engine.title_game_start && sys->difficulty == 2 && sys->camera_mode == 1 && sys->light_mode == 0 && engine.flags().at(19) == 1,
+          "the room's story and modes at the Game Start");
+    // "Continue? No": the title again; its character select writes its own
+    // difficulty and the record's story (game_started stays set).
+    sys->difficulty = 0;
+    engine.flags()[19] = 0;
+    link.after_live_step();
+    check(sys->difficulty == 0, "nothing between two Game Starts");
+    engine.title_game_start = true;
+    link.after_live_step();
+    check(sys->difficulty == 2 && engine.flags().at(19) == 1, "the session's second Game Start gets them again");
+}
+
 int main(int argc, char** argv) {
     try {
         snapshot_bytes();
@@ -1205,6 +1247,7 @@ int main(int argc, char** argv) {
         barrier_without_data();
         dissolve_through_the_link();
         story_at_the_barrier();
+        title_application_at_every_game_start();
         leaving_redirect();
         std::string data = argc > 1 ? argv[1] : "";
         if (data.empty())

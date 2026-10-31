@@ -115,7 +115,6 @@ private:
     std::uint64_t ticket_request_ = 0;
     double next_reconnect_ = 0;
     bool pending_before_ = false; // the last live step had a NEXTSTAGE pending
-    bool started_before_ = false; // the last live step's GameSystem::game_started
     bool saved_on_leave_ = false;
     bool left_ = false;
 };

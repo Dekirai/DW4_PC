@@ -283,6 +283,9 @@ void account(online::OnlineLobby& lobby) {
     ImGui::Spacing();
     if (button("Change password", !lobby.busy())) lobby.go(Screen::change_password);
     ImGui::SameLine();
+    if (button("Reset online character", !lobby.busy() && !lobby.in_room() && lobby.character() && lobby.character()->exists))
+        lobby.go(Screen::reset_character);
+    ImGui::SameLine();
     if (button("Log out", !lobby.busy() && !lobby.in_room())) lobby.logout();
     ImGui::SameLine();
     if (button("Log out everywhere", !lobby.busy() && !lobby.in_room())) lobby.logout_everywhere();
@@ -305,6 +308,25 @@ void change_password(online::OnlineLobby& lobby, OnlineUiState& s) {
             wipe(s.pw_next);
             wipe(s.pw_again);
         }
+    }
+    ImGui::SameLine();
+    if (button("Back", !lobby.busy())) lobby.back();
+}
+
+void reset_character(online::OnlineLobby& lobby, OnlineUiState& s) {
+    ImGui::SeparatorText("Reset online character");
+    if (const auto& c = lobby.character(); c && c->exists)
+        wrapped(("Your online character " + (c->name.empty() ? std::string("(no name)") : c->name) + " (" + c->digimon + ", level " +
+                 std::to_string(c->level) + ") ends, and so does its online story: the rooms you open start a new story, and only Normal "
+                 "is open again. Your next online game starts a new character at level 1. A room you own closes.")
+                    .c_str());
+    wrapped_disabled("Your local save is not touched. The server keeps the old character for 30 days, so the staff can undo a reset made "
+                     "by mistake.");
+    const bool submit = secret("Password", "##reset_pw", s.reset_password);
+    ImGui::Spacing();
+    if (button("Reset", !lobby.busy(), true) || (submit && !lobby.busy())) {
+        lobby.reset_character(s.reset_password);
+        if (lobby.busy()) wipe(s.reset_password);
     }
     ImGui::SameLine();
     if (button("Back", !lobby.busy())) lobby.back();
@@ -628,7 +650,8 @@ void in_room(online::OnlineLobby& lobby, OnlineUiState& s, const RoomLive* live)
             if (!live->character.empty()) wrapped_disabled(live->character.c_str());
         } else if (const auto& c = lobby.character(); c && c->exists)
             wrapped_disabled(("You play " + (c->name.empty() ? std::string("your online character") : c->name) + " (" + c->digimon + ", level " +
-                              std::to_string(c->level) + "): Play, then START and Game Start at the title to continue.")
+                              std::to_string(c->level) + "): Play, then START and Game Start at the title, and load it from the card. "
+                              "A character made with Create Digimon is not saved online.")
                                  .c_str());
         else
             wrapped_disabled("Your online character starts new: Play, then START and Game Start at the title (your save on this PC is not "
@@ -648,7 +671,11 @@ void in_room(online::OnlineLobby& lobby, OnlineUiState& s, const RoomLive* live)
             s.leave_asked = false;
         }
         ImGui::SameLine();
-        if (button("Stay", !lobby.busy())) s.leave_asked = false;
+        if (button("Stay", !lobby.busy())) {
+            s.leave_asked = false;
+            // (The prompt of B + X + START is the host's: it closes there.)
+            if (live && live->leave_prompt) s.stay_requested = true;
+        }
     }
 }
 
@@ -845,6 +872,7 @@ void draw_online_screens(online::OnlineLobby& lobby, OnlineUiState& state, const
     case Screen::recovered: recovery_code(lobby, false); break;
     case Screen::account: account(lobby); break;
     case Screen::change_password: change_password(lobby, state); break;
+    case Screen::reset_character: reset_character(lobby, state); break;
     case Screen::rooms: rooms(lobby, state, lobby.protocol(), lobby.data_hash()); break;
     case Screen::create_room: create_room(lobby, state); break;
     case Screen::join_room: join_room(lobby, state); break;

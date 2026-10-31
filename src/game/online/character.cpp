@@ -431,19 +431,48 @@ void CharacterSync::card_written(int box) {
         trace("card_written box " + std::to_string(box) + ": no character in the card file");
         return;
     }
-    if (unique_ && record_unique(*record) != unique_) {
+    if (foreign_ || (unique_ && record_unique(*record) != unique_)) {
         notice("Box " + std::to_string(box + 1) + " holds another character than your online character, so it was not uploaded. "
-               "Reset the online character (Online tab) to start a new one.");
+               "Reset the online character (Online > Account) to start a new one.");
+        skip_told_ = true;
         return;
     }
     box_ = box;
     request(Save{*record, Why::save_room}, false);
 }
 
+void CharacterSync::new_game(std::uint32_t unique) {
+    created_since_start_ = true;
+    // (Without an online character yet the new one becomes it.)
+    if (!entered_ || (revision_ == 0 && unique_ == 0)) return;
+    foreign_ = true;
+    trace("new character (unique " + std::to_string(unique) + ") while the online character (unique " + std::to_string(unique_) +
+          ") exists: its saves are not uploaded");
+    notice("You made a NEW character, but your account already has an online character. The new one is not saved online. To play your "
+           "online character, go back to the title and load it from the card; to start over, reset it in Online > Account first.");
+    skip_told_ = true;
+}
+
+void CharacterSync::game_started() {
+    if (!created_since_start_) {
+        foreign_ = false;
+        skip_told_ = false;
+    }
+    created_since_start_ = false;
+}
+
+void CharacterSync::skipped(Why why) {
+    trace(std::string("auto save (") + why_name(why) + ") skipped: another character than the online one");
+    if (skip_told_) return;
+    skip_told_ = true;
+    notice("This game is not your online character, so it is not saved online. Load your online character at the title, or reset it in "
+           "Online > Account to start a new one.");
+}
+
 void CharacterSync::auto_save(const CharacterRecord& record, Why why) {
     if (!entered_ || !record_used(record)) return;
-    if (unique_ && record_unique(record) != unique_) {
-        trace(std::string("auto save (") + why_name(why) + ") skipped: another character than the online one");
+    if (foreign_ || (unique_ && record_unique(record) != unique_)) {
+        skipped(why);
         return;
     }
     request(Save{record, why}, true);
@@ -468,6 +497,11 @@ void CharacterSync::request(const Save& save, bool write_cache) {
         if (!card.write(gci, &problem)) trace("the card cache could not be written: " + problem);
     }
     card.set_state({revision_, play_seconds(), true, box_, unique_ ? unique_ : record_unique(save.record)});
+    if (auth_blocked_) {
+        // (Pending in the cache: the next room entry, after a new login, uploads it.)
+        trace(std::string("save (") + why_name(save.why) + ") kept in the card cache, not uploaded (" + last_problem_ + ")");
+        return;
+    }
     // One upload at a time, and none before a retry is due (a rate limit):
     // the newest save waits and replaces an older waiting one.
     if (in_flight_ || (retry_at_ >= 0 && now_ < retry_at_)) {
@@ -584,11 +618,16 @@ bool CharacterSync::on_response(std::uint64_t id, const HttpResponse& response) 
         return true;
     }
     if (response.status == 401 || response.status == 403 || response.status == 426) {
-        blocked_ = true;
+        // The login ended (logged out everywhere, a new password on another
+        // PC) or the version is too old: the saves go on into the card cache
+        // as pending (this one is there already), and the next room entry
+        // uploads the newest when the server still has this revision.
+        auth_blocked_ = true;
         waiting_.reset();
         last_problem_ = text;
-        notice("The online character cannot be saved: " + text);
-        trace("refused (" + std::to_string(response.status) + " " + code + ")");
+        notice("The online character cannot be uploaded now (" + text + "). It is kept on this PC and goes up when you enter a room "
+               "again.");
+        trace("refused (" + std::to_string(response.status) + " " + code + "): saves stay pending in the card cache");
         return true;
     }
     // 422 (the record failed the server's checks) and the rest: this save is
@@ -608,7 +647,7 @@ bool CharacterSync::on_response(std::uint64_t id, const HttpResponse& response) 
 
 void CharacterSync::tick(double now) {
     now_ = now;
-    if (retry_at_ >= 0 && now >= retry_at_ && in_flight_ == 0 && waiting_ && !blocked_) {
+    if (retry_at_ >= 0 && now >= retry_at_ && in_flight_ == 0 && waiting_ && !blocked_ && !auth_blocked_) {
         const Save next = *waiting_;
         waiting_.reset();
         send(next);
@@ -618,6 +657,10 @@ void CharacterSync::tick(double now) {
 std::string CharacterSync::status_text() const {
     if (!entered_) return "Online character: not loaded";
     if (blocked_) return "Online character: not saving (" + last_problem_ + ")";
+    if (foreign_ || skip_told_)
+        return "Online character: not saving (this game is another character; load your online character at the title, or reset it in "
+               "Online > Account to start a new one)";
+    if (auth_blocked_) return "Online character: kept on this PC, uploaded at the next room entry (" + last_problem_ + ")";
     if (in_flight_ || waiting_) return "Online character: saving...";
     if (revision_ == 0) return "Online character: none yet (a new game makes it)";
     return "Online character: saved (revision " + std::to_string(revision_) + ")";

@@ -31,7 +31,15 @@
 // player is told (a 409 that names the revision the save was based on is a
 // race lost inside the server, a database deadlock, and goes again after 2 s,
 // at most three times in a row). A record of another character (another UNIQUE) is not
-// uploaded (the server would refuse it: reset the online character first).
+// uploaded (the server would refuse it: reset the online character first), and
+// neither is a character the title's character select made new while the
+// account has an online character (new_game: its UNIQUE is the frame count of
+// its creation and may even be the online character's); the player is told
+// at once and the status line says so. A refused login (401 / 403, e.g. after
+// "Log out everywhere" or a password change on another PC) or an outdated
+// version (426) stops the uploads, but the saves still go into the card cache
+// as pending: the next room entry uploads the newest when the server still
+// has the revision it was based on.
 #include "http.hpp"
 
 #include "dw4/card_store.hpp"
@@ -181,6 +189,14 @@ public:
     // An automatic save (stage change, leaving the room): the record goes
     // into the cache's character box, then up.
     void auto_save(const CharacterRecord& record, Why why);
+    // The title's character select made a new character (port event
+    // new_character of the own slot), and the title started a game (TITLE2
+    // GAMESTART). A new character while the account has an online character
+    // is another character: its saves are not uploaded until a game starts
+    // with the card's character again (round 56 review).
+    void new_game(std::uint32_t unique);
+    void game_started();
+    bool foreign() const { return foreign_; }
     // Play time without loads (live steps in a started game).
     void add_play_time(double seconds) { session_play_ += seconds; }
     // The room's context changes (members, ...).
@@ -194,7 +210,7 @@ public:
     // Nothing waiting and nothing in flight.
     bool idle() const { return in_flight_ == 0 && !waiting_ && !reload_; }
     // The uploads stopped for this room session (409 or a refused account).
-    bool blocked() const { return blocked_; }
+    bool blocked() const { return blocked_ || auth_blocked_; }
     int revision() const { return revision_; }
     std::uint32_t unique() const { return unique_; }
     std::int64_t play_seconds() const;
@@ -217,6 +233,7 @@ private:
     void trace(const std::string& line) const;
     void reload();
     void after_reload(const HttpResponse& response);
+    void skipped(Why why); // a save of another character than the online one
 
     Config config_;
     bool entered_ = false;
@@ -231,7 +248,11 @@ private:
     std::optional<Save> waiting_;     // the next save while one is in flight (the newest wins)
     std::optional<CharacterRecord> confirmed_; // the last record the server confirmed (identical saves are skipped)
     std::uint64_t reload_ = 0;        // the GET after a conflict
-    bool blocked_ = false;
+    bool blocked_ = false;            // 409: the server's character changed; nothing goes up or into the cache
+    bool auth_blocked_ = false;       // 401 / 403 / 426: nothing goes up, the saves stay pending in the cache
+    bool foreign_ = false;            // the game is a character made new while the online character exists
+    bool created_since_start_ = false; // new_game since the last game_started
+    bool skip_told_ = false;          // the player was told that this game is not saved online
     double retry_at_ = -1;            // a retry is due then (-1: none)
     int races_ = 0;                   // 409s at the revision the save was based on (lost server races) in a row
     double now_ = 0;
