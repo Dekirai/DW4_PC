@@ -1,5 +1,6 @@
 {
   "desc": "dead partner and an exit: A dead, B (the only living member) takes an exit: A goes with B, no game over, no fork",
+  "seed_story": true,
   "frames": 80000,
   "timeout": 1100,
   "clients": [

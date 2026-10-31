@@ -1,5 +1,6 @@
 {
   "desc": "two members in one stage walk apart (> 200 units), own cameras, enemies on both sides",
+  "seed_story": true,
   "card": "k10",
   "frames": 60000,
   "timeout": 700,

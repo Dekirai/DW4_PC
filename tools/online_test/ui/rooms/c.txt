@@ -1,0 +1,17 @@
+# A third player: the room for two is full.
+wait-title
+to-menu
+pad DOWN DOWN A
+wait-screens
+screen login
+login $UI_C_NAME $UI_C_PASSWORD
+expect-screen rooms
+wait-room $UI_ROOM
+sleep 5
+refresh
+select $UI_ROOM
+join $UI_ROOM password=$UI_ROOM_PASSWORD
+expect-error The room is full.
+wait 10
+shot room_full
+end

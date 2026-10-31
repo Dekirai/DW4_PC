@@ -1,0 +1,15 @@
+# S14 (apply): the owner leaves; the guest starts its game with the room story (revision 1: 505 = 0 in the lobby); its
+# stag0101 value 505 joins the room story at once (revision 1, the owner's card, to 2; saved as the owner's online
+# story), nothing is refused for the owner's absence or removed at the barrier (505 = 1 in stag0102).
+relay: ^owner .*present=False
+g: online: The room owner is away
+g: online: the game starts with the room story .revision 1.
+g: online-script: step .* log: 505 not in the lobby
+g: online-trace: story .*rev=1 phase=0 flags=1 keys=0 counters=0
+relay: ^story .*revision=2
+g: online-trace: story_ack rev=2 refused=0
+g: online-script: step .* log: 505 kept
+!relay: ^story_dropped
+!relay: ^story_held
+!g: Story progress was not saved
+!g: online-script: FAIL

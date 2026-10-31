@@ -1,5 +1,6 @@
 {
   "desc": "exit mat: A answers No and stays, B steps on and off: no prompt for A; A answers Yes while B stands on the mat: B is asked; B No: only A leaves",
+  "seed_story": true,
   "frames": 80000,
   "timeout": 1000,
   "clients": [

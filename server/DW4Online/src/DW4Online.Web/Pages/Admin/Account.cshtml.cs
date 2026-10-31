@@ -1,5 +1,6 @@
 using DW4Online.Domain.Abstractions;
 using DW4Online.Domain.Services;
+using DW4Online.Domain.Story;
 using DW4Online.Web.Auth;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
@@ -7,8 +8,9 @@ using Microsoft.AspNetCore.Mvc.RazorPages;
 namespace DW4Online.Web.Pages.Admin;
 
 /// <summary>
-/// Staff actions on one account: lock / unlock, ban / unban, temporary password, flag / unflag / revoke unlocks;
-/// admins also change roles and delete accounts. Every action is written to the audit log by the services.
+/// Staff actions on one account: lock / unlock, ban / unban, temporary password, flag / unflag / revoke unlocks, put a
+/// kept revision of the online story back (damage from a forged or faulty merge); admins also change roles and delete
+/// accounts. Every action is written to the audit log by the services.
 /// </summary>
 public sealed class AccountModel(AccountService accounts, OnlineCharacterService characters, AchievementService achievements,
     RoomService rooms, WebOptions web) : PageModel
@@ -20,10 +22,12 @@ public sealed class AccountModel(AccountService accounts, OnlineCharacterService
     [BindProperty] public bool Flagged { get; set; }
     [BindProperty] public string? Role { get; set; }
     [BindProperty] public bool ConfirmDelete { get; set; }
+    [BindProperty] public long StoryRevision { get; set; }
 
     public AccountView Target { get; private set; } = null!;
     public CharacterView? Character { get; private set; }
     public IReadOnlyList<(AchievementView Achievement, UnlockView Unlock)> Unlocks { get; private set; } = [];
+    public IReadOnlyList<StoryHistoryEntry> Story { get; private set; } = [];
     public bool IsAdmin { get; private set; }
     public string? Message { get; private set; }
     public string? Error { get; private set; }
@@ -60,6 +64,15 @@ public sealed class AccountModel(AccountService accounts, OnlineCharacterService
         return await ShowAsync(name, ct, result.Ok ? $"{Code} was removed from the account." : null, result.Error?.Message);
     }
 
+    public async Task<IActionResult> OnPostRestoreStoryAsync(string name, CancellationToken ct)
+    {
+        if (await accounts.FindAccountAsync(name, ct) is not { } target) return NotFound();
+        // The account's own room closes first: its hub holds the story and would save it again.
+        await rooms.CloseOwnedAsync(target.Id, ct);
+        var result = await characters.RestoreStoryAsync(target.Id, StoryRevision, HttpContext.WebSession()!.AccountId, HttpContext.Caller().Ip, ct);
+        return await ShowAsync(name, ct, result.Ok ? $"Story revision {StoryRevision} is back as revision {result.Value}." : null, result.Error?.Message);
+    }
+
     public async Task<IActionResult> OnPostRoleAsync(string name, CancellationToken ct)
     {
         var result = await accounts.AdminSetRoleAsync(HttpContext.WebSession()!, name, Role ?? "", HttpContext.Caller(), ct);
@@ -88,6 +101,7 @@ public sealed class AccountModel(AccountService accounts, OnlineCharacterService
         Target = target;
         IsAdmin = HttpContext.WebSession()!.Role == Roles.Admin;
         Character = await characters.GetAsync(target.Id, ct);
+        Story = await characters.StoryHistoryAsync(target.Id, ct);
         Unlocks = (await achievements.ListAsync(target.Id, ct))
             .SelectMany(a => a.Unlocks.Select(u => (a, u)))
             .OrderByDescending(x => x.u.UnlockedAt)

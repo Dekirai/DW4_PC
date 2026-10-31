@@ -1,0 +1,13 @@
+{
+  "desc": "owner present: the guest's new story value reaches the owner's online_story within ten seconds, and the owner's own instance only at its next barrier",
+  "card": "k2",
+  "seed_story": true,
+  "frames": 32000,
+  "timeout": 900,
+  "min_shared_ticks": 0,
+  "story_saved": {"client": "g", "after": "log: 505 set", "flag": 505, "seconds": 10},
+  "clients": [
+    {"name": "o", "script": "o.script", "start": 0, "card_flags": {"505": 0}},
+    {"name": "g", "script": "g.script", "start": 3, "card": "k10"}
+  ]
+}

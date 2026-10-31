@@ -1,0 +1,16 @@
+# S14 (drop): the owner leaves (the relay notes it); the guest starts its game with the room story (revision 1, the
+# owner's card: 505 = 0 in the lobby although the guest's card has it); in stag0101 its pending set is only 505; it is
+# dropped (story_dropped with flag 505 alone), the guest is told when the barrier into stag0102 removes it, and its
+# engine has 505 = 0 there (the script's fail check).
+relay: ^owner .*present=False
+g: online: The room owner is away
+g: online: the game starts with the room story .revision 1.
+g: online-script: step .* log: 505 not in the lobby
+g: online-trace: story .*rev=1 phase=0 flags=1 keys=0 counters=0
+relay: ^story_dropped .*keys=flag:505 ms=
+g: online-trace: story_ack .*refused=1
+g: online: Story progress was not saved: the room owner is away.
+g: online-script: step .* log: 505 removed
+!relay: ^story .*revision
+!relay: ^owner .*present=True
+!g: online-script: FAIL

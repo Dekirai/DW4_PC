@@ -37,6 +37,10 @@ std::span<const AreaImage> area_images();
 const AreaInfo* find_area(std::string_view stage);
 // "Death Valley: Humid Cave" ("Practice Stage" when region and place agree).
 std::string area_display_name(const AreaInfo& area);
+// The table as data/online/areas.json holds it (stage folder and display
+// name per line, LF): the DW4Online website names the stages of its room
+// page with it (docs/SEAMLESS.md 14); the presence test compares the file.
+std::string area_names_json();
 // The title, logo, character select and save screens (stagIS*).
 bool is_menu_stage(std::string_view stage);
 

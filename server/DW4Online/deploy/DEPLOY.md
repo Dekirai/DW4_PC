@@ -15,7 +15,8 @@ stay untouched.
 | ACME challenge folder (later, section 6.3 A2) | `D:\Dekirai\Servers\DW4Online\acme` |
 | Website Data Protection keys | `D:\Dekirai\Servers\DW4Online\keys` (DPAPI-encrypted for the service account) |
 | Service | `DW4Online`, virtual account `NT SERVICE\DW4Online`, start delayed-auto |
-| TLS certificate (now) | self-signed for `IP 88.198.52.221` in `LocalMachine\My`, pinned by the game client (section 6.1) |
+| TLS certificate (now) | self-signed for `IP 88.198.52.221` in `LocalMachine\My` on a key made once and kept offline, pinned by the game client (sections 6.1, 6.4) |
+| Kept once, never regenerated | the two TLS keys (in use, spare; offline), `Relay:TicketKey` (in the settings file and its encrypted copy) |
 | Ports | 443 TCP (HTTPS: API and website), 52041 TCP (relay), 80 TCP only for a later domain's certificate validation; MariaDB 3306 on 127.0.0.1 only; plain HTTP on 127.0.0.1:5280 for checks on the server itself (`appsettings.json`'s endpoint, never reachable from outside) |
 
 The scripts in this folder are written for these steps but were **not run** on the server: read them, then run them
@@ -117,13 +118,22 @@ patch a self-contained app): a .NET security release means a new publish and an 
 1. Copy the zip to the server and extract it to `D:\Dekirai\Servers\DW4Online\app`.
 2. Create `D:\Dekirai\Servers\DW4Online\config\appsettings.Production.json` from
    [appsettings.Production.example.json](appsettings.Production.example.json): the connection string with the service
-   password, a relay ticket key (`app\DW4Online.Server.exe gen-relay-key`), the IP address (the TLS settings of
+   password, the relay ticket key, the IP address (the TLS settings of
    section 6.1), and the `Web` section: `RequireHttps` true, `DataProtectionKeysDirectory` = the `keys` folder, and your
    name, postal address and a contact in `OperatorName` / `OperatorAddress` / `OperatorContact` (the privacy page names
    the controller, GDPR Art. 13). The relay is on by default (`Relay:Enabled`); it needs `ListenAddress` 0.0.0.0 and
    the ticket key, and `Service:RelayHost` tells clients where it is. This file holds the secrets: never copy it into
    Git or the app folder.
-3. Register the service, folder permissions and firewall rules:
+
+   **The relay ticket key is made once and kept.** Make it with `app\DW4Online.Server.exe gen-relay-key` (32 random
+   bytes, base64) the first time only, put it into `Relay:TicketKey` and keep it with the encrypted copy of this file
+   (section 7). Updates, restores and a moved server keep the same key: it signs the one-time relay tickets (a new key
+   only breaks the tickets of the last 60 seconds) and, through HKDF, keys the security log's tags of unknown user names
+   (`audit-tag`): with a new key the tags written before can no longer be matched, and account deletions leave them
+   behind. Without the key a production start fails on purpose (a temporary key only in Development).
+3. Register the service, folder permissions and firewall rules, in an **elevated** PowerShell (right-click the Start
+   button, *Terminal (Admin)*, or PowerShell with *Run as administrator*; its title bar says Administrator). In a
+   normal PowerShell the script stops with "This script needs administrator rights".
 
    ```powershell
    powershell -ExecutionPolicy Bypass -File D:\Dekirai\Servers\DW4Online\app\deploy\install-service.ps1 -DryRun   # shows the commands
@@ -158,7 +168,8 @@ patch a self-contained app): a .NET security release means a new publish and an 
    (`Kestrel:Endpoints:Http`; `curl.exe http://127.0.0.1:5280/health` works on the server without the certificate).
    If another program uses 5280, give the endpoint another free loopback port in `appsettings.Production.json`; a
    port in use stops the service at its start.
-6. Create the TLS certificate for the IP address and note its pins (section 6.1, `new-selfsigned-cert.ps1`).
+6. Install the TLS certificate made on the kept key and write the client's pins (section 6.1, `tls-key.ps1`,
+   `new-selfsigned-cert.ps1 -ImportPfx`, `print-pins.ps1`).
 
 Kestrel binds the ports itself; on Windows a non-admin account may bind ports below 1024 with sockets (no URL ACL is
 needed because http.sys is not used).
@@ -168,7 +179,7 @@ needed because http.sys is not used).
 ```powershell
 Start-Service DW4Online
 Get-Content D:\Dekirai\Servers\DW4Online\logs\dw4online-*.log -Tail 30
-curl.exe -k https://88.198.52.221/health      # {"status":"ok","schema":7}; -k: the certificate is self-signed (section 6.1)
+curl.exe -k https://88.198.52.221/health      # {"status":"ok","schema":9}; -k: the certificate is self-signed (section 6.1)
 D:\Dekirai\Servers\DW4Online\app\DW4Online.Server.exe tls-pin --host 88.198.52.221   # the certificate the service picks from the store, and its pin
 powershell -ExecutionPolicy Bypass -File D:\Dekirai\Servers\DW4Online\app\deploy\new-selfsigned-cert.ps1 -PinServedBy 88.198.52.221   # the pin of the certificate port 443 really serves
 ```
@@ -189,38 +200,55 @@ in `src/DW4Online.Web/Pages/Privacy.cshtml` if your setup differs (for example o
 
 ## 6. TLS: the IP address now, the domain later
 
-### 6.1 Now: https://88.198.52.221 with a pinned self-signed certificate
+### 6.1 Now: https://88.198.52.221 with a pinned self-signed certificate on a kept key
 
 There is no domain yet, so no certificate authority vouches for the address. The game client therefore does not ask
 the Windows root store: it pins the server's public key, the SHA-256 of the certificate's SubjectPublicKeyInfo ("SPKI
 pin"), and refuses any other key before it sends a single byte of a request (the end-to-end test
 `Pinned_self_signed_https_at_an_ip_address_below_a_path_base` checks exactly that with the WinHTTP test client).
 
-1. After `install-service.ps1` (section 4; the service account must exist), in an elevated PowerShell:
+**A key made once and kept.** The pin belongs to the key, not to the certificate. Two keys are made once on your PC and
+kept offline: the key in use and a spare. Every client pins both. Every certificate made on a kept key has its pin, so
+renewing the certificate, reinstalling or moving the server needs no client update. (A key the server makes itself, as
+`New-SelfSignedCertificate` does, is new with every certificate: a new pin, so every renewal would need a client update
+first.)
+
+1. **The keys**, on the development PC in PowerShell (OpenSSL comes with Git for Windows):
+
+   ```powershell
+   cd server\DW4Online\deploy
+   powershell -ExecutionPolicy Bypass -File tls-key.ps1 -NewKey E:\dw4online\server-key.pem
+   powershell -ExecutionPolicy Bypass -File tls-key.ps1 -NewKey E:\dw4online\spare-key.pem
+   ```
+
+   `E:` stands for a USB stick or any place outside the repository; keep a second copy somewhere else. Each key is RSA
+   3072, encrypted with AES-256 under a passphrase OpenSSL asks for; keep the passphrases apart (a password manager).
+   [tls-key.ps1](tls-key.ps1) never overwrites a key file and prints each key's pin. The keys never go into Git, the
+   repository or (as PEM files) onto the server.
+2. **A certificate** on the key in use, as a PFX for the server:
+
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File tls-key.ps1 -Certificate -KeyFile E:\dw4online\server-key.pem -Out E:\dw4online\server.pfx
+   ```
+
+   It is self-signed for `IP 88.198.52.221` (subject alternative name, server authentication), valid 10 years
+   (`-Years` changes it); OpenSSL asks for the key's passphrase and a password for the PFX.
+3. **On the server**, after `install-service.ps1` (section 4; the service account must exist), in an elevated
+   PowerShell:
 
    ```powershell
    cd D:\Dekirai\Servers\DW4Online\app\deploy
-   powershell -ExecutionPolicy Bypass -File new-selfsigned-cert.ps1 -SparePfx E:\dw4online-spare.pfx
+   powershell -ExecutionPolicy Bypass -File new-selfsigned-cert.ps1 -ImportPfx E:\dw4online\server.pfx
    ```
 
-   `E:` stands for a USB stick or any place that is not this server. On a rented server reached over Remote Desktop
-   that is your own PC: with drive redirection on, write it there directly (`-SparePfx \\tsclient\C\Users\<you>\Desktop\dw4online-spare.pfx`),
-   otherwise write it to the server's desktop, copy it to your PC through the Remote Desktop clipboard and delete it on
-   the server (`Remove-Item`). [new-selfsigned-cert.ps1](new-selfsigned-cert.ps1)
-   - creates a certificate for `IP 88.198.52.221` (RSA 3072, server authentication, valid 10 years) in
-     `LocalMachine\My` whose key cannot be exported: it never leaves the server;
-   - gives `NT SERVICE\DW4Online` read access to that key (the service runs the TLS handshakes);
-   - with `-SparePfx`, creates a second, spare key (in the current user's store, where the service never looks),
-     writes it to that PFX file (it asks for a password twice) and removes it from the server again;
-   - prints both pins, checked against the service's own `DW4Online.Server.exe tls-pin`, and the settings of step 2.
-
-   It refuses to make a second certificate for an address that already has a valid one: a new key means a new pin,
-   and every client without that pin stops connecting (`-Force` overrides this; only use it when a client update with
-   the new pin is out). `-DryRun` shows what it would do. A spare can follow later without a new key:
-   `new-selfsigned-cert.ps1 -SparePfx E:\dw4online-spare.pfx -SpareOnly` keeps the certificate in use and prints its
-   pin and the spare's. `DW4Online.Server.exe tls-pin --file E:\dw4online-spare.pfx --password-env DW4_PFX` prints a
-   PFX's pin with the password from the environment variable `DW4_PFX` (`$env:DW4_PFX = Read-Host` first).
-2. In `appsettings.Production.json` (the example file already holds these values):
+   `E:` is wherever the PFX of step 2 is. On a rented server reached over Remote Desktop that is your own PC: with
+   drive redirection on, read it there directly (`-ImportPfx \\tsclient\E\dw4online\server.pfx`), otherwise copy it to
+   the server's desktop through the Remote Desktop clipboard. [new-selfsigned-cert.ps1](new-selfsigned-cert.ps1) asks
+   for the PFX password, installs the certificate in `LocalMachine\My` without export permission, gives
+   `NT SERVICE\DW4Online` read access to its key (the service runs the TLS handshakes) and prints its pin, checked
+   against the service's own `DW4Online.Server.exe tls-pin`. Delete the PFX from the server afterwards
+   (`Remove-Item`): the kept PEM key is the master copy. `-DryRun` shows what it would do.
+4. In `appsettings.Production.json` (the example file already holds these values):
 
    ```json
    "Kestrel": { "Endpoints": { "Https": { "Url": "https://0.0.0.0:443" } } },
@@ -231,10 +259,19 @@ pin"), and refuses any other key before it sends a single byte of a request (the
 
    then `Restart-Service DW4Online` (or wait: the service re-reads the store every 10 minutes). Its log names the
    certificate and its pin (`TLS certificate for 88.198.52.221: <thumbprint>, valid until ..., SPKI pin ...`).
-3. Both pins go into the game client's online settings (the first one is in use, the second is the spare). Keep the
-   spare PFX offline and its password somewhere else (for example in your password manager).
-4. Check: `.\DW4Online.Server.exe tls-pin --host 88.198.52.221` (in the app folder) prints the certificate the service
-   picks from the store (the same selection, read from the store, no connection) and its pin;
+5. **The pins for the game client**, on the development PC (the pin script):
+
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File print-pins.ps1 -KeyFile E:\dw4online\server-key.pem,E:\dw4online\spare-key.pem -Out ..\..\..\local\online_pins.txt
+   ```
+
+   [print-pins.ps1](print-pins.ps1) prints both pins (in use first, then the spare) and writes them to
+   `local/online_pins.txt` of the DW4_PC checkout, which the client build reads (section 6.4). It also reads
+   certificates (`-CertFile`) and PFX files (`-Pfx`).
+6. **Check**: `print-pins.ps1 -Server 88.198.52.221` (from any PC; a TLS handshake, nothing is sent) prints the key the
+   server presents; together with the `-KeyFile` list of step 5 it checks that this is the key in use. On the server,
+   `.\DW4Online.Server.exe tls-pin --host 88.198.52.221` (in the app folder) prints the certificate the service picks
+   from the store (the same selection, read from the store, no connection) and its pin, and
    `new-selfsigned-cert.ps1 -PinServedBy 88.198.52.221` connects to port 443 as the game client does (no host name)
    and prints the pin of the certificate actually served; from another PC `curl.exe -k https://88.198.52.221/health`
    answers `{"status":"ok",...}`.
@@ -244,12 +281,21 @@ before accepting compares the browser's SHA-256 fingerprint with the `Certificat
 `tls-pin`; you can publish that line where your players read news. HSTS stays off for the IP address (browsers ignore it
 there anyway). The game itself shows no warning: it checks the pin.
 
-If the server or its key is lost: install the spare on the new server with
-`new-selfsigned-cert.ps1 -ImportPfx E:\dw4online-spare.pfx` (it asks for the password, installs the key without
-export permission and grants the service read access). Every client keeps working because it pins the spare too; ship
-a client update with a new spare pin afterwards (`new-selfsigned-cert.ps1 -Force -SparePfx ...` on the new server
-makes one, but its own new key is then a third pin: the update must carry it before you switch to it). The certificate
-lasts 10 years; by then the service runs under the domain.
+**Renewal, a new or moved server.** Make a new certificate on the same kept key (step 2) and import it (step 3) with
+`-Force`: the script refuses a second certificate for an address that already has a valid one, because with a new key
+that would lock every client out; with the kept key the pin stays the same, so `-Force` is safe. The certificate lasts
+10 years; by then the service runs under the domain.
+
+**A key that leaked.** Make a certificate on the spare key and import it with `-Force`: every client accepts it, as it
+pins the spare too. Then make a new spare key (step 1), write the pins again (step 5: the former spare in use first,
+the new spare second) and ship a client update with them before the old key's certificate is gone for good.
+
+**Without kept keys** (the earlier way, not recommended): `new-selfsigned-cert.ps1` without `-ImportPfx` makes the key on
+the server, where it can never leave (`-SparePfx` writes a spare to a PFX, over Remote Desktop best straight to your own
+PC through `\\tsclient\...`; `-SpareOnly` adds one later; `-DryRun` shows what it would do). It refuses a second
+certificate for an address that already has a valid one unless `-Force` is given. Its pins come from
+`print-pins.ps1 -Server` or `-Pfx` (or `DW4Online.Server.exe tls-pin --file x.pfx --password-env DW4_PFX`) and go into
+the build the same way, but a renewal makes a new key and a new pin.
 
 ### 6.2 Later: https://dekirai.crygod.de/dw4online
 
@@ -314,6 +360,25 @@ Not chosen: a Let's Encrypt certificate for the IP address (6-day certificates t
 the client would have to pin a key that changes with every renewal unless the key is reused) and plain HTTP (passwords
 and tokens would travel unencrypted).
 
+### 6.4 The pins in the game client (a build step)
+
+The client takes the server's pins from its build, never from a file at run time and never from a key
+(`src/game/online/server_pins.hpp`; SEAMLESS.md 10):
+
+- `local/online_pins.txt` in the DW4_PC checkout: one pin per line, the key in use first, then the spare; `#` starts a
+  comment. `print-pins.ps1 -Out` writes it (section 6.1, step 5). `local/` is ignored by Git. The pins are public values
+  (hashes of public keys), the keys stay offline.
+- or `-DDW4_ONLINE_PINS=<in use>,<spare>` on the CMake command line (it wins over the file; `DW4_ONLINE_PINS_FILE` names
+  another file).
+
+CMake reads them at its configure step: `scripts/build.ps1` runs it on every build; in a build folder of your own run
+`cmake -S . -B <folder>` once after the file first exists (later changes of the file reconfigure by themselves). It
+checks each pin (base64 SHA-256, 44 characters, at most two) and prints `DW4Online server pins: 2 (...)`; without pins
+it prints `none`, and that client refuses the server (fail closed: "the server's key matched no pin"). For a release
+package configure with `-DDW4_ONLINE_REQUIRE_PINS=ON`: a missing or broken pin then fails the configure step. The ctest
+`online_api` checks that the build carries the configured pins ("server pins in this build: 2"). A client built with
+`DW4_ONLINE_USE_DOMAIN` (section 6.2) validates the domain's certificate chain instead and needs no pins.
+
 ## 7. Backups
 
 [backup-db.ps1](backup-db.ps1) runs `mariadb-dump --single-transaction --quick --hex-blob --routines --events
@@ -340,8 +405,9 @@ Register-ScheduledTask -TaskName 'DW4Online DB backup' -Action $action -Trigger 
 ```
 
 Copy the backups off the server as well (for example to your own FTPS server with WinSCP scripting, or a storage box).
-Also keep a copy of `config\appsettings.Production.json` (it holds the database password and the relay key), stored
-encrypted. The `keys` folder needs no backup: its keys are DPAPI-encrypted for this machine's service account and only
+Also keep a copy of `config\appsettings.Production.json` (it holds the database password and the relay ticket key, which
+stays the same for good, section 4), stored encrypted. The TLS keys are kept offline anyway (section 6.1); the
+certificate in the store needs no backup, as a new one is made on the kept key. The `keys` folder needs no backup: its keys are DPAPI-encrypted for this machine's service account and only
 protect anti-forgery tokens; if it is lost, open website forms simply have to be reloaded.
 
 Run the backup once by hand and check the file (elevated PowerShell; `Start-ScheduledTask 'DW4Online DB backup'` runs
@@ -407,6 +473,16 @@ DW4Online too), and the MariaDB MSI cannot replace a running server. Stop DW4Onl
 start MariaDB, then DW4Online). The same holds for a my.ini change (section 1).
 
 ## 9. Operating notes
+
+- The room story while the owner is away (`Rooms:StoryWhileOwnerAway` in `appsettings.Production.json`, SEAMLESS.md
+  8.6): `drop` (the default: progress the guests make while the room's owner is away is not saved and leaves their
+  games at the next stage change, with a notice), `hold` (kept on the server and merged when the owner returns) or
+  `apply` (saved at once). The story's plausibility per visit (`Instances:StoryMinVisitSeconds`, 10;
+  `StoryBurst` 10, `StoryMessagesPerMinute` 60) rarely needs a change. Every saved revision of an account's online
+  story is kept (`OnlineCharacter:StoryHistoryRevisions`, 100): the admin page of an account lists them and puts one
+  back (*Put back*) when misuse or an error damaged it; resetting the online character empties the story.
+- `Play:MinimumProtocol` and `Play:CurrentProtocol` follow the game client (45 since round S2): older clients are
+  asked to update.
 
 - Logs: `logs\dw4online-yyyyMMdd.log` (UTC, 30 days) when `Logging:File:Directory` is set; crashes also appear in the
   Windows Application event log (source ".NET Runtime").

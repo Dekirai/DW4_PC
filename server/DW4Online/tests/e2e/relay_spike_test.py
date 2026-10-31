@@ -209,6 +209,10 @@ def main():
     context = 0xC0FFEE
     for m in (a, b):
         m.send(HEADING, struct.pack("<I", m.inst) + string("stag0101") + bytes([0]) + struct.pack("<Q", context))
+    # Each connection has its own reader on the relay: b's HEADING must be in before a's barrier is decided (a real
+    # client sends HEADING one to two seconds before its barrier). Without the pause a busy machine let a's barrier
+    # overtake it and a went on alone.
+    time.sleep(0.3)
     def barrier(m):
         carry = m.ok.encode()
         m.send(BARRIER, struct.pack("<III", m.inst, m.visit, 0) + string("stag0101") + bytes([0, 1, 1]) + struct.pack("<Q", context)

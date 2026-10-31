@@ -261,6 +261,7 @@ int SaveCommon::create(Engine& engine, int player, MessageWindow& message, int c
     int step = step_at(p, level), outcome = 0;
     auto finished = [&] {
         if (io.done) outcome = io.result == 2 ? 1 : 2;
+        if (outcome == 1) engine.port_event({PortEvent::Kind::card_written, player, card, -1, {}}); // observe-only (SEAMLESS.md 7.5)
     };
     if (step == 0) {
         message.show((player << 16) | 0x2003);
@@ -338,6 +339,7 @@ int SaveCommon::write(Engine& engine, int player, int card, int box, int level) 
         if (io.result == 2) {
             outcome = 1;
             if (p.card) p.card->records[std::size_t(box)] = records[std::size_t(player)]; // 80364854
+            engine.port_event({PortEvent::Kind::card_written, player, card, box, {}}); // observe-only (SEAMLESS.md 7.5)
         } else {
             outcome = 2;
         }

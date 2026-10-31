@@ -40,7 +40,7 @@ function Step([string]$text, [scriptblock]$action) {
 
 if (-not $DryRun) {
     $principal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
-    if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { throw 'Run this script elevated.' }
+    if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { throw "This script needs administrator rights: open PowerShell with 'Run as administrator' (right-click the Start button, Terminal (Admin)), then run the same command again." }
     if (-not (Test-Path $exe)) { throw "$exe not found: extract the release to $app first." }
     if (-not (Test-Path $settings)) { throw "$settings not found: create it from appsettings.Production.example.json first." }
     if (Get-Service -Name $ServiceName -ErrorAction SilentlyContinue) { throw "Service $ServiceName exists already (updates: see DEPLOY.md, section 8)." }

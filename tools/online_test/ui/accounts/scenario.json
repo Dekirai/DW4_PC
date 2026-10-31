@@ -1,0 +1,5 @@
+{
+  "desc": "logged out: Online from the title menu, register (recovery code), the account, log out, a wrong password, log in again",
+  "timeout": 240,
+  "clients": [{"name": "a", "script": "a.txt"}]
+}

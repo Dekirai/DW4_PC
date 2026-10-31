@@ -52,8 +52,19 @@ struct Activity {
     std::string small_image;
     std::string small_text;
     std::int64_t start = 0;  // unix seconds of the session start, 0: none
+    // An online room's party (docs/SEAMLESS.md 13): an id that names no room
+    // (party_id below) and the room's size, members of the whole room (up to
+    // ten), not of the instance. Discord shows "(n of max)" after the state.
+    // No join secret: joining goes through the room list (a secret would need
+    // Discord's join events and could not carry a room's password).
+    std::string party_id;
+    int party_size = 0, party_max = 0;
     bool operator==(const Activity&) const = default;
 };
+
+// "dw4-" and 16 hex digits of FNV-1a 64 over the room code: the same party for
+// every member of a room, the code itself never leaves the game.
+std::string party_id(std::string_view room_code);
 
 std::string handshake_json(std::string_view client_id);
 // SET_ACTIVITY for the process; no activity clears it.

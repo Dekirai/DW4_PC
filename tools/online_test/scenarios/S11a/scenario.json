@@ -1,6 +1,7 @@
 {
   "desc": "an injected desync (test hook) on the shorter member: the fingerprint vote resyncs it, equal net fingerprints after",
   "card": "k10",
+  "seed_story": true,
   "frames": 60000,
   "timeout": 800,
   "min_shared_ticks": 6000,

@@ -17,6 +17,10 @@ expected events. It stops only the processes it started (by their handles), neve
     python run.py dev --game-exe EXE --data DATA [--hidden [--frames N]] [--dev-card DIR]
                                                            the local stack and two clients in one room (visible windows
                                                            for a person, scripts/online-dev.ps1; --hidden for agents)
+    python run.py ui [SCENARIO ...] --game-exe EXE --data DATA [--cards DIR]
+                                                           the account and room screens (ui/<id>): hidden clients driven by
+                                                           --online-ui scripts through the client's own code paths, with
+                                                           screenshots (PNG) of every screen in the run folder
     common: [--mysql-port 3431] [--ports 53100-53199] [--no-build]
 
 Game scenarios (scenarios/<id>/scenario.json, one .script per client, expected.txt): every client is a hidden
@@ -29,7 +33,13 @@ canonical snapshot hashes of every NEW (and co-arrival) are equal, the relay log
 was closed or crashed; then the scenario's expected log (in order per source; "!" lines must not appear; "shared: a b >=
 N" asks for N ticks of equal fingerprints with both present in one instance). A scenario with "allow_resync" (S11a, S11b:
 a client's DW4_ONLINE_TEST_DESYNC injects a desync) may differ up to its instance's last resync READY and must then be
-equal for "min_after_resync" ticks; its expected log checks the votes and resyncs. Network traffic stays on loopback.
+equal for "min_after_resync" ticks; its expected log checks the votes and resyncs. A scenario's "achievements" asks the
+server for each client account's online achievements afterwards (check_achievements). Network traffic stays on loopback. A
+scenario.json with "server": {...} gets its own server with those settings merged over the stack's and its own database
+(S14h / S14a: {"Rooms": {"StoryWhileOwnerAway": "hold"}}); "min_shared_ticks" lowers the 10,000 shared ticks a scenario
+needs (S14: one member plays); "seed_story": true starts the room story from the room creator's card (its online_story
+row, SEAMLESS.md 8.4), so the members' card stories are not new to the room (the title gives every member the room
+story at game start).
 
 Without a scenario every game scenario runs. G1 is the integration's first game run (a new game from the title, both
 meet in the first field).
@@ -212,6 +222,12 @@ def start_mysql(stack):
     if not wait_port(port, 40):
         raise RuntimeError("mysqld did not open port %d" % port)
     stack.mysql = (port, pw)
+    return create_database(stack)
+
+
+def create_database(stack):
+    """A new database in the run's mysqld; its connection string."""
+    port, pw = stack.mysql
     db = "dw4online_run_" + secrets.token_hex(4)
     subprocess.run([os.path.join(MYSQL_BIN, "mysql.exe"), "--protocol=tcp", "-h", "127.0.0.1", "-P", str(port), "-u", "root", "--password=" + pw,
                     "-e", "CREATE DATABASE %s CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci" % db], check=True, creationflags=NO_WINDOW)
@@ -225,10 +241,10 @@ def openssl():
     raise RuntimeError("openssl not found (Git for Windows ships one)")
 
 
-def make_certificate(stack):
+def make_certificate(folder):
     """A throw-away P-256 certificate for 127.0.0.1 (PEM for Kestrel), its SPKI pin and its DER."""
     o = openssl()
-    cert, key = os.path.join(stack.dir, "cert.pem"), os.path.join(stack.dir, "key.pem")
+    cert, key = os.path.join(folder, "cert.pem"), os.path.join(folder, "key.pem")
     subprocess.run([o, "req", "-x509", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:P-256", "-nodes", "-keyout", key, "-out", cert,
                     "-days", "2", "-subj", "/CN=127.0.0.1", "-addext", "subjectAltName=IP:127.0.0.1"], check=True, capture_output=True,
                    creationflags=NO_WINDOW)
@@ -275,10 +291,22 @@ class Api:
             return e.code, json.loads(raw) if raw else None
 
 
-def start_server(stack, connection):
+def merged(base, extra):
+    """base with extra's keys deep-merged into it (nested objects key by key)."""
+    out = dict(base)
+    for k, v in (extra or {}).items():
+        out[k] = merged(out[k], v) if isinstance(v, dict) and isinstance(out.get(k), dict) else v
+    return out
+
+
+def start_server(stack, connection, extra=None, name=""):
+    """The DW4Online server (API and relay) on loopback; extra: settings merged over the test stack's (a scenario's own
+    server, in its own folder and database: SEAMLESS.md 8.6's Rooms:StoryWhileOwnerAway, for example)."""
+    folder = os.path.join(stack.dir, "server-" + name) if name else stack.dir
+    os.makedirs(folder, exist_ok=True)
     https, relay = free_port(stack), free_port(stack)
-    cert, key, pin, der = make_certificate(stack)
-    diag = os.path.join(stack.dir, "relay")
+    cert, key, pin, der = make_certificate(folder)
+    diag = os.path.join(folder, "relay")
     settings = {
         "Database": {"ConnectionString": connection, "AutoMigrate": True},
         "Kestrel": {"Endpoints": {"Http": {"Url": "http://127.0.0.1:%d" % free_port(stack)},
@@ -290,15 +318,16 @@ def start_server(stack, connection):
         "Relay": {"Enabled": True, "ListenAddress": "127.0.0.1", "Port": relay, "TicketKey": base64.b64encode(secrets.token_bytes(32)).decode(),
                   "DiagnosticsDirectory": diag},
         "Web": {"DataProtectionKeysDirectory": "memory"},
-        "Logging": {"File": {"Directory": os.path.join(stack.dir, "server-log")}},
+        "Logging": {"File": {"Directory": os.path.join(folder, "server-log")}},
     }
-    path = os.path.join(stack.dir, "server-settings.json")
+    settings = merged(settings, extra)
+    path = os.path.join(folder, "server-settings.json")
     with open(path, "w", encoding="utf-8") as f:
         json.dump(settings, f, indent=1)
-    stack.spawn(["dotnet", dll("src/DW4Online.Server", "DW4Online.Server.dll"), "--settings", path], os.path.join(stack.dir, "server.out"),
+    stack.spawn(["dotnet", dll("src/DW4Online.Server", "DW4Online.Server.dll"), "--settings", path], os.path.join(folder, "server.out"),
                 env=dict(os.environ, ASPNETCORE_ENVIRONMENT="Production", DOTNET_gcServer="0"))
     if not wait_port(https, 60) or not wait_port(relay, 30):
-        raise RuntimeError("the server did not start (see %s)" % os.path.join(stack.dir, "server.out"))
+        raise RuntimeError("the server did not start (see %s)" % os.path.join(folder, "server.out"))
     return "https://127.0.0.1:%d" % https, relay, pin, der, diag
 
 
@@ -479,13 +508,88 @@ def derive_card(src, dst, flags):
     return dst
 
 
+def card_story(folder):
+    """The story of the first character record of the card folder's DW4 save (the first copy that passes its
+    checksum, as the game reads it): BASE_FLAG (1024 bytes at 792), BASE_FLAGFOLDER (12 at 1816), BASE_COUNTER
+    (16 x i32 big endian at 1828)."""
+    if os.path.isdir(os.path.join(folder, "Card A")):
+        folder = os.path.join(folder, "Card A")
+    for name in sorted(os.listdir(folder)):
+        if not name.endswith(".gci"):
+            continue
+        data = open(os.path.join(folder, name), "rb").read()
+        for copy in CARD_COPIES:
+            base = GCI_ENTRY + copy
+            words = struct.unpack(">%dI" % ((CARD_COPY_SIZE - 4) // 4), data[base + 4:base + CARD_COPY_SIZE])
+            if struct.unpack(">I", data[base:base + 4])[0] != sum(words) & 0xFFFFFFFF or not data[base + 8]:
+                continue
+            rec = data[base + 8:base + 8 + 3316]
+            return rec[792:1816], rec[1816:1828], struct.unpack(">16i", rec[1828:1892])
+    raise RuntimeError("no valid DW4 save in " + folder)
+
+
+def seed_story(stack, connection, account_id, folder):
+    """The account's online story (online_story, SEAMLESS.md 8.4) from the card's story: the room story of a room this
+    account opens starts from it, as if the online character had played that far (test runs that start from saved
+    cards; the title gives every member the room story at game start)."""
+    flags, folder_bytes, counters = card_story(folder)
+    db = dict(kv.split("=", 1) for kv in connection.split(";") if "=" in kv)["Database"]
+    port, pw = stack.mysql
+    sql = ("REPLACE INTO online_story (account_id, revision, flags, folder, counters, updated_at) VALUES (%d, 1, X'%s', X'%s', X'%s', "
+           "UTC_TIMESTAMP(3))" % (int(account_id), flags.hex(), folder_bytes.hex(), struct.pack("<16i", *counters).hex()))
+    subprocess.run([os.path.join(MYSQL_BIN, "mysql.exe"), "--protocol=tcp", "-h", "127.0.0.1", "-P", str(port), "-u", "root", "--password=" + pw,
+                    db, "-e", sql], check=True, capture_output=True, creationflags=NO_WINDOW)
+
+
+def stored_story_flag(stack, connection, account_id, flag):
+    """(revision, value of `flag`) of the account's online_story row as the database holds it now; (0, 0) without one."""
+    db = dict(kv.split("=", 1) for kv in connection.split(";") if "=" in kv)["Database"]
+    port, pw = stack.mysql
+    sql = "SELECT revision, ORD(SUBSTRING(flags, %d, 1)) FROM online_story WHERE account_id = %d" % (int(flag) + 1, int(account_id))
+    out = subprocess.run([os.path.join(MYSQL_BIN, "mysql.exe"), "--protocol=tcp", "-h", "127.0.0.1", "-P", str(port), "-u", "root", "--password=" + pw,
+                          "-N", "-B", db, "-e", sql], check=True, capture_output=True, text=True, creationflags=NO_WINDOW).stdout.split()
+    return (int(out[0]), int(out[1])) if len(out) >= 2 else (0, 0)
+
+
+def watch_story_saved(stack, sc, out, connection, owner_id, result, stop):
+    """scenario.json "story_saved": {"client", "after", "flag", "seconds"}: the time from the client's log line that
+    contains "after" (the script step that saw the flag set in its engine; step lines are flushed at once) until the
+    room owner's online_story row in the database holds the flag (SEAMLESS.md 17 S2: within ten seconds). The log is
+    read every 0.1 s, the database every 0.2 s; result["seconds"] is that time, None if it never came within 60 s."""
+    spec = sc["story_saved"]
+    log = os.path.join(out, spec["client"] + ".log")
+    seen, at, text = None, 0, ""
+    while not stop.is_set():
+        if seen is None:
+            if os.path.exists(log):
+                with open(log, encoding="utf-8", errors="replace") as f:
+                    f.seek(at)
+                    chunk = f.read()
+                    at = f.tell()
+                text = (text + chunk)[-4096:]
+                if spec["after"] in text:
+                    seen = time.time()
+                    result["before"] = stored_story_flag(stack, connection, owner_id, spec["flag"])
+                    continue
+            time.sleep(0.1)
+            continue
+        revision, value = stored_story_flag(stack, connection, owner_id, spec["flag"])
+        if value:
+            result["seconds"], result["revision"] = time.time() - seen, revision
+            return
+        if time.time() - seen > 60:
+            result["seconds"] = None
+            return
+        time.sleep(0.2)
+
+
 def game_scenarios():
     names = sorted(d for d in os.listdir(SCENARIO_DIR) if os.path.isfile(os.path.join(SCENARIO_DIR, d, "scenario.json"))) \
         if os.path.isdir(SCENARIO_DIR) else []
     return [dict(json.load(open(os.path.join(SCENARIO_DIR, n, "scenario.json"), encoding="utf-8")), name=n) for n in names]
 
 
-def run_real(stack, sc, api, relay_port, pin, diag, lock):
+def run_real(stack, sc, api, relay_port, pin, diag, lock, connection):
     """One game scenario: hidden game clients with scripts in one room."""
     a = stack.args
     if not a.game_exe or not a.data:
@@ -494,13 +598,14 @@ def run_real(stack, sc, api, relay_port, pin, diag, lock):
     out = os.path.join(stack.dir, sc["name"])
     os.makedirs(out, exist_ok=True)
     tag = sc["name"].lower() + secrets.token_hex(2)
-    passwords = {}
+    passwords, accounts = {}, {}
     with lock:
         for c in sc["clients"]:
             passwords[c["name"]] = "online test " + c["name"] + " " + secrets.token_hex(4)
             s, body = api.call("POST", "/api/v1/auth/register", {"username": tag + c["name"], "password": passwords[c["name"]]})
             if s != 201:
                 raise RuntimeError("register %s: %s %s" % (c["name"], s, body))
+            accounts[c["name"]] = body["account"]["id"]
     https_port = api.base.rsplit(":", 1)[1]
     room_name = sc["name"] + " " + tag
     t0 = time.time()
@@ -511,16 +616,31 @@ def run_real(stack, sc, api, relay_port, pin, diag, lock):
         text = open(os.path.join(src, c["script"]), encoding="utf-8").read()
         text = re.sub(r"@(\d+(?:\.\d+)?)", lambda m: "%.1f" % (t0 + float(m.group(1))), text)
 
-        # {route:NAME} is the waypoint list of routes/NAME.txt, {route:NAME:X,Z} the same up to the waypoint X,Z.
+        # {route:NAME} is the waypoint list of routes/NAME.txt, {route:NAME:X,Z} the same up to the waypoint X,Z,
+        # {route:NAME>X,Z} the same from the waypoint X,Z on (S14: on along the route after a detour).
         def route(m):
             lines = open(os.path.join(HERE, "routes", m.group(1) + ".txt"), encoding="utf-8").read().splitlines()
             points = " ".join(l for l in lines if l.strip() and not l.startswith("#")).split()
+            if m.group(3):
+                return " ".join(points[points.index(m.group(3)):])
             return " ".join(points[:points.index(m.group(2)) + 1] if m.group(2) else points)
-        text = re.sub(r"\{route:(\w+)(?::(-?\d+,-?\d+))?\}", route, text)
+        text = re.sub(r"\{route:(\w+)(?::(-?\d+,-?\d+)|>(-?\d+,-?\d+))?\}", route, text)
         path = os.path.join(out, c["name"] + ".script")
         with open(path, "w", encoding="utf-8") as f:
             f.write(text)
         return path
+
+    def saved_card(c):
+        # The client's card folder (scenario.json's "card", with its "card_flags" in a copy), or None.
+        saved = c.get("card", sc.get("card"))
+        if not saved:
+            return None
+        folder = saved if os.path.isabs(saved) else os.path.join(a.cards, saved)
+        if not os.path.isdir(folder):
+            raise RuntimeError("no card folder %s (--cards)" % folder)
+        if c.get("card_flags"):
+            folder = derive_card(folder, os.path.join(out, "card_from_" + c["name"]), c["card_flags"])
+        return folder
 
     def start(c, room_args):
         card = os.path.join(out, "card_" + c["name"])
@@ -532,19 +652,26 @@ def run_real(stack, sc, api, relay_port, pin, diag, lock):
         env.update(c.get("env", {}))
         argv = [a.game_exe, "--data", a.data, "--smoke-test", str(c.get("frames", sc.get("frames", 30000))), "--card-dir", card,
                 "--online-login", tag + c["name"], "--online-script", script_for(c)] + room_args
-        saved = c.get("card", sc.get("card"))
-        if saved:
-            folder = saved if os.path.isabs(saved) else os.path.join(a.cards, saved)
-            if not os.path.isdir(folder):
-                raise RuntimeError("no card folder %s (--cards)" % folder)
-            if c.get("card_flags"):
-                folder = derive_card(folder, os.path.join(out, "card_from_" + c["name"]), c["card_flags"])
+        folder = saved_card(c)
+        if folder:
             argv += ["--online-card", folder]
             env["DW4_CAMPAIGN_LOAD"] = "1"
         return stack.spawn(argv, os.path.join(out, c["name"] + ".log"), env=env)
 
     clients = sorted(sc["clients"], key=lambda c: c.get("start", 0))
+    if sc.get("seed_story"):
+        # The room's creator is its owner: the room story starts from the owner's card.
+        owner_card = saved_card(clients[0])
+        if not owner_card:
+            raise RuntimeError("seed_story needs a card for the room's creator %s" % clients[0]["name"])
+        with lock:
+            seed_story(stack, connection, accounts[clients[0]["name"]], owner_card)
     procs = [(clients[0]["name"], start(clients[0], ["--online-create", room_name]))]
+    story_saved, stop_watch = {}, threading.Event()
+    if sc.get("story_saved"):
+        watcher = threading.Thread(target=watch_story_saved, args=(stack, sc, out, connection, accounts[clients[0]["name"]], story_saved, stop_watch),
+                                   daemon=True)
+        watcher.start()
     code = None
     while time.time() - t0 < 90 and code is None:
         if procs[0][1].poll() is not None:
@@ -572,7 +699,70 @@ def run_real(stack, sc, api, relay_port, pin, diag, lock):
     for name, p in procs:
         if p.poll() is None:
             p.terminate()
-    return evaluate_real(sc, src, out, code, diag, timed_out, exits)
+    stop_watch.set()
+    problems, notes = evaluate_real(sc, src, out, code, diag, timed_out, exits)
+    if sc.get("story_saved"):
+        spec = sc["story_saved"]
+        seconds = story_saved.get("seconds")
+        if "before" not in story_saved:
+            problems.append("story_saved: %s never logged '%s'" % (spec["client"], spec["after"]))
+        elif story_saved["before"][1]:
+            problems.append("story_saved: the owner's online_story had flag %s before %s set it (%s)" % (spec["flag"], spec["client"],
+                                                                                                    story_saved["before"]))
+        elif seconds is None:
+            problems.append("story_saved: flag %s never reached the owner's online_story" % spec["flag"])
+        else:
+            # The log is read every 0.1 s: the flag may have been set up to 0.1 s before the line was seen.
+            notes.append("story_saved: flag %s in the owner's online_story (revision %d) %.1f s after %s set it (at most %s s)" % (
+                spec["flag"], story_saved["revision"], seconds, spec["client"], spec["seconds"]))
+            if seconds + 0.1 > spec["seconds"]:
+                problems.append("story_saved: flag %s took %.1f s to reach the owner's online_story (> %s s)" % (spec["flag"], seconds,
+                                                                                                             spec["seconds"]))
+    if sc.get("achievements"):
+        check_achievements(sc, api, tag, passwords, lock, problems, notes)
+    return problems, notes
+
+
+def check_achievements(sc, api, tag, passwords, lock, problems, notes):
+    """The online account's achievements (SEAMLESS.md 11) a scenario asks for in "achievements": per client, the codes the
+    server must hold ("unlocked", in the "ruleset", standard by default, with "players" per code where given), the codes it
+    must not ("locked"), and the least progress of stat achievements ("progress": code -> the counter's least value)."""
+    for name, want in sorted(sc["achievements"].items()):
+        with lock:
+            s, body = api.call("POST", "/api/v1/auth/login", {"username": tag + name, "password": passwords[name], "deviceName": "online_test",
+                                                              "protocol": 44})
+        if s != 200 or not body or not body.get("token"):
+            problems.append("%s: no login for the achievement check (%s %s)" % (name, s, body))
+            continue
+        with lock:
+            s, items = api.call("GET", "/api/v1/achievements", token=body["token"])
+        if s != 200 or not isinstance(items, list):
+            problems.append("%s: GET /achievements answered %s" % (name, s))
+            continue
+        by_code = {a["code"]: a for a in items}
+        held = sorted(code for code, a in by_code.items() if a.get("unlocks"))
+        notes.append("%s holds online: %s" % (name, ", ".join(held) or "-"))
+        for code in want.get("unlocked", []):
+            unlocks = (by_code.get(code) or {}).get("unlocks") or []
+            if not unlocks:
+                problems.append("%s: the server holds no %s" % (name, code))
+                continue
+            u = unlocks[0]
+            if u.get("ruleset") != want.get("ruleset", "standard"):
+                problems.append("%s: %s in ruleset %s" % (name, code, u.get("ruleset")))
+            players = want.get("players", {}).get(code)
+            if players is not None and u.get("players") != players:
+                problems.append("%s: %s with players %s, expected %s" % (name, code, u.get("players"), players))
+            if u.get("flagged"):
+                problems.append("%s: %s is flagged" % (name, code))
+        for code in want.get("locked", []):
+            if code in held:
+                problems.append("%s: %s must not be unlocked" % (name, code))
+        for code, least in want.get("progress", {}).items():
+            progress = (by_code.get(code) or {}).get("progress")
+            notes.append("%s: %s progress %s" % (name, code, progress))
+            if progress is None or progress < least:
+                problems.append("%s: %s progress %s, expected at least %s" % (name, code, progress, least))
 
 
 def parse_client_log(path):
@@ -904,6 +1094,196 @@ def run_dev(stack, api, pin):
     return problems, notes
 
 
+UI_DIR = os.path.join(HERE, "ui")
+
+
+def ui_scenarios():
+    names = sorted(d for d in os.listdir(UI_DIR) if os.path.isfile(os.path.join(UI_DIR, d, "scenario.json"))) if os.path.isdir(UI_DIR) else []
+    return [dict(json.load(open(os.path.join(UI_DIR, n, "scenario.json"), encoding="utf-8")), name=n) for n in names]
+
+
+def run_ui(stack, sc, connection, servers):
+    """One UI scenario (ui/<id>): hidden game clients that drive the account and room screens with --online-ui scripts
+    (src/game/online_ui_script.hpp) against the local server, each with its own card folder and login folder, screenshots
+    at 1920x1009 widescreen with MSAA 4 (the round 50 / 54 look). The scripts read their account names, passwords and the
+    room name from UI_<CLIENT>_NAME, UI_<CLIENT>_PASSWORD, UI_ROOM and UI_ROOM_PASSWORD (made up per run, never in the
+    repository). Checked: every client ends with exit code 0 and its script complete; no client printed an error."""
+    a = stack.args
+    if not a.game_exe or not a.data:
+        raise RuntimeError("ui scenarios need --game-exe (a DW4_ONLINE_DEV build) and --data (the game data)")
+    key = json.dumps(sc.get("server", {}), sort_keys=True)
+    if key not in servers:
+        servers[key] = start_server(stack, connection, sc.get("server"), "server%d" % len(servers))
+    base, relay, pin, der, diag = servers[key]
+    api = Api(base, der)
+    src = os.path.join(UI_DIR, sc["name"])
+    out = os.path.join(stack.dir, sc["name"])
+    os.makedirs(out, exist_ok=True)
+    tag = "ui" + secrets.token_hex(3)
+    env = dict(os.environ, DW4_NO_ERROR_BOX="1", DW4_ONLINE_SERVER="127.0.0.1:" + base.rsplit(":", 1)[1], DW4_ONLINE_PIN=pin,
+               DW4_WINDOW=a.ui_window, DW4_WIDESCREEN="1", DW4_MSAA="4", DW4_ONLINE_TRACE="1",
+               UI_ROOM="Room " + tag, UI_ROOM_PASSWORD="pw" + secrets.token_hex(4))
+    for c in sc["clients"]:
+        up = c["name"].upper()
+        env["UI_%s_NAME" % up] = tag + c["name"]
+        env["UI_%s_PASSWORD" % up] = "ui test " + c["name"] + " " + secrets.token_hex(6)
+        if c.get("registered"):
+            s, body = api.call("POST", "/api/v1/auth/register", {"username": env["UI_%s_NAME" % up], "password": env["UI_%s_PASSWORD" % up]})
+            if s != 201:
+                raise RuntimeError("register %s: %s %s" % (c["name"], s, body))
+    campaign = os.path.join(out, "campaign.txt")
+    with open(campaign, "w") as f:
+        f.write("0 SEEK 400000 campaign\n")
+    t0 = time.time()
+    procs = []
+    for c in sorted(sc["clients"], key=lambda c: c.get("start", 0)):
+        while time.time() - t0 < c.get("start", 0):
+            time.sleep(0.1)
+        d = os.path.join(out, c["name"])
+        for sub in ("cards/Card A", "cards/Card B", "online"):
+            os.makedirs(os.path.join(d, sub), exist_ok=True)
+        argv = [a.game_exe, "--data", a.data, "--smoke-test", str(c.get("frames", 400000)), "--card-dir", os.path.join(d, "cards"),
+                "--online-folder", os.path.join(d, "online"), "--online-ui", os.path.join(src, c["script"]),
+                "--screenshot", os.path.join(d, "shot.bmp")] + c.get("args", [])
+        cenv = dict(env)
+        cenv.update(c.get("env", {}))
+        if c.get("card"):
+            folder = c["card"] if os.path.isabs(c["card"]) else os.path.join(a.cards, c["card"])
+            if not os.path.isdir(folder):
+                raise RuntimeError("no card folder %s (--cards)" % folder)
+            argv += ["--online-card", folder]
+            cenv["DW4_CAMPAIGN_LOAD"] = "1"
+        if c.get("campaign"):
+            argv += ["--input", campaign]
+            if sc.get("checkpoints"):
+                # The campaign bot saves like a player at these checkpoints (the save Digi-Elf, the save room stagIS12).
+                cenv["DW4_CAMPAIGN_CHECKPOINTS"] = os.path.join(d, "checkpoints")
+                cenv["DW4_CAMPAIGN_CHECKPOINT_LIST"] = sc["checkpoints"]
+        procs.append((c["name"], stack.spawn(argv, os.path.join(d, "log.txt"), env=cenv)))
+    limit = sc.get("timeout", 300)
+    for name, p in procs:
+        try:
+            p.wait(max(1, limit - (time.time() - t0)))
+        except subprocess.TimeoutExpired:
+            p.kill()
+            p.wait()
+    problems, notes = [], []
+    for name, p in procs:
+        d = os.path.join(out, name)
+        lines = open(os.path.join(d, "log.txt"), encoding="utf-8", errors="replace").read().splitlines()
+        steps = [l for l in lines if l.startswith("online-ui: [")]
+        shots = []
+        for f in sorted(os.listdir(d)):
+            if f.endswith(".bmp"):
+                try:
+                    from PIL import Image
+                    Image.open(os.path.join(d, f)).save(os.path.join(d, f[:-4] + ".png"))
+                    os.remove(os.path.join(d, f))
+                    shots.append(f[:-4])
+                except Exception as e:  # keep the BMP
+                    shots.append(f[:-4] + " (bmp: %s)" % e)
+        notes.append("%s: exit %s, %d script steps, shots: %s" % (name, p.poll(), len(steps), ", ".join(shots) or "none"))
+        if p.poll() != 0:
+            problems.append("%s: exit code %s" % (name, p.poll()))
+        problems += ["%s: %s" % (name, l) for l in lines if l.startswith("error:") or "online-ui line" in l]
+        expected = sum(1 for l in open(os.path.join(src, sc["clients"][[c["name"] for c in sc["clients"]].index(name)]["script"]),
+                                       encoding="utf-8") if l.split("#")[0].strip())
+        if len(steps) < expected:
+            problems.append("%s: %d of %d script lines ran (log %s)" % (name, len(steps), expected, os.path.join(d, "log.txt")))
+    if sc.get("characters"):
+        check_characters(sc, api, env, out, problems, notes)
+    return problems, notes
+
+
+UI_RECORD_SIZE, UI_STORY = 3316, (792, 1892)  # the character record; its story bytes (BASE_FLAG .. BASE_COUNTER, SEAMLESS.md 8.1)
+
+
+def gci_record(path, box=0):
+    """Box `box` of the first data copy of a DW4 save file whose version and checksum hold (save_data.cpp)."""
+    data = open(path, "rb").read()
+    for copy in CARD_COPIES:
+        base = GCI_ENTRY + copy
+        block = data[base:base + CARD_COPY_SIZE]
+        words = struct.unpack(">%dI" % ((CARD_COPY_SIZE - 4) // 4), block[4:])
+        if struct.unpack(">I", block[4:8])[0] == 4 and struct.unpack(">I", block[0:4])[0] == sum(words) & 0xFFFFFFFF:
+            at = 8 + box * 0x2000
+            return block[at:at + UI_RECORD_SIZE]
+    raise RuntimeError("no valid data copy in " + path)
+
+
+def check_characters(sc, api, env, out, problems, notes):
+    """scenario.json "characters" (SEAMLESS.md 9 and the S2 done-when): per client, its online character as the client
+    logged it ("online-character: ..." lines) and as the server holds it. Every client entered without a character (a new
+    game), its first stage change created revision 1, the save room uploaded (card_written), the run's last save is the
+    automatic save when it left the room (an upload with "leave_upload": true; otherwise also "unchanged since" the last
+    uploaded revision), nothing was refused; GET /online-character (logged in through the API) returns the last uploaded
+    revision, and its record equals the client's card cache (online_card.dat, nothing pending) outside the story
+    bytes, which the server composes from the account's own online story (8.4). "own_story": "none" asks for a record
+    whose story bytes are all zero (a guest's own story is untouched by playing in someone else's room); "phase": N for
+    the story phase flag N set in the record (the room owner's online story holds the room's progress)."""
+    for name, want in sorted(sc["characters"].items()):
+        up = name.upper()
+        account, password = env["UI_%s_NAME" % up], env["UI_%s_PASSWORD" % up]
+        log = os.path.join(out, name, "log.txt")
+        lines = open(log, encoding="utf-8", errors="replace").read().splitlines() if os.path.exists(log) else []
+        ch = [l[len("online-character: "):] for l in lines if l.startswith("online-character: ")]
+        if not any(l.startswith("enter without a character") for l in ch):
+            problems.append("%s: the room entry did not start without a character (a new game)" % name)
+        saves = [(m.group(1), int(m.group(2))) for m in (re.match(r"saved \((.+)\) revision (\d+)$", l) for l in ch) if m]
+        notes.append("%s uploads: %s" % (name, ", ".join("%s r%d" % s for s in saves) or "none"))
+        reasons = [r for r, _ in saves]
+        if not saves or saves[0] != ("stage change", 1):
+            problems.append("%s: the first stage change did not create the online character as revision 1" % name)
+        if "save room" not in reasons:
+            problems.append("%s: no upload from the save room" % name)
+        # The automatic save when leaving: the last save line of the run. It uploads what changed since the last upload
+        # ("leave_upload": true asks for that) and finds nothing to do when the server holds the character as it is.
+        leave = [l for l in ch if l.startswith(("save (", "saved (", "upload ("))][-1:]
+        left_unchanged = re.match(r"save \(leaving the room\) unchanged since revision (\d+)$", leave[0]) if leave else None
+        if want.get("leave_upload") and (not reasons or reasons[-1] != "leaving the room" or not leave or not leave[0].startswith("saved")):
+            problems.append("%s: the automatic save when leaving the room did not upload last (%s)" % (name, leave))
+        elif not want.get("leave_upload") and not (left_unchanged or (leave and leave[0].startswith("saved (leaving the room)"))):
+            problems.append("%s: the run did not end with the automatic save when leaving the room (%s)" % (name, leave))
+        if left_unchanged and saves and int(left_unchanged.group(1)) != saves[-1][1]:
+            problems.append("%s: the leaving save compared with revision %s, the last upload was %d" % (name, left_unchanged.group(1), saves[-1][1]))
+        if leave:
+            notes.append("%s left the room: %s" % (name, leave[0]))
+        for l in ch:
+            if l.startswith(("conflict", "refused")) or "not uploaded" in l:
+                problems.append("%s: %s" % (name, l))
+        s, body = api.call("POST", "/api/v1/auth/login", {"username": account, "password": password, "deviceName": "online_test", "protocol": 45})
+        if s != 200 or not body or not body.get("token"):
+            problems.append("%s: no login for the character check (%s)" % (name, s))
+            continue
+        s, body = api.call("GET", "/api/v1/online-character", token=body["token"])
+        if s != 200 or not body:
+            problems.append("%s: GET /online-character answered %s" % (name, s))
+            continue
+        record = base64.b64decode(body["record"])
+        summary = body.get("summary") or {}
+        notes.append("%s on the server: revision %s, %s level %s, play %s s" % (name, body["revision"], summary.get("digimon"), summary.get("level"),
+                                                                              body.get("playSeconds")))
+        if saves and body["revision"] != saves[-1][1]:
+            problems.append("%s: the server holds revision %s, the client saved revision %s last" % (name, body["revision"], saves[-1][1]))
+        folder = os.path.join(out, name, "online", re.sub(r"[^a-z0-9_-]", "_", account.lower()))
+        cache, state_file = os.path.join(folder, "online_card.dat"), os.path.join(folder, "online_card.state")
+        state = open(state_file).read() if os.path.exists(state_file) else ""
+        if "pending=0" not in state:
+            problems.append("%s: the card cache has a pending save: %s" % (name, state.replace("\n", " ")))
+        box = int(re.search(r"box=(\d)", state).group(1)) if "box=" in state else 0
+        if not os.path.exists(cache):
+            problems.append("%s: no card cache %s" % (name, cache))
+        else:
+            mine = gci_record(cache, box)
+            if record[:UI_STORY[0]] + record[UI_STORY[1]:] != mine[:UI_STORY[0]] + mine[UI_STORY[1]:]:
+                problems.append("%s: the server's record differs from the card cache's outside the story bytes" % name)
+        story = record[UI_STORY[0]:UI_STORY[1]]
+        if want.get("own_story") == "none" and any(story):
+            problems.append("%s: the record's story bytes are not empty (a guest's own story must stay untouched)" % name)
+        if "phase" in want and record[UI_STORY[0] + int(want["phase"])] != 1:
+            problems.append("%s: the record's story lacks the phase flag %s" % (name, want["phase"]))
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("scenarios", nargs="*")
@@ -926,6 +1306,7 @@ def main():
     ap.add_argument("--parallel", type=int, default=1, help="game scenarios run side by side (one room each)")
     ap.add_argument("--hidden", action="store_true", help="dev: hidden clients with the campaign bot for --frames frames")
     ap.add_argument("--dev-card", default="", help="dev: a card folder whose saves both online cards start with")
+    ap.add_argument("--ui-window", default="1920x1009", help="ui: the hidden window's size")
     a = ap.parse_args()
     if a.list:
         for sc in (SCENARIOS if a.fake else game_scenarios()):
@@ -940,6 +1321,34 @@ def main():
         return subprocess.run(["dotnet", dll("tests/DW4Online.FakeClient", "DW4Online.FakeClient.dll"), "matrix", "--ports", a.ports,
                                "--warmup", a.warmup, "--seconds", a.seconds, "--out", os.path.join(out, "matrix.json"), "--md",
                                os.path.join(out, "matrix.md")], creationflags=BELOW_NORMAL | NO_WINDOW).returncode
+    if a.scenarios[:1] == ["ui"]:
+        wanted_ui = [sc for sc in ui_scenarios() if len(a.scenarios) == 1 or sc["name"] in a.scenarios[1:]]
+        unknown = [n for n in a.scenarios[1:] if n not in {sc["name"] for sc in ui_scenarios()}]
+        if unknown:
+            print("unknown ui scenario(s): " + " ".join(unknown))
+            return 2
+        stack = Stack(a)
+        failed = 0
+        try:
+            connection = start_mysql(stack)
+            servers = {}
+            for sc in wanted_ui:
+                t = time.time()
+                try:
+                    problems, notes = run_ui(stack, sc, connection, servers)
+                except Exception as e:
+                    problems, notes = ["%s: %s" % (type(e).__name__, e)], []
+                print("%s ui %-10s %s (%.0f s)" % ("PASS" if not problems else "FAIL", sc["name"], sc.get("desc", ""), time.time() - t), flush=True)
+                for n in notes:
+                    print("       " + n, flush=True)
+                for p in problems:
+                    print("     ! " + p, flush=True)
+                failed += bool(problems)
+        finally:
+            stack.stop()
+        print("run folder (screenshots): " + stack.dir)
+        print("%d of %d ui scenarios passed" % (len(wanted_ui) - failed, len(wanted_ui)))
+        return 1 if failed else 0
     game = "G1" in a.scenarios
     dev = a.scenarios == ["dev"]
     if dev:
@@ -982,7 +1391,15 @@ def main():
             def one(sc):
                 t = time.time()
                 try:
-                    problems, notes = run_real(stack, sc, api, relay, pin, diag, lock)
+                    if sc.get("server"):
+                        # Its own server (settings of scenario.json's "server") with its own database: a server closes the
+                        # rooms its database lists as open when it starts.
+                        with lock:
+                            own_db = create_database(stack)
+                            own = start_server(stack, own_db, sc["server"], sc["name"])
+                        problems, notes = run_real(stack, sc, Api(own[0], own[3]), own[1], own[2], own[4], lock, own_db)
+                    else:
+                        problems, notes = run_real(stack, sc, api, relay, pin, diag, lock, connection)
                 except Exception as e:  # a broken scenario is a failure, the others go on
                     problems, notes = ["%s: %s" % (type(e).__name__, e)], []
                 with lock:

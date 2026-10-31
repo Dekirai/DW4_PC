@@ -144,7 +144,7 @@ if (-not [System.Net.IPAddress]::TryParse($IpAddress, [ref]$ip)) { throw "-IpAdd
 if ($Years -lt 1 -or $Years -gt 30) { throw '-Years must be between 1 and 30.' }
 if ($StoreLocation -eq 'LocalMachine' -and -not $DryRun) {
     $principal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
-    if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { throw 'Run this script elevated.' }
+    if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { throw "This script needs administrator rights: open PowerShell with 'Run as administrator' (right-click the Start button, Terminal (Admin)), then run the same command again." }
 }
 if (-not $DryRun) {
     try {
@@ -291,7 +291,7 @@ if ($SpareOnly) {
 # --- What goes where ------------------------------------------------------------------------------------------------
 
 Write-Output ''
-Write-Output 'For the game client (pin every line, the first is in use):'
+Write-Output 'For the game client build (DEPLOY.md 6.4: print-pins.ps1 -Out writes local/online_pins.txt; the first is in use):'
 foreach ($pin in $pins) { Write-Output "  $pin" }
 Write-Output ''
 Write-Output 'appsettings.Production.json:'

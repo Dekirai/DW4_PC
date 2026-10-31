@@ -106,6 +106,44 @@
     }
 }
 
+<h2>Online story</h2>
+<p class="muted small">The story the account's rooms play (every member's progress counts for the room owner). Each saved
+    revision is kept (the newest first); putting one back closes the account's own room and writes it as the next revision.</p>
+@if (Model.Story.Count == 0)
+{
+    <p class="muted">No story yet.</p>
+}
+else
+{
+    <div class="table-wrap">
+        <table>
+            <thead><tr><th>Revision</th><th>Why</th><th>Saved</th><th>Phase</th><th>Key items</th><th>Flags</th><th></th></tr></thead>
+            <tbody>
+            @foreach (var s in Model.Story)
+            {
+                <tr>
+                    <td>@s.Revision</td>
+                    <td>@(s.Reason switch { "room" => "room", "reset" => "character reset", _ => "restored by staff" })</td>
+                    <td>@Format.Date(s.SavedAt)</td>
+                    <td>@s.Phase</td>
+                    <td>@(s.Keys.Count == 0 ? "-" : string.Join(", ", s.Keys))</td>
+                    <td>@s.FlagCount</td>
+                    <td>
+                        @if (t.Status != "deleted" && s != Model.Story[0])
+                        {
+                            <form method="post" asp-page-handler="RestoreStory" class="inline">
+                                <input type="hidden" name="StoryRevision" value="@s.Revision" />
+                                <button type="submit" class="link">Put back</button>
+                            </form>
+                        }
+                    </td>
+                </tr>
+            }
+            </tbody>
+        </table>
+    </div>
+}
+
 <h2>Achievements (@Model.Unlocks.Count)</h2>
 @if (Model.Unlocks.Count == 0)
 {

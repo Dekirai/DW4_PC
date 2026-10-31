@@ -29,6 +29,12 @@ public sealed class RoomOptions
     /// hash is ranked (until the release ships its official hash).
     /// </summary>
     public List<string> RankedDataHashes { get; set; } = [];
+    /// <summary>
+    /// Story progress the members make while the room owner is away (SEAMLESS.md 8.6): "drop" (refused; the next barrier
+    /// takes it back out of the engines with a notice), "hold" (kept and merged when the owner returns) or "apply"
+    /// (merged at once). Default drop until the owner of the server decides otherwise.
+    /// </summary>
+    public string StoryWhileOwnerAway { get; set; } = "drop";
 }
 
 public static class RoomLimits
@@ -43,6 +49,8 @@ public static class RoomLimits
 public static class CloseReasons
 {
     public const string Empty = "empty";
+    /// <summary>The owner is gone for good (its account was deleted, locked or banned).</summary>
+    public const string HostLeft = "host_left";
     public const string HostClosed = "host_closed";
     public const string Admin = "admin";
     public const string ServerRestart = "server_restart";
@@ -74,7 +82,9 @@ public sealed record RoomSummary(
     bool Randomizer,
     int? Difficulty,
     int Instances,
-    DateTime CreatedAt);
+    DateTime CreatedAt,
+    // Rooms:StoryWhileOwnerAway (drop, hold, apply): what happens to story progress while the owner is away (8.6).
+    string StoryPolicy = "drop");
 
 /// <summary>A room member; <paramref name="Instance"/> = the relay instance it plays in (null while not connected to the relay).</summary>
 public sealed record RoomMemberView(long AccountId, string Username, int Slot, bool Owner, uint? Instance, DateTime JoinedAt);
@@ -148,8 +158,21 @@ public sealed record RelayTicket(string Ticket, string Nonce);
 /// <summary>A ticket the relay is about to accept: the room, the account and the ticket's nonce.</summary>
 public sealed record RelayAdmission(string Room, long AccountId, string Nonce);
 
-/// <summary>The room service's answer: the member's room slot (0-9), name, owner flag and the room's compatibility data.</summary>
-public sealed record RelayAdmitted(int MemberIndex, string Username, bool Owner, int Protocol, ulong DataHash, ulong SettingsHash, int MaxPlayers);
+/// <summary>
+/// The room service's answer: the member's room slot (0-9), name, owner flag and the room's compatibility data; for the
+/// room story (SEAMLESS.md 8) the owner's account, the room's difficulty, whether the owner is in the room and the
+/// owner-away policy (Rooms:StoryWhileOwnerAway).
+/// </summary>
+public sealed record RelayAdmitted(int MemberIndex, string Username, bool Owner, int Protocol, ulong DataHash, ulong SettingsHash, int MaxPlayers,
+    long OwnerAccountId = 0, int Difficulty = 0, bool OwnerPresent = true, string StoryPolicy = "drop");
+
+/// <summary>
+/// The room story as GET /rooms/{code}/story shows it (SEAMLESS.md 8): its revision and phase index (0-7), the flags, keys
+/// and the 16 counters it holds, the owner-away policy, whether the owner is in the room, the session's dropped set and how
+/// many values are held for the owner's return.
+/// </summary>
+public sealed record RoomStoryState(uint Revision, int Phase, IReadOnlyList<int> Flags, IReadOnlyList<int> Folder, IReadOnlyList<int> Counters,
+    string Policy, bool OwnerPresent, IReadOnlyList<int> DroppedFlags, IReadOnlyList<int> DroppedFolder, IReadOnlyList<int> DroppedCounters, int Held);
 
 /// <summary>The DW4R2 relay as the room service uses it (SEAMLESS.md 6.2, 14).</summary>
 public interface IRelayGateway
@@ -168,6 +191,8 @@ public interface IRelayGateway
     void OwnerPresence(string roomCode, bool present);
     /// <summary>The room's instance groups as the relay runs them.</summary>
     IReadOnlyList<InstanceGroupView> Instances(string roomCode);
+    /// <summary>The room story as the relay keeps it (null: no relay room yet).</summary>
+    RoomStoryState? Story(string roomCode) => null;
     /// <summary>The check the relay makes after a ticket's signature, expiry and single use checked out.</summary>
     void SetAdmission(Func<RelayAdmission, ValueTask<RelayAdmitted?>> check);
     /// <summary>The relay connection is the room heartbeat: the accounts connected per room, every few seconds.</summary>

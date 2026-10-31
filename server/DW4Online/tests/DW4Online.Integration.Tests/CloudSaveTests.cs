@@ -30,6 +30,19 @@ public class CloudSaveTests
     }
 
     [DbFact]
+    public async Task First_backups_of_many_accounts_at_once_never_conflict()
+    {
+        // As the online character: another account's deadlock is no concurrent upload of this account.
+        await using var host = await TestHost.StartAsync();
+        var clients = new List<HttpClient>();
+        for (var i = 0; i < 12; ++i) clients.Add(host.Client((await host.RegisterAsync("Backup" + i)).Item1));
+        var created = await Task.WhenAll(clients.Select((client, i) => PutAsync(client, Save(i), create: true)));
+        Assert.All(created, r => Assert.Equal(HttpStatusCode.Created, r.StatusCode));
+        var updated = await Task.WhenAll(clients.Select((client, i) => PutAsync(client, Save(100 + i), ifMatch: "\"1\"")));
+        Assert.All(updated, r => Assert.Equal(HttpStatusCode.OK, r.StatusCode));
+    }
+
+    [DbFact]
     public async Task Upload_download_history_restore_delete()
     {
         await using var host = await TestHost.StartAsync();

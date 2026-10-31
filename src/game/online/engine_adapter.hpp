@@ -21,8 +21,11 @@
 #include "room_settings.hpp"
 
 #include "dw4/engine/engine.hpp"
+#include "dw4/engine/online_membership.hpp"
 
+#include <array>
 #include <functional>
+#include <optional>
 
 namespace dw4::game::online {
 
@@ -57,6 +60,7 @@ public:
     std::optional<SplitInfo> take_split() override;
     std::optional<HeadingInfo> take_heading() override;
     PresenceFacts presence(int slot) const override;
+    engine::StoryValues story_values() const override;
 
     void replay_step(const std::array<PadSample, 4>& pads) override;
     bool restore(std::span<const std::uint8_t> snapshot) override;
@@ -74,11 +78,37 @@ public:
     const RoomSettings& settings() const { return settings_; }
     // After every live step: once the title starts a game (GameSystem::
     // game_started, set by TITLE2 GAMESTART right after the title wrote its
-    // own camera and light mode), the room's camera mode and light mode
-    // replace them before gameStart.lua's first stage loads, so every
-    // instance of the room uses the same camera data (3.1). The title is the
-    // member's own solo instance, so each machine does it in its own line.
+    // own camera and light mode and the character select its difficulty),
+    // the room's difficulty, camera mode and light mode replace them and the
+    // room story (set_room_story) replaces the character's FLAG, FLAGFOLDER
+    // and COUNTER, before gameStart.lua runs (a later step) and before the
+    // first stage loads, so every instance of the room uses the same
+    // difficulty and camera data (3.1, 8.5). The title is the member's own
+    // solo instance, so each machine does it in its own line.
+    // The trigger is the title's GAMESTART (Engine::title_game_start), not
+    // game_started's rising edge: that flag stays set after "Continue? No"
+    // took the player back to the title, and the title's option menu sets it
+    // without a game start, so the next Game Start of the session got neither
+    // the room story nor the room's modes (round 56 review).
     void after_live_step();
+    // A Game Start is waiting for after_live_step (set by the step's
+    // GAMESTART): the host hands the confirmed room story over first.
+    bool game_start() const;
+    // The room story for game_started (SEAMLESS.md 8.5): the confirmed room
+    // story the session has when the game starts. Without one the
+    // character's own story stays until the first barrier's merge (the room
+    // owner's own story is the room story anyway).
+    void set_room_story(std::optional<engine::RoomStory> story) { room_story_ = std::move(story); }
+    const std::optional<engine::RoomStory>& room_story() const { return room_story_; }
+    // The online character's record of `slot` for an automatic save
+    // (SEAMLESS.md 9): GameSystem::make_record from the state the member
+    // carries (Engine::carry_player) on a copy of GameSystem, since
+    // make_record changes state (store_species) and the live engine must stay
+    // as every member has it. None before a game started and for a slot
+    // without a character or with a defeated one (its last save stands).
+    std::optional<std::array<std::uint8_t, 3316>> character_record(int slot) const;
+    // The game started (GameSystem::game_started).
+    bool game_started() const;
     bool replaying() const { return replay_; }
     // Seconds of output the last replay rendered for the music position.
     std::uint64_t replay_samples() const { return replay_samples_; }
@@ -87,8 +117,8 @@ private:
     engine::Engine& e() const { return hooks_.engine(); }
     EngineHooks hooks_;
     RoomSettings settings_;
+    std::optional<engine::RoomStory> room_story_;
     bool replay_ = false;
-    bool modes_applied_ = false;
     int own_slot_ = 0;
     std::uint64_t replay_samples_ = 0;
 };

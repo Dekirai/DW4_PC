@@ -51,6 +51,11 @@ struct PortEvent {
         // The character select made a new character for slot (a new game;
         // value: its UNIQUE as int32). The randomizer binds only new games.
         new_character,
+        // A memory card write of slot's save panel finished (docs/SEAMLESS.md
+        // 7.5, the online character's upload): value the card (0 = A, 1 = B),
+        // extra the box the character went into (0..3; -1 for a FILEMAKE,
+        // which only makes the empty file). Only successful writes.
+        card_written,
     };
     Kind kind{};
     std::int32_t slot = -1;

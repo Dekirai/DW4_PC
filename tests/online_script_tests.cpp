@@ -71,6 +71,9 @@ void unknown_names() {
     error.clear();
     check(!c.load(write_script("empty", "# nothing\n\n"), error) && error.find("no steps") != std::string::npos, "an empty script fails");
     check(OnlineScript::known_condition("onme:matz00") && !OnlineScript::known_condition("onmat:"), "mat conditions need a mat name");
+    check(OnlineScript::known_condition("roomflag:505") && !OnlineScript::known_condition("roomflag:") &&
+              !OnlineScript::known_condition("roomflag:5x"),
+          "a room story flag condition needs a flag number");
 }
 
 void scenario_scripts() {

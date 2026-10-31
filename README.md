@@ -313,9 +313,10 @@ cylinder; wider bodies and a missing entry sequence are noted).
 
 ### Online co-op
 
-Up to four machines play one session in lockstep (TCP, the host relays). The
-F1 menu's Online tab hosts (players, port, input delay) or joins a host
-address; everyone then starts at the title together. From the command line:
+Up to four machines play one session in lockstep (TCP, the host relays),
+started from the command line (the F1 menu's Online tab belongs to the
+online rooms below and shows such a session's state); everyone then starts at
+the title together:
 
 ```bat
 dw4_game.exe --host --players 2            rem waits for one guest on port 52040
@@ -363,15 +364,39 @@ leaves the PC), builds a development client (`build\OnlineDev`, needs
 closing both windows stops the server. `-Data` names the game data (default:
 the `[data]` path of `build\Game\settings.ini`), `-Card` a card folder whose
 saves both start with. Player builds connect only to the project's server
-and do not run yet (its certificate pins are still empty).
+and take its certificate pins from the build (`local/online_pins.txt` or
+`-DDW4_ONLINE_PINS`, [server/DW4Online/deploy/DEPLOY.md](server/DW4Online/deploy/DEPLOY.md)
+6.4); a build without them refuses the server. In a room, achievements also
+count for the online account (only your own player; the story challenges
+only for the room owner, whose story it is), shown on the server's website.
+
+The title menu has a third entry below Game Start and Option: **Online**
+(the same lettering, the cursor moves to it with down from Option). Choosing
+it opens the account and room screens over the title, connected to the
+project's server (fixed in the build): log in or register (the recovery code
+is shown once), the room list (refresh; name, lock, players n/10, owner,
+settings), creating a room (name, optional password, up to ten players,
+difficulty, camera and light mode) or joining one (its password if it has
+one), and the room itself (who is where, kick for the owner, Play, leave).
+The room plays the online character, never the save on this PC: a new
+account starts a new game, and the character is saved on the server when the
+save room writes, at every stage change and when leaving the room. The room's
+story is the owner's: everybody's story progress counts for it, and every
+member starts the game with it. Leaving returns to the offline title. B (or Esc) goes back a screen and from the
+first one back to the title menu. The screens work with a controller first
+(text fields open an on-screen keyboard), the keyboard and the mouse; the F1
+menu's Online tab shows the same screens, and starting a room from there
+ends an offline game only after asking.
 
 Known limits of the preview:
 
 - Talks, the map recorders, camera tours and the status window still pause
   the whole instance (every member in it), as in local co-op.
 - Pits still darken every member's screen in the instance.
-- Nothing is saved online yet: every room starts from the title with a new
-  game (or the `-Card` saves), and nothing comes back into the local save.
+- Story progress made while the room owner is away is not kept (the
+  server's default; the player is told at the next stage change).
+- Nothing of a room comes back into the local save; F1 > Saves > Cloud backup
+  keeps one copy of the local save on the server (outside rooms).
 - Online needs a CPU with FMA3 (every machine must compute alike); the game
   refuses online play without it.
 

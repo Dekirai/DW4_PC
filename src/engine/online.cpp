@@ -99,8 +99,13 @@ const std::vector<std::string_view>& online_forbidden_env() {
         "DW4_TEST_GIVEUP",
         // state tests, the randomizer's save bond of test runs and the direct netplay menus (the client lane's list)
         "DW4_STATE_FILE", "DW4_STATE_TEST", "DW4_RANDOMIZER_BIND", "DW4_MENU_HOST", "DW4_MENU_IMPORT", "DW4_MENU_JOIN",
+        // the cloud backup panel's test login and action (F1 Saves, outside rooms only)
+        "DW4_MENU_CLOUD",
         // the pad replay of the test tools replaces the sealed pads before the step (game_main.cpp)
-        "DW4_PAD_REPLAY"};
+        "DW4_PAD_REPLAY",
+        // the title menu's third entry in a test run without the online screens (game_main.cpp; it lets
+        // TITLE2's cursor reach it)
+        "DW4_TITLE_ONLINE"};
     return names;
 }
 
@@ -117,6 +122,8 @@ const std::vector<std::string_view>& online_presentation_env() {
         // calibration, the rate override, its trace, the test driver's position interval)
         "DW4_ONLINE_CALIBRATION", "DW4_ONLINE_PASSWORD", "DW4_ONLINE_PIN", "DW4_ONLINE_RATE", "DW4_ONLINE_SERVER",
         "DW4_ONLINE_TRACE", "DW4_ONLINE_SCRIPT_EVERY",
+        // the online account's achievement profile of a test run (online_achievements.hpp, round S2)
+        "DW4_ONLINE_PROFILE",
         // the resync scenarios' injected desync (DW4_ONLINE_DEV builds only, game_main.cpp: it is the point of the test)
         "DW4_ONLINE_TEST_DESYNC",
         // round S1 test tools (game_main.cpp)
@@ -572,7 +579,13 @@ void Engine::apply_barrier() {
     barrier_.reset();
     auto* sys = get<GameSystem>();
     if (!sys) return;
-    // (round S2: the room story merge and the dropped values come first.)
+    // The room story first (8.5, 8.6): its merge into the engine's story and
+    // the removal of the values the server dropped while the room owner was
+    // away. Every member of the group applies the same bytes in this load
+    // step, before the stage's load scripts read the flags and before the
+    // snapshot, so a joiner gets the same state. (JOIN and CO_ARRIVE merge it
+    // into the member's own fallback load.)
+    if (b.story) story::apply(flags_, sys->flag_folder, counters_, *b.story, b.dropped);
     auto rules = b.rules;
     rules.enabled = true;
     rules.leaving = 0;

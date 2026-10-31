@@ -1142,6 +1142,13 @@ public:
     bool command(Engine& engine, Ram& ram, std::string_view command, Packet& packet) override;
     void update(Engine& engine) override;
     int state() const { return rams_.empty() ? -1 : rams_.front()->state; }
+    // The Game Start / Option menu waits for input (state 2, the cursor's
+    // step), and its cursor (2: the PC's Online entry, Engine::title_online_entry).
+    bool menu_waiting() const {
+        return !rams_.empty() && rams_.front()->state == 2 && rams_.front()->sub == 1 && rams_.front()->step == 1;
+    }
+    bool menu_open() const { return !rams_.empty() && rams_.front()->state == 2; }
+    int cursor() const { return rams_.empty() ? 0 : rams_.front()->cursor; }
 
 private:
     struct Option {
@@ -2171,7 +2178,7 @@ public:
         // flag_folder, Engine::counters()), which BASE2CURRENT points at them
         // (link_common). New player data (8036CE1C, 0x8036D148-0x8036D174)
         // has BASE_FLAG[960] = 1, the constant byte at 80561411.
-        std::map<std::int32_t, std::uint8_t> base_flags{{960, 1}};
+        std::map<std::int32_t, std::uint8_t> base_flags{{960, std::uint8_t(1)}};
         std::map<int, std::uint8_t> base_flag_folder;
         std::map<std::int32_t, std::int32_t> base_counters;
     };

@@ -14,6 +14,23 @@ public class OnlineCharacterTests
         new { record = Convert.ToBase64String(RecordCodec.Encode(record)), playSeconds, context };
 
     [DbFact]
+    public async Task First_saves_of_many_accounts_at_once_never_conflict()
+    {
+        // The FOR UPDATE reads of two accounts' first saves lock the same gap and InnoDB made one a deadlock
+        // victim, which answered 409 although nobody else had saved that character (a client then stopped its
+        // uploads, round S2). A deadlock victim runs again now.
+        await using var host = await TestHost.StartAsync();
+        var clients = new List<HttpClient>();
+        for (var i = 0; i < 12; ++i) clients.Add(host.Client((await host.RegisterAsync("Racer" + i)).Item1));
+        var created = await Task.WhenAll(clients.Select((client, i) =>
+            client.PutJson("/api/v1/online-character", Upload(Samples.Fresh("R" + i), 600), create: true)));
+        Assert.All(created, r => Assert.Equal(HttpStatusCode.Created, r.StatusCode));
+        var updated = await Task.WhenAll(clients.Select((client, i) =>
+            client.PutJson("/api/v1/online-character", Upload(Samples.Fresh("R" + i), 700), ifMatch: "\"1\"")));
+        Assert.All(updated, r => Assert.Equal(HttpStatusCode.OK, r.StatusCode));
+    }
+
+    [DbFact]
     public async Task Create_update_conflict_and_history()
     {
         await using var host = await TestHost.StartAsync(new() { ["OnlineCharacter:HistoryRevisions"] = "2" });
@@ -40,7 +57,9 @@ public class OnlineCharacterTests
         Assert.Equal("character_exists", await again.ProblemCode());
 
         var stored = await (await client.GetAsync("/api/v1/online-character")).Json();
-        Assert.Equal(RecordCodec.Encode(character), Convert.FromBase64String(stored.GetProperty("record").GetString()!));
+        // The story bytes are the account's own online story (none yet: zero), never the uploaded ones (SEAMLESS.md 8.4).
+        Assert.Equal(DW4Online.Domain.Story.StoryRecord.Compose(RecordCodec.Encode(character), new DW4Online.Domain.Story.RoomStoryData()),
+            Convert.FromBase64String(stored.GetProperty("record").GetString()!));
         Assert.Equal(600, stored.GetProperty("playSeconds").GetInt64());
 
         character.Level = 12;

@@ -62,6 +62,9 @@ std::optional<ServerStatus> parse_status(const HttpResponse& response) {
     const auto& client = (*v)["client"];
     s.current_protocol = int(client["currentProtocol"].i64().value_or(0));
     s.minimum_protocol = int(client["minimumProtocol"].i64().value_or(0));
+    s.current_version = client["currentVersion"].str().value_or("");
+    s.minimum_version = client["minimumVersion"].str().value_or("");
+    if (const auto registration = (*v)["registration"].str()) s.registration_open = *registration == "open";
     s.maintenance = (*v)["maintenance"].flag().value_or(false);
     s.motd = (*v)["motd"].str().value_or("");
     if (const auto port = (*v)["relay"]["port"].i64(); port && *port > 0 && *port < 65536) s.relay_port = int(*port);
@@ -89,6 +92,8 @@ std::optional<RoomJoined> parse_room(const HttpResponse& response) {
     if (!code) return std::nullopt;
     r.code = *code;
     r.name = room["name"].str().value_or("");
+    r.max_players = int(room["maxPlayers"].i64().value_or(0));
+    r.owner = room["owner"].str().value_or("");
     const auto settings = settings_from_json((*v)["settings"]);
     if (!settings) return std::nullopt;
     r.settings = *settings;

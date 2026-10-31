@@ -12,6 +12,8 @@
 #include "presence_data.hpp"
 
 #include <atomic>
+#include <fstream>
+#include <iterator>
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
@@ -83,6 +85,21 @@ void json() {
           "assets");
     check(contains(set, "\"nonce\":\"7\""), "nonce");
     check(contains(discord::set_activity_json(1, std::nullopt, 2), "\"activity\":null"), "clearing");
+    check(!contains(set, "party"), "no party offline");
+    // An online room's party: a hashed id and the room's size, never the code or a secret.
+    discord::Activity room = activity;
+    room.party_id = discord::party_id("ABCD12");
+    room.party_size = 3;
+    room.party_max = 10;
+    const auto party = discord::set_activity_json(1, room, 4);
+    check(room.party_id.size() == 20 && room.party_id.rfind("dw4-", 0) == 0 && room.party_id == discord::party_id("ABCD12") &&
+              room.party_id != discord::party_id("ABCD13"),
+          "party id");
+    check(contains(party, "\"party\":{\"id\":\"" + room.party_id + "\",\"size\":[3,10]}") && !contains(party, "ABCD12") &&
+              !contains(party, "secret"),
+          "party size, no room code, no join secret");
+    room.party_size = 11;
+    check(!contains(discord::set_activity_json(1, room, 5), "party"), "a size above the maximum is left out");
     discord::Activity menus;
     menus.details = "In Menus";
     const auto menu_json = discord::set_activity_json(1, menus, 3);
@@ -625,19 +642,38 @@ int serve(const std::string& name, int seconds, const std::string& mode) {
 }
 #endif
 
+// The stage names the website's room page reads (data/online/areas.json).
+void area_file(const std::string& file) {
+    const auto text = dw4::game::area_names_json();
+    check(text.find("\"stage\": \"stag0101\", \"name\": \"Death Valley: Goblin Pass\"") != std::string::npos, "an area line");
+    check(text.find('\r') == std::string::npos && text.ends_with("]\n}\n"), "LF, complete");
+    for (const auto& area : dw4::game::area_table())
+        for (const char* c = area.place; *c; ++c) check(*c != '"' && *c != '\\' && static_cast<unsigned char>(*c) < 0x80, "plain ASCII names");
+    if (file.empty()) return;
+    std::ifstream in(file, std::ios::binary);
+    check(bool(in), "the checked-in area names " + file);
+    std::string checked_in((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    std::erase(checked_in, '\r'); // (a checkout with CRLF line ends)
+    check(checked_in == text, "data/online/areas.json is the client's table (regenerate: dw4_presence_tests --export-areas FILE)");
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
 #ifdef _WIN32
     if ((argc == 4 || argc == 5) && std::string(argv[1]) == "--serve") return serve(argv[2], std::atoi(argv[3]), argc == 5 ? argv[4] : "ready");
-#else
-    (void)argc;
-    (void)argv;
 #endif
+    // --export-areas FILE: writes data/online/areas.json.
+    if (argc == 3 && std::string(argv[1]) == "--export-areas") {
+        std::ofstream(argv[2], std::ios::binary | std::ios::trunc) << dw4::game::area_names_json();
+        std::cout << "wrote " << argv[2] << '\n';
+        return 0;
+    }
     try {
         framing();
         json();
         tables();
+        area_file(argc == 2 ? argv[1] : "");
 #ifdef _WIN32
         no_discord();
         fake_client_session();

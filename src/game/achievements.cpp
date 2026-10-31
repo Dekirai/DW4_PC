@@ -100,6 +100,103 @@ constexpr AchievementDef kAchievements[] = {
     {"online_raid", "Raid Night", "Defeat a boss in an online session.", C::multiplayer},
 };
 
+// The online form of every achievement, in the order of kAchievements
+// (docs/SEAMLESS.md 11). Events are the moments the game sees (story and
+// boss credits go to every member of the instance it happened in); stats are
+// the counters the server adds up; states are what the server reads from the
+// uploaded online character. Goals are the server's units: speed limits in
+// seconds of in-game time (loads excluded), lowlevel the highest level.
+using OK = AchievementOnlineKind;
+constexpr AchievementOnline kOnline[] = {
+    {"story_apocalymon", OK::event},
+    {"story_belphemon", OK::event},
+    {"story_lucemon", OK::event},
+    {"story_lordknightmon", OK::event},
+    {"story_daemon", OK::event},
+    {"clear_normal", OK::event},
+    {"clear_hard", OK::event},
+    {"clear_veryhard", OK::event},
+    {"boss_first", OK::event},
+    {"boss_blossomon", OK::event},
+    {"boss_mammothmon", OK::event},
+    {"boss_skullgreymon", OK::event},
+    {"boss_anomalocarimon", OK::event},
+    {"boss_tonosama", OK::event},
+    {"boss_vine_tunnel", OK::event},
+    {"boss_diaboromon", OK::event},
+    {"boss_mecha_nest", OK::event},
+    {"boss_dungeon_all", OK::event},
+    {"nodmg_boss", OK::event},
+    {"nodmg_daemon_vh", OK::event},
+    {"deathless_clear", OK::event, 0, nullptr, true},
+    {"solo_veryhard", OK::event, 0, nullptr, true},
+    {"lowlevel_apocalymon", OK::event, 12},
+    {"speed_normal", OK::event, 8 * 3600, nullptr, true},
+    {"speed_fast", OK::event, 4 * 3600, nullptr, true},
+    {"rookie_clear", OK::event, 0, nullptr, true},
+    {"quest_veryhard", OK::event},
+    {"lv_10", OK::state, 10},
+    {"lv_50", OK::state, 50},
+    {"lv_99", OK::state, 99},
+    {"lv_200", OK::state, 200},
+    {"lv_500", OK::state, 500},
+    {"lv_999", OK::state, 999},
+    {"form_evolve", OK::event},
+    {"form_rookies", OK::state},
+    {"form_eight", OK::state, 8},
+    {"form_all", OK::state, 16},
+    {"form_susanoomon", OK::state},
+    {"form_master", OK::state, 16},
+    {"tech_first", OK::event},
+    {"tech_full", OK::event},
+    {"tech_rank5", OK::event},
+    {"card_first", OK::state, 1},
+    {"card_rare", OK::event},
+    {"card_25", OK::state, 25},
+    {"card_50", OK::state, 50},
+    {"bits_100k", OK::state, 100000},
+    {"bits_1m", OK::state, 1000000},
+    {"bits_max", OK::state, 9999999},
+    {"hoarder", OK::state, 36},
+    {"item_rank5", OK::state, 5},
+    {"item_pink", OK::state, 1000},
+    {"numemon_free", OK::event},
+    {"quest_first", OK::event},
+    {"quest_all", OK::event},
+    {"kills_100", OK::stat, 100, "enemies_defeated"},
+    {"kills_1000", OK::stat, 1000, "enemies_defeated"},
+    {"kills_10000", OK::stat, 10000, "enemies_defeated"},
+    {"kills_100000", OK::stat, 100000, "enemies_defeated"},
+    {"crit_1000", OK::stat, 1000, "critical_hits"},
+    {"numemon_hunter", OK::stat, 500, "numemon_defeated"},
+    {"first_defeat", OK::event},
+    {"raise_ally", OK::event},
+    {"time_1h", OK::stat, 3600, "play_seconds"},
+    {"time_10h", OK::stat, 36000, "play_seconds"},
+    {"time_100h", OK::stat, 360000, "play_seconds"},
+    {"time_500h", OK::stat, 1800000, "play_seconds"},
+    {"mp_couch", OK::event},
+    {"mp_fullhouse", OK::event},
+    {"online_join", OK::event},
+    {"online_host", OK::event},
+    {"online_raid", OK::event},
+};
+static_assert(std::size(kOnline) == std::size(kAchievements), "one online form per achievement");
+
+constexpr AchievementCounter kCounters[] = {
+    {"kills", "enemies_defeated"},   {"criticals", "critical_hits"}, {"numemon_kills", "numemon_defeated"},
+    {"bosses", "bosses_defeated"},   {"defeats", "defeats"},         {"play_fields", "play_seconds"},
+};
+
+std::string json_text(std::string_view text) {
+    std::string out = "\"";
+    for (const char c : text) {
+        if (c == '"' || c == '\\') out += '\\';
+        out += c;
+    }
+    return out + '"';
+}
+
 // The dungeon bosses (death script keys) and their achievements.
 struct DungeonBoss {
     const char* key;
@@ -145,6 +242,61 @@ const AchievementDef* find_achievement(std::string_view id) {
     for (const auto& def : kAchievements)
         if (id == def.id) return &def;
     return nullptr;
+}
+
+const char* achievement_online_kind_name(AchievementOnlineKind kind) {
+    switch (kind) {
+    case OK::event: return "event";
+    case OK::stat: return "stat";
+    case OK::state: return "state";
+    }
+    return "";
+}
+
+const char* achievement_category_key(AchievementCategory category) {
+    switch (category) {
+    case C::story: return "story";
+    case C::bosses: return "boss";
+    case C::challenge: return "challenge";
+    case C::growth: return "level";
+    case C::forms: return "digivolution";
+    case C::techniques: return "technique";
+    case C::collection: return "collection";
+    case C::quests: return "quest";
+    case C::combat: return "combat";
+    case C::time: return "time";
+    case C::multiplayer: return "multiplayer";
+    }
+    return "";
+}
+
+std::span<const AchievementOnline> achievement_online_list() { return kOnline; }
+
+const AchievementOnline* find_achievement_online(std::string_view id) {
+    for (const auto& online : kOnline)
+        if (id == online.id) return &online;
+    return nullptr;
+}
+
+std::span<const AchievementCounter> achievement_online_counters() { return kCounters; }
+
+std::string achievement_catalogue_json() {
+    std::string out = "{\n  \"format\": \"dw4-achievements/1\",\n";
+    out += "  \"source\": \"src/game/achievements.cpp (dw4_achievements_tests --export)\",\n";
+    out += "  \"achievements\": [\n";
+    for (std::size_t i = 0; i < std::size(kAchievements); ++i) {
+        const auto& def = kAchievements[i];
+        const auto& online = kOnline[i];
+        out += "    {\"id\": " + json_text(def.id) + ", \"title\": " + json_text(def.title) + ", \"description\": " +
+               json_text(def.description) + ", \"category\": " + json_text(achievement_category_key(def.category)) +
+               ", \"kind\": " + json_text(achievement_online_kind_name(online.kind)) +
+               ", \"goal\": " + (online.goal ? std::to_string(online.goal) : std::string("null")) +
+               ", \"stat\": " + (online.server_stat ? json_text(online.server_stat) : std::string("null")) +
+               ", \"ownerOnly\": " + (online.owner_only ? "true" : "false") + "}";
+        out += i + 1 < std::size(kAchievements) ? ",\n" : "\n";
+    }
+    out += "  ]\n}\n";
+    return out;
 }
 
 const char* achievement_gate_text(AchievementGate gate) {
@@ -264,7 +416,8 @@ std::vector<AchievementUnlock> AchievementTracker::observe(const AchievementStep
         stage_damage_ = false;
         have_last_ = false;
     }
-    const auto& p1 = step.players[0];
+    // The story character: player 1 offline, this machine's player online.
+    const auto& p1 = step.players[std::size_t(std::clamp(step.own_slot, 0, 3))];
     bool local_alive_hp_loss = false;
     for (int slot = 0; slot < 4; ++slot) {
         const auto& p = step.players[std::size_t(slot)];
@@ -330,7 +483,8 @@ std::vector<AchievementUnlock> AchievementTracker::observe(const AchievementStep
     // event still comes).
     auto story_clear = [&](int difficulty) {
         give(difficulty == 0 ? "clear_normal" : difficulty == 1 ? "clear_hard" : "clear_veryhard");
-        if (!story_character || !story_character->from_start || story_character->assisted) return;
+        // (Online the story is the room owner's: a guest gets the clear, never its challenges.)
+        if (!step.story_owner || !story_character || !story_character->from_start || story_character->assisted) return;
         if (story_character->defeats == 0) give("deathless_clear");
         if (!story_character->beyond_rookie) give("rookie_clear");
         if (story_character->play_frames < 8 * kFieldsPerHour) give("speed_normal");
@@ -338,10 +492,12 @@ std::vector<AchievementUnlock> AchievementTracker::observe(const AchievementStep
         if (difficulty == 2 && !story_character->coop_very_hard) give("solo_veryhard");
     };
 
+    bool numemon_rose = false; // a Numemon freed in this step (flags 89..98)
     for (const auto& e : events) {
         switch (e.kind) {
         case Kind::boss_defeated: {
             if (!local_player) break;
+            add_stat("bosses", 1);
             give("boss_first");
             if (e.text == "apocaly") {
                 give("story_apocalymon");
@@ -376,6 +532,7 @@ std::vector<AchievementUnlock> AchievementTracker::observe(const AchievementStep
         }
         case Kind::story_flag:
             if (local_player && e.extra != 0 && e.value >= 406 && e.value <= 408) story_clear(e.value - 406);
+            if (e.extra != 0 && e.value >= 89 && e.value <= 98) numemon_rose = true;
             break;
         case Kind::enemy_defeated:
             if (!local_slot(e.slot)) break;
@@ -402,7 +559,8 @@ std::vector<AchievementUnlock> AchievementTracker::observe(const AchievementStep
             if (e.extra >= 4) give("tech_rank5");
             break;
         case Kind::card:
-            if (!local_player) break; // (cards are kept in player 1's record)
+            // (Cards are kept in player 1's record; online the shops are solo hub stages.)
+            if (!local_player || step.own_slot != 0) break;
             give("card_first");
             if (e.extra >= 2) give("card_rare");
             break;
@@ -450,7 +608,8 @@ std::vector<AchievementUnlock> AchievementTracker::observe(const AchievementStep
     }
     if (local_player) {
         max_stat("best_cards", step.cards);
-        max_stat("numemon_freed", step.numemon_freed);
+        // (Online the flags come with the room story: they count when one rises here.)
+        if (!step.shared_story || numemon_rose) max_stat("numemon_freed", step.numemon_freed);
     }
     if (partner_raised && joined >= 2 && local_player) give("raise_ally");
     if (step.online && local_player) give("online_join");

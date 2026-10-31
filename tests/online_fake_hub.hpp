@@ -9,7 +9,10 @@
 // (DISSOLVE for hubs, NEW, co-arrival, JOIN by catch-up), JOIN_REQ / JOIN_AT,
 // state delivery with LIVE ticks for observers, SPLIT with REASSIGN and
 // LEAD_FROM, RESUME, PING with a suggested delay, ROOM lag notices, NETFP
-// collection. The real hub is server/DW4Online/src/DW4Online.Relay/Hub.
+// collection, the room story (STORY merged with the C++ story rules, STORY_ACK
+// after WELCOME and on every revision, the story and the dropped set in every
+// BARRIER_OK; owner away with the drop policy refuses and records). The real
+// hub is server/DW4Online/src/DW4Online.Relay/Hub.
 #include "online/engine_link.hpp"
 #include "online/pacing.hpp"
 #include "online/session.hpp"
@@ -64,6 +67,8 @@ public:
     int prompt_owner_ = -1;
     std::uint8_t leaving_ = 0;
     bool replay_ = false;
+    dw4::engine::StoryValues story; // FLAG / FLAGFOLDER / COUNTER (tests set values as a script would)
+    int story_merges = 0;
     int restores = 0, replayed = 0;
     std::uint64_t audio_steps = 0;
 
@@ -116,6 +121,7 @@ public:
     std::uint8_t present_mask() const override { return present_; }
     std::vector<std::uint8_t> carry(int slot) const override { return {std::uint8_t(slot), 0xC0, 0xDE}; }
     std::optional<SplitInfo> take_split() override { return std::exchange(split_, std::nullopt); }
+    dw4::engine::StoryValues story_values() const override { return story; }
     PresenceFacts presence(int slot) const override {
         PresenceFacts f;
         f.in_stage = !pending_;
@@ -138,6 +144,12 @@ public:
             prompt_owner_ = -1;
             leaving_ = 0;
             if (barrier_) {
+                // The room story first (8.5, 8.6), as Engine::apply_barrier.
+                if (!barrier_->story.empty()) {
+                    dw4::engine::story::apply(story, dw4::engine::story::decode_story(barrier_->story, barrier_->story_revision),
+                                              dw4::engine::story::decode_keys(barrier_->dropped));
+                    ++story_merges;
+                }
                 present_ = barrier_->present();
                 for (const auto& c : barrier_->co_arrivals) state_ = mix(state_, 0x5000 + c.slot + c.carry.size());
                 barrier_.reset();
@@ -360,6 +372,70 @@ public:
     std::uint64_t netfp_compared = 0, netfp_mismatches = 0, late_pads = 0, fills_total = 0, splits = 0, snaphash_mismatches = 0, reassigns = 0;
     double last_ping = 0;
     std::uint32_t ping_nonce = 0;
+    // The room story (8.3-8.6).
+    dw4::engine::RoomStory room_story;
+    dw4::engine::story::StoryLines story_lines;
+    dw4::engine::StoryKeys dropped;
+    bool owner_away = false; // with the drop policy: pending values are refused and recorded in `dropped`
+    bool story_lost = false; // STORY frames are counted and then lost (no merge, no answer), as on a dying connection
+    int story_wait = 0;      // the next STORY frames are answered "wait" for every key (a visit too young, 8.7)
+    int stories = 0, story_acks = 0;
+    w::BarrierOk with_story(w::BarrierOk ok) const {
+        ok.story_revision = room_story.revision;
+        ok.story = dw4::engine::story::encode_story(room_story);
+        ok.dropped = dw4::engine::story::encode_keys(dropped);
+        return ok;
+    }
+    void broadcast_story(double now) {
+        w::StoryAck ack{room_story.revision, dw4::engine::story::encode_story(room_story), 0, {}};
+        for (auto& [id, _] : members) send(id, w::Type::story_ack, w::encode(ack), now);
+    }
+    void on_story(Member& m, const w::Story& s, double now) {
+        ++stories;
+        if (story_lost) return;
+        w::StoryAck answer{0, {}, w::StoryAck::answer, {}};
+        using K = dw4::engine::StoryRefused::Kind;
+        bool changed = false;
+        if (story_wait > 0) {
+            --story_wait;
+            const auto wait = [&](K kind, std::int32_t index) { answer.refused.push_back({kind, index, dw4::engine::StoryRefusal::wait}); };
+            if (s.delta.phase) wait(K::phase, s.delta.phase);
+            for (const auto f : s.delta.flags) wait(K::flag, f);
+            for (const auto k : s.delta.folder) wait(K::folder, k);
+            for (const auto& g : s.delta.counters) wait(K::counter, g.counter);
+        } else if (owner_away) {
+            const auto refuse = [&](K kind, std::int32_t index) { answer.refused.push_back({kind, index, dw4::engine::StoryRefusal::owner_away}); };
+            if (s.delta.phase) {
+                refuse(K::phase, s.delta.phase);
+                dropped.flags.push_back(dw4::engine::story::phase_flags()[std::size_t(s.delta.phase - 1)]);
+            }
+            for (const auto f : s.delta.flags) {
+                refuse(K::flag, f);
+                if (std::find(dropped.flags.begin(), dropped.flags.end(), f) == dropped.flags.end()) dropped.flags.push_back(f);
+            }
+            for (const auto k : s.delta.folder) {
+                refuse(K::folder, k);
+                if (std::find(dropped.folder.begin(), dropped.folder.end(), k) == dropped.folder.end()) dropped.folder.push_back(k);
+            }
+            for (const auto& g : s.delta.counters) {
+                refuse(K::counter, g.counter);
+                if (std::find(dropped.counters.begin(), dropped.counters.end(), g.counter) == dropped.counters.end()) dropped.counters.push_back(g.counter);
+            }
+        } else {
+            auto r = dw4::engine::story::merge(room_story, s.delta, 0, story_lines);
+            answer.refused = r.refused;
+            changed = r.changed;
+            room_story = r.story;
+        }
+        answer.revision = room_story.revision;
+        answer.story = dw4::engine::story::encode_story(room_story);
+        send(m.id, w::Type::story_ack, w::encode(answer), now);
+        ++story_acks;
+        if (changed) {
+            log_lines.push_back("story " + m.name + " -> revision " + std::to_string(room_story.revision));
+            broadcast_story(now);
+        }
+    }
 
     std::unique_ptr<Transport> connect(std::uint32_t member, const std::string& name) {
         auto pipe = make_memory_pipe();
@@ -408,6 +484,7 @@ public:
         w::Welcome welcome{std::uint8_t(m.id), inst.id, inst.visit, std::uint8_t(m.slot), inst.mode(), inst.stage, w::kNoTick, 0, 30,
                            std::uint8_t(resumable ? w::Welcome::resumable : 0)};
         send(m.id, w::Type::welcome, w::encode(welcome), now);
+        send(m.id, w::Type::story_ack, w::encode(w::StoryAck{room_story.revision, dw4::engine::story::encode_story(room_story), 0, {}}), now);
         for (auto& [id, other] : members)
             if (id != c.member) {
                 send(id, w::Type::room, w::encode(w::Room{w::RoomEvent::joined, std::uint8_t(c.member), c.member, m.name, 0}), now);
@@ -559,7 +636,7 @@ public:
             m.inst = hub.id;
             m.slot = 0;
             m.parked.reset();
-            send(m.id, w::Type::barrier_ok, w::encode(ok), now);
+            send(m.id, w::Type::barrier_ok, w::encode(with_story(ok)), now);
             log_lines.push_back("dissolve " + m.name + " " + b.stage);
             leave_instance_if_empty(from);
             return;
@@ -604,8 +681,8 @@ public:
             base.parked.reset();
             late.parked.reset();
             pending_co_arrival[inst.id] = late.id;
-            send(base.id, w::Type::barrier_ok, w::encode(base_ok), now);
-            send(late.id, w::Type::barrier_ok, w::encode(late_ok), now);
+            send(base.id, w::Type::barrier_ok, w::encode(with_story(base_ok)), now);
+            send(late.id, w::Type::barrier_ok, w::encode(with_story(late_ok)), now);
             log_lines.push_back("co-arrival " + base.name + " + " + late.name + " in " + b.stage);
             leave_instance_if_empty(from);
             leave_instance_if_empty(late_from);
@@ -627,7 +704,7 @@ public:
             m.observe_slot = slot;
             m.carry = b.carry;
             m.parked.reset();
-            send(m.id, w::Type::barrier_ok, w::encode(ok), now);
+            send(m.id, w::Type::barrier_ok, w::encode(with_story(ok)), now);
             // The state: snapshot and every tick since; LIVE / SEALED keep coming.
             w::StateData state;
             state.purpose = w::StatePurpose::join;
@@ -679,7 +756,7 @@ public:
         m.inst = inst.id;
         m.slot = 0;
         m.parked.reset();
-        send(m.id, w::Type::barrier_ok, w::encode(ok), now);
+        send(m.id, w::Type::barrier_ok, w::encode(with_story(ok)), now);
         log_lines.push_back("new " + m.name + " " + b.stage);
         if (!reuse) leave_instance_if_empty(from);
     }
@@ -984,6 +1061,7 @@ public:
             log_lines.push_back("resume " + m.name + " from " + std::to_string(r.last_tick + 1));
             break;
         }
+        case w::Type::story: on_story(m, w::decode_story(f.payload), now); break;
         case w::Type::presence: {
             auto p = w::decode_presence(f.payload, false);
             p.member = std::uint8_t(id);

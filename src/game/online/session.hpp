@@ -60,6 +60,9 @@ struct SessionConfig {
     std::size_t state_limit = 64u << 20; // largest state transfer accepted
     bool trace = false;                 // DW4_ONLINE_TRACE: decisions, membership, NETFP lines on stdout (test runs)
     std::uint32_t max_replay_rate = 0;  // DW4_ONLINE_RATE (test runs): replay steps per second at most (0: as fast as it goes)
+    double story_check_interval = 1.0;  // the pending set is looked at once a second (sent when it changed)
+    double story_interval = 10.0;       // and sent again every ten seconds while it is not empty (8.3)
+    double story_retry_interval = 3.0;  // after a wait / not_member answer: sent again this soon (8.7)
 };
 
 enum class Mode : std::uint8_t { connecting, solo, sealed, parked, transition, waiting_state, catching_up, observing, lost, closed };
@@ -112,6 +115,10 @@ public:
     // Name tags of room members outside the own instance, interpolated.
     std::vector<RemoteSample> remote_tags(double now) const { return tracks_.sample(now); }
     std::string member_name(std::uint32_t member) const;
+    // The relay's ROSTER (once per second): every room member's stage (empty:
+    // hidden), instance, level, HP and flags (1 connected, 2 lagging, 4
+    // owner), for the room view's areas (docs/SEAMLESS.md 10, 12).
+    const std::vector<wire::RosterEntry>& roster() const { return roster_; }
 
     // Facts.
     Mode mode() const { return mode_; }
@@ -127,6 +134,10 @@ public:
     int delay() const { return delay_; }
     bool hub() const { return hub_; }
     std::uint32_t measured_rate() const { return config_.rate; }
+    // The confirmed room story (SEAMLESS.md 8.3): the last one the server sent
+    // (STORY_ACK after WELCOME and on every revision, BARRIER_OK). Nothing
+    // until the server sent one. The title applies it at game_started (8.5).
+    const std::optional<engine::RoomStory>& confirmed_story() const { return confirmed_; }
     // The host must supply a new connection (lost, reconnecting).
     bool wants_transport() const { return mode_ == Mode::lost || (resume_after_lost_ && !transport_); }
 
@@ -166,6 +177,13 @@ private:
     void send_input_ahead(const wire::WirePad& pad);
     void start_sealed(const wire::WirePad& pad);
     void notice(std::string text);
+    // Room story (8.3): the pending set as STORY (at a barrier always, else
+    // when it changed or every story_interval while it is not empty), the
+    // answer, the engine lines of the additive counters.
+    void send_story(double now, bool at_barrier);
+    void on_story_ack(const wire::StoryAck& ack);
+    void take_story(const engine::RoomStory& story);
+    void open_line();
     void trace(const char* format, ...) const;
     std::string slot_name(int slot) const;
 
@@ -248,9 +266,33 @@ private:
     std::set<std::uint32_t> known_members_;
     std::set<std::uint32_t> disconnected_members_;      // ROOM disconnected, not connected again yet
     std::map<std::uint32_t, std::uint32_t> roster_inst_; // ROSTER: room member -> its instance (or join target)
+    std::vector<wire::RosterEntry> roster_;              // the last ROSTER as it came
     bool hello_seen_ = false;
+    double welcome_at_ = -100; // the first WELCOME (the members named right after it are no news)
     double last_tick_at_ = 0;
     double now_ = 0;
+
+    // Room story (8.3). A counter line is the engine line its growth is made
+    // in: the visit (base = the counters at the visit's start), a fork's child
+    // from its fork (its id comes with REASSIGN), a parent line closed at a
+    // fork (its final growth is sent until the server took it).
+    struct CounterLine {
+        std::uint32_t inst = 0, visit = 0;
+        bool awaiting_id = false;
+        std::map<std::int32_t, std::int32_t> base, taken;
+        std::optional<std::map<std::int32_t, std::int32_t>> final_growth;
+    };
+    std::optional<engine::RoomStory> confirmed_;
+    std::vector<CounterLine> lines_;
+    std::deque<wire::Story> story_in_flight_;
+    std::set<std::int32_t> refused_flags_, refused_folder_; // not sent again before the next barrier
+    std::uint8_t refused_phase_ = 0;
+    engine::StoryDelta story_last_;
+    double story_sent_at_ = -100, story_checked_at_ = -100;
+    // A STORY_ACK said wait / not_member: the pending set goes again at this
+    // time even if it did not change (0: none due).
+    double story_retry_at_ = 0;
+    bool held_noticed_ = false;
 
     std::map<std::uint32_t, RemoteMember> remote_;
     PresenceTracks tracks_;

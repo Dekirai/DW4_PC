@@ -1,3 +1,4 @@
+using DW4Online.Domain.Story;
 using DW4Online.Relay.Protocol;
 
 namespace DW4Online.Relay.Hub;
@@ -11,8 +12,14 @@ public interface IHubPeer
     void Close(CloseReason reason, string text);
 }
 
-/// <summary>What the room service tells the relay about a room when a member connects.</summary>
-public sealed record RoomInfo(string Code, int Protocol, ulong DataHash, ulong SettingsHash, int MaxPlayers);
+/// <summary>What the room service tells the relay about a room when a member connects (the story: when the room has an owner account).</summary>
+public sealed record RoomInfo(string Code, int Protocol, ulong DataHash, ulong SettingsHash, int MaxPlayers, RoomStoryInit? Story = null);
+
+/// <summary>
+/// The room story's start (SEAMLESS.md 8): the owner's account and online story as stored, the room's difficulty (the
+/// story is rebased on it), the owner-away policy and whether the owner is in the room.
+/// </summary>
+public sealed record RoomStoryInit(long OwnerAccountId, RoomStoryData Story, int Difficulty, StoryPolicy Policy, bool OwnerPresent);
 
 /// <summary>A member as the room's state lists it.</summary>
 public sealed record InstanceMemberView(long AccountId, string Username, int Slot, bool Connected, bool Lagging);
@@ -68,6 +75,27 @@ public sealed class HubMember(int index, long accountId, string name, bool owner
     public long ResyncAt { get; set; }
     /// <summary>A state transfer for this member is being built outside the room lock: nothing is pumped to it meanwhile.</summary>
     public StateJob? PendingState { get; set; }
+
+    /// <summary>STORY tokens (Instances:StoryBurst, refilled at StoryMessagesPerMinute) and when they were refilled.</summary>
+    public double StoryTokens { get; set; } = -1;
+    public long StoryRefilledAt { get; set; }
+    /// <summary>The engine lines (instance, visit) the server put this member in (every visit it was placed in, a fork's
+    /// child): besides its own instance 0 lines the only counter lines it may report, the last <see cref="StoryLineLimit"/>
+    /// of them (SEAMLESS.md 8.7).</summary>
+    public HashSet<(uint Inst, uint Visit)> StoryLines { get; } = [];
+    public Queue<(uint Inst, uint Visit)> StoryLineOrder { get; } = new();
+    public const int StoryLineLimit = 16;
+    /// <summary>The visits of instance 0 (a group that went on alone) the member reported lines of, at most
+    /// <see cref="LoneLineLimit"/> in a room session.</summary>
+    public HashSet<uint> LoneLineVisits { get; } = [];
+    public const int LoneLineLimit = 8;
+    /// <summary>The story epoch of the member's last instance visit (its engine was cleaned at that barrier).</summary>
+    public long VisitEpoch { get; set; }
+    /// <summary>The stage the member plays alone in while the server has no instance with a stage for it (taken out of its
+    /// group, its connection lost in a lobby or at a barrier, a reconnect without resuming), and since when: its STORY counts
+    /// against that stage (SEAMLESS.md 8.7).</summary>
+    public string? LoneStage { get; set; }
+    public long LoneSince { get; set; }
     /// <summary>When the member's last BARRIER that arrived alone was decided (at most one per Instances:LoneBarrierMs).</summary>
     public long LoneBarrierAt { get; set; }
     /// <summary>The member's state budget (Relay:StateBytesPerMinute): bytes left and when it was last refilled.</summary>
@@ -305,6 +333,8 @@ public sealed class HubInstance(uint id)
     public bool Joinable { get; set; }
     public bool MembershipSafe { get; set; }
     public StateReason Reason { get; set; } = StateReason.Loading;
+    /// <summary>The room story's drop epoch when this visit began (a fork's child keeps its parent's: one engine line).</summary>
+    public long StoryEpoch { get; set; }
 
     public TickLog Log { get; set; } = new();
     /// <summary>Sealed records beyond the log's end, waiting for the solo leader's LOG to reach them (1 to 2 members).</summary>

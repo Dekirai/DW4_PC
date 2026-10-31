@@ -1,0 +1,22 @@
+# The owner looks at the room while b plays: b's area, level and connection; then kicks b.
+wait-title
+to-menu
+pad DOWN DOWN A
+wait-screens
+login $UI_A_NAME $UI_A_PASSWORD
+create $UI_ROOM max=4
+wait-session
+key pad-b
+sleep 1
+menu online
+wait-members 2 180
+sleep 100
+wait 10
+shot room_areas
+kick $UI_B_NAME
+sleep 4
+wait 10
+shot after_kick
+leave
+wait-left
+end

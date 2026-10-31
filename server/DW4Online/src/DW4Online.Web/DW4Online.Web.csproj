@@ -13,5 +13,7 @@
   <ItemGroup>
     <!-- One stylesheet served from the assembly at /css/site.css (no static web assets to deploy). -->
     <EmbeddedResource Include="Assets\site.css" LogicalName="DW4Online.Web.site.css" />
+    <!-- The game client's stage names (src/game/presence_data.cpp, docs/SEAMLESS.md 14) for the room page. -->
+    <EmbeddedResource Include="..\..\..\..\data\online\areas.json" LogicalName="DW4Online.Web.areas.json" />
   </ItemGroup>
 </Project>

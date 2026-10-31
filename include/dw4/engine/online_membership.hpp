@@ -8,6 +8,7 @@
 #include "dw4/engine/engine.hpp"
 #include "dw4/engine/managers.hpp"
 #include "dw4/engine/online.hpp"
+#include "dw4/engine/online_story.hpp" // RoomStory, StoryKeys
 
 #include <array>
 #include <cstdint>
@@ -27,22 +28,6 @@ struct PlayerCarry {
     GameSystem::BitChip chip;
     PersonalSession personal;
     std::vector<std::uint8_t> record;
-};
-
-// The story the room confirmed (8.4): BASE_FLAG, BASE_FLAGFOLDER and
-// BASE_COUNTER of the room owner's online story. Round S2 merges it at
-// barriers; round S1 carries it and applies it only at game_started
-// (Engine::apply_room_story replaces the three tables).
-struct RoomStory {
-    std::array<std::uint8_t, 1024> flags{};
-    std::array<std::uint8_t, 12> folder{};
-    std::array<std::int32_t, 16> counters{};
-    std::uint32_t revision{};
-};
-// Story keys the server dropped while the owner was away (8.6; round S2).
-struct StoryKeys {
-    std::vector<std::int32_t> flags;
-    std::vector<std::int32_t> folder;
 };
 
 // BARRIER_OK's contents (6.3, 6.7), handed to the engine while it is parked

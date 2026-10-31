@@ -4,9 +4,11 @@
 // (READY, JOIN_REQ / JOIN_AT, the JOIN event, then sealed ticks with
 // identical net fingerprints), an exit fork (REASSIGN, LEAD_FROM), a
 // co-arrival (one entry for both, sealed from tick 0), a reconnect with
-// RESUME, the barrier timeout of a solo group, and the 1 -> 2 pads.
+// RESUME, the barrier timeout of a solo group, the 1 -> 2 pads and the room
+// story (STORY / STORY_ACK, the barrier merge, the dropped set).
 #include "online_fake_hub.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdlib>
 #include <cstdio>
@@ -300,6 +302,111 @@ void barrier_hold() {
     check(a.session->inst() >= 100, "a registered instance, not the timeout's");
 }
 
+// The room story through the client (SEAMLESS.md 8.3-8.6): the confirmed
+// story comes after WELCOME; nothing goes from the title (its character
+// select holds a record's own story); a flag and a key the guest's engine
+// makes in its lobby reach the room story within about a second (STORY), the
+// other member's confirmed story follows (STORY_ACK on the revision) but its
+// engine gets them only at its next barrier; an additive counter both engines
+// of a shared instance grow counts once (one engine line); with the room
+// owner away (drop) the guest's new flag is refused and the next barrier
+// removes it from the guest's engine with the notice.
+void room_story() {
+    World world;
+    world.hub.co_arrival_hold = 3.0;
+    world.hub.suggested_delay = 6; // (no pad comes late with 20 ms one way: the exit press is not filled away)
+    world.hub.room_story.flags[392] = 1;
+    world.hub.room_story.revision = 5;
+    auto& a = world.add("kim", 1);
+    auto& b = world.add("lee", 2);
+    a.input = press_in({{"stagis10", 20}}, fake::kExitButton);
+    b.input = press_in({{"stagis10", 600}}, fake::kExitButton);
+    b.engine.story.flags[426] = 1; // (the character select's own record)
+    check(world.run_until(10, [&] { return a.engine.stage() == "stagml11" && a.session->mode() == Mode::solo; }), "A in its lobby");
+    check(a.session->confirmed_story() && a.session->confirmed_story()->revision == 5 && a.session->confirmed_story()->flags[392] == 1,
+          "the confirmed story after WELCOME");
+    world.run(3);
+    check(b.engine.stage() == "stagis10" && world.hub.stories == 0, "no STORY from the title");
+    check(world.run_until(10, [&] { return b.engine.stage() == "stagml11" && b.session->mode() == Mode::solo; }), "B in its lobby");
+    check(world.run_until(3, [&] { return world.hub.room_story.flags[426] == 1; }), "B's value goes from the lobby");
+    b.engine.story.flags[19] = 1;  // a persistent flag (a talk)
+    b.engine.story.flags[23] = 1;  // a temporary: never sent
+    b.engine.story.folder[2] = 1;  // a key item
+    const double t0 = world.now;
+    check(world.run_until(5, [&] { return world.hub.room_story.flags[19] && world.hub.room_story.folder[2]; }), "B's progress reaches the room story");
+    check(world.now - t0 < 1.6, "within about a second (" + std::to_string(world.now - t0) + " s)");
+    check(!world.hub.room_story.flags[23], "temporaries are never sent");
+    check(world.hub.room_story.flags[706] && world.hub.room_story.flags[520], "the normal copies follow the working set and the keys");
+    check(world.run_until(2, [&] { return a.session->confirmed_story()->revision == world.hub.room_story.revision; }),
+          "A's confirmed story follows (STORY_ACK on the revision)");
+    check(!a.engine.story.flags.count(19), "A's engine does not get it mid-stage");
+    const auto stories = world.hub.stories;
+    world.run(12);
+    check(world.hub.stories == stories, "an empty pending set sends nothing (" + std::to_string(world.hub.stories - stories) + ")");
+    // The server lets a value wait (B's visit is too young, 8.7): it goes
+    // again within a few seconds, not ten seconds later or at the barrier.
+    world.hub.story_wait = 1;
+    b.engine.story.flags[394] = 1;
+    const double t_wait = world.now;
+    check(world.run_until(8, [&] { return world.hub.room_story.flags[394] == 1; }), "a value the server let wait goes again");
+    check(world.now - t_wait < 5.0, "within a few seconds (" + std::to_string(world.now - t_wait) + " s)");
+    // Both take the gate to stag0101 half a second apart: a co-arrival, the
+    // load step merges the room story into both engines.
+    const auto ta = a.session->tick(), tb = b.session->tick();
+    a.input = [ta](const fake::Client& c) -> std::uint32_t { return c.engine.stage() == "stagml11" && c.session->tick() == ta + 60 ? fake::kExitButton : 0u; };
+    b.input = [tb](const fake::Client& c) -> std::uint32_t { return c.engine.stage() == "stagml11" && c.session->tick() == tb + 90 ? fake::kExitButton : 0u; };
+    check(world.run_until(20, [&] { return a.session->mode() == Mode::sealed && b.session->mode() == Mode::sealed; }), "both sealed in stag0101");
+    check(a.engine.story.flags.count(19) && a.engine.story.flags.at(19) == 1 && a.engine.story.folder.at(2) == 1 && a.engine.story.flags.at(392) == 1,
+          "A's load merged the room story");
+    // stag0001's attempts: both engines of the instance grow COUNTER 7 alike.
+    a.engine.story.counters[7] = 1;
+    b.engine.story.counters[7] = 1;
+    check(world.run_until(4, [&] { return world.hub.room_story.counters[7] == 1; }), "the counter's growth reaches the room story");
+    world.run(3);
+    check(world.hub.room_story.counters[7] == 1 && world.hub.story_lines.size() == 1, "one engine line, counted once");
+    // The owner leaves; B makes a new flag: refused and dropped.
+    world.hub.owner_away = true;
+    b.engine.story.flags[393] = 1;
+    check(world.run_until(3, [&] { return std::count(world.hub.dropped.flags.begin(), world.hub.dropped.flags.end(), 393) == 1; }),
+          "the flag is refused and recorded as dropped");
+    check(!b.session->confirmed_story()->flags[393], "not in the confirmed story");
+    const auto stories_dropped = world.hub.stories;
+    world.run(5);
+    check(world.hub.stories == stories_dropped, "a refused value is not sent again before the barrier");
+    (void)a.session->take_notices();
+    (void)b.session->take_notices();
+    const auto ta2 = a.session->tick();
+    a.input = [ta2](const fake::Client& c) -> std::uint32_t { return c.engine.stage() == "stag0101" && c.session->tick() == ta2 + 60 ? fake::kExitButton : 0u; };
+    b.input = nullptr;
+    check(world.run_until(20, [&] { return a.engine.stage() == "stag0102" && b.engine.stage() == "stag0102" && a.session->mode() == Mode::sealed &&
+                                           b.session->mode() == Mode::sealed; }),
+          "both in stag0102");
+    check(b.engine.story.flags.at(393) == 0, "the barrier removed the dropped flag from B's engine");
+    check(b.engine.story.flags.at(19) == 1 && b.engine.story.counters.at(7) == 1, "the confirmed values stay");
+    bool told_b = false, told_a = false;
+    for (const auto& n : b.session->take_notices()) told_b |= n.find("Story progress was not saved") != std::string::npos;
+    for (const auto& n : a.session->take_notices()) told_a |= n.find("Story progress was not saved") != std::string::npos;
+    check(told_b && !told_a, "only B is told");
+    // The owner is back. B's STORY with new growth is lost with its dying
+    // connection (never answered): after the reconnect the pending set goes
+    // again at once, not ten seconds after the lost one.
+    world.hub.owner_away = false;
+    world.hub.story_lost = true;
+    const auto lost_before = world.hub.stories;
+    b.engine.story.counters[7] = 3;
+    check(world.run_until(3, [&] { return world.hub.stories > lost_before; }), "B sends the growth");
+    world.hub.drop(2);
+    world.hub.story_lost = false;
+    world.run(1.0);
+    check(b.session->wants_transport(), "B asks for a new connection");
+    b.session->attach(world.hub.connect(2, "lee"), world.now, "t-lee-3");
+    const double t1 = world.now;
+    check(world.run_until(8, [&] { return world.hub.room_story.counters[7] == 3; }), "the growth reaches the room story after the reconnect");
+    check(world.now - t1 < 4.0, "soon after the reconnect (" + std::to_string(world.now - t1) + " s)");
+    world.run(12);
+    check(world.hub.room_story.counters[7] == 3, "counted once");
+}
+
 // Two co-arrived members; returns once both play sealed.
 // (Delay 6: no pad of theirs comes late with 20 ms one way.)
 void co_arrive(World& world, fake::Client& a, fake::Client& b) {
@@ -456,6 +563,18 @@ void pacing_and_lag() {
     b.input = press_in({{"stagis10", 20}, {"stagml11", 120}}, fake::kExitButton);
     check(world.run_until(20, [&] { return a.session->mode() == Mode::sealed && b.session->mode() == Mode::sealed; }), "sealed");
     world.run(30);
+    // The room view's roster: the relay's ROSTER as it came (areas, levels, flags).
+    {
+        w::Roster roster;
+        roster.entries.push_back({1, "stag0101", 7, 12, 300, 320, 1 | 4});
+        roster.entries.push_back({2, "", 7, 9, 0, 250, 1 | 2});
+        world.hub.send(1, w::Type::roster, w::encode(roster), world.now);
+        world.run(0.5);
+        const auto& seen = a.session->roster();
+        check(seen.size() == 2 && seen[0].stage == "stag0101" && seen[0].level == 12 && seen[0].flags == 5 && seen[1].stage.empty() &&
+                  seen[1].max_hp == 250,
+              "the roster reaches the room view");
+    }
     const double ratio = a.session->audio_ratio();
     check(ratio >= 0.999 && ratio <= 1.001, "the audio ratio stays within 0.1 %");
     // Lag: the server fills B's pads when they stop (B's uplink gone, its downlink alive).
@@ -555,6 +674,8 @@ int main(int argc, char** argv) {
         resync_then_alone();
         std::cout << "taken out, continues alone\n";
         taken_out_continues_alone();
+        std::cout << "room story\n";
+        room_story();
         std::cout << "pacing, lag\n";
         pacing_and_lag();
         std::cout << "input delay\n";

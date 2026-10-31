@@ -1,0 +1,25 @@
+# S14h (hold), guest g (a k10 character: k2 dies on the route's rock slope): the title gives it the room story at game
+# start (the owner's card, without flag 505), so its engine lacks 505 as well although its own card has it (the
+# lobby's check). It waits at the title until the owner has left, goes through the lobby into stag0101 and steps on
+# matb01, whose hint panel sets 505: new to the room and plausible there (stag0101 sets it).
+# Hold keeps it on the server until the owner returns, apply merges it at once; either way the barrier into stag0102
+# leaves it in g's engine.
+# (matb01 lies on the west route at 229,-35: the route goes on from there to the exit matz02.)
+idle until epoch>=@50
+log owner gone
+campaign until stage=stagml11
+talk until control,frames>=60
+log in the lobby
+idle until frames>=300 fail flag:505=1
+log 505 not in the lobby
+explore mate00 yes until stage=stag0101,control
+log in the field
+mat matb01 no until flag:505=1
+log 505 set
+talk until control,frames>=60
+route {route:stag0101_west>218,-26}
+mat matz02 yes until stage=stag0102,control
+log in stag0102
+idle until frames>=120 fail flag:505=0
+log 505 kept
+idle until frames>=60

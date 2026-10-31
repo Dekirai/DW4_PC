@@ -1,0 +1,16 @@
+# The version gate: Online says "Update required" and offers nothing else; B goes back to the title menu.
+wait-title
+to-menu
+pad DOWN DOWN A
+wait-screens
+sleep 1
+expect-gate outdated
+wait 10
+shot outdated_screens
+key pad-b
+sleep 1
+expect-screens closed
+menu online
+wait 10
+shot outdated_menu
+end

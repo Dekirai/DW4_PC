@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using DW4Online.Domain.Abstractions;
 using DW4Online.Domain.Achievements;
 using DW4Online.Domain.Save;
+using DW4Online.Domain.Story;
 
 namespace DW4Online.Domain.Services;
 
@@ -11,7 +12,10 @@ public sealed record CharacterSaveResult(int Revision, CharacterSummary Summary,
 
 /// <summary>
 /// The online character: one per account, starts from zero, independent of local saves. Uploads are decoded
-/// and validated here; the summary columns come from this decode, never from the client.
+/// and validated here; the summary columns come from this decode, never from the client. The record's story bytes
+/// (BASE_FLAG, BASE_FLAGFOLDER, BASE_COUNTER) are the account's own online story (SEAMLESS.md 8.4): GET composes them
+/// from online_story, PUT replaces the uploaded ones with it (a guest uploads its character with the room owner's story;
+/// state achievements never come from a borrowed story).
 /// </summary>
 public sealed class OnlineCharacterService(
     IOnlineCharacterRepository characters,
@@ -19,14 +23,16 @@ public sealed class OnlineCharacterService(
     IAuditLog audit,
     VersionGate versions,
     OnlineCharacterOptions options,
-    TimeProvider time)
+    TimeProvider time,
+    OnlineStoryService? stories = null)
 {
     public async Task<CharacterView?> GetAsync(long accountId, CancellationToken ct = default)
     {
         var row = await characters.GetAsync(accountId, ct);
         if (row is null) return null;
-        var summary = CharacterSummary.From(RecordCodec.Decode(row.Record));
-        return new CharacterView(row.Revision, row.Record, summary, row.PlaySeconds, row.Flagged, row.CreatedAt, row.UpdatedAt);
+        var record = stories is null ? row.Record : await stories.ComposeAsync(accountId, row.Record, ct);
+        var summary = CharacterSummary.From(RecordCodec.Decode(record));
+        return new CharacterView(row.Revision, record, summary, row.PlaySeconds, row.Flagged, row.CreatedAt, row.UpdatedAt);
     }
 
     /// <summary>
@@ -41,6 +47,12 @@ public sealed class OnlineCharacterService(
 
         var report = RecordValidator.Validate(record, out var decoded);
         if (!report.Ok || decoded is null) return Rejected(report);
+        if (stories is not null)
+        {
+            // The uploaded story bytes are ignored: the stored record carries the account's own story.
+            record = await stories.ComposeAsync(accountId, record, ct);
+            decoded = RecordCodec.Decode(record);
+        }
 
         var now = Clock.Now(time);
         var current = await characters.GetAsync(accountId, ct);
@@ -82,16 +94,20 @@ public sealed class OnlineCharacterService(
     /// Ends the current online character; the next upload creates a new one. Its revisions stay in the history for
     /// <see cref="OnlineCharacterOptions.ResetHistoryDays"/> (staff can undo a reset made by mistake or look at a
     /// flagged character), then the housekeeping deletes them. The audit row keeps whether the character was flagged.
+    /// The account's online story is emptied with it (a new character starts from a new game's story, its unlocked
+    /// difficulties too); the old story stays in the story history. The caller closes the account's own room first (its
+    /// hub would save the old story again).
     /// </summary>
     public async Task<bool> ResetAsync(long accountId, long actorId, byte[]? ip, CancellationToken ct = default)
     {
         var now = Clock.Now(time);
         var current = await characters.GetAsync(accountId, ct);
         var done = current is not null && await characters.ResetAsync(accountId, now, options.HistoryRevisions, ct);
-        if (done)
-            await audit.WriteAsync("character_reset", accountId, actorId, ip,
-                new { revision = current!.Revision, flagged = current.Flagged, historyKeptDays = options.ResetHistoryDays }, now, ct);
-        return done;
+        if (!done) return false;
+        var story = stories is null ? 0 : await stories.ResetAsync(accountId, ct);
+        await audit.WriteAsync("character_reset", accountId, actorId, ip,
+            new { revision = current!.Revision, flagged = current.Flagged, historyKeptDays = options.ResetHistoryDays, storyRevision = story }, now, ct);
+        return true;
     }
 
     /// <summary>
@@ -123,6 +139,23 @@ public sealed class OnlineCharacterService(
             replaced = kept.EndedAt is not null && current is not null ? current.Revision : (int?)null,
         }, now, ct);
         return outcome.Revision;
+    }
+
+    /// <summary>Staff: the kept revisions of the account's online story, newest first.</summary>
+    public async Task<IReadOnlyList<StoryHistoryEntry>> StoryHistoryAsync(long accountId, CancellationToken ct = default) =>
+        stories is null ? [] : await stories.HistoryAsync(accountId, ct);
+
+    /// <summary>
+    /// Staff: makes a kept revision of the account's online story the current one again (the next revision, reason
+    /// admin_restore), for damage a forged or faulty merge did. The caller closes the account's own room first.
+    /// </summary>
+    public async Task<Result<long>> RestoreStoryAsync(long accountId, long revision, long actorId, byte[]? ip, CancellationToken ct = default)
+    {
+        if (stories is null || await stories.RestoreAsync(accountId, revision, ct) is not { } restored)
+            return DomainError.NotFound("revision_not_found", "No such kept revision of the online story.");
+        var now = Clock.Now(time);
+        await audit.WriteAsync("story_restore", accountId, actorId, ip, new { from = revision, revision = restored }, now, ct);
+        return restored;
     }
 
     private static DomainError Rejected(ValidationReport report) =>

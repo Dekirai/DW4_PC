@@ -754,4 +754,33 @@ public partial class HubLogicTests
         Assert.True(child.Snapshot.Complete);
         Assert.True(parent.Snapshot.Complete);
     }
+
+    /// <summary>
+    /// Round 56 verification (A1 on a loaded machine): both members of a sealed pair lagged at once, both were taken out,
+    /// the instance ended before either got the ticks up to its LEAVE, and both clients waited for good. When every
+    /// connected member lags nobody is taken out; once one plays on, the other is.
+    /// </summary>
+    [Fact]
+    public void Nobody_is_taken_out_for_lag_while_everyone_lags_one_who_plays_on_is_the_measure()
+    {
+        var h = SealedPair(out var inst, new RelayOptions { LagLeaveSeconds = 10 });
+        var i = h.I("a");
+        h.Seal(12_000); // neither sends pads
+        h.Hub.Housekeep(h.Now);
+        Assert.Same(i, h.Mem("a").Instance);
+        Assert.Same(i, h.Mem("b").Instance);
+        Assert.DoesNotContain(h.P("a").Ticks(), t => t.Rec.Events.Any(e => e.Type == Ev.Leave));
+        // a plays on: its pads arrive again; b still lags and leaves.
+        for (var k = 0; k < 60; ++k)
+        {
+            h.Send("a", new InputMsg(inst, i.Visit, i.NextSeal + 3, [new Pad(1, 0, 0, 0, 0), new Pad(1, 0, 0, 0, 0)]).Frame());
+            h.Seal(17);
+        }
+        h.Hub.Housekeep(h.Now);
+        Assert.Null(h.Mem("b").Instance);
+        Assert.Same(i, h.Mem("a").Instance);
+        h.Seal(300);
+        var leave = h.P("a").Ticks().First(t => t.Rec.Events.Any(e => e.Type == Ev.Leave));
+        Assert.Equal(1, leave.Rec.Events.First(e => e.Type == Ev.Leave).Slot);
+    }
 }

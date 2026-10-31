@@ -1,5 +1,6 @@
 {
   "desc": "dead partner and the gate disc: A dead, B (the only living member) uses the gate disc: A goes with B, no game over",
+  "seed_story": true,
   "frames": 80000,
   "timeout": 1000,
   "clients": [

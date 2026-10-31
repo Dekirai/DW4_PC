@@ -31,6 +31,30 @@ public class WireGoldenTests
     }
 
     [Fact]
+    public void Story_messages_equal_the_clients()
+    {
+        // tests/online_wire_tests.cpp "golden STORY" / "golden STORY_ACK" (SEAMLESS.md 8.3).
+        var story = new DW4Online.Domain.Story.StoryDelta { Phase = 3, Flags = [19, 392], Folder = [1], Counters = [new(7, 4, 2, 1)] };
+        Assert.Equal("07000000" + "02000000" + "0c000000" + "03" + "0200" + "1300" + "8801" + "01" + "01" + "01" + "07" + "04000000" + "02000000" + "01000000",
+            PayloadHex(new StoryMsg(7, 2, 12, story).Frame()));
+        var back = StoryMsg.Parse(new StoryMsg(7, 2, 12, story).Frame().AsSpan(Wire.HeaderBytes));
+        Assert.Equal((7u, 2u, 12u, (byte)3), (back.Inst, back.Visit, back.Revision, back.Delta.Phase));
+        Assert.Equal([19, 392], back.Delta.Flags);
+        Assert.Equal(new DW4Online.Domain.Story.CounterGrowth(7, 4, 2, 1), back.Delta.Counters.Single());
+        var ack = new StoryAckMsg(13, [], StoryAckMsg.Answer,
+            [new(DW4Online.Domain.Story.StoryKeyKind.Flag, 23, DW4Online.Domain.Story.StoryRefusal.NotStory),
+             new(DW4Online.Domain.Story.StoryKeyKind.Phase, 5, DW4Online.Domain.Story.StoryRefusal.PhaseJump)]);
+        Assert.Equal("0d000000" + "00000000" + "01" + "0200" + "01" + "1700" + "07" + "00" + "0500" + "04", PayloadHex(ack.Frame()));
+        var withStory = new StoryAckMsg(13, new DW4Online.Domain.Story.RoomStoryData().ToBlob(), 0, []).Frame();
+        Assert.Equal(4 + 4 + 1100 + 1 + 2, withStory.Length - Wire.HeaderBytes);
+        Assert.Throws<ProtocolException>(() => StoryAckMsg.Parse(new StoryAckMsg(1, new byte[1099], 0, []).Frame().AsSpan(Wire.HeaderBytes)));
+        var tooMany = new StoryMsg(7, 2, 12, story).Frame()[Wire.HeaderBytes..];
+        tooMany[13] = 0x01;
+        tooMany[14] = 0x04;
+        Assert.Throws<ProtocolException>(() => StoryMsg.Parse(tooMany));
+    }
+
+    [Fact]
     public void Message_bytes_equal_the_clients()
     {
         Assert.Equal("070000000200000063000000010080010203" + "04", PayloadHex(new InputMsg(7, 2, 99, [new Pad(0x8000, 1, 2, 3, 4)]).Frame()));

@@ -83,12 +83,32 @@ public static class AdminEndpoints
         });
 
         admin.MapPost("/accounts/{username}/online-character/reset", async (string username, AccountService accounts,
-            OnlineCharacterService characters, HttpContext ctx) =>
+            OnlineCharacterService characters, RoomService rooms, HttpContext ctx) =>
         {
             if (await accounts.FindAccountAsync(username, ctx.RequestAborted) is not { } account) return NoAccount();
+            if (await characters.GetAsync(account.Id, ctx.RequestAborted) is null)
+                return ApiProblems.Of(StatusCodes.Status404NotFound, "no_online_character", "There is no online character.");
+            await rooms.CloseOwnedAsync(account.Id, ctx.RequestAborted); // (its hub holds the story the reset empties)
             return await characters.ResetAsync(account.Id, ctx.Session().AccountId, ctx.IpBytes(), ctx.RequestAborted)
                 ? Results.NoContent()
                 : ApiProblems.Of(StatusCodes.Status404NotFound, "no_online_character", "There is no online character.");
+        });
+
+        // The account's online story: its kept revisions (each with its phase, key items and flag count), and putting one
+        // back as the next revision (damage from a forged or faulty merge; the account's own room closes first).
+        admin.MapGet("/accounts/{username}/online-story/history", async (string username, AccountService accounts,
+            OnlineCharacterService characters, HttpContext ctx) =>
+            await accounts.FindAccountAsync(username, ctx.RequestAborted) is { } account
+                ? Results.Ok(await characters.StoryHistoryAsync(account.Id, ctx.RequestAborted))
+                : NoAccount());
+
+        admin.MapPost("/accounts/{username}/online-story/restore/{revision:long}", async (string username, long revision,
+            AccountService accounts, OnlineCharacterService characters, RoomService rooms, HttpContext ctx) =>
+        {
+            if (await accounts.FindAccountAsync(username, ctx.RequestAborted) is not { } account) return NoAccount();
+            await rooms.CloseOwnedAsync(account.Id, ctx.RequestAborted);
+            return ApiProblems.Ok(await characters.RestoreStoryAsync(account.Id, revision, ctx.Session().AccountId, ctx.IpBytes(), ctx.RequestAborted),
+                rev => Results.Ok(new { revision = rev }));
         });
     }
 

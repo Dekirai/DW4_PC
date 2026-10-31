@@ -156,7 +156,11 @@ public static class RecordValidator
         {
             if (next.BaseLevel[s] < previous.BaseLevel[s])
             {
-                report.Warn("form_level_dropped", "A form's level went down.");
+                // A form's level never goes down in the game. A new character can carry the online character's UNIQUE
+                // (the frame count of its creation, the same in every fresh session): refused, not only flagged, so it
+                // never replaces the online character (round 56 review).
+                report.Error("form_level_dropped",
+                    "A form's level went down: this looks like another character; reset the online character before starting a new one.");
                 break;
             }
         }

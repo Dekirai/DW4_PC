@@ -506,6 +506,98 @@ void dissolve_through_the_link() {
     engine.set_online(OnlineRules{});
 }
 
+// 8.5 / 8.6: the barrier's room story reaches the engine in the load step,
+// before the membership: the phase rises one-hot, persistent flags, keys and
+// counters come in, temporaries stay, and the values the server dropped while
+// the room owner was away go back to the room's. Through the link the same
+// bytes give the same engine; a damaged story blob merges nothing.
+void story_at_the_barrier() {
+    namespace w = dw4::game::online::wire;
+    RoomStory room;
+    room.flags[3] = 1;
+    room.flags[19] = 1;
+    room.folder[1] = 1;
+    room.counters[1] = 500;
+    room.counters[7] = 1;
+    room.revision = 12;
+    const StoryKeys dropped{{392}, {5}, {7}};
+    const auto prepare = [](Engine& engine) {
+        auto* sys = engine.get<GameSystem>();
+        sys->players[0] = sample_player("p_agumon", 5);
+        engine.flags()[1] = 0;   // an absent-or-zero phase entry stays as it is
+        engine.flags()[2] = 1;   // phase 2
+        engine.flags()[392] = 1; // made while the owner was away (dropped)
+        engine.flags()[393] = 1; // pending, not dropped: stays
+        engine.flags()[23] = 1;  // a temporary: never touched
+        sys->flag_folder[5] = 1; // dropped
+        engine.counters()[7] = 3;
+        engine.counters()[2] = 4; // a session counter
+        OnlineRules rules;
+        rules.enabled = true;
+        rules.present = 1;
+        engine.set_online(rules);
+    };
+    const auto verify = [](Engine& engine, const std::string& how) {
+        auto* sys = engine.get<GameSystem>();
+        auto& f = engine.flags();
+        check(!engine.barrier_set(), how + ": the barrier applied");
+        check(f.at(1) == 0 && f.at(2) == 0 && f.at(3) == 1 && !f.count(4), how + ": the phase rose one-hot to the room's");
+        check(f.at(19) == 1 && f.at(393) == 1 && f.at(23) == 1, how + ": room flags came in, pending and temporary ones stay");
+        check(f.at(392) == 0, how + ": the dropped flag is gone");
+        check(sys->flag_folder.at(1) == 1 && sys->flag_folder.at(5) == 0, how + ": keys");
+        check(engine.counters().at(1) == 500 && engine.counters().at(7) == 1 && engine.counters().at(2) == 4, how + ": counters");
+        check(sys->players[0].joined && engine.online().present == 1, how + ": the membership applied after the story");
+    };
+    std::array<PadSample, 4> pads{};
+    {
+        Engine engine{dw4::MountedResources{}};
+        prepare(engine);
+        BarrierResult b;
+        b.decision = Decision::new_instance;
+        b.slot_map = {0, -1, -1, -1};
+        b.own_slot = 0;
+        b.rules.enabled = true;
+        b.story = room;
+        b.dropped = dropped;
+        engine.request_stage("stagxx01");
+        engine.set_barrier(b);
+        for (int i = 0; i < 40 && engine.barrier_set(); ++i) engine.step(pads);
+        verify(engine, "engine");
+        engine.set_online(OnlineRules{});
+    }
+    {
+        Engine engine{dw4::MountedResources{}};
+        prepare(engine);
+        dw4::game::online::EngineHooks hooks;
+        hooks.engine = [&]() -> Engine& { return engine; };
+        dw4::game::online::GameEngineLink link(hooks, {});
+        link.start_online(0, 0b0001);
+        check(story::pending(room, link.story_values()).flags == std::vector<std::int32_t>{392, 393}, "the link's story values");
+        w::BarrierOk ok;
+        ok.decision = w::Decision::dissolve;
+        ok.slot_map = {0, -1, -1, -1};
+        ok.mode = w::Mode::hub;
+        ok.story_revision = room.revision;
+        ok.story = story::encode_story(room);
+        ok.dropped = story::encode_keys(dropped);
+        engine.request_stage("stagml11");
+        link.set_barrier(ok);
+        for (int i = 0; i < 40 && engine.barrier_set(); ++i) engine.step(pads);
+        verify(engine, "link");
+        // A damaged story blob: nothing merges (the next barrier brings it).
+        ok.story.pop_back();
+        engine.flags()[22] = 0;
+        room.flags[22] = 1;
+        ok.story = story::encode_story(room);
+        ok.story.pop_back();
+        engine.request_stage("stagml12");
+        link.set_barrier(ok);
+        for (int i = 0; i < 40 && engine.barrier_set(); ++i) engine.step(pads);
+        check(!engine.barrier_set() && engine.flags().at(22) == 0, "a damaged story blob merges nothing");
+        engine.set_online(OnlineRules{});
+    }
+}
+
 // 6.5: a LEAVE that waits for a membership-safe step marks the slot leaving:
 // its pad is neutral and connected, and its readers (a prompt it owns, a
 // status window: SUBWND reads window.player through pad_reader_slot) get the
@@ -1097,6 +1189,48 @@ void data_scenarios(const std::filesystem::path& data) {
 
 } // namespace
 
+// The room's story and modes at the title's Game Start (SEAMLESS.md 8.5): on
+// the step of every TITLE2 GAMESTART (Engine::title_game_start), not at
+// game_started's rising edge. That flag stays set after "Continue? No" took the
+// player back to the title, and the title's option menu sets it without a game
+// start: the next Game Start of the session got neither (round 56 review).
+void title_application_at_every_game_start() {
+    Engine engine{dw4::MountedResources{}};
+    dw4::game::online::EngineHooks hooks;
+    hooks.engine = [&]() -> Engine& { return engine; };
+    dw4::game::online::RoomSettings settings;
+    settings.difficulty = 2;
+    settings.camera_mode = 1;
+    settings.light_mode = 0;
+    dw4::game::online::GameEngineLink link(hooks, settings);
+    RoomStory room;
+    room.flags[19] = 1;
+    room.revision = 3;
+    link.set_room_story(room);
+    auto* sys = engine.get<GameSystem>();
+    // The option menu's reload: game_started without a game start.
+    sys->game_started = true;
+    sys->difficulty = 0;
+    sys->camera_mode = 0;
+    link.after_live_step();
+    check(!link.game_start() && sys->difficulty == 0 && sys->camera_mode == 0 && !engine.flags().count(19), "no application without GAMESTART");
+    // GAMESTART (TITLE2): the story and the modes on that step, once.
+    engine.title_game_start = true;
+    check(link.game_start(), "the host sees the Game Start");
+    link.after_live_step();
+    check(!engine.title_game_start && sys->difficulty == 2 && sys->camera_mode == 1 && sys->light_mode == 0 && engine.flags().at(19) == 1,
+          "the room's story and modes at the Game Start");
+    // "Continue? No": the title again; its character select writes its own
+    // difficulty and the record's story (game_started stays set).
+    sys->difficulty = 0;
+    engine.flags()[19] = 0;
+    link.after_live_step();
+    check(sys->difficulty == 0, "nothing between two Game Starts");
+    engine.title_game_start = true;
+    link.after_live_step();
+    check(sys->difficulty == 2 && engine.flags().at(19) == 1, "the session's second Game Start gets them again");
+}
+
 int main(int argc, char** argv) {
     try {
         snapshot_bytes();
@@ -1112,6 +1246,8 @@ int main(int argc, char** argv) {
         rules_replay_and_split_without_players();
         barrier_without_data();
         dissolve_through_the_link();
+        story_at_the_barrier();
+        title_application_at_every_game_start();
         leaving_redirect();
         std::string data = argc > 1 ? argv[1] : "";
         if (data.empty())

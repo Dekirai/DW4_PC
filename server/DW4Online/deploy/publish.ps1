@@ -47,6 +47,9 @@ if ($LASTEXITCODE -ne 0) { throw 'Publish failed.' }
 foreach ($leak in @('appsettings.Development.json', 'appsettings.Local.json', 'appsettings.Production.json')) {
     if (Test-Path (Join-Path $out $leak)) { throw "$leak must not be part of a release." }
 }
+# Keys and certificates never travel with a release (the TLS keys stay offline, DEPLOY.md 6.1).
+$keys = @(Get-ChildItem (Join-Path $serverRoot 'deploy') -Recurse -File -Include *.pem, *.pfx, *.p12, *.key)
+if ($keys.Count -gt 0) { throw "Key or certificate files in deploy\ must not be part of a release: $($keys.Name -join ', ')" }
 Copy-Item -Recurse (Join-Path $serverRoot 'deploy') (Join-Path $out 'deploy')
 Copy-Item -Recurse (Join-Path $serverRoot 'sql') (Join-Path $out 'sql')
 Remove-Item (Join-Path $out 'deploy\publish.ps1')
