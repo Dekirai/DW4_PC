@@ -994,9 +994,14 @@ ticks as the 0.5 % quantile of the margin allows with 0.15 of a tick kept (at
 most three at once). The rule sees only paced pads: one that came within
 4 ms of the member's previous pad (a burst after a stall of the client, of its
 downlink or of the relay's sealing, or behind one lost segment) or more than
-three ticks after it (the first after such a stall) says nothing about the
-link and is left out; a link too slow for `d` still raises it, its pads come
-one by one and late. The first `d + 2` ticks of a stream (a sealed start, a
+eight ticks after it (the first after such a stall) says nothing about the
+link and is left out; a link too slow for `d` still raises it (its pads come
+one by one and late, or in bursts behind gaps of up to eight ticks from a game
+running only 8-20 passes a second), and a member whose pads were filled for
+half a second in a row (lagging) feeds the rule with every pad. A button
+pressed in a pad that came after its tick was sealed, and not held in the
+slot's last sealed pad, is sealed with the slot's next pad: a press inside a
+burst comes a few ticks late instead of being lost. The first `d + 2` ticks of a stream (a sealed start, a
 resync's end) do not count: the client sends those pads at once when it learns
 of the stream, so the first of them are late by design; a JOIN gives every
 stream of the instance `d + 120` ticks (the joiner's spawn loads its packages
@@ -1156,7 +1161,52 @@ gets. The latency is sample to tick run here; the picture follows in the same
 host pass (presented within 0.5 ms in these runs without pictures, one
 present later with them).
 
-TABLE
+Every row is one L1 run (two members, 100 s sealed after the join; b is the
+guest that joined mid-stage). "Machine" says how busy the PC was: quiet (few
+other processes), loaded (the hidden clients of up to three other rounds on
+the same 16 threads; stalls of 0.1-0.5 s in every process). d is the input
+delay in ticks (16.7 ms): in the first 5 s of sealed play, its largest value
+and at the end; latency is the second half's average from sampling a pad to
+its tick running here; lost is the share of own pads the relay replaced by a
+fill (whole sealed play). The rule's value is `ceil((RTT + J) / f + 1.5)`: 3 at
+20 ms, 4 at 40 ms (5 with jitter), 7 at 80 ms, 11-12 at 150 ms.
+
+| Server | Link each way (RTT) | Machine | Member | d first / max / end | Latency | Lost |
+| --- | --- | --- | --- | --- | --- | --- |
+| DW4Online 0.1.0 (the field's) | 10 ms (20) | loaded | a host | 5 / 12 / 12 | 98 ms | 3.0 % |
+| | | | b guest | 5 / 12 / 12 | 115 ms | 2.9 % |
+| main before round 62 (the same rule) | 10 ms (20) | loaded | a host | 3 / 8 / 8 | 134 ms | 0.3 % |
+| | | | b guest | 7 / 9 / 9 | 150 ms | 0.3 % |
+| 0.1.0 | 20 ms (40) | quiet | a / b | 6 / 6 / 6, 8 / 8 / 6 | 90 / 104 ms | 0.1 / 0 % |
+| 0.1.0 | 40 ms (80) | quiet | a / b | 8 / 8 / 8, 9 / 9 / 8 | 124 / 134 ms | 0.1 / 0 % |
+| 0.1.0 | 75 ms (150) | quiet | a / b | 13 / 13 / 12, 14 / 14 / 12 | 200 / 204 ms | 0 / 0 % |
+| 0.1.0 | up 5, down 35 (40) | loaded | a / b | 9 / 10 / 8, 9 / 10 / 8 | 146 / 144 ms | 0.1 / 0.1 % |
+| 0.1.0, L2 (host throttled) | 10 ms (20) | loaded | a host / b guest | 13 / 14 / 14, 5 / 8 / 7 | 227 / 127 ms | 0.2 / 0.5 % |
+| round 62 | 10 ms (20) | quiet | a / b | 3 / 3 / 3, 5 / 5 / 3 | 50 / 50 ms | 0 / 1.1 % |
+| round 62 | 20 ms (40) | quiet | a / b | 5 / 5 / 4, 8 / 8 / 5 (before the JOIN's grace) | 67 / 83 ms | 0.1 / 1.6 % |
+| round 62 | 40 ms (80) | quiet | a / b | 7 / 7 / 7, 7 / 7 / 7 | 117 / 117 ms | 0 / 0 % |
+| round 62, L2 (host throttled) | 10 ms (20) | quiet | a host / b guest | 5 / 13 / 13, 3 / 4 / 4 | 193 / 52 ms | 1.8 / 0.1 % |
+| round 62 (paced pads) | 10 ms (20) | loaded | a / b | 3 / 6 / 4, 3 / 6 / 4 | 71 / 77 ms | 1.8 / 1.7 % |
+| round 62 (paced pads) | 20 ms (40) | loaded | a / b | 5 / 7 / 7, 5 / 8 / 6 | 98 / 108 ms | 2.1 / 2.1 % |
+| round 62 (paced pads) | 75 ms (150) | loaded | a / b | 11 / 13 / 13, 11 / 13 / 13 | 201 / 205 ms | 6.4 / 1.7 % |
+| round 62 (paced pads) | 20 ms + 0-5 ms jitter (47) | loaded | a / b | 5 / 7 / 6, 5 / 7 / 6 | 94 / 95 ms | 1.9 / 3.8 % |
+| round 62 (paced pads) | 20 ms, 1 % loss (42) | loaded | a / b | 5 / 6 / 6, 5 / 6 / 5 | 89 / 91 ms | 7.0 / 7.0 % |
+| round 62 (paced pads) | up 5, down 35 (41) | loaded | a / b | 5 / 6 / 5, 5 / 6 / 5 | 87 / 87 ms | 1.2 / 1.1 % |
+
+With the rule of round 62 but before the paced pads (every late pad counted),
+the loaded machine still ratcheted: 3 to 8 / 9 at 20 ms, 5 to 9 at 40 ms, 12
+to 15 at 150 ms, 9-11 at 1 % loss (losing 1.3 %), each rise right after a
+second of backlog runs (the clients' downlink, the relay's sealing or the
+clients themselves stalled). That is what led to the paced pads. A run while
+four rounds' clients shared the PC (stalls of 1-4 s in every process) is no
+measurement of the rule: members were taken out for lag and half the pads
+were filled; it is left out. The rows "paced pads" ran before the last two
+changes of the round: a press in a late pad now goes with the next sealed pad
+(at 1 % loss the 7 % filled pads repeat the previous pad, the presses among
+them come a few ticks late), and a burst's first pad after a gap of up to
+eight ticks (a game running 8-20 passes a second) or any pad of a member that
+lags counts again (two real-client scenarios lost a member to the lag rule on
+the four-round machine with the narrower window).
 
 Offline the same input runs in the step of its pass (0 ms); the picture
 follows as offline. "Lost" is the share of own pads the relay replaced by a
@@ -1185,7 +1235,18 @@ fill.
    the joiner's packages; afterwards its buffer stood near 2.5 ticks (target
    1.5) and drained at +0.1 %, a tick per 17 s. Every tick of it made its pads
    a tick later at the relay, so the rule kept its d a tick above the host's.
-5. **Not causes:** the protocol-45 client works with the 0.1.0 hub (one wire
+5. **A JOIN's step made every member's next pads late.** The step that applies
+   a JOIN spawns the joiner on every machine (its species and weapon
+   packages load in it): at 40 ms of round trip the joiner rose from 5 to 8
+   in the second after its JOIN and needed 20 s to come back to 5.
+6. **Bursts after stalls raised d although no network was slow.** On a busy
+   PC (other games, other rounds' clients) the clients, their downlink and
+   the relay's sealing thread stalled for 0.1-0.5 s now and then; each stall
+   let a member's pads out late in one burst. Counting them, even the rule of
+   causes 1-3 fixed went from 3 to 8 / 9 at 20 ms within two minutes of load
+   (every rise right after a second of backlog runs). Two games on one PC are
+   such a busy PC.
+7. **Not causes:** the protocol-45 client works with the 0.1.0 hub (one wire
    layout since S1; 0.1.0 ignores STORY, so the room has no story, `story_ignored`),
    and its delay rule is main's (SlotStream.cs did not change after 890e802);
    the relay's sealing timer is high resolution (its log says so) and TCP_NODELAY
@@ -1195,9 +1256,11 @@ fill.
 
 *Fixes (round 62).* Hub: the starting d from the median and the p90 spread of
 the newest 30 round trips with stalls left out, `ceil((RTT + J) / f + 1.5)`;
-no rise from a stream's first `d + 2` ticks; the rule above (rise on late pads
-in three different seconds of ten, at once on a mostly late second; fall after
-ten seconds by the margin, up to three ticks); NETSTAT for the client. Client:
+no rise from a stream's first `d + 2` ticks, nor from anyone's pads in the
+`d + 120` ticks after a JOIN; the rule above (rise on paced late pads in three
+different seconds of ten, at once on a mostly late second; fall after ten
+seconds by the margin, up to three ticks); presses of late pads go with the
+next sealed pad; NETSTAT for the client. Client:
 a lasting playout excess runs an extra step; skipped samples keep their
 buttons; an online session opts out of Windows' background throttling and a
 minimized window's loop sleeps instead of spinning; the measurements above,
@@ -1206,7 +1269,9 @@ minimized window's loop sleeps instead of spinning; the measurements above,
 *What remains inherent.* Lockstep without prediction delays every input by d
 ticks: `ceil((RTT + J) / 16.683 ms + 1.5)`, the 1.5 for the playout tick and
 the host pass. Measured after the fixes: 3 ticks (50 ms) at 20 ms of round
-trip, ROW40, ROW80, ROW150. A game presenting at 60 Hz with vsync adds up to a
+trip, 4-5 (67-83 ms) at 40 ms, 7 (117 ms) at 80 ms, 11-13 (183-217 ms) at
+150 ms; on a busy PC one or two more after a stretch of stalls, coming back
+down within 10-20 s. A game presenting at 60 Hz with vsync adds up to a
 pass (16.7 ms) to its round trip and its pads' way, so at 20-30 ms of ping it
 settles at 3-4 ticks (50-67 ms); at 144 Hz at 3. A member whose PC stalls
 regularly (a throttled background game) raises only its own d. TCP loss still
