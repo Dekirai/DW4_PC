@@ -1517,13 +1517,19 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 if (e.kind == dw4::engine::PortEvent::Kind::new_character && e.slot == 0) new_characters.insert(std::uint32_t(e.value));
             // The online character: the save room's card writes go up (SEAMLESS.md 9).
             if (online) online->port_events(events);
-            if (!achievements_on()) return;
+            // The online account's achievements count whatever the local
+            // setting says (a player who turned the local ones off got no
+            // online ones either); test runs: DW4_ACHIEVEMENTS for both.
+            const bool local_on = achievements_on();
+            const bool online_on = online_achievements && online && !engine.replay() && (local_on || !options.smoke_frames);
+            if (!local_on && !online_on) return;
             last_gate = achievement_gate();
             const auto step = achievement_step();
-            const auto unlocked = achievements.observe(step, events, last_gate, randomized(), unix_now());
+            const auto unlocked = local_on ? achievements.observe(step, events, last_gate, randomized(), unix_now())
+                                           : decltype(achievements.observe(step, events, last_gate, randomized(), unix_now())){};
             // The online account (SEAMLESS.md 11): only the member's own live
             // ticks ("was there"); a catch-up replays without port events.
-            if (online_achievements && online && !engine.replay()) {
+            if (online_on) {
                 using Mode = dw4::game::online::Mode;
                 const auto mode = online->session().mode();
                 if (mode == Mode::solo || mode == Mode::sealed || mode == Mode::transition)

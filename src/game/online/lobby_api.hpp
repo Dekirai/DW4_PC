@@ -71,6 +71,9 @@ struct RoomListing {
     std::string client_version;
     std::optional<int> difficulty;
     int instances = 0;
+    // Rooms:StoryWhileOwnerAway of the server: "drop", "hold" or "apply"
+    // (what happens to story progress while the owner is away; SEAMLESS.md 8.6).
+    std::string story_policy = "drop";
     // Same protocol and game data as this machine: only these can be joined.
     bool compatible(int own_protocol, std::uint64_t own_data_hash) const {
         return protocol == own_protocol && data_hash == own_data_hash;

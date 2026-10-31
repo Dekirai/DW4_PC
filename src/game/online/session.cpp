@@ -347,7 +347,10 @@ void Session::handle(const w::Frame& frame, double now) {
         if (!m.name.empty()) names_[m.member] = m.name;
         switch (m.kind) {
         case w::RoomEvent::joined:
-            if (!own && known_members_.insert(m.member).second && hello_seen_) notice(member_name(m.member) + " joined the room");
+            // (Right after WELCOME the server names every member already in
+            // the room: they are no news, only members that come later are.)
+            if (!own && known_members_.insert(m.member).second && hello_seen_ && now_ - welcome_at_ > 1.0)
+                notice(member_name(m.member) + " joined the room");
             break;
         case w::RoomEvent::left:
             if (!own) notice(member_name(m.member) + " left the room");
@@ -440,6 +443,7 @@ void Session::on_sealed(std::uint32_t inst, std::uint32_t visit, std::uint32_t t
 }
 
 void Session::on_welcome(const w::Welcome& m, double now) {
+    if (!hello_seen_) welcome_at_ = now;
     hello_seen_ = true;
     member_id_ = m.member;
     if (!config_.own_name.empty()) names_[member_id_] = config_.own_name;

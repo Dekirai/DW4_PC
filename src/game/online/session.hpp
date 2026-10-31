@@ -268,6 +268,7 @@ private:
     std::map<std::uint32_t, std::uint32_t> roster_inst_; // ROSTER: room member -> its instance (or join target)
     std::vector<wire::RosterEntry> roster_;              // the last ROSTER as it came
     bool hello_seen_ = false;
+    double welcome_at_ = -100; // the first WELCOME (the members named right after it are no news)
     double last_tick_at_ = 0;
     double now_ = 0;
 

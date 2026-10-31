@@ -41,6 +41,7 @@ RoomListing listing_of(const json::Value& r) {
     l.randomizer = flag_of(r["randomizer"]);
     if (const auto d = r["difficulty"].i64()) l.difficulty = int(*d);
     l.instances = int_of(r["instances"]);
+    if (const auto policy = text_of(r["storyPolicy"]); !policy.empty()) l.story_policy = policy;
     return l;
 }
 

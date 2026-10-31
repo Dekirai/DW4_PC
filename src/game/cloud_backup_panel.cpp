@@ -51,9 +51,9 @@ void CloudBackupPanel::ensure_worker() {
     online::cloud::CloudBackup::Config config;
     config.submit = [http = http_.get()](online::HttpRequest request) { return http->submit(std::move(request)); };
     config.client_version = version_;
-    char host[256] = "DW4_PC";
-    if (const char* name = std::getenv("COMPUTERNAME"); name && *name) std::snprintf(host, sizeof host, "%s", name);
-    config.device = host;
+    // (The game's name, as the Online screens send it: the PC's own name is
+    // not sent to the server, where it would stay in the backup's history.)
+    config.device = "DW4_PC";
     cloud_ = std::make_unique<online::cloud::CloudBackup>(std::move(config));
 }
 

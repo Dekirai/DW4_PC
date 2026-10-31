@@ -225,7 +225,13 @@ void recovery_code(online::OnlineLobby& lobby, bool registered) {
     wrapped_colored(kWarn, "Write it down or keep it somewhere safe. It is the only way back into the account if you forget the "
                            "password, and it is shown only now.");
     ImGui::Spacing();
-    if (button("I saved it", true, true)) lobby.acknowledge_code();
+    if (button("I saved it", true, true)) {
+        // (Not left behind in this buffer or, after Copy, in the clipboard.)
+        if (const char* clip = ImGui::GetClipboardText(); clip && !lobby.recovery_code().empty() && lobby.recovery_code() == clip)
+            ImGui::SetClipboardText("");
+        lobby.acknowledge_code();
+        wipe(code);
+    }
 }
 
 void recover(online::OnlineLobby& lobby, OnlineUiState& s) {
@@ -523,8 +529,11 @@ void in_room(online::OnlineLobby& lobby, OnlineUiState& s, const RoomLive* live)
     ImGui::SameLine();
     ImGui::TextDisabled("(room %s)", lobby.room_code().c_str());
     if (view) {
-        ImGui::TextDisabled("Owner %s%s - %s", view->room.owner.c_str(), view->room.owner_present ? "" : " (away: story progress is not saved)",
-                            settings_line(view->settings).c_str());
+        // (The server's Rooms:StoryWhileOwnerAway decides what the owner's absence means.)
+        const char* away = view->room.story_policy == "hold"    ? " (away: story progress is kept until they return)"
+                           : view->room.story_policy == "apply" ? " (away)"
+                                                                : " (away: story progress is not saved)";
+        ImGui::TextDisabled("Owner %s%s - %s", view->room.owner.c_str(), view->room.owner_present ? "" : away, settings_line(view->settings).c_str());
     }
     if (live && live->active)
         ImGui::TextDisabled("You: player %d in instance %u (%s), input delay %d", live->own_slot + 1, live->inst, live->mode.c_str(), live->delay);
