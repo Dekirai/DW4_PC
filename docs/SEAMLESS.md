@@ -991,9 +991,16 @@ pads came in at least three different seconds of them, and at once by up to
 three when most pads of the last second were late (by the median margin of
 that second); it lowers `d_i` after ten seconds without a change by as many
 ticks as the 0.5 % quantile of the margin allows with 0.15 of a tick kept (at
-most three at once). The first `d + 2` ticks of a stream (a JOIN, a sealed
-start, a resync's end) do not count: the client sends those pads at once when
-it learns of the stream, so the first of them are late by design. (Round S1's
+most three at once). The rule sees only paced pads: one that came within
+4 ms of the member's previous pad (a burst after a stall of the client, of its
+downlink or of the relay's sealing, or behind one lost segment) or more than
+three ticks after it (the first after such a stall) says nothing about the
+link and is left out; a link too slow for `d` still raises it, its pads come
+one by one and late. The first `d + 2` ticks of a stream (a sealed start, a
+resync's end) do not count: the client sends those pads at once when it learns
+of the stream, so the first of them are late by design; a JOIN gives every
+stream of the instance `d + 120` ticks (the joiner's spawn loads its packages
+in that step on every machine). (Round S1's
 rule raised `d_i` by one on four late pads in a minute and lowered it by one
 per 30 clean seconds: it turned every hiccup into lasting delay, see
 "Measured in round 62" below.) A change is a DELAY event at a sealed tick (the
