@@ -56,6 +56,11 @@ struct PortEvent {
         // extra the box the character went into (0..3; -1 for a FILEMAKE,
         // which only makes the empty file). Only successful writes.
         card_written,
+        // The character select called slot's character from a card box
+        // ("Call Digimon"; value: its UNIQUE as int32, extra: the box). The
+        // online character (docs/SEAMLESS.md 9) decides at the Game Start
+        // whether the game is a new character (new_character) or a called one.
+        character_called,
     };
     Kind kind{};
     std::int32_t slot = -1;

@@ -405,6 +405,18 @@ void room_story() {
     check(world.now - t1 < 4.0, "soon after the reconnect (" + std::to_string(world.now - t1) + " s)");
     world.run(12);
     check(world.hub.room_story.counters[7] == 3, "counted once");
+    // A room whose owner has no story yet (8.6, the user's decision of
+    // 31.10): what B makes is refused not_started and dropped, and B is told
+    // why (once).
+    world.hub.not_started = true;
+    (void)b.session->take_notices();
+    b.engine.story.flags[395] = 1;
+    check(world.run_until(3, [&] { return std::count(world.hub.dropped.flags.begin(), world.hub.dropped.flags.end(), 395) == 1; }),
+          "the flag is refused and recorded as dropped (not started)");
+    bool told_not_started = false;
+    for (const auto& n : b.session->take_notices()) told_not_started |= n.find("has not started its story yet") != std::string::npos;
+    check(told_not_started, "B is told that the owner's story has not started");
+    world.hub.not_started = false;
 }
 
 // Two co-arrived members; returns once both play sealed.

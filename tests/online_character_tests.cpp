@@ -367,6 +367,100 @@ void new_game_beside_the_online_character() {
     std::filesystem::remove_all(card.folder());
 }
 
+// Round 59 review: Create Digimon reports the new character at the status
+// window; B back out of it, the name entry and the partner selection, then
+// Call Digimon from the card and START: the online character was never saved
+// for the whole session. The Game Start decides from the title's last choice
+// now. A box the save room filled with another character stays another
+// character when it is called later, even with the online character's
+// UNIQUE.
+void the_title_decides_at_the_game_start() {
+    const OnlineCard card(fresh_folder("title"));
+    FakeHttp http;
+    auto sync = make_sync(card, http);
+    const auto online = make_record(3420661002u, 30, "Kim");
+    std::string error;
+    check(sync.enter(answer(200, character_json(4, online, 9000)), error), "enter with the online character");
+    // K3 (the same UNIQUE) and K3b (another one): a new character, taken back, the card's character called.
+    int revision = 4;
+    for (const std::uint32_t made : {3420661002u, 4037944336u}) {
+        sync.new_game(made);
+        check(!sync.take_notices().empty(), "told at the status window");
+        sync.character_called(0, 3420661002u);
+        sync.game_started();
+        check(!sync.foreign() && sync.status_text().find("not saving") == std::string::npos, "the called online character saves");
+        sync.auto_save(make_record(3420661002u, 27 + revision, "Kim"), CharacterSync::Why::stage_change);
+        auto [id, put] = http.take();
+        check(header(put, "If-Match") == "\"" + std::to_string(revision) + "\"", "the stage change goes up");
+        sync.on_response(id, answer(200, "{\"revision\":" + std::to_string(++revision) + "}"));
+    }
+    // A new character that does start: not uploaded; the save room puts it into box 1.
+    sync.new_game(77);
+    sync.game_started();
+    check(sync.foreign(), "a new character's game");
+    const auto stranger = make_record(3420661002u, 2, "Kim"); // (a UNIQUE collision)
+    const auto before = card.read();
+    card.write(card_with_record(&*before, stranger, 1, true, 0));
+    sync.card_written(1);
+    check(http.sent.empty(), "not uploaded");
+    (void)sync.take_notices();
+    // Called from box 1 later, it is still not the online character.
+    sync.character_called(1, 3420661002u);
+    sync.game_started();
+    check(sync.foreign(), "box 1 holds another character");
+    sync.auto_save(stranger, CharacterSync::Why::stage_change);
+    check(http.sent.empty(), "its saves are not uploaded");
+    // Box 0 again: the online character.
+    sync.character_called(0, 3420661002u);
+    sync.game_started();
+    check(!sync.foreign(), "box 0 is the online character");
+    std::filesystem::remove_all(card.folder());
+}
+
+// Round 59 review: another PC of the account entered the room and the relay
+// replaced this connection; this PC's leaving save made the other PC's first
+// upload a 409. The saves stay pending in the card cache now.
+void replaced_by_another_pc() {
+    const OnlineCard card(fresh_folder("replaced"));
+    FakeHttp http;
+    auto sync = make_sync(card, http);
+    std::string error;
+    sync.enter(answer(200, character_json(2, make_record(9, 5), 600)), error);
+    sync.replaced();
+    check(sync.blocked() && sync.status_text().find("another PC") != std::string::npos, "the status line says why");
+    check(!sync.take_notices().empty(), "the player is told");
+    sync.auto_save(make_record(9, 6), CharacterSync::Why::leave);
+    check(http.sent.empty(), "no upload");
+    check(card.state().pending && card.state().revision == 2 && record_of_box(*card.read(), 0) == make_record(9, 6),
+          "the leaving save is pending in the cache, based on revision 2");
+    std::filesystem::remove_all(card.folder());
+}
+
+// Round 59 review: after a 409 the session's later saves were kept nowhere
+// (the next room entry rebuilt the cache without a backup). They go into the
+// backup the conflict made.
+void saves_after_a_conflict_go_into_its_backup() {
+    const OnlineCard card(fresh_folder("blocked"));
+    FakeHttp http;
+    auto sync = make_sync(card, http);
+    std::string error;
+    sync.enter(answer(200, character_json(3, make_record(5, 10), 600)), error);
+    sync.auto_save(make_record(5, 11), CharacterSync::Why::stage_change);
+    auto [id, put] = http.take();
+    sync.on_response(id, answer(409, "{\"code\":\"revision_conflict\",\"currentRevision\":4}"));
+    auto [reload_id, get] = http.take();
+    sync.on_response(reload_id, answer(200, character_json(4, make_record(5, 12), 700)));
+    sync.auto_save(make_record(5, 13), CharacterSync::Why::stage_change);
+    sync.auto_save(make_record(5, 14), CharacterSync::Why::leave);
+    check(http.sent.empty(), "nothing goes up");
+    std::filesystem::path kept;
+    for (const auto& e : std::filesystem::directory_iterator(card.backups())) kept = e.path();
+    const auto bytes = dw4::save::read_whole_file(kept);
+    check(bytes && record_of_box(*bytes, 0) == make_record(5, 14), "the backup holds the session's newest save");
+    check(record_of_box(*card.read(), 0) == make_record(5, 12), "the cache holds the server's character");
+    std::filesystem::remove_all(card.folder());
+}
+
 // Round 56 review: a refused login (Log out everywhere, a password change on
 // another PC) stopped every later save of the session. The saves now go on
 // into the card cache as pending, and the next room entry uploads the newest.
@@ -492,6 +586,9 @@ int main() {
         save_room_and_conflict();
         retries_and_recovery();
         new_game_beside_the_online_character();
+        the_title_decides_at_the_game_start();
+        replaced_by_another_pc();
+        saves_after_a_conflict_go_into_its_backup();
         refused_login_keeps_saving_into_the_cache();
         sha256_vectors();
         cloud_backup();

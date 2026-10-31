@@ -125,6 +125,13 @@ public:
     bool connected() const { return hello_done_ && transport_ != nullptr; }
     bool closed() const { return mode_ == Mode::closed; }
     std::string close_reason() const { return close_reason_; }
+    // The relay closed the session because a newer connection of the same
+    // account took its place (another PC entered the room).
+    bool replaced() const { return close_code_ == wireCloseReplaced; }
+    // Blocks until the relay answered the HELLO (true), refused it or the
+    // connection was lost (false, closed() tells), or `timeout` seconds passed
+    // (false). Frames after the answer wait for the next poll.
+    bool await_hello(double timeout);
     std::uint32_t member_id() const { return member_id_; }
     int own_slot() const { return slot_; }
     std::uint8_t present() const { return present_; }
@@ -198,7 +205,15 @@ private:
     Mode mode_ = Mode::connecting;
     Mode mode_before_lost_ = Mode::solo;
     std::string close_reason_;
+    static constexpr std::uint8_t wireCloseReplaced = 4; // wire::CloseReason::replaced
+    std::uint8_t close_code_ = 0;                          // the relay's CLOSE reason (0: none)
     std::uint32_t member_id_ = 0;
+    // The HELLO answer line out of the received bytes; returns how many of them it used.
+    std::size_t read_hello(double now);
+    // The story progress the relay refused because the room owner had not started its story (8.6): the barrier's
+    // removal notice names it.
+    bool not_started_dropped_ = false;
+    bool not_started_noticed_ = false;
 
     // The instance.
     std::uint32_t inst_ = 0, visit_ = 0;

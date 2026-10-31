@@ -127,6 +127,12 @@ bool OnlineRun::connect(double now, std::string& error) {
     auto transport = online::connect_tcp(room_.endpoint.host, room_.relay_port, 5000, error);
     if (!transport) return false;
     session_->attach(std::move(transport), now);
+    // The relay's answer: by then it replaced any older connection of this account (a session another PC still holds in
+    // the room ends without uploading). A refusal ends here; a slow relay is waited for in the main loop as before.
+    if (!session_->await_hello(10.0) && session_->closed()) {
+        error = session_->close_reason();
+        return false;
+    }
     return true;
 }
 
@@ -231,10 +237,17 @@ void OnlineRun::port_events(const std::vector<engine::PortEvent>& events) {
             character_->set_context(character_context());
             character_->card_written(e.extra);
         }
-        // A character the character select made new (the title is the
-        // member's own solo instance: its slot is this machine's).
+        // A character the character select made new or called from the card
+        // (the title is the member's own solo instance: its slot is this
+        // machine's); the Game Start decides from the last one.
         if (e.kind == engine::PortEvent::Kind::new_character && e.slot == session_->own_slot()) character_->new_game(std::uint32_t(e.value));
+        if (e.kind == engine::PortEvent::Kind::character_called && e.slot == session_->own_slot())
+            character_->character_called(e.extra, std::uint32_t(e.value));
     }
+}
+
+void OnlineRun::replaced() {
+    if (character_) character_->replaced();
 }
 
 void OnlineRun::save_on_leave(double seconds) {

@@ -70,7 +70,10 @@ public:
     online::CharacterSync* character() { return character_.get(); }
     // The card store of the online character (slot A the cache file).
     save::CardStore character_card() const;
-    // Connects to the relay (blocking up to five seconds).
+    // Connects to the relay (blocking up to five seconds for the connection
+    // and up to ten for the relay's answer: a newer connection of the same
+    // account replaces one another PC holds in the room when the relay
+    // answers, so the character loaded after it is the newest; round 59).
     bool connect(double now, std::string& error);
     // Every loop pass: network, catch-up, reconnects, the character's uploads.
     void pass(double now);
@@ -82,8 +85,13 @@ public:
     // the state the member carries into the next stage).
     void after_live_step(double now);
     // The step's port events: card_written of the own slot on card A uploads
-    // the box the save room wrote.
+    // the box the save room wrote; new_character and character_called tell
+    // the character the title's last choice before its Game Start.
     void port_events(const std::vector<engine::PortEvent>& events);
+    // The relay closed the session because a newer connection of this account
+    // (another PC) took its place: the leaving save stays pending in the card
+    // cache instead of overwriting what the other PC goes on from.
+    void replaced();
     // The automatic save when the member leaves the room (also when the
     // server closed the session): the current state's record, then up to
     // `seconds` for the uploads to finish (what does not arrive stays pending

@@ -96,6 +96,7 @@ enum class StoryRefusal : std::uint8_t {
     not_story = 7,   // never merged (a temporary, derived or unknown value)
     limit = 8,       // a counter growth beyond the plausible, or a counter line the server never put the member in
     wait = 9,        // not yet: the visit is younger than the server's minimum or gave its phase step / key item (sent again)
+    not_started = 10, // the room owner's online story has not started (an owner without one; 8.6): dropped like owner_away
 };
 
 // One refused key of a STORY_ACK.
