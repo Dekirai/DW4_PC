@@ -52,7 +52,8 @@ switch (command)
             var target = new MySqlConnector.MySqlConnectionStringBuilder(app.Services.GetRequiredService<DatabaseOptions>().ConnectionString);
             Console.WriteLine($"Database '{target.Database}' on {target.Server}:{target.Port} as {target.UserID}");
             var watch = System.Diagnostics.Stopwatch.StartNew();
-            var applied = await new Migrator(app.Services.GetRequiredService<Database>(), Console.WriteLine).MigrateAsync();
+            var applied = await new Migrator(app.Services.GetRequiredService<Database>(), Console.WriteLine,
+                warning => Console.WriteLine($"WARNING: {warning}")).MigrateAsync();
             Console.WriteLine(applied.Count == 0
                 ? "The database schema is current."
                 : $"Applied {applied.Count} migration(s) in {watch.Elapsed.TotalSeconds.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture)} s.");

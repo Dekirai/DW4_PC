@@ -39,6 +39,7 @@ public sealed class RelayHub : BackgroundService
     private readonly JsonMembershipLog? _mlog;
     private volatile bool _stopping;
     private Thread? _sealer;
+    private TcpListener? _listener; // bound in StartAsync
 
     public RelayHub(RelayOptions options, SealingOptions sealing, InstanceOptions instances, RelayTickets tickets, ILoggerFactory loggers)
     {
@@ -61,6 +62,10 @@ public sealed class RelayHub : BackgroundService
     public Func<string, IReadOnlyCollection<long>, ValueTask>? Heartbeat { get; set; }
 
     public bool HighResolutionTimer => _timer.HighResolution;
+
+    /// <summary>Whether the sealing thread runs (diagnostics and tests: it must have ended when Dispose returns).</summary>
+    public bool SealingThreadAlive => Volatile.Read(ref _sealer)?.IsAlive == true;
+
     public IReadOnlyCollection<string> Rooms => _rooms.Keys.ToList();
     public RoomHub? Room(string code) => _rooms.GetValueOrDefault(code);
 
@@ -103,24 +108,40 @@ public sealed class RelayHub : BackgroundService
         lock (hub.Sync) hub.OwnerPresence(present);
     }
 
-    protected override async Task ExecuteAsync(CancellationToken stop)
+    /// <summary>
+    /// Binds the listener before the hub runs, so a port in use fails the host's start with that error (the service
+    /// log's FAIL line names it). .NET 10 runs all of <see cref="ExecuteAsync"/> on a thread of its own: a bind there
+    /// only stopped the host, and the start then failed with an OperationCanceledException of the next hosted service.
+    /// </summary>
+    public override Task StartAsync(CancellationToken cancellationToken)
     {
         var listener = new TcpListener(IPAddress.Parse(_options.ListenAddress), _options.Port);
         try
         {
             listener.Start();
         }
-        catch (Exception e)
+        catch (SocketException e)
         {
-            _started.TrySetException(e);
-            throw;
+            // Kestrel's wording for its own endpoints; the socket's text is localized, so it follows as the inner exception.
+            var error = new IOException($"Failed to bind the relay to {_options.ListenAddress}:{_options.Port} (Relay:ListenAddress, Relay:Port): " +
+                                        (e.SocketErrorCode == SocketError.AddressAlreadyInUse ? "address already in use." : $"{e.SocketErrorCode}."), e);
+            _started.TrySetException(error);
+            throw error;
         }
+        _listener = listener;
+        return base.StartAsync(cancellationToken);
+    }
+
+    protected override async Task ExecuteAsync(CancellationToken stop)
+    {
+        var listener = _listener ?? throw new InvalidOperationException("RelayHub.StartAsync binds the listener first.");
         var port = ((IPEndPoint)listener.LocalEndpoint).Port;
         _log.LogInformation("Relay (DW4R2) listening on {Address}:{Port}; sealing timer {Kind}", _options.ListenAddress, port,
             _timer.HighResolution ? "high resolution" : "sleep and spin");
         _started.TrySetResult(port);
-        _sealer = new Thread(SealLoop) { IsBackground = true, Name = "DW4R2 sealing", Priority = ThreadPriority.AboveNormal };
-        _sealer.Start();
+        var sealer = new Thread(SealLoop) { IsBackground = true, Name = "DW4R2 sealing", Priority = ThreadPriority.AboveNormal };
+        sealer.Start();
+        Volatile.Write(ref _sealer, sealer); // only a started thread: Dispose joins it
         var housekeeping = Task.Run(() => HousekeepAsync(stop), CancellationToken.None);
         try
         {
@@ -156,7 +177,7 @@ public sealed class RelayHub : BackgroundService
             catch (OperationCanceledException)
             {
             }
-            _sealer.Join(TimeSpan.FromSeconds(2));
+            sealer.Join(TimeSpan.FromSeconds(2));
         }
     }
 
@@ -487,9 +508,16 @@ public sealed class RelayHub : BackgroundService
 
     public override void Dispose()
     {
-        _timer.Dispose();
+        // A host disposed without StopAsync (its start failed after the relay began, for example on Kestrel's port)
+        // finds the sealing thread still running: stop it before its timer goes, or it waits on a disposed handle and
+        // takes the process down (an unhandled ObjectDisposedException on that thread).
+        _stopping = true;
+        _timer.Wake();
+        _listener?.Stop();
+        base.Dispose(); // cancels ExecuteAsync
+        var sealer = Volatile.Read(ref _sealer);
+        if (sealer is null || sealer.Join(TimeSpan.FromSeconds(2))) _timer.Dispose(); // a thread that never ends keeps it
         _mlog?.Dispose();
-        base.Dispose();
     }
 }
 

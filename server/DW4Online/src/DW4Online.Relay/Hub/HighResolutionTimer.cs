@@ -27,7 +27,17 @@ public sealed class HighResolutionTimer : IDisposable
     /// <summary>True when the high-resolution waitable timer is in use.</summary>
     public bool HighResolution => _timer is not null;
 
-    public void Wake() => _wake.Set();
+    public void Wake()
+    {
+        try
+        {
+            _wake.Set();
+        }
+        catch (ObjectDisposedException)
+        {
+            // Nothing waits any more (RelayHub disposes it after its sealing thread ended).
+        }
+    }
 
     /// <summary>Waits until <paramref name="dueTimestamp"/> (Stopwatch ticks) or a wake; returns false on a wake.</summary>
     public bool WaitUntil(long dueTimestamp)

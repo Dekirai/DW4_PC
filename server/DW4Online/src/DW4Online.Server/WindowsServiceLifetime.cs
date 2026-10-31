@@ -13,7 +13,9 @@ namespace DW4Online.Server;
 /// STOP_PENDING with growing checkpoints follows, and STOPPED once the host is down. A start that fails for good is
 /// reported as STOPPED with a service-specific exit code (<see cref="ReportStartFailed"/>); a start that should be
 /// tried again ends the process without STOPPED, which the SCM treats as a failure and answers with the service's
-/// restart actions (install-service.ps1: 5 s, 30 s, 60 s).
+/// restart actions (install-service.ps1: 5 s, 30 s, 60 s). The same holds for a host that stops after RUNNING without
+/// a STOP or SHUTDOWN from the SCM (<see cref="StopRequested"/> false: a background service failed): nothing after
+/// RUNNING is reported, the process ends, the restart actions run.
 /// </summary>
 internal sealed class WindowsServiceLifetime : IHostLifetime, IDisposable
 {
@@ -40,7 +42,7 @@ internal sealed class WindowsServiceLifetime : IHostLifetime, IDisposable
     private int _checkPoint;
     private int _win32ExitCode;
     private int _specificExitCode;
-    private bool _started;     // the host reached ApplicationStarted
+    private bool _stopRequested; // the SCM sent STOP or SHUTDOWN while RUNNING
 
     public WindowsServiceLifetime(IServiceControlApi scm, IHostApplicationLifetime lifetime, ILogger<WindowsServiceLifetime> log)
         : this(scm, lifetime, log, DefaultProgressInterval)
@@ -86,6 +88,22 @@ internal sealed class WindowsServiceLifetime : IHostLifetime, IDisposable
     public void ReportStartFailed(int serviceSpecificExitCode) =>
         Set(ServiceState.Stopped, ErrorServiceSpecificError, serviceSpecificExitCode);
 
+    /// <summary>
+    /// The host failed while it stopped on the SCM's request: STOPPED with a service-specific exit code, so the SCM
+    /// does not restart a service the operator stopped (nothing happens if STOPPED was reported already).
+    /// </summary>
+    public void ReportStopFailed(int serviceSpecificExitCode) =>
+        Set(ServiceState.Stopped, ErrorServiceSpecificError, serviceSpecificExitCode);
+
+    /// <summary>Whether the SCM asked the service to stop (STOP or SHUTDOWN while RUNNING).</summary>
+    public bool StopRequested
+    {
+        get
+        {
+            lock (_gate) return _stopRequested;
+        }
+    }
+
     public void Dispose()
     {
         lock (_gate)
@@ -125,7 +143,9 @@ internal sealed class WindowsServiceLifetime : IHostLifetime, IDisposable
             case ServiceControlCode.Shutdown:
                 lock (_gate)
                 {
-                    if (_state != ServiceState.Running) return NoError; // only RUNNING accepts it; a second request is already under way
+                    // Only RUNNING accepts it; a second request finds the first under way.
+                    if (_state != ServiceState.Running || _stopRequested) return NoError;
+                    _stopRequested = true;
                 }
                 _log.LogInformation("Service control {Control}: stopping", control == ServiceControlCode.Stop ? "STOP" : "SHUTDOWN");
                 Set(ServiceState.StopPending);
@@ -138,26 +158,18 @@ internal sealed class WindowsServiceLifetime : IHostLifetime, IDisposable
         }
     }
 
-    private void OnStarted()
-    {
-        lock (_gate) _started = true;
-        Set(ServiceState.Running);
-    }
+    private void OnStarted() => Set(ServiceState.Running);
 
-    // A host that fails while it starts never reached RUNNING: ServerStartup decides how that start ends.
+    // Only a stop the SCM asked for is reported. A host that fails while it starts never reached RUNNING, and one that
+    // stops by itself after RUNNING must look like a failure to the SCM: ServerStartup decides how those end.
     private void OnStopping()
     {
-        if (Started()) Set(ServiceState.StopPending);
+        if (StopRequested) Set(ServiceState.StopPending);
     }
 
     private void OnStopped()
     {
-        if (Started()) Set(ServiceState.Stopped);
-    }
-
-    private bool Started()
-    {
-        lock (_gate) return _started;
+        if (StopRequested) Set(ServiceState.Stopped);
     }
 
     private void Set(int state, int win32ExitCode = 0, int specificExitCode = 0)

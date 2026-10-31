@@ -147,6 +147,7 @@ public class ServiceStartTests
         var app = new ApplicationLifetime(NullLogger<ApplicationLifetime>.Instance);
         using var service = new WindowsServiceLifetime(scm, app, NullLogger.Instance, Tick);
         var log = new ListLogger();
+        var entriesAtDispose = -1;
         var code = await ServerStartup.RunAsync(service, log,
             migrate: () => Task.CompletedTask,
             run: async () =>
@@ -156,13 +157,89 @@ public class ServiceStartTests
                 app.NotifyStopped();
                 throw new IOException("Failed to bind to address https://0.0.0.0:8443: address already in use.");
             },
-            dispose: () => ValueTask.CompletedTask);
+            dispose: () =>
+            {
+                entriesAtDispose = log.Entries.Count; // the host (and its log providers) goes only after the FAIL line
+                return ValueTask.CompletedTask;
+            });
 
         Assert.Equal(ServerStartup.ExitHostFailed, code);
         Assert.All(scm.Statuses(), s => Assert.Equal(ServiceState.StartPending, s.State));
         var fail = Assert.Single(log.Entries, e => e.Level == LogLevel.Error);
         Assert.IsType<IOException>(fail.Exception);
         Assert.Contains("8443", fail.Message);
+        Assert.Equal(log.Entries.Count, entriesAtDispose);
+    }
+
+    /// <summary>
+    /// A host that stops after RUNNING although the SCM did not ask it to (a background service failed and stopped the
+    /// host): the process ends without STOP_PENDING or STOPPED, so the SCM sees a failure and runs the restart actions.
+    /// </summary>
+    [Fact]
+    public async Task A_host_that_stops_by_itself_after_RUNNING_ends_the_process_without_STOPPED()
+    {
+        using var scm = new FakeScm();
+        var app = new ApplicationLifetime(NullLogger<ApplicationLifetime>.Instance);
+        using var service = new WindowsServiceLifetime(scm, app, NullLogger.Instance, Tick);
+        var log = new ListLogger();
+        var disposed = false;
+        var code = await ServerStartup.RunAsync(service, log,
+            migrate: () => Task.CompletedTask,
+            run: async () =>
+            {
+                await service.WaitForStartAsync(CancellationToken.None);
+                app.NotifyStarted();
+                await scm.WaitUntil(s => s.Any(x => x.State == ServiceState.Running));
+                app.StopApplication(); // BackgroundServiceExceptionBehavior.StopHost
+                await Task.Delay(Tick * 5); // a stop that takes a few progress intervals
+                app.NotifyStopped();
+            },
+            dispose: () =>
+            {
+                disposed = true;
+                return ValueTask.CompletedTask;
+            });
+
+        Assert.Equal(ServerStartup.ExitHostFailed, code);
+        Assert.True(disposed);
+        var statuses = scm.Statuses();
+        Assert.Equal(ServiceState.Running, statuses[^1].State); // nothing after RUNNING: the SCM sees the process end
+        Assert.DoesNotContain(statuses, s => s.State is ServiceState.StopPending or ServiceState.Stopped);
+        var fail = Assert.Single(log.Entries, e => e.Level == LogLevel.Error);
+        Assert.Contains("stopped although the Service Control Manager did not ask it to", fail.Message);
+        Assert.Contains("restart actions", fail.Message);
+    }
+
+    /// <summary>A stop the SCM asked for ends in STOPPED even when the host's stop fails: no restart against the operator's will.</summary>
+    [Fact]
+    public async Task A_host_that_fails_while_the_SCM_stops_it_still_reports_STOPPED()
+    {
+        using var scm = new FakeScm();
+        var app = new ApplicationLifetime(NullLogger<ApplicationLifetime>.Instance);
+        using var service = new WindowsServiceLifetime(scm, app, NullLogger.Instance, Tick);
+        var log = new ListLogger();
+        var start = Task.Run(() => ServerStartup.RunAsync(service, log,
+            migrate: () => Task.CompletedTask,
+            run: async () =>
+            {
+                await service.WaitForStartAsync(CancellationToken.None);
+                app.NotifyStarted();
+                var stopping = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                app.ApplicationStopping.Register(() => stopping.TrySetResult());
+                await stopping.Task.WaitAsync(Timeout);
+                throw new AggregateException("One or more hosted services failed to stop.", new InvalidOperationException("stuck"));
+            },
+            dispose: () => ValueTask.CompletedTask));
+
+        await scm.WaitUntil(s => s.Any(x => x.State == ServiceState.Running));
+        Assert.Equal(0, scm.Send(ServiceControlCode.Stop));
+        Assert.Equal(ServerStartup.ExitHostFailed, await start.WaitAsync(Timeout));
+        var statuses = scm.Statuses();
+        Assert.Equal(new ServiceStatus(ServiceState.Stopped, 0, WindowsServiceLifetime.ErrorServiceSpecificError,
+            ServerStartup.ExitHostFailed, 0, 0), statuses[^1]);
+        var fail = Assert.Single(log.Entries, e => e.Level == LogLevel.Error);
+        Assert.Contains("The host failed while it stopped", fail.Message);
+        Assert.DoesNotContain("restart actions", fail.Message);
     }
 
     [Fact]
@@ -197,79 +274,5 @@ public class ServiceStartTests
             () => ValueTask.CompletedTask));
         Assert.Equal(0, await ServerStartup.RunAsync(null, log, () => Task.CompletedTask, () => Task.CompletedTask, () => ValueTask.CompletedTask));
         Assert.Equal(2, log.Entries.Count(e => e.Level == LogLevel.Error));
-    }
-
-    /// <summary>A Service Control Manager in memory: records every status, delivers controls to the handler.</summary>
-    private sealed class FakeScm : IServiceControlApi, IDisposable
-    {
-        private readonly Lock _gate = new();
-        private readonly List<ServiceStatus> _statuses = [];
-        private readonly ManualResetEventSlim _stopped = new();
-        private Func<int, int>? _handler;
-
-        public int DispatcherError { get; init; }
-
-        public int RunDispatcher(Action serviceMain)
-        {
-            if (DispatcherError != 0) return DispatcherError;
-            serviceMain();
-            _stopped.Wait(); // StartServiceCtrlDispatcher returns once the service reported STOPPED
-            return 0;
-        }
-
-        public int RegisterHandler(Func<int, int> handler)
-        {
-            _handler = handler;
-            return 0;
-        }
-
-        public int SetStatus(ServiceStatus status)
-        {
-            lock (_gate) _statuses.Add(status); // the tests check that nothing follows STOPPED
-            if (status.State == ServiceState.Stopped) _stopped.Set();
-            return 0;
-        }
-
-        public int Send(int control) => _handler!(control);
-
-        public List<ServiceStatus> Statuses()
-        {
-            lock (_gate) return [.. _statuses];
-        }
-
-        public async Task WaitUntil(Func<List<ServiceStatus>, bool> condition)
-        {
-            var until = DateTime.UtcNow + Timeout;
-            while (!condition(Statuses()))
-            {
-                if (DateTime.UtcNow > until) throw new TimeoutException("The fake SCM did not see the expected statuses.");
-                await Task.Delay(5);
-            }
-        }
-
-        public void Dispose() => _stopped.Set(); // releases a dispatcher thread whose service never stopped
-    }
-
-    private sealed class ListLogger : ILogger
-    {
-        private readonly Lock _gate = new();
-        private readonly List<(LogLevel Level, string Message, Exception? Exception)> _entries = [];
-
-        public List<(LogLevel Level, string Message, Exception? Exception)> Entries
-        {
-            get
-            {
-                lock (_gate) return [.. _entries];
-            }
-        }
-
-        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
-
-        public bool IsEnabled(LogLevel logLevel) => true;
-
-        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
-        {
-            lock (_gate) _entries.Add((logLevel, formatter(state, exception), exception));
-        }
     }
 }

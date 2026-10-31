@@ -36,9 +36,10 @@ public sealed class MigrationException : Exception
 /// <item>whose applied migration files changed, or which is newer than this build.</item>
 /// </list>
 /// Every refusal says whether the tables hold rows and what to do; the migrator itself never drops or rewrites data
-/// to get out of such a state. Back up before an update (deploy/DEPLOY.md, "Migrations").
+/// to get out of such a state. Back up before an update (deploy/DEPLOY.md, "Migrations"). <paramref name="log"/> gets
+/// the progress lines, <paramref name="warn"/> a warning about the server (<see cref="NativeAioWarning"/>).
 /// </summary>
-public sealed partial class Migrator(Database database, Action<string>? log = null)
+public sealed partial class Migrator(Database database, Action<string>? log = null, Action<string>? warn = null)
 {
     /// <summary>The checksum of a migration that was started but has not finished (a real SHA-256 is never all zero).</summary>
     private static readonly byte[] StartedMark = new byte[32];
@@ -85,6 +86,7 @@ public sealed partial class Migrator(Database database, Action<string>? log = nu
                                          "Wait until it is done (its output ends with \"Migrating ... done\"), then try again.");
         try
         {
+            await WarnAboutServerAsync(c);
             var hasSchemaVersion = await HasSchemaVersionAsync(c);
             var applied = new Dictionary<int, byte[]>();
             if (hasSchemaVersion)
@@ -138,8 +140,10 @@ public sealed partial class Migrator(Database database, Action<string>? log = nu
                         "ON DUPLICATE KEY UPDATE description = VALUES(description), checksum = VALUES(checksum), applied_at = VALUES(applied_at)",
                         new { v = m.Version, d = m.Description, c = m.Checksum });
                 }
-                catch (MySqlException e)
+                catch (Exception e) when (e is MySqlException or InvalidOperationException or IOException)
                 {
+                    // A failing statement, or a connection that broke (killed, MariaDB gone): either way the
+                    // migration may be half applied.
                     throw new MigrationException(Failed(m, watch.Elapsed, e), e);
                 }
                 hasSchemaVersion = true; // migration 0001 creates the table
@@ -151,7 +155,52 @@ public sealed partial class Migrator(Database database, Action<string>? log = nu
         }
         finally
         {
-            await c.ExecuteAsync("SELECT RELEASE_LOCK('dw4online_migrate')");
+            try
+            {
+                await c.ExecuteAsync("SELECT RELEASE_LOCK('dw4online_migrate')");
+            }
+            catch (Exception e) when (e is MySqlException or InvalidOperationException)
+            {
+                // The connection broke (and the lock went with it): the exception in flight, usually the migration's
+                // own, says what happened.
+            }
+        }
+    }
+
+    /// <summary>
+    /// A warning about the MariaDB server (null when there is none): native AIO on a MariaDB before 10.6 on Windows,
+    /// where DDL can hang for good (XAMPP's 10.4.32: CREATE TABLE and DROP DATABASE stuck in an InnoDB latch wait,
+    /// "Killed" yet holding their locks).
+    /// </summary>
+    public static string? NativeAioWarning(string version, string compileOs, string nativeAio)
+    {
+        if (!(nativeAio.Equals("ON", StringComparison.OrdinalIgnoreCase) || nativeAio == "1")) return null;
+        if (!compileOs.StartsWith("Win", StringComparison.OrdinalIgnoreCase)) return null;
+        var m = Regex.Match(version, @"^(\d+)\.(\d+)\.", RegexOptions.CultureInvariant);
+        if (!m.Success || !version.Contains("MariaDB", StringComparison.OrdinalIgnoreCase)) return null;
+        var (major, minor) = (int.Parse(m.Groups[1].Value, CultureInfo.InvariantCulture), int.Parse(m.Groups[2].Value, CultureInfo.InvariantCulture));
+        if (major > 10 || (major == 10 && minor >= 6)) return null;
+        return $"MariaDB {version} on Windows runs with innodb_use_native_aio=ON. On MariaDB before 10.6 that can make DDL " +
+               "(CREATE TABLE, ALTER TABLE, DROP DATABASE) hang for good, as it did with XAMPP's 10.4.32: a migration or a restore " +
+               "then never finishes and keeps its locks. Add the line innodb_use_native_aio=0 at the end of the [mysqld] section " +
+               "of the MariaDB's my.ini and restart the MariaDB service before you migrate (deploy/DEPLOY.md section 1.1).";
+    }
+
+    private async Task WarnAboutServerAsync(MySqlConnection c)
+    {
+        if (warn is null) return;
+        try
+        {
+            var vars = (await c.QueryAsync<(string Name, string Value)>(
+                    "SHOW GLOBAL VARIABLES WHERE Variable_name IN ('version', 'version_compile_os', 'innodb_use_native_aio')"))
+                .ToDictionary(v => v.Name, v => v.Value, StringComparer.OrdinalIgnoreCase);
+            if (NativeAioWarning(vars.GetValueOrDefault("version", ""), vars.GetValueOrDefault("version_compile_os", ""),
+                    vars.GetValueOrDefault("innodb_use_native_aio", "")) is { } text)
+                warn(text);
+        }
+        catch (MySqlException)
+        {
+            // Only a warning: a server without these variables is no reason to stop.
         }
     }
 
@@ -178,7 +227,7 @@ public sealed partial class Migrator(Database database, Action<string>? log = nu
                $"Way out: {Restore()} (deploy/DEPLOY.md, \"Migrations\").";
     }
 
-    private string Failed(Migration m, TimeSpan elapsed, MySqlException e)
+    private string Failed(Migration m, TimeSpan elapsed, Exception e)
     {
         var head = $"Migration {m.Version:D4} ({m.Description}) failed after {Seconds(elapsed)} s: {e.Message}";
         if (m.Version == 1)

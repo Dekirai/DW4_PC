@@ -179,7 +179,8 @@ public static class ServerApp
             log.LogInformation("Database:AutoMigrate is off: the schema is not checked at the start (run 'migrate' after every update)");
             return;
         }
-        var migrator = new Migrator(app.Services.GetRequiredService<Database>(), m => log.LogInformation("{Message}", m));
+        var migrator = new Migrator(app.Services.GetRequiredService<Database>(), m => log.LogInformation("{Message}", m),
+            w => log.LogWarning("{Message}", w));
         var wait = waitForDatabase ?? TimeSpan.FromSeconds(Math.Max(0, options.StartupWaitSeconds));
         var started = System.Diagnostics.Stopwatch.GetTimestamp();
         IReadOnlyList<int> applied;
@@ -230,11 +231,27 @@ public static class ServerApp
         kestrel.ConfigureHttpsDefaults(https => https.ServerCertificateSelector = (_, name) => selector.Select(name));
     }
 
+    /// <summary>
+    /// Checks the settings that the host would otherwise trip over only while it starts (as a service: a crash and a
+    /// restart loop instead of a clear refusal): Relay:TicketKey. Throws an <see cref="InvalidOperationException"/>
+    /// that names the setting.
+    /// </summary>
+    public static void CheckSettings(WebApplication app) => app.Services.GetRequiredService<ServerSecret>();
+
     private static byte[] RelayKey(RelayOptions relay, IHostEnvironment env, ILogger log)
     {
         if (!string.IsNullOrEmpty(relay.TicketKey))
         {
-            var key = Convert.FromBase64String(relay.TicketKey);
+            byte[] key;
+            try
+            {
+                key = Convert.FromBase64String(relay.TicketKey);
+            }
+            catch (FormatException e)
+            {
+                throw new InvalidOperationException(
+                    "Relay:TicketKey is not valid base64 (put the line 'DW4Online.Server gen-relay-key' prints into the settings file).", e);
+            }
             if (key.Length < 32) throw new InvalidOperationException("Relay:TicketKey must hold at least 32 bytes (base64).");
             return key;
         }
