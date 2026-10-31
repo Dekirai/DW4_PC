@@ -61,6 +61,16 @@
                     deleted; the security log notes the reset and whether the character was marked</td>
             </tr>
             <tr>
+                <td>Online story: the story progress of the rooms you open (story flags, key items and two counters of
+                    the game), saved with your account, and its last 100 revisions with the time and why each was written.
+                    The members of your rooms change it by playing in them (every member's progress counts for the room's
+                    owner)</td>
+                <td>Running the shared story of your rooms (Art. 6(1)(b)); the revisions let the staff repair a story
+                    damaged by misuse or an error (Art. 6(1)(f))</td>
+                <td>Until you delete the account. Resetting the online character empties it; the earlier revisions stay
+                    in the history (the last 100)</td>
+            </tr>
+            <tr>
                 <td>Cloud save: your private backup of the local save (latest and 5 older revisions)</td>
                 <td>The backup you asked for; never shown to anyone else (Art. 6(1)(b))</td>
                 <td>Until you delete it or the account</td>
@@ -71,7 +81,8 @@
                 <td>Until you delete the account</td>
             </tr>
             <tr>
-                <td>Rooms: room name, who was a member and when</td>
+                <td>Rooms: room name, who was a member and when; while a room is open, in which stages its members play
+                    and how many play together (relay state, not stored)</td>
                 <td>Running rooms and checking that achievements happened in online play (Art. 6(1)(b))</td>
                 <td>The room record stays; your membership rows go with your account</td>
             </tr>
@@ -94,7 +105,9 @@
 <h2>Who receives data</h2>
 <p>Nobody. Data is not sold or shared. The hosting provider of the server processes it only on the operator's behalf.
     Your user name and, when your profile is public, your online character and achievements are visible to everyone on
-    this website; room names and the host's user name are visible in the room list while a room is open.</p>
+    this website; room names and the host's user name are visible in the room list while a room is open, together with
+    the stages its members play in and how many play together there (the members' names in that list only to the members
+    of the same room).</p>
 
 <h2>Automated checks</h2>
 <p>Uploads of the online character are checked for plausibility. A failed check only marks the upload for the staff
@@ -109,10 +122,10 @@
 
 <h2>Deleting your data</h2>
 <p>You can delete your account at any time in your <a href="~/account">account settings</a>, or ask the operator to do
-    it. Deleting removes your online character, cloud save, achievements, statistics, best times, sessions and e-mail
-    address at once. The account row stays only as an anonymous placeholder ("deleted_" and a number), and the
+    it. Deleting removes your online character, your online story and its revisions, cloud save, achievements,
+    statistics, best times, sessions and e-mail address at once, and closes a room you own. The account row stays only as an anonymous placeholder ("deleted_" and a number), and the
     security log keeps its entries without your IP address until they expire after 180 days (failed logins typed with
     your user name lose its hash and their IP address too). Database backups roll over
     within about two months.</p>
 
-<p class="muted small">Last updated: 29 October 2026.</p>
+<p class="muted small">Last updated: 31 October 2026.</p>

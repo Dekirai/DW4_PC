@@ -49,6 +49,8 @@ public static class RoomLimits
 public static class CloseReasons
 {
     public const string Empty = "empty";
+    /// <summary>The owner is gone for good (its account was deleted, locked or banned).</summary>
+    public const string HostLeft = "host_left";
     public const string HostClosed = "host_closed";
     public const string Admin = "admin";
     public const string ServerRestart = "server_restart";
@@ -80,7 +82,9 @@ public sealed record RoomSummary(
     bool Randomizer,
     int? Difficulty,
     int Instances,
-    DateTime CreatedAt);
+    DateTime CreatedAt,
+    // Rooms:StoryWhileOwnerAway (drop, hold, apply): what happens to story progress while the owner is away (8.6).
+    string StoryPolicy = "drop");
 
 /// <summary>A room member; <paramref name="Instance"/> = the relay instance it plays in (null while not connected to the relay).</summary>
 public sealed record RoomMemberView(long AccountId, string Username, int Slot, bool Owner, uint? Instance, DateTime JoinedAt);

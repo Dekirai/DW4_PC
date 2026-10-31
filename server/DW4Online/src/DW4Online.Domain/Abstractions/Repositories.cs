@@ -82,12 +82,25 @@ public interface IOnlineCharacterRepository
     Task<DateTime?> GetStartAsync(long accountId, CancellationToken ct = default);
 }
 
-/// <summary>online_story: only the room service writes it (the relay saves each new revision of a room's story).</summary>
+/// <summary>
+/// online_story and its history: the relay saves each new revision of a room's story; a reset and a staff restore write
+/// the next revision whatever came before.
+/// </summary>
 public interface IOnlineStoryRepository
 {
     Task<OnlineStoryRow?> GetAsync(long accountId, CancellationToken ct = default);
-    /// <summary>Writes the row when it is new or its revision is higher than the stored one; false when nothing changed.</summary>
-    Task<bool> SaveAsync(OnlineStoryRow row, CancellationToken ct = default);
+    /// <summary>
+    /// Writes the row when it is new or its revision is higher than the stored one, and keeps it in the history (the last
+    /// <paramref name="historyKeep"/>); false when nothing changed (an older revision, or a deleted account).
+    /// </summary>
+    Task<bool> SaveAsync(OnlineStoryRow row, int historyKeep, CancellationToken ct = default);
+    /// <summary>
+    /// Writes <paramref name="row"/>'s story as the next revision whatever the stored one is (a reset, a staff restore)
+    /// and keeps it in the history; returns that revision (0: nothing written, the account is deleted).
+    /// </summary>
+    Task<long> ReplaceAsync(OnlineStoryRow row, string reason, int historyKeep, CancellationToken ct = default);
+    /// <summary>The kept revisions, newest first.</summary>
+    Task<IReadOnlyList<OnlineStoryHistoryRow>> ListHistoryAsync(long accountId, CancellationToken ct = default);
 }
 
 public interface ICloudSaveRepository

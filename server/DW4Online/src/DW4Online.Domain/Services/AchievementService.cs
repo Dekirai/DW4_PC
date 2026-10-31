@@ -239,7 +239,8 @@ public sealed class AchievementService(
         int? players = context?.Players;
         int? roomPlayers = context?.RoomPlayers;
         if (room is not null && players is not null) players = Math.Min(players.Value, room.Members);
-        if (room is not null && roomPlayers is not null) roomPlayers = Math.Min(roomPlayers.Value, room.Members);
+        // The room's members as the server counts them (a client reporting one player in a room of two got Lone Tamer).
+        if (room is not null) roomPlayers = room.Members;
         return (room, players, roomPlayers);
     }
 

@@ -35,7 +35,12 @@ else
                         @r.Owner
                         @if (r.StoryFrozen)
                         {
-                            <div><span class="badge warn">host away: story paused</span></div>
+                            <div><span class="badge warn">@(r.StoryPolicy switch
+                            {
+                                "hold" => "host away: story kept until they return",
+                                "apply" => "host away",
+                                _ => "host away: story progress not saved",
+                            })</span></div>
                         }
                     </td>
                     <td class="num">@r.Players / @r.MaxPlayers@(r.Instances == 1 ? " (1 stage group)" : r.Instances > 1 ? $" ({r.Instances} stage groups)" : "")</td>

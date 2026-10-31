@@ -33,12 +33,15 @@ public sealed partial class RoomService
     private readonly TimeProvider _time;
     private readonly PasswordHasher _passwords;
     private readonly HashSet<ulong> _rankedHashes;
+    private readonly DW4Online.Domain.Story.OnlineStoryService? _stories;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly Dictionary<string, LiveRoom> _rooms = new(StringComparer.Ordinal);
     private readonly Dictionary<long, string> _memberOf = [];
 
-    public RoomService(IRoomRepository repository, IRelayGateway relay, IAuditLog audit, VersionGate versions, RoomOptions options, TimeProvider time)
+    public RoomService(IRoomRepository repository, IRelayGateway relay, IAuditLog audit, VersionGate versions, RoomOptions options, TimeProvider time,
+        DW4Online.Domain.Story.OnlineStoryService? stories = null)
     {
+        _stories = stories;
         _repository = repository;
         _relay = relay;
         _audit = audit;
@@ -122,6 +125,13 @@ public sealed partial class RoomService
         var (settingsJson, randomizer, difficulty) = settings.Value;
         var parsed = RoomSettings.FromJson(settingsJson is null ? null : JsonDocument.Parse(settingsJson).RootElement);
         if (!parsed.Ok) return parsed.Error!;
+        // Hard opens after the owner's own clear on Normal, Very Hard after one on Hard (the clear flags 406 + difficulty
+        // in the owner's online story; the client offers only those).
+        if (_stories is not null && difficulty is >= 1 and <= 2 &&
+            (await _stories.LoadAsync(accountId, ct)).Flags[DW4Online.Domain.Story.RoomStoryKeeper.FirstClearFlag + difficulty.Value - 1] == 0)
+            return DomainError.Forbidden("difficulty_locked", difficulty == 1
+                ? "Hard opens once your online story has cleared the game on Normal."
+                : "Very Hard opens once your online story has cleared the game on Hard.");
         var hash = password is null ? null : _passwords.Hash(password); // expensive: outside the gate
         var version = Truncate(request.ClientVersion?.Trim() ?? "", 32);
 
@@ -347,19 +357,53 @@ public sealed partial class RoomService
         }
     }
 
-    /// <summary>Takes an account out of its room (staff locked or banned it, or it was deleted).</summary>
+    /// <summary>
+    /// Takes an account out of its room (staff locked or banned it, or it was deleted) and closes the rooms it owns: their
+    /// story is that account's online story, and an owner that never comes back would leave its guests in a room whose
+    /// progress is dropped for good, its name on the public room list, and (deleted) a story saved for an erased account.
+    /// </summary>
     public async Task RemoveAccountAsync(long accountId, CancellationToken ct = default)
     {
         await _gate.WaitAsync(ct);
         try
         {
+            var now = Clock.Now(_time);
+            await CloseOwnedLockedAsync(accountId, CloseReasons.HostLeft, now, ct);
             if (_memberOf.TryGetValue(accountId, out var code) && _rooms.TryGetValue(code, out var room))
-                await LeaveLockedAsync(room, accountId, LeaveReasons.Kicked, Clock.Now(_time), ct);
+                await LeaveLockedAsync(room, accountId, LeaveReasons.Kicked, now, ct);
         }
         finally
         {
             _gate.Release();
         }
+    }
+
+    /// <summary>
+    /// Closes the rooms the account owns (its online character and story are reset or restored: the room's hub holds the
+    /// old story and would save it again). Returns how many.
+    /// </summary>
+    public async Task<int> CloseOwnedAsync(long accountId, CancellationToken ct = default)
+    {
+        await _gate.WaitAsync(ct);
+        try
+        {
+            return await CloseOwnedLockedAsync(accountId, CloseReasons.HostClosed, Clock.Now(_time), ct);
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    private async Task<int> CloseOwnedLockedAsync(long accountId, string reason, DateTime now, CancellationToken ct)
+    {
+        var owned = _rooms.Values.Where(r => r.OwnerId == accountId).ToList();
+        foreach (var room in owned)
+        {
+            await _repository.CloseAsync(room.Id, reason, now, ct);
+            RemoveRoomLocked(room);
+        }
+        return owned.Count;
     }
 
     // Relay ------------------------------------------------------------------------------------------------------------
@@ -528,9 +572,10 @@ public sealed partial class RoomService
 
     private RoomSummary Summary(LiveRoom r) => Summary(r, _relay.Instances(r.Code).Count);
 
-    private static RoomSummary Summary(LiveRoom r, int instances) => new(r.Code, r.Name, r.OwnerName, r.Members.ContainsKey(r.OwnerId),
+    private RoomSummary Summary(LiveRoom r, int instances) => new(r.Code, r.Name, r.OwnerName, r.Members.ContainsKey(r.OwnerId),
         r.StoryFrozenAt is not null, r.StoryFrozenAt, r.PasswordHash is not null, r.Members.Count, r.MaxPlayers, r.Protocol, r.DataHash,
-        r.ClientVersion, r.Ranked, r.Randomizer, r.Difficulty, instances, r.CreatedAt);
+        r.ClientVersion, r.Ranked, r.Randomizer, r.Difficulty, instances, r.CreatedAt,
+        DW4Online.Domain.Story.StoryPolicies.Parse(_options.StoryWhileOwnerAway).ToString().ToLowerInvariant());
 
     private RoomState State(LiveRoom room, LiveMember you)
     {

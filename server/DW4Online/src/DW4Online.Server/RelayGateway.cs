@@ -23,20 +23,15 @@ internal sealed class RelayGateway : IRelayGateway
         _hub = services.GetService<RelayHub>(); // registered only with Relay:Enabled
         _stories = services.GetService<OnlineStoryService>();
         _log = services.GetService<ILogger<RelayGateway>>();
-        // A room story's new revision becomes its owner's online story (newer revisions only, so the order of the saves
-        // does not matter; SEAMLESS.md 8.4). Under the room lock: only start the write.
-        if (_hub is not null && _stories is not null) _hub.StorySaver = (owner, story) => _ = SaveStoryAsync(owner, story);
-    }
-
-    private async Task SaveStoryAsync(long owner, RoomStoryData story)
-    {
-        try
+        // A room story's new revision becomes its owner's online story (SEAMLESS.md 8.4). Under the room lock: only queue
+        // it. The queue writes the newest revision per owner, tries a failed write again (a database that is away for a
+        // moment, a restart of it) and gives a queued revision to the next room's load before it is written; the service's
+        // stop writes what is left (StoryFlushService).
+        if (_hub is not null && _stories is not null)
         {
-            await _stories!.SaveAsync(owner, story);
-        }
-        catch (Exception e)
-        {
-            _log?.LogWarning(e, "Saving the online story of account {Account} (revision {Revision}) failed", owner, story.Revision);
+            _hub.StorySaver = (owner, story) => _stories.Enqueue(owner, story);
+            _stories.SaveFailed = (owner, revision, e) =>
+                _log?.LogWarning(e, "Saving the online story of account {Account} (revision {Revision}) failed; it is tried again", owner, revision);
         }
     }
 
@@ -99,6 +94,32 @@ internal sealed class RelayGateway : IRelayGateway
     public void SetHeartbeat(Func<string, IReadOnlyCollection<long>, ValueTask> beat)
     {
         if (_hub is not null) _hub.Heartbeat = beat;
+    }
+}
+
+/// <summary>
+/// At the service's stop, after the relay stopped (registered before it, so stopped after it): writes the room stories
+/// still queued (a database write that failed and waits for its next try), then ends the retries.
+/// </summary>
+internal sealed class StoryFlushService(OnlineStoryService stories, ILogger<StoryFlushService> log) : IHostedService
+{
+    public Task StartAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+
+    public async Task StopAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            if (stories.PendingCount > 0 && !await stories.FlushAsync(TimeSpan.FromSeconds(10), cancellationToken))
+                log.LogWarning("{Count} online stories could not be saved before the service stopped", stories.PendingCount);
+        }
+        catch (OperationCanceledException)
+        {
+            log.LogWarning("{Count} online stories could not be saved before the service stopped", stories.PendingCount);
+        }
+        finally
+        {
+            stories.Stop();
+        }
     }
 }
 

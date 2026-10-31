@@ -89,6 +89,7 @@ public static class ServerApp
         services.AddSingleton(sp => new RelayTickets(sp.GetRequiredService<ServerSecret>().Key,
             TimeSpan.FromSeconds(relay.TicketLifetimeSeconds), sp.GetRequiredService<TimeProvider>()));
         services.AddSingleton(sp => new AuditNameHasher(sp.GetRequiredService<ServerSecret>().Key));
+        services.AddHostedService<StoryFlushService>(); // (before the relay: it stops after it)
         if (relay.Enabled)
         {
             services.AddSingleton<RelayHub>();

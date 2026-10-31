@@ -45,6 +45,8 @@ public sealed class OnlineCharacterOptions
     /// character) before the housekeeping deletes them; account deletion removes them at once.
     /// </summary>
     public int ResetHistoryDays { get; set; } = 30;
+    /// <summary>Revisions of an account's online story kept for a staff restore (online_story_history).</summary>
+    public int StoryHistoryRevisions { get; set; } = 100;
     public CharacterRules Rules { get; set; } = new();
 }
 

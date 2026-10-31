@@ -22,14 +22,14 @@ public class MigratorTests
             Assert.Equal(From(1), await migrator.MigrateAsync());
             Assert.Empty(await migrator.MigrateAsync());
             Assert.Equal(From(1).Last(), await migrator.CurrentVersionAsync());
-            Assert.True(From(1).Last() >= 9); // 0008: online_story, 0009: the achievement catalogue
+            Assert.True(From(1).Last() >= 10); // 0008: online_story, 0009: the achievement catalogue, 0010: the story history
             await using var c = new MySqlConnection(TestDb.ConnectionString(name));
             // 0002's 72 and the game client's 20 others (0009); 72 active: the client's catalogue.
             Assert.Equal(92, await c.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM achievements"));
             Assert.Equal(72, await c.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM achievements WHERE active = 1"));
             Assert.Equal(0, await c.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM achievements WHERE active = 1 AND code IN ('speed_6h', 'online_ten')"));
             Assert.Equal(12, await c.ExecuteScalarAsync<int>("SELECT goal FROM achievements WHERE code = 'lowlevel_apocalymon'"));
-            Assert.Equal(17, await c.ExecuteScalarAsync<int>( // (0008: online_story)
+            Assert.Equal(18, await c.ExecuteScalarAsync<int>( // (0008: online_story, 0010: online_story_history)
                 "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE()"));
         }
         finally

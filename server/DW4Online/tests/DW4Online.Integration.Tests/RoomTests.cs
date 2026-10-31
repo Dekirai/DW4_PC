@@ -37,6 +37,12 @@ public class RoomTests
 
         Assert.Equal(HttpStatusCode.Unauthorized, (await host.Client().PostAsJsonAsync("/api/v1/rooms", NewRoom())).StatusCode);
         Assert.Equal("invalid_max_players", await (await owner.PostAsJsonAsync("/api/v1/rooms", NewRoom(maxPlayers: 11))).ProblemCode());
+        // Hard opens after the owner's online story cleared Normal (flag 406), Very Hard after Hard (407).
+        Assert.Equal("difficulty_locked", await (await owner.PostAsJsonAsync("/api/v1/rooms", NewRoom(settings: new { difficulty = 1 }))).ProblemCode());
+        var cleared = new DW4Online.Domain.Story.RoomStoryData { Revision = 1 };
+        cleared.Flags[406] = 1;
+        Assert.True(await host.App.Services.GetRequiredService<DW4Online.Domain.Story.OnlineStoryService>().SaveAsync(hostId, cleared));
+        Assert.Equal("difficulty_locked", await (await owner.PostAsJsonAsync("/api/v1/rooms", NewRoom(settings: new { difficulty = 2 }))).ProblemCode());
         var created = await OkJson(await owner.PostAsJsonAsync("/api/v1/rooms", NewRoom(password: "dw4dw4", settings: new { difficulty = 1, lightMode = 0 })),
             HttpStatusCode.Created);
         var code = created.GetProperty("room").GetProperty("code").GetString()!;
@@ -246,7 +252,7 @@ public class RoomTests
         Assert.Equal("unranked_settings", await (await host.Client(otherToken).PostAsJsonAsync("/api/v1/rooms",
             NewRoom(settings: new { cheats = true }))).ProblemCode());
 
-        // Staff close a room; a banned owner leaves it at once.
+        // Staff close a room; a banned owner's room closes at once (its story is the owner's, who never comes back).
         var mod = host.Client(modToken);
         Assert.Equal(HttpStatusCode.Forbidden, (await owner.PostAsync($"/api/v1/admin/rooms/{code}/close", null)).StatusCode);
         Assert.Equal(HttpStatusCode.NoContent, (await mod.PostAsync($"/api/v1/admin/rooms/{code}/close", null)).StatusCode);
@@ -255,9 +261,7 @@ public class RoomTests
         var (memberToken, _, _) = await host.RegisterAsync("Member");
         await OkJson(await host.Client(memberToken).PostAsJsonAsync($"/api/v1/rooms/{second}/join", Join()));
         Assert.Equal(HttpStatusCode.OK, (await mod.PostAsJsonAsync("/api/v1/admin/accounts/Shuffler/status", new { status = "banned", reason = "test" })).StatusCode);
-        var after = await OkJson(await host.Client(memberToken).PostAsync($"/api/v1/rooms/{second}/heartbeat", null));
-        Assert.True(after.GetProperty("room").GetProperty("storyFrozen").GetBoolean());
-        Assert.Equal(1, after.GetProperty("members").GetArrayLength());
+        Assert.Equal("not_in_room", await (await host.Client(memberToken).PostAsync($"/api/v1/rooms/{second}/heartbeat", null)).ProblemCode());
 
         // Rows a previous process left open are closed at start (reason server_restart).
         await using (var sql = await host.SqlAsync())
@@ -268,6 +272,7 @@ public class RoomTests
             Assert.True(await host.App.Services.GetRequiredService<RoomService>().CloseLeftoversAsync() >= 1);
             Assert.Equal("server_restart", await sql.ExecuteScalarAsync<string>("SELECT close_reason FROM rooms WHERE public_code = 'LEFT01'"));
             Assert.Equal("admin", await sql.ExecuteScalarAsync<string>("SELECT close_reason FROM rooms WHERE public_code = @code", new { code }));
+            Assert.Equal("host_left", await sql.ExecuteScalarAsync<string>("SELECT close_reason FROM rooms WHERE public_code = @second", new { second }));
         }
     }
 

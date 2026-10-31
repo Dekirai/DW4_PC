@@ -76,7 +76,8 @@ public class OnlineStoryTests
     [DbFact]
     public async Task A_guests_story_flag_reaches_the_owners_online_story_through_the_relay()
     {
-        await using var host = await TestHost.StartAsync(RelaySettings.On());
+        // (A visit counts after one second here: the per-visit rules of SEAMLESS.md 8.7 with a short minimum.)
+        await using var host = await TestHost.StartAsync(RelaySettings.On(new() { ["Instances:StoryMinVisitSeconds"] = "1" }));
         var relayPort = await host.App.Services.GetRequiredService<RelayHub>().Started.WaitAsync(TimeSpan.FromSeconds(10));
         var (ownerToken, _, ownerId) = await host.RegisterAsync("StoryHost");
         var (guestToken, _, guestId) = await host.RegisterAsync("StoryGuest");
@@ -103,6 +104,11 @@ public class OnlineStoryTests
         Assert.Equal(BarrierDecision.Dissolve, ok.Decision);
         Assert.Equal(7u, ok.StoryRevision);
         var watch = Stopwatch.StartNew();
+        // Right after the barrier the visit is too young: the flag waits (the client sends it again).
+        await b.SendAsync(new StoryMsg(ok.NewInst, ok.NewVisit, 7, new StoryDelta { Flags = [393] }).Frame());
+        var early = StoryAckMsg.Parse(await b.NextAsync(Msg.StoryAck));
+        Assert.Equal(StoryRefusal.Wait, early.Refused.Single().Reason);
+        await Task.Delay(1200);
         await b.SendAsync(new StoryMsg(ok.NewInst, ok.NewVisit, 7, new StoryDelta { Flags = [393] }).Frame());
         var answer = StoryAckMsg.Parse(await b.NextAsync(Msg.StoryAck));
         Assert.Equal((8u, StoryAckMsg.Answer), (answer.Revision, answer.Flags));
@@ -129,6 +135,105 @@ public class OnlineStoryTests
         Assert.Equal("drop", view.GetProperty("policy").GetString());
         var (otherToken, _, _) = await host.RegisterAsync("StoryOut");
         Assert.Equal("not_in_room", await (await host.Client(otherToken).GetAsync($"/api/v1/rooms/{code}/story")).ProblemCode());
+    }
+
+    /// <summary>
+    /// Round 56 review: deleting a room owner's account left its room running with the deleted account's story keeper,
+    /// and a guest's STORY afterwards made a new online_story row for the erased account. Now the owner's rooms close
+    /// with the deletion (the guests get CLOSE, the room list drops it), and a save still on its way writes nothing.
+    /// </summary>
+    [DbFact]
+    public async Task Deleting_a_room_owner_closes_its_room_and_no_story_is_saved_for_it()
+    {
+        await using var host = await TestHost.StartAsync(RelaySettings.On());
+        var relayPort = await host.App.Services.GetRequiredService<RelayHub>().Started.WaitAsync(TimeSpan.FromSeconds(10));
+        var (ownerToken, _, ownerId) = await host.RegisterAsync("GoneHost");
+        var (guestToken, _, _) = await host.RegisterAsync("LeftGuest");
+        var owner = host.Client(ownerToken);
+        var guest = host.Client(guestToken);
+        var created = await (await owner.PostAsJsonAsync("/api/v1/rooms", NewRoom())).Json();
+        var code = created.GetProperty("room").GetProperty("code").GetString()!;
+        var settingsHash = created.GetProperty("settingsHash").GetString()!;
+        var joined = await (await guest.PostAsJsonAsync($"/api/v1/rooms/{code}/join", Join())).Json();
+        await using var b = await Member.ConnectAsync(relayPort, joined.GetProperty("relayTicket").GetString()!, settingsHash);
+
+        Assert.Equal(HttpStatusCode.NoContent, (await owner.PostAsJsonAsync("/api/v1/me/delete", new { currentPassword = "a decent password" })).StatusCode);
+        // The guest's connection closes with the room; the public room list no longer shows the room or the name.
+        await b.NextAsync(Msg.Close);
+        var rooms = await (await host.Client().GetAsync("/api/v1/rooms")).Json();
+        Assert.DoesNotContain(rooms.EnumerateArray(), r => r.GetProperty("code").GetString() == code);
+        Assert.Equal("not_in_room", await (await guest.GetAsync($"/api/v1/rooms/{code}/story")).ProblemCode());
+        await using var sql = await host.SqlAsync();
+        Assert.Equal("host_left", await sql.ExecuteScalarAsync<string>("SELECT close_reason FROM rooms WHERE public_code = @code", new { code }));
+
+        // A room story save of the owner that was still on its way: nothing is written for the erased account.
+        var stories = host.App.Services.GetRequiredService<OnlineStoryService>();
+        var late = new RoomStoryData { Revision = 3 };
+        late.Flags[506] = 1;
+        Assert.False(await stories.SaveAsync(ownerId, late));
+        stories.Enqueue(ownerId, late);
+        Assert.True(await stories.FlushAsync(TimeSpan.FromSeconds(5)));
+        Assert.Equal(0, await sql.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM online_story WHERE account_id = @ownerId", new { ownerId }));
+        Assert.Equal(0, await sql.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM online_story_history WHERE account_id = @ownerId", new { ownerId }));
+    }
+
+    /// <summary>
+    /// Round 56 review: the online story had no history, no reset and no restore; a reset character started in the old
+    /// story. Every revision is now kept; the character's reset empties the story (a new revision, the old one kept) and
+    /// closes the account's own room; staff put a kept revision back as the next revision.
+    /// </summary>
+    [DbFact]
+    public async Task The_story_keeps_its_revisions_is_emptied_by_the_characters_reset_and_staff_restore_one()
+    {
+        await using var host = await TestHost.StartAsync();
+        var (adminToken, _, _) = await host.RegisterAsync("StoryStaff");
+        var (token, _, id) = await host.RegisterAsync("StoryReset");
+        Assert.True((await host.App.Services.GetRequiredService<DW4Online.Domain.Services.AccountService>()
+            .AdminSetRoleAsync(null, "StoryStaff", "admin", new DW4Online.Domain.Services.CallerInfo(null, "tests"))).Ok);
+        var client = host.Client(token);
+        Assert.Equal(HttpStatusCode.Created, (await client.PutJson("/api/v1/online-character", Upload(Samples.Fresh("Kev"), 600), create: true)).StatusCode);
+        var created = await (await client.PostAsJsonAsync("/api/v1/rooms", NewRoom())).Json();
+        var code = created.GetProperty("room").GetProperty("code").GetString()!;
+        var stories = host.App.Services.GetRequiredService<OnlineStoryService>();
+        for (uint r = 1; r <= 3; ++r)
+        {
+            var s = new RoomStoryData { Revision = r };
+            s.Flags[(int)r] = 1; // phase r (one-hot)
+            s.Flags[505] = 1;
+            s.Folder[0] = 1;
+            Assert.True(await stories.SaveAsync(id, s));
+        }
+        // The reset closes the account's own room; the record's story is empty, the story's revision 4 is empty, 3 is kept.
+        Assert.Equal(HttpStatusCode.NoContent,
+            (await client.PostAsJsonAsync("/api/v1/online-character/reset", new { currentPassword = "a decent password" })).StatusCode);
+        Assert.Equal("room_not_found", await (await client.GetAsync($"/api/v1/rooms/{code}")).ProblemCode());
+        Assert.Equal(HttpStatusCode.Created, (await client.PutJson("/api/v1/online-character", Upload(Samples.Fresh("Ann"), 60), create: true)).StatusCode);
+        var record = Convert.FromBase64String((await (await client.GetAsync("/api/v1/online-character")).Json()).GetProperty("record").GetString()!);
+        Assert.Equal(0, record[792 + 3]);
+        Assert.Equal(0, record[792 + 505]);
+        Assert.Equal(0, record[1816]);
+        var now = await stories.LoadAsync(id);
+        Assert.Equal(4u, now.Revision);
+        Assert.All(now.Flags, f => Assert.Equal(0, f));
+
+        var admin = host.Client(adminToken);
+        var history = await (await admin.GetAsync("/api/v1/admin/accounts/StoryReset/online-story/history")).Json();
+        Assert.Equal([4, 3, 2, 1], history.EnumerateArray().Select(h => h.GetProperty("revision").GetInt32()));
+        Assert.Equal("reset", history[0].GetProperty("reason").GetString());
+        Assert.Equal(3, history[1].GetProperty("phase").GetInt32());
+        Assert.Equal([0], history[1].GetProperty("keys").EnumerateArray().Select(k => k.GetInt32()));
+        Assert.Equal(HttpStatusCode.Forbidden, (await client.GetAsync("/api/v1/admin/accounts/StoryReset/online-story/history")).StatusCode);
+
+        // Staff put revision 2 back: revision 5 with its content.
+        var restored = await (await admin.PostAsync("/api/v1/admin/accounts/StoryReset/online-story/restore/2", null)).Json();
+        Assert.Equal(5, restored.GetProperty("revision").GetInt32());
+        var back = await stories.LoadAsync(id);
+        Assert.Equal((5u, (byte)1, (byte)0, (byte)1), (back.Revision, back.Flags[2], back.Flags[3], back.Flags[505]));
+        Assert.Equal("revision_not_found", await (await admin.PostAsync("/api/v1/admin/accounts/StoryReset/online-story/restore/77", null)).ProblemCode());
+        await using var sql = await host.SqlAsync();
+        Assert.Equal(1, await sql.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM audit_log WHERE event = 'story_restore' AND account_id = @id", new { id }));
+        // A room save older than the restore writes nothing.
+        Assert.False(await stories.SaveAsync(id, new RoomStoryData { Revision = 4 }));
     }
 
     /// <summary>A raw DW4R2 member: handshake, WELCOME, the first STORY_ACK.</summary>

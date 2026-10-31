@@ -137,7 +137,7 @@ public sealed class AccountRepository(Database db) : IAccountRepository
     {
         string[] owned =
         [
-            "sessions", "email_tokens", "online_character_history", "online_characters", "online_story", "cloud_save_history", "cloud_saves",
+            "sessions", "email_tokens", "online_character_history", "online_characters", "online_story", "online_story_history", "cloud_save_history", "cloud_saves",
             "achievement_unlocks", "player_stats", "speedrun_times", "room_members", "account_bans",
         ];
         await using var c = await db.OpenAsync(ct);
