@@ -3032,7 +3032,7 @@ anyway; joining goes through the room list.
 | S24 | map recorder (dng102b3) read far from the partner (scoped, local freeze) and near (original) | S3 |
 | S25 | Trailmon ride (dng412b3) with one member not aboard: no fork, the rider moves alone | S3 |
 | A1 | online achievements: S5's run with achievements on; each machine reports its own player (online_join in its solo lobby, first_defeat in the sealed field) with the ranked context, the counters at the end; the server holds them (`scenario.json` "achievements") | S2 |
-| P1 | ghost figures in the lobby: three members (k7, k10, k2); one stands, one walks around it and stops right in front of it, the third shows another form every 6 s (`DW4_ONLINE_TEST_FORM`, the form PRESENCE2 names; the engine's stays), leaves through the gate for stag0101, falls there and comes back after the game over; `"shots": true` takes the scripts' `shot` pictures (hidden 1920x1009, widescreen, MSAA 4, all tags) and the `ghosts` condition waits on the figures a client shows | 60 |
+| P1 | ghost figures in the lobby: three members (k7, k10, k2); one stands, one walks around it and stops right in front of it, the third shows another form every 6 s (`DW4_ONLINE_TEST_FORM`, the form PRESENCE2 names; the engine's stays), leaves through the lobby gate for a field (stag0101), falls there and comes back after the game over; `"shots": true` takes the scripts' `shot` pictures (hidden 1920x1009, widescreen, MSAA 4, all tags) and the `ghosts` condition waits on the figures a client shows | 60 |
 
 - **Real game clients** (round S1 integration): `run.py G1 --game-exe EXE
   --data DATA` starts two hidden `DW4_ONLINE_DEV` game clients instead of fake
