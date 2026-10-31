@@ -7,13 +7,24 @@
   (see DEPLOY.md). Needs no restart. -DryRun prints the commands without running them. Does nothing to other services,
   SQL Server or the Pangya servers.
 
-  The service depends on the MariaDB service (sc.exe config depend=): after a reboot Windows starts MariaDB first, and
-  stopping MariaDB stops DW4Online first. Before anything changes the script checks that MariaDB listens on
-  -DatabasePort and only on the loopback address (bind-address=127.0.0.1, DEPLOY.md section 1).
+  The service depends on the database service (sc.exe config depend=, -DatabaseService): 'MariaDB' for the MSI
+  install, 'mysql' for a XAMPP MariaDB made a service with the XAMPP Control Panel (DEPLOY.md section 1). After a
+  reboot Windows starts the database first, and stopping it stops DW4Online first. Before anything changes the script
+  checks that
+  - the database service exists and listens on -DatabasePort, only on the loopback address (bind-address=127.0.0.1),
+    and that the connection string in the settings names that port;
+  - the settings' HTTPS endpoint (Kestrel:Endpoints:Https:Url) uses -HttpsPort and the relay -RelayPort: the firewall
+    rules open exactly these ports;
+  - nobody else listens on the HTTPS, relay or loopback HTTP port (a Traefik, IIS or Apache on 443: give DW4Online
+    another HTTPS port, DEPLOY.md section 4.1, for example -HttpsPort 8443).
+
+  Afterwards: run the migrations in the console once ("DW4Online.Server.exe migrate --settings ..."), then
+  Start-Service (DEPLOY.md section 5).
 
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File install-service.ps1 -DryRun
   powershell -ExecutionPolicy Bypass -File install-service.ps1 -OpenPort80
+  powershell -ExecutionPolicy Bypass -File install-service.ps1 -DatabaseService mysql -DatabasePort 3306 -HttpsPort 8443
 #>
 param(
     [string]$Root = 'D:\Dekirai\Servers\DW4Online',
@@ -38,6 +49,19 @@ function Step([string]$text, [scriptblock]$action) {
     if (-not $DryRun) { & $action }
 }
 
+# The port of a Kestrel URL ("https://0.0.0.0:8443", "http://127.0.0.1:5280", "https://*:8443").
+function Get-UrlPort([string]$url) {
+    try { return ([Uri]($url -replace '://[*+]', '://localhost')).Port } catch { throw "Cannot read the port of '$url' in $settings." }
+}
+
+# Who listens on a TCP port ("traefik (PID 1234)"), or $null.
+function Get-PortOwner([int]$port) {
+    $listen = @(Get-NetTCPConnection -State Listen -LocalPort $port -ErrorAction SilentlyContinue)
+    if ($listen.Count -eq 0) { return $null }
+    $owners = $listen | ForEach-Object { $_.OwningProcess } | Sort-Object -Unique
+    return ($owners | ForEach-Object { $p = Get-Process -Id $_ -ErrorAction SilentlyContinue; if ($p) { "$($p.ProcessName) (PID $_)" } else { "PID $_" } }) -join ', '
+}
+
 if (-not $DryRun) {
     $principal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
     if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { throw 'Run this script elevated.' }
@@ -45,15 +69,16 @@ if (-not $DryRun) {
     if (-not (Test-Path $settings)) { throw "$settings not found: create it from appsettings.Production.example.json first." }
     if (Get-Service -Name $ServiceName -ErrorAction SilentlyContinue) { throw "Service $ServiceName exists already (updates: see DEPLOY.md, section 8)." }
     if (-not (Get-Service -Name $DatabaseService -ErrorAction SilentlyContinue)) {
-        throw "Service $DatabaseService not found: install MariaDB first (DEPLOY.md section 1) or pass -DatabaseService <its service name>."
+        throw ("Service $DatabaseService not found: install MariaDB first (DEPLOY.md section 1) or pass -DatabaseService <its service name> " +
+            "(a XAMPP MariaDB installed as a service with the XAMPP Control Panel: -DatabaseService mysql).")
     }
-    # MariaDB must answer locally and nowhere else (the database port stays closed to the network).
+    # The database must answer locally and nowhere else (the database port stays closed to the network).
     $listen = @(Get-NetTCPConnection -State Listen -LocalPort $DatabasePort -ErrorAction SilentlyContinue)
     if ($listen.Count -eq 0) { throw "Nothing listens on port ${DatabasePort}: start $DatabaseService (or pass -DatabasePort)." }
     $open = @($listen | Where-Object { $_.LocalAddress -notin @('127.0.0.1', '::1') })
     if ($open.Count -gt 0) {
         $where = ($open | ForEach-Object { $_.LocalAddress } | Sort-Object -Unique) -join ', '
-        throw "Port $DatabasePort listens on ${where}: set bind-address=127.0.0.1 in MariaDB's my.ini and restart it (DEPLOY.md section 1)."
+        throw "Port $DatabasePort listens on ${where}: set bind-address=127.0.0.1 in the [mysqld] section of the database's my.ini and restart $DatabaseService (DEPLOY.md section 1)."
     }
     # ... and it is the service DW4Online will depend on, not another mysqld (a XAMPP one on 3306 while MariaDB has 3307).
     $dbPid = (Get-CimInstance Win32_Service -Filter "Name='$DatabaseService'").ProcessId
@@ -62,6 +87,33 @@ if (-not $DryRun) {
         $who = ($owners | ForEach-Object { $p = Get-Process -Id $_ -ErrorAction SilentlyContinue; if ($p) { "$($p.ProcessName) (PID $_)" } else { "PID $_" } }) -join ', '
         throw "Port $DatabasePort belongs to $who, not to the service $DatabaseService (PID $dbPid): pass the -DatabasePort of $DatabaseService (or -DatabaseService)."
     }
+
+    # The settings must match what this script opens and depends on.
+    try { $json = Get-Content $settings -Raw -Encoding UTF8 | ConvertFrom-Json } catch { throw "$settings is not valid JSON: $_" }
+    $connection = [string]$json.Database.ConnectionString
+    if ($connection -match '(?i)(^|;)\s*Port\s*=\s*(\d+)' -and [int]$Matches[2] -ne $DatabasePort) {
+        throw "Database:ConnectionString in $settings uses port $($Matches[2]), but -DatabasePort is ${DatabasePort}: make them the same."
+    }
+    $httpsUrl = [string]$json.Kestrel.Endpoints.Https.Url
+    if ($httpsUrl -and (Get-UrlPort $httpsUrl) -ne $HttpsPort) {
+        throw "Kestrel:Endpoints:Https:Url in $settings is $httpsUrl, but -HttpsPort is ${HttpsPort}: pass -HttpsPort $(Get-UrlPort $httpsUrl) (the firewall rule opens -HttpsPort)."
+    }
+    if ($json.Relay.Port -and [int]$json.Relay.Port -ne $RelayPort) {
+        throw "Relay:Port in $settings is $($json.Relay.Port), but -RelayPort is ${RelayPort}: make them the same."
+    }
+    $loopbackUrl = [string]$json.Kestrel.Endpoints.Http.Url
+    $loopbackPort = if ($loopbackUrl) { Get-UrlPort $loopbackUrl } else { 5280 }
+    # Nobody else may hold these ports (DW4Online does not run yet: its service does not exist).
+    $owner = Get-PortOwner $HttpsPort
+    if ($owner) {
+        throw ("Port $HttpsPort is taken by $owner (on 443 often a reverse proxy such as Traefik, IIS or Apache). Leave that program " +
+            "alone and give DW4Online another HTTPS port, for example 8443: Kestrel:Endpoints:Https:Url https://0.0.0.0:8443 in " +
+            "$settings and -HttpsPort 8443 here (DEPLOY.md section 4.1).")
+    }
+    $owner = Get-PortOwner $RelayPort
+    if ($owner) { throw "Port $RelayPort (relay) is taken by ${owner}: choose another Relay:Port and pass it as -RelayPort." }
+    $owner = Get-PortOwner $loopbackPort
+    if ($owner) { throw "Port $loopbackPort (the loopback HTTP endpoint) is taken by ${owner}: give Kestrel:Endpoints:Http:Url another free 127.0.0.1 port." }
 }
 
 foreach ($dir in @('config', 'logs', 'backups', 'acme', 'keys')) {
@@ -82,7 +134,7 @@ Step "sc.exe config $ServiceName start= delayed-auto obj= `"$account`" (virtual 
 Step "sc.exe failure ${ServiceName}: restart after 5 s, 30 s, 60 s" {
     & sc.exe failure $ServiceName reset= 86400 actions= restart/5000/restart/30000/restart/60000 | Out-Null
 }
-Step "sc.exe config $ServiceName depend= $DatabaseService (Windows starts MariaDB first)" {
+Step "sc.exe config $ServiceName depend= $DatabaseService (Windows starts $DatabaseService first)" {
     & sc.exe config $ServiceName depend= $DatabaseService | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "sc.exe config depend= failed ($LASTEXITCODE)" }
 }
@@ -118,5 +170,7 @@ foreach ($port in $ports) {
 }
 
 Write-Output ''
-Write-Output "Done. Start with: Start-Service $ServiceName   (log: $Root\logs)"
+Write-Output "Done. Next, in this console: create the tables before the first start (it prints every step and its time):"
+Write-Output "  & '$exe' migrate --settings '$settings'"
+Write-Output "Then: Start-Service $ServiceName   (log: $Root\logs)"
 Write-Output "Remove again: Stop-Service $ServiceName; sc.exe delete $ServiceName; Get-NetFirewallRule -DisplayName 'DW4Online TCP *' | Remove-NetFirewallRule"

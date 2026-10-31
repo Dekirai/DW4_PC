@@ -109,7 +109,7 @@ and user secrets (Development) work as usual.
 
 | Section | Keys (defaults) |
 | --- | --- |
-| `Database` | `ConnectionString`, `AutoMigrate` (true): run pending migrations at startup. |
+| `Database` | `ConnectionString`, `AutoMigrate` (true): run pending migrations at startup, `StartupWaitSeconds` (60): how long the start waits for a database that does not answer yet. |
 | `Service` | `Name`, `Motd` (game menu and home page), `Maintenance` (announced; no new rooms), `RelayHost` (empty = the request's host name) / `RelayPort` (default 0 = the port the relay listens on, `Relay:Port`; set it only when clients reach the relay through another public port), announced to clients; `PathBase` (empty; for example `/dw4online`: website and API below that path, see "Website"), `BehindProxy` (false; true behind a reverse proxy on the same machine: client address and scheme from `X-Forwarded-For` / `X-Forwarded-Proto` of a loopback proxy only). |
 | `Accounts` | `Registration` (open / closed), `PasswordIterations` (220000), `MaxFailedLogins` (10, per user name and address), `LockoutMinutes` (15), `MaxFailedLoginsPerAccount` (50), `KnownAddressDays` (30), `GameSessionDays` (30), `WebSessionDays` (14), `SessionTouchMinutes` (5), `MaxSessionsPerAccount` (20). |
 | `OnlineCharacter` | `HistoryRevisions` (20), `ResetHistoryDays` (30: the revisions of a reset character stay that long), `Rules:MaxLevelsPerPlayHour` (120), `Rules:PlayTimeSlackSeconds` (600). |
@@ -129,8 +129,8 @@ CLI of the executable:
 
 ```
 DW4Online.Server                          run in the console
-DW4Online.Server --service                run under the Service Control Manager
-DW4Online.Server migrate                  apply pending migrations and exit
+DW4Online.Server --service                run under the Service Control Manager (connects first, then database wait and migrations)
+DW4Online.Server migrate                  apply pending migrations and exit (each with its time; exit 1 with the way out on a refusal)
 DW4Online.Server set-role <user> <role>   player | moderator | admin (bootstraps the first admin)
 DW4Online.Server reset-password <user>    print a temporary password the user must change (audit actor 0 = console)
 DW4Online.Server gen-relay-key            print a new random Relay:TicketKey
@@ -144,10 +144,25 @@ DW4Online.Server tls-pin --host <IP or name> | --thumbprint <hex> | --file <cert
 ## Database
 
 MariaDB 11.4 LTS is the target (developed on a private 10.4 instance; the schema avoids `INET6` / `UUID` so both
-run it). InnoDB, `utf8mb4_unicode_ci` set explicitly (11.x changed the default), all times UTC `DATETIME(3)` written by
-the service. The migrator applies `sql/NNNN_*.sql` in order, records each in `schema_version` with the SHA-256 of the
-file and refuses to run when the database has tables but no `schema_version`, when an applied file changed, or when the
-database is newer than the build. MariaDB commits DDL implicitly: **back up before an update** (deploy kit).
+run it; the server installed on 31.10 runs XAMPP's 10.4.32, and the integration tests pass with XAMPP's unchanged
+`my.ini` settings too). InnoDB, `utf8mb4_unicode_ci` set explicitly (11.x changed the default), all times UTC
+`DATETIME(3)` written by the service. The migrator applies `sql/NNNN_*.sql` in order and records each in
+`schema_version` with the SHA-256 of the file. MariaDB commits DDL implicitly, so before it runs a migration it marks
+it in `schema_version` as started (an all-zero checksum, description "... (started, not finished)") and replaces the
+mark when the migration is done. It refuses to run, with the state and the way out in its message (DEPLOY.md
+section 9), when a migration is marked as started (interrupted or failed half way: restore the backup from before the
+update), when `schema_version` is empty (the first migration was interrupted; when no table holds a row, drop and
+re-create the database), when the database has tables but no `schema_version`, when an applied file changed, or when
+the database is newer than the build. It never drops or repairs anything itself. **Back up before an update** (deploy
+kit) and run `migrate` in a console before the service starts.
+
+Startup (`ServerStartup`): as a Windows service the process enters the Service Control Manager's dispatcher first and
+reports START_PENDING with a new checkpoint every 5 s (`WindowsServiceLifetime`), then waits for the database (up to
+`Database:StartupWaitSeconds`) and migrates, then starts the host and reports RUNNING. A refused or failed migration
+is a FAIL line in the log and STOPPED with service-specific error 13 (no restart); a database that never answered or a
+host that could not start ends the process without STOPPED, so the service's restart actions run. Release 0.1.0
+migrated before it connected, and a slow first migration on the server outran the SCM's 30 s limit.
+`tests/DW4Online.Tests/ServiceStartTests.cs` runs this against a fake SCM.
 
 Tables: `accounts`, `sessions` (only SHA-256 of tokens), `email_tokens` (future SMTP), `account_bans`,
 `online_characters` + `online_character_history`, `cloud_saves` + `cloud_save_history`, `achievements`,

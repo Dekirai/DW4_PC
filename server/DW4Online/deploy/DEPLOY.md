@@ -1,9 +1,9 @@
 # Deploying DW4Online on the Windows Server
 
 The target is the user's Windows Server 2025 (public address 88.198.52.221, no domain yet). Everything here runs
-**without a Windows restart**: MariaDB is an MSI with its own service, the service is a self-contained publish (no
-.NET runtime install), Kestrel serves HTTPS itself (no IIS). SQL Server Express and the Pangya servers (web port 88)
-stay untouched.
+**without a Windows restart**: the database is a MariaDB service (a new MariaDB 11.4 MSI install, or an existing XAMPP
+MariaDB made a service), the service is a self-contained publish (no .NET runtime install), Kestrel serves HTTPS
+itself (no IIS). SQL Server Express and the Pangya servers (web port 88) stay untouched.
 
 | What | Where |
 | --- | --- |
@@ -14,13 +14,24 @@ stay untouched.
 | Database backups | `D:\Dekirai\Servers\DW4Online\backups` |
 | ACME challenge folder (later, section 6.3 A2) | `D:\Dekirai\Servers\DW4Online\acme` |
 | Website Data Protection keys | `D:\Dekirai\Servers\DW4Online\keys` (DPAPI-encrypted for the service account) |
-| Service | `DW4Online`, virtual account `NT SERVICE\DW4Online`, start delayed-auto |
+| Service | `DW4Online`, virtual account `NT SERVICE\DW4Online`, start delayed-auto, depends on the database service |
 | TLS certificate (now) | self-signed for `IP 88.198.52.221` in `LocalMachine\My`, pinned by the game client (section 6.1) |
-| Ports | 443 TCP (HTTPS: API and website), 52041 TCP (relay), 80 TCP only for a later domain's certificate validation; MariaDB 3306 on 127.0.0.1 only; plain HTTP on 127.0.0.1:5280 for checks on the server itself (`appsettings.json`'s endpoint, never reachable from outside) |
+| Ports | 443 TCP (HTTPS: API and website; another port such as 8443 when 443 is taken, section 4.1), 52041 TCP (relay), 80 TCP only for a later domain's certificate validation; MariaDB 3306 on 127.0.0.1 only; plain HTTP on 127.0.0.1:5280 for checks on the server itself (`appsettings.json`'s endpoint, never reachable from outside) |
 
-The scripts in this folder are written for these steps but were **not run** on the server: read them, then run them
-yourself in an elevated PowerShell. (`new-selfsigned-cert.ps1` was run end to end against a user certificate store
-on the development PC, see the README's tests.)
+**The server as installed on 31.10.2026 (release 0.1.0)** uses the variants this document describes next to the
+defaults: the existing **XAMPP MariaDB 10.4.32** (`C:\Users\Dekirai\xampp\mysql`) as the Windows service `mysql`
+(section 1.1), **root as the only database login** (section 2.1), **HTTPS on port 8443** because a Traefik reverse
+proxy owns 443 (section 4.1); relay 52041, loopback check endpoint 127.0.0.1:5280. Its first `Start-Service` failed:
+release 0.1.0 ran the migrations before it connected to the Service Control Manager, migration 0001 took longer than
+the 30 s the SCM gives a starting process, the SCM ended the process half way, and every later start refused the
+half-migrated database. The way out was `DROP DATABASE` / `CREATE DATABASE` and `DW4Online.Server.exe migrate` in a
+console. Later releases connect to the SCM first and migrate while they report "start pending" (section 9), and
+every refusal names its way out; run `migrate` in a console before a start anyway (sections 5 and 8).
+
+The scripts in this folder are meant to be read and then run by you in an elevated PowerShell on the server. (They
+were tested on the development PC as far as that is possible without changing its services, firewall or certificate
+stores: `-DryRun`, the read-only checks, the backup and restore against a private XAMPP MariaDB 10.4, and
+`new-selfsigned-cert.ps1` against a user certificate store, see the README's tests.)
 
 ## 1. MariaDB 11.4 LTS
 
@@ -58,11 +69,51 @@ on the development PC, see the README's tests.)
 6. Port 3306 is **not** opened in the firewall. If the installer added an inbound rule for MariaDB, disable it:
    `Get-NetFirewallRule -Direction Inbound | Where-Object DisplayName -like '*MariaDB*' | Disable-NetFirewallRule`.
 
+### 1.1 Variant: an existing XAMPP MariaDB 10.4 as the database service
+
+A XAMPP that already runs on the server brings MariaDB 10.4 (XAMPP 8.x: 10.4.32). DW4Online runs on it: the schema
+avoids the types 10.4 lacks, and every migration and integration test passes against a MariaDB 10.4.32 with XAMPP's
+**unchanged** `my.ini` settings (non-strict `sql_mode`, `collation-server=utf8mb4_general_ci`, a 16 MB buffer pool;
+migrations 1 to 7 took 0.25 s there). What it costs: MariaDB 10.4 reached its end of life in June 2024 and gets no
+security fixes any more. That is acceptable only because it answers on 127.0.0.1 alone (step 3); move to a supported
+MariaDB (section 1, then a backup and restore) when convenient.
+
+1. Make XAMPP's MySQL a Windows service: start the **XAMPP Control Panel as administrator**, stop MySQL there if it
+   runs, tick the **"Svc"** box in the MySQL row and confirm. The Control Panel installs the service **`mysql`**
+   (`mysqld.exe --defaults-file=<XAMPP>\mysql\bin\my.ini mysql`, automatic start, LocalSystem). Start it once with the
+   Control Panel's Start button or `Start-Service mysql`. From now on start and stop it as a service; with DW4Online
+   installed, stop DW4Online first (it depends on `mysql`).
+2. Add two lines at the **end of the `[mysqld]` section** of `<XAMPP>\mysql\bin\my.ini` (just above `[mysqldump]`;
+   a later line wins over XAMPP's own `max_allowed_packet=1M` further up) and leave the rest as it is, since other
+   databases on this MariaDB rely on it:
+
+   ```ini
+   bind-address=127.0.0.1
+   max_allowed_packet=16M
+   ```
+
+3. `Restart-Service mysql`, then check that it listens on the loopback address only:
+
+   ```powershell
+   Get-NetTCPConnection -State Listen -LocalPort 3306 | Select-Object LocalAddress, OwningProcess   # only 127.0.0.1
+   ```
+
+4. XAMPP's root accounts (usually `root@localhost`, `root@127.0.0.1` and `root@::1`) have **no password** out of
+   the box. Give every one of them the same strong password (HeidiSQL: Tools -> User manager, each root entry; or
+   `ALTER USER 'root'@'localhost' IDENTIFIED BY '...'` and the same for the others; `SELECT user, host FROM mysql.user`
+   lists them). XAMPP's phpMyAdmin then needs that password in `<XAMPP>\phpMyAdmin\config.inc.php` or stays unused;
+   HeidiSQL asks for it.
+5. Everywhere below: `-DatabaseService mysql` for `install-service.ps1`, `-MariaDbBin <XAMPP>\mysql\bin -DumpExe
+   mysqldump.exe` for `backup-db.ps1`, `-MariaDbBin <XAMPP>\mysql\bin -ClientExe mysql.exe` for `restore-db.ps1`
+   (XAMPP's 10.4 has `mysqldump.exe` and `mysql.exe`, no `mariadb-dump.exe` / `mariadb.exe`; both scripts also take the
+   old names by themselves when the folder has no new ones). No firewall rule exists for XAMPP's MySQL by default; if
+   one was added, disable it as in section 1 step 6.
+
 ## 2. Database and users
 
 Generate two long random passwords (for example `-join ((48..57)+(65..90)+(97..122) | Get-Random -Count 32 | % {[char]$_})`)
 and run in `mariadb.exe -u root -p` (if PowerShell does not find `mariadb.exe`, add the client folder for this
-session: `$env:PATH += ';C:\Program Files\MariaDB 11.4\bin'`):
+session: `$env:PATH += ';C:\Program Files\MariaDB 11.4\bin'`; or use HeidiSQL's query tab as root):
 
 ```sql
 CREATE DATABASE dw4online CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
@@ -92,6 +143,30 @@ Which of the two accounts answers depends on MariaDB's name resolution (127.0.0.
 `skip-name-resolve` is set); both exist with the same password and rights, so either line is right. "Access denied"
 is not: check the password and that both `CREATE USER` lines ran.
 
+### 2.1 Variant: root as the only login
+
+The operator may decide to run the service and the backup as MariaDB's `root` instead of the two users above (the
+server installed on 31.10 does). Then only the database is created (as root, for example in HeidiSQL's query tab):
+
+```sql
+CREATE DATABASE dw4online CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+```
+
+and both files name root: `User ID=root;Password=<root password>` in the connection string (section 4),
+`user=root` / `password=<root password>` in `backup.cnf` (section 7). Use a root password of letters and digits only
+(a `;` ends the connection string's value, a `"` the JSON string).
+
+What it costs, plainly: the service then holds every right on the whole MariaDB instance, not only on `dw4online`. A
+flaw in DW4Online, a leaked settings file or code running as `NT SERVICE\DW4Online` would reach every other database
+on that instance (Pangya's, for example), the `mysql` system schema with its accounts and, through the `FILE`
+privilege, files on the disk with the rights of the MariaDB service (XAMPP's runs as LocalSystem and leaves
+`secure_file_priv` empty). The root password lies in two files instead of none, and the service could `DROP` its own
+tables. Why it is acceptable here: the MariaDB answers on 127.0.0.1 only, so nothing outside the server can try that
+password; both files are readable only by Administrators and SYSTEM (and the settings file by the service account);
+DW4Online sends only parameterised SQL (Dapper), no SQL built from player input; and one person administers the
+server. If the server ever hosts other people's services, or the MariaDB becomes reachable from the network, switch to
+the two users above (create them, put them into both files, restart the service).
+
 ## 3. Publish on the development PC
 
 ```powershell
@@ -117,38 +192,46 @@ patch a self-contained app): a .NET security release means a new publish and an 
 1. Copy the zip to the server and extract it to `D:\Dekirai\Servers\DW4Online\app`.
 2. Create `D:\Dekirai\Servers\DW4Online\config\appsettings.Production.json` from
    [appsettings.Production.example.json](appsettings.Production.example.json): the connection string with the service
-   password, a relay ticket key (`app\DW4Online.Server.exe gen-relay-key`), the IP address (the TLS settings of
-   section 6.1), and the `Web` section: `RequireHttps` true, `DataProtectionKeysDirectory` = the `keys` folder, and your
-   name, postal address and a contact in `OperatorName` / `OperatorAddress` / `OperatorContact` (the privacy page names
-   the controller, GDPR Art. 13). The relay is on by default (`Relay:Enabled`); it needs `ListenAddress` 0.0.0.0 and
-   the ticket key, and `Service:RelayHost` tells clients where it is. This file holds the secrets: never copy it into
-   Git or the app folder.
-3. Register the service, folder permissions and firewall rules:
+   password (root and its password in the root-only variant, section 2.1; the database's port), a relay ticket key
+   (`app\DW4Online.Server.exe gen-relay-key`), the IP address (the TLS settings of section 6.1), the HTTPS port
+   (`Kestrel:Endpoints:Https:Url`, section 4.1 when 443 is taken), and the `Web` section: `RequireHttps` true,
+   `DataProtectionKeysDirectory` = the `keys` folder, and your name, postal address and a contact in `OperatorName` /
+   `OperatorAddress` / `OperatorContact` (the privacy page names the controller, GDPR Art. 13). The relay is on by
+   default (`Relay:Enabled`); it needs `ListenAddress` 0.0.0.0 and the ticket key, and `Service:RelayHost` tells
+   clients where it is. This file holds the secrets: never copy it into Git or the app folder.
+3. Register the service, folder permissions and firewall rules (MSI MariaDB on 443; the XAMPP variant with HTTPS on
+   8443 below it):
 
    ```powershell
    powershell -ExecutionPolicy Bypass -File D:\Dekirai\Servers\DW4Online\app\deploy\install-service.ps1 -DryRun   # shows the commands
    powershell -ExecutionPolicy Bypass -File D:\Dekirai\Servers\DW4Online\app\deploy\install-service.ps1
+   powershell -ExecutionPolicy Bypass -File D:\Dekirai\Servers\DW4Online\app\deploy\install-service.ps1 -DatabaseService mysql -DatabasePort 3306 -HttpsPort 8443
    ```
 
    What it does (all reversible, no restart):
-   - First it checks that the `MariaDB` service exists and that its port (3306, `-DatabasePort`) listens on 127.0.0.1
-     only; it stops before changing anything otherwise.
+   - First it checks, and stops before changing anything if one check fails: the database service
+     (`-DatabaseService`: `MariaDB`, or `mysql` for XAMPP) exists and its port (`-DatabasePort`, 3306) listens on
+     127.0.0.1 only; the connection string names that port; the settings' HTTPS URL uses `-HttpsPort` and `Relay:Port`
+     is `-RelayPort` (the firewall rules open exactly these); nothing else listens on the HTTPS, relay and loopback
+     HTTP ports (a Traefik on 443 is named with its process and the hint to section 4.1).
    - `New-Service DW4Online` with the path `"...\app\DW4Online.Server.exe" --service --settings "...\config\appsettings.Production.json"`,
      then `sc.exe config DW4Online start= delayed-auto obj= "NT SERVICE\DW4Online"` (virtual account, no password),
-     restart-on-failure actions (5 s, 30 s, 60 s) and `sc.exe config DW4Online depend= MariaDB` (`-DatabaseService`):
-     after a reboot Windows starts MariaDB first, and the service itself waits up to 20 s for the database to answer
-     before its start fails (then the restart actions try again). Stopping MariaDB now stops DW4Online first; start
-     both again with `Start-Service MariaDB, DW4Online`.
+     restart-on-failure actions (5 s, 30 s, 60 s) and `sc.exe config DW4Online depend= <database service>`: after a
+     reboot Windows starts the database first, and the service itself waits up to 60 s
+     (`Database:StartupWaitSeconds`) for the database to answer before its start fails (then the restart actions try
+     again). Stopping the database service now stops DW4Online first; start both again with
+     `Start-Service <database service>, DW4Online`.
    - ACLs: every folder drops the permissions inherited from the drive and keeps only Administrators and SYSTEM (full
      control) plus the service's rights: the root and `app` read and execute for `NT SERVICE\DW4Online` (a release
      folder made later in the root inherits that), `config` read, `logs`, `acme` and `keys` modify, `backups` nothing
      (only Administrators and SYSTEM: the dumps hold password hashes, e-mail addresses and cloud saves). Check with
      `icacls D:\Dekirai\Servers\DW4Online\backups`.
-   - Inbound firewall rules for TCP 443 and 52041 (and 80 with `-OpenPort80`), limited to the service executable.
+   - Inbound firewall rules `DW4Online TCP <port>` for the HTTPS port and 52041 (and 80 with `-OpenPort80`), limited
+     to the service executable.
 4. If the hoster has a network firewall in front of the server (for example a Hetzner firewall in the Robot / Cloud
-   console), open TCP 443, 52041 (and 80 for certificate validation) there too.
+   console), open the HTTPS port (443, or 8443 in section 4.1), 52041 (and 80 for certificate validation) there too.
 5. Check that nothing else listens on the service's ports (a XAMPP Apache often holds 443 and 80, IIS or another
-   http.sys user shows up as `System`, PID 4):
+   http.sys user shows up as `System`, PID 4; `install-service.ps1` checks the same):
 
    ```powershell
    Get-NetTCPConnection -State Listen -LocalPort 443,52041,5280 -ErrorAction SilentlyContinue   # no output = free
@@ -163,20 +246,61 @@ patch a self-contained app): a .NET security release means a new publish and an 
 Kestrel binds the ports itself; on Windows a non-admin account may bind ports below 1024 with sockets (no URL ACL is
 needed because http.sys is not used).
 
-## 5. First start
+### 4.1 HTTPS on another port when 443 is taken (Traefik, IIS, Apache)
+
+A reverse proxy that already serves port 443 on the server stays untouched; DW4Online serves HTTPS on a port of its
+own instead (the server installed on 31.10: Traefik owns 443 and answers `404 page not found` with its "TRAEFIK DEFAULT
+CERT", so DW4Online uses **8443**). Who holds 443:
 
 ```powershell
+Get-NetTCPConnection -State Listen -LocalPort 443 | Select-Object LocalAddress, OwningProcess, @{n='Process';e={(Get-Process -Id $_.OwningProcess).ProcessName}}
+```
+
+1. `appsettings.Production.json`: `"Kestrel": { "Endpoints": { "Https": { "Url": "https://0.0.0.0:8443" }, "Http": { "Url": "http://127.0.0.1:5280" } } }`.
+2. Windows firewall: a fresh install passes `-HttpsPort 8443` to `install-service.ps1` (rule `DW4Online TCP 8443`).
+   On a service installed for 443, swap the rule by hand (elevated):
+
+   ```powershell
+   New-NetFirewallRule -DisplayName 'DW4Online TCP 8443' -Direction Inbound -Protocol TCP -LocalPort 8443 -Program D:\Dekirai\Servers\DW4Online\app\DW4Online.Server.exe -Action Allow -Profile Any
+   Get-NetFirewallRule -DisplayName 'DW4Online TCP 443' -ErrorAction SilentlyContinue | Remove-NetFirewallRule
+   ```
+
+3. Hetzner firewall: allow inbound TCP 8443 (and keep 52041).
+4. Certificate checks with the port: `new-selfsigned-cert.ps1 -PinServedBy 88.198.52.221 -PinServedPort 8443`
+   (`-HttpsPort 8443` does the same and also puts 8443 into the settings the script prints at creation);
+   `curl.exe -k https://88.198.52.221:8443/health`.
+5. Clients: the game client's server address carries the port, **`https://88.198.52.221:8443`**; the pins do not
+   change (they belong to the key, not the port), the relay stays on 52041 (`Service:RelayHost` without a port). The
+   website is `https://88.198.52.221:8443/` (register, account, privacy page).
+
+Port 443 can come back to DW4Online later through the proxy that holds it (section 6.2, case 2): the proxy then has to
+pass the pinned IP certificate's connections through (Traefik: a TCP router with TLS passthrough) or serve that
+certificate itself, or every client that pins it stops connecting.
+
+## 5. First start
+
+Create the tables in the console first, then start the service: `migrate` prints every migration with its time and,
+if something is wrong, the reason and the way out on the screen (section 9), not only in the log.
+
+```powershell
+cd D:\Dekirai\Servers\DW4Online
+.\app\DW4Online.Server.exe migrate --settings config\appsettings.Production.json   # ... "Migrating database 'dw4online' done in N s: schema 7"
 Start-Service DW4Online
-Get-Content D:\Dekirai\Servers\DW4Online\logs\dw4online-*.log -Tail 30
-curl.exe -k https://88.198.52.221/health      # {"status":"ok","schema":7}; -k: the certificate is self-signed (section 6.1)
-D:\Dekirai\Servers\DW4Online\app\DW4Online.Server.exe tls-pin --host 88.198.52.221   # the certificate the service picks from the store, and its pin
-powershell -ExecutionPolicy Bypass -File D:\Dekirai\Servers\DW4Online\app\deploy\new-selfsigned-cert.ps1 -PinServedBy 88.198.52.221   # the pin of the certificate port 443 really serves
+Get-ChildItem logs\dw4online-*.log | Sort-Object Name | Select-Object -Last 1 | Get-Content -Tail 30
+curl.exe http://127.0.0.1:5280/health          # {"status":"ok","schema":7}, on the server itself
+curl.exe -k https://88.198.52.221/health      # the same over HTTPS (:8443 in section 4.1); -k: the certificate is self-signed (section 6.1)
+.\app\DW4Online.Server.exe tls-pin --host 88.198.52.221   # the certificate the service picks from the store, and its pin
+powershell -ExecutionPolicy Bypass -File app\deploy\new-selfsigned-cert.ps1 -PinServedBy 88.198.52.221   # the pin of the certificate the HTTPS port really serves (-PinServedPort 8443 in section 4.1)
 ```
 
 Both pins must equal the first pin `new-selfsigned-cert.ps1` printed when it made the certificate (section 6.1).
+`Start-Service` may print `WARNING: Waiting for service 'DW4Online' to start...` a few times while the service waits
+for the database or migrates: that is the service reporting progress, not an error. The log then says "Database schema
+is current" (or "Applied migrations ..." if it migrated itself), "Now listening on: https://0.0.0.0:443" and the TLS
+certificate line; a ` FAIL ` line names what went wrong (section 9).
 
-The first start creates the tables (startup migrator). Register your own account on the website
-(`https://<host>/register`, keep the recovery code) or in the game, then make it the admin from an elevated console:
+Register your own account on the website (`https://<host>/register`, keep the recovery code) or in the game, then make
+it the admin from an elevated console:
 
 ```powershell
 cd D:\Dekirai\Servers\DW4Online\app
@@ -203,6 +327,7 @@ pin"), and refuses any other key before it sends a single byte of a request (the
    powershell -ExecutionPolicy Bypass -File new-selfsigned-cert.ps1 -SparePfx E:\dw4online-spare.pfx
    ```
 
+   (With HTTPS on 8443, section 4.1, add `-HttpsPort 8443`: the settings the script prints then name that port.)
    `E:` stands for a USB stick or any place that is not this server. On a rented server reached over Remote Desktop
    that is your own PC: with drive redirection on, write it there directly (`-SparePfx \\tsclient\C\Users\<you>\Desktop\dw4online-spare.pfx`),
    otherwise write it to the server's desktop, copy it to your PC through the Remote Desktop clipboard and delete it on
@@ -220,7 +345,7 @@ pin"), and refuses any other key before it sends a single byte of a request (the
    `new-selfsigned-cert.ps1 -SparePfx E:\dw4online-spare.pfx -SpareOnly` keeps the certificate in use and prints its
    pin and the spare's. `DW4Online.Server.exe tls-pin --file E:\dw4online-spare.pfx --password-env DW4_PFX` prints a
    PFX's pin with the password from the environment variable `DW4_PFX` (`$env:DW4_PFX = Read-Host` first).
-2. In `appsettings.Production.json` (the example file already holds these values):
+2. In `appsettings.Production.json` (the example file already holds these values; the port is 8443 in section 4.1):
 
    ```json
    "Kestrel": { "Endpoints": { "Https": { "Url": "https://0.0.0.0:443" } } },
@@ -235,9 +360,15 @@ pin"), and refuses any other key before it sends a single byte of a request (the
    spare PFX offline and its password somewhere else (for example in your password manager).
 4. Check: `.\DW4Online.Server.exe tls-pin --host 88.198.52.221` (in the app folder) prints the certificate the service
    picks from the store (the same selection, read from the store, no connection) and its pin;
-   `new-selfsigned-cert.ps1 -PinServedBy 88.198.52.221` connects to port 443 as the game client does (no host name)
-   and prints the pin of the certificate actually served; from another PC `curl.exe -k https://88.198.52.221/health`
-   answers `{"status":"ok",...}`.
+   `new-selfsigned-cert.ps1 -PinServedBy 88.198.52.221` (with `-PinServedPort 8443` in section 4.1) connects to the
+   HTTPS port as the game client does (no host name) and prints the pin of the certificate actually served; from
+   another PC `curl.exe -k https://88.198.52.221/health` (`https://88.198.52.221:8443/health`) answers
+   `{"status":"ok",...}`.
+
+A certificate made again before any client pins it (for example after a failed first attempt) is fine: remove the
+first one with its key (`Get-ChildItem Cert:\LocalMachine\My | Where-Object FriendlyName -eq 'DW4Online 88.198.52.221'
+| ForEach-Object { Remove-Item -LiteralPath "Cert:\LocalMachine\My\$($_.Thumbprint)" -DeleteKey }`), run step 1 again
+and use only the new pins.
 
 What players notice: browsers warn about the website's certificate (it is self-signed). Whoever wants to check it
 before accepting compares the browser's SHA-256 fingerprint with the `Certificate fingerprint (SHA-256)` line of
@@ -265,9 +396,9 @@ tokens included). A cross-site-scripting flaw in any other site on that name is 
 If other content lives on that host name (case 2), prefer a host name of its own for DW4Online
 (`dw4.crygod.de`, an A record to 88.198.52.221) with `PathBase` empty or kept.
 
-**Case 1: DW4Online keeps port 443 on this server.** The domain's A record points to 88.198.52.221 and nothing else
-on this machine serves that name. Get a Let's Encrypt certificate for `dekirai.crygod.de` into `LocalMachine\My` (6.3)
-and set:
+**Case 1: DW4Online keeps its HTTPS port on this server.** The domain's A record points to 88.198.52.221 and nothing
+else on this machine serves that name on that port. Get a Let's Encrypt certificate for `dekirai.crygod.de` into
+`LocalMachine\My` (6.3) and set:
 
 ```json
 "Tls": { "StoreHostName": "88.198.52.221", "AdditionalHostNames": [ "dekirai.crygod.de" ] },
@@ -276,10 +407,11 @@ and set:
 
 A connection that names the domain (SNI) gets the Let's Encrypt certificate and is validated normally; a connection to
 the IP address names no host and keeps getting the pinned certificate. New clients use
-`https://dekirai.crygod.de/dw4online`, old ones keep working until they update. (The domain's root then also shows
-the DW4Online website; if other content should live there, see case 2.)
+`https://dekirai.crygod.de/dw4online` (with `:8443` while DW4Online serves that port, section 4.1), old ones keep
+working until they update. (The domain's root then also shows the DW4Online website; if other content should live
+there, see case 2.)
 
-**Case 2: another web server serves dekirai.crygod.de on this machine** (IIS, nginx, Caddy). It forwards
+**Case 2: another web server serves dekirai.crygod.de on this machine** (Traefik, IIS, nginx, Caddy). It forwards
 `/dw4online/...` with the prefix kept to `http://127.0.0.1:5280` and sends `X-Forwarded-For` and `X-Forwarded-Proto`;
 DW4Online then listens only there (remove its `Https` endpoint and `Tls:StoreHostName`):
 
@@ -290,9 +422,9 @@ DW4Online then listens only there (remove its `Https` endpoint and `Tls:StoreHos
 
 `BehindProxy` believes those headers only from a proxy on this machine. Port 443 then belongs to that web server, so
 it must also serve the pinned IP certificate to connections without a name (IIS: an https binding on 88.198.52.221
-port 443 without host name, using the same certificate from `LocalMachine\My`, no export needed) and forward them to
-DW4Online as well, or the clients that still pin the IP certificate stop working. The relay keeps its own port 52041
-in both cases.
+port 443 without host name, using the same certificate from `LocalMachine\My`, no export needed; Traefik: TLS
+passthrough for connections without SNI) and forward them to DW4Online as well, or the clients that still pin the IP
+certificate stop working. The relay keeps its own port 52041 in both cases.
 
 ### 6.3 Let's Encrypt certificates with win-acme (the domain)
 
@@ -308,7 +440,8 @@ private key (win-acme's certificate store plugin can set key ACLs, check `wacs.e
 version; otherwise certlm.msc -> the certificate -> All Tasks -> Manage Private Keys). The service re-reads the store
 every 10 minutes and uses the newest valid certificate for each name, so win-acme's scheduled renewals take effect
 **without** restarting the service (a restart would end running co-op sessions). Clients of the domain validate it
-against the Windows root store (WinHTTP + Schannel) and do not pin it, so renewals with new keys are fine.
+against the Windows root store (WinHTTP + Schannel) and do not pin it, so renewals with new keys are fine. (Port 80
+may be taken by the same proxy as 443; then the proxy has to answer or forward the challenge.)
 
 Not chosen: a Let's Encrypt certificate for the IP address (6-day certificates through the ACME `shortlived` profile;
 the client would have to pin a key that changes with every renewal unless the key is reused) and plain HTTP (passwords
@@ -331,12 +464,21 @@ host=127.0.0.1
 port=3306
 ```
 
+(Root-only variant, section 2.1: `user=root` and the root password.)
+
 Schedule it nightly as SYSTEM (elevated PowerShell):
 
 ```powershell
 $action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument '-NoProfile -ExecutionPolicy Bypass -File D:\Dekirai\Servers\DW4Online\app\deploy\backup-db.ps1'
 $trigger = New-ScheduledTaskTrigger -Daily -At 03:30
 Register-ScheduledTask -TaskName 'DW4Online DB backup' -Action $action -Trigger $trigger -User 'SYSTEM' -RunLevel Highest
+```
+
+With XAMPP's MariaDB (section 1.1) the task passes its bin folder and dump program (put the XAMPP path of your server
+in place of `C:\xampp`; a path with spaces needs `\"...\"` around it inside the argument string):
+
+```powershell
+$action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument '-NoProfile -ExecutionPolicy Bypass -File D:\Dekirai\Servers\DW4Online\app\deploy\backup-db.ps1 -MariaDbBin C:\xampp\mysql\bin -DumpExe mysqldump.exe'
 ```
 
 Copy the backups off the server as well (for example to your own FTPS server with WinSCP scripting, or a storage box).
@@ -349,10 +491,12 @@ it as SYSTEM the same way):
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File D:\Dekirai\Servers\DW4Online\app\deploy\backup-db.ps1   # "Backup written: ...sql.gz (.. KB)"
+powershell -ExecutionPolicy Bypass -File D:\Dekirai\Servers\DW4Online\app\deploy\backup-db.ps1 -MariaDbBin C:\xampp\mysql\bin -DumpExe mysqldump.exe   # XAMPP
 ```
 
 Restore drill (once, and after schema changes) with [restore-db.ps1](restore-db.ps1), which asks for the MariaDB root
-password once and prints the restored database's account count and schema version:
+password once (or uses `backup.cnf` with `-OptionFile` when that holds a root login) and prints the restored
+database's account count and schema version:
 
 ```powershell
 cd D:\Dekirai\Servers\DW4Online
@@ -361,10 +505,13 @@ powershell -ExecutionPolicy Bypass -File app\deploy\restore-db.ps1 -Backup $late
 mariadb.exe -u root -p -e "DROP DATABASE dw4online_restore"
 ```
 
+With XAMPP's MariaDB: `restore-db.ps1 -Backup $latest -MariaDbBin C:\xampp\mysql\bin -ClientExe mysql.exe`, and drop
+`dw4online_restore` afterwards in HeidiSQL or with `C:\xampp\mysql\bin\mysql.exe -u root -p -e "DROP DATABASE dw4online_restore"`.
+
 Do not pipe a dump into the client in Windows PowerShell 5.1 (`7z e -so x.sql.gz | mariadb.exe ...`): the pipe
 re-encodes the text and silently turns every non-ASCII character into `?` (the rehearsal restored "PC von Jürgen" as
 "PC von J??rgen"). `restore-db.ps1` decompresses to a file and lets cmd.exe feed it unchanged; by hand that is
-`cmd /c "mariadb.exe -u root -p dw4online_restore < dump.sql"`.
+`cmd /c "mariadb.exe -u root -p dw4online_restore < dump.sql"`. HeidiSQL's "Run SQL file" is no substitute either.
 
 ## 8. Updates and rollback
 
@@ -372,7 +519,9 @@ re-encodes the text and silently turns every non-ASCII character into `?` (the r
    with `server_restart` at the next start). The service reads its settings only when it starts, so `Service:Motd` or
    `Service:Maintenance` (no new rooms) take effect only after a restart: announce elsewhere, or set them for a
    restart some time before the update.
-2. In an elevated PowerShell, with the new zip on the server (for example `C:\Users\Administrator\Desktop\DW4Online-<version>.zip`):
+2. In an elevated PowerShell, with the new zip on the server (for example `C:\Users\Administrator\Desktop\DW4Online-<version>.zip`;
+   XAMPP's MariaDB: add `-MariaDbBin <XAMPP>\mysql\bin -DumpExe mysqldump.exe` to the backup line; HTTPS on 8443: the
+   last line with `:8443`):
 
    ```powershell
    cd D:\Dekirai\Servers\DW4Online
@@ -381,35 +530,81 @@ re-encodes the text and silently turns every non-ASCII character into `?` (the r
    if (Test-Path app.previous) { Remove-Item -Recurse -Force app.previous }
    Rename-Item app app.previous
    Expand-Archive C:\Users\Administrator\Desktop\DW4Online-<version>.zip -DestinationPath app
+   .\app\DW4Online.Server.exe migrate --settings config\appsettings.Production.json   # "The database schema is current." or "... done in N s: schema N"
    Start-Service DW4Online
-   Get-Content (Get-ChildItem logs\dw4online-*.log | Sort-Object Name | Select-Object -Last 1).FullName -Tail 20   # "Database schema is current" or "Applied migrations ..."
+   Get-Content (Get-ChildItem logs\dw4online-*.log | Sort-Object Name | Select-Object -Last 1).FullName -Tail 20   # no " FAIL " line
+   curl.exe http://127.0.0.1:5280/health
    curl.exe -k https://88.198.52.221/health
    ```
 
-   The new `app` folder inherits the root's permissions (service read and execute), and the firewall rules and the
-   service name the same path, so nothing else changes.
+   `migrate` runs the new release's migrations in the console, before the service starts (section 9): it prints each
+   one with its time, and if it refuses or fails, nothing starts and the screen says why and what to do (usually: the
+   rollback below). The new `app` folder inherits the root's permissions (service read and execute), and the firewall
+   rules and the service name the same path, so nothing else changes.
 
-Rollback: stop the service, swap `app` and `app.previous` back; if the update applied a migration, restore the backup
-from step 2 into `dw4online` first (the old build refuses a database that is newer than itself):
+Rollback: stop the service, swap `app` and `app.previous` back; if the update applied a migration (or one failed half
+way), restore the backup from step 2 into `dw4online` first (the old build refuses a database that is newer than
+itself; XAMPP: add `-MariaDbBin <XAMPP>\mysql\bin -ClientExe mysql.exe`):
 
 ```powershell
 cd D:\Dekirai\Servers\DW4Online
 Stop-Service DW4Online
 Rename-Item app app.failed; Rename-Item app.previous app
 powershell -ExecutionPolicy Bypass -File app\deploy\restore-db.ps1 -Backup backups\daily\dw4online-<date>.sql.gz -Database dw4online -Replace   # only after a migration
+.\app\DW4Online.Server.exe migrate --settings config\appsettings.Production.json   # "The database schema is current."
 Start-Service DW4Online
 ```
 
-MariaDB updates and restarts: DW4Online depends on the MariaDB service (`sc.exe config DW4Online depend= MariaDB`), so
-`Stop-Service MariaDB` and `Restart-Service MariaDB` refuse while DW4Online runs (without `-Force`, which stops
-DW4Online too), and the MariaDB MSI cannot replace a running server. Stop DW4Online first:
-`Stop-Service DW4Online; Restart-Service MariaDB; Start-Service DW4Online` (for an MSI update: stop both, run the MSI,
-start MariaDB, then DW4Online). The same holds for a my.ini change (section 1).
+Database updates and restarts: DW4Online depends on the database service (`sc.exe config DW4Online depend= MariaDB`,
+or `mysql`), so `Stop-Service` and `Restart-Service` of that service refuse while DW4Online runs (without `-Force`,
+which stops DW4Online too), and the MariaDB MSI cannot replace a running server. Stop DW4Online first:
+`Stop-Service DW4Online; Restart-Service MariaDB; Start-Service DW4Online` (`mysql` for XAMPP; for an MSI update: stop
+both, run the MSI, start MariaDB, then DW4Online). The same holds for a `my.ini` change (section 1). With XAMPP, use
+these commands rather than the Control Panel's Stop button for MySQL: the Control Panel does not stop DW4Online first.
 
-## 9. Operating notes
+## 9. Migrations
 
-- Logs: `logs\dw4online-yyyyMMdd.log` (UTC, 30 days) when `Logging:File:Directory` is set; crashes also appear in the
-  Windows Application event log (source ".NET Runtime").
+Every release carries its database migrations (`sql/NNNN_*.sql`, inside the executable). They run
+
+- **in the console**, `DW4Online.Server.exe migrate --settings config\appsettings.Production.json`, which is the way
+  this document uses before every start that brings new migrations (sections 5 and 8): it shows the database it
+  talks to, each migration with its time (`Applied migration 0003 rooms in 0.01 s`) and the total
+  (`Migrating database 'dw4online' done in 0.26 s: schema 7`), and exits with 1 and a `FAIL:` message if it refuses or
+  fails;
+- **at the service start** (`Database:AutoMigrate`, on by default), so a start after a forgotten `migrate` still
+  works. The service connects to the Service Control Manager first and reports "start pending" with a new checkpoint
+  every 5 s while it waits for the database (up to `Database:StartupWaitSeconds`, 60 s) and migrates, however long
+  that takes; it reports "running" only once it listens. (Release 0.1.0 migrated before it connected, and the SCM
+  ended it after 30 s, see the top of this document.)
+
+Migrations change the schema with DDL, and MariaDB commits every DDL statement at once: a migration stopped half way
+leaves the database between two versions, which no build can work with. The migrator therefore marks each migration
+in `schema_version` before it runs it ("<name> (started, not finished)", checksum all zero) and replaces the mark when
+it is done. It never repairs or drops anything itself; it refuses, and its message (on screen, and as a ` FAIL ` line
+in the service log) names the state and the way out:
+
+| Message begins with | State | Way out |
+| --- | --- | --- |
+| `Database 'dw4online' has an empty schema_version: migration 0001 (initial) ... was interrupted` + `None of its N tables holds a row` | the very first migration stopped half way (the server's first start on 31.10) | nothing to lose: drop and re-create the database empty (as root, for example in HeidiSQL: `DROP DATABASE dw4online; CREATE DATABASE dw4online CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;`), then `migrate` in the console, then `Start-Service` |
+| the same + `yet tables hold rows (...)` | not what an interrupted first migration leaves | do **not** drop it: restore the last backup (`restore-db.ps1 -Database dw4online -Replace`) |
+| `Migration 000N (...) was started at ... and did not finish` / `Migration 000N (...) failed after ...: <MariaDB error>` | migration N stopped half way (a failing statement, a killed process) | restore the backup made before the update (`restore-db.ps1 -Backup <file> -Database dw4online -Replace`), remove the cause (the MariaDB error says what; tell the developers), then `migrate` again, or go back to the old release (section 8, rollback) |
+| `Database 'dw4online' has tables but no schema_version; refusing to touch it` | a database that is not (or no longer) DW4Online's | rows in it: point `Database:ConnectionString` at DW4Online's own database, or restore DW4Online's backup; no rows: drop and re-create it as above if it is meant for DW4Online |
+| `The database is at schema N, newer than this build` | an older release on a newer database (a rollback without the restore) | restore the backup that matches the release, or start the newer release |
+| `Migration N (...) changed after it was applied` | a build whose migration file differs from the applied one | do not use that build; tell the developers |
+| `Another process is migrating this database` | a second `migrate` or a starting service at the same time | wait until the other one is done, then again |
+| `The database did not answer within 60 s` (service log) | the database service is not running, or the port in the connection string is wrong | start it (`Start-Service mysql` / `MariaDB`); the service's restart actions try again by themselves |
+
+A service start that the migrator refuses (or that wrong settings stop) ends with `Start-Service` failing ("Failed to
+start service") and the System event log entry 7024 "The DW4Online service terminated with the following
+service-specific error: The data is invalid." (code 13; Windows supplies that text, the log says what is wrong); the
+service is not restarted (an operator has to act). A database that does not answer, or a port that is in use, ends the
+start without that entry ("terminated unexpectedly"), and the restart actions (5 s, 30 s, 60 s) try again. The last
+` FAIL ` line of the log always says which it was.
+
+## 10. Operating notes
+
+- Logs: `logs\dw4online-yyyyMMdd.log` (UTC, 30 days) when `Logging:File:Directory` is set; errors are ` FAIL ` lines
+  (with the exception below them), crashes also appear in the Windows Application event log (source ".NET Runtime").
 - Staff tools without the website: `DW4Online.Server.exe reset-password <user> --settings ...`, the `/api/v1/admin/...`
   endpoints with an admin token.
 - Privacy (GDPR, the server is in Germany): the database holds user names, optional e-mail addresses, IP addresses in
@@ -417,4 +612,4 @@ start MariaDB, then DW4Online). The same holds for a my.ini change (section 1).
   website has a privacy page (`/privacy`, fill in the `Web:Operator*` settings) and account deletion (by the player in
   the account settings, or by an admin on request on the admin page); deleting removes the personal records at once
   and leaves an anonymous `deleted_<id>` row. Backups keep deleted data until they roll over (14 daily + 8 weekly).
-- Ports 80 / 443 must not collide with other software on the server; the Pangya web port 88 is not used.
+- Ports 80 / 443 must not collide with other software on the server (section 4.1); the Pangya web port 88 is not used.

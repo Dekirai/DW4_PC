@@ -15,11 +15,19 @@
   -Database dw4online_restore (the default) is the restore drill: the database must not exist yet; drop it afterwards
   (DEPLOY.md section 7). -Database dw4online -Replace is the rollback of an update (DEPLOY.md section 8): it drops and
   re-creates the live database, so it refuses while the DW4Online service runs. The users' grants on dw4online.*
-  survive DROP DATABASE.
+  survive DROP DATABASE. It is also the way out of a migration that stopped half way (DEPLOY.md, "Migrations"):
+  restore the backup made before the update, then run "DW4Online.Server.exe migrate" in the console.
+
+  -MariaDbBin is the database's bin folder ('C:\Program Files\MariaDB 11.4\bin' for the MSI install, the default; the
+  XAMPP folder's mysql\bin for a XAMPP MariaDB). XAMPP's MariaDB 10.4 names its client mysql.exe (no mariadb.exe):
+  pass -ClientExe mysql.exe; without -ClientExe the script also takes mysql.exe when the folder has no mariadb.exe.
+  -OptionFile config\backup.cnf uses the backup's login instead of asking for the password (a root login there can
+  create and drop databases; a read-only backup user cannot).
 
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File restore-db.ps1 -Backup D:\Dekirai\Servers\DW4Online\backups\daily\dw4online-20261030-033000.sql.gz
   powershell -ExecutionPolicy Bypass -File restore-db.ps1 -Backup <file> -Database dw4online -Replace
+  powershell -ExecutionPolicy Bypass -File restore-db.ps1 -Backup <file> -MariaDbBin C:\xampp\mysql\bin -ClientExe mysql.exe
 #>
 param(
     [Parameter(Mandatory = $true)]
@@ -38,7 +46,13 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $client = Join-Path $MariaDbBin $ClientExe
-if (-not (Test-Path $client)) { throw "$client not found (use -MariaDbBin)." }
+if (-not (Test-Path $client) -and -not $PSBoundParameters.ContainsKey('ClientExe') -and (Test-Path (Join-Path $MariaDbBin 'mysql.exe'))) {
+    $ClientExe = 'mysql.exe' # XAMPP's MariaDB 10.4 has no mariadb.exe
+    $client = Join-Path $MariaDbBin $ClientExe
+}
+if (-not (Test-Path $client)) {
+    throw "$client not found: pass the database's bin folder with -MariaDbBin (XAMPP: -MariaDbBin <XAMPP folder>\mysql\bin -ClientExe mysql.exe)."
+}
 $Backup = (Resolve-Path $Backup).Path
 if ($Database -notmatch '^[A-Za-z0-9_]+$') { throw "-Database '$Database': letters, digits and _ only." }
 if ($Database -eq 'dw4online' -and -not $Replace) { throw 'Restoring into the live database dw4online needs -Replace (the rollback, DEPLOY.md section 8).' }
