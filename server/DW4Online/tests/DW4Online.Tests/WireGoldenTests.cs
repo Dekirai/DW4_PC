@@ -58,6 +58,11 @@ public class WireGoldenTests
     public void Message_bytes_equal_the_clients()
     {
         Assert.Equal("070000000200000063000000010080010203" + "04", PayloadHex(new InputMsg(7, 2, 99, [new Pad(0x8000, 1, 2, 3, 4)]).Frame()));
+        // NETSTAT (round 62): the member's link for its network indicator (tests/online_wire_tests.cpp "golden NETSTAT").
+        Assert.Equal("1800" + "0600" + "03" + "feff" + "e8030000" + "05000000" + "07000000" + "01",
+            PayloadHex(new NetStatMsg(24, 6, 3, -2, 1000, 5, 7, NetStatMsg.InStream).Frame()));
+        Assert.Equal(new NetStatMsg(24, 6, 3, -2, 1000, 5, 7, 1), NetStatMsg.Parse(new NetStatMsg(24, 6, 3, -2, 1000, 5, 7, 1).Frame().AsSpan(Wire.HeaderBytes)));
+        Assert.Equal(0x8F, new NetStatMsg(0, 0, 0, 0, 0, 0, 0, 0).Frame()[0]);
         Assert.Equal("0700000008737461673031303203cdab000000000000", PayloadHex(new HeadingMsg(7, "stag0102", 3, 0xABCD).Frame()));
         Assert.Equal("0700000002000000f401000008646e67313031623101030388776655443322110200000009" + "09",
             PayloadHex(new BarrierMsg(7, 2, 500, "dng101b1", 1, 3, 3, 0x1122334455667788, [9, 9]).Frame()));

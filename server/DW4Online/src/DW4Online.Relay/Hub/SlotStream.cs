@@ -24,6 +24,7 @@ public sealed class SlotStream
         Slot = slot;
         FromTick = fromTick;
         Delay = new DelayController(delay);
+        GraceUntil = fromTick + (uint)Math.Max(0, delay) + 2;
     }
 
     public int Slot { get; }
@@ -31,6 +32,12 @@ public sealed class SlotStream
     public uint FromTick { get; set; }
     /// <summary>The first tick without this slot (LEAVE, fork); uint.MaxValue while it stays.</summary>
     public uint UntilTick { get; set; } = uint.MaxValue;
+    /// <summary>Pads for ticks before this one do not feed the delay rule when they come late: the member's client sends
+    /// them all at once when it learns of the stream (a JOIN it executes at J, a sealed start after its load, a resync's
+    /// end), so the first of them are late by design (round 62: every join raised the joiner's d by one).</summary>
+    public uint GraceUntil { get; set; }
+    /// <summary>Late pads inside the grace (not counted by the delay rule).</summary>
+    public long LateInGrace { get; private set; }
     public DelayController Delay { get; }
 
     public long Sealed { get; private set; }
@@ -62,7 +69,8 @@ public sealed class SlotStream
         if (tick < nextSeal || tick < FromTick)
         {
             ++Late;
-            Delay.Record(marginMs, late: true);
+            if (tick < GraceUntil) ++LateInGrace;
+            else Delay.Record(marginMs, late: true);
             return Submit.Late;
         }
         if (tick - nextSeal >= MaxAhead)
@@ -80,7 +88,7 @@ public sealed class SlotStream
         _ringTick[i] = tick;
         if (!HasHorizon || tick > Horizon) Horizon = tick;
         HasHorizon = true;
-        Delay.Record(marginMs, late: false);
+        if (tick >= GraceUntil) Delay.Record(marginMs, late: false);
         return Submit.Accepted;
     }
 
@@ -121,92 +129,156 @@ public sealed class SlotStream
 
     public double FillRate => Sealed == 0 ? 0 : (double)Filled / Sealed;
 }
-
 /// <summary>
-/// The delay rule of SEAMLESS.md 6.4: raise d by one when more than 0.1 % of the last 3,600 pads arrived late; lower it
-/// by one when the 0.1 % quantile of the arrival margin stayed above one tick for 30 s. Bounds 1..max.
+/// The delay rule of SEAMLESS.md 6.4 (round 62): it follows the member's link, not single stalls. Over the last ten
+/// seconds of pads (600): d rises by one when late pads came in at least three different seconds of them (one stall of
+/// the client, a burst after one lost segment or a load costs that member a few filled pads, not a lasting tick of input
+/// delay for the rest of the stage), and at once by up to three when most pads of the last second were late (the
+/// starting value too low, a joiner still a tick behind); it falls
+/// when ten seconds have passed since the last change and the 0.5 % quantile of the arrival margin is above 1.15 ticks,
+/// by as many ticks as leave 0.15 of a tick of that margin (at most three at once; the client keeps the presses of the
+/// samples it skips). Round S1's rule (rise on four late pads in 60 s, fall by one per 30 s) ratcheted every hiccup into
+/// lasting delay: two hidden clients at 20 ms of round trip went from d 3 to 8 and 9 within ten seconds of machine load
+/// and the guest of a mid-stage join started at 7 (docs/SEAMLESS.md 6.4, round 62). Bounds 1..max.
 /// </summary>
 public sealed class DelayController(int initial)
 {
-    public const int Window = 3600;
-    public const int LowerWindow = 1800; // 30 s of pads
+    /// <summary>Pads the rules look at (ten seconds).</summary>
+    public const int Window = 600;
+    /// <summary>One second of pads: late pads count by the seconds they came in.</summary>
+    public const int Block = 60;
+    /// <summary>Seconds of the window with late pads before d rises.</summary>
+    public const int RaiseSeconds = 3;
+    /// <summary>Pads since the last change before d may fall (ten seconds).</summary>
+    public const int LowerHold = 600;
+    /// <summary>The margin quantile d falls by (0.5 %: three pads of the window may be below it).</summary>
+    public const double LowerQuantile = 0.005;
+    /// <summary>The share of a tick the low margin keeps after d fell (S1 kept a quarter; at 20 ms of round trip a joiner
+    /// then stayed at 4 with a margin of 19-20 ms, one tick above the host's 3 at 3-6 ms).</summary>
+    public const double LowerReserve = 0.15;
+    /// <summary>Ticks d falls or rises at most in one evaluation.</summary>
+    public const int MaxStep = 3;
+
+    private readonly double[] _margin = new double[Window];
     private readonly bool[] _late = new bool[Window];
-    private readonly double[] _margin = new double[LowerWindow];
     private int _pos;
-    private int _mpos;
     private int _count;
-    private int _mcount;
-    private int _lateInWindow;
     private int _sinceChange;
 
     public int Current { get; private set; } = initial;
     public int Max { get; set; } = 10;
+    /// <summary>The share of late pads in the window that counts (with <see cref="RaiseSeconds"/> different seconds).</summary>
     public double LateTarget { get; set; } = 0.001;
 
     public void Record(double marginMs, bool late)
     {
-        if (_count == Window && _late[_pos]) --_lateInWindow;
+        _margin[_pos] = marginMs;
         _late[_pos] = late;
-        if (late) ++_lateInWindow;
         _pos = (_pos + 1) % Window;
         _count = Math.Min(Window, _count + 1);
-        _margin[_mpos] = marginMs;
-        _mpos = (_mpos + 1) % LowerWindow;
-        _mcount = Math.Min(LowerWindow, _mcount + 1);
         ++_sinceChange;
     }
 
-    /// <summary>The 0.1 % quantile of the margins of the last 30 s (ms), or null with fewer samples.</summary>
-    public double? LowMargin()
+    /// <summary>The <paramref name="share"/> quantile of the window's margins (ms), or null with fewer than a second of pads.</summary>
+    public double? Quantile(double share)
     {
-        if (_mcount < 60) return null;
-        var copy = _margin.AsSpan(0, _mcount).ToArray();
+        if (_count < Block) return null;
+        var copy = new double[_count];
+        for (var k = 0; k < _count; ++k) copy[k] = _margin[(_pos - _count + k + Window) % Window];
         Array.Sort(copy);
-        return copy[(int)Math.Floor(_mcount * LateTarget)];
+        return copy[Math.Clamp((int)Math.Floor(_count * share), 0, _count - 1)];
+    }
+
+    /// <summary>The newest <paramref name="n"/> margins (ms), sorted; fewer while the window holds fewer.</summary>
+    private double[] NewestMargins(int n)
+    {
+        var k = Math.Min(n, _count);
+        var copy = new double[k];
+        for (var i = 0; i < k; ++i) copy[i] = _margin[(_pos - 1 - i + 2 * Window) % Window];
+        Array.Sort(copy);
+        return copy;
+    }
+
+    /// <summary>The low margin PING reports (the quantile the rule falls by), or null with fewer than a second of pads.</summary>
+    public double? LowMargin() => Quantile(LowerQuantile);
+
+    /// <summary>Late pads in the window, and the number of its one-second blocks that hold one.</summary>
+    public (int Late, int Seconds) LateInWindow()
+    {
+        int late = 0, seconds = 0;
+        for (var b = 0; b * Block < _count; ++b)
+        {
+            var any = false;
+            for (var k = b * Block; k < Math.Min(_count, (b + 1) * Block); ++k)
+            {
+                // The newest pads first, by blocks of one second.
+                if (!_late[(_pos - 1 - k + 2 * Window) % Window]) continue;
+                ++late;
+                any = true;
+            }
+            if (any) ++seconds;
+        }
+        return (late, seconds);
     }
 
     /// <summary>A new delay when the rule says so (call every 60 ticks or so), else null.</summary>
     public int? Evaluate()
     {
-        var lateLimit = Math.Max(1, (int)Math.Floor(Window * LateTarget));
-        if (_lateInWindow > lateLimit && Current < Max)
+        const double tick = Wire.TickSeconds * 1000.0;
+        var (late, seconds) = LateInWindow();
+        // Most of the last second's pads late: d is too low for this link right now (a start value below it, a join
+        // whose client still runs a tick behind); every second waited for two more seconds of late pads costs the
+        // member most of its inputs, so it rises at once, by what the median margin of that second says.
+        var newest = NewestMargins(Block);
+        var mostLate = newest.Length == Block && newest[Block / 2] < 0;
+        if (Current < Max && (mostLate || (late > _count * LateTarget && seconds >= RaiseSeconds)))
         {
-            Change(Current + 1);
+            var step = mostLate ? Math.Clamp((int)Math.Ceiling(-newest[Block / 2] / tick) + 1, 1, MaxStep) : 1;
+            Change(Current + step);
             return Current;
         }
-        if (_sinceChange >= LowerWindow && _mcount == LowerWindow && Current > 1 && LowMargin() is { } low && low > Wire.TickSeconds * 1000.0 * 1.25)
+        if (_sinceChange >= LowerHold && _count == Window && Current > 1 && LowMargin() is { } low && low > tick * (1 + LowerReserve))
         {
-            Change(Current - 1);
+            var step = Math.Clamp((int)Math.Floor((low - tick * LowerReserve) / tick), 1, MaxStep);
+            Change(Current - step);
             return Current;
         }
         return null;
     }
 
-    /// <summary>Sets the delay (a DELAY event goes out with it) and starts the windows afresh.</summary>
+    /// <summary>Sets the delay (a DELAY event goes out with it) and starts the window afresh.</summary>
     public void Change(int d)
     {
         Current = Math.Clamp(d, 1, Max);
         Array.Clear(_late);
-        _lateInWindow = 0;
         _count = 0;
         _pos = 0;
-        _mcount = 0;
-        _mpos = 0;
         _sinceChange = 0;
     }
 
     /// <summary>
-    /// The starting delay from round trips (ms): d = ceil((RTT + spread) / tick) + 1, the +1 for the client's playout
-    /// buffer of one tick; the arrival margins correct it within seconds.
+    /// The starting delay from round trips (ms): d = ceil((RTT + spread) / tick + 1.5), RTT the median and the spread the
+    /// 90th percentile above it, of the newest 30 round trips (the last 30 s of PING). A client answers PING in its host
+    /// loop, so a stage load, a snapshot restore or a catch-up pass delays single answers by hundreds of ms; those are no
+    /// round trips of the link and are left out (above twice the median plus 50 ms; S1 took the 99.9th percentile of 120
+    /// samples, the largest, and started a joiner at 6 at 20 ms of round trip). The arrival margins correct it.
     /// </summary>
     public static int FromRoundTrips(IReadOnlyCollection<double> rttMs, int max)
     {
         if (rttMs.Count == 0) return Math.Min(3, max);
-        var sorted = rttMs.OrderBy(x => x).ToArray();
-        var median = sorted[sorted.Length / 2];
-        var top = sorted[Math.Min(sorted.Length - 1, (int)Math.Ceiling(sorted.Length * 0.999) - 1)];
-        var spread = Math.Max(0, top - median);
-        var d = (int)Math.Ceiling((median + spread + 1.0) / (Wire.TickSeconds * 1000.0)) + 1;
+        var (median, spread) = RoundTrip(rttMs);
+        var d = (int)Math.Ceiling((median + spread) / (Wire.TickSeconds * 1000.0) + 1.5);
         return Math.Clamp(d, 1, max);
+    }
+
+    /// <summary>The median of the newest 30 round trips and the spread of their 90th percentile above it, stalls left out (ms).</summary>
+    public static (double Median, double Spread) RoundTrip(IReadOnlyCollection<double> rttMs)
+    {
+        if (rttMs.Count == 0) return (0, 0);
+        var recent = rttMs.Skip(Math.Max(0, rttMs.Count - 30)).OrderBy(x => x).ToArray();
+        var median = recent[recent.Length / 2];
+        var kept = recent.Where(x => x <= 2 * median + 50).ToArray();
+        var p90 = kept[Math.Clamp((int)Math.Ceiling(kept.Length * 0.9) - 1, 0, kept.Length - 1)];
+        return (median, Math.Max(0, p90 - median));
     }
 }

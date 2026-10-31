@@ -798,6 +798,28 @@ public sealed record PingMsg(uint Nonce, ulong ServerTimeMs, short MarginMs, byt
     public byte[] Frame() => new WireWriter(Msg.Ping).U32(Nonce).U64(ServerTimeMs).I16(MarginMs).U8(Delay).Frame();
 }
 
+/// <summary>
+/// NETSTAT (round 62), once per second after PING: the member's link as the relay sees it, for its network indicator and
+/// online.log. Round trip median and spread (p90 above it, host-loop stalls left out, ms), the input delay, the arrival
+/// margin (the delay rule's low quantile, ms), and the pads of its current sealed stream: sealed, filled (its pad was not
+/// there in time) and late (came after its tick was sealed). Flags: 1 = in a sealed stream. Clients before round 62 skip
+/// it (unknown server frames are skipped), so no protocol change.
+/// </summary>
+public sealed record NetStatMsg(ushort RttMs, ushort SpreadMs, byte Delay, short MarginMs, uint Sealed, uint Filled, uint Late, byte Flags)
+{
+    public const byte InStream = 1;
+
+    public static NetStatMsg Parse(ReadOnlySpan<byte> p)
+    {
+        var r = new WireReader(p);
+        var m = new NetStatMsg(r.U16(), r.U16(), r.U8(), r.I16(), r.U32(), r.U32(), r.U32(), r.U8());
+        r.End();
+        return m;
+    }
+
+    public byte[] Frame() => new WireWriter(Msg.NetStat).U16(RttMs).U16(SpreadMs).U8(Delay).I16(MarginMs).U32(Sealed).U32(Filled).U32(Late).U8(Flags).Frame();
+}
+
 public sealed record CloseMsg(CloseReason Reason, string Text)
 {
     public static CloseMsg Parse(ReadOnlySpan<byte> p)

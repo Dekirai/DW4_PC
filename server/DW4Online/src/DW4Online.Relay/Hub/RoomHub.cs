@@ -674,7 +674,12 @@ public sealed class RoomHub
     {
         if (i.Mode != InstanceMode.Sealed || i.Sealing || i.Barrier is not null || i.SoloPending) return;
         if (i.Seats.Any(x => !i.Snapshot.Hashes.ContainsKey(x.Slot) && x.Member.Connected)) return;
-        var rtt = i.Members.Select(x => x.Rtt.Max).DefaultIfEmpty(0).Max();
+        // (The members' round trips without their host-loop stalls: a load's late PONG once placed S0 half a second out.)
+        var rtt = i.Members.Select(x =>
+        {
+            var (median, spread) = DelayController.RoundTrip(x.Rtt.All);
+            return median + spread;
+        }).DefaultIfEmpty(0).Max();
         i.S0 = now + FromMs(Math.Min(rtt, 500)) + 2 * TickTs - (long)(i.NextSeal * Wire.TickSeconds * Freq);
         i.Sealing = true;
         Note("sealing", i, ("from", i.NextSeal));
@@ -1565,6 +1570,9 @@ public sealed class RoomHub
             // A resync's end: the member never left the instance and sends its pads again (no JOIN, 6.9).
             m.Resyncing = false;
             if (msg.Rate > 0) m.Rate = Math.Min(msg.Rate, MaxReplayRate);
+            // Its first pads after the resync go out at once and come late by design: the delay rule does not count them.
+            if (m.Slot >= 0 && own.Streams[m.Slot] is { } resynced)
+                resynced.GraceUntil = Math.Max(resynced.GraceUntil, own.NextSeal + (uint)resynced.Delay.Current + 12);
             Count("resync_ready");
             Note("resync_ready", own, ("member", m.Index), ("tick", msg.Tick), ("fp", msg.NetFp.ToString("x16")));
             // Its reports from before the resync are its old engine's: they vote on nothing any more.
@@ -2093,6 +2101,11 @@ public sealed class RoomHub
                 var margin = st?.Delay.LowMargin() is { } low ? (short)Math.Clamp(low, short.MinValue, short.MaxValue) : (short)0;
                 var d = st?.Delay.Current ?? DelayController.FromRoundTrips(m.Rtt.All, _sealing.MaxDelayTicks);
                 m.Peer.Send(new PingMsg(m.PingNonce, (ulong)(now * 1000.0 / Freq), margin, (byte)d).Frame());
+                // What the member's network indicator and online.log show (round 62; older clients skip the frame).
+                var (rttMedian, rttSpread) = DelayController.RoundTrip(m.Rtt.All);
+                m.Peer.Send(new NetStatMsg((ushort)Math.Clamp(Math.Round(rttMedian), 0, ushort.MaxValue), (ushort)Math.Clamp(Math.Round(rttSpread), 0, ushort.MaxValue),
+                    (byte)d, margin, (uint)Math.Min(uint.MaxValue, st?.Sealed ?? 0), (uint)Math.Min(uint.MaxValue, st?.Filled ?? 0),
+                    (uint)Math.Min(uint.MaxValue, st?.Late ?? 0), st is null ? (byte)0 : NetStatMsg.InStream).Frame());
             }
         }
         foreach (var i in _instances.Values.ToList())
