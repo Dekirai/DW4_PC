@@ -56,12 +56,22 @@ public sealed class OnlineCharacterService(
 
         var now = Clock.Now(time);
         var current = await characters.GetAsync(accountId, ct);
+        // A save sent again after its answer was lost (the same record on the revision it was based on, the one right after
+        // it): its own revision, not another PC's (the client said "saved on another PC" and stopped saving).
+        if (current is not null && expectedRevision is { } based && current.Revision == based + 1 && SameOutsideStory(current.Record, record))
+            return new CharacterSaveResult(current.Revision, CharacterSummary.From(RecordCodec.Decode(current.Record)), [], []);
         if (expectedRevision is null && current is not null)
             return DomainError.Conflict("character_exists", "An online character exists; update it with its revision.", Revision(current.Revision));
         if (expectedRevision is not null && current is null)
             return DomainError.NotFound("no_online_character", "There is no online character yet.");
         if (current is not null && current.Revision != expectedRevision)
             return DomainError.Conflict("revision_conflict", "The online character changed in the meantime.", Revision(current.Revision));
+        // The character the last reset ended does not come back as a new one (another PC still had it in its card cache). A new
+        // character's UNIQUE is the frame count of its creation and may repeat, so only a record beyond a new game's level with
+        // the ended character's UNIQUE, name and partner is the old character.
+        if (current is null && decoded.Level > 1 && await characters.GetLastEndedRecordAsync(accountId, ct) is { } ended &&
+            RecordCodec.Decode(ended) is var old && old.Unique == decoded.Unique && old.Name == decoded.Name && old.Digimon == decoded.Digimon)
+            return DomainError.Conflict("character_was_reset", "This online character was reset. Start a new game to make a new one.");
 
         var previous = current is null ? null : RecordCodec.Decode(current.Record);
         // A new character: the real time since the account was made or its online character was last reset.
@@ -90,23 +100,34 @@ public sealed class OnlineCharacterService(
     public Task<IReadOnlyList<HistoryEntry>> HistoryAsync(long accountId, CancellationToken ct = default) =>
         characters.ListHistoryAsync(accountId, ct);
 
+    /// <summary>Whether a reset has anything to do: an online character, or an online story (an owner whose guests played,
+    /// or whose character is gone while its story is not).</summary>
+    public async Task<bool> HasResetWorkAsync(long accountId, CancellationToken ct = default) =>
+        await characters.GetAsync(accountId, ct) is not null || (stories is not null && !(await stories.LoadAsync(accountId, ct)).IsEmpty);
+
+    /// <summary>Staff: whether the account's story history keeps that revision.</summary>
+    public async Task<bool> HasStoryRevisionAsync(long accountId, long revision, CancellationToken ct = default) =>
+        stories is not null && await stories.HasRevisionAsync(accountId, revision, ct);
+
     /// <summary>
     /// Ends the current online character; the next upload creates a new one. Its revisions stay in the history for
     /// <see cref="OnlineCharacterOptions.ResetHistoryDays"/> (staff can undo a reset made by mistake or look at a
     /// flagged character), then the housekeeping deletes them. The audit row keeps whether the character was flagged.
     /// The account's online story is emptied with it (a new character starts from a new game's story, its unlocked
-    /// difficulties too); the old story stays in the story history. The caller closes the account's own room first (its
-    /// hub would save the old story again).
+    /// difficulties too); the old story stays in the story history. An account without a character whose story is not
+    /// empty (an owner whose guests played) gets the story emptied alone, and a reset whose story part failed can be run
+    /// again. The caller closes the account's own room first (its hub would save the old story again).
     /// </summary>
     public async Task<bool> ResetAsync(long accountId, long actorId, byte[]? ip, CancellationToken ct = default)
     {
         var now = Clock.Now(time);
         var current = await characters.GetAsync(accountId, ct);
-        var done = current is not null && await characters.ResetAsync(accountId, now, options.HistoryRevisions, ct);
-        if (!done) return false;
-        var story = stories is null ? 0 : await stories.ResetAsync(accountId, ct);
+        var character = current is not null && await characters.ResetAsync(accountId, now, options.HistoryRevisions, ct);
+        var hadStory = stories is not null && !(await stories.LoadAsync(accountId, ct)).IsEmpty;
+        var story = hadStory ? await stories!.ResetAsync(accountId, ct) : 0;
+        if (!character && !hadStory) return false;
         await audit.WriteAsync("character_reset", accountId, actorId, ip,
-            new { revision = current!.Revision, flagged = current.Flagged, historyKeptDays = options.ResetHistoryDays, storyRevision = story }, now, ct);
+            new { revision = current?.Revision, flagged = current?.Flagged, historyKeptDays = options.ResetHistoryDays, storyRevision = story }, now, ct);
         return true;
     }
 
@@ -156,6 +177,14 @@ public sealed class OnlineCharacterService(
         var now = Clock.Now(time);
         await audit.WriteAsync("story_restore", accountId, actorId, ip, new { from = revision, revision = restored }, now, ct);
         return restored;
+    }
+
+    /// <summary>Two records alike outside the story bytes (the stored one carries the account's own story).</summary>
+    private static bool SameOutsideStory(byte[] stored, byte[] upload)
+    {
+        if (stored.Length != upload.Length) return false;
+        var empty = new RoomStoryData();
+        return StoryRecord.Compose(stored, empty).AsSpan().SequenceEqual(StoryRecord.Compose(upload, empty));
     }
 
     private static DomainError Rejected(ValidationReport report) =>

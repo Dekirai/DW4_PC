@@ -37,7 +37,10 @@ public static class AccountEndpoints
             if (await accounts.ConfirmPasswordAsync(session.AccountId, r.CurrentPassword, ctx.Caller(), ctx.RequestAborted) is { Ok: false } wrong)
                 return ApiProblems.From(wrong.Error!);
             await rooms.RemoveAccountAsync(session.AccountId, ctx.RequestAborted);
-            return ApiProblems.Ok(await accounts.DeleteAccountAsync(session, r.CurrentPassword, ctx.Caller(), ctx.RequestAborted), _ => Results.NoContent());
+            var deleted = await accounts.DeleteAccountAsync(session, r.CurrentPassword, ctx.Caller(), ctx.RequestAborted);
+            // Again after the scrub: a room another session of the account opened meanwhile closes (its sessions end there).
+            if (deleted.Ok) await rooms.RemoveAccountAsync(session.AccountId, CancellationToken.None);
+            return ApiProblems.Ok(deleted, _ => Results.NoContent());
         }).RequireRateLimiting(RateLimitPolicies.AccountChange);
 
         me.MapGet("/sessions", async (AccountService accounts, HttpContext ctx) =>

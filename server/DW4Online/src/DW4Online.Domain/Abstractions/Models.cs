@@ -108,7 +108,18 @@ public static class StoryWriteReasons
     public const string Room = "room";
     public const string Reset = "reset";
     public const string AdminRestore = "admin_restore";
+    /// <summary>The story a room session started from (its owner opened a room), kept beside the room's revisions.</summary>
+    public const string Session = "session";
 }
+
+/// <summary>
+/// How an account's online story history is kept (online_story_history, SEAMLESS.md 8.7): the newest
+/// <paramref name="Recent"/> revisions in full; of older ones the room's revisions thinned to the first of every
+/// <paramref name="BucketMinutes"/> minutes for <paramref name="Days"/> days, and the session starts, resets and restores
+/// for <paramref name="Days"/> days, the newest <paramref name="Sessions"/> of them for good. Kept by time and session, not
+/// by count alone: a member that forged a revision a second pushed every honest revision out of the last 100.
+/// </summary>
+public sealed record StoryHistoryPolicy(int Recent, int BucketMinutes, int Days, int Sessions);
 
 /// <summary>A new online character revision with the server-side summary columns.</summary>
 public sealed record OnlineCharacterWrite(

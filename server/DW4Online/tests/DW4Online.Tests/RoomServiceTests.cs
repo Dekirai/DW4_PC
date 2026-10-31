@@ -411,4 +411,25 @@ public class RoomServiceTests
         Assert.True(RoomSettings.RandomizerRequested(JsonDocument.Parse("{\"randomizer\":{\"enabled\":true,\"seed\":5,\"drops\":true}}").RootElement));
         Assert.False(RoomSettings.RandomizerRequested(JsonDocument.Parse("{\"randomizer\":{\"enabled\":true,\"seed\":5}}").RootElement)); // no mode
     }
+
+    /// <summary>
+    /// Round 59 review: an account's deletion closed its rooms and then scrubbed it; another session of the same account (the
+    /// running game) opened a room in between, which kept the deleted account's name and story keeper. A removed account
+    /// opens, joins and gets tickets for no room for two minutes (its requests already on their way), and the deletion paths
+    /// take it out again after the scrub.
+    /// </summary>
+    [Fact]
+    public async Task A_removed_account_opens_and_joins_no_room_for_a_while()
+    {
+        var rooms = Service();
+        var guestRoom = await Ok(rooms.CreateAsync(1, "Owner", Create(), false));
+        await Ok(rooms.JoinAsync(2, "Guest", guestRoom.Room.Code, null, 41, 77, "0.48.0"));
+        await rooms.RemoveAccountAsync(2);
+        Assert.Equal("account_inactive", (await rooms.CreateAsync(2, "Guest", Create(name: "Mine"), false)).Error!.Code);
+        Assert.Equal("account_inactive", (await rooms.JoinAsync(2, "Guest", guestRoom.Room.Code, null, 41, 77, "0.48.0")).Error!.Code);
+        Assert.Single(await rooms.ListAsync());
+        _clock.Now += TimeSpan.FromMinutes(3);
+        await rooms.SweepAsync();
+        Assert.True((await rooms.CreateAsync(2, "Guest", Create(name: "Mine"), false)).Ok); // (unlocked again)
+    }
 }

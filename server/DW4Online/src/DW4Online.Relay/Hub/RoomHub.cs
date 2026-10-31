@@ -31,18 +31,20 @@ public sealed class RoomHub
     private readonly Dictionary<int, HubMember> _members = [];
     private readonly Dictionary<uint, HubInstance> _instances = [];
     private readonly List<ArrivalGroup> _holds = [];
-    private uint _nextInstance = 1;
-    private RoomStoryKeeper? _story;
+    private readonly RoomSessionState _session;
     private uint _pingNonce;
     private long _lastPing;
     private long _lastRoster;
 
     /// <param name="stateRunner">Builds state transfers outside the room lock (the relay: on the thread pool, then
     /// <see cref="FinishState"/> under the lock); null builds them at once (the tests).</param>
+    /// <param name="session">What the room keeps while its hub is rebuilt (the relay drops an empty hub while the room stays
+    /// open): its story keeper and the next instance id. Null: a room of its own (the tests).</param>
     public RoomHub(RoomInfo info, RelayOptions relay, SealingOptions sealing, InstanceOptions instances, ILogger log, IMembershipLog? mlog = null,
-        Action<StateJob>? stateRunner = null)
+        Action<StateJob>? stateRunner = null, RoomSessionState? session = null)
     {
         Info = info;
+        _session = session ?? new RoomSessionState();
         _relay = relay;
         _sealing = sealing;
         _inst = instances;
@@ -51,13 +53,21 @@ public sealed class RoomHub
         _stateRunner = stateRunner;
     }
 
-    /// <summary>Saves a new revision of the room story as the owner's online story (the account, a copy); set by the relay.</summary>
-    public Action<long, RoomStoryData>? StorySaver { get; set; }
+    /// <summary>Saves a new revision of the room story as the owner's online story (the account, a copy, whether only counters
+    /// changed); set by the relay.</summary>
+    public Action<long, RoomStoryData, bool>? StorySaver { get; set; }
 
-    /// <summary>The room story of this session (SEAMLESS.md 8.3-8.6), from the owner's story the first connection brought.</summary>
-    public RoomStoryKeeper Story => _story ??= Info.Story is { } s
-        ? new RoomStoryKeeper(s.Story, s.Difficulty, s.Policy, s.OwnerPresent) { MinVisitSeconds = _inst.StoryMinVisitSeconds }
-        : new RoomStoryKeeper(new RoomStoryData(), 0, StoryPolicy.Drop, ownerPresent: true) { MinVisitSeconds = _inst.StoryMinVisitSeconds };
+    /// <summary>The room story of this session (SEAMLESS.md 8.3-8.7), from the owner's story the first connection brought; it
+    /// stays with the room when the hub is rebuilt.</summary>
+    public RoomStoryKeeper Story => _session.Story ??= NewKeeper(Info.Story, _inst);
+
+    /// <summary>A room's story keeper from its start (the owner's story, difficulty, policy and presence), with the options'
+    /// per-visit and per-member rules. Without a start (relay-only tests): an empty, started story.</summary>
+    public static RoomStoryKeeper NewKeeper(RoomStoryInit? init, InstanceOptions inst) => init is { } s
+        ? new RoomStoryKeeper(s.Story, s.Difficulty, s.Policy, s.OwnerPresent, started: s.Started) { MinVisitSeconds = inst.StoryMinVisitSeconds,
+            PhaseStepSeconds = inst.StoryPhaseStepSeconds, KeySeconds = inst.StoryKeySeconds, MaxLinesPerMember = inst.StoryLinesPerMember }
+        : new RoomStoryKeeper(new RoomStoryData(), 0, StoryPolicy.Drop, ownerPresent: true) { MinVisitSeconds = inst.StoryMinVisitSeconds,
+            PhaseStepSeconds = inst.StoryPhaseStepSeconds, KeySeconds = inst.StoryKeySeconds, MaxLinesPerMember = inst.StoryLinesPerMember };
 
     /// <summary>The views as the last housekeeping pass saw them (the room API's answer while the room is busy).</summary>
     public IReadOnlyList<InstanceView> CachedViews { get; private set; } = [];
@@ -164,11 +174,15 @@ public sealed class RoomHub
         {
             m.LoneStage = parked.Stage;
             m.LoneSince = parked.ParkedAt;
+            m.LoneKey = 1UL << 63 | (ulong)parked.ParkedAt;
         }
         else if (m.Instance is { Ended: false } was && !string.IsNullOrEmpty(was.Stage) && m.Slot >= 0)
         {
             m.LoneStage = was.Stage;
             m.LoneSince = Math.Max(m.InstanceSince, was.VisitStartedAt);
+            // The visit goes on alone: it keeps its key, so what it gave (one phase step, one key item) stays given (a
+            // reconnect without resuming made a fresh visit of it before).
+            m.LoneKey = (ulong)was.Id << 32 | was.Visit;
         }
     }
 
@@ -600,6 +614,7 @@ public sealed class RoomHub
             // Its client plays on alone in this stage until its next barrier: its STORY counts against it (8.7).
             m.LoneStage = i.Stage;
             m.LoneSince = Math.Max(m.InstanceSince, i.VisitStartedAt);
+            m.LoneKey = (ulong)i.Id << 32 | i.Visit;
             // A member taken out while it still plays (lag, a resync too long or too many, a missing hash) gets the ticks
             // up to its LEAVE: its client sees it and continues alone until its next barrier (before, it waited for
             // ticks nobody sent it). A member that parks, joins or reconnects meanwhile drops out of this (PumpAll).
@@ -1393,9 +1408,10 @@ public sealed class RoomHub
 
     private HubInstance NewInstance(InstanceMode mode, string stage, uint visit, ulong context, long now)
     {
-        var id = _nextInstance;
+        // (The ids go on across a rebuilt hub: an engine line of the old one never meets a new instance's.)
+        var id = _session.NextInstance;
         while (_instances.ContainsKey(id) || id == 0) id = id >= 999_999_999 ? 1 : id + 1;
-        _nextInstance = id >= 999_999_999 ? 1 : id + 1;
+        _session.NextInstance = id >= 999_999_999 ? 1 : id + 1;
         var i = new HubInstance(id)
         {
             Mode = mode, Stage = stage, Visit = visit, ContextHash = context, CreatedAt = now, LastLogAt = now, VisitStartedAt = now, StoryEpoch = Story.Epoch,
@@ -1415,9 +1431,13 @@ public sealed class RoomHub
         if (!string.IsNullOrEmpty(i.Stage))
         {
             m.LoneStage = null;
+            m.LoneKey = 0;
             // The engine line this visit's counters grow in: besides its own instance 0 lines the only kind of line the
             // member may report (8.7).
             AllowLine(m, i.Id, i.Visit);
+            // The owner's game entered a stage: a room whose owner had no online story starts it now (8.6, at zero).
+            if (m.Owner && !i.Stage.StartsWith("stagis", StringComparison.OrdinalIgnoreCase) && Story.OwnerStarted())
+                Note("story_started", i, ("member", m.Index));
         }
         m.Cursor = 0;
         m.Heading = null;
@@ -1920,15 +1940,20 @@ public sealed class RoomHub
             var (stage, epoch, visit, inst) = StoryOrigin(m, now);
             at = inst;
             var (delta, lines) = OwnLines(m, msg.Delta);
+            // The lines nobody can report any more go (8.7: they never come again).
+            if (keeper.LineCount > LinePruneAt) PruneStoryLines();
             take = keeper.Take(delta, stage, epoch, visit);
             if (lines.Count > 0) take = take with { Refused = [.. take.Refused, .. lines] };
         }
         if (take.Refused.Count > 0) Count("story_refused", take.Refused.Count);
         // The membership log names what the owner-away policy took (the scenarios of SEAMLESS.md 16 check it).
-        foreach (var (why, ev) in new[] { (StoryRefusal.OwnerAway, "story_dropped"), (StoryRefusal.Held, "story_held") })
+        foreach (var (why, ev) in new[] { (StoryRefusal.OwnerAway, "story_dropped"), (StoryRefusal.NotStarted, "story_dropped"),
+                     (StoryRefusal.Held, "story_held") })
         {
             var keys = take.Refused.Where(r => r.Reason == why).Select(r => r.Kind.ToString().ToLowerInvariant() + ":" + r.Index).ToList();
-            if (keys.Count > 0) Note(ev, at, ("member", m.Index), ("keys", string.Join(",", keys)));
+            if (keys.Count == 0) continue;
+            if (why == StoryRefusal.NotStarted) Note(ev, at, ("member", m.Index), ("keys", string.Join(",", keys)), ("reason", "not_started"));
+            else Note(ev, at, ("member", m.Index), ("keys", string.Join(",", keys)));
         }
         // (A STORY refused for the rate changed nothing: its answer carries no story, 21 bytes of request were 1,120 of answer.)
         m.Peer?.Send(new StoryAckMsg(keeper.Story.Revision, rated ? [] : keeper.Story.ToBlob(), StoryAckMsg.Answer, take.Refused).Frame());
@@ -1945,16 +1970,34 @@ public sealed class RoomHub
     private (string? Stage, long Epoch, StoryVisit? Visit, HubInstance? Inst) StoryOrigin(HubMember m, long now)
     {
         if (m.Joining is not null) return (null, 0, null, null);
+        var at = Ms(now) / 1000.0;
         if (m.Instance is { Ended: false } i && m.Slot >= 0 && m.Arrival is null && !string.IsNullOrEmpty(i.Stage))
         {
             var since = Math.Max(m.InstanceSince, i.VisitStartedAt);
-            return (i.Stage, i.StoryEpoch, new StoryVisit(m.Index, (ulong)i.Id << 32 | i.Visit, Ms(now - since) / 1000.0), i);
+            return (i.Stage, i.StoryEpoch, new StoryVisit(m.Index, (ulong)i.Id << 32 | i.Visit, Ms(now - since) / 1000.0, m.AccountId, at), i);
         }
         if (m.Arrival is { } a)
-            return (a.Stage, m.VisitEpoch, new StoryVisit(m.Index, 1UL << 63 | (ulong)a.ParkedAt, Ms(now - a.ParkedAt) / 1000.0), null);
+            return (a.Stage, m.VisitEpoch, new StoryVisit(m.Index, 1UL << 63 | (ulong)a.ParkedAt, Ms(now - a.ParkedAt) / 1000.0, m.AccountId, at), null);
         if (m.LoneStage is { } lone)
-            return (lone, m.VisitEpoch, new StoryVisit(m.Index, 1UL << 63 | (ulong)m.LoneSince, Ms(now - m.LoneSince) / 1000.0), null);
+            return (lone, m.VisitEpoch, new StoryVisit(m.Index, m.LoneKey != 0 ? m.LoneKey : 1UL << 63 | (ulong)m.LoneSince,
+                Ms(now - m.LoneSince) / 1000.0, m.AccountId, at), null);
         return (null, 0, null, null);
+    }
+
+    /// <summary>The keeper prunes its lines once it remembers more than this many (a few per member are normal).</summary>
+    private const int LinePruneAt = 64;
+
+    /// <summary>Forgets the counter lines no member can report any more (its own lines, its instance 0 lines).</summary>
+    private void PruneStoryLines()
+    {
+        var reportable = new HashSet<(uint, uint)>();
+        foreach (var m in _members.Values)
+        {
+            reportable.UnionWith(m.StoryLines);
+            foreach (var v in m.LoneLineVisits) reportable.Add((0x8000_0000u | (uint)m.Index, v));
+        }
+        var removed = Story.PruneLines(k => reportable.Contains((k.Inst, k.Visit)));
+        if (removed > 0) Count("story_lines_pruned", removed);
     }
 
     private static void AllowLine(HubMember m, uint inst, uint visit)
@@ -1998,7 +2041,10 @@ public sealed class RoomHub
         foreach (var other in _members.Values)
             if (other != sender) other.Peer?.Send(frame);
         Note("story", null, ("revision", story.Revision), ("phase", StoryMerge.Phase(story)));
-        if (Info.Story is { OwnerAccountId: > 0 } s) StorySaver?.Invoke(s.OwnerAccountId, story.Clone());
+        // (Only counters changed since the last save: the saver writes such revisions at most once a minute, SEAMLESS.md 8.7.)
+        var countersOnly = _session.Saved is { } before && before.Flags.AsSpan().SequenceEqual(story.Flags) && before.Folder.AsSpan().SequenceEqual(story.Folder);
+        _session.Saved = story.Clone();
+        if (Info.Story is { OwnerAccountId: > 0 } s) StorySaver?.Invoke(s.OwnerAccountId, story.Clone(), countersOnly);
     }
 
     /// <summary>The room story as the room API shows it.</summary>
@@ -2009,7 +2055,25 @@ public sealed class RoomHub
         var dropped = k.Dropped;
         return new RoomStoryState(s.Revision, StoryMerge.Phase(s), Enumerable.Range(0, StorySets.FlagCount).Where(f => s.Flags[f] != 0).ToList(),
             Enumerable.Range(0, StorySets.FolderCount).Where(f => s.Folder[f] != 0).ToList(), [.. s.Counters], k.Policy.ToString().ToLowerInvariant(),
-            k.OwnerPresent, dropped.Flags, dropped.Folder, dropped.Counters, k.HeldCount);
+            k.OwnerPresent, dropped.Flags, dropped.Folder, dropped.Counters, k.HeldCount)
+        {
+            Started = k.Started,
+            Difficulty = k.Difficulty,
+        };
+    }
+
+    /// <summary>
+    /// The most players the account's instance had in the last <paramref name="seconds"/> (its instance now, and every
+    /// size the housekeeping saw it in since): the achievements' "players" cannot claim more (a guest alone in its lobby
+    /// reported four). Null when the account is no member of this room's relay.
+    /// </summary>
+    public int? RecentInstancePlayers(long accountId, long now, double seconds = 60)
+    {
+        if (_members.Values.FirstOrDefault(x => x.AccountId == accountId) is not { } m) return null;
+        var most = m.Instance is { Ended: false } i ? Math.Max(1, i.Slots.Count(x => x is not null)) : 1;
+        for (var n = most + 1; n < m.SeenInSize.Length; ++n)
+            if (m.SeenInSize[n] != 0 && Ms(now - m.SeenInSize[n]) <= seconds * 1000) most = n;
+        return most;
     }
 
     // Resume ---------------------------------------------------------------------------------------------------------------
@@ -2117,6 +2181,13 @@ public sealed class RoomHub
             Fault(e, "the barrier holds");
         }
         CachedViews = Views();
+        foreach (var i in _instances.Values)
+        {
+            if (i.Ended) continue;
+            var n = i.Slots.Count(x => x is not null);
+            foreach (var x in i.Slots)
+                if (x is not null && n < x.SeenInSize.Length) x.SeenInSize[n] = now;
+        }
         if (Ms(now - _lastRoster) >= 1000)
         {
             _lastRoster = now;

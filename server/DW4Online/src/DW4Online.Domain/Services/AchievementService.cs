@@ -27,8 +27,17 @@ public sealed class AchievementService(
     IAuditLog audit,
     VersionGate versions,
     PlayOptions play,
-    TimeProvider time)
+    TimeProvider time,
+    DW4Online.Domain.Rooms.IRelayGateway? relay = null)
 {
+    /// <summary>The story clears and the difficulty whose clear flag (406 + difficulty) they need in the room's story.</summary>
+    private static readonly Dictionary<string, int> ClearDifficulty = new(StringComparer.Ordinal)
+    {
+        ["clear_normal"] = 0,
+        ["clear_hard"] = 1,
+        ["clear_veryhard"] = 2,
+    };
+
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
     private IReadOnlyList<AchievementDefinition>? _definitions;
     private readonly StatBudgets _budgets = new();
@@ -75,6 +84,11 @@ public sealed class AchievementService(
             roomPlayers);
         if (AchievementRules.CheckEvent(definition.Code, check) is { } reason)
             return DomainError.Invalid("requirement_not_met", reason);
+        // A story clear in a room needs the room's story to hold it (the server keeps it since round 56): one request
+        // claimed a clear and the speedrun board's first place.
+        if (room is not null && ClearDifficulty.TryGetValue(definition.Code, out var cleared) &&
+            !await RoomStoryHoldsClearAsync(context!.RoomCode!, cleared, ct))
+            return DomainError.Invalid("requirement_not_met", "The room's story has no clear on this difficulty.");
 
         var now = Clock.Now(time);
         var ruleset = RulesetOf(room, context);
@@ -239,9 +253,33 @@ public sealed class AchievementService(
         int? players = context?.Players;
         int? roomPlayers = context?.RoomPlayers;
         if (room is not null && players is not null) players = Math.Min(players.Value, room.Members);
+        // The instance's players as the relay saw them in the last minute (a guest alone in its lobby reported four).
+        if (room is not null && players is not null && relay?.RecentInstancePlayers(Rooms.RoomCodes.Normalize(context!.RoomCode!), accountId) is { } seen)
+            players = Math.Min(players.Value, seen);
         // The room's members as the server counts them (a client reporting one player in a room of two got Lone Tamer).
         if (room is not null) roomPlayers = room.Members;
         return (room, players, roomPlayers);
+    }
+
+    /// <summary>
+    /// Whether the room's story (the relay's keeper) is at <paramref name="difficulty"/> and holds its clear flag, waiting up
+    /// to PlayOptions.ClearStoryWaitSeconds for it (the clear's STORY may come after the report). Without a relay (switched
+    /// off) there is no room story to ask: true.
+    /// </summary>
+    private async Task<bool> RoomStoryHoldsClearAsync(string roomCode, int difficulty, CancellationToken ct)
+    {
+        if (relay is not { Available: true }) return true;
+        var code = Rooms.RoomCodes.Normalize(roomCode);
+        // (Real time, not the service's clock: the relay's STORY comes in real time.)
+        var waited = System.Diagnostics.Stopwatch.StartNew();
+        while (true)
+        {
+            if (relay.Story(code) is { } story && story.Difficulty == difficulty &&
+                story.Flags.Contains(DW4Online.Domain.Story.RoomStoryKeeper.FirstClearFlag + difficulty))
+                return true;
+            if (waited.Elapsed.TotalSeconds >= Math.Max(0, play.ClearStoryWaitSeconds)) return false;
+            await Task.Delay(250, ct);
+        }
     }
 
     /// <summary>The room's randomizer setting decides (a client cannot report a randomizer room as standard).</summary>

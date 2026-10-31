@@ -150,7 +150,8 @@ public class RoomStoryKeeperTests
     [Fact]
     public void A_visit_gives_one_phase_step_and_one_key_item_once_it_is_old_enough()
     {
-        var k = Keeper();
+        // (The per-member intervals apart: A_patient_member_... checks those.)
+        var k = new RoomStoryKeeper(new RoomStoryData(), 0, StoryPolicy.Drop, true) { PhaseStepSeconds = 0, KeySeconds = 0 };
         var young = new StoryVisit(1, 77, 3);
         // Younger than MinVisitSeconds: everything waits (the client sends it again).
         var t = k.Take(new StoryDelta { Phase = 1, Flags = [22], Folder = [0] }, "stagML02", 0, young);
@@ -187,5 +188,76 @@ public class RoomStoryKeeperTests
         // COUNTER 1 counts donated bits (wallet and bank hold at most 9,999,999 each).
         Assert.Equal(StoryRefusal.Limit, hard.Take(new StoryDelta { Counters = [new CounterGrowth(1, 3, 1, 20_000_001)] }, "stagML13", 0).Refused.Single().Reason);
         Assert.True(hard.Take(new StoryDelta { Counters = [new CounterGrowth(1, 3, 1, 19_999_998)] }, "stagML13", 0).Changed);
+    }
+
+    /// <summary>
+    /// An owner without an online story starts at zero (the user's decision of 31.10, SEAMLESS.md 8.6): until the owner's
+    /// game enters a stage every value is dropped with the reason NotStarted, before the per-visit rules (a value that only
+    /// waited could slip in after the start) and whatever the policy; afterwards an old visit's value stays refused, a
+    /// later visit's counts.
+    /// </summary>
+    [Fact]
+    public void An_owner_without_a_story_starts_at_zero()
+    {
+        var k = new RoomStoryKeeper(new RoomStoryData(), 0, StoryPolicy.Apply, true, started: false);
+        var visit = k.Epoch;
+        var t = k.Take(new StoryDelta { Phase = 1, Flags = [22], Folder = [0], Counters = [new CounterGrowth(1, 4, 1, 300)] }, "stagML02", visit,
+            new StoryVisit(1, 7, 2)); // (a young visit: dropped, not left waiting)
+        Assert.False(t.Changed);
+        Assert.Equal(3, t.Refused.Count(r => r.Reason == StoryRefusal.NotStarted));
+        Assert.Contains(t.Refused, r => r.Kind == StoryKeyKind.Counter && r.Reason == StoryRefusal.Stage); // (1 only in stagML13)
+        Assert.Equal([1, 22], k.Dropped.Flags);
+        Assert.Equal([0], k.Dropped.Folder);
+        Assert.Equal(0u, k.Story.Revision);
+        Assert.True(k.OwnerStarted());
+        Assert.False(k.OwnerStarted());
+        // The old visit's engine still holds them: refused (its next barrier removes them).
+        t = k.Take(new StoryDelta { Flags = [22] }, "stagML02", visit, new StoryVisit(1, 7, 20));
+        Assert.Equal(new StoryRefused(StoryKeyKind.Flag, 22, StoryRefusal.NotStarted), t.Refused.Single());
+        // A visit that began after the drop sets it anew: it counts.
+        t = k.Take(new StoryDelta { Phase = 1, Flags = [22] }, "stagML02", k.Epoch, new StoryVisit(1, 8, 20));
+        Assert.True(t.Changed);
+        Assert.Equal(1, StoryMerge.Phase(k.Story));
+        Assert.Equal(1u, k.Story.Revision);
+    }
+
+    /// <summary>A member's phase steps count five minutes apart and its key items a minute apart; another member counts on its own.</summary>
+    [Fact]
+    public void A_patient_member_gets_its_phase_steps_and_key_items_spaced_out()
+    {
+        var k = Keeper();
+        StoryVisit V(int member, ulong key, double at) => new(member, key, 15, 100 + member, at);
+        Assert.True(k.Take(new StoryDelta { Phase = 1, Folder = [0] }, "stagML02", 0, V(1, 1, 1000)).Changed);
+        var t = k.Take(new StoryDelta { Phase = 2, Folder = [1] }, "stagML02", 0, V(1, 2, 1030));
+        Assert.Equal(2, t.Refused.Count(r => r.Reason == StoryRefusal.Wait));
+        t = k.Take(new StoryDelta { Phase = 2, Folder = [1] }, "stagML02", 0, V(1, 3, 1061));
+        Assert.Equal(new StoryRefused(StoryKeyKind.Phase, 2, StoryRefusal.Wait), t.Refused.Single());
+        Assert.Equal(1, k.Story.Folder[1]);
+        Assert.True(k.Take(new StoryDelta { Phase = 2 }, "stagML02", 0, V(2, 4, 1062)).Changed);
+        Assert.Equal(StoryRefusal.Wait, k.Take(new StoryDelta { Phase = 3 }, "stagML02", 0, V(1, 5, 1299)).Refused.Single().Reason);
+        Assert.True(k.Take(new StoryDelta { Phase = 3 }, "stagML02", 0, V(1, 6, 1300)).Changed);
+        // The same account under another member index (it left and joined again) is the same member.
+        Assert.Equal(StoryRefusal.Wait, k.Take(new StoryDelta { Phase = 4 }, "stagML02", 0, new StoryVisit(5, 9, 15, 101, 1301)).Refused.Single().Reason);
+    }
+
+    /// <summary>
+    /// Lines nobody can report any more are forgotten; a held line's growth beyond what was taken stays held and is merged
+    /// when the owner returns.
+    /// </summary>
+    [Fact]
+    public void Forgotten_lines_keep_their_held_growth()
+    {
+        var k = Keeper(StoryPolicy.Hold);
+        Assert.True(k.Take(new StoryDelta { Counters = [new CounterGrowth(7, 5, 1, 4)] }, "stag0001", 0).Changed);
+        Assert.False(k.SetOwnerPresent(false));
+        k.Take(new StoryDelta { Counters = [new CounterGrowth(7, 5, 1, 10), new CounterGrowth(7, 6, 1, 3)] }, "stag0001", 0);
+        Assert.Equal(3, k.LineCount); // (5,1) taken and held, (6,1) held
+        Assert.Equal(3, k.PruneLines(_ => false)); // (5,1) taken and held, (6,1) held
+        Assert.Equal(0, k.LineCount);
+        Assert.Equal(1, k.HeldCount); // the growth of counter 7
+        Assert.True(k.SetOwnerPresent(true));
+        Assert.Equal(4 + 6 + 3, k.Story.Counters[7]); // (taken 4, held 10 of which 4 were taken, held 3)
+        Assert.Equal(0, k.HeldCount);
+        Assert.Equal(0, k.LineCount);
     }
 }

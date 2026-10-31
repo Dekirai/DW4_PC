@@ -33,6 +33,11 @@ public sealed class RelayHub : BackgroundService
     private readonly ILogger<RelayHub> _log;
     private readonly ILoggerFactory _loggers;
     private readonly ConcurrentDictionary<string, RoomHub> _rooms = new(StringComparer.Ordinal);
+    // Per open room, beyond its hub's life (an empty hub is dropped while the room stays open): the story keeper and the
+    // instance ids (SEAMLESS.md 8.7), and the owner's presence as the room service last reported it (a report that came
+    // while no hub was there, or while the first connection's admission loaded the story, still reaches the keeper).
+    private readonly ConcurrentDictionary<string, RoomSessionState> _sessions = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, bool> _ownerPresence = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<IPAddress, int> _perIp = new();
     private readonly TaskCompletionSource<int> _started = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly HighResolutionTimer _timer = new();
@@ -61,8 +66,16 @@ public sealed class RelayHub : BackgroundService
     /// <summary>Called every few seconds with the accounts connected per room (the relay connection is the room heartbeat).</summary>
     public Func<string, IReadOnlyCollection<long>, ValueTask>? Heartbeat { get; set; }
 
-    /// <summary>Saves a room story's new revision as its owner's online story (account, copy; called under the room lock: only queue).</summary>
-    public Action<long, DW4Online.Domain.Story.RoomStoryData>? StorySaver { get; set; }
+    /// <summary>Saves a room story's new revision as its owner's online story (account, copy, whether only counters changed;
+    /// called under the room lock: only queue).</summary>
+    public Action<long, DW4Online.Domain.Story.RoomStoryData, bool>? StorySaver { get; set; }
+
+    /// <summary>The most players the account's instance had in the last minute (null: no such member on the relay).</summary>
+    public int? RecentInstancePlayers(string code, long accountId)
+    {
+        if (!_rooms.TryGetValue(code, out var hub)) return null;
+        lock (hub.Sync) return hub.RecentInstancePlayers(accountId, Stopwatch.GetTimestamp());
+    }
 
     /// <summary>The room story as the room API shows it (null: no hub for that room).</summary>
     public DW4Online.Domain.Rooms.RoomStoryState? Story(string code)
@@ -112,6 +125,8 @@ public sealed class RelayHub : BackgroundService
 
     public void RoomClosed(string code, string text)
     {
+        _sessions.TryRemove(code, out _);
+        _ownerPresence.TryRemove(code, out _);
         if (!_rooms.TryRemove(code, out var hub)) return;
         lock (hub.Sync)
         {
@@ -122,6 +137,7 @@ public sealed class RelayHub : BackgroundService
 
     public void OwnerPresence(string code, bool present)
     {
+        _ownerPresence[code] = present;
         if (!_rooms.TryGetValue(code, out var hub)) return;
         lock (hub.Sync) hub.OwnerPresence(present);
     }
@@ -401,6 +417,9 @@ public sealed class RelayHub : BackgroundService
                         var serverMs = (long)(Stopwatch.GetTimestamp() * 1000.0 / Stopwatch.Frequency);
                         conn.Send(Encoding.ASCII.GetBytes(FormattableString.Invariant($"OK {admitted.MemberIndex} {serverMs}\n")));
                         member = hub.Connect(admitted.MemberIndex, claims.Account, admitted.Username, admitted.Owner, conn, Stopwatch.GetTimestamp());
+                        // The owner's presence as the room service reported it last: the admission read it before the
+                        // story's load, and a change meanwhile found no hub to tell (SEAMLESS.md 8.6).
+                        if (_ownerPresence.TryGetValue(room.Code, out var present) && hub.Story.OwnerPresent != present) hub.OwnerPresence(present);
                     }
                 }
                 if (member is null) _rooms.TryRemove(new KeyValuePair<string, RoomHub>(room.Code, hub));
@@ -454,9 +473,9 @@ public sealed class RelayHub : BackgroundService
     private RoomHub NewRoom(RoomInfo room)
     {
         var hub = new RoomHub(room, _options, _sealing, _instances, _loggers.CreateLogger("DW4Online.Relay.Room." + room.Code), _mlog,
-            job => _ = Task.Run(() => RunStateJobAsync(job)))
+            job => _ = Task.Run(() => RunStateJobAsync(job)), _sessions.GetOrAdd(room.Code, _ => new RoomSessionState()))
         {
-            StorySaver = (owner, story) => StorySaver?.Invoke(owner, story),
+            StorySaver = (owner, story, countersOnly) => StorySaver?.Invoke(owner, story, countersOnly),
         };
         hub.OnSealingStarted(_timer.Wake);
         return hub;

@@ -236,6 +236,178 @@ public class OnlineStoryTests
         Assert.False(await stories.SaveAsync(id, new RoomStoryData { Revision = 4 }));
     }
 
+    /// <summary>
+    /// The user's decision of 31.10 through the real relay (SEAMLESS.md 8.6): a room whose owner has no online story starts
+    /// at zero. A guest's lobby flag before the owner's game is in a stage is dropped (not_started; the room API says the
+    /// story has not started), the owner's lobby starts it, the guest's next barrier removes the value, and a value set anew
+    /// afterwards becomes the owner's revision 1.
+    /// </summary>
+    [DbFact]
+    public async Task A_new_owners_room_starts_at_zero_through_the_relay()
+    {
+        await using var host = await TestHost.StartAsync(RelaySettings.On(new() { ["Instances:StoryMinVisitSeconds"] = "1" }));
+        var relayPort = await host.App.Services.GetRequiredService<RelayHub>().Started.WaitAsync(TimeSpan.FromSeconds(10));
+        var (ownerToken, _, ownerId) = await host.RegisterAsync("ZeroHost");
+        var (guestToken, _, _) = await host.RegisterAsync("ZeroGuest");
+        var owner = host.Client(ownerToken);
+        var guest = host.Client(guestToken);
+        var created = await (await owner.PostAsJsonAsync("/api/v1/rooms", NewRoom())).Json();
+        var code = created.GetProperty("room").GetProperty("code").GetString()!;
+        var settingsHash = created.GetProperty("settingsHash").GetString()!;
+        var joined = await (await guest.PostAsJsonAsync($"/api/v1/rooms/{code}/join", Join())).Json();
+        await using var a = await Member.ConnectAsync(relayPort, created.GetProperty("relayTicket").GetString()!, settingsHash);
+        await using var b = await Member.ConnectAsync(relayPort, joined.GetProperty("relayTicket").GetString()!, settingsHash);
+        Assert.Equal(0u, b.FirstStory.Revision);
+
+        // The guest plays its lobby while the owner sits at the title.
+        await b.SendAsync(new BarrierMsg(b.Inst, b.Visit, 0, "stagml12", 0, 1, 1, 5, [1]).Frame());
+        var ok = BarrierOkMsg.Parse(await b.NextAsync(Msg.BarrierOk));
+        await Task.Delay(1200);
+        await b.SendAsync(new StoryMsg(ok.NewInst, ok.NewVisit, 0, new StoryDelta { Flags = [393] }).Frame());
+        var refused = StoryAckMsg.Parse(await b.NextAsync(Msg.StoryAck));
+        Assert.Equal(new StoryRefused(StoryKeyKind.Flag, 393, StoryRefusal.NotStarted), refused.Refused.Single());
+        var view = await (await guest.GetAsync($"/api/v1/rooms/{code}/story")).Json();
+        Assert.False(view.GetProperty("started").GetBoolean());
+        Assert.Equal([393], view.GetProperty("droppedFlags").EnumerateArray().Select(e => e.GetInt32()));
+
+        // The owner's game enters its lobby: the story starts (at zero).
+        await a.SendAsync(new BarrierMsg(a.Inst, a.Visit, 0, "stagml11", 0, 1, 1, 5, [0]).Frame());
+        BarrierOkMsg.Parse(await a.NextAsync(Msg.BarrierOk));
+        Assert.True((await (await guest.GetAsync($"/api/v1/rooms/{code}/story")).Json()).GetProperty("started").GetBoolean());
+
+        // The guest's barrier removes 393 (the dropped set); set anew in its next visit, it counts.
+        await b.SendAsync(new BarrierMsg(ok.NewInst, ok.NewVisit, 0, "stagml13", 0, 1, 1, 5, [1]).Frame());
+        var next = BarrierOkMsg.Parse(await b.NextAsync(Msg.BarrierOk));
+        Assert.Equal([393], StoryKeys.FromBlob(next.Dropped).Flags);
+        await b.SendAsync(new BarrierMsg(next.NewInst, next.NewVisit, 0, "stagml12", 0, 1, 1, 5, [1]).Frame());
+        var again = BarrierOkMsg.Parse(await b.NextAsync(Msg.BarrierOk));
+        await Task.Delay(1200);
+        await b.SendAsync(new StoryMsg(again.NewInst, again.NewVisit, 0, new StoryDelta { Flags = [393] }).Frame());
+        var taken = StoryAckMsg.Parse(await b.NextAsync(Msg.StoryAck));
+        Assert.Empty(taken.Refused);
+        Assert.Equal(1u, taken.Revision);
+        var stories = host.App.Services.GetRequiredService<OnlineStoryService>();
+        var watch = Stopwatch.StartNew();
+        while ((await stories.LoadAsync(ownerId)).Revision < 1 && watch.Elapsed < TimeSpan.FromSeconds(10)) await Task.Delay(50);
+        Assert.Equal(1, (await stories.LoadAsync(ownerId)).Flags[393]);
+    }
+
+    /// <summary>
+    /// Round 59 review: a member forging a revision a second pushed every honest revision out of a history that kept the
+    /// last 100, so staff could not put the owner's story back. The story a room session starts from is kept as a session
+    /// start, the newest revisions in full, older room revisions as the first of every ten minutes for 90 days; session
+    /// starts, resets and restores stay (the newest few for good).
+    /// </summary>
+    [DbFact]
+    public async Task The_history_keeps_every_session_start_and_thins_old_revisions_by_time()
+    {
+        await using var host = await TestHost.StartAsync(new() { ["OnlineCharacter:StoryHistoryRevisions"] = "10", ["OnlineCharacter:StoryHistorySessions"] = "3" });
+        var (adminToken, _, _) = await host.RegisterAsync("HistoryStaff");
+        Assert.True((await host.App.Services.GetRequiredService<DW4Online.Domain.Services.AccountService>()
+            .AdminSetRoleAsync(null, "HistoryStaff", "admin", new DW4Online.Domain.Services.CallerInfo(null, "tests"))).Ok);
+        var (token, _, id) = await host.RegisterAsync("HistoryHost");
+        var admin = host.Client(adminToken);
+        var stories = host.App.Services.GetRequiredService<OnlineStoryService>();
+        var honest = new RoomStoryData { Revision = 1 };
+        honest.Flags[1] = 1;
+        honest.Flags[505] = 1;
+        Assert.True(await stories.SaveAsync(id, honest));
+        Assert.Equal(HttpStatusCode.Created, (await host.Client(token).PostAsJsonAsync("/api/v1/rooms", NewRoom())).StatusCode);
+        // 140 forged revisions in a little over two minutes.
+        for (uint r = 2; r <= 141; ++r)
+        {
+            host.Clock.Advance(TimeSpan.FromSeconds(1));
+            var forged = new RoomStoryData { Revision = r };
+            forged.Flags[86] = 1;
+            forged.Counters[1] = (int)r;
+            Assert.True(await stories.SaveAsync(id, forged));
+        }
+        var history = (await (await admin.GetAsync("/api/v1/admin/accounts/HistoryHost/online-story/history")).Json()).EnumerateArray().ToList();
+        Assert.Equal(12, history.Count); // the newest 10, the first room revision of the ten minutes, the session start
+        Assert.Contains(history, h => h.GetProperty("revision").GetInt32() == 1 && h.GetProperty("reason").GetString() == "session");
+        Assert.Equal(142, (await (await admin.PostAsync("/api/v1/admin/accounts/HistoryHost/online-story/restore/1", null)).Json()).GetProperty("revision").GetInt32());
+        var back = await stories.LoadAsync(id);
+        Assert.Equal((142u, (byte)1, (byte)1, (byte)0), (back.Revision, back.Flags[1], back.Flags[505], back.Flags[86]));
+
+        // An hour of revisions every two minutes, then a hundred days later one more: the room revisions older than 90 days
+        // go, the session start and the restore stay (the newest three such).
+        for (uint r = 143; r <= 172; ++r)
+        {
+            host.Clock.Advance(TimeSpan.FromMinutes(2));
+            Assert.True(await stories.SaveAsync(id, new RoomStoryData { Revision = r }));
+        }
+        await using var sql = await host.SqlAsync();
+        var roomRows = await sql.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM online_story_history WHERE account_id = @id AND reason = 'room'", new { id });
+        Assert.InRange(roomRows, 14, 16); // the newest 10, then the first of every ten minutes (5)
+        host.Clock.Advance(TimeSpan.FromDays(100));
+        Assert.True(await stories.SaveAsync(id, new RoomStoryData { Revision = 173 }));
+        var reasons = (await sql.QueryAsync<(long Revision, string Reason)>(
+            "SELECT revision, reason FROM online_story_history WHERE account_id = @id ORDER BY id", new { id })).ToList();
+        Assert.Equal(12, reasons.Count);
+        Assert.Equal((1L, "session"), reasons[0]);
+        Assert.Equal((142L, "admin_restore"), reasons[1]);
+        Assert.All(reasons.Skip(2), r => Assert.Equal("room", r.Reason));
+    }
+
+    /// <summary>Round 59 review: a staff restore of a revision that is not kept closed the owner's room before it failed.</summary>
+    [DbFact]
+    public async Task A_restore_of_a_revision_that_is_not_kept_leaves_the_owners_room_open()
+    {
+        await using var host = await TestHost.StartAsync();
+        var (adminToken, _, _) = await host.RegisterAsync("RestoreStaff");
+        Assert.True((await host.App.Services.GetRequiredService<DW4Online.Domain.Services.AccountService>()
+            .AdminSetRoleAsync(null, "RestoreStaff", "admin", new DW4Online.Domain.Services.CallerInfo(null, "tests"))).Ok);
+        var (token, _, id) = await host.RegisterAsync("RestoreHost");
+        var s = new RoomStoryData { Revision = 1 };
+        s.Flags[505] = 1;
+        Assert.True(await host.App.Services.GetRequiredService<OnlineStoryService>().SaveAsync(id, s));
+        var owner = host.Client(token);
+        var code = (await (await owner.PostAsJsonAsync("/api/v1/rooms", NewRoom())).Json()).GetProperty("room").GetProperty("code").GetString()!;
+        var admin = host.Client(adminToken);
+        Assert.Equal("revision_not_found", await (await admin.PostAsync("/api/v1/admin/accounts/RestoreHost/online-story/restore/999999", null)).ProblemCode());
+        Assert.Equal(HttpStatusCode.OK, (await owner.GetAsync($"/api/v1/rooms/{code}")).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await admin.PostAsync("/api/v1/admin/accounts/RestoreHost/online-story/restore/1", null)).StatusCode);
+        Assert.Equal("room_not_found", await (await owner.GetAsync($"/api/v1/rooms/{code}")).ProblemCode());
+    }
+
+    /// <summary>
+    /// Round 59 review: a guest in a Normal room without a clear in the room's story got clear_normal and the speedrun
+    /// board's first place with one request, and mp_fullhouse / mp_couch alone in its lobby. A story clear in a room now
+    /// needs the room's story to hold that difficulty's clear flag, and the players claim is capped by the relay's instance.
+    /// </summary>
+    [DbFact]
+    public async Task A_story_clear_in_a_room_needs_the_rooms_story_and_players_count_as_the_relay_saw_them()
+    {
+        await using var host = await TestHost.StartAsync(RelaySettings.On(new() { ["Play:ClearStoryWaitSeconds"] = "1" }));
+        var relayPort = await host.App.Services.GetRequiredService<RelayHub>().Started.WaitAsync(TimeSpan.FromSeconds(10));
+        var (ownerToken, _, _) = await host.RegisterAsync("ClearHost");
+        var (clearedToken, _, clearedId) = await host.RegisterAsync("ClearedHost");
+        var (guestToken, _, _) = await host.RegisterAsync("ClearGuest");
+        var guest = host.Client(guestToken);
+        var created = await (await host.Client(ownerToken).PostAsJsonAsync("/api/v1/rooms", NewRoom())).Json();
+        var code = created.GetProperty("room").GetProperty("code").GetString()!;
+        var joined = await (await guest.PostAsJsonAsync($"/api/v1/rooms/{code}/join", Join())).Json();
+        await using var b = await Member.ConnectAsync(relayPort, joined.GetProperty("relayTicket").GetString()!, created.GetProperty("settingsHash").GetString()!);
+        object Claim(string what, string room, int players) =>
+            new { code = what, context = new { roomCode = room, players }, evidence = new { igtMs = 2_700_001L } };
+        Assert.Equal("requirement_not_met", await (await guest.PostAsJsonAsync("/api/v1/achievements/unlock", Claim("clear_normal", code, 1))).ProblemCode());
+        Assert.Equal("requirement_not_met", await (await guest.PostAsJsonAsync("/api/v1/achievements/unlock", Claim("mp_couch", code, 2))).ProblemCode());
+
+        // A room whose owner cleared Normal: the guest's clear counts there.
+        var cleared = new RoomStoryData { Revision = 3 };
+        cleared.Flags[86] = 1;
+        cleared.Flags[713] = 1;
+        cleared.Flags[406] = 1;
+        Assert.True(await host.App.Services.GetRequiredService<OnlineStoryService>().SaveAsync(clearedId, cleared));
+        var second = await (await host.Client(clearedToken).PostAsJsonAsync("/api/v1/rooms", NewRoom())).Json();
+        var code2 = second.GetProperty("room").GetProperty("code").GetString()!;
+        var joined2 = await (await guest.PostAsJsonAsync($"/api/v1/rooms/{code2}/join", Join())).Json();
+        await using var b2 = await Member.ConnectAsync(relayPort, joined2.GetProperty("relayTicket").GetString()!, second.GetProperty("settingsHash").GetString()!);
+        var ok = await guest.PostAsJsonAsync("/api/v1/achievements/unlock", Claim("clear_normal", code2, 1));
+        Assert.Equal(HttpStatusCode.OK, ok.StatusCode);
+        Assert.True((await ok.Json()).GetProperty("newlyUnlocked").GetBoolean());
+    }
+
     /// <summary>A raw DW4R2 member: handshake, WELCOME, the first STORY_ACK.</summary>
     private sealed class Member : IAsyncDisposable
     {

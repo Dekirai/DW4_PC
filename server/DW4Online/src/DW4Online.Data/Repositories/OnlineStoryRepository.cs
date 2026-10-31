@@ -6,8 +6,9 @@ namespace DW4Online.Data.Repositories;
 
 /// <summary>
 /// online_story: one row per account, the account's own online story (SEAMLESS.md 8.4), newer revisions only; every
-/// written revision is kept in online_story_history (the last few per account). A deleted account gets no row again (a
-/// room's save that was still on its way when the account was deleted writes nothing).
+/// written revision goes into online_story_history, which keeps the newest in full, older ones thinned out by time and the
+/// story every room session started from (<see cref="StoryHistoryPolicy"/>). A deleted account gets no row again (a room's
+/// save that was still on its way when the account was deleted writes nothing).
 /// </summary>
 public sealed class OnlineStoryRepository(Database db) : IOnlineStoryRepository
 {
@@ -21,7 +22,7 @@ public sealed class OnlineStoryRepository(Database db) : IOnlineStoryRepository
             new { a = accountId }, cancellationToken: ct));
     }
 
-    public async Task<bool> SaveAsync(OnlineStoryRow row, int historyKeep, CancellationToken ct = default)
+    public async Task<bool> SaveAsync(OnlineStoryRow row, StoryHistoryPolicy history, CancellationToken ct = default)
     {
         await using var c = await db.OpenAsync(ct);
         await using var tx = await c.BeginTransactionAsync(MySqlErrors.RevisionedWrite, ct);
@@ -34,12 +35,12 @@ public sealed class OnlineStoryRepository(Database db) : IOnlineStoryRepository
                 "INSERT IGNORE INTO online_story (account_id, revision, flags, folder, counters, updated_at) " +
                 $"SELECT @AccountId, @Revision, @Flags, @Folder, @Counters, @UpdatedAt FROM accounts WHERE id = @AccountId AND {Live}",
                 row, tx, cancellationToken: ct)) > 0;
-        if (written) await KeepAsync(c, tx, row, row.Revision, StoryWriteReasons.Room, historyKeep, ct);
+        if (written) await KeepAsync(c, tx, row, row.Revision, StoryWriteReasons.Room, history, ct);
         await tx.CommitAsync(ct);
         return written;
     }
 
-    public async Task<long> ReplaceAsync(OnlineStoryRow row, string reason, int historyKeep, CancellationToken ct = default)
+    public async Task<long> ReplaceAsync(OnlineStoryRow row, string reason, StoryHistoryPolicy history, CancellationToken ct = default)
     {
         await using var c = await db.OpenAsync(ct);
         await using var tx = await c.BeginTransactionAsync(MySqlErrors.RevisionedWrite, ct);
@@ -55,9 +56,21 @@ public sealed class OnlineStoryRepository(Database db) : IOnlineStoryRepository
                 row, tx, cancellationToken: ct));
         var revision = await c.ExecuteScalarAsync<long?>(new CommandDefinition(
             "SELECT revision FROM online_story WHERE account_id = @AccountId", row, tx, cancellationToken: ct)) ?? 0;
-        if (revision > 0) await KeepAsync(c, tx, row, revision, reason, historyKeep, ct);
+        if (revision > 0) await KeepAsync(c, tx, row, revision, reason, history, ct);
         await tx.CommitAsync(ct);
         return revision;
+    }
+
+    public async Task KeepAsync(OnlineStoryRow row, string reason, StoryHistoryPolicy history, CancellationToken ct = default)
+    {
+        await using var c = await db.OpenAsync(ct);
+        await using var tx = await c.BeginTransactionAsync(MySqlErrors.RevisionedWrite, ct);
+        // (Only for a live account with a story: a deleted one keeps nothing.)
+        var live = await c.ExecuteScalarAsync<long?>(new CommandDefinition(
+            $"SELECT s.revision FROM online_story s JOIN accounts a ON a.id = s.account_id WHERE s.account_id = @AccountId AND a.{Live}",
+            row, tx, cancellationToken: ct));
+        if (live is not null) await KeepAsync(c, tx, row, row.Revision, reason, history, ct);
+        await tx.CommitAsync(ct);
     }
 
     public async Task<IReadOnlyList<OnlineStoryHistoryRow>> ListHistoryAsync(long accountId, CancellationToken ct = default)
@@ -69,17 +82,31 @@ public sealed class OnlineStoryRepository(Database db) : IOnlineStoryRepository
         return rows.AsList();
     }
 
-    private static async Task KeepAsync(MySqlConnection c, MySqlTransaction tx, OnlineStoryRow row, long revision, string reason, int keep,
-        CancellationToken ct)
+    private static async Task KeepAsync(MySqlConnection c, MySqlTransaction tx, OnlineStoryRow row, long revision, string reason,
+        StoryHistoryPolicy history, CancellationToken ct)
     {
         await c.ExecuteAsync(new CommandDefinition(
             "INSERT INTO online_story_history (account_id, revision, flags, folder, counters, reason, saved_at) " +
             "VALUES (@AccountId, @revision, @Flags, @Folder, @Counters, @reason, @UpdatedAt)",
             new { row.AccountId, revision, row.Flags, row.Folder, row.Counters, reason, row.UpdatedAt }, tx, cancellationToken: ct));
-        // The last `keep` revisions stay (MariaDB 10.4 allows no LIMIT in an IN subquery, hence the derived table).
+        // What stays: the newest `recent` rows; older room revisions only as the first of their time bucket and not older
+        // than `cutoff`; older session starts, resets and restores until `cutoff`, the newest `sessions` of them for good.
+        // (MariaDB 10.4: window functions in a derived table; no LIMIT in an IN subquery.)
         await c.ExecuteAsync(new CommandDefinition(
-            "DELETE h FROM online_story_history h JOIN (SELECT id FROM online_story_history WHERE account_id = @a ORDER BY id DESC " +
-            "LIMIT 18446744073709551615 OFFSET @keep) old ON old.id = h.id",
-            new { a = row.AccountId, keep = Math.Max(1, keep) }, tx, cancellationToken: ct));
+            "DELETE h FROM online_story_history h JOIN (SELECT id FROM (SELECT id, reason, saved_at, " +
+            "ROW_NUMBER() OVER (ORDER BY id DESC) AS newest, " +
+            "ROW_NUMBER() OVER (PARTITION BY reason = 'room' ORDER BY id DESC) AS of_kind, " +
+            "ROW_NUMBER() OVER (PARTITION BY reason = 'room', FLOOR(UNIX_TIMESTAMP(saved_at) / @bucket) ORDER BY id) AS in_bucket " +
+            "FROM online_story_history WHERE account_id = @a) x WHERE x.newest > @recent AND (" +
+            "(x.reason = 'room' AND (x.in_bucket > 1 OR x.saved_at < @cutoff)) OR " +
+            "(x.reason <> 'room' AND x.of_kind > @sessions AND x.saved_at < @cutoff))) old ON old.id = h.id",
+            new
+            {
+                a = row.AccountId,
+                recent = Math.Max(1, history.Recent),
+                bucket = Math.Max(1, history.BucketMinutes) * 60,
+                cutoff = row.UpdatedAt.AddDays(-Math.Max(1, history.Days)),
+                sessions = Math.Max(1, history.Sessions),
+            }, tx, cancellationToken: ct));
     }
 }

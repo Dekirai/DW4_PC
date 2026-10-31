@@ -390,9 +390,11 @@ public class OnlineCharacterTests
         var ok = await host.Client(token2).PutJson("/api/v1/online-character", Upload(modest, 24 * 3600), create: true);
         Assert.Equal(HttpStatusCode.Created, ok.StatusCode);
         Assert.Empty((await ok.Json()).GetProperty("warnings").EnumerateArray());
-        // After a reset the clock starts again: the next new character cannot bring the old play time.
+        // After a reset the clock starts again: the next new character cannot bring the old play time. (Another name: the
+        // reset character itself does not come back, round 59.)
         Assert.Equal(HttpStatusCode.NoContent,
             (await host.Client(token2).PostAsJsonAsync("/api/v1/online-character/reset", new { currentPassword = "a decent password" })).StatusCode);
+        modest.Name = CardName.ToCard("Neo");
         var again = await host.Client(token2).PutJson("/api/v1/online-character", Upload(modest, 24 * 3600), create: true);
         Assert.Contains("play_time_too_fast", (await again.Json()).GetProperty("warnings").EnumerateArray().Select(w => w.GetProperty("code").GetString()));
         Assert.True(await c.ExecuteScalarAsync<bool>("SELECT online_reset_at IS NOT NULL FROM accounts WHERE id = @id2", new { id2 }));
@@ -425,5 +427,45 @@ public class OnlineCharacterTests
         Assert.Equal(HttpStatusCode.OK, outside.StatusCode);
         Assert.Empty((await outside.Json()).GetProperty("unlocked").EnumerateArray());
         _ = otherToken;
+    }
+
+    /// <summary>
+    /// Round 59 review: (1) an account with an online story but no online character (an owner whose guests played) could not
+    /// empty its story itself; (2) a save sent again after its answer was lost got 409 on its own revision; (3) after a
+    /// reset another PC brought the old character back with If-None-Match: *.
+    /// </summary>
+    [DbFact]
+    public async Task Reset_empties_a_story_alone_a_repeated_save_is_its_own_and_a_reset_character_stays_gone()
+    {
+        await using var host = await TestHost.StartAsync();
+        var (token, _, id) = await host.RegisterAsync("ResetAlone");
+        var client = host.Client(token);
+        var stories = host.App.Services.GetRequiredService<DW4Online.Domain.Story.OnlineStoryService>();
+        var story = new DW4Online.Domain.Story.RoomStoryData { Revision = 2 };
+        story.Flags[1] = 1;
+        Assert.True(await stories.SaveAsync(id, story));
+        Assert.Equal(HttpStatusCode.NoContent,
+            (await client.PostAsJsonAsync("/api/v1/online-character/reset", new { currentPassword = "a decent password" })).StatusCode);
+        Assert.True((await stories.LoadAsync(id)).IsEmpty);
+        Assert.Equal("no_online_character",
+            await (await client.PostAsJsonAsync("/api/v1/online-character/reset", new { currentPassword = "a decent password" })).ProblemCode());
+
+        var character = Samples.Fresh("Kev");
+        Assert.Equal(HttpStatusCode.Created, (await client.PutJson("/api/v1/online-character", Upload(character, 600), create: true)).StatusCode);
+        character.Level = 8;
+        Assert.Equal(HttpStatusCode.OK, (await client.PutJson("/api/v1/online-character", Upload(character, 700), ifMatch: "\"1\"")).StatusCode);
+        // The same save again (its answer was lost): its own revision, not another PC's.
+        var again = await client.PutJson("/api/v1/online-character", Upload(character, 700), ifMatch: "\"1\"");
+        Assert.Equal(HttpStatusCode.OK, again.StatusCode);
+        Assert.Equal(2, (await again.Json()).GetProperty("revision").GetInt32());
+        character.Level = 9;
+        Assert.Equal("revision_conflict", await (await client.PutJson("/api/v1/online-character", Upload(character, 800), ifMatch: "\"1\"")).ProblemCode());
+
+        // Reset; the other PC's card still holds the level 8 character: it does not come back. A new one does.
+        Assert.Equal(HttpStatusCode.NoContent,
+            (await client.PostAsJsonAsync("/api/v1/online-character/reset", new { currentPassword = "a decent password" })).StatusCode);
+        character.Level = 8;
+        Assert.Equal("character_was_reset", await (await client.PutJson("/api/v1/online-character", Upload(character, 700), create: true)).ProblemCode());
+        Assert.Equal(HttpStatusCode.Created, (await client.PutJson("/api/v1/online-character", Upload(Samples.Fresh("Ann"), 60), create: true)).StatusCode);
     }
 }

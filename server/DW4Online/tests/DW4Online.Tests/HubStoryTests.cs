@@ -33,12 +33,23 @@ public class HubStoryTests
         public List<(long Owner, RoomStoryData Story)> Saved { get; } = [];
 
         // (Without options: no minimum visit age, so a STORY right after a barrier counts; the per-visit tests pass their own.)
-        public Harness(StoryPolicy policy, bool ownerPresent = true, RoomStoryData? story = null, InstanceOptions? instances = null, int difficulty = 0)
+        public Harness(StoryPolicy policy, bool ownerPresent = true, RoomStoryData? story = null, InstanceOptions? instances = null, int difficulty = 0,
+            bool started = true, RoomSessionState? session = null, Harness? after = null)
         {
-            var init = new RoomStoryInit(4242, story ?? new RoomStoryData(), difficulty, policy, ownerPresent);
+            var init = new RoomStoryInit(4242, story ?? new RoomStoryData(), difficulty, policy, ownerPresent, started);
             Hub = new RoomHub(new RoomInfo("ROOM01", 43, 1, 2, 10, init), new RelayOptions(), new SealingOptions(),
-                instances ?? new InstanceOptions { StoryMinVisitSeconds = 0 }, NullLogger.Instance) { StorySaver = (owner, s) => Saved.Add((owner, s)) };
+                instances ?? new InstanceOptions { StoryMinVisitSeconds = 0 }, NullLogger.Instance, session: session)
+            {
+                StorySaver = (owner, s, countersOnly) =>
+                {
+                    Saved.Add((owner, s));
+                    CountersOnly.Add(countersOnly);
+                },
+            };
+            if (after is not null) Now = after.Now;
         }
+
+        public List<bool> CountersOnly { get; } = [];
 
         public void Advance(double ms) => Now += (long)(ms * Stopwatch.Frequency / 1000.0);
 
@@ -200,7 +211,8 @@ public class HubStoryTests
     [Fact]
     public void A_client_that_hops_from_stage_to_stage_gets_one_phase_step_and_one_key_per_visit_and_only_its_own_lines()
     {
-        var h = new Harness(StoryPolicy.Apply, instances: new InstanceOptions { StoryBurst = 1000 });
+        // (The per-member intervals of round 59 apart: A_patient_forger_... checks those.)
+        var h = new Harness(StoryPolicy.Apply, instances: new InstanceOptions { StoryBurst = 1000, StoryPhaseStepSeconds = 0, StoryKeySeconds = 0 });
         h.Connect("a", 0);
         h.Connect("b", 1);
         h.Barrier("b", "stagml02");
@@ -274,5 +286,162 @@ public class HubStoryTests
         Assert.Empty(h.Story("b", Flags(394)).Refused);
         Assert.Contains(394, h.Hub.StoryState().Flags);
         Assert.Equal(StoryRefusal.Stage, h.Story("b", Flags(426)).Refused.Single().Reason); // (stagML11's, not stagML13's)
+    }
+
+    /// <summary>
+    /// The user's decision of 31.10 (SEAMLESS.md 8.6): a room whose owner has no online story starts at zero. What a guest
+    /// does before the owner's own game enters a stage is dropped (not_started) whatever the policy, the next barrier
+    /// removes it from the guest's engine, and it counts again only when set anew in a later visit; the owner's title does
+    /// not start the story, its first stage does.
+    /// </summary>
+    [Fact]
+    public void A_room_whose_owner_has_no_story_starts_at_zero_when_the_owners_game_enters_a_stage()
+    {
+        var h = new Harness(StoryPolicy.Apply, started: false);
+        h.Connect("a", 0); // the owner, at the title
+        var b = h.Connect("b", 1);
+        h.Barrier("b", "stagml12");
+        var ack = h.Story("b", new StoryDelta { Flags = [392] });
+        Assert.Equal(new StoryRefused(StoryKeyKind.Flag, 392, StoryRefusal.NotStarted), ack.Refused.Single());
+        Assert.Equal(0u, h.Hub.StoryState().Revision);
+        Assert.False(h.Hub.StoryState().Started);
+        Assert.Equal([392], h.Hub.StoryState().DroppedFlags);
+        Assert.Empty(h.Saved);
+        // The owner's title does not start it (stagIS*); its game entering a stage does.
+        h.Barrier("a", "stagis10");
+        Assert.False(h.Hub.StoryState().Started);
+        h.Barrier("a", "stagml11");
+        Assert.True(h.Hub.StoryState().Started);
+        // The guest's old visit still holds 392: it does not count; its barrier removes it (the dropped set).
+        Assert.Equal(StoryRefusal.NotStarted, h.Story("b", Flags(392)).Refused.Single().Reason);
+        h.Barrier("b", "stagml13");
+        Assert.Equal([392], StoryKeys.FromBlob(b.LastOk.Dropped).Flags);
+        Assert.Equal(0, RoomStoryData.FromBlob(b.LastOk.Story, b.LastOk.StoryRevision).Flags[392]);
+        // Set anew in a later visit of a stage that sets it, it counts; so does the owner's own progress.
+        h.Barrier("b", "stagml12");
+        Assert.Empty(h.Story("b", Flags(392)).Refused);
+        Assert.Empty(h.Story("a", Flags(426)).Refused);
+        Assert.Equal(2u, h.Hub.StoryState().Revision);
+        Assert.Equal(2, h.Saved.Count);
+    }
+
+    /// <summary>
+    /// The patient forgery of the round 59 review: a guest that BARRIERs into stagML02, waits a little over ten seconds and
+    /// sends the next phase and a key item, again and again, climbed to the clear in under two minutes. A member's phase
+    /// steps now count five minutes apart and its key items a minute apart (Instances:StoryPhaseStepSeconds,
+    /// StoryKeySeconds; the rest waits).
+    /// </summary>
+    [Fact]
+    public void A_patient_forger_gets_one_phase_step_per_five_minutes_and_one_key_item_per_minute()
+    {
+        var h = new Harness(StoryPolicy.Apply, instances: new InstanceOptions { StoryBurst = 1000 });
+        h.Connect("a", 0);
+        h.Connect("b", 1);
+        for (var n = 0; n < 12; ++n) // about two minutes
+        {
+            h.Barrier("b", "stagml12");
+            h.Barrier("b", "stagml02");
+            h.Advance(10_300);
+            h.Story("b", new StoryDelta { Phase = (byte)(h.Hub.StoryState().Phase + 1), Folder = [n % 11] });
+        }
+        Assert.Equal(1, h.Hub.StoryState().Phase);
+        Assert.Equal(2, h.Hub.StoryState().Folder.Count); // at 10.3 s and at 72.1 s
+        h.Advance(300_000);
+        h.Barrier("b", "stagml12");
+        h.Barrier("b", "stagml02");
+        h.Advance(10_300);
+        Assert.Empty(h.Story("b", new StoryDelta { Phase = 2 }).Refused);
+        Assert.Equal(2, h.Hub.StoryState().Phase);
+        // Another member counts on its own (N accounts, N steps: the story history repairs what they do).
+        h.Barrier("a", "stagml02");
+        h.Advance(10_300);
+        Assert.Empty(h.Story("a", new StoryDelta { Phase = 3 }).Refused);
+    }
+
+    /// <summary>
+    /// The round 59 review's line flood: a guest looping barriers in stag0001 and reporting its last 16 lines with growth 1
+    /// made about a thousand lines a minute that the keeper kept for as long as the room lived. Counters now wait for a visit
+    /// ten seconds old, a member opens at most Instances:StoryLinesPerMember lines a session (then limit), and the lines no
+    /// member can report any more are forgotten.
+    /// </summary>
+    [Fact]
+    public void Counter_lines_wait_for_old_visits_are_capped_per_member_and_forgotten_once_nobody_can_report_them()
+    {
+        var h = new Harness(StoryPolicy.Apply, instances: new InstanceOptions { StoryBurst = 100_000, StoryMessagesPerMinute = 100_000, StoryLinesPerMember = 100 });
+        h.Connect("a", 0);
+        h.Connect("b", 1);
+        h.Barrier("b", "stag0001");
+        var i = h.I("b");
+        Assert.Equal(StoryRefusal.Wait, h.Story("b", new StoryDelta { Counters = [new CounterGrowth(7, i.Id, i.Visit, 1)] }).Refused.Single().Reason);
+        var limited = 0;
+        for (var n = 0; n < 200; ++n)
+        {
+            h.Barrier("b", "stag0001");
+            h.Advance(11_000);
+            var own = h.M["b"].Member.StoryLines.Select(l => new CounterGrowth(7, l.Inst, l.Visit, 1)).ToList();
+            limited += h.Story("b", new StoryDelta { Counters = own }).Refused.Count(r => r.Reason == StoryRefusal.Limit);
+        }
+        Assert.Equal(100, h.Hub.StoryState().Counters[7]);
+        Assert.True(limited > 0);
+        Assert.True(h.Hub.Story.LineCount <= 64 + HubMember.StoryLineLimit, $"{h.Hub.Story.LineCount} lines kept");
+        Assert.True(h.Hub.Counters.GetValueOrDefault("story_lines_pruned") > 0);
+    }
+
+    /// <summary>
+    /// A reconnect without RESUME made the member's lone play a new visit (its key was the visit's start), so it gave one
+    /// more phase step and key item (round 59 review); the lone play now keeps the visit's key.
+    /// </summary>
+    [Fact]
+    public void A_reconnect_without_resuming_is_no_new_visit()
+    {
+        var h = new Harness(StoryPolicy.Apply, instances: new InstanceOptions { StoryPhaseStepSeconds = 0, StoryKeySeconds = 0 });
+        h.Connect("a", 0);
+        h.Connect("b", 1);
+        h.Barrier("b", "stagml02");
+        h.Advance(11_000);
+        Assert.Empty(h.Story("b", new StoryDelta { Phase = 1, Folder = [0] }).Refused);
+        Assert.Equal(2, h.Story("b", new StoryDelta { Phase = 2, Folder = [1] }).Refused.Count(r => r.Reason == StoryRefusal.Wait));
+        h.Hub.Disconnect(h.M["b"].Member, h.P("b"), h.Now);
+        h.Connect("b", 1);
+        Assert.Equal(2, h.Story("b", new StoryDelta { Phase = 2, Folder = [1] }).Refused.Count(r => r.Reason == StoryRefusal.Wait));
+        Assert.Equal(1, h.Hub.StoryState().Phase);
+    }
+
+    /// <summary>
+    /// The relay drops a hub whose connections are all gone while its room stays open; the room story (dropped set, epochs,
+    /// held values, per-member rules) and the instance ids now stay with the room (round 59 review: the next keeper started
+    /// without them, so values dropped while the owner was away counted again).
+    /// </summary>
+    [Fact]
+    public void The_room_story_outlives_a_rebuilt_hub()
+    {
+        var session = new RoomSessionState();
+        var h = new Harness(StoryPolicy.Drop, ownerPresent: false, session: session);
+        h.Connect("b", 1);
+        h.Barrier("b", "stagml12");
+        Assert.Equal(StoryRefusal.OwnerAway, h.Story("b", Flags(392)).Refused.Single().Reason);
+        var last = h.I("b").Id;
+        var again = new Harness(StoryPolicy.Drop, ownerPresent: false, session: session, after: h);
+        var b = again.Connect("b", 1);
+        Assert.Same(h.Hub.Story, again.Hub.Story);
+        Assert.Equal([392], again.Hub.StoryState().DroppedFlags);
+        Assert.True(again.I("b").Id > last);
+        again.Barrier("b", "stagml13");
+        Assert.Equal([392], StoryKeys.FromBlob(b.LastOk.Dropped).Flags);
+    }
+
+    /// <summary>A revision that changed only counters goes to the saver as such (it writes those at most once a minute).</summary>
+    [Fact]
+    public void The_saver_learns_which_revisions_changed_only_counters()
+    {
+        var h = new Harness(StoryPolicy.Apply);
+        h.Connect("a", 0);
+        h.Barrier("a", "stagml13");
+        var i = h.I("a");
+        h.Story("a", Flags(392));
+        h.Story("a", new StoryDelta { Counters = [new CounterGrowth(1, i.Id, i.Visit, 100)] });
+        h.Story("a", new StoryDelta { Counters = [new CounterGrowth(1, i.Id, i.Visit, 200)] });
+        h.Story("a", Flags(394));
+        Assert.Equal([false, true, true, false], h.CountersOnly);
     }
 }
