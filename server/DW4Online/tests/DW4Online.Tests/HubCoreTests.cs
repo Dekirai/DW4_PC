@@ -226,11 +226,27 @@ public class HubCoreTests
         // The grace after a stream starts: its first pads come late by design and do not feed the rule.
         var s = new SlotStream(0, 100, 4);
         Assert.Equal(106u, s.GraceUntil);
-        for (uint t = 100; t < 106; ++t) Assert.Equal(SlotStream.Submit.Late, s.Offer(t, P(1), 110, -20));
+        for (uint g = 100; g < 106; ++g) Assert.Equal(SlotStream.Submit.Late, s.Offer(g, P(1), 110, -20));
         Assert.Equal(6, s.LateInGrace);
         Assert.Equal((0, 0), s.Delay.LateInWindow());
         Assert.Equal(SlotStream.Submit.Late, s.Offer(107, P(1), 110, -5));
         Assert.Equal((1, 1), s.Delay.LateInWindow());
+        // Pads in a burst (within 4 ms of the previous one) or right after a stall (over three ticks later) do not feed the
+        // rule: a stall of the client, its downlink or the relay is no lasting delay of the link.
+        var b = new SlotStream(0, 0, 3);
+        double at = 1000;
+        uint t = 10;
+        for (; t < 70; ++t, at += 16.7) b.Offer(t, P(1), t - 2, 30, at); // paced, on time
+        Assert.Equal(0, b.Unpaced);
+        at += 150; // a stall of the client: its next pads come at once, late
+        for (var k = 0; k < 8; ++k, ++t) b.Offer(t, P(1), t + 3, -40 + 16.7 * k, at + 0.3 * k);
+        Assert.Equal(8, b.Unpaced);
+        Assert.Equal((0, 0), b.Delay.LateInWindow());
+        at += 16.7;
+        b.Offer(t, P(1), t + 1, -2, at); // a paced late pad counts
+        Assert.Equal((1, 1), b.Delay.LateInWindow());
+        Assert.Equal(SlotStream.Submit.Accepted, b.Offer(t + 5, P(1), t, 20)); // no arrival time: paced
+
         // A JOIN extends it (the spawn's long step on every machine), never shortens it.
         s.GraceThrough(300);
         s.GraceThrough(200);

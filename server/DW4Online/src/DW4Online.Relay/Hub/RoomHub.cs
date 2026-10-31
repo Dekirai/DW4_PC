@@ -334,7 +334,7 @@ public sealed class RoomHub
         {
             var tick = msg.FirstTick + (uint)k;
             var margin = i.Sealing || i.S0 != 0 ? Ms(Due(i, tick) - now) : 1000.0;
-            switch (s.Offer(tick, msg.Pads[k], i.NextSeal, margin))
+            switch (s.Offer(tick, msg.Pads[k], i.NextSeal, margin, Ms(now)))
             {
                 case SlotStream.Submit.Late: Count("late_pads"); break;
                 case SlotStream.Submit.TooEarly: Count("early_pads"); break;

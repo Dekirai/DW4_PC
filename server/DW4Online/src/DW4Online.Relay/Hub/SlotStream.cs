@@ -70,14 +70,34 @@ public sealed class SlotStream
         TooEarly,
     }
 
-    /// <summary>A pad for <paramref name="tick"/>; <paramref name="nextSeal"/> is the next tick the schedule seals.</summary>
-    public Submit Offer(uint tick, Pad pad, uint nextSeal, double marginMs)
+    /// <summary>
+    /// A pad that came within this many ms of the member's previous one (a burst: a stall of the client, its downlink or the
+    /// relay's sealing thread let its pads out at once, or one lost segment held them back) or more than this many ticks
+    /// after it (the first pad after such a stall) says nothing about the link's delay: the delay rule leaves it out.
+    /// Round 62: with every late pad counted, a machine busy for a few minutes raised two members at 20 ms of round trip
+    /// from 3 to 9 (150 ms of input delay for every input) to save a few filled pads per stall.
+    /// </summary>
+    public const double BurstMs = 4.0;
+    public const double StallTicks = 3.0;
+
+    private double _lastArrivalMs = double.NaN;
+
+    /// <summary>Pads that came in a burst or after a stall (left out of the delay rule).</summary>
+    public long Unpaced { get; private set; }
+
+    /// <summary>A pad for <paramref name="tick"/>; <paramref name="nextSeal"/> is the next tick the schedule seals,
+    /// <paramref name="arrivalMs"/> the relay's clock when it came (NaN: unknown, the pad counts as paced).</summary>
+    public Submit Offer(uint tick, Pad pad, uint nextSeal, double marginMs, double arrivalMs = double.NaN)
     {
+        var gap = arrivalMs - _lastArrivalMs;
+        var paced = double.IsNaN(gap) || (gap >= BurstMs && gap <= StallTicks * Wire.TickSeconds * 1000.0);
+        if (!double.IsNaN(arrivalMs)) _lastArrivalMs = arrivalMs;
+        if (!paced && tick >= GraceUntil) ++Unpaced;
         if (tick < nextSeal || tick < FromTick)
         {
             ++Late;
             if (tick < GraceUntil) ++LateInGrace;
-            else Delay.Record(marginMs, late: true);
+            else if (paced) Delay.Record(marginMs, late: true);
             return Submit.Late;
         }
         if (tick - nextSeal >= MaxAhead)
@@ -95,7 +115,7 @@ public sealed class SlotStream
         _ringTick[i] = tick;
         if (!HasHorizon || tick > Horizon) Horizon = tick;
         HasHorizon = true;
-        if (tick >= GraceUntil) Delay.Record(marginMs, late: false);
+        if (tick >= GraceUntil && paced) Delay.Record(marginMs, late: false);
         return Submit.Accepted;
     }
 
@@ -141,7 +161,8 @@ public sealed class SlotStream
 /// seconds of pads (600): d rises by one when late pads came in at least three different seconds of them (one stall of
 /// the client, a burst after one lost segment or a load costs that member a few filled pads, not a lasting tick of input
 /// delay for the rest of the stage), and at once by up to three when most pads of the last second were late (the
-/// starting value too low, a joiner still a tick behind); it falls
+/// starting value too low, a joiner still a tick behind; the stream gives it only paced pads, none of a burst or right after
+/// a stall); it falls
 /// when ten seconds have passed since the last change and the 0.5 % quantile of the arrival margin is above 1.15 ticks,
 /// by as many ticks as leave 0.15 of a tick of that margin (at most three at once; the client keeps the presses of the
 /// samples it skips). Round S1's rule (rise on four late pads in 60 s, fall by one per 30 s) ratcheted every hiccup into
