@@ -18,6 +18,14 @@ public sealed class SlotStream
     private readonly Pad?[] _ring = new Pad?[MaxAhead];
     private readonly uint[] _ringTick = new uint[MaxAhead];
     private Pad _lastReal;
+    private Pad _lastSealed;
+    /// <summary>Buttons pressed in pads that came after their tick was sealed and not held in the last sealed pad: they
+    /// go with the next sealed pad of this slot (round 62). The delay rule no longer rises for a burst of late pads (a
+    /// stall, one lost segment), so a press inside such a burst comes a few ticks late instead of being lost.</summary>
+    private ushort _carry;
+
+    /// <summary>Presses carried from late pads into a later sealed one.</summary>
+    public long Carried { get; private set; }
 
     public SlotStream(int slot, uint fromTick, int delay)
     {
@@ -96,6 +104,7 @@ public sealed class SlotStream
         if (tick < nextSeal || tick < FromTick)
         {
             ++Late;
+            if (tick >= FromTick) _carry |= (ushort)(pad.Buttons & ~_lastSealed.Buttons);
             if (tick < GraceUntil) ++LateInGrace;
             else if (paced) Delay.Record(marginMs, late: true);
             return Submit.Late;
@@ -130,13 +139,27 @@ public sealed class SlotStream
             _lastReal = pad;
             FillStreak = 0;
             filled = false;
-            return pad;
+            return Sealing(pad);
         }
         if (FillStreak == 0) FillStreakSince = now;
         ++FillStreak;
         ++Filled;
         filled = true;
-        return FillStreak <= RepeatFills ? _lastReal : Pad.Neutral;
+        return Sealing(FillStreak <= RepeatFills ? _lastReal : Pad.Neutral);
+    }
+
+    /// <summary>The pad as it is sealed: with the presses carried from late pads.</summary>
+    private Pad Sealing(Pad pad)
+    {
+        if (_carry != 0)
+        {
+            var with = (ushort)(pad.Buttons | _carry);
+            if (with != pad.Buttons) ++Carried;
+            pad = pad with { Buttons = with };
+            _carry = 0;
+        }
+        _lastSealed = pad;
+        return pad;
     }
 
     /// <summary>Moves the pads submitted for ticks from <paramref name="tick"/> on into another stream (a fork's child).</summary>

@@ -81,7 +81,10 @@ void NetStats::executed(std::uint32_t visit, std::uint32_t tick, double now, std
     in_flight_.erase(in_flight_.begin(), std::next(it));
     const double exec = std::max(0.0, now - s.at);
     const double steps = double(step - std::min(step, s.step));
-    const bool dropped = !(sealed == s.pad);
+    // (Lost: the relay sealed another pad. A sealed pad with the sent one's
+    // buttons and more, a press the relay carried from a late pad, is not.)
+    const bool dropped = (sealed.buttons & s.pad.buttons) != s.pad.buttons || sealed.lx != s.pad.lx || sealed.ly != s.pad.ly ||
+                         sealed.rx != s.pad.rx || sealed.ry != s.pad.ry;
     current_.add_exec(exec, steps, dropped);
     total_.add_exec(exec, steps, dropped);
     add_bucket(now);

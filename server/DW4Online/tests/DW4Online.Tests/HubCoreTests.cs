@@ -148,7 +148,8 @@ public class HubCoreTests
         Assert.Equal(SlotStream.Submit.Late, s.Offer(15, P(2), 19, -60));
         Assert.Equal(1, s.Late - 1); // the one before the stream plus this one
         Assert.Equal(SlotStream.Submit.Accepted, s.Offer(19, P(4), 19, 10));
-        Assert.Equal(P(4), s.Take(19, 0, out filled));
+        // (The late pad's press goes with the next sealed pad, round 62.)
+        Assert.Equal(P(4) with { Buttons = (ushort)(P(4).Buttons | P(2).Buttons) }, s.Take(19, 0, out filled));
         Assert.False(filled);
         Assert.Equal(0, s.FillStreak);
         Assert.Equal(8, s.Filled);
@@ -246,6 +247,22 @@ public class HubCoreTests
         b.Offer(t, P(1), t + 1, -2, at); // a paced late pad counts
         Assert.Equal((1, 1), b.Delay.LateInWindow());
         Assert.Equal(SlotStream.Submit.Accepted, b.Offer(t + 5, P(1), t, 20)); // no arrival time: paced
+
+        // A press in a late pad (after its tick was sealed) goes with the next sealed pad: late, not lost.
+        var c = new SlotStream(2, 0, 3);
+        Assert.Equal(SlotStream.Submit.Accepted, c.Offer(10, new Pad(0x0010, 0, 0, 0, 0), 10, 20));
+        Assert.Equal(new Pad(0x0010, 0, 0, 0, 0), c.Take(10, 0, out var cf));
+        Assert.Equal(SlotStream.Submit.Late, c.Offer(11, new Pad(0x0110, 5, 0, 0, 0), 12, -10)); // A (0x0100) pressed, late
+        Assert.Equal(SlotStream.Submit.Accepted, c.Offer(12, new Pad(0x0010, 5, 0, 0, 0), 12, 5)); // released again
+        Assert.Equal(new Pad(0x0110, 5, 0, 0, 0), c.Take(12, 0, out cf)); // sealed with the carried press
+        Assert.False(cf);
+        Assert.Equal(1, c.Carried);
+        Assert.Equal(new Pad(0x0010, 5, 0, 0, 0), c.Take(13, 0, out cf)); // a fill: the last real pad, nothing carried any more
+        Assert.True(cf);
+        // A button already held in the last sealed pad is no new press.
+        Assert.Equal(SlotStream.Submit.Late, c.Offer(13, new Pad(0x0010, 0, 0, 0, 0), 14, -10));
+        Assert.Equal(new Pad(0x0010, 5, 0, 0, 0), c.Take(14, 0, out cf));
+        Assert.Equal(1, c.Carried);
 
         // A JOIN extends it (the spawn's long step on every machine), never shortens it.
         s.GraceThrough(300);
