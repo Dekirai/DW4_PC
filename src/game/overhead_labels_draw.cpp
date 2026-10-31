@@ -57,11 +57,17 @@ void draw_overhead_labels(ImDrawList* list, const std::vector<OverheadLabel>& la
     };
     // The box: the name line over the two bars (the numbers beside them
     // stick out to the right and are not counted).
+    // A note (seamless co-op: "Kim is in the menu") goes on its own line above.
+    auto note_size = [&](const OverheadLabel& label) {
+        return label.note.empty() ? ImVec2(0, 0) : font->CalcTextSizeA(small_size, 1e9f, 0.0f, label.note.c_str());
+    };
     const auto boxes = layout_overhead_labels(labels, view, mode, players, [&](const OverheadLabel& label) {
         char level[24];
         const auto [name_size, level_size] = texts(label, level);
         const float name_width = name_size.x + level_size.x + (label.slot >= 0 ? stripe + 3.0f * scale : 0.0f);
-        return std::make_pair(std::max(bar_width, name_width), name_size.y + 2.0f * scale + hp_height + 1.0f + mp_height);
+        const ImVec2 note = note_size(label);
+        const float note_height = label.note.empty() ? 0.0f : note.y + 1.0f * scale;
+        return std::make_pair(std::max({bar_width, name_width, note.x}), note_height + name_size.y + 2.0f * scale + hp_height + 1.0f + mp_height);
     });
     // Farthest first, so the nearer tags are drawn over the farther ones.
     std::vector<std::size_t> order(labels.size());
@@ -102,6 +108,11 @@ void draw_overhead_labels(ImDrawList* list, const std::vector<OverheadLabel>& la
         const float mark = label.slot >= 0 ? stripe + 3.0f * scale : 0.0f;
         const float total = mark + name_size.x + level_size.x;
         y = box.y;
+        if (!label.note.empty()) {
+            const ImVec2 note = note_size(label);
+            outlined_text(list, font, small_size, ImVec2(centre - note.x * 0.5f, y), colour(0.75f, 0.95f, 1.0f, alpha), alpha, label.note.c_str());
+            y += note.y + 1.0f * scale;
+        }
         float tx = centre - total * 0.5f;
         if (label.slot >= 0) {
             ImVec4 c = slot_colour(label.slot);

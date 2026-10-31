@@ -39,7 +39,8 @@ scenario.json with "server": {...} gets its own server with those settings merge
 (S14h / S14a: {"Rooms": {"StoryWhileOwnerAway": "hold"}}); "min_shared_ticks" lowers the 10,000 shared ticks a scenario
 needs (S14: one member plays); "seed_story": true starts the room story from the room creator's card (its online_story
 row, SEAMLESS.md 8.4), so the members' card stories are not new to the room (the title gives every member the room
-story at game start).
+story at game start); "shots": true (scenario or client) lets the scripts' "shot NAME" steps write NAME.bmp into
+the run folder's shots_<client> (the client then draws its pictures in its hidden window).
 
 Without a scenario every game scenario runs. G1 is the integration's first game run (a new game from the title, both
 meet in the first field).
@@ -652,6 +653,12 @@ def run_real(stack, sc, api, relay_port, pin, diag, lock, connection):
         env.update(c.get("env", {}))
         argv = [a.game_exe, "--data", a.data, "--smoke-test", str(c.get("frames", sc.get("frames", 30000))), "--card-dir", card,
                 "--online-login", tag + c["name"], "--online-script", script_for(c)] + room_args
+        if c.get("shots", sc.get("shots")):
+            # The script's "shot NAME" steps: NAME.bmp in shots_<client> (a hidden window draws every picture then).
+            shots = os.path.join(out, "shots_" + c["name"])
+            os.makedirs(shots, exist_ok=True)
+            argv += ["--screenshot", os.path.join(shots, "end.bmp")]
+            env.setdefault("DW4_WINDOW", "960x720")
         folder = saved_card(c)
         if folder:
             argv += ["--online-card", folder]

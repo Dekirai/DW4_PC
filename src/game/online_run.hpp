@@ -34,8 +34,11 @@ namespace dw4::game {
 // DW4R2, the seamless protocol (the REST "protocol" too): 44 round S1, 45
 // round S2 (the room story in BARRIER_OK, STORY / STORY_ACK, the story at
 // game start; an S1 client in an S2 room would desynchronize at its first
-// barrier, so the rooms of the two never mix).
-inline constexpr std::uint32_t kOnlineProtocol = 45;
+// barrier, so the rooms of the two never mix), 46 round 63 (a member's
+// status window, NPC talks and map recorders are its own and pause nothing,
+// docs/SEAMLESS.md 5.3; a 45 client would pause its instance for them and
+// desynchronize at the first menu).
+inline constexpr std::uint32_t kOnlineProtocol = 46;
 
 struct OnlineOptions {
     std::string user, create, join;

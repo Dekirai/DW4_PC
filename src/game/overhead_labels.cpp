@@ -385,6 +385,11 @@ void OverheadLabels::capture(engine::Engine& engine, int own_slot) {
         label.max_hp = player.max_hp;
         label.mp = player.mp;
         label.max_mp = player.max_mp;
+        // Seamless co-op: another member in its own window or scene (5.3).
+        if (!label.own && engine.online().enabled) {
+            if (engine.own_window_open(slot)) label.note = label.name + " is in the menu";
+            else if (engine.own_scene_running(slot)) label.note = label.name + " is talking";
+        }
         local.push_back(std::move(label));
     }
     capture(std::move(local), joined, engine.stage_name());
@@ -544,9 +549,13 @@ std::vector<LabelBox> layout_overhead_labels(const std::vector<OverheadLabel>& l
 
 bool OverheadLabels::hidden(engine::Engine& engine) {
     if (engine.loading() || !engine.presenting() || engine.rebooting() || !engine.pad_input_enabled()) return true;
-    if (engine.demo().running() > 0) return true;
+    // (Offline every demo work and window is unscoped and counts.)
+    const int own = engine.view_slot();
+    if (engine.demo().running_for(own) > 0) return true;
     if (is_menu_stage(engine.stage_name())) return true;
-    if (const auto* windows = engine.get<engine::SubWindowManager>(); windows && windows->window_open()) return true;
+    if (const auto* windows = engine.get<engine::SubWindowManager>();
+        windows && (windows->shared_window_open() || windows->own_window_open(own)))
+        return true;
     return false;
 }
 

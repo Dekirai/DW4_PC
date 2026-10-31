@@ -45,7 +45,16 @@
 //   press BUTTONS       one press (6 frames)
 //   giveup              hold START while defeated (give up, SEAMLESS.md 5)
 //   disk RECORD         use a disk of the L panel (8: the Gate Disk)
+//   menu [close]        open the status window with START (this member's
+//                       own, docs/SEAMLESS.md 5.3); "close": B until it is shut
+//   browse              inside the status window: DOWN, A, B by turns every
+//                       90 frames from the 60th on (its pages one after the other)
+//   talkto MODEL[#N]    walk up to the NPC or map recorder, strike it (A) and
+//                       page through the talk this starts with A
 //   log TEXT            one trace line
+//   shot NAME           a screenshot of this machine's picture (with
+//                       --screenshot: NAME.bmp beside its file; the run draws
+//                       its pictures then)
 //
 //   COND: stage=NAME  present=N  present>=N  present<=N  frames>=N  dead
 //         alive  control  apart>D  near<D  asked  mode=NAME  partnerdead
@@ -61,6 +70,12 @@
 //         roomflag:N=V (flag N of the room story this machine holds as
 //         confirmed, docs/SEAMLESS.md 8.3: the server's newest it was sent,
 //         ahead of the engine until the next barrier; 0 without one)
+//         menu=0|1 (this member's own status window is open, 5.3)
+//         menus=N (present members with their own window open)
+//         talking=0|1 (this member's own talk or map recorder runs)
+//         scenes=N (present members in their own talk)
+//         lost>=N (HP this member lost since the step began)
+//         enemy<N (a living enemy within N units of this member)
 //
 // Without "until", hold / press / log end by themselves, goto and route when
 // the goal is reached, and the others never end. Every step start, exit prompt change and stage change is traced
@@ -99,6 +114,7 @@ public:
         bool walk{};
         float x{}, z{};
         float reach{4.0f};
+        std::string shot; // "shot NAME": a screenshot of this frame's picture (NAME.bmp beside --screenshot's file)
     };
     struct Condition {
         std::string key, op, text;
@@ -149,6 +165,8 @@ private:
     std::string step_stage_;    // the stage the step began in (stagechange)
     bool failed_ = false;       // a fail condition of this step held (traced once)
     int menu_at_ = -1;          // the gate action: the frame the menu came up
+    int step_hp_ = 0;           // this member's HP when the step began (lost)
+    std::string shot_;          // a "shot" step's name, handed out with the frame's output
     // The route action: where this member stood 40 frames ago, held up.
     engine::Vec3f stuck_at_{};
     int stuck_frame_ = -1000;

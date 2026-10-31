@@ -2181,6 +2181,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     const auto out = online_script.update(engine, facts);
                     // The run ends once the script is done.
                     if (online_script.finished()) running = false;
+                    if (!out.shot.empty()) ui_shot = out.shot;
                     input |= out.buttons;
                     if (out.push & dw4::pad_direction::negative_x) stick_x = -1;
                     if (out.push & dw4::pad_direction::positive_x) stick_x = 1;

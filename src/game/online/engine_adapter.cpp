@@ -113,7 +113,8 @@ bool GameEngineLink::joinable(wire::NotJoinable& reason) const {
         reason = wire::NotJoinable::loading;
         return false;
     }
-    if (e().demo().running() > 0) {
+    // (A member's own talk or map recorder holds up no join, SEAMLESS.md 5.3.)
+    if (e().demo().running_unscoped() > 0) {
         reason = wire::NotJoinable::scene;
         return false;
     }

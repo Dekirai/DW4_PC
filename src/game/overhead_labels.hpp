@@ -178,6 +178,10 @@ struct OverheadLabel {
     engine::Vec3f feet{}; // the model's position
     std::string name;     // ASCII
     int level{}, hp{}, max_hp{}, mp{}, max_mp{};
+    // Seamless co-op: a line above the tag for the other members while this
+    // member is in its own window or scene ("Kim is in the menu",
+    // docs/SEAMLESS.md 5.3); empty otherwise.
+    std::string note;
 };
 
 class OverheadLabels {
@@ -218,7 +222,9 @@ public:
 
     // Whether the labels are hidden as a whole: stage loads, no new picture,
     // a demo running, pad input off (cutscenes), a status / shop window, the
-    // title and menu stages.
+    // title and menu stages. Online, another member's own window or scene
+    // hides nothing (its tag carries a note instead), this machine's member's
+    // own does (its screen shows the window).
     static bool hidden(engine::Engine& engine);
 
     // The head point's follow of a local player's head (head_point's
