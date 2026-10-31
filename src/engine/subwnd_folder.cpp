@@ -14,9 +14,13 @@ std::vector<int> other_players(Engine& engine, int self) {
     return out;
 }
 
+// (A partner who left the instance while this window was open - online, a
+// member's own window stays open while others come and go, SEAMLESS.md 5.3 -
+// is no partner any more: nothing goes to it.)
 GameSystem::PlayerSlot* slot_of(Engine& engine, int k) {
     auto* sys = engine.get<GameSystem>();
-    return sys ? &sys->players[std::size_t(std::clamp(k, 0, 3))] : nullptr;
+    auto* slot = sys ? &sys->players[std::size_t(std::clamp(k, 0, 3))] : nullptr;
+    return slot && slot->joined ? slot : nullptr;
 }
 
 std::string digit(int value) { return std::string(1, char('0' + value)); }
@@ -741,9 +745,10 @@ struct CtrlSendBit : Window {
                 return;
             }
             switch_line(engine, "STWINFONT29", "font100", false);
-            p->bits -= amount;
-            if (auto* other = slot_of(engine, partners[std::size_t(std::clamp(target, 0, int(partners.size()) - 1))]))
+            if (auto* other = slot_of(engine, partners[std::size_t(std::clamp(target, 0, int(partners.size()) - 1))])) {
+                p->bits -= amount;
                 other->bits += amount;
+            }
             set_step(3);
             return;
         case 3:

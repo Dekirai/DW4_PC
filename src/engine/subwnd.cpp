@@ -972,7 +972,7 @@ void SubWindowManager::fill_stocks(Engine& engine) {
         if (const auto value = db->number(table, row, name)) return *value;
         return db->has_column(table, name) ? -1 : 0;
     };
-    if (program_ == 6 && stocks_[0].empty()) {
+    if (main_.program == 6 && stocks_[0].empty()) {
         // Weapons: a species offset alone, 150 for a party.
         int offset = 0;
         if (joined <= 1) {
@@ -993,7 +993,7 @@ void SubWindowManager::fill_stocks(Engine& engine) {
             if (record == -1) stocks_[0].emplace_back();
             else stocks_[0].push_back(roll_item_device(3, record, level));
         }
-    } else if (program_ == 7 && stocks_[1].empty()) {
+    } else if (main_.program == 7 && stocks_[1].empty()) {
         // Boards on lines 0..11, accessories on 12..35.
         const int row = row_of(29);
         for (int i = 0; i < 36; ++i) {
@@ -1001,14 +1001,14 @@ void SubWindowManager::fill_stocks(Engine& engine) {
             if (record == -1) stocks_[1].emplace_back();
             else stocks_[1].push_back(roll_item_device(i < 12 ? 4 : 5, record, level));
         }
-    } else if (program_ == 8 && stocks_[2].empty()) {
+    } else if (main_.program == 8 && stocks_[2].empty()) {
         const int row = row_of(29);
         for (int i = 0; i < 36; ++i) {
             const int record = cell("shopChip", row, column(i));
             if (record == -1) stocks_[2].emplace_back();
             else stocks_[2].push_back(ItemDevice{3, record});
         }
-    } else if (program_ == 9 && stocks_[3].empty()) {
+    } else if (main_.program == 9 && stocks_[3].empty()) {
         static const int levels[] = {1000, 6000, 26000, 86000, 206000, 456000, 956000, 1956000, 3956000};
         const int count = engine.counters()[1];
         junk_counter_ = count;
@@ -1028,8 +1028,54 @@ void SubWindowManager::fill_stocks(Engine& engine) {
 void SubWindowManager::clear_stage(Engine&) {
     for (auto& stock : stocks_) stock.clear();
     rams_.clear();
-    window_.reset();
-    running_ = false;
+    // (The original program's player and kept values outlive the stage.)
+    main_.window.reset();
+    main_.running = false;
+    for (auto& own : own_) own = Program{};
+}
+
+bool SubWindowManager::window_open() const {
+    if (main_.running) return true;
+    for (const auto& own : own_)
+        if (own.running) return true;
+    return false;
+}
+
+SubWindowManager::Program& SubWindowManager::program_of(Engine&, int slot) {
+    if (slot >= 0 && slot < 4 && own_[std::size_t(slot)].running) return own_[std::size_t(slot)];
+    return main_;
+}
+
+std::uint64_t SubWindowManager::own_windows_hash() const {
+    std::uint64_t h = 0xcbf29ce484222325ull;
+    auto mix = [&](std::int64_t value) {
+        for (int i = 0; i < 8; ++i) {
+            h ^= std::uint64_t(value >> (8 * i)) & 0xFFu;
+            h *= 0x100000001b3ull;
+        }
+    };
+    for (const auto& own : own_) {
+        mix(own.running);
+        if (!own.running) continue;
+        mix(own.state);
+        mix(own.player);
+        mix(own.shown_hp);
+        mix(own.shown_mp);
+        if (own.window) {
+            mix(own.window->state);
+            mix(own.window->sub);
+            mix(own.window->step);
+            mix(own.window->selection);
+            mix(std::int64_t(own.window->children.size()));
+        }
+    }
+    return h;
+}
+
+void SubWindowManager::end_own_window(Engine&, int slot) {
+    // (The window's models and lines are the member's own copies, which no
+    // picture shows once the member is gone; Engine::end_own_scenes.)
+    if (slot >= 0 && slot < 4) own_[std::size_t(slot)] = Program{};
 }
 
 bool SubWindowManager::command(Engine& engine, Ram&, std::string_view command, Packet& packet) {
@@ -1039,28 +1085,75 @@ bool SubWindowManager::command(Engine& engine, Ram&, std::string_view command, P
         Packet p;
         messenger.send(engine, category, std::nullopt, -1, "ONFREEZE", p);
     };
+    // Online: the member whose own window or scene sends this (SEAMLESS.md 5.3).
+    const int scope = engine.scene_scope();
     if (command == "GENERATE") {
-        if (running_) return true;
         static const char* programs[] = {"STATUS", "XDATA", "LABO", "BANK", "CNOS", "DISK", "WPU", "APU", "CHIP", "JUNK", "CARD"};
-        program_ = 0;
+        int program = 0;
         const auto name = packet.string(0);
         for (int i = 0; i < 11; ++i)
-            if (name == programs[i]) program_ = i;
-        player_ = packet.integer(0, 0);
-        running_ = true;
-        state_ = 0;
+            if (name == programs[i]) program = i;
+        const int player = packet.integer(0, 0);
+        // Online outside the hub stages the status window is the member's
+        // own: it opens at once, also while other members have theirs, and
+        // pauses nothing. Only the member's player stops taking its pad (what
+        // the original's MODELCTRL freeze kept from the window's buttons);
+        // the enemies, generators, other members, timers, sounds and posted
+        // messages run on, and the player can be hit (SEAMLESS.md 5.3).
+        if (program == 0 && engine.scenes_scoped() && player >= 0 && player < 4 && (engine.online().present & (1u << player))) {
+            auto& own = own_[std::size_t(player)];
+            if (own.running || main_.running) return true;
+            own = Program{};
+            own.program = 0;
+            own.player = player;
+            own.running = true;
+            Packet off;
+            messenger.send(engine, "PLAYER", std::nullopt, player, "OFCTRL", off);
+            return true;
+        }
+        if (main_.running) return true;
+        main_.program = program;
+        main_.player = player;
+        main_.running = true;
+        main_.state = 0;
         // 8034FBF0..8034FC40: models and generators freeze, the messenger
         // holds its posted messages until the program ends, the sounds freeze.
-        freeze("MODELCTRL");
-        freeze("GENERATER");
-        messenger.pause(engine, true);
-        freeze("SOUND");
+        // DW4_TEST_SUBWND_SKIP (an analysis switch of round 63, docs/SEAMLESS.md
+        // 5.3: what the pause protects inside a window): a comma list of
+        // modelctrl, generater, messenger, sound left out.
+        static const std::string skip = [] {
+            const char* value = std::getenv("DW4_TEST_SUBWND_SKIP");
+            return value ? std::string(value) : std::string();
+        }();
+        if (skip.find("modelctrl") == std::string::npos) freeze("MODELCTRL");
+        if (skip.find("generater") == std::string::npos) freeze("GENERATER");
+        if (skip.find("messenger") == std::string::npos) messenger.pause(engine, true);
+        if (skip.find("sound") == std::string::npos) freeze("SOUND");
         return true;
     }
     if (command == "REMOVE") {
-        if (running_) {
-            if (window_) {
-                window_->next_state(2);
+        // A member's own window closes for a REMOVE in its own scope; one
+        // from outside (the gate disc, a soft reset) closes the original
+        // program and every own window, as the original closes any.
+        auto close_own = [&](int slot) {
+            auto& own = own_[std::size_t(slot)];
+            if (!own.running) return;
+            if (own.window) {
+                own.window->next_state(2);
+            } else {
+                // (No window yet: the REMOVE comes back a frame later, in
+                // the member's scope.)
+                const Engine::SceneScope again(engine, slot);
+                messenger.post(engine.time() + kFrameNs, "SUBWND", std::nullopt, -1, "REMOVE", {});
+            }
+        };
+        if (scope >= 0) {
+            close_own(scope);
+            return true;
+        }
+        if (main_.running) {
+            if (main_.window) {
+                main_.window->next_state(2);
             } else {
                 // 8034FC80: no window yet: the messenger runs again and the
                 // REMOVE comes back a frame later.
@@ -1068,14 +1161,21 @@ bool SubWindowManager::command(Engine& engine, Ram&, std::string_view command, P
                 messenger.post(engine.time() + kFrameNs, "SUBWND", std::nullopt, -1, "REMOVE", {});
             }
         }
+        for (int slot = 0; slot < 4; ++slot) close_own(slot);
         return true;
     }
     if (command == "ISRUN") {
-        packet.bools.push_back(running_ ? 1 : 0);
+        // A member's own window counts only for its own scripts and quick
+        // panel (the scope, else the trigger slot of the asking run).
+        bool run = main_.running;
+        const int whose = scope >= 0 ? scope : engine.trigger_slot();
+        if (!run && whose >= 0 && whose < 4) run = own_[std::size_t(whose)].running;
+        packet.bools.push_back(run ? 1 : 0);
         return true;
     }
     if (!sys) return true;
-    const int slot = std::clamp(packet.integer(0, player_), 0, 3);
+    const int slot = std::clamp(packet.integer(0, main_.player), 0, 3);
+    auto& program = program_of(engine, slot);
     auto& p = sys->players[std::size_t(slot)];
     const auto& s = p.stats;
     auto set = [&](const char* layer, const char* line, const std::string& value) {
@@ -1116,9 +1216,9 @@ bool SubWindowManager::command(Engine& engine, Ram&, std::string_view command, P
         set("STWINFONT06", "font070", std::to_string(p.bits));
         const int next = s.next_exp - s.exp;
         set("STWINFONT06", "font071", s.level >= 999 ? "----" : next >= 0 ? std::to_string(next) : "0");
-        shown_ = values;
-        shown_hp_ = p.hp;
-        shown_mp_ = p.mp;
+        program.shown = values;
+        program.shown_hp = p.hp;
+        program.shown_mp = p.mp;
         return true;
     }
     if (command == "ONPREVIEW") {
@@ -1127,17 +1227,25 @@ bool SubWindowManager::command(Engine& engine, Ram&, std::string_view command, P
         const auto values = current();
         for (std::size_t i = 0; i < 11; ++i) {
             set("STWINFONT06", stat_lines[i], std::to_string(values[i]));
-            color(stat_lines[i], values[i] == shown_[i] ? &same : values[i] > shown_[i] ? &up : &down);
+            color(stat_lines[i], values[i] == program.shown[i] ? &same : values[i] > program.shown[i] ? &up : &down);
         }
         return true;
     }
     if (command == "OFPREVIEW") {
         for (std::size_t i = 0; i < 11; ++i) {
-            set("STWINFONT06", stat_lines[i], std::to_string(shown_[i]));
+            set("STWINFONT06", stat_lines[i], std::to_string(program.shown[i]));
             color(stat_lines[i], nullptr);
         }
-        p.hp = shown_hp_;
-        p.mp = shown_mp_;
+        if (&program == &main_) {
+            p.hp = program.shown_hp;
+            p.mp = program.shown_mp;
+        } else {
+            // An own window's kept values follow what the running world did
+            // to HP and MP meanwhile (update_own): the preview's clamp goes,
+            // a hit taken meanwhile stays.
+            p.hp = std::clamp(program.shown_hp, 0, std::max(p.max_hp, 0));
+            p.mp = std::clamp(program.shown_mp, 0, std::max(p.max_mp, 0));
+        }
         return true;
     }
     if (command == "GETSHOPDATA") {
@@ -1149,9 +1257,11 @@ bool SubWindowManager::command(Engine& engine, Ram&, std::string_view command, P
 
 // 8034F504: create the program window, run it, restore the stage afterwards.
 void SubWindowManager::update(Engine& engine) {
-    if (!running_) return;
+    for (int slot = 0; slot < 4; ++slot)
+        if (own_[std::size_t(slot)].running) update_own(engine, slot);
+    if (!main_.running) return;
     auto& messenger = engine.messenger();
-    if (state_ == 0) {
+    if (main_.state == 0) {
         // The port creates players on first use; a program needs them made.
         if (auto* sys = engine.get<GameSystem>())
             for (int slot = 0; slot < 4; ++slot)
@@ -1161,7 +1271,7 @@ void SubWindowManager::update(Engine& engine) {
         Packet pad;
         pad.strings.emplace_back("ENABLE");
         messenger.send(engine, "STAGECTL", std::nullopt, -1, "PADINPUT", pad);
-        if (program_ == 0) {
+        if (main_.program == 0) {
             for (const char* layer : {"WN01", "WN00"}) {
                 Packet p;
                 p.strings = {layer, "DISPOFF"};
@@ -1169,13 +1279,13 @@ void SubWindowManager::update(Engine& engine) {
             }
             auto window = std::make_unique<subwnd::StatusCtrl00>();
             window->manager = this;
-            window->player = player_;
-            window_ = std::move(window);
+            window->player = main_.player;
+            main_.window = std::move(window);
         } else {
             // The lobby programs play the shop music (RM_NSHOP).
-            window_ = subwnd::make_shop_program(program_);
-            window_->manager = this;
-            window_->player = player_;
+            main_.window = subwnd::make_shop_program(main_.program);
+            main_.window->manager = this;
+            main_.window->player = main_.player;
             for (const char* command : {"BGMSTOP", "ENVSTOP"}) {
                 Packet p;
                 messenger.send(engine, "SOUND", std::nullopt, -1, command, p);
@@ -1184,24 +1294,24 @@ void SubWindowManager::update(Engine& engine) {
             music.strings.emplace_back("RM_NSHOP");
             messenger.send(engine, "SOUND", std::nullopt, -1, "PLAY", music);
         }
-        ++state_;
+        ++main_.state;
     }
-    if (window_) window_->run(engine);
-    if (window_ && window_->running) return;
-    window_.reset();
+    if (main_.window) main_.window->run(engine);
+    if (main_.window && main_.window->running) return;
+    main_.window.reset();
     for (const char* category : {"SOUND", "GENERATER", "MODELCTRL"}) {
         Packet p;
         messenger.send(engine, category, std::nullopt, -1, "OFFREEZE", p);
     }
     messenger.pause(engine, false); // 0x8034F950
-    running_ = false;
+    main_.running = false;
     if (auto* sys = engine.get<GameSystem>())
         for (int slot = 0; slot < 4; ++slot)
             if (sys->players[std::size_t(slot)].joined) {
                 sys->change_hp(engine, slot, 0);
                 sys->change_mp(engine, slot, 0);
             }
-    if (program_ == 10) {
+    if (main_.program == 10) {
         // 8034FA18: the card program leaves for the lobby's point 4 unless a
         // reset is starting.
         Packet reset;
@@ -1221,7 +1331,60 @@ void SubWindowManager::update(Engine& engine) {
         p.strings = {layer, "DISPON"};
         messenger.send(engine, "LAYERCTL", std::nullopt, -1, "SWITCH", p);
     }
-    if (program_ != 0) engine.run_script("shopexit.lua");
+    if (main_.program != 0) engine.run_script("shopexit.lua");
+}
+
+// A member's own status window (SEAMLESS.md 5.3): the original program's
+// steps in the member's scope, so its window models and lines are the
+// member's own copies, its LAYERCTL and PADINPUT reach the member's own
+// screen and pad only, and nothing freezes. The running world goes on
+// meanwhile: HP / MP changes between two runs carry into the values
+// OFPREVIEW restores, and a member defeated in its window leaves it.
+void SubWindowManager::update_own(Engine& engine, int slot) {
+    auto& own = own_[std::size_t(slot)];
+    auto* sys = engine.get<GameSystem>();
+    if (!sys) return;
+    auto& player = sys->players[std::size_t(slot)];
+    const Engine::SceneScope scope(engine, slot);
+    auto& messenger = engine.messenger();
+    if (own.state == 0) {
+        if (player.joined && !player.stats.ready) sys->prepare_player(engine, slot);
+        Packet pad;
+        pad.strings.emplace_back("ENABLE");
+        messenger.send(engine, "STAGECTL", std::nullopt, -1, "PADINPUT", pad);
+        for (const char* layer : {"WN01", "WN00"}) {
+            Packet p;
+            p.strings = {layer, "DISPOFF"};
+            messenger.send(engine, "LAYERCTL", std::nullopt, -1, "SWITCH", p);
+        }
+        auto window = std::make_unique<subwnd::StatusCtrl00>();
+        window->manager = this;
+        window->player = slot;
+        own.window = std::move(window);
+        own.shown_hp = own.left_hp = player.hp;
+        own.shown_mp = own.left_mp = player.mp;
+        ++own.state;
+    } else {
+        own.shown_hp = std::max(0, own.shown_hp + player.hp - own.left_hp);
+        own.shown_mp = std::max(0, own.shown_mp + player.mp - own.left_mp);
+        if (player.hp <= 0 && own.window && own.window->state < 2) own.window->next_state(2);
+    }
+    if (own.window) own.window->run(engine);
+    own.left_hp = player.hp;
+    own.left_mp = player.mp;
+    if (own.window && own.window->running) return;
+    own = Program{};
+    sys->change_hp(engine, slot, 0);
+    sys->change_mp(engine, slot, 0);
+    for (const char* layer : {"WN01", "WN00"}) {
+        Packet p;
+        p.strings = {layer, "DISPON"};
+        messenger.send(engine, "LAYERCTL", std::nullopt, -1, "SWITCH", p);
+    }
+    if (player.hp > 0) {
+        Packet on;
+        messenger.send(engine, "PLAYER", std::nullopt, slot, "ONCTRL", on);
+    }
 }
 
 } // namespace dw4::engine

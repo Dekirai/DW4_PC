@@ -664,6 +664,10 @@ struct Scenario {
     // B+X+START on slot 1 from this pre-step frame for 240 frames (0: none).
     std::uint64_t reset_combo_at{};
     std::array<PadSample, 4> pads(std::uint64_t frame) const;
+    // The pads of chosen slots replaced (a menu's presses), and a look at the
+    // engine after every step of the recorded run (A).
+    std::function<void(std::uint64_t frame, std::array<PadSample, 4>& pads)> shape;
+    std::function<void(Engine& engine, std::uint64_t frame)> observe;
 };
 
 PadSample pad_for(std::uint64_t frame, int slot) {
@@ -708,6 +712,7 @@ std::array<PadSample, 4> Scenario::pads(std::uint64_t frame) const {
     auto out = pads_at(frame);
     if (reset_combo_at && frame >= reset_combo_at && frame < reset_combo_at + 240)
         out[1].buttons = dw4::pad_button::b | dw4::pad_button::x | dw4::pad_button::start;
+    if (shape) shape(frame, out);
     return out;
 }
 
@@ -799,6 +804,7 @@ Recording run_scenario(const std::filesystem::path& data, const Scenario& sc, co
         host_step(engine, pads, split);
         if (auto s = engine.take_split()) rec.splits.push_back(*s);
         rec.fingerprints[engine.frame()] = engine.net_fingerprint();
+        if (!replayed && sc.observe) sc.observe(engine, engine.frame());
         rec.rebooted = rec.rebooted || engine.rebooting();
         if (const auto* models = engine.get<ModelCtrlManager>()) {
             int generated = 0;
@@ -1181,9 +1187,107 @@ void data_scenarios(const std::filesystem::path& data) {
         check(compare(a5, b5, s5.name) == a5.fingerprints.size(), "give up: the second engine agrees");
     }
 
-    // 6. The transition steps take the pads of the barrier tick.
+    // 6. Own windows (SEAMLESS.md 5.3, round 63): two members in dng101b1;
+    // slot 0 opens its status window with START and walks its pages while
+    // slot 1 plays on, slot 1 opens its own while slot 0's is open, a third
+    // member joins while both are open; nothing pauses (slot 1's player moves
+    // and the enemies run while slot 0 is in its menu), both close again and
+    // their players take their pads again. A second engine and a joiner
+    // restored while the windows are open stay equal.
+    {
+        constexpr std::uint64_t open0 = 1500, open1 = 1700;
+        Scenario s6;
+        s6.name = "dng101b1 own menus";
+        s6.stage = "dng101b1";
+        s6.players = 2;
+        s6.species = {"p_agumon", "p_dorumon"};
+        s6.steps = 3000;
+        s6.identity = 0;
+        s6.join_at = open1 + 80;
+        Planned j;
+        j.kind = Planned::join;
+        j.earliest = open1 + 40;
+        j.slot = 2;
+        j.carry = carry_of("p_vmon", 4, "");
+        j.point = 0;
+        s6.plan = {j};
+        // A member's menu: still, START, then A (Equipment) / B / DOWN / A
+        // (Folder) / B / B (close), 120 frames apart.
+        auto menu_pad = [](std::uint64_t frame, std::uint64_t open, PadSample& pad) {
+            if (frame + 30 < open || frame > open + 900) return;
+            pad = PadSample{};
+            pad.connected = true;
+            static constexpr std::uint32_t presses[] = {dw4::pad_button::start, dw4::pad_button::a, dw4::pad_button::b, dw4::pad_button::down,
+                                                        dw4::pad_button::a,     dw4::pad_button::b, dw4::pad_button::b, dw4::pad_button::b};
+            if (frame < open) return;
+            const std::uint64_t t = frame - open;
+            if (t % 120 < 3 && t / 120 < std::size(presses)) pad.buttons = presses[t / 120];
+        };
+        s6.shape = [&](std::uint64_t frame, std::array<PadSample, 4>& pads) {
+            menu_pad(frame, open0, pads[0]);
+            menu_pad(frame, open1, pads[1]);
+        };
+        struct Seen {
+            bool own0{}, both{}, joined_in_menus{}, closed{}, control_back{}, one_moved{}, enemies_ran{}, copies{};
+            dw4::engine::Vec3f one_at{};
+            std::uint64_t enemies_at{};
+        } seen;
+        auto enemies = [](Engine& engine) {
+            std::uint64_t h = 0;
+            if (const auto* models = engine.get<ModelCtrlManager>())
+                for (const auto& ram : models->rams())
+                    if (ram->category == "ENEMY" && ram->generated && ram->node)
+                        h = h * 1000003u + std::uint64_t(std::int64_t(ram->node->matrix(3, 0) * 16) ^ std::int64_t(ram->node->matrix(3, 2) * 16));
+            return h;
+        };
+        s6.observe = [&](Engine& engine, std::uint64_t frame) {
+            auto* models = engine.get<ModelCtrlManager>();
+            const auto* one = models ? models->player(1) : nullptr;
+            if (frame == open0 + 60) {
+                seen.own0 = engine.own_window_open(0) && !engine.own_window_open(1) && engine.busy_slots() == 0b0001;
+                if (one && one->node) seen.one_at = {one->node->matrix(3, 0), 0, one->node->matrix(3, 2)};
+                seen.enemies_at = enemies(engine);
+                seen.enemies_ran = models && std::none_of(models->rams().begin(), models->rams().end(), [](const auto& ram) { return ram->frozen; });
+                seen.copies = models && models->find("i_stmenu01@0", 0) && models->find("i_stbase@0", 0) && !models->find("i_stmenu01@1", 0);
+            }
+            if (frame == open0 + 180 && one && one->node) {
+                const float dx = one->node->matrix(3, 0) - seen.one_at.x, dz = one->node->matrix(3, 2) - seen.one_at.z;
+                seen.one_moved = dx * dx + dz * dz > 1.0f;
+            }
+            if (frame == open1 + 60) {
+                seen.both = engine.own_window_open(0) && engine.own_window_open(1) && models && models->find("i_stmenu01@1", 0);
+                seen.enemies_ran = seen.enemies_ran && models &&
+                                   std::none_of(models->rams().begin(), models->rams().end(), [](const auto& ram) { return ram->frozen; });
+            }
+            if (frame == open1 + 120) seen.joined_in_menus = (engine.online().present & 0b0100) && engine.own_window_open(0) && engine.own_window_open(1);
+            if (frame == open1 + 1100) {
+                seen.closed = !engine.own_window_open(0) && !engine.own_window_open(1) && engine.busy_slots() == 0;
+                const auto* zero = models ? models->player(0) : nullptr;
+                seen.control_back = zero && zero->control_enabled && one && one->control_enabled;
+            }
+        };
+        const auto a6 = run_scenario(data, s6, nullptr);
+        std::cout << "  " << s6.name << ": events at";
+        for (const auto& e : a6.applied) std::cout << ' ' << e.frame;
+        std::cout << "; own window " << seen.own0 << ", copies " << seen.copies << ", slot 1 moved " << seen.one_moved << ", nothing frozen "
+                  << seen.enemies_ran << ", both " << seen.both << ", joined " << seen.joined_in_menus << ", closed " << seen.closed
+                  << ", control " << seen.control_back << '\n';
+        check(seen.own0 && seen.copies, "own menus: slot 0's window is its own, with its own copies");
+        check(seen.one_moved && seen.enemies_ran, "own menus: slot 0's window pauses nothing");
+        check(seen.both, "own menus: two windows at once");
+        check(seen.joined_in_menus && !a6.applied.empty() && a6.applied[0].frame < open1 + 120, "own menus: a member joins while both are open");
+        check(seen.closed && seen.control_back, "own menus: both close, both players take their pads again");
+        const auto b6 = run_scenario(data, s6, &a6.applied);
+        check(compare(a6, b6, s6.name) == a6.fingerprints.size(), "own menus: the second engine agrees");
+        const auto c6 = run_joiner(data, s6, a6);
+        const auto m6 = compare(a6, c6, s6.name + " (joiner)");
+        std::cout << "  joiner restored with both windows open: " << m6 << " steps equal after\n";
+        check(m6 > 1000, "own menus: the joiner compared the rest of the run");
+    }
+
+    // 7. The transition steps take the pads of the barrier tick.
     transition_pads(data);
-    // 7. The barrier names the point the exit leads to.
+    // 8. The barrier names the point the exit leads to.
     barrier_point(data);
 }
 

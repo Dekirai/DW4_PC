@@ -268,6 +268,38 @@ bool ModelCtrlManager::has_sequence(std::string_view model, std::string_view seq
     return false;
 }
 
+ModelCtrlManager::ModelRam* ModelCtrlManager::add_copy(Engine& engine, const ModelRam& original, const std::string& name,
+                                                        const std::function<Node*(const Node*)>& remap) {
+    auto ram = std::make_unique<ModelRam>();
+    ram->manager = this;
+    ram->info = original.info;
+    ram->ram = original.ram;
+    ram->info_name = name;
+    ram->index = original.index;
+    ram->category = original.category;
+    ram->sequences = original.sequences;
+    ram->ai_maps = original.ai_maps;
+    ram->homing = original.homing;
+    ram->is_player = false;
+    // (No HIT categories: a copy of a talk window's portrait is no target.)
+    ram->node = remap(original.node);
+    ram->trace = remap(original.trace);
+    ram->base_matrix = original.base_matrix;
+    if (ram->node) ram->node->matrix = original.base_matrix;
+    engine.messenger().add_row(ram->category, ram->info_name, ram->index, ram.get());
+    if (ram->category != "MODELCTRL") engine.messenger().add_row("MODELCTRL", ram->info_name, ram->index, ram.get());
+    int rank = 0;
+    for (const auto& entry : update_order_)
+        if (entry.ram == &original) rank = entry.rank;
+    const auto at = std::upper_bound(update_order_.begin(), update_order_.end(), rank,
+                                     [](int r, const UpdateEntry& e) { return r < e.rank; });
+    update_order_.insert(at, {rank, ram.get()});
+    auto* made = ram.get();
+    rams_.push_back(std::move(ram));
+    rams_generation_ = next_rams_generation();
+    return made;
+}
+
 void ModelCtrlManager::clear_stage(Engine&) {
     rams_.clear();
     player_rams_.clear();
@@ -1448,7 +1480,9 @@ void ModelCtrlManager::update_player(Engine& engine, ModelRam& ram) {
         // CURSOR_NG while a panel of any player runs (NDMWPANEL ISRUN, row -1).
         if (start_alone && messenger.count("SUBWND", std::nullopt, -1)) {
             Packet run;
-            messenger.send(engine, "NDMWPANEL", std::nullopt, -1, "ISRUN", run);
+            // (Online outside the hub stages the window is the member's own:
+            // only its own quick panel refuses it, SEAMLESS.md 5.3.)
+            messenger.send(engine, "NDMWPANEL", std::nullopt, engine.scenes_scoped() ? ram.index : -1, "ISRUN", run);
             if (!run.bools.empty() && run.bools[0]) {
                 Packet sound;
                 sound.strings.emplace_back("CURSOR_NG");
@@ -2654,6 +2688,14 @@ bool ModelCtrlManager::hit_check(Engine& engine, ModelRam& ram, Packet& packet) 
     if (const auto* shooter = find(packet.string(0), packet.integer(1, -1)); shooter && shooter->is_player) trigger = shooter->index;
     {
         const Engine::TriggerScope scope(engine, trigger);
+        // Seamless co-op: an NPC talk or a map recorder (the class
+        // local_scene, the hit_n_* scripts) is the talking member's own scene
+        // (SEAMLESS.md 5.3): its run, its demo works and its posts in that
+        // member's scope.
+        const bool own = engine.scenes_scoped() && ram.info_name.starts_with("n_") && trigger >= 0 &&
+                         (engine.online().present & (1u << trigger)) != 0;
+        std::optional<Engine::SceneScope> scene;
+        if (own) scene.emplace(engine, trigger);
         engine.run_script("hit_" + ram.info_name + ".lua");
     }
     const auto done = engine.pop_model_context();
@@ -2903,6 +2945,37 @@ void ActionManager::add_info(Engine& engine, const ObjectView& info) {
         engine.messenger().add_row("ACTION", ram->info_name, ram->index, ram.get());
         rams_.push_back(std::move(ram));
     }
+}
+
+void ActionManager::add_copy(Engine& engine, const ActionRam& original, const std::string& name,
+                             const std::function<Node*(const Node*)>& remap, std::size_t child) {
+    auto ram = std::make_unique<ActionRam>();
+    ram->manager = this;
+    ram->info = original.info;
+    ram->ram = original.ram;
+    ram->info_name = name;
+    ram->index = original.index;
+    ram->actions = original.actions;
+    ram->switch_node = original.switch_node;
+    ram->database = original.database;
+    ram->node = remap(original.node);
+    for (const auto* actor : original.actors)
+        if (Node* n = remap(actor)) {
+            ram->actors.push_back(n);
+            actor_owner_[n] = ram.get();
+        }
+    if (ram->node) {
+        // (A fresh action: no appearance override of the original's current one.)
+        ram->node->color_override.reset();
+        ram->node->blend_override.reset();
+        ram->node->texture_override.reset();
+        ram->node->lighting_override.reset();
+        ram->node_clock.scale = ram->node->time_scale;
+        ram->node_clock.bias = ram->node->time_bias;
+    }
+    ram->switch_child = child;
+    engine.messenger().add_row("ACTION", ram->info_name, ram->index, ram.get());
+    rams_.push_back(std::move(ram));
 }
 
 void ActionManager::clear_stage(Engine&) {

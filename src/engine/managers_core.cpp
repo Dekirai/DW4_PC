@@ -170,6 +170,20 @@ void LayerManager::order(Engine& engine, Ram&) {
     }
 }
 
+const Node* LayerManager::group(std::string_view name) const {
+    if (!layer_switch_) return nullptr;
+    for (const auto* child : layer_switch_->children)
+        if (child->name == name) return child;
+    return nullptr;
+}
+
+std::vector<const Node*> LayerManager::groups() const {
+    std::vector<const Node*> out;
+    if (layer_switch_)
+        for (const auto* child : layer_switch_->children) out.push_back(child);
+    return out;
+}
+
 bool LayerManager::command(Engine& engine, Ram& ram, std::string_view command, Packet& packet) {
     if (command == "ORDER") { order(engine, ram); return true; }
     if (!layer_switch_) return true;
@@ -1579,6 +1593,9 @@ std::uint64_t SoundManager::play(Engine& engine, const std::string& name) {
         return 0;
     }
     const SoundData data = found->second;
+    // Seamless co-op: a member's own window or scene does not change the
+    // instance's music or ambience (docs/SEAMLESS.md 5.3).
+    if ((data.type == 1 || data.type == 2) && engine.scene_scope() >= 0) return 0;
     if (data.type == 1 || data.type == 2) {
         if (data.type == 1 && !current_bgm_.empty() && current_bgm_ == name) return 0;
         const auto id = start_bgm_env(engine, name, data);
@@ -1670,6 +1687,7 @@ std::uint64_t SoundManager::start_stream(Engine& engine, int channel, const std:
     stream.serial = ++serial_;
     stream.name = name;
     stream.type = data.type; // entry +32
+    stream.owner = engine.scene_scope(); // (presentation: heard on that member's machine alone, 5.3)
     if (static const bool trace = std::getenv("DW4_TRACE_SOUND") != nullptr; trace)
         engine.log("stream start slot " + std::to_string(channel) + " " + name + " volume " + std::to_string(stream.out_volume) +
                    (cri_.handles[std::size_t(channel)].paused ? " (paused)" : "") + " frame " + std::to_string(engine.frame()));
@@ -1824,6 +1842,7 @@ std::uint64_t SoundManager::start_sfp(Engine& engine, const std::string& name, c
     if (!started) return 0;
     // 802F5F14: the Cri serial + 1 becomes the entry's play id.
     entry.serial = ++serial_;
+    entry.owner = engine.scene_scope(); // (presentation: heard on that member's machine alone, 5.3)
     entry.type = data.type;
     entry.name = name;
     entry.priority = data.priority;
@@ -1983,6 +2002,8 @@ void SoundManager::mix_frame(std::int64_t frame, axmix::Output::Frame& out, axmi
         }
         // (A stream or movie the game replaced since waits for its frame.)
         if (!m.on || !stream.decoder || (movie ? !movie_ || movie_->serial != m.serial : stream.serial != m.serial)) continue;
+        // (Seamless co-op: another member's own window's sound effect plays on its machine.)
+        if (!movie && stream.owner >= 0 && listener_slot_ >= 0 && stream.owner != listener_slot_) continue;
         // 802A7F34: a stereo stream's channels sit hard left and right (pan
         // 0 / 127, full level on their side), a mono stream in the centre.
         const bool stereo = stream.decoder->header().channels > 1;
@@ -2027,6 +2048,12 @@ void SoundManager::mix_frame(std::int64_t frame, axmix::Output::Frame& out, axmi
     // split's send level, the AUX A bus.
     for (const auto& voice : mirror_.driver().voices()) {
         if (!voice.used || !voice.bank || std::size_t(voice.sample) >= voice.bank->pcm.size()) continue;
+        // (Seamless co-op: another member's own window's sound effect plays on its machine.)
+        if (listener_slot_ >= 0) {
+            const int entry = int(voice.seq) - kSfpFirstSeq;
+            if (entry >= 0 && entry < int(kSfpEntries) && sfp_[std::size_t(entry)].owner >= 0 && sfp_[std::size_t(entry)].owner != listener_slot_)
+                continue;
+        }
         const std::int64_t first = (frame - (voice.start + 1)) * n;
         if (first < 0) continue;
         const auto& pcm = voice.bank->pcm[std::size_t(voice.sample)];

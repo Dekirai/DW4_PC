@@ -405,7 +405,9 @@ std::vector<Lua4Value> Engine::lua_call(const Lua4HostCall& call) {
         // with none, SUBWND ISRUN to RAM 0 (0x802ED500, no name) - a running
         // status window gives -1 (0x802ED538..0x802ED544), no answer or a
         // stopped one 0.
-        if (const auto running = demo().running()) return number(double(running));
+        // (Online: another member's own scene does not count, SEAMLESS.md
+        // 5.3; offline every work counts.)
+        if (const auto running = demo().running_for(trigger_slot())) return number(double(running));
         Packet run;
         messenger().send(*this, "SUBWND", std::nullopt, 0, "ISRUN", run);
         return number(!run.bools.empty() && run.bools[0] ? -1.0 : 0.0);

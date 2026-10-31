@@ -172,6 +172,9 @@ struct DeferredMessage {
     // Online co-op: the trigger slot of the script run that posted it
     // (Engine::trigger_slot; read only online).
     int trigger = -1;
+    // Online co-op: the member whose own window or scene posted it
+    // (Engine::scene_scope, docs/SEAMLESS.md 5.3; -1 none, always offline).
+    int scope = -1;
 };
 
 class Messenger {
@@ -219,9 +222,12 @@ public:
     const MessageObjects& message_objects() const { return objects_; }
     // The trigger slot posts take (Engine::TriggerScope).
     void set_trigger(int slot) { trigger_ = slot; }
+    // The scene scope posts take (Engine::SceneScope).
+    void set_scope(int slot) { scope_ = slot; }
 
 private:
     int trigger_ = -1;
+    int scope_ = -1;
     bool modelling() const { return port_only_ == 0; }
     std::size_t dispatch(Engine& engine, std::string_view category, std::optional<std::string_view> name,
                          std::int32_t index, std::string_view command, Packet& packet, bool model);
@@ -279,6 +285,7 @@ struct DemoWork {
     std::vector<DemoRecord> records;
     std::size_t cursor{};
     int trigger = -1; // the trigger slot of the script run that started it (Engine::trigger_slot)
+    int scope = -1;   // online: the member whose own scene started it (Engine::scene_scope, -1 none)
 };
 
 class DemoManager {
@@ -295,12 +302,23 @@ public:
     void update(Engine& engine);
     void clear();
     std::size_t running() const { return running_.size(); }
+    // Online (docs/SEAMLESS.md 5.3): the works that are no member's own
+    // scene, and those plus the own scenes of `slot` (what DMgetCount counts
+    // for a script run of that trigger; -1: the unscoped works alone).
+    // Offline every work is unscoped: both equal running().
+    std::size_t running_unscoped() const;
+    std::size_t running_for(int slot) const;
+    // The own scenes of `slot` end at once (the member left the instance).
+    void drop_scope(int slot);
     std::vector<std::string> describe() const;
     // The trigger slot new works take (Engine::TriggerScope).
     void set_trigger(int slot) { trigger_ = slot; }
+    // The scene scope new works take (Engine::SceneScope).
+    void set_scope(int slot) { scope_ = slot; }
 
 private:
     int trigger_ = -1;
+    int scope_ = -1;
     std::unique_ptr<DemoWork> current_;
     bool in_switch_{};
     std::vector<std::unique_ptr<DemoWork>> running_;
@@ -473,7 +491,9 @@ public:
     // member's slot, 0..3). picture_slot() is the camera render() draws: the
     // view slot, or while its player is defeated the nearest living member's
     // (4.1); the view slot itself without per-slot cameras.
-    void set_view_slot(int slot) { view_slot_ = slot < 0 || slot > 3 ? 0 : slot; }
+    // (It also tells the sound output whose own windows' sound effects this
+    // machine plays, SEAMLESS.md 5.3.)
+    void set_view_slot(int slot);
     int view_slot() const { return view_slot_; }
     int picture_slot() const;
     // Replays (catch-up, resync, resume): the side to take at each fork.
@@ -581,6 +601,60 @@ public:
     // online, index 0 of a window with a present trigger reads the trigger's
     // pad, an absent or leaving index or one without a trigger the leader's.
     int pad_reader_slot(int index, int trigger) const;
+
+    // ---- Own windows and scenes online (docs/SEAMLESS.md 5.3, round 63;
+    // online_scenes.cpp). Online in a stage that is not a hub or UI stage, a
+    // member's status window (START) and the scenes of the class local_scene
+    // (NPC talks and map recorders, the hit_n_* scripts) belong to that member
+    // alone, also while it is alone in its instance. They run in the
+    // simulation like everything else (every engine of the instance runs them
+    // with that member's sealed pads), but they never pause the instance:
+    // inside their scope the instance-wide commands are narrowed to the
+    // member's slot (PLAYER -1 OFCTRL / ONCTRL, STAGECTL PADINPUT, LAYERCTL)
+    // or left out (ENEMY -1 OFCTRL / ONCTRL, GENERATER and category freezes,
+    // the quest timer's stop), and their window models, cursors and text lines
+    // are the member's own copies, which only its machine draws and whose
+    // sound effects only it hears. Offline, in a hub stage and in the replay
+    // of an offline save state nothing of it acts.
+    bool scenes_scoped() const;
+    // The slot whose own window or scene runs right now (-1: none).
+    int scene_scope() const { return scene_scope_; }
+    class SceneScope {
+    public:
+        // `slot` -1 leaves the scope (an unscoped delivery inside a scoped one).
+        SceneScope(Engine& engine, int slot);
+        ~SceneScope();
+        SceneScope(const SceneScope&) = delete;
+        SceneScope& operator=(const SceneScope&) = delete;
+
+    private:
+        Engine& engine_;
+        int saved_scope_;
+        int saved_trigger_;
+    };
+    // The messenger's hook for a message inside a scene scope: rewrites the
+    // target (a window model to the member's own copy, made on first use; the
+    // index of PLAYER -1 to the member's slot) or keeps the message from the
+    // instance (false). `storage` holds a rewritten name.
+    bool scope_message(std::string_view category, std::optional<std::string_view>& name, std::int32_t& index,
+                       std::string_view command, Packet& packet, std::string& storage);
+    // The member's own copy of a window text line: TextCtlManager asks for it
+    // inside a scope. `child` is the line switch's child that holds the line
+    // node `line`; its copy becomes a new child of `parent` (hidden, `index`
+    // its place), the line node's copy is returned (nullptr: none).
+    Node* scene_copy_line(const Node* child, const Node* line, Node* parent, std::size_t& index);
+    // A slot's own status window or own scene (presentation, the exit port's
+    // busy rule, the name tags); busy_slots(): a bit per such slot.
+    bool own_window_open(int slot) const;
+    bool own_scene_running(int slot) const;
+    std::uint8_t busy_slots() const;
+    // The slot's own windows and scenes end at once (a LEAVE, the other side
+    // of a fork): the window closes without its close sequence, the scene's
+    // works stop, its copies hide and its layer filter goes.
+    void end_own_scenes(int slot);
+    // STAGECTL PADINPUT inside a slot's scope: that slot alone reads the
+    // neutral pad (pads()).
+    std::uint8_t scoped_pads_off() const { return scoped_pads_off_; }
     // Simulation entries that found another MXCSR than 0x1F80 and repaired
     // it for their duration (diagnostics, 6.12).
     static std::uint64_t mxcsr_repairs();
@@ -720,7 +794,15 @@ public:
     // update every frame meanwhile and keep their own history, so a press
     // read in the frame of the ENABLE counts and a button held across it
     // gives no trigger.
-    const std::array<PadState, 4>& pads() const { return pad_input_enabled_ ? pads_.states() : kFifthPads; }
+    const std::array<PadState, 4>& pads() const {
+        if (!pad_input_enabled_) return kFifthPads;
+        if (!scoped_pads_off_) return pads_.states();
+        // Online: a member's own scene turned its pad input off (SEAMLESS.md 5.3).
+        scoped_pads_ = pads_.states();
+        for (std::size_t s = 0; s < 4; ++s)
+            if (scoped_pads_off_ & (1u << s)) scoped_pads_[s] = kFifthPads[s];
+        return scoped_pads_;
+    }
 
     // Script execution (beLua::call 80301FA4): first matching name per info.
     bool run_script(std::string_view name);
@@ -1065,6 +1147,33 @@ private:
         messenger_.set_trigger(slot);
         demo_.set_trigger(slot);
     }
+    // Own windows and scenes (online_scenes.cpp, SEAMLESS.md 5.3).
+    int scene_scope_ = -1;
+    std::uint8_t scoped_pads_off_{};                  // STAGECTL PADINPUT DISABLE inside a slot's scope
+    mutable std::array<PadState, 4> scoped_pads_{};   // pads() with those slots neutral
+    // LAYERCTL inside a slot's scope: the layer groups that slot's picture
+    // leaves out (its own screen only; the simulation's layers stay).
+    std::array<std::vector<std::string>, 4> scoped_layers_off_;
+    // The members' own copies of window models and text lines: the cloned
+    // subtrees (owned here, hung under the original's parent), their parents,
+    // the colour attributes of copied lines, the copies made (name@slot#index).
+    struct SceneCopy {
+        Node* parent{};
+        Node* root{};
+        int slot{};
+    };
+    std::vector<std::unique_ptr<Node>> copy_nodes_;
+    std::vector<std::unique_ptr<Attribute>> copy_attributes_;
+    std::vector<SceneCopy> copies_;
+    std::set<std::string, std::less<>> copies_made_;
+    Node* clone_subtree(const Node* root, std::unordered_map<const Node*, Node*>& map);
+    bool make_window_copy(std::string_view name, int index, int slot);
+    void clear_scene_copies();
+    // The picture filter's part of the own windows and scenes: every slot's
+    // copies but the viewed one's, and the layers the viewed slot's own
+    // window or scene hides.
+    void scoped_picture_hidden(std::vector<const Node*>& out);
+    bool scoped_picture_filter() const;
     void step_impl(const std::array<PadSample, 4>& samples);
 };
 

@@ -105,7 +105,9 @@ const std::vector<std::string_view>& online_forbidden_env() {
         "DW4_PAD_REPLAY",
         // the title menu's third entry in a test run without the online screens (game_main.cpp; it lets
         // TITLE2's cursor reach it)
-        "DW4_TITLE_ONLINE"};
+        "DW4_TITLE_ONLINE",
+        // round 63's analysis switch: parts of the status window's pause left out (subwnd.cpp)
+        "DW4_TEST_SUBWND_SKIP"};
     return names;
 }
 
@@ -201,6 +203,9 @@ void Engine::set_online(const OnlineRules& rules) {
     }
     const OnlineRules before = online_;
     online_ = rules;
+    // (The sound output plays the own windows' sound effects of this
+    // machine's member alone, SEAMLESS.md 5.3.)
+    if (auto* sound = get<SoundManager>()) sound->set_listener_slot(online_.enabled ? view_slot_ : -1);
     if (!online_.enabled) {
         personal_ = {};
         barrier_pads_.reset();
@@ -236,8 +241,10 @@ bool Engine::hub_stage(std::string_view stage) {
 bool Engine::membership_safe() const {
     if (rebooting_ || !presenting() || loading() || !pending_stage_.empty() || !stage_active_) return false;
     if (!pad_input_enabled_) return false;
-    if (demo_.running() != 0) return false;
-    if (const auto* windows = get<SubWindowManager>(); windows && windows->window_open()) return false;
+    // (A member's own window or scene pauses nothing and holds up nothing:
+    // a member joins or leaves while another has its menu open, 5.3.)
+    if (demo_.running_unscoped() != 0) return false;
+    if (const auto* windows = get<SubWindowManager>(); windows && windows->shared_window_open()) return false;
     if (pending_fork_) return false;
     return true;
 }
@@ -459,6 +466,8 @@ void Engine::despawn_player(int slot) {
     auto* sys = get<GameSystem>();
     auto* models = get<ModelCtrlManager>();
     const Messenger::PortOnly port_only(messenger_);
+    // Its own window and scenes go with it (5.3).
+    end_own_scenes(slot);
     // As the pits' PLAYER REMOVE (the player class hook closes an open quick
     // panel, the model releases its action, subcommands and timers).
     if (models)
@@ -733,6 +742,17 @@ std::uint64_t Engine::net_fingerprint() {
     }
     h.value(net_fingerprint_cameras(*this));
     h.value(session_context_hash());
+    // The members' own windows and scenes (5.3): their programs, pad and
+    // layer switches, the copies made and the scoped demo works.
+    if (const auto* windows = get<SubWindowManager>()) h.value(windows->own_windows_hash());
+    h.value(scoped_pads_off_);
+    for (const auto& layers : scoped_layers_off_) {
+        h.value(std::uint32_t(layers.size()));
+        for (const auto& layer : layers) h.text(layer);
+    }
+    h.value(std::uint32_t(copies_made_.size()));
+    h.value(std::uint32_t(demo_.running_unscoped()));
+    h.value(std::uint32_t(demo_.running()));
     return h.h;
 }
 

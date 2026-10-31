@@ -331,11 +331,43 @@ GeometryData layout_text(const FontImage& font, std::u16string_view text, int al
     return geometry;
 }
 
+void TextCtlManager::make_copies(Engine& engine, int slot, const Ram& ram, std::string_view layer, std::string_view name) {
+    Node* root = root_switch(engine);
+    if (!root) return;
+    const std::size_t count = lines_.size();
+    for (std::size_t i = 0; i < count; ++i) {
+        const Line original = lines_[i];
+        if (original.slot >= 0 || original.document != ram.info.document() || original.info != ram.info.reference()) continue;
+        if (!(layer == "ALL" || original.layer == layer) || original.name != name || !original.node) continue;
+        const bool made = std::any_of(lines_.begin(), lines_.end(), [&](const Line& line) {
+            return line.slot == slot && line.document == original.document && line.info == original.info && line.layer == original.layer &&
+                   line.name == original.name;
+        });
+        if (made || original.category < 0 || std::size_t(original.category) >= root->children.size()) continue;
+        Node* category = root->children[std::size_t(original.category)];
+        if (category->children.empty() || original.index < 0) continue;
+        Node* parent = category->children[0];
+        if (std::size_t(original.index) >= parent->children.size()) continue;
+        std::size_t index = 0;
+        Node* node = engine.scene_copy_line(parent->children[std::size_t(original.index)], original.node, parent, index);
+        if (!node) continue;
+        Line copy = original;
+        copy.slot = slot;
+        copy.node = node;
+        copy.index = int(index);
+        lines_.push_back(std::move(copy));
+    }
+}
+
 bool TextCtlManager::command(Engine& engine, Ram& ram, std::string_view command, Packet& packet) {
     // Each TEXTCTL RAM answers for the lines of its own beFontInfo.
     auto owned = [&](const Line& line) {
         return line.document == ram.info.document() && line.info == ram.info.reference();
     };
+    // Seamless co-op (SEAMLESS.md 5.3): inside a member's own window or
+    // scene the lines are its own copies; outside, the originals (always so
+    // offline: no scope).
+    const int scope = engine.scene_scope();
     if (command == "INITIALIZE") {
         for (auto& line : lines_)
             if (owned(line))
@@ -345,8 +377,11 @@ bool TextCtlManager::command(Engine& engine, Ram& ram, std::string_view command,
     // 802FC5AC / 802FC6F4: select lines by layer ("ALL" = any) and line name.
     const std::string layer(packet.string(0));
     const std::string name(packet.string(1));
+    if (scope >= 0 && (command == "TEXTSET" || command == "SWITCH" || command == "ALIGN" || command == "COLOR" || command == "DEFAULTCOLOR" ||
+                       command == "CANCELCOLOR" || command == "SETPOSITION"))
+        make_copies(engine, scope, ram, layer, name);
     auto matches = [&](const Line& line) {
-        return owned(line) && (layer == "ALL" || line.layer == layer) && line.name == name;
+        return owned(line) && line.slot == scope && (layer == "ALL" || line.layer == layer) && line.name == name;
     };
     if (command == "TEXTSET") {
         std::optional<std::u16string> value;
@@ -413,7 +448,8 @@ bool TextCtlManager::command(Engine& engine, Ram& ram, std::string_view command,
             if (!matches(line) || !line.node) continue;
             for (const Attribute* attribute : line.node->attributes) {
                 if (attribute->kind != AttrKind::color) continue;
-                Attribute* color = engine.scenes().edit_attribute(attribute->object);
+                // (A member's own copy has its own colour attributes.)
+                Attribute* color = line.slot >= 0 ? const_cast<Attribute*>(attribute) : engine.scenes().edit_attribute(attribute->object);
                 if (!color) continue;
                 color->color = Vec4f{rgb.x, rgb.y, rgb.z, color->color.w};
             }
@@ -456,6 +492,36 @@ void SelectCtrlManager::add_info(Engine& engine, const ObjectView& info) {
 }
 
 void SelectCtrlManager::clear_stage(Engine&) { rams_.clear(); }
+
+bool SelectCtrlManager::has(std::string_view name, int index) const {
+    for (const auto& ram : rams_)
+        if (ram->info_name == name && ram->index == index) return true;
+    return false;
+}
+
+void SelectCtrlManager::add_copy(Engine& engine, std::string_view name, int index, const std::string& copy) {
+    const SelectRam* original = nullptr;
+    for (const auto& ram : rams_)
+        if (ram->info_name == name && ram->index == index) original = ram.get();
+    if (!original) return;
+    auto ram = std::make_unique<SelectRam>();
+    ram->manager = this;
+    ram->info = original->info;
+    ram->ram = original->ram;
+    ram->info_name = copy;
+    ram->index = original->index;
+    ram->active = ram->ram ? ram->ram.boolean(5) : false;
+    // (The fresh cursor's line layout, as add_info reads it.)
+    if (ram->ram)
+        for (const auto& data : ram->ram.list(10))
+            if (data && data.str(2) == "ONE") {
+                ram->vertical = data.boolean(4, true);
+                ram->items = std::max(1, data.i32(5, 1));
+                break;
+            }
+    engine.messenger().add_row("SELECTCTRL", ram->info_name, ram->index, ram.get());
+    rams_.push_back(std::move(ram));
+}
 
 std::vector<SelectCtrlManager::OpenSelect> SelectCtrlManager::open_selects() const {
     std::vector<OpenSelect> open;
