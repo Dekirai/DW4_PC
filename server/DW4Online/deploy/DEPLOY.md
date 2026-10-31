@@ -131,7 +131,9 @@ patch a self-contained app): a .NET security release means a new publish and an 
    only breaks the tickets of the last 60 seconds) and, through HKDF, keys the security log's tags of unknown user names
    (`audit-tag`): with a new key the tags written before can no longer be matched, and account deletions leave them
    behind. Without the key a production start fails on purpose (a temporary key only in Development).
-3. Register the service, folder permissions and firewall rules:
+3. Register the service, folder permissions and firewall rules, in an **elevated** PowerShell (right-click the Start
+   button, *Terminal (Admin)*, or PowerShell with *Run as administrator*; its title bar says Administrator). In a
+   normal PowerShell the script stops with "This script needs administrator rights".
 
    ```powershell
    powershell -ExecutionPolicy Bypass -File D:\Dekirai\Servers\DW4Online\app\deploy\install-service.ps1 -DryRun   # shows the commands
@@ -471,6 +473,16 @@ DW4Online too), and the MariaDB MSI cannot replace a running server. Stop DW4Onl
 start MariaDB, then DW4Online). The same holds for a my.ini change (section 1).
 
 ## 9. Operating notes
+
+- The room story while the owner is away (`Rooms:StoryWhileOwnerAway` in `appsettings.Production.json`, SEAMLESS.md
+  8.6): `drop` (the default: progress the guests make while the room's owner is away is not saved and leaves their
+  games at the next stage change, with a notice), `hold` (kept on the server and merged when the owner returns) or
+  `apply` (saved at once). The story's plausibility per visit (`Instances:StoryMinVisitSeconds`, 10;
+  `StoryBurst` 10, `StoryMessagesPerMinute` 60) rarely needs a change. Every saved revision of an account's online
+  story is kept (`OnlineCharacter:StoryHistoryRevisions`, 100): the admin page of an account lists them and puts one
+  back (*Put back*) when misuse or an error damaged it; resetting the online character empties the story.
+- `Play:MinimumProtocol` and `Play:CurrentProtocol` follow the game client (45 since round S2): older clients are
+  asked to update.
 
 - Logs: `logs\dw4online-yyyyMMdd.log` (UTC, 30 days) when `Logging:File:Directory` is set; crashes also appear in the
   Windows Application event log (source ".NET Runtime").
