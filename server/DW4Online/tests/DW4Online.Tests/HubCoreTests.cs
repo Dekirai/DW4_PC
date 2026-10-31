@@ -247,6 +247,18 @@ public class HubCoreTests
         b.Offer(t, P(1), t + 1, -2, at); // a paced late pad counts
         Assert.Equal((1, 1), b.Delay.LateInWindow());
         Assert.Equal(SlotStream.Submit.Accepted, b.Offer(t + 5, P(1), t, 20)); // no arrival time: paced
+        // A game of 15 passes a second sends four pads at once every 67 ms: the first of each burst counts.
+        var slow = new SlotStream(0, 0, 3);
+        double s15 = 1000;
+        for (uint k = 10; k < 70; ++k) slow.Offer(k, P(1), k + 1, -10, s15 + (k % 4 == 0 ? 0 : 0.2 * (k % 4)) + 66.7 * (k / 4));
+        Assert.Equal(44, slow.Unpaced); // (the very first pad has no gap: paced)
+        Assert.Equal((16, 1), slow.Delay.LateInWindow());
+        // A member that lags (its pads filled for half a second in a row) counts in any case.
+        var lag = new SlotStream(0, 0, 3);
+        for (uint k = 0; k < 40; ++k) lag.Take(k, 0, out _);
+        Assert.Equal(SlotStream.Submit.Late, lag.Offer(20, P(1), 40, -300, 5000));
+        Assert.Equal(SlotStream.Submit.Late, lag.Offer(21, P(1), 40, -280, 5000.5));
+        Assert.Equal((2, 1), lag.Delay.LateInWindow());
 
         // A press in a late pad (after its tick was sealed) goes with the next sealed pad: late, not lost.
         var c = new SlotStream(2, 0, 3);

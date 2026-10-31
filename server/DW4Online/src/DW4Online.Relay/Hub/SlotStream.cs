@@ -83,10 +83,13 @@ public sealed class SlotStream
     /// relay's sealing thread let its pads out at once, or one lost segment held them back) or more than this many ticks
     /// after it (the first pad after such a stall) says nothing about the link's delay: the delay rule leaves it out.
     /// Round 62: with every late pad counted, a machine busy for a few minutes raised two members at 20 ms of round trip
-    /// from 3 to 9 (150 ms of input delay for every input) to save a few filled pads per stall.
+    /// from 3 to 9 (150 ms of input delay for every input) to save a few filled pads per stall. (Eight ticks: a game that
+    /// runs only 8-20 passes a second sends its pads in bursts of several, the first after a gap of up to eight ticks; its
+    /// lateness is steady and must count. A member whose pads are filled for half a second in a row counts in any case:
+    /// it lags, and only a higher d keeps it from being taken out after Relay:LagLeaveSeconds.)
     /// </summary>
     public const double BurstMs = 4.0;
-    public const double StallTicks = 3.0;
+    public const double StallTicks = 8.0;
 
     private double _lastArrivalMs = double.NaN;
 
@@ -100,6 +103,7 @@ public sealed class SlotStream
         var gap = arrivalMs - _lastArrivalMs;
         var paced = double.IsNaN(gap) || (gap >= BurstMs && gap <= StallTicks * Wire.TickSeconds * 1000.0);
         if (!double.IsNaN(arrivalMs)) _lastArrivalMs = arrivalMs;
+        paced = paced || FillStreak >= LagFills;
         if (!paced && tick >= GraceUntil) ++Unpaced;
         if (tick < nextSeal || tick < FromTick)
         {
