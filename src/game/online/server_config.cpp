@@ -35,6 +35,9 @@ ServerEndpoint release_endpoint() {
     e.pinned = false;
 #else
     e.host = "88.198.52.221";
+    // Port 443 on that server belongs to a Traefik proxy; DW4Online serves
+    // HTTPS on 8443 (server/DW4Online/deploy/DEPLOY.md).
+    e.port = 8443;
     e.base_path = "/api/v1";
     e.pinned = true;
     for (const char* pin : {kServerPinInUse, kServerPinSpare})

@@ -2,7 +2,7 @@
 
 // Where the online client talks to (docs/SEAMLESS.md 1.1, 6.2, 10). The
 // address is a build constant and not user-changeable:
-//   now:   https://88.198.52.221, API at /api/v1, the self-signed certificate
+//   now:   https://88.198.52.221:8443, API at /api/v1, the self-signed certificate
 //          checked by its SPKI pin (server_pins.hpp);
 //   later: https://dekirai.crygod.de/dw4online (build with
 //          DW4_ONLINE_USE_DOMAIN), API at /dw4online/api/v1, the ordinary

@@ -143,9 +143,9 @@ void api_calls() {
 void endpoints() {
     const auto release = release_endpoint();
 #ifndef DW4_ONLINE_USE_DOMAIN
-    check(release.host == "88.198.52.221" && release.port == 443 && release.base_path == "/api/v1" && release.pinned && !release.development,
+    check(release.host == "88.198.52.221" && release.port == 8443 && release.base_path == "/api/v1" && release.pinned && !release.development,
           "the hard-coded IP endpoint, pinned");
-    check(release.url() == "https://88.198.52.221/api/v1", "url");
+    check(release.url() == "https://88.198.52.221:8443/api/v1", "url");
     // The pins come from the build step (CMake DW4_ONLINE_PINS or local/online_pins.txt, DEPLOY.md 6.1).
     check(release.pins == split_pins(DW4_EXPECTED_PINS), "the build's pins");
     for (const auto& pin : release.pins) check(pin.size() == 44 && pin.back() == '=', "a pin is a base64 SHA-256");
