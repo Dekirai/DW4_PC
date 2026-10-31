@@ -1,13 +1,13 @@
-# S14z, guest g (a k10 character): the title gives it the room story at game start (empty: revision 0), so it plays the
-# lobby's first visit; its lobby progress (the phase step, 501, ...) goes up while the owner has not started the story:
-# refused not_started and dropped (with the notice once). Its barrier into stag0101 removes those values from its engine
-# (501 is 0 there) and tells it why.
+# S14z, guest g: a new account too (the campaign bot's new game). The title gives it the room story at game start
+# (empty: revision 0), so it plays the lobby's first visit; its lobby progress (phase 1 and 501) goes up while the owner
+# has not started the story: refused not_started and dropped (with the notice once). Its barrier into stagML02 (the new
+# game's next stage) removes those values from its engine (501 is 0 there) and tells it why.
 campaign until stage=stagml11
 talk until control,frames>=60
 log guest in the lobby
 idle until frames>=900
-explore mate00 yes until stage=stag0101,control
-log guest in the field
+campaign until stage=stagml02
+log guest in stagml02
 idle until frames>=120 fail flag:501=1
 log 501 removed
 idle until frames>=60

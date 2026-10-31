@@ -1,5 +1,5 @@
 # S14z (start at zero): the guest's lobby progress is dropped while the owner sits at the title (relay story_dropped
-# with reason not_started; the guest is told), the barrier into stag0101 removes it from the guest's engine with the
+# with reason not_started; the guest is told), the barrier into stagml02 removes it from the guest's engine with the
 # notice; the owner's game starts with the empty room story (revision 0), its lobby starts the story (story_started),
 # and the first revision comes after that.
 g: online: the game starts with the room story .revision 0.

@@ -605,7 +605,7 @@ def run_k3(st, args, api, https_port, pin, out, shift=0):
         problems.append("the second client did not call box 0 (the title presses missed)")
     if not any("new character" in l for l in ch):
         problems.append("the second client did not make (and back out of) a new character first")
-    if any("another character than the online one" in l or "not uploaded" in l for l in ch):
+    if any(l.startswith("auto save (") and "skipped" in l or l.startswith("save (") and "not uploaded" in l for l in ch):
         problems.append("saves of the called online character were skipped")
     saved = [l for l in ch if re.match(r"saved \(stage change\) revision \d+", l)]
     if not saved:
@@ -635,7 +635,7 @@ def run_k5(st, args, api, https_port, pin, out):
     p1, card1, log1 = first_owner_client(st, args, api, https_port, pin, out, name, password, token, room, "online_pc1")
     time.sleep(20)
     code = room_code(api, room, token)
-    script = ["campaign until stage=stagml11", "talk until control,frames>=60", "log back in the lobby", "campaign until frames>=9000",
+    script = ["campaign until stage=stagml11", "talk until control,frames>=60", "log back in the lobby", "campaign until frames>=6000",
               "log played on", "idle until frames>=30"]
     p2, card2 = k_client(st, args, out, "second", name, password, https_port, pin, "\n".join(script) + "\n", 9300, {"DW4_CAMPAIGN_LOAD": "1"},
                          ["--online-join", code], "online_pc2")

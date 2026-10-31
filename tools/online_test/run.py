@@ -1145,6 +1145,8 @@ def run_ui(stack, sc, connection, servers):
         argv = [a.game_exe, "--data", a.data, "--smoke-test", str(c.get("frames", 400000)), "--card-dir", os.path.join(d, "cards"),
                 "--online-folder", os.path.join(d, "online"), "--online-ui", os.path.join(src, c["script"]),
                 "--screenshot", os.path.join(d, "shot.bmp")] + c.get("args", [])
+        if c.get("online_script"):  # (the game's pad script beside the UI script, in the scenario's folder)
+            argv += ["--online-script", os.path.join(src, c["online_script"])]
         cenv = dict(env)
         cenv.update(c.get("env", {}))
         if c.get("card"):
@@ -1190,6 +1192,10 @@ def run_ui(stack, sc, connection, servers):
                                        encoding="utf-8") if l.split("#")[0].strip())
         if len(steps) < expected:
             problems.append("%s: %d of %d script lines ran (log %s)" % (name, len(steps), expected, os.path.join(d, "log.txt")))
+        # A client's "log_expect": regular expressions its log must match (each one somewhere).
+        for pattern in next(c for c in sc["clients"] if c["name"] == name).get("log_expect", []):
+            if not any(re.search(pattern, l) for l in lines):
+                problems.append("%s: no log line matches %s" % (name, pattern))
     if sc.get("characters"):
         check_characters(sc, api, env, out, problems, notes)
     return problems, notes
