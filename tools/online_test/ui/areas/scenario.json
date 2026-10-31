@@ -1,5 +1,5 @@
 {
-  "desc": "the room view with areas: b calls a saved character (campaign bot) and walks into the lobby; a kicks b",
+  "desc": "the room view with areas: b calls a saved character (campaign bot) and walks into the lobby; a kicks b; b resets the online character its game made",
   "timeout": 420,
   "clients": [
     {"name": "a", "script": "a.txt", "registered": true},
