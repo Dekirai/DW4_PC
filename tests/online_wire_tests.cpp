@@ -509,7 +509,9 @@ void online_log() {
     std::getline(in, first);
     check(first.size() > 24 && first[4] == '-' && first[10] == ' ' && first[19] == '.' && first.find("of the link") != std::string::npos,
           "lines carry the date and time: " + first);
-    std::filesystem::remove_all(folder);
+    in.close();
+    std::error_code ignored;
+    std::filesystem::remove_all(folder, ignored);
 }
 
 int main() {
