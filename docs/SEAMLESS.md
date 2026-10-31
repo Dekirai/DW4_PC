@@ -1298,6 +1298,18 @@ presentation side effects inside steps (sounds started, effects spawned) would
 need the replay mode's suppression during every re-simulation. Until then the
 honest number is d.
 
+*Checks of round 62.* ctest 44 of 44; `det` 4004f056 / 396cb219 in four
+runs with online off; the server's unit tests (185) and integration and
+end-to-end tests (90, one skipped: the deploy kit's certificate store); the
+real-client scenarios S2, S3, S18b, S19b and S22a pass with the paced rule's
+first window, S1, S11a and S17a lost a member to the lag rule on the
+four-round machine with it and pass with the final rule (S11a's resync
+included), every instance's net fingerprints equal; L1 and L2 pass in every
+cell above. Hidden windows only: what a visible window in the background does
+to its own loop (vsync of an occluded window, two GL windows on one GPU) was
+not measured here; its effect on the others is L2's, and its own numbers come
+with `saves/online.log` from the field.
+
 **1 → 2 members.** The server sends JOIN_REQ to the solo leader; the leader
 answers JOIN_AT(J) with `J = current tick + d`, switches to delayed sampling at
 once and repeats its last pad for the ticks before `J` it has no sample for
