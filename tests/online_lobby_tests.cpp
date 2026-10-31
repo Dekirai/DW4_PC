@@ -230,6 +230,12 @@ struct Harness {
                                    R"(},"playSeconds":3600})");
         }
         if (r.path == "/auth/logout" || r.path == "/auth/password") return answer(204);
+        if (r.path == "/online-character/reset") {
+            const auto v = json::parse(r.body);
+            if ((*v)["currentPassword"].str() != std::string("correct horse")) return problem(403, "wrong_password", "The password is wrong.");
+            character = false;
+            return answer(204);
+        }
         if (r.path == "/auth/logout-all") return answer(200, R"({"revoked":3})");
         if (r.path == "/rooms" && r.method == "POST") {
             const auto v = json::parse(r.body);
@@ -398,6 +404,19 @@ void accounts(const std::filesystem::path& root) {
         h.lobby->change_password("old", "new password 1", "new password 1");
         h.pass();
         check(h.lobby->screen() == Screen::account && h.lobby->info().find("Password changed") != std::string::npos, "password changed");
+        // The online character's reset (round 56): the password, the server's answer, the account without a character.
+        check(h.lobby->character() && h.lobby->character()->exists, "the account has an online character");
+        h.lobby->go(Screen::reset_character);
+        h.lobby->reset_character("");
+        check(h.lobby->error().find("password") != std::string::npos, "reset: the password is needed");
+        h.lobby->reset_character("a wrong one");
+        h.pass();
+        check(h.lobby->screen() == Screen::reset_character && h.lobby->error() == "The password is wrong.", "reset: a wrong password");
+        h.lobby->reset_character("correct horse");
+        h.pass();
+        check(h.lobby->screen() == Screen::account && h.lobby->info().find("was reset") != std::string::npos, "reset: done");
+        check(h.lobby->character() && !h.lobby->character()->exists, "reset: the account has no online character now");
+        check(std::string(screen_name(Screen::reset_character)) == "reset" && screen_from_name("reset") == Screen::reset_character, "reset: its name");
         h.lobby->back();
         check(h.lobby->screen() == Screen::rooms, "back to the rooms");
     }
