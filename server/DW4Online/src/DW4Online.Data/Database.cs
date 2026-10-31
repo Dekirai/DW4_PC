@@ -10,6 +10,8 @@ public sealed class DatabaseOptions
     public string ConnectionString { get; set; } = "";
     /// <summary>Run pending migrations at startup.</summary>
     public bool AutoMigrate { get; set; } = true;
+    /// <summary>How long the start waits for a database that does not answer yet (MariaDB still starting after a reboot).</summary>
+    public int StartupWaitSeconds { get; set; } = 60;
 }
 
 /// <summary>The pooled MariaDB data source shared by all repositories.</summary>

@@ -1,5 +1,5 @@
 <Project Sdk="Microsoft.NET.Sdk">
-  <!-- Unit tests without a database: record decoding (mirrors tests/save_data_tests.cpp), validation, security, rules, relay. -->
+  <!-- Unit tests without a database: record decoding (mirrors tests/save_data_tests.cpp), validation, security, rules, relay, service start. -->
   <PropertyGroup>
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
@@ -12,6 +12,8 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\DW4Online.Domain\DW4Online.Domain.csproj" />
     <ProjectReference Include="..\..\src\DW4Online.Relay\DW4Online.Relay.csproj" />
+    <!-- The service start against a fake Service Control Manager (ServiceStartTests). -->
+    <ProjectReference Include="..\..\src\DW4Online.Server\DW4Online.Server.csproj" />
   </ItemGroup>
   <ItemGroup>
     <Content Include="..\..\sql\*.sql" Link="sql\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
