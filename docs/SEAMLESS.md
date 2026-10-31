@@ -4408,6 +4408,20 @@ keeper merges it when due).
    player may join another's quest without taking it (larger; the quest's
    end and rewards then run in a lobby that never took it). Default: (b).
 
+### Answers of round 61 (user, 2026-10-31)
+
+9. Quest rewards: **per player** - every player keeps its own taken first
+   rewards and keychain steps in any room; the owner never loses one to a
+   guest and nobody takes one twice (the "hub extras" lane of round G).
+10. Quests of a guest: **(b)** - at the boards a guest uses the higher of
+   its own and the owner's level, forms and cards; nothing of it is saved
+   to the guest.
+
+Also decided on 2026-10-31 (rounds 59 and 63): a room owner without an
+online story starts at zero; online, a member's START menu / status window,
+talks and recorders open only for that member and never pause the
+instance, with no protection (this replaces the answer to question 6).
+
 ## 19. Risks
 
 - **Multi-camera semantics** have no Dolphin reference: an actor animates when
