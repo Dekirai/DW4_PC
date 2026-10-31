@@ -2162,10 +2162,15 @@ sender's instance stage; a rate limit.
 
 ### 8.5 When the story reaches an engine
 
-- **At the online title start**: when `GameSystem::game_started` is set (before
-  `gameStart.lua`), the client replaces flags, flag folder and counters with the
-  room story and sets the room difficulty, camera mode and light mode;
-  `gameStart.lua` then clears the temporaries as in the original.
+- **At the online title start**: at every TITLE2 GAMESTART (before
+  `gameStart.lua`; `Engine::title_game_start`, a host field outside snapshots
+  and the fingerprint), the client replaces flags, flag folder and counters with
+  the room story and sets the room difficulty, camera mode and light mode;
+  `gameStart.lua` then clears the temporaries as in the original. (Until the
+  round 56 fix round the trigger was `GameSystem::game_started`'s rising edge:
+  the flag stays set after "Continue? No" took the player back to the title,
+  and the title's option menu sets it without a game start, so the session's
+  next Game Start got neither.)
 - **At every barrier** (6.7): the load step merges the barrier's room story
   into the engine with the same rules, touching only keys whose value changes
   (FLGisOn creates zero entries and the fingerprint hashes every key,
@@ -2244,11 +2249,14 @@ is computed once a second and sent when it changed, else every ten seconds
 while it is not empty, and always right before BARRIER (the server merges it
 before it decides, so BARRIER_OK brings it back). Never from a stagIS* stage:
 the character select holds a record's own story until the room story replaces
-it at `game_started`. Refused keys (not for the rate) wait for the next
-barrier; held ones are sent again (the server keeps them). The confirmed
-story is `Session::confirmed_story()`; `OnlineRun::after_live_step` hands it
-to `GameEngineLink::set_room_story` on the step that sets `game_started`
-(the title's application, 8.5; wired at the integration of round 56).
+it at the Game Start. Refused keys (not for the rate) wait for the next
+barrier; held ones are sent again (the server keeps them); keys answered
+*wait* or *not_member* go again three seconds later
+(`SessionConfig::story_retry_interval`), not only at the next barrier, where
+they would come from a stage that does not set them. The confirmed story is
+`Session::confirmed_story()`; `OnlineRun::after_live_step` hands it to
+`GameEngineLink::set_room_story` on the step of the title's GAMESTART (the
+title's application, 8.5).
 
 **Plausibility and policy on the server** (`DW4Online.Domain.Story.
 RoomStoryKeeper`, one per room hub, under the room lock). The sender's
@@ -2286,6 +2294,27 @@ implementation in Python) writes `data/online/story_golden.json`: 14 merge,
 the C# `StoryGoldenTests` give the same results. STORY / STORY_ACK have golden
 bytes on both sides (`online_wire_tests.cpp`, `WireGoldenTests.cs`).
 
+**Per visit (round 56 fix round).** The checks above work per STORY
+message; the review forged a guest client that BARRIERed from stage to stage
+at once and sent the phase step by step, every key item and COUNTER 7 growth
+on 32 invented lines (revision 10 of the owner's story in 50 ms). Now
+`RoomStoryKeeper.Take` gets the sender's visit (`StoryVisit`: member, a key
+per visit, its age) from the relay: phase steps, flags and key items count
+only from a visit at least `Instances:StoryMinVisitSeconds` (10) old, and a
+visit gives one phase step and one key item; the rest is refused with the
+reason *wait* (9), which the client sends again. A room takes only its own
+difficulty's clear flag (406 + difficulty). COUNTER 1 grows at most
+20,000,000 per line (wallet and bank hold 9,999,999 each). The relay takes
+counter lines only where it put the member (`Place`, a fork's child; the last
+16) and at most 8 instance 0 lines per room session. A member without an
+instance with a stage (its barrier parked while its client went on as NEW
+after the five seconds, taken out of its group, a lost connection in a lobby
+or at a barrier, a reconnect without resuming) counts against the stage its
+client plays in (`HubMember.LoneStage`) instead of being refused
+(not_member). A STORY refused for the rate is answered without the story
+blob. This slows a forging client down to real visits; the repair is the
+story history below.
+
 **Storage.** Migration 0008 adds `online_story (account_id, revision, flags
 VARBINARY(1024), folder BINARY(12), counters BINARY(64) as 16 x i32 LE,
 updated_at)`; only newer revisions replace a row (the relay saves each new
@@ -2295,6 +2324,22 @@ BASE_FLAG / FLAGFOLDER / COUNTER (big endian) from the account's own story,
 achievements. `GET /rooms/{code}/story` (members) shows revision, phase,
 flags, keys, counters, policy, owner presence, the dropped set and the held
 count.
+
+Round 56 fix round: migration 0010 keeps every written revision in
+`online_story_history` (the last `OnlineCharacter:StoryHistoryRevisions`,
+100, with the reason room / reset / admin_restore). The online character's
+reset empties the story as its next revision (a new character starts from a
+new game's story and Normal); staff list the revisions and put one back as
+the next revision (`GET /admin/accounts/{name}/online-story/history`, `POST
+.../online-story/restore/{revision}`, the admin account page's *Put back*).
+Reset and restore close the account's own room first (its hub holds the old
+story). The relay's saves go through a queue in `OnlineStoryService`: the
+newest revision per owner, a failed write tried again after 1 .. 30 s, a
+room's load sees a queued revision before it is written, and the service's
+stop writes what is left (`StoryFlushService`). Deleting, locking or banning
+an owner closes its rooms (close reason host_left), and no story row is ever
+written for a deleted account. `POST /rooms` refuses Hard and Very Hard
+without the owner's own clear on the difficulty below (difficulty_locked).
 
 **Reconnects.** STORY_ACK answers come in order on one connection, so a new
 connection (`Session::attach`) forgets the STORY frames still waiting for an
@@ -2361,6 +2406,22 @@ online story, and drop would take its key items too.
   with a preview (`summarize_save`) and `X-Sha256`, download with a backup of
   the current file first (`.bak`), restore of the five earlier revisions; the
   endpoints exist (`/cloud-save`, `/cloud-save/meta`, `/cloud-save/restore/{n}`).
+
+**Round 56 fix round.** A character the title's character select makes new
+(*Create Digimon*, its first option) while the account has an online
+character is another character, even with the same UNIQUE (the frame count
+of its creation, the same in every fresh session): `CharacterSync::new_game`
+(the port event `new_character` of the own slot) marks the game until a
+Game Start with the card's character, its saves are neither uploaded nor
+cached, and the player is told at once (toast and status line); a skipped
+save of another UNIQUE is told once as well. The server refuses a record whose
+form levels went down (`form_level_dropped` is an error), so a collision
+cannot replace the online character either. *Reset online character* is on
+the account screen (password, a warning; not inside a room; the server
+empties the online story with it). A refused login or an outdated version
+(401 / 403 / 426) no longer drops the session's later saves: they go into the
+card cache as pending, and the next room entry uploads the newest when the
+server still has the revision it was based on.
 
 **Built in round S2 (character lane).**
 
@@ -2462,7 +2523,9 @@ the server).
 - **Account.** Log in (name, password, remember me), Register (name, password
   twice, optional e-mail; the recovery code is shown once, confirmed with "I
   saved it"), Recover (name, code, new password; a new code is shown), Log out,
-  Log out everywhere, Change password.
+  Log out everywhere, Change password, Reset online character (password and
+  a warning, not inside a room: the online character and its online story
+  end; round 56 fix round; UI script `reset-character PASSWORD`).
 - **Rooms.** List of compatible rooms (`GET /rooms?protocol&dataHash`: name,
   owner and whether present, players n/max, lock, difficulty, randomizer, story
   frozen), refresh, Create (name, optional password, 2-10 players, difficulty up
@@ -3476,15 +3539,47 @@ New test hooks: the script condition `roomflag:N`, `wait-members <=N` in UI
 scripts, and the scenario keys "story_saved", "characters" and
 "checkpoints".
 
-Still open:
+Still open after the verification:
 - When a member leaves on purpose (BYE), the hub sends the others
   `Disconnected` before `MemberLeft` (`RoomHub.Disconnect`), so they see
   "X lost the connection" just before "X left the room".
 - The story runs nc1 were not run in this round.
-- main has since taken `fix-r55s1` (0950c69). A merge of main into this
-  branch conflicts in `RoomHub.cs`, `RelayHub.cs`, `HubModel.cs`,
-  `online.cpp`, `online_session_tests.cpp`, `run.py` and this file. Every
-  check above has to be run again after that merge.
+
+**Fix round of round 56 (`dref-r56int`).** main with `fix-r55s1` (0950c69)
+is merged into the branch (4406220: the seven conflicting files resolved,
+both sides kept). The review's findings and their fixes:
+
+- *Story per visit* (blocker): 8.7 "Per visit"; the client's retry of *wait*
+  and *not_member* keys (8.7, pending sets).
+- *A deleted owner's room* (blocker): the owner's rooms close with the
+  deletion (and a lock or ban), no story is written for a deleted account
+  (8.7 storage).
+- *A new character beside the online one* (blocker): section 9 "Round 56 fix
+  round"; the reset on the account screen (section 10).
+- *The title's application after "Continue? No"* and the option menu: 8.5.
+- *Stay* in the room view closes B + X + START's prompt
+  (`OnlineUiState::stay_requested`).
+- *not_member* after the r55 merge (members taken out of their group,
+  instance 0): `LoneStage` and the client's retry (8.7).
+- *Saves after a refused login* stay pending (section 9).
+- *Story history, reset, restore* and the *save queue* (8.7 storage).
+- *Privacy page*: the online story and its revisions, the public "where they
+  play" lines, the story in the deletion list.
+- Minors fixed: the join toasts for members already in the room, online
+  achievements without the local setting, the owner-away text and the
+  website's badge by the policy (`storyPolicy` in the room summary),
+  the recovery code buffer, the UI script log's passwords, the cloud panel's
+  device name (DW4_PC, not COMPUTERNAME), the server's difficulty unlock,
+  Lone Tamer with the server's member count, a rate-refused STORY without the
+  story blob, the protocol (45) and the story keys in the deploy settings and
+  DEPLOY.md (also: how to open an elevated PowerShell for
+  `install-service.ps1`).
+- Minors left: `leave_room()` / `open_room()` still block the main loop while
+  the server is slow; the relay's instance size does not cap `players` in
+  achievement reports; the admission's owner presence is read before the
+  story load (not reproduced); a new owner without a story starts from what a
+  guest did in the room before (a design question for the user); the cloud
+  panel's *Log out* does not revoke the shared login on the server.
 
 ### Round S3 (r54): stage flow in shared instances
 
