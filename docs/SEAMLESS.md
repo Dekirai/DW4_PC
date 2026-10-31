@@ -5574,6 +5574,20 @@ player, means per box with four characters per account: 9.1.9.)
     honest player hit by a wrong rule cannot save until staff switch the
     rule off or accept his saves).
 
+### Answers of round 64 (user, 2026-10-31)
+
+11. Story: **one story per box (b)**, as in the original - a new character in
+   another box starts the story anew; a room uses the story of the box its
+   owner plays (the extra lane of round D).
+12. Public profile: **the default** (current Digimon picture, the 4 boxes, all
+   forms with values, the equipped gear in its colours, BITS, Data, cards,
+   "under review"; Device Folder, Item Bank, BITS Bank, disks and history only
+   for the owner and staff).
+13. Local saves of the cloud backup on the profile: **no** (the default).
+14. A rule that keeps refusing: **the breaker** (the default): after two
+   refusals in a row by the same rule the box's saves are accepted, marked
+   "under review", and staff is warned.
+
 ## 19. Risks
 
 - **Multi-camera semantics** have no Dolphin reference: an actor animates when
