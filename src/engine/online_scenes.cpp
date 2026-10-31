@@ -7,11 +7,12 @@
 //
 // - Inside a member's scope (Engine::SceneScope: its window's run, the script
 //   run of its scene, the demo works and posts these start) the messenger
-//   narrows the instance-wide commands to the member's slot (PLAYER -1 OFCTRL
-//   / ONCTRL), keeps the protective ones from the instance (ENEMY -1 OFCTRL /
-//   ONCTRL, every category freeze, GENERATER, the quest timer's stop), turns
-//   STAGECTL PADINPUT into the member's own pad switch and LAYERCTL into its
-//   own picture's layer filter.
+//   narrows the instance-wide commands to the member (PLAYER -1 OFCTRL /
+//   ONCTRL: its player stands without its input but keeps its control, so it
+//   can be hit), keeps the protective ones from the instance (ENEMY -1 OFCTRL
+//   / ONCTRL, every category freeze, GENERATER, the quest timer's stop),
+//   turns STAGECTL PADINPUT into the member's own pad switch and LAYERCTL
+//   into its own picture's layer filter.
 // - The window models and cursors it addresses are the member's own copies
 //   ("i_messwn@1"): the model's subtree cloned under the same parent (a new
 //   child of its action switch) with its own MODELCTRL, ACTION and SELECTCTRL
@@ -105,10 +106,12 @@ bool Engine::scope_message(std::string_view category, std::optional<std::string_
     // The instance's music stays (the status window and the talks do not
     // change it; SoundManager keeps a scope's BGM starts out as well).
     if (category == "SOUND" && (command == "BGMSTOP" || command == "ENVSTOP" || command == "SESTOP")) return false;
-    // Every player's control: the member's own.
-    if (category == "PLAYER" && index == -1 && (command == "OFCTRL" || command == "ONCTRL")) {
-        index = slot;
-        return true;
+    // Every player's control: the member's own player stands without its
+    // input instead (it keeps its control: it can be hit, hold_own_input);
+    // another member's player is not the scene's.
+    if (category == "PLAYER" && (command == "OFCTRL" || command == "ONCTRL")) {
+        if (index == -1 || index == slot) hold_own_input(slot, false, command == "OFCTRL");
+        return false;
     }
     // The pad input: the member's own pad.
     if (category == "STAGECTL" && command == "PADINPUT") {
@@ -243,7 +246,21 @@ void Engine::clear_scene_copies() {
     copy_nodes_.clear();
     copy_attributes_.clear();
     scoped_pads_off_ = 0;
+    own_window_hold_ = own_scene_hold_ = 0;
     for (auto& layers : scoped_layers_off_) layers.clear();
+}
+
+void Engine::hold_own_input(int slot, bool window, bool on) {
+    if (slot < 0 || slot > 3) return;
+    auto& mask = window ? own_window_hold_ : own_scene_hold_;
+    if (on) mask |= bit(slot);
+    else mask &= std::uint8_t(~bit(slot));
+}
+
+void Engine::release_scene_holds() {
+    if (!own_scene_hold_) return;
+    for (int slot = 0; slot < 4; ++slot)
+        if ((own_scene_hold_ & bit(slot)) && !own_scene_running(slot)) own_scene_hold_ &= std::uint8_t(~bit(slot));
 }
 
 bool Engine::own_window_open(int slot) const {
@@ -269,6 +286,8 @@ void Engine::end_own_scenes(int slot) {
     // (Posted messages of the scope still arrive: they reach the member's own
     // copies, which nobody sees, and its slot, which no player holds.)
     scoped_pads_off_ &= std::uint8_t(~bit(slot));
+    own_window_hold_ &= std::uint8_t(~bit(slot));
+    own_scene_hold_ &= std::uint8_t(~bit(slot));
     scoped_layers_off_[std::size_t(slot)].clear();
     // Its copies hide: a member who joins this slot later starts with its own
     // copies hidden (their actions show them again on use).

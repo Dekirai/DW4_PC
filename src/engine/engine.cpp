@@ -606,6 +606,9 @@ void DemoManager::update(Engine& engine) {
         if (w < running_.size() && running_[w].get() == work) work->cursor = cursor;
     }
     std::erase_if(running_, [](const std::unique_ptr<DemoWork>& work) { return work->cursor >= work->records.size(); });
+    // (Online: a member's own scene that ended without its ONCTRL leaves its
+    // player its input again, SEAMLESS.md 5.3; offline no scene holds one.)
+    engine.release_scene_holds();
 }
 
 // ---------------------------------------------------------------------------

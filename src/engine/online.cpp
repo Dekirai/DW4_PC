@@ -746,6 +746,8 @@ std::uint64_t Engine::net_fingerprint() {
     // layer switches, the copies made and the scoped demo works.
     if (const auto* windows = get<SubWindowManager>()) h.value(windows->own_windows_hash());
     h.value(scoped_pads_off_);
+    h.value(own_window_hold_);
+    h.value(own_scene_hold_);
     for (const auto& layers : scoped_layers_off_) {
         h.value(std::uint32_t(layers.size()));
         for (const auto& layer : layers) h.text(layer);

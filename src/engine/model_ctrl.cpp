@@ -1269,7 +1269,10 @@ const ModelCtrlManager::ModelRam* ModelCtrlManager::player(int index) const {
 }
 
 void ModelCtrlManager::update_player(Engine& engine, ModelRam& ram) {
-    const auto& pad = engine.pads()[std::size_t(std::clamp(ram.index, 0, 3))];
+    // (Online: the neutral pad while the member is in its own window or
+    // scene - their cursors read the pad - Engine::player_pad; offline and
+    // otherwise the slot's pad.)
+    const auto& pad = engine.player_pad(ram.index);
     const float sx = pad.left.x, sy = pad.left.y;
     // 8034C4C8 bl 80312138 (the player's bePadData), 8034C4D4 lwz r25,0x24:
     // walking (+70) and the heading need the held mask of the left stick's
@@ -2062,7 +2065,8 @@ void ModelCtrlManager::run_model_script(Engine& engine, ModelRam& ram, std::stri
 // check still follows; held, the wait ends with the action; Atck03: wait
 // while A is held.
 bool ModelCtrlManager::player_wait(Engine& engine, ModelRam& ram, std::string_view wait) {
-    const auto& pad = engine.pads()[std::size_t(std::clamp(ram.index, 0, 3))];
+    // (Online: a member in its own window or scene, Engine::player_pad.)
+    const auto& pad = engine.player_pad(ram.index);
     const bool held = ram.control_enabled && (pad.buttons.held & dw4::pad_button::a);
     auto action_done = [&] {
         Packet packet;

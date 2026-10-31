@@ -1097,18 +1097,20 @@ bool SubWindowManager::command(Engine& engine, Ram&, std::string_view command, P
         // Online outside the hub stages the status window is the member's
         // own: it opens at once, also while other members have theirs, and
         // pauses nothing. Only the member's player stops taking its pad (what
-        // the original's MODELCTRL freeze kept from the window's buttons);
-        // the enemies, generators, other members, timers, sounds and posted
-        // messages run on, and the player can be hit (SEAMLESS.md 5.3).
+        // the original's MODELCTRL freeze kept from the window's buttons; it
+        // keeps its control, Engine::hold_own_input); the enemies, generators,
+        // other members, timers, sounds and posted messages run on, and the
+        // player can be hit (SEAMLESS.md 5.3).
         if (program == 0 && engine.scenes_scoped() && player >= 0 && player < 4 && (engine.online().present & (1u << player))) {
+            // (Only the member's player stops taking its pad: see below.)
             auto& own = own_[std::size_t(player)];
             if (own.running || main_.running) return true;
             own = Program{};
             own.program = 0;
             own.player = player;
             own.running = true;
-            Packet off;
-            messenger.send(engine, "PLAYER", std::nullopt, player, "OFCTRL", off);
+            // (Not OFCTRL: a player off control takes no hit.)
+            engine.hold_own_input(player, true, true);
             return true;
         }
         if (main_.running) return true;
@@ -1381,10 +1383,7 @@ void SubWindowManager::update_own(Engine& engine, int slot) {
         p.strings = {layer, "DISPON"};
         messenger.send(engine, "LAYERCTL", std::nullopt, -1, "SWITCH", p);
     }
-    if (player.hp > 0) {
-        Packet on;
-        messenger.send(engine, "PLAYER", std::nullopt, slot, "ONCTRL", on);
-    }
+    engine.hold_own_input(slot, true, false);
 }
 
 } // namespace dw4::engine

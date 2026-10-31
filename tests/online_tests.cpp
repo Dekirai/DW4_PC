@@ -1244,7 +1244,10 @@ void data_scenarios(const std::filesystem::path& data) {
             auto* models = engine.get<ModelCtrlManager>();
             const auto* one = models ? models->player(1) : nullptr;
             if (frame == open0 + 60) {
-                seen.own0 = engine.own_window_open(0) && !engine.own_window_open(1) && engine.busy_slots() == 0b0001;
+                // (Its player stands without its input but keeps its control: it can be hit.)
+                const auto* zero = models ? models->player(0) : nullptr;
+                seen.own0 = engine.own_window_open(0) && !engine.own_window_open(1) && engine.busy_slots() == 0b0001 &&
+                            engine.own_input_held(0) && !engine.own_input_held(1) && zero && zero->control_enabled;
                 if (one && one->node) seen.one_at = {one->node->matrix(3, 0), 0, one->node->matrix(3, 2)};
                 seen.enemies_at = enemies(engine);
                 seen.enemies_ran = models && std::none_of(models->rams().begin(), models->rams().end(), [](const auto& ram) { return ram->frozen; });
@@ -1263,7 +1266,8 @@ void data_scenarios(const std::filesystem::path& data) {
             if (frame == open1 + 1100) {
                 seen.closed = !engine.own_window_open(0) && !engine.own_window_open(1) && engine.busy_slots() == 0;
                 const auto* zero = models ? models->player(0) : nullptr;
-                seen.control_back = zero && zero->control_enabled && one && one->control_enabled;
+                seen.control_back = zero && zero->control_enabled && one && one->control_enabled && !engine.own_input_held(0) &&
+                                    !engine.own_input_held(1);
             }
         };
         const auto a6 = run_scenario(data, s6, nullptr);
@@ -1272,7 +1276,7 @@ void data_scenarios(const std::filesystem::path& data) {
         std::cout << "; own window " << seen.own0 << ", copies " << seen.copies << ", slot 1 moved " << seen.one_moved << ", nothing frozen "
                   << seen.enemies_ran << ", both " << seen.both << ", joined " << seen.joined_in_menus << ", closed " << seen.closed
                   << ", control " << seen.control_back << '\n';
-        check(seen.own0 && seen.copies, "own menus: slot 0's window is its own, with its own copies");
+        check(seen.own0 && seen.copies, "own menus: slot 0's window is its own, with its own copies, its player on control without input");
         check(seen.one_moved && seen.enemies_ran, "own menus: slot 0's window pauses nothing");
         check(seen.both, "own menus: two windows at once");
         check(seen.joined_in_menus && !a6.applied.empty() && a6.applied[0].frame < open1 + 120, "own menus: a member joins while both are open");

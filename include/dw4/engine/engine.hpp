@@ -655,6 +655,23 @@ public:
     // STAGECTL PADINPUT inside a slot's scope: that slot alone reads the
     // neutral pad (pads()).
     std::uint8_t scoped_pads_off() const { return scoped_pads_off_; }
+    // A member's player in its own window or scene stands without its input
+    // (the window's or the talk's cursors read the pad) but keeps its control:
+    // it can be hit, which the original's OFCTRL would prevent (hit_check
+    // takes no hit while _isOnCtrl is clear). `window`: the status window's
+    // hold, else the scene's (its PLAYER OFCTRL / ONCTRL); the player stands
+    // while either holds. player_pad: the pad the player model reads.
+    void hold_own_input(int slot, bool window, bool on);
+    // The scene holds of the members without an own scene left (the demo
+    // manager, after its works ran).
+    void release_scene_holds();
+    bool own_input_held(int slot) const {
+        return slot >= 0 && slot < 4 && ((own_window_hold_ | own_scene_hold_) & (1u << slot)) != 0;
+    }
+    const PadState& player_pad(int slot) const {
+        const int s = slot < 0 ? 0 : slot > 3 ? 3 : slot;
+        return own_input_held(s) ? kFifthPads[std::size_t(s)] : pads()[std::size_t(s)];
+    }
     // Simulation entries that found another MXCSR than 0x1F80 and repaired
     // it for their duration (diagnostics, 6.12).
     static std::uint64_t mxcsr_repairs();
@@ -1150,6 +1167,7 @@ private:
     // Own windows and scenes (online_scenes.cpp, SEAMLESS.md 5.3).
     int scene_scope_ = -1;
     std::uint8_t scoped_pads_off_{};                  // STAGECTL PADINPUT DISABLE inside a slot's scope
+    std::uint8_t own_window_hold_{}, own_scene_hold_{}; // hold_own_input
     mutable std::array<PadState, 4> scoped_pads_{};   // pads() with those slots neutral
     // LAYERCTL inside a slot's scope: the layer groups that slot's picture
     // leaves out (its own screen only; the simulation's layers stay).
