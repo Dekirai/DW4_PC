@@ -15,7 +15,7 @@ itself (no IIS). SQL Server Express and the Pangya servers (web port 88) stay un
 | ACME challenge folder (later, section 6.3 A2) | `D:\Dekirai\Servers\DW4Online\acme` |
 | Website Data Protection keys | `D:\Dekirai\Servers\DW4Online\keys` (DPAPI-encrypted for the service account) |
 | Service | `DW4Online`, virtual account `NT SERVICE\DW4Online`, start delayed-auto, depends on the database service |
-| TLS certificate (now) | self-signed for `IP 88.198.52.221` in `LocalMachine\My` on a key made once and kept offline, pinned by the game client (sections 6.1, 6.4) |
+| TLS certificate (now) | self-signed for `IP 88.198.52.221` in `LocalMachine\My`, pinned by the game client (sections 6.1, 6.4); target: a key made once and kept offline (the server installed on 31.10 has a server-made key, see below) |
 | Kept once, never regenerated | the two TLS keys (in use, spare; offline), `Relay:TicketKey` (in the settings file and its encrypted copy) |
 | Ports | 443 TCP (HTTPS: API and website; another port such as 8443 when 443 is taken, section 4.1), 52041 TCP (relay), 80 TCP only for a later domain's certificate validation; MariaDB 3306 on 127.0.0.1 only; plain HTTP on 127.0.0.1:5280 for checks on the server itself (`appsettings.json`'s endpoint, never reachable from outside) |
 
@@ -86,12 +86,12 @@ stores: `-DryRun`, the read-only checks, the backup and restore against a privat
 ### 1.1 Variant: an existing XAMPP MariaDB 10.4 as the database service
 
 A XAMPP that already runs on the server brings MariaDB 10.4 (XAMPP 8.x: 10.4.32). DW4Online runs on it: the schema
-avoids the types 10.4 lacks, and every migration and integration test passes, round after round, against a MariaDB
-10.4.32 that runs with XAMPP's own `my.ini` plus the **three** lines of step 2 (so with its non-strict `sql_mode`,
-`collation-server=utf8mb4_general_ci`, a 16 MB buffer pool and a 5 MB redo log; migrations 1 to 7 took about 0.25 s
-there on the development PC). Migrations 8 to 10 (the online story, the achievement catalogue, the story history)
-and their tests ran on the private 10.4.32 mysqld of `scripts/local-db.ps1` (its default settings and
-`innodb_use_native_aio=0`; 1 to 10 in about 0.25 s). Without the third line, `innodb_use_native_aio=0`, the runs do
+avoids the types 10.4 lacks. Migrations 1 to 7 and their integration tests passed, round after round, against a
+MariaDB 10.4.32 that runs with XAMPP's own `my.ini` plus the **three** lines of step 2 (so with its non-strict
+`sql_mode`, `collation-server=utf8mb4_general_ci`, a 16 MB buffer pool and a 5 MB redo log; about 0.25 s on the
+development PC). All migrations 1 to 10 and all 87 integration tests also pass on the private 10.4.32 mysqld of
+`scripts/local-db.ps1` (`innodb_use_native_aio=0`; 1 to 10 in about 0.25 s), there also with XAMPP's `sql_mode`
+and `collation_server` set at run time; XAMPP's buffer pool and redo log sizes could not be set that way. Without the third line, `innodb_use_native_aio=0`, the runs do
 not all pass: MariaDB before 10.6 on Windows uses native asynchronous I/O by default, and with it DDL (`CREATE TABLE`, `DROP DATABASE`) can hang for good
 in an InnoDB latch wait (the top of this document; the server's first start). A hung statement stays "Killed" in the
 process list and keeps its locks, and `Restart-Service mysql` can hang behind it. What the line costs: InnoDB then does
@@ -336,7 +336,7 @@ curl.exe -k https://88.198.52.221/health      # the same over HTTPS (:8443 in se
 powershell -ExecutionPolicy Bypass -File app\deploy\new-selfsigned-cert.ps1 -PinServedBy 88.198.52.221   # the pin of the certificate the HTTPS port really serves (-PinServedPort 8443 in section 4.1)
 ```
 
-Both pins must equal the pin in use, the first line of the client build's pins (section 6.1 step 5;
+Both pins must equal the pin in use, the first pin of the client build's pins (comment lines aside) (section 6.1 step 5;
 `new-selfsigned-cert.ps1` printed it too when it imported or made the certificate). `Start-Service` may print `WARNING: Waiting for service 'DW4Online' to start...` a few times
 while the service waits for the database or migrates: that is the service reporting progress, not an error (for
 minutes: section 9, "A migration or a start that hangs"). The log then says "Database schema is current" (or "Applied
@@ -462,6 +462,12 @@ client pins it (for example after a failed first attempt) is fine: remove the fi
 Remove-Item -LiteralPath "Cert:\LocalMachine\My\$($_.Thumbprint)" -DeleteKey }`), run the script again and use only
 the new pins. The server installed on 31.10 has a certificate made this way (its spare is the offline
 `dw4online-spare.pfx`); moving it to kept keys means new pins, so a client update that carries them comes first.
+If that server or its key is lost (or the key leaks), the spare takes over: on the new (or the same) server run
+`new-selfsigned-cert.ps1 -ImportPfx <path>\dw4online-spare.pfx -HttpsPort 8443` (`-Force` on a server that still has
+the old certificate; it asks for the PFX password and installs the key without export permission), restart the
+service and check with `-PinServedBy ... -PinServedPort 8443` that the spare's pin is served. Every client keeps
+working because it pins the spare too. Then ship a client update whose pins name the spare as the key in use plus a
+new spare (made with `-SparePfx ... -SpareOnly` on that server), before the next loss can happen.
 
 ### 6.2 Later: https://dekirai.crygod.de/dw4online
 

@@ -19,7 +19,7 @@ separate work (see "Open ends"); `tests/winhttp_client` shows the client side of
 | `src/DW4Online.Relay` | The DW4R2 relay (port 52041, SEAMLESS.md 6): `Protocol` (frames and messages), `Hub` (one connection per member and room, instances as solo-led and sealed lockstep groups, server-paced sealing on a dedicated high-resolution timer thread, barrier decisions, forks, the tick log, state delivery), HMAC room tickets. |
 | `src/DW4Online.Web` | The Razor Pages website (English, server-rendered, no scripts): home, register, login, recovery, account settings, profiles, achievements, rooms, admin, privacy. |
 | `src/DW4Online.Server` | The executable: composition root, configuration, Windows-service mode, CLI tools, TLS certificate selector, file log. |
-| `sql/` | Numbered migrations `NNNN_description.sql` (0001 schema, 0002 achievement definitions, 0003-0009 see "Database"). |
+| `sql/` | Numbered migrations `NNNN_description.sql` (0001 schema, 0002 achievement definitions, 0003-0010 see "Database"). |
 | `tests/DW4Online.Tests` | Unit tests (no database). |
 | `tests/DW4Online.Integration.Tests` | HTTP + MariaDB tests against a private local instance (API, rooms with the real relay and fake clients, website forms, end to end on real Kestrel). |
 | `tests/DW4Online.FakeClient` | Fake DW4R2 clients (a deterministic stand-in engine that speaks the protocol as the game will), the latency / jitter / loss proxy and the loss matrix; a console tool (`client`, `proxy`, `matrix`) and a library for the tests. |
@@ -184,7 +184,9 @@ was last used from, for the account-wide lock) and `online_character_history.fla
 restores; earlier revisions take their live character's flag or the one their reset noted); 0008 `online_story` (an
 account's own online story: BASE_FLAG, BASE_FLAGFOLDER, BASE_COUNTER and a revision; a room's story is its owner's row,
 only the relay writes it, newer revisions only; SEAMLESS.md 8); 0009 the game client's achievement catalogue (see
-"Achievements").
+"Achievements"); 0010 `online_story_history` (every revision written to `online_story` with its reason: a room's
+merge, the reset that goes with an online character's reset, or a staff restore; the last
+`OnlineCharacter:StoryHistoryRevisions` per account, removed with the account).
 
 ## API (`/api/v1`, JSON, errors as problem details)
 
