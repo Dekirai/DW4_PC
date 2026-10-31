@@ -457,6 +457,7 @@ public class AccountTests
         await using var host = await TestHost.StartAsync(new() { ["Play:MinimumProtocol"] = "41", ["Play:CurrentProtocol"] = "41", ["Service:Motd"] = "Hello" });
         var status = await (await host.Client().GetAsync("/api/v1/status")).Json();
         Assert.Equal("DW4Online", status.GetProperty("service").GetString());
+        Assert.Equal(PropsVersion(), status.GetProperty("version").GetString()); // what the operator checks after an update
         Assert.Equal(41, status.GetProperty("client").GetProperty("minimumProtocol").GetInt32());
         Assert.Equal("Hello", status.GetProperty("motd").GetString());
         var health = await (await host.Client().GetAsync("/health")).Json();
@@ -469,5 +470,15 @@ public class AccountTests
         var current = await host.Client().PostAsJsonAsync("/api/v1/auth/login", new { username = "Oldie", password = "a decent password", protocol = 41 });
         Assert.Equal(HttpStatusCode.OK, current.StatusCode);
         Assert.Equal(HttpStatusCode.OK, (await host.Client().GetAsync("/")).StatusCode); // the website renders
+    }
+
+    /// <summary>The release version in server/DW4Online/Directory.Build.props (it also names the release zip).</summary>
+    private static string PropsVersion()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "Directory.Build.props"))) dir = dir.Parent;
+        Assert.NotNull(dir);
+        var props = System.Xml.Linq.XDocument.Load(Path.Combine(dir.FullName, "Directory.Build.props"));
+        return Assert.Single(props.Descendants("Version")).Value;
     }
 }

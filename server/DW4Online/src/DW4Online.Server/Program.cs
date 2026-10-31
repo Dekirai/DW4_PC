@@ -6,8 +6,8 @@ using DW4Online.Server;
 
 // DW4Online: API, website and relay in one process.
 //   DW4Online.Server                         run in the console
-//   DW4Online.Server --service               run under the Service Control Manager (deploy/DEPLOY.md)
-//   DW4Online.Server migrate                 apply pending database migrations and exit
+//   DW4Online.Server --service               run under the Service Control Manager (deploy/DEPLOY.md; ServerStartup)
+//   DW4Online.Server migrate                 apply pending database migrations and exit (the operator's way, before a start)
 //   DW4Online.Server set-role <user> <role>  player | moderator | admin (bootstraps the first admin)
 //   DW4Online.Server reset-password <user>   print a temporary password the user must change
 //   DW4Online.Server gen-relay-key           print a new random Relay:TicketKey
@@ -35,20 +35,8 @@ var hostArgs = rest.ToArray();
 switch (command)
 {
     case null:
-    {
-        var app = ServerApp.Build(hostArgs, asService, settings);
-        await ServerApp.MigrateIfEnabledAsync(app);
-        try
-        {
-            await app.RunAsync();
-        }
-        catch (InvalidOperationException e) when (asService)
-        {
-            Console.Error.WriteLine(e.Message);
-            return 1;
-        }
-        return 0;
-    }
+        // As a service: connect to the SCM first, then the database wait and the migrations, then the host (ServerStartup).
+        return await ServerStartup.RunAsync(ServerApp.Build(hostArgs, asService, settings), asService);
     case "tls-pin":
         return TlsPinCommand.Run(hostArgs, Console.Out, Console.Error);
     case "gen-relay-key":
@@ -56,10 +44,33 @@ switch (command)
         return 0;
     case "migrate":
     {
+        // The operator's way to migrate (deploy/DEPLOY.md, "Migrations"): in a console, before the service starts, with
+        // every step, its time and on failure the state of the database and the way out on screen.
         await using var app = ServerApp.Build(hostArgs, settingsFile: settings);
-        var applied = await new Migrator(app.Services.GetRequiredService<Database>(), Console.WriteLine).MigrateAsync();
-        Console.WriteLine(applied.Count == 0 ? "The database schema is current." : $"Applied {applied.Count} migration(s).");
-        return 0;
+        try
+        {
+            var target = new MySqlConnector.MySqlConnectionStringBuilder(app.Services.GetRequiredService<DatabaseOptions>().ConnectionString);
+            Console.WriteLine($"Database '{target.Database}' on {target.Server}:{target.Port} as {target.UserID}");
+            var watch = System.Diagnostics.Stopwatch.StartNew();
+            var applied = await new Migrator(app.Services.GetRequiredService<Database>(), Console.WriteLine,
+                warning => Console.WriteLine($"WARNING: {warning}")).MigrateAsync();
+            Console.WriteLine(applied.Count == 0
+                ? "The database schema is current."
+                : $"Applied {applied.Count} migration(s) in {watch.Elapsed.TotalSeconds.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture)} s.");
+            return 0;
+        }
+        catch (MigrationException e)
+        {
+            Console.Error.WriteLine($"FAIL: {e.Message}");
+            if (e.InnerException is not null) Console.Error.WriteLine($"      ({e.InnerException.GetType().Name}: {e.InnerException.Message})");
+            return 1;
+        }
+        catch (Exception e) when (e is MySqlConnector.MySqlException or InvalidOperationException or ArgumentException)
+        {
+            Console.Error.WriteLine($"FAIL: {e.Message}");
+            Console.Error.WriteLine("      Nothing was changed. Check Database:ConnectionString in the settings file and that MariaDB runs.");
+            return 1;
+        }
     }
     case "set-role" when hostArgs.Length >= 2:
     {

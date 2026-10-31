@@ -1,4 +1,5 @@
-using System.Reflection;
+using System.Diagnostics;
+using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -10,16 +11,39 @@ namespace DW4Online.Data.Migrations;
 /// <summary>One numbered SQL migration (sql/NNNN_description.sql, embedded in the assembly).</summary>
 public sealed record Migration(int Version, string Description, string Sql, byte[] Checksum);
 
-public sealed class MigrationException(string message) : Exception(message);
+/// <summary>The migrator refused or failed; the message names the state of the database and the way out.</summary>
+public sealed class MigrationException : Exception
+{
+    public MigrationException(string message) : base(message)
+    {
+    }
+
+    public MigrationException(string message, Exception inner) : base(message, inner)
+    {
+    }
+}
 
 /// <summary>
 /// Applies the numbered SQL migrations in order and records each in schema_version with the SHA-256 of the file.
-/// It refuses to run when the database holds tables but no schema_version, when an applied migration's file
-/// changed, or when the database is newer than this build. MariaDB commits DDL implicitly, so back up first:
-/// a migration that fails half way leaves the database between versions (deploy/DEPLOY.md, "Updates").
+/// MariaDB commits every DDL statement at once, so a migration that stops half way (a failing statement, a killed
+/// process) leaves the database between two versions. The migrator therefore marks a migration as started in
+/// schema_version before it runs it (a row with an all-zero checksum, replaced by the real one when it is done) and
+/// refuses to touch a database
+/// <list type="bullet">
+/// <item>with such a mark (an interrupted or failed migration: restore the backup made before the update),</item>
+/// <item>with an empty schema_version (the first migration, which creates that table first, was interrupted),</item>
+/// <item>with tables but no schema_version (not a DW4Online database, or one whose schema_version was lost),</item>
+/// <item>whose applied migration files changed, or which is newer than this build.</item>
+/// </list>
+/// Every refusal says whether the tables hold rows and what to do; the migrator itself never drops or rewrites data
+/// to get out of such a state. Back up before an update (deploy/DEPLOY.md, "Migrations"). <paramref name="log"/> gets
+/// the progress lines, <paramref name="warn"/> a warning about the server (<see cref="NativeAioWarning"/>).
 /// </summary>
-public sealed partial class Migrator(Database database, Action<string>? log = null)
+public sealed partial class Migrator(Database database, Action<string>? log = null, Action<string>? warn = null)
 {
+    /// <summary>The checksum of a migration that was started but has not finished (a real SHA-256 is never all zero).</summary>
+    private static readonly byte[] StartedMark = new byte[32];
+
     [GeneratedRegex(@"^sql/(\d{4})_([a-z0-9_]+)\.sql$", RegexOptions.CultureInvariant)]
     private static partial Regex ResourceName();
 
@@ -43,11 +67,13 @@ public sealed partial class Migrator(Database database, Action<string>? log = nu
         return list;
     }
 
-    /// <summary>The schema version of the database (0 when empty).</summary>
+    /// <summary>The schema version of the database (0 when empty; a started but unfinished migration does not count).</summary>
     public async Task<int> CurrentVersionAsync(CancellationToken ct = default)
     {
         await using var c = await database.OpenAsync(ct);
-        return await HasSchemaVersionAsync(c) ? await c.ExecuteScalarAsync<int>("SELECT COALESCE(MAX(version), 0) FROM schema_version") : 0;
+        return await HasSchemaVersionAsync(c)
+            ? await c.ExecuteScalarAsync<int>("SELECT COALESCE(MAX(version), 0) FROM schema_version WHERE checksum <> @mark", new { mark = StartedMark })
+            : 0;
     }
 
     /// <summary>Brings the database to the newest embedded migration; returns the versions applied now.</summary>
@@ -56,21 +82,28 @@ public sealed partial class Migrator(Database database, Action<string>? log = nu
         var migrations = LoadEmbedded();
         await using var c = await database.OpenAsync(ct);
         if (await c.ExecuteScalarAsync<long?>("SELECT GET_LOCK('dw4online_migrate', 60)") != 1)
-            throw new MigrationException("Another process is migrating this database.");
+            throw new MigrationException("Another process is migrating this database (no lock 'dw4online_migrate' within 60 s). " +
+                                         "Wait until it is done (its output ends with \"Migrating ... done\"), then try again.");
         try
         {
+            await WarnAboutServerAsync(c);
+            var hasSchemaVersion = await HasSchemaVersionAsync(c);
             var applied = new Dictionary<int, byte[]>();
-            if (await HasSchemaVersionAsync(c))
+            if (hasSchemaVersion)
             {
-                foreach (var row in await c.QueryAsync<(long Version, byte[] Checksum)>("SELECT CAST(version AS SIGNED) AS version, checksum FROM schema_version"))
-                    applied[(int)row.Version] = row.Checksum;
+                var rows = (await c.QueryAsync<(long Version, byte[] Checksum, DateTime AppliedAt)>(
+                    "SELECT CAST(version AS SIGNED) AS version, checksum, applied_at FROM schema_version ORDER BY version")).ToList();
+                foreach (var row in rows)
+                    if (row.Checksum.AsSpan().SequenceEqual(StartedMark))
+                        throw new MigrationException(Interrupted((int)row.Version, migrations, row.AppliedAt));
+                if (rows.Count == 0) throw new MigrationException(await EmptySchemaVersionAsync(c));
+                foreach (var row in rows) applied[(int)row.Version] = row.Checksum;
             }
             else
             {
                 var tables = await c.ExecuteScalarAsync<long>(
                     "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE()");
-                if (tables > 0)
-                    throw new MigrationException($"Database '{database.DatabaseName}' has tables but no schema_version; refusing to touch it.");
+                if (tables > 0) throw new MigrationException(await NoSchemaVersionAsync(c));
             }
             var newest = migrations.Count == 0 ? 0 : migrations[^1].Version;
             if (applied.Count > 0 && applied.Keys.Max() > newest)
@@ -80,24 +113,166 @@ public sealed partial class Migrator(Database database, Action<string>? log = nu
                 if (applied.TryGetValue(m.Version, out var checksum) && !checksum.AsSpan().SequenceEqual(m.Checksum))
                     throw new MigrationException($"Migration {m.Version} ({m.Description}) changed after it was applied. Add a new migration instead.");
             }
+
+            var pending = migrations.Where(m => !applied.ContainsKey(m.Version)).ToList();
+            if (pending.Count == 0) return [];
+            var current = applied.Count == 0 ? 0 : applied.Keys.Max();
+            log?.Invoke($"Migrating database '{database.DatabaseName}' from schema {current} to {newest} ({pending.Count} migration(s)) ...");
+            var total = Stopwatch.StartNew();
             var done = new List<int>();
-            foreach (var m in migrations.Where(m => !applied.ContainsKey(m.Version)))
+            foreach (var m in pending)
             {
                 log?.Invoke($"Applying migration {m.Version:D4} {m.Description}");
-                await using (var cmd = new MySqlCommand(m.Sql, c) { CommandTimeout = 600 })
-                    await cmd.ExecuteNonQueryAsync(ct);
-                await c.ExecuteAsync(
-                    "INSERT INTO schema_version (version, description, checksum, applied_at) VALUES (@v, @d, @c, UTC_TIMESTAMP(3))",
-                    new { v = m.Version, d = m.Description, c = m.Checksum });
+                var watch = Stopwatch.StartNew();
+                try
+                {
+                    if (hasSchemaVersion)
+                    {
+                        // The mark: until it is replaced below, every later run refuses this database (see Interrupted).
+                        await c.ExecuteAsync(
+                            "INSERT INTO schema_version (version, description, checksum, applied_at) VALUES (@v, @d, @mark, UTC_TIMESTAMP(3))",
+                            new { v = m.Version, d = m.Description + " (started, not finished)", mark = StartedMark });
+                    }
+                    await using (var cmd = new MySqlCommand(m.Sql, c) { CommandTimeout = 600 })
+                        await cmd.ExecuteNonQueryAsync(ct);
+                    await c.ExecuteAsync(
+                        "INSERT INTO schema_version (version, description, checksum, applied_at) VALUES (@v, @d, @c, UTC_TIMESTAMP(3)) " +
+                        "ON DUPLICATE KEY UPDATE description = VALUES(description), checksum = VALUES(checksum), applied_at = VALUES(applied_at)",
+                        new { v = m.Version, d = m.Description, c = m.Checksum });
+                }
+                catch (Exception e) when (e is MySqlException or InvalidOperationException or IOException)
+                {
+                    // A failing statement, or a connection that broke (killed, MariaDB gone): either way the
+                    // migration may be half applied.
+                    throw new MigrationException(Failed(m, watch.Elapsed, e), e);
+                }
+                hasSchemaVersion = true; // migration 0001 creates the table
+                log?.Invoke($"Applied migration {m.Version:D4} {m.Description} in {Seconds(watch.Elapsed)} s");
                 done.Add(m.Version);
             }
+            log?.Invoke($"Migrating database '{database.DatabaseName}' done in {Seconds(total.Elapsed)} s: schema {newest}");
             return done;
         }
         finally
         {
-            await c.ExecuteAsync("SELECT RELEASE_LOCK('dw4online_migrate')");
+            try
+            {
+                await c.ExecuteAsync("SELECT RELEASE_LOCK('dw4online_migrate')");
+            }
+            catch (Exception e) when (e is MySqlException or InvalidOperationException)
+            {
+                // The connection broke (and the lock went with it): the exception in flight, usually the migration's
+                // own, says what happened.
+            }
         }
     }
+
+    /// <summary>
+    /// A warning about the MariaDB server (null when there is none): native AIO on a MariaDB before 10.6 on Windows,
+    /// where DDL can hang for good (XAMPP's 10.4.32: CREATE TABLE and DROP DATABASE stuck in an InnoDB latch wait,
+    /// "Killed" yet holding their locks).
+    /// </summary>
+    public static string? NativeAioWarning(string version, string compileOs, string nativeAio)
+    {
+        if (!(nativeAio.Equals("ON", StringComparison.OrdinalIgnoreCase) || nativeAio == "1")) return null;
+        if (!compileOs.StartsWith("Win", StringComparison.OrdinalIgnoreCase)) return null;
+        var m = Regex.Match(version, @"^(\d+)\.(\d+)\.", RegexOptions.CultureInvariant);
+        if (!m.Success || !version.Contains("MariaDB", StringComparison.OrdinalIgnoreCase)) return null;
+        var (major, minor) = (int.Parse(m.Groups[1].Value, CultureInfo.InvariantCulture), int.Parse(m.Groups[2].Value, CultureInfo.InvariantCulture));
+        if (major > 10 || (major == 10 && minor >= 6)) return null;
+        return $"MariaDB {version} on Windows runs with innodb_use_native_aio=ON. On MariaDB before 10.6 that can make DDL " +
+               "(CREATE TABLE, ALTER TABLE, DROP DATABASE) hang for good, as it did with XAMPP's 10.4.32: a migration or a restore " +
+               "then never finishes and keeps its locks. Add the line innodb_use_native_aio=0 at the end of the [mysqld] section " +
+               "of the MariaDB's my.ini and restart the MariaDB service before you migrate (deploy/DEPLOY.md section 1.1).";
+    }
+
+    private async Task WarnAboutServerAsync(MySqlConnection c)
+    {
+        if (warn is null) return;
+        try
+        {
+            var vars = (await c.QueryAsync<(string Name, string Value)>(
+                    "SHOW GLOBAL VARIABLES WHERE Variable_name IN ('version', 'version_compile_os', 'innodb_use_native_aio')"))
+                .ToDictionary(v => v.Name, v => v.Value, StringComparer.OrdinalIgnoreCase);
+            if (NativeAioWarning(vars.GetValueOrDefault("version", ""), vars.GetValueOrDefault("version_compile_os", ""),
+                    vars.GetValueOrDefault("innodb_use_native_aio", "")) is { } text)
+                warn(text);
+        }
+        catch (MySqlException)
+        {
+            // Only a warning: a server without these variables is no reason to stop.
+        }
+    }
+
+    // --- Refusals and failures: the state of the database and the way out ----------------------------------------------
+
+    private string Recreate() =>
+        $"drop and re-create it empty (as root, for example in HeidiSQL: DROP DATABASE `{database.DatabaseName}`; " +
+        $"CREATE DATABASE `{database.DatabaseName}` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;), then run " +
+        "'DW4Online.Server.exe migrate --settings <settings file>' in a console before you start the service";
+
+    private string Restore() =>
+        "restore the backup made before the update into it (deploy\\restore-db.ps1 -Backup <file> -Database " +
+        $"{database.DatabaseName} -Replace), then run 'DW4Online.Server.exe migrate --settings <settings file>' in a console " +
+        "before you start the service";
+
+    private string Interrupted(int version, IReadOnlyList<Migration> migrations, DateTime startedAt)
+    {
+        var what = version >= 1 && version <= migrations.Count
+            ? $"Migration {version:D4} ({migrations[version - 1].Description})"
+            : $"Migration {version:D4}";
+        return $"{what} was started at {startedAt.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture)} UTC and did not finish " +
+               "(interrupted or failed; schema_version marks it \"started, not finished\"). MariaDB commits every DDL statement at once, " +
+               $"so database '{database.DatabaseName}' is now between schema {version - 1} and {version}: refusing to touch it. " +
+               $"Way out: {Restore()} (deploy/DEPLOY.md, \"Migrations\").";
+    }
+
+    private string Failed(Migration m, TimeSpan elapsed, Exception e)
+    {
+        var head = $"Migration {m.Version:D4} ({m.Description}) failed after {Seconds(elapsed)} s: {e.Message}";
+        if (m.Version == 1)
+            return $"{head}. Database '{database.DatabaseName}' holds no data yet (the first migration only creates tables): " +
+                   $"remove the cause, then {Recreate()} (deploy/DEPLOY.md, \"Migrations\").";
+        return $"{head}. MariaDB commits every DDL statement at once, so the statements before the failing one stay applied: " +
+               $"database '{database.DatabaseName}' is between schema {m.Version - 1} and {m.Version}, and every later start " +
+               $"refuses it. Way out: remove the cause, then {Restore()} (deploy/DEPLOY.md, \"Migrations\").";
+    }
+
+    private async Task<string> EmptySchemaVersionAsync(MySqlConnection c)
+    {
+        var (tables, withRows) = await TablesWithRowsAsync(c);
+        var head = $"Database '{database.DatabaseName}' has an empty schema_version: migration 0001 (initial), which creates that " +
+                   "table first and records itself last, was interrupted before it finished";
+        if (withRows.Count == 0)
+            return $"{head}. None of its {tables} tables holds a row, so nothing is lost by starting over: {Recreate()} " +
+                   "(deploy/DEPLOY.md, \"Migrations\").";
+        return $"{head}, yet tables hold rows ({string.Join(", ", withRows)}): refusing to touch it. Do not drop it: if it is " +
+               $"DW4Online's database, {Restore()}; otherwise give DW4Online an empty database of its own.";
+    }
+
+    private async Task<string> NoSchemaVersionAsync(MySqlConnection c)
+    {
+        var (tables, withRows) = await TablesWithRowsAsync(c);
+        var head = $"Database '{database.DatabaseName}' has tables but no schema_version; refusing to touch it";
+        if (withRows.Count == 0)
+            return $"{head}. None of its {tables} tables holds a row: if it is meant for DW4Online and nothing else uses it, " +
+                   $"{Recreate()} (deploy/DEPLOY.md, \"Migrations\").";
+        return $"{head}. Its tables hold rows ({string.Join(", ", withRows)}): if it is DW4Online's database, {Restore()}; " +
+               "otherwise give DW4Online an empty database of its own (Database:ConnectionString).";
+    }
+
+    /// <summary>The number of tables and the names of those that hold at least one row.</summary>
+    private static async Task<(int Tables, List<string> WithRows)> TablesWithRowsAsync(MySqlConnection c)
+    {
+        var tables = (await c.QueryAsync<string>(
+            "SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() AND table_type <> 'VIEW' ORDER BY table_name")).ToList();
+        var withRows = new List<string>();
+        foreach (var table in tables)
+            if (await c.ExecuteScalarAsync<long>($"SELECT EXISTS (SELECT 1 FROM `{table.Replace("`", "``")}`)") == 1) withRows.Add(table);
+        return (tables.Count, withRows);
+    }
+
+    private static string Seconds(TimeSpan t) => t.TotalSeconds.ToString("0.00", CultureInfo.InvariantCulture);
 
     private static async Task<bool> HasSchemaVersionAsync(MySqlConnection c) =>
         await c.ExecuteScalarAsync<long>(

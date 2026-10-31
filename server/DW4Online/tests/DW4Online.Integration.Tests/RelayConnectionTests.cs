@@ -177,4 +177,47 @@ public class RelayConnectionTests
             hub.Dispose();
         }
     }
+
+    /// <summary>
+    /// The relay binds in StartAsync: a port in use fails the start itself with an error that names the port (the
+    /// service's FAIL line), instead of a background failure that only stopped the host.
+    /// </summary>
+    [Fact]
+    public async Task A_relay_port_in_use_fails_the_start_with_the_port()
+    {
+        using var holder = new TcpListener(IPAddress.Loopback, TestPorts.Next());
+        holder.Start();
+        var port = ((IPEndPoint)holder.LocalEndpoint).Port;
+        var tickets = new RelayTickets(RandomNumberGenerator.GetBytes(32), TimeSpan.FromSeconds(60), TimeProvider.System);
+        using var hub = new RelayHub(new RelayOptions { Enabled = true, ListenAddress = "127.0.0.1", Port = port }, new SealingOptions(),
+            new InstanceOptions(), tickets, NullLoggerFactory.Instance);
+        var error = await Assert.ThrowsAsync<IOException>(() => hub.StartAsync(CancellationToken.None));
+        Assert.Equal($"Failed to bind the relay to 127.0.0.1:{port} (Relay:ListenAddress, Relay:Port): address already in use.", error.Message);
+        Assert.Equal(SocketError.AddressAlreadyInUse, Assert.IsType<SocketException>(error.InnerException).SocketErrorCode);
+        Assert.Same(error, (await Assert.ThrowsAsync<IOException>(() => hub.Started)));
+    }
+
+    /// <summary>
+    /// A hub disposed without StopAsync (the host's start failed after the relay began, for example on Kestrel's port)
+    /// ends its sealing thread before it disposes that thread's timer. Before, Dispose disposed the timer at once while
+    /// the thread still waited on it (it only noticed the stop a moment later); when it woke up first, its
+    /// ObjectDisposedException took the whole process down (a crashed integration run on 31.10).
+    /// </summary>
+    [Fact]
+    public async Task A_hub_disposed_without_a_stop_ends_its_sealing_thread_first()
+    {
+        var tickets = new RelayTickets(RandomNumberGenerator.GetBytes(32), TimeSpan.FromSeconds(60), TimeProvider.System);
+        for (var i = 0; i < 10; i++)
+        {
+            var hub = new RelayHub(new RelayOptions { Enabled = true, ListenAddress = "127.0.0.1", Port = TestPorts.Next() },
+                new SealingOptions(), new InstanceOptions(), tickets, NullLoggerFactory.Instance);
+            await hub.StartAsync(CancellationToken.None);
+            await hub.Started.WaitAsync(TimeSpan.FromSeconds(10));
+            for (var w = 0; w < 200 && !hub.SealingThreadAlive; w++) await Task.Delay(5);
+            Assert.True(hub.SealingThreadAlive);
+            await Task.Delay(30); // the sealing thread waits on its timer (50 ms at most per pass)
+            hub.Dispose();
+            Assert.False(hub.SealingThreadAlive); // ended before its timer was disposed
+        }
+    }
 }

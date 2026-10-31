@@ -17,13 +17,22 @@ public class MigratorTests
         try
         {
             await using var db = new Database(TestDb.ConnectionString(name));
-            var migrator = new Migrator(db);
+            var lines = new List<string>();
+            var warnings = new List<string>();
+            var migrator = new Migrator(db, lines.Add, warnings.Add);
             Assert.Equal(0, await migrator.CurrentVersionAsync());
             Assert.Equal(From(1), await migrator.MigrateAsync());
             Assert.Empty(await migrator.MigrateAsync());
             Assert.Equal(From(1).Last(), await migrator.CurrentVersionAsync());
             Assert.True(From(1).Last() >= 10); // 0008: online_story, 0009: the achievement catalogue, 0010: the story history
             await using var c = new MySqlConnection(TestDb.ConnectionString(name));
+
+            // The server warning (once per run) follows the server's setting: none on a private mysqld that runs
+            // with innodb_use_native_aio=0 (scripts/local-db.ps1, or XAMPP's my.ini with the line of DEPLOY.md 1.1).
+            var version = await c.ExecuteScalarAsync<string>("SELECT VERSION()");
+            var risky = await c.ExecuteScalarAsync<long>("SELECT @@innodb_use_native_aio") == 1 && OperatingSystem.IsWindows() &&
+                        version!.StartsWith("10.", StringComparison.Ordinal) && int.Parse(version.Split('.')[1]) < 6;
+            Assert.Equal(risky ? 2 : 0, warnings.Count);
             // 0002's 72 and the game client's 20 others (0009); 72 active: the client's catalogue.
             Assert.Equal(92, await c.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM achievements"));
             Assert.Equal(72, await c.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM achievements WHERE active = 1"));
@@ -31,6 +40,18 @@ public class MigratorTests
             Assert.Equal(12, await c.ExecuteScalarAsync<int>("SELECT goal FROM achievements WHERE code = 'lowlevel_apocalymon'"));
             Assert.Equal(18, await c.ExecuteScalarAsync<int>( // (0008: online_story, 0010: online_story_history)
                 "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE()"));
+
+            // What the log shows: the plan, each migration with its time, the total.
+            var all = Migrator.LoadEmbedded();
+            var last = all[^1];
+            Assert.Equal(2 + 2 * all.Count, lines.Count);
+            Assert.Equal($"Migrating database '{name}' from schema 0 to {last.Version} ({all.Count} migration(s)) ...", lines[0]);
+            Assert.Equal("Applying migration 0001 initial", lines[1]);
+            Assert.Matches(@"^Applied migration 0001 initial in \d+\.\d\d s$", lines[2]);
+            Assert.Matches(@"^Applied migration 0007 session address revision flag in \d+\.\d\d s$", lines[14]);
+            Assert.Equal($"Applying migration {last.Version:D4} {last.Description}", lines[2 * all.Count - 1]);
+            Assert.Matches($@"^Migrating database '{name}' done in \d+\.\d\d s: schema {last.Version}$", lines[2 * all.Count + 1]);
+            Assert.Equal(0, await c.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM schema_version WHERE description LIKE '%not finished%'"));
         }
         finally
         {
@@ -150,6 +171,14 @@ public class MigratorTests
             await c.ExecuteAsync("CREATE TABLE someone_elses (id INT PRIMARY KEY)");
             var foreign = await Assert.ThrowsAsync<MigrationException>(() => new Migrator(db).MigrateAsync());
             Assert.Contains("no schema_version", foreign.Message);
+            Assert.Contains("None of its 1 tables holds a row", foreign.Message);
+            Assert.Contains($"DROP DATABASE `{name}`", foreign.Message);
+            await c.ExecuteAsync("INSERT INTO someone_elses VALUES (1)");
+            var withData = await Assert.ThrowsAsync<MigrationException>(() => new Migrator(db).MigrateAsync());
+            Assert.Contains("has tables but no schema_version; refusing to touch it", withData.Message); // unchanged for real data
+            Assert.Contains("Its tables hold rows (someone_elses)", withData.Message);
+            Assert.DoesNotContain("DROP DATABASE", withData.Message);
+            Assert.Equal(1, await c.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM someone_elses"));
             await c.ExecuteAsync("DROP TABLE someone_elses");
 
             await new Migrator(db).MigrateAsync();
@@ -162,6 +191,153 @@ public class MigratorTests
             await c.ExecuteAsync("INSERT INTO schema_version (version, description, checksum, applied_at) VALUES (99, 'future', @real, UTC_TIMESTAMP(3))", new { real });
             var newer = await Assert.ThrowsAsync<MigrationException>(() => new Migrator(db).MigrateAsync());
             Assert.Contains("newer than this build", newer.Message);
+        }
+        finally
+        {
+            await TestDb.DropAsync(name);
+        }
+    }
+
+    /// <summary>
+    /// What a process killed during migration 0001 leaves (the server's first start on 31.10: the SCM ended it after
+    /// 30 s): schema_version, which 0001 creates first, and some more tables, all empty. The migrator refuses it with the
+    /// way out (DROP / CREATE, then migrate), refuses it without that advice once a table holds a row, and migrates
+    /// the re-created database.
+    /// </summary>
+    [DbFact]
+    public async Task An_interrupted_first_migration_is_refused_with_the_way_out()
+    {
+        var name = await TestDb.CreateAsync();
+        try
+        {
+            await using (var c = new MySqlConnection(TestDb.ConnectionString(name)))
+            {
+                var initial = Migrator.LoadEmbedded()[0].Sql;
+                await c.ExecuteAsync(initial[..initial.IndexOf("CREATE TABLE sessions", StringComparison.Ordinal)]); // schema_version, accounts
+
+                await using (var db = new Database(TestDb.ConnectionString(name)))
+                {
+                    var empty = await Assert.ThrowsAsync<MigrationException>(() => new Migrator(db).MigrateAsync());
+                    Assert.Contains("has an empty schema_version: migration 0001 (initial)", empty.Message);
+                    Assert.Contains("None of its 2 tables holds a row, so nothing is lost by starting over", empty.Message);
+                    Assert.Contains($"DROP DATABASE `{name}`; CREATE DATABASE `{name}` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;", empty.Message);
+                    Assert.Contains("'DW4Online.Server.exe migrate --settings <settings file>' in a console", empty.Message);
+                    Assert.Equal(0, await new Migrator(db).CurrentVersionAsync());
+
+                    await c.ExecuteAsync("INSERT INTO accounts (username, username_norm, password_hash, created_at) VALUES ('Kevin', 'kevin', 'x', UTC_TIMESTAMP(3))");
+                    var data = await Assert.ThrowsAsync<MigrationException>(() => new Migrator(db).MigrateAsync());
+                    Assert.Contains("yet tables hold rows (accounts): refusing to touch it. Do not drop it", data.Message);
+                    Assert.Contains($"restore-db.ps1 -Backup <file> -Database {name} -Replace", data.Message);
+                    Assert.DoesNotContain("DROP DATABASE", data.Message);
+                    Assert.Equal(2, await c.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE()"));
+                }
+            }
+
+            // The way out for the empty case: drop and re-create, then migrate.
+            await TestDb.DropAsync(name);
+            await using (var admin = new MySqlConnection(TestDb.AdminConnectionString))
+                await admin.ExecuteAsync($"CREATE DATABASE `{name}` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci");
+            await using var fresh = new Database(TestDb.ConnectionString(name));
+            Assert.Equal(From(1), await new Migrator(fresh).MigrateAsync());
+        }
+        finally
+        {
+            await TestDb.DropAsync(name);
+        }
+    }
+
+    /// <summary>
+    /// A migration that fails half way (0003: its ALTER TABLE goes through, its CREATE INDEX fails) leaves the mark
+    /// "started, not finished" in schema_version; the database counts as the version before, and every later run
+    /// refuses it with the way back (the backup from before the update). An interrupted process leaves the same mark.
+    /// </summary>
+    [DbFact]
+    public async Task A_migration_that_fails_half_way_is_marked_and_refused_until_the_backup_is_back()
+    {
+        var name = await TestDb.CreateAsync();
+        try
+        {
+            await using var c = new MySqlConnection(TestDb.ConnectionString(name));
+            await c.OpenAsync();
+            foreach (var m in Migrator.LoadEmbedded().Where(m => m.Version <= 2)) // what the migrator did up to schema 2
+            {
+                await using (var cmd = new MySqlCommand(m.Sql, c)) await cmd.ExecuteNonQueryAsync();
+                await c.ExecuteAsync("INSERT INTO schema_version (version, description, checksum, applied_at) VALUES (@v, @d, @c, UTC_TIMESTAMP(3))",
+                    new { v = m.Version, d = m.Description, c = m.Checksum });
+            }
+            // The index 0003 creates in its second statement, so that statement fails after the first went through.
+            await c.ExecuteAsync("CREATE INDEX ix_unlocks_rarity ON achievement_unlocks (achievement_id, flagged, account_id)");
+            await using var db = new Database(TestDb.ConnectionString(name));
+
+            var failed = await Assert.ThrowsAsync<MigrationException>(() => new Migrator(db).MigrateAsync());
+            Assert.StartsWith("Migration 0003 (rooms) failed after ", failed.Message);
+            Assert.Contains("ix_unlocks_rarity", failed.Message);
+            Assert.Contains($"database '{name}' is between schema 2 and 3", failed.Message);
+            Assert.Contains($"restore-db.ps1 -Backup <file> -Database {name} -Replace", failed.Message);
+            Assert.IsType<MySqlException>(failed.InnerException);
+            Assert.Equal(1, await c.ExecuteScalarAsync<int>(
+                "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'rooms' AND column_name = 'randomizer'"));
+            Assert.Equal("rooms (started, not finished)", await c.ExecuteScalarAsync<string>("SELECT description FROM schema_version WHERE version = 3"));
+            Assert.Equal(2, await new Migrator(db).CurrentVersionAsync());
+
+            var refused = await Assert.ThrowsAsync<MigrationException>(() => new Migrator(db).MigrateAsync());
+            Assert.StartsWith("Migration 0003 (rooms) was started at ", refused.Message);
+            Assert.Contains("did not finish", refused.Message);
+            Assert.Contains("between schema 2 and 3: refusing to touch it", refused.Message);
+            Assert.Contains("restore the backup made before the update", refused.Message);
+            Assert.Equal(3, await c.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM schema_version"));
+        }
+        finally
+        {
+            await TestDb.DropAsync(name);
+        }
+    }
+
+    /// <summary>
+    /// The connection breaks while a migration runs (killed while 0003's ALTER TABLE waits for another session's
+    /// metadata lock on rooms): the migrator reports that migration and the state it leaves, not the error of releasing
+    /// its lock on the dead connection (which hid it before, and 'migrate' then said "Nothing was changed").
+    /// </summary>
+    [DbFact]
+    public async Task A_connection_that_breaks_during_a_migration_reports_that_migration()
+    {
+        var name = await TestDb.CreateAsync();
+        try
+        {
+            await using var c = new MySqlConnection(TestDb.ConnectionString(name));
+            await c.OpenAsync();
+            foreach (var m in Migrator.LoadEmbedded().Where(m => m.Version <= 2))
+            {
+                await using (var cmd = new MySqlCommand(m.Sql, c)) await cmd.ExecuteNonQueryAsync();
+                await c.ExecuteAsync("INSERT INTO schema_version (version, description, checksum, applied_at) VALUES (@v, @d, @c, UTC_TIMESTAMP(3))",
+                    new { v = m.Version, d = m.Description, c = m.Checksum });
+            }
+            await using var holder = new MySqlConnection(TestDb.ConnectionString(name));
+            await holder.OpenAsync();
+            await using var transaction = await holder.BeginTransactionAsync();
+            await holder.ExecuteAsync("SELECT COUNT(*) FROM rooms", transaction: transaction); // a shared metadata lock until the rollback
+
+            await using var db = new Database(TestDb.ConnectionString(name));
+            var migrate = new Migrator(db).MigrateAsync();
+            await using var admin = new MySqlConnection(TestDb.AdminConnectionString);
+            long waiting = 0;
+            for (var i = 0; i < 400 && waiting == 0; i++)
+            {
+                waiting = await admin.ExecuteScalarAsync<long>(
+                    "SELECT COALESCE(MAX(id), 0) FROM information_schema.processlist WHERE db = @name AND state = 'Waiting for table metadata lock'",
+                    new { name });
+                if (waiting == 0) await Task.Delay(50);
+            }
+            Assert.NotEqual(0, waiting);
+            await admin.ExecuteAsync($"KILL CONNECTION {waiting}");
+
+            var failed = await Assert.ThrowsAsync<MigrationException>(() => migrate);
+            Assert.StartsWith("Migration 0003 (rooms) failed after ", failed.Message);
+            Assert.Contains($"database '{name}' is between schema 2 and 3", failed.Message);
+            await transaction.RollbackAsync();
+            Assert.Equal("rooms (started, not finished)", await c.ExecuteScalarAsync<string>("SELECT description FROM schema_version WHERE version = 3"));
+            var refused = await Assert.ThrowsAsync<MigrationException>(() => new Migrator(db).MigrateAsync());
+            Assert.StartsWith("Migration 0003 (rooms) was started at ", refused.Message);
         }
         finally
         {

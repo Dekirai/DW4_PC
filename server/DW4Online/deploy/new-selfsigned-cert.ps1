@@ -20,9 +20,13 @@
   -ImportPfx installs an existing PFX (the spare, or the certificate of a moved server) instead of creating one, and
   grants the service its key. -PinFile only prints the pin of a certificate file (.cer / .crt / .pem; for a PFX use
   "DW4Online.Server.exe tls-pin --file x.pfx --password-env NAME"). -PinServedBy <address> only connects to
-  <address>:443 (-PinServedPort) the way the game client does (TLS without a host name, no certificate check) and
+  <address>:<-PinServedPort> the way the game client does (TLS without a host name, no certificate check) and
   prints the pin of the certificate the running service actually serves: it must be the first pin printed at creation.
   Neither needs elevation; nothing is changed.
+
+  -HttpsPort is the service's HTTPS port (Kestrel:Endpoints:Https:Url), 443 unless another program holds 443 (a
+  Traefik, IIS or Apache: DEPLOY.md section 4.1, for example 8443). It goes into the settings printed at the end and is
+  the port -PinServedBy connects to unless -PinServedPort names another one.
 
   A new key means a new pin, and every client without that pin stops connecting: the script refuses to create a second
   certificate for an address that already has a valid one unless -Force is given. Nothing else changes: no other
@@ -35,6 +39,7 @@
   powershell -ExecutionPolicy Bypass -File new-selfsigned-cert.ps1 -ImportPfx E:\dw4online-spare.pfx
   powershell -ExecutionPolicy Bypass -File new-selfsigned-cert.ps1 -PinFile C:\temp\server.cer
   powershell -ExecutionPolicy Bypass -File new-selfsigned-cert.ps1 -PinServedBy 88.198.52.221
+  powershell -ExecutionPolicy Bypass -File new-selfsigned-cert.ps1 -PinServedBy 88.198.52.221 -PinServedPort 8443
 #>
 param(
     [string]$IpAddress = '88.198.52.221',
@@ -49,7 +54,8 @@ param(
     [System.Security.SecureString]$ImportPassword = $null,
     [string]$PinFile = '',
     [string]$PinServedBy = '',
-    [int]$PinServedPort = 443,
+    [int]$PinServedPort = 0,
+    [int]$HttpsPort = 443,
     [ValidateSet('LocalMachine', 'CurrentUser')]
     [string]$StoreLocation = 'LocalMachine',
     [string]$Exe = (Join-Path (Split-Path -Parent $PSScriptRoot) 'DW4Online.Server.exe'),
@@ -123,8 +129,10 @@ if ($PinFile) {
     exit 0
 }
 
+if ($PinServedPort -le 0) { $PinServedPort = $HttpsPort }
 if ($PinServedBy) {
     # Like the game client: no host name (an IP address sends no SNI), any certificate accepted here, then its pin.
+    Write-Output "Connecting to ${PinServedBy}:$PinServedPort ..."
     $tcp = New-Object System.Net.Sockets.TcpClient($PinServedBy, $PinServedPort)
     try {
         $tls = New-Object System.Net.Security.SslStream($tcp.GetStream(), $false, { $true })
@@ -295,8 +303,10 @@ Write-Output 'For the game client build (DEPLOY.md 6.4: print-pins.ps1 -Out writ
 foreach ($pin in $pins) { Write-Output "  $pin" }
 Write-Output ''
 Write-Output 'appsettings.Production.json:'
-Write-Output '  "Kestrel": { "Endpoints": { "Https": { "Url": "https://0.0.0.0:443" } } },'
+Write-Output "  `"Kestrel`": { `"Endpoints`": { `"Https`": { `"Url`": `"https://0.0.0.0:$HttpsPort`" } } },"
 Write-Output "  `"Tls`": { `"StoreHostName`": `"$IpAddress`" },"
 Write-Output "  `"Service`": { `"RelayHost`": `"$IpAddress`" }"
+$base = if ($HttpsPort -eq 443) { "https://$IpAddress" } else { "https://${IpAddress}:$HttpsPort" }
+Write-Output "The game client's server address: $base"
 Write-Output ''
 Write-Output 'Then: Restart-Service DW4Online (or wait up to 10 minutes); its log names the certificate and the pin.'

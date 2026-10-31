@@ -89,7 +89,10 @@ afterwards), serves it from the store as the service does and runs the client wi
 `local-db.ps1` uses XAMPP's MariaDB binaries (`-MySqlBin` for others) with its **own** data directory in
 `server/DW4Online/.local` (gitignored), its own port and `--bind-address=127.0.0.1`; it never touches XAMPP's data,
 other databases or services and stops only the `mysqld` it started (by PID). XAMPP ships MariaDB 10.4, whose native
-AIO hung `DROP DATABASE` here (an InnoDB latch wait), so the script starts it with `--innodb-use-native-aio=0`.
+AIO hung `DROP DATABASE` here (an InnoDB latch wait), so the script starts it with `--innodb-use-native-aio=0`. The
+same hang is the likely cause of the server's failed first start on 31.10 (migration 0001 stuck in a `CREATE TABLE`),
+so the XAMPP variant of the deploy kit sets that line in the server's `my.ini` too (DEPLOY.md section 1.1), and the
+migrator warns when it talks to a MariaDB before 10.6 on Windows with native AIO on.
 The integration tests create a database `dw4online_it_<random>` per test class and drop it afterwards.
 
 Run the service locally:
@@ -109,7 +112,7 @@ and user secrets (Development) work as usual.
 
 | Section | Keys (defaults) |
 | --- | --- |
-| `Database` | `ConnectionString`, `AutoMigrate` (true): run pending migrations at startup. |
+| `Database` | `ConnectionString`, `AutoMigrate` (true): run pending migrations at startup, `StartupWaitSeconds` (60): how long the start waits for a database that does not answer yet. |
 | `Service` | `Name`, `Motd` (game menu and home page), `Maintenance` (announced; no new rooms), `RelayHost` (empty = the request's host name) / `RelayPort` (default 0 = the port the relay listens on, `Relay:Port`; set it only when clients reach the relay through another public port), announced to clients; `PathBase` (empty; for example `/dw4online`: website and API below that path, see "Website"), `BehindProxy` (false; true behind a reverse proxy on the same machine: client address and scheme from `X-Forwarded-For` / `X-Forwarded-Proto` of a loopback proxy only). |
 | `Accounts` | `Registration` (open / closed), `PasswordIterations` (220000), `MaxFailedLogins` (10, per user name and address), `LockoutMinutes` (15), `MaxFailedLoginsPerAccount` (50), `KnownAddressDays` (30), `GameSessionDays` (30), `WebSessionDays` (14), `SessionTouchMinutes` (5), `MaxSessionsPerAccount` (20). |
 | `OnlineCharacter` | `HistoryRevisions` (20), `ResetHistoryDays` (30: the revisions of a reset character stay that long), `StoryHistoryRevisions` (100: kept revisions of an account's online story, online_story_history), `Rules:MaxLevelsPerPlayHour` (120), `Rules:PlayTimeSlackSeconds` (600). |
@@ -129,8 +132,8 @@ CLI of the executable:
 
 ```
 DW4Online.Server                          run in the console
-DW4Online.Server --service                run under the Service Control Manager
-DW4Online.Server migrate                  apply pending migrations and exit
+DW4Online.Server --service                run under the Service Control Manager (connects first, then database wait and migrations)
+DW4Online.Server migrate                  apply pending migrations and exit (each with its time; exit 1 with the way out on a refusal)
 DW4Online.Server set-role <user> <role>   player | moderator | admin (bootstraps the first admin)
 DW4Online.Server reset-password <user>    print a temporary password the user must change (audit actor 0 = console)
 DW4Online.Server gen-relay-key            print a new random Relay:TicketKey
@@ -144,10 +147,31 @@ DW4Online.Server tls-pin --host <IP or name> | --thumbprint <hex> | --file <cert
 ## Database
 
 MariaDB 11.4 LTS is the target (developed on a private 10.4 instance; the schema avoids `INET6` / `UUID` so both
-run it). InnoDB, `utf8mb4_unicode_ci` set explicitly (11.x changed the default), all times UTC `DATETIME(3)` written by
-the service. The migrator applies `sql/NNNN_*.sql` in order, records each in `schema_version` with the SHA-256 of the
-file and refuses to run when the database has tables but no `schema_version`, when an applied file changed, or when the
-database is newer than the build. MariaDB commits DDL implicitly: **back up before an update** (deploy kit).
+run it; the server installed on 31.10 runs XAMPP's 10.4.32, and the integration tests pass round after round on a
+private mysqld with XAMPP's own `my.ini` plus the three lines of DEPLOY.md section 1.1: bind-address,
+max_allowed_packet and `innodb_use_native_aio=0`, without which DDL can hang). InnoDB, `utf8mb4_unicode_ci` set
+explicitly (11.x changed the default), all times UTC
+`DATETIME(3)` written by the service. The migrator applies `sql/NNNN_*.sql` in order and records each in
+`schema_version` with the SHA-256 of the file. MariaDB commits DDL implicitly, so before it runs a migration it marks
+it in `schema_version` as started (an all-zero checksum, description "... (started, not finished)") and replaces the
+mark when the migration is done. It refuses to run, with the state and the way out in its message (DEPLOY.md
+section 9), when a migration is marked as started (interrupted or failed half way: restore the backup from before the
+update), when `schema_version` is empty (the first migration was interrupted; when no table holds a row, drop and
+re-create the database), when the database has tables but no `schema_version`, when an applied file changed, or when
+the database is newer than the build. It never drops or repairs anything itself. **Back up before an update** (deploy
+kit) and run `migrate` in a console before the service starts.
+
+Startup (`ServerStartup`): as a Windows service the process enters the Service Control Manager's dispatcher first and
+reports START_PENDING with a new checkpoint every 5 s (`WindowsServiceLifetime`), then waits for the database (up to
+`Database:StartupWaitSeconds`) and migrates, then starts the host and reports RUNNING. A refused or failed migration,
+or a setting the start checks first (`Relay:TicketKey`), is a FAIL line in the log and STOPPED with service-specific
+error 13 (no restart); a database that never answered, a host that could not start (a port in use: Kestrel's or the
+relay's, which binds in `StartAsync` so the error names the port) or a host that stopped after RUNNING without a STOP
+from the SCM (a failed background service) ends the process without STOPPED, so the service's restart actions run.
+The host is started and awaited by `ServerStartup` itself (not `RunAsync`, which disposed the log providers before
+the FAIL line could be written) and disposed only after that line. Release 0.1.0 migrated before it connected; when
+migration 0001 hung on the server, the SCM ended it after 30 s. `tests/DW4Online.Tests/ServiceStartTests.cs` runs
+this against a fake SCM, `tests/DW4Online.Integration.Tests/ServiceHostTests.cs` runs the real host under it.
 
 Tables: `accounts`, `sessions` (only SHA-256 of tokens), `email_tokens` (future SMTP), `account_bans`,
 `online_characters` + `online_character_history`, `cloud_saves` + `cloud_save_history`, `achievements`,
@@ -398,7 +422,8 @@ minute per IP, registrations to 3 per hour, on top of the account lockout. Websi
   F1 room UI and the online character in place of the card.
 - Round S2: STORY / STORY_ACK and the room story; round S4: the resync path completed, RESUME with missing ticks after
   a crash-free reconnect, UDP for INPUT / SEALED (the S1 loss matrix, SEAMLESS.md 6.4).
-  For the IP phase it talks to `https://88.198.52.221` and pins the two SPKI pins of the kept TLS keys (in use and
+  For the IP phase it talks to `https://88.198.52.221:8443` (a Traefik holds 443 there, DEPLOY.md 4.1) and pins the
+  two SPKI pins of the server's TLS keys (in use and
   spare; `deploy/tls-key.ps1` makes the keys and their certificates, `deploy/print-pins.ps1` writes the pins for the
   client build, DEPLOY.md 6.1 and 6.4), checked in WinHTTP's SENDING_REQUEST callback exactly like `dw4online_client --pin`;
   for the later domain (`https://dekirai.crygod.de/dw4online`) it validates normally and puts every API path below

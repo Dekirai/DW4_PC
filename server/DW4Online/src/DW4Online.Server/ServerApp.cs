@@ -38,10 +38,14 @@ public static class ServerApp
         {
             var path = Path.IsPathRooted(logDir) ? logDir : Path.Combine(AppContext.BaseDirectory, logDir);
             var level = config.GetSection("Logging:File").GetValue("MinimumLevel", LogLevel.Information);
-            builder.Logging.AddProvider(new FileLoggerProvider(path, config.GetSection("Logging:File").GetValue("RetainDays", 30), level));
+            var retain = config.GetSection("Logging:File").GetValue("RetainDays", 30);
+            // Made by the container, so disposing the application disposes it: the queue is written out and the file
+            // closed before the process ends (an instance from Logging.AddProvider would never be disposed, and the
+            // last lines, a start's FAIL line among them, could be lost).
+            builder.Services.AddSingleton<ILoggerProvider>(_ => new FileLoggerProvider(path, retain, level));
         }
         if (windowsService && OperatingSystem.IsWindows())
-            builder.Services.AddSingleton<IHostLifetime, WindowsServiceLifetime>();
+            builder.Services.AddSingleton<IHostLifetime>(NewServiceLifetime);
 
         var accounts = Bind<AccountOptions>(config, "Accounts");
         var character = Bind<OnlineCharacterOptions>(config, "OnlineCharacter");
@@ -153,21 +157,34 @@ public static class ServerApp
 
     private const string DefaultScheme = "dw4";
 
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
+    private static IHostLifetime NewServiceLifetime(IServiceProvider services) =>
+        new WindowsServiceLifetime(new NativeServiceControlApi(), services.GetRequiredService<IHostApplicationLifetime>(),
+            services.GetRequiredService<ILogger<WindowsServiceLifetime>>());
+
     /// <summary>The server secret (Relay:TicketKey, or a key for this process only in Development / with the relay off).</summary>
     private sealed record ServerSecret(byte[] Key);
 
     /// <summary>
     /// Runs the startup migrator when Database:AutoMigrate is on (the default). A database that does not answer yet
-    /// (MariaDB still starting after a reboot) is tried again for up to <paramref name="waitForDatabase"/> (20 s, inside
-    /// the 30 s the Service Control Manager waits for a starting service); after that the start fails and the service's
-    /// restart-on-failure actions take over.
+    /// (MariaDB still starting after a reboot) is tried again every 2 s for up to <paramref name="waitForDatabase"/>
+    /// (Database:StartupWaitSeconds, 60 s); after that a <see cref="DatabaseUnavailableException"/> ends the start and
+    /// the service's restart-on-failure actions take over. As a service this runs while the service reports
+    /// START_PENDING with growing checkpoints (<see cref="ServerStartup"/>), so neither the wait nor a long migration
+    /// meets the Service Control Manager's 30 s limit. Migration failures and refusals propagate (a FAIL line in the log).
     /// </summary>
     public static async Task MigrateIfEnabledAsync(WebApplication app, TimeSpan? waitForDatabase = null)
     {
-        if (!app.Services.GetRequiredService<DatabaseOptions>().AutoMigrate) return;
+        var options = app.Services.GetRequiredService<DatabaseOptions>();
         var log = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Migrator");
-        var migrator = new Migrator(app.Services.GetRequiredService<Database>(), m => log.LogInformation("{Message}", m));
-        var wait = waitForDatabase ?? TimeSpan.FromSeconds(20);
+        if (!options.AutoMigrate)
+        {
+            log.LogInformation("Database:AutoMigrate is off: the schema is not checked at the start (run 'migrate' after every update)");
+            return;
+        }
+        var migrator = new Migrator(app.Services.GetRequiredService<Database>(), m => log.LogInformation("{Message}", m),
+            w => log.LogWarning("{Message}", w));
+        var wait = waitForDatabase ?? TimeSpan.FromSeconds(Math.Max(0, options.StartupWaitSeconds));
         var started = System.Diagnostics.Stopwatch.GetTimestamp();
         IReadOnlyList<int> applied;
         while (true)
@@ -177,10 +194,17 @@ public static class ServerApp
                 applied = await migrator.MigrateAsync();
                 break;
             }
-            catch (MySqlConnector.MySqlException e) when (e.ErrorCode == MySqlConnector.MySqlErrorCode.UnableToConnectToHost &&
-                                                          System.Diagnostics.Stopwatch.GetElapsedTime(started) < wait)
+            catch (MySqlConnector.MySqlException e) when (e.ErrorCode == MySqlConnector.MySqlErrorCode.UnableToConnectToHost)
             {
-                log.LogWarning("The database does not answer yet ({Message}); trying again in 2 s", e.Message);
+                var elapsed = System.Diagnostics.Stopwatch.GetElapsedTime(started);
+                if (elapsed >= wait)
+                {
+                    throw new DatabaseUnavailableException(
+                        $"The database did not answer within {wait.TotalSeconds:0} s ({e.Message}). Is the MariaDB service running, " +
+                        "and do the server and port in Database:ConnectionString match it?", e);
+                }
+                log.LogWarning("The database does not answer yet ({Message}); trying again in 2 s ({Elapsed:0} of {Wait:0} s)",
+                    e.Message, elapsed.TotalSeconds, wait.TotalSeconds);
                 await Task.Delay(TimeSpan.FromSeconds(2));
             }
         }
@@ -210,11 +234,27 @@ public static class ServerApp
         kestrel.ConfigureHttpsDefaults(https => https.ServerCertificateSelector = (_, name) => selector.Select(name));
     }
 
+    /// <summary>
+    /// Checks the settings that the host would otherwise trip over only while it starts (as a service: a crash and a
+    /// restart loop instead of a clear refusal): Relay:TicketKey. Throws an <see cref="InvalidOperationException"/>
+    /// that names the setting.
+    /// </summary>
+    public static void CheckSettings(WebApplication app) => app.Services.GetRequiredService<ServerSecret>();
+
     private static byte[] RelayKey(RelayOptions relay, IHostEnvironment env, ILogger log)
     {
         if (!string.IsNullOrEmpty(relay.TicketKey))
         {
-            var key = Convert.FromBase64String(relay.TicketKey);
+            byte[] key;
+            try
+            {
+                key = Convert.FromBase64String(relay.TicketKey);
+            }
+            catch (FormatException e)
+            {
+                throw new InvalidOperationException(
+                    "Relay:TicketKey is not valid base64 (put the line 'DW4Online.Server gen-relay-key' prints into the settings file).", e);
+            }
             if (key.Length < 32) throw new InvalidOperationException("Relay:TicketKey must hold at least 32 bytes (base64).");
             return key;
         }

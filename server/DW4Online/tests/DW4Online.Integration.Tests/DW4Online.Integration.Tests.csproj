@@ -22,6 +22,8 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="..\DW4Online.Tests\Samples.cs" Link="Samples.cs" />
+    <!-- The fake Service Control Manager: ServiceHostTests runs the real host under it. -->
+    <Compile Include="..\DW4Online.Tests\FakeScm.cs" Link="FakeScm.cs" />
   </ItemGroup>
   <ItemGroup>
     <!-- The game client's achievement catalogue (src/game/achievements.cpp, docs/SEAMLESS.md 11). -->
