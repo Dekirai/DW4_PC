@@ -343,6 +343,13 @@ void room_story() {
     const auto stories = world.hub.stories;
     world.run(12);
     check(world.hub.stories == stories, "an empty pending set sends nothing (" + std::to_string(world.hub.stories - stories) + ")");
+    // The server lets a value wait (B's visit is too young, 8.7): it goes
+    // again within a few seconds, not ten seconds later or at the barrier.
+    world.hub.story_wait = 1;
+    b.engine.story.flags[394] = 1;
+    const double t_wait = world.now;
+    check(world.run_until(8, [&] { return world.hub.room_story.flags[394] == 1; }), "a value the server let wait goes again");
+    check(world.now - t_wait < 5.0, "within a few seconds (" + std::to_string(world.now - t_wait) + " s)");
     // Both take the gate to stag0101 half a second apart: a co-arrival, the
     // load step merges the room story into both engines.
     const auto ta = a.session->tick(), tb = b.session->tick();

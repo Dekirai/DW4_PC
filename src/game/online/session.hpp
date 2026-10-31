@@ -62,6 +62,7 @@ struct SessionConfig {
     std::uint32_t max_replay_rate = 0;  // DW4_ONLINE_RATE (test runs): replay steps per second at most (0: as fast as it goes)
     double story_check_interval = 1.0;  // the pending set is looked at once a second (sent when it changed)
     double story_interval = 10.0;       // and sent again every ten seconds while it is not empty (8.3)
+    double story_retry_interval = 3.0;  // after a wait / not_member answer: sent again this soon (8.7)
 };
 
 enum class Mode : std::uint8_t { connecting, solo, sealed, parked, transition, waiting_state, catching_up, observing, lost, closed };
@@ -287,6 +288,9 @@ private:
     std::uint8_t refused_phase_ = 0;
     engine::StoryDelta story_last_;
     double story_sent_at_ = -100, story_checked_at_ = -100;
+    // A STORY_ACK said wait / not_member: the pending set goes again at this
+    // time even if it did not change (0: none due).
+    double story_retry_at_ = 0;
     bool held_noticed_ = false;
 
     std::map<std::uint32_t, RemoteMember> remote_;

@@ -1384,7 +1384,9 @@ void Session::send_story(double now, bool at_barrier) {
         story_last_ = {};
         return;
     }
-    if (!at_barrier && delta == story_last_ && now - story_sent_at_ < config_.story_interval) return;
+    const bool retry_due = story_retry_at_ > 0 && now >= story_retry_at_;
+    if (!at_barrier && !retry_due && delta == story_last_ && now - story_sent_at_ < config_.story_interval) return;
+    story_retry_at_ = 0;
     w::Story m{inst_, visit_, confirmed_->revision, std::move(delta)};
     send(w::Type::story, w::encode(m));
     trace("story inst=%u visit=%u rev=%u phase=%u flags=%zu keys=%zu counters=%zu%s", inst_, visit_, m.revision, unsigned(m.delta.phase),
@@ -1400,7 +1402,7 @@ void Session::on_story_ack(const w::StoryAck& ack) {
     if (!(ack.flags & w::StoryAck::answer) || story_in_flight_.empty()) return;
     const auto sent = std::move(story_in_flight_.front());
     story_in_flight_.pop_front();
-    std::set<std::int32_t> again; // counters refused for the rate: sent again
+    std::set<std::int32_t> again; // counters refused for the rate, wait or not_member: sent again
     for (const auto& x : ack.refused) {
         if (x.reason == engine::StoryRefusal::rate) {
             if (x.kind == engine::StoryRefused::Kind::counter) again.insert(x.index);
@@ -1410,6 +1412,15 @@ void Session::on_story_ack(const w::StoryAck& ack) {
             if (!held_noticed_) notice("The room owner is away: your story progress is kept until they return.");
             held_noticed_ = true;
             continue; // the server keeps it; the confirmed story brings it once merged
+        }
+        if (x.reason == engine::StoryRefusal::wait || x.reason == engine::StoryRefusal::not_member) {
+            // Not yet (the visit is too young or already gave its step; the
+            // server has no stage for this member right now): sent again soon,
+            // not only at the next barrier, where it would come from a stage
+            // that does not set it.
+            if (x.kind == engine::StoryRefused::Kind::counter) again.insert(x.index);
+            story_retry_at_ = now_ + config_.story_retry_interval;
+            continue;
         }
         switch (x.kind) {
         case engine::StoryRefused::Kind::phase: refused_phase_ = std::max<std::uint8_t>(refused_phase_, std::uint8_t(x.index)); break;

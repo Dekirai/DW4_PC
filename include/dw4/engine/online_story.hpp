@@ -94,7 +94,8 @@ enum class StoryRefusal : std::uint8_t {
     rate = 5,        // too many STORY messages (sent again later)
     not_member = 6,  // the sender is in no stage instance
     not_story = 7,   // never merged (a temporary, derived or unknown value)
-    limit = 8,       // a counter growth beyond the plausible
+    limit = 8,       // a counter growth beyond the plausible, or a counter line the server never put the member in
+    wait = 9,        // not yet: the visit is younger than the server's minimum or gave its phase step / key item (sent again)
 };
 
 // One refused key of a STORY_ACK.
