@@ -14,6 +14,8 @@ die until dead
 log dead
 talk until stage=stagml11,control
 log back in the lobby
-idle until frames>=120
+idle until ghosts>=2 or frames>=900
+log sees a and b
+idle until frames>=30
 shot c_back
-idle until frames>=420
+idle until frames>=120

@@ -20,11 +20,11 @@ goto 91 -75
 goto 80 -55 3
 log walked
 shot b_after_walk
-idle until epoch>=@125
+idle until epoch>=@160
 idle until ghosts<=1 or epoch>=@300
 log c left
 idle until ghosts>=2 or epoch>=@700
 log c back
 idle until frames>=60
 shot b_c_back
-idle until frames>=300
+idle until frames>=900

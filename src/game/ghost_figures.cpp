@@ -90,7 +90,7 @@ float ghost_camera_alpha(const Vec3f& eye, const Vec3f& centre, std::optional<Ve
         }
         // Standing in the own player (every member arrives at the same entry
         // point of its own lobby): faint from kOverlapFar in to kOverlapNear.
-        constexpr float kOverlapNear = 6.0f, kOverlapFar = 16.0f;
+        constexpr float kOverlapNear = 5.0f, kOverlapFar = 12.0f;
         const float flat = std::hypot(centre.x - own->x, centre.z - own->z);
         if (flat < kOverlapFar && std::abs(centre.y - own->y) < 30.0f)
             alpha = std::min(alpha, kCameraAlpha + (1.0f - kCameraAlpha) * std::clamp((flat - kOverlapNear) / (kOverlapFar - kOverlapNear), 0.0f, 1.0f));

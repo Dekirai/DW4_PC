@@ -17,7 +17,9 @@ b: online-script: step .* log: c back
 c: online-script: step .* log: in the field
 c: online-script: step .* log: dead
 c: online-script: step .* log: back in the lobby
+c: online-script: step .* log: sees a and b
 c: ghost member=0 form=\d+
+c: ghost member=1 form=\d+
 # No figure outside a hub stage: c's own trace in the field shows none.
 !c: ghosts shown [1-9], forms \d+, stage (stag0|stagGF|dng)
 !a: ghosts shown [3-9]

@@ -26,7 +26,7 @@ idle until frames>=60
 shot a_walk_7
 idle until frames>=60
 shot a_walk_8
-idle until epoch>=@125
+idle until epoch>=@160
 idle until ghosts<=1 or epoch>=@300
 log c left
 idle until frames>=60
@@ -37,4 +37,4 @@ idle until frames>=20
 shot a_c_arriving
 idle until frames>=60
 shot a_c_back
-idle until frames>=240
+idle until frames>=900
