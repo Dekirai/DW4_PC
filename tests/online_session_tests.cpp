@@ -182,6 +182,117 @@ void presence_tracks() {
     check(tracks.sample(1.8).empty(), "defeated (hp 0): no tag");
 }
 
+// PRESENCE2 (round 60): the sender's clock spaces the packets, a held-up
+// packet does not shift the others, jumps never glide, a short way past the
+// newest packet, the clip at the drawn time, busy and the weapon.
+void presence2_tracks() {
+    PresenceTracks tracks;
+    w::Presence p;
+    p.member = 2;
+    p.stage = "stagml11";
+    p.inst = 1;
+    p.level = 7;
+    p.hp = p.max_hp = 40;
+    p.version = w::kPresenceVersion;
+    p.flags = w::Presence::loop;
+    p.weapon = "w_test01";
+    // Ten a second, x 10 per packet (100 units per second); the network
+    // delays them 50 ms, the fourth 130 ms (jitter). The clock offset is
+    // 15.05 s (the smallest delay); drawn 0.16 s behind on the sender's clock.
+    for (int i = 0; i <= 8; ++i) {
+        p.x = float(i * 10);
+        p.sent_ms = std::uint32_t(5000 + i * 100);
+        p.clip = i < 5 ? "waitD" : "runD";
+        tracks.add(p, "kim", 20.0 + i * 0.1 + (i == 3 ? 0.13 : 0.05));
+    }
+    auto s = tracks.sample(20.9); // drawn time 5.69
+    check(s.size() == 1 && std::abs(s[0].x - 69.0f) < 0.05f, "drawn on the sender's clock (" + std::to_string(s.empty() ? -1 : s[0].x) + ")");
+    check(s[0].v2 && s[0].clip == "runD" && s[0].loop && s[0].weapon == "w_test01" && !s[0].busy, "the clip at the drawn time, the weapon");
+    check(std::abs(s[0].speed - 100.0f) < 0.5f, "the speed between the packets");
+    s = tracks.sample(20.8); // 5.59
+    check(std::abs(s[0].x - 59.0f) < 0.05f && s[0].clip == "runD", "evenly spaced through the late packet");
+    s = tracks.sample(20.66); // 5.45
+    check(std::abs(s[0].x - 45.0f) < 0.05f && s[0].clip == "waitD", "the clip of the packet before the drawn time");
+    // Past the newest packet: on for at most kExtrapolate, then it holds.
+    s = tracks.sample(21.2); // 5.99
+    check(std::abs(s[0].x - (80.0f + 100.0f * float(PresenceTracks::kExtrapolate))) < 0.05f, "a short way past the newest packet, then it holds");
+    // A warp: the next packet's warp counter changed, far away. No glide.
+    p.warp = 1;
+    p.x = 500;
+    p.sent_ms = 5900;
+    tracks.add(p, "kim", 20.95);
+    const auto before = tracks.sample(21.0); // 5.79
+    check(std::abs(before[0].x - 79.0f) < 0.05f, "before the warp's packet time: the old way");
+    const auto after = tracks.sample(21.06); // 5.85
+    check(after[0].x == 80.0f && after[0].segment == before[0].segment, "between the last old packet and the warp: it holds there");
+    const auto warped = tracks.sample(21.12); // 5.91
+    check(warped[0].x == 500.0f && warped[0].segment != before[0].segment, "at the warp's time: the new place, a new segment");
+    // A step faster than any walk without a warp counter change snaps too.
+    p.x = 900;
+    p.sent_ms = 6000;
+    tracks.add(p, "kim", 21.05);
+    check(tracks.sample(21.3)[0].segment != warped[0].segment, "a jump of 400 units in 0.1 s is a new segment");
+    // Busy: the tag hides, the figure stays.
+    p.flags = w::Presence::busy;
+    p.sent_ms = 6100;
+    tracks.add(p, "kim", 21.15);
+    s = tracks.sample(21.4);
+    check(s.size() == 1 && s[0].busy && !s[0].loop, "busy and the clip's loop flag come along");
+    // A restarted sender clock starts the track over.
+    p.sent_ms = 10;
+    p.x = 0;
+    tracks.add(p, "kim", 21.3);
+    s = tracks.sample(21.35);
+    check(s.size() == 1 && s[0].x == 0.0f, "a sender clock that went back starts over");
+    // Yaw goes the short way round.
+    PresenceTracks turn;
+    p.flags = 0;
+    p.yaw = 3.0f;
+    p.sent_ms = 100;
+    turn.add(p, "kim", 1.0);
+    p.yaw = -3.0f;
+    p.sent_ms = 200;
+    turn.add(p, "kim", 1.1);
+    const float yaw = turn.sample(1.21)[0].yaw; // halfway
+    check(std::abs(yaw) > 3.0f, "yaw turns through pi, not through 0 (" + std::to_string(yaw) + ")");
+}
+
+// PRESENCE2 end to end over the fake hub: only after a WELCOME that
+// announces it; else PRESENCE as before (an older hub).
+void presence2_session() {
+    for (const bool v2 : {false, true}) {
+        World world;
+        world.hub.presence_v2 = v2;
+        auto& a = world.add("kim", 1);
+        auto& b = world.add("lee", 2);
+        b.engine.figure_clip = "runD";
+        world.run(3);
+        check(a.session->presence_v2() == v2 && b.session->presence_v2() == v2, "the WELCOME flag decides");
+        check(world.hub.unknown_frames == 0, "no PRESENCE2 to a hub that does not take it");
+        if (v2) check(world.hub.presence2_frames > 10 && world.hub.presence_frames == 0, "PRESENCE2 only");
+        else check(world.hub.presence_frames > 10 && world.hub.presence2_frames == 0, "PRESENCE only");
+        const auto tags = a.session->remote_tags(world.now);
+        check(tags.size() == 1 && tags[0].name == "lee", "A has B's sample");
+        check(tags[0].v2 == v2 && tags[0].clip == (v2 ? "runD" : "") && tags[0].weapon == (v2 ? "w_test01" : ""),
+              "PRESENCE2 brings the clip and the weapon");
+    }
+    // Ten a second while the figure changes, five while it stands.
+    World world;
+    world.hub.presence_v2 = true;
+    auto& a = world.add("kim", 1);
+    a.engine.figure_x = 5.0f;
+    world.run(2);
+    const auto standing = world.hub.presence2_frames;
+    world.run(4);
+    const auto still = world.hub.presence2_frames - standing;
+    check(still >= 19 && still <= 21, "five a second while nothing changes (" + std::to_string(still) + ")");
+    a.engine.figure_x.reset();
+    const auto moving_from = world.hub.presence2_frames;
+    world.run(4);
+    const auto moving = world.hub.presence2_frames - moving_from;
+    check(moving >= 36 && moving <= 41, "ten a second while it moves (" + std::to_string(moving) + ")");
+}
+
 void co_arrival() {
     World world;
     world.hub.co_arrival_hold = 3.0;
@@ -654,6 +765,8 @@ int main(int argc, char** argv) {
         std::cout << "solo, join, fork\n";
         solo_join_fork();
         presence_tracks();
+        presence2_tracks();
+        presence2_session();
         std::cout << "co-arrival, reconnect\n";
         co_arrival();
         std::cout << "target moves on\n";

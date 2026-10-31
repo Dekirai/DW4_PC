@@ -5,8 +5,10 @@
 #include <algorithm>
 #include <bit>
 #include <chrono>
+#include <cmath>
 #include <cstdarg>
 #include <cstdio>
+#include <cstdlib>
 
 namespace dw4::game::online {
 
@@ -226,29 +228,106 @@ void Session::poll(double now) {
             story_checked_at_ = now;
             send_story(now, false);
         }
-        if (now - presence_at_ >= config_.presence_interval) {
-            presence_at_ = now;
-            const auto facts = engine_.presence(slot_);
-            if (facts.in_stage) {
-                w::Presence p;
-                // An empty stage hides the tag (loads, scenes, menus); hp 0 shows a defeated member.
-                p.stage = facts.hidden ? std::string() : engine_.stage();
-                p.inst = inst_;
-                p.x = facts.x;
-                p.y = facts.y;
-                p.z = facts.z;
-                p.yaw = facts.yaw;
-                p.species = std::uint8_t(std::clamp(facts.species, 0, 255));
-                p.level = std::uint16_t(std::clamp(facts.level, 0, 65535));
-                p.hp = std::uint16_t(std::clamp(facts.hp, 0, 65535));
-                p.max_hp = std::uint16_t(std::clamp(facts.max_hp, 0, 65535));
-                p.mp = std::uint16_t(std::clamp(facts.mp, 0, 65535));
-                p.max_mp = std::uint16_t(std::clamp(facts.max_mp, 0, 65535));
-                if (facts.defeated) p.hp = 0;
-                send(w::Type::presence, w::encode(p, false));
-            }
-        }
+        send_presence(now);
     }
+}
+
+namespace {
+// A clip or weapon name as PRESENCE2 carries it: A-Z a-z 0-9 _ up to `limit`
+// characters, anything else unknown (empty).
+std::string wire_name(const std::string& name, std::size_t limit) {
+    if (name.size() > limit) return {};
+    for (const char c : name)
+        if (!((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_')) return {};
+    return name;
+}
+} // namespace
+
+void Session::send_presence(double now) {
+    // PRESENCE2 to a hub that takes it: ten a second while the figure moves,
+    // turns or changes its motion (the others' ghost figures walk smoothly),
+    // five while nothing changes; PRESENCE five a second to an older hub.
+    const double since = now - presence_at_;
+    if (since < (presence_v2_ ? config_.presence_moving_interval : config_.presence_interval)) return;
+    const auto facts = engine_.presence(slot_);
+    if (!facts.in_stage) {
+        presence_at_ = now;
+        return;
+    }
+    w::Presence p;
+    // An empty stage hides the tag (loads, scenes, menus); hp 0 shows a defeated member.
+    p.stage = (presence_v2_ ? facts.figure_hidden : facts.hidden) ? std::string() : engine_.stage();
+    p.inst = inst_;
+    p.x = facts.x;
+    p.y = facts.y;
+    p.z = facts.z;
+    p.yaw = facts.yaw;
+    p.species = std::uint8_t(std::clamp(facts.species, 0, 255));
+    p.level = std::uint16_t(std::clamp(facts.level, 0, 65535));
+    p.hp = std::uint16_t(std::clamp(facts.hp, 0, 65535));
+    p.max_hp = std::uint16_t(std::clamp(facts.max_hp, 0, 65535));
+    p.mp = std::uint16_t(std::clamp(facts.mp, 0, 65535));
+    p.max_mp = std::uint16_t(std::clamp(facts.max_mp, 0, 65535));
+    if (facts.defeated) p.hp = 0;
+    if (!presence_v2_) {
+        presence_at_ = now;
+        send(w::Type::presence, w::encode(p, false));
+        return;
+    }
+#ifdef DW4_ONLINE_DEV
+    // DW4_ONLINE_TEST_FORM=SECONDS (development builds; the ghost figure
+    // scenarios of tools/online_test): the form the others' figures show
+    // moves on by one every SECONDS (the engine's form stays as it is).
+    static const double form_cycle = [] {
+        const char* text = std::getenv("DW4_ONLINE_TEST_FORM");
+        return text && *text ? std::atof(text) : 0.0;
+    }();
+    if (form_cycle > 0) p.species = std::uint8_t((facts.species + int(now / form_cycle)) % 16);
+#endif
+    p.version = w::kPresenceVersion;
+    p.clip = wire_name(facts.clip, w::kMaxClip);
+    p.flags = std::uint8_t((facts.clip_loops ? w::Presence::loop : 0) | (facts.busy ? w::Presence::busy : 0));
+    p.warp = warp_;
+    p.weapon = wire_name(facts.weapon, w::kMaxWeapon);
+    // (The clock is compared below without it.)
+    if (presence_sent_ && since < config_.presence_interval) {
+        auto same = *presence_sent_;
+        same.sent_ms = 0;
+        const bool still = same.stage == p.stage && same.inst == p.inst && std::abs(same.x - p.x) < 0.01f && std::abs(same.y - p.y) < 0.01f &&
+                           std::abs(same.z - p.z) < 0.01f && std::abs(same.yaw - p.yaw) < 0.001f && same.clip == p.clip &&
+                           same.flags == p.flags && same.warp == p.warp && same.species == p.species && same.weapon == p.weapon;
+        if (still) return;
+    }
+    p.sent_ms = std::uint32_t(std::llround(now * 1000.0));
+    presence_at_ = now;
+    presence_sent_ = p;
+    send(w::Type::presence2, w::encode_presence2(p, false));
+}
+
+void Session::track_figure() {
+    // PRESENCE2's warp counter: a stage load or a step that moved the figure
+    // farther than any walk (a warp, a gate) counts, so the others' figures
+    // jump instead of gliding across. Reads the engine only.
+    if (!presence_v2_) return;
+    const auto serial = engine_.load_serial();
+    if (serial != figure_serial_) {
+        figure_serial_ = serial;
+        ++warp_;
+        figure_known_ = false;
+    }
+    const auto facts = engine_.presence(slot_);
+    if (!facts.in_stage || facts.figure_hidden) {
+        figure_known_ = false;
+        return;
+    }
+    if (figure_known_) {
+        const float dx = facts.x - figure_x_, dy = facts.y - figure_y_, dz = facts.z - figure_z_;
+        if (dx * dx + dy * dy + dz * dz > kWarpStep * kWarpStep) ++warp_;
+    }
+    figure_x_ = facts.x;
+    figure_y_ = facts.y;
+    figure_z_ = facts.z;
+    figure_known_ = true;
 }
 
 void Session::handle(const w::Frame& frame, double now) {
@@ -331,8 +410,9 @@ void Session::handle(const w::Frame& frame, double now) {
         assembler_.reset();
         break;
     }
-    case w::Type::presence_of: {
-        auto m = w::decode_presence(p, true);
+    case w::Type::presence_of:
+    case w::Type::presence2_of: {
+        auto m = frame.type == w::Type::presence2_of ? w::decode_presence2(p, true) : w::decode_presence(p, true);
         if (m.member == member_id_) break;
         auto& r = remote_[m.member];
         r.name = member_name(m.member);
@@ -446,6 +526,9 @@ void Session::on_welcome(const w::Welcome& m, double now) {
     if (!hello_seen_) welcome_at_ = now;
     hello_seen_ = true;
     member_id_ = m.member;
+    // (Every WELCOME: a reconnect may reach another hub build.)
+    presence_v2_ = (m.flags & w::Welcome::presence_v2) != 0;
+    presence_sent_.reset();
     if (!config_.own_name.empty()) names_[member_id_] = config_.own_name;
     if (resume_after_lost_) {
         resume_after_lost_ = false;
@@ -741,6 +824,7 @@ void Session::after_step(double now) {
         return;
     }
     if (mode_ != Mode::solo && mode_ != Mode::sealed && mode_ != Mode::observing) return;
+    if (mode_ != Mode::observing) track_figure();
     const std::uint32_t executed = tick_;
     const bool member = mode_ != Mode::observing;
     // A fork in this step: from here the two sides' engines differ (each has

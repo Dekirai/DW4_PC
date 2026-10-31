@@ -78,6 +78,9 @@ float form_label_height(int species);
 // attack, a run's bounce, the upright stance of a form whose height is
 // the other's): `joint_height + reach - height`, at least 0.
 float form_head_rise(int species, float joint_height);
+// A remote player's head point over its feet (the tag's anchor, the ghost
+// figure's too): form_label_height and the tags' gap.
+engine::Vec3f remote_head(const engine::Vec3f& feet, int species);
 // The form a player's tag measures: the drawn model's first (a Digi-Lab
 // digivolution changes the player's form at once, the model only with the
 // next stage load), else the stats' species (-1: none), else the player's
@@ -190,6 +193,7 @@ public:
         engine::Vec3f position{};
         int species{};
         int level{}, hp{}, max_hp{}, mp{}, max_mp{};
+        bool busy{}; // a status / shop window is open: counted, but no tag
     };
     void set_remote_players(std::vector<RemotePlayer> players) { remote_ = std::move(players); }
     const std::vector<RemotePlayer>& remote_players() const { return remote_; }
@@ -218,8 +222,11 @@ public:
 
     // Whether the labels are hidden as a whole: stage loads, no new picture,
     // a demo running, pad input off (cutscenes), a status / shop window, the
-    // title and menu stages.
-    static bool hidden(engine::Engine& engine);
+    // title and menu stages. `windows` false leaves the status and shop
+    // windows out (the ghost figures: a member in a window still stands
+    // there); window_open() is that part alone.
+    static bool hidden(engine::Engine& engine, bool windows = true);
+    static bool window_open(engine::Engine& engine);
 
     // The head point's follow of a local player's head (head_point's
     // `head`: the offset's x and z, the lift as y) for label `key` after

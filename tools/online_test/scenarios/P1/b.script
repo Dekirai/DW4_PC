@@ -1,0 +1,30 @@
+# P1, member b (k10): off the entry point, then a walk around a's place (40,-70): past it on the camera's side, a
+# moment right in front of it (its figure turns faint there on a's screen), past its right side and back; it waits until c has
+# left and come back.
+campaign until stage=stagml11,control
+talk until control,frames>=60
+log in the lobby
+idle until epoch>=@88
+goto 80 -55 3
+idle until epoch>=@100
+shot b_standing
+idle until epoch>=@112
+log walk
+goto 55 -50
+goto 41 -59 2
+log in front of a
+idle until frames>=90
+goto 62 -62
+goto 70 -78
+goto 91 -75
+goto 80 -55 3
+log walked
+shot b_after_walk
+idle until epoch>=@125
+idle until ghosts<=1 or epoch>=@300
+log c left
+idle until ghosts>=2 or epoch>=@700
+log c back
+idle until frames>=60
+shot b_c_back
+idle until frames>=300

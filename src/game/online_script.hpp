@@ -46,6 +46,10 @@
 //   giveup              hold START while defeated (give up, SEAMLESS.md 5)
 //   disk RECORD         use a disk of the L panel (8: the Gate Disk)
 //   log TEXT            one trace line
+//   shot NAME           a screenshot of this frame's picture, NAME.bmp beside
+//                       --screenshot's file (the ghost figures' look,
+//                       docs/SEAMLESS.md 12; a run without --screenshot
+//                       takes none)
 //
 //   COND: stage=NAME  present=N  present>=N  present<=N  frames>=N  dead
 //         alive  control  apart>D  near<D  asked  mode=NAME  partnerdead
@@ -58,11 +62,13 @@
 //         writes @N as its scenario start + N)  answered>=N (exit prompt
 //         answers given in this step)  hp<=N (this member's HP)
 //         level>=N (this member's own character's level)
+//         ghosts>=N (ghost figures this machine shows: other room members
+//         in this hub stage, docs/SEAMLESS.md 12)
 //         roomflag:N=V (flag N of the room story this machine holds as
 //         confirmed, docs/SEAMLESS.md 8.3: the server's newest it was sent,
 //         ahead of the engine until the next barrier; 0 without one)
 //
-// Without "until", hold / press / log end by themselves, goto and route when
+// Without "until", hold / press / log / shot end by themselves, goto and route when
 // the goal is reached, and the others never end. Every step start, exit prompt change and stage change is traced
 // ("online-script: ..."). The driver only reads the engine (the instance's
 // state, the same on every member's machine) and the session's facts, and
@@ -89,6 +95,7 @@ struct OnlineScriptFacts {
     std::string mode = "offline"; // the session mode (session.hpp mode_name)
     std::uint32_t tick = 0;      // the next tick of the visit
     const engine::RoomStory* room_story = nullptr; // the session's confirmed room story (none yet: nullptr)
+    int ghosts = 0;              // ghost figures shown (GhostFigures::shown, presentation)
 };
 
 class OnlineScript {
@@ -99,6 +106,7 @@ public:
         bool walk{};
         float x{}, z{};
         float reach{4.0f};
+        std::string shot; // a "shot" step ended in this update: its name
     };
     struct Condition {
         std::string key, op, text;

@@ -352,7 +352,13 @@ and walks wherever they like (no leash); members in the same field, dungeon
 or boss stage play one shared stage instance (up to four), a member who
 arrives later joins it mid-stage, exits and the gate disc take only the
 members who say yes, and members who leave the lobby together a few seconds
-apart start the field together. Lobby and menu stages stay single player.
+apart start the field together. Lobby and menu stages stay single player:
+there the other room members in the same lobby appear as ghost figures, their
+Digimon in their current form with their weapon and name tag, walking and
+standing where they really are (look only: no collision, no talks, nothing
+they do changes your game; a figure in your way or inside your own Digimon
+turns see-through). With a server older than this version the figures come
+without their weapon and only run or stand.
 
 ```bat
 powershell -ExecutionPolicy Bypass -File scripts\online-dev.ps1
@@ -399,6 +405,8 @@ Known limits of the preview:
   keeps one copy of the local save on the server (outside rooms).
 - Online needs a CPU with FMA3 (every machine must compute alike); the game
   refuses online play without it.
+- Ghost figures appear only in the lobby rooms; in the fields and dungeons
+  members of other instances still show only as name tags.
 
 ### Online server (DW4Online)
 

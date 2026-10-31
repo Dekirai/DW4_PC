@@ -1,0 +1,19 @@
+# P1, member c (k2, DW4_ONLINE_TEST_FORM=6: the form the others see moves on every 6 s, its own stays): stands in
+# front of the entry point in a's view, then leaves through the lobby gate for a field, falls there (game over) and
+# comes back to the lobby.
+campaign until stage=stagml11,control
+talk until control,frames>=60
+log in the lobby
+idle until epoch>=@92
+goto 60 -45 3
+idle until epoch>=@130
+shot c_view
+explore mate00 yes until stagechange,control
+log in the field
+die until dead
+log dead
+talk until stage=stagml11,control
+log back in the lobby
+idle until frames>=120
+shot c_back
+idle until frames>=420

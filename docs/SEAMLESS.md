@@ -148,7 +148,7 @@ and that the decisions above do not settle are questions in section 18.
 
 | Default | Section |
 | --- | --- |
-| Hub and UI stages are solo instances with presence (question 1) | 3.3 |
+| Hub and UI stages are solo instances with presence: name tags and, since round 60, ghost figures (question 1) | 3.3, 12 |
 | One player per machine online (question 5) | 3.1 |
 | Same stage and same quest context = same instance, automatically (question 8 asks about a *play alone* switch) | 3.4, 3.7 |
 | Arrivals within 3 s start together; later ones wait up to 15 s for the entry scene | 3.4 |
@@ -245,12 +245,23 @@ Hub and UI stages (2) are always solo instances, never joined:
   the simulation (`src/engine/save_menu.cpp:320-349, 686-741`); solo, each
   machine has its own card and needs no shared instance card.
 
-Members in the same hub stage see each other through *presence* (12): a name
-tag with level, HP and MP at the other member's position, updated about five
-times per second, drawn outside the simulation. Ghost models are a possible
-later addition (question 1). Co-op starts at the area gate: members who leave
-the lobby for the same field within a few seconds start it together as
-co-arrivals (3.4).
+Members in the same hub stage see each other through *presence* (12): since
+round 60 (the user's decision of 31.10, after a first test over the real
+server: "you only see yourself") as *ghost figures*, their Digimon in their
+current form with the weapon they hold, walking, running and turning where
+they really are, standing in their wait motion, with their name tag (level,
+HP, MP) above it; they fade in on arrival and out on leaving. Look only: no
+collision, no hits, no talks, no effect on anything; the PC host draws them
+from PRESENCE2 packets and they never enter the simulation (12.1). A member in
+a status or shop window or a talk keeps standing there (its tag hides); one
+that loads, watches a scene or is in a menu stage has no figure. Co-op starts
+at the area gate: members who leave the lobby for the same field within a few
+seconds start it together as co-arrivals (3.4).
+
+The hub and UI stages are the relay's `StageNames.IsHub` list: stagML02,
+stagML11-14 and every stagIS* (title, character select, save room, call
+shop, staff roll, the menu stages); figures need a picture of the stage, so
+in practice the lobby rooms stagML11-14 and stagML02 show them.
 
 If the user prefers shared lobbies (question 1), hub stages join like fields
 and the scoped scene work of round S3 grows to cover every lobby program; the
@@ -915,12 +926,13 @@ Client to server:
 | 0x10 | RESUME | inst, visit, slot, last executed tick | after a reconnect that WELCOME calls resumable |
 | 0x11 | RATE | replay steps per second | after WELCOME (the calibration) and after every replay |
 | 0x12 / 0x13 | PONG / BYE | nonce, client time / reason | |
+| 0x14 | PRESENCE2 | version (1), the PRESENCE fields, motion clip, flags (clip loops, busy), warp counter, sender clock (ms), weapon | instead of PRESENCE once WELCOME announced it: ten times per second while the figure moves, turns or changes its motion, five while it stands (round 60, 12.1) |
 
 Server to client:
 
 | Type | Message | Fields | When |
 | --- | --- | --- | --- |
-| 0x80 | WELCOME | member (the room slot 0-9), inst, visit, slot, mode (hub, solo-led, sealed), stage, last tick, delay, max catch-up seconds, flags (resumable) | the first frame after OK: a fresh member's solo hub instance (the title, stage ""), or the instance it still holds |
+| 0x80 | WELCOME | member (the room slot 0-9), inst, visit, slot, mode (hub, solo-led, sealed), stage, last tick, delay, max catch-up seconds, flags (resumable; presence v2: the hub takes PRESENCE2, round 60) | the first frame after OK: a fresh member's solo hub instance (the title, stage ""), or the instance it still holds |
 | 0x81 / 0x82 | SEALED / LIVE | inst, visit, first tick, count, tick records | SEALED to members at each tick's due time (batched when behind), LIVE to observers (the leader's LOG or the sealed ticks) |
 | 0x83 | JOIN_REQ | inst, visit, slot, suggested delay | to the leader of a solo-led instance: choose J |
 | 0x84 | BARRIER_OK | old inst and visit, decision (1 NEW, 2 JOIN, 3 DISSOLVE, 4 CO_ARRIVE), new inst and visit, stage, point, own slot, slot map, mode, delay, co-arrivals (slot, member, carry), story revision, story, dropped set, notice, names | answer to BARRIER |
@@ -934,6 +946,7 @@ Server to client:
 | 0x8C | CLOSE | reason (left, kicked, room closed, replaced, protocol, abuse, timeout, stopping), text | before the server closes |
 | 0x8D | ROSTER | every member: stage, inst, level, HP, max HP, flags (connected, lagging, owner) | once per second (the room UI) |
 | 0x8E | REASSIGN | old inst, visit, new inst, from tick, mode, flags (departing) | after a fork: this member's copy is the child |
+| 0x8F | PRESENCE2 | member, the PRESENCE2 fields | instead of PRESENCE to members that send PRESENCE2 themselves (round 60, 12.1) |
 
 Events inside a tick record: JOIN (slot, entrance point, carry), LEAVE (slot),
 INTENT (slot, kind, argument), LEAD_FROM (tick: the remaining member leads
@@ -2793,6 +2806,130 @@ are `src/game/online/lobby_api.hpp`; the ImGui screens are
 - Notices (presentation, a few seconds at the top): "<name> joined", "<name>
   left for <stage>", "<name> is in a scene", "<name> has a menu open".
 
+### 12.1 Ghost figures (round 60)
+
+In a hub stage (3.3: every member has its own solo instance there) the other
+room members in the same stage appear as their Digimon
+(`src/game/ghost_figures.hpp`, `GhostFigures`): the form they play now, with
+the weapon they hold, at their place and facing, playing the motion clip they
+play (their wait, their run, a jump), with their name tag above, fading in
+over 0.35 s when they arrive and out where they were when they leave (another
+stage, a load, a scene, the room). Look only: no collision, no hits, no talks,
+no effect on anything.
+
+**Never in the simulation.** The PC host makes and draws the figures:
+
+- Each form's package (`_common/p_<form>.igb`, the one the engine loads for a
+  player, `Engine::online_join_player`) and each weapon package
+  (`_common/<weapon>.igb`) is read and parsed on a worker thread from a *copy*
+  of the resources (never the engine's object, which a catch-up replaces);
+  their nodes, animation database and geometry live in the figures' own
+  `SceneCache`, never the engine's. A form's model is the record 0 instance
+  of its beAction2Info (the beModelCtrlNode2 with its igLod: Kage, High, Low);
+  its wait and run clips come from the control info's SQ_WAIT / SQ_WALK (the
+  first ACTION of the first weapon label, that action's last MOTIONSET:
+  `waitD`, `runD`). The weapon's parts hang under the form's igActor nodes on
+  their bones for the figure's traversal only (as `WeaponManager` GENERATE
+  does), so one form's nodes serve all its figures.
+- Per presented frame the figure's pose comes from the engine's own combiner
+  code (`MotionState`, `evaluate_pose`) on its own clock (a new clip fades in
+  over MOTIONSET's 8 frames from the pose before), and the engine's traversal
+  turns the private nodes into draw items (skinning palettes, the igLod by the
+  real eye distance). They go into a *copy* of the picture's draw list after
+  the simulation's picture was taken and smooth motion blended it: opaque
+  figures after the last opaque item of the 3D scene, fading ones after its
+  last blended item (`ghost_insert_points`), so the 2D layers stay on top; the
+  lights and fog are those of the scene's first lit 3D item (every model hangs
+  below the stage's root light set). The Kage level joins a copy of the shadow
+  frame's casters, so a figure casts its shadow inside the stage shadow's box
+  as the players' proxies do.
+- Nothing of this is in a snapshot, fingerprint, replay or the lockstep path;
+  smooth motion never sees the figures (they are drawn at the present's own
+  time, so they move smoothly at 60 and 144 Hz alike); `DW4_GHOSTS=0` turns
+  them off (test runs). The sender reads its facts from the engine
+  (`GameEngineLink::presence`: the action's current clip and loop mode, the
+  POWERSOCKET weapon, whether the action switch shows the model) and writes
+  nothing.
+
+**At most nine** figures (a room has ten members), the nearest to the own
+player. A form whose package is still loading shows once it is ready (it fades
+in then); the packages of members anywhere in the room are loaded ahead, so a
+member who comes back from a field is usually ready. Measured (P1, three hidden
+clients, 13 forms loaded one after another): 0.5-5 ms of reading and about
+1 ms of parsing per package on the worker, the figures' own work at most
+0.3 ms a pass on the main thread, no longer present when a form appeared (the
+longest presents, 60-95 ms, were the screenshots' read-backs).
+
+**Camera.** A figure turns semi-transparent (to 35 %, eased over 0.2 s) when it
+stands in the own player (every member enters its own lobby at the same entry
+point, so a newcomer stands inside the others' figures), between the camera
+and the own player, or within 60 units of the camera. A fading figure draws its
+nearest surface's depth first and then its colour where that depth is, so it
+never shows its inside or its far side through the near one. In the lobby
+rooms the camera stays high above the floor, so a figure blocks the own player
+only when it stands right in front of it, which the own-player rule covers.
+
+**Wire (PRESENCE2, 6.3 and the appendix).** PRESENCE stays as it was; round 60
+adds PRESENCE2 (client 0x14, server 0x8F): a version byte (1), the PRESENCE
+fields, then the motion clip (0-16 of A-Z a-z 0-9 _; empty: unknown), flags
+(1 the clip loops, 2 busy: a status or shop window or a talk is open, the
+figure stands and the tag hides), a warp counter (the sender counts its stage
+loads and every step that moved its figure more than 24 units, far beyond a
+run's 0.7: receivers never glide across a change), the sender's clock in
+milliseconds (wrapping) and the weapon package (0-24 characters). In PRESENCE2
+the stage is empty only while the figure is really gone (a load, a scene, a
+menu stage, the action switch hiding the model); a window keeps the stage and
+sets busy. A member sends it ten times per second while its figure moves,
+turns or changes its clip or flags and five times per second while nothing
+changes (about 70 bytes each: a full room in one lobby relays about 6 KB/s to
+each member).
+
+**Versions fail safe.** A client sends PRESENCE2 only after a WELCOME with the
+presence-v2 flag (2); an older hub never sets it (and would close a connection
+on an unknown frame), so a new client on an old server sends PRESENCE and shows
+the others' figures from PRESENCE alone (no clip or weapon: a figure runs or
+stands by the speed of its packets). An older client ignores the flag bit and
+never gets a 0x8F frame: the hub sends PRESENCE2 only to members that send
+PRESENCE2 themselves (`HubMember.PresenceV2`) and PRESENCE, the same subset,
+to the others, so old and new clients share a room (the protocol number stays
+45: nothing of the lockstep changed). A later version keeps the layout and
+appends; the hub reads its version 1 part and drops such a frame (counted),
+a client takes what it knows.
+
+**The hub's bounds** (`RoomHub.OnPresence2`, `Presence2Msg`): a malformed frame
+(lengths, a clip or weapon outside its characters, a non-finite position)
+closes the connection like any malformed frame; an implausible one is dropped
+and counted while the connection stays: a form above 15, a coordinate beyond
+100,000, a yaw beyond two turns, a level above 999, HP or MP above their
+maximum, an unknown flag. The rate is a token bucket per member (12 a second,
+3 at once; more is dropped and counted); PRESENCE keeps its 150 ms rule. The
+hub also sends a member's presence to the members still in the stage it just
+left (another stage, or hidden while it loads), so its tag and figure go at
+once instead of after the two seconds a silent track takes.
+
+**Interpolation (`PresenceTracks`).** PRESENCE2 packets keep the sender's clock
+(the offset to the receiver's clock is the smallest one seen, relaxed by 2 ms
+per packet against clock drift, so a packet the network held up does not shift
+the others) and are drawn 0.16 s behind the newest (one 100 ms interval and
+room for jitter), between the two packets around that time, the yaw the short
+way round; past the newest packet a member goes on along its last movement for
+at most 60 ms, then holds. A change of the warp counter, a step faster than 900
+units per second or longer than 120 units, a new stage or instance and a
+restarted sender clock start a new segment: the old figure fades out where it
+was and a new one fades in at the new place (no glide). The remote name tags
+take the same sample, so a tag never trails its figure. PRESENCE packets keep
+their old rule (arrival times, 0.2 s behind).
+
+**Tests.** `dw4_ghosts_tests` (placement, list order, camera fade; with the
+game data a form loaded in the background, faded in, posed, its shadow proxy,
+a jump and a form change faded over, the cap of nine), `online_wire_tests`
+(PRESENCE2 round trip, golden bytes shared with the relay's `WireGoldenTests`,
+versions, malformed frames), `online_session_tests` (the sender's clock and
+jitter, warps, extrapolation, busy, yaw; PRESENCE2 only after the WELCOME flag,
+ten or five a second), the relay's `HubPresenceTests` (the WELCOME flag,
+PRESENCE2 to PRESENCE2 members and PRESENCE to the others, the bounds, the
+token bucket, leaving a stage), and the real-client scenario P1 (16).
+
 ## 13. Discord
 
 The existing IPC client gets party fields in a room: `party {id: "dw4-" + a hash
@@ -2812,7 +2949,7 @@ anyway; joining goes through the room list.
 
 | Area | Change |
 | --- | --- |
-| Relay | `DW4Online.Relay`: DW4R2 hub replacing the splice: one connection per member, frames, instance groups (solo-led and sealed), server-paced sealing at 59.94 Hz on a dedicated timer thread with immediate fill, delay suggestions from the arrival margins, event stamping, snapshot and log store with canonical hashes and fork lists (6.8), state delivery for join / co-arrival / resync / resume with its own rate limit, fingerprint vote, presence fan-out, pings, the 64 KB/s bucket for game frames |
+| Relay | `DW4Online.Relay`: DW4R2 hub replacing the splice: one connection per member, frames, instance groups (solo-led and sealed), server-paced sealing at 59.94 Hz on a dedicated timer thread with immediate fill, delay suggestions from the arrival margins, event stamping, snapshot and log store with canonical hashes and fork lists (6.8), state delivery for join / co-arrival / resync / resume with its own rate limit, fingerprint vote, presence fan-out (round 60: PRESENCE2 with its bounds and token bucket, the stage a member left, 12.1), pings, the 64 KB/s bucket for game frames |
 | Rooms | `RoomService`: instances as lockstep groups (id, stage, visit, context hash, slots, parent and fork frame, departing, boss lock, joinable), barrier decisions DISSOLVE / co-arrival / JOIN / NEW with holds and the boss choice (3.4), catch-up estimates from the members' replay rates, forks of both kinds, in-band JOIN and LEAVE, preferred slots, no instance end when its first member leaves (`EndInstanceLocked` goes), room-scoped relay tickets, the settings hash, the relay connection as heartbeat. `POST /rooms/{code}/stage` and `/stage/leave` are retired; the room state lists instances with stage and members. Room settings gain camera mode and light mode |
 | Story | migration with `online_story`; `StoryMerge` in the domain with the golden vectors; plausibility table from the census; pending sets with STORY_ACK; the owner-away setting with the session's dropped set; `GET /online-character` composes, `PUT` ignores story bytes; `GET /rooms/{code}/story` for the website and debugging |
 | Achievements | catalogue migration to the client's ids and thresholds (built in S2: migration 0009 (0008 is `online_story`), `data/online/achievements.json`, `roomPlayers`, owner-only story challenges; 11) |
@@ -2895,6 +3032,7 @@ anyway; joining goes through the room list.
 | S24 | map recorder (dng102b3) read far from the partner (scoped, local freeze) and near (original) | S3 |
 | S25 | Trailmon ride (dng412b3) with one member not aboard: no fork, the rider moves alone | S3 |
 | A1 | online achievements: S5's run with achievements on; each machine reports its own player (online_join in its solo lobby, first_defeat in the sealed field) with the ranked context, the counters at the end; the server holds them (`scenario.json` "achievements") | S2 |
+| P1 | ghost figures in the lobby: three members (k7, k10, k2); one stands, one walks around it and stops right in front of it, the third shows another form every 6 s (`DW4_ONLINE_TEST_FORM`, the form PRESENCE2 names; the engine's stays), leaves through the gate for stag0101, falls there and comes back after the game over; `"shots": true` takes the scripts' `shot` pictures (hidden 1920x1009, widescreen, MSAA 4, all tags) and the `ghosts` condition waits on the figures a client shows | 60 |
 
 - **Real game clients** (round S1 integration): `run.py G1 --game-exe EXE
   --data DATA` starts two hidden `DW4_ONLINE_DEV` game clients instead of fake
@@ -3653,7 +3791,7 @@ Depends on: S1-S3.
 
 | Lane | Scope (shaped by the answers in section 18) |
 | --- | --- |
-| presence | ghost models in hub stages if wanted (question 1), roster polish |
+| presence | ghost models in hub stages if wanted (question 1), roster polish. *Ghost figures built in round 60 (r60ghosts, 12.1) at the user's request of 31.10* |
 | travel | warp to a friend's stage from the lobby if wanted (question 4); a *play alone* switch if wanted (question 8) |
 | saves | the upload policy chosen in question 3; second local player if wanted (question 5) |
 | release | README "Online co-op" rewritten, this document updated to what was built, field test checklist for the user (deploy, pin, firewall), domain switch prepared as a build constant |
@@ -3707,7 +3845,8 @@ Depends on: S4 and the answers.
 
 ### Answers (user, 2026-10-29)
 
-1. Lobby: solo (the default).
+1. Lobby: solo (the default). 31.10, after the first test over the real
+   server: the other members appear as ghost figures there (12.1, round 60).
 2. Story while the owner is away: drop (the default).
 3. Saving the online character: **also automatically** at stage changes and
    when leaving the room, in addition to the save room (not the default;
@@ -3911,12 +4050,13 @@ Client to server:
 | 0x11 | RATE | replay rate u32 (steps per second) |
 | 0x12 | PONG | nonce u32, client ms u64 |
 | 0x13 | BYE | reason u8 (leaves the relay at once; the room membership stays) |
+| 0x14 | PRESENCE2 | version u8 (1), the PRESENCE fields, clip str (0-16 of A-Z a-z 0-9 _), flags u8 (1 the clip loops, 2 busy), warp u8, sender ms u32, weapon str (0-24, the same characters); only after a WELCOME with flag 2; a later version appends (round 60, 12.1) |
 
 Server to client:
 
 | Type | Name | Payload |
 | --- | --- | --- |
-| 0x80 | WELCOME | member u8, inst u32, visit u32, slot u8, mode u8 (0 hub, 1 solo-led, 2 sealed), stage str, last tick u32 (0xFFFFFFFF none), delay u8, max catch-up seconds u16, flags u8 (1 resumable: the member still holds that slot; send RESUME) |
+| 0x80 | WELCOME | member u8, inst u32, visit u32, slot u8, mode u8 (0 hub, 1 solo-led, 2 sealed), stage str, last tick u32 (0xFFFFFFFF none), delay u8, max catch-up seconds u16, flags u8 (1 resumable: the member still holds that slot; send RESUME; 2 presence v2: the hub takes PRESENCE2) |
 | 0x81 / 0x82 | SEALED / LIVE | inst u32, visit u32, first tick u32, count u16, tick records (SEALED to members, LIVE to observers catching up) |
 | 0x83 | JOIN_REQ | inst u32, visit u32, slot u8, leader's delay u8 |
 | 0x84 | BARRIER_OK | old inst u32, old visit u32, decision u8 (1 NEW, 2 JOIN, 3 DISSOLVE, 4 CO_ARRIVE), new inst u32, new visit u32, stage str, point u8, own slot u8, slot map 4 x i8 (old slot -> new slot or -1), mode u8, delay u8, co-arrival count u8 + (slot u8, member u8, carry blob) each, story revision u32, story blob (1,100 bytes: flags 1024, folder 12, counters 16 x i32; the same bytes for every member of a group; empty: none), dropped blob (u16 flag count + u16 flags, u8 key count + u8 keys, u8 counter count + u8 counters; empty: none), notice u8 (0 none, 1 other context, 2 full, 3 too long to catch up, 4 hold expired, 5 went alone, 6 join failed), name count u8 + names |
@@ -3930,6 +4070,7 @@ Server to client:
 | 0x8C | CLOSE | reason u8 (1 left, 2 kicked, 3 room closed, 4 replaced, 5 protocol, 6 abuse, 7 timeout, 8 server stopping), text str |
 | 0x8D | ROSTER | count u8 + (member u8, stage str, inst u32, level u16, hp u16, max hp u16, flags u8: 1 connected, 2 lagging, 4 owner) (once per second) |
 | 0x8E | REASSIGN | old inst u32, visit u32, new inst u32, from tick u32, mode u8, flags u8 (1 departing): after a fork the receiver's copy is the child; its stream comes with the new id from that tick |
+| 0x8F | PRESENCE2 | member u8, then the PRESENCE2 fields at version 1 (to members that send PRESENCE2; the others get the same member's PRESENCE) |
 
 **State blob** (reassembled STATE_DATA): purpose u8 (1 join, 2 co-arrival, 3 resync, 4 resume), slot u8, codec u8
 (0 = raw records), snapshot blob (as the leader uploaded it), fork count u8 + (tick u32, leaver mask u8, kind u8,

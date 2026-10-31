@@ -1,0 +1,40 @@
+# P1, member a (k7): steps off the lobby's entry point and stands; pictures of b walking past and of c (its form
+# changes every 6 s by the test hook), c's leave for stag0101 and its return after a game over.
+campaign until stage=stagml11,control
+talk until control,frames>=60
+log in the lobby
+idle until epoch>=@84
+goto 40 -70 3
+idle until epoch>=@100
+shot a_standing
+idle until epoch>=@106
+shot a_form
+idle until epoch>=@112
+log b walks
+shot a_walk_1
+idle until frames>=60
+shot a_walk_2
+idle until frames>=60
+shot a_walk_3
+idle until frames>=60
+shot a_walk_4
+idle until frames>=60
+shot a_walk_5
+idle until frames>=60
+shot a_walk_6
+idle until frames>=60
+shot a_walk_7
+idle until frames>=60
+shot a_walk_8
+idle until epoch>=@125
+idle until ghosts<=1 or epoch>=@300
+log c left
+idle until frames>=60
+shot a_c_gone
+idle until ghosts>=2 or epoch>=@700
+log c back
+idle until frames>=20
+shot a_c_arriving
+idle until frames>=60
+shot a_c_back
+idle until frames>=240

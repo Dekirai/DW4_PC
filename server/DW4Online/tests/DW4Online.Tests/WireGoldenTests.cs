@@ -57,6 +57,11 @@ public class WireGoldenTests
     [Fact]
     public void Message_bytes_equal_the_clients()
     {
+        // tests/online_wire_tests.cpp "golden PRESENCE2" (round 60, SEAMLESS.md 12).
+        var ghost = new Presence2Msg(1, new PresenceMsg("stagml11", 9, 1.5f, -2, 3, 0.25f, 4, 99, 500, 600, 70, 80), "runD",
+            Presence2Msg.Loop | Presence2Msg.Busy, 7, 0x01020304, "w_a1");
+        Assert.Equal("01" + "08737461676d6c3131" + "09000000" + "0000c03f" + "000000c0" + "00004040" + "0000803e" + "04" + "6300" + "f401" + "5802" +
+            "4600" + "5000" + "0472756e44" + "03" + "07" + "04030201" + "04775f6131", PayloadHex(ghost.Frame()));
         Assert.Equal("070000000200000063000000010080010203" + "04", PayloadHex(new InputMsg(7, 2, 99, [new Pad(0x8000, 1, 2, 3, 4)]).Frame()));
         Assert.Equal("0700000008737461673031303203cdab000000000000", PayloadHex(new HeadingMsg(7, "stag0102", 3, 0xABCD).Frame()));
         Assert.Equal("0700000002000000f401000008646e67313031623101030388776655443322110200000009" + "09",

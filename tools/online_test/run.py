@@ -652,6 +652,12 @@ def run_real(stack, sc, api, relay_port, pin, diag, lock, connection):
         env.update(c.get("env", {}))
         argv = [a.game_exe, "--data", a.data, "--smoke-test", str(c.get("frames", sc.get("frames", 30000))), "--card-dir", card,
                 "--online-login", tag + c["name"], "--online-script", script_for(c)] + room_args
+        # "shots": the script's shot steps write NAME.bmp into the run folder (hidden 1920x1009 widescreen MSAA 4
+        # pictures, as a player sees them; P1, the ghost figures).
+        if c.get("shots", sc.get("shots")):
+            argv += ["--screenshot", os.path.join(out, c["name"] + "_shot.bmp")]
+            for k, v in (("DW4_RENDER", "1"), ("DW4_WINDOW", "1920x1009"), ("DW4_WIDESCREEN", "1"), ("DW4_MSAA", "4"), ("DW4_LABELS", "all")):
+                env.setdefault(k, v)
         folder = saved_card(c)
         if folder:
             argv += ["--online-card", folder]

@@ -28,6 +28,7 @@ const char* type_name(Type type) noexcept {
     case Type::rate: return "RATE";
     case Type::pong: return "PONG";
     case Type::bye: return "BYE";
+    case Type::presence2: return "PRESENCE2";
     case Type::welcome: return "WELCOME";
     case Type::sealed: return "SEALED";
     case Type::live: return "LIVE";
@@ -42,6 +43,7 @@ const char* type_name(Type type) noexcept {
     case Type::ping: return "PING";
     case Type::close: return "CLOSE";
     case Type::roster: return "ROSTER";
+    case Type::presence2_of: return "PRESENCE2";
     case Type::reassign: return "REASSIGN";
     }
     return "?";
@@ -716,9 +718,9 @@ Intent decode_intent(std::span<const std::uint8_t> b) {
     return m;
 }
 
-std::vector<std::uint8_t> encode(const Presence& m, bool with_member) {
-    Writer w;
-    if (with_member) w.u8(m.member);
+namespace {
+// The fields PRESENCE and PRESENCE2 share.
+void write_presence(Writer& w, const Presence& m) {
     put_stage(w, m.stage, true);
     w.u32(m.inst);
     w.f32(m.x);
@@ -731,12 +733,8 @@ std::vector<std::uint8_t> encode(const Presence& m, bool with_member) {
     w.u16(m.max_hp);
     w.u16(m.mp);
     w.u16(m.max_mp);
-    return std::move(w.out);
 }
-Presence decode_presence(std::span<const std::uint8_t> b, bool with_member) {
-    Reader r{b};
-    Presence m;
-    if (with_member) m.member = r.u8();
+void read_presence(Reader& r, Presence& m) {
     m.stage = stage_of(r, true);
     m.inst = r.u32();
     m.x = r.f32();
@@ -749,9 +747,67 @@ Presence decode_presence(std::span<const std::uint8_t> b, bool with_member) {
     m.max_hp = r.u16();
     m.mp = r.u16();
     m.max_mp = r.u16();
-    r.end();
+}
+void check_presence(const Presence& m) {
     for (const float v : {m.x, m.y, m.z, m.yaw})
         if (!(v == v) || v > 3.0e38f || v < -3.0e38f) throw WireError("presence position is not finite");
+}
+// PRESENCE2's clip and weapon: A-Z a-z 0-9 _ (the stage names' characters), empty allowed.
+void check_name(const std::string& name, std::size_t limit, const char* what) {
+    if (name.size() > limit) throw WireError(std::string("presence ") + what + " too long");
+    for (const char c : name)
+        if (!((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_'))
+            throw WireError(std::string("bad presence ") + what);
+}
+} // namespace
+
+std::vector<std::uint8_t> encode(const Presence& m, bool with_member) {
+    Writer w;
+    if (with_member) w.u8(m.member);
+    write_presence(w, m);
+    return std::move(w.out);
+}
+Presence decode_presence(std::span<const std::uint8_t> b, bool with_member) {
+    Reader r{b};
+    Presence m;
+    if (with_member) m.member = r.u8();
+    read_presence(r, m);
+    r.end();
+    check_presence(m);
+    return m;
+}
+
+std::vector<std::uint8_t> encode_presence2(const Presence& m, bool with_member) {
+    check_name(m.clip, kMaxClip, "clip");
+    check_name(m.weapon, kMaxWeapon, "weapon");
+    Writer w;
+    if (with_member) w.u8(m.member);
+    w.u8(kPresenceVersion);
+    write_presence(w, m);
+    w.str8(m.clip);
+    w.u8(m.flags);
+    w.u8(m.warp);
+    w.u32(m.sent_ms);
+    w.str8(m.weapon);
+    return std::move(w.out);
+}
+Presence decode_presence2(std::span<const std::uint8_t> b, bool with_member) {
+    Reader r{b};
+    Presence m;
+    if (with_member) m.member = r.u8();
+    m.version = r.u8();
+    if (m.version == 0) throw WireError("presence version 0");
+    read_presence(r, m);
+    m.clip = r.str8(kMaxClip);
+    m.flags = r.u8();
+    m.warp = r.u8();
+    m.sent_ms = r.u32();
+    m.weapon = r.str8(kMaxWeapon);
+    // (A later version appends: the rest is skipped.)
+    if (m.version == kPresenceVersion) r.end();
+    check_presence(m);
+    check_name(m.clip, kMaxClip, "clip");
+    check_name(m.weapon, kMaxWeapon, "weapon");
     return m;
 }
 

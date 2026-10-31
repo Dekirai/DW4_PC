@@ -60,6 +60,12 @@ public sealed class HubMember(int index, long accountId, string name, bool owner
     public Heading? Heading { get; set; }
     public PresenceMsg? Presence { get; set; }
     public long PresenceAt { get; set; }
+    /// <summary>The member sends PRESENCE2 (round 60): it is sent PRESENCE2 too. Its last one (null: PRESENCE).</summary>
+    public bool PresenceV2 { get; set; }
+    public Presence2Msg? Presence2 { get; set; }
+    /// <summary>PRESENCE2's token bucket (<see cref="RoomHub.PresenceRate"/> a second, <see cref="RoomHub.PresenceBurst"/>).</summary>
+    public double PresenceTokens { get; set; }
+    public long PresenceTokensAt { get; set; }
     public bool Lagging { get; set; }
 
     public uint PingNonce { get; set; }
