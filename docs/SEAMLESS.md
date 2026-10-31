@@ -72,6 +72,11 @@ in section 18.
   `online_story` row per account that only the room service writes. Members
   send what their engine has beyond the last confirmed room story; it merges by
   fixed rules and reaches an instance at its next stage entry, never mid-stage.
+- **Guests on the host's story** (round 61 design, 8.8): in a room every
+  member plays the owner's story (phase, story flags, key items; flag 503
+  becomes story, so nobody replays a training the owner played); its own
+  online character keeps its personal values and its own story, and outside
+  the room it is back on its own.
 - **Client.** Account and room UI in ImGui (title overlay and the F1 Online
   tab), the online character as a virtual memory card, an upload whenever the
   save room writes, cloud backup in F1 Saves, online achievements, name tags
@@ -140,6 +145,11 @@ first task of the round that needs it (17).
 - Online: no cheats, no rebalancing, no save states; the randomizer is a host
   room setting. Discord application ID 1560921673354453093.
 - With online off the original game stays exactly as it is.
+- A member who joins a room plays on the room owner's story while it is there
+  (every story flag, the key items, everything story progress depends on; what
+  the owner did, such as the tutorial, is done for it too); that story never
+  lands on its own online character or save, and its personal progress is its
+  own (31.10; section 8.8).
 
 ### 1.2 Defaults this design chooses
 
@@ -411,7 +421,8 @@ instance (only the quest dungeons that set it read it). COUNTER 2 stays
 context: the dungeons' first floors compare it at load (b1 / f1
 `start.lua`), and every field's game over script (`end_g_000bcaps.lua`)
 reads it to clear the right quest. 64 scripts index the dungeon flags
-100-299 by a computed number; all of them are instance values.
+100-299 by a computed number; all of them are instance values. (Round 61's
+design makes 503 a story value, 8.8: it leaves the instance class.)
 
 **Personal values in the engine.** Online, the engine keeps every present
 slot's personal values (in the snapshot's online block): a joiner's and a
@@ -2107,10 +2118,10 @@ the merge checks it in with golden vectors.
 | Set | Contents | Merge |
 | --- | --- | --- |
 | Phase | flags 1-6 and 86 (game cleared) with their save room copies 700-705/713 (Normal), 7-12/87 (Hard), 13-18/88 (Very Hard) | the furthest phase wins, rebuilt one-hot (the copies are one-hot too; OR would set several phases) |
-| Persistent | every other flag a script sets for good (145 with a constant FLGset(..., 1); 49, 82, 334, 383, 406-408 through computed indexes) and the difficulty copies of the story working set | OR |
+| Persistent | every other flag a script sets for good (145 with a constant FLGset(..., 1); 49, 82, 334, 383, 406-408 through computed indexes) and the difficulty copies of the story working set; 503 (the training) from round 61's design, not applied at a barrier into stag0001 (8.8) | OR |
 | Key items | flag folder 0-10 (K0-K10) | OR |
 | Counters | COUNTER 1 (junk shop donations), COUNTER 7 (training attempts) | additive (8.3) |
-| Never merged | the 404 flags `gameStart.lua` clears, 0, 508, 900-937 (derived at each lobby load), the non-monotone 503, 611, 905, folder 11, COUNTER 0 and 2-6 (session values, 3.7) | - |
+| Never merged | the 404 flags `gameStart.lua` clears, 0, 508, 900-937 (derived at each lobby load), the non-monotone 611, 905, folder 11, COUNTER 0 and 2-6 (session values, 3.7) | - |
 
 After every merge the server sets the copy of the room difficulty to the story
 working set and the key copies to K, as the save room does
@@ -2149,10 +2160,11 @@ A table `online_story (account_id, revision, flags 1024 B, folder 12 B,
 counters 64 B)` that only the room service writes: the room story is the
 owner's row. `GET /online-character` composes the record from the character
 and the account's own story; `PUT` ignores the story bytes, for owners and
-guests alike, which avoids revision conflicts between story merges and
-character uploads. A guest's own story is untouched by playing in someone
-else's room; the server's state achievements (clear flags 406-408,
-`CharacterSummary.cs:26`) therefore never come from a borrowed story.
+guests alike (the client sends the own story's bytes as well, 8.8), which
+avoids revision conflicts between story merges and character uploads. A
+guest's own story is untouched by playing in someone else's room; the
+server's state achievements (clear flags 406-408, `CharacterSummary.cs:26`)
+therefore never come from a borrowed story.
 
 Plausibility before a merge: the sender is a member of the room and in an
 instance; the phase rises by at most one per delta; each flag only from a stage
@@ -2170,13 +2182,15 @@ sender's instance stage; a rate limit.
   round 56 fix round the trigger was `GameSystem::game_started`'s rising edge:
   the flag stays set after "Continue? No" took the player back to the title,
   and the title's option menu sets it without a game start, so the session's
-  next Game Start got neither.)
+  next Game Start got neither.) Round 61's design: no Game Start without a
+  confirmed story (the title waits for it, 8.8).
 - **At every barrier** (6.7): the load step merges the barrier's room story
   into the engine with the same rules, touching only keys whose value changes
   (FLGisOn creates zero entries and the fingerprint hashes every key,
   `lua_host.cpp:400`, `engine.cpp:774-781`), and removes dropped values (8.6).
   It runs before the snapshot, so joiners get the same state. Every member of
-  the group applies the same bytes at the same step.
+  the group applies the same bytes at the same step. Round 61's design: flag
+  503 is left alone when the barrier loads stag0001 (8.8).
 - **Never mid-stage**: the stage is built from the flags by its load scripts
   (621 story flag reads at load time), so a mid-stage change would contradict
   gates and NPC scenes.
@@ -2218,7 +2232,8 @@ setter stage, flag 99 none (a working set flag no script sets), 406-408 come
 from `FLGset(SYSgetDifficulty() + 406, 1)` (stagBS06). Keys: flag folder 0-10.
 Never merged: 445 flags (gameStart.lua's temporaries, 0, 503, 508, 611,
 900-937, the copies 529 / 541 / 553 of the quest item), folder 11, COUNTER 0
-and 2-6.
+and 2-6. (Round 61's design moves 503 to the persistent flags, 8.8: its
+DERIVED entry made every guest of a phase-2 room play the training.)
 
 **Counters.** COUNTER 1 changes only in the engine's junk shop program
 (`subwnd_shop.cpp` ShopJunk), which only `stagML13_m1__junkshop.lua` opens:
@@ -2383,6 +2398,316 @@ card, and k2 without 501 stalls in the first visit's talk at n_digilff #2's
 the guest's whole card story would be pending against the owner's empty
 online story, and drop would take its key items too.
 
+### 8.8 Guests play on the host's story (round 61 design)
+
+The user's requirement of 31.10: a member who joins someone else's room has
+the room owner's story while it plays there (every story flag, the phase,
+the unlocked areas, gates and dungeons, the key items: everything story
+progress depends on), so it gets everywhere the owner gets and skips what
+the owner already did, the tutorial first of all. Its own online character
+never stores that story, and outside the room it is back on its own. Its
+personal progress is its own. This section says exactly what that means,
+what round 56 already does, why the user's guest still had to play the
+tutorial, and what closes the gaps. Base: main 87d9f0d. Round 59
+(`fix-r59s2`: a room whose owner has no online story starts at zero, the
+STORY_ACK reason not_started, `Session::await_hello` before the character
+load, the character select's new-character rule) runs in parallel and
+touches the same client files; the implementation round (17, round G)
+builds on main after round 59 is merged. Nothing here was run: the findings
+come from the scripts, the code, the story sets and the campaign
+checkpoints.
+
+**Already built (round 56).** Most of the requirement holds today:
+
+- At every Game Start in a room the confirmed room story replaces FLAG,
+  FLAGFOLDER and COUNTER (`GameEngineLink::after_live_step`,
+  `src/game/online/engine_adapter.cpp:412-424`; `Engine::apply_room_story`,
+  `src/engine/online.cpp:673-685`) before `gameStart.lua`, which then
+  restores the working set and K0-K10 from the room difficulty's copies the
+  server derived (8.7). A guest thus starts with the owner's phase,
+  persistent flags and key items.
+- Every barrier merges the room story into the engine (8.5); a guest's
+  progress flows into the owner's story (8.3, 8.7).
+- The server never stores a borrowed story: `PUT /online-character`
+  replaces the uploaded story bytes with the account's own `online_story`
+  before validation, summary and state achievements, and `GET` composes them
+  (`OnlineCharacterService.cs:29-36, 48-55`).
+- Leaving the room ends the engine (`offline_title`, `game_main.cpp:1809-1816`):
+  a fresh engine with the local save store and its card settings.
+
+**Why the guest had to play the tutorial.** In phase 2 the lobby gate
+(`stagML11_m1__mate00.lua:9-23`) leads to the training field stag0001 while
+flag 503 is 0 and to stag0101 once it is 1. `stag0001_m1__first.lua:8-13`
+sets 503 on the first entry (and plays the intro only while it is 0);
+`stag0001_m1__restart.lua:4` clears it right before its NEXTSTAGE stag0001,
+so that *Retry* plays the intro again. 503 is read nowhere else, and
+`gameStart.lua` does not clear it: in the original it lives in the save. The
+story census lists it as non-monotone (`tools/online/story_census.py:80`
+DERIVED), so it is in `story_sets.json`'s *never* set: no pending set sends
+it, the keeper refuses it (not_story), no `online_story` holds it, and
+`apply_room_story` clears it at every Game Start in a room. Phase 2 spans
+the whole first area (the r25c checkpoint k2 is phase 2 with K0-K2), so a
+guest in a phase-2 room is sent to the training whatever the owner did; by
+the code the owner too after every fresh Game Start (not run). The tests
+hid it: `run.py` `seed_story` (`tools/online_test/run.py:511-541`) writes
+every flag byte of the owner's card into `online_story`, and every r25c
+checkpoint (k2-k10, p4-p6) has 503 = 1 (read with a read-only script), so
+the S14 / S16 guests went to stag0101. The script scan finds no other
+progress value outside the room story: 0, 508, 611 and 900-937 are derived
+or talk switches, 504, 554-555, 559-560, 567-569, 596-597 are read but set by
+no script (0 for everyone), and the computed FLGset indexes (`MDLgetRamNo() +
+171 / 181 / 248`, `L0 + 166 / 173 / 214`) hit dungeon flags of the instance
+class.
+
+Further gaps: a Game Start before the room story arrived keeps the
+character's own story (and its pending set would then carry the guest's own
+key items into the owner's story: key items have no stage check); the card
+cache keeps records with a borrowed story (the recovery path loads one,
+9); `numemon_freed` counts the engine's Numemon flags, borrowed ones
+included (11); the guest is not told whose story it plays; the character
+select offers the difficulty dialog from the guest's own unlocks although
+the room decides.
+
+**Which fields are whose.** The record splits along the bytes 792..1891
+(RecordCodec, SAVES.md):
+
+| Part | Where | In a room | Outside |
+| --- | --- | --- | --- |
+| Phase (flags 1-6, 86) | BASE_FLAG | the room story's | own |
+| The 110 persistent flags (109 of round 56 plus 503): bosses 67-70, Numemon 89-99, the world events 19-20, 22, 35, 49, 82-83, 320-327, 329-335, 383, 404-408, the intros 501, 502, 505-507, the training 503, quest clears 426-452, quest boards 469-474, the quest line's rewards 392-403, 476, 479, 509-513, 556-558, 561, 570, 576, 582, 588, 595 (question 9) | BASE_FLAG | room | own |
+| The difficulty copies (700-812, 7-18, 74-81, 87-88, key copies 518-553) | BASE_FLAG | room (derived by the server for the room's difficulty; read only by the title) | own |
+| Key items K0-K10 | BASE_FLAGFOLDER 0-10 | room | own |
+| COUNTER 1 (junk shop donations, the shop tiers) and COUNTER 7 (training attempts) | BASE_COUNTER | room | own |
+| Session values: the 404 temporaries, 0, 508, 611, 900-937, folder 11 (quest item), COUNTER 0 and 2-6 | engine | the engine line's (3.7): cleared by `gameStart.lua`, 900-937 derived again at every lobby load from the phase, COUNTER 1 and the member's own level and cards | - |
+| UNIQUE, Digimon, name, level, HP, MP, XDATA, bits, devices, disks, cards, bank, equipment, the forms with level, EXP, skills and counts | record 0-791, 1892-3315 | own | own |
+| Difficulty, camera mode, light mode, randomizer | GameSystem | room settings | own choice |
+| Gate disc return, bit capsule, NINZU | session | personal session values (3.7) | - |
+
+Nothing personal is lent and nothing personal is needed: no story, field,
+dungeon or boss script tests a level, device, disk, form or card count for
+progress (such tests exist only in the hub stages ML11-13: quest and shop
+tiers 908-927, the Digi-Lab from level 16, quest trades, the keychain), and
+the story stages give no items (stag0001, the lobby and briefing intros
+give nothing; forms come only from the ML11 / ML12 quest rewards). A guest
+who skips what the owner did loses only the EXP and drops he would have
+fought for. In its solo hub instance the guest is slot 0, so the personal
+reads of the lobby scripts (level, cards, forms) read its own character.
+
+**Flag 503 becomes story.** The census gets a class for it: 503 is
+persistent (OR; setter stage stag0001), with the original's meaning "has
+been to the training field" (`first.lua` sets it on the entry; the lobby
+gate reads only that). Changes:
+
+- `story_census.py` takes 503 out of DERIVED (its one clear is the retry's,
+  below); `data/online/story_sets.json`, `src/engine/online_story_sets.inc`
+  and the server's embedded copy follow (110 persistent flags), the setter
+  table gets 503 -> stag0001, `session_census.py` drops it from NEVER_MERGED
+  and `data/online/session_values.txt` from the instance class.
+- The pending set sends it from stag0001, the keeper takes it (stage
+  stag0001; the visit rules hold: the training's load and entry take about
+  21 s, G1 in 3.4), the title gives it to every member's Game Start.
+- **Retry keeps its intro.** `story::apply` gets the barrier's target stage
+  (`Engine::apply_barrier` runs while `pending_stage_` holds it,
+  `engine.cpp:2009-2013`) and leaves 503 alone when the target is stag0001:
+  `restart.lua` cleared it on purpose, and every member of the group loads
+  the same target, so the rule is the same on every engine. The pending set
+  never takes anything back, so the clear is not sent.
+- **Stories saved before the fix.** The server's rebase (room open,
+  `StoryMerge.Rebase`, and the C++ / Python twins with golden vectors) sets
+  503 when the story shows the training was played: phase 3 or later
+  (3-6, 86), COUNTER 7 above 0, any key item, or any persistent flag whose
+  setter stages are all outside stagml02, stagml11 and stag0001 (progress
+  beyond the training). All r25c checkpoints pass the rule (COUNTER 7 = 1,
+  K0 from k2 on). An owner in phase 2 who never left the lobby keeps 503 = 0
+  and his guests start at the training, as he does.
+- The protocol version rises (rooms are per protocol): a client with the old
+  tables would not add 503 at a barrier its group's new clients add, and the
+  instance would desync.
+
+**When the room story comes and when it goes.**
+
+- *Game Start in a room* (TITLE2 GAMESTART, `Engine::title_game_start`): full
+  replacement with the confirmed room story, then the room's difficulty,
+  camera and light mode, as built. New: never without a confirmed story.
+  When the GAMESTART step finds none, the client parks before the title's
+  next live step, as at a barrier (the title is a solo-led instance: no
+  ticks meanwhile, as in a loading hitch; `gameStart.lua` has not run yet)
+  and shows "Loading the room story..." until STORY_ACK brings it; a closed
+  session ends the park as every session end does, and after 15 s without
+  the story the client leaves the room with "The room story did not arrive.
+  Join the room again." With round 59's `await_hello` the story is in before
+  the title in practice; this is the safety net that keeps the guest's own
+  story out of the engine and out of its pending set. The log line "the game
+  starts without a room story yet" goes.
+- *Every barrier*: the load step merges the barrier's room story (the
+  phase rises to the room's, persistent flags, keys and the two counters
+  come in, dropped values go), before the stage's load scripts and the
+  snapshot; one blob for the whole group. New: the 503 rule above.
+- *The owner's new progress mid-session*: every new revision reaches every
+  member at once (STORY_ACK broadcast) as its confirmed story, but the
+  engine takes it only at the member's next barrier, never mid-stage: the
+  stage was built from the flags at its load (8.5), and a solo hub is no
+  exception (the lobby's `start.lua` lays out its NPCs and gates by the
+  phase). Any stage change brings it, also a walk into the save room and
+  back.
+- *Joins and co-arrivals*: the member takes the instance's engine state,
+  which holds the room story of its visit start plus the barrier merges.
+- *Gone*: leaving the room, the server closing the session, a kick, the
+  room's close and quitting all end in `offline_title` (a new engine, the
+  local save store); "Continue? No" goes to the title, whose next Game
+  Start replaces the story again (no rest of the old one survives a full
+  replacement); a crash loses the engine. Nothing has to be restored: the
+  guest's own story never left the server, and the client keeps it outside
+  the engine (uploads, below).
+
+**Determinism.** The room story in an engine is the engine's one shared
+story (8.1), so every engine of an instance must hold the same bytes. The
+title's replacement runs in the member's own solo title instance (stagIS*,
+never joined); the barrier's merge applies one blob, in the same step, with
+the same target stage, on every member of the group; the title's hold is
+solo. Nothing per member is ever written into the shared flags, folder or
+counters: the guest's own story lives on the server, in `CharacterSync`
+(outside the engine) and in its slot's `base_flags` / `base_flag_folder` /
+`base_counters`, which are part of the shared GameSystem and equal on every
+engine (they travel in the carry and the snapshot) and which no script
+reads. A per-member overlay inside a shared instance (each machine its own
+story) is ruled out: the fingerprint and the snapshot hash every flag.
+
+**Uploads keep the guest's own story.** The server stays the authority
+(`PUT` replaces the story bytes before anything reads them; unchanged). The
+client keeps the card cache honest as well, so no record with a borrowed
+story is ever loaded or sent:
+
+- `CharacterSync` keeps the account's own story bytes (792..1891) from the
+  record `GET /online-character` returned at the room entry (200), from the
+  record of a 409 reload, and zeros with no character on the server (404;
+  the server composes the first upload anyway).
+- Every record it caches or uploads gets those bytes: the save room's
+  upload (`card_written`), the stage-change and leave saves
+  (`character_record` -> `auto_save`), the recovered save. The check
+  "unchanged since revision n" then compares like with like. `make_record`
+  keeps the original rule (slot 0 writes the engine's story); in a shared
+  instance as slot 1-3 the record already carries the slot's own
+  `base_*`.
+- The save room's own card write stays as the engine wrote it (the card is
+  part of the simulation; it holds the borrowed story until the room is
+  left). Every room entry builds box 0 from `GET` (the own story); the
+  recovery path (a pending save at the server's revision,
+  `character.cpp:367`) puts the own story of that entry's `GET` into the
+  cached record before it goes on the card and up.
+- The owner's own story is the room story; the server composes his newest
+  `online_story` into every upload, so his cache's entry bytes are only a
+  placeholder.
+
+**Key items and story items.** The key items are flags in the shared flag
+folder (K0-K10, `items.cpp:295`), not inventory: while in the room the guest
+holds every key the owner holds (the status window's Folder page shows them,
+`subwnd_folder.cpp:297`), the gates read them (`stag0101_m1__start.lua:166`,
+`stag0102_m1__matg00.lua:3`, `stagML12_m1__hit_g_evenconsz05.lua:8`,
+`stag0202_m1__start.lua:110`, `stag0302_m1__n_gekoa_00.lua:4`,
+`stag0401_m1__start.lua:107`), and outside the room they are gone. No
+script clears K0-K10 and the barrier merge removes a key only when it was
+dropped (8.6), so a guest cannot use one up. Folder 11 (the quest item) is a
+session value of the quest (3.7): used up inside the quest, never merged.
+Consumables are personal (disks, recovery items, the Key Chain disk the
+keychain ladder takes): spent from the guest's own stock as offline; story
+progress never needs one.
+
+**The guest's own progress in the room.** Story-wise it counts for the
+owner (8.3, with the owner-away policy and round 59's not_started), never
+for the guest's own story: only the guest's own room writes that. Personal
+fields are its own and go up with every save. So a player who only ever
+plays as a guest keeps an empty own story, and its own room starts at zero
+(round 59), which is what the user asked for.
+
+**Achievements.** A borrowed story gives none: `apply_room_story` and
+`story::apply` write the maps directly (no `story_flag` port event), event
+achievements come only from live steps ("was there": a boss fought, a clear
+flag rising in the instance gives `clear_*`, the story challenges stay the
+owner's, 11), and the server's state achievements read the composed record
+(the own story). One leak closes: online, `numemon_freed` counts the
+Numemon flags that rose in this account's own live steps (a mask in the
+online profile, as `quest_mask`), not the engine's total
+(`game_main.cpp:1499`, `achievements.cpp:612`): freeing the tenth Numemon
+in a world where the owner freed nine is one, not *Numemon Liberator*.
+
+**What the guest sees.**
+
+- At every Game Start in a room it does not own, a toast: "Playing on
+  <owner>'s story (<difficulty>)" and "Your level, items and Digimon stay
+  yours. The story stays in <owner>'s save." The F1 Online tab and the room
+  view show "Story: <owner>'s, phase n, k key items" (the owner sees "Story:
+  yours").
+- When the confirmed story gains a phase step or a key item while the
+  member is inside a stage: "<owner>'s story moved on. It reaches your game
+  at your next stage change." (once per stage).
+- The character select's difficulty dialog is not offered online (after
+  `hostLoad.lua`, `load_intf.cpp:780-786`, `difficulty_max` is 0 while the
+  online rules are on): the room decides, and the toast names it. Offline
+  unchanged.
+- The owner-away and not_started notices stay as they are.
+
+**Offline and local saves** are untouched: the local card store is not the
+engine's while a session runs (`game_main.cpp:622`, put back by
+`offline_title`), the cloud backup works outside rooms only, and no path
+writes the room story into `savedata.dat`. Online off stays bit-identical:
+the story sets are read only online, the 503 rule lives in
+`apply_barrier`, the dialog rule needs the online rules.
+
+**Edge cases.**
+
+- *The owner leaves the room*: the room runs on (owner away, 8.6); the
+  guests keep the story as it was, new progress follows the policy (drop by
+  default: removed at the next barrier with the notice). The owner's return
+  merges held values. *The owner closes the room* or staff remove the
+  owner: every session ends, the guests are back offline.
+- *Ownership transfer* does not exist (`RoomService` has none). A round that
+  adds it must send every member back to the title: barriers only add, so
+  the old owner's story would stay in every engine and its pending sets
+  would carry it into the new owner's.
+- *The guest owns a room too*: an account is in one room at a time; its own
+  room runs owner-away meanwhile, and with *apply* (or *hold* on its return)
+  its own story can change while it is a guest elsewhere. That room's
+  session does not care; the server composes the newest own story into every
+  upload.
+- *An owner without a story* (round 59): the room story is a new game's;
+  the guests start as the owner does, and what they send is dropped
+  (not_started) until the owner's game enters a stage.
+- *A guest ahead of the room story*: its own in-room progress stays in its
+  engine and goes to the owner as pending; a value the keeper refuses for
+  plausibility (stage, phase jump) stays in that engine for the session (only
+  dropped values are removed), as built.
+- *A 409* (the account saved on another PC): the uploads stop, the cache
+  goes to `backups/`, the server's character is reloaded into the card (its
+  own story); the running engine keeps the room story.
+
+**Lag.** The room story is the owner's saved online story, not his running
+engine: a value reaches it after the visit rules (a visit ten seconds old,
+round 56; round 59 spaces an account's phase steps 300 s and its key items
+60 s apart) and reaches a guest at its next barrier. In play that is
+seconds behind the owner (phase steps lie an area apart). Sending the
+owner's running engine to the guests instead is rejected: unchecked bytes,
+values the keeper refused would spread through the guests' engines and
+pending sets, and the owner may be anywhere.
+
+**Quest rewards (question 9).** The quest line's first rewards (weapons per
+partner, bits, form unlocks through `SYSctlShinka SETSHINKA`, all for slot 0)
+and the keychain ladder are gated by persistent flags set and read only in
+the hub stages ML11-13 (392-403, 476, 479, 509-513, 556-558, 561, 570, 576,
+582, 588, 595). As room story (today, the default): the guest cannot take
+in the room a reward the owner already took; when the guest takes an open
+one, it gets the item (it is slot 0 of its solo lobby) and the flag goes
+into the owner's story, so the owner can never take that one (in local
+co-op the owner, player 1, always got it); the guest can take it once more
+in its own story. Per player (the alternative): those flags leave the room
+story; every account keeps the rewards it took in a store of its own
+(`online_rewards`, written by any room it plays in from its pending set,
+composed into its record), the title sets the member's own over the room
+story, the 3.7 personal mechanism keeps them aside at joins and writes them
+back at DISSOLVE (they are read only in solo hubs), and the room story blob
+carries none. Nobody loses a reward to another player and nobody takes one
+twice; it costs one lane (round G, lane rewards).
+
 ## 9. Online character and cloud backup
 
 - **Virtual card.** Entering a room, the client builds memory card A as a
@@ -2402,6 +2727,10 @@ online story, and drop would take its key items too.
   member carries into the next stage) and when the member leaves the room
   (question 3, answered: automatic saves wanted). A crash or quit loses at most
   the current stage. The room story does not depend on it (8.3).
+- **Story bytes.** Every upload and every record the client caches carries
+  the account's own story (from the room entry's `GET`), never the room's:
+  the server replaces the bytes anyway, the client keeps its card cache and
+  the recovery path clean (round 61 design, 8.8).
 - **Cloud backup** of the local save (F1 > Saves, outside rooms only): upload
   with a preview (`summarize_save`) and `X-Sha256`, download with a backup of
   the current file first (`.bak`), restore of the five earlier revisions; the
@@ -2531,7 +2860,9 @@ the server).
   frozen), refresh, Create (name, optional password, 2-10 players, difficulty up
   to what the owner's online story unlocked, camera mode, light mode,
   randomizer seed and modes, fast loading), Join (password prompt). In a room:
-  members with their area (from presence), Leave room, Kick (owner).
+  members with their area (from presence), Leave room, Kick (owner). The
+  room view and F1 Online show whose story the member plays; a guest's Game
+  Start shows "Playing on <owner>'s story" (round 61 design, 8.8).
 - **Session start.** Joining or creating checks the CPU (6.12) and the
   simulation environment variables (6.12), asks to end the offline game
   ("unsaved progress is lost"), then restarts the engine at the title in online
@@ -2708,7 +3039,9 @@ are `src/game/online/lobby_api.hpp`; the ImGui screens are
 - **Story achievements** count for every member of the instance in which the
   story flag rose ("was there"): each machine sees the same port event in its
   engine during live ticks (never in a replay, 7.5) and awards its own player.
-  Members elsewhere in the room do not get them.
+  Members elsewhere in the room do not get them. A borrowed story never gives
+  an achievement; online, `numemon_freed` counts the Numemon this account
+  freed in its own live steps (round 61 design, 8.8).
 - **Story challenges.** `story_clear` and its challenges (speed_fast under
   4 h, speed_normal, rookie_clear, deathless_clear) read slot 0's character and
   its own play time today (`achievements.cpp:325-338`). Online they go only to
@@ -2949,6 +3282,40 @@ anyway; joining goes through the room list.
 - **For the user**: `scripts/online-dev.ps1` starts the local stack and two
   visible game windows (agents run only the hidden variant, `-Hidden`, which
   plays both with the campaign bot; `run.py dev`).
+
+**Round G (guests on the host's story, 8.8).** The room story of a card
+scenario must look like one real merges leave: `seed_story` writes only the
+merge sets of the owner's card (the phase one-hot, the persistent flags,
+K0-K10, COUNTER 1 and 7) and derives the room difficulty's copies, as the
+keeper does (today it copies all 1024 flag bytes, 503 and the temporaries
+included, which hid the tutorial bug). Scenarios on hidden real clients
+(the owner `o`, the guest `g`; each with a counter-proof on the build
+before round G where it applies):
+
+| Id | Scenario |
+| --- | --- |
+| G1 | owner k2 (phase 2 after the training, 503 = 1, K0-K2), guest a new account (Create Digimon): the guest's lobby gate leads to stag0101 (`!stage:stag0001`); on main it leads to stag0001 |
+| G2 | owner k10 (phase 6, K0-K10), guest the k2 card with its own `online_story` seeded from it (phase 2, K0-K2): its Game Start gives it phase 6 and K0-K10 (`flag`, `folder` checks), the lobby gate offers stag0401 and the guest enters it, the K9 / K10 entrance of stag0401 is open (905) |
+| G3 | G2's guest saves in the save room, changes stage and leaves: its own `online_story` row keeps its seeded revision, the stored record's story bytes are its own (database), every upload body carries its own story bytes (`DW4_ONLINE_TRACE`), box 0 of its card after the next entry holds its own |
+| G4 | after G2 the guest leaves: its local `savedata.dat` is byte-identical to before the session (sha256); then it opens its own room and its game starts on its own story (phase 2, K0-K2) |
+| G5 | the owner takes a new value while the guest stands in the lobby (S14p's 505): the guest's engine lacks it until its next barrier (save room and back), then holds it; the "moved on" notice comes once |
+| G6 | retry in the training: an owner in phase 2 without 503 enters stag0001 (503 set and merged), answers *Retry*: the barrier into stag0001 leaves 503 at 0, the intro talk plays again, 503 is 1 after it |
+| G7 | a dev-build test switch makes the client ignore the room story for its first 10 s in the room, and the title's Game Start comes before: it waits with "Loading the room story...", then starts with the room story; no STORY from that member before |
+| G8 | a crash after a stage-change save (the client killed before the answer, C3's way): the next entry uploads the cached save with the guest's own story bytes and puts it on the card with them |
+| G9 | owner and guest in one stag0101 instance over three barriers: equal fingerprints (the usual check), the same story on both engines, 503 = 1 on both |
+
+Unit tests: ctest `online_story` (the census tables with 503; golden cases:
+503 merged by OR, applied at a barrier into stag0101 and left alone at one
+into stag0001, the rebase derivation from phase 3, COUNTER 7, a key item, a
+stag0101 flag, and not from a phase-2 lobby-only story), the C#
+`StoryGoldenTests` with the same vectors, `RoomStoryKeeperTests` (503 from
+stag0001 taken, from stag0101 refused with stage), `online_session` (a Game
+Start without a confirmed story holds until STORY_ACK, no STORY meanwhile),
+`online_character` (every cached and uploaded record carries the own story:
+entry 200, 404, a 409 reload, the recovery path; the unchanged check with a
+borrowed engine story), `achievements` (nine borrowed Numemon plus one
+rising count one), `online` (the difficulty dialog is not offered with the
+online rules, offline unchanged).
 
 ## 17. Round plan
 
@@ -3665,6 +4032,33 @@ for what that field test finds is expected.
 
 Depends on: S4 and the answers.
 
+### Round G (proposed r64): guests on the host's story
+
+Goal: the user's requirement of 31.10 (8.8). A guest's game in a room has
+the owner's story (the training skipped when the owner played it, the
+owner's areas, gates and key items), its uploads and saves keep its own
+story, and it is told whose story it plays.
+
+| Lane | Scope |
+| --- | --- |
+| story-sets | 503 as a story value (census class and setter, `story_sets.json`, `online_story_sets.inc`, the server's sets, `session_values.txt`), `story::apply` with the barrier's target (503 not into stag0001), the rebase derivation for saved stories (C++, C#, Python, golden vectors), keeper tests, the protocol version |
+| client | the Game Start's hold until the confirmed story (with G7's dev-build switch), the own story bytes in `CharacterSync` (cache, uploads, recovery, 409 reload), the toast, the F1 / room view story line and the "moved on" notice, the online difficulty dialog rule, `numemon_freed` by mask |
+| scenarios | the production-like `seed_story`, G1-G9 with counter-proofs on main, the regression S2, S3, S5, S14, S14h, S14a, S14p, S14z, S16, S17a and C1-C3 |
+| rewards (only if question 9 says per player) | the `online_rewards` store and its composition, the keeper routing reward flags to the sender's own store, the room story blob without them, the title's overlay and the personal-class extension at joins and DISSOLVE |
+
+Done when: G1-G9 pass (G1 fails on main: the counter-proof); the regression
+scenarios pass; ctest; the server's unit and integration tests; online off
+bit-identical (`det.sh` 4004f056 / audio 396cb219 twice, r25c 10 of 10 with
+1,748,011 frames, the save state suite 17 of 17); a DW4Online release with
+the new sets and the rebase.
+
+Depends on: round 59 merged (the same files: `character.cpp`,
+`session.cpp`, `online_run.cpp`, `RoomStoryKeeper.cs`,
+`OnlineStoryService.cs`); the answer to question 9 (default: room story,
+no rewards lane). The user's step: deploy the server release and the client
+together (the protocol rises); the rebase fixes saved phase-2 stories at the
+next room open.
+
 ## 18. Questions for the user
 
 1. **Lobby.** Hub and UI stages (lobby, briefing room, Digi-Lab) as solo
@@ -3718,6 +4112,18 @@ Depends on: S4 and the answers.
    enemies near it freeze too (the default).
 7. EXP: (a) only members near the kill share it (the default).
 8. Play alone in a room: no switch (the default).
+
+### Question of round 61 (2026-10-31)
+
+9. **Quest rewards of a guest** (8.8). The quest line's first rewards
+   (weapons, bits, form unlocks) and the keychain ladder are part of the
+   room story today. A guest then cannot take in the room a reward the
+   owner already took, and when it takes one the owner has not taken, it
+   keeps the item but the owner can never take that one in his own story;
+   the guest can take it once more in its own story. Alternative: every
+   player keeps its own taken rewards, in any room (the owner never loses
+   one to a guest, nobody takes one twice; one more lane). Default: as
+   today (room story).
 
 ## 19. Risks
 
