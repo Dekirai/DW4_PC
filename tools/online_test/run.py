@@ -1384,6 +1384,8 @@ def main():
             return 2
     stack = Stack(a)
     failed = 0
+    # A scenario that takes pictures ("shots": P1, P2) keeps the run folder: the pictures are what a person looks at.
+    pictures = any(s.get("shots") or any(c.get("shots") for c in s.get("clients", [])) for s in real)
     try:
         connection = start_mysql(stack)
         base, relay, pin, der, diag = start_server(stack, connection)
@@ -1449,7 +1451,7 @@ def main():
             wanted = wanted + [{"name": "G1"}]
     finally:
         stack.stop()
-        if not a.keep and not failed:
+        if not a.keep and not failed and not pictures:
             shutil.rmtree(stack.dir, ignore_errors=True)
         else:
             print("run folder: " + stack.dir)

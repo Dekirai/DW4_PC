@@ -368,8 +368,8 @@ public sealed record PresenceMsg(string Stage, uint Inst, float X, float Y, floa
 /// PRESENCE fields | str clip (0-16 of A-Z a-z 0-9 _) | u8 flags (1 the clip loops, 2 busy) | u8 warp | u32 the sender's
 /// clock in ms | str weapon (0-24, the same characters). Only from members whose WELCOME carried
 /// <see cref="WelcomeMsg.PresenceV2"/>; the hub forwards it as PRESENCE2 to the members that send it and as PRESENCE to
-/// the others. A later version appends to this layout: the hub reads its version 1 part and drops it (counted), so an
-/// older hub never forwards what it cannot check.
+/// the others. A later version appends to this layout: the hub reads and checks its version 1 part and forwards only that,
+/// written at version 1 with the version 1 flags (counted), so an older hub never forwards what it cannot check.
 /// </summary>
 public sealed record Presence2Msg(byte Version, PresenceMsg Presence, string Clip, byte Flags, byte Warp, uint SentMs, string Weapon)
 {

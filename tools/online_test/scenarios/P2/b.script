@@ -1,0 +1,25 @@
+# P2, member b (k10, DW4_ONLINE_TEST_PRESENCE1=1: sends PRESENCE and gets PRESENCE): off the entry point, then a walk
+# around a's place (40,-70), a moment right in front of it, and back to where it stood.
+campaign until stage=stagml11,control
+talk until control,frames>=60
+log in the lobby
+idle until epoch>=@88
+goto 80 -55 3
+idle until ghosts>=1 or epoch>=@110
+log sees a
+idle until epoch>=@100
+shot b_p2_standing
+idle until epoch>=@112
+log walk
+goto 55 -50
+goto 41 -59 2
+log in front of a
+idle until frames>=90
+goto 62 -62
+goto 70 -78
+goto 91 -75
+goto 80 -55 3
+log walked
+shot b_p2_after_walk
+idle until epoch>=@150
+idle until frames>=600

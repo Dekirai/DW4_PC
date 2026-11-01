@@ -126,9 +126,10 @@ const std::vector<std::string_view>& online_presentation_env() {
         "DW4_ONLINE_PROFILE",
         // the resync scenarios' injected desync (DW4_ONLINE_DEV builds only, game_main.cpp: it is the point of the test)
         "DW4_ONLINE_TEST_DESYNC",
-        // the ghost figures (round 60, presentation only): off, and the form test of the scenarios (DW4_ONLINE_DEV builds
-        // only, session.cpp: the form PRESENCE2 names cycles, the engine's stays)
-        "DW4_GHOSTS", "DW4_ONLINE_TEST_FORM",
+        // the ghost figures (round 60, presentation only): off, and the form and old-client tests of the scenarios
+        // (DW4_ONLINE_DEV builds only, session.cpp: the form PRESENCE2 names cycles, the engine's stays; PRESENCE
+        // instead of PRESENCE2)
+        "DW4_GHOSTS", "DW4_ONLINE_TEST_FORM", "DW4_ONLINE_TEST_PRESENCE1",
         // round S1 test tools (game_main.cpp)
         "DW4_SNAPSHOT_DUMP", "DW4_PAD_LOG", "DW4_EXTRA_RENDERS", "DW4_EXTRA_WIDEN", "DW4_EXTRA_PREVIOUS",
         "DW4_CAM_CHECK"};

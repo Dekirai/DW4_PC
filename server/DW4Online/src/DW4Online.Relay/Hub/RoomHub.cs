@@ -429,10 +429,13 @@ public sealed class RoomHub
     {
         // (Sent PRESENCE2 from now on, also when this one is dropped.)
         m.PresenceV2 = true;
+        // A later version: only its version 1 part was read (its appended bytes skipped) and that part alone goes on,
+        // checked below and written at version 1 (Presence2Msg.Write), with the flags version 1 knows; so the hub never
+        // forwards what it cannot check, and the member's tag and figure still show.
         if (msg.Version != Presence2Msg.CurrentVersion)
         {
             Count("presence_version");
-            return;
+            msg = msg with { Version = Presence2Msg.CurrentVersion, Flags = (byte)(msg.Flags & Presence2Msg.KnownFlags) };
         }
         if (msg.Implausible() is { } why)
         {

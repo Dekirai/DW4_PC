@@ -528,6 +528,17 @@ void Session::on_welcome(const w::Welcome& m, double now) {
     member_id_ = m.member;
     // (Every WELCOME: a reconnect may reach another hub build.)
     presence_v2_ = (m.flags & w::Welcome::presence_v2) != 0;
+#ifdef DW4_ONLINE_DEV
+    // DW4_ONLINE_TEST_PRESENCE1=1 (development builds; the ghost figure
+    // scenario P2 of tools/online_test): this client acts as one from before
+    // round 60 or as a client of an older hub: it sends PRESENCE, so the hub
+    // sends it PRESENCE too, and its figures come from PRESENCE alone.
+    static const bool presence1 = [] {
+        const char* text = std::getenv("DW4_ONLINE_TEST_PRESENCE1");
+        return text && *text && *text != '0';
+    }();
+    if (presence1) presence_v2_ = false;
+#endif
     presence_sent_.reset();
     if (!config_.own_name.empty()) names_[member_id_] = config_.own_name;
     if (resume_after_lost_) {

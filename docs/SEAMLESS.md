@@ -2850,6 +2850,12 @@ no effect on anything.
   (`GameEngineLink::presence`: the action's current clip and loop mode, the
   POWERSOCKET weapon, whether the action switch shows the model) and writes
   nothing.
+- On the own screen the figures go where the name tags go: none while the
+  own game loads, plays a scene or a demo, or shows a menu stage (they fade
+  out over 0.35 s, a stage load drops them at once). A status, shop or talk
+  window of the own player leaves them standing behind it like the stage's
+  other models (only the tags hide), so opening a menu never makes them
+  vanish and come back.
 
 **At most nine** figures (a room has ten members), the nearest to the own
 player. A form whose package is still loading shows once it is ready (it fades
@@ -2893,8 +2899,13 @@ never gets a 0x8F frame: the hub sends PRESENCE2 only to members that send
 PRESENCE2 themselves (`HubMember.PresenceV2`) and PRESENCE, the same subset,
 to the others, so old and new clients share a room (the protocol number stays
 45: nothing of the lockstep changed). A later version keeps the layout and
-appends; the hub reads its version 1 part and drops such a frame (counted),
-a client takes what it knows.
+appends: the hub reads and checks its version 1 part and forwards only that,
+written at version 1 with the flags version 1 knows (counted as
+`presence_version`), so it never passes on what it cannot check and the
+member's figure still shows; a client takes what it knows. Scenario P2 (16)
+plays a new and an old member in one lobby (`DW4_ONLINE_TEST_PRESENCE1`
+makes a development client speak PRESENCE only, as before round 60 or
+against an older hub).
 
 **The hub's bounds** (`RoomHub.OnPresence2`, `Presence2Msg`): a malformed frame
 (lengths, a clip or weapon outside its characters, a non-finite position)
@@ -2928,7 +2939,8 @@ versions, malformed frames), `online_session_tests` (the sender's clock and
 jitter, warps, extrapolation, busy, yaw; PRESENCE2 only after the WELCOME flag,
 ten or five a second), the relay's `HubPresenceTests` (the WELCOME flag,
 PRESENCE2 to PRESENCE2 members and PRESENCE to the others, the bounds, the
-token bucket, leaving a stage), and the real-client scenario P1 (16).
+token bucket, leaving a stage, a later version's version 1 part), and the
+real-client scenarios P1 and P2 (16).
 
 ## 13. Discord
 
@@ -3033,6 +3045,7 @@ anyway; joining goes through the room list.
 | S25 | Trailmon ride (dng412b3) with one member not aboard: no fork, the rider moves alone | S3 |
 | A1 | online achievements: S5's run with achievements on; each machine reports its own player (online_join in its solo lobby, first_defeat in the sealed field) with the ranked context, the counters at the end; the server holds them (`scenario.json` "achievements") | S2 |
 | P1 | ghost figures in the lobby: three members (k7, k10, k2); one stands, one walks around it and stops right in front of it, the third shows another form every 6 s (`DW4_ONLINE_TEST_FORM`, the form PRESENCE2 names; the engine's stays), leaves through the lobby gate for a field (stag0101), falls there and comes back after the game over; `"shots": true` takes the scripts' `shot` pictures (hidden 1920x1009, widescreen, MSAA 4, all tags) and the `ghosts` condition waits on the figures a client shows | 60 |
+| P2 | ghost figures with an older client: two members (k7, k10), b speaks PRESENCE only (`DW4_ONLINE_TEST_PRESENCE1`, as a client before round 60 or one of an older hub); each sees the other's figure, without weapon and with run or wait by the speed of the packets (the hub turns a's PRESENCE2 into PRESENCE for b); b walks around a and stops right in front of it; pictures from both | 60 |
 
 - **Real game clients** (round S1 integration): `run.py G1 --game-exe EXE
   --data DATA` starts two hidden `DW4_ONLINE_DEV` game clients instead of fake
@@ -4050,7 +4063,7 @@ Client to server:
 | 0x11 | RATE | replay rate u32 (steps per second) |
 | 0x12 | PONG | nonce u32, client ms u64 |
 | 0x13 | BYE | reason u8 (leaves the relay at once; the room membership stays) |
-| 0x14 | PRESENCE2 | version u8 (1), the PRESENCE fields, clip str (0-16 of A-Z a-z 0-9 _), flags u8 (1 the clip loops, 2 busy), warp u8, sender ms u32, weapon str (0-24, the same characters); only after a WELCOME with flag 2; a later version appends (round 60, 12.1) |
+| 0x14 | PRESENCE2 | version u8 (1), the PRESENCE fields, clip str (0-16 of A-Z a-z 0-9 _), flags u8 (1 the clip loops, 2 busy), warp u8, sender ms u32, weapon str (0-24, the same characters); only after a WELCOME with flag 2; a later version appends (the hub forwards its checked version 1 part at version 1; round 60, 12.1) |
 
 Server to client:
 

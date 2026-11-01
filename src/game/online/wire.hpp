@@ -303,7 +303,8 @@ struct Intent {        // inst | visit | u8 kind | i32 argument (sealed instance
 // WELCOME carries Welcome::presence_v2 (an older hub closes a connection that
 // sends a frame it does not know); the hub forwards PRESENCE2 to the members
 // that send it and PRESENCE to the others. A later version keeps this layout
-// and appends: a reader takes what it knows.
+// and appends: a reader takes what it knows (a version 1 hub forwards only
+// the version 1 part it checked, written at version 1).
 struct Presence {
     std::uint8_t member{};
     std::string stage;

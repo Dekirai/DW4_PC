@@ -5,9 +5,9 @@ namespace DW4Online.Tests;
 
 /// <summary>
 /// Presence through the hub (SEAMLESS.md 12, round 60): WELCOME announces PRESENCE2; PRESENCE2 goes to the members that
-/// send it and PRESENCE to the others; the hub bounds the new fields (an implausible or later-version frame is dropped and
-/// counted, a malformed one closes) and the rate (a token bucket); a member that leaves a stage is shown leaving to
-/// those still there.
+/// send it and PRESENCE to the others; the hub bounds the new fields (an implausible frame is dropped and counted, a
+/// later version's checked version 1 part goes on, a malformed one closes) and the rate (a token bucket); a member that
+/// leaves a stage is shown leaving to those still there.
 /// </summary>
 public partial class HubLogicTests
 {
@@ -61,7 +61,7 @@ public partial class HubLogicTests
     }
 
     [Fact]
-    public void Implausible_and_later_version_presence2_is_dropped_and_a_malformed_one_closes()
+    public void Implausible_presence2_is_dropped_a_later_version_goes_on_as_version_1_and_a_malformed_one_closes()
     {
         var h = new Harness();
         h.Connect("a", 0);
@@ -83,13 +83,26 @@ public partial class HubLogicTests
         Assert.Equal(1, h.Hub.Counters["presence_implausible_species"]);
         Assert.Equal(1, h.Hub.Counters["presence_implausible_flags"]);
         Assert.False(h.P("b").Has(Msg.Presence2Out));
-        // A later version (appended bytes): read, not forwarded, the connection stays.
+        // A later version (appended bytes, a flag version 1 does not know): its version 1 part goes on, written at
+        // version 1 without the unknown flag and the appended bytes; the connection stays.
         h.Advance(200);
-        var later = Presence2("stagML11").Frame();
+        var later = Presence2("stagML11", x: 33, flags: Presence2Msg.Loop | 8).Frame();
         later[Wire.HeaderBytes] = 2;
         h.Hub.Receive(h.Mem("a"), later[0], later[Wire.HeaderBytes..].Concat(new byte[] { 1, 2 }).ToArray(), h.Now);
         Assert.Equal(1, h.Hub.Counters["presence_version"]);
-        Assert.False(h.P("b").Has(Msg.Presence2Out));
+        sent++;
+        var forwarded = h.P("b").Last(Msg.Presence2Out, Presence2OutMsg.Parse);
+        Assert.Equal((Presence2Msg.CurrentVersion, 33f, Presence2Msg.Loop, "w_a1"),
+            (forwarded.Presence.Version, forwarded.Presence.Presence.X, forwarded.Presence.Flags, forwarded.Presence.Weapon));
+        Assert.Null(h.P("a").Closed);
+        // Its version 1 part is checked like any other.
+        h.Advance(200);
+        var laterBad = Presence2("stagML11", species: 16).Frame();
+        laterBad[Wire.HeaderBytes] = 2;
+        h.Hub.Receive(h.Mem("a"), laterBad[0], laterBad[Wire.HeaderBytes..], h.Now);
+        Assert.Equal(2, h.Hub.Counters["presence_version"]);
+        Assert.Equal(7, h.Hub.Counters["presence_implausible"]);
+        Assert.Equal(sent, h.P("b").All(Msg.Presence2Out, Presence2OutMsg.Parse).Count);
         // A plausible one goes through.
         Try(Presence2("stagML11", species: 15));
         sent++;
