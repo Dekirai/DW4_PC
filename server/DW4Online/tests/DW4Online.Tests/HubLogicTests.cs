@@ -280,6 +280,152 @@ public partial class HubLogicTests
         Assert.True(HubRules.ContextMatches(loading, 1));
     }
 
+    // ---- Round J: joins from a checkpoint (SEAMLESS.md 6.13.4-6.13.5)
+
+    /// <summary>A solo leader in stag0101 that reached its load end (K = 20) and reported its STATEHASH of tick 600.</summary>
+    private static Harness CheckpointTarget(InstanceOptions? options = null)
+    {
+        var h = new Harness(options);
+        h.Connect("a", 0);
+        h.Connect("b", 1);
+        h.Barrier("a", "stag0101");
+        h.Snapshot("a");
+        h.Advance(12000); // (a LOG never runs ahead of the game's pace)
+        h.Log("a", 0, 700);
+        h.Joinable("a");
+        var i = h.I("a");
+        h.Send("a", new StateHashMsg(i.Id, i.Visit, 600, 0xC0FFEE, 20, 1).Frame());
+        return h;
+    }
+
+    private static void Upload(Harness h, string donor, uint tick, ulong hash, byte[] bytes, int chunk = 7)
+    {
+        var i = h.I(donor);
+        for (var off = 0; off < bytes.Length; off += chunk)
+            h.Send(donor, new CheckpointMsg(i.Id, i.Visit, tick, hash, 20, (uint)bytes.Length, (uint)off,
+                bytes.AsSpan(off, Math.Min(chunk, bytes.Length - off)).ToArray()).Frame());
+    }
+
+    [Fact]
+    public void A_join_asks_the_donor_and_gets_the_load_ticks_the_checkpoint_and_the_ticks_from_it()
+    {
+        var h = CheckpointTarget();
+        var i = h.I("a");
+        Assert.Equal(20u, i.AgreedLoadEnd);
+        h.Barrier("b", "stag0101");
+        Assert.Equal(BarrierDecision.Join, h.Decision("b").Decision);
+        // No state yet: the relay asked the donor for its next state-safe tick.
+        Assert.False(h.P("b").Has(Msg.StateData));
+        var ask = h.P("a").Last(Msg.CheckpointAsk, CheckpointAskMsg.Parse);
+        Assert.Equal((i.Id, i.Visit, 0u), (ask.Inst, ask.Visit, ask.Tick));
+        var cp = Enumerable.Range(0, 40).Select(x => (byte)(x * 3)).ToArray();
+        Upload(h, "a", 650, 0xBEEF, cp);
+        var blob = StateBlob.Parse(h.P("b").StateBlob());
+        Assert.Equal((StatePurpose.Join, (byte)1), (blob.Purpose, blob.Slot));
+        Assert.Equal(20, blob.LoadTicks.Count);
+        Assert.Equal((650u, 0xBEEFUL), (blob.CheckpointTick, blob.CheckpointHash));
+        Assert.Equal(cp, blob.Checkpoint);
+        Assert.Equal((650u, 50), (blob.FirstTick, blob.Ticks.Count)); // the log's 700 ticks from 650
+        Assert.Equal(1, h.Hub.Counters["checkpoint_joins"]);
+        // READY from the checkpoint: the join goes on as always; the rebuild is noted for the suspicion rule.
+        var ok = h.Decision("b");
+        h.Send("b", new ReadyMsg(ok.NewInst, ok.NewVisit, 690, 0, 0, [7], ReadyMsg.FromCheckpoint).Frame());
+        Assert.True(h.P("a").Has(Msg.JoinReq));
+        Assert.Equal(690u, i.RebuildTick);
+    }
+
+    [Fact]
+    public void A_fresh_checkpoint_serves_at_once_and_a_bad_one_falls_back_to_the_classic_state()
+    {
+        var h = CheckpointTarget();
+        var i = h.I("a");
+        i.CheckpointAskedAt = h.Now;
+        Upload(h, "a", 640, 0xBEEF, [1, 2, 3]);
+        Assert.Single(i.Checkpoints);
+        h.Barrier("b", "stag0101");
+        Assert.False(h.P("a").Has(Msg.CheckpointAsk)); // fresh: no ask
+        var blob = StateBlob.Parse(h.P("b").StateBlob());
+        Assert.Equal(640u, blob.CheckpointTick);
+        // The rebuild fails: the classic state follows (the snapshot and every tick).
+        var ok = h.Decision("b");
+        h.Send("b", new CheckpointBadMsg(ok.NewInst, ok.NewVisit, 640, CheckpointBadReason.Hash, "nodes").Frame());
+        var classic = StateBlob.Parse(h.P("b").StateBlob());
+        Assert.Null(classic.Checkpoint);
+        Assert.Equal((0u, 700), (classic.FirstTick, classic.Ticks.Count));
+        Assert.Equal(1, h.Hub.Counters["checkpoint_bad"]);
+    }
+
+    [Fact]
+    public void Without_the_donors_checkpoint_in_time_the_join_takes_the_classic_state_and_the_switch_turns_the_path_off()
+    {
+        var h = CheckpointTarget(new InstanceOptions { CheckpointWaitMs = 500 });
+        h.Barrier("b", "stag0101");
+        Assert.True(h.P("a").Has(Msg.CheckpointAsk));
+        Assert.False(h.P("b").Has(Msg.StateData));
+        h.Advance(600);
+        h.Hub.Housekeep(h.Now);
+        var classic = StateBlob.Parse(h.P("b").StateBlob());
+        Assert.Null(classic.Checkpoint);
+        Assert.Equal(700, classic.Ticks.Count);
+
+        var off = CheckpointTarget(new InstanceOptions { CheckpointJoins = false });
+        off.Barrier("b", "stag0101");
+        Assert.False(off.P("a").Has(Msg.CheckpointAsk));
+        Assert.Null(StateBlob.Parse(off.P("b").StateBlob()).Checkpoint);
+    }
+
+    [Fact]
+    public void A_desync_soon_after_a_rebuild_makes_the_checkpoint_path_suspect()
+    {
+        var h = CheckpointTarget();
+        var i = h.I("a");
+        h.Barrier("b", "stag0101");
+        Upload(h, "a", 650, 0xBEEF, [9, 9, 9]);
+        var ok = h.Decision("b");
+        h.Send("b", new ReadyMsg(ok.NewInst, ok.NewVisit, 690, 0, 0, [7], ReadyMsg.FromCheckpoint).Frame());
+        var req = h.P("a").Last(Msg.JoinReq, JoinReqMsg.Parse);
+        h.Send("a", new JoinAtMsg(req.Inst, req.Visit, 720).Frame());
+        h.Log("a", 700, 20);
+        h.Seal(2000);
+        Assert.Equal(InstanceMode.Sealed, i.Mode);
+        h.Send("a", new NetFpMsg(i.Id, i.Visit, 750, 1).Frame());
+        h.Send("b", new NetFpMsg(i.Id, i.Visit, 750, 2).Frame());
+        Assert.True(i.CheckpointSuspect);
+        Assert.Equal(1, h.Hub.Counters["checkpoint_suspect"]);
+    }
+
+    [Fact]
+    public void Statehash_reports_agree_on_the_load_end_and_messages_round_trip()
+    {
+        var sh = new StateHashMsg(3, 4, 1200, 0x0123456789ABCDEFUL, 17, 1);
+        Assert.Equal(sh, StateHashMsg.Parse(sh.Frame()[Wire.HeaderBytes..]));
+        var cp = new CheckpointMsg(3, 4, 1200, 5, 17, 10, 4, [1, 2, 3]);
+        var back = CheckpointMsg.Parse(cp.Frame()[Wire.HeaderBytes..]);
+        Assert.Equal((cp.Tick, cp.Total, cp.Offset), (back.Tick, back.Total, back.Offset));
+        Assert.Equal(cp.Chunk, back.Chunk);
+        Assert.Throws<ProtocolException>(() => CheckpointMsg.Parse(new CheckpointMsg(3, 4, 10, 5, 17, 2, 1, [1, 2]).Frame()[Wire.HeaderBytes..]));
+        Assert.Throws<ProtocolException>(() => StateHashMsg.Parse(new StateHashMsg(3, 4, 10, 5, 11, 0).Frame()[Wire.HeaderBytes..]));
+        var bad = new CheckpointBadMsg(1, 2, 3, CheckpointBadReason.Topology, "journal");
+        Assert.Equal(bad, CheckpointBadMsg.Parse(bad.Frame()[Wire.HeaderBytes..]));
+        var ask = new CheckpointAskMsg(1, 2, 0, CheckpointAskMsg.Periodic);
+        Assert.Equal(ask, CheckpointAskMsg.Parse(ask.Frame()[Wire.HeaderBytes..]));
+        var ready = new ReadyMsg(1, 2, 3, 4, 5, [6], ReadyMsg.FromCheckpoint);
+        Assert.Equal(ReadyMsg.FromCheckpoint, ReadyMsg.Parse(ready.Frame()[Wire.HeaderBytes..]).Flags);
+        Assert.Equal(0, ReadyMsg.Parse(new ReadyMsg(1, 2, 3, 4, 5, [6]).Frame()[Wire.HeaderBytes..]).Flags);
+        // Two members disagree: no agreed load end yet; then they agree.
+        var h = SealedPair(out _);
+        var i = h.I("a");
+        Assert.Same(i, h.I("b"));
+        h.Send("a", new StateHashMsg(i.Id, i.Visit, 600, 7, 20, 1).Frame());
+        Assert.Null(i.AgreedLoadEnd);
+        h.Send("b", new StateHashMsg(i.Id, i.Visit, 600, 8, 20, 1).Frame());
+        Assert.Null(i.AgreedLoadEnd);
+        Assert.Equal(1, h.Hub.Counters["statehash_mismatch"]);
+        h.Send("a", new StateHashMsg(i.Id, i.Visit, 1200, 9, 20, 1).Frame());
+        h.Send("b", new StateHashMsg(i.Id, i.Visit, 1200, 9, 20, 1).Frame());
+        Assert.Equal(20u, i.AgreedLoadEnd);
+    }
+
     [Fact]
     public void A_boss_locked_target_lets_the_arrival_wait_or_go_alone()
     {
@@ -609,7 +755,7 @@ public partial class HubLogicTests
         h.Hub.Disconnect(h.Mem("b"), h.P("b"), h.Now);
         h.Seal(500);
         var b2 = h.Connect("b", 1);
-        Assert.Equal(WelcomeMsg.Resumable | WelcomeMsg.PresenceV2, b2.Last(Msg.Welcome, WelcomeMsg.Parse).Flags);
+        Assert.Equal(WelcomeMsg.Resumable | WelcomeMsg.PresenceV2 | WelcomeMsg.Checkpoints, b2.Last(Msg.Welcome, WelcomeMsg.Parse).Flags);
         h.Send("b", new ResumeMsg(inst, i.Visit, 1, 0).Frame()); // the whole log: refused
         Assert.Equal(2, h.Hub.Counters["resume_refused"]);
         h.Send("b", new ResumeMsg(inst, i.Visit, 1, i.NextSeal - 30).Frame()); // once per connection
