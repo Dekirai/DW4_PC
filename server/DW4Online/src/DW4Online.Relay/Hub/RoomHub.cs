@@ -562,6 +562,16 @@ public sealed class RoomHub
         return n;
     }
 
+    /// <summary>A member's sealed stream from <paramref name="from"/> with delay <paramref name="d"/>: the configured bound
+    /// and late share, and the bar of the member's previous stream (DelayController.Inherit).</summary>
+    private SlotStream NewStream(HubMember m, int slot, uint from, int d)
+    {
+        var stream = new SlotStream(slot, from, d) { Delay = { Max = _sealing.MaxDelayTicks, LateTarget = _sealing.LateTarget } };
+        stream.Delay.Inherit(m.LastDelay);
+        m.LastDelay = stream.Delay;
+        return stream;
+    }
+
     private void EvaluateDelays(HubInstance i, uint t)
     {
         foreach (var st in i.Streams)
@@ -571,7 +581,7 @@ public sealed class RoomHub
             {
                 i.AddEvent(t + 2, TickEvent.Delay(st.Slot, d));
                 Count("delay_changes");
-                Note("delay", i, ("slot", st.Slot), ("d", d), ("tick", t + 2));
+                Note("delay", i, ("slot", st.Slot), ("d", d), ("tick", t + 2), ("why", st.Delay.LastReason), ("barred", st.Delay.Barred));
             }
         }
     }
@@ -1291,7 +1301,7 @@ public sealed class RoomHub
         var delays = map.Keys.ToDictionary(x => x, x => DelayController.FromRoundTrips(x.Rtt.All, _sealing.MaxDelayTicks));
         if (inst.Mode == InstanceMode.Sealed)
             foreach (var (member, slot) in map)
-                inst.Streams[slot] = new SlotStream(slot, 0, delays[member]) { Delay = { Max = _sealing.MaxDelayTicks, LateTarget = _sealing.LateTarget } };
+                inst.Streams[slot] = NewStream(member, slot, 0, delays[member]);
 
         // The base engine spawns the co-arrivals (and followers) in its load step with their carries.
         var coList = new List<CoArrival>();
@@ -1628,7 +1638,7 @@ public sealed class RoomHub
             var at = StampTick(target);
             target.AddEvent(at, TickEvent.Join(j.Slot, j.From.Point, j.Carry));
             target.AddEvent(at, TickEvent.Delay(j.Slot, d));
-            target.Streams[j.Slot] = new SlotStream(j.Slot, at, d) { Delay = { Max = _sealing.MaxDelayTicks, LateTarget = _sealing.LateTarget } };
+            target.Streams[j.Slot] = NewStream(m, j.Slot, at, d);
             foreach (var st in target.Streams)
                 st?.GraceThrough(at + (uint)st.Delay.Current + SlotStream.JoinGraceTicks);
             j.Stamped = true;
@@ -1687,7 +1697,7 @@ public sealed class RoomHub
         i.LogOwner = m;
         i.Mode = InstanceMode.Sealed;
         i.SoloJoin = null;
-        i.Streams[m.Slot] = new SlotStream(m.Slot, at, p.LeaderDelay) { Delay = { Max = _sealing.MaxDelayTicks, LateTarget = _sealing.LateTarget } };
+        i.Streams[m.Slot] = NewStream(m, m.Slot, at, p.LeaderDelay);
         m.Cursor = at;
         if (orphan)
         {
@@ -1697,7 +1707,7 @@ public sealed class RoomHub
         }
         else
         {
-            i.Streams[p.Slot] = new SlotStream(p.Slot, at, p.JoinerDelay) { Delay = { Max = _sealing.MaxDelayTicks, LateTarget = _sealing.LateTarget } };
+            i.Streams[p.Slot] = NewStream(p.Joiner, p.Slot, at, p.JoinerDelay);
             i.AddEvent(at, TickEvent.Join(p.Slot, p.Point, p.Carry));
             i.AddEvent(at, TickEvent.Delay(p.Slot, p.JoinerDelay));
             i.AddEvent(at, TickEvent.Delay(m.Slot, p.LeaderDelay));
@@ -1837,7 +1847,7 @@ public sealed class RoomHub
         {
             if ((leavers & (1 << s)) == 0 || i.Slots[s] is not { } m) continue;
             var old = i.Streams[s];
-            var stream = new SlotStream(s, from, old?.Delay.Current ?? 2) { Delay = { Max = _sealing.MaxDelayTicks, LateTarget = _sealing.LateTarget } };
+            var stream = NewStream(m, s, from, old?.Delay.Current ?? 2);
             old?.MoveAhead(stream, from);
             if (old is not null) old.UntilTick = from;
             child.Streams[s] = stream;

@@ -194,15 +194,18 @@ public class HubCoreTests
         for (var i = 0; i < 300; ++i) bound.Record(-30, late: true);
         Assert.Equal(6, bound.Evaluate()); // the bound
 
-        // It falls after ten seconds by the ticks the 0.5 % quantile of the margin leaves (0.15 of a tick kept), at most three.
+        // It falls after thirty seconds (more than one 60 Hz vsync beat) by the ticks the 0.5 % quantile of the margin
+        // leaves (0.15 of a tick kept), at most three.
+        Assert.Equal(1800, DelayController.LowerHold);
         var f = new DelayController(9) { Max = 15 };
         for (var i = 0; i < DelayController.LowerHold - 1; ++i) f.Record(60, late: false);
-        Assert.Null(f.Evaluate()); // not ten seconds yet
+        Assert.Null(f.Evaluate()); // not thirty seconds yet
         f.Record(60, late: false);
         Assert.Equal(6, f.Evaluate()); // floor((60 - 2.5) / 16.68) = 3
-        for (var i = 0; i < DelayController.LowerHold; ++i) f.Record(i < 3 ? 5 : 30, late: false); // three low margins: below the 0.5 % quantile
+        Assert.Equal("margin", f.LastReason);
+        for (var i = 0; i < DelayController.LowerHold; ++i) f.Record(i < 9 ? 5 : 30, late: false); // nine low margins: below the 0.5 % quantile
         Assert.Equal(5, f.Evaluate()); // floor((30 - 2.5) / 16.68) = 1
-        for (var i = 0; i < DelayController.LowerHold; ++i) f.Record(i < 4 ? 5 : 30, late: false); // four: the quantile is 5 ms
+        for (var i = 0; i < DelayController.LowerHold; ++i) f.Record(i < 10 ? 5 : 30, late: false); // ten: the quantile is 5 ms
         Assert.Null(f.Evaluate());
         for (var i = 0; i < DelayController.LowerHold; ++i) f.Record(19, late: false); // 19 ms is below 1.15 ticks
         Assert.Null(f.Evaluate());
@@ -283,6 +286,56 @@ public class HubCoreTests
         Assert.Equal(300u, s.GraceUntil);
         Assert.Equal(SlotStream.Submit.Late, s.Offer(250, P(1), 260, -30));
         Assert.Equal((1, 1), s.Delay.LateInWindow());
+    }
+
+    [Fact]
+    public void A_fall_that_is_undone_bars_its_value()
+    {
+        // Round 62 review: a game presenting at 60.000 Hz or 59.95 Hz against the relay's 59.94 Hz has a margin that
+        // swings by one pass over a beat; a fall in its high part is undone in its low part. The value it fell to is barred
+        // for a minute, twice as long when a fall to it fails again (SEAMLESS.md 6.4).
+        var h = new DelayController(4) { Max = 10 };
+        for (var i = 0; i < DelayController.LowerHold; ++i) h.Record(25, late: false);
+        Assert.Equal(3, h.Evaluate()); // floor((25 - 2.5) / 16.68) = 1
+        Assert.Equal(0, h.Barred);
+        for (var i = 0; i < DelayController.Block; ++i) h.Record(-3, late: true); // most of a second late at 3
+        Assert.Equal(4, h.Evaluate()); // back to the value it fell from (a rise from nowhere: ceil(3 / 16.68) + 1 = 2)
+        Assert.Equal("most_late", h.LastReason);
+        Assert.Equal(3, h.Barred);
+        for (var i = 0; i < DelayController.LowerHold; ++i) h.Record(45, late: false);
+        Assert.Null(h.Evaluate()); // the margin allows two ticks (to 2): the bar holds 4
+        for (var i = 0; i < DelayController.LowerHold; ++i) h.Record(25, late: false);
+        Assert.Equal(0, h.Barred); // a minute of pads since the bar
+        Assert.Equal(3, h.Evaluate());
+        for (var i = 0; i < DelayController.Block; ++i) h.Record(-3, late: true); // and again too low
+        Assert.Equal(4, h.Evaluate());
+        Assert.Equal(3, h.Barred);
+        for (var k = 0; k < 3; ++k)
+        {
+            for (var i = 0; i < DelayController.LowerHold; ++i) h.Record(25, late: false);
+            Assert.Null(h.Evaluate()); // two minutes this time
+        }
+        Assert.Equal(3, h.Barred);
+        for (var i = 0; i < DelayController.LowerHold; ++i) h.Record(25, late: false);
+        Assert.Equal(3, h.Evaluate());
+        // Lateness beyond the value it fell from takes d further, and a rise that follows no fall bars nothing (a
+        // stretch of stalls, a start value too low).
+        for (var i = 0; i < DelayController.Block; ++i) h.Record(-40, late: true);
+        Assert.Equal(6, h.Evaluate()); // ceil(40 / 16.68) = 3
+        // The member's next stream (another stage) keeps the bar with the pads it has left.
+        var next = new DelayController(4);
+        next.Inherit(h);
+        Assert.Equal(3, next.Barred);
+        for (var i = 0; i < DelayController.LowerHold; ++i) next.Record(25, late: false);
+        Assert.Null(next.Evaluate());
+        var fresh = new DelayController(4);
+        fresh.Inherit(null);
+        for (var i = 0; i < DelayController.LowerHold; ++i) fresh.Record(25, late: false);
+        Assert.Equal(3, fresh.Evaluate());
+        var r = new DelayController(3) { Max = 10 };
+        for (var i = 0; i < DelayController.Block; ++i) r.Record(-3, late: true);
+        Assert.Equal(5, r.Evaluate());
+        Assert.Equal(0, r.Barred);
     }
 
     [Fact]

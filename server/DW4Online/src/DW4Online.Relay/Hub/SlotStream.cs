@@ -210,62 +210,89 @@ public sealed class SlotStream
     public double FillRate => Sealed == 0 ? 0 : (double)Filled / Sealed;
 }
 /// <summary>
-/// The delay rule of SEAMLESS.md 6.4 (round 62): it follows the member's link, not single stalls. Over the last ten
-/// seconds of pads (600): d rises by one when late pads came in at least three different seconds of them (one stall of
-/// the client, a burst after one lost segment or a load costs that member a few filled pads, not a lasting tick of input
-/// delay for the rest of the stage), and at once by up to three when most pads of the last second were late (the
-/// starting value too low, a joiner still a tick behind; the stream gives it only paced pads, none of a burst or right after
-/// a stall); it falls
-/// when ten seconds have passed since the last change and the 0.5 % quantile of the arrival margin is above 1.15 ticks,
-/// by as many ticks as leave 0.15 of a tick of that margin (at most three at once; the client keeps the presses of the
-/// samples it skips). Round S1's rule (rise on four late pads in 60 s, fall by one per 30 s) ratcheted every hiccup into
-/// lasting delay: two hidden clients at 20 ms of round trip went from d 3 to 8 and 9 within ten seconds of machine load
-/// and the guest of a mid-stage join started at 7 (docs/SEAMLESS.md 6.4, round 62). Bounds 1..max.
+/// The delay rule of SEAMLESS.md 6.4 (round 62): it follows the member's link, not single stalls, and holds still on a
+/// game whose pads leave on a vsync grid.
+/// <para>Rise, over the last ten seconds of pads (600): by one when late pads came in at least three different seconds of
+/// them (one stall of the client, a burst after one lost segment or a load costs that member a few filled pads, not a
+/// lasting tick of input delay for the rest of the stage), and at once by up to three when most pads of the last second
+/// were late (the starting value too low, a joiner still a tick behind; the stream gives it only paced pads, none of a
+/// burst or right after a stall).</para>
+/// <para>Fall: when thirty seconds of pads (1800) came since the last change and the 0.5 % quantile of their arrival
+/// margin is above 1.15 ticks, by as many ticks as leave 0.15 of a tick of that margin (at most three at once; the client
+/// keeps the presses of the samples it skips). Thirty seconds hold more than one beat of a game presenting at 60.000 Hz
+/// against the relay's 59.94 Hz (16.7 s): such a game sends its pads at its passes, so their margin is a sawtooth of one
+/// pass (16.7 ms) over that beat, and the review of round 62 found the ten seconds the fall looked at before seeing only
+/// its high part: d 4 -> 3 -> 5 -> 4 every 33 s at 24 ms of round trip, about 120 inputs late in a row each time. A fall
+/// that d had to undo (it rose again from the value it fell to) bars that value for a minute, twice as long after each
+/// further failure at it, up to ten minutes: a slower beat (a monitor at 59.95 Hz: 100 s) outlasts any window.</para>
+/// Round S1's rule (rise on four late pads in 60 s, fall by one per 30 s) ratcheted every hiccup into lasting delay: two
+/// hidden clients at 20 ms of round trip went from d 3 to 8 and 9 within ten seconds of machine load and the guest of a
+/// mid-stage join started at 7 (docs/SEAMLESS.md 6.4, round 62). Bounds 1..max.
 /// </summary>
 public sealed class DelayController(int initial)
 {
-    /// <summary>Pads the rules look at (ten seconds).</summary>
+    /// <summary>Pads the rise looks at (ten seconds).</summary>
     public const int Window = 600;
     /// <summary>One second of pads: late pads count by the seconds they came in.</summary>
     public const int Block = 60;
     /// <summary>Seconds of the window with late pads before d rises.</summary>
     public const int RaiseSeconds = 3;
-    /// <summary>Pads since the last change before d may fall (ten seconds).</summary>
-    public const int LowerHold = 600;
-    /// <summary>The margin quantile d falls by (0.5 %: three pads of the window may be below it).</summary>
+    /// <summary>Pads the fall looks at (thirty seconds: more than one 60.000 / 59.94 Hz beat of 16.7 s).</summary>
+    public const int FallWindow = 1800;
+    /// <summary>Pads since the last change before d may fall (the fall window, all of it at the new d).</summary>
+    public const int LowerHold = FallWindow;
+    /// <summary>The margin quantile d falls by (0.5 %: nine pads of the fall window may be below it).</summary>
     public const double LowerQuantile = 0.005;
     /// <summary>The share of a tick the low margin keeps after d fell (S1 kept a quarter; at 20 ms of round trip a joiner
     /// then stayed at 4 with a margin of 19-20 ms, one tick above the host's 3 at 3-6 ms).</summary>
     public const double LowerReserve = 0.15;
     /// <summary>Ticks d falls or rises at most in one evaluation.</summary>
     public const int MaxStep = 3;
+    /// <summary>Pads a value is barred after a fall to it was undone (one minute), the first time.</summary>
+    public const int BarHold = 3600;
+    /// <summary>The longest bar (ten minutes): it doubles at each further failure at the same value.</summary>
+    public const int BarHoldMax = 36000;
 
-    private readonly double[] _margin = new double[Window];
-    private readonly bool[] _late = new bool[Window];
+    private readonly double[] _margin = new double[FallWindow];
+    private readonly bool[] _late = new bool[FallWindow];
     private int _pos;
     private int _count;
     private int _sinceChange;
+    private long _records;
+    /// <summary>The value the last change fell to (0: the last change was a rise or none), and the one before it.</summary>
+    private int _fellTo;
+    private int _fellFrom;
+    private int _barred;
+    private long _barredUntil;
+    private int _barHold;
 
     public int Current { get; private set; } = initial;
     public int Max { get; set; } = 10;
     /// <summary>The share of late pads in the window that counts (with <see cref="RaiseSeconds"/> different seconds).</summary>
     public double LateTarget { get; set; } = 0.001;
+    /// <summary>Why the last change came: "late" (late pads in three seconds), "most_late" (most of a second late),
+    /// "margin" (the fall), for the relay's log.</summary>
+    public string LastReason { get; private set; } = "";
+    /// <summary>The value falls stop above while a bar lasts (0: none).</summary>
+    public int Barred => _records < _barredUntil ? _barred : 0;
 
     public void Record(double marginMs, bool late)
     {
         _margin[_pos] = marginMs;
         _late[_pos] = late;
-        _pos = (_pos + 1) % Window;
-        _count = Math.Min(Window, _count + 1);
+        _pos = (_pos + 1) % FallWindow;
+        _count = Math.Min(FallWindow, _count + 1);
         ++_sinceChange;
+        ++_records;
     }
 
-    /// <summary>The <paramref name="share"/> quantile of the window's margins (ms), or null with fewer than a second of pads.</summary>
+    /// <summary>The <paramref name="share"/> quantile of the margins since the last change, at most the fall window's
+    /// (ms), or null with fewer than a second of pads.</summary>
     public double? Quantile(double share)
     {
         if (_count < Block) return null;
         var copy = new double[_count];
-        for (var k = 0; k < _count; ++k) copy[k] = _margin[(_pos - _count + k + Window) % Window];
+        for (var k = 0; k < _count; ++k) copy[k] = _margin[(_pos - _count + k + FallWindow) % FallWindow];
         Array.Sort(copy);
         return copy[Math.Clamp((int)Math.Floor(_count * share), 0, _count - 1)];
     }
@@ -275,7 +302,7 @@ public sealed class DelayController(int initial)
     {
         var k = Math.Min(n, _count);
         var copy = new double[k];
-        for (var i = 0; i < k; ++i) copy[i] = _margin[(_pos - 1 - i + 2 * Window) % Window];
+        for (var i = 0; i < k; ++i) copy[i] = _margin[(_pos - 1 - i + 2 * FallWindow) % FallWindow];
         Array.Sort(copy);
         return copy;
     }
@@ -283,17 +310,18 @@ public sealed class DelayController(int initial)
     /// <summary>The low margin PING reports (the quantile the rule falls by), or null with fewer than a second of pads.</summary>
     public double? LowMargin() => Quantile(LowerQuantile);
 
-    /// <summary>Late pads in the window, and the number of its one-second blocks that hold one.</summary>
+    /// <summary>Late pads in the rise window (the newest ten seconds), and the number of its one-second blocks that hold one.</summary>
     public (int Late, int Seconds) LateInWindow()
     {
         int late = 0, seconds = 0;
-        for (var b = 0; b * Block < _count; ++b)
+        var n = Math.Min(_count, Window);
+        for (var b = 0; b * Block < n; ++b)
         {
             var any = false;
-            for (var k = b * Block; k < Math.Min(_count, (b + 1) * Block); ++k)
+            for (var k = b * Block; k < Math.Min(n, (b + 1) * Block); ++k)
             {
                 // The newest pads first, by blocks of one second.
-                if (!_late[(_pos - 1 - k + 2 * Window) % Window]) continue;
+                if (!_late[(_pos - 1 - k + 2 * FallWindow) % FallWindow]) continue;
                 ++late;
                 any = true;
             }
@@ -312,25 +340,64 @@ public sealed class DelayController(int initial)
         // member most of its inputs, so it rises at once, by what the median margin of that second says.
         var newest = NewestMargins(Block);
         var mostLate = newest.Length == Block && newest[Block / 2] < 0;
-        if (Current < Max && (mostLate || (late > _count * LateTarget && seconds >= RaiseSeconds)))
+        if (Current < Max && (mostLate || (late > Math.Min(_count, Window) * LateTarget && seconds >= RaiseSeconds)))
         {
             var step = mostLate ? Math.Clamp((int)Math.Ceiling(-newest[Block / 2] / tick) + 1, 1, MaxStep) : 1;
-            Change(Current + step);
+            if (_fellTo == Current)
+            {
+                // The value the last change fell to was too low after all: barred for a while, and d goes back to the
+                // value it fell from (it held for the whole fall window), unless the lateness asks for more.
+                Bar(Current);
+                if (mostLate) step = Math.Clamp(Math.Max(_fellFrom - Current, (int)Math.Ceiling(-newest[Block / 2] / tick)), 1, MaxStep);
+            }
+            LastReason = mostLate ? "most_late" : "late";
+            Change(Current + step, fell: false);
             return Current;
         }
-        if (_sinceChange >= LowerHold && _count == Window && Current > 1 && LowMargin() is { } low && low > tick * (1 + LowerReserve))
+        if (_sinceChange >= LowerHold && _count == FallWindow && Current > 1 && LowMargin() is { } low && low > tick * (1 + LowerReserve))
         {
             var step = Math.Clamp((int)Math.Floor((low - tick * LowerReserve) / tick), 1, MaxStep);
-            Change(Current - step);
-            return Current;
+            var to = Current - step;
+            if (_records < _barredUntil) to = Math.Max(to, _barred + 1);
+            if (to < Current)
+            {
+                LastReason = "margin";
+                Change(to, fell: true);
+                return Current;
+            }
         }
         return null;
     }
 
-    /// <summary>Sets the delay (a DELAY event goes out with it) and starts the window afresh.</summary>
-    public void Change(int d)
+    /// <summary>Takes over the bar of the member's previous stream (another stage, a fork's child, a rejoin) with the pads
+    /// it had left, and the length of the next one: a value too low for the member's link and game stays barred, and a
+    /// display beat that outlasts a stage visit does not start its tries afresh at every stage.</summary>
+    public void Inherit(DelayController? previous)
     {
+        if (previous is null || previous == this) return;
+        _barred = previous._barred;
+        _barHold = previous._barHold;
+        _barredUntil = _records + Math.Max(0, previous._barredUntil - previous._records);
+        // (Long over: the next failure starts with the first bar again, as on the previous stream.)
+        if (previous._records - previous._barredUntil >= BarHoldMax) _barHold = 0;
+    }
+
+    private void Bar(int d)
+    {
+        // The same value failing again before its last bar was long over: twice as long (1, 2, 4, 8, 10 minutes).
+        var again = d == _barred && _barHold > 0 && _records - _barredUntil < BarHoldMax;
+        // (An inherited bar that had run out counts as ending at this stream's first pad.)
+        _barHold = again ? Math.Min(2 * _barHold, BarHoldMax) : BarHold;
+        _barred = d;
+        _barredUntil = _records + _barHold;
+    }
+
+    /// <summary>Sets the delay (a DELAY event goes out with it) and starts the windows afresh.</summary>
+    private void Change(int d, bool fell)
+    {
+        _fellFrom = Current;
         Current = Math.Clamp(d, 1, Max);
+        _fellTo = fell ? Current : 0;
         Array.Clear(_late);
         _count = 0;
         _pos = 0;
