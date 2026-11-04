@@ -4,6 +4,7 @@
 // (vtable +C0, 803ACD88) runs them with named model timers, and the
 // sequence-change hook (vtable +B8, 803AE1A4) breaks sleep and stun.
 #include "dw4/engine/managers.hpp"
+#include "dw4/engine/overflow.hpp"
 
 #include <algorithm>
 #include <cstdlib>
@@ -286,7 +287,15 @@ void ModelCtrlManager::update_status(Engine& engine, ModelRam& ram) {
             st.start[0] = false;
         }
         if (timer_done(ram, now, "POISON")) {
-            if (!(engine.cheats().god && ram.is_player)) ram.hp = std::max(ram.hp - st.poison_damage, 0);
+            if (!(engine.cheats().god && ram.is_player)) {
+                int lost = st.poison_damage;
+                // Data Overflow (SURVIVAL.md 4.8, a run engine only): poison
+                // never takes the player's last HP; the run's defeat is its
+                // player hit rule's (OverflowRules::PlayerHit).
+                if (ram.is_player && engine.overflow_run() && engine.overflow()->player_hit.poison_keeps_one)
+                    lost = std::min(lost, std::max(ram.hp - 1, 0));
+                ram.hp = std::max(ram.hp - lost, 0);
+            }
             if (ram.is_player) {
                 if (sys) sys->players[std::size_t(slot_index)].hp = ram.hp;
                 Packet percent, value;

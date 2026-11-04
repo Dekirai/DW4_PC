@@ -1,4 +1,5 @@
 #include "dw4/engine/managers.hpp"
+#include "dw4/engine/overflow.hpp"
 
 #include <algorithm>
 #include <cstdlib>
@@ -101,6 +102,8 @@ void ModelCtrlManager::update_item(Engine& engine, ModelRam& ram) {
     const auto& m = ram.node->matrix;
     int nearest = -1;
     float best = 64.0f;
+    // Data Overflow (H4): the run's reach for instant pickups.
+    if (engine.overflow_run() && ram.item_table == 1) best = engine.overflow()->pickup_radius * engine.overflow()->pickup_radius;
     for (const auto& other : rams_) {
         if (!other->is_player || !other->generated || !other->node) continue;
         const auto& o = other->node->matrix;
@@ -141,6 +144,7 @@ void ModelCtrlManager::update_item(Engine& engine, ModelRam& ram) {
         engine.log("player " + std::to_string(nearest) + " picked up " + std::to_string(amount) + " bits (" +
                    std::to_string(slot.bits) + ")");
         show_number(engine, 4, amount, Vec3f{m(3, 0), m(3, 1), m(3, 2)});
+        if (engine.overflow_run()) engine.overflow()->item_taken(engine, nearest, 1, record); // (H5)
         return;
     }
     if (record <= 3) {
@@ -168,6 +172,7 @@ void ModelCtrlManager::update_item(Engine& engine, ModelRam& ram) {
         {"i_getitempnl01", "SQ_DARKUP2"}};
     // Posted with 1 frame (0x803AAA6C).
     post_effect(engine, "PLAYER", std::nullopt, nearest, panels[record - 1][0], panels[record - 1][1]);
+    if (engine.overflow_run()) engine.overflow()->item_taken(engine, nearest, 1, record); // (H5)
 }
 
 // 0x803AB838..0x803ABA44: the label goes on the near player's own
@@ -300,6 +305,7 @@ bool ModelCtrlManager::pick_item(Engine& engine, ModelRam& ram, int player) {
     std::string name;
     if (auto* db = engine.get<DatabaseManager>()) name = db->text(GameSystem::item_tables[ram.item_table], ram.item_record, "NAME");
     engine.log("player " + std::to_string(player) + " picked up " + game_text_utf8(name));
+    if (engine.overflow_run()) engine.overflow()->item_taken(engine, player, ram.item_table, ram.item_record); // (H5)
     ram.item_table = -1;
     select_sequence(engine, ram, "SQ_DDMG");
     item_erase_hook(engine, ram);

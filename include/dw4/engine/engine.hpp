@@ -36,6 +36,8 @@ class Manager;
 struct PlayerCarry;
 struct BarrierResult;
 struct RoomStory;
+// overflow.hpp (Data Overflow, docs/SURVIVAL.md 13.4)
+namespace overflow { class OverflowRules; }
 
 // The messenger's delay unit: one nominal frame is 16,666,666 ns (802ECA74 /
 // 803061BC). Delays and frame counts in the data use this constant.
@@ -356,6 +358,9 @@ struct ModelScriptContext {
     Vec3f* world_target{};         // MDLsetWorldPosTarget's destination (AIMAP WPOS, 8053594C)
     // Last FIGHTCALC results of this hit (80535A54..5C): damage, attribute, flag.
     std::int32_t damage{}, attribute = -1, damage_flag{};
+    // Data Overflow (H6): the tag of the port hitbox that fired this hit
+    // (ModelCtrlManager::port_hitbox), 0 for every box of the original.
+    std::int32_t port_tag{};
 };
 
 // What is in a memory card slot (Engine::card_setting). The card keeps its
@@ -681,6 +686,22 @@ public:
     // it for their duration (diagnostics, 6.12).
     static std::uint64_t mxcsr_repairs();
 
+    // ---- Data Overflow (docs/SURVIVAL.md 13.4; dw4/engine/overflow.hpp).
+    // A survival run's engine carries its rules, set by the host before the
+    // first request_stage; null in every other engine. They are in no
+    // snapshot and not in the fingerprint; with them null every hook is one
+    // untaken branch.
+    void set_overflow_rules(std::shared_ptr<overflow::OverflowRules> rules);
+    overflow::OverflowRules* overflow() const { return overflow_.get(); }
+    // The rules are set and are the run's (RuleSet::run): the hooks that
+    // change the game act only then (RuleSet::original changes nothing but
+    // the native player hit script, the T10 comparison).
+    bool overflow_run() const { return overflow_run_; }
+    // A script host call be:<method>(args...) as a script makes it: the
+    // native script handlers (H10) take the scripts' own code paths. Like a
+    // script call, a failing call is noted and answers nothing.
+    std::vector<Lua4Value> host_call(std::string_view method, std::span<const Lua4Value> args = {});
+
     // One fixed 60 Hz simulation step.
     void step(const std::array<PadSample, 4>& samples);
     // Collect the draw list for the current state.
@@ -753,7 +774,8 @@ public:
     // take the other 181. The new engine then boots as at power-on.
     static constexpr int kRebootFields = 258 - 77;
     // beSystem +0x5F (ConsoleReset::set_enabled).
-    void set_reset_enabled(bool enabled) { console_reset_.set_enabled(enabled); }
+    // (Never on in a run engine: SURVIVAL.md H3.)
+    void set_reset_enabled(bool enabled) { console_reset_.set_enabled(enabled && !overflow_run_); }
     const ConsoleReset& console_reset() const { return console_reset_; }
     const std::string& stage_name() const { return stage_name_; }
     // The world clock as the last update sampled it (8028AF84 at the start of
@@ -843,7 +865,8 @@ public:
     void for_each_script(const std::function<void(std::string_view name, std::string_view chunk)>& visit) const;
     // Scene graph root management.
     Node* global_root() { return &global_root_; }
-    bool soft_reset_allowed() const { return soft_reset_allowed_; }
+    // (Never in a run engine: SURVIVAL.md H3.)
+    bool soft_reset_allowed() const { return soft_reset_allowed_ && !overflow_run_; }
     void set_soft_reset_allowed(bool allowed) { soft_reset_allowed_ = allowed; }
     void attach_scene_root(Node* root);
     Node* find_named_node(Node* from, std::string_view name);
@@ -1041,6 +1064,10 @@ private:
     std::vector<std::pair<ObjectView, std::set<std::string, std::less<>>>> donor_starters_;
     std::vector<ObjectView> donor_scripts_;
     void load_enemy_donors();
+    // Data Overflow (H2): the run's explicit donor list (overflow/donors.cpp).
+    void load_overflow_donors();
+    std::shared_ptr<overflow::OverflowRules> overflow_;
+    bool overflow_run_{};
     // The targets (families and the effects they start) it registered.
     std::set<std::string, std::less<>> route_donor(const std::shared_ptr<const IgbDocument>& document, const std::vector<std::string>& families);
     std::unique_ptr<Lua4Vm> lua_;

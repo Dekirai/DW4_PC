@@ -43,6 +43,11 @@ add_library(dw4_engine src/engine/math.cpp src/engine/gekko_math.cpp src/engine/
   src/engine/subwnd.cpp src/engine/subwnd_folder.cpp src/engine/subwnd_skill.cpp
   src/engine/subwnd_shop.cpp src/engine/save_state.cpp src/engine/port_events.cpp src/engine/online.cpp
   src/engine/online_cameras.cpp src/engine/online_exits.cpp src/engine/online_scenes.cpp src/engine/online_story.cpp)
+# Data Overflow, the survival mode's run engine rules (docs/SURVIVAL.md 13.4):
+# the hooks' values and the native run scripts; inert without OverflowRules.
+target_sources(dw4_engine PRIVATE src/engine/overflow/rules.cpp src/engine/overflow/player_hit.cpp
+  src/engine/overflow/field_start.cpp src/engine/overflow/donors.cpp src/engine/overflow/director.cpp
+  src/engine/overflow/spawner.cpp src/engine/overflow/abilities.cpp src/engine/overflow/offers.cpp)
 target_link_libraries(dw4_engine PUBLIC dw4_core)
 # The Gekko arithmetic rounds only where the original rounds (no contraction).
 if(MSVC)
@@ -138,6 +143,12 @@ add_executable(dw4_inspect tools/dw4_inspect.cpp)
 target_link_libraries(dw4_inspect PRIVATE dw4_core)
 add_executable(dw4_catalog tools/dw4_catalog.cpp)
 target_link_libraries(dw4_catalog PRIVATE dw4_core)
+# Data Overflow's O1a spikes (docs/SURVIVAL_O1A.md): a headless run engine probe.
+add_executable(dw4_overflow_probe tools/overflow_probe.cpp)
+target_link_libraries(dw4_overflow_probe PRIVATE dw4_engine)
+if(WIN32)
+  target_link_libraries(dw4_overflow_probe PRIVATE psapi)
+endif()
 
 if(BUILD_TESTING)
   foreach(suite assets igb igb_document resources packages scripts lua4 textures meshes skinning animation_math enbaya adx save_data save_import card_store sfp sfd ini disc)
@@ -159,6 +170,11 @@ if(BUILD_TESTING)
   add_executable(dw4_randomizer_tests tests/randomizer_tests.cpp src/game/randomizer_save.cpp)
   target_link_libraries(dw4_randomizer_tests PRIVATE dw4_engine)
   add_test(NAME randomizer COMMAND dw4_randomizer_tests)
+  # Data Overflow's host side (round O1a lane A, docs/SURVIVAL.md 13.2-13.3): the run request, the story's
+  # generator across a run engine, the test variables a run keeps out, its cards and setup, the story switch.
+  add_executable(dw4_overflow_host_tests tests/overflow_host_tests.cpp src/game/overflow_run.cpp src/game/presence_data.cpp)
+  target_link_libraries(dw4_overflow_host_tests PRIVATE dw4_engine)
+  add_test(NAME overflow_host COMMAND dw4_overflow_host_tests)
   add_executable(dw4_interpolation_tests tests/interpolation_tests.cpp src/game/interpolation.cpp)
   target_link_libraries(dw4_interpolation_tests PRIVATE dw4_engine)
   add_test(NAME interpolation COMMAND dw4_interpolation_tests)
@@ -204,6 +220,22 @@ if(BUILD_TESTING)
   target_include_directories(dw4_online_achievements_tests PRIVATE src/game)
   target_link_libraries(dw4_online_achievements_tests PRIVATE dw4_online)
   add_test(NAME online_achievements COMMAND dw4_online_achievements_tests)
+  # Data Overflow (docs/SURVIVAL.md 13.4, 14.1): the run engine's rules
+  # without data, and with the game data T10 (the native player hit script
+  # and field start against the originals) and the run's hooks.
+  add_executable(dw4_overflow_rules_tests tests/overflow_rules_tests.cpp)
+  target_link_libraries(dw4_overflow_rules_tests PRIVATE dw4_engine)
+  add_test(NAME overflow_rules COMMAND dw4_overflow_rules_tests)
+  add_executable(dw4_overflow_scripts_tests tests/overflow_scripts_tests.cpp)
+  target_link_libraries(dw4_overflow_scripts_tests PRIVATE dw4_engine)
+  add_test(NAME overflow_scripts COMMAND dw4_overflow_scripts_tests "${DW4_TEST_DATA}")
+  add_executable(dw4_overflow_director_tests tests/overflow_director_tests.cpp)
+  target_link_libraries(dw4_overflow_director_tests PRIVATE dw4_engine)
+  add_test(NAME overflow_offers COMMAND dw4_overflow_director_tests offers)
+  add_test(NAME overflow_rng COMMAND dw4_overflow_director_tests rng)
+  add_test(NAME overflow_spawn COMMAND dw4_overflow_director_tests spawn "${DW4_TEST_DATA}")
+  add_test(NAME overflow_poison COMMAND dw4_overflow_director_tests poison "${DW4_TEST_DATA}")
+  add_test(NAME overflow_balance COMMAND dw4_overflow_director_tests balance "${DW4_TEST_DATA}")
   # The online client (asset free; the env test reads the sources).
   # (online_story: the story sets and golden vectors of data/online, SEAMLESS.md 8.)
   foreach(suite online_cpu_gate online_env online_wire online_session online_api online_story online_lobby)
@@ -275,7 +307,7 @@ if(DW4_BUILD_APP)
     src/game/discord_ipc.cpp src/game/discord_presence.cpp src/game/presence_data.cpp src/game/presence_art.cpp
     src/game/overhead_labels.cpp src/game/overhead_labels_draw.cpp src/game/ghost_figures.cpp src/game/achievements.cpp
     src/game/randomizer_save.cpp src/game/dev_present.cpp src/game/online_run.cpp src/game/online_ui.cpp src/game/online_ui_script.cpp src/game/title_entry.cpp
-    src/game/online_achievements.cpp)
+    src/game/online_achievements.cpp src/game/host_view.cpp src/game/overflow_run.cpp src/game/overflow_host.cpp src/game/overflow_driver.cpp)
   target_include_directories(dw4_game PRIVATE ${pl_mpeg_src_SOURCE_DIR} ${stb_src_SOURCE_DIR})
   target_compile_definitions(dw4_game PRIVATE DW4_PC_VERSION="${PROJECT_VERSION}")
   target_link_libraries(dw4_game PRIVATE dw4_engine dw4_online imgui zstd_decoder SDL3::SDL3 OpenGL::GL)

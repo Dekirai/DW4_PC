@@ -43,6 +43,9 @@ public:
     // none was kept at this window size).
     void keep_picture(int window_width, int window_height);
     bool draw_kept_picture(int window_width, int window_height);
+    // No picture is kept any more (another engine drew the last one: the
+    // Data Overflow switches).
+    void forget_kept_picture() { kept_width_ = kept_height_ = 0; }
     // The window depth (0..1) the last render left at a window pixel (GL
     // coordinates, origin bottom left); nullopt outside the window or when
     // the depth cannot be read. It waits for the picture to be drawn (the

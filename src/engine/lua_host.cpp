@@ -1,5 +1,6 @@
 #include "dw4/engine/engine.hpp"
 #include "dw4/engine/managers.hpp"
+#include "dw4/engine/overflow.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -109,6 +110,8 @@ void Engine::for_each_script(const std::function<void(std::string_view name, std
 
 bool Engine::run_script(std::string_view name) {
     if (!lua_) install_lua();
+    // Data Overflow (H10): a run engine answers some scripts natively.
+    if (overflow_ && overflow_->script(*this, name)) return true;
     // Seamless online co-op: the gate disc's user forks off first; the
     // members who stay do not run its script (online_exits.cpp).
     if (name == "gatedisc.lua" && online_shared() && !gatedisc_fork()) return true;
@@ -211,6 +214,18 @@ bool Engine::run_script(std::string_view name) {
     // Online: the overrides of func.lua's globals (install_online_lua).
     if (ran && online_.enabled && name == "func.lua") install_online_lua();
     return ran;
+}
+
+std::vector<Lua4Value> Engine::host_call(std::string_view method, std::span<const Lua4Value> args) {
+    Lua4HostCall call;
+    call.name = "be." + std::string(method);
+    call.arguments = args;
+    try {
+        return lua_call(call);
+    } catch (const std::exception& error) {
+        note(std::string("script call failed: ") + call.name + ": " + error.what());
+        return {};
+    }
 }
 
 std::vector<Lua4Value> Engine::lua_call(const Lua4HostCall& call) {
@@ -601,6 +616,8 @@ std::vector<Lua4Value> Engine::lua_call(const Lua4HostCall& call) {
     if (method == "MDLgetBulletName") return string_result(fight::bullet_name(bullet_kind));
     if (method == "BLTisPlayerBullet") return number(context && context->shooter_name.starts_with('p') ? 1 : 0);
     if (method == "BLTisHitCheck") {
+        // Data Overflow (H4): the run's Arts always hit.
+        if (overflow_run_ && context && overflow_->always_hits(*context)) return number(1);
         const auto* stats = shooter_stats();
         auto* model = context_model();
         if (!stats || !model) return number(1);
@@ -623,6 +640,8 @@ std::vector<Lua4Value> Engine::lua_call(const Lua4HostCall& call) {
         if (cheats().damage_dealt != 100 && result.damage > 0)
             result.damage = std::max(1, int(std::int64_t(result.damage) * cheats().damage_dealt / 100));
         if (cheats().one_hit && result.damage > 0) result.damage = std::max(result.damage, model->hp);
+        // Data Overflow (H4): the run's factors per Art, technique and element.
+        if (overflow_run_ && result.damage > 0) result.damage = overflow_->dealt(*this, *context, result.damage, result.attribute);
         context->damage = result.damage;
         context->attribute = result.attribute;
         context->damage_flag = result.flag;
@@ -661,7 +680,10 @@ std::vector<Lua4Value> Engine::lua_call(const Lua4HostCall& call) {
         if (!model || !sys || !context) return number(0);
         const int killer = context->shooter_name.starts_with('p') ? context->shooter : -1;
         if (port_events_enabled()) port_event({PortEvent::Kind::enemy_defeated, killer, model->record, 0, model->info_name});
-        return number(sys->experience_up(*this, killer, model->record));
+        const int gain = sys->experience_up(*this, killer, model->record);
+        // Data Overflow (H5): the director's own notification.
+        if (overflow_run_) overflow_->enemy_defeated(*this, killer, model->record, model->info_name, model->index);
+        return number(gain);
     }
     if (method == "BLTcalcSkillUp") {
         // 802EF198: P2ESKILLUP for a player shooter (hit flag, critical).
@@ -741,6 +763,9 @@ std::vector<Lua4Value> Engine::lua_call(const Lua4HostCall& call) {
                                           down_of(shooter, 1));
         if (cheats().damage_taken != 100 && result.damage > 0)
             result.damage = std::max(1, int(std::int64_t(result.damage) * cheats().damage_taken / 100));
+        // Data Overflow (H4): the run's damage-taken rule (time, tier,
+        // Corrupted) with the 35 % clamp for every non-Guardian.
+        if (overflow_run_ && result.damage > 0) result.damage = overflow_->taken(*this, *context, model->index, model->max_hp, result.damage);
         context->damage = result.damage;
         context->attribute = result.attribute;
         context->damage_flag = result.flag;

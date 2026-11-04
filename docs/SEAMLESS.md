@@ -7443,7 +7443,9 @@ the real server ("you only see yourself"; question 1): in a member's solo hub
 instance the other room members of the same hub stage appear as their
 Digimon, look only, and nothing of it reaches the simulation. Built as 12.1
 describes: on the client the presentation-only renderer
-(`src/game/ghost_figures.{hpp,cpp}`, the hooks in `game_main.cpp`), the
+(`src/game/ghost_figures.{hpp,cpp}`, the hooks in `game_main.cpp`; since
+the Data Overflow merge the figures' draw and the remote tags' places are in
+`host_view.cpp`'s `present_scene`, docs/OVERFLOW_HOST.md 9), the
 PRESENCE2 sender (`Session::send_presence`, `track_figure`, the read-only
 facts of `GameEngineLink::presence`) and the receiver's interpolation
 (`PresenceTracks`); on the hub `Presence2Msg`, `RoomHub.OnPresence2` and

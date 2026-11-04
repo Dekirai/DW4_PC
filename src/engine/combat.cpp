@@ -1,4 +1,5 @@
 #include "dw4/engine/managers.hpp"
+#include "dw4/engine/overflow.hpp"
 
 #include <algorithm>
 #include <cstdio>
@@ -703,6 +704,8 @@ void skill_up(Engine& engine, int shooter, int kind, int /*hit*/, int critical) 
     auto* sys = engine.get<GameSystem>();
     if (!sys) return;
     const int slot = std::clamp(shooter, 0, 3);
+    // Data Overflow (H4): the run's skill rule (SURVIVAL.md 6.2).
+    if (engine.overflow_run() && engine.overflow()->skill_up(engine, slot, kind, critical)) return;
     auto& player = sys->players[std::size_t(slot)];
     auto& stats = player.stats;
     const int level = stats.level;
@@ -938,7 +941,10 @@ void GameSystem::recalc_player(Engine& engine, int slot) {
         const int base = cell("shinka", row, tech);
         const int skill_type = std::clamp(cell("pcTech", base, "SKILL"), 0, 8);
         const int points = stats.skill[std::size_t(skill_type)];
-        if (cell("shinka", row, tech + "_LEVEL") > level) continue;
+        int lock = cell("shinka", row, tech + "_LEVEL");
+        // Data Overflow (H8): the run's level lock (TECHn_LEVEL x 2/3).
+        if (engine.overflow_run()) lock = engine.overflow()->technique_level(lock);
+        if (lock > level) continue;
         for (int rank = 4; rank >= 0; --rank)
             if (cell("shinka", row, tech + "_SKILL" + std::to_string(rank + 1)) <= points) {
                 player.wazalist.push_back(base + rank);
@@ -962,6 +968,8 @@ void GameSystem::recalc_player(Engine& engine, int slot) {
     }
     // NEXTEXP (80370DBC): (level + 140) * level^2 + level * 200; none at 999.
     stats.next_exp = level >= 999 ? 0 : (level + 140) * level * level + level * 200;
+    // Data Overflow (H4): the run's curve (SURVIVAL.md 4.5).
+    if (engine.overflow_run() && level < 999) stats.next_exp = engine.overflow()->next_exp(level);
 
     int delay = down[6];
     socket(delay, "DELAY", false);
@@ -1090,6 +1098,8 @@ int GameSystem::experience_up(Engine& engine, int killer, int enemy_record) {
         exp = slot == killer ? exp / 50 : exp / 100;
         // Rebalancing option: the EXP rate.
         if (engine.cheats().exp_rate != 100) exp = int(std::int64_t(exp) * engine.cheats().exp_rate / 100);
+        // Data Overflow (H4): the tier's EXP factor.
+        if (engine.overflow_run()) exp = engine.overflow()->exp_gain(exp);
         if (slot == killer) killer_gain = exp;
         stats.exp += exp;
         apply_level_ups(engine, slot);
@@ -1100,6 +1110,7 @@ int GameSystem::experience_up(Engine& engine, int killer, int enemy_record) {
 bool GameSystem::apply_level_ups(Engine& engine, int slot) {
     auto& player = players[std::size_t(std::clamp(slot, 0, 3))];
     auto& stats = player.stats;
+    const int old_hp = player.hp, old_max_hp = player.max_hp, old_mp = player.mp, old_max_mp = player.max_mp;
     bool leveled = false;
     while (stats.level < 999 && stats.next_exp <= stats.exp) {
         ++stats.level;
@@ -1109,8 +1120,14 @@ bool GameSystem::apply_level_ups(Engine& engine, int slot) {
     if (!leveled) return false;
     engine.port_event({PortEvent::Kind::level_up, slot, stats.level, 0, {}}); // observe-only
     store_species(slot);
-    player.hp = player.max_hp;
-    player.mp = player.max_mp;
+    // Data Overflow (H4): a run keeps the HP and MP fractions (+3 % HP)
+    // instead of the refill (SURVIVAL.md 4.5).
+    if (engine.overflow_run()) {
+        engine.overflow()->level_up(engine, slot, old_hp, old_max_hp, old_mp, old_max_mp);
+    } else {
+        player.hp = player.max_hp;
+        player.mp = player.max_mp;
+    }
     auto* models = engine.get<ModelCtrlManager>();
     std::string name = player.digimon;
     if (models)
@@ -1130,11 +1147,19 @@ bool GameSystem::apply_level_ups(Engine& engine, int slot) {
     full.floats.push_back(100.0f);
     hp.ints.push_back(player.hp);
     mp.ints.push_back(player.mp);
+    Packet mp_full = full;
+    if (engine.overflow_run()) {
+        // (The run's meters show what is left.)
+        full.floats[0] = 100.0f * float(player.hp) / float(std::max(player.max_hp, 1));
+        mp_full.floats[0] = 100.0f * float(player.mp) / float(std::max(player.max_mp, 1));
+    }
     send("NUMBERCTRL", "lvnm", "SETVALUE", level);
     send("METERCTRL", "hpmt", "SETPERCENT", full);
     send("NUMBERCTRL", "hpnm", "SETVALUE", hp);
-    send("METERCTRL", "mpmt", "SETPERCENT", full);
+    send("METERCTRL", "mpmt", "SETPERCENT", mp_full);
     send("NUMBERCTRL", "mpnm", "SETVALUE", mp);
+    // Data Overflow (H5): the director's own notification.
+    if (engine.overflow_run()) engine.overflow()->level_reached(engine, slot, stats.level);
     return true;
 }
 
