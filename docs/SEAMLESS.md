@@ -6030,7 +6030,11 @@ adds PRESENCE2 (client 0x14, server 0x90; first 0x8F, which round 62's
 NETSTAT holds in the field: moved in the fix round): a version byte (1), the PRESENCE
 fields, then the motion clip (0-16 of A-Z a-z 0-9 _; empty: unknown), flags
 (1 the clip loops, 2 busy: a status or shop window or a talk is open, the
-figure stands and the tag hides), a warp counter (the sender counts its stage
+figure stands and the tag hides; in a field since round 63 the member's own
+status window sets busy, so members of another instance of that stage see no
+tag for it while its own instance's members see "Kim is in the menu"; an
+own talk sends the presence with an empty stage, so the others drop it as
+for any hidden tag), a warp counter (the sender counts its stage
 loads and every step that moved its figure more than 24 units, far beyond a
 run's 0.7: receivers never glide across a change), the sender's clock in
 milliseconds (wrapping) and the weapon package (0-24 characters). The clock is
@@ -6067,8 +6071,11 @@ the others' figures from PRESENCE alone (no clip or weapon: a figure runs or
 stands by the speed of its packets). An older client ignores the flag bit and
 never gets a 0x90 frame: the hub sends PRESENCE2 only to members that send
 PRESENCE2 themselves (`HubMember.PresenceV2`) and PRESENCE, the same subset,
-to the others, so old and new clients share a room (the protocol number stays
-45: nothing of the lockstep changed). A later version keeps the layout and
+to the others, so old and new clients could share a room (round 60 left the
+protocol number at 45: nothing of the lockstep changed; round 63 raised it to
+46 for its own reason, 5.3, so since then the two speakers meet only at an
+older hub or with a later PRESENCE2 version - scenario P2 plays the old
+client with `DW4_ONLINE_TEST_PRESENCE1`). A later version keeps the layout and
 appends: the hub reads and checks its version 1 part and forwards only that,
 written at version 1 with the flags version 1 knows (counted as
 `presence_version`), so it never passes on what it cannot check and the
@@ -7215,7 +7222,7 @@ own window programs per slot, the scene scope with its narrowed commands, the
 members' own copies of window models, cursors and text lines, the picture
 and sound filters, membership and exit rules for busy members, the online
 script's `menu`, `browse`, `talkto`, `shot` and conditions `menu`, `menus`,
-`talking`, `scenes`, `lost`, run.py's `"shots"`, the protocol 46 (a 45 client
+`talking`, `scenes`, `lost`, `enemy`, run.py's `"shots"`, the protocol 46 (a 45 client
 would pause for a menu and desynchronize). Checked: the pause analysis of 5.3,
 ctest 44/44 (the `online` scenario "dng101b1 own menus"), the real-client
 scenarios M1 and M2 with screenshots from both machines (every instance's
@@ -7232,6 +7239,24 @@ context, 3.7, had changed meanwhile); M2 therefore lets both wait on the mat.
 Left for later: camera tours, tutorials and shaking mats as own scenes (they
 need a per-slot demo viewer); the story scenes the instance shares stay the
 original by decision.
+
+The review found a blocker (two own talks at once shared the stage's Lua talk
+globals: a recorder scene that never ended, wrong exchanges) and three
+should-fix points; the fix round made talks wait for each other (one NPC talk
+per instance at a time, as in local co-op), keeps the talk globals per scope,
+lets merchants trade with the talker's folders, checks a gift partner's room
+when given and narrows `MODELCTRL` / `PLAYER -1` in a scope to the own slot.
+
+Checked on the merge with main (e4d30bb: round 60's ghost figures and round
+62's lag fix; the `shot` step and run.py's `"shots"` are main's, the shots of
+M1/M2 now lie in the scenario folder at 1920x1009; the name tag rules combine
+round 60's `hidden(engine, windows)` / `window_open` with the own slot): ctest
+45/45, offline `det.sh` 4004f056 / 396cb219, on hidden real clients P1, P2,
+P3, M1, M2 (twice), L1, S1, S11a and S18 all passed (M1 98, M2 250 and 281,
+L1 101, S1 178, S11a 121 with only its injected desync before the resync,
+S18 175 fingerprint comparisons equal), the pictures show the ghosts' tags in
+the lobby, "aaaaaaaa is in the menu" over a member in its own window and the
+own windows only on their owner's machine.
 
 ### Round G (proposed r64): guests on the host's story
 
