@@ -172,10 +172,33 @@ public sealed class JoinState(HubInstance target, int slot, ArrivalGroup from, i
     /// <summary>JOIN_REQ sent to the solo leader without its JOIN_AT (a few, then the joiner falls back to NEW).</summary>
     public int JoinRequests { get; set; }
     public bool StateSent { get; set; }
+    /// <summary>Round J: the checkpoint the join waits for (the relay asked the donor) until this time (0: not waiting).</summary>
+    public long CheckpointWaitUntil { get; set; }
+    /// <summary>Round J: the joiner's state came from a checkpoint; the classic path is the fallback.</summary>
+    public bool FromCheckpoint { get; set; }
+    /// <summary>Round J: the next state is the classic one (a checkpoint failed).</summary>
+    public bool Classic { get; set; }
     /// <summary>READY arrived (the joiner caught up).</summary>
     public bool Ready { get; set; }
     /// <summary>The JOIN is stamped (sealed) or JOIN_REQ went to the solo leader.</summary>
     public bool Stamped { get; set; }
+}
+
+/// <summary>A checkpoint the relay keeps (round J): the donor's tick state at Tick, with its hash and the load end.</summary>
+public sealed record StoredCheckpoint(uint Tick, ulong Hash, uint LoadEnd, byte[] Bytes, long At)
+{
+    public bool Agreed { get; set; }
+}
+
+/// <summary>A donor's checkpoint arriving in chunks.</summary>
+public sealed class CheckpointUpload(HubMember donor, uint tick, ulong hash, uint loadEnd, uint total)
+{
+    public HubMember Donor { get; } = donor;
+    public uint Tick { get; } = tick;
+    public ulong Hash { get; } = hash;
+    public uint LoadEnd { get; } = loadEnd;
+    public byte[] Buffer { get; } = new byte[total];
+    public uint Received { get; set; }
 }
 
 public enum HoldKind
@@ -426,6 +449,22 @@ public sealed class HubInstance(uint id)
 
     public long CreatedAt { get; set; }
     public long Desyncs { get; set; }
+
+    // Round J: checkpoints (SEAMLESS.md 6.13.4)
+    /// <summary>The newest checkpoints, oldest first.</summary>
+    public List<StoredCheckpoint> Checkpoints { get; set; } = [];
+    /// <summary>The donor's upload in progress.</summary>
+    public CheckpointUpload? Upload { get; set; }
+    /// <summary>When the donor was last asked (0: never).</summary>
+    public long CheckpointAskedAt { get; set; }
+    /// <summary>STATEHASH reports per checkpoint tick: slot -> (hash, load end).</summary>
+    public SortedDictionary<uint, Dictionary<int, (ulong Hash, uint LoadEnd)>> StateHashes { get; } = [];
+    /// <summary>The visit's load end K as the members' reports agree (a solo leader's alone).</summary>
+    public uint? AgreedLoadEnd { get; set; }
+    /// <summary>A desync after a rebuild from a checkpoint: joins and resyncs take the classic path from now on.</summary>
+    public bool CheckpointSuspect { get; set; }
+    /// <summary>The tick of the last READY from a checkpoint (the suspicion window counts from it).</summary>
+    public uint? RebuildTick { get; set; }
 
     public IEnumerable<HubMember> Members => Slots.Where(m => m is not null)!;
     /// <summary>The filled slots with their members (by index: never trusts a member's own slot number).</summary>
