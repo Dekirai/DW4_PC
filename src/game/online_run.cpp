@@ -402,11 +402,11 @@ void OnlineRun::after_live_step(double now) {
     // The title starts a game: the confirmed room story replaces the
     // character's FLAG / FLAGFOLDER / COUNTER before gameStart.lua runs
     // (GameEngineLink applies it with the room's modes on this very step).
-    // Without a confirmed story yet the character's own stays until the
-    // first barrier's merge.
+    // Round G-core: never without a confirmed story; without one the next
+    // live step waits until it comes (begin_game, pass), so the character's
+    // own story never plays in the room nor reaches a pending set.
     // (Every Game Start of the session: after "Continue? No" the title
     // starts the next one with the room story and modes again.)
-    // (Round G-core: never without a confirmed story; without one the next live step waits, begin_game.)
     if (link_.game_start() && story_hold_since_ < 0) begin_game(now);
     // The call shop is closed online (round G-core): its refusal branch ran.
     if (const int refused = engine_().callshop_refused; refused != callshop_seen_) {
