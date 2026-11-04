@@ -1200,6 +1200,10 @@ int run(const Options& options, dw4::game::Settings& settings) {
         }
         std::vector<dw4::engine::DrawItem> items;
         dw4::engine::ShadowFrame shadow;
+        // A picture's list and shadow with the ghost figures in (the draw
+        // block's copies; here, as the renderer keeps the shadow's address).
+        std::vector<dw4::engine::DrawItem> ghost_items;
+        dw4::engine::ShadowFrame ghost_shadow;
         dw4::engine::FrameCamera camera;
         dw4::engine::Vec4f clear{};
         std::array<dw4::engine::PadSample, 4> pads{};
@@ -3059,8 +3063,10 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 // draws the list again as it is), never the simulation's.
                 const std::vector<dw4::engine::DrawItem>* frame_items = &items;
                 const dw4::engine::ShadowFrame* frame_shadow = &shadow;
-                std::vector<dw4::engine::DrawItem> ghost_items;
-                dw4::engine::ShadowFrame ghost_shadow;
+                if (!ghost_items.empty()) {
+                    ghost_items.clear();
+                    ghost_shadow = {};
+                }
                 if (ghosts.active() && engine.presenting()) {
                     const auto ghost_draw_start = std::chrono::steady_clock::now();
                     ghost_items = items;
@@ -3958,6 +3964,8 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     dev_dumper->picture(dev_present, frame, steps, present_alpha, smooth_blending ? &blend_report : nullptr,
                                         engine.stage_name(), width, height, pixels);
                     if (dev.ids && dev.pictures) {
+                        // (The picture's own list: its own shadow, not the ghost figures'.)
+                        renderer->set_shadow(&shadow);
                         renderer->set_id_pass(true);
                         renderer->render(items, camera, clear, screen, wide, width, height);
                         renderer->set_id_pass(false);
