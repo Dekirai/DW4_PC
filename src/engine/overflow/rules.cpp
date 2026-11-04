@@ -108,7 +108,6 @@ void OverflowRules::end_run(Engine& engine, RunEnd end) {
 bool OverflowRules::always_hits(const ModelScriptContext& context) const { return damage.arts_always_hit && context.port_tag != 0; }
 
 int OverflowRules::dealt(Engine& engine, const ModelScriptContext& context, int value, int attribute) {
-    (void)engine;
     double factor = 1.0;
     std::int32_t source;
     if (context.port_tag != 0) {
@@ -126,6 +125,7 @@ int OverflowRules::dealt(Engine& engine, const ModelScriptContext& context, int 
     if (attribute >= 0 && attribute < 4) factor *= damage.element_factor[std::size_t(attribute)];
     const int out = std::clamp(int(double(value) * factor), 1, 99999);
     tally.dealt_by[source] += out;
+    if (director) director->damage_dealt(engine, context.name, context.index, source, out);
     return out;
 }
 
@@ -134,6 +134,7 @@ int OverflowRules::taken(Engine& engine, const ModelScriptContext& context, int 
     const auto kind = enemy_class(context.shooter_name, context.shooter);
     double factor = damage.taken_factor;
     if (kind == EnemyClass::corrupted) factor *= damage.corrupted_factor;
+    if (const auto found = damage.family_factor.find(context.shooter_name); found != damage.family_factor.end()) factor *= found->second;
     int out = std::clamp(int(double(value) * factor), 1, 99999);
     last_taken.raw = out;
     last_taken.clamped = false;
@@ -261,6 +262,10 @@ bool OverflowRules::script(Engine& engine, std::string_view name) {
     }
     if (!run()) return false;
     if (name == "first.lua" && has_native_field_start(engine.stage_name())) return native_field_start(engine, *this);
+    // H2 never loads a donor family's ded_*.lua (no story flag, scene or
+    // door); MRδ04 and MRε05 still call theirs (their donor stages are boss
+    // stages): answered with nothing.
+    if (name.starts_with("ded_e_") && name.ends_with(".lua")) return true;
     if (name == "end_g_000bcaps.lua") {
         // The original's game over (no live player left): the run ends.
         end_run(engine, {EndReason::game_over, {}});

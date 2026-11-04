@@ -2304,7 +2304,7 @@ void ModelCtrlManager::update_port_hitboxes(Engine& engine, ModelRam& ram) {
             // The targets struck so far travel with the bullet (hit_check
             // skips them and adds the new one).
             auto struck = copy.struck;
-            if (!copy.repeat) packet.objects.push_back(&struck);
+            if (!copy.repeat) packet.objects.push_back(copy.shared_struck ? copy.shared_struck.get() : &struck);
             engine.messenger().send(engine, category, std::nullopt, -1, "CHKBULLET", packet);
             if (!ram.generated) return;
             if (i < ram.port_hitboxes.size()) ram.port_hitboxes[i].struck = std::move(struck);

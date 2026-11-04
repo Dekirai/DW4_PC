@@ -1682,6 +1682,10 @@ public:
             bool repeat{};
             int max_targets{};
             std::vector<std::pair<std::string, int>> struck;
+            // The boxes of one Art strike share their struck targets: a
+            // target inside several of them is struck once (null: the box's
+            // own list).
+            std::shared_ptr<std::vector<std::pair<std::string, int>>> shared_struck;
         };
         std::vector<Hitbox> hitboxes;
         // Data Overflow (H6): the run's port hitboxes (an Art's boxes). They

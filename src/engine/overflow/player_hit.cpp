@@ -312,7 +312,16 @@ void native_player_hit(Engine& engine, OverflowRules& rules) {
     // 80000..89999: support techniques (heal, force) reach the player.
     if (!(80000 > kind) && !(kind >= 90000)) {
         be.call("MDLsetDMGTurn", {N(0)});
+        // The run's heal cap (6.4): a heal restores at most heal_cap of MaxHP.
+        auto* sys = rules.run() ? engine.get<GameSystem>() : nullptr;
+        const int slot = std::clamp(int(ram), 0, 3);
+        const int hp_before = sys ? sys->players[std::size_t(slot)].hp : 0;
         const auto effect = be.call("BLPcalcKoukaMagic");
+        if (sys) {
+            const auto& player = sys->players[std::size_t(slot)];
+            const int cap = std::max(1, int(double(player.max_hp) * double(rules.player_hit.heal_cap)));
+            if (player.hp - hp_before > cap) sys->change_hp(engine, slot, hp_before + cap - player.hp);
+        }
         be.call("BLTcalcSkillUp", {effect, N(0)});
         return;
     }

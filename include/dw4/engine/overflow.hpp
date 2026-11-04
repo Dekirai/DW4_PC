@@ -145,6 +145,11 @@ public:
     virtual void level_up(Engine& engine, int slot, int level) { (void)engine; (void)slot; (void)level; }
     virtual void item_taken(Engine& engine, int slot, int table, int record) { (void)engine; (void)slot; (void)table; (void)record; }
     virtual void player_hit(Engine& engine, const HitTaken& hit) { (void)engine; (void)hit; }
+    // H4: the run's damage dealt to an enemy (after the run's factors):
+    // `source` is the port hitbox tag (> 0, an Art) or -(bullet kind).
+    virtual void damage_dealt(Engine& engine, std::string_view family, int index, std::int32_t source, int damage) {
+        (void)engine; (void)family; (void)index; (void)source; (void)damage;
+    }
 };
 
 // Skill columns of GameSystem::Stats::skill (shinka BASE_SKILL, pcTech SKILL):
@@ -186,6 +191,7 @@ public:
         // Taken (enemy to player, BLPgetDamageValue).
         float taken_factor = 1.0f;                  // time x tier (1 + 0.04 x minutes, Hard 1.2, ...)
         float corrupted_factor = 1.5f;
+        std::map<std::string, float, std::less<>> family_factor; // a family's own damage factor (14.3; the director's table)
         float hit_clamp = 0.35f;                    // a non-Guardian hit takes at most this share of MaxHP
     } damage;
     struct Levels {
@@ -210,6 +216,7 @@ public:
         int muteki = 50;                            // frames after every damaging hit (4.8)
         int status_cap = 30;                        // stun / sleep / bind of normal enemies, frames
         int guard_percent = 50;                     // classic buttons: a guarded hit's share
+        float heal_cap = 0.20f;                     // a heal technique restores at most this share of MaxHP (6.4)
     } player_hit;
     float pickup_radius = 8.0f;                     // instant pickups (items.cpp: the original's 8)
     float walk_factor = 1.0f;                       // the player's walk speed (Boost, traits)
