@@ -262,6 +262,13 @@ online::character_api::Context OnlineRun::character_context() const {
     c.players = std::clamp(std::popcount(unsigned(session_->present())), 1, 4);
     c.room_players = std::clamp(std::max(int(session_->roster().size()), int(session_->remote().size()) + 1), 1, 10);
     c.randomizer = room_.settings.randomizer();
+    // The engine's real cheat flags, not a constant (SEAMLESS.md 9.1.10;
+    // online they stay off, Engine::step).
+    if (engine_) {
+        const auto& cheats = engine_().cheats();
+        c.cheats = cheats.god || cheats.infinite_mp || cheats.one_hit;
+        c.rebalanced = cheats.exp_rate != 100 || cheats.damage_dealt != 100 || cheats.damage_taken != 100;
+    }
     c.difficulty = room_.settings.difficulty;
     c.protocol = int(kOnlineProtocol);
     c.client_version = client_version_;

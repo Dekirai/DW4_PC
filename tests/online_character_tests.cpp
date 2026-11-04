@@ -6,6 +6,7 @@
 // local cache, reload the server's character), a record of another
 // character, retries after 429 and network errors, the recovery of an unsent
 // save at the next room entry.
+#include "online/achievement_api.hpp"
 #include "online/character.hpp"
 #include "online/cloud_save.hpp"
 #include "online/json.hpp"
@@ -141,6 +142,25 @@ void requests() {
         alone.room_players = 0;
         const auto a = json::parse(character_api::put_request(record, 7, 130, alone).body);
         check(a && !(*a)["context"].find("roomPlayers"), "no roomPlayers when the room's size is unknown");
+    }
+    {
+        // The engine's real flags, no constant (SEAMLESS.md 9.1.10).
+        auto cheated = ctx;
+        cheated.cheats = true;
+        const auto a = json::parse(character_api::put_request(record, 7, 130, cheated).body);
+        check(a && (*a)["context"]["cheats"].flag() == true && (*a)["context"]["rebalanced"].flag() == false, "cheats on in the context");
+        auto rebalanced = ctx;
+        rebalanced.rebalanced = true;
+        const auto b = json::parse(character_api::put_request(record, 7, 130, rebalanced).body);
+        check(b && (*b)["context"]["cheats"].flag() == false && (*b)["context"]["rebalanced"].flag() == true, "rebalancing in the context");
+        dw4::game::online::achievements::ReportContext report;
+        report.cheats = true;
+        const auto r = json::parse(dw4::game::online::achievements::context_json(report));
+        check(r && (*r)["cheats"].flag() == true && (*r)["rebalanced"].flag() == false, "cheats on in the achievement context");
+        report.cheats = false;
+        report.rebalanced = true;
+        const auto q = json::parse(dw4::game::online::achievements::context_json(report));
+        check(q && (*q)["cheats"].flag() == false && (*q)["rebalanced"].flag() == true, "rebalancing in the achievement context");
     }
     check(body_record(update) == record, "the record travels as base64");
 

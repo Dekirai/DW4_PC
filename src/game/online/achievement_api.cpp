@@ -9,8 +9,9 @@ namespace dw4::game::online::achievements {
 std::string context_json(const ReportContext& c) {
     return "{\"roomCode\":" + json::quote(c.room_code) + ",\"players\":" + std::to_string(std::clamp(c.players, 1, 10)) +
            ",\"roomPlayers\":" + std::to_string(std::clamp(c.room_players, 1, 10)) +
-           ",\"randomizer\":" + (c.randomizer ? "true" : "false") +
-           ",\"cheats\":false,\"rebalanced\":false,\"saveStateLoaded\":false,\"difficulty\":" + std::to_string(std::clamp(c.difficulty, 0, 2)) +
+           ",\"randomizer\":" + (c.randomizer ? "true" : "false") + ",\"cheats\":" + (c.cheats ? "true" : "false") +
+           ",\"rebalanced\":" + (c.rebalanced ? "true" : "false") + ",\"saveStateLoaded\":false,\"difficulty\":" +
+           std::to_string(std::clamp(c.difficulty, 0, 2)) +
            ",\"protocol\":" + std::to_string(c.protocol) + ",\"clientVersion\":" + json::quote(c.client_version) + "}";
 }
 

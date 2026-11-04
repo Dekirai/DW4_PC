@@ -256,7 +256,18 @@ void rules_cheats_and_resets() {
     std::array<PadSample, 4> pads{};
     engine.step(pads);
     check(!engine.console_reset().enabled(), "an online step switches the console reset off again");
+    // The F1 menu's Cheats tab after set_online (SEAMLESS.md 9.1.10): the
+    // next online step turns them off again, the randomizer stays.
+    engine.cheats().god = engine.cheats().infinite_mp = engine.cheats().one_hit = true;
+    engine.cheats().damage_dealt = 500;
+    engine.step(pads);
+    check(!engine.cheats().god && !engine.cheats().infinite_mp && !engine.cheats().one_hit && engine.cheats().damage_dealt == 100,
+          "an online step switches the cheats and the rebalancing off again");
+    check(engine.cheats().rand_seed == 77 && engine.cheats().rand_enemies == 1, "an online step keeps the room's randomizer");
     engine.set_online(OnlineRules{});
+    engine.cheats().god = true;
+    engine.step(pads);
+    check(engine.cheats().god, "offline a step keeps the cheats");
 }
 
 void rules_input_masking() {

@@ -59,6 +59,12 @@ public:
     // The ranked context of a report now (the room, the instance's and the room's players, the room's
     // randomizer, the difficulty of the last step): also the context of an online character upload.
     online::achievements::ReportContext report_context() const;
+    // The engine's real cheat flags for the reports' context (God mode,
+    // Infinite MP, One-hit; the EXP / damage rates), before every observe.
+    void set_cheats(bool cheats, bool rebalanced) {
+        cheats_ = cheats;
+        rebalanced_ = rebalanced;
+    }
 
     // One live step of this machine's member (after the local tracker, with
     // the same events). Returns the unlocks of the online tracker (all kinds;
@@ -100,6 +106,8 @@ private:
     int room_members_ = 1;
     int instance_players_ = 1;
     int difficulty_ = 0;
+    bool cheats_ = false;
+    bool rebalanced_ = false;
 
     std::deque<Pending> pending_;
     std::map<std::uint64_t, Pending> unlocks_in_flight_;
