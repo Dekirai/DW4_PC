@@ -25,7 +25,9 @@
 // semi-transparent (the depth of its nearest surface first, so it never shows
 // its own inside), so it never covers the own player more than a passer-by
 // would. At most kMaxFigures, the nearest; a form still loading shows once
-// it is ready (it fades in then).
+// it is ready (it fades in then). A weapon name from the network is only
+// loaded as a weapon package (w_*), and at most kMaxWeapons of them are
+// kept: the one asked for longest ago goes for a new one.
 #include "dw4/engine/actor.hpp"
 #include "dw4/engine/scene_graph.hpp"
 #include "dw4/resources.hpp"
@@ -78,6 +80,7 @@ float ghost_camera_alpha(const engine::Vec3f& eye, const engine::Vec3f& centre, 
 class GhostFigures {
 public:
     static constexpr std::size_t kMaxFigures = 9;
+    static constexpr std::size_t kMaxWeapons = 16;    // weapon packages kept (a room member holds one at a time)
     static constexpr double kFadeSeconds = 0.35;      // fade in / out
     static constexpr double kCameraFadeSeconds = 0.2; // the camera fade eases this fast
     static constexpr float kWalkSpeed = 15.0f;        // units per second: above it a figure without a clip runs
@@ -92,7 +95,8 @@ public:
     // a catch-up replaces). Before the first, nothing loads.
     void set_resources(const MountedResources& resources);
     // Starts loading a form and a weapon in the background (members anywhere
-    // in the room: their figure is ready when they come).
+    // in the room: their figure is ready when they come). Only a weapon
+    // package name (w_ and up to 22 more of A-Z a-z 0-9 _) loads.
     void preload(int species, const std::string& weapon);
     // The figures to show from now on (`own`: the own player, for the cap
     // to the nearest); the others fade out where they are. Empty: all fade.
@@ -114,6 +118,10 @@ public:
     // Figures drawn by the last draw (alpha above 0) and loaded forms.
     std::size_t drawn() const { return drawn_; }
     std::size_t loaded_forms() const;
+    // Weapon packages kept, and packages asked of the loader in all (forms
+    // and weapons; tests).
+    std::size_t weapon_packages() const { return weapons_.size(); }
+    std::size_t requested_packages();
     // One line per figure (traces: DW4_TRACE_GHOSTS).
     std::vector<std::string> describe() const;
 
@@ -124,15 +132,24 @@ private:
     struct Job {
         std::string path;
     };
+    // A weapon package: its path, when it was last asked for (`tick_`), the
+    // parts built for each form.
+    struct WeaponPackage {
+        std::string path;
+        std::uint64_t used{};
+        std::map<const Model*, std::unique_ptr<Weapon>> forms;
+    };
     void worker();
-    void request(const std::string& path);
-    void take_results();
+    bool request(const std::string& path);
+    void use_weapon(const std::string& name);
     Model* model(int species);
     Weapon* weapon(const std::string& name, const Model& model);
     void pose(Figure& figure, Model& model, double now);
 
     std::map<int, std::unique_ptr<Model>> models_;
-    std::map<std::string, std::unique_ptr<Weapon>> weapons_; // by weapon package name + form
+    std::vector<bool> forms_requested_;
+    std::map<std::string, WeaponPackage, std::less<>> weapons_; // by weapon package name
+    std::uint64_t tick_{};                                      // update() passes
     std::vector<std::unique_ptr<Figure>> figures_;
     double last_update_{}, last_draw_{};
     std::size_t drawn_{};

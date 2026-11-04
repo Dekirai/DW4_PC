@@ -139,6 +139,15 @@ struct GhostFigures::Figure {
 namespace {
 std::string package(const std::string& name) { return "_common/" + name + ".igb"; }
 
+// A weapon package name (the weapon table's MODEL column: w_sword01,
+// w_common01): anything else from the network is not loaded.
+bool weapon_package(std::string_view name) {
+    if (name.size() < 3 || name.size() > 24 || name.substr(0, 2) != "w_") return false;
+    return std::all_of(name.begin(), name.end(), [](char c) {
+        return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_';
+    });
+}
+
 // The model's infos named `name` of a parsed package.
 ObjectView find_info(const IgbDocument& document, std::string_view type, std::string_view name) {
     if (!document.info_list_reference) return {};
@@ -195,13 +204,20 @@ void GhostFigures::set_resources(const MountedResources& resources) {
     resources_ = std::make_unique<MountedResources>(resources);
 }
 
-void GhostFigures::request(const std::string& path) {
+bool GhostFigures::request(const std::string& path) {
     std::lock_guard lock(mutex_);
-    if (!resources_ || requested_[path]) return;
+    if (!resources_) return false;
+    if (requested_[path]) return true;
     requested_[path] = true;
     jobs_.push_back({path});
     if (!thread_.joinable()) thread_ = std::thread([this] { worker(); });
     wake_.notify_one();
+    return true;
+}
+
+std::size_t GhostFigures::requested_packages() {
+    std::lock_guard lock(mutex_);
+    return requested_.size();
 }
 
 void GhostFigures::worker() {
@@ -224,14 +240,50 @@ void GhostFigures::worker() {
             error = e.what();
         }
         std::lock_guard lock(mutex_);
+        if (!requested_.contains(job.path)) continue; // (a weapon package dropped meanwhile)
         if (document) done_[job.path] = std::move(document);
         else failed_[job.path] = error.empty() ? "unreadable" : error;
     }
 }
 
 void GhostFigures::preload(int species, const std::string& weapon) {
-    if (const auto* form = form_by_species(species)) request(package(form->model));
-    if (!weapon.empty()) request(package(weapon));
+    // (Every frame for every member: nothing is built for a known one.)
+    if (species >= 0 && species < 256) {
+        const auto index = std::size_t(species);
+        if (forms_requested_.size() <= index) forms_requested_.resize(index + 1);
+        if (!forms_requested_[index])
+            if (const auto* form = form_by_species(species)) forms_requested_[index] = request(package(form->model));
+    }
+    if (weapon_package(weapon)) use_weapon(weapon);
+}
+
+void GhostFigures::use_weapon(const std::string& name) {
+    if (auto found = weapons_.find(name); found != weapons_.end()) {
+        found->second.used = tick_;
+        return;
+    }
+    if (weapons_.size() >= kMaxWeapons) {
+        // The package asked for longest ago goes (never one of this pass:
+        // with more than kMaxWeapons at once the new one waits).
+        auto oldest = weapons_.end();
+        for (auto it = weapons_.begin(); it != weapons_.end(); ++it)
+            if (it->second.used < tick_ && (oldest == weapons_.end() || it->second.used < oldest->second.used)) oldest = it;
+        if (oldest == weapons_.end()) return;
+        {
+            std::lock_guard lock(mutex_);
+            const auto& path = oldest->second.path;
+            requested_.erase(path);
+            done_.erase(path);
+            failed_.erase(path);
+            std::erase_if(jobs_, [&](const Job& job) { return job.path == path; });
+        }
+        weapons_.erase(oldest);
+    }
+    WeaponPackage entry;
+    entry.path = package(name);
+    entry.used = tick_;
+    if (!request(entry.path)) return; // (no resources yet)
+    weapons_.emplace(name, std::move(entry));
 }
 
 int GhostFigures::shown() const {
@@ -309,16 +361,19 @@ GhostFigures::Model* GhostFigures::model(int species) {
 }
 
 GhostFigures::Weapon* GhostFigures::weapon(const std::string& name, const Model& model) {
-    const std::string key = name + "#" + std::to_string(reinterpret_cast<std::uintptr_t>(&model));
-    if (auto found = weapons_.find(key); found != weapons_.end()) return found->second.get();
-    const auto path = package(name);
+    const auto entry = weapons_.find(name);
+    if (entry == weapons_.end()) return nullptr; // (not a weapon package, or not asked for: preload)
+    entry->second.used = tick_;
+    auto& forms = entry->second.forms;
+    if (auto found = forms.find(&model); found != forms.end()) return found->second.get();
+    const auto& path = entry->second.path;
     std::shared_ptr<const IgbDocument> document;
     {
         std::lock_guard lock(mutex_);
         if (failed_.contains(path)) {
             auto weapon = std::make_unique<Weapon>();
             weapon->failed = true;
-            return weapons_.emplace(key, std::move(weapon)).first->second.get();
+            return forms.emplace(&model, std::move(weapon)).first->second.get();
         }
         const auto found = done_.find(path);
         if (found == done_.end()) return nullptr; // still loading
@@ -350,7 +405,7 @@ GhostFigures::Weapon* GhostFigures::weapon(const std::string& name, const Model&
         }
     }
     if (weapon->selects.empty()) weapon->failed = true;
-    return weapons_.emplace(key, std::move(weapon)).first->second.get();
+    return forms.emplace(&model, std::move(weapon)).first->second.get();
 }
 
 void GhostFigures::update(std::vector<GhostTarget> targets, std::optional<Vec3f> own, double now) {
@@ -398,6 +453,7 @@ void GhostFigures::update(std::vector<GhostTarget> targets, std::optional<Vec3f>
         figure->alpha = std::clamp(figure->alpha, 0.0, 1.0);
     }
     std::erase_if(figures_, [](const auto& f) { return f->leaving && f->alpha <= 0.0; });
+    ++tick_;
 }
 
 void GhostFigures::clear() {

@@ -207,6 +207,56 @@ void figures(const std::string& data) {
     ghosts.clear();
     check(!ghosts.active(), "clear drops every figure at once");
 }
+
+// The weapon names of the network (the round 60 review): any package name
+// was loaded and kept as a "weapon" (model packages too), and the maps grew
+// with every name. Only weapon packages (w_*) load now, at most kMaxWeapons
+// are kept, and the one a figure holds stays.
+void weapons(const std::string& data) {
+    const auto resources = dw4::MountedResources::open(data);
+    GhostFigures ghosts;
+    ghosts.set_resources(resources);
+    Clock clock;
+    dw4::engine::FrameCamera camera;
+    camera.view = dw4::engine::look_at({100, 80, 250}, {100, 10, 50}, {0, 1, 0});
+    camera.projection = dw4::engine::perspective(0.8f, 4.0f / 3.0f, 1.0f, 4000.0f);
+    for (const char* name : {"p_agumon", "stagml11", "", "w_", "W_sword01", "w_sword01.igb", "w_../p_agumon"}) ghosts.preload(0, name);
+    check(ghosts.weapon_packages() == 0 && ghosts.requested_packages() == 1, "only the form is asked for: no package that is not a weapon");
+    GhostTarget agumon;
+    agumon.key = 3;
+    agumon.position = {100, 0, 50};
+    agumon.species = 0;
+    agumon.weapon = "p_agumon"; // (a model package as the weapon: none drawn)
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(20);
+    while (ghosts.loaded_forms() == 0 && std::chrono::steady_clock::now() < deadline) {
+        ghosts.update({agumon}, std::nullopt, clock.now += 0.01);
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    for (int k = 0; k < 6; ++k) ghosts.update({agumon}, std::nullopt, clock.now += 0.1);
+    const auto bare = draw(ghosts, camera, clock.now).size();
+    check(bare > 0 && ghosts.weapon_packages() == 0, "a figure without a weapon package");
+    // Its sword: loaded in the background, then drawn with the figure.
+    agumon.weapon = "w_sword01";
+    std::size_t armed = 0;
+    while (armed <= bare && std::chrono::steady_clock::now() < deadline) {
+        ghosts.update({agumon}, std::nullopt, clock.now += 0.01);
+        armed = draw(ghosts, camera, clock.now).size();
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    check(armed > bare && ghosts.weapon_packages() == 1, "the sword's parts are drawn (" + std::to_string(bare) + " -> " + std::to_string(armed) + ")");
+    // A flood of other names (a member that sends a new one every packet):
+    // the packages kept stay bounded, the sword in use stays.
+    std::size_t most = 0, most_requested = 0;
+    for (int k = 0; k < 200; ++k) {
+        ghosts.preload(1, "w_flood" + std::to_string(k));
+        ghosts.update({agumon}, std::nullopt, clock.now += 0.01);
+        most = std::max(most, ghosts.weapon_packages());
+        most_requested = std::max(most_requested, ghosts.requested_packages());
+    }
+    check(most <= GhostFigures::kMaxWeapons && most_requested <= GhostFigures::kMaxWeapons + 2,
+          "at most kMaxWeapons weapon packages (" + std::to_string(most) + ", " + std::to_string(most_requested) + " packages asked for)");
+    check(draw(ghosts, camera, clock.now).size() == armed, "the sword a figure holds is never dropped");
+}
 } // namespace
 
 int main(int argc, char** argv) {
@@ -214,8 +264,12 @@ int main(int argc, char** argv) {
         placement();
         insert_points();
         camera_fade();
-        if (argc > 1 && argv[1] && *argv[1]) figures(argv[1]);
-        else std::cout << "(no game data: the figure checks are skipped)\n";
+        if (argc > 1 && argv[1] && *argv[1]) {
+            figures(argv[1]);
+            weapons(argv[1]);
+        } else {
+            std::cout << "(no game data: the figure checks are skipped)\n";
+        }
         std::cout << checks << " ghost figure checks passed\n";
         return 0;
     } catch (const std::exception& error) {
