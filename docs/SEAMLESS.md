@@ -4122,7 +4122,7 @@ from a visit that began before it, is dropped) and two smaller ones:
   achievement waits only 30 s for it). The 109 persistent flags now take a
   forging account about 50 minutes; the history repairs what N accounts do.
 - COUNTER 7 could still grow by 256 lines x 100,000 = 25,600,000 per guest
-  account and room session (P2). A member now gets at most
+  account and room session (P2). A guest now gets at most
   `RoomStoryKeeper.MaxSessionGrowth` of a counter merged in a room session,
   over all its lines: 1,000 for COUNTER 7 (stag0001's training attempts;
   `matz00.lua` only asks whether it is 10) and 20,000,000 for COUNTER 1 (a

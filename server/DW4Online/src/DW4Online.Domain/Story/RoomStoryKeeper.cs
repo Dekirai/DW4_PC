@@ -653,10 +653,11 @@ public sealed class RoomStoryKeeper
                 }
                 _linesOpened[account] = opened + 1;
             }
-            // The session's growth per member: what this line adds beyond what it gave already, up to the cap.
+            // The session's growth per guest: what this line adds beyond what it gave already, up to the cap. The owner's
+            // own counters are not capped: the cap keeps guests from forging into his story, his own play is his.
             var before = Math.Max(_lines.GetValueOrDefault(key), _heldLines.GetValueOrDefault(key));
             var extra = (long)g.Growth - before;
-            if (extra <= 0) continue;
+            if (extra <= 0 || v.Owner) continue;
             var left = MaxSessionGrowth(g.Counter) - _grown.GetValueOrDefault((account, g.Counter)) - growths.GetValueOrDefault(g.Counter);
             if (left <= 0)
             {
