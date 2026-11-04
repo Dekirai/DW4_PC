@@ -112,7 +112,12 @@ RunOutcome run_loop(HostView& view, engine::Engine& run, RunDriver& driver, cons
     std::optional<RunEnd> end;
     bool retire_asked = false;
     std::array<engine::PadSample, 4> pads{};
+    // timing=1 (T8): the picture's cost per pass.
+    const bool timing = request.options.contains("timing");
+    std::vector<float> picture_ms, pass_ms;
+    std::vector<std::size_t> draw_items;
     for (;;) {
+        const auto pass_started = std::chrono::steady_clock::now();
         SDL_Event event;
         while (SDL_PollEvent(&event)) {
             if (host_event(view, event)) continue;
@@ -207,7 +212,14 @@ RunOutcome run_loop(HostView& view, engine::Engine& run, RunDriver& driver, cons
         }
         note_stage(view, run);
         const bool smooth = view.smooth_blending();
-        if (make_picture(view, run, ran, smooth) == PictureMade::drawn) driver.decorate(run, view.picture.items);
+        const auto picture_started = std::chrono::steady_clock::now();
+        const auto made = make_picture(view, run, ran, smooth);
+        if (timing && made != PictureMade::kept && !run.loading()) {
+            // T8 (SURVIVAL.md 12): traverse + draw list, the draw items.
+            picture_ms.push_back(float(std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - picture_started).count()));
+            draw_items.push_back(view.picture.items.size());
+        }
+        if (made == PictureMade::drawn) driver.decorate(run, view.picture.items);
         if (view.draw) {
             const auto scene = present_scene(view, run, accumulator, smooth, false);
             set_menu_navigation(view.show_menu, false);
@@ -223,6 +235,7 @@ RunOutcome run_loop(HostView& view, engine::Engine& run, RunDriver& driver, cons
                 frame.screen_height = scene.screen.height;
                 frame.menu_open = view.show_menu;
                 frame.steps = steps_done;
+                frame.font = view.tag_font;
                 driver.draw_overlay(run, frame);
                 if (view.show_menu) draw_run_menu(view, run, driver, host);
                 if (!message.empty() && std::chrono::steady_clock::now() < message_until) {
@@ -256,7 +269,27 @@ RunOutcome run_loop(HostView& view, engine::Engine& run, RunDriver& driver, cons
             if (fade_out < 0) fade_out = kFadeFrames;
             else if (--fade_out <= 0) break;
         }
+        // (T8: a pass's work, the present included, without the pacing's wait.)
+        if (timing && view.draw && ran > 0 && !run.loading())
+            pass_ms.push_back(float(std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - pass_started).count()));
         pace_presents(view);
+    }
+    if (timing && !picture_ms.empty()) {
+        std::sort(picture_ms.begin(), picture_ms.end());
+        std::sort(draw_items.begin(), draw_items.end());
+        double sum = 0;
+        for (const float v : picture_ms) sum += v;
+        std::printf("overflow: picture_ms mean %.3f p95 %.3f max %.3f (%zu pictures, %s), draw items p95 %zu max %zu\n",
+                    sum / double(picture_ms.size()), double(picture_ms[picture_ms.size() * 95 / 100]), double(picture_ms.back()),
+                    picture_ms.size(), view.draw ? "traverse + draw list" : "traverse only", draw_items[draw_items.size() * 95 / 100],
+                    draw_items.back());
+    }
+    if (timing && !pass_ms.empty()) {
+        std::sort(pass_ms.begin(), pass_ms.end());
+        int width = 0, height = 0;
+        if (view.window) SDL_GetWindowSizeInPixels(view.window, &width, &height);
+        std::printf("overflow: pass_ms p95 %.3f max %.3f (%zu passes with a present, %dx%d)\n", double(pass_ms[pass_ms.size() * 95 / 100]),
+                    double(pass_ms.back()), pass_ms.size(), width, height);
     }
     outcome.end = end.value_or(RunEnd::retired);
     outcome.steps = steps_done;

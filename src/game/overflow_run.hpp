@@ -174,6 +174,7 @@ struct OverlayFrame {
     int screen_width = 0, screen_height = 0;
     bool menu_open = false;                     // the F1 menu is over the run (it is paused)
     std::uint64_t steps = 0;                    // run steps so far
+    void* font = nullptr;                       // the host's bold UI font (an ImFont*: Segoe UI Bold has the Greek grades)
 };
 
 // The director's side of a run as the host sees it (round O1a lane C
