@@ -2409,7 +2409,9 @@ back). Now:
   guest's client); the owner keeps the per-visit rules.
 - The room's clear flag (406 + difficulty) counts only once the room story
   (with *hold*: the held phase) is at phase 6, the last briefing: the clear
-  comes from the last boss, after it (with phase 7 in the same set). The
+  comes from the last boss, after it (phase 7, flag 86, follows in the
+  lobby after the ending: r25c's k10 sets 70 and 406 in stagBS06 at phase 6,
+  86 in stagML11; stagBS06 may set 86 too). The
   review's guest gave a phase 2 story the clear, and the owner the next
   difficulty's rooms, with one ten-second visit of stagBS06; that is refused
   with *phase_jump* now, and a forger has to climb the phases first (300 s
@@ -2455,16 +2457,22 @@ back). Now:
   relay's instance in the last minute (one request gave a guest alone in its
   lobby `mp_fullhouse` and a speedrun board's first place).
 
-Open, not measured: a flag set in a visit shorter than ten seconds is only
-sent again (it is not earned: the visit age is a plausibility rule); the
-next Game Start replaces the engine's flags with the room story's, so such a
-flag is gone then and comes back only from a visit of at least ten seconds
-that sets it again. No run checked whether real story flags come from such
-short visits (short corridors, stages passed through). The same holds for
-counter growth since this round: a junk shop donation (COUNTER 1, stagML13)
-in a visit of the shop's stage shorter than ten seconds is refused for the
-stage once the member left (a visit with a walk to the shop and its menus
-takes longer).
+A flag set in a visit shorter than ten seconds is only sent again (it is not
+earned: the visit age is a plausibility rule); the next Game Start replaces
+the engine's flags with the room story's, so such a flag is gone then and
+comes back only from a visit of at least ten seconds that sets it again.
+*Measured* (round 59's fix round: r25c's ten segments with
+`DW4_TRACE_EVENTS=1`, every `story_flag` rise of a phase or persistent flag
+against the stage changes): 36 rises outside the title, each in a visit of
+at least 31 s; the earliest in their visits are the lobby's first load
+(flags 1 and 501 at 7 s of a 31 s visit), the briefings (322, 325 and phase
+4 at 3-8 s of 41-42 s visits) and the ending's return to the lobby (86 at
+2.6 s, the segment's end). None would be refused, with the campaign bot's
+shortest routes; quests (dngq*, the lobby's quest flags) are not in r25c and
+stay unmeasured. The same holds for counter growth since this round: a junk
+shop donation (COUNTER 1, stagML13) in a visit of the shop's stage shorter
+than ten seconds is refused for the stage once the member left (a visit with
+a walk to the shop and its menus takes longer).
 
 **Storage.** Migration 0008 adds `online_story (account_id, revision, flags
 VARBINARY(1024), folder BINARY(12), counters BINARY(64) as 16 x i32 LE,
@@ -2481,7 +2489,8 @@ Round 56 fix round: migration 0010 keeps every written revision in
 100, with the reason room / reset / admin_restore). Round 59 keeps it by time
 and session instead of by count alone (migration 0011, reason *session*):
 opening a room keeps the owner's story as it was then (the revision the room
-session starts from); the newest `StoryHistoryRevisions` (100) stay in full;
+session starts from; once per revision, so rooms opened one after another
+add nothing); the newest `StoryHistoryRevisions` (100) stay in full;
 older room revisions stay as the first of every `StoryHistoryMinutes` (10)
 for `StoryHistoryDays` (90); session starts, resets and restores stay for
 `StoryHistoryDays`, the newest `StoryHistorySessions` (20) of them for good.

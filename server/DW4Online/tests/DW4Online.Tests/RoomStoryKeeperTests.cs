@@ -207,7 +207,7 @@ public class RoomStoryKeeperTests
         Assert.Equal(5, StoryMerge.Phase(k.Story));
         Assert.Equal(new StoryRefused(StoryKeyKind.Flag, 406, StoryRefusal.PhaseJump), k.Take(Flags(406), "stagBS06", 0).Refused.Single());
         Assert.Equal(0, k.Story.Flags[406]);
-        // Phase 6 and then the clear (with phase 7 in the same set, as the last boss gives both).
+        // Phase 6 and then the clear (stagBS06 may set phase 7 with it; r25c sets 86 in the lobby after the ending).
         Assert.True(k.Take(new StoryDelta { Phase = 6 }, "stagML02", 0).Changed);
         var t = k.Take(new StoryDelta { Phase = 7, Flags = [406] }, "stagBS06", 0);
         Assert.True(t.Changed);
