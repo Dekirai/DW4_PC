@@ -73,7 +73,7 @@ void NetStats::sampled(std::uint32_t visit, std::uint32_t tick, double now, std:
     while (in_flight_.size() > kMaxInFlight) in_flight_.erase(in_flight_.begin());
 }
 
-void NetStats::executed(std::uint32_t visit, std::uint32_t tick, double now, std::uint64_t step, const WirePad& sealed) {
+void NetStats::executed(std::uint32_t visit, std::uint32_t tick, double now, std::uint64_t step, const WirePad& sealed, bool delayed) {
     const auto it = in_flight_.find({visit, tick});
     if (it == in_flight_.end()) return;
     const Sample s = it->second;
@@ -87,6 +87,7 @@ void NetStats::executed(std::uint32_t visit, std::uint32_t tick, double now, std
                          sealed.rx != s.pad.rx || sealed.ry != s.pad.ry;
     current_.add_exec(exec, steps, dropped);
     total_.add_exec(exec, steps, dropped);
+    if (delayed) delayed_total_.add_exec(exec, steps, dropped);
     add_bucket(now);
     buckets_.back().w.add_exec(exec, steps, dropped);
     ran_.push_back(s.at);

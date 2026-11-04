@@ -129,6 +129,8 @@ const std::vector<std::string_view>& online_presentation_env() {
         // round 62: the online log's file, the latency scenarios' proxy port and their host-loop throttle (the
         // relay seals by its clock: a throttled member's own pads come late, the simulation is the same)
         "DW4_ONLINE_LOG", "DW4_ONLINE_RELAY_PORT", "DW4_ONLINE_TEST_STALL",
+        // the round 62 review's vsync grid of the latency scenarios (a pass ends on a grid of HZ, like a display's vsync)
+        "DW4_ONLINE_TEST_PASS_HZ",
         // round S1 test tools (game_main.cpp)
         "DW4_SNAPSHOT_DUMP", "DW4_PAD_LOG", "DW4_EXTRA_RENDERS", "DW4_EXTRA_WIDEN", "DW4_EXTRA_PREVIOUS",
         "DW4_CAM_CHECK"};

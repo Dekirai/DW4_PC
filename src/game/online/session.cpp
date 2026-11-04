@@ -123,10 +123,12 @@ void Session::report_window(double now, bool force) {
         log_window_at_ = now;
         const auto& l = log_window_;
         if (l.samples)
-            log("link: %s, stage %s, input delay %d ticks (%.0f ms), round trip %.0f ms (spread %.0f, tcp %.1f), relay margin %d ms, "
+            log("link: %s, stage %s, input delay %d ticks (%.0f ms), round trip %.0f ms (network about %.0f, wait for this game's pass %.1f, "
+                "spread %.0f, tcp %.1f), relay margin %d ms, "
                 "own pads %llu (not sealed as sent: %llu), latency avg %.0f ms p95 %.0f max %.0f ms, relay: %llu sealed, %llu filled, "
                 "%llu late, backlog runs %zu, starved %zu, drained %zu, tcp loss episodes %lld",
-                mode_name(mode_), engine_.stage().c_str(), delay_, delay_ * kFieldSeconds * 1000.0, net_.rtt_ms, net_.rtt_spread_ms, net_.tcp_rtt_ms,
+                mode_name(mode_), engine_.stage().c_str(), delay_, delay_ * kFieldSeconds * 1000.0, net_.rtt_ms, net_.network_rtt_ms(),
+                net_.pass_wait_ms, net_.rtt_spread_ms, net_.tcp_rtt_ms,
                 net_.margin_ms, static_cast<unsigned long long>(l.samples), static_cast<unsigned long long>(l.dropped), l.exec_avg() * 1000.0,
                 l.exec_quantile(0.95) * 1000.0, l.exec_max * 1000.0, static_cast<unsigned long long>(net_.sealed),
                 static_cast<unsigned long long>(net_.filled), static_cast<unsigned long long>(net_.late), backlog_runs_, pace_.starved(),
@@ -219,6 +221,8 @@ void Session::leave(const std::string& reason) {
 
 void Session::poll(double now) {
     now_ = now;
+    poll_gap_ = last_poll_at_ >= 0 ? std::clamp(now - last_poll_at_, 0.0, 1.0) : 0.0;
+    last_poll_at_ = now;
     if (transport_) {
         inbox_.clear();
         const bool open = transport_->receive(inbox_);
@@ -254,7 +258,23 @@ void Session::poll(double now) {
             try {
                 reader_.feed(std::span(inbox_).subspan(used));
                 while (auto frame = reader_.next()) {
-                    handle(*frame, now);
+                    if (informational(frame->type)) {
+                        // A frame that only feeds the indicator, the tags or the
+                        // room list and does not decode is skipped, not a broken
+                        // connection: the same type number given to another
+                        // message by another build (round 62 review: round 60's
+                        // PRESENCE2 on 0x8F, NETSTAT's number since 0.1.2) would
+                        // otherwise reconnect this client once a second.
+                        try {
+                            handle(*frame, now);
+                        } catch (const w::WireError& error) {
+                            if (net_.skipped_frames++ == 0)
+                                log("a %s frame from the relay did not decode (%s); skipped (another server build?)", w::type_name(frame->type),
+                                    error.what());
+                        }
+                    } else {
+                        handle(*frame, now);
+                    }
                     if (!transport_) break;
                 }
             } catch (const w::WireError&) {
@@ -315,6 +335,10 @@ void Session::poll(double now) {
             }
         }
     }
+}
+
+bool Session::informational(w::Type type) noexcept {
+    return type == w::Type::netstat || type == w::Type::presence_of || type == w::Type::roster || type == w::Type::room;
 }
 
 void Session::handle(const w::Frame& frame, double now) {
@@ -459,6 +483,15 @@ void Session::handle(const w::Frame& frame, double now) {
     }
     case w::Type::ping: {
         const auto m = w::decode_ping(p);
+        // (The PING came at some time since the last pass: on average half that gap ago.)
+        pass_waits_[pass_wait_count_++ % pass_waits_.size()] = poll_gap_ * 500.0;
+        {
+            std::array<double, 31> waits{};
+            const std::size_t n = std::min(pass_wait_count_, pass_waits_.size());
+            std::copy_n(pass_waits_.begin(), n, waits.begin());
+            std::nth_element(waits.begin(), waits.begin() + std::ptrdiff_t(n / 2), waits.begin() + std::ptrdiff_t(n));
+            net_.pass_wait_ms = waits[n / 2];
+        }
         if (m.delay >= 1 && m.delay <= 15 && mode_ != Mode::sealed) set_delay(m.delay, "ping"); // sealed: DELAY events change it
         net_.margin_ms = m.margin_ms;
         net_.suggested_delay = m.delay;
@@ -825,7 +858,7 @@ std::array<PadSample, 4> Session::before_step(const PadSample& local, double now
         } else {
             stats_.sampled(visit_, tick_, now, steps_, own);
         }
-        stats_.executed(visit_, tick_, now, steps_, pad);
+        stats_.executed(visit_, tick_, now, steps_, pad, join_at_.has_value());
         last_own_ = pad;
         pads[std::size_t(slot_)] = dequantize_pad(pad, true);
         for (int s = 0; s < 4; ++s)

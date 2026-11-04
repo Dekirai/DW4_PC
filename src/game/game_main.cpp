@@ -37,6 +37,7 @@
 #include "dw4/engine/state_archive.hpp"
 #include <algorithm>
 #include <bit>
+#include <cctype>
 #include <cmath>
 
 #include <SDL3/SDL.h>
@@ -1923,6 +1924,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
         };
         while (running) {
             const auto pass_start = std::chrono::steady_clock::now();
+            bool pass_presented = false; // (online.log's pictures per second)
             SDL_Event event;
             while (SDL_PollEvent(&event)) {
                 // A key binding being edited takes the next key (F1 still
@@ -3571,38 +3573,66 @@ int run(const Options& options, dw4::game::Settings& settings) {
                             const auto& session = online->session();
                             const auto& net = session.net();
                             const auto& recent = session.stats().recent();
-                            const auto& total = session.stats().total();
+                            const auto& delayed = session.stats().delayed_total();
                             const bool playing = session.mode() == dw4::game::online::Mode::sealed;
-                            const auto quality = dw4::game::online::link_quality(playing ? session.delay() : 0, net.rtt_ms, recent.drop_rate(),
+                            const auto quality = dw4::game::online::link_quality(playing ? session.delay() : 0, net.network_rtt_ms(), recent.drop_rate(),
                                                                                  session.overlay(steady_seconds()).waiting_for_server);
                             ImGui::SeparatorText("Connection");
                             const ImVec4 colour = quality == dw4::game::online::LinkQuality::good   ? ImVec4(0.45f, 0.9f, 0.45f, 1)
                                                   : quality == dw4::game::online::LinkQuality::fair ? ImVec4(1.0f, 0.85f, 0.3f, 1)
                                                                                                     : ImVec4(1.0f, 0.4f, 0.4f, 1);
+                            // (Wrapped: the lines are longer than the menu is wide; round 62 review.)
+                            const auto dim = [](const char* format, auto... args) {
+                                ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+                                ImGui::TextWrapped(format, args...);
+                                ImGui::PopStyleColor();
+                            };
                             ImGui::TextColored(colour, "Link: %s", dw4::game::online::link_quality_name(quality));
-                            if (net.rtt_ms >= 0)
-                                ImGui::Text("Ping (round trip to the server): %.0f ms%s", net.rtt_ms,
-                                            net.from_relay ? (" (spread " + std::to_string(int(net.rtt_spread_ms)) + " ms)").c_str() : " (TCP estimate)");
+                            if (net.rtt_ms >= 0 && net.from_relay)
+                                ImGui::TextWrapped("Ping (network round trip to the server): %.0f ms. The server measures %.0f ms (spread %d ms): that "
+                                                   "includes about %.0f ms of waiting for this game's next picture.",
+                                                   net.network_rtt_ms(), net.rtt_ms, int(net.rtt_spread_ms), std::max(0.0, net.pass_wait_ms));
+                            else if (net.rtt_ms >= 0)
+                                ImGui::TextWrapped("Ping (network round trip to the server): %.0f ms (TCP estimate)", net.rtt_ms);
                             else
-                                ImGui::TextDisabled("Ping: not measured yet");
+                                dim("Ping: not measured yet");
                             if (playing)
-                                ImGui::Text("Input delay: %d ticks (%.0f ms) - with others in your stage every input waits this long",
-                                            session.delay(), session.delay() * dw4::engine::kFieldSeconds * 1000.0);
+                                ImGui::TextWrapped("Input delay: %d ticks (%.0f ms). With others in your stage every input waits this long.",
+                                                   session.delay(), session.delay() * dw4::engine::kFieldSeconds * 1000.0);
                             else
-                                ImGui::Text("Input delay: none (you play this stage on your own)");
+                                ImGui::TextWrapped("Input delay: none (you play this stage on your own)");
                             if (recent.samples)
-                                ImGui::Text("Your inputs, last seconds: %.0f ms until they run (max %.0f), %.1f %% came too late for the server",
-                                            recent.exec_avg() * 1000.0, recent.exec_max * 1000.0, recent.drop_rate() * 100.0);
+                                ImGui::TextWrapped("Your inputs, last seconds: %.0f ms until they run (max %.0f); %.1f %% came too late for the server.",
+                                                   recent.exec_avg() * 1000.0, recent.exec_max * 1000.0, recent.drop_rate() * 100.0);
                             if (net.from_relay && net.sealed)
-                                ImGui::Text("Server: %llu of your inputs filled in, %llu late, of %llu in this stage",
-                                            static_cast<unsigned long long>(net.filled), static_cast<unsigned long long>(net.late),
-                                            static_cast<unsigned long long>(net.sealed));
-                            ImGui::TextDisabled("Session: %llu inputs, latency avg %.0f ms, %d reconnects, %d resyncs, %zu stalls caught up",
-                                                static_cast<unsigned long long>(total.samples), total.exec_avg() * 1000.0, net.reconnects, net.resyncs,
-                                                session.backlog_runs());
+                                ImGui::TextWrapped("Server: %llu of your inputs filled in, %llu late, of %llu in this stage.",
+                                                   static_cast<unsigned long long>(net.filled), static_cast<unsigned long long>(net.late),
+                                                   static_cast<unsigned long long>(net.sealed));
+                            dim("Session: %llu inputs with others, latency avg %.0f ms; %d reconnects, %d resyncs, %zu stalls caught up.",
+                                static_cast<unsigned long long>(delayed.samples), delayed.exec_avg() * 1000.0, net.reconnects, net.resyncs,
+                                session.backlog_runs());
                             if (online->log().is_open()) {
-                                ImGui::TextDisabled("Log: %s", online->log().path().string().c_str());
-                                ImGui::TextDisabled("When online play lags, send this file (it holds no password).");
+                                const auto log_path = online->log().path();
+                                dim("When online play lags, send this file (it holds no password):");
+                                ImGui::TextWrapped("%s", log_path.string().c_str());
+                                if (ImGui::Button("Copy path")) ImGui::SetClipboardText(log_path.string().c_str());
+                                ImGui::SameLine();
+                                if (ImGui::Button("Open folder")) {
+                                    // A file:/// URL of the folder, UTF-8 percent-encoded (spaces, non-ASCII names).
+                                    std::string url = "file:///";
+                                    const auto folder = log_path.parent_path().generic_u8string();
+                                    for (const auto c : folder) {
+                                        const auto b = static_cast<unsigned char>(c);
+                                        if (std::isalnum(b) || b == '/' || b == ':' || b == '.' || b == '_' || b == '-' || b == '~') {
+                                            url += char(b);
+                                        } else {
+                                            char hex[4];
+                                            std::snprintf(hex, sizeof hex, "%%%02X", unsigned(b));
+                                            url += hex;
+                                        }
+                                    }
+                                    SDL_OpenURL(url.c_str());
+                                }
                             }
                         }
                         ImGui::EndTabItem();
@@ -3866,7 +3896,8 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     const auto& net = session.net();
                     const bool playing = session.mode() == dw4::game::online::Mode::sealed;
                     const auto overlay_now = session.overlay(steady_seconds());
-                    const auto quality = dw4::game::online::link_quality(playing ? session.delay() : 0, net.rtt_ms, session.stats().recent().drop_rate(),
+                    const auto quality = dw4::game::online::link_quality(playing ? session.delay() : 0, net.network_rtt_ms(),
+                                                                         session.stats().recent().drop_rate(),
                                                                          overlay_now.waiting_for_server || overlay_now.connection_lost);
                     const ImVec4 colour = quality == dw4::game::online::LinkQuality::good   ? ImVec4(0.45f, 0.9f, 0.45f, 1)
                                           : quality == dw4::game::online::LinkQuality::fair ? ImVec4(1.0f, 0.85f, 0.3f, 1)
@@ -3877,7 +3908,8 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     ImGui::Begin("##net", nullptr,
                                  ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoInputs |
                                      ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing);
-                    std::string text = net.rtt_ms >= 0 ? "Ping " + std::to_string(int(net.rtt_ms + 0.5)) + " ms" : std::string("Ping -");
+                    // (The network's round trip: the relay's less the wait for this game's next pass.)
+                    std::string text = net.rtt_ms >= 0 ? "Ping " + std::to_string(int(net.network_rtt_ms() + 0.5)) + " ms" : std::string("Ping -");
                     if (playing)
                         text += "  Delay " + std::to_string(session.delay()) + " (" +
                                 std::to_string(int(session.delay() * dw4::engine::kFieldSeconds * 1000.0 + 0.5)) + " ms)";
@@ -3950,6 +3982,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     if (queued < kAudioFrameSamples * 2) mix_audio(kAudioFrameSamples * 3 - queued);
                 }
                 SDL_GL_SwapWindow(window);
+                pass_presented = true;
                 if (online) online->session().presented(steady_seconds());
                 // A minimized window's swap does not wait for the display: the
                 // loop would spin and take the CPU from a second game on this
@@ -4018,6 +4051,46 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     SDL_DelayPrecise(Uint64(std::chrono::duration_cast<std::chrono::nanoseconds>(next_present - now).count()));
                 else if (now - next_present > interval * 4)
                     next_present = now;
+            }
+#ifdef DW4_ONLINE_DEV
+            // DW4_ONLINE_TEST_PASS_HZ=HZ (development builds, the latency
+            // scenarios of tools/online_test): each pass ends on a grid of HZ
+            // per second, as a pass that waits for the vsync of a display at
+            // HZ (a hidden test client has none; round 62 review: 60.000 Hz
+            // beats against the relay's 59.94 Hz).
+            if (online) {
+                static const double pass_hz = [] {
+                    const char* text = std::getenv("DW4_ONLINE_TEST_PASS_HZ");
+                    return text ? std::max(0.0, std::atof(text)) : 0.0;
+                }();
+                if (pass_hz > 0) {
+                    static const auto grid = std::chrono::steady_clock::now();
+                    const double at = std::chrono::duration<double>(std::chrono::steady_clock::now() - grid).count();
+                    const double next = (std::floor(at * pass_hz) + 1.0) / pass_hz;
+                    SDL_DelayPrecise(Uint64((next - at) * 1e9));
+                }
+            }
+#endif
+            if (online) {
+                // online.log: the rates of passes and pictures, vsync, the display, the window's state (round 62 review).
+                dw4::game::OnlineRun::HostFacts facts;
+                facts.presented = pass_presented;
+                if (window) {
+                    const auto flags = SDL_GetWindowFlags(window);
+                    facts.window = true;
+                    facts.vsync = settings.vsync;
+                    SDL_GL_GetSwapInterval(&facts.swap_interval);
+                    facts.fps_limit = settings.fps_limit;
+                    if (const auto* mode = SDL_GetCurrentDisplayMode(SDL_GetDisplayForWindow(window)))
+                        facts.refresh_hz = mode->refresh_rate_numerator > 0 && mode->refresh_rate_denominator > 0
+                                               ? double(mode->refresh_rate_numerator) / double(mode->refresh_rate_denominator)
+                                               : double(mode->refresh_rate);
+                    facts.focused = (flags & SDL_WINDOW_INPUT_FOCUS) != 0;
+                    facts.minimized = (flags & SDL_WINDOW_MINIMIZED) != 0;
+                    facts.occluded = (flags & SDL_WINDOW_OCCLUDED) != 0;
+                    facts.hidden = (flags & SDL_WINDOW_HIDDEN) != 0;
+                }
+                online->host_pass(steady_seconds(), facts);
             }
             // DW4_SMOKE_STAGES=n: a test run also ends once the n-th stage has loaded.
             static const int smoke_stages = options.smoke_frames && std::getenv("DW4_SMOKE_STAGES") ? std::atoi(std::getenv("DW4_SMOKE_STAGES")) : 0;

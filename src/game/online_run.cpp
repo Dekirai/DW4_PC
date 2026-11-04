@@ -11,9 +11,11 @@
 #include <algorithm>
 #include <bit>
 #include <chrono>
+#include <cmath>
 #include <cstdlib>
 #include <iostream>
 #include <thread>
+#include <tuple>
 
 namespace dw4::game {
 
@@ -174,6 +176,46 @@ void OnlineRun::open_log(const std::filesystem::path& path, const std::string& c
     log_.line("background throttling of this process: %s", online::keep_full_speed_in_background() ? "off" : "left to the system");
 }
 
+namespace {
+const char* window_state(const OnlineRun::HostFacts& f) {
+    if (!f.window) return "none";
+    if (f.minimized) return "minimized";
+    if (f.hidden) return "hidden";
+    if (f.occluded) return "covered (occluded)";
+    return f.focused ? "in front (focused)" : "in the background (not focused)";
+}
+} // namespace
+
+void OnlineRun::host_pass(double now, const HostFacts& f) {
+    auto& h = host_window_;
+    if (h.since < 0) h.since = now;
+    if (h.last >= 0) h.longest = std::max(h.longest, now - h.last);
+    h.last = now;
+    ++h.passes;
+    if (f.presented) ++h.presents;
+    const auto settings_of = [](const HostFacts& x) {
+        return std::tuple(x.window, x.vsync, x.swap_interval, x.fps_limit, std::lround(x.refresh_hz * 100.0));
+    };
+    const auto window_of = [](const HostFacts& x) { return std::tuple(x.focused, x.minimized, x.occluded, x.hidden); };
+    if (!host_logged_ || settings_of(*host_logged_) != settings_of(f)) {
+        if (f.window)
+            log_.line("host: vsync %s (swap interval %d), display %.3f Hz, frame limit %s", f.vsync ? "on" : "off", f.swap_interval, f.refresh_hz,
+                      f.fps_limit > 0 ? (std::to_string(f.fps_limit) + " fps").c_str() : "off");
+        else
+            log_.line("host: no window (a run without pictures)");
+    }
+    if (f.window && (!host_logged_ || window_of(*host_logged_) != window_of(f))) log_.line("window: %s", window_state(f));
+    host_logged_ = f;
+    if (now - h.since >= 10.0) {
+        // (A game at 60 pictures a second with vsync on a display of 60.000 Hz
+        // sends its pads on a grid that beats against the relay's 59.94 Hz.)
+        const double span = now - h.since;
+        log_.line("host: %.2f passes/s, %.2f pictures/s, longest pass %.0f ms, window %s", double(h.passes) / span, double(h.presents) / span,
+                  h.longest * 1000.0, window_state(f));
+        h = HostWindow{now, now, 0, 0, 0};
+    }
+}
+
 void OnlineRun::dispatch(std::uint64_t id, const online::HttpResponse& response, double now) {
     if (character_ && character_->on_response(id, response)) return;
     if (id == status_request_ && status_request_ != 0) {
@@ -309,11 +351,14 @@ void OnlineRun::leave(double save_seconds) {
     save_on_leave(save_seconds);
     left_ = true;
     {
+        // (The latency of the pads that waited for the network: solo ticks run in the step of their sample.)
         const auto& t = session_->stats().total();
-        log_.line("leaving the room: %llu own pads ran, %llu not sealed as sent, latency avg %.0f ms p95 %.0f ms max %.0f ms, input delay %d, "
-                  "reconnects %d, resyncs %d",
-                  static_cast<unsigned long long>(t.samples), static_cast<unsigned long long>(t.dropped), t.exec_avg() * 1000.0,
-                  t.exec_quantile(0.95) * 1000.0, t.exec_max * 1000.0, session_->delay(), session_->net().reconnects, session_->net().resyncs);
+        const auto& n = session_->stats().delayed_total();
+        log_.line("leaving the room: %llu own pads ran (%llu with others), %llu not sealed as sent, latency with others avg %.0f ms p95 %.0f ms "
+                  "max %.0f ms, input delay %d, reconnects %d, resyncs %d",
+                  static_cast<unsigned long long>(t.samples), static_cast<unsigned long long>(n.samples), static_cast<unsigned long long>(t.dropped),
+                  n.exec_avg() * 1000.0, n.exec_quantile(0.95) * 1000.0, n.exec_max * 1000.0, session_->delay(), session_->net().reconnects,
+                  session_->net().resyncs);
     }
     session_->leave();
     http_->wait(http_->submit(online::api::leave_request(room_.code)));

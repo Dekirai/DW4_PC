@@ -16,6 +16,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <iterator>
 #include <random>
 #include <stdexcept>
 #include <string>
@@ -224,6 +225,19 @@ void messages() {
               netstat.filled == 5 && netstat.late == 7 && netstat.flags == 1,
           "NETSTAT round trip");
     check(std::uint8_t(w::Type::netstat) == 0x8F && std::string(w::type_name(w::Type::netstat)) == "NETSTAT", "NETSTAT type");
+    {
+        // The type registry (SEAMLESS.md 6.3; WireGoldenTests.Message_types_are_unique_and_registered): the numbers
+        // type_name knows are exactly these. A number given twice does not compile (type_name's switch); a new type
+        // fails this until it is entered here and in WireGoldenTests.cs (round 62 review: round 60's PRESENCE2 on 0x8F).
+        std::string known;
+        for (int b = 0; b < 256; ++b)
+            if (std::string(w::type_name(w::Type(b))) != "?") known += (known.empty() ? "" : " ") + std::string(w::type_name(w::Type(b)));
+        check(known == "INPUT LOG HEADING BARRIER BARRIER_CHOICE SPLIT SNAPSHOT SNAPHASH READY JOIN_AT NETFP STATE INTENT STORY PRESENCE RESUME "
+                       "RATE PONG BYE WELCOME SEALED LIVE JOIN_REQ BARRIER_OK BARRIER_WAIT STATE_DATA PRESENCE RESYNC STORY_ACK ROOM PING CLOSE "
+                       "ROSTER REASSIGN NETSTAT",
+              "type registry: " + known);
+        check(std::uint8_t(w::Type::bye) == 0x13 && std::uint8_t(w::Type::reassign) == 0x8E, "the registry's last numbers before NETSTAT");
+    }
     auto close = w::decode_close(w::encode(w::Close{w::CloseReason::kicked, "bye"}));
     check(close.reason == w::CloseReason::kicked && close.text == "bye", "CLOSE");
     w::Roster roster{{{1, "stag0101", 8, 3, 50, 60, 3}, {2, "", 9, 1, 1, 1, 0}}};
@@ -510,6 +524,41 @@ void online_log() {
     check(first.size() > 24 && first[4] == '-' && first[10] == ' ' && first[19] == '.' && first.find("of the link") != std::string::npos,
           "lines carry the date and time: " + first);
     in.close();
+#ifdef _WIN32
+    {
+        // Two games from one folder (round 62 review): the second finds online.log over its size and held by the first.
+        // It writes nothing there and rotates nothing: online.1-3.log keep what they held (OnlineRun::open_log then
+        // takes online-2.log).
+        const auto two = folder / "two";
+        std::filesystem::create_directories(two);
+        const auto held = two / "online.log";
+        auto put = [](const std::filesystem::path& p, const std::string& text) {
+            std::ofstream out(p, std::ios::binary);
+            out << text;
+        };
+        auto get = [](const std::filesystem::path& p) {
+            std::ifstream in(p, std::ios::binary);
+            return std::string(std::istreambuf_iterator<char>(in), {});
+        };
+        put(held, std::string(10000, 'x'));
+        for (int n = 1; n <= 3; ++n) put(rotated_log_name(held, n), "old " + std::to_string(n));
+        OnlineLog game1;
+        check(game1.open(held, 1u << 20, 3), "the first game holds online.log");
+        OnlineLog game2;
+        check(!game2.open(held, 4096, 3), "the second game cannot write the held online.log");
+        check(get(rotated_log_name(held, 1)) == "old 1" && get(rotated_log_name(held, 2)) == "old 2" && get(rotated_log_name(held, 3)) == "old 3",
+              "the older logs are untouched");
+        check(std::filesystem::file_size(held) == 10000, "the held log is untouched");
+        game1.line("still the first game's");
+        game1.close();
+        // The first game rotates its own file when it is over the size.
+        OnlineLog again;
+        check(again.open(held, 4096, 3), "online.log again");
+        check(get(rotated_log_name(held, 1)).size() > 10000 && get(rotated_log_name(held, 2)) == "old 1" && get(rotated_log_name(held, 3)) == "old 2",
+              "rotated once: online.log became online.1.log, the oldest went");
+        check(!std::filesystem::exists(two / "online.log.rotating"), "nothing left aside");
+    }
+#endif
     std::error_code ignored;
     std::filesystem::remove_all(folder, ignored);
 }

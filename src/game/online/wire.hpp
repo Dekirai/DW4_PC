@@ -59,6 +59,13 @@ struct WireError : std::runtime_error {
     using std::runtime_error::runtime_error;
 };
 
+// The frame types (SEAMLESS.md 6.3, "Message types"): one number per message
+// on both sides, never given twice. A new message takes the next free number
+// of its direction (client to server 0x14, server to client 0x90 after round
+// 62) and goes into the registry checks of tests/online_wire_tests.cpp and
+// WireGoldenTests.cs. 0x8F is NETSTAT, in the field since DW4Online 0.1.2: a
+// client that cannot decode a frame of a type it knows drops the connection
+// (only the informational ones are skipped, Session::informational).
 enum class Type : std::uint8_t {
     // client -> server (0x01-0x3F)
     input = 0x01,

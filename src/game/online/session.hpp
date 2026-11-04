@@ -36,6 +36,7 @@
 #include "transport.hpp"
 #include "wire.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <deque>
@@ -75,6 +76,11 @@ const char* mode_name(Mode mode) noexcept;
 // measured. Negative: not known (yet).
 struct NetView {
     double rtt_ms = -1;           // round trip to the relay (the relay's NETSTAT, else the socket's TCP estimate)
+    // How long a PING waits here for this game's next pass (half the time
+    // between the passes it came between, the median of the newest 31): the
+    // relay's round trip holds it, the network's does not (at 60 pictures a
+    // second about 8 ms; round 62 review: "Ping 34 ms" at 24 ms of network).
+    double pass_wait_ms = -1;
     double rtt_spread_ms = -1;    // its spread (p95 - median) as the relay saw it
     int suggested_delay = 0;      // the relay's suggestion (PING) for the next sealed start
     int margin_ms = 0;            // the relay's arrival margin of this member's pads (0.1 % quantile, PING)
@@ -84,6 +90,13 @@ struct NetView {
     long long tcp_loss = -1;      // TCP loss episodes on the connection (fast retransmissions, timeouts)
     int reconnects = 0;           // connections lost in this session
     int resyncs = 0;              // RESYNCs this member went through
+    int skipped_frames = 0;       // server frames of a known type that did not decode and were skipped (informational only)
+    // The network's round trip as a ping would show it: the relay's minus the
+    // wait for this game's pass, or the socket's TCP estimate; negative: not known.
+    double network_rtt_ms() const {
+        if (rtt_ms < 0) return rtt_ms;
+        return from_relay && pass_wait_ms > 0 ? std::max(0.0, rtt_ms - pass_wait_ms) : rtt_ms;
+    }
 };
 
 struct RemoteMember {
@@ -187,6 +200,9 @@ private:
     };
     void send(wire::Type type, const std::vector<std::uint8_t>& payload);
     void handle(const wire::Frame& frame, double now);
+    // Frames that only feed the indicator, the name tags or the room list
+    // (NETSTAT, PRESENCE, ROSTER, ROOM): one that does not decode is skipped.
+    static bool informational(wire::Type type) noexcept;
     void on_welcome(const wire::Welcome& welcome, double now);
     // The new instance of a BARRIER_OK: ids, slot, members, mode, delay, the
     // snapshot's uploader, the notice.
@@ -312,6 +328,10 @@ private:
     double welcome_at_ = -100; // the first WELCOME (the members named right after it are no news)
     double last_tick_at_ = 0;
     double now_ = 0;
+    double last_poll_at_ = -1;  // the previous poll (a PING waited at most the gap since)
+    double poll_gap_ = 0;
+    std::array<double, 31> pass_waits_{};
+    std::size_t pass_wait_count_ = 0;
 
     // Room story (8.3). A counter line is the engine line its growth is made
     // in: the visit (base = the counters at the visit's start), a fork's child

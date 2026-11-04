@@ -39,11 +39,16 @@ bool OnlineLog::open(const std::filesystem::path& path, std::uintmax_t max_bytes
     keep_ = std::max(keep, 1);
     std::error_code ec;
     if (!path.parent_path().empty()) std::filesystem::create_directories(path.parent_path(), ec);
-    const auto size = std::filesystem::file_size(path, ec);
-    if (!ec && size > max_bytes_) rotate();
-    written_ = ec ? 0 : std::filesystem::file_size(path, ec);
-    if (ec) written_ = 0;
+    // Opened first: a file another game holds (two games from one folder) is
+    // left alone, its older logs too, and this game writes another name
+    // (OnlineRun::open_log). Round 62 review: the second game rotated first,
+    // deleted online.3.log, moved .1 and .2 on, failed to move the held
+    // online.log and left no online.1.log.
     file_ = open_append(path);
+    if (!file_) return false;
+    written_ = std::filesystem::file_size(path, ec);
+    if (ec) written_ = 0;
+    if (written_ > max_bytes_) rotate();
     return file_ != nullptr;
 }
 
@@ -56,16 +61,21 @@ void OnlineLog::rotate() {
     const bool was_open = file_ != nullptr;
     close();
     std::error_code ec;
-    std::filesystem::remove(rotated_log_name(path_, keep_), ec);
-    for (int n = keep_ - 1; n >= 1; --n) {
-        const auto from = rotated_log_name(path_, n);
-        if (std::filesystem::exists(from, ec)) std::filesystem::rename(from, rotated_log_name(path_, n + 1), ec);
+    // The current file moves aside first: when it cannot (another program
+    // holds it), nothing older is touched and this game appends on; the next
+    // try comes after another max_bytes.
+    const auto aside = path_.parent_path() / (path_.filename().string() + ".rotating");
+    std::filesystem::rename(path_, aside, ec);
+    if (!ec) {
+        std::filesystem::remove(rotated_log_name(path_, keep_), ec);
+        for (int n = keep_ - 1; n >= 1; --n) {
+            const auto from = rotated_log_name(path_, n);
+            if (std::filesystem::exists(from, ec)) std::filesystem::rename(from, rotated_log_name(path_, n + 1), ec);
+        }
+        std::filesystem::rename(aside, rotated_log_name(path_, 1), ec);
     }
-    std::filesystem::rename(path_, rotated_log_name(path_, 1), ec);
     written_ = 0;
-    if (was_open) {
-        file_ = open_append(path_);
-    }
+    if (was_open) file_ = open_append(path_);
 }
 
 void OnlineLog::line(const char* format, ...) {

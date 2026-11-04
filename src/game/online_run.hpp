@@ -103,6 +103,22 @@ public:
     // come with its status); the session logs into it from here.
     void open_log(const std::filesystem::path& path, const std::string& client_version);
     const online::OnlineLog& log() const { return log_; }
+    // What the host loop did in one pass, for online.log (round 62 review:
+    // with two games on one PC the rates of passes and pictures, vsync, the
+    // display's rate, the frame limit and which window was in front decide
+    // what each game's pads cost; none of it was in the log).
+    struct HostFacts {
+        bool window = false;    // a window exists (test runs without pictures have none)
+        bool presented = false; // this pass swapped a picture
+        bool vsync = false;     // settings.ini vsync
+        int swap_interval = 0;  // what the GL context reports (-1: adaptive)
+        int fps_limit = 0;      // settings.ini fps_limit (0: off)
+        double refresh_hz = 0;  // the window's display (0: unknown)
+        bool focused = false, minimized = false, occluded = false, hidden = false;
+    };
+    // Once per pass of the host loop: a line when the settings or the window's
+    // state change, and every ten seconds the rates of passes and pictures.
+    void host_pass(double now, const HostFacts& facts);
 
 private:
     void dispatch(std::uint64_t id, const online::HttpResponse& response, double now);
@@ -120,6 +136,11 @@ private:
     std::uint64_t ticket_request_ = 0;
     std::uint64_t status_request_ = 0; // the server's status for the log
     online::OnlineLog log_;
+    struct HostWindow {
+        double since = -1, last = -1, longest = 0;
+        std::uint64_t passes = 0, presents = 0;
+    } host_window_;
+    std::optional<HostFacts> host_logged_; // the settings and window state of the last lines
     double next_reconnect_ = 0;
     bool pending_before_ = false; // the last live step had a NEXTSTAGE pending
     bool saved_on_leave_ = false;
