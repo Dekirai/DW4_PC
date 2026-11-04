@@ -119,8 +119,37 @@ void derive_copies(RoomStory& story, int difficulty) {
         story.flags[std::size_t(tables::kKeyCopies[d] + k)] = story.folder[std::size_t(k)] ? 1 : 0;
 }
 
+std::int32_t training_flag() { return tables::kTrainingFlag; }
+
+bool played_training(const RoomStory& story) {
+    const auto on = [&](std::int32_t f) { return f >= 0 && f < kFlags && story.flags[std::size_t(f)] != 0; };
+    if (on(tables::kTrainingFlag)) return true;
+    // Phase 3 or later (index 3-7) in the working set or any difficulty's copies.
+    for (std::size_t i = 2; i < tables::kPhase.size(); ++i) {
+        if (on(tables::kPhase[i])) return true;
+        for (int d = 0; d < kDifficulties; ++d)
+            if (on(tables::kPhaseCopies[std::size_t(d)][i])) return true;
+    }
+    if (story.counters[7] > 0) return true;
+    for (std::int32_t k = 0; k < tables::kKeys; ++k) {
+        if (story.folder[std::size_t(k)]) return true;
+        for (int d = 0; d < kDifficulties; ++d)
+            if (on(tables::kKeyCopies[std::size_t(d)] + k)) return true;
+    }
+    for (const auto f : tables::kTrainingProof) {
+        if (on(f)) return true;
+        for (const auto& g : tables::kWorking)
+            if (f >= g.first && f < g.first + g.count)
+                for (int d = 0; d < kDifficulties; ++d)
+                    if (on(g.copies[std::size_t(d)] + (f - g.first))) return true;
+    }
+    return false;
+}
+
 void rebase(RoomStory& story, int difficulty) {
     if (difficulty < 0 || difficulty >= kDifficulties) return;
+    // (Read before the rebase: the stored working set and every difficulty's copies.)
+    const bool trained = played_training(story);
     const auto d = std::size_t(difficulty);
     for (std::size_t i = 0; i < tables::kPhase.size(); ++i)
         story.flags[std::size_t(tables::kPhase[i])] = story.flags[std::size_t(tables::kPhaseCopies[d][i])] ? 1 : 0;
@@ -130,6 +159,7 @@ void rebase(RoomStory& story, int difficulty) {
     // gameStart.lua clears folder 0-11 and sets 0-10 from the copies.
     for (std::int32_t k = 0; k < kFolder; ++k)
         story.folder[std::size_t(k)] = k < tables::kKeys && story.flags[std::size_t(tables::kKeyCopies[d] + k)] ? 1 : 0;
+    if (trained) story.flags[std::size_t(tables::kTrainingFlag)] = 1;
 }
 
 MergeResult merge(const RoomStory& room, const StoryDelta& delta, int difficulty, StoryLines& lines) {
@@ -198,8 +228,11 @@ MergeResult merge(const RoomStory& room, const StoryDelta& delta, int difficulty
 }
 
 bool apply(std::map<std::int32_t, std::uint8_t>& flags, std::map<std::int32_t, std::uint8_t>& folder,
-           std::map<std::int32_t, std::int32_t>& counters, const RoomStory& room, const StoryKeys& dropped) {
+           std::map<std::int32_t, std::int32_t>& counters, const RoomStory& room, const StoryKeys& dropped,
+           std::string_view target) {
     bool removed = false;
+    // A barrier into the training field leaves 503 as the engine has it (8.8).
+    const bool keep_training = target == kTrainingStage;
     const std::set<std::int32_t> dflags(dropped.flags.begin(), dropped.flags.end());
     const std::set<std::int32_t> dfolder(dropped.folder.begin(), dropped.folder.end());
     const std::set<std::int32_t> dcounters(dropped.counters.begin(), dropped.counters.end());
@@ -217,9 +250,11 @@ bool apply(std::map<std::int32_t, std::uint8_t>& flags, std::map<std::int32_t, s
         for (int i = 1; i <= kPhases; ++i) put(flags, tables::kPhase[std::size_t(i - 1)], std::uint8_t(i == target ? 1 : 0));
     // Persistent flags and keys the room has; then the dropped ones.
     for (const auto f : tables::kPersistent)
-        if (const auto v = room.flags[std::size_t(f)]; v && !get(flags, f)) put(flags, f, v);
+        if (const auto v = room.flags[std::size_t(f)]; v && !get(flags, f) && !(keep_training && f == tables::kTrainingFlag)) put(flags, f, v);
     for (const auto f : dflags)
-        if (is_persistent(f) && !room.flags[std::size_t(f)] && put(flags, f, std::uint8_t(0))) removed = true;
+        if (is_persistent(f) && !(keep_training && f == tables::kTrainingFlag) && !room.flags[std::size_t(f)] &&
+            put(flags, f, std::uint8_t(0)))
+            removed = true;
     for (std::int32_t k = 0; k < tables::kKeys; ++k)
         if (const auto v = room.folder[std::size_t(k)]; v && !get(folder, k)) put(folder, k, v);
     for (const auto k : dfolder)
@@ -238,10 +273,10 @@ bool apply(std::map<std::int32_t, std::uint8_t>& flags, std::map<std::int32_t, s
     return removed;
 }
 
-bool holds_dropped(const StoryValues& values, const RoomStory& room, const StoryKeys& dropped) {
+bool holds_dropped(const StoryValues& values, const RoomStory& room, const StoryKeys& dropped, std::string_view target) {
     if (dropped.empty()) return false;
     StoryValues copy = values;
-    return apply(copy, room, dropped);
+    return apply(copy, room, dropped, target);
 }
 
 std::vector<std::uint8_t> encode_story(const RoomStory& story) {

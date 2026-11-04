@@ -37,7 +37,7 @@ public class HubStoryTests
             bool started = true, RoomSessionState? session = null, Harness? after = null)
         {
             var init = new RoomStoryInit(4242, story ?? new RoomStoryData(), difficulty, policy, ownerPresent, started);
-            Hub = new RoomHub(new RoomInfo("ROOM01", 43, 1, 2, 10, init), new RelayOptions(), new SealingOptions(),
+            Hub = new RoomHub(new RoomInfo("ROOM01", RoomStoryKeeper.QueuedProtocol, 1, 2, 10, init), new RelayOptions(), new SealingOptions(),
                 instances ?? new InstanceOptions { StoryMinVisitSeconds = 0 }, NullLogger.Instance, session: session)
             {
                 StorySaver = (owner, s, countersOnly) =>
@@ -258,12 +258,19 @@ public class HubStoryTests
         Assert.Contains(new StoryRefused(StoryKeyKind.Flag, 408, StoryRefusal.Stage), ack.Refused);
         Assert.DoesNotContain(406, h.Hub.StoryState().Flags);
         Assert.DoesNotContain(407, h.Hub.StoryState().Flags);
-        // Every key item at once: one counts, the others wait for later visits.
+        // Every key item at once from stag0101: none comes from there (round G, the key setter stages).
         h.Barrier("b", "stag0101");
         h.Advance(11_000);
         ack = h.Story("b", new StoryDelta { Folder = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10] });
-        Assert.Equal(10, ack.Refused.Count(r => r is { Kind: StoryKeyKind.Folder, Reason: StoryRefusal.Wait }));
-        Assert.Equal([0], h.Hub.StoryState().Folder);
+        Assert.Equal(11, ack.Refused.Count(r => r is { Kind: StoryKeyKind.Folder, Reason: StoryRefusal.Stage }));
+        Assert.Empty(h.Hub.StoryState().Folder);
+        // From stagML02 (K2 and K3 come from its scripts): one counts, the other is queued for a later visit.
+        h.Barrier("b", "stagml02");
+        h.Advance(11_000);
+        ack = h.Story("b", new StoryDelta { Folder = [0, 2, 3] });
+        Assert.Contains(new StoryRefused(StoryKeyKind.Folder, 0, StoryRefusal.Stage), ack.Refused);
+        Assert.Contains(new StoryRefused(StoryKeyKind.Folder, 3, StoryRefusal.Queued), ack.Refused);
+        Assert.Equal([2], h.Hub.StoryState().Folder);
         // COUNTER 7 on 32 invented lines: refused; the member's own line counts.
         h.Barrier("b", "stag0001");
         h.Advance(11_000);
@@ -426,8 +433,8 @@ public class HubStoryTests
         h.Barrier("b", "stagml12");
         h.Barrier("b", "stagml02");
         h.Advance(11_000);
-        Assert.Equal(StoryRefusal.Wait, h.Story("b", new StoryDelta { Phase = 4 }).Refused.Single().Reason);
-        // ... is earned, and the guest leaves stagML02, where a resend would be refused for the stage.
+        Assert.Equal(StoryRefusal.Queued, h.Story("b", new StoryDelta { Phase = 4 }).Refused.Single().Reason);
+        // ... is earned (queued: a client of protocol 47 does not send it again), and the guest leaves stagML02, where a resend would be refused for the stage.
         h.Barrier("b", "stag0101");
         Assert.Equal(StoryRefusal.Stage, h.Story("b", new StoryDelta { Phase = 4 }).Refused.Single().Reason);
         h.Advance(60_000);
@@ -462,7 +469,7 @@ public class HubStoryTests
             h.Barrier("b", "stagml12");
             h.Barrier("b", "stagml02");
             h.Advance(10_300);
-            h.Story("b", new StoryDelta { Phase = (byte)(h.Hub.StoryState().Phase + 1), Folder = [n % 11] });
+            h.Story("b", new StoryDelta { Phase = (byte)(h.Hub.StoryState().Phase + 1), Folder = [2 + n % 2] }); // (K2 / K3: stagML02's)
             h.Hub.Housekeep(h.Now);
         }
         Assert.Equal(1, h.Hub.StoryState().Phase);
@@ -520,11 +527,11 @@ public class HubStoryTests
         h.Connect("b", 1);
         h.Barrier("b", "stagml02");
         h.Advance(11_000);
-        Assert.Empty(h.Story("b", new StoryDelta { Phase = 1, Folder = [0] }).Refused);
-        Assert.Equal(2, h.Story("b", new StoryDelta { Phase = 2, Folder = [1] }).Refused.Count(r => r.Reason == StoryRefusal.Wait));
+        Assert.Empty(h.Story("b", new StoryDelta { Phase = 1, Folder = [2] }).Refused);
+        Assert.Equal(2, h.Story("b", new StoryDelta { Phase = 2, Folder = [3] }).Refused.Count(r => r.Reason == StoryRefusal.Queued));
         h.Hub.Disconnect(h.M["b"].Member, h.P("b"), h.Now);
         h.Connect("b", 1);
-        Assert.Equal(2, h.Story("b", new StoryDelta { Phase = 2, Folder = [1] }).Refused.Count(r => r.Reason == StoryRefusal.Wait));
+        Assert.Equal(2, h.Story("b", new StoryDelta { Phase = 2, Folder = [3] }).Refused.Count(r => r.Reason == StoryRefusal.Queued));
         Assert.Equal(1, h.Hub.StoryState().Phase);
     }
 
@@ -592,7 +599,7 @@ public class HubStoryTests
         Assert.True(h.I("b").OwnerSeen);
         Assert.Equal(StoryRefusal.NotStarted, h.Story("b", Flags(505)).Refused.Single().Reason);
         Assert.Equal(StoryRefusal.NotStarted, h.Story("a", Flags(506)).Refused.Single().Reason);
-        Assert.Empty(h.Story("b", new StoryDelta { Folder = [0] }).Refused);
+        Assert.Empty(h.Story("b", Flags(507)).Refused);
         Assert.Equal(1u, h.Hub.StoryState().Revision);
         Assert.Equal([505, 506], h.Hub.StoryState().DroppedFlags);
     }

@@ -1259,7 +1259,10 @@ void Session::on_barrier_ok(const w::BarrierOk& ok, double now) {
             try {
                 const auto room = engine::story::decode_story(ok.story, ok.story_revision);
                 const auto dropped = engine::story::decode_keys(ok.dropped);
-                if (engine::story::holds_dropped(engine_.story_values(), room, dropped))
+                // (The engine's pending stage is the barrier's target: a barrier into the
+                // training field leaves 503 alone, as the load step does, 8.8.)
+                const auto target = engine_.pending_stage();
+                if (engine::story::holds_dropped(engine_.story_values(), room, dropped, target ? std::string_view(*target) : std::string_view()))
                     notice(not_started_dropped_ ? "Story progress was not saved: the room owner had not started its story yet."
                                                 : "Story progress was not saved: the room owner is away.");
                 take_story(room);

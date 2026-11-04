@@ -605,7 +605,9 @@ void Engine::apply_barrier() {
     // step, before the stage's load scripts read the flags and before the
     // snapshot, so a joiner gets the same state. (JOIN and CO_ARRIVE merge it
     // into the member's own fallback load.)
-    if (b.story) story::apply(flags_, sys->flag_folder, counters_, *b.story, b.dropped);
+    // (pending_stage_ holds the barrier's target: a barrier into the training
+    // field leaves flag 503 alone, 8.8.)
+    if (b.story) story::apply(flags_, sys->flag_folder, counters_, *b.story, b.dropped, pending_stage_);
     auto rules = b.rules;
     rules.enabled = true;
     rules.leaving = 0;
