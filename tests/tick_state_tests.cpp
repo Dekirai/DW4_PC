@@ -21,6 +21,7 @@
 #include "dw4/engine/online.hpp"
 #include "dw4/engine/tick_state.hpp"
 
+#include <cctype>
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
@@ -154,7 +155,7 @@ Straight run_straight(const std::filesystem::path& data, const Scenario& sc) {
     for (std::uint64_t i = 0; i < sc.steps; ++i) {
         const auto pads = pads_at(engine.frame());
         host_step(engine, pads);
-        if (const auto* s = engine.stage_snapshot(); s && s->serial != serial) {
+        if (const auto* s = engine.stage_snapshot(); s && s->serial != serial && !out.load_end) {
             serial = s->serial;
             out.snapshot = engine.snapshot_bytes(SnapshotForm::raw);
             out.load_frame = engine.frame();
@@ -163,6 +164,8 @@ Straight run_straight(const std::filesystem::path& data, const Scenario& sc) {
             out.load_log.push_back(pads);
         }
         if (!out.load_end && engine.load_end_frame()) out.load_end = engine.load_end_frame();
+        // The first visit only (a boss stage may end in another stage).
+        if (out.load_end && (engine.stage_name() != sc.stage || engine.pending_stage())) break;
         out.fingerprints[engine.frame()] = engine.net_fingerprint();
     }
     engine.set_online(OnlineRules{});
@@ -312,8 +315,9 @@ void run_rebuild(const std::filesystem::path& data, const Scenario& sc, const St
     engine.set_online(OnlineRules{});
 }
 
-void run(const std::filesystem::path& data, const Scenario& sc) {
+void run(const std::filesystem::path& data, Scenario sc) {
     const auto t0 = std::chrono::steady_clock::now();
+    for (auto& c : sc.stage) c = char(std::tolower(static_cast<unsigned char>(c))); // the engine's stage names
     const auto straight = run_straight(data, sc);
     check(straight.load_end != 0, sc.stage + ": the visit reached its load end");
     Trials t;

@@ -1284,6 +1284,7 @@ private:
     std::uint64_t load_end_frame_{};
     void tick_engine(TickArchive& a);
     void tick_nodes(TickArchive& a);
+    void tick_lua(TickArchive& a);
     friend class TickIds;
 };
 

@@ -42,6 +42,7 @@ enum : std::uint32_t {
     kDemo = 5,
     kNodes = 6,
     kAttributes = 7,
+    kLua = 8,
     kManagerBase = 0x100, // + the manager's index
 };
 
@@ -54,6 +55,7 @@ const char* section_name(std::uint32_t tag) {
     case kDemo: return "demo";
     case kNodes: return "nodes";
     case kAttributes: return "attributes";
+    case kLua: return "lua";
     default: return nullptr;
     }
 }
@@ -461,29 +463,78 @@ void Engine::tick_engine(TickArchive& a) {
     a.io(scoped_layers_off_);
     a.io(talk_globals_side_);
     a.io(talk_waits_);
-    // The talk globals (Lua values): only nil, numbers and strings so far
-    // (the Lua lane carries tables and functions).
+}
+
+// The Lua VM (Lua4Vm::save_state) and the talk globals (Lua values of the
+// VM): the programs its closures run by (document id, reference) with their
+// labels, made on the reader as the script runs make them.
+void Engine::tick_lua(TickArchive& a) {
+    struct Program {
+        std::uint64_t id{};
+        std::string label;
+    };
+    std::vector<Program> programs;
+    std::unordered_map<const void*, std::uint64_t> ids;
+    if (!a.reading()) {
+        for (const auto& [key, program] : lua_programs_) {
+            const std::uint64_t id = (std::uint64_t(a.ids().document(static_cast<const IgbDocument*>(key.first))) << 32) | key.second;
+            ids[program.identity()] = id;
+            programs.push_back({id, program.info().label});
+        }
+        std::sort(programs.begin(), programs.end(), [](const Program& x, const Program& y) { return x.id < y.id; });
+    }
+    std::uint32_t count = std::uint32_t(programs.size());
+    a.io(count);
+    if (a.reading()) {
+        if (count > 1u << 16) throw TickStateError("lua", "implausible programs");
+        programs.resize(count);
+    }
+    for (auto& p : programs) {
+        a.io(p.id);
+        a.io(p.label);
+    }
+    auto program_of = [&](std::uint64_t id) -> Lua4Program {
+        const auto* document = a.ids().document(std::uint32_t(id >> 32));
+        const auto key = std::make_pair(static_cast<const void*>(document), std::uint32_t(id));
+        auto found = lua_programs_.find(key);
+        if (found == lua_programs_.end()) {
+            std::string label;
+            for (const auto& p : programs)
+                if (p.id == id) label = p.label;
+            const ObjectView object(document, std::uint32_t(id));
+            found = lua_programs_.emplace(key, read_lua4_chunk(object.memory(3), label)).first;
+        }
+        return found->second;
+    };
+    std::vector<std::uint8_t> vm;
+    if (!a.reading()) {
+        if (!lua_) throw TickStateError("lua", "no VM");
+        vm = lua_->save_state([&](const void* program) {
+            const auto it = ids.find(program);
+            if (it == ids.end()) throw TickStateError("lua", "a closure of a program outside the cache");
+            return it->second;
+        });
+    }
+    a.io(vm);
+    if (a.reading()) {
+        if (!lua_) throw TickStateError("lua", "no VM");
+        lua_->load_state(vm, program_of);
+    }
     for (auto& side : talk_globals_)
         for (auto& value : side) {
-            std::uint8_t kind = 0;
-            double number = 0;
-            std::string text;
-            if (!a.reading() && value) {
-                switch (value->type()) {
-                case Lua4Type::Nil: kind = 1; break;
-                case Lua4Type::Number: kind = 2; number = value->as_number(); break;
-                case Lua4Type::String: kind = 3; text = std::string(value->as_string()); break;
-                default: throw TickStateError("engine", "a talk global holds a Lua object");
-                }
+            std::vector<std::uint8_t> bytes;
+            bool has = value.has_value();
+            a.io(has);
+            if (!has) {
+                if (a.reading()) value.reset();
+                continue;
             }
-            a.io(kind);
-            if (kind == 2) a.io(number);
-            if (kind == 3) a.io(text);
+            if (!a.reading()) lua_->write_value(bytes, *value);
+            a.io(bytes);
             if (a.reading()) {
-                if (kind == 0) value.reset();
-                else if (kind == 1) value = Lua4Value{};
-                else if (kind == 2) value = Lua4Value::number(number);
-                else value = Lua4Value::string(text);
+                std::size_t at = 0;
+                value = lua_->read_value(bytes, at);
+                if (at != bytes.size()) throw TickStateError("lua", "a damaged talk global");
             }
         }
 }
@@ -721,6 +772,7 @@ std::vector<std::uint8_t> Engine::save_tick_state(TickForm form) {
     });
     section(kMessenger, [&](TickArchive& a) { messenger_.tick_state(a); });
     section(kDemo, [&](TickArchive& a) { demo_.tick_state(a); });
+    section(kLua, [&](TickArchive& a) { tick_lua(a); });
     section(kNodes, [&](TickArchive& a) { tick_nodes(a); });
     section(kAttributes, [&](TickArchive& a) {
         struct Entry {
@@ -797,6 +849,7 @@ void Engine::apply_tick_state(std::span<const std::uint8_t> bytes) {
     });
     section(kMessenger, [&](TickArchive& a) { messenger_.tick_state(a); });
     section(kDemo, [&](TickArchive& a) { demo_.tick_state(a); });
+    section(kLua, [&](TickArchive& a) { tick_lua(a); });
     section(kNodes, [&](TickArchive& a) { tick_nodes(a); });
     section(kAttributes, [&](TickArchive& a) {
         std::uint32_t count = 0;
