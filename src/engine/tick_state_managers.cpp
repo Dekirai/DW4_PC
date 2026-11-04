@@ -350,23 +350,33 @@ void SoundManager::tick_state(TickArchive& a) {
     a.io(fx_preset_);
     a.io(fx_bank_select_);
     a.io(aux_a_callback_);
-    a.io(audio_delta_);
+    // (audio_delta_ and the mirror's recorded master and reserve are the
+    // audio output's: each machine keeps its own.)
     a.io(last_update_ticks_);
     a.io(updated_);
-    a.io(recorded_master_);
-    a.io(recorded_reserved_);
     serialize_cri(a, cri_);
     // The SNDF as the game sees it, its banks by their place in the list.
-    const auto banks = driver_banks();
+    // (A bank by its file name and kind: the session's common banks may
+    // stand elsewhere in another engine's list.)
     auto bank_io = [&](std::shared_ptr<const sndf::BankData>& bank) {
-        std::int32_t id = -1;
+        std::string name;
+        std::uint8_t kind = 0; // 0 none, 1 stage, 2 common
         if (!a.reading() && bank) {
-            for (std::size_t i = 0; i < banks.size(); ++i)
-                if (banks[i] == bank) id = std::int32_t(i);
-            if (id < 0) throw TickStateError("sound", "a driver bank outside the bank list");
+            for (const auto& b : banks_)
+                if (b && b->data == bank) {
+                    name = b->name;
+                    kind = b->common ? 2 : 1;
+                }
+            if (!kind) throw TickStateError("sound", "a driver bank outside the bank list");
         }
-        a.io(id);
-        if (a.reading()) bank = id >= 0 && std::size_t(id) < banks.size() ? banks[std::size_t(id)] : nullptr;
+        a.io(kind);
+        if (kind) a.io(name);
+        if (a.reading()) {
+            bank = nullptr;
+            for (const auto& b : banks_)
+                if (b && b->name == name && (b->common ? 2 : 1) == kind) bank = b->data;
+            if (kind && !bank) throw TickStateError("topology", "the sound bank " + name + " is not loaded");
+        }
     };
     auto bank_bytes = [](const std::shared_ptr<const sndf::BankData>& bank) {
         return bank && bank->bank ? bank->bank->bytes() : std::span<const std::uint8_t>{};
@@ -527,6 +537,10 @@ void TextCtlManager::tick_state(TickArchive& a) {
         a.io(l.align);
         a.io(l.style);
         a.io(l.slot);
+        // The shown text (raw form only): laid out again on the reader, for
+        // the joiner's picture.
+        a.shown(l.text);
+        if (a.reading() && l.text) set_text(a.engine(), l, *l.text);
     }
 }
 void TextCtlManager::owned_nodes(std::vector<Node*>&) const {}
@@ -569,6 +583,8 @@ void NumberCtrlManager::tick_state(TickArchive& a) {
         a.io(r->target);
         a.io(r->rate);
         a.io(r->drawn);
+        // (The digits on the reader's picture: presentation only.)
+        if (a.reading() && r->drawn) draw(a.engine(), *r, r->shown);
     }
 }
 void NumberCtrlManager::owned_nodes(std::vector<Node*>&) const {}

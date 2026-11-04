@@ -1098,6 +1098,9 @@ private:
         // line (its window's text) for that slot; -1 the original. Commands
         // inside a member's scope reach its copies, all others the originals.
         int slot = -1;
+        // The text it was set with (round J: a joiner's picture lays it out
+        // again; nothing in the simulation reads it).
+        std::optional<std::u16string> text;
     };
     // The member's own copies of the lines a command in its scope addresses
     // (made on first use, the same on every machine).

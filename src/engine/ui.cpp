@@ -239,6 +239,7 @@ void TextCtlManager::set_text(Engine& engine, Line& target, const std::u16string
         }
         engine.log("text " + target.layer + "/" + target.name + ": " + ascii);
     }
+    target.text = value;
     Node* geometry_node = find_geometry(target.node);
     if (!geometry_node) return;
     auto font_it = fonts_.find(target.style.empty() ? "NORMAL" : target.style);

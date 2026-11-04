@@ -1843,6 +1843,17 @@ void Session::checkpoint_tick(double now) {
         const auto t0 = clock_seconds();
         const auto hash = engine_.tick_state_hash();
         send(w::Type::statehash, w::encode(w::StateHash{inst_, visit_, tick_, hash, *load_end_, 0}));
+        // DW4_TRACE_TICKSTATE_DUMP=DIR (test runs): the canonical state of every STATEHASH, for
+        // tools/online/tickstate_diff.py.
+        if (const char* dir = std::getenv("DW4_TRACE_TICKSTATE_DUMP"); dir && *dir) {
+            const auto bytes = engine_.save_tick_state(true);
+            const std::string path = std::string(dir) + "/statehash_" + config_.own_name + "_" + std::to_string(inst_) + "_" +
+                                     std::to_string(visit_) + "_" + std::to_string(tick_) + ".bin";
+            if (FILE* f = std::fopen(path.c_str(), "wb")) {
+                std::fwrite(bytes.data(), 1, bytes.size(), f);
+                std::fclose(f);
+            }
+        }
         trace("statehash inst=%u visit=%u tick=%u hash=%016llx k=%u ms=%.2f", inst_, visit_, tick_, static_cast<unsigned long long>(hash),
               *load_end_, (clock_seconds() - t0) * 1000.0);
         next_statehash_ = (tick_ / config_.checkpoint_period + 1) * config_.checkpoint_period;

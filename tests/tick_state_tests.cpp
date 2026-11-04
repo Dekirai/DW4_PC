@@ -174,6 +174,10 @@ struct Straight {
     std::uint64_t load_frame{}, load_end{};
     std::map<std::uint64_t, std::vector<std::uint8_t>> states; // Scenario::dump_from..dump_to
     std::uint64_t joined{}; // the pre-step frame of the join (0: none)
+    // The canonical states at a few state-safe frames (the classic joiner's
+    // comparison) and every step's pads since the load step.
+    std::map<std::uint64_t, std::vector<std::uint8_t>> canonical;
+    std::vector<std::array<PadSample, 4>> visit_log;
 };
 
 PlayerCarry joiner_carry() {
@@ -192,6 +196,7 @@ Straight run_straight(const std::filesystem::path& data, const Scenario& sc) {
     std::unique_ptr<Engine> holder;
     Engine& engine = start(holder, data, sc);
     std::uint64_t serial = 0;
+    bool fresh_visit = false;
     for (std::uint64_t i = 0; i < sc.steps; ++i) {
         const auto pads = sc.pads(engine.frame());
         if (sc.join_at && !out.joined && engine.frame() >= sc.join_at && engine.joinable()) {
@@ -204,6 +209,8 @@ Straight run_straight(const std::filesystem::path& data, const Scenario& sc) {
             out.snapshot = engine.snapshot_bytes(SnapshotForm::raw);
             out.load_frame = engine.frame();
             out.load_log.clear();
+            out.visit_log.clear();
+            fresh_visit = true;
         } else if (serial && !out.load_end) {
             out.load_log.push_back(pads);
         }
@@ -217,6 +224,10 @@ Straight run_straight(const std::filesystem::path& data, const Scenario& sc) {
             if (why != last) std::cout << "  straight " << engine.frame() << ": " << (why.empty() ? std::string("safe") : why) << " busy " << int(engine.busy_slots()) << std::endl;
             last = why;
         }
+        if (serial && !fresh_visit) out.visit_log.push_back(pads);
+        fresh_visit = false;
+        if (out.load_end && engine.frame() >= out.load_end + 300 && engine.frame() % 500 == 0 && out.canonical.size() < 6 && engine.state_safe())
+            out.canonical[engine.frame()] = engine.save_tick_state(TickForm::canonical);
         if (sc.dump_to && engine.frame() >= sc.dump_from && engine.frame() <= sc.dump_to && engine.state_safe())
             out.states[engine.frame()] = engine.save_tick_state();
     }
@@ -405,6 +416,48 @@ void run_rebuild(const std::filesystem::path& data, const Scenario& sc, const St
     engine.set_online(OnlineRules{});
 }
 
+// A classic joiner (the catch-up of today, 6.6): the visit's load snapshot
+// and every tick since in replay mode. Its canonical tick state must equal
+// the straight run's at the same frames: the members' STATEHASH reports of
+// an instance a member joined by catch-up are compared (6.13.4).
+void run_classic(const std::filesystem::path& data, const Scenario& sc, const Straight& straight) {
+    if (straight.canonical.empty()) return;
+    Engine engine(data);
+    engine.set_card_root(std::filesystem::temp_directory_path() / "dw4_tick_state_tests_cards");
+    engine.restore(decode_snapshot(straight.snapshot));
+    if (!engine.held()) engine.traverse_scene();
+    engine.set_split_identity(-1);
+    engine.set_replay(true);
+    int compared = 0;
+    std::size_t at = 0;
+    while (at < straight.visit_log.size() && engine.frame() < straight.canonical.rbegin()->first) {
+        if (straight.joined && engine.frame() == straight.joined) engine.online_join_player(sc.players, joiner_carry(), 0);
+        host_step(engine, straight.visit_log[at++]);
+        if (const auto it = straight.canonical.find(engine.frame()); it != straight.canonical.end()) {
+            ++compared;
+            if (!engine.state_safe()) {
+                soft(false, sc.stage + ": the classic joiner is not state-safe at " + std::to_string(it->first) + " (" + engine.state_unsafe_reason() + ")");
+                continue;
+            }
+            const auto mine = engine.save_tick_state(TickForm::canonical);
+            if (mine != it->second) {
+                soft(false, sc.stage + ": the classic joiner's canonical state differs at " + std::to_string(it->first) + " in " +
+                                first_differing_section(it->second, mine));
+                if (const char* dir = std::getenv("DW4_TICKSTATE_DUMP")) {
+                    const auto base = std::filesystem::path(dir) / (sc.stage + "_classic_" + std::to_string(it->first));
+                    std::ofstream(base.string() + "_straight.bin", std::ios::binary)
+                        .write(reinterpret_cast<const char*>(it->second.data()), std::streamsize(it->second.size()));
+                    std::ofstream(base.string() + "_classic.bin", std::ios::binary)
+                        .write(reinterpret_cast<const char*>(mine.data()), std::streamsize(mine.size()));
+                }
+                break;
+            }
+        }
+    }
+    std::cout << "  classic joiner: " << compared << " canonical states compared" << std::endl;
+    engine.set_online(OnlineRules{});
+}
+
 void run(const std::filesystem::path& data, Scenario sc) {
     const auto t0 = std::chrono::steady_clock::now();
     for (auto& c : sc.stage) c = char(std::tolower(static_cast<unsigned char>(c))); // the engine's stage names
@@ -415,6 +468,7 @@ void run(const std::filesystem::path& data, Scenario sc) {
     if (sc.dump_to) std::cout << "  kept " << straight.states.size() << " straight states for diagnosis" << std::endl;
     run_trials(data, sc, straight, t, kept);
     for (const auto& [at, bytes] : kept) run_rebuild(data, sc, straight, at, bytes, t);
+    run_classic(data, sc, straight);
     std::cout << sc.stage << " x" << sc.players << ": load end " << straight.load_end << ", " << t.saved << " states (" << t.idempotent
               << " idempotent), " << t.trials << " trials (" << t.passed << " equal, " << t.skipped << " with a node made), " << t.rebuilds
               << " rebuilds; max " << t.bytes / 1024 << " KB, save " << (t.saved ? t.save_ms / t.saved : 0) << " ms, hash "
