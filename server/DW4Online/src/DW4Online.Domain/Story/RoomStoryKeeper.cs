@@ -623,6 +623,8 @@ public sealed class RoomStoryKeeper
             {
                 // (The room's clear: it needs phase 6, whose steps are spaced, and the clear achievement waits for it.)
                 if (f == FirstClearFlag + Difficulty) continue;
+                // (A held flag the client resends while the owner is away is held already: no new token.)
+                if (_heldFlags.Contains(f)) continue;
                 if (tokens >= 1)
                 {
                     tokens -= 1;
