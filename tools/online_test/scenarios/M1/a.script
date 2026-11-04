@@ -1,0 +1,54 @@
+# M1, member a (k10, slot 0): own menus in stag0101 (docs/SEAMLESS.md 5.3, round 63). a arrives alone, opens its
+# menu among the goburi and is hit while it is alone in its instance; b joins while the menu is open. Then a's menu
+# while b fights near it, both menus at once, a's menu while b is far away, a talk with the field recorder.
+campaign until stage=stagml11,control
+idle until epoch>=@90
+explore mate00 yes until stage=stag0101,control
+log in the field alone
+fight 455 15 80 until enemy<14 or frames>=3000 fail stagechange,frames>=2990
+log case 1: a alone opens its menu among the enemies
+menu until menu=1 fail stagechange
+browse until frames>=420 fail stagechange,menu=0
+shot a1_alone_menu
+idle until lost>=1 or frames>=4000 fail stagechange,menu=0,frames>=3990
+log a was hit in its menu while alone
+idle until present=2 or frames>=24000 fail stagechange,dead,menu=0,frames>=23990
+log case 2: b joined while a is in its menu
+idle until frames>=600 fail stagechange,menu=0
+shot a2_menu_b_joined
+menu close until menu=0 fail stagechange
+log a closed its menu
+fight 440 20 60 until frames>=300 fail stagechange
+log a played on after its menu
+idle until near<70 or frames>=2400 fail stagechange
+log case 3: a opens its menu while b fights near it
+menu until menu=1 fail stagechange
+browse until frames>=420 fail stagechange,menu=0
+shot a3_menu_b_near
+idle until frames>=600 fail stagechange,menu=0
+menu close until menu=0 fail stagechange
+log case 4: both open their menus
+idle until menus>=1 or frames>=2400 fail stagechange
+menu until menus=2 fail stagechange,frames>=1800
+log both menus are open
+idle until frames>=120 fail stagechange,menu=0
+shot a4_both_menus
+idle until frames>=300 fail stagechange,menu=0
+menu close until menu=0 fail stagechange
+idle until menus=0 fail stagechange
+log case 5: a opens its menu while b is far away
+idle until apart>150 or frames>=3600 fail stagechange
+menu until menu=1 fail stagechange
+idle until frames>=180 fail stagechange,menu=0
+shot a5_menu_b_far
+idle until frames>=420 fail stagechange,menu=0
+menu close until menu=0 fail stagechange
+idle until apart>280 or frames>=3600 fail stagechange
+log case 6: a talks with the field recorder while b moves
+talkto n_recorder#1 until talking=1 or frames>=2400 fail stagechange,frames>=2390
+log a talks
+idle until frames>=90 fail stagechange
+shot a6_talk
+talkto n_recorder#1 until talking=0,frames>=60 fail stagechange
+log a read the recorder
+idle until frames>=1800

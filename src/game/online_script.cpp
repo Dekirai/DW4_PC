@@ -441,13 +441,39 @@ OnlineScript::Output OnlineScript::act(engine::Engine& engine, const OnlineScrip
             if (m->info_name == name && m->index == index && m->generated && m->node) target = m.get();
         if (!target || !control) return out;
         const auto at = position(*target);
-        if (walk_to(engine, *me, at.x, at.z, 10.0f, frame, out)) {
-            // Close enough: turn to it (a short push towards it) and strike.
-            out.walk = frame % 40 >= 20 && flat(at, position(*me)) > 7.0f;
+        if (flat(at, position(*me)) > 12.0f) {
+            // On the way: an enemy within 15 units is struck first.
+            if (const auto* enemy = nearest_enemy(position(*me).x, position(*me).z, 15.0f)) {
+                const auto e = position(*enemy);
+                if (flat(e, position(*me)) > 10.0f) walk_to(engine, *me, e.x, e.z, 10.0f, frame, out);
+                if (frame % 20 < 3) out.buttons |= dw4::pad_button::a;
+                return out;
+            }
+            walk_to(engine, *me, at.x, at.z, 6.0f, frame, out);
+            return out;
+        }
+        // Close (as the campaign's "talk:", campaign.cpp): A's talk check lies
+        // ahead of the player, so from inside the model's body it passes over
+        // it. A only while 2..7 off the model facing it (within 30 degrees);
+        // nearer, or turned away close by, back off to 10 off it and walk up
+        // again; else up to it, the stick toward it turning the player.
+        const auto here = position(*me);
+        const auto& pm = me->node->matrix;
+        const float fx = pm(2, 0), fz = pm(2, 2), fl = std::hypot(fx, fz);
+        const float d = flat(at, here);
+        const float toward = fl > 0.0f && d > 0.0f ? (fx * (at.x - here.x) + fz * (at.z - here.z)) / (fl * d) : -1.0f;
+        if (d < 2.0f || (toward < 0.0f && d < 9.0f)) {
+            const float ax = d >= 0.5f ? (here.x - at.x) / d : fl > 0.0f ? -fx / fl : 1.0f;
+            const float az = d >= 0.5f ? (here.z - at.z) / d : fl > 0.0f ? -fz / fl : 0.0f;
+            walk_to(engine, *me, at.x + ax * 10.0f, at.z + az * 10.0f, 1.0f, frame, out, true);
+        } else if (toward > 0.87f && d <= 7.0f) {
+            if (frame % 20 < 3) out.buttons = dw4::pad_button::a;
+        } else {
+            out.walk = true;
             out.x = at.x;
             out.z = at.z;
-            out.reach = 7.0f;
-            if (frame % 40 < 3) out.buttons = dw4::pad_button::a;
+            out.reach = 0.0f;
+            if (toward > 0.87f && frame % 20 < 3) out.buttons = dw4::pad_button::a;
         }
         return out;
     }

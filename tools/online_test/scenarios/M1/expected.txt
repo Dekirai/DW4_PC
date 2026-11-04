@@ -1,0 +1,14 @@
+# M1: own menus (SEAMLESS.md 5.3). Every machine's net fingerprints are equal (checked by run.py); the logs show
+# that each case happened while the other member played on.
+a: online-script: step .* log: in the field alone
+a: online-script: step .* log: a was hit in its menu while alone
+b: online-script: step .* log: b in the field
+a: online-script: step .* log: case 2: b joined while a is in its menu
+a: online-script: step .* log: a played on after its menu
+b: online-script: step .* log: b fights near a in its menu
+a: online-script: step .* log: both menus are open
+b: online-script: step .* log: b sees both menus
+a: online-script: step .* log: a talks
+b: online-script: step .* log: b sees a talking
+a: online-script: step .* log: a read the recorder
+b: online-script: step .* log: b moved while a talked

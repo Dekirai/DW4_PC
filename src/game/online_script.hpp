@@ -49,8 +49,9 @@
 //                       own, docs/SEAMLESS.md 5.3); "close": B until it is shut
 //   browse              inside the status window: DOWN, A, B by turns every
 //                       90 frames from the 60th on (its pages one after the other)
-//   talkto MODEL[#N]    walk up to the NPC or map recorder, strike it (A) and
-//                       page through the talk this starts with A
+//   talkto MODEL[#N]    walk up to the NPC or map recorder (striking the
+//                       enemies that come within 15 units on the way), strike
+//                       it (A) and page through the talk this starts with A
 //   log TEXT            one trace line
 //   shot NAME           a screenshot of this machine's picture (with
 //                       --screenshot: NAME.bmp beside its file; the run draws

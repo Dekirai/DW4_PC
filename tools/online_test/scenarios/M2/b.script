@@ -1,0 +1,15 @@
+# M2, member b (k10): with a into dng101b1, walks about near the entrance (fighting GENE-01's e_nume) while a
+# reads the map recorder far away.
+campaign until stage=stagml11,control
+idle until epoch>=@91
+explore mate00 yes until stage=stag0101,control
+log in the field
+explore matz00 yes until stage=dng101b1,control
+log b in the dungeon
+wander -300 330 40 until scenes>=1 or frames>=14000 fail stagechange,frames>=13990
+log b sees a reading the map
+wander -300 330 40 until frames>=150 fail stagechange
+shot b_a_map
+wander -300 330 40 until scenes=0,frames>=60 or frames>=6000 fail stagechange
+log b moved while a read the map
+idle until frames>=300

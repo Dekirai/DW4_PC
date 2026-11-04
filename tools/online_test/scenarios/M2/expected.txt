@@ -1,0 +1,8 @@
+# M2: a's own map recorder scene in dng101b1 (SEAMLESS.md 5.3) while b walks about; every machine's net fingerprints
+# are equal (checked by run.py).
+a: online-script: step .* log: in the dungeon
+b: online-script: step .* log: b in the dungeon
+a: online-script: step .* log: a reads the map recorder
+b: online-script: step .* log: b sees a reading the map
+a: online-script: step .* log: a read the map recorder
+b: online-script: step .* log: b moved while a read the map
