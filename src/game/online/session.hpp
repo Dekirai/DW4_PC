@@ -29,11 +29,14 @@
 // (LOG, NETFP every 60 ticks, STATE, SPLIT, BARRIER). Catch-up steps run in
 // poll().
 #include "engine_link.hpp"
+#include "net_log.hpp"
+#include "net_stats.hpp"
 #include "pacing.hpp"
 #include "presence.hpp"
 #include "transport.hpp"
 #include "wire.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <deque>
@@ -67,6 +70,34 @@ struct SessionConfig {
 
 enum class Mode : std::uint8_t { connecting, solo, sealed, parked, transition, waiting_state, catching_up, observing, lost, closed };
 const char* mode_name(Mode mode) noexcept;
+
+// The network facts of this member's session (the in-game indicator, F1 >
+// Online, saves/online.log): what the relay reports and what this machine
+// measured. Negative: not known (yet).
+struct NetView {
+    double rtt_ms = -1;           // round trip to the relay (the relay's NETSTAT, else the socket's TCP estimate)
+    // How long a PING waits here for this game's next pass (half the time
+    // between the passes it came between, the median of the newest 31): the
+    // relay's round trip holds it, the network's does not (at 60 pictures a
+    // second about 8 ms; round 62 review: "Ping 34 ms" at 24 ms of network).
+    double pass_wait_ms = -1;
+    double rtt_spread_ms = -1;    // its spread (p95 - median) as the relay saw it
+    int suggested_delay = 0;      // the relay's suggestion (PING) for the next sealed start
+    int margin_ms = 0;            // the relay's arrival margin of this member's pads (0.1 % quantile, PING)
+    std::uint64_t late = 0, filled = 0, sealed = 0; // this member's pads in the current sealed stream (NETSTAT)
+    bool from_relay = false;      // the relay sent NETSTAT (a server of this round or later)
+    double tcp_rtt_ms = -1;       // the socket's TCP round-trip estimate (the network alone)
+    long long tcp_loss = -1;      // TCP loss episodes on the connection (fast retransmissions, timeouts)
+    int reconnects = 0;           // connections lost in this session
+    int resyncs = 0;              // RESYNCs this member went through
+    int skipped_frames = 0;       // server frames of a known type that did not decode and were skipped (informational only)
+    // The network's round trip as a ping would show it: the relay's minus the
+    // wait for this game's pass, or the socket's TCP estimate; negative: not known.
+    double network_rtt_ms() const {
+        if (rtt_ms < 0) return rtt_ms;
+        return from_relay && pass_wait_ms > 0 ? std::max(0.0, rtt_ms - pass_wait_ms) : rtt_ms;
+    }
+};
 
 struct RemoteMember {
     std::string name;
@@ -104,6 +135,20 @@ public:
     bool step_ready() const;
     std::array<PadSample, 4> before_step(const PadSample& local, double now);
     void after_step(double now);
+
+    // saves/online.log (net_log.hpp): the session's events and its link every
+    // ten seconds (nothing secret). Not owned; null: none.
+    void set_log(OnlineLog* log) { online_log_ = log; }
+    // A picture was presented (the input latency of the ticks that ran since the last one).
+    void presented(double now) { stats_.presented(now); }
+    const NetStats& stats() const { return stats_; }
+    const NetView& net() const { return net_; }
+    // Steps the pacing ran without a picture (backlogs) and steps that found
+    // no sealed tick when due (diagnostics).
+    std::size_t backlog_runs() const { return backlog_runs_; }
+    std::size_t starved_steps() const { return pace_.starved(); }
+    std::size_t drained_steps() const { return pace_.drained(); }
+    double playout_level() const { return pace_.level(); }
 
     // Presentation.
     bool backlog_run() const { return pace_.catching_up(); } // no pictures for these steps
@@ -155,6 +200,9 @@ private:
     };
     void send(wire::Type type, const std::vector<std::uint8_t>& payload);
     void handle(const wire::Frame& frame, double now);
+    // Frames that only feed the indicator, the name tags or the room list
+    // (NETSTAT, PRESENCE, ROSTER, ROOM): one that does not decode is skipped.
+    static bool informational(wire::Type type) noexcept;
     void on_welcome(const wire::Welcome& welcome, double now);
     // The new instance of a BARRIER_OK: ids, slot, members, mode, delay, the
     // snapshot's uploader, the notice.
@@ -185,6 +233,14 @@ private:
     void take_story(const engine::RoomStory& story);
     void open_line();
     void trace(const char* format, ...) const;
+    // The input delay changes (traced with its source: welcome, ping, join_req, barrier_ok, delay_event).
+    void set_delay(int d, const char* why);
+    // Traces a mode change once (called where the mode may have changed).
+    void note_mode();
+    // The latency window line (every few seconds while a stage runs).
+    void report_window(double now, bool force);
+    // One line of saves/online.log (when set).
+    void log(const char* format, ...) const;
     std::string slot_name(int slot) const;
 
     EngineLink& engine_;
@@ -226,6 +282,7 @@ private:
     std::optional<std::uint32_t> join_at_;
     std::deque<wire::WirePad> delayed_;
     std::uint32_t input_next_ = 0;      // sealed: the next tick this member sends a pad for
+    std::uint16_t skipped_buttons_ = 0; // buttons of samples skipped after a shorter delay (sent with the next pad)
 
     // Barrier.
     std::uint32_t barrier_tick_ = 0;
@@ -271,6 +328,10 @@ private:
     double welcome_at_ = -100; // the first WELCOME (the members named right after it are no news)
     double last_tick_at_ = 0;
     double now_ = 0;
+    double last_poll_at_ = -1;  // the previous poll (a PING waited at most the gap since)
+    double poll_gap_ = 0;
+    std::array<double, 31> pass_waits_{};
+    std::size_t pass_wait_count_ = 0;
 
     // Room story (8.3). A counter line is the engine line its growth is made
     // in: the visit (base = the counters at the visit's start), a fork's child
@@ -299,6 +360,18 @@ private:
     std::map<std::uint32_t, std::string> names_;
     std::vector<std::string> notices_;
     bool engine_replaced_ = false;
+
+    // Network facts and the input latency (net_stats.hpp).
+    NetStats stats_;
+    NetView net_;
+    std::uint64_t steps_ = 0;       // live steps run (the latency's step count)
+    std::size_t backlog_runs_ = 0;  // passes that ran a backlog without pictures
+    Mode traced_mode_ = Mode::connecting;
+    double window_at_ = -100;
+    double log_window_at_ = -100;
+    double tcp_checked_at_ = -100;
+    LatencyWindow log_window_;  // the windows since the last log line
+    OnlineLog* online_log_ = nullptr;
 };
 
 } // namespace dw4::game::online

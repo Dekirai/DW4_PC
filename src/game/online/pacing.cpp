@@ -11,6 +11,10 @@ namespace {
 // between one and two.
 constexpr double kLevelSeconds = 2.0;
 constexpr double kTargetLevel = double(kPlayoutTicks) + 0.5;
+// A level this long 0.75 ticks or more above the target drains by one extra
+// step (a joiner ran its backlog and then its long join step: it stayed near
+// 2.5 for a minute, a tick of its pads' margin at the relay).
+constexpr double kExcessSeconds = 0.5;
 } // namespace
 
 void PaceController::reset() { *this = PaceController{}; }
@@ -35,6 +39,18 @@ int PaceController::due_steps(double elapsed, std::size_t waiting) {
     }
     accumulator_ += elapsed * ratio_;
     int due = int(std::floor(accumulator_ / kFieldSeconds));
+    // A level 0.75 ticks or more above the target for half a second: one
+    // extra step, when there is a tick beyond the playout buffer to run.
+    if (level_ >= kTargetLevel + 0.75) excess_for_ += elapsed;
+    else excess_for_ = 0;
+    if (excess_for_ >= kExcessSeconds && waiting >= std::size_t(std::max(due, 0)) + kPlayoutTicks + 1) {
+        // (Its picture is skipped like any second step of a pass.)
+        excess_for_ = 0;
+        level_ -= 1.0;
+        ++drained_;
+        accumulator_ += kFieldSeconds;
+        ++due;
+    }
     if (due <= 0) return 0;
     if (std::size_t(due) > waiting) {
         starved_ += std::size_t(due) - waiting;

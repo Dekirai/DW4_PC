@@ -1,0 +1,6 @@
+# L3 (L1 at a 60.000 Hz vsync grid): a NEW, b JOINs mid-stage; both stay together.
+a: (?i)decision 1 .*stage=stag0101
+b: (?i)decision 2 .*stage=stag0101
+a: online-trace: join applied .*slot=1
+!a: online-trace: split
+shared: a b >= 3000

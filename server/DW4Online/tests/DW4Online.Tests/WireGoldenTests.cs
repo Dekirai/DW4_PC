@@ -58,6 +58,11 @@ public class WireGoldenTests
     public void Message_bytes_equal_the_clients()
     {
         Assert.Equal("070000000200000063000000010080010203" + "04", PayloadHex(new InputMsg(7, 2, 99, [new Pad(0x8000, 1, 2, 3, 4)]).Frame()));
+        // NETSTAT (round 62): the member's link for its network indicator (tests/online_wire_tests.cpp "golden NETSTAT").
+        Assert.Equal("1800" + "0600" + "03" + "feff" + "e8030000" + "05000000" + "07000000" + "01",
+            PayloadHex(new NetStatMsg(24, 6, 3, -2, 1000, 5, 7, NetStatMsg.InStream).Frame()));
+        Assert.Equal(new NetStatMsg(24, 6, 3, -2, 1000, 5, 7, 1), NetStatMsg.Parse(new NetStatMsg(24, 6, 3, -2, 1000, 5, 7, 1).Frame().AsSpan(Wire.HeaderBytes)));
+        Assert.Equal(0x8F, new NetStatMsg(0, 0, 0, 0, 0, 0, 0, 0).Frame()[0]);
         Assert.Equal("0700000008737461673031303203cdab000000000000", PayloadHex(new HeadingMsg(7, "stag0102", 3, 0xABCD).Frame()));
         Assert.Equal("0700000002000000f401000008646e67313031623101030388776655443322110200000009" + "09",
             PayloadHex(new BarrierMsg(7, 2, 500, "dng101b1", 1, 3, 3, 0x1122334455667788, [9, 9]).Frame()));
@@ -70,6 +75,35 @@ public class WireGoldenTests
         var blob = StateBlob.Build(StatePurpose.CoArrival, 1, [0xAA, 0xBB], [new ForkSide(800, 2, SplitKind.Exit, ForkSide.Leave)], 0,
             [new TickRecord { Mask = 0 }.ToBytes()]);
         Assert.Equal("02010002000000aabb0120030000020001000000000100000000" + "00", Hex(blob));
+    }
+
+    /// <summary>
+    /// Every frame type has one number on both sides (SEAMLESS.md 6.3, "Message types"): a number given twice reached the
+    /// review of round 62 (round 60's PRESENCE2 to clients on 0x8F, the number NETSTAT holds since DW4Online 0.1.2, both
+    /// at protocol 45), and a client that cannot decode a frame of a known type drops the connection. A new type takes the
+    /// next free number of its direction and goes into this list and into tests/online_wire_tests.cpp "type registry".
+    /// </summary>
+    [Fact]
+    public void Message_types_are_unique_and_registered()
+    {
+        var types = typeof(Msg).GetFields(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static)
+            .Where(f => f.IsLiteral && f.FieldType == typeof(byte))
+            .ToDictionary(f => f.Name, f => (byte)f.GetRawConstantValue()!);
+        var twice = types.GroupBy(x => x.Value).Where(g => g.Count() > 1).Select(g => $"0x{g.Key:X2}: {string.Join(", ", g.Select(x => x.Key))}");
+        Assert.Empty(twice);
+        var registry = new Dictionary<string, byte>
+        {
+            ["Input"] = 0x01, ["Log"] = 0x02, ["Heading"] = 0x03, ["Barrier"] = 0x04, ["BarrierChoice"] = 0x05, ["Split"] = 0x06,
+            ["Snapshot"] = 0x07, ["SnapHash"] = 0x08, ["Ready"] = 0x09, ["JoinAt"] = 0x0A, ["NetFp"] = 0x0B, ["State"] = 0x0C,
+            ["Intent"] = 0x0D, ["Story"] = 0x0E, ["Presence"] = 0x0F, ["Resume"] = 0x10, ["Rate"] = 0x11, ["Pong"] = 0x12, ["Bye"] = 0x13,
+            ["Welcome"] = 0x80, ["Sealed"] = 0x81, ["Live"] = 0x82, ["JoinReq"] = 0x83, ["BarrierOk"] = 0x84, ["BarrierWait"] = 0x85,
+            ["StateData"] = 0x86, ["PresenceOut"] = 0x87, ["Resync"] = 0x88, ["StoryAck"] = 0x89, ["Room"] = 0x8A, ["Ping"] = 0x8B,
+            ["Close"] = 0x8C, ["Roster"] = 0x8D, ["Reassign"] = 0x8E,
+            // Round 62, in the field since DW4Online 0.1.2 (sent to every member once a second): never another type's.
+            ["NetStat"] = 0x8F,
+        };
+        Assert.Equal(registry.OrderBy(x => x.Value), types.OrderBy(x => x.Value));
+        foreach (var (name, value) in types) Assert.NotEqual("0x" + value.ToString("X2"), Msg.Name(value));
     }
 
     [Fact]
