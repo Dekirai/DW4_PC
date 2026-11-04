@@ -614,6 +614,173 @@ int fight_mode(const std::string& stage, const std::string& form, int n, float r
     return 0;
 }
 
+// ---------------------------------------------------------------------------
+// Lane C: the data the director reads (the Art patterns, the technique
+// actions, the weapon ladder, the forms' techniques)
+// ---------------------------------------------------------------------------
+void dump_section(const ModelCtrlManager::ModelRam& self, const std::string& sequence, const std::string& label) {
+    if (!self.sequences) return;
+    for (const auto& seq : *self.sequences) {
+        if (seq.name != sequence) continue;
+        bool in = label.empty();
+        for (const auto& command : seq.commands) {
+            const auto type = command.type();
+            const std::string name(command.str(2));
+            if (type == "beModelCtrlLABEL") {
+                if (in && !label.empty()) break;
+                in = name == label;
+                continue;
+            }
+            if (!in) continue;
+            if (type == "beModelCtrlHITBOX" && name == "Set") {
+                const auto o = command.vec3(6).value_or(Vec3f{});
+                const auto s = command.vec3(7).value_or(Vec3f{});
+                std::printf("    HITBOX kind %d delay %.0f len %.0f offset (%.1f,%.1f,%.1f) size (%.1f,%.1f,%.1f)\n", command.i32(3),
+                            command.f32(4), command.f32(5), o.x, o.y, o.z, s.x, s.y, s.z);
+            } else if (type == "beModelCtrlACTION" || type == "beModelCtrlSOUND" || type == "beModelCtrlWCHECK" || type == "beModelCtrlMOVE" ||
+                       type == "beModelCtrlJUMP") {
+                std::printf("    %s %s\n", std::string(type).c_str() + 10, name.c_str());
+            }
+        }
+    }
+}
+
+int patterns(const std::string& form) {
+    auto run = make_run({}, form);
+    auto& engine = *run->engine;
+    auto* sys = engine.get<GameSystem>();
+    auto* db = engine.get<DatabaseManager>();
+    auto* self = player(engine);
+    auto& p = sys->players[0];
+    std::printf("patterns: %s species %d weapon %s label SQ_ATCK1=%s\n", form.c_str(), p.stats.species, p.weapons[0].c_str(),
+                self->labels.contains("SQ_ATCK1") ? self->labels.at("SQ_ATCK1").c_str() : self->label.c_str());
+    for (int n = 1; n <= 6; ++n) {
+        const std::string tech = "TECH" + std::to_string(n);
+        const int base = db->number("shinka", p.stats.species, tech).value_or(-1);
+        std::printf("  %s row %d %s SKILL %d LEVEL %d thresholds", tech.c_str(), base,
+                    dw4::engine::game_text_utf8(db->text("pcTech", base, "NAME")).c_str(), db->number("pcTech", base, "SKILL").value_or(-1),
+                    db->number("shinka", p.stats.species, tech + "_LEVEL").value_or(-1));
+        for (int k = 1; k <= 5; ++k) std::printf(" %d", db->number("shinka", p.stats.species, tech + "_SKILL" + std::to_string(k)).value_or(-1));
+        std::printf("\n");
+        for (int r = base; r < base + 5; ++r)
+            std::printf("    rank %d LABEL %s MP %d HP %d DELAY %d\n", r - base, std::string(db->text("pcTech", r, "LABEL")).c_str(),
+                        db->number("pcTech", r, "MP").value_or(0), db->number("pcTech", r, "HP").value_or(0),
+                        db->number("pcTech", r, "DELAY").value_or(0));
+    }
+    for (const char* grow : {"BLUNT_GROW", "SLASH_GROW", "STAB_GROW", "BASH_GROW", "SHOT_GROW", "CRUSH_GROW"})
+        std::printf("  %s %d", grow, db->number("shinka", p.stats.species, grow).value_or(0));
+    std::printf("\n  SQ_WAZA labels:");
+    if (self->sequences)
+        for (const auto& seq : *self->sequences)
+            if (seq.name == "SQ_WAZA")
+                for (const auto& command : seq.commands)
+                    if (command.type() == "beModelCtrlLABEL") std::printf(" %s", std::string(command.str(2)).c_str());
+    std::printf("\n");
+    for (const char* label : {"fire1", "fire3", "cutter1", "cutter3", "thunder1", "impulse1", "impulse3", "healsingle"}) {
+        std::printf("  SQ_WAZA %s:\n", label);
+        dump_section(*self, "SQ_WAZA", label);
+    }
+    // The class's weapon families (the Art's ladder) and each family's SQ_ATCK1.
+    const int skill = p.stats.weapon_skill_no;
+    std::printf("  weapon skill column %d; the ladder:\n", skill);
+    for (int r = 0; r < 250; ++r) {
+        if (db->number("weapon", r, "SKILL").value_or(-1) != skill) continue;
+        std::printf("    %3d %-14s %s SKILLPOINT %4d TSUYOSA %4d DELAY %d SOUBI %x CHIMEI %d\n", r,
+                    dw4::engine::game_text_utf8(db->text("weapon", r, "NAME")).c_str(), std::string(db->text("weapon", r, "MODEL")).c_str(),
+                    db->number("weapon", r, "SKILLPOINT").value_or(0), db->number("weapon", r, "TSUYOSA").value_or(0),
+                    db->number("weapon", r, "DELAY").value_or(0), db->number("weapon", r, "SOUBI").value_or(0),
+                    db->number("weapon", r, "CHIMEIRITSU").value_or(0));
+    }
+    for (int r = 250; r < 266; ++r)
+        if (db->number("weapon", r, "SOUBI").value_or(0) & (1 << p.stats.species))
+            std::printf("    signature %d %s %s SKILLPOINT %d\n", r, dw4::engine::game_text_utf8(db->text("weapon", r, "NAME")).c_str(),
+                        std::string(db->text("weapon", r, "MODEL")).c_str(), db->number("weapon", r, "SKILLPOINT").value_or(0));
+    // Equip the family 1 alpha weapon of the class (as the run's start) and dump its SQ_ATCK1.
+    int first = -1;
+    for (int r = 0; r < 250 && first < 0; ++r)
+        if (db->number("weapon", r, "SKILL").value_or(-1) == skill) first = r;
+    if (first >= 0) {
+        ItemDevice weapon;
+        weapon.type = 0;
+        weapon.record = first;
+        weapon.flag = true;
+        p.devices.push_back(weapon);
+        p.power_socket[0] = int(p.devices.size()) - 1;
+        sys->recalc_player(engine, 0);
+        engine.load_common_now("_common/" + p.weapons[0] + ".igb");
+        {
+            const Messenger::PortOnly scope(engine.messenger());
+            Packet arms;
+            engine.messenger().send(engine, "PLAYERARMS", p.weapons[0], 0, "GENERATE", arms);
+        }
+        for (int f = 0; f < 4; ++f) step(engine, pads());
+        const std::string label = self->labels.contains("SQ_ATCK1") ? self->labels.at("SQ_ATCK1") : self->label;
+        std::printf("  with %s (%s): SQ_ATCK1 label %s, TSUYOSA %d, attack delay %d\n", p.weapons[0].c_str(),
+                    dw4::engine::game_text_utf8(db->text("weapon", first, "NAME")).c_str(), label.c_str(), p.stats.tsuyosa, p.stats.attack_delay);
+        dump_section(*self, "SQ_ATCK1", label);
+    }
+    // The enemy rows the run uses and the HP / MP disks.
+    for (int r = 0; r < db->rows("conItem"); ++r)
+        std::printf("  conItem %d %s MODEL %s\n", r, dw4::engine::game_text_utf8(db->text("conItem", r, "NAME")).c_str(),
+                    std::string(db->text("conItem", r, "MODEL")).c_str());
+    for (int r = 0; r < db->rows("insItem"); ++r)
+        std::printf("  insItem %d %s MODEL %s UP %d\n", r, dw4::engine::game_text_utf8(db->text("insItem", r, "NAME")).c_str(),
+                    std::string(db->text("insItem", r, "MODEL")).c_str(), db->number("insItem", r, "UP").value_or(0));
+    return 0;
+}
+
+// ---------------------------------------------------------------------------
+// Lane C: does turning a broadcast's queued effects aim them? One enemy
+// behind the player; the technique's effects turned towards it with each
+// sign of the rotation; the damage that arrived.
+// ---------------------------------------------------------------------------
+int aim(const std::string& action, float bearing_deg) {
+    for (const float sign : {0.0f, 1.0f, -1.0f}) {
+        auto run = make_run({"e_goburi"});
+        auto& engine = *run->engine;
+        auto* self = player(engine);
+        auto* models = engine.get<ModelCtrlManager>();
+        const auto& m = self->node->matrix;
+        const float yaw = std::atan2(m(2, 0), m(2, 2)) + bearing_deg * 3.14159265f / 180.0f;
+        const Vec3f me = pos(*self);
+        const int ram = spawn(engine, "e_goburi", me.x + 25.0f * std::sin(yaw), me.z + 25.0f * std::cos(yaw), me.y);
+        if (auto* e = models->find("e_goburi", ram)) e->hp = e->max_hp = 9999;
+        // (SQ_ENTR's entry first: the enemy is invulnerable meanwhile.)
+        for (int f = 0; f < 90; ++f) step(engine, pads());
+        float facing_now = std::atan2(m(2, 0), m(2, 2));
+        float target = yaw;
+        if (auto* e = models->find("e_goburi", ram)) {
+            const Vec3f q = pos(*e), p = pos(*self);
+            target = std::atan2(q.x - p.x, q.z - p.z);
+            std::printf("aim: the enemy at %.1f units, bearing %+.0f from the facing\n", flat(q, p), (target - facing_now) * 57.2958f);
+        }
+        const std::size_t before = self->effects.size();
+        {
+            const Messenger::PortOnly scope(engine.messenger());
+            Packet cast;
+            cast.strings.emplace_back(std::string("p_agumon"));
+            cast.ints.push_back(0);
+            engine.messenger().send(engine, "ACTION_BROADCAST", std::nullopt, -1, action, cast);
+        }
+        float delta = target - facing_now;
+        const float s = std::sin(delta * (sign == 0 ? 0.0f : 1.0f)), c = std::cos(delta * (sign == 0 ? 0.0f : 1.0f));
+        std::size_t turned = 0;
+        for (std::size_t i = before; i < self->effects.size(); ++i) {
+            auto& effect = self->effects[i];
+            effect.rotation.y += sign * delta;
+            const Vec3f o = effect.offset;
+            effect.offset = {o.x * c + o.z * s, o.y, -o.x * s + o.z * c};
+            ++turned;
+        }
+        for (int f = 0; f < 150; ++f) step(engine, pads());
+        std::int64_t dealt = 0;
+        for (const auto& [source, amount] : run->rules->tally.dealt_by) dealt += amount;
+        std::printf("aim %s bearing %+.0f sign %+.0f: %zu effects turned, damage %lld\n", action.c_str(), bearing_deg, sign, turned,
+                    (long long)dealt);
+    }
+    return 0;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -630,6 +797,8 @@ int main(int argc, char** argv) {
         if (mode == "jump") return jump();
         if (mode == "weapon") return weapon();
         if (mode == "memory") return memory(argc > 3 ? argv[3] : "all");
+        if (mode == "patterns") return patterns(argc > 3 ? argv[3] : "p_agumon");
+        if (mode == "aim") return aim(argc > 3 ? argv[3] : "HFIRE1", argc > 4 ? float(std::atof(argv[4])) : 180.0f);
         if (mode == "fight" && argc > 7)
             return fight_mode(argv[3], argv[4], std::atoi(argv[5]), float(std::atof(argv[6])), std::atoi(argv[7]));
     } catch (const std::exception& error) {

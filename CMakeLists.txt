@@ -46,7 +46,8 @@ add_library(dw4_engine src/engine/math.cpp src/engine/gekko_math.cpp src/engine/
 # Data Overflow, the survival mode's run engine rules (docs/SURVIVAL.md 13.4):
 # the hooks' values and the native run scripts; inert without OverflowRules.
 target_sources(dw4_engine PRIVATE src/engine/overflow/rules.cpp src/engine/overflow/player_hit.cpp
-  src/engine/overflow/field_start.cpp src/engine/overflow/donors.cpp)
+  src/engine/overflow/field_start.cpp src/engine/overflow/donors.cpp src/engine/overflow/director.cpp
+  src/engine/overflow/spawner.cpp src/engine/overflow/abilities.cpp src/engine/overflow/offers.cpp)
 target_link_libraries(dw4_engine PUBLIC dw4_core)
 # The Gekko arithmetic rounds only where the original rounds (no contraction).
 if(MSVC)
@@ -222,6 +223,12 @@ if(BUILD_TESTING)
   add_executable(dw4_overflow_scripts_tests tests/overflow_scripts_tests.cpp)
   target_link_libraries(dw4_overflow_scripts_tests PRIVATE dw4_engine)
   add_test(NAME overflow_scripts COMMAND dw4_overflow_scripts_tests "${DW4_TEST_DATA}")
+  add_executable(dw4_overflow_director_tests tests/overflow_director_tests.cpp)
+  target_link_libraries(dw4_overflow_director_tests PRIVATE dw4_engine)
+  add_test(NAME overflow_offers COMMAND dw4_overflow_director_tests offers)
+  add_test(NAME overflow_rng COMMAND dw4_overflow_director_tests rng)
+  add_test(NAME overflow_spawn COMMAND dw4_overflow_director_tests spawn "${DW4_TEST_DATA}")
+  add_test(NAME overflow_balance COMMAND dw4_overflow_director_tests balance "${DW4_TEST_DATA}")
   # The online client (asset free; the env test reads the sources).
   # (online_story: the story sets and golden vectors of data/online, SEAMLESS.md 8.)
   foreach(suite online_cpu_gate online_env online_wire online_session online_api online_story online_lobby)
