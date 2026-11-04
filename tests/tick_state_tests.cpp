@@ -26,6 +26,7 @@
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <map>
 #include <random>
@@ -328,6 +329,14 @@ void run_trials(const std::filesystem::path& data, const Scenario& sc, const Str
                 const auto mine = engine.save_tick_state();
                 if (mine != kept->second) {
                     diagnosed = true;
+                    // DW4_TICKSTATE_DUMP=DIR: both states for tools/online/tickstate_diff.py.
+                    if (const char* dir = std::getenv("DW4_TICKSTATE_DUMP")) {
+                        const auto base = std::filesystem::path(dir) / (sc.stage + "_" + std::to_string(f));
+                        std::ofstream(base.string() + "_straight.bin", std::ios::binary)
+                            .write(reinterpret_cast<const char*>(kept->second.data()), std::streamsize(kept->second.size()));
+                        std::ofstream(base.string() + "_trial.bin", std::ios::binary)
+                            .write(reinterpret_cast<const char*>(mine.data()), std::streamsize(mine.size()));
+                    }
                     std::cout << "  trial at " << frame << ": the state differs first at frame " << f << " in "
                               << first_differing_section(kept->second, mine) << std::endl;
                 }

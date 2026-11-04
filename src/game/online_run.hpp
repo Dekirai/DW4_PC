@@ -38,7 +38,7 @@ namespace dw4::game {
 // status window, NPC talks and map recorders are its own and pause nothing,
 // docs/SEAMLESS.md 5.3; a 45 client would pause its instance for them and
 // desynchronize at the first menu).
-inline constexpr std::uint32_t kOnlineProtocol = 46;
+inline constexpr std::uint32_t kOnlineProtocol = 47; // 47 (round J): checkpoints (STATEHASH, CHECKPOINT, STATE_DATA codec 2, docs/SEAMLESS.md 6.13.7)
 
 struct OnlineOptions {
     std::string user, create, join;

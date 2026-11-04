@@ -151,7 +151,7 @@ public sealed class RoomHub
         var inst = m.Instance!;
         peer.Send(new WelcomeMsg((byte)m.Index, inst.Id, inst.Visit, (byte)m.Slot, inst.Mode, inst.Stage,
             resumable && m.Cursor > 0 ? m.Cursor - 1 : WelcomeMsg.NoTick, (byte)(inst.Streams[m.Slot]?.Delay.Current ?? 0),
-            (ushort)_inst.MaxCatchUpSeconds, (byte)((resumable ? WelcomeMsg.Resumable : 0) | WelcomeMsg.PresenceV2 | WelcomeMsg.Checkpoints)).Frame());
+            (ushort)_inst.MaxCatchUpSeconds, (byte)((resumable ? WelcomeMsg.Resumable : 0) | WelcomeMsg.PresenceV2 | (Info.Protocol >= Wire.CheckpointProtocol ? WelcomeMsg.Checkpoints : 0))).Frame());
         // The confirmed room story to start from (the title applies it at game start; SEAMLESS.md 8.5).
         peer.Send(new StoryAckMsg(Story.Story.Revision, Story.Story.ToBlob(), 0, []).Frame());
         foreach (var other in _members.Values)
@@ -1652,7 +1652,8 @@ public sealed class RoomHub
     /// <summary>Round J: joins of this instance may take a checkpoint (the switch is on, the path is not suspect and the
     /// members told the load end).</summary>
     private bool CheckpointPathOpen(HubInstance t) =>
-        _inst.CheckpointJoins && !t.CheckpointSuspect && t.AgreedLoadEnd is not null && t.Mode != InstanceMode.Hub;
+        _inst.CheckpointJoins && Info.Protocol >= Wire.CheckpointProtocol && !t.CheckpointSuspect && t.AgreedLoadEnd is not null &&
+        t.Mode != InstanceMode.Hub;
 
     /// <summary>A stored checkpoint serves when its load end is the agreed one and the log still holds its load ticks.</summary>
     private static bool UsableCheckpoint(HubInstance t, StoredCheckpoint c) =>

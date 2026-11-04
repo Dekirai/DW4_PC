@@ -49,7 +49,7 @@ public partial class HubLogicTests
 
         public Harness(InstanceOptions? instances = null, RelayOptions? relay = null, Action<StateJob>? stateRunner = null)
         {
-            Hub = new RoomHub(new RoomInfo("ROOM01", 43, 1, 2, 10), relay ?? new RelayOptions(), new SealingOptions(),
+            Hub = new RoomHub(new RoomInfo("ROOM01", Wire.CheckpointProtocol, 1, 2, 10), relay ?? new RelayOptions(), new SealingOptions(),
                 instances ?? new InstanceOptions(), NullLogger.Instance, null, stateRunner);
         }
 

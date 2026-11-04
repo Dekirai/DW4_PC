@@ -20,6 +20,9 @@ public static class Wire
     public const int MaxSlots = 4;
     public const byte SlotMask = 0x0F;
     public const int MaxStageName = 24;
+    /// <summary>Round J: rooms of this client protocol and later take checkpoints (STATEHASH, CHECKPOINT, STATE_DATA codec 2);
+    /// an older room's members would refuse a codec 2 state.</summary>
+    public const int CheckpointProtocol = 47;
 }
 
 /// <summary>Frame types. Client to server 0x01-0x3F, server to client 0x80-0xBF.</summary>
