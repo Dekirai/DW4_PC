@@ -930,6 +930,7 @@ public sealed class RoomHub
         i.BossLock = boss;
         i.Reason = msg.Reason;
         i.ContextHash = msg.ContextHash;
+        if (i.Joinable && i.EntryContext is null) i.EntryContext = msg.ContextHash;
         CheckHolds(now);
     }
 
@@ -1173,7 +1174,7 @@ public sealed class RoomHub
             New(g, now, BarrierNotice.None, []);
             return;
         }
-        var sameContext = candidates.Where(x => x.ContextHash == g.Context).ToList();
+        var sameContext = candidates.Where(x => HubRules.ContextMatches(x, g.Context)).ToList();
         var fits = sameContext.Where(x => x.FreeSlots >= size).ToList();
         var slowest = g.Members.Select(a => a.Member.Rate == 0 ? (double)_inst.DefaultReplayRate : a.Member.Rate).DefaultIfEmpty(_inst.DefaultReplayRate).Min();
         var ranked = fits.Select(x => (Inst: x, CatchUp: HubRules.CatchUpSeconds(CurrentTick(x, now), slowest)))
@@ -1373,6 +1374,8 @@ public sealed class RoomHub
 
         inst.Stage = g.Stage;
         inst.ContextHash = g.Context;
+        inst.ArrivalContext = g.Context;
+        inst.EntryContext = null;
         inst.Mode = everyone.Count >= 2 ? InstanceMode.Sealed : InstanceMode.SoloLed;
         Array.Clear(inst.Slots);
         Array.Clear(inst.Reserved);
@@ -1500,7 +1503,7 @@ public sealed class RoomHub
         _session.NextInstance = id >= 999_999_999 ? 1 : id + 1;
         var i = new HubInstance(id)
         {
-            Mode = mode, Stage = stage, Visit = visit, ContextHash = context, CreatedAt = now, LastLogAt = now, VisitStartedAt = now, StoryEpoch = Story.Epoch,
+            Mode = mode, Stage = stage, Visit = visit, ContextHash = context, ArrivalContext = context, CreatedAt = now, LastLogAt = now, VisitStartedAt = now, StoryEpoch = Story.Epoch,
         };
         _instances[id] = i;
         return i;
@@ -1955,6 +1958,8 @@ public sealed class RoomHub
         child.Log = new TickLog(i.Log, i.Log.Count);
         foreach (var (t, rec) in i.Ahead) child.Ahead[t] = rec;
         child.Snapshot = i.Snapshot.Share();
+        child.ArrivalContext = i.ArrivalContext;
+        child.EntryContext = i.EntryContext;
         child.VisitStartedAt = i.VisitStartedAt;
         child.StoryEpoch = i.StoryEpoch;
         child.OwnerSeen = i.OwnerSeen;

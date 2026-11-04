@@ -349,7 +349,15 @@ public sealed class HubInstance(uint id)
     public uint Id { get; } = id;
     public string Stage { get; set; } = "";
     public uint Visit { get; set; }
+    /// <summary>The session context its engine reports now (STATE; SEAMLESS.md 3.7).</summary>
     public ulong ContextHash { get; set; }
+    /// <summary>The context the visit's members arrived with (their barrier's hash, taken before the load; a fork's child
+    /// keeps its parent's).</summary>
+    public ulong ArrivalContext { get; set; }
+    /// <summary>The context when the visit first became joinable, after its own load and entry scripts ran (null before;
+    /// a fork's child keeps its parent's). A dungeon's first floor sets COUNTER 2 at its load, so a later arrival's barrier
+    /// hash (taken in the previous stage) equals <see cref="ArrivalContext"/>, not the running context.</summary>
+    public ulong? EntryContext { get; set; }
     public InstanceMode Mode { get; set; }
     public bool Ended { get; set; }
     public HubMember?[] Slots { get; } = new HubMember?[Wire.MaxSlots];
@@ -466,6 +474,14 @@ public sealed record PendingSoloJoin(HubMember Joiner, int Slot, byte Point, byt
 /// <summary>Pure rules of the instance model, unit-tested on their own.</summary>
 public static class HubRules
 {
+    /// <summary>
+    /// An arrival with barrier context <paramref name="context"/> may join <paramref name="x"/> (SEAMLESS.md 3.7): the
+    /// instance runs that context now, or it arrived with it and nothing of the play since its entry changed it (the
+    /// stage's own load scripts did; the arrival's own load would have done the same, as a co-arrival's did).
+    /// </summary>
+    public static bool ContextMatches(HubInstance x, ulong context) =>
+        x.ContextHash == context || (x.ArrivalContext == context && (x.EntryContext is not { } entry || entry == x.ContextHash));
+
     /// <summary>
     /// The slot map of a NEW (SEAMLESS.md 3.6): each member keeps its preferred slot when free, else its current slot when
     /// free, else the lowest free one; then, when slot 0 is free, the member in the lowest slot moves to slot 0.

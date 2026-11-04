@@ -242,6 +242,45 @@ public partial class HubLogicTests
     }
 
     [Fact]
+    public void A_later_arrival_joins_a_dungeon_whose_own_load_changed_the_context_but_not_one_whose_play_did()
+    {
+        // dng101b1's start.lua sets COUNTER 2 at its load (a context value): the running instance reports another context
+        // than the one its members arrived with, while a partner's barrier (taken in the previous stage) still has the old
+        // one. Round 63's M2 saw the partner 15 s later get OtherContext and an instance of its own.
+        var h = new Harness();
+        h.Connect("a", 0);
+        h.Connect("b", 1);
+        h.Connect("c", 2);
+        h.Barrier("a", "dng101b1", context: 1);
+        h.Snapshot("a");
+        h.Joinable("a", joinable: false, context: 1);
+        h.Joinable("a", joinable: false, context: 7); // the load's COUNTERset(2, 101), during the entry
+        h.Joinable("a", context: 7);
+        h.Barrier("b", "dng101b1", context: 1);
+        Assert.Equal(BarrierDecision.Join, h.Decision("b").Decision);
+        Assert.Equal(h.I("a").Id, h.Inst("b"));
+        // A change made by the play after the entry (a quest step) is the instance's own: an arrival with the old context
+        // no longer fits, one with the new context does.
+        h.Joinable("a", context: 8);
+        h.Barrier("c", "dng101b1", context: 1);
+        Assert.Equal((BarrierDecision.New, BarrierNotice.OtherContext), (h.Decision("c").Decision, h.Decision("c").Notice));
+    }
+
+    [Fact]
+    public void Arrival_and_entry_context_follow_a_reused_instance_and_a_fork()
+    {
+        var x = new HubInstance(1) { ContextHash = 7, ArrivalContext = 1, EntryContext = 7 };
+        Assert.True(HubRules.ContextMatches(x, 1));
+        Assert.True(HubRules.ContextMatches(x, 7));
+        Assert.False(HubRules.ContextMatches(x, 2));
+        x.ContextHash = 8;
+        Assert.False(HubRules.ContextMatches(x, 1));
+        Assert.True(HubRules.ContextMatches(x, 8));
+        var loading = new HubInstance(2) { ContextHash = 7, ArrivalContext = 1 }; // not joinable yet: the hold waits
+        Assert.True(HubRules.ContextMatches(loading, 1));
+    }
+
+    [Fact]
     public void A_boss_locked_target_lets_the_arrival_wait_or_go_alone()
     {
         var h = new Harness();
