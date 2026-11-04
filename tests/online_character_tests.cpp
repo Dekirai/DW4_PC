@@ -514,6 +514,105 @@ void refused_login_keeps_saving_into_the_cache() {
     std::filesystem::remove_all(card.folder());
 }
 
+// Round G-core (docs/SEAMLESS.md 8.8): every record the sync caches or
+// uploads carries the account's own story bytes (792..1891), never the room
+// owner's the engine holds in someone else's room; a guest's card store
+// writes them over the save room's write; an old cache is rewritten at entry.
+dw4::save::StoryBytes story_of(const CharacterRecord& r) {
+    dw4::save::StoryBytes s{};
+    std::copy_n(r.begin() + std::ptrdiff_t(dw4::save::kStoryOffset), s.size(), s.begin());
+    return s;
+}
+CharacterRecord with_story_bytes(CharacterRecord r, int phase_flag, int key) {
+    std::fill_n(r.begin() + std::ptrdiff_t(dw4::save::kStoryOffset), dw4::save::kStoryBytes, std::uint8_t(0));
+    r[dw4::save::kStoryOffset + std::size_t(phase_flag)] = 1;
+    r[dw4::save::kStoryOffset + 1024 + std::size_t(key)] = 1;
+    return r;
+}
+
+void guest_records_keep_the_own_story() {
+    const OnlineCard card(fresh_folder("ownstory"));
+    // A cache from before round G-core: the save room wrote the owner's story (phase 6, K10) into box 0 and box 2.
+    const auto own = with_story_bytes(make_record(77, 9, "Guest"), 2, 0);       // its own: phase 2, K0
+    const auto borrowed = with_story_bytes(make_record(77, 9, "Guest"), 6, 10); // the owner's: phase 6, K10
+    auto old = card_with_record(nullptr, borrowed, 0, true, 0);
+    old = card_with_record(&old, borrowed, 2, true, 0);
+    card.write(old);
+    FakeHttp http;
+    auto sync = make_sync(card, http);
+    std::string error;
+    check(sync.enter(answer(200, character_json(3, own, 100)), error), "enter with the own character");
+    check(sync.own_story() == story_of(own), "the own story comes from the GET");
+    check(story_of(*record_of_box(*card.read(), 0)) == story_of(own), "the entry's card holds the own story");
+    // An automatic save of the engine's record (the owner's story in the room) goes up and into the cache with the own story.
+    auto played = with_story_bytes(make_record(77, 10, "Guest"), 6, 10);
+    sync.auto_save(played, CharacterSync::Why::stage_change);
+    auto [id, put] = http.take();
+    check(story_of(body_record(put)) == story_of(own), "the upload carries the own story");
+    {
+        const auto r = body_record(put);
+        check(std::equal(r.begin(), r.begin() + std::ptrdiff_t(dw4::save::kStoryOffset), played.begin()), "the personal bytes are the engine's");
+    }
+    check(story_of(*record_of_box(*card.read(), 0)) == story_of(own), "the cache holds the own story");
+    sync.on_response(id, answer(200, "{\"revision\":4}"));
+    // The same save again: unchanged (like compared with like), no upload.
+    sync.auto_save(played, CharacterSync::Why::leave);
+    check(http.sent.empty(), "an unchanged save with a borrowed engine story is skipped");
+    // The save room through a guest's store: the override puts the own story into every used box of both copies.
+    auto store = card.store();
+    store.set_story_override(sync.own_story());
+    const auto before = card.read();
+    const auto box1 = with_story_bytes(make_record(77, 11, "Guest"), 6, 10);
+    auto written = card_with_record(&*before, box1, 1, true, 0);
+    check(store.write(0, written), "the save room's write");
+    const auto file = *card.read();
+    check(dw4::save::valid_save_gci(file), "the file stays a valid save (checksums fixed)");
+    for (int box = 0; box < 2; ++box) check(story_of(*record_of_box(file, box)) == story_of(own), "every used box holds the own story");
+    sync.card_written(1);
+    auto [id2, put2] = http.take();
+    const auto up = body_record(put2);
+    check(story_of(up) == story_of(own) && std::equal(up.begin(), up.begin() + std::ptrdiff_t(dw4::save::kStoryOffset), box1.begin()),
+          "the save room's upload: the own story, the box's personal bytes");
+    // A 409: the reload's record brings the own story of the server (another PC played its own room meanwhile).
+    sync.on_response(id2, answer(409, "{\"code\":\"revision_conflict\",\"currentRevision\":6}"));
+    sync.take_notices();
+    for (const auto& entry : std::filesystem::directory_iterator(card.backups())) {
+        const auto bytes = dw4::save::read_whole_file(entry.path());
+        check(bytes && story_of(*record_of_box(*bytes, 0)) == story_of(own), "the backup holds the own story");
+    }
+    auto [reload, get] = http.take();
+    const auto newer = with_story_bytes(make_record(77, 12, "Guest"), 3, 1);
+    sync.on_response(reload, answer(200, character_json(6, newer, 200)));
+    check(sync.own_story() == story_of(newer), "the 409 reload's own story");
+    std::filesystem::remove_all(card.folder());
+
+    // 404: the own story is empty, and an old cache's boxes get it before the backup keeps them.
+    const OnlineCard empty(fresh_folder("ownstory404"));
+    empty.write(card_with_record(nullptr, borrowed, 0, true, 0));
+    FakeHttp http2;
+    auto none = make_sync(empty, http2);
+    check(none.enter(answer(404, "{\"code\":\"no_online_character\"}"), error), "404 enters");
+    check(none.own_story() == dw4::save::StoryBytes{}, "no character: no own story");
+    for (const auto& entry : std::filesystem::directory_iterator(empty.backups())) {
+        const auto bytes = dw4::save::read_whole_file(entry.path());
+        check(bytes && story_of(*record_of_box(*bytes, 0)) == dw4::save::StoryBytes{}, "the 404 backup holds no borrowed story");
+    }
+    std::filesystem::remove_all(empty.folder());
+
+    // The recovery path: an unsent save with a borrowed story at the server's revision goes up with the own story.
+    const OnlineCard crash(fresh_folder("ownstorycrash"));
+    crash.write(card_with_record(nullptr, with_story_bytes(make_record(77, 13, "Guest"), 6, 10), 0, true, 0));
+    crash.set_state({3, 100, true, 0, 77});
+    FakeHttp http3;
+    auto again = make_sync(crash, http3);
+    check(again.enter(answer(200, character_json(3, own, 100)), error), "enter with an unsent save");
+    auto [id3, put3] = http3.take();
+    check(story_of(body_record(put3)) == story_of(own) && dw4::save::decode(body_record(put3)).level == 13,
+          "the recovered save goes up with the own story");
+    check(story_of(*record_of_box(*crash.read(), 0)) == story_of(own), "and is on the card with it");
+    std::filesystem::remove_all(crash.folder());
+}
+
 void sha256_vectors() {
     check(sha256_hex({}) == "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "SHA-256 of nothing");
     const std::string abc = "abc";
@@ -610,6 +709,7 @@ int main() {
         replaced_by_another_pc();
         saves_after_a_conflict_go_into_its_backup();
         refused_login_keeps_saving_into_the_cache();
+        guest_records_keep_the_own_story();
         sha256_vectors();
         cloud_backup();
     } catch (const std::exception& e) {

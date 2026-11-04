@@ -348,19 +348,40 @@ std::vector<std::string> CharacterSync::take_notices() {
 
 std::int64_t CharacterSync::play_seconds() const { return std::int64_t(std::floor(base_play_ + session_play_)); }
 
+void CharacterSync::put_own_story(CharacterRecord& record) const {
+    std::copy(own_story_.begin(), own_story_.end(), record.begin() + std::ptrdiff_t(save::kStoryOffset));
+}
+
 bool CharacterSync::enter(const HttpResponse& response, std::string& error) {
     namespace api = character_api;
     const auto& card = config_.card;
     const auto state = card.state();
-    const auto cached = card.read();
-    const auto cached_record = cached ? record_of_box(*cached, state.box) : std::nullopt;
-    const bool unsent = state.pending && cached_record && record_used(*cached_record);
+    // The own story first (round G-core, 8.8): the server's record holds it (composed from the account's own story), no
+    // character means none.
+    std::optional<api::Character> server;
     if (response.status == 200) {
-        const auto server = api::parse_character(response);
+        server = api::parse_character(response);
         if (!server) {
             error = "The server's online character could not be read.";
             return false;
         }
+        std::copy_n(server->record.begin() + std::ptrdiff_t(save::kStoryOffset), save::kStoryBytes, own_story_.begin());
+    } else {
+        own_story_.fill(0);
+    }
+    auto cached = card.read();
+    // A cache written before round G-core may hold a borrowed story (the save room wrote the engine's room story): every
+    // used box gets the own story before anything reads, uploads or backs it up.
+    if (cached && (response.status == 200 || response.status == 404) && save::valid_save_gci(*cached)) {
+        auto own = save::with_story(*cached, own_story_);
+        if (own != *cached) {
+            if (card.write(own)) trace("the card cache's boxes got the account's own story");
+            cached = std::move(own);
+        }
+    }
+    const auto cached_record = cached ? record_of_box(*cached, state.box) : std::nullopt;
+    const bool unsent = state.pending && cached_record && record_used(*cached_record);
+    if (response.status == 200) {
         revision_ = server->revision;
         unique_ = record_unique(server->record);
         base_play_ = double(server->play_seconds);
@@ -510,7 +531,11 @@ void CharacterSync::auto_save(const CharacterRecord& record, Why why) {
     request(Save{record, why}, true);
 }
 
-void CharacterSync::request(const Save& save, bool write_cache) {
+void CharacterSync::request(const Save& given, bool write_cache) {
+    // Every cached or uploaded record carries the account's own story (round G-core, 8.8): the engine's records hold the
+    // room owner's story in someone else's room, and the "unchanged" check below compares like with like.
+    Save save = given;
+    put_own_story(save.record);
     if (blocked_) {
         // (The cache holds the server's character again, and the next room entry rebuilds it: the session's later progress
         // goes into the backup the conflict made, which keeps the newest.)
@@ -572,6 +597,7 @@ void CharacterSync::after_reload(const HttpResponse& response) {
         unique_ = record_unique(server->record);
         base_play_ = double(server->play_seconds);
         session_play_ = 0;
+        std::copy_n(server->record.begin() + std::ptrdiff_t(save::kStoryOffset), save::kStoryBytes, own_story_.begin());
         const auto before = card.read();
         card.write(card_with_record(before ? &*before : nullptr, server->record, 0, false, card_time_now()));
         box_ = 0;
@@ -581,6 +607,7 @@ void CharacterSync::after_reload(const HttpResponse& response) {
     } else if (response.status == 404) {
         revision_ = 0;
         unique_ = 0;
+        own_story_.fill(0);
         std::error_code ec;
         std::filesystem::remove(card.file(), ec);
         card.set_state({});

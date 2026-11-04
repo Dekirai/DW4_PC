@@ -67,6 +67,10 @@ struct SessionConfig {
     double story_check_interval = 1.0;  // the pending set is looked at once a second (sent when it changed)
     double story_interval = 10.0;       // and sent again every ten seconds while it is not empty (8.3)
     double story_retry_interval = 3.0;  // after a wait / not_member answer: sent again this soon (8.7)
+    // Round G-core (8.8): this member owns the room (its engine story is its own) and the owner's name for the
+    // guest's notices ("<owner>'s story moved on").
+    bool room_owner = true;
+    std::string owner_name;
 };
 
 enum class Mode : std::uint8_t { connecting, solo, sealed, parked, transition, waiting_state, catching_up, observing, lost, closed };
@@ -194,6 +198,12 @@ public:
     // (STORY_ACK after WELCOME and on every revision, BARRIER_OK). Nothing
     // until the server sent one. The title applies it at game_started (8.5).
     const std::optional<engine::RoomStory>& confirmed_story() const { return confirmed_; }
+    // The Game Start's hold (round G-core, 8.8): no live step while set (the
+    // title is a solo instance: as a loading hitch), the loading line "Loading
+    // the room story..." meanwhile. The host sets it when a Game Start finds no
+    // confirmed story and clears it once the story came.
+    void hold_for_story(bool on) { story_hold_ = on; }
+    bool story_held() const { return story_hold_; }
     // The host must supply a new connection (lost, reconnecting).
     bool wants_transport() const { return mode_ == Mode::lost || (resume_after_lost_ && !transport_); }
 
@@ -405,6 +415,10 @@ private:
     // A STORY_ACK said wait / not_member: the pending set goes again at this
     // time even if it did not change (0: none due).
     double story_retry_at_ = 0;
+    // Round G-core: the Game Start waits for the confirmed story (hold_for_story).
+    bool story_hold_ = false;
+    // Round G-core: "<owner>'s story moved on" once per visit (inst, visit) of a guest.
+    std::optional<std::pair<std::uint32_t, std::uint32_t>> moved_on_noticed_;
     bool held_noticed_ = false;
 
     std::map<std::uint32_t, RemoteMember> remote_;

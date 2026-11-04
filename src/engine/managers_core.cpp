@@ -3658,6 +3658,8 @@ bool GameSystem::script_call(Engine& engine, const std::string& method, std::spa
     if (method == "SYSgetPlayerNinzu") {
         int n = 0;
         for (const auto& p : players) n += p.joined ? 1 : 0;
+        // (Online, the call shop's script reads 4: its refusal branch, round G-core.)
+        if (engine.online_callshop_closed()) n = 4;
         out = {Lua4Value::number(n)};
         return true;
     }

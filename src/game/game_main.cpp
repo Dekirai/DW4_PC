@@ -2688,6 +2688,11 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     std::cout << "online: " << notice << '\n';
                     toasts.push_back({"Online", notice, std::chrono::steady_clock::now() + std::chrono::seconds(5)});
                 }
+                // (Round G-core: the guest's story at its Game Start, the closed call shop.)
+                for (auto& notice : online->take_notices()) {
+                    std::cout << "online: " << notice << '\n';
+                    toasts.push_back({"Online", notice, std::chrono::steady_clock::now() + std::chrono::seconds(8)});
+                }
                 if (auto* character = online->character())
                     for (auto& notice : character->take_notices()) {
                         std::cout << "online: character: " << notice << '\n';
@@ -3038,6 +3043,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     room_live.leave_prompt = online->leave_prompt;
                     room_live.in_game = online->link().game_started();
                     if (auto* character = online->character()) room_live.character = character->status_text();
+                    room_live.story = online->story_line();
                     for (const auto& e : session.roster())
                         room_live.members.push_back({e.member, session.member_name(e.member), e.stage, e.inst, e.level, e.hp, e.max_hp,
                                                      (e.flags & 1) != 0, (e.flags & 2) != 0, (e.flags & 4) != 0});
@@ -3347,6 +3353,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                             ImGui::Text("Instance %u, slot %d, %s, input delay %d", online->session().inst(), online->session().own_slot() + 1,
                                         dw4::game::online::mode_name(online->session().mode()), online->session().delay());
                             if (auto* character = online->character()) ImGui::TextDisabled("%s", character->status_text().c_str());
+                            ImGui::TextDisabled("%s", online->story_line().c_str());
                             if (online->leave_prompt) ImGui::TextColored(ImVec4(1, 0.85f, 0.3f, 1), "Leave room?");
                             if (ImGui::Button("Leave room")) leave_room();
                             if (online->leave_prompt && ImGui::Button("Stay")) online->leave_prompt = false;
