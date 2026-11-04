@@ -5,8 +5,9 @@ public sealed class SealingOptions
 {
     /// <summary>Upper bound of a member's input delay d (ticks).</summary>
     public int MaxDelayTicks { get; set; } = 15;
-    /// <summary>The share of late pads above which d rises (0.1 %).</summary>
-    public double LateTarget { get; set; } = 0.001;
+    /// <summary>The share of late pads in the delay rule's ten-second window above which d rises, when they came in at least
+    /// three different seconds (2 %: DelayController.LateTarget).</summary>
+    public double LateTarget { get; set; } = 0.02;
     /// <summary>Ticks added to the largest member horizon when the server stamps JOIN, LEAVE or INTENT.</summary>
     public int EventMarginTicks { get; set; } = 2;
 }

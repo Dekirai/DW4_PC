@@ -11,7 +11,8 @@ using DW4Online.FakeClient;
 //   client  --port N [--host 127.0.0.1] (--ticket T | --api URL --token BEARER --room CODE [--pin BASE64])
 //           [--protocol 43] [--data-hash 1] [--settings-hash HEX] [--name NAME] [--quest N] [--seed N] [--script FILE]
 //           [--duration SECONDS] [--replay-rate N] [--entry-ticks 120] [--depart-ticks 120] [--log FILE] [--stats FILE]
-//   proxy   --listen PORT --target PORT [--one-way MS] [--jitter MS] [--loss P]
+//   proxy   --listen PORT --target PORT [--one-way MS] [--jitter MS] [--loss P] [--up MS,JITTER,LOSS] [--down MS,JITTER,LOSS]
+//           (--up / --down: an asymmetric link, client to server / server to client; each overrides the symmetric values)
 //   matrix  [--ports 53100-53199] [--clients 3] [--warmup 20] [--seconds 40] [--parallel 3] [--out FILE.json] [--md FILE.md] [--quick]
 var args2 = args.Skip(1).ToArray();
 string Opt(string name, string fallback = "")
@@ -99,9 +100,18 @@ switch (args.FirstOrDefault())
     {
         var imp = new Impairment(double.Parse(Opt("--one-way", "0"), CultureInfo.InvariantCulture),
             double.Parse(Opt("--jitter", "0"), CultureInfo.InvariantCulture), double.Parse(Opt("--loss", "0"), CultureInfo.InvariantCulture));
+        static Impairment Direction(string text, Impairment fallback)
+        {
+            if (text.Length == 0) return fallback;
+            var parts = text.Split(',');
+            double At(int k) => k < parts.Length && parts[k].Length > 0 ? double.Parse(parts[k], CultureInfo.InvariantCulture) : 0;
+            return new Impairment(At(0), At(1), At(2));
+        }
+        var up = Direction(Opt("--up"), imp);
+        var down = Direction(Opt("--down"), imp);
         await using var proxy = new ImpairmentProxy(new IPEndPoint(IPAddress.Loopback, int.Parse(Opt("--listen"), CultureInfo.InvariantCulture)),
-            new IPEndPoint(IPAddress.Loopback, int.Parse(Opt("--target"), CultureInfo.InvariantCulture)), imp, imp, Environment.ProcessId);
-        Console.WriteLine($"proxy {proxy.Port} -> {Opt("--target")} ({imp})");
+            new IPEndPoint(IPAddress.Loopback, int.Parse(Opt("--target"), CultureInfo.InvariantCulture)), up, down, Environment.ProcessId);
+        Console.WriteLine($"proxy {proxy.Port} -> {Opt("--target")} (up {up}, down {down})");
         try
         {
             await Task.Delay(Timeout.Infinite, cts.Token);

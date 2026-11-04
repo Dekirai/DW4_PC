@@ -8,6 +8,12 @@
 // the sound manager's AX frames keep their mapping to the steps. A backlog of
 // more than three ticks (a stall on the member's downlink) runs at once
 // without pictures, which moves the audio once, as an offline hitch does.
+// A smaller excess that lasts (the buffer 0.75 ticks or more above its target
+// for half a second: a join's or a stage event's long step, a hitch of the
+// host)
+// runs one extra step at once (round 62): at +0.1 % it took 17 s per tick, and
+// every tick of it made this member's pads later at the relay, which answered
+// with a higher input delay.
 #include <cstddef>
 
 namespace dw4::game::online {
@@ -33,6 +39,8 @@ public:
     double level() const { return level_; }
     // Steps that found no sealed tick when they were due (diagnostics).
     std::size_t starved() const { return starved_; }
+    // Extra steps run to drain a lasting excess (diagnostics).
+    std::size_t drained() const { return drained_; }
 
 private:
     double accumulator_ = 0;
@@ -41,6 +49,8 @@ private:
     bool catching_up_ = false;
     bool primed_ = false;
     std::size_t starved_ = 0;
+    std::size_t drained_ = 0;
+    double excess_for_ = 0; // seconds the level stayed 0.75 ticks or more above its target
 };
 
 } // namespace dw4::game::online

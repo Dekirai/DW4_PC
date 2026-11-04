@@ -587,6 +587,24 @@ void pacing_and_lag() {
                   seen[1].max_hp == 250,
               "the roster reaches the room view");
     }
+    {
+        // An informational frame that does not decode (round 62 review: round 60's PRESENCE2 to clients on 0x8F, the
+        // number NETSTAT holds since 0.1.2) is skipped; the session stays connected and sealed.
+        std::vector<std::uint8_t> other(40, 0x55);
+        world.hub.send(1, w::Type::netstat, other, world.now);
+        world.hub.send(1, w::Type::roster, {0x07}, world.now);
+        world.run(0.5);
+        check(a.session->mode() == Mode::sealed && a.session->net().reconnects == 0 && a.session->net().skipped_frames == 2,
+              "undecodable NETSTAT / ROSTER frames are skipped, not a lost connection");
+        world.hub.send(1, w::Type::netstat, w::encode(w::NetStat{30, 4, 3, 12, 900, 2, 1, w::NetStat::in_stream}), world.now);
+        world.run(0.5);
+        const auto& net = a.session->net();
+        check(net.from_relay && net.rtt_ms == 30 && net.sealed == 900, "the next NETSTAT counts");
+        // A PING waits here for the next pass: half the gap between passes (1/240 s here), which the network's round
+        // trip leaves out (round 62 review: "Ping 34 ms" at 24 ms of network with 60 passes a second).
+        check(net.pass_wait_ms > 1.5 && net.pass_wait_ms < 2.6, "the pass wait: " + std::to_string(net.pass_wait_ms));
+        check(std::abs(net.network_rtt_ms() - (30 - net.pass_wait_ms)) < 1e-9, "the network's round trip");
+    }
     const double ratio = a.session->audio_ratio();
     check(ratio >= 0.999 && ratio <= 1.001, "the audio ratio stays within 0.1 %");
     // Lag: the server fills B's pads when they stop (B's uplink gone, its downlink alive).

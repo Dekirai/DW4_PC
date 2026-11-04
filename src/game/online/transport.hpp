@@ -20,6 +20,15 @@ public:
     // the remaining bytes were handed out).
     virtual bool receive(std::vector<std::uint8_t>& into) = 0;
     virtual void close() = 0;
+    // The kernel's round-trip estimate of the TCP connection in ms (Windows
+    // SIO_TCP_INFO; the network alone, without the relay's or this host's
+    // processing), or a negative value where there is none (a pipe, an older
+    // system). The network indicator shows it when the relay sends no
+    // NETSTAT (a server before round 62).
+    virtual double tcp_rtt_ms() const { return -1; }
+    // TCP loss episodes on this connection so far (fast retransmissions and
+    // retransmission timeouts; -1: unknown).
+    virtual long long tcp_retransmits() const { return -1; }
 };
 
 // Connects to host:port (blocking up to `timeout_ms`), then switches to
