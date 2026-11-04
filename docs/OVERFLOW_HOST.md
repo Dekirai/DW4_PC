@@ -10,7 +10,7 @@ F-keys, Discord and achievements, the pacing reset and the dev start. Lane B
 
 | File | What |
 | --- | --- |
-| `src/game/host_view.hpp/.cpp` | The extraction (13.3, T11): `HostView` (window, renderer, sound output, controllers, F1 state, picture state) and the functions both loops call: `host_event`, `toggle_menu`, `read_live_input`, `live_pad_sample`, `mix_audio` (with the host `gain`), `note_stage`, `make_picture`, `present_scene`, `set_menu_navigation`, `new_ui_frame`, `draw_tags`, `render_ui`, `write_screenshot`, `finish_present`, `pace_presents`, and the F1 Settings tab's display, audio, presence, keyboard and controller sections. The statements moved out of `game_main.cpp`'s `run()` in their order; the story loop keeps its old names as references into `HostView`. |
+| `src/game/host_view.hpp/.cpp` | The extraction (13.3, T11): `HostView` (window, renderer, sound output, controllers, F1 state, picture state) and the functions both loops call: `host_event`, `toggle_menu`, `read_live_input`, `live_pad_sample`, `mix_audio` (with the host `gain`), `note_stage`, `make_picture`, `present_scene`, `set_menu_navigation`, `new_ui_frame`, `draw_tags`, `render_ui`, `write_screenshot`, `finish_present`, `pace_presents`, and the F1 Settings tab's display, audio, presence, keyboard and controller sections. The statements moved out of `game_main.cpp`'s `run()` in their order; the story loop keeps its old names as references into `HostView`. Since the merge with main (section 9) `note_stage` and `present_scene` also take the story loop's online presentation (round 60's ghost figures, the remote tags' presence places: `RemotePresentation`) and `finish_present` a call right after the swap. |
 | `src/game/overflow_run.hpp/.cpp` | The run without a window: `RunRequest` and `parse_run_request` (`--overflow-run`), `RunEnd`, `StoryRandomGuard`, `TestEnvironmentScope`, `RunCards`, `prepare_run_engine`, `StorySwitch`, and the `RunDriver` interface. |
 | `src/game/overflow_host.hpp/.cpp` | `run_from_story` (13.3 steps 2-4) and the run loop, the run's F1 menu, the fades, `start_refusal`, the F1 Gameplay tab's dev start. |
 | `src/game/overflow_driver.cpp` | `make_run_driver`: since lane C the director's driver (docs/OVERFLOW_DIRECTOR.md 5: the run's moves, the menus, the overlay boxes, the summary and log). Before it, the host's stand-in of section 7. |
@@ -91,7 +91,7 @@ it starts after story frame F once the story has loaded a stage. Output lines:
 | input | the run gets this machine's live pads only (slot 1); after F1's Start and after the return the pad waits for released buttons |
 | F-keys | F5 / F9: refused in a run; F2 (free camera): story only; F1: the run's own menu with the settings sections only; F11 as everywhere |
 | Discord | the run's own activity; the story's comes back with its next pass |
-| online | the dev start is refused in direct sessions, rooms, the online screens and with online rules; `--overflow-run` refuses the online options; nothing online is reachable during a run (and `Engine::set_online` throws while two engines live) |
+| online | the dev start is refused in direct sessions, rooms, the online screens and with online rules; `--overflow-run` refuses the online options; nothing online is reachable during a run (and `Engine::set_online` throws while two engines live); round 60's ghost figures and the remote tags' presence places reach `note_stage` and `present_scene` only as the story loop's arguments (`RemotePresentation`, section 9), the run loop passes none |
 | pacing | the story loop's accumulator and present clocks start over after the return: the story does not catch up the run's time |
 
 ## 4. Static audit (13.2)
@@ -191,3 +191,59 @@ bold face, which has the Greek grades of the weapon names) and, with the
 request's `timing=1` (T8), the picture's cost per pass (traverse and draw
 list, the draw items) and each pass's work with its present, printed when
 the run ends.
+
+## 9. The merge with main 64d0b61
+
+Main had moved on by round 60 (the ghost figures, 9700b11), round 62 (the
+input lag, the network indicator, online.log), round 63 (own menus online,
+protocol 46), round 59b (the room story) and DW4Online 0.1.4. Merged into
+dref-o1a with both sides' behaviour kept: main's changes to the code lane A
+had moved out of `game_main.cpp` went into `HostView`, not back into the
+story loop, and nothing online reaches a run.
+
+| Conflict | Resolution |
+| --- | --- |
+| `CMakeLists.txt` | main's `online_scenes.cpp` beside the overflow sources of `dw4_engine`; `ghost_figures.cpp` beside `host_view.cpp` and the overflow files of `dw4_game` |
+| `online.cpp`, `online_forbidden_env` | both new names: `DW4_OVERFLOW_TEST_CHEATS` and round 63's `DW4_TEST_SUBWND_SKIP` |
+| the picture's list and shadow | lane A's references into `view.picture`; round 60's copies with the figures in (`ghost_items`, `ghost_shadow`) are `PictureState` members now (the renderer keeps the shadow's address; `reset()` clears them at both switches) |
+| the labels and the figures' state | lane A's `view.labels`; `GhostFigures`, `present_remote` and the `DW4_GHOSTS` / `DW4_TRACE_GHOSTS` state stay the story loop's own (online presentation; the figures' loader thread never serves a run) |
+| the stage change | `note_stage(view, engine, &ghosts)`: the figures are cleared in HostView's stage reset in main's order (after the labels, before the profile is saved); the run loop passes none |
+| the draw block | `present_scene(..., const RemotePresentation*)`: the story loop hands over its figures, this pass's presence samples, the own player's place (only while a figure is shown, as main asked for it) and `DW4_TRACE_GHOSTS`' cost; `present_scene` draws the figures into the copy at the present's own time and puts the remote tags at their presence samples, as main did inline. The run loop passes none |
+| the F1 Settings sections | lane A's shared sections; round 62's "Network indicator in online sessions" is in `settings_presence_section`, so both loops' F1 show the same settings (the indicator itself needs a room session) |
+| the present | `finish_present(view, engine, swapped)`: the story loop's `pass_presented` and `Session::presented` right after the swap; round 62's 4 ms pause of a minimized or covered window is in `finish_present` (both loops: a run's window would spin the same way); `HostView::last_present_seconds` feeds `DW4_TRACE_GHOSTS`' longest present |
+| the pacing | `pace_presents(view)`, then main's `DW4_ONLINE_DEV` pass grid and `OnlineRun::host_pass` (story loop, online only) |
+
+Everything else of main merged by itself (the online setup's order, the
+presence's busy flag, the session's replacement, the figures' update and
+trace, the online F1 tab's connection section, the indicator, the stalls of
+the online test builds, the final latency line). A check that nothing of
+either side was lost: every line main added to `game_main.cpp` since the
+merge base is in the merged `game_main.cpp` or `host_view.cpp` except the
+ones ported above, and every line lane A added is still there except the four
+calls that took the new arguments.
+
+**The run hash.** Round 63 added terms to `Engine::net_fingerprint` (the own
+windows, the scoped pads and layers, the holds, the copies, the demo works),
+which every engine hashes, the run's too: Agumon seed 1 (`form=p_agumon
+field=stagbs02 seed=1 bot=kite --smoke-test 90000`) ends as before (defeated
+after 28,575 steps at Lv 20) with the run hash d9ced6aba81ccd47 instead of
+8da422d504d5b458, Veemon seed 1 (41,700 steps, Lv 28) with e22487c8310bfd94
+instead of 6194b570b2fe81e9. The runs themselves are the same: their run logs
+(27,874 and 40,930 lines: the events, the minute lines, every step's pads)
+and summaries are byte-identical to the build before the merge, Agumon's
+headless and drawn in a hidden window at a virtual 144 Hz with smooth motion
+(`DW4_RENDER=1 DW4_DEV_PRESENT=144 DW4_DEV_SMOOTH=1`); and a variant of the
+merged build that leaves round 63's terms out of the hash (never committed)
+gives 8da422d504d5b458 again.
+
+Results (Release, all hidden or headless; outputs in the worktree's ignored
+`build/t/merge`):
+
+| Test | Result |
+| --- | --- |
+| build | Release with tests and a `DW4_ONLINE_DEV` build, Ninja `--parallel 2`; no new warnings |
+| ctest | 53 / 53 |
+| T1 det.sh | 4004f056 / 396cb219, both runs |
+| T11 | `merge/shots.sh`: title / new game, dng101b1 4:3 and 1600x900 widescreen, the research card's lobby with name tags, the new game's lobby: identical to main's build (64d0b61) and to the build before the merge. F1 Cheats and Gameplay identical to the build before the merge; against main only the tab bar (the Gameplay tab). F1 Settings against main: the tab bar and the live frame-time numbers and graph; against the build before the merge: the frame-time numbers and the scroll bar (the tab is two lines longer) |
+| T3 / T5 | `merge/t3.sh`: 12,200 story lines and 106 events / achievements equal with and without a run, the card unchanged, the profiles equal |
+| run hash | see above |

@@ -337,13 +337,12 @@ box as between two runs of main).
   7-14 minutes); a human with O1b's gear may go further. Phase 3 is reached
   by 11 of 20 Veemon and 4 of 20 Agumon runs.
 - T8's single-step maximum (section 6.2): warm the families up at the start.
-- The merge into main (9700b11 and later): main's round 60 (the ghost
-  figures) wrote into the presentation that lane A moved into `host_view.cpp`
-  (`present_scene`, `note_stage`, the items and labels); `git merge-tree`
-  shows 7 conflict hunks in `game_main.cpp`. The merge needs the ghost
-  figures ported into `HostView` / `present_scene` / `note_stage`, then T11
-  and the SEAMLESS ghost tests again (not done in the review round: it
-  touches the online round's code).
+- (Done: main 64d0b61 is merged into dref-o1a, round 60's ghost figures
+  ported into `HostView`, docs/OVERFLOW_HOST.md 9. Round 63 added terms to
+  the net fingerprint, so every run hash of section 6 changed with the merge
+  while the runs stayed the same: Agumon seed 1 is d9ced6aba81ccd47 now,
+  Veemon seed 1 e22487c8310bfd94, and the merged build without round 63's
+  terms gives 8da422d504d5b458 again.)
 
 ## 9. The review round
 
@@ -361,4 +360,4 @@ list of small ones; each is answered here, with its test.
 | The offers inform badly: Train Heal from level 2 for a Heal Lt of level 15, plugs like Fire RES +14 | Train came whenever the form had a technique of the group | Train waits until two levels before its group's first technique; a resistance plug weighs a quarter; a detail per line and a sentence about the cursor's offer (Forge as the heart of the build, a locked technique's level, what a resistance plug does) | ctest `overflow_offers`; the level-up picture |
 | Recycling and encirclements brought hurt enemies back healed | GENERATE sets the full HP | the new HP keeps the old share (SETHP) | ctest `overflow_spawn` (an encircled enemy at half HP stays at half) |
 | The run loop never called `DiscordPresence::configure` | | as the story loop: every pass with the F1 setting (test runs on) | T3 (the run's activity set as before); by reading (a test run always switches it on) |
-| `game_main.cpp` conflicts with main 9700b11 | | open (section 8) | |
+| `game_main.cpp` conflicts with main 9700b11 | | the merge of main 64d0b61 (docs/OVERFLOW_HOST.md 9) | T11, T3, the run's log and summary, P1 / P3 / M1 / S1 (OVERFLOW_HOST.md 9) |
