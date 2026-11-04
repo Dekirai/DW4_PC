@@ -3711,12 +3711,21 @@ bool GameSystem::script_call(Engine& engine, const std::string& method, std::spa
         if (std::string_view(folder) == "BIT") return packet.ints.empty() ? 0 : int(packet.ints[0]);
         return int(packet.bools.empty() ? engine.messenger().stale_bool() : packet.bools[0]);
     };
+    // The field NPCs' exchanges (n_*.lua, itemchange*.lua) look at and change
+    // player 0's device and disk folders, whoever talks. Online such a talk is
+    // the talking member's own scene (docs/SEAMLESS.md 5.3), shown on its
+    // screen alone: player 0 there is that member, whose folders it trades
+    // with. (Offline there is no scope: player 0 as in the original.)
+    auto folder_player = [&](int player) {
+        const int scope = engine.scene_scope();
+        return player == 0 && scope >= 0 ? scope : player;
+    };
     if (method == "SYSctlDeviceFolder") {
-        out = {Lua4Value::number(ctrl_item("DEVICE", arg_str(2), arg_int(1), arg_int(3), arg_int(4), arg_int(5)))};
+        out = {Lua4Value::number(ctrl_item("DEVICE", arg_str(2), folder_player(arg_int(1)), arg_int(3), arg_int(4), arg_int(5)))};
         return true;
     }
     if (method == "SYSctlDiskFolder") {
-        out = {Lua4Value::number(ctrl_item("DISK", {}, arg_int(1), arg_int(2), 0, arg_int(3)))};
+        out = {Lua4Value::number(ctrl_item("DISK", {}, folder_player(arg_int(1)), arg_int(2), 0, arg_int(3)))};
         return true;
     }
     if (method == "SYSctlFlagFolder") {

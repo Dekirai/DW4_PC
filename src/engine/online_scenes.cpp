@@ -113,6 +113,16 @@ bool Engine::scope_message(std::string_view category, std::optional<std::string_
         if (index == -1 || index == slot) hold_own_input(slot, false, command == "OFCTRL");
         return false;
     }
+    // Every model's control (a talk's demo hands it back to all, stag0302's
+    // Gekomon demo00.lua): only the member's own player, as above - another
+    // member frozen in its exit prompt stays frozen.
+    if (category == "MODELCTRL" && !name && index == -1 && (command == "OFCTRL" || command == "ONCTRL")) {
+        hold_own_input(slot, false, command == "OFCTRL");
+        return false;
+    }
+    // Any other command to every player (that demo's PLAYER -1 SQ_WAIT): the
+    // member's own player alone; the others play on.
+    if (category == "PLAYER" && index == -1) index = slot;
     // The pad input: the member's own pad.
     if (category == "STAGECTL" && command == "PADINPUT") {
         const bool off = !packet.strings.empty() && packet.string(0) == "DISABLE";
@@ -248,6 +258,52 @@ void Engine::clear_scene_copies() {
     scoped_pads_off_ = 0;
     own_window_hold_ = own_scene_hold_ = 0;
     for (auto& layers : scoped_layers_off_) layers.clear();
+}
+
+namespace {
+
+// The stage globals a talk keeps its state in (Engine::talk_globals_): set by
+// the hit_n_* scripts and func.lua's funcOpenMessage, read by the scripts the
+// talk's DMsetLua records load (n_*.lua, itemchange*.lua) and by func.lua's
+// funcOneMessage / funcChoiceMessage / funcCloseMessage when those build
+// their records. The stage's own state globals (g_lFLG*, g_IFLG*, ...) are not
+// among them: what a talk sets there is the instance's.
+constexpr std::array<std::string_view, 7> kTalkGlobalNames{"g_npcRamNo", "g_messPlayerNo", "g_talk",  "g_SItemDB",
+                                                           "g_SItemID",  "g_TItemDB",      "g_TItemID"};
+
+} // namespace
+
+void Engine::switch_talk_globals(int side) {
+    static_assert(kTalkGlobalNames.size() == kTalkGlobals);
+    if (!lua_ || side == talk_globals_side_) return;
+    auto& from = talk_globals_[std::size_t(talk_globals_side_ >= 0 && talk_globals_side_ < 4 ? talk_globals_side_ : 4)];
+    auto& to = talk_globals_[std::size_t(side >= 0 && side < 4 ? side : 4)];
+    for (std::size_t i = 0; i < kTalkGlobals; ++i) {
+        // (Numbers, strings and nil only: the talks keep nothing else there,
+        // and a table kept outside the VM would not survive a collection.)
+        const auto value = lua_->get_global(kTalkGlobalNames[i]);
+        const auto type = value.type();
+        if (type == Lua4Type::Nil || type == Lua4Type::Number || type == Lua4Type::String) from[i] = value;
+        else from[i].reset();
+        // (A side without a value of its own yet sees the one it finds.)
+        if (to[i]) lua_->set_global(std::string(kTalkGlobalNames[i]), *to[i]);
+    }
+    talk_globals_side_ = side;
+}
+
+void Engine::run_own_talk(int slot, const std::string& script) {
+    const SceneScope scope(*this, slot);
+    // Talks wait for each other, as in the original's one talk at a time:
+    // what they change is often the instance's (the common FLAGFOLDER an
+    // exchange takes its key item from, a quest a Digi-Elf starts, a story
+    // flag), and the original never decides one talk while another one's
+    // decision is still to come. Another member's own talk makes this hit
+    // script's DMgetCount nonzero (its busy path: the NPC only takes the
+    // hit); its own status window and other members' windows do not.
+    for (int other = 0; other < 4; ++other)
+        if (other != slot && own_scene_running(other)) talk_waits_ = true;
+    run_script(script);
+    talk_waits_ = false;
 }
 
 void Engine::hold_own_input(int slot, bool window, bool on) {

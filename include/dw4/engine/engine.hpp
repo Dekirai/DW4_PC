@@ -652,6 +652,11 @@ public:
     // of a fork): the window closes without its close sequence, the scene's
     // works stop, its copies hide and its layer filter goes.
     void end_own_scenes(int slot);
+    // A talk (a hit_n_* script) in the talking member's own scope. While
+    // another member's own talk runs, the script's DMgetCount answers 1 (its
+    // busy path): talks wait for each other, as the original's one talk at a
+    // time; status windows and exits do not wait for them.
+    void run_own_talk(int slot, const std::string& script);
     // STAGECTL PADINPUT inside a slot's scope: that slot alone reads the
     // neutral pad (pads()).
     std::uint8_t scoped_pads_off() const { return scoped_pads_off_; }
@@ -1184,6 +1189,22 @@ private:
     std::vector<std::unique_ptr<Attribute>> copy_attributes_;
     std::vector<SceneCopy> copies_;
     std::set<std::string, std::less<>> copies_made_;
+    // The talk globals of the own scenes: func.lua's message helpers and the
+    // NPC scripts keep a talk's state in stage globals (g_npcRamNo,
+    // g_messPlayerNo, g_talk, an exchange's g_SItem* / g_TItem*) from the hit
+    // script to the scripts its DMsetLua records load later - the original
+    // never runs two talks at once. Online every member's own scenes keep
+    // their own values ([slot]) and the rest of the instance its own ([4]);
+    // the VM holds the values of talk_globals_side_ (-1: the instance), and
+    // run_script switches to the running scope's side and back (never
+    // offline: there is no scope).
+    static constexpr std::size_t kTalkGlobals = 7;
+    std::array<std::array<std::optional<Lua4Value>, kTalkGlobals>, 5> talk_globals_{};
+    int talk_globals_side_ = -1;
+    void switch_talk_globals(int side);
+    // A talk's hit script while another member's own talk runs
+    // (run_own_talk: its DMgetCount answers 1).
+    bool talk_waits_ = false;
     Node* clone_subtree(const Node* root, std::unordered_map<const Node*, Node*>& map);
     bool make_window_copy(std::string_view name, int index, int slot);
     void clear_scene_copies();

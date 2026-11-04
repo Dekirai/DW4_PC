@@ -2695,12 +2695,12 @@ bool ModelCtrlManager::hit_check(Engine& engine, ModelRam& ram, Packet& packet) 
         // Seamless co-op: an NPC talk or a map recorder (the class
         // local_scene, the hit_n_* scripts) is the talking member's own scene
         // (SEAMLESS.md 5.3): its run, its demo works and its posts in that
-        // member's scope.
+        // member's scope, with the member's own talk globals; it waits while
+        // another member's talk runs.
         const bool own = engine.scenes_scoped() && ram.info_name.starts_with("n_") && trigger >= 0 &&
                          (engine.online().present & (1u << trigger)) != 0;
-        std::optional<Engine::SceneScope> scene;
-        if (own) scene.emplace(engine, trigger);
-        engine.run_script("hit_" + ram.info_name + ".lua");
+        if (own) engine.run_own_talk(trigger, "hit_" + ram.info_name + ".lua");
+        else engine.run_script("hit_" + ram.info_name + ".lua");
     }
     const auto done = engine.pop_model_context();
     if (done.turn && has_source) {
