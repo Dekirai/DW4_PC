@@ -2,6 +2,7 @@
 // reconstructed engine in dw4::engine. Original data is read from --data.
 #include "dev_present.hpp"
 #include "gl_renderer.hpp"
+#include "host_view.hpp"
 #include "interpolation.hpp"
 #include "mods.hpp"
 #include "netplay.hpp"
@@ -104,26 +105,7 @@ struct Options {
 };
 
 
-void write_bmp(const std::string& path, int width, int height, const std::vector<std::uint8_t>& rgba) {
-    std::ofstream out(path, std::ios::binary);
-    const int row = width * 3;
-    const int pad = (4 - row % 4) % 4;
-    const std::uint32_t size = 54 + std::uint32_t((row + pad) * height);
-    auto u32 = [&](std::uint32_t v) { out.write(reinterpret_cast<const char*>(&v), 4); };
-    auto u16 = [&](std::uint16_t v) { out.write(reinterpret_cast<const char*>(&v), 2); };
-    out.write("BM", 2);
-    u32(size); u32(0); u32(54); u32(40); u32(std::uint32_t(width)); u32(std::uint32_t(height));
-    u16(1); u16(24); u32(0); u32(size - 54); u32(2835); u32(2835); u32(0); u32(0);
-    const char zeros[3]{};
-    for (int y = 0; y < height; ++y) {
-        for (int x = 0; x < width; ++x) {
-            const auto* p = &rgba[std::size_t((y * width + x) * 4)];
-            const char bgr[3]{char(p[2]), char(p[1]), char(p[0])};
-            out.write(bgr, 3);
-        }
-        out.write(zeros, pad);
-    }
-}
+using dw4::game::write_bmp;
 
 // Scripted input for automated runs: lines "frame button [duration [player]]"
 // (button: A,B,X,Y,START,Z,L,R, UP,DOWN,LEFT,RIGHT (the D-pad bit and the main
@@ -371,12 +353,7 @@ std::filesystem::path choose_game_data() {
     return result.path;
 }
 
-// A key or controller button of the controls tables waiting for input.
-struct KeyCapture {
-    std::size_t button{};
-    std::size_t slot{};
-    bool gamepad{};
-};
+using dw4::game::KeyCapture;
 
 // A save state: the snapshot of the running stage's load and the controller
 // input of every step since; loading replays them on a new engine.
@@ -1133,32 +1110,29 @@ int run(const Options& options, dw4::game::Settings& settings) {
     // its output is dropped (the streams' decoding positions advance: the
     // canonical snapshot check, SEAMLESS.md 6.8).
     const bool audio_mix = options.smoke_frames && std::getenv("DW4_AUDIO_MIX") && std::atoi(std::getenv("DW4_AUDIO_MIX")) != 0;
-    std::vector<std::int16_t> audio_dump;
-    constexpr int kAudioFrameSamples = dw4::engine::SoundManager::kOutputRate / 60;
-    // Output samples of the step that reached `frame`: one NTSC field
-    // (800.8 at 48 kHz), so music and movie sound keep pace with world time.
-    auto step_samples = [](std::uint64_t frame) {
-        constexpr std::uint64_t rate = dw4::engine::SoundManager::kOutputRate;
-        const auto upto = [](std::uint64_t f) { return f * rate * 1001 / 60000; };
-        return int(upto(frame) - upto(frame ? frame - 1 : 0));
-    };
-    auto mix_audio = [&](int frames) {
-        auto* sound = engine.get<dw4::engine::SoundManager>();
-        if (!sound || (!audio && !audio_dump_path && !audio_mix)) return;
-        std::vector<std::int16_t> pcm(std::size_t(frames) * 2);
-        // A rebooting console is silent (the reset stops the DSP).
-        if (!engine.rebooting()) sound->render(pcm.data(), std::size_t(frames));
-        // Master volume (settings.ini [audio] volume, percent).
-        if (settings.volume < 100)
-            for (auto& sample : pcm) sample = std::int16_t(int(sample) * settings.volume / 100);
-        if (audio) SDL_PutAudioStreamData(audio, pcm.data(), int(pcm.size() * sizeof(std::int16_t)));
-        if (audio_dump_path) audio_dump.insert(audio_dump.end(), pcm.begin(), pcm.end());
-    };
+    // (The output samples of a step and the mix: host_view.hpp.)
+    using dw4::game::kAudioFrameSamples;
+    using dw4::game::step_samples;
 
     {
         std::optional<dw4::game::GlRenderer> gl_renderer;
         if (draw) gl_renderer.emplace();
         dw4::game::GlRenderer* const renderer = gl_renderer ? &*gl_renderer : nullptr;
+        // The window, the renderer, the sound output, the controllers, the
+        // F1 menu and the pictures as the host's shared parts see them
+        // (host_view.hpp: the story and a Data Overflow run use the same).
+        dw4::game::HostView view(settings, dev);
+        view.test_run = options.smoke_frames != 0;
+        view.draw = draw;
+        view.window = window;
+        view.renderer = renderer;
+        view.samples = samples;
+        view.tag_font = tag_font;
+        view.audio = audio;
+        view.audio_dump_path = audio_dump_path;
+        view.audio_mix = audio_mix;
+        auto& audio_dump = view.audio_dump;
+        auto mix_audio = [&](int frames) { dw4::game::mix_audio(view, engine, frames); };
         // Texture packs: settings.ini [mods] textures (default mods/textures
         // next to the program, else in the working folder); dumps go to
         // mods/dump/textures. Test runs use neither.
@@ -1185,7 +1159,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
             texture_pack.configure(pack ? pack : "", dump ? dump : "");
             renderer->set_texture_pack(&texture_pack);
         }
-        std::vector<SDL_Gamepad*> gamepads;
+        auto& gamepads = view.gamepads;
         ScriptedInput scripted;
         if (!options.input_script.empty()) scripted.load(options.input_script);
         // --online-script FILE (test runs of online rooms, tools/online_test):
@@ -1195,20 +1169,22 @@ int run(const Options& options, dw4::game::Settings& settings) {
             std::string error;
             if (!online_script.load(options.online_script, error)) throw std::runtime_error("online script: " + error);
         }
-        std::vector<dw4::engine::DrawItem> items;
-        dw4::engine::ShadowFrame shadow;
-        dw4::engine::FrameCamera camera;
-        dw4::engine::Vec4f clear{};
+        auto& items = view.picture.items;
+        auto& shadow = view.picture.shadow;
+        auto& camera = view.picture.camera;
+        auto& clear = view.picture.clear;
         std::array<dw4::engine::PadSample, 4> pads{};
-        std::string rendered_stage;
-        std::uint64_t rendered_serial{};
-        std::unique_ptr<dw4::game::MovieDecoder> movie_decoder;
-        std::uint32_t movie_serial = 0;
-        std::string movie_stage; // stage the decoder's movie played in
+        auto& rendered_stage = view.picture.rendered_stage;
+        auto& movie_decoder = view.picture.movie_decoder;
+        auto& movie_serial = view.picture.movie_serial;
+        auto& movie_stage = view.picture.movie_stage;
         // DW4_OPEN_MENU=1 opens the F1 menu at start (menu screenshots);
         // DW4_MENU_TAB=<tab> selects that tab when it first shows.
-        bool running = true, show_menu = std::getenv("DW4_OPEN_MENU") != nullptr;
-        std::string menu_tab = std::getenv("DW4_MENU_TAB") ? std::getenv("DW4_MENU_TAB") : "";
+        bool running = true;
+        auto& show_menu = view.show_menu;
+        show_menu = std::getenv("DW4_OPEN_MENU") != nullptr;
+        auto& menu_tab = view.menu_tab;
+        menu_tab = std::getenv("DW4_MENU_TAB") ? std::getenv("DW4_MENU_TAB") : "";
         auto tab_flags = [&](const char* name) -> ImGuiTabItemFlags {
             if (menu_tab != name) return ImGuiTabItemFlags_None;
             menu_tab.clear();
@@ -1218,7 +1194,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
         std::array<std::optional<SaveState>, 4> state_slots;
         std::vector<LoggedStep> input_log;
         bool load_step_drawn = false, last_step_loaded = false;
-        bool items_current = false; // `items` is the draw list of the last update
+        auto& items_current = view.picture.items_current; // `items` is the draw list of the last update
         std::uint64_t log_serial = 0;
         std::string state_message;
         auto message_until = std::chrono::steady_clock::now();
@@ -1228,7 +1204,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
         int state_pass = 1, state_mismatch = -1;
         bool state_test_save = false; // saves after the picture, like F5 or the menu
         std::vector<std::uint64_t> state_fingerprints;
-        bool settings_changed = false;
+        auto& settings_changed = view.settings_changed;
         // F1 Saves tab: the boxes of the slots (read again every 2 s while
         // shown), the import preview and the file dialog's answer (it may
         // come from another thread).
@@ -1258,21 +1234,19 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 cloud_panel.set_test(text.substr(0, a), text.substr(a + 1, b == std::string::npos ? std::string::npos : b - a - 1),
                                      b == std::string::npos ? std::string() : text.substr(b + 1));
         }
-        std::optional<KeyCapture> capture;
-        auto next_present = std::chrono::steady_clock::now();
+        auto& capture = view.capture;
+        auto& next_present = view.next_present;
+        next_present = std::chrono::steady_clock::now();
         float online_audio_ratio = 1.0f; // the audio stream's frequency ratio in an online room
         std::uint64_t net_submitted = std::uint64_t(net.active() ? net.start().delay : 0);
         // Smooth motion above 60 presents per second (settings.ini smooth_motion).
-        dw4::game::MotionInterpolator interpolator;
-        int last_picture_slot = -1; // Engine::picture_slot of the last picture (smooth motion restarts on a change)
+        auto& interpolator = view.interpolator;
         // Seamless co-op: the steps START is held while the local member is
         // defeated (give up after kGiveUpFrames).
         int give_up_held = 0;
         constexpr int kGiveUpFrames = 120;
-        double present_interval = 1.0 / 60.0;
-        std::array<float, 240> frame_times{}; // ms per presented frame (F1 graph)
-        std::size_t frame_time_at = 0;
-        auto last_present = std::chrono::steady_clock::now();
+        auto& present_interval = view.present_interval;
+        view.last_present = std::chrono::steady_clock::now();
         int frame = 0;
         // ---- Presence features: overhead name tags, Discord Rich Presence,
         // achievements. Host only: they read the engine after a step and
@@ -1292,16 +1266,11 @@ int run(const Options& options, dw4::game::Settings& settings) {
         // Overhead name tags (settings.ini [hud]; test runs: DW4_LABELS=
         // auto|all|others|off, DW4_TRACE_LABELS=N prints their screen
         // positions every N frames, without a window too).
-        dw4::game::OverheadLabels labels;
+        auto& labels = view.labels;
         const int trace_labels = options.smoke_frames && std::getenv("DW4_TRACE_LABELS") ? std::atoi(std::getenv("DW4_TRACE_LABELS")) : 0;
-        std::set<std::uint64_t> traced_occlusion; // the labels the last picture hid (traces)
-        auto label_mode = [&] {
-            if (options.smoke_frames) {
-                const char* mode = std::getenv("DW4_LABELS");
-                return mode ? dw4::game::parse_label_mode(mode) : trace_labels ? dw4::game::LabelMode::all : dw4::game::LabelMode::off;
-            }
-            return dw4::game::parse_label_mode(settings.overhead_labels);
-        };
+        view.trace_labels = trace_labels;
+        auto& traced_occlusion = view.traced_occlusion; // the labels the last picture hid (traces)
+        auto label_mode = [&] { return view.label_mode(); };
         // Discord Rich Presence (settings.ini [discord]). Test runs talk only
         // to a test pipe (DW4_DISCORD_PIPE=<pipe name prefix>), never to a
         // running Discord; DW4_TRACE_PRESENCE=1 prints each new activity.
@@ -1391,7 +1360,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
         bool online_tab_shown = false;   // F1 shows the Online tab (the last frame)
         // After the screens close, the game's pad waits until every button
         // is up (the B that closed them must not also cancel the menu).
-        bool pad_latch = false;
+        auto& pad_latch = view.pad_latch;
         // A UI test run's presses on the game's pad (dw4::pad_button bits),
         // held until that engine frame.
         std::uint32_t ui_pad = 0;
@@ -1402,19 +1371,9 @@ int run(const Options& options, dw4::game::Settings& settings) {
             std::string error;
             if (!ui_script.load(options.online_ui, error)) throw std::runtime_error("online-ui: " + error);
         }
-        // The controller's View / Back button opens and closes the F1 menu,
-        // unless a binding gives it to a game button.
-        const auto back_button_free = [&] {
-            for (const auto& inputs : settings.pad)
-                for (const auto& input : inputs)
-                    if (input.kind == dw4::game::PadInput::Kind::button && input.code == SDL_GAMEPAD_BUTTON_BACK) return false;
-            return true;
-        };
-        auto view_button = [&] {
-            show_menu = !show_menu;
-            capture.reset();
-            if (!show_menu && settings_changed && settings.save()) settings_changed = false;
-        };
+        // The controller's View / Back button opens and closes the F1 menu
+        // (dw4::game::host_event), a UI test run's "view" too.
+        auto view_button = [&] { dw4::game::toggle_menu(view); };
         // Opens the online screens over the title (the menu's Online entry;
         // a test run's "panel open").
         auto open_title_online = [&] {
@@ -1919,71 +1878,11 @@ int run(const Options& options, dw4::game::Settings& settings) {
             const auto pass_start = std::chrono::steady_clock::now();
             SDL_Event event;
             while (SDL_PollEvent(&event)) {
-                // A key binding being edited takes the next key (F1 still
-                // closes the menu).
-                // A controller binding being edited takes the next button or
-                // trigger pull.
-                if (capture && capture->gamepad &&
-                    (event.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN ||
-                     (event.type == SDL_EVENT_GAMEPAD_AXIS_MOTION && event.gaxis.value > 16000 &&
-                      (event.gaxis.axis == SDL_GAMEPAD_AXIS_LEFT_TRIGGER || event.gaxis.axis == SDL_GAMEPAD_AXIS_RIGHT_TRIGGER)))) {
-                    const dw4::game::PadInput input =
-                        event.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN
-                            ? dw4::game::PadInput{dw4::game::PadInput::Kind::button, int(event.gbutton.button)}
-                            : dw4::game::PadInput{dw4::game::PadInput::Kind::axis, int(event.gaxis.axis)};
-                    settings.pad[capture->button][capture->slot] = input;
-                    for (std::size_t b = 0; b < settings.pad.size(); ++b)
-                        for (std::size_t k = 0; k < settings.pad[b].size(); ++k)
-                            if ((b != capture->button || k != capture->slot) && settings.pad[b][k] == input)
-                                settings.pad[b][k] = {};
-                    capture.reset();
-                    settings_changed = true;
-                    continue;
-                }
-                if (capture && !capture->gamepad && event.type == SDL_EVENT_KEY_DOWN && event.key.scancode != SDL_SCANCODE_F1) {
-                    settings.keys[capture->button][capture->slot] = event.key.scancode;
-                    // A key stands for one button only.
-                    for (std::size_t b = 0; b < settings.keys.size(); ++b)
-                        for (std::size_t k = 0; k < settings.keys[b].size(); ++k)
-                            if ((b != capture->button || k != capture->slot) && settings.keys[b][k] == event.key.scancode)
-                                settings.keys[b][k] = SDL_SCANCODE_UNKNOWN;
-                    capture.reset();
-                    settings_changed = true;
-                    continue;
-                }
-                if (draw) ImGui_ImplSDL3_ProcessEvent(&event);
-                if (event.type == SDL_EVENT_QUIT) running = false;
-                if (event.type == SDL_EVENT_WINDOW_RESIZED && !options.smoke_frames &&
-                    !(SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN)) {
-                    settings.width = event.window.data1;
-                    settings.height = event.window.data2;
-                    settings_changed = true;
-                }
-                if (event.type == SDL_EVENT_GAMEPAD_ADDED) {
-                    if (auto* pad = SDL_OpenGamepad(event.gdevice.which)) gamepads.push_back(pad);
-                }
-                if (event.type == SDL_EVENT_GAMEPAD_REMOVED) {
-                    for (auto it = gamepads.begin(); it != gamepads.end(); ++it)
-                        if (SDL_GetGamepadID(*it) == event.gdevice.which) {
-                            SDL_CloseGamepad(*it);
-                            gamepads.erase(it);
-                            break;
-                        }
-                }
-                if (event.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN && event.gbutton.button == SDL_GAMEPAD_BUTTON_BACK && back_button_free())
-                    view_button();
-                if (event.type == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_F1) {
-                    show_menu = !show_menu;
-                    capture.reset();
-                    if (!show_menu && settings_changed && settings.save()) settings_changed = false;
-                }
+                // A binding being edited, ImGui, quit, the window size,
+                // controllers, the View button, F1 and F11 (host_view.hpp).
+                if (dw4::game::host_event(view, event)) continue;
                 if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat && event.key.key == SDLK_F5) save_state(0);
                 if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat && event.key.key == SDLK_F9) load_state(0);
-                if (event.type == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_F11 && !event.key.repeat) {
-                    settings.fullscreen = !settings.fullscreen;
-                    SDL_SetWindowFullscreen(window, settings.fullscreen);
-                    settings_changed = true;
-                }
                 if (event.type == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_F2) {
                     free_camera = !free_camera;
                     if (!free_camera) engine.debug_camera.reset();
@@ -1993,6 +1892,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     free_pitch = std::clamp(free_pitch - event.motion.yrel * 0.005f, -1.5f, 1.5f);
                 }
             }
+            if (view.quit_requested) running = false;
             // Input: player 1 is the keyboard and the first gamepad, players 2-4
             // the further gamepads, each on its own controller slot. The main
             // stick, the D-pad and the C-stick stay separate inputs like on a
@@ -2013,21 +1913,8 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 if (keys[SDL_SCANCODE_Q]) free_eye.y -= speed;
                 engine.debug_camera = make_camera(free_eye, free_eye + forward);
             } else if (!show_menu && !title_online.active) {
-                // Keyboard: the bound keys of settings.ini [keyboard];
-                // controllers: [gamepad] and the sticks.
-                live[0] = dw4::game::keyboard_input(settings, SDL_GetKeyboardState(nullptr));
-                for (std::size_t i = 0; i < gamepads.size() && i < 4; ++i) {
-                    const auto pad = dw4::game::gamepad_input(settings, dw4::game::read_gamepad(gamepads[i]));
-                    if (i == 0) dw4::merge(live[0], pad);
-                    else live[i] = pad;
-                }
-                if (pad_latch) {
-                    bool held = false;
-                    for (const auto& in : live)
-                        held = held || in.buttons || in.stick_directions || in.c_stick_directions || in.stick.x != 0 || in.stick.y != 0;
-                    if (held) live = {};
-                    else pad_latch = false;
-                }
+                // The keyboard and the controllers (host_view.hpp).
+                live = dw4::game::read_live_input(view);
             }
             // Fixed-step simulation at the NTSC field rate (59.94 Hz, one
             // original frame per field; Engine::step adds a field of time).
@@ -2874,47 +2761,13 @@ int run(const Options& options, dw4::game::Settings& settings) {
             }
             // (Every stage load, also of the same stage: the texture cache is
             // keyed by document addresses, which a new load may reuse.)
-            const std::uint64_t serial = engine.stage_snapshot() ? engine.stage_snapshot()->serial : 0;
-            if (rendered_stage != engine.stage_name() || rendered_serial != serial) {
-                if (renderer) renderer->clear_cache();
-                rendered_stage = engine.stage_name();
-                rendered_serial = serial;
-                interpolator.reset();
-                labels.reset();
-                save_profile();
-            }
+            if (dw4::game::note_stage(view, engine)) save_profile();
             // Smooth motion: the picture is drawn between the previous step
             // and this one (MotionInterpolator::blend below).
-            const bool smooth_blending =
-                (!options.smoke_frames || dev.presenting()) && settings.smooth_motion && present_interval < 1.0 / 75.0;
-            // A field the running update covers (Engine::held: the movie's
-            // 30 Hz frames) shows the last update's picture again, without a
-            // traversal (only a catch-up that left no draw list draws it).
-            if (engine.held() && steps > 0 && (items_current || !draw)) {
-            } else if (draw) {
-                // The picture's own frustum cull follows the renderer's
-                // widescreen widening (GlRenderer::render, the viewports
-                // below): subtrees the original's cull skips that lie in
-                // the wider picture are drawn without their updates.
-                int width = 0, height = 0;
-                SDL_GetWindowSizeInPixels(window, &width, &height);
-                engine.picture_widen = 1.0f;
-                if (settings.widescreen && width * 3 > height * 4 && height > 0) {
-                    const int screen_width = height * 4 / 3;
-                    engine.picture_widen = (float(screen_width) / float(height)) / (float(width) / float(height));
-                }
-                // Smooth motion draws between the previous step's camera and
-                // this one: the picture's cull keeps what is inside either.
-                engine.picture_previous_view = smooth_blending ? interpolator.previous_view() : std::nullopt;
-                // Seamless co-op: a new picture camera (a defeated member
-                // watches a partner) starts its smooth motion anew.
-                if (const int slot = engine.picture_slot(); slot != last_picture_slot) {
-                    if (last_picture_slot >= 0) interpolator.reset();
-                    last_picture_slot = slot;
-                    engine.picture_previous_view = std::nullopt;
-                }
-                engine.render(items, camera, clear, &shadow);
-                dw4::game::dev_hide(dev, items, shadow);
+            const bool smooth_blending = view.smooth_blending();
+            // The draw list of this pass, or its traversal without pictures
+            // (a field the running update covers keeps the last one).
+            if (dw4::game::make_picture(view, engine, steps, smooth_blending) == dw4::game::PictureMade::drawn) {
                 // The title menu's third entry "Online" (title_entry.hpp).
                 if (static const bool trace = std::getenv("DW4_TRACE_TITLE_ENTRY") != nullptr; trace && options.smoke_frames)
                     dw4::game::TitleEntry::trace(items, engine.frame());
@@ -2922,9 +2775,6 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     const auto* title = engine.get<dw4::engine::Title2Manager>();
                     title_entry.apply(items, title && title->menu_open(), title && title->menu_open() && title->cursor() == 2, engine.frame());
                 }
-                items_current = true;
-            } else {
-                engine.traverse_scene();
             }
             // The idempotence check of the pictures (docs/SEAMLESS.md 4.4, a
             // permanent check of test runs): DW4_EXTRA_RENDERS=n draws the
@@ -2976,119 +2826,28 @@ int run(const Options& options, dw4::game::Settings& settings) {
             }
             // The picture, the menu and the sound output.
             if (draw) {
-                if (!interpolator.captured()) interpolator.capture(items, camera, shadow);
-                const float present_alpha = float(accumulator / dw4::engine::kFieldSeconds);
                 // (DW4_DEV_DUMP: what the blend did, for presents.csv.)
-                dw4::game::BlendReport blend_report;
                 const bool report_blend = dev_dumper && dev.dumping(frame);
-                if (smooth_blending) interpolator.blend(items, camera, shadow, present_alpha, report_blend ? &blend_report : nullptr);
-                renderer->set_shadow(&shadow);
-                int width = 0, height = 0;
-                SDL_GetWindowSizeInPixels(window, &width, &height);
-                dw4::game::Viewport screen;
-                if (width * 3 > height * 4) { screen.height = height; screen.width = height * 4 / 3; }
-                else { screen.width = width; screen.height = width * 3 / 4; }
-                screen.x = (width - screen.width) / 2;
-                screen.y = (height - screen.height) / 2;
-                // Widescreen: the 3D scene uses the whole window width.
-                dw4::game::Viewport wide = screen;
-                if (settings.widescreen && width * 3 > height * 4) {
-                    wide.x = 0;
-                    wide.width = width;
-                }
-                // From the step that took a stage change on, the original presents
-                // nothing new: the last picture stays until the loader draws.
-                // Overhead name tags: where they stand on this picture and
-                // whether it hides their players (its depth buffer, read
-                // right after the scene is drawn).
-                const auto tag_mode = label_mode();
-                bool tags_shown = false;
-                std::vector<dw4::game::OverheadLabel> tags;
-                dw4::game::LabelView tag_view;
-                if (engine.presenting() || !renderer->draw_kept_picture(width, height)) {
-                    renderer->render(items, camera, clear, screen, wide, width, height);
-                    if (tag_mode != dw4::game::LabelMode::off && !dw4::game::OverheadLabels::hidden(engine)) {
-                        tags_shown = true;
-                        tag_view.camera = camera;
-                        tag_view.widen = wide.width > screen.width && wide.height > 0 && screen.height > 0
-                                             ? (float(screen.width) / float(screen.height)) / (float(wide.width) / float(wide.height))
-                                             : 1.0f;
-                        tag_view.wide_x = float(wide.x);
-                        tag_view.wide_y = float(wide.y);
-                        tag_view.wide_width = float(wide.width);
-                        tag_view.wide_height = float(wide.height);
-                        tag_view.window_height = float(height);
-                        // (Last frame's scale: ImGui sets it with the next NewFrame.)
-                        const ImVec2 scale = ImGui::GetIO().DisplayFramebufferScale;
-                        tag_view.scale_x = scale.x > 0 ? scale.x : 1.0f;
-                        tag_view.scale_y = scale.y > 0 ? scale.y : 1.0f;
-                        // (Between the two steps like the picture: smooth motion's condition.)
-                        tags = labels.blended(smooth_blending ? present_alpha : 1.0f);
-                        traced_occlusion.clear();
-                        for (auto& tag : tags) {
-                            if ((tag.hp <= 0 && !tag.capsule) || !dw4::game::label_visible(tag_mode, tag.own, labels.players())) continue;
-                            const bool hidden_now = dw4::game::occluded_in_picture(
-                                dw4::game::occlusion_probes(tag.head, tag_view),
-                                [&](float x, float y) { return renderer->read_depth(int(x), height - 1 - int(y), width, height); },
-                                tag_view.camera.projection);
-                            tag.occlusion = labels.ease_occlusion(tag.key, hidden_now);
-                            if (hidden_now) traced_occlusion.insert(tag.key);
-                        }
-                    }
-                    // A playing movie covers the screen with its current picture.
-                    // After its end Sofdec's last picture stays up until the
-                    // stage changes (the opening's end script switches a frame
-                    // later).
-                    if (const auto* sound = engine.get<dw4::engine::SoundManager>(); sound && sound->movie() && !engine.rebooting()) {
-                        const auto* movie = sound->movie();
-                        if (!movie_decoder || movie_serial != movie->serial) {
-                            movie_decoder = std::make_unique<dw4::game::MovieDecoder>(movie->video);
-                            movie_serial = movie->serial;
-                            movie_stage = engine.stage_name();
-                        }
-                        // The picture the player's last frame took, from
-                        // that frame's second field on (none before the first).
-                        if (movie->visible >= 0 && movie_decoder->seek(std::size_t(movie->visible)))
-                            renderer->draw_movie(movie_decoder->rgba().data(), movie_decoder->width(), movie_decoder->height(), screen,
-                                                width, height);
-                    } else if (movie_decoder && movie_stage == engine.stage_name()) {
-                        // A movie that stopped (a skip, the teardown) leaves the
-                        // picture its codec took last on the layer.
-                        if (sound && sound->movie_still().serial == movie_serial && sound->movie_still().picture >= 0)
-                            movie_decoder->seek(std::size_t(sound->movie_still().picture));
-                        if (!movie_decoder->rgba().empty())
-                            renderer->draw_movie(movie_decoder->rgba().data(), movie_decoder->width(), movie_decoder->height(), screen,
-                                                width, height);
-                        else
-                            movie_decoder.reset();
-                    } else {
-                        movie_decoder.reset();
-                    }
-                    renderer->keep_picture(width, height);
-                }
+                const auto scene = dw4::game::present_scene(view, engine, accumulator, smooth_blending, report_blend);
+                const int width = scene.width, height = scene.height;
+                const float present_alpha = scene.present_alpha;
+                const auto& blend_report = scene.blend_report;
+                const auto& screen = scene.screen;
+                const auto& wide = scene.wide;
 
                 // Keyboard and controller navigation of the menus while one takes
                 // the input (the F1 menu, the active title panel); never while
                 // the game reads the pad.
-                {
-                    constexpr ImGuiConfigFlags nav = ImGuiConfigFlags_NavEnableKeyboard | ImGuiConfigFlags_NavEnableGamepad;
-                    auto& io = ImGui::GetIO();
-                    if (show_menu || title_online.active) io.ConfigFlags |= nav;
-                    else io.ConfigFlags &= ~nav;
-                    // (Over the title the cursor always shows, as in the game's
-                    // own menus: A presses the highlighted button at once.)
-                    io.ConfigNavCursorVisibleAlways = title_online.active && !show_menu;
-                }
+                // (Over the title the cursor always shows, as in the game's
+                // own menus: A presses the highlighted button at once.)
+                dw4::game::set_menu_navigation(show_menu || title_online.active, title_online.active && !show_menu);
                 // (A UI test run's keys: last frame's go up, this frame's go down.)
                 for (const int key : ui_keys_down) ImGui::GetIO().AddKeyEvent(ImGuiKey(key), false);
                 ui_keys_down.clear();
                 for (const int key : ui_keys) ImGui::GetIO().AddKeyEvent(ImGuiKey(key), true);
                 ui_keys_down.swap(ui_keys);
-                ImGui_ImplOpenGL3_NewFrame();
-                ImGui_ImplSDL3_NewFrame();
                 // (A UI test run's controller keys count as a controller's.)
-                if (ui_script.loaded()) ImGui::GetIO().BackendFlags |= ImGuiBackendFlags_HasGamepad;
-                ImGui::NewFrame();
+                dw4::game::new_ui_frame(ui_script.loaded());
                 // The running room for the screens (the relay's roster).
                 dw4::game::RoomLive room_live;
                 if (online) {
@@ -3110,11 +2869,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 }
                 bool online_tab_now = false;
                 // Overhead name tags over the picture, under the menus.
-                if (tags_shown) {
-                    const float size = float(height) / tag_view.scale_y / 960.0f * float(settings.label_scale) / 100.0f;
-                    dw4::game::draw_overhead_labels(ImGui::GetBackgroundDrawList(), tags, tag_view, tag_mode, labels.players(),
-                                                    std::max(size, 0.5f), settings.label_numbers, tag_font);
-                }
+                dw4::game::draw_tags(view, scene);
                 if (show_menu) {
                     ImGui::SetNextWindowSize(ImVec2(560, 560), ImGuiCond_FirstUseEver);
                     ImGui::Begin("DW4 PC (F1)");
@@ -3194,159 +2949,13 @@ int run(const Options& options, dw4::game::Settings& settings) {
                                                     "Applies from the next stage change.");
                             ImGui::PopTextWrapPos();
                         }
-                        if (ImGui::CollapsingHeader("Display", ImGuiTreeNodeFlags_DefaultOpen)) {
-                            if (ImGui::Checkbox("Fullscreen (F11)", &settings.fullscreen)) {
-                                SDL_SetWindowFullscreen(window, settings.fullscreen);
-                                settings_changed = true;
-                            }
-                            if (ImGui::Checkbox("Widescreen (the 3D view fills wide windows, 2D stays 4:3)", &settings.widescreen))
-                                settings_changed = true;
-                            if (ImGui::Checkbox("VSync", &settings.vsync)) {
-                                SDL_GL_SetSwapInterval(settings.vsync ? 1 : 0);
-                                settings_changed = true;
-                            }
-                            if (ImGui::SliderInt("Frame limit", &settings.fps_limit, 0, 300, settings.fps_limit ? "%d fps" : "off"))
-                                settings_changed = true;
-                            if (ImGui::Checkbox("Smooth motion above 60 fps", &settings.smooth_motion)) settings_changed = true;
-                            ImGui::SameLine();
-                            ImGui::TextDisabled("(now %.0f fps)", present_interval > 0 ? 1.0 / present_interval : 0.0);
-                            ImGui::TextDisabled("The game itself always runs at 60 updates per second.");
-                            {
-                                float worst = 0, total = 0;
-                                for (const float t : frame_times) {
-                                    worst = std::max(worst, t);
-                                    total += t;
-                                }
-                                char overlay[96];
-                                std::snprintf(overlay, sizeof overlay, "avg %.2f ms  worst %.2f ms", total / float(frame_times.size()), worst);
-                                ImGui::PlotLines("Frame time", frame_times.data(), int(frame_times.size()), int(frame_time_at % frame_times.size()),
-                                                 overlay, 0.0f, std::max(33.4f, worst), ImVec2(0, 48));
-                            }
-                            static const int sample_choices[] = {0, 2, 4, 8};
-                            static const char* sample_names[] = {"Off", "2x", "4x", "8x"};
-                            int choice = 0;
-                            for (int i = 0; i < 4; ++i)
-                                if (settings.msaa >= sample_choices[i]) choice = i;
-                            if (ImGui::Combo("Anti-aliasing (MSAA)", &choice, sample_names, 4)) {
-                                settings.msaa = sample_choices[choice];
-                                settings_changed = true;
-                            }
-                            ImGui::TextDisabled("Anti-aliasing applies at the next start (now %dx).", samples > 1 ? samples : 0);
-                            static const int sizes[][2] = {{1280, 960}, {1440, 1080}, {1920, 1440}, {1280, 720}, {1920, 1080}, {2560, 1440}};
-                            if (!settings.fullscreen) {
-                                // The buttons wrap onto the next line instead of
-                                // running past the window's edge.
-                                const float line_end = ImGui::GetCursorScreenPos().x + ImGui::GetContentRegionAvail().x;
-                                ImGui::TextUnformatted("Window size:");
-                                for (const auto& size : sizes) {
-                                    const std::string label = std::to_string(size[0]) + "x" + std::to_string(size[1]);
-                                    const float button = ImGui::CalcTextSize(label.c_str()).x + ImGui::GetStyle().FramePadding.x * 2.0f;
-                                    if (ImGui::GetItemRectMax().x + ImGui::GetStyle().ItemSpacing.x + button <= line_end) ImGui::SameLine();
-                                    if (ImGui::SmallButton(label.c_str())) {
-                                        SDL_SetWindowSize(window, size[0], size[1]);
-                                        settings.width = size[0];
-                                        settings.height = size[1];
-                                        settings_changed = true;
-                                    }
-                                }
-                            }
-                        }
-                        if (ImGui::CollapsingHeader("Audio", ImGuiTreeNodeFlags_DefaultOpen)) {
-                            if (ImGui::SliderInt("Volume", &settings.volume, 0, 100, "%d%%")) settings_changed = true;
-                        }
-                        if (ImGui::CollapsingHeader("Name tags, Discord, achievements", ImGuiTreeNodeFlags_DefaultOpen)) {
-                            // (LabelMode order: automatic, all, others, off.)
-                            static const char* label_modes[] = {"Auto (two or more players)", "All players", "Other players", "Off"};
-                            int mode = int(dw4::game::parse_label_mode(settings.overhead_labels));
-                            if (ImGui::Combo("Name tags", &mode, label_modes, 4)) {
-                                settings.overhead_labels = dw4::game::label_mode_name(dw4::game::LabelMode(mode));
-                                settings_changed = true;
-                            }
-                            if (ImGui::SliderInt("Name tag size", &settings.label_scale, 50, 200, "%d%%")) settings_changed = true;
-                            if (ImGui::Checkbox("HP / MP numbers on name tags", &settings.label_numbers)) settings_changed = true;
-                            ImGui::TextDisabled("Name, level, HP and MP over the players' Digimon (not in cutscenes, menus and loads).");
-                            if (ImGui::Checkbox("Discord Rich Presence", &settings.discord)) settings_changed = true;
-                            ImGui::SameLine();
-                            ImGui::TextDisabled("(%s)", discord ? discord->status().c_str() : "off");
-                            ImGui::TextDisabled("Shows your form, level, area and difficulty in Discord while the Discord app runs.");
-                            if (ImGui::Checkbox("Achievements", &settings.achievements)) settings_changed = true;
-                            ImGui::SameLine();
-                            if (ImGui::Checkbox("Unlock notices", &settings.achievement_popups)) settings_changed = true;
-                        }
-                        if (ImGui::CollapsingHeader("Keyboard (player 1)", ImGuiTreeNodeFlags_DefaultOpen)) {
-                            ImGui::TextDisabled("Click a key to change it, right-click to clear it.");
-                            ImGui::TextDisabled("As on the GameCube the main stick walks, the D-pad and the C-stick move the");
-                            ImGui::TextDisabled("quick panels' cursor (L / R), the main stick and the D-pad move menu cursors.");
-                            for (int group = 0; group < 4; ++group) {
-                                ImGui::SeparatorText(dw4::game::pad_group_name(dw4::game::PadGroup(group)));
-                                if (!ImGui::BeginTable(("keys" + std::to_string(group)).c_str(), 4, ImGuiTableFlags_SizingStretchSame)) continue;
-                                for (std::size_t b = 0; b < settings.keys.size(); ++b) {
-                                    if (dw4::game::pad_key_group(dw4::game::PadKey(b)) != dw4::game::PadGroup(group)) continue;
-                                    ImGui::TableNextRow();
-                                    ImGui::TableNextColumn();
-                                    ImGui::TextUnformatted(dw4::game::pad_key_name(dw4::game::PadKey(b)));
-                                    for (std::size_t k = 0; k < settings.keys[b].size(); ++k) {
-                                        ImGui::TableNextColumn();
-                                        const bool waiting = capture && !capture->gamepad && capture->button == b && capture->slot == k;
-                                        const SDL_Scancode code = settings.keys[b][k];
-                                        std::string label = waiting ? "press a key..."
-                                                          : code == SDL_SCANCODE_UNKNOWN ? "-"
-                                                                                         : SDL_GetScancodeName(code);
-                                        label += "##" + std::to_string(b * 8 + k);
-                                        if (ImGui::Button(label.c_str(), ImVec2(-1, 0))) capture = KeyCapture{b, k};
-                                        if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) {
-                                            settings.keys[b][k] = SDL_SCANCODE_UNKNOWN;
-                                            capture.reset();
-                                            settings_changed = true;
-                                        }
-                                    }
-                                }
-                                ImGui::EndTable();
-                            }
-                            if (ImGui::Button("Default keys")) {
-                                settings.reset_keys();
-                                capture.reset();
-                                settings_changed = true;
-                            }
-                        }
-                        if (ImGui::CollapsingHeader("Controllers", ImGuiTreeNodeFlags_DefaultOpen)) {
-                            if (gamepads.empty()) ImGui::TextDisabled("No controller connected.");
-                            for (std::size_t i = 0; i < gamepads.size() && i < 4; ++i) {
-                                const char* name = SDL_GetGamepadName(gamepads[i]);
-                                ImGui::BulletText("Player %zu: %s", i + 1, name ? name : "controller");
-                            }
-                            ImGui::TextDisabled("Click an input and press a controller button or trigger; right-click clears.");
-                            ImGui::TextDisabled("The left stick is the main stick (walks), the right stick the C-stick.");
-                            for (int group = 0; group < 4; ++group) {
-                                ImGui::SeparatorText(dw4::game::pad_group_name(dw4::game::PadGroup(group)));
-                                if (!ImGui::BeginTable(("pad" + std::to_string(group)).c_str(), 4, ImGuiTableFlags_SizingStretchSame)) continue;
-                                for (std::size_t b = 0; b < settings.pad.size(); ++b) {
-                                    if (dw4::game::pad_key_group(dw4::game::PadKey(b)) != dw4::game::PadGroup(group)) continue;
-                                    ImGui::TableNextRow();
-                                    ImGui::TableNextColumn();
-                                    ImGui::TextUnformatted(dw4::game::pad_key_name(dw4::game::PadKey(b)));
-                                    for (std::size_t k = 0; k < settings.pad[b].size(); ++k) {
-                                        ImGui::TableNextColumn();
-                                        const bool waiting = capture && capture->gamepad && capture->button == b && capture->slot == k;
-                                        std::string label = waiting ? "press..." : dw4::game::pad_input_name(settings.pad[b][k]);
-                                        if (label.empty()) label = "-";
-                                        label += "##pad" + std::to_string(b * 8 + k);
-                                        if (ImGui::Button(label.c_str(), ImVec2(-1, 0))) capture = KeyCapture{b, k, true};
-                                        if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) {
-                                            settings.pad[b][k] = {};
-                                            capture.reset();
-                                            settings_changed = true;
-                                        }
-                                    }
-                                }
-                                ImGui::EndTable();
-                            }
-                            if (ImGui::Button("Default controller layout")) {
-                                settings.reset_pad();
-                                capture.reset();
-                                settings_changed = true;
-                            }
-                        }
+                        // Display, audio, name tags / Discord / achievements, keyboard and
+                        // controllers (host_view.hpp: a Data Overflow run's F1 shows them too).
+                        dw4::game::settings_display_section(view);
+                        dw4::game::settings_audio_section(view);
+                        dw4::game::settings_presence_section(view, discord ? discord->status().c_str() : "off");
+                        dw4::game::settings_keyboard_section(view);
+                        dw4::game::settings_controllers_section(view);
                         if (ImGui::CollapsingHeader("Save states", ImGuiTreeNodeFlags_DefaultOpen)) {
                             ImGui::TextDisabled("F5 saves and F9 loads state 1. Files: %s", state_dir.string().c_str());
                             for (std::size_t slot = 0; slot < state_slots.size(); ++slot) {
@@ -3830,16 +3439,13 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     ImGui::PopTextWrapPos();
                     ImGui::End();
                 }
-                ImGui::Render();
-                ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+                dw4::game::render_ui();
 
                 const bool shoot = (!options.screenshot.empty() &&
                                     ((options.screenshot_frames.empty() && frame == options.smoke_frames) ||
                                      std::find(options.screenshot_frames.begin(), options.screenshot_frames.end(), frame) != options.screenshot_frames.end())) ||
                                    !ui_shot.empty();
                 if (shoot) {
-                    std::vector<std::uint8_t> pixels(std::size_t(width * height * 4));
-                    glReadPixels(0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
                     std::string path = options.screenshot;
                     // (A UI test run's "shot NAME": NAME.bmp beside --screenshot's file.)
                     if (!ui_shot.empty()) {
@@ -3849,7 +3455,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                         const auto dot = path.rfind('.');
                         path = path.substr(0, dot) + "_" + std::to_string(frame) + (dot == std::string::npos ? ".bmp" : path.substr(dot));
                     }
-                    write_bmp(path, width, height, pixels);
+                    dw4::game::write_screenshot(path, width, height);
                     std::cout << "screenshot " << path << " at frame " << frame << " stage " << engine.stage_name() << '\n';
                 }
                 // DW4_DEV_DUMP / DW4_DEV_IDS: every present of the window,
@@ -3871,20 +3477,8 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     }
                 }
                 ++dev_present;
-                // Keep about three frames of audio queued across frame hitches.
-                if (audio) {
-                    const int queued = SDL_GetAudioStreamQueued(audio) / int(2 * sizeof(std::int16_t));
-                    if (queued < kAudioFrameSamples * 2) mix_audio(kAudioFrameSamples * 3 - queued);
-                }
-                SDL_GL_SwapWindow(window);
-                {
-                    const auto now = std::chrono::steady_clock::now();
-                    const double seconds = std::chrono::duration<double>(now - last_present).count();
-                    last_present = now;
-                    present_interval += (std::min(seconds, 0.1) - present_interval) * 0.1;
-                    if (dev.presenting()) present_interval = 1.0 / dev.hz;
-                    frame_times[frame_time_at++ % frame_times.size()] = float(seconds * 1000.0);
-                }
+                // The sound queue, the swap and the frame time (host_view.hpp).
+                dw4::game::finish_present(view, engine);
             }
             if (trace_loadtime && steps > 0) {
                 const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - pass_start).count();
@@ -3909,15 +3503,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
             }
             // Frame limit (settings.ini fps_limit): presents are spaced out;
             // the simulation keeps its fixed 60 Hz steps.
-            if (!options.smoke_frames && settings.fps_limit > 0) {
-                const auto interval = std::chrono::nanoseconds(1'000'000'000LL / settings.fps_limit);
-                next_present += interval;
-                const auto now = std::chrono::steady_clock::now();
-                if (next_present > now)
-                    SDL_DelayPrecise(Uint64(std::chrono::duration_cast<std::chrono::nanoseconds>(next_present - now).count()));
-                else if (now - next_present > interval * 4)
-                    next_present = now;
-            }
+            dw4::game::pace_presents(view);
             // DW4_SMOKE_STAGES=n: a test run also ends once the n-th stage has loaded.
             static const int smoke_stages = options.smoke_frames && std::getenv("DW4_SMOKE_STAGES") ? std::atoi(std::getenv("DW4_SMOKE_STAGES")) : 0;
             if (const auto* snapshot = engine.stage_snapshot(); smoke_stages && snapshot && snapshot->serial >= std::uint64_t(smoke_stages))
