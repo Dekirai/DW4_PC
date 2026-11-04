@@ -7,8 +7,8 @@
 #include <chrono>
 #include <cmath>
 #include <cstdarg>
-#include <cstdio>
 #include <cstdlib>
+#include <cstdio>
 
 namespace dw4::game::online {
 
