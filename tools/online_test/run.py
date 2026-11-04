@@ -268,6 +268,7 @@ def dll(project, name):
 # deployed server's code, DW4Online 0.1.0 = main 890e802, against this client); the fake clients and the proxy stay this
 # checkout's.
 SERVER_DLL = None
+SERVER_HAS_STORY = False  # --server-root of a checkout whose server keeps the room story (round 56 and later)
 
 
 def server_dll():
@@ -676,7 +677,7 @@ def run_real(stack, sc, api, relay_port, pin, diag, lock, connection):
                 raise RuntimeError("the proxy of %s did not start" % c["name"])
             env["DW4_ONLINE_RELAY_PORT"] = str(port)
         argv = [a.game_exe, "--data", a.data, "--smoke-test", str(c.get("frames", sc.get("frames", 30000))), "--card-dir", card,
-                "--online-login", tag + c["name"], "--online-script", script_for(c)] + room_args
+                "--online-login", tag + c["name"], "--online-script", script_for(c)] + room_args +             [x.replace("{out}", out) for x in c.get("args", [])]  # (a client's extra game arguments; {out}: the scenario's folder)
         folder = saved_card(c)
         if folder:
             argv += ["--online-card", folder]
@@ -684,7 +685,7 @@ def run_real(stack, sc, api, relay_port, pin, diag, lock, connection):
         return stack.spawn(argv, os.path.join(out, c["name"] + ".log"), env=env)
 
     clients = sorted(sc["clients"], key=lambda c: c.get("start", 0))
-    if sc.get("seed_story") and not SERVER_DLL:  # (an older server, --server-root, has no online_story)
+    if sc.get("seed_story") and (not SERVER_DLL or SERVER_HAS_STORY):  # (an older server, --server-root, has no online_story)
         # The room's creator is its owner: the room story starts from the owner's card.
         owner_card = saved_card(clients[0])
         if not owner_card:
@@ -1388,11 +1389,14 @@ def main():
     ap.add_argument("--ui-window", default="1920x1009", help="ui: the hidden window's size")
     ap.add_argument("--server-root", default="", help="the DW4Online folder of another checkout whose server runs (built there)")
     ap.add_argument("--play-protocol", type=int, default=0, help="the server's Play:MinimumProtocol / CurrentProtocol (the field: 43)")
+    ap.add_argument("--server-has-story", action="store_true",
+                    help="--server-root's server keeps the room story (round 56 and later, e.g. DW4Online 0.1.2): seed it as for this one")
     ap.add_argument("--net", default="", help="game scenarios: every client behind its own proxy, UP[/DOWN] as MS,JITTER,LOSS")
     a = ap.parse_args()
-    global SERVER_DLL, NET_OVERRIDE
+    global SERVER_DLL, NET_OVERRIDE, SERVER_HAS_STORY
     if a.server_root:
         SERVER_DLL = os.path.join(a.server_root, "src", "DW4Online.Server", "bin", "Debug", "net10.0", "DW4Online.Server.dll")
+        SERVER_HAS_STORY = a.server_has_story
     NET_OVERRIDE = a.net or None
     if a.list:
         for sc in (SCENARIOS if a.fake else game_scenarios()):
