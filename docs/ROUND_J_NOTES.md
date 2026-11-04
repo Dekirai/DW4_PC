@@ -64,7 +64,15 @@ story-point credit).
   Scenarios J1 / J5 written (`tools/online_test/scenarios`), run with
   `build/m_scen.sh dev/dw4_game.exe run.py J1` (own mysqld 3560, ports
   56150-56199).
-- Open: resync from a checkpoint (JR), periodic uploads, the window trees
+- 23:00: real hidden clients: J1 (a minute) and J5 (five minutes) join
+  from a checkpoint: BARRIER_OK to JOIN 307 / 298 ms, rebuild 136 / 124 ms,
+  3 / 7 ticks replayed (classic J1: 3,622 ticks, 852 ms). Fixed on the way:
+  SNDF banks and bank slots by name, the audio output's fields, a restored
+  engine's common banks first (STATEHASH mismatches of J1 runs 1-3).
+  Resync from the newest agreed checkpoint, periodic uploads (30 s),
+  protocol 47 gate, JB / JS hooks and scenarios, SEAMLESS.md 3.7 and
+  "Round J (built)". det.sh 4004f056 / 396cb219 twice (build/det_j2.log).
+- Open (was): resync from a checkpoint (JR), periodic uploads, the window trees
   (JW), TEXTCTL texts and the music position for the joiner's picture and
   sound (presentation only), JS / JB / JL / JF scenarios, the regression
   scenarios, the protocol number (47 at the integration), SEAMLESS.md 6.13
