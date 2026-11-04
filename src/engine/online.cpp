@@ -105,7 +105,9 @@ const std::vector<std::string_view>& online_forbidden_env() {
         "DW4_PAD_REPLAY",
         // the title menu's third entry in a test run without the online screens (game_main.cpp; it lets
         // TITLE2's cursor reach it)
-        "DW4_TITLE_ONLINE"};
+        "DW4_TITLE_ONLINE",
+        // a Data Overflow run keeps the test characters' variables and cheats (src/game/overflow_run.hpp)
+        "DW4_OVERFLOW_TEST_CHEATS"};
     return names;
 }
 

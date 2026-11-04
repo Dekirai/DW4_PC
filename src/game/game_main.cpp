@@ -3,6 +3,7 @@
 #include "dev_present.hpp"
 #include "gl_renderer.hpp"
 #include "host_view.hpp"
+#include "overflow_host.hpp"
 #include "interpolation.hpp"
 #include "mods.hpp"
 #include "netplay.hpp"
@@ -102,6 +103,10 @@ struct Options {
     // [gameplay] loading (test runs: else DW4_FAST_LOADING=1).
     std::optional<bool> fast_loading;
     std::filesystem::path export_art; // --export-presence-art FOLDER
+    // --overflow-run KEY=VALUE ...: a Data Overflow run (overflow_run.hpp's
+    // RunRequest), at once or after story frame at=F.
+    bool overflow_given{};
+    std::vector<std::string> overflow_run;
 };
 
 
@@ -1355,6 +1360,26 @@ int run(const Options& options, dw4::game::Settings& settings) {
         // run's script (--online-ui).
         dw4::game::OnlineUiState online_ui;
         dw4::game::TitleEntry title_entry; // the title menu's third entry in the picture
+        // Data Overflow (docs/SURVIVAL.md 13.3, overflow_host.hpp): the switch
+        // to a run and back, the F1 dev start's choices, --overflow-run's
+        // request (offline only; without at=F it runs before the story's
+        // first step, and a test run ends with it).
+        dw4::game::overflow::StorySwitch overflow_switch;
+        dw4::game::overflow::DevStartState overflow_dev;
+        std::optional<dw4::game::overflow::RunRequest> overflow_cli;
+        bool overflow_quit_after = false;
+        if (options.overflow_given) {
+            std::string error;
+            overflow_cli = dw4::game::overflow::parse_run_request(options.overflow_run, error);
+            if (!overflow_cli) throw std::runtime_error(error);
+            if (net.active() || online || options.online.wanted() || options.net_host || !options.net_join.empty())
+                throw std::runtime_error("--overflow-run: Data Overflow is offline only");
+            if (overflow_cli->at < 0) {
+                overflow_switch.request(std::move(*overflow_cli), true);
+                overflow_cli.reset();
+                overflow_quit_after = options.smoke_frames != 0;
+            }
+        }
         dw4::game::TitleOnline title_online;
         bool title_online_shown = false; // the screens over the title (the last frame)
         bool online_tab_shown = false;   // F1 shows the Online tab (the last frame)
@@ -1875,6 +1900,36 @@ int run(const Options& options, dw4::game::Settings& settings) {
                         load_timing.total_ms, load_timing.longest_ms);
         };
         while (running) {
+            // Data Overflow (SURVIVAL.md 13.3): between two passes, once the
+            // story has faded out, a run takes over until it is over; the
+            // story engine waits untouched and goes on from where it was.
+            if (overflow_switch.due()) {
+                const auto request = overflow_switch.take();
+                std::cout << "overflow: run " << dw4::game::overflow::describe(request) << " at story frame " << frame << " ("
+                          << engine.stage_name() << ")\n";
+                dw4::game::overflow::RunHost run_host;
+                run_host.discord = discord ? &*discord : nullptr;
+                run_host.screenshot = options.screenshot;
+                run_host.test_frames = options.smoke_frames;
+                const auto outcome = dw4::game::overflow::run_from_story(view, engine, request, run_host);
+                std::printf("overflow: run %s after %llu steps (%s Lv %d), run hash %016llx%s%s\n", dw4::game::overflow::run_end_name(outcome.end),
+                            (unsigned long long)outcome.steps, dw4::game::overflow::form_display_name(outcome.form).c_str(), outcome.level,
+                            (unsigned long long)outcome.run_hash, outcome.error.empty() ? "" : ": ", outcome.error.c_str());
+                // Back in the story (13.3 step 4): the pacing starts over (the
+                // story does not catch up the run's time), the pad waits for
+                // released buttons, the picture and the sound fade in.
+                accumulator = 0;
+                last = std::chrono::steady_clock::now();
+                next_present = view.last_present = last;
+                pad_latch = true;
+                overflow_switch.returned();
+                state_message = outcome.end == dw4::game::overflow::RunEnd::failed ? "Data Overflow could not run: " + outcome.error
+                                                                                    : std::string("Back from Data Overflow (") +
+                                                                                          dw4::game::overflow::run_end_name(outcome.end) + ")";
+                message_until = last + std::chrono::seconds(3);
+                if (outcome.end == dw4::game::overflow::RunEnd::window_closed || overflow_quit_after) running = false;
+                continue;
+            }
             const auto pass_start = std::chrono::steady_clock::now();
             SDL_Event event;
             while (SDL_PollEvent(&event)) {
@@ -1916,6 +1971,10 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 // The keyboard and the controllers (host_view.hpp).
                 live = dw4::game::read_live_input(view);
             }
+            // (Data Overflow: the story steps with neutral live pads while it
+            // fades out, as with the F1 menu open; its sound fades along.)
+            if (overflow_switch.fading_out()) live = {};
+            view.gain = overflow_switch.gain();
             // Fixed-step simulation at the NTSC field rate (59.94 Hz, one
             // original frame per field; Engine::step adds a field of time).
             const auto now = std::chrono::steady_clock::now();
@@ -2481,6 +2540,14 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 for (const auto& [at, samples] : topups)
                     if (options.smoke_frames && at == frame_base + engine.frame()) mix_audio(samples);
                 ++frame;
+                // Data Overflow: the fades count story steps; --overflow-run
+                // at=F starts the fade out after story frame F, or once a run
+                // may start (the stage has loaded).
+                overflow_switch.story_stepped();
+                if (overflow_cli && overflow_cli->at >= 0 && frame >= overflow_cli->at && dw4::game::overflow::start_refusal(engine, false).empty()) {
+                    overflow_switch.request(std::move(*overflow_cli));
+                    overflow_cli.reset();
+                }
                 if (state_test) {
                     if (state_pass == 1) {
                         if (frame == state_test) state_test_save = true;
@@ -2497,6 +2564,14 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     random << dw4::engine::fight::generator();
                     std::printf("[%d] fingerprint %016llx random %016zx\n", frame, static_cast<unsigned long long>(engine.fingerprint()),
                                 std::hash<std::string>{}(random.str()));
+                    // DW4_TRACE_NET=1 (Data Overflow's isolation check, SURVIVAL.md
+                    // T3): the net fingerprint (the generator, the models' turns, the
+                    // sound's random value, ...) and the running stage's canonical
+                    // snapshot as well.
+                    if (static const bool trace_net = std::getenv("DW4_TRACE_NET") != nullptr; trace_net)
+                        std::printf("[%d] net %016llx canon %016llx\n", frame, static_cast<unsigned long long>(engine.net_fingerprint()),
+                                    static_cast<unsigned long long>(
+                                        dw4::engine::online_hash(engine.snapshot_bytes(dw4::engine::SnapshotForm::canonical))));
                 }
                 // DW4_TRACE_CAMERAS=N (test runs, seamless co-op): every N
                 // frames the per-slot camera state (the box hash the net
@@ -3010,6 +3085,16 @@ int run(const Options& options, dw4::game::Settings& settings) {
                         ImGui::TextDisabled("Settings file: %s", settings.file.string().c_str());
                         ImGui::EndTabItem();
                     }
+                    if (ImGui::BeginTabItem("Gameplay", nullptr, tab_flags("Gameplay"))) {
+                        // Data Overflow's dev start (SURVIVAL.md 15.1, round O1a).
+                        const std::string refusal = overflow_switch.busy() ? std::string("A run is starting.")
+                                                                           : dw4::game::overflow::start_refusal(engine, net.active() || net.in_lobby() || online || title_online.active);
+                        if (auto request = dw4::game::overflow::draw_dev_start(overflow_dev, refusal)) {
+                            overflow_switch.request(std::move(*request));
+                            dw4::game::toggle_menu(view);
+                        }
+                        ImGui::EndTabItem();
+                    }
                     if (ImGui::BeginTabItem("Saves", nullptr, tab_flags("Saves"))) {
                         auto& tab = saves_tab;
                         const auto now = std::chrono::steady_clock::now();
@@ -3439,6 +3524,8 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     ImGui::PopTextWrapPos();
                     ImGui::End();
                 }
+                // Data Overflow's fade (nothing while no run is near).
+                dw4::game::overflow::draw_fade(overflow_switch.black());
                 dw4::game::render_ui();
 
                 const bool shoot = (!options.screenshot.empty() &&
@@ -3781,6 +3868,11 @@ int main(int argc, char** argv) {
             else if (arg == "--online-folder") options.online_folder = next();
             else if (arg == "--load-state") options.load_state = next();
             else if (arg == "--export-presence-art") options.export_art = next();
+            else if (arg == "--overflow-run") {
+                // KEY=VALUE tokens up to the next option (overflow_run.hpp).
+                options.overflow_given = true;
+                while (i + 1 < argc && std::string_view(argv[i + 1]).rfind("--", 0) != 0) options.overflow_run.emplace_back(argv[++i]);
+            }
             else if (arg == "--loading") {
                 const std::string value = next();
                 if (value != "original" && value != "fast") throw std::runtime_error("--loading takes original or fast");
@@ -3806,6 +3898,7 @@ int main(int argc, char** argv) {
                              "         [--screenshot-frames N,M,...] [--input SCRIPT] [--card-dir GCI_ROOT]\n"
                              "         [--save-file FILE] [--load-state FILE] [--loading original|fast]\n"
                              "         [--export-presence-art FOLDER] (Discord art asset PNGs from your game data)\n"
+                             "         [--overflow-run form=p_agumon field=stagbs02 seed=N [at=F] [frames=N] ...] (Data Overflow)\n"
                              "dw4_game --save-info FILE|FOLDER\n"
                              "dw4_game --import-save FILE|FOLDER[:all|BOXES] [--import-slot A|B] [--card-dir GCI_ROOT | --save-file FILE]\n"
                              "         BOXES: 1,3 (the same boxes) or 1>2,4>1 (box 1 into box 2, ...); .gci .gcs .sav .raw .gcp\n";
