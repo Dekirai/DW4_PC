@@ -2203,6 +2203,42 @@ decision and the freeze was an r48 default, the server gets a setting
 
 The default stays `drop` until the user decides (question 2).
 
+**An owner without a story starts at zero** (the user's decision of 31.10).
+A room whose owner has no online story (none yet, or the empty story of the
+online character's reset; `RoomStoryData.IsEmpty`) starts at zero: the
+owner's own game starts from a new game's story, and nothing a member does
+before that game is in a stage becomes the owner's story. Exactly:
+
+- The room is *not started* until the relay places the owner in an instance
+  of a stage outside the title (`stagIS*`): the owner's Game Start and its
+  first stage (the lobby) start it, for the rest of the room session
+  (`RoomStoryKeeper.Started` / `OwnerStarted()`, the membership log's
+  `story_started`). An owner who sits at the title, who is away, or who never
+  plays leaves the room not started.
+- Until then every value a member sends (phase, flags, key items, counter
+  growth; after the census and the plausibility checks) is refused with the
+  STORY_ACK reason *not_started* (10) and recorded in the room's dropped set
+  with a drop epoch, whatever `Rooms:StoryWhileOwnerAway` says (also under
+  *hold* and *apply*: nothing is held, nothing merged). This comes before the
+  per-visit rules (8.7), so a value that would only have waited cannot slip
+  in after the start, and nothing is earned (8.7) before it. The membership
+  log notes `story_dropped ...
+  reason=not_started`; the member is told once ("The room owner has not
+  started its story yet: story progress made before that is not saved.").
+- The guests' earlier *pending* progress (what their engines hold and still
+  send) is dropped as above: their next barrier removes it from their engines
+  (the dropped set of BARRIER_OK, 8.6 drop, with the notice "Story progress
+  was not saved: the room owner had not started its story yet."), and it
+  counts again only when a member sets it anew in a visit that began after
+  its drop, that is after the start. A member's visit that began before the
+  start keeps sending the old values and they stay refused; values it sets
+  only after the start count. *Held* progress cannot come from that time:
+  a room that has not started holds nothing.
+- Every member's game started in that time starts with the empty room story
+  (the title's application, 8.5), so every engine of the room is at zero too.
+  The room API (`GET /rooms/{code}/story`) shows `started`.
+- An owner whose story is not empty starts as before (started at once).
+
 ### 8.7 Built in round S2 (story lane)
 
 **Census (measured).** `tools/online/story_census.py` reads the 7,168
@@ -2264,9 +2300,11 @@ instance *now* decides: no instance or a stagIS* stage refuses everything
 (not_member); a flag or a phase step only from a stage whose scripts set it
 (stage); the phase rises at most one step beyond the room's (with *hold*: the
 held phase); a counter only from a stage that changes it, growth 0..100,000
-(COUNTER 7) or 0..100,000,000 (COUNTER 1) per line (limit); never-merged
-values refused (not_story); a member's STORY rate is a burst of 10, then 60
-per minute (rate; the client sends again). Then the owner-away policy:
+(COUNTER 7) or 0..20,000,000 (COUNTER 1; 100,000,000 before the round 56
+fix round) per line (limit); never-merged values refused (not_story); a
+member's STORY rate is a burst of 10, then 60 per minute (rate; the client
+sends again). The per-visit and per-member rules below come on top (the
+visit age applies to counters too since round 59). Then the owner-away policy:
 *apply* merges; *hold* keeps phase, flags, keys and line growth and merges
 them when the owner returns (the phase step by step); *drop* refuses
 (owner_away) and records the keys in the room session's dropped set with a
@@ -2303,7 +2341,8 @@ per visit, its age) from the relay: phase steps, flags and key items count
 only from a visit at least `Instances:StoryMinVisitSeconds` (10) old, and a
 visit gives one phase step and one key item; the rest is refused with the
 reason *wait* (9), which the client sends again. A room takes only its own
-difficulty's clear flag (406 + difficulty). COUNTER 1 grows at most
+difficulty's clear flag (406 + difficulty; since round 59 only at phase 6 or
+later). COUNTER 1 grows at most
 20,000,000 per line (wallet and bank hold 9,999,999 each). The relay takes
 counter lines only where it put the member (`Place`, a fork's child; the last
 16) and at most 8 instance 0 lines per room session. A member without an
@@ -2314,6 +2353,79 @@ client plays in (`HubMember.LoneStage`) instead of being refused
 (not_member). A STORY refused for the rate is answered without the story
 blob. This slows a forging client down to real visits; the repair is the
 story history below.
+
+**Round 59 fix round.** The review forged patiently: a guest that BARRIERed
+into stagML02, waited 10.3 s and sent the next phase and a key item, again
+and again, had phase 7, the Normal clear and every key item in the owner's
+story after 113 s, and then pushed 140 counter-only revisions out in 130 s,
+past the history's last 100 (the honest revision 1 could no longer be put
+back). Now:
+
+- A guest's phase steps count at least `Instances:StoryPhaseStepSeconds`
+  (300) apart and its key items `StoryKeySeconds` (60) apart in a room
+  session, per account (leaving and joining again starts nothing new). The
+  original's phase steps follow whole dungeons, its key items single pickups.
+  N accounts still give N steps: the history repairs that. The owner's own
+  steps are not spaced (the spacing guards the owner's story against a
+  guest's client); the owner keeps the per-visit rules.
+- The room's clear flag (406 + difficulty) counts only once the room story
+  (with *hold*: the held phase) is at phase 6, the last briefing: the clear
+  comes from the last boss, after it (with phase 7 in the same set). The
+  review's guest gave a phase 2 story the clear, and the owner the next
+  difficulty's rooms, with one ten-second visit of stagBS06; that is refused
+  with *phase_jump* now, and a forger has to climb the phases first (300 s
+  per step and guest account).
+- *Earned values* (the round 61 design's queue, 8.8 "Lag", built here on the
+  server alone): a phase step or key item that passed every check (stage,
+  phase limit, visit age) and waits only for the one-per-visit rule or a
+  guest's spacing is kept per account (`RoomStoryKeeper.MergeEarned`) and the
+  relay merges it when it is due, a few times a second from its housekeeping:
+  in a later visit of that member at least ten seconds old, after the
+  spacing, whatever stage the member plays in then, under the owner-away
+  policy of that moment; everyone gets the new revision (membership log
+  `story_earned`). What the room story got meanwhile, or what was dropped
+  after the visit that earned it began, is no longer waited for. The client
+  still gets *wait* and sends the value again (no protocol change; from
+  another stage that resend is refused for the stage, which does no harm).
+  Before, a step that waited was refused for the stage once its member left
+  the stage that set it, and the next step was a phase jump: the room story
+  stopped for the room session. Every new story ran into it as first built in
+  this round (phase 1 at the lobby's first load, phase 2 at the first
+  briefing a minute or two later): C1's owner, alone in its room, kept phase
+  1 in its online story although its game had phase 2 (the round 61 design
+  found it in the code, 8.8; C1 checks phase 2 now).
+- Counter growth waits for a visit ten seconds old as well (a client looping
+  barriers in stag0001 opened about a thousand lines a minute); a member opens
+  at most `Instances:StoryLinesPerMember` (256) counter lines a room session
+  (then *limit*); the lines no member can report any more (in no member's last
+  16, no instance 0 line of a present member) are forgotten (`PruneLines`; a
+  held line's growth beyond what was taken stays held per counter).
+- The keeper lives with the room, not with the relay's hub: an empty hub the
+  relay drops keeps the room's keeper (dropped set, epochs, held values, the
+  per-member rules) and its instance ids for the next connection
+  (`RoomSessionState`). The owner's presence the room service reports while no
+  hub is there, or while the first connection's admission loads the story,
+  reaches the keeper when the hub is built (it started with the admission's
+  older value before). A reconnect without RESUME keeps its visit's key for
+  the per-visit rules (it was a fresh visit with one more phase step and key
+  item before).
+- A story clear in a room (`clear_normal`, `clear_hard`, `clear_veryhard`)
+  counts only when the room's story is at that difficulty and holds its clear
+  flag (406 + difficulty; the server waits up to `Play:ClearStoryWaitSeconds`,
+  30, for the clear's STORY), and the achievements' `players` is capped by the
+  relay's instance in the last minute (one request gave a guest alone in its
+  lobby `mp_fullhouse` and a speedrun board's first place).
+
+Open, not measured: a flag set in a visit shorter than ten seconds is only
+sent again (it is not earned: the visit age is a plausibility rule); the
+next Game Start replaces the engine's flags with the room story's, so such a
+flag is gone then and comes back only from a visit of at least ten seconds
+that sets it again. No run checked whether real story flags come from such
+short visits (short corridors, stages passed through). The same holds for
+counter growth since this round: a junk shop donation (COUNTER 1, stagML13)
+in a visit of the shop's stage shorter than ten seconds is refused for the
+stage once the member left (a visit with a walk to the shop and its menus
+takes longer).
 
 **Storage.** Migration 0008 adds `online_story (account_id, revision, flags
 VARBINARY(1024), folder BINARY(12), counters BINARY(64) as 16 x i32 LE,
@@ -2327,7 +2439,19 @@ count.
 
 Round 56 fix round: migration 0010 keeps every written revision in
 `online_story_history` (the last `OnlineCharacter:StoryHistoryRevisions`,
-100, with the reason room / reset / admin_restore). The online character's
+100, with the reason room / reset / admin_restore). Round 59 keeps it by time
+and session instead of by count alone (migration 0011, reason *session*):
+opening a room keeps the owner's story as it was then (the revision the room
+session starts from); the newest `StoryHistoryRevisions` (100) stay in full;
+older room revisions stay as the first of every `StoryHistoryMinutes` (10)
+for `StoryHistoryDays` (90); session starts, resets and restores stay for
+`StoryHistoryDays`, the newest `StoryHistorySessions` (20) of them for good.
+A revision that changed only counters is written at most once per
+`StoryCounterSaveSeconds` (60) per account (a newer one replaces it in the
+queue). The queue reads a queued revision before the database row (a write
+in between gave the older row), and a reset or restore waits for a write in
+flight and drops what was queued before it (a generation per account). A
+staff restore looks for the revision before it closes the owner's room. The online character's
 reset empties the story as its next revision (a new character starts from a
 new game's story and Normal); staff list the revisions and put one back as
 the next revision (`GET /admin/accounts/{name}/online-story/history`, `POST
@@ -2422,6 +2546,32 @@ empties the online story with it). A refused login or an outdated version
 (401 / 403 / 426) no longer drops the session's later saves: they go into the
 card cache as pending, and the next room entry uploads the newest when the
 server still has the revision it was based on.
+
+**Round 59 fix round.** *Create Digimon* reports `new_character` already at
+the status window, and B takes it back: a player who then called the online
+character from the card (as the toast advised) was never saved for the whole
+session. The engine also reports `character_called` (observe-only: the card
+branch of the character select, the box and the UNIQUE), and
+`CharacterSync::game_started` decides from the title's last choice: a new
+character beside the online one, or a box the save room filled with another
+character this session (a UNIQUE collision uploaded it before), is another
+character; the online character called from its box is the online
+character. The player is told when a new character overwrote the box of the
+online character (leaving and entering the room brings it back). A second PC
+of the account that enters the room connects to the relay first and waits
+for its answer (`Session::await_hello`), then loads the character: the relay
+replaces the first PC's connection there, and that PC's session (closed as
+*replaced*) keeps its leaving save pending in its card cache instead of
+uploading it (`OnlineRun::replaced`; it goes up at that PC's next room entry
+if nobody saved since). Before, the first PC's leaving save came after the
+second PC's load and blocked the second PC with a 409 for the session. After
+a 409 the session's later saves go into the backup the conflict made. The
+server: a save sent again after its answer was lost (the same record on the
+revision right before the stored one) is its own revision, not another PC's;
+the reset empties an online story without a character (an owner whose guests
+played); a character the last reset ended does not come back with
+`If-None-Match: *` (the same UNIQUE, name and partner above level 1:
+`character_was_reset`).
 
 **Built in round S2 (character lane).**
 
@@ -3719,6 +3869,12 @@ Depends on: S4 and the answers.
 7. EXP: (a) only members near the kill share it (the default).
 8. Play alone in a room: no switch (the default).
 
+### Answer (user, 2026-10-31)
+
+A room owner without an online story starts at zero: the progress a guest
+made in the room before must not become the new owner's story (8.6, "An owner
+without a story starts at zero").
+
 ## 19. Risks
 
 - **Multi-camera semantics** have no Dolphin reference: an actor animates when
@@ -3924,7 +4080,7 @@ Server to client:
 | 0x86 | STATE_DATA | inst u32, visit u32, total u32, offset u32, chunk (at most 60 KiB): the state blob |
 | 0x87 | PRESENCE | member u8, then the PRESENCE fields (members in the same stage outside the own instance) |
 | 0x88 | RESYNC | inst u32, visit u32 (a STATE_DATA with purpose resync follows) |
-| 0x89 | STORY_ACK | revision u32, story blob (1,100 bytes or empty), flags u8 (1 the answer to this member's STORY), refused count u16 + (kind u8: 0 phase, 1 flag, 2 key, 3 counter; index u16; reason u8: 1 owner away (dropped), 2 held, 3 stage, 4 phase jump, 5 rate, 6 not a member, 7 not story, 8 limit) each (round S2, 8.7) |
+| 0x89 | STORY_ACK | revision u32, story blob (1,100 bytes or empty), flags u8 (1 the answer to this member's STORY), refused count u16 + (kind u8: 0 phase, 1 flag, 2 key, 3 counter; index u16; reason u8: 1 owner away (dropped), 2 held, 3 stage, 4 phase jump, 5 rate, 6 not a member, 7 not story, 8 limit, 9 wait (round 56), 10 not started (dropped; round 59, 8.6)) each (round S2, 8.7) |
 | 0x8A | ROOM | notice u8 (1 joined, 2 left, 3 owner present, 4 owner away, 5 lagging, 6 lag over, 7 connected, 8 disconnected), member u8, account u64, name str, flags u8 (1 owner) |
 | 0x8B | PING | nonce u32, server ms u64, margin ms i16 (the member's 0.1 % arrival margin), suggested delay u8 (once per second) |
 | 0x8C | CLOSE | reason u8 (1 left, 2 kicked, 3 room closed, 4 replaced, 5 protocol, 6 abuse, 7 timeout, 8 server stopping), text str |
