@@ -212,7 +212,9 @@ bool OnlineUiScript::run(const Line& line, UiScriptHost& host) {
     }
     if (c == "menu") {
         host.show_menu = arg(1) != "close";
-        if (host.show_menu) {
+        if (host.show_menu && arg(1) == "cheats") {
+            host.menu_tab = "Cheats"; // (SEAMLESS.md 9.1.10: the tab in a room)
+        } else if (host.show_menu) {
             host.menu_tab = "Online";
             if (!lobby.opened()) lobby.open();
         }

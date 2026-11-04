@@ -1,0 +1,16 @@
+# Round 68: the Cheats tab in a room reads "Cheats are off online.", its controls are disabled and its player
+# buttons hidden (offline the tab is unchanged: det.sh and the offline screenshot).
+open
+login $UI_A_NAME $UI_A_PASSWORD
+create $UI_ROOM max=4
+wait-session
+sleep 30
+wait 10
+menu cheats
+wait 20
+shot cheats_tab
+menu close
+sleep 2
+leave
+wait-left 60
+end
