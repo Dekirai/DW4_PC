@@ -6,12 +6,16 @@
 // packet, between the two packets around that time, so a member glides
 // instead of jumping five or ten times a second:
 //
-//  - PRESENCE2 carries the sender's clock: the packets keep its spacing (the
-//    offset to this machine's clock is the smallest one seen, so a packet
-//    the network held up does not shift the others) and are drawn kDelay2
-//    behind the newest (one 100 ms interval and room for the network's
-//    jitter); past the newest packet (a late one) the member goes on along
-//    its last movement for at most kExtrapolate, then holds;
+//  - PRESENCE2 carries the sender's clock (the time of the step whose place
+//    it carries): the packets keep its spacing and are drawn kDelay2 behind
+//    the newest (one 100 ms interval and room for the network's jitter). The
+//    offset to this machine's clock aims at the smallest arrival minus sent
+//    of the last kLagWindow packets (the one the network held up least, so a
+//    late packet does not shift the others) and moves there by at most
+//    kOffsetSlew seconds a second: the drawn time never jumps, it runs at
+//    most that much faster or slower. Past the newest packet (a late one)
+//    the member goes on along its last movement for at most kExtrapolate,
+//    then holds;
 //  - PRESENCE has no clock: the packets are placed at their arrival and
 //    drawn kInterval (its 200 ms interval) behind, holding the newest.
 //
@@ -54,7 +58,8 @@ public:
     static constexpr double kDelay2 = 0.16;        // PRESENCE2: drawn this far behind the sender's newest packet
     static constexpr double kStale = 2.0;          // no packet for this long: no sample
     static constexpr double kExtrapolate = 0.06;   // PRESENCE2: at most this far past the newest packet
-    static constexpr double kOffsetRelax = 0.002;  // seconds the clock offset may rise per packet (clock drift, a slower route)
+    static constexpr double kOffsetSlew = 0.02;    // the drawn clock offset moves at most this many seconds a second
+    static constexpr std::size_t kLagWindow = 20;  // packets whose smallest arrival minus sent the offset aims at
     static constexpr float kSnapSpeed = 900.0f;    // units per second faster than any walk: a warp
     static constexpr float kSnapDistance = 120.0f; // a step this far between two packets never glides
     static constexpr std::size_t kPoints = 8;      // packets kept per member
@@ -77,9 +82,15 @@ private:
         std::string name;
         std::deque<Point> points;
         bool v2{};
-        double offset{}; // this machine's clock minus the sender's: the smallest seen, relaxed per packet
+        // This machine's clock minus the sender's: `offset` drawn at
+        // `offset_time`, moving towards `target` (the smallest of `lags`,
+        // the last packets' arrival minus sent) at kOffsetSlew.
+        double offset{}, offset_time{}, target{};
+        std::deque<double> lags;
         std::uint32_t segment{};
     };
+    // The offset drawn at `now` (continuous in `now`).
+    static double offset_at(const Track& track, double now);
     std::map<std::uint32_t, Track> tracks_;
 };
 

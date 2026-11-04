@@ -125,20 +125,30 @@ public:
     PresenceFacts presence(int slot) const override {
         PresenceFacts f;
         f.in_stage = !pending_;
-        f.x = figure_x ? *figure_x : float(state_ & 0xFF);
+        f.x = figure_x ? *figure_x : figure_walk ? float(frame_) * *figure_walk : float(state_ & 0xFF);
         f.z = float(slot);
         f.level = 3;
-        f.hp = f.max_hp = 50;
+        f.max_hp = 50;
+        f.hp = figure_hp.value_or(f.max_hp);
         f.clip = figure_clip;
         f.weapon = "w_test01";
         f.busy = figure_busy;
+        f.figure_hidden = figure_hidden;
         return f;
     }
-    // PRESENCE2's figure facts (round 60); figure_x holds the figure still
-    // (else it follows the state, a new place every step).
-    std::optional<float> figure_x;
+    // PRESENCE2's figure facts (round 60); figure_x holds the figure still,
+    // figure_walk moves it this far every step (else it follows the state, a
+    // new place every step); figure_hidden: the model is not shown (a
+    // scene); figure_hp: HP other than the maximum (a script may raise it
+    // above).
+    std::optional<float> figure_x, figure_walk;
+    std::optional<int> figure_hp;
     std::string figure_clip = "waitD";
-    bool figure_busy = false;
+    bool figure_busy = false, figure_hidden = false;
+    // A departure the stage announces (Engine::take_heading: its NEXTSTAGE
+    // is due after a scene; a test sets it, the next step reports it).
+    std::optional<HeadingInfo> heading;
+    std::optional<HeadingInfo> take_heading() override { return std::exchange(heading, std::nullopt); }
 
     void step(const std::array<dw4::PadSample, 4>& pads) {
         ++frame_;
@@ -371,6 +381,7 @@ public:
     // Round 60: WELCOME announces PRESENCE2 (a hub of this round), and what came.
     bool presence_v2 = false;
     std::uint64_t presence_frames = 0, presence2_frames = 0, unknown_frames = 0; // (unknown: PRESENCE2 without presence_v2)
+    std::vector<w::Presence> presence2_seen; // every PRESENCE2 that came, its member set
     double state_delay = 0.0; // extra delay of STATE_DATA (a slow state transfer)
     double state_pacing = 0.0; // STATE_DATA paced like the relay's state delivery: sent this much later, LIVE ticks go first
     std::vector<std::tuple<double, std::uint32_t, std::vector<std::uint8_t>>> paced_state;
@@ -1090,6 +1101,7 @@ public:
             ++presence2_frames;
             auto p = w::decode_presence2(f.payload, false);
             p.member = std::uint8_t(id);
+            presence2_seen.push_back(p);
             for (auto& [oid, other] : members)
                 if (oid != id && other.inst != m.inst) send(oid, w::Type::presence2_of, w::encode_presence2(p, true), now);
             break;

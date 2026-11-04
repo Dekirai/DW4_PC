@@ -297,14 +297,15 @@ struct Intent {        // inst | visit | u8 kind | i32 argument (sealed instance
 // empty: unknown); flags 1: the clip loops, 2: busy (a status or shop
 // window is open: the figure stands where it is, the tag hides); `warp`
 // counts the member's jumps (stage loads, warps: never glided across);
-// `sent ms` is the sender's clock in milliseconds (wrapping), the receivers'
-// interpolation clock; `weapon` the package of the weapon its figure holds
-// (0-24 of the same characters, empty: none). Sent only to a hub whose
-// WELCOME carries Welcome::presence_v2 (an older hub closes a connection that
-// sends a frame it does not know); the hub forwards PRESENCE2 to the members
-// that send it and PRESENCE to the others. A later version keeps this layout
-// and appends: a reader takes what it knows (a version 1 hub forwards only
-// the version 1 part it checked, written at version 1).
+// `sent ms` is the sender's clock in milliseconds (wrapping: the time of the
+// step whose place it carries), the receivers' interpolation clock; `weapon`
+// the package of the weapon its figure holds (0-24 of the same characters,
+// empty: none). Sent only to a hub whose WELCOME carries Welcome::presence_v2
+// (an older hub closes a connection that sends a frame it does not know); the
+// hub forwards PRESENCE2 to the members that send it and PRESENCE to the
+// others. A later version keeps this layout and appends, within 256 bytes in
+// all: a reader takes what it knows (a version 1 hub forwards only the
+// version 1 part it checked, written at version 1; a larger one it drops).
 struct Presence {
     std::uint8_t member{};
     std::string stage;

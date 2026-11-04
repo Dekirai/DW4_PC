@@ -249,14 +249,20 @@ void Session::send_presence(double now) {
     // five while nothing changes; PRESENCE five a second to an older hub.
     const double since = now - presence_at_;
     if (since < (presence_v2_ ? config_.presence_moving_interval : config_.presence_interval)) return;
+    if (departing_ && (engine_.load_serial() != departing_serial_ || now - departing_at_ > kDepartingLimit)) departing_ = false;
     const auto facts = engine_.presence(slot_);
     if (!facts.in_stage) {
+        // Loading, a title screen: the member left the stage it showed (once).
+        hide_presence(now);
         presence_at_ = now;
         return;
     }
     w::Presence p;
-    // An empty stage hides the tag (loads, scenes, menus); hp 0 shows a defeated member.
-    p.stage = (presence_v2_ ? facts.figure_hidden : facts.hidden) ? std::string() : engine_.stage();
+    // An empty stage hides the tag (loads, scenes, menus, a departure); hp 0
+    // shows a defeated member. (HP and MP above their maximum, as a script's
+    // MDLaddHp allows, show full.)
+    const bool hidden = departing_ || (presence_v2_ ? facts.figure_hidden : facts.hidden);
+    p.stage = hidden ? std::string() : engine_.stage();
     p.inst = inst_;
     p.x = facts.x;
     p.y = facts.y;
@@ -264,14 +270,13 @@ void Session::send_presence(double now) {
     p.yaw = facts.yaw;
     p.species = std::uint8_t(std::clamp(facts.species, 0, 255));
     p.level = std::uint16_t(std::clamp(facts.level, 0, 65535));
-    p.hp = std::uint16_t(std::clamp(facts.hp, 0, 65535));
     p.max_hp = std::uint16_t(std::clamp(facts.max_hp, 0, 65535));
-    p.mp = std::uint16_t(std::clamp(facts.mp, 0, 65535));
     p.max_mp = std::uint16_t(std::clamp(facts.max_mp, 0, 65535));
+    p.hp = std::uint16_t(std::clamp(facts.hp, 0, p.max_hp > 0 ? int(p.max_hp) : 65535));
+    p.mp = std::uint16_t(std::clamp(facts.mp, 0, p.max_mp > 0 ? int(p.max_mp) : 65535));
     if (facts.defeated) p.hp = 0;
     if (!presence_v2_) {
-        presence_at_ = now;
-        send(w::Type::presence, w::encode(p, false));
+        transmit(std::move(p), now);
         return;
     }
 #ifdef DW4_ONLINE_DEV
@@ -298,17 +303,55 @@ void Session::send_presence(double now) {
                            same.flags == p.flags && same.warp == p.warp && same.species == p.species && same.weapon == p.weapon;
         if (still) return;
     }
-    p.sent_ms = std::uint32_t(std::llround(now * 1000.0));
-    presence_at_ = now;
-    presence_sent_ = p;
-    send(w::Type::presence2, w::encode_presence2(p, false));
+    transmit(std::move(p), now);
 }
 
-void Session::track_figure() {
+void Session::hide_presence(double now) {
+    // The last one sent at once with an empty stage: the hub sends it to the
+    // members still in the stage it showed (its "left" path), whose tag and
+    // figure of this member fade out now.
+    if (!presence_sent_ || presence_sent_->stage.empty()) return;
+    auto p = *presence_sent_;
+    p.stage.clear();
+    transmit(std::move(p), now);
+}
+
+void Session::depart(double now) {
+    // A departure: from here until the next stage load the member shows
+    // nowhere (the stage's own scene and fade end on its machine alone).
+    if (!departing_) {
+        departing_ = true;
+        departing_serial_ = engine_.load_serial();
+        departing_at_ = now;
+        trace("presence hidden until the next stage load (serial %llu)", static_cast<unsigned long long>(departing_serial_));
+    }
+    hide_presence(now);
+}
+
+void Session::transmit(w::Presence p, double now) {
+    presence_at_ = now;
+    if (p.version == 0) {
+        send(w::Type::presence, w::encode(p, false));
+    } else {
+        // PRESENCE2's clock: the step whose place this is (track_figure),
+        // the poll time after a pause without steps; always later than the
+        // last one sent (the receivers start over at a clock that goes back).
+        const double clock = now - step_at_ <= kStepStale ? step_at_ : now;
+        p.sent_ms = std::uint32_t(std::llround(clock * 1000.0));
+        if (presence_sent_ && presence_sent_->version != 0 && std::int32_t(p.sent_ms - presence_sent_->sent_ms) <= 0)
+            p.sent_ms = presence_sent_->sent_ms + 1;
+        send(w::Type::presence2, w::encode_presence2(p, false));
+    }
+    presence_sent_ = std::move(p);
+}
+
+void Session::track_figure(double now) {
     // PRESENCE2's warp counter: a stage load or a step that moved the figure
     // farther than any walk (a warp, a gate) counts, so the others' figures
-    // jump instead of gliding across. Reads the engine only.
+    // jump instead of gliding across; and its step clock. Reads the engine
+    // only.
     if (!presence_v2_) return;
+    step_at_ = now - step_at_ < 0.25 ? std::clamp(step_at_ + kFieldSeconds, now - kStepSlack, now) : now;
     const auto serial = engine_.load_serial();
     if (serial != figure_serial_) {
         figure_serial_ = serial;
@@ -835,7 +878,7 @@ void Session::after_step(double now) {
         return;
     }
     if (mode_ != Mode::solo && mode_ != Mode::sealed && mode_ != Mode::observing) return;
-    if (mode_ != Mode::observing) track_figure();
+    if (mode_ != Mode::observing) track_figure(now);
     const std::uint32_t executed = tick_;
     const bool member = mode_ != Mode::observing;
     // A fork in this step: from here the two sides' engines differ (each has
@@ -908,9 +951,13 @@ void Session::after_step(double now) {
         // server's LEAD_FROM: from that tick it leads alone.)
     }
     // (Also from a hub instance: the lobby gate announces a field, 3.4.)
-    if (const auto heading = engine_.take_heading(); heading && member)
+    if (const auto heading = engine_.take_heading(); heading && member) {
         send(w::Type::heading, w::encode(w::Heading{inst_, heading->stage, std::uint8_t(std::clamp(heading->point, 0, 255)),
                                                     engine_.session_context_hash()}));
+        // (The scene and fade before its NEXTSTAGE show nowhere else: the
+        // others' figure of this member does not come back at the gate.)
+        depart(now);
+    }
     if (engine_.supports_barriers()) {
         if (engine_.pending_stage()) park(now);
     } else if (member && engine_.load_serial() != serial_at_barrier_) {
@@ -980,6 +1027,9 @@ void Session::report_state(double now, bool force) {
 
 // ---- barrier
 void Session::park(double now) {
+    // The member leaves its stage: its tag and figure go at once (no
+    // presence goes until the next stage's).
+    depart(now);
     flush_log(now, true);
     barrier_tick_ = tick_ - 1;
     serial_at_barrier_ = engine_.load_serial();

@@ -39,10 +39,8 @@ void PresenceTracks::add(const wire::Presence& presence, const std::string& name
     if (v2) {
         // The sender's clock in seconds, unwrapped against the last packet
         // (its milliseconds wrap after 49 days).
-        if (track.points.empty()) {
-            point.sent = double(presence.sent_ms) / 1000.0;
-            track.offset = now - point.sent;
-        } else {
+        bool restart = track.points.empty();
+        if (!restart) {
             const auto& last = track.points.back();
             const auto step = std::int32_t(presence.sent_ms - last.presence.sent_ms);
             point.sent = last.sent + double(step) / 1000.0;
@@ -50,11 +48,22 @@ void PresenceTracks::add(const wire::Presence& presence, const std::string& name
             if (step <= 0 || step > 10000) {
                 track.points.clear();
                 ++track.segment;
-                point.sent = double(presence.sent_ms) / 1000.0;
-                track.offset = now - point.sent;
-            } else {
-                track.offset = std::min(now - point.sent, track.offset + kOffsetRelax);
+                restart = true;
             }
+        }
+        if (restart) {
+            point.sent = double(presence.sent_ms) / 1000.0;
+            track.offset = track.target = now - point.sent;
+            track.offset_time = now;
+            track.lags.assign(1, now - point.sent);
+        } else {
+            // The drawn offset goes on from where it is now towards the new
+            // target (no jump: it only changes its direction here).
+            track.offset = offset_at(track, now);
+            track.offset_time = now;
+            track.lags.push_back(now - point.sent);
+            while (track.lags.size() > kLagWindow) track.lags.pop_front();
+            track.target = *std::min_element(track.lags.begin(), track.lags.end());
         }
     }
     if (!track.points.empty()) {
@@ -69,6 +78,11 @@ void PresenceTracks::add(const wire::Presence& presence, const std::string& name
     while (track.points.size() > kPoints) track.points.pop_front();
 }
 
+double PresenceTracks::offset_at(const Track& track, double now) {
+    const double room = kOffsetSlew * std::max(0.0, now - track.offset_time);
+    return track.offset + std::clamp(track.target - track.offset, -room, room);
+}
+
 std::vector<RemoteSample> PresenceTracks::sample(double now) const {
     std::vector<RemoteSample> out;
     for (const auto& [member, track] : tracks_) {
@@ -77,7 +91,7 @@ std::vector<RemoteSample> PresenceTracks::sample(double now) const {
         if (now - last.arrived > kStale) continue;
         if (last.presence.stage.empty() || last.presence.hp == 0) continue; // hidden (empty stage) or defeated
         // The time drawn, on the sender's clock (PRESENCE: the arrivals).
-        const double at = track.v2 ? now - track.offset - kDelay2 : now - kInterval;
+        const double at = track.v2 ? now - offset_at(track, now) - kDelay2 : now - kInterval;
         const Point* a = &last;
         const Point* b = &last;
         double t = 1.0;
