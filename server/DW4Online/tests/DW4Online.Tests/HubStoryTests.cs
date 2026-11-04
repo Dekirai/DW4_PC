@@ -70,6 +70,26 @@ public class HubStoryTests
             Send(name, new BarrierMsg(i.Id, i.Visit, 0, stage, 0, i.PresentMask, i.PresentMask, context, [(byte)name[0]]).Frame());
         }
 
+        public void Snapshot(string name)
+        {
+            var i = I(name);
+            var bytes = Enumerable.Range(0, 100).Select(x => (byte)x).ToArray();
+            Send(name, new SnapshotMsg(i.Id, i.Visit, (uint)bytes.Length, 0, bytes).Frame());
+            Send(name, new SnapHashMsg(i.Id, i.Visit, 0xAA).Frame());
+        }
+
+        public void Log(string name, uint first, int count)
+        {
+            var i = I(name);
+            Send(name, new LogMsg(i.Id, i.Visit, first, Enumerable.Range(0, count).Select(k => new Pad((ushort)(first + k), 0, 0, 0, 0)).ToArray()).Frame());
+        }
+
+        public void Joinable(string name, ulong context = 5)
+        {
+            var i = I(name);
+            Send(name, new StateMsg(i.Id, i.Visit, 0, StateMsg.Joinable | StateMsg.MembershipSafe, context, StateReason.None).Frame());
+        }
+
         public StoryAckMsg Story(string name, StoryDelta d)
         {
             var i = I(name);
@@ -539,6 +559,42 @@ public class HubStoryTests
         Assert.Equal(StoryRefusal.OwnerAway, h.Story("b", Flags(394)).Refused.Single().Reason);
         Assert.Empty(h.Story("b", Flags(392)).Refused); // (set anew in this visit, after the start)
         Assert.Equal(1u, h.Hub.StoryState().Revision);
+    }
+
+    /// <summary>
+    /// A guest's field visit from before the start that the owner joins after it (SEAMLESS.md 8.6): what the visit offered
+    /// before the owner came stays refused, for the guest and the owner alike (its barrier removes it); what it sets once
+    /// the owner is in it counts (HubInstance.OwnerSeen).
+    /// </summary>
+    [Fact]
+    public void A_visit_from_before_the_start_counts_once_the_owner_joined_it()
+    {
+        var h = new Harness(StoryPolicy.Drop, started: false);
+        var a = h.Connect("a", 0);
+        var b = h.Connect("b", 1);
+        h.Barrier("b", "stag0101");
+        h.Snapshot("b");
+        h.Log("b", 0, 120);
+        Assert.Equal(StoryRefusal.NotStarted, h.Story("b", Flags(505)).Refused.Single().Reason);
+        h.Barrier("a", "stagml11");
+        Assert.True(h.Hub.StoryState().Started);
+        Assert.Equal(StoryRefusal.NotStarted, h.Story("b", Flags(506)).Refused.Single().Reason);
+        // The owner comes to the guest's field and joins its visit.
+        h.Barrier("a", "stag0101");
+        h.Joinable("b");
+        var ok = a.LastOk;
+        Assert.Equal(BarrierDecision.Join, ok.Decision);
+        h.Log("b", 120, 30);
+        h.Send("a", new ReadyMsg(ok.NewInst, ok.NewVisit, 120, 0, 5000, [7]).Frame());
+        var req = JoinReqMsg.Parse(b.Frames.Last(f => f.Type == Msg.JoinReq).Payload);
+        h.Send("b", new JoinAtMsg(req.Inst, req.Visit, 155).Frame());
+        Assert.Same(h.I("b"), h.I("a"));
+        Assert.True(h.I("b").OwnerSeen);
+        Assert.Equal(StoryRefusal.NotStarted, h.Story("b", Flags(505)).Refused.Single().Reason);
+        Assert.Equal(StoryRefusal.NotStarted, h.Story("a", Flags(506)).Refused.Single().Reason);
+        Assert.Empty(h.Story("b", new StoryDelta { Folder = [0] }).Refused);
+        Assert.Equal(1u, h.Hub.StoryState().Revision);
+        Assert.Equal([505, 506], h.Hub.StoryState().DroppedFlags);
     }
 
     /// <summary>

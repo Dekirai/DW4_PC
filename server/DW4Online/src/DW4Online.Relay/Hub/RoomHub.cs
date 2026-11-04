@@ -1460,24 +1460,7 @@ public sealed class RoomHub
             // The engine line this visit's counters grow in: besides its own instance 0 lines the only kind of line the
             // member may report (8.7).
             AllowLine(m, i.Id, i.Visit);
-            if (m.Owner && !i.Stage.StartsWith("stagis", StringComparison.OrdinalIgnoreCase))
-            {
-                // The owner's game entered a stage: a room whose owner had no online story starts it now (8.6, at zero).
-                // Its first visit begins with the start: one that begins now gets the start's epoch (every engine of it
-                // starts from this barrier's load step, cleaned of the dropped values). A visit the owner joins counts
-                // from then on (OwnerSeen); what it held before stays dropped.
-                if (Story.OwnerStarted())
-                {
-                    Note("story_started", i, ("member", m.Index));
-                    if (i.VisitStartedAt == now) i.StoryEpoch = Story.Epoch;
-                }
-                i.OwnerSeen = true;
-                foreach (var x in i.Members)
-                {
-                    x.VisitEpoch = i.StoryEpoch;
-                    x.VisitOwnerSeen = true;
-                }
-            }
+            OwnerEnters(m, i, visitBegins: i.VisitStartedAt == now);
         }
         m.Cursor = 0;
         m.Heading = null;
@@ -1716,6 +1699,33 @@ public sealed class RoomHub
         m.InstanceSince = Stopwatch.GetTimestamp();
         m.JoinedVia = j;
         if (m.PreferredSlot < 0) m.PreferredSlot = j.Slot;
+        // The joined visit's epoch (the joiner's engine is that visit's snapshot and ticks), and the owner's arrival (8.6).
+        m.VisitEpoch = target.StoryEpoch;
+        m.VisitOwnerSeen = target.OwnerSeen;
+        OwnerEnters(m, target, visitBegins: false);
+    }
+
+    /// <summary>
+    /// The room owner entered a visit of a stage outside the title (Place, a join; SEAMLESS.md 8.6). A room whose owner had
+    /// no online story starts now (at zero). The owner's first visit begins with the start when it begins at this barrier:
+    /// it gets the start's epoch (every engine of it starts from this barrier's load step, cleaned of the dropped values).
+    /// A visit the owner is in counts from then on (OwnerSeen) even if it began before the start; what it offered before
+    /// stays dropped.
+    /// </summary>
+    private void OwnerEnters(HubMember m, HubInstance i, bool visitBegins)
+    {
+        if (!m.Owner || string.IsNullOrEmpty(i.Stage) || i.Stage.StartsWith("stagis", StringComparison.OrdinalIgnoreCase)) return;
+        if (Story.OwnerStarted())
+        {
+            Note("story_started", i, ("member", m.Index));
+            if (visitBegins) i.StoryEpoch = Story.Epoch;
+        }
+        i.OwnerSeen = true;
+        foreach (var x in i.Members)
+        {
+            x.VisitEpoch = i.StoryEpoch;
+            x.VisitOwnerSeen = true;
+        }
     }
 
     private void OnJoinAt(HubMember m, JoinAtMsg msg, long now)
