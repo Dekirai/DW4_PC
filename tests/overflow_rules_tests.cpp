@@ -155,7 +155,7 @@ void exits() {
     rules->reset_end();
     check(engine.run_script("end_g_000bcaps.lua"), "end_g_000bcaps.lua is answered natively");
     check(director.ends.size() == 2 && director.ends[1].reason == EndReason::game_over, "as the run's game over");
-    check(!engine.run_script("first.lua") || true, "(first.lua: only the arenas with a native start)");
+    check(!rules->script(engine, "first.lua"), "first.lua is native only on an arena with a native start");
 }
 
 void original_rule_set() {
