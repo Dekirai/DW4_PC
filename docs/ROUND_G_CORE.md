@@ -149,3 +149,8 @@ online_character's guest_records_keep_the_own_story).
   stag0001, the training), RG10 (the call shop goes to stagIS13; the online
   card's box 0 holds the owner's story), RG2 (the save room put the owner's
   story into the online card's box 0). Regression runs next.
+- 04.11 23:55: regression on build/dev PASS: S14 (255 s), S14p (204 s),
+  S14z, S17a (277 s), S2 (303 s) (build/scen_regress1.log); det.sh a
+  second time on build/rel of 51342d28: 4004f056 / 396cb219 (both runs,
+  work/dref/checks/det/det_r69gcore_b). Next: character_test C1-C3, S16,
+  S5, S3, S14h, S14a.
