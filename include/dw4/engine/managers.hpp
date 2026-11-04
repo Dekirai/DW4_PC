@@ -1675,6 +1675,11 @@ public:
             std::int32_t tag{};
             bool aimed{};
             float yaw{}, shift{};
+            // A port box strikes each target once (a sequence's box hits again
+            // whenever the target's reaction lets it) and, with max_targets
+            // above 0, at most that many targets (the Art's "pierces").
+            int max_targets{};
+            std::vector<std::pair<std::string, int>> struck;
         };
         std::vector<Hitbox> hitboxes;
         // Data Overflow (H6): the run's port hitboxes (an Art's boxes). They

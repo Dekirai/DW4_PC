@@ -2296,13 +2296,18 @@ void ModelCtrlManager::update_port_hitboxes(Engine& engine, ModelRam& ram) {
             const bool enemy = group == 7 || group == 8 || (group == 0 && copy.kind >= 1000);
             const char* category = group == 6 ? "HITPLAYERTALK" : enemy ? "HITENEMYBULLET" : "HITPLAYERBULLET";
             Packet packet;
-            packet.ints = {copy.kind, ram.index, copy.tag};
+            packet.ints = {copy.kind, ram.index, copy.tag, copy.max_targets};
             packet.vectors = {Vec3f{center.x - half.x, center.y - half.y, center.z - half.z},
                               Vec3f{center.x + half.x, center.y + half.y, center.z + half.z}};
             packet.matrices.push_back(m);
             packet.strings.emplace_back(ram.info_name);
+            // The targets struck so far travel with the bullet (hit_check
+            // skips them and adds the new one).
+            auto struck = copy.struck;
+            packet.objects.push_back(&struck);
             engine.messenger().send(engine, category, std::nullopt, -1, "CHKBULLET", packet);
             if (!ram.generated) return;
+            if (i < ram.port_hitboxes.size()) ram.port_hitboxes[i].struck = std::move(struck);
         }
         ++i;
     }
@@ -2686,6 +2691,16 @@ bool ModelCtrlManager::hit_check(Engine& engine, ModelRam& ram, Packet& packet) 
         }
     }
     if (!overlap) return false;
+    // Data Overflow (H6): a port hitbox strikes each target once, at most
+    // its max_targets (fire of update_port_hitboxes: ints 2 / 3, objects 0).
+    if (packet.integer(2, 0) != 0 && !packet.objects.empty() && packet.objects[0]) {
+        auto& struck = *static_cast<std::vector<std::pair<std::string, int>>*>(packet.objects[0]);
+        const int max_targets = packet.integer(3, 0);
+        for (const auto& [name, index] : struck)
+            if (index == ram.index && name == ram.info_name) return false;
+        if (max_targets > 0 && int(struck.size()) >= max_targets) return false;
+        struck.emplace_back(ram.info_name, ram.index);
+    }
     // 0x8030E778..0x8030E7C8: a shooter that is not a player ('p') has to
     // answer MODELCTRL <name> <index> GETRECNO with exactly one record (the
     // record the hit script's FIGHTCALC uses). One that is gone by now (a

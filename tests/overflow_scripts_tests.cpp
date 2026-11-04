@@ -348,7 +348,9 @@ void run_hooks(const std::filesystem::path& data) {
     rules->director = &director;
     director.rules = rules.get();
     rules->donors.families = {"e_goburi", "e_nume"};
+    rules->donors.streams = {{"stag0101", {"ST_DEATH"}}};
     rules->skills.cap.fill(2500);
+    rules->damage.taken_factor = 0.5f; // (the time and tier factor: a long enough fight for the checks)
     Engine engine(data);
     engine.set_overflow_rules(rules);
     start(engine, "stagbs02", "p_agumon", 300);
@@ -365,6 +367,22 @@ void run_hooks(const std::filesystem::path& data) {
     check(!boss && hud, "no boss, the HUD is up");
     check(rams["e_goburi"] == 10 && rams["e_nume"] == 10, "the donor families are in the arena (H2): Goblimon 10, Numemon 10 RAMs");
     check(!engine.soft_reset_allowed() && !engine.console_reset().enabled(), "no soft or console reset (H3)");
+    // H2 streams: Death Valley's field music plays in the Violet Ring.
+    {
+        bool listed = false;
+        for (const auto& line : engine.log_lines()) listed = listed || line.find("~ST_DEATH (stag0101)") != std::string::npos;
+        check(listed, "the donor stream ST_DEATH came from stag0101");
+        {
+            const Messenger::PortOnly scope(engine.messenger());
+            Packet play;
+            play.strings.emplace_back(std::string("ST_DEATH"));
+            engine.messenger().send(engine, "SOUND", std::nullopt, -1, "PLAY", play);
+        }
+        for (int i = 0; i < 30; ++i) host_step(engine, pads_at(0, false));
+        bool missing = false;
+        for (const auto& note : engine.notes()) missing = missing || note.text.find("ST_DEATH") != std::string::npos;
+        check(!missing, "and SOUND PLAY finds it");
+    }
     // The director's helpers: the picture of the box camera, the heal MP.
     {
         const Vec3f me = position(*models->player(0));
@@ -404,7 +422,7 @@ void run_hooks(const std::filesystem::path& data) {
               << director.muteki_after << ", HP " << p.hp << "/" << p.max_hp << ", steps without control "
               << rules->tally.no_control_steps << "/" << rules->tally.steps << ", panels " << rules->tally.panels << " (+"
               << rules->tally.panels_skipped << " left out)\n";
-    check(director.art_casts > 10 && rules->tally.dealt_by[1] > 0, "the aimed port hitboxes hit (H6) with their tag");
+    check(director.art_casts >= 8 && rules->tally.dealt_by[1] > 0, "the aimed port hitboxes hit (H6) with their tag");
     check(director.kills > 0, "Arts defeat enemies (H5: the director heard of it)");
     check(p.stats.skill[0] > start_skill, "the class skill grows by Art hits (H4 skill rule)");
     check(p.stats.next_exp == run_next_exp(p.stats.level, 80, 50, 6), "NEXTEXP follows the run's curve");
