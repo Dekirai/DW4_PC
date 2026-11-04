@@ -13,6 +13,7 @@
 #include <cstdint>
 #include <optional>
 #include <span>
+#include <stdexcept>
 #include <vector>
 
 namespace dw4::sfp {
@@ -83,6 +84,22 @@ public:
     // Reads the next event; Kind::end at 0xFF or the end of the data.
     Event next();
     bool finished() const { return finished_; }
+    // The tick state (round J): the data as a place in `base` (its bank's
+    // bytes), the cursor and flags.
+    template <class Archive> void tick_io(Archive& a, std::span<const std::uint8_t> base) {
+        std::uint64_t offset = data_.empty() ? 0 : std::uint64_t(data_.data() - base.data());
+        std::uint64_t length = data_.size();
+        a.io(offset);
+        a.io(length);
+        if (a.reading()) {
+            if (offset > base.size() || length > base.size() - offset) throw std::runtime_error("a sequence outside its bank");
+            data_ = length ? base.subspan(std::size_t(offset), std::size_t(length)) : std::span<const std::uint8_t>{};
+        }
+        a.io(position_);
+        a.io(flags_);
+        a.io(running_);
+        a.io(finished_);
+    }
 
 private:
     std::span<const std::uint8_t> data_;
@@ -95,6 +112,7 @@ class Bank {
 public:
     // Validates the chunks and tables; throws std::runtime_error on bad data.
     explicit Bank(std::vector<std::uint8_t> data);
+    std::span<const std::uint8_t> bytes() const { return data_; }
     // The sequence of request id 0xA9GGNN00 (group by the top 16 bits, entry
     // by bits 8..15, 803C5188), or an empty span.
     std::span<const std::uint8_t> sequence(std::uint32_t request) const;

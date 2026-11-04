@@ -30,6 +30,7 @@
 #include <deque>
 #include <limits>
 #include <memory>
+#include <stdexcept>
 #include <utility>
 #include <vector>
 
@@ -86,6 +87,15 @@ public:
     void release(int voice);                    // AXFreeVoice 8023C958
     void set_priority(int voice, int priority); // AXSetVoicePriority 8023CB4C
     int in_use() const;
+    template <class Archive> void tick_io(Archive& a) {
+        for (auto& v : voices_) {
+            a.io(v.priority);
+            a.io(v.owner);
+            a.io(v.stamp);
+        }
+        a.io(reserved_);
+        a.io(stamp_);
+    }
 
 private:
     struct Voice {
@@ -184,6 +194,84 @@ public:
     // The voice's master volume for new notes (the SNDF master, 1..127).
     void set_master(float gain) { master_ = gain; }
     bool idle() const;
+    // The tick state (round J): every field of the game's driver; `bank`
+    // serializes a bank reference as an id, `bytes` gives a bank's bytes.
+    template <class Archive, class BankIo, class BankBytes> void tick_io(Archive& a, BankIo&& bank, BankBytes&& bytes) {
+        for (auto& v : voices_) {
+            a.io(v.used);
+            a.io(v.key);
+            a.io(v.channel);
+            a.io(v.priority);
+            a.io(v.phase);
+            a.io(v.seq);
+            a.io(v.id);
+            a.io(v.ax);
+            a.io(v.env_delta);
+            a.io(v.env_target);
+            a.io(v.env);
+            a.io(v.decay);
+            a.io(v.sustain);
+            a.io(v.release);
+            bank(v.bank);
+            a.io(v.sample);
+            a.io(v.ratio);
+            a.io(v.loop);
+            a.io(v.start);
+            a.io(v.end);
+            a.io(v.left);
+            a.io(v.right);
+            a.io(v.aux_left);
+            a.io(v.aux_right);
+            a.io(v.seq_volume);
+            a.io(v.gain_from);
+            a.io(v.gain_to);
+            a.io(v.fresh);
+        }
+        for (auto& t : tracks_) {
+            a.io(t.flags);
+            a.io(t.seq_flags);
+            a.io(t.channel);
+            a.io(t.id);
+            a.io(t.wait);
+            bank(t.bank);
+            t.sequence.tick_io(a, bytes(t.bank));
+        }
+        for (auto& s : seqs_) {
+            a.io(s.state);
+            a.io(s.volume);
+            a.io(s.voices);
+            a.io(s.request);
+            a.io(s.id);
+        }
+        std::uint32_t messages = std::uint32_t(messages_.size());
+        a.io(messages);
+        if (a.reading()) {
+            if (messages > 1u << 16) throw std::runtime_error("implausible driver messages");
+            messages_.resize(messages);
+        }
+        for (auto& m : messages_) {
+            a.io(m.time);
+            a.io(m.value);
+        }
+        std::uint32_t ring = std::uint32_t(ring_.size());
+        a.io(ring);
+        if (a.reading()) {
+            if (ring > 1u << 16) throw std::runtime_error("implausible driver ring");
+            ring_.resize(ring);
+        }
+        for (auto& r : ring_) {
+            a.io(r.note);
+            a.io(r.message);
+            a.io(r.channel);
+            a.io(r.key);
+            a.io(r.velocity);
+            a.io(r.seq);
+            bank(r.bank);
+        }
+        ax_.tick_io(a);
+        a.io(counter_);
+        a.io(master_);
+    }
 
 private:
     struct Message {

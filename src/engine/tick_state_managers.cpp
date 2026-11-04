@@ -13,6 +13,7 @@
 namespace dw4::engine {
 
 void serialize(StateArchive& a, ItemDevice& v); // save_state.cpp
+void serialize_cri(StateArchive& a, CriStreams& cri); // managers_core.cpp
 
 void serialize(StateArchive& a, NodeTimer& v) {
     a.io(v.scale);
@@ -354,6 +355,23 @@ void SoundManager::tick_state(TickArchive& a) {
     a.io(updated_);
     a.io(recorded_master_);
     a.io(recorded_reserved_);
+    serialize_cri(a, cri_);
+    // The SNDF as the game sees it, its banks by their place in the list.
+    const auto banks = driver_banks();
+    auto bank_io = [&](std::shared_ptr<const sndf::BankData>& bank) {
+        std::int32_t id = -1;
+        if (!a.reading() && bank) {
+            for (std::size_t i = 0; i < banks.size(); ++i)
+                if (banks[i] == bank) id = std::int32_t(i);
+            if (id < 0) throw TickStateError("sound", "a driver bank outside the bank list");
+        }
+        a.io(id);
+        if (a.reading()) bank = id >= 0 && std::size_t(id) < banks.size() ? banks[std::size_t(id)] : nullptr;
+    };
+    auto bank_bytes = [](const std::shared_ptr<const sndf::BankData>& bank) {
+        return bank && bank->bank ? bank->bank->bytes() : std::span<const std::uint8_t>{};
+    };
+    driver_.tick_io(a, bank_io, bank_bytes);
 }
 void SoundManager::owned_nodes(std::vector<Node*>&) const {}
 void SoundManager::tick_rams(std::vector<const Ram*>& out) const { ram_list(out, rams_); }

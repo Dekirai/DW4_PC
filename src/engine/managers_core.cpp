@@ -2656,44 +2656,8 @@ void SoundManager::restore(Engine& engine, const std::shared_ptr<const void>& op
     cri_ = state.cri;
 }
 
-void SoundManager::serialize_persistent(StateArchive& a, std::shared_ptr<const void>& opaque, bool canonical) {
-    bool present = opaque != nullptr;
-    a.io(present);
-    if (!present) return;
-    auto state = a.reading() ? std::make_shared<SoundState>() : std::make_shared<SoundState>(*static_cast<const SoundState*>(opaque.get()));
-    std::uint32_t count = std::uint32_t(state->streams.size());
-    a.io(count);
-    if (a.reading()) {
-        if (count > 64) throw std::runtime_error("save state holds an implausible stream count");
-        state->streams.resize(count);
-    }
-    for (auto& s : state->streams) {
-        a.io(s.name);
-        a.io(s.file);
-        if (canonical && !a.reading()) {
-            std::uint64_t none = 0;
-            a.io(none);
-        } else {
-            a.io(s.frames_read);
-        }
-        a.io(s.serial);
-        a.io(s.priority);
-        a.io(s.type);
-        a.io(s.volume);
-        a.io(s.out_volume);
-        a.io(s.fade.running);
-        a.io(s.fade.from);
-        a.io(s.fade.to);
-        a.io(s.fade.position);
-        a.io(s.fade.increment);
-    }
-    a.io(state->current_bgm);
-    a.io(state->serial);
-    a.io(state->pause_next);
-    a.io(state->se_volume);
-    a.io(state->base_volume);
-    a.io(state->random);
-    auto& cri = state->cri;
+// The CRI streams' state (the stage snapshot's and the tick state's).
+void serialize_cri(StateArchive& a, CriStreams& cri) {
     a.io(cri.drive.buffer_start_offset);
     a.io(cri.drive.buffer_end_offset);
     a.io(cri.drive.buffer_start_time);
@@ -2760,6 +2724,48 @@ void SoundManager::serialize_persistent(StateArchive& a, std::shared_ptr<const v
     a.io(movie.write_pos);
     a.io(movie.written);
     a.io(movie.consumed);
+}
+
+void SoundManager::serialize_persistent(StateArchive& a, std::shared_ptr<const void>& opaque, bool canonical) {
+    bool present = opaque != nullptr;
+    a.io(present);
+    if (!present) return;
+    auto state = a.reading() ? std::make_shared<SoundState>() : std::make_shared<SoundState>(*static_cast<const SoundState*>(opaque.get()));
+    std::uint32_t count = std::uint32_t(state->streams.size());
+    a.io(count);
+    if (a.reading()) {
+        if (count > 64) throw std::runtime_error("save state holds an implausible stream count");
+        state->streams.resize(count);
+    }
+    for (auto& s : state->streams) {
+        a.io(s.name);
+        a.io(s.file);
+        if (canonical && !a.reading()) {
+            std::uint64_t none = 0;
+            a.io(none);
+        } else {
+            a.io(s.frames_read);
+        }
+        a.io(s.serial);
+        a.io(s.priority);
+        a.io(s.type);
+        a.io(s.volume);
+        a.io(s.out_volume);
+        a.io(s.fade.running);
+        a.io(s.fade.from);
+        a.io(s.fade.to);
+        a.io(s.fade.position);
+        a.io(s.fade.increment);
+    }
+    a.io(state->current_bgm);
+    a.io(state->serial);
+    a.io(state->pause_next);
+    a.io(state->se_volume);
+    a.io(state->base_volume);
+    a.io(state->random);
+    auto& cri = state->cri;
+    serialize_cri(a, cri);
+    const auto& movie = cri.movie;
     if (a.reading() && (cri.inflight.slot < -1 || cri.inflight.slot > CriStreams::kMovieHeaderSlot))
         throw std::runtime_error("save state holds an invalid stream read");
     if (a.reading() && (movie.pos > movie.sectors || movie.request > CriStreams::kMovieRingSectors ||
