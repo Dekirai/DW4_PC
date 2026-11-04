@@ -299,6 +299,16 @@ if(DW4_BUILD_APP)
     ${ZSTD_LIB}/decompress/zstd_decompress.c ${ZSTD_LIB}/decompress/zstd_decompress_block.c)
   target_include_directories(zstd_decoder PUBLIC ${ZSTD_LIB})
   target_compile_definitions(zstd_decoder PRIVATE ZSTD_DISABLE_ASM)
+  # Round J: the checkpoints' compression (docs/SEAMLESS.md 6.13.2), the
+  # single-threaded encoder of the same release.
+  add_library(zstd_encoder STATIC
+    ${ZSTD_LIB}/common/fse_decompress.c ${ZSTD_LIB}/compress/fse_compress.c ${ZSTD_LIB}/compress/hist.c ${ZSTD_LIB}/compress/huf_compress.c
+    ${ZSTD_LIB}/compress/zstd_compress.c ${ZSTD_LIB}/compress/zstd_compress_literals.c ${ZSTD_LIB}/compress/zstd_compress_sequences.c
+    ${ZSTD_LIB}/compress/zstd_compress_superblock.c ${ZSTD_LIB}/compress/zstd_double_fast.c ${ZSTD_LIB}/compress/zstd_fast.c
+    ${ZSTD_LIB}/compress/zstd_lazy.c ${ZSTD_LIB}/compress/zstd_ldm.c ${ZSTD_LIB}/compress/zstd_opt.c)
+  target_include_directories(zstd_encoder PUBLIC ${ZSTD_LIB})
+  target_compile_definitions(zstd_encoder PRIVATE ZSTD_DISABLE_ASM)
+  target_link_libraries(zstd_encoder PUBLIC zstd_decoder)
   find_package(OpenGL REQUIRED)
   add_library(imgui STATIC
     ${imgui_src_SOURCE_DIR}/imgui.cpp
@@ -316,7 +326,7 @@ if(DW4_BUILD_APP)
     src/game/online_achievements.cpp src/game/host_view.cpp src/game/overflow_run.cpp src/game/overflow_host.cpp src/game/overflow_driver.cpp)
   target_include_directories(dw4_game PRIVATE ${pl_mpeg_src_SOURCE_DIR} ${stb_src_SOURCE_DIR})
   target_compile_definitions(dw4_game PRIVATE DW4_PC_VERSION="${PROJECT_VERSION}")
-  target_link_libraries(dw4_game PRIVATE dw4_engine dw4_online imgui zstd_decoder SDL3::SDL3 OpenGL::GL)
+  target_link_libraries(dw4_game PRIVATE dw4_engine dw4_online imgui zstd_decoder zstd_encoder SDL3::SDL3 OpenGL::GL)
   # F1 Saves > Cloud backup (the online character's lane, docs/SEAMLESS.md 9).
   target_sources(dw4_game PRIVATE src/game/cloud_backup_panel.cpp)
   if(WIN32)
