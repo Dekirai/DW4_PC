@@ -60,7 +60,7 @@ list on the port hitbox (`Hitbox::shared_struck`) and the silent answer to
 | --- | --- | --- |
 | H2 donors | `Engine` loader state 3 (`load_overflow_donors`, `src/engine/overflow/donors.cpp`); `SoundManager::add_named_sounds` | the request's families from their donor stages (all 21 on any arena, no fixed-stage lock, no six-family pool), Guardians from a stage or a separate package, never a `ded_*.lua`; their SE banks; named stream entries of other stages |
 | H3 exits | `Engine::request_stage`, `soft_reset_allowed`, `set_reset_enabled`; `end_g_000bcaps.lua` (H10) | the host's first request and `OverflowRules::field_change` pass; every other stage change (gates, the return gate matz01, a gate disc) is refused and becomes `RunEnd{stage_exit, target}`; no soft reset, no console reset; the game over script becomes `RunEnd{game_over}`. The director hears of the end once |
-| H4 rule values | `lua_host.cpp` BLTisHitCheck, BLTgetDamageValue, BLPgetDamageValue; `combat.cpp` skill_up, recalc_player (NEXTEXP), experience_up, apply_level_ups; `items.cpp` update_item; `model_ctrl.cpp` MOVE | Arts always hit; dealt: Art factor x tag factor, technique family factors, element factors; taken: time x tier x Corrupted, the 35 % clamp for non-Guardians (logged, counted); the run curve; the tier's EXP factor; the level-up rule (fractions, +3 % HP, the meters show what is left); the skill rule (Art hit 1 + 1 on a crit, x GROW / 100, kept as a fraction; blast hit 2; heal / force cast 12; the run's caps; RECALCPLAYER and the CURRENT2BASE store; an SQ_TECUP panel only for a new technique, rank or weapon, at most one in 30 frames); the instant pickup reach; the walk speed factor |
+| H4 rule values | `lua_host.cpp` BLTisHitCheck, BLTgetDamageValue, BLPgetDamageValue; `combat.cpp` skill_up, recalc_player (NEXTEXP), experience_up, apply_level_ups; `items.cpp` update_item; `model_ctrl.cpp` MOVE; `status.cpp` the poison tick (the O1a review round) | Arts always hit; dealt: Art factor x tag factor, technique family factors, element factors; taken: time x tier x Corrupted, the 35 % clamp for non-Guardians (logged, counted); the run curve; the tier's EXP factor; the level-up rule (fractions, +3 % HP, the meters show what is left); the skill rule (Art hit 1 + 1 on a crit, x GROW / 100, kept as a fraction; blast hit 2; heal / force cast 12; the run's caps; RECALCPLAYER and the CURRENT2BASE store; an SQ_TECUP panel only for a new technique, rank or weapon, at most one in 30 frames); the instant pickup reach; the walk speed factor; a poison tick never takes the player's last HP (`player_hit.poison_keeps_one`) |
 | H5 notifications | next to the port events | `enemy_defeated`, `level_up`, `item_taken`, `player_hit` (and `run_end`) |
 | H6 port hitbox | `ModelRam::port_hitboxes`, `update_port_hitboxes` after the model's own subcommands | see section 2 |
 | H8 run player | `recalc_player` | TECHn_LEVEL x 2/3 rounded up; `digivolve`. A core's LVPOINT is checked only by the equipment window and the shops (subwnd*.cpp); the run's level is the player's DW4 level, so the director's gear offers read it directly |
@@ -77,8 +77,16 @@ written as the Lua VM writes them. In a run: a normal or Corrupted enemy's
 hit takes the HP and shows the number, the HP meter and the panel's shake,
 the element's hit spark (`SDMG<F/I/T/D>1`'s own starter) and PC_DMG01, but
 no damage sequence and no turn towards the attacker; stun, sleep and bind
-last at most 30 frames; 50 frames of MUTEKI follow every damaging hit. A
-Guardian's hit keeps the original reaction. A miss shows the guard effect
+last at most 30 frames; 50 frames of MUTEKI follow every damaging hit. Its
+poison goes through the run's rule (`OverflowRules::poison`, the O1a review
+round): DW4's tick (MaxHP x KOUKARANK / 100 every 2 s) times the
+damage-taken rule's factors (time, tier, Corrupted, the family's), at most
+`poison_ticks` (5) ticks and `poison_share` (10 %) of MaxHP in all, and a
+tick never takes the last HP (`status.cpp`), so every defeat of a run is the
+hit rule's, where Raise can answer it; the hit's report carries the poison
+(`HitTaken::poison_tick`, `poison_ticks`). Before, MRβ02's rank 3 poison
+(23 ticks of 3 %) took 69 % of MaxHP from a hit of 1 and ended runs outside
+the hit rule. A Guardian's hit keeps the original reaction (and poison). A miss shows the guard effect
 (`GURD<D/S/A/G>2`'s starter) and EFX_GUARD without SQ_GUARDR. A guarded hit
 (classic buttons) passes at 50 % without a reaction. At 0 HP the director
 may revive; otherwise `RunEnd{player_defeated}` and the original knock-down.
