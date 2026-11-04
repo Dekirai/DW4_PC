@@ -399,6 +399,8 @@ public partial class HubLogicTests
     {
         var sh = new StateHashMsg(3, 4, 1200, 0x0123456789ABCDEFUL, 17, 1);
         Assert.Equal(sh, StateHashMsg.Parse(sh.Frame()[Wire.HeaderBytes..]));
+        // Golden bytes shared with tests/online_wire_tests.cpp.
+        Assert.Equal("03000000" + "04000000" + "b0040000" + "efcdab8967452301" + "11000000" + "01", Convert.ToHexStringLower(sh.Frame()[Wire.HeaderBytes..]));
         var cp = new CheckpointMsg(3, 4, 1200, 5, 17, 10, 4, [1, 2, 3]);
         var back = CheckpointMsg.Parse(cp.Frame()[Wire.HeaderBytes..]);
         Assert.Equal((cp.Tick, cp.Total, cp.Offset), (back.Tick, back.Total, back.Offset));
