@@ -3,6 +3,7 @@
 #include "dw4/engine/online_membership.hpp"
 
 #include "dw4/engine/managers.hpp"
+#include "dw4/engine/overflow.hpp"
 #include "dw4/packages.hpp"
 
 #include <algorithm>
@@ -632,7 +633,17 @@ void Engine::log(std::string text) {
 
 void Engine::request_stage(std::string name) {
     std::transform(name.begin(), name.end(), name.begin(), [](unsigned char c) { return char(std::tolower(c)); });
+    // Data Overflow (H3): a run engine changes its stage only for the
+    // director (and the host's first request); every other change ends the run.
+    if (overflow_run_ && !overflow_->stage_request(*this, name)) return;
     pending_stage_ = std::move(name);
+}
+
+void Engine::set_overflow_rules(std::shared_ptr<overflow::OverflowRules> rules) {
+    overflow_ = std::move(rules);
+    overflow_run_ = overflow_ && overflow_->run();
+    // (H3: no console reset in a run.)
+    if (overflow_run_) console_reset_.set_enabled(false);
 }
 
 std::string Engine::loader_state() const {
@@ -1773,6 +1784,8 @@ void Engine::loader_update() {
         // Randomizer: the enemy pool's families from donor stages (no disc
         // time; every machine loads the same).
         if (cheats_.enemy_shuffle()) load_enemy_donors();
+        // Data Overflow (H2): the run's families, Guardians and streams.
+        if (overflow_run_) load_overflow_donors();
         common_queue_.clear();
         loader_state_ = 4;
         return;
@@ -2029,6 +2042,8 @@ void Engine::step_impl(const std::array<PadSample, 4>& samples) {
     // Seamless co-op: no leash while OnlineRules::leash_off (a no-op offline).
     apply_leash_rule();
     update_managers();
+    // Data Overflow (H9): the director's step, after the managers.
+    if (overflow_run_) overflow_->step(*this);
 }
 
 // The scheduler run (8028B7B0): the managers scheduled at registration, then

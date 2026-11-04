@@ -1,4 +1,5 @@
 #include "dw4/engine/managers.hpp"
+#include "dw4/engine/overflow.hpp"
 #include "dw4/engine/gekko_math.hpp"
 #include "dw4/motion.hpp"
 
@@ -604,6 +605,9 @@ void ModelCtrlManager::run_commands(Engine& engine, ModelRam& ram) {
                     else if (name == "Back") { motion.channel = 2; motion.setup.mode = dw4::MotionMode::impulse_negative; }
                     else if (name == "Jump") { motion.channel = 1; motion.setup.mode = dw4::MotionMode::impulse_positive; }
                     else if (name == "Fall") { motion.channel = 1; motion.setup.mode = dw4::MotionMode::accelerate_negative; }
+                    // Data Overflow (H4): the run's walk speed (Boost, traits).
+                    if (engine.overflow_run() && ram.is_player && name == "Move" && engine.overflow()->walk_factor != 1.0f)
+                        motion.setup.value *= engine.overflow()->walk_factor;
                 }
                 ram.channels.apply(motion);
             } catch (const std::exception& error) {
@@ -812,6 +816,7 @@ bool ModelCtrlManager::command(Engine& engine, Ram& base, std::string_view comma
         ram.label.clear();
         ram.effects.clear();
         ram.hitboxes.clear();
+        ram.port_hitboxes.clear();
         ram.sounds.clear();
         ++ram.hitbox_generation;
         // beNDMWMdlPEBaseInfoWork (players and enemies, 803398B0) holds the
@@ -1893,6 +1898,8 @@ void ModelCtrlManager::update_slot(Engine& engine, int slot) {
         if (effects && ram.generated && ram.hitbox_generation == generation) update_effects(engine, ram, effects);
         // (The sounds after the effects: their starts change no model.)
         if (sounds && ram.generated && ram.hitbox_generation == generation) update_sounds(engine, ram, sounds);
+        // Data Overflow (H6): the run's port hitboxes after the subcommands.
+        if (!ram.port_hitboxes.empty() && ram.generated) update_port_hitboxes(engine, ram);
         // 8030D00C..8030D028: walls and floors while +78 is set.
         if (ram.translated && ram.generated) {
             if (ram.pos_lock && trace_lock() && engine.messenger().count("HITLANDDELIVER", ram.info_name, ram.index))
@@ -2237,6 +2244,68 @@ void ModelCtrlManager::player_erase_hook(Engine& engine, ModelRam& ram) {
     }
     engine.log("player " + std::to_string(ram.index) + " defeated");
     engine.port_event({PortEvent::Kind::player_defeated, ram.index, 0, 0, {}}); // observe-only
+}
+
+// Data Overflow (4.8): the run's invulnerable frames after a hit. The count
+// runs down by the KEIKATIMER frames like the MUTEKI subcommand's (8030C1F0
+// makes a missing timer first).
+void ModelCtrlManager::set_muteki(Engine& engine, ModelRam& ram, float frames) {
+    ensure_keika(ram, engine.time());
+    ram.muteki = frames;
+}
+
+// Data Overflow (H6, SURVIVAL.md 6.3): the port hitboxes advance like the
+// subcommand hitboxes (update_hitboxes: the system frame step, the first
+// check at the delay, the last before the end) and fire like fire_hitbox,
+// from the model's position, turned to their own yaw when aimed, with the
+// tag as a third int that hit_check hands the hit script context.
+void ModelCtrlManager::update_port_hitboxes(Engine& engine, ModelRam& ram) {
+    const float step = engine.system_step();
+    std::size_t count = ram.port_hitboxes.size();
+    for (std::size_t i = 0; i < count && i < ram.port_hitboxes.size();) {
+        auto& box = ram.port_hitboxes[i];
+        box.elapsed += step;
+        bool check = false;
+        if (!box.started) {
+            if (box.elapsed >= box.delay) {
+                box.started = true;
+                check = true;
+            }
+        } else if (box.elapsed >= box.end) {
+            ram.port_hitboxes.erase(ram.port_hitboxes.begin() + std::ptrdiff_t(i));
+            --count;
+            continue;
+        } else {
+            check = true;
+        }
+        if (check && ram.node) {
+            const auto copy = box;
+            const auto& m = ram.node->matrix;
+            Vec3f center;
+            if (copy.aimed) {
+                const float s = std::sin(copy.yaw), c = std::cos(copy.yaw);
+                const Vec3f o{copy.offset.x, copy.offset.y, copy.offset.z + copy.shift};
+                center = {m(3, 0) + o.x * c + o.z * s, m(3, 1) + o.y, m(3, 2) - o.x * s + o.z * c};
+            } else {
+                const Vec3f o = copy.offset;
+                center = {o.x * m(0, 0) + o.y * m(1, 0) + o.z * m(2, 0) + m(3, 0), o.x * m(0, 1) + o.y * m(1, 1) + o.z * m(2, 1) + m(3, 1),
+                          o.x * m(0, 2) + o.y * m(1, 2) + o.z * m(2, 2) + m(3, 2)};
+            }
+            const Vec3f half{copy.size.x * 0.5f, copy.size.y * 0.5f, copy.size.z * 0.5f};
+            const int group = copy.kind / 10000;
+            const bool enemy = group == 7 || group == 8 || (group == 0 && copy.kind >= 1000);
+            const char* category = group == 6 ? "HITPLAYERTALK" : enemy ? "HITENEMYBULLET" : "HITPLAYERBULLET";
+            Packet packet;
+            packet.ints = {copy.kind, ram.index, copy.tag};
+            packet.vectors = {Vec3f{center.x - half.x, center.y - half.y, center.z - half.z},
+                              Vec3f{center.x + half.x, center.y + half.y, center.z + half.z}};
+            packet.matrices.push_back(m);
+            packet.strings.emplace_back(ram.info_name);
+            engine.messenger().send(engine, category, std::nullopt, -1, "CHKBULLET", packet);
+            if (!ram.generated) return;
+        }
+        ++i;
+    }
 }
 
 // KIND_PLAYER2 bit capsule (beNDMWMdlPlayer2, 8034EB78): switches on while a
@@ -2640,6 +2709,7 @@ bool ModelCtrlManager::hit_check(Engine& engine, ModelRam& ram, Packet& packet) 
     context.shooter = packet.integer(1, -1);
     context.shooter_name = std::string(packet.string(0));
     context.bullet_box = box;
+    context.port_tag = packet.integer(2, 0); // Data Overflow (H6): a port hitbox's tag, 0 otherwise
     // 0x8030E718..0x8030E76C, before the hit script: the translation of the
     // packet's matrix #0 (the firing hitbox model's own matrix, 0x803101F0)
     // and the own node's. The shooter name / index only feed GETRECNO and
