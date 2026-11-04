@@ -74,6 +74,10 @@ int Engine::picture_slot() const {
 // the prompt.
 void Engine::picture_hidden_roots(std::vector<const Node*>& out) {
     out.clear();
+    // Own windows and scenes (5.3, online_scenes.cpp): the other members'
+    // window copies and the layers this member's own window hides, also in a
+    // one-member instance.
+    if (online_.enabled) scoped_picture_hidden(out);
     if (!online_shared()) return;
     const int picture = picture_slot();
     const int view = view_slot_;

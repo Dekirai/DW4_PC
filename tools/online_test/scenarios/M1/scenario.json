@@ -1,0 +1,24 @@
+{
+  "desc": "own menus (SEAMLESS.md 5.3): a alone opens its status window among the enemies and is hit, b joins while it is open; a's menu while b fights near it, both menus at once, a's menu while b walks far away, a talks with the field recorder while b moves; nothing pauses, every window shows on its owner's screen only",
+  "card": "k10",
+  "seed_story": true,
+  "shots": true,
+  "frames": 70000,
+  "timeout": 1300,
+  "min_shared_ticks": 5000,
+  "clients": [
+    {
+      "name": "a",
+      "script": "a.script",
+      "start": 0
+    },
+    {
+      "name": "b",
+      "script": "b.script",
+      "start": 50
+    }
+  ],
+  "env": {
+    "DW4_LABELS": "auto"
+  }
+}

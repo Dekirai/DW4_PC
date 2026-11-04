@@ -359,6 +359,15 @@ standing where they really are (look only: no collision, no talks, nothing
 they do changes your game; a figure in your way or inside your own Digimon
 turns see-through). With a server older than this version the figures come
 without their weapon and only run or stand.
+Everyone plays for themselves as in an online game: the status window (START),
+NPC talks and the map recorders in fields and dungeons are the member's own -
+they open on that member's screen only (the others see "Kim is in the menu"
+or "Kim is talking" over the name tag), several members can have their menus
+open at once, and they pause nothing: enemies, generators, the other members,
+timers and music run on, and a member in a menu stands still and can be hit.
+Only one NPC talk runs in an instance at a time, as in local co-op: while
+Kim talks, another member's NPC does not answer yet. An NPC's exchange
+trades with the talking member's own folders.
 
 ```bat
 powershell -ExecutionPolicy Bypass -File scripts\online-dev.ps1
@@ -410,10 +419,10 @@ Online has "Copy path" and "Open folder" for it).
 
 Known limits of the preview:
 
-- Talks, the map recorders, camera tours and the status window still pause
-  the whole instance (every member in it), as in local co-op. The status
-  window (START) is to open only on the own screen and pause nothing
-  (decided 31.10; docs/SEAMLESS.md 18).
+- Camera tours and tutorials on mats, the shaking mats and the story scenes
+  still pause the whole instance (every member in it), as in local co-op;
+  only the status window, NPC talks and the map recorders are each member's
+  own so far. A map recorder's floor map shows for the member who read it.
 - Pits still darken every member's screen in the instance.
 - Story progress made while the room owner is away is not kept (the
   server's default; the player is told at the next stage change).

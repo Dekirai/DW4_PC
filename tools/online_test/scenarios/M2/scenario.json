@@ -1,0 +1,13 @@
+{
+  "desc": "own scenes (SEAMLESS.md 5.3): a reads the dungeon's map recorder in dng101b1 (talk window and map overlay) while b moves; the talk pauses nothing and shows on a's screen only",
+  "card": "k10",
+  "seed_story": true,
+  "shots": true,
+  "frames": 60000,
+  "timeout": 1100,
+  "min_shared_ticks": 3000,
+  "clients": [
+    {"name": "a", "script": "a.script", "start": 0},
+    {"name": "b", "script": "b.script", "start": 3}
+  ]
+}

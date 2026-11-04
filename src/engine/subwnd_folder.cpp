@@ -14,9 +14,13 @@ std::vector<int> other_players(Engine& engine, int self) {
     return out;
 }
 
+// (A partner who left the instance while this window was open - online, a
+// member's own window stays open while others come and go, SEAMLESS.md 5.3 -
+// is no partner any more: nothing goes to it.)
 GameSystem::PlayerSlot* slot_of(Engine& engine, int k) {
     auto* sys = engine.get<GameSystem>();
-    return sys ? &sys->players[std::size_t(std::clamp(k, 0, 3))] : nullptr;
+    auto* slot = sys ? &sys->players[std::size_t(std::clamp(k, 0, 3))] : nullptr;
+    return slot && slot->joined ? slot : nullptr;
 }
 
 std::string digit(int value) { return std::string(1, char('0' + value)); }
@@ -249,13 +253,18 @@ struct DeviceMenu : Window {
             set_step(4);
             message = -1;
             target = selection;
-            if (target >= 0 && target < int(sizes.size()) && sizes[std::size_t(target)] < 36) {
+            // (Online the partner's folder can fill while this window is
+            // open - its own window takes gifts too and its player picks
+            // items up, SEAMLESS.md 5.3 - so the gift looks at the room
+            // again; offline the frozen world keeps the size the partner
+            // list showed.)
+            auto* other = target >= 0 && target < int(partners.size()) ? slot_of(engine, partners[std::size_t(target)]) : nullptr;
+            if (other && target < int(sizes.size()) && sizes[std::size_t(target)] < 36 && other->devices.size() < 36 && device >= 0 &&
+                device < int(p.devices.size())) {
                 note.text_script(engine, "txt_status.lua", 131);
-                if (auto* other = slot_of(engine, partners[std::size_t(target)])) {
-                    ItemDevice moved = p.devices[std::size_t(device)];
-                    p.remove_device(device);
-                    other->devices.push_back(moved);
-                }
+                ItemDevice moved = p.devices[std::size_t(device)];
+                p.remove_device(device);
+                other->devices.push_back(moved);
             } else {
                 note.text_script(engine, "txt_status.lua", 149);
             }
@@ -592,8 +601,19 @@ struct CtrlDisk : Window {
                 set_step(3);
                 return;
             }
-            if (auto* disk = partner_disk(engine, target)) {
-                const int given = amount_max - selection;
+            // (Online the partner's count can grow while this window is open -
+            // its own window takes gifts too and its player picks disks up,
+            // SEAMLESS.md 5.3 - so the gift gives what still fits, and with
+            // no room left the partner is full (143); offline the frozen
+            // world keeps the counts amount_max came from.)
+            {
+                auto* disk = partner_disk(engine, target);
+                const int chosen = amount_max - selection;
+                const int given = disk ? std::min({chosen, 9 - disk->count, own.count}) : 0;
+                if (!disk || (chosen > 0 && given <= 0)) {
+                    set_step(10);
+                    return;
+                }
                 own.count -= given;
                 disk->count += given;
             }
@@ -740,10 +760,24 @@ struct CtrlSendBit : Window {
                 set_step(0);
                 return;
             }
-            switch_line(engine, "STWINFONT29", "font100", false);
-            p->bits -= amount;
-            if (auto* other = slot_of(engine, partners[std::size_t(std::clamp(target, 0, int(partners.size()) - 1))]))
-                other->bits += amount;
+            {
+                // (Online the partner's bits can grow while this window is
+                // open - its own window takes gifts too and its player picks
+                // bits up, SEAMLESS.md 5.3 - so the gift sends what still
+                // fits below 9,999,999, and nothing when nothing fits (back
+                // to the amount, as an amount of 0); offline the frozen
+                // world keeps the bits amount_max came from.)
+                auto* other = slot_of(engine, partners[std::size_t(std::clamp(target, 0, int(partners.size()) - 1))]);
+                const int given = other ? std::min({amount, 9999999 - other->bits, p->bits}) : 0;
+                if (given < 1) {
+                    model(engine, "i_stcursor04", 0, "SQ_CLOSE");
+                    set_step(0);
+                    return;
+                }
+                switch_line(engine, "STWINFONT29", "font100", false);
+                p->bits -= given;
+                other->bits += given;
+            }
             set_step(3);
             return;
         case 3:

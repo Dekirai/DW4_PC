@@ -39,7 +39,8 @@ scenario.json with "server": {...} gets its own server with those settings merge
 (S14h / S14a: {"Rooms": {"StoryWhileOwnerAway": "hold"}}); "min_shared_ticks" lowers the 10,000 shared ticks a scenario
 needs (S14: one member plays); "seed_story": true starts the room story from the room creator's card (its online_story
 row, SEAMLESS.md 8.4), so the members' card stories are not new to the room (the title gives every member the room
-story at game start).
+story at game start); "shots": true (scenario or client) lets the scripts' "shot NAME" steps write NAME.bmp into
+the run folder (the client then draws its pictures in its hidden window).
 
 Without a scenario every game scenario runs. G1 is the integration's first game run (a new game from the title, both
 meet in the first field).
