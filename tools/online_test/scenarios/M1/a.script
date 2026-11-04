@@ -1,6 +1,7 @@
 # M1, member a (k10, slot 0): own menus in stag0101 (docs/SEAMLESS.md 5.3, round 63). a arrives alone, opens its
-# menu among the goburi and is hit while it is alone in its instance; b joins while the menu is open. Then a's menu
-# while b fights near it, both menus at once, a's menu while b is far away, a talk with the field recorder.
+# menu among the goburi and is hit while it is alone in its instance; b joins while the menu is open and fights the
+# goburi beside a while they go on hitting a. Then a's menu while b fights near it, both menus at once, a's menu while
+# b is far away, a talk with the field recorder.
 campaign until stage=stagml11,control
 idle until epoch>=@90
 explore mate00 yes until stage=stag0101,control
@@ -14,7 +15,9 @@ idle until lost>=1 or frames>=4000 fail stagechange,menu=0,frames>=3990
 log a was hit in its menu while alone
 idle until present=2 or frames>=24000 fail stagechange,dead,menu=0,frames>=23990
 log case 2: b joined while a is in its menu
-idle until frames>=600 fail stagechange,menu=0
+idle until near<45 or frames>=1500 fail stagechange,menu=0
+log case 2b: b fights near a while a is in its menu
+idle until frames>=420 fail stagechange,menu=0
 shot a2_menu_b_joined
 menu close until menu=0 fail stagechange
 log a closed its menu

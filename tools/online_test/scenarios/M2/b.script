@@ -4,7 +4,7 @@ campaign until stage=stagml11,control
 idle until epoch>=@91
 explore mate00 yes until stage=stag0101,control
 log in the field
-explore matz00 yes until stage=dng101b1,control
+explore matz00 yes 2 until stage=dng101b1,control
 log b in the dungeon
 wander -300 330 40 until scenes>=1 or frames>=14000 fail stagechange,frames>=13990
 log b sees a reading the map

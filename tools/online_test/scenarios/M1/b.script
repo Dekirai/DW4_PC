@@ -1,6 +1,7 @@
-# M1, member b (k10, slot 1): joins a's instance while a is in its menu and sees the field, no window; fights near a
-# while a is in its menu, opens its own while a's is open, walks west (the field route as far as the bush gap)
-# while a is in its menu, wanders there while a talks with the recorder.
+# M1, member b (k10, slot 1): joins a's instance while a is in its menu and sees the field, no window; goes to a and
+# fights the goburi beside it while a's menu stays open; fights near a while a is in its menu again, opens its own
+# while a's is open, walks west (the field route as far as the bush gap) while a is in its menu, wanders there while
+# a talks with the recorder.
 campaign until stage=stagml11,control
 idle until epoch>=@140
 explore mate00 yes until stage=stag0101,control
@@ -8,7 +9,9 @@ log b in the field
 idle until frames>=120 fail menus=0
 log b sees a in its menu
 shot b1_joined_a_in_menu
-idle until menus=0 or frames>=6000 fail stagechange
+follow 20 until near<40 or frames>=1400 fail stagechange,menus=0
+log b fights near a in its menu (after the join)
+fight 470 175 60 until menus=0 or frames>=3000 fail stagechange
 log a closed its menu
 goto 450 50 15 fail stagechange
 fight 440 20 60 until menus>=1 or frames>=3000 fail stagechange,frames>=2990

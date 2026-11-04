@@ -1,11 +1,12 @@
-# M2, member a (k10): with b through the lobby gate and stag0101's matz00 into dng101b1, then the map recorder there
+# M2, member a (k10): with b through the lobby gate and stag0101's matz00 into dng101b1 (both wait on the mat for
+# each other, so they arrive together: a member arriving later can find another context), then the map recorder there
 # (n_recorderdng#0 behind g_d1door#0, which GENE-03's wave opens: flag 102; its talk window and the floor map
 # j_map101b1) while b walks about.
 campaign until stage=stagml11,control
 idle until epoch>=@90
 explore mate00 yes until stage=stag0101,control
 log in the field
-explore matz00 yes until stage=dng101b1,control
+explore matz00 yes 2 until stage=dng101b1,control
 log in the dungeon
 fight -180 20 90 until flag:102>=1 or frames>=6000 fail stagechange,dead,frames>=5990
 log the door to the map recorder is open

@@ -4612,8 +4612,8 @@ anyway; joining goes through the room list.
 | S22 | a joiner whose target leaves the stage during the catch-up (fallback NEW) or forks (follows the instance id) | S1 |
 | S23 | boss-locked target: *Wait for them* (joins after the boss falls) and *Go alone* | S3 |
 | S24 | map recorder read while the partner moves: the reader's own scene, the floor map on its screen only (round 63: M2 in dng101b1; dng102b3 with the offline two-member harness) | r63 |
-| M1 | own menus (5.3): a alone opens its status window among the enemies and is hit; b joins while it is open; a's menu while b fights near it; both menus at once; a's menu while b walks far away; a talks with the field recorder while b moves; screenshots from both machines (`"shots": true`, the scripts' `shot NAME`) | r63 |
-| M2 | own scenes (5.3): a reads the map recorder in dng101b1 (talk window and floor map) while b walks about; screenshots from both machines | r63 |
+| M1 | own menus (5.3): a alone opens its status window among the enemies and is hit; b joins while it is open, comes over and fights the goburi that go on hitting a; a's menu while b fights near it; both menus at once; a's menu while b walks far away; a talks with the field recorder while b moves; screenshots from both machines (`"shots": true`, the scripts' `shot NAME`) | r63 |
+| M2 | own scenes (5.3): a and b enter dng101b1 together (both wait on matz00 for each other), a reads the map recorder there (talk window and floor map) while b walks about; screenshots from both machines | r63 |
 | S25 | Trailmon ride (dng412b3) with one member not aboard: no fork, the rider moves alone | S3 |
 | A1 | online achievements: S5's run with achievements on; each machine reports its own player (online_join in its solo lobby, first_defeat in the sealed field) with the ranked context, the counters at the end; the server holds them (`scenario.json` "achievements") | S2 |
 | D1 | a new account: Create Digimon (its `/play` with the new-character record), the first stage change: box 1's rows in the tables (SQL), `v_characters` and `v_character_devices` readable, the profile shows the box with its face picture | D |
