@@ -238,9 +238,10 @@ public class OnlineStoryTests
 
     /// <summary>
     /// The user's decision of 31.10 through the real relay (SEAMLESS.md 8.6): a room whose owner has no online story starts
-    /// at zero. A guest's lobby flag before the owner's game is in a stage is dropped (not_started; the room API says the
-    /// story has not started), the owner's lobby starts it, the guest's next barrier removes the value, and a value set anew
-    /// afterwards becomes the owner's revision 1.
+    /// at zero. A guest's lobby flag and a phase claim two steps above the room before the owner's game is in a stage are
+    /// dropped (not_started, the phase jump too: round 59's verification; the room API says the story has not started),
+    /// the owner's lobby starts it, a value the guest's old visit offers only after the start is dropped as well, the
+    /// guest's next barrier removes them all, and a value set anew afterwards becomes the owner's revision 1.
     /// </summary>
     [DbFact]
     public async Task A_new_owners_room_starts_at_zero_through_the_relay()
@@ -263,22 +264,26 @@ public class OnlineStoryTests
         await b.SendAsync(new BarrierMsg(b.Inst, b.Visit, 0, "stagml12", 0, 1, 1, 5, [1]).Frame());
         var ok = BarrierOkMsg.Parse(await b.NextAsync(Msg.BarrierOk));
         await Task.Delay(1200);
-        await b.SendAsync(new StoryMsg(ok.NewInst, ok.NewVisit, 0, new StoryDelta { Flags = [393] }).Frame());
+        await b.SendAsync(new StoryMsg(ok.NewInst, ok.NewVisit, 0, new StoryDelta { Phase = 2, Flags = [393] }).Frame());
         var refused = StoryAckMsg.Parse(await b.NextAsync(Msg.StoryAck));
-        Assert.Equal(new StoryRefused(StoryKeyKind.Flag, 393, StoryRefusal.NotStarted), refused.Refused.Single());
+        Assert.Equal([new(StoryKeyKind.Phase, 2, StoryRefusal.NotStarted), new StoryRefused(StoryKeyKind.Flag, 393, StoryRefusal.NotStarted)],
+            refused.Refused);
         var view = await (await guest.GetAsync($"/api/v1/rooms/{code}/story")).Json();
         Assert.False(view.GetProperty("started").GetBoolean());
-        Assert.Equal([393], view.GetProperty("droppedFlags").EnumerateArray().Select(e => e.GetInt32()));
+        Assert.Equal([2, 393], view.GetProperty("droppedFlags").EnumerateArray().Select(e => e.GetInt32()));
 
         // The owner's game enters its lobby: the story starts (at zero).
         await a.SendAsync(new BarrierMsg(a.Inst, a.Visit, 0, "stagml11", 0, 1, 1, 5, [0]).Frame());
         BarrierOkMsg.Parse(await a.NextAsync(Msg.BarrierOk));
         Assert.True((await (await guest.GetAsync($"/api/v1/rooms/{code}/story")).Json()).GetProperty("started").GetBoolean());
+        // The guest's visit from before the start offers 392 only now: dropped as well.
+        await b.SendAsync(new StoryMsg(ok.NewInst, ok.NewVisit, 0, new StoryDelta { Flags = [392] }).Frame());
+        Assert.Equal(new StoryRefused(StoryKeyKind.Flag, 392, StoryRefusal.NotStarted), StoryAckMsg.Parse(await b.NextAsync(Msg.StoryAck)).Refused.Single());
 
-        // The guest's barrier removes 393 (the dropped set); set anew in its next visit, it counts.
+        // The guest's barrier removes them (the dropped set); set anew in its next visit, 393 counts.
         await b.SendAsync(new BarrierMsg(ok.NewInst, ok.NewVisit, 0, "stagml13", 0, 1, 1, 5, [1]).Frame());
         var next = BarrierOkMsg.Parse(await b.NextAsync(Msg.BarrierOk));
-        Assert.Equal([393], StoryKeys.FromBlob(next.Dropped).Flags);
+        Assert.Equal([2, 392, 393], StoryKeys.FromBlob(next.Dropped).Flags);
         await b.SendAsync(new BarrierMsg(next.NewInst, next.NewVisit, 0, "stagml12", 0, 1, 1, 5, [1]).Frame());
         var again = BarrierOkMsg.Parse(await b.NextAsync(Msg.BarrierOk));
         await Task.Delay(1200);

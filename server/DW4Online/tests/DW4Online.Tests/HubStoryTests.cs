@@ -328,6 +328,58 @@ public class HubStoryTests
     }
 
     /// <summary>
+    /// Round 59's verification (OZ at the hub): the guest's lobby (phase 1) and first briefing (phase 2) before the owner's
+    /// game starts. Every claim is dropped, phase 2 included (it was refused phase_jump and kept before), and the barrier out
+    /// of stagML02 removes it from the guest's engine. The owner's own lobby phase 1 merges although the guest's old lobby
+    /// offered the same value after the start; the guest's old stagML02 visit, offering phase 2 again once it is one step
+    /// above the room, and a value it offers only after the start, are refused and dropped. The room story stays at the
+    /// owner's phase 1.
+    /// </summary>
+    [Fact]
+    public void A_guests_briefing_from_before_the_start_never_becomes_the_new_owners_phase_2()
+    {
+        var h = new Harness(StoryPolicy.Apply, instances: new InstanceOptions { StoryBurst = 1000 }, started: false);
+        var a = h.Connect("a", 0); // the owner, at the title
+        var b = h.Connect("b", 1);
+        h.Barrier("b", "stagml11");
+        h.Advance(12_000);
+        Assert.All(h.Story("b", new StoryDelta { Phase = 1, Flags = [501] }).Refused, r => Assert.Equal(StoryRefusal.NotStarted, r.Reason));
+        h.Barrier("b", "stagml02");
+        Assert.Equal([1, 501], StoryKeys.FromBlob(b.LastOk.Dropped).Flags);
+        h.Advance(12_000);
+        var ack = h.Story("b", new StoryDelta { Phase = 2, Flags = [320] });
+        Assert.Equal([new(StoryKeyKind.Phase, 2, StoryRefusal.NotStarted), new StoryRefused(StoryKeyKind.Flag, 320, StoryRefusal.NotStarted)], ack.Refused);
+        Assert.Equal([1, 2, 320, 501], h.Hub.StoryState().DroppedFlags);
+        // The owner's game enters its lobby: the story starts.
+        h.Barrier("a", "stagml11");
+        Assert.True(h.Hub.StoryState().Started);
+        h.Advance(1_000);
+        // The guest's old stagML02 visit offers flag 502 only now (set a moment before the start): dropped as well.
+        Assert.Equal(StoryRefusal.NotStarted, h.Story("b", Flags(502)).Refused.Single().Reason);
+        h.Advance(10_500);
+        Assert.Empty(h.Story("a", new StoryDelta { Phase = 1, Flags = [501] }).Refused);
+        Assert.Equal((1u, 1), (h.Hub.StoryState().Revision, h.Hub.StoryState().Phase));
+        // Phase 2 is one step above the room now, from stagML02, in an old visit, the guest's first step: refused all the same,
+        // in the visit and at its barrier, which removes it from the guest's engine.
+        h.Advance(300_000);
+        Assert.All(h.Story("b", new StoryDelta { Phase = 2, Flags = [320, 502] }).Refused, r => Assert.Equal(StoryRefusal.NotStarted, r.Reason));
+        h.Hub.Housekeep(h.Now);
+        h.Barrier("b", "stagml11");
+        var dropped = StoryKeys.FromBlob(b.LastOk.Dropped).Flags;
+        Assert.Contains(2, dropped);
+        Assert.Contains(502, dropped);
+        Assert.Equal(1, StoryMerge.Phase(RoomStoryData.FromBlob(b.LastOk.Story, b.LastOk.StoryRevision)));
+        Assert.Equal((1u, 1), (h.Hub.StoryState().Revision, h.Hub.StoryState().Phase));
+        Assert.Single(h.Saved);
+        Assert.Equal(1, StoryMerge.Phase(h.Saved.Single().Story));
+        // The guest's visits from now on count: the lobby talk of its new visit.
+        h.Advance(12_000);
+        Assert.Empty(h.Story("b", Flags(426)).Refused);
+        Assert.Equal(2u, h.Hub.StoryState().Revision);
+        Assert.Equal(2u, a.LastAck.Revision);
+    }
+
+    /// <summary>
     /// The round 61 design's finding on round 59 (C1 on real clients showed it too): a new owner's phase 2, the first
     /// briefing a minute after the lobby's phase 1, waited for the five-minute spacing, was refused for the stage once the
     /// owner left stagML02, and the room story stayed at phase 1 for the room session. The owner's own steps are not spaced;
@@ -454,6 +506,39 @@ public class HubStoryTests
         h.Connect("b", 1);
         Assert.Equal(2, h.Story("b", new StoryDelta { Phase = 2, Folder = [1] }).Refused.Count(r => r.Reason == StoryRefusal.Wait));
         Assert.Equal(1, h.Hub.StoryState().Phase);
+    }
+
+    /// <summary>
+    /// A reconnect without resuming keeps the last visit's epoch: the client plays on alone in that visit, which no barrier
+    /// has cleaned since (before, the reconnect's stageless instance gave the member the current epoch, and a value dropped
+    /// in that visit, before the owner's start or while the owner was away, counted again from the same engine).
+    /// </summary>
+    [Fact]
+    public void A_reconnect_without_resuming_keeps_its_visits_drops()
+    {
+        var h = new Harness(StoryPolicy.Drop, started: false);
+        h.Connect("a", 0);
+        var b = h.Connect("b", 1);
+        h.Barrier("b", "stagml12");
+        Assert.Equal(StoryRefusal.NotStarted, h.Story("b", Flags(392)).Refused.Single().Reason);
+        h.Hub.Disconnect(h.M["b"].Member, b, h.Now);
+        h.Barrier("a", "stagml11");
+        Assert.True(h.Hub.StoryState().Started);
+        b = h.Connect("b", 1);
+        Assert.Equal(StoryRefusal.NotStarted, h.Story("b", Flags(392)).Refused.Single().Reason);
+        // A value that visit offers only now is from before the start as well.
+        Assert.Equal(StoryRefusal.NotStarted, h.Story("b", Flags(393)).Refused.Single().Reason);
+        Assert.Equal(0u, h.Hub.StoryState().Revision);
+        // Owner away (drop): the same.
+        h.Barrier("b", "stagml13");
+        h.Hub.OwnerPresence(false);
+        Assert.Equal(StoryRefusal.OwnerAway, h.Story("b", Flags(394)).Refused.Single().Reason);
+        h.Hub.Disconnect(h.M["b"].Member, b, h.Now);
+        h.Hub.OwnerPresence(true);
+        h.Connect("b", 1);
+        Assert.Equal(StoryRefusal.OwnerAway, h.Story("b", Flags(394)).Refused.Single().Reason);
+        Assert.Empty(h.Story("b", Flags(392)).Refused); // (set anew in this visit, after the start)
+        Assert.Equal(1u, h.Hub.StoryState().Revision);
     }
 
     /// <summary>

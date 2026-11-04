@@ -107,6 +107,8 @@ public sealed class HubMember(int index, long accountId, string name, bool owner
     public const int LoneLineLimit = 8;
     /// <summary>The story epoch of the member's last instance visit (its engine was cleaned at that barrier).</summary>
     public long VisitEpoch { get; set; }
+    /// <summary>The room owner has been in the member's last instance visit (<see cref="HubInstance.OwnerSeen"/>).</summary>
+    public bool VisitOwnerSeen { get; set; }
     /// <summary>The stage the member plays alone in while the server has no instance with a stage for it (taken out of its
     /// group, its connection lost in a lobby or at a barrier, a reconnect without resuming), and since when: its STORY counts
     /// against that stage (SEAMLESS.md 8.7).</summary>
@@ -357,6 +359,9 @@ public sealed class HubInstance(uint id)
     public StateReason Reason { get; set; } = StateReason.Loading;
     /// <summary>The room story's drop epoch when this visit began (a fork's child keeps its parent's: one engine line).</summary>
     public long StoryEpoch { get; set; }
+    /// <summary>The room owner has been in this visit (a fork's child keeps its parent's): a visit that began before a room's
+    /// story started counts from the owner's arrival on (SEAMLESS.md 8.6).</summary>
+    public bool OwnerSeen { get; set; }
 
     public TickLog Log { get; set; } = new();
     /// <summary>Sealed records beyond the log's end, waiting for the solo leader's LOG to reach them (1 to 2 members).</summary>

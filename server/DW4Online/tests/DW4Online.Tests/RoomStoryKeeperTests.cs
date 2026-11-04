@@ -225,9 +225,10 @@ public class RoomStoryKeeperTests
 
     /// <summary>
     /// An owner without an online story starts at zero (the user's decision of 31.10, SEAMLESS.md 8.6): until the owner's
-    /// game enters a stage every value is dropped with the reason NotStarted, before the per-visit rules (a value that only
-    /// waited could slip in after the start) and whatever the policy; afterwards an old visit's value stays refused, a
-    /// later visit's counts.
+    /// game enters a stage every story value is dropped with the reason NotStarted, before the per-visit rules (a value that
+    /// only waited could slip in after the start) and whatever the policy or the plausibility checks say (COUNTER 1 from
+    /// stagML02 is dropped too, its engine takes the room's value at the next barrier); afterwards an old visit's value stays
+    /// refused, a later visit's counts.
     /// </summary>
     [Fact]
     public void An_owner_without_a_story_starts_at_zero()
@@ -237,21 +238,194 @@ public class RoomStoryKeeperTests
         var t = k.Take(new StoryDelta { Phase = 1, Flags = [22], Folder = [0], Counters = [new CounterGrowth(1, 4, 1, 300)] }, "stagML02", visit,
             new StoryVisit(1, 7, 2)); // (a young visit: dropped, not left waiting)
         Assert.False(t.Changed);
-        Assert.Equal(3, t.Refused.Count(r => r.Reason == StoryRefusal.NotStarted));
-        Assert.Contains(t.Refused, r => r.Kind == StoryKeyKind.Counter && r.Reason == StoryRefusal.Stage); // (1 only in stagML13)
+        Assert.Equal(4, t.Refused.Count(r => r.Reason == StoryRefusal.NotStarted));
         Assert.Equal([1, 22], k.Dropped.Flags);
         Assert.Equal([0], k.Dropped.Folder);
+        Assert.Equal([1], k.Dropped.Counters);
         Assert.Equal(0u, k.Story.Revision);
         Assert.True(k.OwnerStarted());
         Assert.False(k.OwnerStarted());
+        Assert.Equal(k.Epoch, k.StartEpoch);
         // The old visit's engine still holds them: refused (its next barrier removes them).
         t = k.Take(new StoryDelta { Flags = [22] }, "stagML02", visit, new StoryVisit(1, 7, 20));
         Assert.Equal(new StoryRefused(StoryKeyKind.Flag, 22, StoryRefusal.NotStarted), t.Refused.Single());
-        // A visit that began after the drop sets it anew: it counts.
+        // A visit that began after the start sets it anew: it counts.
         t = k.Take(new StoryDelta { Phase = 1, Flags = [22] }, "stagML02", k.Epoch, new StoryVisit(1, 8, 20));
         Assert.True(t.Changed);
         Assert.Equal(1, StoryMerge.Phase(k.Story));
         Assert.Equal(1u, k.Story.Revision);
+    }
+
+    /// <summary>
+    /// Round 59's verification (OZ, OZR): a guest's pre-start claim of phase 2 (the first briefing, after its lobby's phase
+    /// 1 was dropped) was refused phase_jump, not dropped, so its barriers never removed it; once the owner's lobby gave
+    /// the room phase 1 the same claim passed and became the owner's phase 2. Now every story value offered before the
+    /// start is dropped whatever the checks say: the phase jump, a flag from a stage that never sets it, growth beyond the
+    /// limit, a key item, and a member in no instance; values never merged stay not_story.
+    /// </summary>
+    [Fact]
+    public void Every_story_value_offered_before_the_start_is_dropped_whatever_the_checks_say()
+    {
+        var k = new RoomStoryKeeper(new RoomStoryData(), 0, StoryPolicy.Apply, true, started: false);
+        var t = k.Take(new StoryDelta { Phase = 2, Flags = [70, 0, 406], Folder = [3, 11], Counters = [new CounterGrowth(7, 4, 1, 100_001), new CounterGrowth(3, 4, 1, 5)] },
+            "stagML02", k.Epoch, new StoryVisit(1, 7, 30, 11, 50));
+        Assert.Equal(
+            [
+                new(StoryKeyKind.Phase, 2, StoryRefusal.NotStarted), new(StoryKeyKind.Flag, 70, StoryRefusal.NotStarted),
+                new(StoryKeyKind.Flag, 406, StoryRefusal.NotStarted), new(StoryKeyKind.Folder, 3, StoryRefusal.NotStarted),
+                new StoryRefused(StoryKeyKind.Counter, 7, StoryRefusal.NotStarted),
+            ],
+            t.Refused.Where(r => r.Reason == StoryRefusal.NotStarted).OrderBy(r => r.Kind).ThenBy(r => r.Index));
+        Assert.Equal(3, t.Refused.Count(r => r.Reason == StoryRefusal.NotStory)); // flag 0, folder 11, COUNTER 3
+        Assert.Equal([2, 70, 406], k.Dropped.Flags);
+        Assert.Equal([3], k.Dropped.Folder);
+        Assert.Equal([7], k.Dropped.Counters);
+        // A member the relay has in no instance (a join under way) or a UI stage: dropped all the same.
+        t = k.Take(new StoryDelta { Phase = 3, Flags = [392] }, null, 0);
+        Assert.All(t.Refused, r => Assert.Equal(StoryRefusal.NotStarted, r.Reason));
+        t = k.Take(new StoryDelta { Flags = [393] }, "stagIS10", 0);
+        Assert.Equal(StoryRefusal.NotStarted, t.Refused.Single().Reason);
+        Assert.Equal([2, 3, 70, 392, 393, 406], k.Dropped.Flags);
+        // A shrinking counter is no progress: refused (limit), not dropped.
+        Assert.Equal(StoryRefusal.Limit, k.Take(new StoryDelta { Counters = [new CounterGrowth(1, 4, 1, -5)] }, "stagML13", k.Epoch).Refused.Single().Reason);
+        Assert.Equal(0u, k.Story.Revision);
+        Assert.Equal(0, k.EarnedCount);
+    }
+
+    /// <summary>
+    /// The verification's case in full: the guest's lobby (phase 1) and first briefing (phase 2) before the start, the
+    /// owner's own lobby phase 1 after it. The guest's old stagML02 visit offering phase 2 again (in the visit or at its
+    /// barrier) stays refused; a value that visit offers only after the start (set just before it) is dropped too, without
+    /// touching the owner's visit, which began with the start; the room keeps the owner's phase 1. The guest's next visit,
+    /// which its barrier cleaned, counts again.
+    /// </summary>
+    [Fact]
+    public void A_guests_progress_from_before_the_start_never_becomes_the_new_owners_story()
+    {
+        var k = new RoomStoryKeeper(new RoomStoryData(), 0, StoryPolicy.Drop, ownerPresent: true, started: false);
+        StoryVisit Guest(ulong key, double at, double seconds = 20) => new(1, key, seconds, 11, at);
+        StoryVisit Owner(ulong key, double at, double seconds = 20) => new(0, key, seconds, 10, at, Owner: true);
+        var lobby = k.Epoch;
+        Assert.Equal(new StoryRefused(StoryKeyKind.Phase, 1, StoryRefusal.NotStarted),
+            k.Take(new StoryDelta { Phase = 1, Flags = [501] }, "stagml11", lobby, Guest(100, 20)).Refused.First());
+        var briefing = k.Epoch; // the guest's barrier into stagML02 (it removed 1 and 501 from its engine)
+        var t = k.Take(new StoryDelta { Phase = 2, Flags = [320] }, "stagml02", briefing, Guest(101, 50));
+        Assert.All(t.Refused, r => Assert.Equal(StoryRefusal.NotStarted, r.Reason));
+        Assert.Contains(2, k.Dropped.Flags);
+        // The owner's game enters its lobby: the visit begins with the start (the relay gives it the start's epoch).
+        Assert.True(k.OwnerStarted());
+        var own = k.Epoch;
+        // The guest's old visit offers flag 502 only now (set just before the start, or after it): dropped as well ...
+        t = k.Take(new StoryDelta { Phase = 2, Flags = [502] }, "stagml02", briefing, Guest(101, 290, 260));
+        Assert.Equal([new(StoryKeyKind.Phase, 2, StoryRefusal.NotStarted), new StoryRefused(StoryKeyKind.Flag, 502, StoryRefusal.NotStarted)], t.Refused);
+        Assert.Contains(502, k.Dropped.Flags);
+        // ... and so is its phase 1 from the old lobby, which does not touch the owner's visit.
+        k.Take(new StoryDelta { Phase = 1 }, "stagml11", lobby, Guest(100, 295));
+        Assert.True(k.Take(new StoryDelta { Phase = 1, Flags = [501] }, "stagml11", own, Owner(200, 300, 11)).Changed);
+        Assert.Equal(1, StoryMerge.Phase(k.Story));
+        // Phase 2 now passes every plausibility check (one step, stagML02, an old visit, the guest's first step): refused.
+        for (var at = 330.0; at < 1000; at += 100)
+        {
+            t = k.Take(new StoryDelta { Phase = 2, Flags = [320, 502] }, "stagml02", briefing, Guest(101, at, at - 40));
+            Assert.False(t.Changed);
+            Assert.All(t.Refused, r => Assert.Equal(StoryRefusal.NotStarted, r.Reason));
+        }
+        Assert.Equal(0, k.EarnedCount);
+        Assert.Equal(1, StoryMerge.Phase(k.Story));
+        Assert.Equal(1u, k.Story.Revision);
+        // The guest's next stagML02 visit began after the start: its barrier removed phase 2; the briefing played anew counts.
+        Assert.True(k.Take(new StoryDelta { Phase = 2, Flags = [320] }, "stagml02", k.Epoch, Guest(102, 1100)).Changed);
+        Assert.Equal(2, StoryMerge.Phase(k.Story));
+    }
+
+    /// <summary>
+    /// A visit that began before the start and that the owner joins after it (a guest waiting in a field the owner comes
+    /// to): what the visit offered before the owner came stays refused (the barrier removes it), what it sets from then on
+    /// counts, for the guest and the owner alike.
+    /// </summary>
+    [Fact]
+    public void A_visit_from_before_the_start_counts_once_the_owner_is_in_it()
+    {
+        var k = new RoomStoryKeeper(new RoomStoryData(), 0, StoryPolicy.Drop, ownerPresent: true, started: false) { PhaseStepSeconds = 0, KeySeconds = 0 };
+        var field = k.Epoch;
+        Assert.False(k.Take(Flags(505), "stag0101", field, new StoryVisit(1, 50, 30, 11, 30)).Changed);
+        Assert.True(k.OwnerStarted());
+        Assert.False(k.Take(Flags(506), "stag0101", field, new StoryVisit(1, 50, 40, 11, 40)).Changed);
+        Assert.Equal([505, 506], k.Dropped.Flags);
+        // The owner joins the guest's visit.
+        Assert.Equal(StoryRefusal.NotStarted, k.Take(Flags(505), "stag0101", field, new StoryVisit(0, 50, 15, 10, 60, Owner: true)).Refused.Single().Reason);
+        Assert.Equal(StoryRefusal.NotStarted, k.Take(Flags(506), "stag0101", field, new StoryVisit(1, 50, 60, 11, 60, OwnerSeen: true)).Refused.Single().Reason);
+        Assert.True(k.Take(new StoryDelta { Folder = [0] }, "stag0101", field, new StoryVisit(1, 50, 61, 11, 61, OwnerSeen: true)).Changed);
+        Assert.Equal(1, k.Story.Folder[0]);
+        Assert.Equal(0, k.Story.Flags[505]);
+    }
+
+    /// <summary>
+    /// Round 59's verification (P1H): one guest put 78 persistent flags into the owner's story in two minutes. A guest's
+    /// flags count FlagBurst (8) at once, then one every FlagSeconds (30); the rest is earned and merged when due, whatever
+    /// stage the guest plays in then. The owner's flags are not spaced, nor is the room's clear flag (phase 6 comes first).
+    /// </summary>
+    [Fact]
+    public void A_guests_flags_are_spaced_and_the_rest_is_merged_when_due()
+    {
+        var k = Keeper();
+        StoryVisit Guest(ulong key, double at) => new(1, key, 15, 11, at);
+        int[] lobby = [324, 329, 330, 331, 332, 335, 392, 393, 394, 395, 396, 397];
+        var t = k.Take(Flags(lobby), "stagml12", 0, Guest(1, 1000));
+        Assert.True(t.Changed);
+        Assert.Equal([394, 395, 396, 397], t.Refused.Where(r => r.Reason == StoryRefusal.Wait).Select(r => r.Index));
+        Assert.Equal(8, lobby.Count(f => k.Story.Flags[f] != 0));
+        Assert.Equal(4, k.EarnedCount);
+        // One more every 30 s, in a later visit and another stage (stag0101 sets none of them).
+        Assert.False(k.MergeEarned(Guest(2, 1029), "stag0101").Changed);
+        Assert.True(k.MergeEarned(Guest(2, 1031), "stag0101").Changed);
+        Assert.Equal(1, k.Story.Flags[394]);
+        Assert.True(k.MergeEarned(Guest(2, 1095), "stag0101").Changed); // two more tokens
+        Assert.Equal([1, 1, 0], new[] { k.Story.Flags[395], k.Story.Flags[396], k.Story.Flags[397] });
+        Assert.Equal(1, k.EarnedCount);
+        // The owner is not spaced, and what the room story gets meanwhile leaves the guest's queue.
+        Assert.True(k.Take(Flags(397, 398, 399, 400, 401, 402, 403, 405, 430, 431), "stagml12", 0, new StoryVisit(0, 3, 15, 10, 1096, Owner: true)).Changed);
+        Assert.Equal(1, k.Story.Flags[431]);
+        Assert.False(k.MergeEarned(Guest(2, 2000), "stag0101").Changed);
+        Assert.Equal(0, k.EarnedCount);
+        // The clear flag of the room's difficulty is never spaced (the clear achievement waits for it).
+        var phase6 = new RoomStoryData();
+        phase6.Flags[6] = 1;   // working phase 6
+        phase6.Flags[705] = 1; // its normal copy (the room rebases on it)
+        var bs = Keeper(story: phase6);
+        Assert.True(bs.Take(Flags(lobby[..8]), "stagml12", 0, Guest(1, 1000)).Changed);
+        t = bs.Take(Flags(70, 406), "stagbs06", 0, Guest(2, 1001));
+        Assert.Equal(new StoryRefused(StoryKeyKind.Flag, 70, StoryRefusal.Wait), t.Refused.Single());
+        Assert.Equal(1, bs.Story.Flags[406]);
+    }
+
+    /// <summary>
+    /// Round 59's verification (P2): 256 lines of 100,000 put 25,600,000 training attempts into COUNTER 7 per guest and
+    /// room session. A member gets at most MaxSessionGrowth of a counter merged in a room session (1,000 for COUNTER 7):
+    /// the line that crosses it is cut, the rest refused (limit). Growth the owner-away drop refuses does not count.
+    /// </summary>
+    [Fact]
+    public void A_members_counter_growth_is_capped_per_room_session()
+    {
+        var k = Keeper();
+        StoryVisit V(int member, uint inst, double at) => new(member, (ulong)inst << 32 | 1, 15, 100 + member, at);
+        for (uint i = 1; i <= 9; ++i) Assert.True(k.Take(new StoryDelta { Counters = [new CounterGrowth(7, i, 1, 100)] }, "stag0001", 0, V(1, i, 1000 + i)).Changed);
+        var t = k.Take(new StoryDelta { Counters = [new CounterGrowth(7, 10, 1, 250)] }, "stag0001", 0, V(1, 10, 1100));
+        Assert.True(t.Changed);
+        Assert.Equal(1_000, k.Story.Counters[7]);
+        // The same line grows on, a new line opens: refused (limit) for this member; another member counts on its own.
+        Assert.Equal(StoryRefusal.Limit, k.Take(new StoryDelta { Counters = [new CounterGrowth(7, 10, 1, 300)] }, "stag0001", 0, V(1, 10, 1110)).Refused.Single().Reason);
+        Assert.Equal(StoryRefusal.Limit, k.Take(new StoryDelta { Counters = [new CounterGrowth(7, 11, 1, 1)] }, "stag0001", 0, V(1, 11, 1120)).Refused.Single().Reason);
+        Assert.True(k.Take(new StoryDelta { Counters = [new CounterGrowth(7, 12, 1, 5)] }, "stag0001", 0, V(2, 12, 1130)).Changed);
+        Assert.Equal(1_005, k.Story.Counters[7]);
+        Assert.Equal(1_000, RoomStoryKeeper.MaxSessionGrowth(7));
+        Assert.Equal(20_000_000, RoomStoryKeeper.MaxSessionGrowth(1));
+        // While the owner is away (drop) nothing is taken, so nothing counts against the cap.
+        var away = Keeper(ownerPresent: false);
+        Assert.Equal(StoryRefusal.OwnerAway, away.Take(new StoryDelta { Counters = [new CounterGrowth(7, 1, 1, 1_000)] }, "stag0001", 0, V(1, 1, 1000)).Refused.Single().Reason);
+        away.SetOwnerPresent(true);
+        Assert.True(away.Take(new StoryDelta { Counters = [new CounterGrowth(7, 2, 1, 1_000)] }, "stag0001", away.Epoch, V(1, 2, 1010)).Changed);
+        Assert.Equal(1_000, away.Story.Counters[7]);
     }
 
     /// <summary>A member's phase steps count five minutes apart and its key items a minute apart; another member counts on its own.</summary>

@@ -65,9 +65,11 @@ public sealed class RoomHub
     /// per-visit and per-member rules. Without a start (relay-only tests): an empty, started story.</summary>
     public static RoomStoryKeeper NewKeeper(RoomStoryInit? init, InstanceOptions inst) => init is { } s
         ? new RoomStoryKeeper(s.Story, s.Difficulty, s.Policy, s.OwnerPresent, started: s.Started) { MinVisitSeconds = inst.StoryMinVisitSeconds,
-            PhaseStepSeconds = inst.StoryPhaseStepSeconds, KeySeconds = inst.StoryKeySeconds, MaxLinesPerMember = inst.StoryLinesPerMember }
+            PhaseStepSeconds = inst.StoryPhaseStepSeconds, KeySeconds = inst.StoryKeySeconds, FlagBurst = inst.StoryFlagBurst,
+            FlagSeconds = inst.StoryFlagSeconds, MaxLinesPerMember = inst.StoryLinesPerMember }
         : new RoomStoryKeeper(new RoomStoryData(), 0, StoryPolicy.Drop, ownerPresent: true) { MinVisitSeconds = inst.StoryMinVisitSeconds,
-            PhaseStepSeconds = inst.StoryPhaseStepSeconds, KeySeconds = inst.StoryKeySeconds, MaxLinesPerMember = inst.StoryLinesPerMember };
+            PhaseStepSeconds = inst.StoryPhaseStepSeconds, KeySeconds = inst.StoryKeySeconds, FlagBurst = inst.StoryFlagBurst,
+            FlagSeconds = inst.StoryFlagSeconds, MaxLinesPerMember = inst.StoryLinesPerMember };
 
     /// <summary>The views as the last housekeeping pass saw them (the room API's answer while the room is busy).</summary>
     public IReadOnlyList<InstanceView> CachedViews { get; private set; } = [];
@@ -1411,6 +1413,7 @@ public sealed class RoomHub
         i.LastLogAt = now;
         i.VisitStartedAt = now;
         i.StoryEpoch = Story.Epoch;
+        i.OwnerSeen = false;
         i.LogOwner = null;
         i.LogFull = false;
         i.Voted.Clear();
@@ -1442,17 +1445,36 @@ public sealed class RoomHub
         if (m.Instance != i) m.InstanceSince = now;
         m.Instance = i;
         m.Slot = slot;
-        m.VisitEpoch = i.StoryEpoch;
         if (!string.IsNullOrEmpty(i.Stage))
         {
+            // (The instance without a stage a reconnect without resuming gets keeps the last visit's epoch: the client
+            // plays on alone in that visit, whose engine no barrier has cleaned since; before round 59's verification the
+            // reconnect took the current epoch, and what was dropped in that visit counted again.)
+            m.VisitEpoch = i.StoryEpoch;
+            m.VisitOwnerSeen = i.OwnerSeen;
             m.LoneStage = null;
             m.LoneKey = 0;
             // The engine line this visit's counters grow in: besides its own instance 0 lines the only kind of line the
             // member may report (8.7).
             AllowLine(m, i.Id, i.Visit);
-            // The owner's game entered a stage: a room whose owner had no online story starts it now (8.6, at zero).
-            if (m.Owner && !i.Stage.StartsWith("stagis", StringComparison.OrdinalIgnoreCase) && Story.OwnerStarted())
-                Note("story_started", i, ("member", m.Index));
+            if (m.Owner && !i.Stage.StartsWith("stagis", StringComparison.OrdinalIgnoreCase))
+            {
+                // The owner's game entered a stage: a room whose owner had no online story starts it now (8.6, at zero).
+                // Its first visit begins with the start: one that begins now gets the start's epoch (every engine of it
+                // starts from this barrier's load step, cleaned of the dropped values). A visit the owner joins counts
+                // from then on (OwnerSeen); what it held before stays dropped.
+                if (Story.OwnerStarted())
+                {
+                    Note("story_started", i, ("member", m.Index));
+                    if (i.VisitStartedAt == now) i.StoryEpoch = Story.Epoch;
+                }
+                i.OwnerSeen = true;
+                foreach (var x in i.Members)
+                {
+                    x.VisitEpoch = i.StoryEpoch;
+                    x.VisitOwnerSeen = true;
+                }
+            }
         }
         m.Cursor = 0;
         m.Heading = null;
@@ -1851,6 +1873,7 @@ public sealed class RoomHub
         child.Snapshot = i.Snapshot.Share();
         child.VisitStartedAt = i.VisitStartedAt;
         child.StoryEpoch = i.StoryEpoch;
+        child.OwnerSeen = i.OwnerSeen;
         child.Parent = i.Id;
         child.ForkTick = f;
         child.Departing = kind == SplitKind.Exit;
@@ -2026,13 +2049,15 @@ public sealed class RoomHub
         if (m.Instance is { Ended: false } i && m.Slot >= 0 && m.Arrival is null && !string.IsNullOrEmpty(i.Stage))
         {
             var since = Math.Max(m.InstanceSince, i.VisitStartedAt);
-            return (i.Stage, i.StoryEpoch, new StoryVisit(m.Index, (ulong)i.Id << 32 | i.Visit, Ms(now - since) / 1000.0, m.AccountId, at, m.Owner), i);
+            return (i.Stage, i.StoryEpoch, new StoryVisit(m.Index, (ulong)i.Id << 32 | i.Visit, Ms(now - since) / 1000.0, m.AccountId, at, m.Owner,
+                i.OwnerSeen), i);
         }
         if (m.Arrival is { } a)
-            return (a.Stage, m.VisitEpoch, new StoryVisit(m.Index, 1UL << 63 | (ulong)a.ParkedAt, Ms(now - a.ParkedAt) / 1000.0, m.AccountId, at, m.Owner), null);
+            return (a.Stage, m.VisitEpoch, new StoryVisit(m.Index, 1UL << 63 | (ulong)a.ParkedAt, Ms(now - a.ParkedAt) / 1000.0, m.AccountId, at, m.Owner,
+                m.VisitOwnerSeen), null);
         if (m.LoneStage is { } lone)
             return (lone, m.VisitEpoch, new StoryVisit(m.Index, m.LoneKey != 0 ? m.LoneKey : 1UL << 63 | (ulong)m.LoneSince,
-                Ms(now - m.LoneSince) / 1000.0, m.AccountId, at, m.Owner), null);
+                Ms(now - m.LoneSince) / 1000.0, m.AccountId, at, m.Owner, m.VisitOwnerSeen), null);
         return (null, 0, null, null);
     }
 
