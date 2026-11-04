@@ -82,6 +82,9 @@ public:
     // The followed source node and the switch node whose mask word holds the
     // child's enable bit `bit` (read in every query, never cached).
     void set_dynamic(std::uint32_t id, const Node* source, const Node* mask_switch, std::uint32_t bit);
+    // The tick state (tick_state_managers.cpp): the groups' switches and the
+    // dynamic children's followed nodes; the query memos are forgotten.
+    void tick_state(class TickArchive& a);
     std::size_t triangle_count() const { return triangles_.size(); }
     const std::vector<CollisionTriangle>& triangles() const { return triangles_; }
     // HITLAND_TRAVERSAL: every segment against the triangles of the selected

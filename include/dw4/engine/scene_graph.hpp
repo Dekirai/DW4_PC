@@ -372,6 +372,19 @@ public:
     Attribute* edit_attribute(const ObjectView& view) { return const_cast<Attribute*>(attribute(view)); }
     Node* find(const IgbDocument* document, std::uint32_t reference) const;
     void release_document(const IgbDocument* document);
+    // The tick state (tick_state.hpp): every cached node and attribute with
+    // its key, and an attribute by key (made on first use like attribute()).
+    template <class Visit> void for_each_node(Visit&& visit) const {
+        for (const auto& [key, node] : nodes_) visit(key.document, key.reference, node.get());
+    }
+    template <class Visit> void for_each_attribute(Visit&& visit) const {
+        for (const auto& [key, attribute] : attributes_) visit(key.document, key.reference, attribute.get());
+    }
+    std::size_t node_count() const { return nodes_.size(); }
+    std::size_t attribute_count() const { return attributes_.size(); }
+    const Attribute* attribute_at(const IgbDocument* document, std::uint32_t reference) {
+        return attribute(ObjectView(document, reference));
+    }
 
 private:
     const Attribute* attribute(const ObjectView& view);

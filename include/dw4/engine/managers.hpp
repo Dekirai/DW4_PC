@@ -97,6 +97,7 @@ private:
 class LayerManager final : public Manager {
 public:
     LayerManager() : Manager("beLayerCtl") {}
+    DW4_TICK_STATE_HOOKS
     bool accepts(const ObjectView& info) const override { return info.type() == "beLayerInfo"; }
     void add_info(Engine& engine, const ObjectView& info) override;
     void clear_stage(Engine& engine) override;
@@ -119,6 +120,7 @@ private:
 class BkColorManager final : public Manager {
 public:
     BkColorManager() : Manager("beBkColor") {}
+    DW4_TICK_STATE_HOOKS
     bool accepts(const ObjectView& info) const override { return info.type() == "beBkColorInfo"; }
     void add_info(Engine& engine, const ObjectView& info) override;
     void clear_stage(Engine& engine) override;
@@ -137,6 +139,7 @@ private:
 class CameraManager final : public Manager {
 public:
     CameraManager() : Manager("beCameraCtrl") {}
+    DW4_TICK_STATE_HOOKS
     bool accepts(const ObjectView& info) const override { return info.type() == "beCameraCtrlInfo"; }
     void add_info(Engine& engine, const ObjectView& info) override;
     void clear_stage(Engine& engine) override;
@@ -282,6 +285,7 @@ private:
 class StageCtlManager final : public Manager {
 public:
     StageCtlManager() : Manager("beNDMWStageCtl") {}
+    DW4_TICK_STATE_HOOKS
     bool accepts(const ObjectView& info) const override { return info.type() == "beNDMWStageCtlInfo"; }
     void add_info(Engine& engine, const ObjectView& info) override;
     void clear_stage(Engine& engine) override;
@@ -298,6 +302,7 @@ private:
 class SwitchCtrlManager final : public Manager {
 public:
     SwitchCtrlManager() : Manager("beSwitchCtrl") {}
+    DW4_TICK_STATE_HOOKS
     bool accepts(const ObjectView& info) const override { return info.type() == "beSwitchCtrlInfo"; }
     void add_info(Engine& engine, const ObjectView& info) override;
     void clear_stage(Engine& engine) override;
@@ -343,6 +348,7 @@ private:
 class SoundManager final : public Manager {
 public:
     SoundManager() : Manager("beSound") {}
+    DW4_TICK_STATE_HOOKS
     bool accepts(const ObjectView& info) const override;
     void add_info(Engine& engine, const ObjectView& info) override;
     void clear_stage(Engine& engine) override;
@@ -759,6 +765,7 @@ private:
 class TextureCtrlManager final : public Manager {
 public:
     TextureCtrlManager() : Manager("beTextureCtrl") {}
+    DW4_TICK_STATE_HOOKS
     bool accepts(const ObjectView& info) const override { return info.type() == "beTextureCtrlInfo"; }
     void add_info(Engine& engine, const ObjectView& info) override;
     void clear_stage(Engine& engine) override;
@@ -783,6 +790,7 @@ private:
 class ParticleCtrlManager final : public Manager {
 public:
     ParticleCtrlManager() : Manager("beParticleCtrl2") {}
+    DW4_TICK_STATE_HOOKS
     bool accepts(const ObjectView& info) const override { return info.type() == "beParticleCtrl2Info"; }
     void add_info(Engine& engine, const ObjectView& info) override;
     void clear_stage(Engine& engine) override;
@@ -812,6 +820,7 @@ private:
 class WaterPlainManager final : public Manager {
 public:
     WaterPlainManager() : Manager("beWaterPlain") {}
+    DW4_TICK_STATE_HOOKS
     bool accepts(const ObjectView& info) const override { return info.type() == "beWaterPlainInfo"; }
     void add_info(Engine& engine, const ObjectView& info) override;
     void clear_stage(Engine& engine) override;
@@ -861,6 +870,7 @@ private:
 class LightCtrlManager final : public Manager {
 public:
     LightCtrlManager() : Manager("beLightCtrl") {}
+    DW4_TICK_STATE_HOOKS
     bool accepts(const ObjectView& info) const override { return info.type() == "beLightCtrlInfo"; }
     void add_info(Engine& engine, const ObjectView& info) override;
     void clear_stage(Engine& engine) override;
@@ -881,6 +891,7 @@ private:
 class ShadowManager final : public Manager {
 public:
     ShadowManager() : Manager("beShadow01") {}
+    DW4_TICK_STATE_HOOKS
     bool accepts(const ObjectView& info) const override { return info.type() == "beShadow01Info"; }
     void add_info(Engine& engine, const ObjectView& info) override;
     void clear_stage(Engine& engine) override;
@@ -917,6 +928,7 @@ private:
 class PlayerPointManager final : public Manager {
 public:
     PlayerPointManager() : Manager("bePoint01") {}
+    DW4_TICK_STATE_HOOKS
     bool accepts(const ObjectView& info) const override { return info.type() == "bePoint01Info"; }
     void add_info(Engine& engine, const ObjectView& info) override;
     void clear_stage(Engine& engine) override;
@@ -936,6 +948,7 @@ private:
 class HitLandManager final : public Manager {
 public:
     HitLandManager() : Manager("beHitLandModel") {}
+    DW4_TICK_STATE_HOOKS
     bool accepts(const ObjectView& info) const override {
         return info.type() == "beHitLandModelInfo" || info.type() == "beHitLandDelivInfo";
     }
@@ -1018,6 +1031,7 @@ private:
 class ChangePosManager final : public Manager {
 public:
     ChangePosManager() : Manager("beChangePosTransform") {}
+    DW4_TICK_STATE_HOOKS
     bool accepts(const ObjectView& info) const override { return info.type() == "beChangePosTransformInfo"; }
     void add_info(Engine& engine, const ObjectView& info) override;
     void clear_stage(Engine& engine) override { (void)engine; rams_.clear(); }
@@ -1057,6 +1071,7 @@ GeometryData layout_text(const FontImage& font, std::u16string_view text, int al
 class TextCtlManager final : public Manager {
 public:
     TextCtlManager() : Manager("beFont") {}
+    DW4_TICK_STATE_HOOKS
     bool accepts(const ObjectView& info) const override { return info.type() == "beFontInfo"; }
     void add_info(Engine& engine, const ObjectView& info) override;
     void clear_stage(Engine& engine) override;
@@ -1102,6 +1117,7 @@ private:
 class SelectCtrlManager final : public Manager {
 public:
     SelectCtrlManager() : Manager("beSelectCtrl") {}
+    DW4_TICK_STATE_HOOKS
     bool accepts(const ObjectView& info) const override { return info.type() == "beSelectCtrlInfo"; }
     void add_info(Engine& engine, const ObjectView& info) override;
     void clear_stage(Engine& engine) override;
@@ -1252,6 +1268,7 @@ private:
 class NumberCtrlManager final : public Manager {
 public:
     NumberCtrlManager() : Manager("beNumberCtrl") {}
+    DW4_TICK_STATE_HOOKS
     bool accepts(const ObjectView& info) const override { return info.type() == "beNumberCtrlInfo"; }
     void add_info(Engine& engine, const ObjectView& info) override;
     void clear_stage(Engine& engine) override { (void)engine; rams_.clear(); }
@@ -1276,6 +1293,7 @@ private:
 class MeterCtrlManager final : public Manager {
 public:
     MeterCtrlManager() : Manager("beMeterCtrl") {}
+    DW4_TICK_STATE_HOOKS
     bool accepts(const ObjectView& info) const override { return info.type() == "beMeterCtrlInfo"; }
     void add_info(Engine& engine, const ObjectView& info) override;
     void clear_stage(Engine& engine) override { (void)engine; rams_.clear(); }
@@ -1303,6 +1321,7 @@ private:
 class GeneraterManager final : public Manager {
 public:
     GeneraterManager() : Manager("beGenerater") {}
+    DW4_TICK_STATE_HOOKS
     bool accepts(const ObjectView& info) const override { return info.type() == "beGeneraterInfo"; }
     void add_info(Engine& engine, const ObjectView& info) override;
     void clear_stage(Engine& engine) override {
@@ -1460,6 +1479,7 @@ private:
 class MatCtrlManager final : public Manager {
 public:
     MatCtrlManager() : Manager("beMatCtrl") {}
+    DW4_TICK_STATE_HOOKS
     bool accepts(const ObjectView& info) const override { return info.type() == "beMatCtrlInfo"; }
     void add_info(Engine& engine, const ObjectView& info) override;
     void clear_stage(Engine& engine) override;
@@ -1577,6 +1597,7 @@ private:
 class PassiveManager final : public Manager {
 public:
     PassiveManager() : Manager("passive") {}
+    DW4_TICK_STATE_HOOKS
     bool accepts(const ObjectView& info) const override;
     void add_info(Engine& engine, const ObjectView& info) override;
     void clear_stage(Engine& engine) override;
@@ -1590,6 +1611,7 @@ class ActionManager;
 class ModelCtrlManager final : public Manager {
 public:
     ModelCtrlManager() : Manager("beModelCtrl") {}
+    DW4_TICK_STATE_HOOKS
     bool accepts(const ObjectView& info) const override;
     void add_info(Engine& engine, const ObjectView& info) override;
     void clear_stage(Engine& engine) override;
@@ -1923,6 +1945,7 @@ private:
 class WeaponManager final : public Manager {
 public:
     WeaponManager() : Manager("beWeapon") {}
+    DW4_TICK_STATE_HOOKS
     bool accepts(const ObjectView& info) const override { return info.type() == "beWeaponInfo"; }
     void add_info(Engine& engine, const ObjectView& info) override;
     void clear_stage(Engine& engine) override;
@@ -1955,6 +1978,7 @@ private:
 class SubWindowManager final : public Manager {
 public:
     SubWindowManager();
+    DW4_TICK_STATE_HOOKS
     ~SubWindowManager() override;
     bool accepts(const ObjectView& info) const override { return info.type() == "beNDMWStatusInfo"; }
     void add_info(Engine& engine, const ObjectView& info) override;
@@ -2019,6 +2043,7 @@ private:
 class PanelManager final : public Manager {
 public:
     PanelManager() : Manager("beNDMWPanelWaza") {}
+    DW4_TICK_STATE_HOOKS
     bool accepts(const ObjectView& info) const override { return info.type() == "beNDMWPanelWazaInfo"; }
     void add_info(Engine& engine, const ObjectView& info) override;
     void clear_stage(Engine& engine) override;
@@ -2060,6 +2085,7 @@ private:
 class ActionStarterManager final : public Manager {
 public:
     ActionStarterManager() : Manager("beActionStarter") {}
+    DW4_TICK_STATE_HOOKS
     bool accepts(const ObjectView& info) const override { return info.type() == "beActionStarterInfo"; }
     void add_info(Engine& engine, const ObjectView& info) override;
     void clear_stage(Engine& engine) override {
@@ -2082,6 +2108,7 @@ private:
 class ActionManager final : public Manager {
 public:
     ActionManager() : Manager("beAction2") {}
+    DW4_TICK_STATE_HOOKS
     bool accepts(const ObjectView& info) const override { return info.type() == "beAction2Info"; }
     void add_info(Engine& engine, const ObjectView& info) override;
     void clear_stage(Engine& engine) override;

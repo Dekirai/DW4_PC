@@ -16,6 +16,7 @@
 #include <stdexcept>
 #include <string>
 #include <type_traits>
+#include <utility>
 #include <vector>
 
 namespace dw4::engine {
@@ -66,6 +67,10 @@ public:
         }
         if (reading() && !value) value.emplace();
         io(*value);
+    }
+    template <class A, class B> void io(std::pair<A, B>& value) {
+        io(value.first);
+        io(value.second);
     }
     template <class T, std::size_t N> void io(std::array<T, N>& values) {
         for (auto& value : values) io(value);
