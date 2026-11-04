@@ -3645,25 +3645,50 @@ before that game is in a stage becomes the owner's story. Exactly:
   (`RoomStoryKeeper.Started` / `OwnerStarted()`, the membership log's
   `story_started`). An owner who sits at the title, who is away, or who never
   plays leaves the room not started.
-- Until then every value a member sends (phase, flags, key items, counter
-  growth; after the census and the plausibility checks) is refused with the
-  STORY_ACK reason *not_started* (10) and recorded in the room's dropped set
-  with a drop epoch, whatever `Rooms:StoryWhileOwnerAway` says (also under
-  *hold* and *apply*: nothing is held, nothing merged). This comes before the
-  per-visit rules (8.7), so a value that would only have waited cannot slip
-  in after the start, and nothing is earned (8.7) before it. The membership
-  log notes `story_dropped ...
-  reason=not_started`; the member is told once ("The room owner has not
-  started its story yet: story progress made before that is not saved.").
-- The guests' earlier *pending* progress (what their engines hold and still
-  send) is dropped as above: their next barrier removes it from their engines
-  (the dropped set of BARRIER_OK, 8.6 drop, with the notice "Story progress
-  was not saved: the room owner had not started its story yet."), and it
-  counts again only when a member sets it anew in a visit that began after
-  its drop, that is after the start. A member's visit that began before the
-  start keeps sending the old values and they stay refused; values it sets
-  only after the start count. *Held* progress cannot come from that time:
-  a room that has not started holds nothing.
+- Until then every story value a member offers (any phase claim up to 7,
+  persistent flags, key items, counter growth: whatever the room story
+  lacks) is refused with the STORY_ACK reason *not_started* (10) and recorded
+  in the room's dropped set with a drop epoch, whatever the plausibility
+  checks would say (a phase jump, a stage that never sets the flag, growth
+  beyond the limit, a visit younger than ten seconds, a member the relay has
+  in no instance or in a UI stage) and whatever `Rooms:StoryWhileOwnerAway`
+  says (also under *hold* and *apply*: nothing is held, nothing merged).
+  Only values that are never merged (*not_story*) and a shrinking counter
+  (*limit*) keep their refusal. Round 59's verification found the gap of the
+  first form, which dropped only what passed the plausibility checks: a
+  guest's phase 2 from the first briefing (its lobby's phase 1 dropped, the
+  room at phase 0) was refused *phase_jump*, never entered the dropped set,
+  so the guest's barriers kept it; once the owner's lobby gave the room phase
+  1 the same claim passed every check and became the owner's phase 2 (OZR
+  with real clients: revision 2, phase 2, while the owner sat in its lobby;
+  the scenario S14zb checks that flow since).
+  This comes before the per-visit rules (8.7), so a value that would only
+  have waited cannot slip in after the start, and nothing is earned (8.7)
+  before it. The membership log notes `story_dropped ... reason=not_started`;
+  the member is told once ("The room owner has not started its story yet:
+  story progress made before that is not saved.").
+- The start is a visit boundary. `OwnerStarted()` opens a new drop epoch,
+  the *start epoch*; the owner's first visit, which begins with the start
+  (the relay places the owner in a visit that begins at that barrier), gets
+  it, and so does every visit that begins later. A visit that began before
+  the start (its epoch is lower) may hold what its engine did before the
+  start, set a moment before it and not yet offered, or offered in a STORY
+  the rate refused, so nothing it offers counts after the start either: its
+  values are dropped with *not_started* as above, recorded at the start epoch
+  (so a visit that began after the start, such as the owner's lobby setting
+  the same phase 1 a guest's old lobby offers, is never refused for them).
+  The guests' earlier *pending* progress (what their engines hold and still
+  send) therefore always ends in the dropped set: their next barrier removes
+  it from their engines (the dropped set of BARRIER_OK, 8.6 drop, the phase
+  falling back to the room's, with the notice "Story progress was not saved:
+  the room owner had not started its story yet."), and it counts again only
+  when a member sets it anew in a visit that began after the start. One
+  exception: a visit that began before the start and that the owner joins
+  after it (a guest waiting in a field the owner comes to; `HubInstance.
+  OwnerSeen`, kept by a fork's child) counts from the owner's arrival on,
+  for every member in it; what it offered before stays refused (its drop
+  epoch is above the visit's) and its barrier removes it. *Held* progress
+  cannot come from that time: a room that has not started holds nothing.
 - Every member's game started in that time starts with the empty room story
   (the title's application, 8.5), so every engine of the room is at zero too.
   The room API (`GET /rooms/{code}/story`) shows `started`.
@@ -3865,6 +3890,40 @@ stay unmeasured. The same holds for counter growth since this round: a junk
 shop donation (COUNTER 1, stagML13) in a visit of the shop's stage shorter
 than ten seconds is refused for the stage once the member left (a visit with
 a walk to the shop and its menus takes longer).
+
+**Round 59's verification.** Its review of the fix round found the
+owner-zero gap (8.6: a guest's phase 2 refused *phase_jump* before the start
+became the owner's phase 2 after it; now every value before the start, and
+from a visit that began before it, is dropped) and two smaller ones:
+
+- A guest's persistent flags had no spacing: one guest account (P1H) put 78
+  of them into the owner's story in about two minutes, one revision each. A
+  guest's flags now count `Instances:StoryFlagBurst` (8) at once, then one
+  every `StoryFlagSeconds` (30), per account in a room session; the rest is
+  earned like a waiting phase step or key item (refused *wait*, merged by the
+  relay when due, in any later visit at least ten seconds old, whatever its
+  stage). r25c's campaign sets at most 6 persistent flags in a minute and 9
+  in five minutes (segment k2's lobby talks in stagML12 / ML13, measured
+  from the `DW4_TRACE_EVENTS` runs above), so honest play does not wait. The
+  owner's flags are not spaced, nor is the room's clear flag (406 +
+  difficulty: it needs phase 6, whose steps are spaced, and the clear
+  achievement waits only 30 s for it). The 109 persistent flags now take a
+  forging account about 50 minutes; the history repairs what N accounts do.
+- COUNTER 7 could still grow by 256 lines x 100,000 = 25,600,000 per guest
+  account and room session (P2). A member now gets at most
+  `RoomStoryKeeper.MaxSessionGrowth` of a counter merged in a room session,
+  over all its lines: 1,000 for COUNTER 7 (stag0001's training attempts;
+  `matz00.lua` only asks whether it is 10) and 20,000,000 for COUNTER 1 (a
+  full wallet and bank donated in the junk shop). The line that crosses the
+  cap is cut there, everything after it is refused (*limit*); growth the
+  owner-away drop refuses does not count against it.
+- Found on the way: a reconnect without resuming put the member into a
+  stageless instance, which gave it the current drop epoch, while its client
+  plays on alone in its old visit (`HubMember.LoneStage`), whose engine no
+  barrier has cleaned since; a value dropped in that visit (before the start
+  or while the owner was away) counted again from the same engine. The
+  member now keeps its last visit's epoch until the relay places it in a
+  visit with a stage.
 
 **Storage.** Migration 0008 adds `online_story (account_id, revision, flags
 VARBINARY(1024), folder BINARY(12), counters BINARY(64) as 16 x i32 LE,
@@ -6069,6 +6128,8 @@ anyway; joining goes through the room list.
 | S13 | room of ten: instances 4 + 4 + 2 plus solo members, 30 minutes | S4 |
 | S14 | owner-away policies drop (removal at the barrier, notice) / hold / apply | S2 |
 | S14p | owner present: a guest's new story value reaches the owner's `online_story` within ten seconds (`scenario.json` "story_saved") and the owner's own instance only at its next barrier | S2 |
+| S14z | an owner without an online story starts at zero (8.6): the guest's lobby while the owner sits at the title is dropped (*not_started*), its barrier removes it with the notice, the owner's lobby starts the story | S2 (round 59) |
+| S14zb | the same in the most common flow (round 59's verification, OZR): the guest also plays the first briefing (phase 2) before the start and stays in stagML02 until the owner's lobby gave the room phase 1; phase 2 is dropped, its barrier removes it, no revision reaches phase 2 | S2 (round 59's verification) |
 | S15 | save room upload, 409 from a second machine (`character_test.py` C4; C2 the same after a stage change's upload) | S2 |
 | S16 | quest and story in stag0401: a quest-1 member arrives at point 3 while a story member plays there: separate instances, both keep their state; two members on quest 1 share one | S1 |
 | S17 | two members take the area gate 2 s apart (co-arrival, one entry scene) and 8 s apart (hold, then join) | S1 |
