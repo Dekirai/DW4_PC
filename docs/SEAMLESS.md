@@ -890,7 +890,7 @@ field is in the appendix "DW4R2 wire layout". Golden byte vectors check it on
 both sides (`tests/online_wire_tests.cpp`,
 `server/DW4Online/tests/DW4Online.Tests/WireGoldenTests.cs`): a change on one
 side fails both until the other follows. Message types 0x01-0x13 go client to
-server, 0x80-0x8E server to client; a pad is 6 bytes (6.4); `inst` is the
+server, 0x80-0x8F server to client; a pad is 6 bytes (6.4); `inst` is the
 instance id, `visit` its stage load count, both u32.
 
 Client to server:
@@ -936,6 +936,22 @@ Server to client:
 | 0x8E | REASSIGN | old inst, visit, new inst, from tick, mode, flags (departing) | after a fork: this member's copy is the child |
 | 0x8F | NETSTAT | round trip median and spread, d, arrival margin, the stream's sealed / filled / late pads, flags (in a stream) | once per second after PING (round 62: the network indicator and online.log; older clients skip it) |
 
+**Message types (the registry).** A number belongs to one message on both
+sides and is never given twice, not even across rounds that run in parallel:
+a client that cannot decode a frame of a type it knows drops the connection,
+so two builds that give one number to two messages at the same protocol
+reconnect each other every second. The review of round 62 found exactly that:
+round 60's PRESENCE2 to clients took 0x8F at protocol 45, the number NETSTAT
+holds since DW4Online 0.1.2, which the user runs (NETSTAT goes to every member
+once a second). 0x8F stays NETSTAT; a new message takes the next free number of
+its direction (client to server 0x14, server to client 0x90) and is entered in
+the registry checks of both sides
+(`WireGoldenTests.Message_types_are_unique_and_registered`,
+`tests/online_wire_tests.cpp` "type registry"), which fail until it is; a
+number given twice does not compile on either side (the name switches). Since the review the client skips (and logs once) a NETSTAT,
+PRESENCE, ROSTER or ROOM frame that does not decode: they only feed the
+indicator, the name tags and the room list.
+
 Events inside a tick record: JOIN (slot, entrance point, carry), LEAVE (slot),
 INTENT (slot, kind, argument), LEAD_FROM (tick: the remaining member leads
 alone from it; stamped on the tick before), DELAY (slot, d). A client takes
@@ -969,8 +985,11 @@ are, so that a joiner can replay them.
 59.94 Hz: tick t is due at `S(t) = S0 + t · kFieldSeconds` on its monotonic
 clock. At `S(t)` it seals tick t with every present member's pad and sends
 SEALED; a pad that is not there by then is filled at once with that member's
-last sealed pad (at most six ticks in a row), then neutral. A pad that arrives
-after its tick was sealed is dropped and counted. Nobody waits for anybody:
+newest pad, sealed in time or late (at most six ticks after it came), then
+neutral. A pad that arrives after its tick was sealed is counted, fills the
+slot's next ticks and its new presses go with the slot's next sealed pad
+(round 62 and its review: late by a tick or a few, not lost; a held button
+stays held). Nobody waits for anybody:
 one member's late uplink costs that member its inputs for those ticks, never
 the others a hitch. Machines execute only sealed ticks, their own slot's pad
 included as sealed. A member that has filled pads for 30 ticks in a row is
@@ -986,12 +1005,19 @@ trip counts: the server's schedule is the common clock, so the other members'
 latencies do not enter (they did in the waiting star of revision 1, where the
 formula also lacked the member's own return path). The server measures each
 member's arrival margin (due time minus arrival) directly. Since round 62 it
-looks at the last ten seconds of pads (600): it raises `d_i` by one when late
-pads came in at least three different seconds of them, and at once by up to
-three when most pads of the last second were late (by the median margin of
-that second); it lowers `d_i` after ten seconds without a change by as many
-ticks as the 0.5 % quantile of the margin allows with 0.15 of a tick kept (at
-most three at once). The rule sees only paced pads: one that came within
+raises `d_i` by one when more than 2 % of the last ten seconds of pads (600)
+came late, in at least three different seconds of them (`Sealing:LateTarget`;
+round 62 had 0.1 %, any one late pad, see its review below), and at once by
+up to three when most pads of the last second were late (by the median margin
+of that second and half a tick); it lowers `d_i` once thirty seconds of pads came since the
+last change (1800: more than one beat of a 60.000 Hz display against the
+59.94 Hz ticks, see the review below) by as many ticks as the 0.5 % quantile
+of their margin allows with 0.15 of a tick kept (at most three at once). A
+fall that has to be undone (d rises again from the value it fell to) bars
+that value: one minute, twice as long at each further failure, at most ten
+minutes; d then goes back to the value it fell from unless the lateness asks
+for more, and the member's next stream (another stage, a fork, a join) keeps
+the bar. The rule sees only paced pads: one that came within
 4 ms of the member's previous pad (a burst after a stall of the client, of its
 downlink or of the relay's sealing, or behind one lost segment) or more than
 eight ticks after it (the first after such a stall) says nothing about the
@@ -1001,7 +1027,8 @@ running only 8-20 passes a second), and a member whose pads were filled for
 half a second in a row (lagging) feeds the rule with every pad. A button
 pressed in a pad that came after its tick was sealed, and not held in the
 slot's last sealed pad, is sealed with the slot's next pad: a press inside a
-burst comes a few ticks late instead of being lost. The first `d + 2` ticks of a stream (a sealed start, a
+burst comes a few ticks late instead of being lost, and the late pad fills the
+slot's next ticks. The first `d + 2` ticks of a stream (a sealed start, a
 resync's end) do not count: the client sends those pads at once when it learns
 of the stream, so the first of them are late by design; a JOIN gives every
 stream of the instance `d + 120` ticks (the joiner's spawn loads its packages
@@ -1270,13 +1297,14 @@ minimized window's loop sleeps instead of spinning; the measurements above,
 ticks: `ceil((RTT + J) / 16.683 ms + 1.5)`, the 1.5 for the playout tick and
 the host pass. Measured after the fixes: 3 ticks (50 ms) at 20 ms of round
 trip, 4-5 (67-83 ms) at 40 ms, 7 (117 ms) at 80 ms, 11-13 (183-217 ms) at
-150 ms; on a busy PC one or two more after a stretch of stalls, coming back
-down within 10-20 s. A game presenting at 60 Hz with vsync adds up to a
-pass (16.7 ms) to its round trip and its pads' way, so at 20-30 ms of ping it
-settles at 3-4 ticks (50-67 ms); at 144 Hz at 3. A member whose PC stalls
-regularly (a throttled background game) raises only its own d. TCP loss still
-costs a lost segment's round trip plus about 50 ms (the S1 matrix); the UDP
-transport of round S4 remains the answer to that.
+150 ms. The review of round 62 (below) corrected the rest of this paragraph:
+a game presenting at 60 Hz with vsync did not settle at 3-4 at 20-30 ms of
+ping but swung between 3, 4 and 5 every 33 s (since the review it holds 4),
+and on a busy PC d did not come back within 10-20 s (since the review it rises
+less often and falls after 30 s). A member whose PC stalls regularly (a
+throttled background game) raises only its own d. TCP loss still costs a lost
+segment's round trip plus about 50 ms (the S1 matrix); the UDP transport of
+round S4 remains the answer to that.
 
 *Prediction or rollback for the own player: assessed, not built.* The engine
 is deterministic across machines (the net fingerprints agree every 60 ticks
@@ -1309,6 +1337,186 @@ cell above. Hidden windows only: what a visible window in the background does
 to its own loop (vsync of an occluded window, two GL windows on one GPU) was
 not measured here; its effect on the others is L2's, and its own numbers come
 with `saves/online.log` from the field.
+
+**Review of round 62 (04.11): the 60 Hz beat, held buttons, the message
+numbers.** DW4Online 0.1.2 (round 62 as the user got it) had three faults the
+review found and measured; DW4Online 0.1.3 and the client of this branch fix
+them.
+
+1. *A game with vsync at 60 Hz swung its own d.* A game presenting with vsync
+   at 60.000 Hz (the default: `settings.ini` vsync on, a 60 Hz monitor) runs
+   its passes, and so sends its pads, on a 60.000 Hz grid; the relay seals at
+   59.94 Hz. The pad for tick t + d leaves at the first pass after tick t ran,
+   so its arrival margin slides by one pass (16.7 ms) over a beat of 16.7 s and
+   jumps back. Round 62's fall looked at ten seconds with 0.15 of a tick kept:
+   it saw only the high part of the sawtooth, fell, and in the low part most
+   pads of a second came late, which raised d by two: 4 -> 3 -> 5 -> 4 every
+   33 s at 24 ms of round trip (the review's real clients on a 60.000 Hz pass
+   grid: 75-193 of about 5,100 inputs not sealed as sent, about 120 late pads
+   in a row in each cycle; the hub of 0.1.0 held 4). The hidden test clients
+   have no vsync, which is why L1 never showed it. *Fix:* the fall looks at
+   thirty seconds of pads since the last change (more than one beat); a fall
+   that has to be undone bars that value (one minute, twice as long at each
+   further failure, at most ten minutes), d goes back to the value it fell
+   from, and the member's next stream keeps the bar (a display at 59.95 Hz
+   beats every 100 s, longer than any window).
+2. *A held button toggled at 30 Hz.* Round 62 carried a press of a late pad
+   into the next sealed pad, but filled the missing ticks with the last pad
+   sealed in time. Where seals and late pads alternate (d a tick too low: in
+   the low part of the beat above, after a fall, at a join) a held A was sealed
+   0010101... (the carried press on, the old fill off), and after six fills
+   every held button toggled: phantom repeated attacks and confirms. *Fix:*
+   the newest pad, sealed in time or late, is the fill source; the same
+   stretch now seals 0011111... (held, one tick late, released one tick late).
+   A late pad now costs that input a tick or two, not the input.
+3. *One number, two messages.* Round 60's PRESENCE2 to clients took 0x8F at
+   protocol 45, NETSTAT's number since 0.1.2 (6.3 "Message types"); a client
+   that cannot decode a frame of a known type drops the connection, so a
+   round 60 client on a 0.1.2 or later server would reconnect every second.
+   0x8F stays NETSTAT; registry checks on both sides, and the client skips an
+   informational frame (NETSTAT, PRESENCE, ROSTER, ROOM) that does not decode.
+   Round 60 has to move PRESENCE2's server-to-client number to 0x90 before it
+   merges.
+
+And one consequence of 2: since a late pad costs only a tick of that input,
+the rise no longer reacts to any one paced late pad in three different seconds
+of ten (`Sealing:LateTarget` 0.001), only to more than 2 % (0.02). On a busy PC
+the first pad after each stall of the client, of its downlink or of the relay
+(up to eight ticks of gap: the rule must count a game that runs only 8-20
+passes a second) and the first pad behind each lost TCP segment raised d by a
+tick every few such seconds, and the thirty seconds of fall took long to give
+it back. A link too slow for d still rises at once (most of a second late) or
+by the 2 % (a slow game: the first pad of every burst late). A mostly late
+second raises d by its median lateness and half a tick, no longer a whole
+tick more: a joiner 2 ms late at 20 ms of round trip went from 3 to 5 and,
+with the thirty seconds of fall, needed a minute back to 3 (now 3 -> 4).
+
+*Closed loop* (`server/DW4Online/tests/DW4Online.Tests/DelayLoopTests.cs`, the
+review's model as tests: the real `SlotStream` and `DelayController`, a port
+of `pacing.cpp`, the client's passes on a display's grid, the start value from
+PING round trips that include the wait for the next pass; ten minutes, three
+seeds, late pads counted after the first minute; the same seeds for both
+rules):
+
+| Passes | Round trip | Round 62: late, d changes after the first minute | Review fix |
+| --- | --- | --- | --- |
+| 60.000 Hz | 24 ms | 0.71 %, none (d 3 too low in a part of the beat) | 0.00 %, none, d 4 |
+| 60.000 Hz | 26 ms | 3.43 %, 50 (3 / 4 / 5 every 33 s) | 0.00 %, none, d 4 |
+| 60.000 Hz | 40 ms | 2.52 %, 10 | 0.00 %, none, d 5 |
+| 59.95 Hz (100 s beat) | 24 ms | 0.86 %, 16 | 0.32 %, 4 (tries at about 0.5, 2.5, 5.5, 10.5, 20, 32 minutes; 0.13-0.21 % after 15 minutes) |
+| 59.95 Hz | 40 ms | 1.06 %, 16 | 0.61 %, 6 (0.15-0.17 % after 15 minutes) |
+| 59.94 Hz, 144 Hz, no vsync | 20-150 ms | 0.00 % | 0.00 % (d 3 at 20 ms, 4 at 24-30 ms, 5 at 40-50, 7 at 80, 11 at 150) |
+
+With client stalls of 20-150 ms at random (`LoadTable`; 60 Hz, 24 ms; the
+time from a pad's sample to the seal that carries it, late pads by the seal
+after they came): quiet d 4, 38 ms; 0.2 / 0.5 / 1 stalls a second with 0.1 %:
+mean d 6.1 / 8.4 / 9.9, 64 / 94 / 112 ms, 1.0-1.2 % late; with 2 %: 5.0 / 5.3 /
+7.5, 44 / 43 / 73 ms, 1.6-3.3 % late (without vsync at 0.2 and 0.5 a second it
+stays at 4).
+
+*Real clients* (hidden, loopback, every client behind its own proxy; L3 is L1
+with both games' passes on a 60.000 Hz grid, `DW4_ONLINE_TEST_PASS_HZ=60`, the
+review's case; the machine loaded by other rounds' clients and builds, 50-85 %
+of its CPU):
+
+"Backlogs" is how often a client ran a backlog of sealed ticks at once
+(stalls of the client or its downlink, per client and run), a measure of the
+machine's load; "late input" is the share of own pads not sealed as sent (since
+the review mostly sealed a tick or a few later, not lost); latency as in the
+table above.
+
+| Link each way (RTT) | Hub | Backlogs | d first / max / end (a, b) | Latency a / b | Late input a / b (of ~5,100) |
+| --- | --- | --- | --- | --- | --- |
+| L3: 12 ms + 1 ms jitter (24), 60 Hz grid | 0.1.2, the review's runs | 0-2 | 4 -> 3 -> 5 -> 4 every 33 s | 71 / 71 ms | 75 / 193 and 85 / 91 |
+| | 0.1.2, this branch | 98-109 | 5 / 12 / 6, 5 / 12 / 8 | 157 / 164 ms | 244 / 182 |
+| | fix with 0.1 % | 3-4 | 4 / 6 / 4, 4 / 6 / 4 | 89 / 88 ms | 22 / 3 |
+| | fix (0.1.3), two runs | 0-2 | 4 / 4 / 4, 4 / 4 / 4 | 67 / 67 ms | 0 / 0, 0 / 0 |
+| L3: 13 ms + 1 ms (26), 60 Hz grid | fix with 0.1 % | 0-3 | 4 / 4 / 4, 5 / 5 / 4 | 67 / 70 ms | 0 / 0 |
+| | fix (0.1.3) | 11-14 (stalls to 0.8 s) | 5 / 8 / 8, 5 / 6 / 6 | 92 / 87 ms | 151 / 167 |
+| L3: 15 ms + 1 ms (30), 60 Hz grid | fix (0.1.3) | 0-3 | 5 / 5 / 4, 5 / 5 / 4 | 71 / 70 ms | 0 / 0 |
+| L1: 10 ms (20), no vsync | fix (0.1.3), three runs | 0-2 | 3 / 3 / 3; joiner 5 / 5 / 3, 4 / 4 / 3, 3 / 3 / 3 | 50 / 50-64 ms | 0-2 / 0 |
+| L1: 20 ms (40) | fix with 0.1 % | 0-3 | 5 / 5 / 5, 5 / 5 / 5 | 83 / 83 ms | 0 / 0 |
+| | fix (0.1.3) | 0-3 | 5 / 5 / 5, 5 / 5 / 5 | 83 / 83 ms | 2 / 2 |
+| | fix (0.1.3) | 8-13 (stalls to 0.56 s) | 5 / 9 / 5, 5 / 9 / 5 | 124 / 123 ms | 41 / 46 |
+| L1: 20 ms + 0-5 ms jitter (47) | fix with 0.1 % | 0-3 | 5 / 6 / 6, 5 / 6 / 6 | 87 / 88 ms | 32 / 34 |
+| | fix (0.1.3) | 0-3 | 5 / 5 / 5, 5 / 5 / 5 | 83 / 83 ms | 0 / 0 |
+| L1: 20 ms, 1 % loss (42) | fix with 0.1 % | 56-62 | 5 / 10 / 10, 5 / 11 / 11 | 163 / 165 ms | 35 / 23 |
+| | fix (0.1.3) | 55-66 (the loss's own stalls) | 5 / 8 / 8, 5 / 9 / 9 | 132 / 142 ms | 130 / 119 |
+| L2: 10 ms, the host throttled (30 pictures a second, a 150 ms stall every 3 s) | fix with 0.1 % | 56 / 10 | host 5 / 8 / 8, guest 5 / 7 / 7 | 110 / 98 ms | 230 / 33 |
+| | fix (0.1.3) | 32 / 3 | host 5 / 6 / 6, guest 3 / 4 / 3 | 95 / 59 ms | 199 / 6 |
+| L1: 75 ms (150) | fix with 0.1 % | 16-19 | 11 / 15 / 15, 11 / 15 / 15 | 221 / 224 ms | 66 / 55 |
+
+On a quiet machine the fix holds d where the network puts it, with no late
+input: 3 at 20 ms, 4 at 24-30 ms with the 60 Hz grid, 5 at 40 ms. On the
+loaded machine of this round (other rounds' scenario clients and four 600,000
+frame campaign runs, 75-85 % of the CPU, the test clients at below normal
+priority) the runs differ more by the load of the moment than by the rule;
+stalls of half a second and more make a client's pads late in whole seconds,
+which raises its d by the "most late" rule as it must (a client that cannot
+keep up is filled otherwise), and the thirty-second fall brings it back. Where
+the load was alike, 2 % kept d lower than 0.1 %: jitter 5 instead of 6, 1 %
+loss 8-9 instead of 10-11 (30 ms less input delay, its late pads a tick late
+instead), and L2's guest at 3-4 next to a throttled host (0.1 %: 5 -> 7). TCP
+loss still costs the UDP transport's absence: at 1 % the input delay roughly
+doubles.
+
+*What the round 62 table promised and did not hold.* The review could not
+reproduce two rows: at 1 % loss it measured d 5 -> 10 (155-163 ms, 40 ms of
+round trip), 5 -> 11 with 5 ms of jitter, 4 -> 8 at 0.5 % and 25 ms, not
+"5 / 6 / 5-6 (90 ms)"; under full load (13 compilers, 8-11 hidden clients)
+3 -> 12 at 20 ms and 35 s until 3-4 again, 4 -> 8 at 40 ms and staying, not
+"one or two more, back within 10-20 s". This branch's runs with the 0.1 % rule
+on a loaded machine agree: 5 -> 10 / 11 at 1 % loss (163 ms), 11 -> 15 at
+150 ms and 3 -> 7 for L2's guest. The rows above with 2 % replace them.
+
+*Minors of the review.* A JOIN's grace (`d + 120` ticks of every stream) hid
+the joiner's lateness but did not prevent it: under load the review saw about
+200 of the joiner's 580 pads in the first ten seconds after J late and not
+sealed as sent. With the newest pad as the fill source those pads come a
+tick or a few late instead of being lost: in this branch's L1 runs at 10 ms
+each way the joiner had as many late pads in those ten seconds (220 and 225;
+the review 203 and 210), but only 40 and 38 were sealed other than sent (the
+review 198 and 203), and those mostly a tick late, not lost. (The grace stays:
+a rise in it would follow the JOIN step's long step on every machine, cause 5
+above.) `saves/online.log` now says what the two-window case needs: the
+game's passes and pictures per second with the longest pass (every ten
+seconds), vsync, the swap interval,
+the display's refresh rate, the frame limit, and a line whenever the window
+goes to the background, is covered, minimized or comes back; the session
+latency at the end counts only the pads that waited for the network (it
+mixed in the solo ticks' 0 ms: "17 ms" for 67 ms). The indicator's "Ping" is
+the network's round trip: the relay's PING / PONG median holds the wait of a
+PING for this game's next pass (half a pass on average, 8 ms at 60 pictures a
+second: "34 ms" at 24 ms of network); F1 > Online shows both and wraps its
+lines, with "Copy path" and "Open folder" for the log. A second game whose
+`online.log` the first holds no longer rotates it (it deleted `online.3.log`
+and left no `online.1.log`); a rotation moves the current file aside first.
+
+*What a guest should feel.* Lockstep without prediction delays every input by
+d ticks of 16.7 ms plus the wait for the next picture, nothing else: at 20 ms
+of ping 3 ticks (50 ms), at 25-30 ms with a 60 Hz display 4 (67 ms), at 40 ms
+5 (83 ms), at 80 ms 7 (117 ms), at 150 ms 11-12. The field's "massive,
+constant" lag was round 62's causes 1-3 (0.1.0 ratcheted both members to 12,
+200 ms of input delay, at 20 ms of ping, a throttled host to 14); 0.1.2 fixed
+that but, with a 60 Hz
+display, swung between 3, 4 and 5 with a second of lost or toggled inputs every
+33 s. Two games on one PC are a busy PC: each stall of either game makes its
+own pads late (a tick of that input), and only a lasting share above 2 % or a
+mostly late second raises its own d; the other member's d never follows.
+
+*Checks of the review fixes.* ctest 44 of 44 (new: the type registry, the
+held log of a second game, undecodable informational frames, the pass wait);
+`det` 4004f056 / 396cb219 in two runs with online off; the server's unit tests
+206 (new: `DelayLoopTests`, the bar, the fill source, the registry) and
+integration and end-to-end tests 90 of 91 (one skipped: the deploy kit's
+certificate store; a private database with a fresh data directory); the
+real-client scenarios S1, S2, S3, S11a, S17a, S18b, S19b and S22a pass with
+every instance's net fingerprints equal (S3 once failed on the order of its
+two joins when the machine stalled for three seconds, and passed again); L1,
+L2, L3 and L1s pass in every cell above; the screenshots of L1s show F1 >
+Online's wrapped lines with the log's full path and the two buttons, and the
+indicator "Ping 27 ms  Delay 4 (67 ms)" (27 ms network, 28 ms at the relay for
+a client without vsync).
 
 **1 → 2 members.** The server sends JOIN_REQ to the solo leader; the leader
 answers JOIN_AT(J) with `J = current tick + d`, switches to delayed sampling at
@@ -3025,7 +3233,7 @@ anyway; joining goes through the room list.
 | Rooms | `RoomService`: instances as lockstep groups (id, stage, visit, context hash, slots, parent and fork frame, departing, boss lock, joinable), barrier decisions DISSOLVE / co-arrival / JOIN / NEW with holds and the boss choice (3.4), catch-up estimates from the members' replay rates, forks of both kinds, in-band JOIN and LEAVE, preferred slots, no instance end when its first member leaves (`EndInstanceLocked` goes), room-scoped relay tickets, the settings hash, the relay connection as heartbeat. `POST /rooms/{code}/stage` and `/stage/leave` are retired; the room state lists instances with stage and members. Room settings gain camera mode and light mode |
 | Story | migration with `online_story`; `StoryMerge` in the domain with the golden vectors; plausibility table from the census; pending sets with STORY_ACK; the owner-away setting with the session's dropped set; `GET /online-character` composes, `PUT` ignores story bytes; `GET /rooms/{code}/story` for the website and debugging |
 | Achievements | catalogue migration to the client's ids and thresholds (built in S2: migration 0009 (0008 is `online_story`), `data/online/achievements.json`, `roomPlayers`, owner-only story challenges; 11) |
-| Config | `Sealing:MaxDelayTicks` (15, measured in S1, 6.4), `Sealing:LateTarget` (0.001: since round 62 the share of late pads in the delay rule's ten-second window that counts, with three different seconds), `Relay:ReconnectSeconds` (10), `Relay:LagLeaveSeconds` (10), `Relay:StateBytesPerSecond`, `Instances:CoArrivalHoldMs` (3000), `Instances:JoinHoldSeconds` (30, measured in S1, 3.4), `Instances:MaxCatchUpSeconds` (30), the flood and recovery limits of the S1 reviews (`Relay:MaxQueuedBytes` 4 MiB, `Relay:MaxQueuedStateBytes` 24 MiB, `Relay:StateBytesPerMinute` 64 MiB, `Relay:MaxConcurrentStateBuilds` 2, `Instances:LoneBarrierMs` 1000, `Instances:MaxAheadSeconds` 15, `Instances:ResyncLimit` 3 in `Instances:ResyncWindowMinutes` 10, 6.6-6.10), `Rooms:StoryWhileOwnerAway` (drop, built in S2), `Instances:StoryBurst` (10) and `Instances:StoryMessagesPerMinute` (60, S2); `Play:CurrentProtocol` follows the client. `Sealing:StallMs` and `Instances:MaxJoinLogMinutes` of revision 1 are gone |
+| Config | `Sealing:MaxDelayTicks` (15, measured in S1, 6.4), `Sealing:LateTarget` (0.02 since the review of round 62, 0.001 in round 62: the share of late pads in the delay rule's ten-second window that counts, with three different seconds), `Relay:ReconnectSeconds` (10), `Relay:LagLeaveSeconds` (10), `Relay:StateBytesPerSecond`, `Instances:CoArrivalHoldMs` (3000), `Instances:JoinHoldSeconds` (30, measured in S1, 3.4), `Instances:MaxCatchUpSeconds` (30), the flood and recovery limits of the S1 reviews (`Relay:MaxQueuedBytes` 4 MiB, `Relay:MaxQueuedStateBytes` 24 MiB, `Relay:StateBytesPerMinute` 64 MiB, `Relay:MaxConcurrentStateBuilds` 2, `Instances:LoneBarrierMs` 1000, `Instances:MaxAheadSeconds` 15, `Instances:ResyncLimit` 3 in `Instances:ResyncWindowMinutes` 10, 6.6-6.10), `Rooms:StoryWhileOwnerAway` (drop, built in S2), `Instances:StoryBurst` (10) and `Instances:StoryMessagesPerMinute` (60, S2); `Play:CurrentProtocol` follows the client. `Sealing:StallMs` and `Instances:MaxJoinLogMinutes` of revision 1 are gone |
 | Website | the room page shows instances per stage (built in S2: `/rooms` lists each room's instances by stage with the client's stage names from `data/online/areas.json`, "2 together" / "alone" / boss fight / leaving, the hub stages last; names only for signed-in members of the room) |
 | Deploy | fixed-key self-signed certificate and the pin script (10); port 52041 as before (built in S2: `tls-key.ps1`, `print-pins.ps1`, the pin build step, DEPLOY.md 4, 6.1, 6.4) |
 | Tests | unit tests for sealing schedules and fills, events, forks, barrier decisions (holds, co-arrival, context key) and merge vectors; integration tests with scripted fake clients; end-to-end tests with the real game client (16) |
@@ -3844,7 +4052,7 @@ Depends on: S1 (S2 for the save room rules), the answers to questions 6 and 7
 | Lane | Scope |
 | --- | --- |
 | resync | the server's vote with diagnostics, resync by replay with the catch-up limit (beyond it: continue alone), RESUME with missing ticks, LEAVE timeouts, catch-up progress with expected duration |
-| latency | delay tuning from the S1 matrix and S12; a UDP transport for INPUT / SEALED if the matrix showed TCP's loss stalls unacceptable; lag indicators (round 62, `fix-r62netlag`, after the field report of 31.10: the delay rule, the join's grace, the playout drain, the network indicator and `saves/online.log`, measured in 6.4; UDP still open) |
+| latency | delay tuning from the S1 matrix and S12; a UDP transport for INPUT / SEALED if the matrix showed TCP's loss stalls unacceptable; lag indicators (round 62, `fix-r62netlag`, after the field report of 31.10: the delay rule, the join's grace, the playout drain, the network indicator and `saves/online.log`, measured in 6.4; its review fixed the 60 Hz beat, held buttons through late pads, the 2 % rise, the message numbers, DW4Online 0.1.3; UDP still open) |
 | determinism | the `dw4::sim` libm routing to MSL routines in online sessions (6.12) and the removal of the FMA3 gate, mod contents in the data hash, version gate, a two-machine test kit and instructions for the user |
 | performance | the cheaper conservative frustum test for extra cameras (strict, no contraction), the picture pass with smooth motion at 144 Hz, cost and replay rate re-measured on the final path (libm routing), a server load test with fake clients (200 rooms) |
 
@@ -4151,7 +4359,7 @@ Server to client:
 | 0x8C | CLOSE | reason u8 (1 left, 2 kicked, 3 room closed, 4 replaced, 5 protocol, 6 abuse, 7 timeout, 8 server stopping), text str |
 | 0x8D | ROSTER | count u8 + (member u8, stage str, inst u32, level u16, hp u16, max hp u16, flags u8: 1 connected, 2 lagging, 4 owner) (once per second) |
 | 0x8E | REASSIGN | old inst u32, visit u32, new inst u32, from tick u32, mode u8, flags u8 (1 departing): after a fork the receiver's copy is the child; its stream comes with the new id from that tick |
-| 0x8F | NETSTAT | rtt ms u16 (median of the newest 30 PONG round trips, host-loop stalls out), spread ms u16 (p90 above it), d u8, margin ms i16 (the delay rule's 0.5 % quantile), sealed u32, filled u32, late u32 (the member's current stream), flags u8 (1 in a stream); once per second after PING (round 62; clients skip unknown server frames, so no protocol change) |
+| 0x8F | NETSTAT | rtt ms u16 (median of the newest 30 PONG round trips, host-loop stalls out), spread ms u16 (p90 above it), d u8, margin ms i16 (the delay rule's 0.5 % quantile), sealed u32, filled u32, late u32 (the member's current stream), flags u8 (1 in a stream); once per second after PING (round 62; clients skip unknown server frames, so no protocol change; 0x8F is NETSTAT's for good, 6.3 "Message types") |
 
 **State blob** (reassembled STATE_DATA): purpose u8 (1 join, 2 co-arrival, 3 resync, 4 resume), slot u8, codec u8
 (0 = raw records), snapshot blob (as the leader uploaded it), fork count u8 + (tick u32, leaver mask u8, kind u8,
