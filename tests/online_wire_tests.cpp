@@ -145,6 +145,57 @@ void messages() {
     check(w::decode_presence(w::encode(presence, true), true) == presence, "PRESENCE (server)");
     presence.stage.clear();
     check(w::decode_presence(w::encode(presence, true), true).stage.empty(), "PRESENCE with an empty stage (hidden)");
+    // PRESENCE2 (round 60): the version, the PRESENCE fields and the figure's.
+    w::Presence ghost{0, "stagML11", 9, 1.5f, -2.0f, 300.25f, 0.5f, 3, 12, 80, 120, 10, 30};
+    ghost.version = w::kPresenceVersion;
+    ghost.clip = "runD";
+    ghost.flags = w::Presence::loop | w::Presence::busy;
+    ghost.warp = 250;
+    ghost.sent_ms = 0xFFFFFFF0u;
+    ghost.weapon = "w_aguclaw01";
+    const auto ghost_bytes = w::encode_presence2(ghost, false);
+    check(ghost_bytes.front() == 1 && w::decode_presence2(ghost_bytes, false) == ghost, "PRESENCE2 (client)");
+    ghost.member = 9;
+    check(w::decode_presence2(w::encode_presence2(ghost, true), true) == ghost, "PRESENCE2 (server)");
+    check(w::encode(ghost, false).size() + 1 + 1 + 4 + 1 + 1 + 4 + 1 + 11 == ghost_bytes.size(), "PRESENCE2 is PRESENCE plus the figure's fields");
+    check(w::decode_presence(w::encode(ghost, false), false).version == 0, "PRESENCE carries no version");
+    ghost.clip.clear();
+    ghost.weapon.clear();
+    check(w::decode_presence2(w::encode_presence2(ghost, true), true) == ghost, "PRESENCE2 without a clip or weapon");
+    ghost.clip = "run-D";
+    check(throws([&] { w::encode_presence2(ghost, false); }), "a clip outside A-Z a-z 0-9 _ is refused");
+    ghost.clip = std::string(17, 'a');
+    check(throws([&] { w::encode_presence2(ghost, false); }), "a clip of 17 characters is refused");
+    ghost.clip = "runD";
+    {
+        auto bytes = w::encode_presence2(ghost, false);
+        auto zero = bytes;
+        zero[0] = 0;
+        check(throws([&] { w::decode_presence2(zero, false); }), "version 0 is refused");
+        auto later = bytes;
+        later[0] = 2;
+        later.push_back(0xAB);
+        later.push_back(0xCD);
+        const auto read = w::decode_presence2(later, false);
+        check(read.version == 2 && read.clip == "runD" && read.warp == 250, "a later version's appended bytes are skipped");
+        auto extra = bytes;
+        extra.push_back(0);
+        check(throws([&] { w::decode_presence2(extra, false); }), "version 1 with a byte too many is refused");
+        auto cut = bytes;
+        cut.pop_back();
+        check(throws([&] { w::decode_presence2(cut, false); }), "a cut PRESENCE2 is refused");
+        auto bad = bytes;
+        const std::size_t clip_at = bytes.size() - (1 + 1 + 4 + 1 + ghost.weapon.size()) - ghost.clip.size();
+        bad[clip_at] = '-';
+        check(throws([&] { w::decode_presence2(bad, false); }), "a received clip with a '-' is refused");
+        auto nan = bytes;
+        const std::size_t x_at = 1 + 1 + ghost.stage.size() + 4;
+        nan[x_at] = 0;
+        nan[x_at + 1] = 0;
+        nan[x_at + 2] = 0xC0;
+        nan[x_at + 3] = 0x7F;
+        check(throws([&] { w::decode_presence2(nan, false); }), "a NaN position is refused");
+    }
     auto resume = w::decode_resume(w::encode(w::Resume{7, 3, 1, 999}));
     check(resume.slot == 1 && resume.last_tick == 999, "RESUME");
     check(w::decode_rate(w::encode(std::uint32_t(4321))) == 4321, "RATE");
@@ -152,6 +203,10 @@ void messages() {
     check(w::decode_bye(w::encode(w::Bye{1})).reason == 1, "BYE");
     // Server -> client.
     w::Welcome welcome{3, 41, 1, 0, w::Mode::hub, "", w::kNoTick, 0, 30, 0};
+    check((w::decode_welcome(w::encode(w::Welcome{3, 41, 1, 0, w::Mode::hub, "", w::kNoTick, 0, 30,
+                                                  std::uint8_t(w::Welcome::resumable | w::Welcome::presence_v2)}))
+               .flags & w::Welcome::presence_v2) != 0,
+          "WELCOME's presence_v2 flag");
     auto welcome2 = w::decode_welcome(w::encode(welcome));
     check(welcome2.member == 3 && welcome2.inst == 41 && welcome2.mode == w::Mode::hub && welcome2.stage.empty() &&
               welcome2.last_tick == w::kNoTick && welcome2.max_catch_up == 30,
@@ -233,10 +288,12 @@ void messages() {
         for (int b = 0; b < 256; ++b)
             if (std::string(w::type_name(w::Type(b))) != "?") known += (known.empty() ? "" : " ") + std::string(w::type_name(w::Type(b)));
         check(known == "INPUT LOG HEADING BARRIER BARRIER_CHOICE SPLIT SNAPSHOT SNAPHASH READY JOIN_AT NETFP STATE INTENT STORY PRESENCE RESUME "
-                       "RATE PONG BYE WELCOME SEALED LIVE JOIN_REQ BARRIER_OK BARRIER_WAIT STATE_DATA PRESENCE RESYNC STORY_ACK ROOM PING CLOSE "
-                       "ROSTER REASSIGN NETSTAT",
+                       "RATE PONG BYE PRESENCE2 WELCOME SEALED LIVE JOIN_REQ BARRIER_OK BARRIER_WAIT STATE_DATA PRESENCE RESYNC STORY_ACK ROOM PING "
+                       "CLOSE ROSTER REASSIGN NETSTAT PRESENCE2",
               "type registry: " + known);
         check(std::uint8_t(w::Type::bye) == 0x13 && std::uint8_t(w::Type::reassign) == 0x8E, "the registry's last numbers before NETSTAT");
+        // Round 60's PRESENCE2: 0x14 to the relay, 0x90 back (first 0x8F, NETSTAT's since DW4Online 0.1.2).
+        check(std::uint8_t(w::Type::presence2) == 0x14 && std::uint8_t(w::Type::presence2_of) == 0x90, "PRESENCE2's numbers");
     }
     auto close = w::decode_close(w::encode(w::Close{w::CloseReason::kicked, "bye"}));
     check(close.reason == w::CloseReason::kicked && close.text == "bye", "CLOSE");
@@ -257,6 +314,18 @@ void messages() {
     check(hex(w::encode(w::State{7, 3, 61, 5, 5, w::NotJoinable::boss})) == "07000000030000003d00000005050000000000000005", "golden STATE");
     check(hex(w::encode(w::Welcome{3, 41, 1, 0, w::Mode::hub, "", w::kNoTick, 0, 30, 0})) == "032900000001000000000000ffffffff001e0000",
           "golden WELCOME");
+    {
+        // (HubCoreTests / WireGoldenTests "PRESENCE2" on the relay's side.)
+        w::Presence g{0, "stagml11", 9, 1.5f, -2.0f, 3.0f, 0.25f, 4, 99, 500, 600, 70, 80};
+        g.clip = "runD";
+        g.flags = w::Presence::loop | w::Presence::busy;
+        g.warp = 7;
+        g.sent_ms = 0x01020304u;
+        g.weapon = "w_a1";
+        check(hex(w::encode_presence2(g, false)) == "01" "08737461676d6c3131" "09000000" "0000c03f" "000000c0" "00004040" "0000803e" "04" "6300"
+                                                    "f401" "5802" "4600" "5000" "0472756e44" "03" "07" "04030201" "04775f6131",
+              "golden PRESENCE2 " + hex(w::encode_presence2(g, false)));
+    }
     w::BarrierOk golden;
     golden.inst = 7;
     golden.visit = 3;

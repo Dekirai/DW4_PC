@@ -1,0 +1,13 @@
+{
+  "desc": "ghost figures: b leaves the lobby over the mat matz00 while a stands by it; its figure fades out on the mat and does not come back there",
+  "frames": 9000,
+  "timeout": 600,
+  "seed_story": true,
+  "min_shared_ticks": 0,
+  "shots": true,
+  "env": {"DW4_TRACE_GHOSTS": "10"},
+  "clients": [
+    {"name": "a", "script": "a.script", "card": "k7", "start": 0},
+    {"name": "b", "script": "b.script", "card": "k10", "start": 3}
+  ]
+}

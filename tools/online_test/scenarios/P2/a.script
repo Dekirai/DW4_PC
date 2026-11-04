@@ -1,0 +1,28 @@
+# P2, member a (k7, PRESENCE2): steps off the lobby's entry point and stands; pictures of b's figure (b sends only
+# PRESENCE: a client before round 60 or of an older hub) standing, walking past and standing right in front of a.
+campaign until stage=stagml11,control
+talk until control,frames>=60
+log in the lobby
+idle until epoch>=@84
+goto 40 -70 3
+idle until ghosts>=1 or epoch>=@110
+log sees b
+idle until epoch>=@100
+shot a_p2_standing
+idle until epoch>=@112
+log b walks
+shot a_p2_walk_1
+idle until frames>=45
+shot a_p2_walk_2
+idle until frames>=45
+shot a_p2_walk_3
+idle until frames>=45
+shot a_p2_walk_4
+idle until frames>=45
+shot a_p2_walk_5
+idle until frames>=45
+shot a_p2_walk_6
+idle until epoch>=@150
+log b back
+shot a_p2_b_back
+idle until frames>=600

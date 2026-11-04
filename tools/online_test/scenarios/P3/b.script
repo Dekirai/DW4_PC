@@ -1,0 +1,11 @@
+# P3, member b (k10): walks to (10, -40), then over the mat matz00 into stagml12 and stays there.
+campaign until stage=stagml11,control
+talk until control,frames>=60
+log in the lobby
+idle until epoch>=@88
+goto 10 -40 3
+idle until epoch>=@112
+log to the mat
+mat matz00 yes until stage=stagml12,control
+log b in stagml12
+idle until frames>=300

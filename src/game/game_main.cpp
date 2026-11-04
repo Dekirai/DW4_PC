@@ -18,6 +18,7 @@
 #include "achievements.hpp"
 #include "discord_presence.hpp"
 #include "overhead_labels.hpp"
+#include "ghost_figures.hpp"
 #include "presence_art.hpp"
 #include "presence_data.hpp"
 #include "online_run.hpp"
@@ -918,6 +919,8 @@ int run(const Options& options, dw4::game::Settings& settings) {
             use_online_card();
         };
         hooks.hidden = [&] { return dw4::game::OverheadLabels::hidden(engine); };
+        hooks.figure_hidden = [&] { return dw4::game::OverheadLabels::hidden(engine, false); };
+        hooks.busy = [&] { return dw4::game::OverheadLabels::window_open(engine); };
         online = std::make_unique<dw4::game::OnlineRun>(std::move(http), std::move(room), std::move(hooks), data,
                                                         rate.ok ? std::uint32_t(rate.steps_per_second) : 3000u);
         {
@@ -1204,6 +1207,10 @@ int run(const Options& options, dw4::game::Settings& settings) {
         }
         std::vector<dw4::engine::DrawItem> items;
         dw4::engine::ShadowFrame shadow;
+        // A picture's list and shadow with the ghost figures in (the draw
+        // block's copies; here, as the renderer keeps the shadow's address).
+        std::vector<dw4::engine::DrawItem> ghost_items;
+        dw4::engine::ShadowFrame ghost_shadow;
         dw4::engine::FrameCamera camera;
         dw4::engine::Vec4f clear{};
         std::array<dw4::engine::PadSample, 4> pads{};
@@ -1296,10 +1303,29 @@ int run(const Options& options, dw4::game::Settings& settings) {
             return (engine_generation << 40) ^ serial;
         };
         auto own_slot = [&] { return net.active() ? net.local_slot() : online ? online->session().own_slot() : engine.view_slot(); }; // (offline: slot 0 unless a seamless co-op test run sets the view slot)
+        // This machine's player's place (presentation: the ghost figures' cap and camera fade).
+        auto own_position = [&]() -> std::optional<dw4::engine::Vec3f> {
+            if (const auto* models = engine.get<dw4::engine::ModelCtrlManager>())
+                if (const auto* player = models->player(own_slot()); player && player->node && player->generated)
+                    return dw4::engine::Vec3f{player->node->matrix(3, 0), player->node->matrix(3, 1), player->node->matrix(3, 2)};
+            return std::nullopt;
+        };
         // Overhead name tags (settings.ini [hud]; test runs: DW4_LABELS=
         // auto|all|others|off, DW4_TRACE_LABELS=N prints their screen
         // positions every N frames, without a window too).
         dw4::game::OverheadLabels labels;
+        // Ghost figures (ghost_figures.hpp, SEAMLESS.md 12): the other room
+        // members in this hub stage as their Digimon, from their presence;
+        // presentation only (DW4_GHOSTS=0 turns them off; DW4_TRACE_GHOSTS=N
+        // prints them every N frames in test runs). `present_remote`: the
+        // room members' presence samples of this loop pass (the figures and
+        // the remote tags use the same ones).
+        dw4::game::GhostFigures ghosts;
+        const bool ghosts_enabled = !std::getenv("DW4_GHOSTS") || std::string_view(std::getenv("DW4_GHOSTS")) != "0";
+        const int trace_ghosts = options.smoke_frames && std::getenv("DW4_TRACE_GHOSTS") ? std::atoi(std::getenv("DW4_TRACE_GHOSTS")) : 0;
+        std::vector<dw4::game::online::RemoteSample> present_remote;
+        double ghost_cost_max = 0, present_max = 0; // (DW4_TRACE_GHOSTS: the figures' own milliseconds a pass, the longest present)
+        int ghost_trace_bucket = -1;
         const int trace_labels = options.smoke_frames && std::getenv("DW4_TRACE_LABELS") ? std::atoi(std::getenv("DW4_TRACE_LABELS")) : 0;
         std::set<std::uint64_t> traced_occlusion; // the labels the last picture hid (traces)
         auto label_mode = [&] {
@@ -2186,7 +2212,9 @@ int run(const Options& options, dw4::game::Settings& settings) {
                         facts.tick = online->session().tick();
                         if (const auto& story = online->session().confirmed_story()) facts.room_story = &*story;
                     }
+                    facts.ghosts = ghosts.shown();
                     const auto out = online_script.update(engine, facts);
+                    if (!out.shot.empty() && !options.screenshot.empty()) ui_shot = out.shot;
                     // The run ends once the script is done.
                     if (online_script.finished()) running = false;
                     input |= out.buttons;
@@ -2718,11 +2746,13 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     state_message = line;
                     message_until = std::chrono::steady_clock::now() + std::chrono::milliseconds(300);
                 }
-                // Room members in this stage outside the own instance: name tags.
+                // Room members in this stage outside the own instance: name tags
+                // (and in a hub stage ghost figures, below).
+                present_remote = session.remote_tags(online_now);
                 std::vector<dw4::game::OverheadLabels::RemotePlayer> remote;
-                for (const auto& tag : session.remote_tags(online_now))
+                for (const auto& tag : present_remote)
                     remote.push_back({tag.member, tag.name, tag.stage, {tag.x, tag.y, tag.z}, tag.species, tag.level, tag.hp, tag.max_hp, tag.mp,
-                                      tag.max_mp});
+                                      tag.max_mp, tag.busy});
                 labels.set_remote_players(std::move(remote));
                 // The audio device follows the simulation's pace (6.4).
                 if (audio) {
@@ -2741,11 +2771,56 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     if (audio) SDL_SetAudioStreamFrequencyRatio(audio, 1.0f);
                     online_audio_ratio = 1.0f;
                     labels.set_remote_players({});
+                    present_remote.clear();
+                    ghosts.clear();
                     if (lobby) lobby->session_ended(reason);
                     // (A UI test run goes on at the offline title, as a player does.)
                     if (options.smoke_frames && !ui_script.loaded()) running = false;
                     else offline_title();
                 }
+            }
+            // Ghost figures (SEAMLESS.md 12): in a hub stage (a solo hub
+            // instance) the room members whose presence names this stage, while
+            // the picture shows the stage (no load, scene or menu; a window of
+            // this member's own keeps them). Members elsewhere are preloaded.
+            // Presentation only: nothing here reaches the engine.
+            const auto ghost_update_start = std::chrono::steady_clock::now();
+            if (online && ghosts_enabled) {
+                ghosts.set_resources(engine.resources());
+                const bool show = online->session().hub() && !dw4::game::OverheadLabels::hidden(engine, false);
+                std::vector<dw4::game::GhostTarget> targets;
+                for (const auto& sample : present_remote) {
+                    ghosts.preload(sample.species, sample.weapon);
+                    if (!show || !dw4::game::same_stage(sample.stage, engine.stage_name())) continue;
+                    targets.push_back({sample.member, sample.segment, {sample.x, sample.y, sample.z}, sample.yaw, sample.species, sample.clip,
+                                       sample.loop, sample.speed, sample.weapon});
+                }
+                ghosts.update(std::move(targets), own_position(), steady_seconds());
+            } else if (ghosts.drawn() || !present_remote.empty()) {
+                present_remote.clear();
+                ghosts.clear();
+            }
+            ghost_cost_max = std::max(ghost_cost_max, std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - ghost_update_start).count());
+            // (Every N frames, also when a pass of several steps jumps over the multiple.)
+            if (trace_ghosts > 0 && steps > 0 && frame / trace_ghosts != ghost_trace_bucket) {
+                ghost_trace_bucket = frame / trace_ghosts;
+                std::printf("[%d] ghosts shown %d, forms %zu, stage %s, own cost at most %.2f ms a pass, longest present %.1f ms\n", frame,
+                            ghosts.shown(), ghosts.loaded_forms(), engine.stage_name().c_str(), ghost_cost_max, present_max);
+                // (The own player's placement against the figure's rebuild from
+                // the presence's yaw: the rows must agree.)
+                if (const auto* models = engine.get<dw4::engine::ModelCtrlManager>())
+                    if (const auto* player = models->player(own_slot()); player && player->node) {
+                        const auto& m = player->node->matrix;
+                        const float yaw = std::atan2(m(2, 0), m(2, 2));
+                        const auto g = dw4::game::ghost_matrix({m(3, 0), m(3, 1), m(3, 2)}, yaw);
+                        float worst = 0;
+                        for (int r = 0; r < 3; ++r)
+                            for (int c = 0; c < 3; ++c) worst = std::max(worst, std::abs(g(r, c) - m(r, c)));
+                        std::printf("[%d] ghost own at (%.1f, %.1f, %.1f) yaw %.2f, rebuilt rotation off by %.4f\n", frame, m(3, 0), m(3, 1), m(3, 2),
+                                    yaw, worst);
+                    }
+                for (const auto& line : ghosts.describe()) std::printf("[%d] ghost %s\n", frame, line.c_str());
+                ghost_cost_max = present_max = 0;
             }
             // The title menu's third entry was chosen: the online screens open
             // over the menu (which stays, its cursor on Online).
@@ -2889,6 +2964,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 rendered_serial = serial;
                 interpolator.reset();
                 labels.reset();
+                ghosts.clear(); // (a new stage: no figure fades across the load)
                 save_profile();
             }
             // Smooth motion: the picture is drawn between the previous step
@@ -2990,7 +3066,26 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 dw4::game::BlendReport blend_report;
                 const bool report_blend = dev_dumper && dev.dumping(frame);
                 if (smooth_blending) interpolator.blend(items, camera, shadow, present_alpha, report_blend ? &blend_report : nullptr);
-                renderer->set_shadow(&shadow);
+                // Ghost figures (ghost_figures.hpp): at the present's own time,
+                // into a copy of the picture's list and shadow (a held field
+                // draws the list again as it is), never the simulation's.
+                const std::vector<dw4::engine::DrawItem>* frame_items = &items;
+                const dw4::engine::ShadowFrame* frame_shadow = &shadow;
+                if (!ghost_items.empty()) {
+                    ghost_items.clear();
+                    ghost_shadow = {};
+                }
+                if (ghosts.active() && engine.presenting()) {
+                    const auto ghost_draw_start = std::chrono::steady_clock::now();
+                    ghost_items = items;
+                    ghost_shadow = shadow;
+                    ghosts.draw(ghost_items, &ghost_shadow, camera, own_position(), steady_seconds());
+                    frame_items = &ghost_items;
+                    frame_shadow = &ghost_shadow;
+                    ghost_cost_max = std::max(ghost_cost_max,
+                                              std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - ghost_draw_start).count());
+                }
+                renderer->set_shadow(frame_shadow);
                 int width = 0, height = 0;
                 SDL_GetWindowSizeInPixels(window, &width, &height);
                 dw4::game::Viewport screen;
@@ -3014,7 +3109,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 std::vector<dw4::game::OverheadLabel> tags;
                 dw4::game::LabelView tag_view;
                 if (engine.presenting() || !renderer->draw_kept_picture(width, height)) {
-                    renderer->render(items, camera, clear, screen, wide, width, height);
+                    renderer->render(*frame_items, camera, clear, screen, wide, width, height);
                     if (tag_mode != dw4::game::LabelMode::off && !dw4::game::OverheadLabels::hidden(engine)) {
                         tags_shown = true;
                         tag_view.camera = camera;
@@ -3032,6 +3127,15 @@ int run(const Options& options, dw4::game::Settings& settings) {
                         tag_view.scale_y = scale.y > 0 ? scale.y : 1.0f;
                         // (Between the two steps like the picture: smooth motion's condition.)
                         tags = labels.blended(smooth_blending ? present_alpha : 1.0f);
+                        // Remote tags at the presence sample of this pass, the
+                        // one their ghost figures stand at (no tag trails its figure).
+                        for (auto& tag : tags)
+                            if (tag.key >= 0x100)
+                                for (const auto& sample : present_remote)
+                                    if (sample.member == tag.key - 0x100) {
+                                        tag.feet = {sample.x, sample.y, sample.z};
+                                        tag.head = dw4::game::remote_head(tag.feet, sample.species);
+                                    }
                         traced_occlusion.clear();
                         for (auto& tag : tags) {
                             if ((tag.hp <= 0 && !tag.capsule) || !dw4::game::label_visible(tag_mode, tag.own, labels.players())) continue;
@@ -3965,6 +4069,8 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     dev_dumper->picture(dev_present, frame, steps, present_alpha, smooth_blending ? &blend_report : nullptr,
                                         engine.stage_name(), width, height, pixels);
                     if (dev.ids && dev.pictures) {
+                        // (The picture's own list: its own shadow, not the ghost figures'.)
+                        renderer->set_shadow(&shadow);
                         renderer->set_id_pass(true);
                         renderer->render(items, camera, clear, screen, wide, width, height);
                         renderer->set_id_pass(false);
@@ -3996,6 +4102,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     present_interval += (std::min(seconds, 0.1) - present_interval) * 0.1;
                     if (dev.presenting()) present_interval = 1.0 / dev.hz;
                     frame_times[frame_time_at++ % frame_times.size()] = float(seconds * 1000.0);
+                    present_max = std::max(present_max, seconds * 1000.0);
                 }
             }
             // (A run without pictures: the pass's end stands for the present, for the input latency of online test runs.)

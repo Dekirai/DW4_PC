@@ -59,6 +59,7 @@ struct SessionConfig {
     double replay_budget = 0.05;        // seconds of catch-up per poll (0: until caught up); the loading screen
                                         // still gets about 15 pictures a second
     double presence_interval = 0.2;     // PRESENCE five times per second
+    double presence_moving_interval = 0.1; // PRESENCE2 ten times per second while the figure moves
     double log_interval = 0.1;          // LOG batches every 100 ms
     std::size_t state_limit = 64u << 20; // largest state transfer accepted
     bool trace = false;                 // DW4_ONLINE_TRACE: decisions, membership, NETFP lines on stdout (test runs)
@@ -157,8 +158,11 @@ public:
     std::vector<std::string> take_notices();
     Overlay overlay(double now) const;
     const std::map<std::uint32_t, RemoteMember>& remote() const { return remote_; }
-    // Name tags of room members outside the own instance, interpolated.
+    // Name tags of room members outside the own instance, interpolated (and
+    // in the hub stages their ghost figures, from PRESENCE2).
     std::vector<RemoteSample> remote_tags(double now) const { return tracks_.sample(now); }
+    // The hub takes PRESENCE2 (its WELCOME said so): this member sends it.
+    bool presence_v2() const { return presence_v2_; }
     std::string member_name(std::uint32_t member) const;
     // The relay's ROSTER (once per second): every room member's stage (empty:
     // hidden), instance, level, HP and flags (1 connected, 2 lagging, 4
@@ -201,7 +205,7 @@ private:
     void send(wire::Type type, const std::vector<std::uint8_t>& payload);
     void handle(const wire::Frame& frame, double now);
     // Frames that only feed the indicator, the name tags or the room list
-    // (NETSTAT, PRESENCE, ROSTER, ROOM): one that does not decode is skipped.
+    // (NETSTAT, PRESENCE, PRESENCE2, ROSTER, ROOM): one that does not decode is skipped.
     static bool informational(wire::Type type) noexcept;
     void on_welcome(const wire::Welcome& welcome, double now);
     // The new instance of a BARRIER_OK: ids, slot, members, mode, delay, the
@@ -229,6 +233,17 @@ private:
     // when it changed or every story_interval while it is not empty), the
     // answer, the engine lines of the additive counters.
     void send_story(double now, bool at_barrier);
+    // PRESENCE / PRESENCE2 (12): the figure's facts for the others' tags and
+    // ghost figures; track_figure (after each live step) counts the warps and
+    // keeps PRESENCE2's step clock. hide_presence: an empty stage at once when
+    // the last one sent showed the member (it leaves its stage: a departure,
+    // a barrier, a load), so the others' tag and figure go now instead of
+    // when the last one turns stale.
+    void send_presence(double now);
+    void hide_presence(double now);
+    void depart(double now);
+    void transmit(wire::Presence p, double now);
+    void track_figure(double now);
     void on_story_ack(const wire::StoryAck& ack);
     void take_story(const engine::RoomStory& story);
     void open_line();
@@ -316,6 +331,28 @@ private:
     double state_sent_at_ = -100;
     bool state_pending_ = false;
     double presence_at_ = -100;
+    // PRESENCE2 (round 60): the hub takes it, the last PRESENCE / PRESENCE2
+    // sent, the warp counter and the figure's place after the last live step.
+    static constexpr float kWarpStep = 24.0f; // units in one step: no walk or run moves this far
+    bool presence_v2_ = false;
+    std::optional<wire::Presence> presence_sent_;
+    std::uint8_t warp_ = 0;
+    std::uint64_t figure_serial_ = 0;
+    bool figure_known_ = false;
+    float figure_x_ = 0, figure_y_ = 0, figure_z_ = 0;
+    // A departure (HEADING: the stage's NEXTSTAGE is due) or a barrier hides
+    // the member until the next stage load (the load serial moves on), at
+    // most kDepartingLimit: nothing visible goes at the place it leaves from.
+    static constexpr double kDepartingLimit = 10.0;
+    bool departing_ = false;
+    std::uint64_t departing_serial_ = 0;
+    double departing_at_ = 0;
+    // PRESENCE2's clock: the time of the last live step on a steady field
+    // grid (one field after the step before, at most kStepSlack behind the
+    // wall clock), so the packets' times are spaced like their places at
+    // any picture rate; after kStepStale without a step, the poll time.
+    static constexpr double kStepSlack = 0.05, kStepStale = 0.1;
+    double step_at_ = -100;
 
     // Pacing and lag (ROOM / ROSTER lagging flags by room member).
     PaceController pace_;

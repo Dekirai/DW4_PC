@@ -34,6 +34,10 @@ public class HubCoreTests
         var presence = new PresenceMsg("stagML11", 9, 1.5f, -2, 3, 0.25f, 4, 99, 500, 600, 70, 80);
         Assert.Equal(presence, PresenceMsg.Parse(Payload(presence.Frame())));
         Assert.Equal(new PresenceOutMsg(3, presence), PresenceOutMsg.Parse(Payload(new PresenceOutMsg(3, presence).Frame())));
+        var ghost = new Presence2Msg(1, presence, "runD", Presence2Msg.Loop, 200, 123456, "w_aguclaw01");
+        Assert.Equal(ghost, Presence2Msg.Parse(Payload(ghost.Frame())));
+        Assert.Equal(new Presence2OutMsg(3, ghost), Presence2OutMsg.Parse(Payload(new Presence2OutMsg(3, ghost).Frame())));
+        Assert.Equal(new Presence2Msg(1, presence, "", 0, 0, 0, ""), Presence2Msg.Parse(Payload(new Presence2Msg(1, presence, "", 0, 0, 0, "").Frame())));
         Assert.Equal(new ResumeMsg(1, 2, 3, 4), ResumeMsg.Parse(Payload(new ResumeMsg(1, 2, 3, 4).Frame())));
         Assert.Equal(new PongMsg(5, 6), PongMsg.Parse(Payload(new PongMsg(5, 6).Frame())));
         Assert.Equal(new WelcomeMsg(1, 2, 3, 0, InstanceMode.Sealed, "stag0101", 99, 3, 30, 1),
@@ -74,6 +78,24 @@ public class HubCoreTests
         Assert.Throws<ProtocolException>(() => SplitMsg.Parse(new SplitMsg(1, 1, 1, 0, SplitKind.Exit).Frame()[Wire.HeaderBytes..]));
         Assert.Throws<ProtocolException>(() => SnapshotMsg.Parse(new SnapshotMsg(1, 1, 4, 3, [1, 2]).Frame()[Wire.HeaderBytes..]));
         Assert.Throws<ProtocolException>(() => TickRecord.Parse([0x10, 0]));
+        // PRESENCE2: version 0, a cut frame, a byte too many, a clip outside A-Z a-z 0-9 _, a clip of 17, a NaN position.
+        var presence = new PresenceMsg("stagML11", 9, 1.5f, -2, 3, 0.25f, 4, 99, 500, 600, 70, 80);
+        var ghost = new Presence2Msg(1, presence, "runD", 1, 0, 0, "w_a1").Frame()[Wire.HeaderBytes..];
+        var versionZero = (byte[])ghost.Clone();
+        versionZero[0] = 0;
+        Assert.Throws<ProtocolException>(() => Presence2Msg.Parse(versionZero));
+        Assert.Throws<ProtocolException>(() => Presence2Msg.Parse(ghost[..^1]));
+        Assert.Throws<ProtocolException>(() => Presence2Msg.Parse(ghost.Concat(new byte[] { 0 }).ToArray()));
+        var dash = (byte[])ghost.Clone();
+        dash[ghost.Length - 1 - 4 - 4 - 1 - 1 - 4] = (byte)'-'; // the clip's first letter
+        Assert.Throws<ProtocolException>(() => Presence2Msg.Parse(dash));
+        Assert.Throws<ProtocolException>(() => Presence2Msg.Parse(new Presence2Msg(1, presence, new string('a', 17), 1, 0, 0, "").Frame()[Wire.HeaderBytes..]));
+        Assert.Throws<ProtocolException>(() => Presence2Msg.Parse(new Presence2Msg(1, presence with { X = float.NaN }, "runD", 1, 0, 0, "").Frame()[Wire.HeaderBytes..]));
+        // A later version appends: its version 1 part is read, the rest skipped.
+        var later = (byte[])ghost.Clone();
+        later[0] = 2;
+        var read = Presence2Msg.Parse(later.Concat(new byte[] { 9, 9, 9 }).ToArray());
+        Assert.Equal(((byte)2, "runD", "w_a1"), (read.Version, read.Clip, read.Weapon));
     }
 
     [Fact]

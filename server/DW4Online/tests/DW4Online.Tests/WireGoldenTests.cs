@@ -57,6 +57,11 @@ public class WireGoldenTests
     [Fact]
     public void Message_bytes_equal_the_clients()
     {
+        // tests/online_wire_tests.cpp "golden PRESENCE2" (round 60, SEAMLESS.md 12).
+        var ghost = new Presence2Msg(1, new PresenceMsg("stagml11", 9, 1.5f, -2, 3, 0.25f, 4, 99, 500, 600, 70, 80), "runD",
+            Presence2Msg.Loop | Presence2Msg.Busy, 7, 0x01020304, "w_a1");
+        Assert.Equal("01" + "08737461676d6c3131" + "09000000" + "0000c03f" + "000000c0" + "00004040" + "0000803e" + "04" + "6300" + "f401" + "5802" +
+            "4600" + "5000" + "0472756e44" + "03" + "07" + "04030201" + "04775f6131", PayloadHex(ghost.Frame()));
         Assert.Equal("070000000200000063000000010080010203" + "04", PayloadHex(new InputMsg(7, 2, 99, [new Pad(0x8000, 1, 2, 3, 4)]).Frame()));
         // NETSTAT (round 62): the member's link for its network indicator (tests/online_wire_tests.cpp "golden NETSTAT").
         Assert.Equal("1800" + "0600" + "03" + "feff" + "e8030000" + "05000000" + "07000000" + "01",
@@ -96,11 +101,15 @@ public class WireGoldenTests
             ["Input"] = 0x01, ["Log"] = 0x02, ["Heading"] = 0x03, ["Barrier"] = 0x04, ["BarrierChoice"] = 0x05, ["Split"] = 0x06,
             ["Snapshot"] = 0x07, ["SnapHash"] = 0x08, ["Ready"] = 0x09, ["JoinAt"] = 0x0A, ["NetFp"] = 0x0B, ["State"] = 0x0C,
             ["Intent"] = 0x0D, ["Story"] = 0x0E, ["Presence"] = 0x0F, ["Resume"] = 0x10, ["Rate"] = 0x11, ["Pong"] = 0x12, ["Bye"] = 0x13,
+            // Round 60: PRESENCE2 to the relay.
+            ["Presence2"] = 0x14,
             ["Welcome"] = 0x80, ["Sealed"] = 0x81, ["Live"] = 0x82, ["JoinReq"] = 0x83, ["BarrierOk"] = 0x84, ["BarrierWait"] = 0x85,
             ["StateData"] = 0x86, ["PresenceOut"] = 0x87, ["Resync"] = 0x88, ["StoryAck"] = 0x89, ["Room"] = 0x8A, ["Ping"] = 0x8B,
             ["Close"] = 0x8C, ["Roster"] = 0x8D, ["Reassign"] = 0x8E,
             // Round 62, in the field since DW4Online 0.1.2 (sent to every member once a second): never another type's.
             ["NetStat"] = 0x8F,
+            // Round 60: PRESENCE2 to the members that send it (first 0x8F: moved when round 62 merged).
+            ["Presence2Out"] = 0x90,
         };
         Assert.Equal(registry.OrderBy(x => x.Value), types.OrderBy(x => x.Value));
         foreach (var (name, value) in types) Assert.NotEqual("0x" + value.ToString("X2"), Msg.Name(value));

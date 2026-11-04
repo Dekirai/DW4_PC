@@ -678,6 +678,12 @@ def run_real(stack, sc, api, relay_port, pin, diag, lock, connection):
             env["DW4_ONLINE_RELAY_PORT"] = str(port)
         argv = [a.game_exe, "--data", a.data, "--smoke-test", str(c.get("frames", sc.get("frames", 30000))), "--card-dir", card,
                 "--online-login", tag + c["name"], "--online-script", script_for(c)] + room_args +             [x.replace("{out}", out) for x in c.get("args", [])]  # (a client's extra game arguments; {out}: the scenario's folder)
+        # "shots": the script's shot steps write NAME.bmp into the run folder (hidden 1920x1009 widescreen MSAA 4
+        # pictures, as a player sees them; P1, the ghost figures).
+        if c.get("shots", sc.get("shots")):
+            argv += ["--screenshot", os.path.join(out, c["name"] + "_shot.bmp")]
+            for k, v in (("DW4_RENDER", "1"), ("DW4_WINDOW", "1920x1009"), ("DW4_WIDESCREEN", "1"), ("DW4_MSAA", "4"), ("DW4_LABELS", "all")):
+                env.setdefault(k, v)
         folder = saved_card(c)
         if folder:
             argv += ["--online-card", folder]
@@ -1476,6 +1482,8 @@ def main():
             return 2
     stack = Stack(a)
     failed = 0
+    # A scenario that takes pictures ("shots": P1, P2) keeps the run folder: the pictures are what a person looks at.
+    pictures = any(s.get("shots") or any(c.get("shots") for c in s.get("clients", [])) for s in real)
     try:
         connection = start_mysql(stack)
         base, relay, pin, der, diag = start_server(stack, connection)
@@ -1541,7 +1549,7 @@ def main():
             wanted = wanted + [{"name": "G1"}]
     finally:
         stack.stop()
-        if not a.keep and not failed:
+        if not a.keep and not failed and not pictures:
             shutil.rmtree(stack.dir, ignore_errors=True)
         else:
             print("run folder: " + stack.dir)

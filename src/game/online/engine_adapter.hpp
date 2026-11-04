@@ -37,6 +37,11 @@ struct EngineHooks {
     std::function<void()> fresh_engine;
     // Presentation: whether the name tags hide (loads, scenes, menus).
     std::function<bool()> hidden;
+    // Presentation (PRESENCE2, the ghost figures): the same without the
+    // status and shop windows, and whether one of those is open (the member
+    // is busy: its figure stays, its tag hides). Unset: `hidden`, not busy.
+    std::function<bool()> figure_hidden;
+    std::function<bool()> busy;
 };
 
 class GameEngineLink final : public EngineLink {

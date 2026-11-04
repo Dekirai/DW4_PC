@@ -187,7 +187,7 @@ and that the decisions above do not settle are questions in section 18.
 
 | Default | Section |
 | --- | --- |
-| Hub and UI stages are solo instances with presence (question 1) | 3.3 |
+| Hub and UI stages are solo instances with presence: name tags and, since round 60, ghost figures (question 1) | 3.3, 12 |
 | One player per machine online (question 5) | 3.1 |
 | Same stage and same quest context = same instance, automatically (question 8 asks about a *play alone* switch) | 3.4, 3.7 |
 | Arrivals within 3 s start together; later ones wait up to 15 s for the entry scene | 3.4 |
@@ -284,12 +284,23 @@ Hub and UI stages (2) are always solo instances, never joined:
   the simulation (`src/engine/save_menu.cpp:320-349, 686-741`); solo, each
   machine has its own card and needs no shared instance card.
 
-Members in the same hub stage see each other through *presence* (12): a name
-tag with level, HP and MP at the other member's position, updated about five
-times per second, drawn outside the simulation. Ghost models are a possible
-later addition (question 1). Co-op starts at the area gate: members who leave
-the lobby for the same field within a few seconds start it together as
-co-arrivals (3.4).
+Members in the same hub stage see each other through *presence* (12): since
+round 60 (the user's decision of 31.10, after a first test over the real
+server: "you only see yourself") as *ghost figures*, their Digimon in their
+current form with the weapon they hold, walking, running and turning where
+they really are, standing in their wait motion, with their name tag (level,
+HP, MP) above it; they fade in on arrival and out on leaving. Look only: no
+collision, no hits, no talks, no effect on anything; the PC host draws them
+from PRESENCE2 packets and they never enter the simulation (12.1). A member in
+a status or shop window or a talk keeps standing there (its tag hides); one
+that loads, watches a scene or is in a menu stage has no figure. Co-op starts
+at the area gate: members who leave the lobby for the same field within a few
+seconds start it together as co-arrivals (3.4).
+
+The hub and UI stages are the relay's `StageNames.IsHub` list: stagML02,
+stagML11-14 and every stagIS* (title, character select, save room, call
+shop, staff roll, the menu stages); figures need a picture of the stage, so
+in practice the lobby rooms stagML11-14 and stagML02 show them.
 
 If the user prefers shared lobbies (question 1), hub stages join like fields
 and the scoped scene work of round S3 grows to cover every lobby program; the
@@ -929,8 +940,8 @@ equals. It never runs the game.
 field is in the appendix "DW4R2 wire layout". Golden byte vectors check it on
 both sides (`tests/online_wire_tests.cpp`,
 `server/DW4Online/tests/DW4Online.Tests/WireGoldenTests.cs`): a change on one
-side fails both until the other follows. Message types 0x01-0x13 go client to
-server, 0x80-0x8F server to client; a pad is 6 bytes (6.4); `inst` is the
+side fails both until the other follows. Message types 0x01-0x14 go client to
+server, 0x80-0x90 server to client; a pad is 6 bytes (6.4); `inst` is the
 instance id, `visit` its stage load count, both u32.
 
 Client to server:
@@ -955,12 +966,13 @@ Client to server:
 | 0x10 | RESUME | inst, visit, slot, last executed tick | after a reconnect that WELCOME calls resumable |
 | 0x11 | RATE | replay steps per second | after WELCOME (the calibration) and after every replay |
 | 0x12 / 0x13 | PONG / BYE | nonce, client time / reason | |
+| 0x14 | PRESENCE2 | version (1), the PRESENCE fields, motion clip, flags (clip loops, busy), warp counter, sender clock (ms), weapon | instead of PRESENCE once WELCOME announced it: ten times per second while the figure moves, turns or changes its motion, five while it stands (round 60, 12.1) |
 
 Server to client:
 
 | Type | Message | Fields | When |
 | --- | --- | --- | --- |
-| 0x80 | WELCOME | member (the room slot 0-9), inst, visit, slot, mode (hub, solo-led, sealed), stage, last tick, delay, max catch-up seconds, flags (resumable) | the first frame after OK: a fresh member's solo hub instance (the title, stage ""), or the instance it still holds |
+| 0x80 | WELCOME | member (the room slot 0-9), inst, visit, slot, mode (hub, solo-led, sealed), stage, last tick, delay, max catch-up seconds, flags (resumable; presence v2: the hub takes PRESENCE2, round 60) | the first frame after OK: a fresh member's solo hub instance (the title, stage ""), or the instance it still holds |
 | 0x81 / 0x82 | SEALED / LIVE | inst, visit, first tick, count, tick records | SEALED to members at each tick's due time (batched when behind), LIVE to observers (the leader's LOG or the sealed ticks) |
 | 0x83 | JOIN_REQ | inst, visit, slot, suggested delay | to the leader of a solo-led instance: choose J |
 | 0x84 | BARRIER_OK | old inst and visit, decision (1 NEW, 2 JOIN, 3 DISSOLVE, 4 CO_ARRIVE), new inst and visit, stage, point, own slot, slot map, mode, delay, co-arrivals (slot, member, carry), story revision, story, dropped set, notice, names | answer to BARRIER |
@@ -975,6 +987,7 @@ Server to client:
 | 0x8D | ROSTER | every member: stage, inst, level, HP, max HP, flags (connected, lagging, owner) | once per second (the room UI) |
 | 0x8E | REASSIGN | old inst, visit, new inst, from tick, mode, flags (departing) | after a fork: this member's copy is the child |
 | 0x8F | NETSTAT | round trip median and spread, d, arrival margin, the stream's sealed / filled / late pads, flags (in a stream) | once per second after PING (round 62: the network indicator and online.log; older clients skip it) |
+| 0x90 | PRESENCE2 | member, the PRESENCE2 fields | instead of PRESENCE to members that send PRESENCE2 themselves (round 60, 12.1) |
 
 **Message types (the registry).** A number belongs to one message on both
 sides and is never given twice, not even across rounds that run in parallel:
@@ -983,14 +996,15 @@ so two builds that give one number to two messages at the same protocol
 reconnect each other every second. The review of round 62 found exactly that:
 round 60's PRESENCE2 to clients took 0x8F at protocol 45, the number NETSTAT
 holds since DW4Online 0.1.2, which the user runs (NETSTAT goes to every member
-once a second). 0x8F stays NETSTAT; a new message takes the next free number of
-its direction (client to server 0x14, server to client 0x90) and is entered in
-the registry checks of both sides
+once a second). 0x8F stays NETSTAT; round 60 moved PRESENCE2 to clients to
+0x90 (its PRESENCE2 to the relay is 0x14); a new message takes the next free
+number of its direction (client to server 0x15, server to client 0x91) and is
+entered in the registry checks of both sides
 (`WireGoldenTests.Message_types_are_unique_and_registered`,
 `tests/online_wire_tests.cpp` "type registry"), which fail until it is; a
 number given twice does not compile on either side (the name switches). Since the review the client skips (and logs once) a NETSTAT,
-PRESENCE, ROSTER or ROOM frame that does not decode: they only feed the
-indicator, the name tags and the room list.
+PRESENCE, PRESENCE2, ROSTER or ROOM frame that does not decode: they only feed the
+indicator, the name tags and figures and the room list.
 
 Events inside a tick record: JOIN (slot, entrance point, carry), LEAVE (slot),
 INTENT (slot, kind, argument), LEAD_FROM (tick: the remaining member leads
@@ -1416,7 +1430,8 @@ them.
    0x8F stays NETSTAT; registry checks on both sides, and the client skips an
    informational frame (NETSTAT, PRESENCE, ROSTER, ROOM) that does not decode.
    Round 60 has to move PRESENCE2's server-to-client number to 0x90 before it
-   merges.
+   merges (done in round 60's fix round, with `main` merged in: PRESENCE2 to
+   clients is 0x90 and informational too).
 
 And one consequence of 2: since a late pad costs only a tick of that input,
 the rise no longer reacts to any one paced late pad in three different seconds
@@ -3173,7 +3188,8 @@ mode.
 #### 6.13.7 Protocol changes
 
 Proposed numbers; the integration pins them after rounds 60 and 62 merge
-(both claim 0x8F today: PRESENCE2 and NETSTAT; client 0x14 is round 60's).
+(NETSTAT keeps 0x8F, round 60's PRESENCE2 to clients moved to 0x90; client
+0x14 is round 60's).
 
 | Dir | Type | Message | Fields | When |
 | --- | --- | --- | --- | --- |
@@ -5790,10 +5806,193 @@ are `src/game/online/lobby_api.hpp`; the ImGui screens are
   player in a parallel instance, a member on another quest) come from PRESENCE
   packets through `OverheadLabels::set_remote_players` (exists): interpolated
   between packets, hidden by the same rules (loads, demos, menus, a defeated
-  player). They are presentation only and never touch the scene graph.
+  player). They are presentation only and never touch the scene graph. In a
+  hub stage the tag stands above the member's ghost figure (12.1).
 - A lagging member's tag shows a connection icon.
 - Notices (presentation, a few seconds at the top): "<name> joined", "<name>
   left for <stage>", "<name> is in a scene", "<name> has a menu open".
+
+### 12.1 Ghost figures (round 60)
+
+In a hub stage (3.3: every member has its own solo instance there) the other
+room members in the same stage appear as their Digimon
+(`src/game/ghost_figures.hpp`, `GhostFigures`): the form they play now, with
+the weapon they hold, at their place and facing, playing the motion clip they
+play (their wait, their run, a jump), with their name tag above, fading in
+over 0.35 s when they arrive and out where they were when they leave (another
+stage, a load, a scene, the room). Look only: no collision, no hits, no talks,
+no effect on anything.
+
+**Never in the simulation.** The PC host makes and draws the figures:
+
+- Each form's package (`_common/p_<form>.igb`, the one the engine loads for a
+  player, `Engine::online_join_player`) and each weapon package
+  (`_common/<weapon>.igb`; only a weapon name, `w_` and up to 22 more of
+  A-Z a-z 0-9 _, and at most 16 of them kept: the one asked for longest ago
+  goes for a new one, never one a figure holds) is read and parsed on a
+  worker thread from a *copy*
+  of the resources (never the engine's object, which a catch-up replaces);
+  their nodes, animation database and geometry live in the figures' own
+  `SceneCache`, never the engine's. A form's model is the record 0 instance
+  of its beAction2Info (the beModelCtrlNode2 with its igLod: Kage, High, Low);
+  its wait and run clips come from the control info's SQ_WAIT / SQ_WALK (the
+  first ACTION of the first weapon label, that action's last MOTIONSET:
+  `waitD`, `runD`). The weapon's parts hang under the form's igActor nodes on
+  their bones for the figure's traversal only (as `WeaponManager` GENERATE
+  does), so one form's nodes serve all its figures.
+- Per presented frame the figure's pose comes from the engine's own combiner
+  code (`MotionState`, `evaluate_pose`) on its own clock (a new clip fades in
+  over MOTIONSET's 8 frames from the pose before), and the engine's traversal
+  turns the private nodes into draw items (skinning palettes, the igLod by the
+  real eye distance). They go into a *copy* of the picture's draw list after
+  the simulation's picture was taken and smooth motion blended it: opaque
+  figures after the last opaque item of the 3D scene, fading ones after its
+  last blended item (`ghost_insert_points`), so the 2D layers stay on top; the
+  lights and fog are those of the scene's first lit 3D item (every model hangs
+  below the stage's root light set). The Kage level joins a copy of the shadow
+  frame's casters, so a figure casts its shadow inside the stage shadow's box
+  as the players' proxies do.
+- Nothing of this is in a snapshot, fingerprint, replay or the lockstep path;
+  smooth motion never sees the figures (they are drawn at the present's own
+  time, so they move smoothly at 60 and 144 Hz alike); `DW4_GHOSTS=0` turns
+  them off (test runs). The sender reads its facts from the engine
+  (`GameEngineLink::presence`: the action's current clip and loop mode, the
+  POWERSOCKET weapon, whether the action switch shows the model) and writes
+  nothing.
+- On the own screen the figures go where the name tags go: none while the
+  own game loads, plays a scene or a demo, or shows a menu stage (they fade
+  out over 0.35 s, a stage load drops them at once). A status, shop or talk
+  window of the own player leaves them standing behind it like the stage's
+  other models (only the tags hide), so opening a menu never makes them
+  vanish and come back.
+
+**At most nine** figures (a room has ten members), the nearest to the own
+player. A form whose package is still loading shows once it is ready (it fades
+in then); the packages of members anywhere in the room are loaded ahead, so a
+member who comes back from a field is usually ready. Measured (P1, three hidden
+clients, 13 forms loaded one after another): 0.5-5 ms of reading and about
+1 ms of parsing per package on the worker, the figures' own work at most
+0.3 ms a pass on the main thread, no longer present when a form appeared (the
+longest presents, 60-95 ms, were the screenshots' read-backs).
+
+**Camera.** A figure turns semi-transparent (to 35 %, eased over 0.2 s) when it
+stands in the own player (every member enters its own lobby at the same entry
+point, so a newcomer stands inside the others' figures), between the camera
+and the own player, or within 60 units of the camera. A fading figure draws its
+nearest surface's depth first and then its colour where that depth is, so it
+never shows its inside or its far side through the near one. In the lobby
+rooms the camera stays high above the floor, so a figure blocks the own player
+only when it stands right in front of it, which the own-player rule covers.
+
+**Wire (PRESENCE2, 6.3 and the appendix).** PRESENCE stays as it was; round 60
+adds PRESENCE2 (client 0x14, server 0x90; first 0x8F, which round 62's
+NETSTAT holds in the field: moved in the fix round): a version byte (1), the PRESENCE
+fields, then the motion clip (0-16 of A-Z a-z 0-9 _; empty: unknown), flags
+(1 the clip loops, 2 busy: a status or shop window or a talk is open, the
+figure stands and the tag hides), a warp counter (the sender counts its stage
+loads and every step that moved its figure more than 24 units, far beyond a
+run's 0.7: receivers never glide across a change), the sender's clock in
+milliseconds (wrapping) and the weapon package (0-24 characters). The clock is
+the time of the step whose place the packet carries, on a steady field grid
+(`Session::track_figure`: one field after the step before, at most 50 ms
+behind the wall clock; after 100 ms without a step the poll time), not the
+time of the poll that sends it: a sender at 144 Hz polls between its 60 Hz
+steps, and its poll times put the places up to 13 % off their spacing. HP and
+MP above their maximum (a script's `MDLaddHp` raises them above it) go as the
+maximum. In PRESENCE2
+the stage is empty only while the figure is really gone (a load, a scene, a
+menu stage, the action switch hiding the model); a window keeps the stage and
+sets busy. A member sends it ten times per second while its figure moves,
+turns or changes its clip or flags and five times per second while nothing
+changes (about 70 bytes each: a full room in one lobby relays about 6 KB/s to
+each member).
+
+**Leaving.** A member that leaves its stage shows nowhere from that moment
+until its next stage load: a departure (the stage announces its NEXTSTAGE,
+HEADING: the lobby gate, a mat's scene and fade) or a barrier sends an empty
+stage at once and keeps the stage empty until the load serial moves on (at
+most 10 s), and a load or title screen that begins without either sends one
+empty stage (`Session::depart`, `hide_presence`). The hub forwards that empty
+stage to the members still in the stage it left, whose figure fades out
+there. Before (the round 60 review), the figure faded out on the mat with the
+mat's scene, the end of the scene showed it on the mat again on its own
+machine until NEXTSTAGE parked it, and that last packet stood on the others'
+screens for the two seconds a silent track stays (scenario P3, 16).
+
+**Versions fail safe.** A client sends PRESENCE2 only after a WELCOME with the
+presence-v2 flag (2); an older hub never sets it (and would close a connection
+on an unknown frame), so a new client on an old server sends PRESENCE and shows
+the others' figures from PRESENCE alone (no clip or weapon: a figure runs or
+stands by the speed of its packets). An older client ignores the flag bit and
+never gets a 0x90 frame: the hub sends PRESENCE2 only to members that send
+PRESENCE2 themselves (`HubMember.PresenceV2`) and PRESENCE, the same subset,
+to the others, so old and new clients share a room (the protocol number stays
+45: nothing of the lockstep changed). A later version keeps the layout and
+appends: the hub reads and checks its version 1 part and forwards only that,
+written at version 1 with the flags version 1 knows (counted as
+`presence_version`), so it never passes on what it cannot check and the
+member's figure still shows; a client takes what it knows. Every version stays
+within 256 bytes (version 1 takes at most 105); the hub drops a larger
+PRESENCE2 unread (counted as `presence_oversize`). Scenario P2 (16)
+plays a new and an old member in one lobby (`DW4_ONLINE_TEST_PRESENCE1`
+makes a development client speak PRESENCE only, as before round 60 or
+against an older hub).
+
+**The hub's bounds** (`RoomHub.OnPresence2`, `PresenceMsg.Implausible`,
+`Presence2Msg`): a malformed frame (lengths, a clip or weapon outside its
+characters, a non-finite position) closes the connection like any malformed
+frame; an implausible one is dropped and counted while the connection stays:
+a form above 15, a coordinate beyond 100,000, a yaw beyond two turns, a level
+above 999, an unknown flag. HP and MP above a known maximum go on as the
+maximum (the engine allows them above it, so dropping the frame would hide a
+member's tag and figure). PRESENCE of an older client is held to the same
+bounds (it drives a ghost figure too). The rate is a token bucket per member
+(12 a second, 3 at once; more is dropped and counted); PRESENCE keeps its
+150 ms rule. The
+hub also sends a member's presence to the members still in the stage it just
+left (another stage, or hidden while it loads), so its tag and figure go at
+once instead of after the two seconds a silent track takes.
+
+**Interpolation (`PresenceTracks`).** PRESENCE2 packets keep the sender's clock
+and are drawn 0.16 s behind the newest (one 100 ms interval and room for
+jitter), between the two packets around that time, the yaw the short way
+round; past the newest packet a member goes on along its last movement for at
+most 60 ms, then holds. The offset to the receiver's clock aims at the
+smallest arrival minus sent of the last 20 packets (the one the network held
+up least, so a late packet does not shift the others; a slower route or clock
+drift moves it up as the window moves on) and the drawn offset moves towards
+it by at most 2 % of the time that passes: the drawn time never jumps, it runs
+at most 2 % faster or slower. Round 60 first kept the smallest offset seen and
+raised it by 2 ms per packet: the drawn time ran 2 % slow and jumped forward
+at every new smallest offset, a saw the review measured as an uneven walk
+(8.5 % standard deviation of the per-picture step, single pictures 1.85x the
+even step on loopback, 3.65x with 30 +- 20 ms of jitter). Measured now with
+the same harness (`presence2_smooth`): at most 3 % off the even step and a
+standard deviation of at most 0.9 % for senders and pictures at 60 or 144 Hz,
+on loopback and with 30 + 40 ms of jitter. A change of the warp counter, a step faster than 900
+units per second or longer than 120 units, a new stage or instance and a
+restarted sender clock start a new segment: the old figure fades out where it
+was and a new one fades in at the new place (no glide). The remote name tags
+take the same sample, so a tag never trails its figure. PRESENCE packets keep
+their old rule (arrival times, 0.2 s behind).
+
+**Tests.** `dw4_ghosts_tests` (placement, list order, camera fade; with the
+game data a form loaded in the background, faded in, posed, its shadow proxy,
+a jump and a form change faded over, the cap of nine; weapons: no package
+that is not a weapon, the sword drawn, a flood of 200 names kept to 16
+packages without dropping the held one), `online_wire_tests`
+(PRESENCE2 round trip, golden bytes shared with the relay's `WireGoldenTests`,
+versions, malformed frames), `online_session_tests` (the sender's clock and
+jitter, warps, extrapolation, busy, yaw; PRESENCE2 only after the WELCOME flag,
+ten or five a second; `presence2_smooth`: an even walk for senders and
+pictures at 30, 60 and 144 Hz with jitter and a route that gets faster or
+slower; `presence2_walk`: the step clock over the fake hub; `presence2_departure`:
+hidden from a departure to the next stage, gone at once at a barrier, HP above
+the maximum), the relay's `HubPresenceTests` (the WELCOME flag,
+PRESENCE2 to PRESENCE2 members and PRESENCE to the others, the bounds, HP
+above the maximum clamped, the 256-byte bound, PRESENCE by the same bounds, the
+token bucket, leaving a stage, a later version's version 1 part), and the
+real-client scenarios P1, P2 and P3 (16).
 
 ## 13. Discord
 
@@ -5814,7 +6013,7 @@ anyway; joining goes through the room list.
 
 | Area | Change |
 | --- | --- |
-| Relay | `DW4Online.Relay`: DW4R2 hub replacing the splice: one connection per member, frames, instance groups (solo-led and sealed), server-paced sealing at 59.94 Hz on a dedicated timer thread with immediate fill, delay suggestions from the arrival margins, event stamping, snapshot and log store with canonical hashes and fork lists (6.8), state delivery for join / co-arrival / resync / resume with its own rate limit, fingerprint vote, presence fan-out, pings, the 64 KB/s bucket for game frames |
+| Relay | `DW4Online.Relay`: DW4R2 hub replacing the splice: one connection per member, frames, instance groups (solo-led and sealed), server-paced sealing at 59.94 Hz on a dedicated timer thread with immediate fill, delay suggestions from the arrival margins, event stamping, snapshot and log store with canonical hashes and fork lists (6.8), state delivery for join / co-arrival / resync / resume with its own rate limit, fingerprint vote, presence fan-out (round 60: PRESENCE2 with its bounds and token bucket, the stage a member left, 12.1), pings, the 64 KB/s bucket for game frames |
 | Rooms | `RoomService`: instances as lockstep groups (id, stage, visit, context hash, slots, parent and fork frame, departing, boss lock, joinable), barrier decisions DISSOLVE / co-arrival / JOIN / NEW with holds and the boss choice (3.4), catch-up estimates from the members' replay rates, forks of both kinds, in-band JOIN and LEAVE, preferred slots, no instance end when its first member leaves (`EndInstanceLocked` goes), room-scoped relay tickets, the settings hash, the relay connection as heartbeat. `POST /rooms/{code}/stage` and `/stage/leave` are retired; the room state lists instances with stage and members. Room settings gain camera mode and light mode |
 | Story | migration with `online_story`; `StoryMerge` in the domain with the golden vectors; plausibility table from the census; pending sets with STORY_ACK; the owner-away setting with the session's dropped set; `GET /online-character` composes, `PUT` ignores story bytes; `GET /rooms/{code}/story` for the website and debugging |
 | Character | (round 64 design, 9.1) four boxes per account; `online_slots`, `online_slot_stats`, `online_forms`, `online_devices`, `online_disks`, `online_cards`, `online_rewards` by box, the persistent `/play` binding, the history with its changes and the client's record, refused uploads, edit drafts, the relay's visits by sequence and box, the breaker's state; `GET /online-characters` composes, `PUT /online-characters/{box}` (ETag of generation and revision; a staff revision in between is merged, never 409) validates by the rule table (refuse / flag / off per code, refusing only what the upload changed, against the new-character record for a new box), `POST .../{box}/play`, a reset per box; staff edits on the website (with a preview) and in HeidiSQL (after a quiet time, not applied edits kept as drafts) with completions, the merge, *Reload now* and audit rows; box locks for every writer; the migrator's data step converts today's blob rows inside the started mark |
@@ -5913,6 +6112,9 @@ anyway; joining goes through the room list.
 | S24 | map recorder (dng102b3) read far from the partner (scoped, local freeze) and near (original) | S3 |
 | S25 | Trailmon ride (dng412b3) with one member not aboard: no fork, the rider moves alone | S3 |
 | A1 | online achievements: S5's run with achievements on; each machine reports its own player (online_join in its solo lobby, first_defeat in the sealed field) with the ranked context, the counters at the end; the server holds them (`scenario.json` "achievements") | S2 |
+| P1 | ghost figures in the lobby: three members (k7, k10, k2); one stands, one walks around it and stops right in front of it, the third shows another form every 6 s (`DW4_ONLINE_TEST_FORM`, the form PRESENCE2 names; the engine's stays), leaves through the lobby gate for a field (stag0101), falls there and comes back after the game over; `"shots": true` takes the scripts' `shot` pictures (hidden 1920x1009, widescreen, MSAA 4, all tags) and the `ghosts` condition waits on the figures a client shows | 60 |
+| P2 | ghost figures with an older client: two members (k7, k10), b speaks PRESENCE only (`DW4_ONLINE_TEST_PRESENCE1`, as a client before round 60 or one of an older hub); each sees the other's figure, without weapon and with run or wait by the speed of the packets (the hub turns a's PRESENCE2 into PRESENCE for b); b walks around a and stops right in front of it; pictures from both | 60 |
+| P3 | ghost figures, a member leaving over a mat: a (k7) stands by the lobby's mat matz00 and takes a picture every 45 frames while b (k10) walks over it into stagml12; a's trace every 10 frames: b's figure fades out on the mat and never shows again (no later segment of b, never two figures), b's trace has its departure | 60 fix |
 | D1 | a new account: Create Digimon (its `/play` with the new-character record), the first stage change: box 1's rows in the tables (SQL), `v_characters` and `v_character_devices` readable, the profile shows the box with its face picture | D |
 | D2 | four boxes: characters made in boxes 1 and 2 in two sessions, the character select shows both; the save room's copy of box 1 into box 3 is not uploaded (notice) and gone at the next entry; the profile picture follows the bound box; a forged upload for box 3 is `wrong_box`; `/play` for box 2 inside a stage is refused, at the title after "Continue? No" accepted | D |
 | D3 | a staff edit while the player is offline (an `UPDATE` of BITS and of a form's level, as HeidiSQL sends it, row by row): processed after the quiet time, the next entry's engine has them (trace), an `sql_edit` revision with the completed EXP, an audit row `character_edit` | D |
@@ -6747,7 +6949,7 @@ Depends on: S1-S3.
 
 | Lane | Scope (shaped by the answers in section 18) |
 | --- | --- |
-| presence | ghost models in hub stages if wanted (question 1), roster polish |
+| presence | ghost models in hub stages if wanted (question 1), roster polish. *Ghost figures built in round 60 (r60ghosts, 12.1) at the user's request of 31.10* |
 | travel | warp to a friend's stage from the lobby if wanted (question 4); a *play alone* switch if wanted (question 8) |
 | saves | the upload policy chosen in question 3; second local player if wanted (question 5) |
 | release | README "Online co-op" rewritten, this document updated to what was built, field test checklist for the user (deploy, pin, firewall), domain switch prepared as a build constant |
@@ -6758,6 +6960,103 @@ over the deployed server (deployment stays the user's step). A buffer round
 for what that field test finds is expected.
 
 Depends on: S4 and the answers.
+
+### Round 60 (r60ghosts): ghost figures in the hub stages
+
+Goal: the user's decision of 31.10 after the first test with a friend over
+the real server ("you only see yourself"; question 1): in a member's solo hub
+instance the other room members of the same hub stage appear as their
+Digimon, look only, and nothing of it reaches the simulation. Built as 12.1
+describes: on the client the presentation-only renderer
+(`src/game/ghost_figures.{hpp,cpp}`, the hooks in `game_main.cpp`), the
+PRESENCE2 sender (`Session::send_presence`, `track_figure`, the read-only
+facts of `GameEngineLink::presence`) and the receiver's interpolation
+(`PresenceTracks`); on the hub `Presence2Msg`, `RoomHub.OnPresence2` and
+`FanPresence` with the WELCOME flag; scenarios P1 and P2 (16). The lane of
+round S5 called *presence* is this round's work.
+
+Looked at in the pictures of P1 and P2 (hidden 1920x1009, widescreen, MSAA
+4, from every client): the figures stand on the floor with their shadow and
+face where they walk (a run from (60, -30) to (79.6, -54.4) faces 2.47, the
+direction's angle; the trace's rebuild of the own player's facing from its
+yaw is 0.0000 off), they play the sender's clips (`waitS`, `runS`) with its
+weapon, the form change of the test hook crossfades, a figure walking in
+front of the own player turns faint and the own player stays visible, c's
+figure goes while c plays the field and fades in again at the lobby's entry
+after c's game over, and c's own trace shows no figure in the field. With
+the PRESENCE-only member of P2 each side sees the other's figure without
+weapon, running and standing by the packets' speed. Nothing needed a change
+after these pictures.
+
+Checked on the branch head (the release build with tests and the
+`DW4_ONLINE_DEV` build, both from the same tree): ctest 45 of 45
+(`dw4_ghosts_tests` with the game data: 65 checks); online off `det.sh`
+4004f056 / audio 396cb219 in every run (the release build twice, the
+development build once); r25c 10 of 10 with 1,748,011 frames, every segment
+as before; the server's unit tests 190, integration and end to end 90
+passed and 1 skipped against a private MariaDB with a fresh data directory;
+on hidden real clients P1 and P2 and the 22 scenarios of rounds S1 and S2
+(S1, S2, S3, S5, S11a, S11b, S14, S14a, S14h, S14p, S16, S17a, S17b, S18,
+S18b, S19a, S19b, S19c, S21, S22a, S22b, A1, three at a time): every member
+passes through its solo lobby with the others' figures and the shared field
+instances keep equal net fingerprints (3,060 comparisons, the only two that
+differ are S11a's and S11b's injected desyncs before their resync); the 9
+fake-client scenarios; the 8 UI scenarios.
+
+Open after the round: a server built before this round has no PRESENCE2,
+so until the user's server is updated a new client shows the figures from
+PRESENCE alone
+(without weapon, run or wait by the packets' speed; 12.1 "Versions fail
+safe"). Figures in a field or dungeon (members of other instances there)
+were not asked for; they stay name tags.
+
+**Review fixes (same branch).** The round's review found two things a player
+would see. A member that left the lobby over a mat faded out on the mat, came
+back there about three seconds later (the end of the mat's scene showed its
+model again on its own machine until NEXTSTAGE parked it, and that packet
+went out) and stood two seconds until the packet turned stale: a departure or
+a barrier now hides the member at once until its next stage load (12.1
+"Leaving", scenario P3). And the walk of a figure was uneven: the drawn clock
+offset rose 2 ms a packet and dropped back at every new smallest one (a saw:
+single pictures up to 1.85x the even step on loopback, 3.65x with jitter),
+and a 144 Hz sender stamped its poll time (+-13 %): the offset now moves at
+most 2 % towards the smallest lag of the last 20 packets and the packets
+carry their step's time (12.1 "Interpolation"; the review's harness on the
+new code: at most 3 % off the even step for 60 and 144 Hz on both sides,
+with and without jitter). Of the minors: HP or MP above the maximum no longer
+drop a PRESENCE2 (clamped on the client and in the hub), PRESENCE of an older
+client is held to PRESENCE2's bounds, every PRESENCE2 version stays within
+256 bytes (a larger one is dropped unread), weapon names from the network
+load only as weapon packages and at most 16 are kept, the ghost list and
+shadow outlive the draw block (the renderer keeps the shadow's address) and
+the development ID pass uses the picture's own shadow, `main` is merged in,
+and round 59's branch (fix-r59s2) adds no conflict of round 60's (its two
+with `main`, `game_main.cpp` and the server README, are round 62's and 59's).
+`main` brought round 62 meanwhile, whose NETSTAT holds server type 0x8F in
+the field since DW4Online 0.1.2: round 60 had given 0x8F to PRESENCE2 to
+clients, and a round 60 client would have dropped its connection on every
+NETSTAT of the user's server. PRESENCE2 to clients is 0x90 now (both
+registries know it, and it is informational: one that does not decode is
+skipped); the next free numbers are 0x15 and 0x91 (6.3).
+
+Checked on the fixed head with round 62 merged in (release and
+`DW4_ONLINE_DEV` builds from one tree): ctest 45 of 45 (`dw4_ghosts_tests` 70
+checks, `online_session_tests` 190, `online_wire_tests` with both type
+registries; `presence2_smooth`, `presence2_walk` and `presence2_departure`
+fail on the code before the fixes); online off `det.sh` 4004f056 / audio
+396cb219 in all six runs (the release build twice, the development build
+once; the same before the merge); on hidden real clients all 29 game
+scenarios (the 22 of rounds S1 and S2, A1, round 62's L1, L1s, L2 and L3, P1,
+P2, P3; three at a time): 4,280 fingerprint comparisons, the only two that
+differ are S11a's and S11b's injected desyncs before their resync. S19b
+failed once in that batch: member a's fight step killed every goburi near it,
+so its next step (walk into them until it falls) found none and stood at
+full HP until the timeout, its 1,002 shared fingerprints equal; S19b alone
+passed (288 s), and before the merge it passed in the batch. In P1 c's figure
+fades out at the lobby gate and shows again only at the lobby's entry after
+c's game over; in P3 b's figure fades out on the mat and never shows again
+(the pictures every 45 frames and a's trace every 10 frames). the 8 UI scenarios;
+the server's unit tests 212, integration and end to end 90 passed and 1 skipped against a private MariaDB with a fresh data directory (before the merge one run of ServiceHostTests failed once on the order of two FAIL log lines with the HTTP port busy, then passed six times; nothing of this round touches the service host).
 
 ### Round G (proposed r64): guests on the host's story
 
@@ -7005,7 +7304,8 @@ the user's OK while he does not play.
 
 ### Answers (user, 2026-10-29)
 
-1. Lobby: solo (the default).
+1. Lobby: solo (the default). 31.10, after the first test over the real
+   server: the other members appear as ghost figures there (12.1, round 60).
 2. Story while the owner is away: drop (the default).
 3. Saving the online character: **also automatically** at stage changes and
    when leaving the room, in addition to the save room (not the default;
@@ -7268,8 +7568,9 @@ player, means per box with four characters per account: 9.1.9.)
   50 ms) exceeds it, so without UDP the user's "sometimes 80 ms" would only
   shrink, not go. Round R therefore needs S4's UDP transport and measures
   the frames with a standing frontier in its jitter and loss cells.
-- **Message numbers**: rounds 60 and 62 both claim server type 0x8F
-  (PRESENCE2, NETSTAT); round 65's numbers (6.13.7) leave 0x8F-0x91 to that
+- **Message numbers**: rounds 60 and 62 both claimed server type 0x8F
+  (PRESENCE2, NETSTAT); round 60 moved PRESENCE2 to clients to 0x90 (NETSTAT
+  keeps 0x8F); round 65's numbers (6.13.7) leave 0x8F-0x91 to that
   integration.
 
 ## Appendix: evidence
@@ -7412,12 +7713,13 @@ Client to server:
 | 0x11 | RATE | replay rate u32 (steps per second) |
 | 0x12 | PONG | nonce u32, client ms u64 |
 | 0x13 | BYE | reason u8 (leaves the relay at once; the room membership stays) |
+| 0x14 | PRESENCE2 | version u8 (1), the PRESENCE fields, clip str (0-16 of A-Z a-z 0-9 _), flags u8 (1 the clip loops, 2 busy), warp u8, sender ms u32, weapon str (0-24, the same characters); only after a WELCOME with flag 2; a later version appends, within 256 bytes in all (the hub forwards its checked version 1 part at version 1, drops a larger one; round 60, 12.1) |
 
 Server to client:
 
 | Type | Name | Payload |
 | --- | --- | --- |
-| 0x80 | WELCOME | member u8, inst u32, visit u32, slot u8, mode u8 (0 hub, 1 solo-led, 2 sealed), stage str, last tick u32 (0xFFFFFFFF none), delay u8, max catch-up seconds u16, flags u8 (1 resumable: the member still holds that slot; send RESUME) |
+| 0x80 | WELCOME | member u8, inst u32, visit u32, slot u8, mode u8 (0 hub, 1 solo-led, 2 sealed), stage str, last tick u32 (0xFFFFFFFF none), delay u8, max catch-up seconds u16, flags u8 (1 resumable: the member still holds that slot; send RESUME; 2 presence v2: the hub takes PRESENCE2) |
 | 0x81 / 0x82 | SEALED / LIVE | inst u32, visit u32, first tick u32, count u16, tick records (SEALED to members, LIVE to observers catching up) |
 | 0x83 | JOIN_REQ | inst u32, visit u32, slot u8, leader's delay u8 |
 | 0x84 | BARRIER_OK | old inst u32, old visit u32, decision u8 (1 NEW, 2 JOIN, 3 DISSOLVE, 4 CO_ARRIVE), new inst u32, new visit u32, stage str, point u8, own slot u8, slot map 4 x i8 (old slot -> new slot or -1), mode u8, delay u8, co-arrival count u8 + (slot u8, member u8, carry blob) each, story revision u32, story blob (1,100 bytes: flags 1024, folder 12, counters 16 x i32; the same bytes for every member of a group; empty: none), dropped blob (u16 flag count + u16 flags, u8 key count + u8 keys, u8 counter count + u8 counters; empty: none), notice u8 (0 none, 1 other context, 2 full, 3 too long to catch up, 4 hold expired, 5 went alone, 6 join failed), name count u8 + names |
@@ -7432,6 +7734,7 @@ Server to client:
 | 0x8D | ROSTER | count u8 + (member u8, stage str, inst u32, level u16, hp u16, max hp u16, flags u8: 1 connected, 2 lagging, 4 owner) (once per second) |
 | 0x8E | REASSIGN | old inst u32, visit u32, new inst u32, from tick u32, mode u8, flags u8 (1 departing): after a fork the receiver's copy is the child; its stream comes with the new id from that tick |
 | 0x8F | NETSTAT | rtt ms u16 (median of the newest 30 PONG round trips, host-loop stalls out), spread ms u16 (p90 above it), d u8, margin ms i16 (the delay rule's 0.5 % quantile), sealed u32, filled u32, late u32 (the member's current stream), flags u8 (1 in a stream); once per second after PING (round 62; clients skip unknown server frames, so no protocol change; 0x8F is NETSTAT's for good, 6.3 "Message types") |
+| 0x90 | PRESENCE2 | member u8, then the PRESENCE2 fields at version 1 (to members that send PRESENCE2; the others get the same member's PRESENCE) |
 
 **State blob** (reassembled STATE_DATA): purpose u8 (1 join, 2 co-arrival, 3 resync, 4 resume), slot u8, codec u8
 (0 = raw records), snapshot blob (as the leader uploaded it), fork count u8 + (tick u32, leaver mask u8, kind u8,

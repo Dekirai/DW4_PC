@@ -1,0 +1,13 @@
+{
+  "desc": "ghost figures with an older client: b sends PRESENCE (no PRESENCE2, the test hook), a PRESENCE2; each sees the other's figure, b's without weapon or clip (run and wait by its speed); b walks around a and stops in front of it",
+  "frames": 60000,
+  "timeout": 600,
+  "seed_story": true,
+  "min_shared_ticks": 0,
+  "shots": true,
+  "env": {"DW4_TRACE_GHOSTS": "60"},
+  "clients": [
+    {"name": "a", "script": "a.script", "card": "k7", "start": 0},
+    {"name": "b", "script": "b.script", "card": "k10", "start": 3, "env": {"DW4_ONLINE_TEST_PRESENCE1": "1"}}
+  ]
+}

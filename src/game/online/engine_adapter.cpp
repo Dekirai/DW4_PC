@@ -212,6 +212,20 @@ PresenceFacts GameEngineLink::presence(int slot) const {
     f.max_mp = player.max_mp;
     f.defeated = player.hp <= 0 || !ram->generated;
     f.hidden = hooks_.hidden ? hooks_.hidden() : false;
+    // PRESENCE2 (the ghost figures): read only, nothing here changes the
+    // engine. The figure hides where the tag hides, except for a status or
+    // shop window (busy), and while the action switch does not show the
+    // model (SQ_HIDE before the entry, a FADESET HIDE).
+    f.busy = hooks_.busy ? hooks_.busy() : false;
+    f.figure_hidden = hooks_.figure_hidden ? hooks_.figure_hidden() : f.hidden;
+    if (const auto* actions = engine.get<engine::ActionManager>()) {
+        if (!actions->drawn(ram->node)) f.figure_hidden = true;
+        if (const auto* action = actions->find(player.digimon, slot)) {
+            f.clip = action->motion.clip;
+            f.clip_loops = !action->database || action->database->looping(f.clip);
+        }
+    }
+    f.weapon = player.weapons[0];
     return f;
 }
 
