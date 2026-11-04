@@ -114,6 +114,28 @@ struct Scenario {
     std::vector<std::string> species;
     std::uint64_t steps = 3000;
     std::uint64_t every = 97;
+    // Slot 1's own status window (round 63) from this frame: START, then
+    // A (Equipment) / B / DOWN / A (Folder) / B / B / B, 120 frames apart;
+    // its copies of the window models and lines stay after it closes. 0: none.
+    std::uint64_t menu_at = 0;
+    // Diagnosis: the straight run keeps its raw states of these frames, and
+    // a trial's true-pad steps are compared with them section by section.
+    std::uint64_t dump_from = 0, dump_to = 0;
+    std::array<PadSample, 4> pads(std::uint64_t frame) const {
+        auto out = pads_at(frame);
+        if (menu_at && frame + 30 >= menu_at && frame <= menu_at + 1000) {
+            auto& pad = out[1];
+            pad = PadSample{};
+            pad.connected = true;
+            static constexpr std::uint32_t presses[] = {dw4::pad_button::start, dw4::pad_button::a, dw4::pad_button::b, dw4::pad_button::down,
+                                                        dw4::pad_button::a,     dw4::pad_button::b, dw4::pad_button::b, dw4::pad_button::b};
+            if (frame >= menu_at) {
+                const std::uint64_t t = frame - menu_at;
+                if (t % 120 < 3 && t / 120 < std::size(presses)) pad.buttons = presses[t / 120];
+            }
+        }
+        return out;
+    }
 };
 
 void host_step(Engine& engine, const std::array<PadSample, 4>& pads) {
@@ -145,6 +167,7 @@ struct Straight {
     std::vector<std::uint8_t> snapshot;                  // the visit's load snapshot
     std::vector<std::array<PadSample, 4>> load_log;      // the visit's steps from the load step to the load end
     std::uint64_t load_frame{}, load_end{};
+    std::map<std::uint64_t, std::vector<std::uint8_t>> states; // Scenario::dump_from..dump_to
 };
 
 Straight run_straight(const std::filesystem::path& data, const Scenario& sc) {
@@ -153,7 +176,7 @@ Straight run_straight(const std::filesystem::path& data, const Scenario& sc) {
     Engine& engine = start(holder, data, sc);
     std::uint64_t serial = 0;
     for (std::uint64_t i = 0; i < sc.steps; ++i) {
-        const auto pads = pads_at(engine.frame());
+        const auto pads = sc.pads(engine.frame());
         host_step(engine, pads);
         if (const auto* s = engine.stage_snapshot(); s && s->serial != serial && !out.load_end) {
             serial = s->serial;
@@ -167,6 +190,14 @@ Straight run_straight(const std::filesystem::path& data, const Scenario& sc) {
         // The first visit only (a boss stage may end in another stage).
         if (out.load_end && (engine.stage_name() != sc.stage || engine.pending_stage())) break;
         out.fingerprints[engine.frame()] = engine.net_fingerprint();
+        if (sc.dump_to) {
+            static std::string last;
+            const auto why = engine.state_unsafe_reason();
+            if (why != last) std::cout << "  straight " << engine.frame() << ": " << (why.empty() ? std::string("safe") : why) << " busy " << int(engine.busy_slots()) << std::endl;
+            last = why;
+        }
+        if (sc.dump_to && engine.frame() >= sc.dump_from && engine.frame() <= sc.dump_to && engine.state_safe())
+            out.states[engine.frame()] = engine.save_tick_state();
     }
     engine.set_online(OnlineRules{});
     return out;
@@ -192,8 +223,9 @@ void run_trials(const std::filesystem::path& data, const Scenario& sc, const Str
     std::uint64_t next_trial = 0;
     int reported = 0;
     while (engine.frame() < straight.fingerprints.rbegin()->first) {
-        host_step(engine, pads_at(engine.frame()));
+        host_step(engine, sc.pads(engine.frame()));
         const auto frame = engine.frame();
+        if (!straight.fingerprints.contains(frame)) break;
         if (straight.fingerprints.at(frame) != engine.net_fingerprint()) {
             soft(false, sc.stage + ": the trial engine left the straight run at frame " + std::to_string(frame));
             break;
@@ -219,7 +251,9 @@ void run_trials(const std::filesystem::path& data, const Scenario& sc, const Str
         t0 = std::chrono::steady_clock::now();
         (void)engine.tick_state_hash();
         t.hash_ms += ms_since(t0);
-        if (kept.size() < 4) kept.push_back({frame, bytes});
+        // States for the rebuild: the first and then every 12th (after a
+        // member's window, its copies come back through the journal).
+        if (t.saved == 1 || (t.saved % 12 == 0 && kept.size() < 6)) kept.push_back({frame, bytes});
         // Idempotence: applied into itself, it saves the same bytes.
         t0 = std::chrono::steady_clock::now();
         try {
@@ -253,11 +287,24 @@ void run_trials(const std::filesystem::path& data, const Scenario& sc, const Str
         if (topology_changed) ++t.skipped;
         ++t.trials;
         bool equal = true;
+        bool diagnosed = false;
         for (int k = 0; k < window; ++k) {
-            host_step(engine, pads_at(engine.frame()));
+            host_step(engine, sc.pads(engine.frame()));
             const auto f = engine.frame();
+            if (!straight.fingerprints.contains(f)) break;
+            if (const auto kept = straight.states.find(f); kept != straight.states.end() && !diagnosed && engine.state_safe()) {
+                const auto mine = engine.save_tick_state();
+                if (mine != kept->second) {
+                    diagnosed = true;
+                    std::cout << "  trial at " << frame << ": the state differs first at frame " << f << " in "
+                              << first_differing_section(kept->second, mine) << std::endl;
+                }
+            }
             if (straight.fingerprints.at(f) != engine.net_fingerprint()) {
                 equal = false;
+                if (reported < 8 && straight.states.count(f))
+                    std::cout << "  (at " << f << " the trial engine is " << (engine.state_safe() ? std::string("safe") : engine.state_unsafe_reason())
+                              << ", its state " << (engine.state_safe() && engine.save_tick_state() == straight.states.at(f) ? "equal" : "other") << ")" << std::endl;
                 if (reported++ < 8)
                     std::cout << "  FAIL " << sc.stage << ": trial at " << frame << " (window " << window << ") differs from frame " << f
                               << (topology_changed ? " (a node was made in the window)" : "") << '\n';
@@ -302,8 +349,9 @@ void run_rebuild(const std::filesystem::path& data, const Scenario& sc, const St
     soft(again == bytes, sc.stage + ": the rebuild saves T's bytes (" + (again == bytes ? std::string() : first_differing_section(bytes, again)) + ")");
     int steps = 0;
     while (engine.frame() < straight.fingerprints.rbegin()->first) {
-        host_step(engine, pads_at(engine.frame()));
+        host_step(engine, sc.pads(engine.frame()));
         ++steps;
+        if (!straight.fingerprints.contains(engine.frame())) break;
         if (straight.fingerprints.at(engine.frame()) != engine.net_fingerprint()) {
             soft(false, sc.stage + ": the rebuild of " + std::to_string(at) + " differs from frame " + std::to_string(engine.frame()));
             engine.set_online(OnlineRules{});
@@ -322,6 +370,7 @@ void run(const std::filesystem::path& data, Scenario sc) {
     check(straight.load_end != 0, sc.stage + ": the visit reached its load end");
     Trials t;
     std::vector<std::pair<std::uint64_t, std::vector<std::uint8_t>>> kept;
+    if (sc.dump_to) std::cout << "  kept " << straight.states.size() << " straight states for diagnosis" << std::endl;
     run_trials(data, sc, straight, t, kept);
     for (const auto& [at, bytes] : kept) run_rebuild(data, sc, straight, at, bytes, t);
     std::cout << sc.stage << " x" << sc.players << ": load end " << straight.load_end << ", " << t.saved << " states (" << t.idempotent
@@ -351,10 +400,15 @@ int main(int argc, char** argv) {
                 sc.steps = std::uint64_t(std::atoll(argv[4]));
                 sc.every = std::uint64_t(std::atoll(argv[5]));
                 sc.species = {"p_agumon", "p_dorumon", "p_vmon", "p_girumon"};
+                if (argc > 6) sc.menu_at = std::uint64_t(std::atoll(argv[6]));
+                if (argc > 8) {
+                    sc.dump_from = std::uint64_t(std::atoll(argv[7]));
+                    sc.dump_to = std::uint64_t(std::atoll(argv[8]));
+                }
                 set.push_back(sc);
             } else {
                 set.push_back({"stag0101", 2, {"p_agumon", "p_dorumon"}, 2500, 97});
-                set.push_back({"dng101b1", 2, {"p_agumon", "p_vmon"}, 2500, 97});
+                set.push_back({"dng101b1", 2, {"p_agumon", "p_vmon"}, 2500, 97, 700});
             }
             for (const auto& sc : set) run(data, sc);
         } else {

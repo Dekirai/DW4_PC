@@ -1079,6 +1079,8 @@ public:
     // The node of a text line (layer, line name such as "ITNAMEFONT",
     // "font01"), null without (the picture filter of seamless co-op).
     const Node* line_node(std::string_view layer, std::string_view name) const;
+    // Round J: a journal entry's line copies made again (Engine::rerun).
+    void replay_copies(Engine& engine, int slot, int ram, std::string_view layer, std::string_view name);
 
 private:
     struct Line {

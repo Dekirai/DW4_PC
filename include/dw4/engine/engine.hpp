@@ -718,12 +718,35 @@ public:
     void apply_tick_state(std::span<const std::uint8_t> bytes);
     // XXH64 of the canonical form.
     std::uint64_t tick_state_hash();
+    // A demo record's port in the tick state (online_exits.cpp).
+    void tick_port(TickArchive& a, std::function<int(Engine&)>& port);
     // The visit's load end: the frame after the first step of this stage's
     // load whose end found the stage active and the loader idle (0 before).
     std::uint64_t load_end_frame() const { return load_end_frame_; }
     // The topology hash (files in order, every manager's RAM count, the
     // messenger rows, the schedule order, the owned nodes).
     std::uint64_t topology_hash() const;
+    // The topology journal (6.13.2 step 3; online only, read by nothing in
+    // the simulation): the operations that change the topology after the
+    // stage's load began, in their order with their frames, at the level
+    // where they act: a package load (load_common_now), a member's own copy
+    // of a window model (make_window_copy) and of a window's text lines
+    // (TextCtlManager's copies). apply_tick_state re-runs the entries the
+    // reader lacks before it checks the topology hash.
+    struct TopologyEntry {
+        enum Kind : std::uint8_t { package = 1, window_copy = 2, line_copies = 3 };
+        std::uint64_t frame{};
+        std::uint8_t kind{};
+        std::string text, text2;
+        std::int32_t a{}, b{};
+        bool operator==(const TopologyEntry&) const = default;
+    };
+    void journal(TopologyEntry entry) {
+        if (!online_.enabled) return;
+        entry.frame = frame_;
+        journal_.push_back(std::move(entry));
+    }
+    const std::vector<TopologyEntry>& topology_journal() const { return journal_; }
 
     // ---- Data Overflow (docs/SURVIVAL.md 13.4; dw4/engine/overflow.hpp).
     // A survival run's engine carries its rules, set by the host before the
@@ -1224,6 +1247,13 @@ private:
     ExitPromptView exit_view_;
     struct ExitPort;
     std::shared_ptr<ExitPort> exit_port_;     // the running exit prompt (shared with its demo records)
+    // The exit port's demo record (a named type, so the tick state can find
+    // the port it steps).
+    struct ExitStep {
+        std::shared_ptr<ExitPort> exit;
+        int operator()(Engine& engine) const;
+    };
+    void tick_exit(TickArchive& a);
     std::vector<const Node*> picture_hidden_; // render(): picture_hidden_roots
     std::vector<Lua4Value> stage_change_port(std::span<const Lua4Value> args);
     bool gatedisc_fork();
@@ -1282,9 +1312,12 @@ private:
     void step_impl(const std::array<PadSample, 4>& samples);
     // Round J (tick_state.cpp).
     std::uint64_t load_end_frame_{};
+    std::vector<TopologyEntry> journal_;
+    void rerun(const TopologyEntry& entry);
     void tick_engine(TickArchive& a);
     void tick_nodes(TickArchive& a);
     void tick_lua(TickArchive& a);
+    friend class DemoManager;
     friend class TickIds;
 };
 

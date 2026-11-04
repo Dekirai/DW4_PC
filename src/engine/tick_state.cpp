@@ -35,6 +35,7 @@ constexpr std::uint32_t kMagic = 0x54345744; // "DW4T"
 
 // Section tags (fixed order).
 enum : std::uint32_t {
+    kJournal = 0,
     kEngine = 1,
     kGenerator = 2,
     kSystem = 3,
@@ -48,6 +49,7 @@ enum : std::uint32_t {
 
 const char* section_name(std::uint32_t tag) {
     switch (tag) {
+    case kJournal: return "journal";
     case kEngine: return "engine";
     case kGenerator: return "generator";
     case kSystem: return "system";
@@ -396,9 +398,7 @@ std::string Engine::state_unsafe_reason() const {
     if (pending_fork_ || split_) return "fork";
     if (script_depth_ != 0 || trigger_slot_ != -1 || scene_scope_ != -1 || !model_contexts_.empty()) return "inside a script";
     if (!messenger_.between_steps() || !demo_.between_steps()) return "inside a step";
-    if (demo_.has_port() || (exit_port_ && exit_view_.active)) return "exit port";
     if (const auto* windows = get<SubWindowManager>(); windows && windows->window_open()) return "window program";
-    if (!copies_.empty()) return "scene copies";
     return {};
 }
 
@@ -421,6 +421,7 @@ std::uint64_t Engine::topology_hash() const {
     for (const auto& s : schedule_) h = mix_u64(mix_text(h, s.manager->type_name()), std::uint64_t(s.slot));
     h = mix_u64(h, copy_nodes_.size());
     h = mix_u64(h, attached_roots_.size());
+    for (const auto& e : journal_) h = mix_u64(mix_text(mix_text(mix_u64(h, e.kind), e.text), e.text2), (std::uint64_t(std::uint32_t(e.a)) << 32) | std::uint32_t(e.b));
     return h;
 }
 
@@ -463,6 +464,7 @@ void Engine::tick_engine(TickArchive& a) {
     a.io(scoped_layers_off_);
     a.io(talk_globals_side_);
     a.io(talk_waits_);
+    tick_exit(a);
 }
 
 // The Lua VM (Lua4Vm::save_state) and the talk globals (Lua values of the
@@ -474,14 +476,22 @@ void Engine::tick_lua(TickArchive& a) {
         std::string label;
     };
     std::vector<Program> programs;
-    std::unordered_map<const void*, std::uint64_t> ids;
+    std::vector<std::uint8_t> vm;
     if (!a.reading()) {
-        for (const auto& [key, program] : lua_programs_) {
-            const std::uint64_t id = (std::uint64_t(a.ids().document(static_cast<const IgbDocument*>(key.first))) << 32) | key.second;
-            ids[program.identity()] = id;
-            programs.push_back({id, program.info().label});
-        }
-        std::sort(programs.begin(), programs.end(), [](const Program& x, const Program& y) { return x.id < y.id; });
+        // The programs the closures run (the cache's others are no state).
+        if (!lua_) throw TickStateError("lua", "no VM");
+        std::unordered_map<const void*, Program> known;
+        for (const auto& [key, program] : lua_programs_)
+            known[program.identity()] = {(std::uint64_t(a.ids().document(static_cast<const IgbDocument*>(key.first))) << 32) | key.second,
+                                         program.info().label};
+        std::map<std::uint64_t, std::string> used;
+        vm = lua_->save_state([&](const void* program) {
+            const auto it = known.find(program);
+            if (it == known.end()) throw TickStateError("lua", "a closure of a program outside the cache");
+            used[it->second.id] = it->second.label;
+            return it->second.id;
+        });
+        for (const auto& [id, label] : used) programs.push_back({id, label});
     }
     std::uint32_t count = std::uint32_t(programs.size());
     a.io(count);
@@ -506,15 +516,6 @@ void Engine::tick_lua(TickArchive& a) {
         }
         return found->second;
     };
-    std::vector<std::uint8_t> vm;
-    if (!a.reading()) {
-        if (!lua_) throw TickStateError("lua", "no VM");
-        vm = lua_->save_state([&](const void* program) {
-            const auto it = ids.find(program);
-            if (it == ids.end()) throw TickStateError("lua", "a closure of a program outside the cache");
-            return it->second;
-        });
-    }
     a.io(vm);
     if (a.reading()) {
         if (!lua_) throw TickStateError("lua", "no VM");
@@ -616,7 +617,7 @@ void DemoManager::tick_state(TickArchive& a) {
             work->records.resize(records);
         }
         for (auto& r : work->records) {
-            if (r.port) throw TickStateError("demo", "a demo record with a port");
+            a.engine().tick_port(a, r.port);
             a.io(r.type);
             a.io(r.category);
             a.io(r.name);
@@ -752,6 +753,40 @@ void attribute_values(TickArchive& a, Attribute& v) {
 }
 } // namespace
 
+namespace {
+void journal_io(StateArchive& a, std::vector<Engine::TopologyEntry>& journal) {
+    std::uint32_t count = std::uint32_t(journal.size());
+    a.io(count);
+    if (a.reading()) {
+        if (count > 1u << 16) throw TickStateError("journal", "implausible journal");
+        journal.resize(count);
+    }
+    for (auto& e : journal) {
+        a.io(e.frame);
+        a.io(e.kind);
+        a.io(e.text);
+        a.io(e.text2);
+        a.io(e.a);
+        a.io(e.b);
+    }
+}
+} // namespace
+
+void Engine::rerun(const TopologyEntry& e) {
+    switch (e.kind) {
+    case TopologyEntry::package:
+        if (!load_common_now(e.text)) throw TickStateError("topology", "the package " + e.text + " does not load");
+        break;
+    case TopologyEntry::window_copy:
+        if (!make_window_copy(e.text, e.a, e.b)) throw TickStateError("topology", "the window copy " + e.text + " has no RAM");
+        break;
+    case TopologyEntry::line_copies:
+        if (auto* texts = get<TextCtlManager>()) texts->replay_copies(*this, e.b, e.a, e.text, e.text2);
+        break;
+    default: throw TickStateError("topology", "an unknown journal entry");
+    }
+}
+
 std::vector<std::uint8_t> Engine::save_tick_state(TickForm form) {
     if (const auto why = state_unsafe_reason(); !why.empty()) throw std::logic_error("tick state at an unsafe tick: " + why);
     const detail::MxcsrGuard mxcsr;
@@ -763,6 +798,7 @@ std::vector<std::uint8_t> Engine::save_tick_state(TickForm form) {
         body(a);
         w.section(tag, bytes);
     };
+    section(kJournal, [&](TickArchive& a) { journal_io(a, journal_); });
     section(kEngine, [&](TickArchive& a) { tick_engine(a); });
     section(kGenerator, [&](TickArchive& a) { fight::generator().tick_io(a); });
     section(kSystem, [&](TickArchive& a) {
@@ -824,9 +860,30 @@ void Engine::apply_tick_state(std::span<const std::uint8_t> bytes) {
     const auto h = decode_tick_header(bytes);
     if (h.form != TickForm::raw) throw TickStateError("header", "a canonical state cannot be applied");
     if (h.stage != stage_name_) throw TickStateError("topology", "another stage");
+    // The journal first: the entries this engine lacks run again in their
+    // order (they make the files, RAMs, rows and nodes the values name).
+    if (sections.empty() || sections[0].tag != kJournal) throw TickStateError("header", "no journal");
+    {
+        std::vector<TopologyEntry> theirs;
+        StateArchive ja(sections[0].bytes);
+        journal_io(ja, theirs);
+        if (!ja.at_end()) throw TickStateError("journal", "trailing bytes");
+        if (theirs.size() < journal_.size()) throw TickStateError("topology", "this engine's journal is longer");
+        for (std::size_t i = 0; i < theirs.size(); ++i) {
+            if (i < journal_.size()) {
+                auto mine = journal_[i];
+                mine.frame = theirs[i].frame;
+                if (!(mine == theirs[i])) throw TickStateError("topology", "the journals differ at entry " + std::to_string(i));
+                continue;
+            }
+            rerun(theirs[i]);
+        }
+        if (journal_.size() != theirs.size()) throw TickStateError("topology", "the journal's re-run made other entries");
+        journal_ = theirs;
+    }
     if (h.topology != topology_hash()) throw TickStateError("topology", "the topology hash differs");
     TickIds ids(*this);
-    std::size_t index = 0;
+    std::size_t index = 1;
     auto section = [&](std::uint32_t tag, auto&& body) {
         if (index >= sections.size() || sections[index].tag != tag) throw TickStateError("header", "a missing or misplaced section");
         const auto& s = sections[index++];

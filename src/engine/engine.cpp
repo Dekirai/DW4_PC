@@ -733,6 +733,7 @@ void Engine::reset_modules() {
 
 void Engine::begin_stage_load(const StageSnapshot* restoring) {
     load_end_frame_ = 0; // (round J: the new visit's load end comes at its end)
+    journal_.clear();    // (round J: a new visit's topology journal)
     const std::string next = pending_stage_;
     pending_stage_.clear();
     log("stage change -> " + next);
@@ -966,6 +967,7 @@ bool Engine::load_common_now(const std::string& logical_path) {
     std::vector<ObjectView> infos;
     load_file(logical_path, false, infos);
     for (const auto& info : infos) register_info(info);
+    if (files_.size() != before) journal({0, TopologyEntry::package, logical_path});
     return files_.size() != before;
 }
 
