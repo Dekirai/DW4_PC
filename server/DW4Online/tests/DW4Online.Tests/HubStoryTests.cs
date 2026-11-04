@@ -598,6 +598,33 @@ public class HubStoryTests
     }
 
     /// <summary>
+    /// A member that joins a running visit may report that visit's counter line, as a member placed there by a barrier
+    /// (round 59b's verify: AllowLine ran only in Place and for a fork's child, so the joiner's line was refused, limit).
+    /// </summary>
+    [Fact]
+    public void A_joiner_may_report_the_counter_line_of_the_visit_it_joined()
+    {
+        var h = new Harness(StoryPolicy.Drop, started: false);
+        var a = h.Connect("a", 0);
+        var b = h.Connect("b", 1);
+        h.Barrier("a", "stagml11");
+        h.Barrier("b", "stag0101");
+        h.Snapshot("b");
+        h.Log("b", 0, 120);
+        h.Barrier("a", "stag0101");
+        h.Joinable("b");
+        var ok = a.LastOk;
+        Assert.Equal(BarrierDecision.Join, ok.Decision);
+        h.Log("b", 120, 30);
+        h.Send("a", new ReadyMsg(ok.NewInst, ok.NewVisit, 120, 0, 5000, [7]).Frame());
+        var req = JoinReqMsg.Parse(b.Frames.Last(f => f.Type == Msg.JoinReq).Payload);
+        h.Send("b", new JoinAtMsg(req.Inst, req.Visit, 155).Frame());
+        Assert.Same(h.I("b"), h.I("a"));
+        var line = new StoryDelta { Counters = [new CounterGrowth(7, h.I("a").Id, h.I("a").Visit, 3)] };
+        Assert.DoesNotContain(h.Story("a", line).Refused, r => r.Reason == StoryRefusal.Limit);
+    }
+
+    /// <summary>
     /// The relay drops a hub whose connections are all gone while its room stays open; the room story (dropped set, epochs,
     /// held values, per-member rules) and the instance ids now stay with the room (round 59 review: the next keeper started
     /// without them, so values dropped while the owner was away counted again).
