@@ -145,3 +145,40 @@ Scripts live in the worktree's ignored `build/t` (`det.sh`, `shots.sh`,
 - O3's field changes: `note_stage` already starts the run's pictures over on
   every stage load of the run's engine; the kept picture of the field being
   left stays until the next field draws, as in the story.
+
+## 7. Integration with lane B (branch dref-o1a)
+
+Main 19c2eae + `feat-o1a-hooks` (lane B) + `feat-o1a-host` (lane A), merge
+order B, A (SURVIVAL.md 15.1). No textual conflicts: main had moved on by
+docs only, and `CMakeLists.txt` merged by itself (lane B's engine sources,
+probe and tests beside lane A's game sources and test). The interfaces made
+to fit:
+
+| Seam | As integrated |
+| --- | --- |
+| rules into the run's engine | the stand-in driver's `attach` calls `Engine::set_overflow_rules` with `OverflowRules(RuleSet::run)` (lane B's initial values, no director) before the host's `request_stage(field)`: the Violet Ring starts natively without Belphemon, `hit_p_<form>.lua` is the run's player hit rule, H3 keeps every other stage change and both resets out |
+| the run's end | the stand-in reads `OverflowRules::ended()`: a stage exit ends the run at once (`retired`), a defeat or the game over three seconds later (`defeated`, the knock-down plays first); the host's own checks (the field left, 0 HP, a reboot) stay as a safety net |
+| the director's lifetime | `run_from_story` destroys the run's engine before the driver, so `OverflowRules::director` (not owned) stays valid for every hook call |
+| tracing | `DW4_TRACE_OVERFLOW=1` prints the rule set at the start and the rules' tallies at the end (steps, steps without control, hits taken, misses, clamps, highest hit share, end reason) |
+| statics | lane B adds no mutable static (its new statics are constant name tables), so the audit of section 4 stands |
+
+Without a director nothing spawns on the Violet Ring and its music is off
+(the native start's BGMSTOP; the phase music is the director's): the dev
+start shows an empty arena to walk in until lane C.
+
+Results with the integrated build (commit b1ef13d, Release, all hidden):
+
+| Test | Result |
+| --- | --- |
+| build | rel with tests, no new warnings (main's C4996 and one C4457) |
+| ctest | 47 / 47 (main's 44 + `overflow_host` 68 checks, `overflow_rules` 1,064, `overflow_scripts` 45) |
+| T1 det.sh | 4004f056 / 396cb219, two runs of two |
+| T2 r25c | 10 / 10 segments, 1,748,011 frames, every segment's frames as lane B's run, every save "same story" (without the NPC, which is O1b's) |
+| T3 | `t3.sh` with a run on the Violet Ring (Agumon, `bot=circle`, native start, 3,600 steps) and with one on staggf01 (Veemon, its own first.lua and enemies, the run's hit rule: one hit of 28.1 % of MaxHP, 222 steps without control in its intro): 12,200 story lines equal, 105 port events and achievements equal |
+| T4 | `t4.sh`: 3990, 4600, 5200 identical after loading |
+| T5 | the card folder unchanged, A and B equal; the achievement profiles equal apart from the unlock times (wall-clock seconds); no throwaway card folder left |
+| T10 | `overflow_scripts`: (a) dng101b1 3,600 of 3,600 and staggf01 3,000 of 3,000 steps equal; (b) the Violet Ring's native start |
+| T11 | `shots.sh`: every scene (title / new game, dng101b1 4:3 and 1600x900, the lobby with name tags, the new game's lobby) identical to main; F1 Cheats identical to lane A's build (the Gameplay tab); F1 Settings differs only in the frame-time graph, as two runs of main do |
+| run hash | staggf01, `seed=7`, 2,400 steps: the same hash twice headless and with `DW4_DEV_PRESENT=144 DW4_DEV_SMOOTH=1` drawn |
+| hidden run with pictures | the Violet Ring with the HUD after the native start, Agumon walking its circle, no boss |
+| st_all | 17 / 17 identical after loading |
