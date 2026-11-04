@@ -2801,7 +2801,8 @@ are `src/game/online/lobby_api.hpp`; the ImGui screens are
   player in a parallel instance, a member on another quest) come from PRESENCE
   packets through `OverheadLabels::set_remote_players` (exists): interpolated
   between packets, hidden by the same rules (loads, demos, menus, a defeated
-  player). They are presentation only and never touch the scene graph.
+  player). They are presentation only and never touch the scene graph. In a
+  hub stage the tag stands above the member's ghost figure (12.1).
 - A lagging member's tag shows a connection icon.
 - Notices (presentation, a few seconds at the top): "<name> joined", "<name>
   left for <stage>", "<name> is in a scene", "<name> has a menu open".
@@ -3815,6 +3816,55 @@ over the deployed server (deployment stays the user's step). A buffer round
 for what that field test finds is expected.
 
 Depends on: S4 and the answers.
+
+### Round 60 (r60ghosts): ghost figures in the hub stages
+
+Goal: the user's decision of 31.10 after the first test with a friend over
+the real server ("you only see yourself"; question 1): in a member's solo hub
+instance the other room members of the same hub stage appear as their
+Digimon, look only, and nothing of it reaches the simulation. Built as 12.1
+describes: on the client the presentation-only renderer
+(`src/game/ghost_figures.{hpp,cpp}`, the hooks in `game_main.cpp`), the
+PRESENCE2 sender (`Session::send_presence`, `track_figure`, the read-only
+facts of `GameEngineLink::presence`) and the receiver's interpolation
+(`PresenceTracks`); on the hub `Presence2Msg`, `RoomHub.OnPresence2` and
+`FanPresence` with the WELCOME flag; scenarios P1 and P2 (16). The lane of
+round S5 called *presence* is this round's work.
+
+Looked at in the pictures of P1 and P2 (hidden 1920x1009, widescreen, MSAA
+4, from every client): the figures stand on the floor with their shadow and
+face where they walk (a run from (60, -30) to (79.6, -54.4) faces 2.47, the
+direction's angle; the trace's rebuild of the own player's facing from its
+yaw is 0.0000 off), they play the sender's clips (`waitS`, `runS`) with its
+weapon, the form change of the test hook crossfades, a figure walking in
+front of the own player turns faint and the own player stays visible, c's
+figure goes while c plays the field and fades in again at the lobby's entry
+after c's game over, and c's own trace shows no figure in the field. With
+the PRESENCE-only member of P2 each side sees the other's figure without
+weapon, running and standing by the packets' speed. Nothing needed a change
+after these pictures.
+
+Checked on the branch head (the release build with tests and the
+`DW4_ONLINE_DEV` build, both from the same tree): ctest 45 of 45
+(`dw4_ghosts_tests` with the game data: 65 checks); online off `det.sh`
+4004f056 / audio 396cb219 in every run (the release build twice, the
+development build once); r25c 10 of 10 with 1,748,011 frames, every segment
+as before; the server's unit tests 190, integration and end to end 90
+passed and 1 skipped against a private MariaDB with a fresh data directory;
+on hidden real clients P1 and P2 and the 22 scenarios of rounds S1 and S2
+(S1, S2, S3, S5, S11a, S11b, S14, S14a, S14h, S14p, S16, S17a, S17b, S18,
+S18b, S19a, S19b, S19c, S21, S22a, S22b, A1, three at a time): every member
+passes through its solo lobby with the others' figures and the shared field
+instances keep equal net fingerprints (3,060 comparisons, the only two that
+differ are S11a's and S11b's injected desyncs before their resync); the 9
+fake-client scenarios; the 8 UI scenarios.
+
+Open after the round: a server built before this round has no PRESENCE2,
+so until the user's server is updated a new client shows the figures from
+PRESENCE alone
+(without weapon, run or wait by the packets' speed; 12.1 "Versions fail
+safe"). Figures in a field or dungeon (members of other instances there)
+were not asked for; they stay name tags.
 
 ## 18. Questions for the user
 
