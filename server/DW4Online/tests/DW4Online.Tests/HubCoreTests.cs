@@ -201,7 +201,7 @@ public class HubCoreTests
         for (var i = 0; i < 59; ++i) low.Record(-30, late: true);
         Assert.Null(low.Evaluate()); // not a whole second yet
         low.Record(-30, late: true);
-        Assert.Equal(5, low.Evaluate()); // ceil(30 / 16.68) + 1 = 3 more
+        Assert.Equal(5, low.Evaluate()); // ceil((30 + 8.34) / 16.68) = 3 more
         var half = new DelayController(3) { Max = 10 };
         for (var i = 0; i < 60; ++i) half.Record(i % 2 == 0 ? -5 : 10, late: i % 2 == 0);
         Assert.Null(half.Evaluate()); // half of them: the median margin is not below zero (one second, one block)
@@ -314,7 +314,7 @@ public class HubCoreTests
         Assert.Equal(3, h.Evaluate()); // floor((25 - 2.5) / 16.68) = 1
         Assert.Equal(0, h.Barred);
         for (var i = 0; i < DelayController.Block; ++i) h.Record(-3, late: true); // most of a second late at 3
-        Assert.Equal(4, h.Evaluate()); // back to the value it fell from (a rise from nowhere: ceil(3 / 16.68) + 1 = 2)
+        Assert.Equal(4, h.Evaluate()); // back to the value it fell from
         Assert.Equal("most_late", h.LastReason);
         Assert.Equal(3, h.Barred);
         for (var i = 0; i < DelayController.LowerHold; ++i) h.Record(45, late: false);
@@ -349,7 +349,10 @@ public class HubCoreTests
         Assert.Equal(3, fresh.Evaluate());
         var r = new DelayController(3) { Max = 10 };
         for (var i = 0; i < DelayController.Block; ++i) r.Record(-3, late: true);
-        Assert.Equal(5, r.Evaluate());
+        Assert.Equal(4, r.Evaluate()); // ceil((3 + 8.34) / 16.68) = 1 (round 62: + 1 tick, 2)
+        var r2 = new DelayController(3) { Max = 10 };
+        for (var i = 0; i < DelayController.Block; ++i) r2.Record(-10, late: true);
+        Assert.Equal(5, r2.Evaluate()); // ceil((10 + 8.34) / 16.68) = 2
         Assert.Equal(0, r.Barred);
     }
 

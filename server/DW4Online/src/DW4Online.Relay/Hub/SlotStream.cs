@@ -345,12 +345,14 @@ public sealed class DelayController(int initial)
         var (late, seconds) = LateInWindow();
         // Most of the last second's pads late: d is too low for this link right now (a start value below it, a join
         // whose client still runs a tick behind); every second waited for two more seconds of late pads costs the
-        // member most of its inputs, so it rises at once, by what the median margin of that second says.
+        // member most of its inputs, so it rises at once, by what the median margin of that second says and half a tick
+        // (review of round 62: "+ 1 tick" took a joiner 2 ms late at 20 ms of round trip from 3 to 5, and the fall needs
+        // thirty seconds per step since then).
         var newest = NewestMargins(Block);
         var mostLate = newest.Length == Block && newest[Block / 2] < 0;
         if (Current < Max && (mostLate || (late > Math.Min(_count, Window) * LateTarget && seconds >= RaiseSeconds)))
         {
-            var step = mostLate ? Math.Clamp((int)Math.Ceiling(-newest[Block / 2] / tick) + 1, 1, MaxStep) : 1;
+            var step = mostLate ? Math.Clamp((int)Math.Ceiling((-newest[Block / 2] + tick / 2) / tick), 1, MaxStep) : 1;
             if (_fellTo == Current)
             {
                 // The value the last change fell to was too low after all: barred for a while, and d goes back to the
