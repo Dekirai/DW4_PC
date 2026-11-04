@@ -53,9 +53,9 @@ in section 18.
   side despawns the other side's players). If every living member goes, the
   whole instance moves as in the original. Dead members always stay with
   living ones. Gate disc, story triggers, boss starts and *give up* fork the
-  same way; scenes that concern one member (talks, map recorders, camera
-  tours, the status window) are scoped to that member when the others are far
-  away (from round S3, section 5.3).
+  same way. A member's status window, NPC talks and map recorders are its
+  own: they open on its screen only, several at once, and pause nothing
+  (round 63, user decision of 2026-10-31, section 5.3).
 - **Transport.** All traffic goes through the server's relay (protocol DW4R2,
   one TCP connection per client and room). A one-member instance runs on its
   member's own clock (no input delay) and streams its inputs to the server.
@@ -157,7 +157,7 @@ and that the decisions above do not settle are questions in section 18.
 | A late pad is filled at once (last pad, then neutral); nobody waits | 6.4 |
 | Exits ask every member on the mat; dead members stay with living ones | 5.2, 6.7 |
 | Boss and story mats keep the original gather rule plus a *Go without them* choice | 5 |
-| Scenes of one member (status window, talks, recorders, camera tours): original when everyone is near, scoped to that member with a local freeze otherwise, from round S3 (question 6) | 5.3 |
+| A member's status window, NPC talks and map recorders are its own: only on its screen, several at once, nothing pauses, no protection (question 6, decided again 2026-10-31; built in round 63) | 5.3 |
 | EXP is shared by the members near the kill (question 7) | 5 |
 | Story while the owner is away: server setting, *drop* until the user decides, refused progress removed at the next barrier (question 2) | 8.6 |
 | The online character is uploaded when the save room writes and also automatically at stage changes and when leaving the room (question 3, answered) | 9 |
@@ -188,7 +188,7 @@ and that the decisions above do not settle are questions in section 18.
 | session context | the temporary values that shape a stage's setup beyond the room story (quest flags and counters, 3.7); instances join only with an equal context |
 | fork (split) | one instance becomes two at a frame decided inside the simulation; each side despawns the other side's players |
 | join | a member enters a running instance by snapshot + replay, then a JOIN event spawns it |
-| scoped scene | a scene of one member that pauses and shows only for that member (5.3) |
+| own window / own scene | a member's status window or local scene (NPC talk, map recorder): it runs in the simulation for that member alone, pauses nothing and shows only on its machine (5.3) |
 | hub / UI stage | stagML02, stagML11-14 and every stagIS* (title, character select, save room, call shop, staff roll and the other menu stages) |
 | online rules | `Engine::online()`: the switches that turn the online-only behaviour on; all off = the original game |
 
@@ -451,9 +451,9 @@ state of 802F2BC0 (centre, moved flag, box, previous box, blend, CAMHOKAN timer,
 saved eye / target, live pivot / eye / target, shake offsets). Each runs the
 original logic with the centre at its own player, which is the original's
 one-player case exactly. Only the shared camera writes the shared scene nodes.
-Shared by the whole instance: the demo viewer (SETDEMOCAMERA, except in scoped
-scenes, 5.3), the SHAKE pattern (applied per slot), SETBOXCAMERA (resets every
-slot). The camera mode and light mode are room settings (3.1), so the camera
+Shared by the whole instance: the demo viewer (SETDEMOCAMERA; a member's own
+camera tour needs a per-slot viewer, later work, 5.3), the SHAKE pattern
+(applied per slot), SETBOXCAMERA (resets every slot). The camera mode and light mode are room settings (3.1), so the camera
 data does not depend on who arrived first. Stages without box data fall back to
 the authored scene camera path; the fallback without viewer follows the slot's
 own player. The original has no camera collision and no zoom, so there is
@@ -672,12 +672,13 @@ local co-op group experienced.
 
 ### 4.7 Demo cameras
 
-A demo viewer is instance-wide, as is PADINPUT, except in a scoped scene (5.3),
-where the viewer applies only to the triggering member's camera and its
-picture. The stage flow rules (5) fork non-participants away before story and
-boss scenes and scope the scenes of one member, so an instance-wide scene only
-ever shows to members who took part or stood near. Every camera comes from
-lockstep data, so the per-slot viewer stays deterministic.
+A demo viewer is instance-wide, as is PADINPUT, except in a member's own
+scene (5.3), where PADINPUT reaches that member's pad alone (a viewer for its
+camera alone is later work: camera tours keep the original). The stage flow
+rules (5) fork non-participants away before story and boss scenes, and a
+member's talks and map recorders set no demo camera, so an instance-wide scene
+only ever shows to members who took part or stood near. Every camera comes
+from lockstep data, so a later per-slot viewer stays deterministic.
 
 ## 5. Stage flow in an instance
 
@@ -702,8 +703,8 @@ player critique decide every case. `funcStageChange`, `funcStageIn`,
 | Boss stages stagBS01-06 | whole arena | entered through exits; boss-locked from the boss intro (the hit_f_* scenes) to the boss's defeat; an arriving member chooses *Wait for them* or *Go alone* (3.4); the exit prompt into a boss stage names who stays (5.2) | boss lock in the simulation | S3 |
 | Boss end (ded_e_*: MOVETRANS 0-3, doors, flags) | everyone | only participants are still there; the lock clears, joins open again | none | - |
 | Stage entry scene (`first.lua`; 52 of them set a demo camera such as 'entry') | at the stage start | runs when the instance starts, with every co-arrival; a later joiner waits for its end (hold, 3.4), never reruns it and appears with its own SQ_ENTR at its entrance | co-arrival, join path | S1 |
-| Scenes of one member: field talks (88 hit_n_* in fields and dungeons, among them the map recorder on every story dungeon floor), camera tours and demos on mats (stag0102 matf00 'Slope', stag0101 matb01 / matx01 / hit_g_lever01z01 camsp0401-0404), tutorials, shaking mats (dng310f3 matt05) | whole group frozen, HUD off, PADINPUT off, demo camera for all | S1-S2: original (a known limit). From S3: class `local_scene` with the proximity rule (5.3): everyone near = original; otherwise only the trigger is frozen and sees it, with a local freeze zone | class table, scoped commands | S3 |
-| Status window (START, SUBWND) | the engine freezes, one window at a time, drawn for all | S1-S2: original instance-wide freeze; a member whose START is refused because another member's window is open sees "<name> has a menu open". From S3: the proximity rule (5.3, question 6); one window per instance at a time; another member's window no longer blocks exits (DMgetCount) | scoped SUBWND + draw filter | S1 / S3 |
+| Scenes of one member: field talks (88 hit_n_* in fields and dungeons, among them the map recorder on every story dungeon floor), camera tours and demos on mats (stag0102 matf00 'Slope', stag0101 matb01 / matx01 / hit_g_lever01z01 camsp0401-0404), tutorials, shaking mats (dng310f3 matt05) | whole group frozen, HUD off, PADINPUT off, demo camera for all | the talks and map recorders (hit_n_*) are the talking member's own scene (5.3): nothing pauses, only that member's player stops, the window, the floor map and the HUD switch show on its screen only. Camera tours, tutorials and shaking mats: original for now | own scene (scope), copies, picture filter | r63 (talks) / later (tours) |
+| Status window (START, SUBWND) | the engine freezes, one window at a time, drawn for all | the member's own window (5.3): opens at once, also while others have theirs open, pauses nothing (only the member's player stops taking its pad and can be hit), drawn and heard on its machine only; another member's window blocks neither exits (DMgetCount) nor joins | own window per slot, copies, picture filter | r63 |
 | Shops, bank, Digi-Lab, card keeper, quest board, event console, NPC talks in the lobby | lobby programs | solo hub instance: single player behaviour | DISSOLVE | S1 |
 | Save room stagIS12 | SAVECTRL; players no longer joined leave the group | solo; writes the virtual card; uploads the own record (9); *leave the group* hidden online | wrapper | S2 |
 | Call shop stagIS13 (LOADCTRL2 without title) | adds or replaces players | off online: a port hint instead (every member is its own machine) | wrapper | S3 |
@@ -732,7 +733,9 @@ Online only:
   `story_trigger` and confirmed `boss_mat` / `story_mat` runs fork the
   non-participants away first (6.7), then run the original script on the
   participant side and skip it on the other side. `warp` and `local_scene`
-  runs do not fork: their instance-wide commands are scoped (5.3).
+  runs do not fork: their instance-wide commands are scoped (5.3; round 63
+  builds the `local_scene` part for the hit_n_* scripts by their name, before
+  the class table exists).
 - `boss_mat` and `boss_intro` runs set the boss lock, `boss_end` runs clear it
   (6.5).
 - `NETsplit(mask)` returns whether this copy continues (7.3); it is the only
@@ -811,36 +814,132 @@ Built in round S1 (`src/engine/online_exits.cpp`, `feat-r52cam`):
   runs the original game over into stagML11 point 0, the partner's copy
   despawns it).
 
-### 5.3 Scoped scenes (round S3)
+### 5.3 Own windows and scenes (round 63)
 
-Scenes that concern one member pause the whole engine in the original. Online
-from round S3, the classes `local_scene` and the status window follow the
-*proximity rule*, decided when the scene starts (simulation, the same on every
-machine):
+**Decision (the user, 2026-10-31).** "Everybody plays for themselves, as in a
+real online game": a member's START menu does not open on the other members'
+screens and does not pause their game; the game runs on and the players can
+still be hurt by the enemies. This replaces the first answer to question 6
+(the proximity rule with a local freeze zone): online, a member's status
+window - and by the same principle its NPC talks, map recorders and the other
+single-member windows and scenes of the class `local_scene` -
 
-- **Everyone near.** If every other present member is within `kNearUnits` of
-  the trigger, the scene runs exactly as in the original: the whole instance
-  pauses and every screen shows it, as a local co-op group experienced it.
-- **Someone far.** Otherwise the scene is scoped to the trigger: its
-  instance-wide commands are narrowed while the script run and every demo
-  record it starts are active. PLAYER -1 OFCTRL / ONCTRL and PADINPUT reach
-  only the trigger's slot; ENEMY -1 OFCTRL and GENERATER ONFREEZE reach only
-  the enemies and generators within `kNearUnits` of the trigger (a *local
-  freeze zone*: the original's protection, applied around the member who is
-  in the scene); SETDEMOCAMERA steers only the trigger's camera; windows,
-  overlays (`j_map102b3`), fades and HUD panel closes are drawn only on the
-  trigger's machine; SUBWND REMOVE closes only the trigger's window. Members
-  near the trigger are frozen with it and see "<name> is in a scene".
-- **Status window.** The same rule: near = the original freeze (MODELCTRL,
-  GENERATER, SOUND, messenger, `subwnd.cpp:1042-1059`); far = the owner's
-  player off control, the local freeze zone, the window, its prompts and fades
-  only on the owner's machine, no messenger pause and no SOUND freeze for the
-  others. The first task of the S3 scenes lane is to find out what the
-  messenger pause and the SOUND freeze protect inside a window (a scripted
-  run with each of them left out against the original), and the lane keeps
-  them where a window needs them.
-- Question 6 asks the user whether this is the wanted protection (the
-  alternatives: always the instance-wide freeze; no protection when far).
+1. open only on that member's own screen,
+2. never pause the instance: enemies, generators, the other members, timers,
+   sounds and music run on,
+3. give no protection: the member's Digimon stands without its input and can
+   be hit,
+4. always, whether the others are near or far, and also while the member is
+   alone in its instance (a member may join at any time).
+
+Story scenes the instance shares (the classes `gather`, `boss_intro`,
+`boss_end`, 5.1) keep the original. Offline, in local co-op and in the hub and
+UI stages (solo instances, 3.3) nothing changes (online off is bit-identical,
+section 15).
+
+**What the original's pause protects inside a window.** A scripted hidden run
+(round 63, `build/ana` in the round's worktree: dng101b1, the status window
+opened with START among the enemies and its three pages walked, the switch
+`DW4_TEST_SUBWND_SKIP` leaving out the MODELCTRL freeze, the GENERATER
+freeze, the messenger pause and the SOUND freeze one at a time and all
+together) gives the window's own course - every SELECTCTRL state change and
+every text set with its frame, 147 lines - unchanged in all five variants
+(equal md5 with the original). The messenger pause, the SOUND and the
+GENERATER freeze change nothing inside the window (the window posts nothing,
+its sounds start after the freeze); without the MODELCTRL freeze the world
+moves on, and the member's own Digimon takes the window's buttons (A attacks,
+B guards, the stick walks: `SQ_ATCK1`, `SQ_GUARD`, `SQ_WALK` while the
+window's selects read the same presses). That is the one thing an own window
+keeps: the member's player alone stands without its input while the window
+is open. Not by OFCTRL: a model whose `_isOnCtrl` is clear takes no hit at
+all (`hit_check`, 8030E56C), which is how the original's talks protect
+everyone. The player keeps its control and reads the neutral pad instead
+(`Engine::hold_own_input`, `Engine::player_pad`), so the enemies hit it - a
+hidden run in dng101b1 with the menu opened among the e_nume: 18-19 damage
+every second or so while the window stays open - and the window's own
+cursors still read the member's pad.
+
+**How it is built** (`src/engine/online_scenes.cpp`, `subwnd.cpp`, `ui.cpp`,
+`model_ctrl.cpp`, the picture filter in `online_cameras.cpp` / `engine.cpp`):
+
+- *Scope.* Online outside the hub and UI stages (`Engine::scenes_scoped`), a
+  member's status window runs its program in that member's scope
+  (`Engine::SceneScope`): the START of a present member opens its own window
+  (`SubWindowManager`, one program per slot besides the original one, all of
+  them in the simulation, each fed by its member's sealed pads). An NPC talk
+  or map recorder (a `hit_n_*` script, the talker = the player that struck
+  it) runs in the talker's scope, and so do the demo works it starts
+  (`DemoWork::scope`) and the messages they post (`DeferredMessage::scope`).
+- *Narrowed commands.* Inside a scope the messenger rewrites or drops what
+  would reach the instance: PLAYER -1 OFCTRL / ONCTRL become the member's
+  input hold (its player stands without its input and stays hittable; a
+  scene that ends without its ONCTRL releases it);
+  ENEMY -1 OFCTRL / ONCTRL, every category freeze (ONFREEZE / OFFREEZE to all
+  RAMs, GENERATER), SOUND BGMSTOP / ENVSTOP / SESTOP, a BGM or ambience start
+  and the quest timer's SQ_STOP / SQ_RESTART (`i_timenm*`) stay out;
+  STAGECTL PADINPUT switches the member's own pad (`Engine::pads`), LAYERCTL
+  SWITCH the layers of its own picture (the status window's HUD and world
+  layers, a talk's HUD). No messenger pause.
+- *Own copies.* The window models, cursors and NPC portraits the scope
+  addresses (`i_*`, `j_*` and `n_*ic`, but not the HUD and the shared
+  overlays: status panels and their icons, damage and item numbers, get-item
+  panels, boss HP, quest timer and name, exit prompts, evolution overlays) are
+  the member's own copies, `name@slot` with the original's RAM index: the
+  model's subtree (its action switch's child) cloned under the same switch,
+  hidden until its action shows it, with fresh MODELCTRL, ACTION and
+  SELECTCTRL RAMs (`ModelCtrlManager::add_copy`, `ActionManager::add_copy`,
+  `SelectCtrlManager::add_copy`). Text lines are copied the same way
+  (`TextCtlManager::make_copies`, with their own colour attributes). Copies
+  are made on first use, at the same step on every machine (simulation
+  state), and go with the stage. So two, three or four members can have
+  windows open at once, and an instance-wide scene keeps the originals.
+- *Picture and sound.* Every machine's picture leaves out the copies of the
+  other members and applies only its own member's layer filter
+  (`Engine::picture_hidden_roots`; a one-member instance draws its picture in
+  a separate peek pass after the step's simulation traversal when it has
+  something to leave out). The sound effects a scope starts play only on its
+  member's machine (`SoundManager::set_listener_slot`; the simulation state
+  stays the same everywhere).
+- *Membership and exits.* An own window or scene holds up neither LEAVE nor
+  JOIN (`membership_safe` counts only the unscoped demo works and the
+  original program): a member joins while another has its menu open, and the
+  joiner's catch-up replays the open window. A member who leaves (or who
+  forks to the other side) loses its window and scenes at once
+  (`Engine::end_own_scenes`). DMgetCount counts only the unscoped works and
+  the asking member's own (another member's talk blocks no exit and no talk),
+  the exit port neither makes a member in its own window or scene the prompt's
+  owner nor asks it, and the quick panel and START refuse only for the
+  member's own panel and window.
+- *Status window actions.* The window's pages are Equipment (the sockets,
+  pockets and slots), Folder (devices: discard, sort, give; key items
+  to look at; disks: move or give; bits: send) and Techniques (to look at).
+  Everything the window does stays deterministic (the simulation runs it on
+  every machine) and touches the member's own slot only, a gift also the
+  partner's. Equipment changes recalculate the member's own player; its
+  preview's HP / MP restore (OFPREVIEW) keeps what the running world did to
+  them meanwhile (a hit taken in the menu stays), and the window's HP / MP
+  lines follow the world at once (the original's frozen world never moved
+  them), so a member sees the hits it takes in its menu; a member defeated
+  in its window leaves it. Gifts to a partner (devices, disks, bits) reach
+  only a partner still in the instance (the others are no partners any more;
+  nothing is lost). The status window has no item use, map, retire or quick
+  panel entries.
+- *Presentation.* Name tags show "Kim is in the menu" / "Kim is talking" over
+  that member's tag for the others; the member's own screen hides the tags as
+  the original's window does. A map recorder's floor map (`j_map*`) is the
+  reader's own, and stays on its screen for the floor as in the original.
+
+Not yet own: camera tours and demos on mats, tutorials and the shaking mats
+(they still pause the instance, as the original); the per-slot demo viewer
+they need is later work.
+
+**Proof (round 63).** ctest `online` scenario "dng101b1 own menus" (two
+members, slot 0's window, slot 1's while slot 0's is open, a third member
+joins while both are open: nothing frozen, both close and give their players
+the pad back, a second engine and a joiner restored with both windows open
+stay net-fingerprint-equal); real hidden clients on the local stack
+(`tools/online_test` scenarios M1, M2, below in section 16) with screenshots
+from both machines; offline unchanged (section 15).
 
 ## 6. Transport and lockstep groups
 
@@ -1143,7 +1242,9 @@ before the first step at or after J in which the instance allows them, a
 deterministic test every machine evaluates the same way:
 
 - **membership-safe**: pad input enabled, no demo record running, no SUBWND,
-  not loading, presenting, no fork pending. LEAVE and INTENT wait for it.
+  not loading, presenting, no fork pending. LEAVE and INTENT wait for it. A
+  member's own window or scene (5.3) counts for none of it: a member joins or
+  leaves while another has its menu open or talks.
 - **joinable**: membership-safe, not a hub or UI stage, `boss_lock` clear.
   JOIN waits for it.
 - **boss_lock** is simulation state in `OnlineRules` (7.2): set when a
@@ -1867,7 +1968,7 @@ struct OnlineRules {
     bool enabled = false;            // overrides, despawn, pad redirect, input masking
     std::uint8_t player_cameras = 0; // bit per slot with its own box camera; 0 = shared camera (original)
     bool leash_off = false;          // limit_Circle child hit off
-    bool scoped_scenes = false;      // proximity rule for local scenes and the status window (round S3)
+    bool scoped_scenes = false;      // (unused: round 63 scopes the own windows and scenes online always, 5.3)
     bool near_share = false;         // EXP shared by members near the kill (round S3, question 7)
     std::uint8_t present = 0;        // instance members (bit per slot)
     std::uint8_t leaving = 0;        // members with a pending LEAVE
@@ -1943,6 +2044,7 @@ goes through `set_online` as well. The MXCSR guard compares the control bits
 ```cpp
 std::optional<std::string_view> Engine::pending_stage() const;  // read-only: a NEXTSTAGE waits for its load step
 bool Engine::membership_safe() const;   // pad input on, no demo record, no SUBWND program, not loading, presenting, no fork pending
+                                        // (round 63: a member's own window or scene counts for none of it, 5.3)
 bool Engine::joinable() const;          // membership_safe, not a hub or UI stage, no boss lock
 static bool Engine::hub_stage(std::string_view);
 std::uint64_t Engine::session_context_hash() const;  // FNV-1a over the context values, absent = 0
@@ -2827,7 +2929,11 @@ anyway; joining goes through the room list.
   campaign tools and the direct `--host` / `--join` sessions never turn it on.
 - The camera mask 0 is today's camera and traversal code, unchanged.
 - The Lua overrides and wrappers are registered only online.
-- Draw filters (item label lines, exit prompts, scoped scenes) act only online.
+- Draw filters (item label lines, exit prompts, the members' own windows and
+  scenes) act only online. A member's own window or scene (5.3) exists only
+  online outside the hub stages: offline no scope is ever entered, so the
+  messenger, the window programs, the text lines, the demo counts and the
+  sound output run the original code.
 - New port events are observe-only (not in fingerprint or snapshot).
 - The title menu's third entry exists only while the host sets
   `Engine::title_online_entry` (offline with the online screens); test runs,
@@ -2875,7 +2981,7 @@ anyway; joining goes through the room list.
 | S5 | everybody falls: game over, dissolve into solo lobbies | S1 |
 | S6 | boss mat: gather, and *Go without them* (participants boss-locked, the others a joinable instance) | S3 |
 | S7 | story trigger by one member (stagGF03 math00) while the other is elsewhere | S3 |
-| S8 | status window of one member while the other fights far away (scoped) and near (original) | S3 |
+| S8 | status window of one member while the other fights far away and near: the member's own window, nothing pauses (round 63: M1) | r63 |
 | S9 | pit: one member falls and respawns alone, no fade on the other screen | S3 |
 | S10 | disconnect and reconnect within ten seconds; and after the timeout | S4 |
 | S11 | injected desync (test hook) and resync; a resync beyond the limit continues alone | S1 (S11a, S11b: `DW4_ONLINE_TEST_DESYNC` on the shorter / the longer member, resync, equal after), S4 |
@@ -2892,7 +2998,9 @@ anyway; joining goes through the room list.
 | S21 | B+X+START held for 4 s on slot 1: no reboot anywhere, *Leave room?* on slot 1's machine | S1 |
 | S22 | a joiner whose target leaves the stage during the catch-up (fallback NEW) or forks (follows the instance id) | S1 |
 | S23 | boss-locked target: *Wait for them* (joins after the boss falls) and *Go alone* | S3 |
-| S24 | map recorder (dng102b3) read far from the partner (scoped, local freeze) and near (original) | S3 |
+| S24 | map recorder read while the partner moves: the reader's own scene, the floor map on its screen only (round 63: M2 in dng101b1; dng102b3 with the offline two-member harness) | r63 |
+| M1 | own menus (5.3): a alone opens its status window among the enemies and is hit; b joins while it is open; a's menu while b fights near it; both menus at once; a's menu while b walks far away; a talks with the field recorder while b moves; screenshots from both machines (`"shots": true`, the scripts' `shot NAME`) | r63 |
+| M2 | own scenes (5.3): a reads the map recorder in dng101b1 (talk window and floor map) while b walks about; screenshots from both machines | r63 |
 | S25 | Trailmon ride (dng412b3) with one member not aboard: no fork, the rider moves alone | S3 |
 | A1 | online achievements: S5's run with achievements on; each machine reports its own player (online_join in its solo lobby, first_defeat in the sealed field) with the ranked context, the counters at the end; the server holds them (`scenario.json` "achievements") | S2 |
 
@@ -3428,10 +3536,11 @@ ROSTER at its own merge. The interfaces as pinned:
   condition). A room whose owner has no `online_story` row has the empty
   story (revision 0): a new owner's game starts from a new game's story, and
   so does every member's.
-- *Protocol*: `kOnlineProtocol` 45 (round S2; 44 was S1) for the REST
-  `protocol`, the settings hash and the rooms. The server lists and admits
-  only rooms of the client's own protocol, so S1 and S2 clients never meet
-  (an S1 client would desynchronize at its first barrier).
+- *Protocol*: `kOnlineProtocol` 45 (round S2; 44 was S1; 46 since round 63,
+  5.3) for the REST `protocol`, the settings hash and the rooms. The server
+  lists and admits only rooms of the client's own protocol, so S1 and S2
+  clients never meet (an S1 client would desynchronize at its first barrier;
+  a 45 client would pause its instance for a menu).
 - *Uploads and reports*: the online character's PUT context and the
   achievements' reports carry the same numbers: `players` the own stage
   instance (1-4), `roomPlayers` the room (1-10).
@@ -3665,6 +3774,26 @@ for what that field test finds is expected.
 
 Depends on: S4 and the answers.
 
+### Round 63: own menus (built)
+
+The user's decision of 2026-10-31 (5.3, question 6): a member's status
+window, NPC talks and map recorders are its own and pause nothing, near or
+far, also alone. Built on main 87d9f0d in branch `feat-r63ownmenus`:
+own window programs per slot, the scene scope with its narrowed commands, the
+members' own copies of window models, cursors and text lines, the picture
+and sound filters, membership and exit rules for busy members, the online
+script's `menu`, `browse`, `talkto`, `shot` and conditions `menu`, `menus`,
+`talking`, `scenes`, `lost`, run.py's `"shots"`, the protocol 46 (a 45 client
+would pause for a menu and desynchronize). Checked: the pause analysis of 5.3,
+ctest (the `online` scenario "dng101b1 own menus"), the real-client
+scenarios M1 and M2 with screenshots, the offline two-member harness in
+dng102b3 (`DW4_ONLINE=3 DW4_CAMERAS=3`, the map recorder from views 0 and
+1), offline `det.sh` twice, r25c 10/10, the save state suite 17/17.
+
+Left for later: camera tours, tutorials and shaking mats as own scenes (they
+need a per-slot demo viewer); the story scenes the instance shares stay the
+original by decision.
+
 ## 18. Questions for the user
 
 1. **Lobby.** Hub and UI stages (lobby, briefing room, Digi-Lab) as solo
@@ -3715,7 +3844,12 @@ Depends on: S4 and the answers.
 4. Warp to a friend: no, walking only (the default).
 5. Two players on one PC online: no, one player per PC (the default).
 6. Menus and talks far from the others: (a) only that member pauses, the
-   enemies near it freeze too (the default).
+   enemies near it freeze too (the default). **Replaced on 2026-10-31**
+   after the first field test ("every member plays for themselves, as in a
+   real online game"): a member's status window, NPC talks and map recorders
+   are its own - only on its screen, they never pause the instance, give no
+   protection (its Digimon can be hit), near or far and also alone (5.3,
+   round 63).
 7. EXP: (a) only members near the kill share it (the default).
 8. Play alone in a room: no switch (the default).
 
@@ -3752,9 +3886,12 @@ Depends on: S4 and the answers.
   keep it small; the S4 load test measures it.
 - **Holds at arrival** lengthen the loading screen by up to 3 s (co-arrival)
   or 15 s (entry scene), only when another member is involved.
-- **Scoped scenes** are new behaviour: the local freeze zone protects the
-  member in the scene from nearby enemies only; enemies walking in from
-  outside it are not frozen. Question 6 settles the trade.
+- **Own windows and scenes** are new behaviour by the user's decision (5.3):
+  a member in its menu or a talk can be defeated meanwhile (its window then
+  closes). The window models of a member are copies made in the simulation:
+  a model the classification misses (an overlay every member should see,
+  used inside a talk) would show only on the talker's screen; the names are
+  listed in `online_scenes.cpp` (own_copy_model).
 - **Forks** discard the other side's script run; state changes before the fork
   exist on both sides (deliberate, instance-class values travel with the
   line). Two instances of one stage do not merge again before the next stage.

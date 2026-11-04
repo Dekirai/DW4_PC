@@ -353,6 +353,12 @@ or boss stage play one shared stage instance (up to four), a member who
 arrives later joins it mid-stage, exits and the gate disc take only the
 members who say yes, and members who leave the lobby together a few seconds
 apart start the field together. Lobby and menu stages stay single player.
+Everyone plays for themselves as in an online game: the status window (START),
+NPC talks and the map recorders in fields and dungeons are the member's own -
+they open on that member's screen only (the others see "Kim is in the menu"
+or "Kim is talking" over the name tag), several members can have theirs open
+at once, and they pause nothing: enemies, generators, the other members,
+timers and music run on, and a member in a menu stands still and can be hit.
 
 ```bat
 powershell -ExecutionPolicy Bypass -File scripts\online-dev.ps1
@@ -390,8 +396,10 @@ ends an offline game only after asking.
 
 Known limits of the preview:
 
-- Talks, the map recorders, camera tours and the status window still pause
-  the whole instance (every member in it), as in local co-op.
+- Camera tours and tutorials on mats, the shaking mats and the story scenes
+  still pause the whole instance (every member in it), as in local co-op;
+  only the status window, NPC talks and the map recorders are each member's
+  own so far. A map recorder's floor map shows for the member who read it.
 - Pits still darken every member's screen in the instance.
 - Story progress made while the room owner is away is not kept (the
   server's default; the player is told at the next stage change).
