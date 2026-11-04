@@ -334,6 +334,51 @@ int push() {
     std::printf("push: encirclement of %d at r 45: after 180 frames the nearest is %.1f, the mean %.1f units away; walking out: %.1f units in "
                 "300 frames, past 60 at frame %d; enemy hits while walking out %d\n",
                 ring, nearest, counted ? mean / float(counted) : 0.0f, out, frames_out, run->director.hits - hits1);
+    remove_all(engine);
+    for (int f = 0; f < 30; ++f) step(engine, pads());
+    // (d) the same crowd with a run body box: SQ_ATCK3's PCBA box (kind
+    // 50000, 15 units) as a repeating port hitbox around the walking player.
+    const Vec3f g = pos(*self);
+    std::map<std::string, Vec3f> crowd;
+    for (int k = 0; k < 12; ++k) {
+        const float ang = 6.2831853f * float(k) / 12.0f;
+        const auto& fam = families[std::size_t(k) % families.size()];
+        if (const int ram = spawn(engine, fam, g.x + 9.0f * std::cos(ang), g.z + 9.0f * std::sin(ang), g.y); ram >= 0)
+            crowd[fam + "#" + std::to_string(ram)] = {};
+    }
+    for (int f = 0; f < 2; ++f) step(engine, pads());
+    for (auto& [key, p] : crowd) {
+        const auto hash = key.find('#');
+        if (auto* ram = models->find(key.substr(0, hash), std::stoi(key.substr(hash + 1)))) p = pos(*ram);
+    }
+    std::map<std::string, int> shoved;
+    const Vec3f h0 = pos(*self);
+    for (int f = 0; f < 90; ++f) {
+        if (f % 30 == 0) {
+            ModelCtrlManager::ModelRam::Hitbox body;
+            body.kind = 50000;
+            body.delay = 0;
+            body.end = 30;
+            body.size = {15, 15, 15};
+            body.tag = 99;
+            body.repeat = true;
+            models->port_hitbox(*self, body);
+        }
+        step(engine, pads(1.0f, 0.0f));
+        for (const auto& [key, p] : crowd) {
+            const auto hash = key.find('#');
+            if (auto* ram = models->find(key.substr(0, hash), std::stoi(key.substr(hash + 1))); ram && ram->seq_name == "SQ_PUSHED")
+                ++shoved[key];
+        }
+    }
+    float shoved_max = 0;
+    for (const auto& [key, p] : crowd) {
+        const auto hash = key.find('#');
+        if (auto* ram = models->find(key.substr(0, hash), std::stoi(key.substr(hash + 1)))) shoved_max = std::max(shoved_max, flat(pos(*ram), p));
+    }
+    std::printf("push: the same crowd with a PCBA body box (port hitbox kind 50000, 15 units): the player walked %.1f units; %zu of %zu "
+                "enemies showed SQ_PUSHED; an enemy moved at most %.1f units\n",
+                flat(h0, pos(*self)), shoved.size(), crowd.size(), shoved_max);
     return 0;
 }
 

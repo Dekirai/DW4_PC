@@ -1676,8 +1676,10 @@ public:
             bool aimed{};
             float yaw{}, shift{};
             // A port box strikes each target once (a sequence's box hits again
-            // whenever the target's reaction lets it) and, with max_targets
-            // above 0, at most that many targets (the Art's "pierces").
+            // whenever the target's reaction lets it; `repeat` keeps that, a
+            // PCBA body box's push) and, with max_targets above 0, at most
+            // that many targets (the Art's "pierces").
+            bool repeat{};
             int max_targets{};
             std::vector<std::pair<std::string, int>> struck;
         };
