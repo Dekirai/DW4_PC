@@ -68,6 +68,14 @@ in section 18.
   JOIN at a future tick. The joiner appears at its own entrance point with
   SQ_ENTR; `first.lua` never runs again. Joins are offered only when the
   joiner's measured replay rate brings it in within 30 s.
+- **Instant joins and rollback** (round 65 design, 6.13): a member's *tick
+  state* (the whole simulation state at a confirmed tick, portable, hashed)
+  lets a joiner skip the replay of the visit: in play within about half a
+  second at any visit length, and resyncs restore a checkpoint the relay
+  keeps. A *state arena* (the engine's heap, saved per tick as written pages)
+  lets each member execute its own input at once and roll back when the
+  sealed ticks disagree: the own character without input delay, every
+  confirmed tick still the same on every machine.
 - **Room story** = the room owner's online save. The server keeps one
   `online_story` row per account that only the room service writes. Members
   send what their engine has beyond the last confirmed room story; it merges by
@@ -1227,6 +1235,16 @@ these limits broke every member's SEALED frame and the log's compressed block
 
 ### 6.6 Mid-stage join
 
+**Round J replaces the catch-up from the load (round 65 design, 6.13).** The
+steps below replay the whole visit, which grows by about one second per
+minute of visit (measured: 1.31 s after one minute, 31 s after thirty, two
+members). From round J a member of the instance sends its *tick state* at a
+confirmed tick T, the joiner rebuilds the engine at T (the load snapshot, the
+visit's load ticks, the topology journal, the values) and replays only the
+ticks after T: about 0.3-0.45 s from the barrier to playing at any visit
+length (6.13.5). The steps below stay as the fallback when no checkpoint can
+be had, and steps 4-6 (the JOIN, the pads, the music) stay for both paths.
+
 1. At the barrier the server answers JOIN with a slot and STATE_DATA: the
    snapshot of the instance's visit, every tick since, the events and the
    forks in its history with the side that leads to this instance.
@@ -1283,6 +1301,9 @@ field log, on a weaker PC about 8-12 minutes; longer stays open a parallel
 instance with a notice (3.4). The minute limit of revision 1 goes. There is no
 mid-stage state to shorten this: a save state is a load snapshot plus its input
 log (`game_main.cpp:2016`), so every catch-up starts at the visit's load.
+(Until round J: its checkpoints start a join's or a resync's catch-up at most
+600 ticks before the present, so the limit applies only to the fallback,
+6.13.4-6.13.5.)
 
 **Measured on the final path (round S1).** The replay of a save state
 (`DW4_STATE_TEST=5400`: a new engine restores the stage snapshot and replays
@@ -1840,6 +1861,639 @@ on, the owner's place stays reserved, the story follows the owner-away setting,
   constructs a second while one runs (6.6). Moving the RNG into the engine
   stays optional.
 
+### 6.13 Instant joins and rollback (round 65 design)
+
+**The feedback (user, 2026-11-01, after round 62's test build).** The lag is
+better but reaches 80 ms at times, and it does not feel online yet: a new
+player first has to "catch up" with the players already in the same world.
+That should disappear, and everything must still be in sync. Two goals
+follow:
+
+1. **Instant join.** A member who joins an instance mid-stage plays within a
+   second, at any visit length, bit-identical with the others.
+2. **Own input without the lockstep delay.** The own character reacts in the
+   frame of the input (local prediction with rollback), while every engine
+   stays deterministic and the instance stays in sync.
+
+Both need what 6.6 and round 62 called missing: a state of a running stage
+that can be taken at any tick and put back. This section designs it in two
+forms. The **tick state** is portable: a serializer per manager with stable
+ids and a canonical hash, for joins, checkpoints, resyncs and desync
+diagnosis. The **state arena** is in-process: the online engine's heap in one
+write-watched region, saved per tick as dirty pages, for rollback. Nothing of
+it is built; rounds J and R (17) build it.
+
+**Decisions in short.**
+
+- A joiner no longer replays the visit. A member of the instance (the
+  *donor*) serializes its tick state at a confirmed tick T; the joiner loads
+  the stage from the visit's load snapshot, replays the visit's few load
+  ticks, re-runs the topology changes made since, applies the tick state and
+  replays only the ticks after T (tens of ticks). Expected 0.3-0.45 s from its
+  barrier to playing at any visit length on the reference machine (measured
+  today: 1.31 s after one minute, 31 s after thirty, refused beyond about 29
+  minutes with two members and 12-14 with four).
+- Every member hashes its tick state every 600 ticks (STATEHASH). The relay
+  keeps the newest agreed one as the instance's *checkpoint*: a resync
+  restores it instead of the load, so `Instances:MaxCatchUpSeconds` no longer
+  takes anyone out, and a mismatch names the object that differs.
+- Rollback: a member executes its tick at once with its own pad and the
+  others' predicted pads, sends its pad as today and rolls back when SEALED
+  disagrees. Relay, INPUT, sealing and the delay rule stay; `d` becomes the
+  rollback depth instead of the visible delay. The own input runs in the
+  frame it was sampled in, at any round trip up to the prediction cap of 8
+  ticks (133 ms of `d`).
+- Per-tick saves come from the state arena (measured: 0.07-0.18 ms per tick;
+  a rollback of three ticks costs 1.7-1.9 ms in a four-player field, and every
+  trial was bit-identical), not from the serializer (1.2-1.5 ms per encode,
+  too slow for every tick).
+- What leaves the simulation (port events, NETFP, STATEHASH, STATE, splits,
+  barriers, story, notices, music) comes from confirmed ticks only; sound
+  effects play from predicted ticks and are reconciled.
+
+#### 6.13.1 Measured for this design
+
+Throwaway probes of the round 65 design, not committed (scratch builds of
+main 870a416 and of `fix-r62netlag` 58c0b8c; hidden, headless, loopback only,
+the reference machine busy with other rounds): `state_probe` (direct start,
+fast loading, synthetic circle pads with attacks; counts the state, times
+copies, a prototype compact serializer), `r65_probe` (global `operator new`
+replaced by one contiguous `MEM_WRITE_WATCH` arena; per-tick dirty pages,
+changed bytes, in-process rollback trials), and four join scenarios on the
+local stack (`tools/online_test`, scratch scenarios J1 / J5 / J15 / J30).
+Line references in this section are to main 870a416.
+
+*The join today* (host a alone in stag0101, wandering and fighting, solo-led;
+guest b joins 1 / 5 / 15 / 30 minutes later; two members; fingerprints equal
+after every join, 21 comparisons each):
+
+| | J1 | J5 | J15 | J30 |
+| --- | --- | --- | --- | --- |
+| visit log (ticks) | 3,576 | 17,834 | 53,800 | 107,779 |
+| STATE_DATA | 49,926 B | 163,990 B | 451,718 B | 883,550 B |
+| barrier to BARRIER_OK (JOIN) | 0.002-0.010 s | | | |
+| the joiner's own transition and load step (its fallback) | 0.158-0.169 s | | | |
+| restore of the load snapshot | 0.009-0.011 s | | | |
+| catch-up (replay of the whole visit) | 1.064 s | 6.088 s | 15.401 s | 30.792 s |
+| READY to member (JOIN_REQ, JOIN_AT, the JOIN step) | 0.064-0.104 s | | | |
+| **barrier to member** | **1.31 s** | **6.34 s** | **15.68 s** | **31.04 s** |
+
+The catch-up grows by about one second per minute of visit (two members,
+3,000-3,560 steps per second on the wall clock, music render-and-drop
+included). J30 passed only with `MaxCatchUpSeconds` raised to 300: with the
+default 30 it would have opened a parallel instance. Four members (estimate
+from the probe's step costs): 2.3-3 s after one minute, 9-11 s after five,
+about 38 s after fifteen (refused), about 77 s after thirty.
+
+*What a running stage holds.* stag0102 with four players: 10 files (6.2 MB,
+51,564 IGB objects), 4,912 scene graph nodes, 1,079 MODELCTRL and 1,079
+ACTION2 RAMs (40-96 generated), 72 generators, 3,775 messenger rows. The IGB
+documents are immutable after the load; every RAM pool, the messenger rows,
+the info tables, the update order and the collision world are fixed by the
+load and change mid-stage only through six kinds of topology operations
+(6.13.2). Per tick 22-40 nodes change (at most 31-64), most of them node
+clocks; after 3,000-20,000 steps only 67-156 nodes differ from the state
+right after the load. Lua ran 6-22 root executions in 3,000 steps. The live
+heap is 27-50 MB, almost all of it read-only resources; `sizeof(Engine)` is
+4,936 B.
+
+*Copies and the prototype serializer* (state_probe; the compact serializer
+writes only the mutable fields of nodes, MODELCTRL and ACTION2 RAMs, pointers
+as ids; compression measured for this section on its dumps, zlib in one
+core):
+
+| Stage, players, steps | encode | raw | zlib 1 | zlib 6 | xz 6 | delta vs the load: raw / zlib 6 |
+| --- | --- | --- | --- | --- | --- | --- |
+| stag0102, 4, 3,000 | 1.48 ms | 1,334 KB | 76.5 KB | 60.2 KB (4.5 %) | 40.8 KB | 100.8 KB / 12.8 KB |
+| stag0102, 4, 20,000 | 1.39 ms | 1,334 KB | 76.9 KB | 60.5 KB | 41.0 KB | 101.2 KB / 13.0 KB |
+| stag0101, 2, 6,000 | 1.46 ms | 1,344 KB | 68.4 KB | 51.7 KB | 33.2 KB | 97.1 KB / 9.4 KB |
+| dng101b1, 4, 3,000 | 1.31 ms | 1,185 KB | 50.8 KB | 37.8 KB | 21.2 KB | 52.9 KB / 8.8 KB |
+| stagBS02, 4, 1,400 | 1.17 ms | 1,107 KB | 48.4 KB | 36.5 KB | 21.0 KB | 52.5 KB / 9.4 KB |
+
+zlib 1 took 2.6-3.3 ms and zlib 6 7-8.5 ms for the full form. Naive deep
+copies of all nodes, ModelRams and ActionRams cost 2.5-4 ms per tick; only
+the mutable node fields 0.53-0.88 ms; GameSystem 0.004-0.009 ms.
+
+*Rollback in the arena* (r65_probe; mean per presented frame with a rollback:
+restore of the pages written since the saved tick, then `d` replay-mode steps
+with the union traversal; worst case in brackets; range quiet to loaded):
+
+| Stage, members | step + simulation traversal | `d` 1 | `d` 3 | `d` 4 | `d` 6 | `d` 8 |
+| --- | --- | --- | --- | --- | --- | --- |
+| stag0102, 4 (four cameras) | 0.36-0.52 ms | 0.88-1.07 (1.4) | 1.72-1.90 (2.9) | 2.07-2.76 (3.5) | 2.74-3.83 (4.9) | 3.6-4.6 (5.4) |
+| stag0101, 2 | 0.19-0.25 ms | | 0.90-1.26 (1.6) | | | 2.1-2.5 (3.4) |
+| dng101b1, 4 | 0.18-0.29 ms | | 0.87-1.32 (1.6) | | | 1.7-2.8 (4.3) |
+| stagBS02, 4 | 0.15-0.27 ms | | 0.81-1.27 (1.6) | | | 1.7-2.8 (3.3) |
+
+Pages written per step: 120-207 (0.48-0.83 MB, with 108-822 allocations per
+step); bytes really changed: 7-31 KB per step; saving the written pages costs
+0.07-0.18 ms per tick, restoring them 0.19-0.46 ms; a whole-image save and
+restore 1.4-2.8 ms each (a join's once, never per tick). Every trial was
+bit-identical (the fingerprint of every re-simulated step and the net
+fingerprint): 12 whole-image and 80 dirty-page trials per mark, at 1, 5, 15
+and 30 minutes of play, in all four stages. So the complete simulation state
+is the engine heap, the Engine object and the process-wide generator
+(`fight::generator`). The one deviation seen was the probe's own: the CRT's
+locale facets, built lazily by the `ostringstream` in `net_fingerprint`,
+landed in the arena inside a trial and were freed under the CRT by the
+restore (60 of 60 after one warm-up call). An arena must therefore keep the
+CRT's and every other lazily built static out (6.13.6).
+
+*Prediction.* The only real pad recording (the user's keyboard game in a
+save state, 1,491 ticks) changes in 0.5 % of ticks (new presses 0.3 %), so
+repeating the last pad would mispredict 1-2 % of ticks with one to three
+remote players. An analog stick (the bot driver's steering, 32,793 distinct
+values in 30,743 steps) changes nearly every tick: with analog pads a
+rollback of `d` ticks every tick is the normal case, and the budget below is
+sized for it.
+
+*Other games.* Photon Quantum (deterministic predict / rollback) keeps
+verified frames from server-confirmed input apart from predicted ones; a late
+joiner gets a snapshot (its own if younger than 10 s, a "buddy snapshot" from
+another client at that client's verified tick, or one from a server plugin)
+and then catches up to the present. Factorio (lockstep) sends a map save and
+re-simulates every tick since the download began, and that catch-up can fall
+behind. GGPO has save / load / advance callbacks, caps prediction at 8 frames
+and has no late join of players. The common pattern, used here: transfer the
+state at one confirmed tick, then follow the sealed stream and replay only
+the ticks since that tick.
+
+#### 6.13.2 The tick state
+
+**Definition.** The tick state of tick T is the engine's whole simulation
+state after the step of T and its simulation traversal (the traversal is
+simulation, 4.2), taken only at a *state-safe* tick (below). Restored on any
+machine with the same build and data, the engine continues bit-identically.
+It never contains the read-only resources or the load topology: the joiner
+rebuilds those by loading the stage.
+
+**How a joiner rebuilds the engine at T.**
+
+1. A fresh engine restores the visit's load snapshot (6.6, as today).
+2. It replays the visit's ticks `[0, K)`, K the visit's *load end* (the
+   first tick with the stage active and the loader idle; 16-17 steps with
+   fast loading, more with the original load timing), with the logged pads (`set_replay`, no music). The
+   pads do nothing during a load; the replay makes the topology the members
+   built: the same files in the same order, `start.lua` and `first.lua`,
+   the entry's LAYER ORDER, the randomizer's donor loads.
+3. It re-runs the *topology journal* after K in its order. The engine
+   appends one entry, with its tick, for each of the six operations that
+   change the topology mid-stage, at the level where they act (not the
+   compound calls around them, whose value side effects depend on the
+   moment): a package load (`load_common_now` and the package loads of
+   `online_join_player`: the file, its infos, RAMs, messenger rows and
+   `schedule_` entries), a weapon attachment or detachment (the created
+   BoneSelect nodes under the actor's children, `model_ctrl.cpp:2817-2819`),
+   LAYER ORDER and REMOVE (children of `global_root` moved or deleted,
+   `managers_core.cpp:128-209`), `Engine::attach_scene_root`, and round 63's
+   own copies (`ModelCtrlManager::add_copy`, `ActionManager::add_copy`,
+   `SelectCtrlManager::add_copy`, `TextCtlManager::make_copies`). Each
+   result depends only on the topology before it and the entry's arguments,
+   so re-running the list rebuilds the same topology. A *topology hash* in
+   the header (files in order, the RAM count of every manager, the messenger
+   rows, the `schedule_` order, the nodes the journal made) is checked after
+   this step.
+4. It applies the values: every block below overwrites the mutable fields of
+   the objects it names; nodes the donor created lazily are created by id;
+   every cache is emptied.
+5. It hashes its own canonical tick state. Equal to the donor's hash, the
+   engine is at T; otherwise the join falls back (6.13.5).
+
+**State-safe.** `Engine::state_safe()`: the stage is active and loaded, no
+stage is pending, no teardown, reboot or held field (a movie), no barrier
+parked, no fork pending, and the transient fields are empty between steps
+(script depth 0, no trigger slot, no demo under construction, the messenger's
+port-only and trigger fields clear, the MatCtrl context clear; by the code
+always so, the completeness test asserts it every tick). Until round J's
+window lane lands (17), also no SUBWND program. Hub and UI stages are never
+state-safe; they are solo instances and never joined (3.3).
+
+**Contents** (sizes for stag0102 with four players: measured for the first
+three blocks of objects, else estimated from the state count):
+
+| Block | Contents | Ids | Raw size |
+| --- | --- | --- | --- |
+| header | magic `DW4T`, version, form (raw, canonical), stage, visit tick T, frame, load end K, topology hash, section table | | < 0.1 KB |
+| engine | world clock (`time_`, `frame_`, `update_frame_`, clock lateness, applied lateness, world delta), held flags, pad input, stage active, soft reset, flags and counters, the loader's timing fields (`loader_fast_`, `loader_common_`, `loader_teardown_`), `pads_` and the console reset, the online fields (`OnlineRules`, `personal_`, barrier pads, fork sides, split identity, heading, exit view, exit port) | | < 2 KB |
+| generator | `fight::generator` (MT19937: 624 words and the index) | | 2.5 KB |
+| game system | `serialize_system` as in the snapshot | | 10 KB |
+| journal | the topology operations of the visit with their ticks and arguments | file paths, RAM and node ids | < 1 KB |
+| scene graph | per node: matrix, mask, the beModelCtrlNode2 clock (scale, bias, override), fixed time, colour, blend, texture and lighting overrides, hidden, runtime matrix, LOD cache, particle timer and live flag, recorder, NodeAnim | (file index, object ref); journal-made nodes (entry, ordinal) | 4,912 nodes, about 0.6 MB |
+| attributes | colours changed by LIGHTCTRL SETCOLOR and TEXTCTL COLOR (`edit_attribute`) | (file index, object ref) | bytes |
+| animation databases | `AnimationDatabase::looping_` (set by MOTIONSET, shared by the RAMs of one info) | info id | bytes |
+| MODELCTRL | every RAM's mutable fields (sequence by index, cursor, labels, HP, base matrix, motion channels with their sharing as an index, control mode, pdmove, checks, ride, item fields, the queues, attachments, owner, hit state, timers, combo, panel, LUACALL prefixes, spiral, capsule, AI and homing, follow, status work, named timers) and `item_labels_` | (manager, RAM index) | 1,079 RAMs, about 0.5 MB |
+| ACTION2 | action and cursor, the flags, motion work, joint, fade, wait and flash state, colours, timers, node clock, `MotionState` with the previous pose, the combiner cache, the traversed bone matrices and their time; `random_wait_min_` | RAM index, clips by database index | about 0.3 MB |
+| GENERATER | every RAM's fields, the randomizer's shuffle pools | RAM numbers | 30 KB |
+| CAMERA | the RAMs (box, shake, state, CAMHOKAN) and the manager (viewer by index, centre, blend, boxes, saved eye and target, `frame_` (the cull camera), the per-slot boxes and frames, viewer events) | RAM, path index | 2-4 KB |
+| HitLand and collision | deliveries (position, previous, land), hit groups, `CollisionWorld::groups_`, ChangePos rings | RAM index | 25 KB |
+| messenger and demo | the deferred queue and its records, the pause, the message objects; demo works with records by (info, index) and the exit step's port as a tag plus its `ExitPort` (state, owner, stage, mat, kind, point, text, candidates, asked, asking, opened, finish) | | < 5 KB |
+| Lua | the VM: globals, the table and closure arenas with slot layout, generations and free list, the GC counters, `stack_last`, next execution and call, stopped; closures by (program, prototype path), host functions and host objects by name | | a few KB |
+| sound simulation | `sfp_[48]`, the SNDF driver (voices, tracks, sequences as bank and offset, the message deques, AX pool, counters), the streams' game parts, `CriStreams`, play serials, pause, the SE lock, the random value, BGM, volumes, the movie's game fields, fx | bank, sequence index | 15-25 KB |
+| small managers | MATCTRL, PARTICLE, SELECTCTRL, NDMWPANEL, NUMBERCTRL, METERCTRL, STAGECTL, BKCOLOR, PLAYERPOINT, the LAYER mask bits, WEAPON's attachment list, TEXTCTL's texts (raw form only) | RAM index | about 50 KB |
+| SUBWND | every program (the original's and one per slot, round 63): running state, program, player, shown values, stocks, junk counter, and the window tree as (class tag, fields, children) | class tag | a few KB |
+
+Total about 1.2-1.5 MB raw and, by the measured ratios, 45-80 KB compressed
+(estimate; the three measured blocks give 37-61 KB with zlib 6). A delta
+against the state after the load would be smaller (9-13 KB for the measured
+blocks) but needs a baseline copy and a compare on every member; at these
+sizes the full form wins on simplicity, and it hashes without a baseline.
+
+**Left out, with the reason.** Caches, emptied or rebuilt on apply
+(`found_managers_`, `schedule_run_`, `lua_programs_`, the messenger's
+`by_category_`, `SceneCache::geometry_`, `clips_`, the collision memos,
+`still_` and space matrices, copy resolutions, `Follower::resolved`, pose and
+locals at a matching pose time, the shadow light). Presentation (ActionRam
+peek, particle geometry, TEXTCTL and NUMBERCTRL geometry, rebuilt from the
+text and the shown value, water, `picture_*`, view slot, hidden roots, port
+events, debug camera, traversal statistics). The audio side of the sound
+manager (decoders, `frames_read`, the mirror, output, mixes): a joiner seeks
+its streams to the position the CRI handle counters imply (decoded, moved,
+reclaimed, played base), without the render-and-drop of today's catch-up.
+The load topology. The solo-only managers (LOGO, TITLE2, the load and save
+interfaces, SAVEUTIL): never in a state-safe instance. The loader: never
+active at a state-safe tick.
+
+**Encoding.** The `StateArchive` style (one `io()` per struct for both
+directions), little endian. Never pointer order: maps as sorted, unordered
+containers sorted by id at write, floats as their bits, optionals with a
+presence byte. Pointers become the ids of the table; a `std::function` is
+written only where its target is known (the exit step's port, as a tag); the
+sharing of `MotionChannels` lists as an index into the RAM's list; a Lua
+closure as (program id, prototype path such as `main/0`), and `Lua4Value`'s
+owner is restamped to the new VM. Sections are (tag u32, length u32, bytes)
+in a fixed order, so a mismatch can be located. The *raw* form carries the
+presentation fields a joiner needs for an identical picture (TEXTCTL texts,
+NUMBERCTRL's drawn value); the *canonical* form zeroes them, as the snapshot's
+canonical form does (6.8). The hash is XXH64 over the canonical bytes (the
+xxhash of the zstd sources the build already has; FNV-1a byte by byte would
+cost about 1.4 ms on 1.4 MB). Transfers are zstd-compressed (level 1-3): the
+client links only zstd's decoder today, round J adds the encoder sources of
+the same release.
+
+**Versioning.** `kTickStateVersion` follows the protocol's simulation version
+(6.12: it changes with every simulation change), the header carries it and a
+decoder refuses another. Each serialized struct gets a size guard next to its
+`io()` (`static_assert(sizeof(ModelRam) == 1752, "tick state: update io()")`):
+a new field fails the build until the serializer and the version follow.
+
+**Cost** (estimates from the prototype, measured in round J's first task):
+encode 1.5-2 ms, hash 0.1-0.2 ms, zstd 1-2 ms, apply 2-4 ms on the
+reference machine.
+
+**Product changes beyond the serializer** (online off unchanged, 15): TEXTCTL
+`Line` keeps the text it was set with (the glyph geometry is built from it as
+today; nothing else holds the text); `Lua4Vm` gets `io()` (its copy is
+deleted and its implementation hidden today); the topology journal; the
+engine calls `Engine::state_safe`, `save_tick_state(form)`,
+`apply_tick_state(bytes)`, `tick_state_hash`, `load_end_tick`.
+
+#### 6.13.3 Completeness proof
+
+A tick state is complete when an engine rebuilt from it continues exactly as
+the engine it was taken from. The test (`DW4_TICKSTATE_TEST`, ctest
+`tick_state`, as `DW4_STATE_TEST` for save states):
+
+- Process A plays a scenario and writes, at every tick from the load end to
+  300 ticks after it and then at every 97th tick, the raw tick state and the
+  pads of every step. Process B rebuilds from each state (6.13.2, steps 1-5)
+  and runs N steps with A's pads (N = 2,000; 10,000 at twenty states per
+  run). Every step's canonical hash, fingerprint and net fingerprint must
+  equal A's. A save of the rebuilt engine at T must give the same raw bytes
+  (idempotence), and the topology hash must match. An in-process variant for
+  ctest saves, runs N steps, drops the engine (one engine per process, 6.12),
+  rebuilds and runs again.
+- Scenarios: stag0101, stag0102, dng101b1, stagBS02 (with its boss intro and
+  fight), a water stage (`beWaterPlain`), a fight with particle effects, a
+  ride if one exists; one, two and four players; at T a status window open
+  on each page (the original and a member's own, round 63), an NPC talk, a
+  demo with the exit step's port, an open exit prompt, a Lua collection due
+  within the next steps, a generator wave in progress, a member who joined
+  and one who left; and the r25c story segments in online rules (one hundred
+  states per segment, 10,000 steps each).
+- A failure names the first step and the first differing section and object
+  (`tools/online/tickstate_diff.py` on the two states written at that step).
+
+The places where a field is easily missed are known from the inventory and
+get their own cases: the Lua slot layout and GC counters (handle order keys
+tables and functions, and the collection's moment decides slot reuse),
+`AnimationDatabase::looping_`, edited attributes, `MotionChannels` sharing,
+lazily created nodes, the `schedule_` order after package loads, the
+transient fields between steps. The size guards catch fields added later; the
+STATEHASH vote (6.13.4) catches what slipped through, in play, within ten
+seconds.
+
+#### 6.13.4 Checkpoints on the relay
+
+- **Checkpoint ticks.** `C_k` is the first state-safe tick at or after
+  `600 · k` of the visit (a deterministic rule every engine evaluates alike).
+  Every member of a field instance, solo-led or sealed, sends
+  STATEHASH(C_k) once `C_k` is confirmed (with rollback: from its saved state
+  of that tick, 6.13.6). Cost on every member: about 2-3 ms every ten
+  seconds.
+- **Vote.** The relay compares STATEHASH like NETFP (6.9: majority, the
+  replay judges, one vote per tick, no vote at a barrier). A mismatch is a
+  desync vote; the loser is resynced. Equal hashes make `C_k` *agreed*. One
+  member's hash (solo-led) is accepted unagreed; the next joiner's check and
+  READY verify it.
+- **Donor.** The member that reports STATE (connected, longest in the
+  instance, then the lowest slot), skipping a lagging one. The relay asks it
+  with CHECKPOINT_ASK: periodic (upload every agreed `C_k` while the
+  instance is joinable, about 50-80 KB every ten seconds) or now (its next
+  confirmed state-safe tick, for a join or a resync). The donor uploads
+  CHECKPOINT chunks under its state budget (6.8).
+- **Store.** Per instance the relay keeps the newest two checkpoints and
+  their hashes. The log before the older one is dropped, except the visit's
+  snapshot and its ticks `[0, K)` (K from the checkpoint's header), so a
+  long visit no longer grows the log without bound (`Instances:MaxVisitHours`
+  stays as the limit of a solo-led log without checkpoints). A fork's child
+  keeps the parent's newest checkpoint before the fork until its own first
+  agreed one.
+- **Resync from the checkpoint.** RESYNC is followed by a STATE_DATA with the
+  newest agreed checkpoint and the ticks since (at most about 600 plus the
+  transfer). The expected catch-up is then under half a second at any visit
+  length, so the resync limit of 6.9 applies only when no checkpoint exists.
+- **Diagnosis.** On a STATEHASH mismatch the relay asks both sides for their
+  bytes of that tick (CHECKPOINT_ASK at that tick, if still saved) and keeps
+  them with the fingerprint lines (6.9) for `tickstate_diff.py`.
+
+#### 6.13.5 The instant join
+
+1. **Barrier.** As today: BARRIER, BARRIER_OK(JOIN) with the slot. The relay
+   at once takes the target's newest checkpoint if it is younger than
+   `Instances:FreshCheckpointMs` (2,000), else sends the donor
+   CHECKPOINT_ASK(now). Meanwhile the joiner runs its own transition and
+   load step as today and keeps its load snapshot as the fallback (0.16 s).
+2. **Donor.** At its next confirmed state-safe tick T it encodes the raw and
+   the canonical form, hashes, compresses and uploads (3-6 ms of work, one
+   frame's hitch; 50-80 KB at an uplink of 1 MB/s take 50-80 ms).
+3. **Relay.** STATE_DATA, layout 2 (6.13.7): the visit's snapshot, its ticks
+   `[0, K)`, the checkpoint (T, hash, agreed or fresh, bytes), the forks
+   after T with the side that leads to the instance, and the tick records
+   after T. About 70-110 KB.
+4. **Joiner.** A fresh engine rebuilds T (6.13.2, steps 1-5), seeks its
+   music from the CRI counters, replays the ticks after T (those that passed
+   during the transfer: 20-60 ticks, 10-30 ms) and sends READY with its net
+   fingerprint as today. Its screen shows the loading screen's "Joining..."
+   line without a countdown; nothing else. The stage files are in the file
+   cache: the joiner's own load read them a moment before.
+5. **JOIN.** The relay stamps the JOIN as today: sealed at
+   `StampTick` (beyond every member's horizon, 6.5), solo-led by
+   JOIN_REQ / JOIN_AT. Every machine spawns the joiner at its entrance point
+   with SQ_ENTR (6.6 step 4). From round R the members learn the tick at
+   once (EVENT_AHEAD, 6.13.6) and read the joiner's package files into the
+   file cache before the JOIN step (a host-side prefetch, no engine state),
+   which shortens the JOIN step's hitch (46-62 ms measured).
+
+| Part | Today (J1 / J30) | Round J (estimate) |
+| --- | --- | --- |
+| barrier to BARRIER_OK | 0.002-0.010 s | the same |
+| own transition and load step | 0.16 s | the same, in parallel with the checkpoint |
+| checkpoint ready and sent | (STATE_DATA 50 KB / 884 KB) | 0.05-0.12 s, inside the 0.16 s |
+| rebuild: snapshot, `[0, K)`, journal, apply, hash | 0.01 s (snapshot only) | 0.08-0.15 s |
+| catch-up | 1.06 s / 30.8 s | 0.01-0.03 s |
+| READY to member | 0.06-0.10 s | the same |
+| **barrier to member** | **1.31 s / 31.04 s** | **about 0.3-0.45 s at any length** |
+
+On a PC three times slower the rebuild and the catch-up take three times
+longer: about 0.6-0.9 s. A later step can drop the joiner's own load (0.16 s)
+when the checkpoint is ready, loading the fallback only when the join fails.
+
+**Failure and fallbacks.**
+
+- No checkpoint within `Instances:CheckpointWaitMs` (1,000; the donor lags,
+  went, or its instance was not state-safe for that long): the newest stored
+  checkpoint (the catch-up grows with its age), else today's path (snapshot
+  and the whole log, under `MaxCatchUpSeconds`), else a parallel instance
+  with the notice of today (3.4).
+- CHECKPOINT_BAD from the joiner (version, decode, topology hash or state
+  hash mismatch): one retry with a fresh checkpoint from another member, then
+  today's path, then NEW. Each case is logged with the section that differed.
+- A READY mismatch, a target that moves on during the join, a leader that
+  goes before J: as today (6.6).
+- An old relay or client never meets a new one: the protocol rises (6.12).
+
+#### 6.13.6 Rollback for the own player
+
+**The model.** Today member i executes tick t when SEALED(t) arrives and
+sends its pad for `t + d_i` then; its input waits `d_i` ticks. With
+prediction it executes `t + d_i` at once, with its own pad and the predicted
+pads of the others, and sends that pad as today. The pad reaches the relay
+in time by the same delay rule (the margin is `d_i · f - RTT` either way), so
+relay, INPUT, sealing, fills and the delay rule stay as round 62 left them.
+The member keeps two ticks:
+
+- the *frontier*, the newest tick it executed (newest sealed + `d_i`), and
+- the *confirmed* tick, the newest whose execution used sealed pads only.
+
+When SEALED arrives, the client compares the sealed pads and events with what
+it executed. The first tick that differs is restored and every tick from it
+to the frontier is executed again, sealed pads where they are in, predicted
+pads after. Ticks that agree become confirmed without any work. The rollback
+depth is at most `d_i` plus what a late SEALED adds, capped at `P` = 8 ticks
+(GGPO's limit): beyond, the frontier stops as the playout does today. At a
+round trip whose `d_i` exceeds 8 (about 110 ms and more), the client samples
+its pad for `newest sealed + d_i` but executes only up to `newest sealed + 8`,
+so the input waits `d_i - 8` ticks: a hybrid that is never worse than today.
+Own input latency below the cap: the sample runs in the host pass that took
+it and is seen at the next present (one frame).
+
+**The state arena.** A tick save must cost a small part of a tick, and every
+byte must come back:
+
+- The online engine lives in a `StateArena`: one reserved region with
+  `MEM_WRITE_WATCH`, a deterministic allocator whose metadata is inside the
+  region, and the Engine object itself placed in it. The game executable
+  replaces `operator new` / `delete`: with an `ArenaScope` open on the thread
+  they allocate in the arena, without one from the CRT heap; delete goes by
+  address. Offline no arena exists and the replacement forwards to `malloc`
+  as MSVC's does.
+- After each executed tick (step and simulation traversal) the arena copies
+  the pages written since the previous tick into a ring entry (0.07-0.18 ms)
+  and saves the 2.5 KB generator (or the generator moves into the engine,
+  6.12). A shadow image of the region at the oldest kept tick takes the
+  oldest entry when the ring passes `P + 1` ticks. Restoring tick t writes
+  back every page written after t from the newest copy at or before t
+  (0.19-0.46 ms). Memory: the region (41-69 MB) twice plus the ring (about
+  8 MB).
+- Why not the serializer per tick: a full encode costs 1.2-1.5 ms (2-3 times
+  that on a slower PC) every tick and allocates, and a per-field dirty
+  tracking would touch every writer of the engine. The arena is complete by
+  construction and measured bit-identical; the serializer stays the portable
+  form and the cross-check (its hash compares rolled-back and straight runs).
+
+**The arena's contract** (every rule closes a hazard the probe or the
+inventory showed; round R's first task audits the online host against it):
+
+1. Engine-owned memory lives in the arena, host-owned memory outside, and
+   no object of one side owns memory of the other. The engine opens
+   `ArenaScope` in every entry that may allocate engine-owned memory: the
+   step, the simulation traversals, the picture's render (its presentation
+   caches are engine-owned), restore and apply, and the online mutators
+   (join, remove, intent, barrier, fork sides, leaving marks), and so does
+   a const accessor that fills a cache (`get<T>()` and `found_managers_`).
+   Other const accessors run without it, so what they return by value is
+   host memory.
+2. Values cross by copy, never by move: arguments are copied inside the
+   scope (barrier results, carries, fork sides); `take_*` calls copy out and
+   clear. The render's out-parameters (the draw list, the shadow frame) use a
+   host allocator type, and the host drops its draw list, whose palettes are
+   arena `shared_ptr`s, before any simulation call (an `ArenaGuard` asserts it
+   in debug builds).
+3. Statics with heap content in engine code are built outside the arena:
+   the collision's `thread_local` scratch vectors, the randomizer's name
+   memo, the trace statics, the `getenv` statics, the manager type registry
+   (the state inventory's complete list). A test greps `src` and `include`
+   for `static` and `thread_local` declarations of types with heap content
+   and fails for one not on the reviewed list. The CRT's lazy facets are
+   warmed up when the session starts (a locale, an `ostringstream` round, one
+   net fingerprint).
+4. The sound manager is split: its simulation side (the state GETSTATUS and
+   the game read) stays in the arena and rolls back; its audio side
+   (decoders, `frames_read`, `LinearSrc`, the mirror, output, compressor,
+   reverb, mixes, `audio_delta_`) becomes an `AudioSide` object outside the
+   arena whose methods, `record()` included, run under `ArenaOff`. The audio
+   never rolls back.
+5. Debug builds poison the blocks a restore frees and keep them from reuse
+   for 64 ticks, so a reference that escaped shows up in the torture test.
+
+**Budget per tick** (the reference machine, the four-player field with four
+cameras, the slowest measured case):
+
+| | 60 Hz picture (16.7 ms) | 144 Hz picture (6.9 ms, 0.42 ticks per frame) |
+| --- | --- | --- |
+| normal tick: step + traversal + save | 0.43-0.70 ms | the same in the frames that carry a tick |
+| rollback every tick (analog pads), `d` 3 | +1.7-1.9 ms (worst 2.9) | fits: 4-5 ms left for the picture |
+| rollback every tick, `d` 5 | +about 2.4-3.3 ms | fits on this PC; a 3x slower PC misses frames, not ticks |
+| rollback, `d` 8 | +3.6-4.6 ms (worst 5.4) | drops to the frames it can make |
+
+A member whose rollbacks (restore plus re-simulation) exceed 8 ms at the
+95th percentile over five seconds switches to *delayed mode* (today's
+lockstep: no prediction, input delay `d`) and back after thirty seconds below
+4 ms; the switch is local and changes nothing for the others. Splitting the
+traversal's clock work from its cull (about 60 % of a four-player step is the
+union pass) would roughly halve every re-simulation; it is not part of
+round R.
+
+**Input prediction.** A remote slot's predicted pad is its last *sealed* pad
+for every tick ahead: held buttons and sticks repeat, a new press is never
+invented. With the engine's own edge detection (`OriginalPads`, rolled back
+with the state) a remote press shows when its tick is sealed, as a
+correction of up to `d` ticks. The own slot executes the pad it sent; it is
+corrected only when the relay filled it (late) or carried a press to the
+next tick, which the delay rule keeps rare (round 62 measured 0-2 % of own
+pads filled on a busy PC without loss, up to 7 % at 1 % loss: 6.4 on
+`fix-r62netlag`). An
+absent or leaving slot's pad is the engine's rule (6.5), never predicted.
+
+**Confirmed ticks and events.** Events stamped into tick records (JOIN,
+LEAVE, INTENT, DELAY, LEAD_FROM) would reach a predicting member only with
+SEALED, after it predicted past their tick. The relay therefore announces
+each event when it stamps it (EVENT_AHEAD), and `StampTick`'s margin covers
+the member's downlink (`EventMarginTicks` = 2 plus the newest one-way time
+in ticks), so the members execute it at its tick in prediction already. An
+event that still arrives late is a misprediction like a pad. LEAD_FROM: the
+member stops predicting at L - 1 and leads alone from L once every tick
+before L is confirmed. DELAY changes only the member's own lead.
+
+**Rollback barriers.** Some steps must not be predicted past or undone:
+`Engine::rollback_barrier()` after a step reports a pending stage (the
+barrier tick B, 6.7), held fields, a package load (the JOIN step, which also
+loads files, 46-62 ms of hitch, and must not run twice), a fork decided in
+the step, and the barrier park. The frontier then stops at that tick until
+it is confirmed: on agreement the client goes on (parks at B, applies the
+JOIN), on disagreement it restores before it. A JOIN announced ahead stops
+the frontier at J - 1 until J is sealed, so the JOIN step runs once,
+confirmed. Each costs one stall of about `d` ticks where today's lockstep
+costs the same.
+
+**What stays confirmed-only.** The session's work after a step moves from
+"after each executed tick" to "when a tick is confirmed":
+
+| Output | When |
+| --- | --- |
+| picture, overhead labels, PRESENCE, the HUD | the frontier (predicted), with the correction blend below |
+| sound effects (SFP / SNDF) | at once from predicted ticks; reconciled on re-simulation |
+| streams (BGM, ambience, SE streams), global sound commands (BGMSTOP, ENVSTOP, volumes), movies | confirmed ticks: `d` ticks late, 50-117 ms at 20-80 ms of round trip |
+| NETFP | computed at every execution of a multiple of 60, sent when that tick is confirmed (the value of its last execution) |
+| STATEHASH, the donor's checkpoint | from the saved state of the confirmed tick: restore, encode, restore the frontier (2-4 ms every ten seconds) |
+| port events (achievements, story credits), story lines, Discord, notices | kept per tick, dropped for undone ticks, delivered when confirmed |
+| STATE, SPLIT, HEADING, BARRIER and the park, INTENT, go-alone | confirmed |
+
+**Sound.** The simulation side rolls back with the arena; the audio side
+does not. `record()` tags every call with its tick. Per tick the reconciler
+keeps the effect calls of the tick's last execution, keyed by (tick, sound,
+emitting RAM, ordinal). When a re-simulation executes a tick again, a call
+already made is skipped (it is playing), a new one starts at once (late), and
+one that did not come again is faded out within 20 ms if it still sounds.
+Stream starts and stops and global commands wait in a per-tick queue that is
+applied when the tick is confirmed and dropped when it is undone. Rolling the
+audio itself back is never done: the device has played it.
+
+**Presentation of corrections.** After a rollback the frontier's picture
+differs from what was shown. `MotionInterpolator` keeps the matrix it last
+presented per draw instance (the `instance` hash it already blends by); for
+each instance whose corrected matrix moved, it adds the difference and lets
+it decay over six frames (100 ms). It snaps instead when the instance
+appeared or vanished, moved more than 2 m, or its sequence phase jumped (the
+existing no-blend rules). The camera blends the same way. Values (HP, the
+meters, text) and effects spawned in an undone tick change at once. A remote
+character can enter an attack a few ticks late: its pose catches up, its
+position glides.
+
+**Determinism and the fingerprints.** Rollback changes no confirmed
+execution: each tick's final execution uses the sealed pads, from a state the
+arena restored byte for byte, so every machine ends each tick as a lockstep
+machine would. NETFP and STATEHASH compare confirmed states only and are
+equal across members whatever their rollback histories; that equality is
+round R's proof. The torture test makes it hard:
+`DW4_ROLLBACK_TORTURE=<seed>` runs an online engine in its arena and, at
+random ticks, executes 1-8 ticks with random wrong pads, restores and executes
+them again with the true ones; every 60th tick's canonical tick state hash,
+every fingerprint and net fingerprint must equal a run without rollbacks,
+over the stage set of 6.13.3 and the r25c segments in online rules, also in
+the poisoning debug build.
+
+**Settings and display.** F1 Online gets "Input: instant (rollback) /
+delayed (lockstep)", default instant. The network indicator and
+`saves/online.log` (round 62) add the rollback depth, corrections per second,
+the re-simulation cost and the mode.
+
+#### 6.13.7 Protocol changes
+
+Proposed numbers; the integration pins them after rounds 60 and 62 merge
+(both claim 0x8F today: PRESENCE2 and NETSTAT; client 0x14 is round 60's).
+
+| Dir | Type | Message | Fields | When |
+| --- | --- | --- | --- | --- |
+| C to S | 0x15 | STATEHASH | inst, visit, tick, hash (XXH64 of the canonical tick state), flags (1 bytes kept) | every member, once a checkpoint tick is confirmed (round J) |
+| C to S | 0x16 | CHECKPOINT | inst, visit, tick, hash, total, offset, chunk (at most 60 KiB of zstd) | the donor, on CHECKPOINT_ASK |
+| C to S | 0x17 | CHECKPOINT_BAD | inst, visit, tick, reason (version, decode, topology, hash), section tag | a joiner or a resyncing member whose rebuild failed |
+| S to C | 0x92 | CHECKPOINT_ASK | inst, visit, tick (0: the next confirmed state-safe tick), flags (1 periodic, 2 diagnosis) | to the donor (round J) |
+| S to C | 0x93 | EVENT_AHEAD | inst, visit, tick, event (the tick record's event layout) | to every member when an event is stamped (round R) |
+
+**State blob, layout 2** (STATE_DATA): purpose u8, slot u8, codec u8 (0 raw
+records as today; 2 with a checkpoint), snapshot blob, load tick count u32 and
+the records `[0, K)`, checkpoint tick u32, hash u64, flags u8 (1 agreed),
+length u32 and the zstd bytes, fork count u8 and the forks after the
+checkpoint (as today), first tick u32 (T + 1), the tick records after T.
+
+**Relay configuration.** `Instances:FreshCheckpointMs` (2,000),
+`Instances:CheckpointWaitMs` (1,000), `Instances:KeepCheckpoints` (2); the
+checkpoint period of 600 ticks is a protocol constant, not a setting.
+`Sealing:EventMarginTicks` adds the one-way time in round R. The protocol and
+the snapshot version rise with each round.
+
+#### 6.13.8 What stays
+
+The sealing, the fills, the delay rule and its bounds, NETFP every 60 ticks,
+the barrier and fork rules, RESUME after a reconnect, the classic catch-up
+(as the fallback), the solo-led instance with its own clock and delay 0 (it
+needs no prediction; from JOIN_AT it keeps its pace with prediction instead
+of switching to delayed sampling, and the relay places `S(J)` `d` ticks after
+its estimate of when the leader executes J). Online off: the tick state, the
+checkpoints, the arena and the prediction exist only in online sessions
+(section 15).
+
 ## 7. Engine interface
 
 Everything below exists only with `Engine::online().enabled` (or a nonzero
@@ -1886,6 +2540,24 @@ first process's. The memory card each process wrote in the save room differs
 in one byte, the GCI header's modification time from the host clock (offset
 0x2B), which the game never reads back; online every member has its own
 virtual card anyway.
+
+**Mid-stage completeness (round 65 design, 6.13).** The load snapshot is
+complete for a stage load because the load rebuilds everything else. Round J
+needs more: the *tick state*, every mutable field of every manager at any
+state-safe tick (6.13.2), and the same test one level deeper: a state taken at
+any tick, rebuilt in another process, continues bit-identically for N steps
+(6.13.3; the canonical tick state hash, the fingerprint and the net
+fingerprint of every step). The rules of this section carry over: every field
+that survives a step and is not serialized breaks joins and resyncs; the
+known traps are listed in 6.13.3 (Lua slot layout and GC counters,
+`AnimationDatabase::looping_`, edited attributes, `MotionChannels` sharing,
+lazily created nodes, the `schedule_` order after package loads, the exit
+step's port closure, TEXTCTL's text held only as geometry, the SUBWND window
+trees). The bump discipline extends to it: the tick state version follows
+the protocol, and a size guard next to every serialized struct's `io()` fails
+the build when a field is added without its serializer. The process-wide
+generator stays the only simulation state outside the engine (6.12); round
+R's arena saves it with every tick or moves it into the engine.
 
 ### 7.2 Online rules
 
@@ -4450,6 +5122,13 @@ anyway; joining goes through the room list.
   online sessions. Input quantization, the console reset switch and the
   environment check act only online.
 - The MXCSR guard runs offline too and is a no-op with the default MXCSR.
+- Round 65 design (6.13): the tick state, checkpoints, the state arena and
+  prediction exist only in online sessions. Offline no arena is created and
+  the game's replaced `operator new` forwards to `malloc` as MSVC's own does;
+  the topology journal is an append-only list nothing offline reads; TEXTCTL
+  keeping its text changes no geometry; `Engine::state_safe` and the tick
+  state hash are separate functions like the net fingerprint. Rounds J and R
+  prove it with the commands below plus the save state suite.
 - The snapshot version rises (new `OnlineRules` block, the two missing fields);
   as with every bump, older save state files no longer load.
 - Proof in every round: `det.sh` twice (4004f056 / audio 396cb219), every ctest
@@ -5443,6 +6122,95 @@ rises).
 
 Depends on: round D deployed.
 
+### Round J (proposed r66): instant joins and checkpoints
+
+Goal: 6.13.2-6.13.5 (the user's feedback of 01.11: new players no longer
+"catch up"). A member joins a running instance in under a second at any
+visit length, bit-identical with the others; resyncs restore a checkpoint
+instead of the load.
+
+First tasks (measurements, into 6.13 before the lanes build on them):
+
+- the topology of a fast load against the live load with the original
+  timing: the topology hash after each stage load of the r25c story run,
+  live, and after restoring its snapshot and replaying its load ticks;
+- encode, hash, zstd and apply cost and the compressed size of the whole
+  tick state in stag0101, stag0102, dng101b1, stagBS02 and a water stage
+  (the prototype measured 1.2-1.5 ms and 37-61 KB with zlib 6 for nodes,
+  MODELCTRL and ACTION2 alone);
+- the side effects of the SceneCache's lazy node creation (does creating a
+  node by id on apply equal creating it on first use?).
+
+| Lane | Scope |
+| --- | --- |
+| tick state core | `include/dw4/engine/tick_state.hpp` (the archive with the id codecs, sections, raw and canonical form, XXH64), engine scalars, generator, game system, online fields; the topology journal and its six entry kinds with their re-run; scene graph nodes and edited attributes, `AnimationDatabase::looping_`, MODELCTRL, ACTION2, GENERATER; `Engine::state_safe` with the transient-field assertions; the size guards; the completeness harness (`DW4_TICKSTATE_TEST`, ctest `tick_state`) and `tools/online/tickstate_diff.py` |
+| tick state rest | `Lua4Vm::io` (slot layout, generations, free list, GC counters, prototype ids, the owner restamp), messenger and demo (the exit step's port), CAMERA, HitLand, collision groups and ChangePos, the sound simulation (sfp, the SNDF driver with bank and offset ids, the streams' game parts, `CriStreams`) and the joiner's music position from the CRI counters, the small managers, TEXTCTL `Line` keeping its text, the SUBWND window trees reachable in field stages (the status window's pages, folders, skill: about 25 classes; the shop windows assert they never open in a state-safe instance) |
+| relay | STATEHASH and its vote (NETFP's rules), the donor, CHECKPOINT_ASK and the CHECKPOINT store (two per instance, fork-aware), STATE_DATA layout 2, the join with a fresh or stored checkpoint and its waits, CHECKPOINT_BAD with one retry, then the classic path, then NEW; `JoinOrNew`'s catch-up estimate from the checkpoint; resync from the checkpoint; the log trimmed below the older checkpoint (snapshot and `[0, K)` kept); unit and integration tests with fake clients; the protocol version |
+| client | zstd's encoder sources in the build; the session's checkpoints (STATEHASH at `C_k`, the donor's upload in chunks under the state budget), the join path (rebuild, self check, the short catch-up, "Joining..." without a countdown), the fallbacks, resync from a checkpoint; scenarios on the local stack: J1 / J5 / J15 / J30 (two members, stag0101, as measured for this design), J15x4 and J30x4 (three members play, a fourth joins), JW (a join while a member's own status window is open and while an NPC talk runs), JF (into a fork's child before its first own checkpoint), JR (an injected desync, resynced from the checkpoint), JB (a damaged checkpoint), JL (40 ms of round trip through the proxy) |
+
+Done when: barrier to member under 1.0 s in J1, J5, J15, J30, J15x4,
+J30x4, JW and JF on the reference machine (timed from the clients' and the
+relay's logs as for this design; today 1.31 / 6.34 / 15.68 / 31.04 s), and
+under 1.0 s plus one round trip in JL; every instance's NETFP and STATEHASH
+equal for 10,000 ticks after each join; JR equal again within a second of the
+resync; JB falls back and joins; the completeness test of 6.13.3 finds no
+difference over its whole set, with idempotent bytes; the tick state's costs
+and sizes are measured and in 6.13 (compressed at most 100 KB); the
+regression scenarios S1, S2, S3, S11a, S17a, S18b, S19b, L1, L2, M1 and M2
+pass; ctest and the server's unit and integration tests pass; online off
+bit-identical (`det.sh` 4004f056 / audio 396cb219 twice, r25c 10 of 10 with
+1,748,011 frames, the save state suite 17 of 17).
+
+Depends on: rounds 59, 60, 62 and 63 merged (`session.cpp`, `RoomHub.cs`,
+the message numbers both 60 and 62 claim, round 63's own windows and copies,
+which the journal and the SUBWND lane cover); the answer to question 15. The
+user's step: the server release and the client together (the protocol
+rises).
+
+### Round R (proposed r67): rollback for the own player
+
+Goal: 6.13.6 (the feedback's "sometimes 80 ms"): the own character reacts in
+the frame of the input at 20-80 ms of round trip, every engine stays
+deterministic, the instance stays in sync.
+
+First tasks:
+
+- the arena contract audit: every Engine entry the online host calls,
+  classified (scope, copy out, host allocator), the statics re-grepped, the
+  draw list's ownership; its result goes into 6.13.6 before the session work
+  builds on it;
+- the torture test on the product allocator and arena, alone, before the
+  session uses them;
+- the misprediction rate from recorded pads (question 17; until then the bot
+  driver's analog steering, every tick a misprediction, as the budget's case).
+
+| Lane | Scope |
+| --- | --- |
+| arena | `StateArena` (a reserved region with `MEM_WRITE_WATCH`, the deterministic allocator with its metadata inside, the page ring with the shadow image, restore to any kept tick, the fold), the game's replaced `operator new` / `delete` (the CRT heap without a scope), `ArenaScope` / `ArenaOff`, the online engine constructed in its arena, the generator saved per tick or moved into the engine, the statics out of the arena with the grep test, the CRT warm-up, the sound manager's split into its simulation side and an `AudioSide`, the poisoning debug build, the torture test (`DW4_ROLLBACK_TORTURE`), the cost table of 6.13.6 re-measured |
+| session | frontier and confirmed tick, prediction by the slot's last sealed pad, the own pad sent and executed at once, the cap of 8 and the hybrid above it, the reconcile (the first differing tick, one restore, re-simulation), `Engine::rollback_barrier` and the stops at barrier ticks and at announced JOIN ticks, EVENT_AHEAD and the downlink margin on the relay, JOIN_AT without delayed sampling, the delayed-mode fallback by cost, the confirmed-only outputs (NETFP, STATEHASH and the donor's state from the saved tick, port events per tick, STATE, SPLIT, HEADING, BARRIER, INTENT, story, notices), `net_stats` with the rollback numbers |
+| presentation | the peek render also with the shared camera (the simulation traversal inside every tick), the correction blend in `MotionInterpolator` and for the camera, the audio reconciler (effects matched, late or faded; streams and global commands from confirmed ticks), the host's draw list dropped before simulation calls, the JOIN prefetch of package files, F1 Online "Input: instant / delayed", the network indicator's rollback line |
+| scenarios | L1 and L2 with rollback (20, 40, 80 and 150 ms of round trip, jitter, 1 % loss, the throttled host), torture runs over the stage set of 6.13.3 and the r25c segments in online rules, an analog-pad run (recorded or the bot driver's), a frame-time run at 144 Hz, the regression scenarios |
+
+Done when: in L1 at 20, 40 and 80 ms of round trip (quiet and loaded
+machine) and in L2 both members' round 62 latency (sample to its tick
+running here) has a median of at most 17 ms and a 95th percentile of at most
+34 ms (today 50, 83 and 117 ms), at 150 ms the remainder of `d - 8` ticks;
+own-slot corrections at most 2 % of ticks without loss; every member's NETFP
+and STATEHASH equal in every cell and scenario; the torture test finds no
+difference over 20,000 ticks per stage and the r25c segments, also in the
+poisoning build, and the statics grep test passes; in the four-player field
+a rollback at the members' `d` costs at most 3 ms on average and 6 ms at the
+99th percentile on the reference machine, and a hidden 144 Hz frame-time run
+keeps step plus rollback under 6.9 ms at the 99th percentile; the delayed
+mode switches on and back under a throttled client without a desync; an
+audio-dumped run with forced mispredictions starts every confirmed effect
+once and never restarts the music; the regression scenarios pass; online off
+bit-identical (as round J, the replaced `operator new` included).
+
+Depends on: round J (the tick state hash for the torture comparison, the
+checkpoints at confirmed ticks); the answers to questions 15 and 16. A
+visible 144 Hz check only with the user's OK while he does not play.
+
 ## 18. Questions for the user
 
 1. **Lobby.** Hub and UI stages (lobby, briefing room, Digi-Lab) as solo
@@ -5588,6 +6356,31 @@ player, means per box with four characters per account: 9.1.9.)
    refusals in a row by the same rule the box's saves are accepted, marked
    "under review", and staff is warned.
 
+### Questions of round 65 (2026-11-04)
+
+15. **Which comes first?** Round J (a joiner plays within a second instead
+    of catching up) is the smaller round and needs nothing of round R.
+    Round R (the own character without input delay) is larger: it puts a
+    new memory layer under the engine and is tested best with round J's
+    state hash. Default: J first, then R. Alternative: R first; the input
+    lag goes sooner, joins keep catching up until J, and R's torture test
+    compares only the fingerprints until J lands.
+16. **Sound effects with rollback.** (a) Effects play at once from the
+    predicted ticks: the own attacks and hits are heard in the frame they are
+    seen. When a partner's input was predicted wrong, an effect can be cut
+    off after a few milliseconds, or come up to `d` ticks late (50-117 ms at
+    20-80 ms of round trip). (b) Every effect waits until its tick is
+    confirmed: never wrong, but always 50-117 ms after the picture. The music
+    waits in both. Default: (a).
+17. **Your pad recordings.** How often the prediction fails decides how much
+    rollback work there is; the only real recording is a short keyboard game
+    (0.5 % of ticks change). A few minutes of normal play in a field, once
+    with the gamepad and once with the keyboard, recorded as pad logs (round
+    R adds an F1 switch that writes them; nothing but the pads is recorded),
+    would replace the assumption of a misprediction in every tick. Can you
+    record them when round R starts? Default: round R plans for the worst
+    case.
+
 ## 19. Risks
 
 - **Multi-camera semantics** have no Dolphin reference: an actor animates when
@@ -5607,6 +6400,10 @@ player, means per box with four characters per account: 9.1.9.)
   beyond about 25 minutes of a four-player field (8-12 on a weaker PC) open a
   parallel instance, and a resync beyond the limit leaves a member alone. A
   full mid-stage state would be a large engine project and is not planned.
+  (Round 65 design: measured 1 s per minute of a two-member visit, unjoinable
+  after about 29 minutes with two members and 12-14 with four; the user asked
+  on 01.11 for it to go. Rounds J and R plan the mid-stage state after all,
+  6.13; the classic catch-up stays as the fallback.)
 - **Determinism across CPUs** is unproven (all runs on one CPU). Until S4 the
   FMA3 gate excludes CPUs without FMA3 (older than about 2013-2015); the MSL
   routing then has to prove itself on two machines the user owns.
@@ -5664,6 +6461,34 @@ player, means per box with four characters per account: 9.1.9.)
 - **Merging staff edits into a running session** keeps the player's
   progress, but his game shows the old values until his next room entry;
   what must apply at once needs *Reload now* (9.1.7).
+- **Tick state completeness** (round 65 design, 6.13.2-6.13.3): one mutable
+  field the serializer misses makes joins and resyncs desync, maybe only
+  minutes later (a timer, a Lua slot reused after a collection). What bounds
+  it: the completeness test from every sampled tick of long runs and of the
+  r25c segments, the size guards that fail the build on a new field, and the
+  STATEHASH vote every ten seconds, which finds a miss in play, resyncs the
+  member and keeps both states for the diff tool.
+- **The state arena** (round 65 design, 6.13.6) rolls back every byte the
+  engine owns. Memory that crosses between engine and host (a moved buffer,
+  a lazily built static, a host-held `shared_ptr` into the arena) is
+  corrupted by a restore, and such a fault can show far from its cause. What
+  bounds it: the contract of 6.13.6 with its audit as round R's first task,
+  the statics grep test, the poisoning debug build and the torture test
+  (random wrong predictions at random ticks, compared with straight runs by
+  the full tick state hash). If the contract cannot be closed, the fallback
+  is the tick state in an in-process form with copies of the generated RAMs
+  and a contiguous node state block (slower, a refactor of the two largest
+  managers).
+- **Rollback costs and corrections.** With analog sticks nearly every tick is
+  mispredicted (6.13.1), so the re-simulation of `d` ticks is the normal
+  case: 1.7-2.8 ms per tick at `d` 3-5 in a four-player field on the
+  reference machine, 5-9 ms on a PC three times slower, which then falls
+  back to delayed input. Remote players' corrections are visible as a short
+  glide or a late start of an attack; effects of an undone tick vanish, and
+  sound effects can be cut or late (question 16).
+- **Message numbers**: rounds 60 and 62 both claim server type 0x8F
+  (PRESENCE2, NETSTAT); round 65's numbers (6.13.7) leave 0x8F-0x91 to that
+  integration.
 
 ## Appendix: evidence
 
