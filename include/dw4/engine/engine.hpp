@@ -723,6 +723,12 @@ public:
     // The visit's load end: the frame after the first step of this stage's
     // load whose end found the stage active and the loader idle (0 before).
     std::uint64_t load_end_frame() const { return load_end_frame_; }
+    // A test of the checkpoint path's suspicion rule (scenario JS, the host
+    // of a development build sets it): the tick state leaves the model RAMs'
+    // HP out, so a rebuild keeps the values of its load end and drifts.
+    // Never read by the simulation.
+    static void set_tick_state_skip_hp(bool on);
+    static bool tick_state_skip_hp();
     // The topology hash (files in order, every manager's RAM count, the
     // messenger rows, the schedule order, the owned nodes).
     std::uint64_t topology_hash() const;

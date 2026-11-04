@@ -765,7 +765,7 @@ void ModelCtrlManager::tick_state(TickArchive& a) {
         a.io(r.label_passed);
         a.io(r.sequence_serial);
         a.io(r.wait_name);
-        a.io(r.hp);
+        if (!Engine::tick_state_skip_hp()) a.io(r.hp); // (scenario JS's missed field)
         a.io(r.max_hp);
         a.io(r.base_matrix);
         motion_channels(a, r.channels);

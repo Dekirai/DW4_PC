@@ -1890,6 +1890,13 @@ void Session::upload_checkpoint() {
         payload.push_back(0);
         payload.insert(payload.end(), raw.begin(), raw.end());
     }
+#ifdef DW4_ONLINE_DEV
+    // DW4_ONLINE_TEST_BAD_CHECKPOINT=1 (development builds; scenario JB): the
+    // upload is damaged on the way (one byte of the state flipped), so the
+    // joiner's rebuild fails and the relay falls back.
+    if (const char* bad = std::getenv("DW4_ONLINE_TEST_BAD_CHECKPOINT"); bad && *bad == '1' && payload.size() > 64)
+        payload[payload.size() / 2] ^= 0x5A;
+#endif
     constexpr std::size_t kChunk = 60 * 1024;
     for (std::size_t off = 0; off < payload.size(); off += kChunk) {
         w::Checkpoint c{inst_, visit_, tick_, hash, *load_end_, std::uint32_t(payload.size()), std::uint32_t(off), {}};

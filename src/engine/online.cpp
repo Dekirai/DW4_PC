@@ -130,6 +130,9 @@ const std::vector<std::string_view>& online_presentation_env() {
         "DW4_ONLINE_PROFILE",
         // the resync scenarios' injected desync (DW4_ONLINE_DEV builds only, game_main.cpp: it is the point of the test)
         "DW4_ONLINE_TEST_DESYNC",
+        // round J's damaged checkpoint and the tick state that misses a field (DW4_ONLINE_DEV builds only, session.cpp,
+        // game_main.cpp: scenarios JB and JS)
+        "DW4_ONLINE_TEST_BAD_CHECKPOINT", "DW4_ONLINE_TEST_TICKSTATE_SKIP",
         // the ghost figures (round 60, presentation only): off, and the form and old-client tests of the scenarios
         // (DW4_ONLINE_DEV builds only, session.cpp: the form PRESENCE2 names cycles, the engine's stays; PRESENCE
         // instead of PRESENCE2)

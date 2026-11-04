@@ -395,6 +395,12 @@ std::string first_differing_section(std::span<const std::uint8_t> a, std::span<c
 }
 
 // ---- the engine
+namespace {
+bool g_tick_state_skip_hp = false;
+}
+void Engine::set_tick_state_skip_hp(bool on) { g_tick_state_skip_hp = on; }
+bool Engine::tick_state_skip_hp() { return g_tick_state_skip_hp; }
+
 bool Engine::state_safe() const { return state_unsafe_reason().empty(); }
 
 std::string Engine::state_unsafe_reason() const {
