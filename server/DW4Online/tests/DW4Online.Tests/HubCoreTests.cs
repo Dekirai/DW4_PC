@@ -271,9 +271,10 @@ public class HubCoreTests
         Assert.Equal(1, c.Carried);
         Assert.Equal(new Pad(0x0010, 5, 0, 0, 0), c.Take(13, 0, out cf)); // a fill: the last real pad, nothing carried any more
         Assert.True(cf);
-        // A button already held in the last sealed pad is no new press.
+        // A button already held in the last sealed pad is no new press; the late pad, newer than the last one sealed in
+        // time, fills the next tick.
         Assert.Equal(SlotStream.Submit.Late, c.Offer(13, new Pad(0x0010, 0, 0, 0, 0), 14, -10));
-        Assert.Equal(new Pad(0x0010, 5, 0, 0, 0), c.Take(14, 0, out cf));
+        Assert.Equal(new Pad(0x0010, 0, 0, 0, 0), c.Take(14, 0, out cf));
         Assert.Equal(1, c.Carried);
 
         // A JOIN extends it (the spawn's long step on every machine), never shortens it.
@@ -282,6 +283,44 @@ public class HubCoreTests
         Assert.Equal(300u, s.GraceUntil);
         Assert.Equal(SlotStream.Submit.Late, s.Offer(250, P(1), 260, -30));
         Assert.Equal((1, 1), s.Delay.LateInWindow());
+    }
+
+    [Fact]
+    public void A_held_button_stays_held_through_late_pads()
+    {
+        // Round 62 review: the player holds A (0x0100) from tick 11 to 39; every pad from tick 10 on comes 5 ms after its
+        // tick was sealed (d one tick too low), so seals and late pads alternate. Filled with the last pad sealed in time
+        // plus the carried press, A toggled at 30 Hz (0010101...) and after six fills every held button did; the newest
+        // (late) pad as the fill source keeps it held, one tick late, and lets it go one tick late.
+        var s = new SlotStream(0, 0, 3);
+        for (uint t = 0; t < 10; ++t)
+        {
+            s.Offer(t, Pad.Neutral, t, 10, 1000 + 16.68 * t);
+            s.Take(t, 0, out _);
+        }
+        var sealedA = "";
+        for (uint t = 10; t < 50; ++t)
+        {
+            var sealedPad = s.Take(t, 0, out var filled);
+            Assert.True(filled);
+            sealedA += (sealedPad.Buttons & 0x0100) != 0 ? '1' : '0';
+            var held = t is >= 11 and < 40 ? (ushort)0x0100 : (ushort)0;
+            Assert.Equal(SlotStream.Submit.Late, s.Offer(t, new Pad(held, 20, 0, 0, 0), t + 1, -5, 1000 + 16.68 * t + 5));
+        }
+        Assert.Equal("00" + new string('1', 29) + new string('0', 9), sealedA);
+        // The lag rule still sees every tick its own pads missed.
+        Assert.Equal(40, s.FillStreak);
+        Assert.True(s.FillStreak >= SlotStream.LagFills);
+        // Once nothing comes any more: the newest pad six times, then neutral.
+        var tail = Enumerable.Range(50, 8).Select(t => s.Take((uint)t, 0, out _)).ToList();
+        Assert.Equal(Enumerable.Repeat(new Pad(0, 20, 0, 0, 0), 6).Concat([Pad.Neutral, Pad.Neutral]), tail);
+        // A pad older than the fill source (out of order) does not replace it.
+        var o = new SlotStream(0, 0, 3);
+        o.Offer(5, new Pad(0x0010, 0, 0, 0, 0), 5, 10);
+        o.Take(5, 0, out _);
+        Assert.Equal(SlotStream.Submit.Late, o.Offer(4, new Pad(0x0020, 0, 0, 0, 0), 6, -30));
+        Assert.Equal(new Pad(0x0030, 0, 0, 0, 0), o.Take(6, 0, out _)); // the carried press with the newer source
+        Assert.Equal(new Pad(0x0010, 0, 0, 0, 0), o.Take(7, 0, out _));
     }
 
     [Fact]

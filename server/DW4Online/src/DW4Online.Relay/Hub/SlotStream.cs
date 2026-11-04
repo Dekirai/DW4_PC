@@ -4,8 +4,9 @@ namespace DW4Online.Relay.Hub;
 
 /// <summary>
 /// One slot's input stream in a sealed instance (SEAMLESS.md 6.4): the pads a member submitted ahead of their ticks,
-/// the fill rule (a missing pad is filled at once with the member's last real pad, at most six ticks in a row, then
-/// neutral), the counters and the delay controller fed by the arrival margins (due time minus arrival).
+/// the fill rule (a missing pad is filled at once with the member's newest pad, sealed in time or late, at most six
+/// ticks in a row after it came, then neutral), the counters and the delay controller fed by the arrival margins (due
+/// time minus arrival).
 /// </summary>
 public sealed class SlotStream
 {
@@ -17,7 +18,14 @@ public sealed class SlotStream
 
     private readonly Pad?[] _ring = new Pad?[MaxAhead];
     private readonly uint[] _ringTick = new uint[MaxAhead];
+    /// <summary>The fill source: the member's newest pad, sealed in time or late (round 62 review: a late pad is the
+    /// newest the relay knows of the member's input; filling with the last pad sealed in time instead made a held button
+    /// toggle at 30 Hz through a stretch where seals and late pads alternate, the carried press on, the old fill off).</summary>
     private Pad _lastReal;
+    private uint _lastRealTick;
+    private bool _hasLastReal;
+    /// <summary>Fills since the fill source came (it repeats up to <see cref="RepeatFills"/> of them, then neutral).</summary>
+    private int _repeats;
     private Pad _lastSealed;
     /// <summary>Buttons pressed in pads that came after their tick was sealed and not held in the last sealed pad: they
     /// go with the next sealed pad of this slot (round 62). The delay rule no longer rises for a burst of late pads (a
@@ -60,7 +68,8 @@ public sealed class SlotStream
     public long Late { get; private set; }
     public long Duplicates { get; private set; }
     public long TooEarly { get; private set; }
-    /// <summary>Consecutive filled ticks (0 after a real pad).</summary>
+    /// <summary>Consecutive filled ticks (0 after a pad sealed in time; a late pad does not end it: the lag rule counts
+    /// the ticks the member's own pads missed).</summary>
     public int FillStreak { get; private set; }
     /// <summary>The server time (timestamp) at which the current fill streak began.</summary>
     public long FillStreakSince { get; private set; }
@@ -108,7 +117,13 @@ public sealed class SlotStream
         if (tick < nextSeal || tick < FromTick)
         {
             ++Late;
-            if (tick >= FromTick) _carry |= (ushort)(pad.Buttons & ~_lastSealed.Buttons);
+            if (tick >= FromTick)
+            {
+                _carry |= (ushort)(pad.Buttons & ~_lastSealed.Buttons);
+                // The newest pad the relay has of this member fills its next ticks: what it holds stays held, one tick or
+                // a few late, instead of the older pad sealed in time (or neutral after six fills).
+                if (!_hasLastReal || tick > _lastRealTick) SetSource(pad, tick);
+            }
             if (tick < GraceUntil) ++LateInGrace;
             else if (paced) Delay.Record(marginMs, late: true);
             return Submit.Late;
@@ -140,7 +155,7 @@ public sealed class SlotStream
         if (_ring[i] is { } pad && _ringTick[i] == tick)
         {
             _ring[i] = null;
-            _lastReal = pad;
+            SetSource(pad, tick);
             FillStreak = 0;
             filled = false;
             return Sealing(pad);
@@ -149,7 +164,15 @@ public sealed class SlotStream
         ++FillStreak;
         ++Filled;
         filled = true;
-        return Sealing(FillStreak <= RepeatFills ? _lastReal : Pad.Neutral);
+        return Sealing(++_repeats <= RepeatFills ? _lastReal : Pad.Neutral);
+    }
+
+    private void SetSource(Pad pad, uint tick)
+    {
+        _lastReal = pad;
+        _lastRealTick = tick;
+        _hasLastReal = true;
+        _repeats = 0;
     }
 
     /// <summary>The pad as it is sealed: with the presses carried from late pads.</summary>
@@ -177,6 +200,9 @@ public sealed class SlotStream
                 _ring[i] = null;
             }
         to._lastReal = _lastReal;
+        to._lastRealTick = _lastRealTick;
+        to._hasLastReal = _hasLastReal;
+        to._repeats = _repeats;
         to.Horizon = Horizon;
         to.HasHorizon = HasHorizon;
     }
