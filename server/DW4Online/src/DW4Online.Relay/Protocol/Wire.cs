@@ -63,7 +63,8 @@ public static class Msg
     public const byte Close = 0x8C;
     public const byte Roster = 0x8D;
     public const byte Reassign = 0x8E;
-    public const byte Presence2Out = 0x8F;
+    public const byte NetStat = 0x8F;
+    public const byte Presence2Out = 0x90;
 
     public static string Name(byte type) => type switch
     {
@@ -73,7 +74,7 @@ public static class Msg
         Resume => "RESUME", Rate => "RATE", Pong => "PONG", Bye => "BYE", Presence2 => "PRESENCE2",
         Welcome => "WELCOME", Sealed => "SEALED", Live => "LIVE", JoinReq => "JOIN_REQ", BarrierOk => "BARRIER_OK",
         BarrierWait => "BARRIER_WAIT", StateData => "STATE_DATA", PresenceOut => "PRESENCE", Resync => "RESYNC",
-        StoryAck => "STORY_ACK", Room => "ROOM", Ping => "PING", Close => "CLOSE", Roster => "ROSTER", Reassign => "REASSIGN",
+        StoryAck => "STORY_ACK", Room => "ROOM", Ping => "PING", Close => "CLOSE", Roster => "ROSTER", Reassign => "REASSIGN", NetStat => "NETSTAT",
         Presence2Out => "PRESENCE2",
         _ => "0x" + type.ToString("X2"),
     };

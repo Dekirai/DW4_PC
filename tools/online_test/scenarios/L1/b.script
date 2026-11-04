@@ -1,0 +1,9 @@
+# L1 (latency), member b (k10), the guest: through the lobby gate 15 s after a, into a's instance by a JOIN; wanders
+# for 100 s of sealed play.
+campaign until stage=stagml11,control
+idle until epoch>=@105
+explore mate00 yes until stage=stag0101,control
+log in the field
+wander 470 160 15 until sealed>=6000 or present<=1,frames>=60
+log enough
+idle until frames>=60

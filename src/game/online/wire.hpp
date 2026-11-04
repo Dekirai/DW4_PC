@@ -59,6 +59,13 @@ struct WireError : std::runtime_error {
     using std::runtime_error::runtime_error;
 };
 
+// The frame types (SEAMLESS.md 6.3, "Message types"): one number per message
+// on both sides, never given twice. A new message takes the next free number
+// of its direction (client to server 0x15, server to client 0x91 after rounds
+// 60 and 62) and goes into the registry checks of tests/online_wire_tests.cpp
+// and WireGoldenTests.cs. 0x8F is NETSTAT, in the field since DW4Online 0.1.2:
+// a client that cannot decode a frame of a type it knows drops the connection
+// (only the informational ones are skipped, Session::informational).
 enum class Type : std::uint8_t {
     // client -> server (0x01-0x3F)
     input = 0x01,
@@ -97,7 +104,8 @@ enum class Type : std::uint8_t {
     close = 0x8C,
     roster = 0x8D,
     reassign = 0x8E,
-    presence2_of = 0x8F,
+    netstat = 0x8F, // round 62: the member's link (older clients skip it)
+    presence2_of = 0x90, // round 60: PRESENCE2 to a member that sends it (12.1)
 };
 const char* type_name(Type type) noexcept;
 
@@ -468,6 +476,14 @@ struct Ping {          // u32 nonce | u64 server time ms | i16 arrival margin ms
     std::int16_t margin_ms{};
     std::uint8_t delay{};
 };
+struct NetStat {       // u16 rtt ms | u16 spread ms | u8 delay | i16 margin ms | u32 sealed | u32 filled | u32 late | u8 flags (1 in a sealed stream)
+    std::uint16_t rtt_ms{}, spread_ms{};
+    std::uint8_t delay{};
+    std::int16_t margin_ms{};
+    std::uint32_t sealed{}, filled{}, late{};
+    std::uint8_t flags{};
+    static constexpr std::uint8_t in_stream = 1;
+};
 struct Close {         // u8 reason | str text
     CloseReason reason{};
     std::string text;
@@ -527,6 +543,7 @@ std::vector<std::uint8_t> encode(const BarrierWait&);
 std::vector<std::uint8_t> encode_state_body(const StateData&);
 std::vector<std::uint8_t> encode(const Room&);
 std::vector<std::uint8_t> encode(const Ping&);
+std::vector<std::uint8_t> encode(const NetStat&);
 std::vector<std::uint8_t> encode(const Close&);
 std::vector<std::uint8_t> encode(const Roster&);
 std::vector<std::uint8_t> encode(const InstVisit&);
@@ -564,6 +581,7 @@ BarrierWait decode_barrier_wait(std::span<const std::uint8_t>);
 StateData decode_state_body(std::span<const std::uint8_t>);
 Room decode_room(std::span<const std::uint8_t>);
 Ping decode_ping(std::span<const std::uint8_t>);
+NetStat decode_netstat(std::span<const std::uint8_t>);
 Close decode_close(std::span<const std::uint8_t>);
 Roster decode_roster(std::span<const std::uint8_t>);
 InstVisit decode_inst_visit(std::span<const std::uint8_t>);

@@ -72,6 +72,9 @@ public sealed class HubMember(int index, long accountId, string name, bool owner
     public long PingSentAt { get; set; }
     public long LastHeard { get; set; }
     public RttSamples Rtt { get; } = new();
+    /// <summary>The delay rule of the member's newest sealed stream: the next one keeps its bar (a value that proved too low
+    /// for this member's link and game, SEAMLESS.md 6.4), since the link does not change with the stage.</summary>
+    public DelayController? LastDelay { get; set; }
 
     /// <summary>This connection may send RESUME once (its WELCOME said resumable).</summary>
     public bool ResumeAllowed { get; set; }

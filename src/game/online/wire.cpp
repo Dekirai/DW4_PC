@@ -45,6 +45,7 @@ const char* type_name(Type type) noexcept {
     case Type::roster: return "ROSTER";
     case Type::presence2_of: return "PRESENCE2";
     case Type::reassign: return "REASSIGN";
+    case Type::netstat: return "NETSTAT";
     }
     return "?";
 }
@@ -1104,6 +1105,33 @@ Room decode_room(std::span<const std::uint8_t> b) {
     m.member = r.u8();
     m.account = r.u64();
     m.name = r.str8(64);
+    m.flags = r.u8();
+    r.end();
+    return m;
+}
+
+std::vector<std::uint8_t> encode(const NetStat& m) {
+    Writer w;
+    w.u16(m.rtt_ms);
+    w.u16(m.spread_ms);
+    w.u8(m.delay);
+    w.i16(m.margin_ms);
+    w.u32(m.sealed);
+    w.u32(m.filled);
+    w.u32(m.late);
+    w.u8(m.flags);
+    return std::move(w.out);
+}
+NetStat decode_netstat(std::span<const std::uint8_t> b) {
+    Reader r{b};
+    NetStat m;
+    m.rtt_ms = r.u16();
+    m.spread_ms = r.u16();
+    m.delay = r.u8();
+    m.margin_ms = r.i16();
+    m.sealed = r.u32();
+    m.filled = r.u32();
+    m.late = r.u32();
     m.flags = r.u8();
     r.end();
     return m;
