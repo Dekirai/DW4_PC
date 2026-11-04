@@ -8148,9 +8148,11 @@ Further answers (the same day):
 
 The user took every default: 32 (a) free travel inside the instance;
 34 (a) the host removes a guest from the Online menu (10 minutes out,
-blocking removes too); 35 (a) help mode for quest instances; 36 (a) a
-player who was only a guest gets, once at the update, a copy of the story
-of the room he spent the most time in; 37 (a) a defeated host gets the
+blocking removes too); 35 (a) help mode for quest instances; 36 (b) a
+player who was only a guest starts at zero - first answered (a), then
+changed by the user the same evening: "people without a story should not
+take over the room story, that could be abused to finish the game more or
+less at once" (join a far player's room, get his story); 37 (a) a defeated host gets the
 60 s return ("Your guests are still playing. Return to them?"; before
 round I3 the instance ends at once). 33 was not asked; the design keeps
 (a), the same main story.
@@ -8340,7 +8342,7 @@ section 18):
 | Quest instances can be joined by travel to help; the quest's end and reward only for players who took it (question 35) | 19.8.8 |
 | Same story point = difficulty, phase, the main-line flags and the key items (question 33, not asked) | 19.8.6 |
 | A defeated host (game over, or taken along by the side rule) gets a 60 s return from round I3; before I3 the instance ends (question 37) | 19.6.5 |
-| Accounts that were only guests get, once, the story of the room they spent the most time in (question 36) | 19.22 |
+| Accounts that were only guests start at zero; no room story is copied, a copy could be abused to finish the game at once (question 36 (b)) | 19.22 |
 | A party member's board shows his own tiers; the leader's higher quests are reached by helping in them (answer 10 (b) has no case in the world) | 19.8.9 |
 | Staff who play respect blocks and bars; only *Spectate*, *Join as moderator*, *End* and *Remove* override them, each audited | 19.7.2, 19.14 |
 | One world session per account; *Play* on a second PC replaces the first; a replaced host ends his instance | 19.17.3 |
@@ -9805,9 +9807,9 @@ ALTER TABLE accounts            ADD COLUMN last_seen_at DATETIME(3) NULL;
 ALTER TABLE achievement_unlocks ADD COLUMN instance_id BIGINT UNSIGNED NULL AFTER room_id;  -- the history id
 ALTER TABLE speedrun_times      ADD COLUMN instance_id BIGINT UNSIGNED NULL AFTER room_id;
 ALTER TABLE online_story_history
-  MODIFY reason ENUM('room','reset','admin_restore','session','mirror','migration') NOT NULL;
+  MODIFY reason ENUM('room','reset','admin_restore','session','mirror') NOT NULL;
   -- as 0011 did: a world entry writes 'session' (the story before the session's first change,
-  -- as opening a room does today); 'mirror' 19.8.6; 'migration' 19.22 step 2
+  -- as opening a room does today); 'mirror' 19.8.6 (no 'migration': question 36 (b), 19.22)
 -- views v_friends, v_friend_requests, v_blocks, v_instance_history (user names, area names,
 -- durations; players only), v_player_reports and v_staff_audit (the staff rows of audit_log)
 ```
@@ -10186,18 +10188,13 @@ Everything runs online only.
    never touched. The owner plays it as his own from round I1 on; round D's
    data step puts it into box 1. `online_story_history` keeps its rows
    (reason *room*).
-2. **Players who were only guests** (question 36, default (a)). An account
-   whose own story is empty (no `online_story` row, or one at phase 0 with
-   no flags) and that was a member of rooms it did not own gets, once, a
-   copy of the story of the room it spent the most time in
-   (`room_members`: the sum of `left_at - joined_at`, an open row counted to
-   the migration's time; ties: the newer room), as its own story with
-   history reason *migration* (the row says which room's owner it came
-   from). An account with a story of its own keeps it; an account with no
-   room time starts at zero. A migration data step inside the migration's
-   started mark (versioned, idempotent: it skips an account that has a
-   *migration* row). With (b) the step is left out and they start at zero;
-   any instance can be joined anyway (Q5).
+2. **Players who were only guests** (question 36, the user's answer (b)).
+   An account whose own story is empty starts at zero; nothing of a room's
+   story is copied to it. The user rejected the copy (a) because it could
+   be abused: join the room of a player near the end, and the copy finishes
+   the game more or less at once. Any instance can be joined anyway (Q5),
+   so such a player still plays with his friends from the first day. No
+   data step and no history reason *migration*.
 3. **Rooms.** The service start closes every open room as today
    (`CloseLeftoversAsync`, *server_restart*); `rooms` and `room_members`
    stay read-only; `/rooms*` answers 410. A cleanup migration one release
@@ -10295,7 +10292,7 @@ answer (the press released after 1 s); the loading-screen prompt and its
 loss on a disconnect; a travel with its hold and its failure before and
 after the restore; the host's quit, give up and grace; staff join and
 audit; the 410 room endpoints; a protocol 46 refusal; the migration's data
-steps (question 36's copy, the prefs from room settings); achievements in
+steps (the prefs from room settings; no story copy for guest-only accounts, question 36 (b)); achievements in
 the world (*Lone Tamer*, `online_host`, a clear as host and as an in-step
 guest, none for a not-in-step guest); the story reset and restore while
 the player is in the world; a deleted account with friends, blocks and
@@ -10417,7 +10414,7 @@ without the half rate (19.13).
 | --- | --- |
 | relay world | member ids; `POST /world/enter` admission with the fixed world channel and the role `staff` accepted by `HandleAsync`; one world session per account (a replaced host ends his instance); the hub for the world with stage cells (not renamed); `WorldInstance` (`wid` and `HistoryId`, creation with the host in the base group, visibility, seats, the data hash filter, settings and their hash per stage group, the starting window, END, HOME sealed and through JOIN_REQ, the host's grace from the first silence with neutral fill, no `lagOut` and the member timeout's margin, a barrier decided without a lost host and his resume into it); `Decide` / `JoinOrNew` filtered by instance and Visible(), the automatic join by 19.7.3's order; co-arrival with visibility and the starting window; the DISSOLVE redirects; lost instances (WELCOME and RESUME without the instance, a continuing guest filed at its stage); presence server-wide (nearest first; friends in I2) with the selection, tiers and budget; INSTANCE_INFO, WORLD_NOTICE, MEMBER_INFO; the staff role with its live re-check, the visibility bypass and the audit rows; the history queue; the protocol floor; the load gate |
 | story | `StoryKeeper` per (account, box) in the hub's registry, loaded outside the lock; the owner key, *owner* refusals, the earned queue across owners; merge and replace in BARRIER_OK with the own story rebased, in the order of 19.8.3; the grace hold; `StoryReplaced`; *not_started*, epochs, `OwnerSeen`, dropped sets and `Rooms:StoryWhileOwnerAway` retired |
-| server and web | the migration `world` (prefs with `RoomSettings.Default`'s values, history, `last_seen_at`, the achievements' `instance_id`, the story history's reasons, the views; question 36's data step); `WorldService` (counts, the play context with `Play:RequireWorld`, `AccountChanged`, `StoryReplaced`); `ScrubAsync` for the new tables; `/world/*`, `/me/online-prefs`, `/instances`, `/admin/instances` with *End* and *Remove*; 410 for `/rooms*`; DEPLOY.md with the HeidiSQL steps and the protocol setting |
+| server and web | the migration `world` (prefs with `RoomSettings.Default`'s values, history, `last_seen_at`, the achievements' `instance_id`, the story history's reasons, the views; no story copy for guest-only accounts, question 36 (b)); `WorldService` (counts, the play context with `Play:RequireWorld`, `AccountChanged`, `StoryReplaced`); `ScrubAsync` for the new tables; `/world/*`, `/me/online-prefs`, `/instances`, `/admin/instances` with *End* and *Remove*; 410 for `/rooms*`; DEPLOY.md with the HeidiSQL steps and the protocol setting |
 | client | the replace at DISSOLVE and `redirect_pending_stage` with the generate point; HOME with `ForkKind::home`; the local way home (19.6.10); the settings at a restore and at DISSOLVE; the original difficulty dialog online; the world session, member ids, two confirmed stories; the home screen (room screens removed), Online > Settings; the F1 Online tab's *Instance* page (visibility, *Leave instance*), the line under the own status window, notices and toasts; 30 ghost figures, the farther ones at half rate; Discord; `--online-play` |
 | harness | a fresh server per scenario, the world's membership log per instance, `--online-play`, `DW4_ONLINE_AUTOCHOICE`, the regression ported |
 
