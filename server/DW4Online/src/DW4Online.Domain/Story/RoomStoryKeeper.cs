@@ -28,20 +28,24 @@ public sealed record StoryTake(IReadOnlyList<StoryRefused> Refused, bool Changed
 /// The sender's visit as the relay knows it (SEAMLESS.md 8.7): the member, a key that changes with every visit (an
 /// instance visit, or a visit the member plays alone), how long the member has been in it, the member's account (the
 /// per-member rules count per account, so leaving and joining the room again starts nothing new) and the relay's clock in
-/// seconds. The per-visit rules (<see cref="RoomStoryKeeper.Take"/>) count per member and visit.
+/// seconds. The per-visit rules (<see cref="RoomStoryKeeper.Take"/>) count per member and visit. <paramref name="Owner"/>:
+/// the sender is the room owner, whose own steps are not spaced (the spacing guards the owner's story against a guest's
+/// client).
 /// </summary>
-public readonly record struct StoryVisit(int Member, ulong Key, double Seconds, long Account = 0, double At = 0);
+public readonly record struct StoryVisit(int Member, ulong Key, double Seconds, long Account = 0, double At = 0, bool Owner = false);
 
 /// <summary>
 /// The room story of one room session (SEAMLESS.md 8.3-8.7): the owner's online story rebased on the room's difficulty,
 /// the members' pending sets checked for plausibility (the sender's instance stage must set the flag or change the
-/// counter, the phase rises at most one step, counter growth within limits), the per-visit and per-member rules, and the
-/// owner-away policy: merged, dropped (the dropped set every BARRIER_OK carries; a dropped value counts again only from an
-/// instance whose visit began after the drop, that is from an engine the barrier cleaned and that set it anew) or held
-/// until the owner returns. A room whose owner has no online story yet starts at zero: until the owner's own game enters a
-/// stage (<see cref="OwnerStarted"/>) everything is dropped with the reason NotStarted, whatever the policy. Not
-/// thread-safe: the relay calls it under the room lock. It lives as long as the room (the relay keeps it when a room's hub
-/// is rebuilt), so its dropped set, epochs, held values and per-member rules hold for the whole room session.
+/// counter, the phase rises at most one step, the clear flag only of the room's difficulty and only after the last
+/// briefing, counter growth within limits), the per-visit and per-member rules (with the
+/// earned values that wait for them, <see cref="MergeEarned"/>), and the owner-away policy: merged, dropped (the dropped
+/// set every BARRIER_OK carries; a dropped value counts again only from an instance whose visit began after the drop, that
+/// is from an engine the barrier cleaned and that set it anew) or held until the owner returns. A room whose owner has no
+/// online story yet starts at zero: until the owner's own game enters a stage (<see cref="OwnerStarted"/>) everything is
+/// dropped with the reason NotStarted, whatever the policy. Not thread-safe: the relay calls it under the room lock. It
+/// lives as long as the room (the relay keeps it when a room's hub is rebuilt), so its dropped set, epochs, held values,
+/// earned values and per-member rules hold for the whole room session.
 /// </summary>
 public sealed class RoomStoryKeeper
 {
@@ -62,6 +66,17 @@ public sealed class RoomStoryKeeper
     private readonly Dictionary<long, (double Phase, double Key)> _lastSteps = [];
     // Per account: the counter lines it opened in this room session (Instances:StoryLinesPerMember).
     private readonly Dictionary<long, int> _linesOpened = [];
+    // Per account: earned values (SEAMLESS.md 8.7) that passed every check and wait only for the one-per-visit rule or the
+    // spacing, with the epoch of the visit that sent them; merged when due (MergeEarned), whatever stage the member is in.
+    private readonly Dictionary<long, Earned> _earned = [];
+
+    private sealed class Earned
+    {
+        public int Phase { get; set; }
+        public long PhaseEpoch { get; set; }
+        public SortedDictionary<int, long> Keys { get; } = [];
+        public bool IsEmpty => Phase == 0 && Keys.Count == 0;
+    }
 
     private sealed class VisitTally(ulong key)
     {
@@ -108,16 +123,21 @@ public sealed class RoomStoryKeeper
     /// it did not play.
     /// </summary>
     public double MinVisitSeconds { get; init; } = 10;
-    /// <summary>A member's phase steps count at least this far apart (Instances:StoryPhaseStepSeconds; the original's steps
-    /// follow whole dungeons). The rest waits (reason Wait) and counts later.</summary>
+    /// <summary>A guest's phase steps count at least this far apart (Instances:StoryPhaseStepSeconds; the original's steps
+    /// follow whole dungeons). The rest waits (reason Wait) and is merged when due. The owner's own steps are not spaced:
+    /// a new game's phase 2 (the first briefing) comes a few minutes after phase 1 (the lobby's first load).</summary>
     public double PhaseStepSeconds { get; init; } = 300;
-    /// <summary>A member's key items count at least this far apart (Instances:StoryKeySeconds; one pickup at a time).</summary>
+    /// <summary>A guest's key items count at least this far apart (Instances:StoryKeySeconds; one pickup at a time); not the owner's.</summary>
     public double KeySeconds { get; init; } = 60;
     /// <summary>The counter lines one member may open in a room session (Instances:StoryLinesPerMember); more are refused (limit).</summary>
     public int MaxLinesPerMember { get; init; } = 256;
     /// <summary>Rises with every drop; an instance remembers the epoch its visit began in.</summary>
     public long Epoch { get; private set; }
     public int HeldCount => (_heldPhase > 0 ? 1 : 0) + _heldFlags.Count + _heldFolder.Count + _heldLines.Count + _heldGrowth.Count;
+    /// <summary>Earned values waiting for their visit or the spacing (phase steps and key items), over all accounts.</summary>
+    public int EarnedCount => _earned.Values.Sum(e => (e.Phase != 0 ? 1 : 0) + e.Keys.Count);
+    /// <summary>Whether the member (its account; a member without one by its index) has earned values waiting (<see cref="MergeEarned"/>).</summary>
+    public bool HasEarned(int member, long account) => _earned.ContainsKey(AccountOf(member, account));
     /// <summary>The engine lines the keeper remembers (taken and held).</summary>
     public int LineCount => _lines.Count + _heldLines.Count;
 
@@ -144,9 +164,11 @@ public sealed class RoomStoryKeeper
     /// in. Counter lines must already be the sender's own (the relay refuses lines it never put the member in and names
     /// instance 0 lines by the member). With <paramref name="visit"/> (the relay always gives it) the per-visit and
     /// per-member rules apply: everything only from a visit at least <see cref="MinVisitSeconds"/> old, one phase step and
-    /// one key item per member and visit, a member's phase steps <see cref="PhaseStepSeconds"/> and key items
+    /// one key item per member and visit, a guest's phase steps <see cref="PhaseStepSeconds"/> and key items
     /// <see cref="KeySeconds"/> apart, at most <see cref="MaxLinesPerMember"/> counter lines per member (the rest waits,
-    /// reason Wait, and counts from a later visit; lines beyond the limit are refused).
+    /// reason Wait; lines beyond the limit are refused). A phase step or key item that waits only for the one-per-visit
+    /// rule or the spacing is earned: the keeper keeps it and merges it when it is due (<see cref="MergeEarned"/>), so it is
+    /// not lost when the member leaves the stage that set it (round 61 design, 8.8 "Lag").
     /// </summary>
     public StoryTake Take(StoryDelta delta, string? stage, long visitEpoch, StoryVisit? visit = null)
     {
@@ -159,9 +181,10 @@ public sealed class RoomStoryKeeper
         // Plausibility (8.4).
         var ok = new StoryDelta();
         var roomPhase = StoryMerge.Phase(Story, _sets);
+        var reached = Math.Max(roomPhase, Policy == StoryPolicy.Hold && !OwnerPresent ? _heldPhase : 0);
         if (delta.Phase != 0)
         {
-            var limit = Math.Max(roomPhase, Policy == StoryPolicy.Hold && !OwnerPresent ? _heldPhase : 0) + 1;
+            var limit = reached + 1;
             if (delta.Phase > _sets.Phase.Count) refused.Add(new(StoryKeyKind.Phase, delta.Phase, StoryRefusal.NotStory));
             else if (delta.Phase <= roomPhase) { }
             else if (delta.Phase > limit) refused.Add(new(StoryKeyKind.Phase, delta.Phase, StoryRefusal.PhaseJump));
@@ -175,6 +198,10 @@ public sealed class RoomStoryKeeper
             else if (!_sets.SetsFlag(stage, f)) refused.Add(new(StoryKeyKind.Flag, f, StoryRefusal.Stage));
             else if (f is >= FirstClearFlag and < FirstClearFlag + StorySets.Difficulties && f != FirstClearFlag + Difficulty)
                 refused.Add(new(StoryKeyKind.Flag, f, StoryRefusal.Stage)); // another difficulty's clear
+            else if (f == FirstClearFlag + Difficulty && reached < _sets.Phase.Count - 1)
+                // The clear comes from the last boss, after the last briefing (phase 6): a guest that BARRIERed into stagBS06
+                // of a younger story got the owner's clear, and with it the next difficulty's rooms, in ten seconds (round 59).
+                refused.Add(new(StoryKeyKind.Flag, f, StoryRefusal.PhaseJump));
             else ok.Flags.Add(f);
         }
         foreach (var k in delta.Folder.Distinct())
@@ -225,12 +252,68 @@ public sealed class RoomStoryKeeper
             Drop(ok, StoryRefusal.NotStarted, refused);
             return new StoryTake(refused, false);
         }
-        if (visit is { } v) PerVisit(ok, v, refused);
+        if (visit is { } v) PerVisit(ok, v, visitEpoch, refused);
         if (ok.IsEmpty) return new StoryTake(refused, false);
+        return new StoryTake(refused, Apply(ok, refused));
+    }
+
+    /// <summary>
+    /// The account's earned values that are due in its member's visit <paramref name="visit"/> in <paramref name="stage"/>
+    /// (SEAMLESS.md 8.7, the round 61 design's queue): the visit at least <see cref="MinVisitSeconds"/> old and not yet
+    /// given its phase step or key item, a guest's spacing passed. They are taken as if sent now, under the owner-away
+    /// policy of this moment (merged, held or dropped); what the room story has meanwhile, or what was dropped after the
+    /// visit that earned it began (the barrier removes it from that engine), is no longer waited for. The relay calls it
+    /// a few times a second for every member with earned values.
+    /// </summary>
+    public StoryTake MergeEarned(StoryVisit visit, string? stage)
+    {
+        var account = AccountOf(visit);
+        if (!_earned.TryGetValue(account, out var earned)) return new StoryTake([], false);
+        var known = Math.Max(StoryMerge.Phase(Story, _sets), _heldPhase);
+        if (earned.Phase != 0 && (earned.Phase <= known || DroppedSince(_droppedFlags, _sets.Phase[earned.Phase - 1], earned.PhaseEpoch)))
+            earned.Phase = 0;
+        foreach (var (k, epoch) in earned.Keys.ToList())
+            if (Story.Folder[k] != 0 || _heldFolder.Contains(k) || DroppedSince(_droppedFolder, k, epoch))
+                earned.Keys.Remove(k);
+        if (earned.IsEmpty)
+        {
+            _earned.Remove(account);
+            return new StoryTake([], false);
+        }
+        if (!Started || string.IsNullOrEmpty(stage) || stage.StartsWith("stagis", StringComparison.OrdinalIgnoreCase) || visit.Seconds < MinVisitSeconds)
+            return new StoryTake([], false);
+        var tally = Tally(visit);
+        var last = _lastSteps.TryGetValue(account, out var l) ? l : (double.NegativeInfinity, double.NegativeInfinity);
+        var ok = new StoryDelta();
+        if (earned.Phase != 0 && earned.Phase <= known + 1 && tally.PhaseSteps == 0 && (visit.Owner || visit.At - last.Item1 >= PhaseStepSeconds))
+        {
+            ok.Phase = (byte)earned.Phase;
+            earned.Phase = 0;
+            tally.PhaseSteps = 1;
+            last.Item1 = visit.At;
+        }
+        if (earned.Keys.Count > 0 && tally.Keys == 0 && (visit.Owner || visit.At - last.Item2 >= KeySeconds))
+        {
+            var k = earned.Keys.Keys.First();
+            ok.Folder.Add(k);
+            earned.Keys.Remove(k);
+            tally.Keys = 1;
+            last.Item2 = visit.At;
+        }
+        _lastSteps[account] = last;
+        if (earned.IsEmpty) _earned.Remove(account);
+        if (ok.IsEmpty) return new StoryTake([], false);
+        var refused = new List<StoryRefused>();
+        return new StoryTake(refused, Apply(ok, refused));
+    }
+
+    /// <summary>The owner-away policy on values that passed every check: dropped, held or merged. True when the story changed.</summary>
+    private bool Apply(StoryDelta ok, List<StoryRefused> refused)
+    {
         if (!OwnerPresent && Policy == StoryPolicy.Drop)
         {
             Drop(ok, StoryRefusal.OwnerAway, refused);
-            return new StoryTake(refused, false);
+            return false;
         }
         if (!OwnerPresent && Policy == StoryPolicy.Hold)
         {
@@ -243,12 +326,25 @@ public sealed class RoomStoryKeeper
                 _heldLines[key] = Math.Max(_heldLines.GetValueOrDefault(key), g.Growth);
             }
             RefuseAll(ok, StoryRefusal.Held, refused);
-            return new StoryTake(refused, false);
+            return false;
         }
         var r = StoryMerge.Merge(Story, ok, Difficulty, _lines, _sets);
         Story = r.Story;
         refused.AddRange(r.Refused);
-        return new StoryTake(refused, r.Changed);
+        return r.Changed;
+    }
+
+    private static bool DroppedSince(SortedDictionary<int, (long Epoch, StoryRefusal Why)> dropped, int key, long visitEpoch) =>
+        dropped.TryGetValue(key, out var at) && visitEpoch < at.Epoch;
+
+    private static long AccountOf(StoryVisit v) => AccountOf(v.Member, v.Account);
+
+    private static long AccountOf(int member, long account) => account != 0 ? account : -1 - member;
+
+    private VisitTally Tally(StoryVisit v)
+    {
+        if (!_visits.TryGetValue(v.Member, out var tally) || tally.Key != v.Key) _visits[v.Member] = tally = new VisitTally(v.Key);
+        return tally;
     }
 
     /// <summary>The owner came or went (RoomService). Returning under the hold policy merges what was held; returns whether the story changed.</summary>
@@ -330,13 +426,14 @@ public sealed class RoomStoryKeeper
     /// climbs six phases in milliseconds. Everything waits (reason Wait, the client sends it again) until the visit is
     /// <see cref="MinVisitSeconds"/> old (counters too: a client looping barriers opened a line per visit); a visit gives one
     /// phase step and one key item (the original's phase steps follow whole dungeons, and key items come one pickup at a
-    /// time), and a member's phase steps and key items count <see cref="PhaseStepSeconds"/> and <see cref="KeySeconds"/>
-    /// apart (one patient account no longer climbs the whole story in minutes); a member opens at most
-    /// <see cref="MaxLinesPerMember"/> counter lines.
+    /// time), and a guest's phase steps and key items count <see cref="PhaseStepSeconds"/> and <see cref="KeySeconds"/>
+    /// apart (one patient account no longer climbs the owner's story in minutes; the owner's own steps are not spaced, a new
+    /// game's phase 2 follows phase 1 within minutes); a member opens at most <see cref="MaxLinesPerMember"/> counter lines.
+    /// A phase step or key item that waits only for the one-per-visit rule or the spacing is earned (<see cref="MergeEarned"/>).
     /// </summary>
-    private void PerVisit(StoryDelta ok, StoryVisit v, List<StoryRefused> refused)
+    private void PerVisit(StoryDelta ok, StoryVisit v, long visitEpoch, List<StoryRefused> refused)
     {
-        if (!_visits.TryGetValue(v.Member, out var tally) || tally.Key != v.Key) _visits[v.Member] = tally = new VisitTally(v.Key);
+        var tally = Tally(v);
         if (v.Seconds < MinVisitSeconds)
         {
             RefuseAll(ok, StoryRefusal.Wait, refused);
@@ -346,13 +443,16 @@ public sealed class RoomStoryKeeper
             ok.Counters.Clear();
             return;
         }
-        var account = v.Account != 0 ? v.Account : -1 - v.Member;
+        var account = AccountOf(v);
         var last = _lastSteps.TryGetValue(account, out var l) ? l : (double.NegativeInfinity, double.NegativeInfinity);
         if (ok.Phase != 0)
         {
-            if (tally.PhaseSteps > 0 || v.At - last.Item1 < PhaseStepSeconds)
+            if (tally.PhaseSteps > 0 || (!v.Owner && v.At - last.Item1 < PhaseStepSeconds))
             {
                 refused.Add(new(StoryKeyKind.Phase, ok.Phase, StoryRefusal.Wait));
+                var earned = EarnedOf(account);
+                if (ok.Phase > earned.Phase) (earned.Phase, earned.PhaseEpoch) = (ok.Phase, visitEpoch);
+                else if (ok.Phase == earned.Phase) earned.PhaseEpoch = Math.Max(earned.PhaseEpoch, visitEpoch);
                 ok.Phase = 0;
             }
             else
@@ -365,7 +465,12 @@ public sealed class RoomStoryKeeper
         ok.Folder.Clear();
         foreach (var k in keys)
         {
-            if (tally.Keys > 0 || v.At - last.Item2 < KeySeconds) refused.Add(new(StoryKeyKind.Folder, k, StoryRefusal.Wait));
+            if (tally.Keys > 0 || (!v.Owner && v.At - last.Item2 < KeySeconds))
+            {
+                refused.Add(new(StoryKeyKind.Folder, k, StoryRefusal.Wait));
+                var earned = EarnedOf(account);
+                earned.Keys[k] = Math.Max(earned.Keys.GetValueOrDefault(k, long.MinValue), visitEpoch);
+            }
             else
             {
                 ok.Folder.Add(k);
@@ -386,6 +491,12 @@ public sealed class RoomStoryKeeper
             }
             else _linesOpened[account] = opened + 1;
         }
+    }
+
+    private Earned EarnedOf(long account)
+    {
+        if (!_earned.TryGetValue(account, out var e)) _earned[account] = e = new Earned();
+        return e;
     }
 
     private static void RefuseAll(StoryDelta d, StoryRefusal why, List<StoryRefused> into)

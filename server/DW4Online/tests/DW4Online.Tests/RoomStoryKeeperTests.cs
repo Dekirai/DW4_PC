@@ -180,7 +180,9 @@ public class RoomStoryKeeperTests
     [Fact]
     public void A_room_takes_only_the_clear_flag_of_its_own_difficulty_and_counters_within_the_wallet()
     {
-        var hard = Keeper(difficulty: 1);
+        var owner = new RoomStoryData();
+        owner.Flags[12] = 1; // the hard copy of phase 6 (the last briefing)
+        var hard = Keeper(difficulty: 1, story: owner);
         var t = hard.Take(Flags(406, 407, 408), "stagBS06", 0);
         Assert.True(t.Changed);
         Assert.Equal(1, hard.Story.Flags[407]);
@@ -188,6 +190,37 @@ public class RoomStoryKeeperTests
         // COUNTER 1 counts donated bits (wallet and bank hold at most 9,999,999 each).
         Assert.Equal(StoryRefusal.Limit, hard.Take(new StoryDelta { Counters = [new CounterGrowth(1, 3, 1, 20_000_001)] }, "stagML13", 0).Refused.Single().Reason);
         Assert.True(hard.Take(new StoryDelta { Counters = [new CounterGrowth(1, 3, 1, 19_999_998)] }, "stagML13", 0).Changed);
+    }
+
+    /// <summary>
+    /// The clear flag comes from the last boss, after the last briefing (phase 6): the round 59 review's guest BARRIERed into
+    /// stagBS06 of a younger story and gave the owner a clear (and the next difficulty's rooms) in ten seconds. Under hold
+    /// the held phase counts, as for the phase limit.
+    /// </summary>
+    [Fact]
+    public void The_clear_flag_needs_the_last_briefing()
+    {
+        var five = new RoomStoryData();
+        five.Flags[5] = 1;   // working phase 5
+        five.Flags[704] = 1; // its normal copy (the room rebases on it)
+        var k = Keeper(story: five);
+        Assert.Equal(5, StoryMerge.Phase(k.Story));
+        Assert.Equal(new StoryRefused(StoryKeyKind.Flag, 406, StoryRefusal.PhaseJump), k.Take(Flags(406), "stagBS06", 0).Refused.Single());
+        Assert.Equal(0, k.Story.Flags[406]);
+        // Phase 6 and then the clear (with phase 7 in the same set, as the last boss gives both).
+        Assert.True(k.Take(new StoryDelta { Phase = 6 }, "stagML02", 0).Changed);
+        var t = k.Take(new StoryDelta { Phase = 7, Flags = [406] }, "stagBS06", 0);
+        Assert.True(t.Changed);
+        Assert.Empty(t.Refused);
+        Assert.Equal(1, k.Story.Flags[406]);
+        Assert.Equal(7, StoryMerge.Phase(k.Story));
+        // Hold: the held phase 6 lets the clear be held too; both merge when the owner returns.
+        var hold = Keeper(StoryPolicy.Hold, ownerPresent: false, story: five);
+        Assert.Equal(StoryRefusal.Held, hold.Take(new StoryDelta { Phase = 6 }, "stagML02", 0).Refused.Single().Reason);
+        Assert.Equal(StoryRefusal.Held, hold.Take(Flags(406), "stagBS06", 0).Refused.Single().Reason);
+        Assert.True(hold.SetOwnerPresent(true));
+        Assert.Equal(1, hold.Story.Flags[406]);
+        Assert.Equal(6, StoryMerge.Phase(hold.Story));
     }
 
     /// <summary>
@@ -238,6 +271,101 @@ public class RoomStoryKeeperTests
         Assert.True(k.Take(new StoryDelta { Phase = 3 }, "stagML02", 0, V(1, 6, 1300)).Changed);
         // The same account under another member index (it left and joined again) is the same member.
         Assert.Equal(StoryRefusal.Wait, k.Take(new StoryDelta { Phase = 4 }, "stagML02", 0, new StoryVisit(5, 9, 15, 101, 1301)).Refused.Single().Reason);
+    }
+
+    /// <summary>
+    /// The round 61 design's finding on round 59: every new game makes phase 1 at the lobby's first load and phase 2 at the
+    /// first briefing a minute or two later. The owner's phase 2 waited for the five minutes, was refused for the stage once
+    /// the owner left stagML02, and the room story stayed at phase 1. The owner's own steps are not spaced (one per visit
+    /// still); a step that waits for that rule or a guest's spacing is earned and merged when due, in any stage.
+    /// </summary>
+    [Fact]
+    public void The_owners_steps_are_not_spaced_and_a_waiting_step_is_merged_when_due()
+    {
+        var k = Keeper();
+        StoryVisit Owner(ulong key, double at, double seconds = 15) => new(0, key, seconds, 100, at, Owner: true);
+        StoryVisit Guest(ulong key, double at, double seconds = 15) => new(1, key, seconds, 101, at);
+        Assert.True(k.Take(new StoryDelta { Phase = 1 }, "stagML11", 0, Owner(1, 1000)).Changed);
+        Assert.True(k.Take(new StoryDelta { Phase = 2, Folder = [0] }, "stagML02", 0, Owner(2, 1060)).Changed);
+        Assert.Equal(2, StoryMerge.Phase(k.Story));
+        // One phase step and one key item per visit hold for the owner too: the second ones are earned ...
+        var t = k.Take(new StoryDelta { Phase = 3, Folder = [1] }, "stagML02", 0, Owner(2, 1070));
+        Assert.Equal(2, t.Refused.Count(r => r.Reason == StoryRefusal.Wait));
+        Assert.Equal(2, k.EarnedCount);
+        // ... and merged in a later visit ten seconds old, whatever its stage (stag0001 sets neither).
+        Assert.False(k.MergeEarned(Owner(2, 1080), "stagML02").Changed);
+        Assert.False(k.MergeEarned(Owner(3, 1081, 5), "stag0001").Changed);
+        Assert.False(k.MergeEarned(Owner(4, 1100, 15), "stagIS12").Changed); // (not from the save room or the title)
+        Assert.True(k.MergeEarned(Owner(5, 1101, 12), "stag0001").Changed);
+        Assert.Equal(3, StoryMerge.Phase(k.Story));
+        Assert.Equal(1, k.Story.Folder[1]);
+        Assert.Equal(0, k.EarnedCount);
+        Assert.False(k.HasEarned(0, 100));
+
+        // A guest's steps stay spaced: its first counts, the next within five minutes (key items: one minute) is earned and
+        // merged once the time has passed, in a later visit.
+        Assert.True(k.Take(new StoryDelta { Phase = 4, Folder = [2] }, "stagML02", 0, Guest(10, 1200)).Changed);
+        t = k.Take(new StoryDelta { Phase = 5, Folder = [3] }, "stagML02", 0, Guest(11, 1230));
+        Assert.Equal(2, t.Refused.Count(r => r.Reason == StoryRefusal.Wait));
+        Assert.False(k.MergeEarned(Guest(12, 1259), "stag0101").Changed);
+        Assert.True(k.MergeEarned(Guest(12, 1261), "stag0101").Changed); // the key item, a minute after the last
+        Assert.Equal(1, k.Story.Folder[3]);
+        Assert.Equal(4, StoryMerge.Phase(k.Story));
+        Assert.False(k.MergeEarned(Guest(13, 1499), "stag0101").Changed);
+        Assert.True(k.MergeEarned(Guest(13, 1500), "stag0101").Changed);
+        Assert.Equal(5, StoryMerge.Phase(k.Story));
+        Assert.Equal(0, k.EarnedCount);
+        // What the room story got meanwhile (another member's step) is no longer waited for.
+        Assert.True(k.Take(new StoryDelta { Phase = 6, Folder = [4] }, "stagML02", 0, Guest(14, 1800)).Changed);
+        Assert.Equal(StoryRefusal.Wait, k.Take(new StoryDelta { Folder = [5] }, "stag0101", 0, Guest(15, 1810)).Refused.Single().Reason);
+        Assert.Equal(1, k.EarnedCount);
+        Assert.True(k.Take(new StoryDelta { Folder = [5] }, "stag0101", 0, Owner(16, 1811)).Changed);
+        Assert.False(k.MergeEarned(Guest(17, 1900), "stag0101").Changed);
+        Assert.Equal(0, k.EarnedCount);
+    }
+
+    /// <summary>
+    /// An earned value takes the owner-away policy of the moment it is due (dropped, held, merged); one that was dropped
+    /// after the visit that earned it began is forgotten (the barrier removes it from that engine; it counts again when set
+    /// anew). A room that has not started earns nothing (everything is dropped before the per-visit rules).
+    /// </summary>
+    [Fact]
+    public void Earned_values_follow_the_owner_away_policy_of_the_moment_they_are_due()
+    {
+        StoryVisit Guest(ulong key, double at) => new(1, key, 15, 101, at);
+        var drop = Keeper();
+        Assert.True(drop.Take(new StoryDelta { Folder = [0] }, "stag0101", 0, Guest(1, 100)).Changed);
+        drop.Take(new StoryDelta { Folder = [1] }, "stag0101", 0, Guest(2, 110));
+        drop.SetOwnerPresent(false);
+        var t = drop.MergeEarned(Guest(3, 200), "stag0101");
+        Assert.False(t.Changed);
+        Assert.Equal(new StoryRefused(StoryKeyKind.Folder, 1, StoryRefusal.OwnerAway), t.Refused.Single());
+        Assert.Contains(1, drop.Dropped.Folder);
+        Assert.Equal(0, drop.EarnedCount);
+
+        var hold = Keeper(StoryPolicy.Hold);
+        Assert.True(hold.Take(new StoryDelta { Folder = [0] }, "stag0101", 0, Guest(1, 100)).Changed);
+        hold.Take(new StoryDelta { Folder = [1] }, "stag0101", 0, Guest(2, 110));
+        hold.SetOwnerPresent(false);
+        Assert.Equal(StoryRefusal.Held, hold.MergeEarned(Guest(3, 200), "stag0101").Refused.Single().Reason);
+        Assert.True(hold.SetOwnerPresent(true));
+        Assert.Equal(1, hold.Story.Folder[1]);
+
+        // Earned in a visit of epoch 0, dropped afterwards from another member (epoch 1): forgotten.
+        var stale = Keeper();
+        Assert.True(stale.Take(new StoryDelta { Folder = [0] }, "stag0101", 0, Guest(1, 100)).Changed);
+        stale.Take(new StoryDelta { Folder = [1] }, "stag0101", 0, Guest(2, 110));
+        stale.SetOwnerPresent(false);
+        stale.Take(new StoryDelta { Folder = [1] }, "stag0101", 0, new StoryVisit(2, 9, 15, 102, 120));
+        stale.SetOwnerPresent(true);
+        Assert.Empty(stale.MergeEarned(Guest(3, 200), "stag0101").Refused);
+        Assert.Equal(0, stale.Story.Folder[1]);
+        Assert.Equal(0, stale.EarnedCount);
+
+        var notStarted = new RoomStoryKeeper(new RoomStoryData(), 0, StoryPolicy.Apply, ownerPresent: true, started: false);
+        notStarted.Take(new StoryDelta { Folder = [0] }, "stag0101", 0, Guest(1, 100));
+        notStarted.Take(new StoryDelta { Folder = [1] }, "stag0101", 0, Guest(1, 100));
+        Assert.Equal(0, notStarted.EarnedCount);
     }
 
     /// <summary>

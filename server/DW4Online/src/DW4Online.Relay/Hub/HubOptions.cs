@@ -28,13 +28,15 @@ public sealed class InstanceOptions
     /// <summary>STORY messages a member may send per minute beyond <see cref="StoryBurst"/>; more are refused (reason rate) and sent again.</summary>
     public int StoryMessagesPerMinute { get; set; } = 60;
     public int StoryBurst { get; set; } = 10;
-    /// <summary>Phase steps, flags and key items count only from a visit the member has been in this long (the client sends
-    /// them again meanwhile, reason wait); a visit gives one phase step and one key item (SEAMLESS.md 8.7).</summary>
+    /// <summary>Phase steps, flags, key items and counter growth count only from a visit the member has been in this long (the
+    /// client sends them again meanwhile, reason wait); a visit gives one phase step and one key item, a further one is
+    /// earned and merged in a later visit (SEAMLESS.md 8.7).</summary>
     public double StoryMinVisitSeconds { get; set; } = 10;
-    /// <summary>A member's phase steps count at least this far apart in a room session (the rest waits); the original's
-    /// steps follow whole dungeons (SEAMLESS.md 8.7).</summary>
+    /// <summary>A guest's phase steps count at least this far apart in a room session (an earlier one is earned and merged
+    /// when due); the original's steps follow whole dungeons. The owner's own steps are not spaced (SEAMLESS.md 8.7).</summary>
     public double StoryPhaseStepSeconds { get; set; } = 300;
-    /// <summary>A member's key items count at least this far apart in a room session (the rest waits).</summary>
+    /// <summary>A guest's key items count at least this far apart in a room session (an earlier one is earned and merged when
+    /// due); not the owner's.</summary>
     public double StoryKeySeconds { get; set; } = 60;
     /// <summary>The counter lines one member may open in a room session; more are refused (limit).</summary>
     public int StoryLinesPerMember { get; set; } = 256;

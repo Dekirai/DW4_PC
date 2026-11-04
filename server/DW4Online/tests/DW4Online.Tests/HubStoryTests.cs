@@ -227,14 +227,16 @@ public class HubStoryTests
         h.Advance(11_000);
         for (byte p = 2; p <= 6; ++p) h.Story("b", new StoryDelta { Phase = p });
         Assert.Equal(2, h.Hub.StoryState().Phase);
-        // Phase 7 (the game cleared) is five steps away; the clear flags only of the room's difficulty (normal: 406).
+        // Phase 7 (the game cleared) is five steps away; the clear flags only of the room's difficulty (normal: 406), and
+        // that one only after the last briefing (phase 6; round 59: the review's guest gave a phase 2 story the clear).
         h.Barrier("b", "stagbs06");
         h.Advance(11_000);
         var ack = h.Story("b", new StoryDelta { Phase = 7, Flags = [406, 407, 408] });
         Assert.Contains(new StoryRefused(StoryKeyKind.Phase, 7, StoryRefusal.PhaseJump), ack.Refused);
+        Assert.Contains(new StoryRefused(StoryKeyKind.Flag, 406, StoryRefusal.PhaseJump), ack.Refused);
         Assert.Contains(new StoryRefused(StoryKeyKind.Flag, 407, StoryRefusal.Stage), ack.Refused);
         Assert.Contains(new StoryRefused(StoryKeyKind.Flag, 408, StoryRefusal.Stage), ack.Refused);
-        Assert.Contains(406, h.Hub.StoryState().Flags);
+        Assert.DoesNotContain(406, h.Hub.StoryState().Flags);
         Assert.DoesNotContain(407, h.Hub.StoryState().Flags);
         // Every key item at once: one counts, the others wait for later visits.
         h.Barrier("b", "stag0101");
@@ -326,10 +328,56 @@ public class HubStoryTests
     }
 
     /// <summary>
+    /// The round 61 design's finding on round 59 (C1 on real clients showed it too): a new owner's phase 2, the first
+    /// briefing a minute after the lobby's phase 1, waited for the five-minute spacing, was refused for the stage once the
+    /// owner left stagML02, and the room story stayed at phase 1 for the room session. The owner's own steps are not spaced;
+    /// a guest's step that waits for the spacing is earned and merged by the relay when due, from whatever stage the guest
+    /// plays in then, and everyone gets the new revision.
+    /// </summary>
+    [Fact]
+    public void A_new_owners_phase_2_counts_and_a_guests_waiting_step_is_merged_when_due()
+    {
+        var h = new Harness(StoryPolicy.Drop, instances: new InstanceOptions { StoryBurst = 1000 }, started: false);
+        var a = h.Connect("a", 0);
+        h.Connect("b", 1);
+        h.Barrier("a", "stagml11");
+        h.Advance(11_000);
+        Assert.Empty(h.Story("a", new StoryDelta { Phase = 1 }).Refused);
+        h.Barrier("a", "stagml02");
+        h.Advance(60_000);
+        Assert.Empty(h.Story("a", new StoryDelta { Phase = 2 }).Refused);
+        Assert.Equal(2, h.Hub.StoryState().Phase);
+        // The guest plays ahead: its first step counts, its next one within five minutes waits ...
+        h.Barrier("b", "stagml02");
+        h.Advance(11_000);
+        Assert.Empty(h.Story("b", new StoryDelta { Phase = 3 }).Refused);
+        h.Barrier("b", "stagml12");
+        h.Barrier("b", "stagml02");
+        h.Advance(11_000);
+        Assert.Equal(StoryRefusal.Wait, h.Story("b", new StoryDelta { Phase = 4 }).Refused.Single().Reason);
+        // ... is earned, and the guest leaves stagML02, where a resend would be refused for the stage.
+        h.Barrier("b", "stag0101");
+        Assert.Equal(StoryRefusal.Stage, h.Story("b", new StoryDelta { Phase = 4 }).Refused.Single().Reason);
+        h.Advance(60_000);
+        h.Hub.Housekeep(h.Now);
+        Assert.Equal(3, h.Hub.StoryState().Phase);
+        h.Advance(230_000); // five minutes after its last step
+        var acks = a.Acks.Count;
+        var saved = h.Saved.Count;
+        h.Hub.Housekeep(h.Now);
+        Assert.Equal(4, h.Hub.StoryState().Phase);
+        Assert.Equal(acks + 1, a.Acks.Count);
+        Assert.Equal(saved + 1, h.Saved.Count);
+        Assert.Equal(4, StoryMerge.Phase(h.Saved[^1].Story));
+        h.Hub.Housekeep(h.Now);
+        Assert.Equal(saved + 1, h.Saved.Count);
+    }
+
+    /// <summary>
     /// The patient forgery of the round 59 review: a guest that BARRIERs into stagML02, waits a little over ten seconds and
-    /// sends the next phase and a key item, again and again, climbed to the clear in under two minutes. A member's phase
+    /// sends the next phase and a key item, again and again, climbed to the clear in under two minutes. A guest's phase
     /// steps now count five minutes apart and its key items a minute apart (Instances:StoryPhaseStepSeconds,
-    /// StoryKeySeconds; the rest waits).
+    /// StoryKeySeconds; the rest waits, earned, and the relay merges it when due, no sooner).
     /// </summary>
     [Fact]
     public void A_patient_forger_gets_one_phase_step_per_five_minutes_and_one_key_item_per_minute()
@@ -343,6 +391,7 @@ public class HubStoryTests
             h.Barrier("b", "stagml02");
             h.Advance(10_300);
             h.Story("b", new StoryDelta { Phase = (byte)(h.Hub.StoryState().Phase + 1), Folder = [n % 11] });
+            h.Hub.Housekeep(h.Now);
         }
         Assert.Equal(1, h.Hub.StoryState().Phase);
         Assert.Equal(2, h.Hub.StoryState().Folder.Count); // at 10.3 s and at 72.1 s

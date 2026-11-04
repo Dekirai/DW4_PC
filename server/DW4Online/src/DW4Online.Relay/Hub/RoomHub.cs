@@ -1946,7 +1946,15 @@ public sealed class RoomHub
             if (lines.Count > 0) take = take with { Refused = [.. take.Refused, .. lines] };
         }
         if (take.Refused.Count > 0) Count("story_refused", take.Refused.Count);
-        // The membership log names what the owner-away policy took (the scenarios of SEAMLESS.md 16 check it).
+        NotePolicy(m, take, at);
+        // (A STORY refused for the rate changed nothing: its answer carries no story, 21 bytes of request were 1,120 of answer.)
+        m.Peer?.Send(new StoryAckMsg(keeper.Story.Revision, rated ? [] : keeper.Story.ToBlob(), StoryAckMsg.Answer, take.Refused).Frame());
+        if (take.Changed) StoryChanged(m);
+    }
+
+    /// <summary>The membership log names what the owner-away policy took (the scenarios of SEAMLESS.md 16 check it).</summary>
+    private void NotePolicy(HubMember m, StoryTake take, HubInstance? at)
+    {
         foreach (var (why, ev) in new[] { (StoryRefusal.OwnerAway, "story_dropped"), (StoryRefusal.NotStarted, "story_dropped"),
                      (StoryRefusal.Held, "story_held") })
         {
@@ -1955,9 +1963,31 @@ public sealed class RoomHub
             if (why == StoryRefusal.NotStarted) Note(ev, at, ("member", m.Index), ("keys", string.Join(",", keys)), ("reason", "not_started"));
             else Note(ev, at, ("member", m.Index), ("keys", string.Join(",", keys)));
         }
-        // (A STORY refused for the rate changed nothing: its answer carries no story, 21 bytes of request were 1,120 of answer.)
-        m.Peer?.Send(new StoryAckMsg(keeper.Story.Revision, rated ? [] : keeper.Story.ToBlob(), StoryAckMsg.Answer, take.Refused).Frame());
-        if (take.Changed) StoryChanged(m);
+    }
+
+    /// <summary>
+    /// The earned story values that are due (SEAMLESS.md 8.7): a phase step or key item that waited only for the
+    /// one-per-visit rule or a guest's spacing is merged in its member's later visit, whatever stage the member plays in
+    /// then (the stage that set it may be long left, where a resend would be refused for the stage); every member gets the
+    /// new revision. The client keeps sending such a value meanwhile and is answered wait, as before.
+    /// </summary>
+    private void MergeEarned(long now)
+    {
+        if (_session.Story is not { EarnedCount: > 0 } keeper) return;
+        var changed = false;
+        foreach (var m in _members.Values.OrderBy(x => x.Index).ToList())
+        {
+            if (!keeper.HasEarned(m.Index, m.AccountId)) continue;
+            var (stage, _, visit, inst) = StoryOrigin(m, now);
+            if (visit is not { } v) continue;
+            var take = keeper.MergeEarned(v, stage);
+            NotePolicy(m, take, inst);
+            if (!take.Changed) continue;
+            changed = true;
+            Count("story_earned");
+            Note("story_earned", inst, ("member", m.Index), ("phase", StoryMerge.Phase(keeper.Story)));
+        }
+        if (changed) StoryChanged(null);
     }
 
     /// <summary>
@@ -1974,13 +2004,13 @@ public sealed class RoomHub
         if (m.Instance is { Ended: false } i && m.Slot >= 0 && m.Arrival is null && !string.IsNullOrEmpty(i.Stage))
         {
             var since = Math.Max(m.InstanceSince, i.VisitStartedAt);
-            return (i.Stage, i.StoryEpoch, new StoryVisit(m.Index, (ulong)i.Id << 32 | i.Visit, Ms(now - since) / 1000.0, m.AccountId, at), i);
+            return (i.Stage, i.StoryEpoch, new StoryVisit(m.Index, (ulong)i.Id << 32 | i.Visit, Ms(now - since) / 1000.0, m.AccountId, at, m.Owner), i);
         }
         if (m.Arrival is { } a)
-            return (a.Stage, m.VisitEpoch, new StoryVisit(m.Index, 1UL << 63 | (ulong)a.ParkedAt, Ms(now - a.ParkedAt) / 1000.0, m.AccountId, at), null);
+            return (a.Stage, m.VisitEpoch, new StoryVisit(m.Index, 1UL << 63 | (ulong)a.ParkedAt, Ms(now - a.ParkedAt) / 1000.0, m.AccountId, at, m.Owner), null);
         if (m.LoneStage is { } lone)
             return (lone, m.VisitEpoch, new StoryVisit(m.Index, m.LoneKey != 0 ? m.LoneKey : 1UL << 63 | (ulong)m.LoneSince,
-                Ms(now - m.LoneSince) / 1000.0, m.AccountId, at), null);
+                Ms(now - m.LoneSince) / 1000.0, m.AccountId, at, m.Owner), null);
         return (null, 0, null, null);
     }
 
@@ -2142,7 +2172,7 @@ public sealed class RoomHub
 
     // Housekeeping ---------------------------------------------------------------------------------------------------------
 
-    /// <summary>Pings, holds, lag and reconnect limits, the roster (the relay calls it a few times per second).</summary>
+    /// <summary>Pings, holds, lag and reconnect limits, the earned story values, the roster (the relay calls it a few times per second).</summary>
     public void Housekeep(long now)
     {
         if (Ms(now - _lastPing) >= 1000)
@@ -2179,6 +2209,14 @@ public sealed class RoomHub
         catch (Exception e)
         {
             Fault(e, "the barrier holds");
+        }
+        try
+        {
+            MergeEarned(now);
+        }
+        catch (Exception e)
+        {
+            Fault(e, "the earned story values");
         }
         CachedViews = Views();
         foreach (var i in _instances.Values)
