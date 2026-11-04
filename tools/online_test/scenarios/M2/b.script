@@ -1,13 +1,15 @@
 # M2, member b (k10): with a into dng101b1; opens its menu among GENE-01's e_nume near the entrance while a fights
 # them beside it and is hit there; then walks about near the entrance (fighting the e_nume) while a
-# reads the map recorder far away.
+# reads the map recorder far away. Its menu opens a few steps from GENE-01's spawn point (-285, 240), which a
+# starts on the entrance mat: from (-300, 335) the e_nume sometimes went for a instead and b was never hit
+# (run 20261104_150825).
 campaign until stage=stagml11,control
 idle until epoch>=@91
 explore mate00 yes until stage=stag0101,control
 log in the field
 explore matz00 yes 2 until stage=dng101b1,control
 log b in the dungeon
-goto -300 335 10 fail stagechange
+goto -296 268 8 fail stagechange
 menu until menu=1 fail stagechange
 idle until lost>=1 fail stagechange,menu=0,frames>=3000
 log b was hit in its menu

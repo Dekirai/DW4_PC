@@ -13,6 +13,10 @@ fight -300 330 40 until menus>=1 or frames>=1800 fail stagechange,dead
 log a fights near b in its menu
 fight -300 330 40 until frames>=480 fail stagechange,dead
 shot a_b_in_menu
+# The explore bot to GENE-03's mat first (matg03 starts the wave): the planned route straight at GENE-03's
+# ground ran east along z 235 into the wall at x -190 and stayed there (the review's failed run
+# 20261104_121719), and the corridor south of the entrance is walled at x -222.
+explore matg03 until flag:102>=1 or frames>=4000 fail stagechange,dead
 fight -180 20 90 until flag:102>=1 or frames>=6000 fail stagechange,dead,frames>=5990
 log the door to the map recorder is open
 talkto n_recorderdng#0 until talking=1 or frames>=3000 fail stagechange,dead,frames>=2990
