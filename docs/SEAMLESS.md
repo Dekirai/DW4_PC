@@ -6721,6 +6721,15 @@ player, means per box with four characters per account: 9.1.9.)
     record them when round R starts? Default: round R plans for the worst
     case.
 
+### Answers of round 65 (user, 2026-11-04)
+
+15. Order: **round J first (instant joins and checkpoints), then round R
+   (rollback) with UDP.**
+16. Sound effects under rollback: **(a) play at once** (a mispredicted
+   partner's effect may cut short or come about a ping late); music waits.
+17. Pad recordings: **yes** - the user records a few minutes of normal play
+   in a field (gamepad and keyboard) when round R starts (F1 switch).
+
 ## 19. Risks
 
 - **Multi-camera semantics** have no Dolphin reference: an actor animates when
