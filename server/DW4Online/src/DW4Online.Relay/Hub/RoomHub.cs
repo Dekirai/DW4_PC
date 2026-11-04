@@ -1770,6 +1770,9 @@ public sealed class RoomHub
         // The joined visit's epoch (the joiner's engine is that visit's snapshot and ticks), and the owner's arrival (8.6).
         m.VisitEpoch = target.StoryEpoch;
         m.VisitOwnerSeen = target.OwnerSeen;
+        // The joined visit's engine line, as Place gives it (8.7): the joiner's counters grow in it like its partners'
+        // (a line keeps the largest growth reported, so the same line from two members does not count twice).
+        if (!string.IsNullOrEmpty(target.Stage)) AllowLine(m, target.Id, target.Visit);
         OwnerEnters(m, target, visitBegins: false);
     }
 
