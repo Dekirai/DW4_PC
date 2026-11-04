@@ -3923,7 +3923,11 @@ from a visit that began before it, is dropped) and two smaller ones:
   barrier has cleaned since; a value dropped in that visit (before the start
   or while the owner was away) counted again from the same engine. The
   member now keeps its last visit's epoch until the relay places it in a
-  visit with a stage.
+  visit with a stage. And a join completes outside `Place`: the owner's
+  arrival by a join neither started a room at zero nor marked the visit as
+  the owner's, and the joiner kept its previous visit's epoch. Both go
+  through `RoomHub.OwnerEnters` now, and a joiner takes the joined visit's
+  epoch.
 
 **Storage.** Migration 0008 adds `online_story (account_id, revision, flags
 VARBINARY(1024), folder BINARY(12), counters BINARY(64) as 16 x i32 LE,
