@@ -1,13 +1,16 @@
 // Data Overflow's host side without game data (docs/SURVIVAL.md 13.2-13.3,
 // round O1a lane A): the run request, the story's system generator across a
 // run engine's construction and life, the test variables a run keeps out,
-// the throwaway memory cards, the run engine's setup and the story switch.
+// the throwaway memory cards, the run engine's setup (with lane B's rules,
+// as the drivers attach them) and the story switch.
 #include "dw4/engine/engine.hpp"
 #include "dw4/engine/managers.hpp"
+#include "dw4/engine/overflow.hpp"
 #include "../src/game/overflow_run.hpp"
 
 #include <cstdlib>
 #include <filesystem>
+#include <memory>
 #include <iostream>
 #include <stdexcept>
 #include <string>
@@ -172,6 +175,35 @@ void run_engine() {
     set_env("DW4_GOD", nullptr);
 }
 
+// The host's run engine with lane B's rules (the stand-in driver's attach):
+// the host's arena request passes, every other stage change and both resets
+// stay out and the rules report the end once.
+void run_rules() {
+    Engine run{dw4::MountedResources{}};
+    ov::RunCards cards;
+    ov::prepare_run_engine(run, ov::RunRequest{}, cards.root());
+    auto rules = std::make_shared<overflow::OverflowRules>(overflow::RuleSet::run);
+    run.set_overflow_rules(rules);
+    check(run.overflow() == rules.get() && run.overflow_run(), "the run engine carries the run's rules");
+    run.set_reset_enabled(true);
+    check(!run.console_reset().enabled(), "no console reset in a run (H3)");
+    run.set_soft_reset_allowed(true);
+    check(!run.soft_reset_allowed(), "no soft reset in a run (H3)");
+    run.request_stage("STAGBS02");
+    check(run.pending_stage() && *run.pending_stage() == "stagbs02" && !rules->ended(), "the host's arena request passes");
+    run.request_stage("stagml11");
+    check(run.pending_stage() && *run.pending_stage() == "stagbs02", "another stage request is refused");
+    check(rules->ended() && rules->ended()->reason == overflow::EndReason::stage_exit && rules->ended()->target == "stagml11",
+          "and becomes the run's end (stage exit)");
+    run.request_stage("stag0101");
+    check(rules->ended()->target == "stagml11", "the end is reported once");
+    // The story's engine has none of it.
+    Engine story{dw4::MountedResources{}};
+    check(!story.overflow() && !story.overflow_run(), "an engine without rules");
+    story.set_reset_enabled(true);
+    check(story.console_reset().enabled(), "keeps its console reset");
+}
+
 void story_switch() {
     ov::StorySwitch sw;
     check(!sw.busy() && !sw.due() && sw.black() == 0.0f && sw.gain() == 1.0f, "idle: no black, the story's sound as it is");
@@ -208,6 +240,7 @@ int main() {
         test_variables();
         cards();
         run_engine();
+        run_rules();
         story_switch();
         names();
     } catch (const std::exception& error) {

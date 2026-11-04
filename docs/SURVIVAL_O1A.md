@@ -43,6 +43,15 @@ SURVIVAL.md 13.5 says. Spawning is the research's recipe: `MODELCTRL
 <action>` with strings {"p_<form>"}, ints {slot} (the cast sound is the
 director's).
 
+**Where the host hands them over** (lane A, docs/OVERFLOW_HOST.md 2 and 7):
+`RunDriver::attach(run, request)` runs after `prepare_run_engine` and before
+the host's `request_stage(field)`; that is where the rules go in
+(`Engine::set_overflow_rules`) and `OverflowRules::director` is set. The host
+destroys the run's engine before the driver, so a director the driver owns
+outlives every hook call. Until lane C, the host's stand-in driver gives the
+engine `OverflowRules` with this lane's initial values and no director (no
+spawns, no revive) and ends the run on `OverflowRules::ended()`.
+
 ## 3. The hooks as built
 
 | Hook | Where | In a run engine |

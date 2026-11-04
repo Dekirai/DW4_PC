@@ -3,6 +3,8 @@
 #include "discord_presence.hpp"
 #include "presence_data.hpp"
 
+#include "dw4/engine/overflow.hpp"
+
 #include <imgui.h>
 
 #include <algorithm>
@@ -168,8 +170,9 @@ RunOutcome run_loop(HostView& view, engine::Engine& run, RunDriver& driver, cons
                 std::printf("[overflow %llu] stage %s run hash %016llx\n", (unsigned long long)steps_done, run.stage_name().c_str(),
                             (unsigned long long)run.net_fingerprint());
             if (const auto over = driver.after_step(run)) end = over;
-            // A console reset in the run (B + X + START; SURVIVAL.md H3 keeps it
-            // out of the director's runs) ends it.
+            // A console reset in the run ends it. (H3 keeps the console reset
+            // off in an engine with the run's rules, so this only catches a
+            // driver that gave its engine none.)
             if (!end && run.rebooting()) {
                 driver.retire(run, RunEnd::retired);
                 end = RunEnd::retired;
@@ -277,16 +280,34 @@ RunOutcome run_from_story(HostView& view, const engine::Engine& story, const Run
         StoryRandomGuard random;
         TestEnvironmentScope environment;
         RunCards cards;
+        // (The driver outlives the run's engine: the engine's OverflowRules
+        // point at the driver's director, OverflowRules::director.)
+        auto driver = make_run_driver(request);
         auto run = std::make_unique<engine::Engine>(MountedResources(story.resources()));
         prepare_run_engine(*run, request, cards.root());
-        auto driver = make_run_driver(request);
+        // The driver gives the engine its rules (Engine::set_overflow_rules)
+        // before the arena's request, the one stage request H3 lets through.
         driver->attach(*run, request);
         run->request_stage(request.field);
-        if (std::getenv("DW4_TRACE_OVERFLOW"))
-            std::printf("[overflow 0] run %s, test variables kept out: %zu\n", describe(request).c_str(), environment.removed().size());
+        static const bool trace = std::getenv("DW4_TRACE_OVERFLOW") != nullptr;
+        if (trace)
+            std::printf("[overflow 0] run %s, test variables kept out: %zu, rules %s\n", describe(request).c_str(), environment.removed().size(),
+                        run->overflow_run() ? "run" : run->overflow() ? "original" : "none");
         outcome = run_loop(view, *run, *driver, request, host);
-        driver.reset();
+        if (const auto* rules = run->overflow(); trace && rules) {
+            // The rules' tallies (SURVIVAL.md 13.5's run log, 14.2's numbers).
+            const auto& tally = rules->tally;
+            std::printf("[overflow %llu] rules: %llu steps, %llu without control, %d hits taken, %d missed, %d clamped, highest hit %.1f %% of MaxHP, "
+                        "end %s\n",
+                        (unsigned long long)outcome.steps, (unsigned long long)tally.steps, (unsigned long long)tally.no_control_steps,
+                        tally.hits_taken, tally.misses, tally.clamps, tally.highest_hit_share * 100.0,
+                        !rules->ended() ? "none"
+                        : rules->ended()->reason == engine::overflow::EndReason::stage_exit ? "stage exit"
+                        : rules->ended()->reason == engine::overflow::EndReason::game_over  ? "game over"
+                                                                                             : "player defeated");
+        }
         run.reset();
+        driver.reset();
     } catch (const std::exception& error) {
         outcome.end = RunEnd::failed;
         outcome.error = error.what();

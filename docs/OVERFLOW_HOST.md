@@ -13,8 +13,8 @@ F-keys, Discord and achievements, the pacing reset and the dev start. Lane B
 | `src/game/host_view.hpp/.cpp` | The extraction (13.3, T11): `HostView` (window, renderer, sound output, controllers, F1 state, picture state) and the functions both loops call: `host_event`, `toggle_menu`, `read_live_input`, `live_pad_sample`, `mix_audio` (with the host `gain`), `note_stage`, `make_picture`, `present_scene`, `set_menu_navigation`, `new_ui_frame`, `draw_tags`, `render_ui`, `write_screenshot`, `finish_present`, `pace_presents`, and the F1 Settings tab's display, audio, presence, keyboard and controller sections. The statements moved out of `game_main.cpp`'s `run()` in their order; the story loop keeps its old names as references into `HostView`. |
 | `src/game/overflow_run.hpp/.cpp` | The run without a window: `RunRequest` and `parse_run_request` (`--overflow-run`), `RunEnd`, `StoryRandomGuard`, `TestEnvironmentScope`, `RunCards`, `prepare_run_engine`, `StorySwitch`, and the `RunDriver` interface. |
 | `src/game/overflow_host.hpp/.cpp` | `run_from_story` (13.3 steps 2-4) and the run loop, the run's F1 menu, the fades, `start_refusal`, the F1 Gameplay tab's dev start. |
-| `src/game/overflow_driver.cpp` | `make_run_driver`: the host's stand-in until lane C's director plugs in (lane C replaces this file's body). |
-| `tests/overflow_host_tests.cpp` | ctest `overflow_host`: the request, the story generator across a run engine's construction and life, the test variables, the cards, the engine setup, the switch. |
+| `src/game/overflow_driver.cpp` | `make_run_driver`: the host's stand-in until lane C's director plugs in (lane C replaces this file's body). Since the integration (section 7) it gives the run's engine lane B's `OverflowRules` and ends the run on their report. |
+| `tests/overflow_host_tests.cpp` | ctest `overflow_host`: the request, the story generator across a run engine's construction and life, the test variables, the cards, the engine setup, the run engine with lane B's rules (H3: the arena's request passes, every other stage change and both resets stay out), the switch. |
 
 ## 2. Interfaces for lane C (and B)
 
@@ -24,7 +24,7 @@ the run loop:
 
 | Call | When | Lane C does |
 | --- | --- | --- |
-| `attach(run, request)` | once, after `prepare_run_engine`, before `request_stage(field)` | set the engine's OverflowRules (lane B's pointer) and the director, apply the loadout and Plug Lab points |
+| `attach(run, request)` | once, after `prepare_run_engine`, before `request_stage(field)` | `Engine::set_overflow_rules` with the run's rule set (the host's `request_stage(field)` is then the one stage request H3 lets through besides `OverflowRules::field_change`), `OverflowRules::director` (the host destroys the engine before the driver, so a director the driver owns outlives every call), the loadout and Plug Lab points |
 | `before_step(run, pads)` | before every run step; `pads[0]` is this machine's player 1 composed as in the story (`live_pad_sample`), slots 2-4 disconnected | a test bot (`bot=kite`) replaces `pads[0]`; the run's own menus may read or neutralize it; queue commands (offers, pause, Retire) for this step |
 | `after_step(run)` | after every run step | the run's end once its results closed |
 | `retire(run, why)` | F1 > Data Overflow > Retire, the window closing (`window_closed`, the program then quits), a test run's limit (`frames=`, else `--smoke-test`'s count) | Retire at the next step: write what was earned, show the results, then report the end |
@@ -56,8 +56,10 @@ the story), `mix_audio`, name tags, Discord ("Data Overflow" / "<form> Lv <n> -
 <mm:ss>"), `note_stage`, `make_picture` + `decorate`, `present_scene`, the
 ImGui frame with `draw_overlay`, the run's F1 menu (Data Overflow tab with
 Retire, the Settings sections) and the fade, `render_ui`, the run's
-screenshots (`shots=`), `finish_present`, `pace_presents`. A console reset in
-the run (B + X + START) ends it as retired until lane B's H3 keeps it out.
+screenshots (`shots=`), `finish_present`, `pace_presents`. Lane B's H3 keeps
+the console reset (B + X + START) off in an engine with the run's rules; the
+loop still ends a run as retired if its engine reboots (a driver that gave
+its engine no rules).
 
 **The switch** (`StorySwitch`, owned by the story loop): `request()` (F1 >
 Gameplay > Data Overflow (test) > Start a run, or `--overflow-run at=F` once
@@ -134,9 +136,8 @@ Scripts live in the worktree's ignored `build/t` (`det.sh`, `shots.sh`,
 
 ## 6. Open for lanes B and C
 
-- Without lane B's native field start (H1 / H10) the Violet Ring's
-  `first.lua` runs Belphemon's intro and fight; the stand-in driver ends the
-  run 3 s after the player's defeat or when the engine leaves its field.
+- (Done by the integration, section 7: the stand-in gives the run's engine
+  lane B's rules, so the Violet Ring starts natively without Belphemon.)
 - `RunStatus::seconds` of the stand-in counts every run step; the director's
   run clock stops while the run is frozen.
 - The run's 2D overlay is ImGui in O1a; `decorate` is there for the game-font

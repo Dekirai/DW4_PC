@@ -186,7 +186,12 @@ class RunDriver {
 public:
     virtual ~RunDriver() = default;
     // The new run engine after prepare_run_engine, before its first stage
-    // request: the rules, the director, the loadout.
+    // request: the rules (Engine::set_overflow_rules with the run's rule set,
+    // dw4/engine/overflow.hpp; the host's request is then the only one H3
+    // lets through besides OverflowRules::field_change), the director
+    // (OverflowRules::director: the host destroys the engine before the
+    // driver, so a director the driver owns outlives every call), the
+    // loadout.
     virtual void attach(engine::Engine& run, const RunRequest& request) = 0;
     // The pads of the next step: `pads` holds this machine's player 1 as
     // the story composes it (slots 2-4 disconnected); a test bot or the
