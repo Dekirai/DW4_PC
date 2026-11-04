@@ -169,6 +169,11 @@ if(BUILD_TESTING)
   add_executable(dw4_randomizer_tests tests/randomizer_tests.cpp src/game/randomizer_save.cpp)
   target_link_libraries(dw4_randomizer_tests PRIVATE dw4_engine)
   add_test(NAME randomizer COMMAND dw4_randomizer_tests)
+  # Data Overflow's host side (round O1a lane A, docs/SURVIVAL.md 13.2-13.3): the run request, the story's
+  # generator across a run engine, the test variables a run keeps out, its cards and setup, the story switch.
+  add_executable(dw4_overflow_host_tests tests/overflow_host_tests.cpp src/game/overflow_run.cpp src/game/presence_data.cpp)
+  target_link_libraries(dw4_overflow_host_tests PRIVATE dw4_engine)
+  add_test(NAME overflow_host COMMAND dw4_overflow_host_tests)
   add_executable(dw4_interpolation_tests tests/interpolation_tests.cpp src/game/interpolation.cpp)
   target_link_libraries(dw4_interpolation_tests PRIVATE dw4_engine)
   add_test(NAME interpolation COMMAND dw4_interpolation_tests)
@@ -288,7 +293,7 @@ if(DW4_BUILD_APP)
     src/game/discord_ipc.cpp src/game/discord_presence.cpp src/game/presence_data.cpp src/game/presence_art.cpp
     src/game/overhead_labels.cpp src/game/overhead_labels_draw.cpp src/game/achievements.cpp
     src/game/randomizer_save.cpp src/game/dev_present.cpp src/game/online_run.cpp src/game/online_ui.cpp src/game/online_ui_script.cpp src/game/title_entry.cpp
-    src/game/online_achievements.cpp)
+    src/game/online_achievements.cpp src/game/host_view.cpp src/game/overflow_run.cpp src/game/overflow_host.cpp src/game/overflow_driver.cpp)
   target_include_directories(dw4_game PRIVATE ${pl_mpeg_src_SOURCE_DIR} ${stb_src_SOURCE_DIR})
   target_compile_definitions(dw4_game PRIVATE DW4_PC_VERSION="${PROJECT_VERSION}")
   target_link_libraries(dw4_game PRIVATE dw4_engine dw4_online imgui zstd_decoder SDL3::SDL3 OpenGL::GL)
