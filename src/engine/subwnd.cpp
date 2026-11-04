@@ -1341,7 +1341,8 @@ void SubWindowManager::update(Engine& engine) {
 // member's own copies, its LAYERCTL and PADINPUT reach the member's own
 // screen and pad only, and nothing freezes. The running world goes on
 // meanwhile: HP / MP changes between two runs carry into the values
-// OFPREVIEW restores, and a member defeated in its window leaves it.
+// OFPREVIEW restores and into the window's HP / MP lines, and a member
+// defeated in its window leaves it.
 void SubWindowManager::update_own(Engine& engine, int slot) {
     auto& own = own_[std::size_t(slot)];
     auto* sys = engine.get<GameSystem>();
@@ -1367,8 +1368,18 @@ void SubWindowManager::update_own(Engine& engine, int slot) {
         own.shown_mp = own.left_mp = player.mp;
         ++own.state;
     } else {
-        own.shown_hp = std::max(0, own.shown_hp + player.hp - own.left_hp);
-        own.shown_mp = std::max(0, own.shown_mp + player.mp - own.left_mp);
+        const int hp_change = player.hp - own.left_hp, mp_change = player.mp - own.left_mp;
+        own.shown_hp = std::max(0, own.shown_hp + hp_change);
+        own.shown_mp = std::max(0, own.shown_mp + mp_change);
+        // The window's HP / MP lines follow the running world at once (a hit
+        // taken in the menu shows; the original's window froze the world, so
+        // its lines never had to move).
+        if (hp_change != 0 || mp_change != 0)
+            for (const auto& [line, value] : {std::pair{"font000", own.shown_hp}, std::pair{"font001", own.shown_mp}}) {
+                Packet t;
+                t.strings = {"STWINFONT06", line, std::to_string(value)};
+                messenger.send(engine, "TEXTCTL", std::nullopt, -1, "TEXTSET", t);
+            }
         if (player.hp <= 0 && own.window && own.window->state < 2) own.window->next_state(2);
     }
     if (own.window) own.window->run(engine);
