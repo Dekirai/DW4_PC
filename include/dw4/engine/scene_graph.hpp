@@ -9,6 +9,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -369,7 +370,12 @@ public:
     Node* node(const ObjectView& view) { return view ? node(view.document(), view.reference()) : nullptr; }
     const GeometryData* geometry(const Attribute* attribute);
     // A cached attribute a manager changes at run time (LIGHTCTRL colours).
-    Attribute* edit_attribute(const ObjectView& view) { return const_cast<Attribute*>(attribute(view)); }
+    // (Round J: its key is kept, for the tick state.)
+    Attribute* edit_attribute(const ObjectView& view) {
+        if (!view) return nullptr;
+        edited_.insert({view.document(), view.reference()});
+        return const_cast<Attribute*>(attribute(view));
+    }
     Node* find(const IgbDocument* document, std::uint32_t reference) const;
     void release_document(const IgbDocument* document);
     // The tick state (tick_state.hpp): every cached node and attribute with
@@ -380,6 +386,13 @@ public:
     template <class Visit> void for_each_attribute(Visit&& visit) const {
         for (const auto& [key, attribute] : attributes_) visit(key.document, key.reference, attribute.get());
     }
+    template <class Visit> void for_each_edited_attribute(Visit&& visit) {
+        for (const auto& [document, reference] : edited_)
+            if (const auto found = attributes_.find({document, reference}); found != attributes_.end())
+                visit(document, reference, found->second.get());
+    }
+    // The edited attributes outside `keep` take their data's values again.
+    void reset_edited_attributes(const std::set<const Attribute*>& keep);
     std::size_t node_count() const { return nodes_.size(); }
     std::size_t attribute_count() const { return attributes_.size(); }
     const Attribute* attribute_at(const IgbDocument* document, std::uint32_t reference) {
@@ -400,6 +413,8 @@ private:
     };
     std::unordered_map<Key, std::unique_ptr<Node>, KeyHash> nodes_;
     std::unordered_map<Key, std::unique_ptr<Attribute>, KeyHash> attributes_;
+    std::set<std::pair<const IgbDocument*, std::uint32_t>> edited_; // edit_attribute's keys
+    void fill_attribute(Attribute& a, const ObjectView& view);
     std::unordered_map<const Attribute*, std::unique_ptr<GeometryData>> geometry_;
 };
 

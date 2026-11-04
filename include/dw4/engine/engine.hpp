@@ -1317,6 +1317,7 @@ private:
     void tick_engine(TickArchive& a);
     void tick_nodes(TickArchive& a);
     void tick_lua(TickArchive& a);
+    void tick_attributes(TickArchive& a);
     friend class DemoManager;
     friend class TickIds;
 };

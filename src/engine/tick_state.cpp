@@ -13,6 +13,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <set>
 #include <tuple>
 
 namespace dw4 {
@@ -368,7 +369,14 @@ std::vector<TickSection> tick_sections(std::span<const std::uint8_t> bytes) {
         s.bytes = bytes.subspan(at, length);
         at += length;
         if (const char* name = section_name(s.tag)) s.name = name;
-        else s.name = "manager " + std::to_string(s.tag - kManagerBase);
+        else {
+            // A manager's section starts with its type name.
+            s.name = "manager " + std::to_string(s.tag - kManagerBase);
+            if (s.bytes.size() >= 4) {
+                const std::uint32_t n = read32(s.bytes.data());
+                if (n > 0 && n < 64 && n + 4 <= s.bytes.size()) s.name = std::string(reinterpret_cast<const char*>(s.bytes.data() + 4), n);
+            }
+        }
         out.push_back(s);
     }
     if (at != bytes.size()) throw TickStateError("header", "trailing bytes");
@@ -664,37 +672,101 @@ void serialize(StateArchive& a, TextureSampler& v) {
 namespace {
 // The mutable fields of one node (the topology of its children included:
 // the owned nodes' children change with LAYER ORDER, weapons and copies).
+template <class T> bool bits_equal(const T& x, const T& y) { return std::memcmp(&x, &y, sizeof(T)) == 0; }
+
+// The field groups of a node that differ from a fresh Node's (a mask, then
+// the groups present; the reader resets the absent ones). Floats compare by
+// their bits.
 void node_values(TickArchive& a, Node& n) {
+    static const Node fresh{};
+    enum : std::uint32_t {
+        children = 1u << 0, appearance = 1u << 1, matrix = 1u << 2, has_matrix = 1u << 3, mask = 1u << 4, clock = 1u << 5,
+        fixed = 1u << 6, colour = 1u << 7, overrides = 1u << 8, hidden = 1u << 9, runtime = 1u << 10, lod = 1u << 11,
+        actor = 1u << 12, bone = 1u << 13, copy = 1u << 14, timer = 1u << 15, live = 1u << 16, recorded = 1u << 17, anim = 1u << 18,
+    };
+    std::uint32_t present = 0;
+    if (!a.reading()) {
+        if (!n.children.empty()) present |= children;
+        if (!n.appearance_roots.empty()) present |= appearance;
+        if (!bits_equal(n.matrix, fresh.matrix)) present |= matrix;
+        if (n.has_matrix) present |= has_matrix;
+        if (!n.mask.empty()) present |= mask;
+        if (!bits_equal(n.time_scale, fresh.time_scale) || n.time_bias || n.time_override) present |= clock;
+        if (n.fixed_time) present |= fixed;
+        if (n.color_override) present |= colour;
+        if (n.blend_override || n.texture_override || n.lighting_override) present |= overrides;
+        if (n.hidden) present |= hidden;
+        if (n.runtime_matrix) present |= runtime;
+        if (!n.lod_ranges.empty() || n.lod_child != -1 || n.lod_index != -1 || !bits_equal(n.lod_lower, fresh.lod_lower) ||
+            !bits_equal(n.lod_upper, fresh.lod_upper))
+            present |= lod;
+        if (!bits_equal(n.actor_matrix, fresh.actor_matrix)) present |= actor;
+        if (n.bone_index != -1) present |= bone;
+        if (n.copy_source || n.copy_actor || n.copy_resolved) present |= copy;
+        if (n.timer.running != fresh.timer.running || n.timer.bias || n.timer.time) present |= timer;
+        if (n.particle_live) present |= live;
+        if (n.recorded) present |= recorded;
+        if (n.anim) present |= anim;
+    }
     a.same(n.kind, "node kind");
-    a.nodes(n.children);
-    a.nodes(n.appearance_roots);
-    a.io(n.matrix);
-    a.io(n.has_matrix);
-    a.io(n.mask);
-    a.io(n.time_scale);
-    a.io(n.time_bias);
-    a.io(n.time_override);
-    a.io(n.fixed_time);
-    a.io(n.color_override);
-    a.io(n.blend_override);
-    a.io(n.texture_override);
-    a.io(n.lighting_override);
-    a.io(n.hidden);
-    a.io(n.runtime_matrix);
-    a.io(n.lod_ranges);
-    a.io(n.lod_child);
-    a.io(n.lod_index);
-    a.io(n.lod_lower);
-    a.io(n.lod_upper);
-    a.io(n.actor_matrix);
-    a.io(n.bone_index);
-    a.node(n.copy_source);
-    a.node(n.copy_actor);
-    a.io(n.copy_resolved);
-    a.io(n.timer);
-    a.io(n.particle_live);
-    a.io(n.recorded);
-    a.io(n.anim);
+    a.io(present);
+    auto group = [&](std::uint32_t bit, auto&& write, auto&& reset) {
+        if (present & bit) write();
+        else if (a.reading()) reset();
+    };
+    group(children, [&] { a.nodes(n.children); }, [&] { n.children.clear(); });
+    group(appearance, [&] { a.nodes(n.appearance_roots); }, [&] { n.appearance_roots.clear(); });
+    group(matrix, [&] { a.io(n.matrix); }, [&] { n.matrix = fresh.matrix; });
+    if (a.reading()) n.has_matrix = (present & has_matrix) != 0;
+    group(mask, [&] { a.io(n.mask); }, [&] { n.mask.clear(); });
+    group(clock, [&] {
+        a.io(n.time_scale);
+        a.io(n.time_bias);
+        a.io(n.time_override);
+    }, [&] {
+        n.time_scale = fresh.time_scale;
+        n.time_bias = 0;
+        n.time_override = false;
+    });
+    group(fixed, [&] { a.io(n.fixed_time); }, [&] { n.fixed_time.reset(); });
+    group(colour, [&] { a.io(n.color_override); }, [&] { n.color_override.reset(); });
+    group(overrides, [&] {
+        a.io(n.blend_override);
+        a.io(n.texture_override);
+        a.io(n.lighting_override);
+    }, [&] {
+        n.blend_override.reset();
+        n.texture_override.reset();
+        n.lighting_override.reset();
+    });
+    if (a.reading()) n.hidden = (present & hidden) != 0;
+    group(runtime, [&] { a.io(n.runtime_matrix); }, [&] { n.runtime_matrix.reset(); });
+    group(lod, [&] {
+        a.io(n.lod_ranges);
+        a.io(n.lod_child);
+        a.io(n.lod_index);
+        a.io(n.lod_lower);
+        a.io(n.lod_upper);
+    }, [&] {
+        n.lod_ranges.clear();
+        n.lod_child = n.lod_index = -1;
+        n.lod_lower = fresh.lod_lower;
+        n.lod_upper = fresh.lod_upper;
+    });
+    group(actor, [&] { a.io(n.actor_matrix); }, [&] { n.actor_matrix = fresh.actor_matrix; });
+    group(bone, [&] { a.io(n.bone_index); }, [&] { n.bone_index = -1; });
+    group(copy, [&] {
+        a.node(n.copy_source);
+        a.node(n.copy_actor);
+        a.io(n.copy_resolved);
+    }, [&] {
+        n.copy_source = n.copy_actor = nullptr;
+        n.copy_resolved = false;
+    });
+    group(timer, [&] { a.io(n.timer); }, [&] { n.timer = fresh.timer; });
+    if (a.reading()) n.particle_live = (present & live) != 0;
+    group(recorded, [&] { a.io(n.recorded); }, [&] { n.recorded.reset(); });
+    group(anim, [&] { a.io(n.anim); }, [&] { n.anim.reset(); });
 }
 } // namespace
 
@@ -789,6 +861,46 @@ void Engine::rerun(const TopologyEntry& e) {
     }
 }
 
+// The attributes the managers edited (LIGHTCTRL SETCOLOR, TEXTCTL COLOR:
+// SceneCache::edit_attribute keeps their keys) and the copies' own; the
+// reader's edited attributes that the state does not name go back to their
+// data.
+void Engine::tick_attributes(TickArchive& a) {
+    struct Entry {
+        std::uint32_t document, reference;
+        Attribute* attribute;
+    };
+    std::vector<Entry> entries;
+    if (!a.reading()) {
+        scenes_.for_each_edited_attribute([&](const IgbDocument* d, std::uint32_t reference, Attribute* attribute) {
+            entries.push_back({a.ids().document(d), reference, attribute});
+        });
+        std::sort(entries.begin(), entries.end(), [](const Entry& x, const Entry& y) {
+            return std::tie(x.document, x.reference) < std::tie(y.document, y.reference);
+        });
+    }
+    std::uint32_t count = std::uint32_t(entries.size());
+    a.io(count);
+    if (a.reading()) {
+        if (count > 1u << 22) throw TickStateError("attributes", "implausible attribute count");
+        entries.resize(count);
+    }
+    std::set<const Attribute*> named;
+    for (auto& e : entries) {
+        a.io(e.document);
+        a.io(e.reference);
+        if (a.reading()) {
+            e.attribute = scenes_.edit_attribute(ObjectView(a.ids().document(e.document), e.reference));
+            if (!e.attribute) throw TickStateError("attributes", "an attribute the engine cannot make");
+            named.insert(e.attribute);
+        }
+        attribute_values(a, *e.attribute);
+    }
+    if (a.reading()) scenes_.reset_edited_attributes(named);
+    a.same(std::uint32_t(copy_attributes_.size()), "copy attributes");
+    for (auto& c : copy_attributes_) attribute_values(a, *c);
+}
+
 std::vector<std::uint8_t> Engine::save_tick_state(TickForm form) {
     if (const auto why = state_unsafe_reason(); !why.empty()) throw std::logic_error("tick state at an unsafe tick: " + why);
     const detail::MxcsrGuard mxcsr;
@@ -815,29 +927,7 @@ std::vector<std::uint8_t> Engine::save_tick_state(TickForm form) {
     section(kDemo, [&](TickArchive& a) { demo_.tick_state(a); });
     section(kLua, [&](TickArchive& a) { tick_lua(a); });
     section(kNodes, [&](TickArchive& a) { tick_nodes(a); });
-    section(kAttributes, [&](TickArchive& a) {
-        struct Entry {
-            std::uint32_t document, reference;
-            Attribute* attribute;
-        };
-        std::vector<Entry> entries;
-        scenes_.for_each_attribute([&](const IgbDocument* d, std::uint32_t reference, const Attribute* attribute) {
-            entries.push_back({ids.document(d), reference, const_cast<Attribute*>(attribute)});
-        });
-        std::sort(entries.begin(), entries.end(), [](const Entry& x, const Entry& y) {
-            return std::tie(x.document, x.reference) < std::tie(y.document, y.reference);
-        });
-        std::uint32_t count = std::uint32_t(entries.size());
-        a.io(count);
-        for (auto& e : entries) {
-            a.io(e.document);
-            a.io(e.reference);
-            attribute_values(a, *e.attribute);
-        }
-        std::uint32_t copies = std::uint32_t(copy_attributes_.size());
-        a.io(copies);
-        for (auto& c : copy_attributes_) attribute_values(a, *c);
-    });
+    section(kAttributes, [&](TickArchive& a) { tick_attributes(a); });
     for (std::size_t m = 0; m < managers_.size(); ++m)
         section(kManagerBase + std::uint32_t(m), [&](TickArchive& a) {
             a.same(managers_[m]->type_name(), "manager");
@@ -928,21 +1018,7 @@ void Engine::apply_tick_state(std::span<const std::uint8_t> bytes) {
     section(kDemo, [&](TickArchive& a) { demo_.tick_state(a); });
     section(kLua, [&](TickArchive& a) { tick_lua(a); });
     section(kNodes, [&](TickArchive& a) { tick_nodes(a); });
-    section(kAttributes, [&](TickArchive& a) {
-        std::uint32_t count = 0;
-        a.io(count);
-        if (count > 1u << 22) throw TickStateError("attributes", "implausible attribute count");
-        for (std::uint32_t i = 0; i < count; ++i) {
-            std::uint32_t d = 0, reference = 0;
-            a.io(d);
-            a.io(reference);
-            attribute_values(a, *const_cast<Attribute*>(ids.attribute(d, reference)));
-        }
-        std::uint32_t copies = 0;
-        a.io(copies);
-        if (copies != copy_attributes_.size()) throw TickStateError("topology", "copy attributes");
-        for (auto& c : copy_attributes_) attribute_values(a, *c);
-    });
+    section(kAttributes, [&](TickArchive& a) { tick_attributes(a); });
     for (std::size_t m = 0; m < managers_.size(); ++m)
         section(kManagerBase + std::uint32_t(m), [&](TickArchive& a) {
             a.same(managers_[m]->type_name(), "manager");

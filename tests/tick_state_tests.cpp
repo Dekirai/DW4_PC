@@ -269,6 +269,12 @@ void run_trials(const std::filesystem::path& data, const Scenario& sc, const Str
         t.save_ms += ms_since(t0);
         t.bytes = std::max(t.bytes, bytes.size());
         ++t.saved;
+        if (t.saved == 1 && std::getenv("DW4_TICKSTATE_SECTIONS")) {
+            std::cout << "  sections:";
+            for (const auto& section : tick_sections(bytes))
+                if (section.bytes.size() > 2048) std::cout << ' ' << section.name << '=' << section.bytes.size() / 1024 << "K";
+            std::cout << std::endl;
+        }
         t0 = std::chrono::steady_clock::now();
         (void)engine.tick_state_hash();
         t.hash_ms += ms_since(t0);
