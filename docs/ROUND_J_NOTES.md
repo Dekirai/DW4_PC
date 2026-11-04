@@ -53,7 +53,19 @@ story-point credit).
   window trees are not serialized yet. TEXTCTL texts (presentation) not yet.
   Costs on this machine: raw 2.0-2.4 MB, save 6-10 ms, hash 6-10 ms, apply
   3-5 ms (too slow for STATEHASH every 600 ticks; optimize).
-- Next: cost (canonical form without the node table where unchanged?),
-  then the relay lane (STATEHASH 0x15, CHECKPOINT 0x16, CHECKPOINT_BAD 0x17,
-  CHECKPOINT_ASK 0x92, STATE_DATA layout 2), then the client lane and the
-  J scenarios.
+- 23:00: compact form (b568863): raw 1.07-1.25 MB, save 3.4-5.2 ms.
+  Relay lane (4dd3eba, c4c29bf): STATEHASH / CHECKPOINT / CHECKPOINT_BAD /
+  CHECKPOINT_ASK, the store, the fresh / wait / stored / classic order,
+  STATE_DATA codec 2, the suspicion rule, `Instances:CheckpointJoins`,
+  WELCOME flag 4; DW4Online.Tests 247/247. Client lane (733ee3b, 91c2b42):
+  STATEHASH every 600 ticks, the donor's upload (zstd level 3), the join
+  from a checkpoint (load ticks, K check, apply, hash, short catch-up,
+  READY flag), CHECKPOINT_BAD; ctest 54/54 after the wire test update.
+  Scenarios J1 / J5 written (`tools/online_test/scenarios`), run with
+  `build/m_scen.sh dev/dw4_game.exe run.py J1` (own mysqld 3560, ports
+  56150-56199).
+- Open: resync from a checkpoint (JR), periodic uploads, the window trees
+  (JW), TEXTCTL texts and the music position for the joiner's picture and
+  sound (presentation only), JS / JB / JL / JF scenarios, the regression
+  scenarios, the protocol number (47 at the integration), SEAMLESS.md 6.13
+  measured numbers.

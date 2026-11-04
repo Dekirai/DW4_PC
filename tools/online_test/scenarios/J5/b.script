@@ -1,0 +1,8 @@
+# J5 (round J), member b (k10): through the lobby gate 300 s after a, into a's instance from a checkpoint.
+campaign until stage=stagml11,control
+idle until epoch>=@390
+explore mate00 yes until stage=stag0101,control
+log in the field
+wander 470 160 15 until sealed>=4000 or present<=1,frames>=60
+log enough
+idle until frames>=60

@@ -1,0 +1,14 @@
+# J5 (round J): a NEW, five minutes alone; b JOINs from a checkpoint: the relay asks a, a uploads, b rebuilds and replays
+# only the ticks since the checkpoint (READY from the checkpoint), then both play sealed.
+a: (?i)decision 1 .*stage=stag0101
+a: online-trace: statehash .*k=
+b: (?i)decision 2 .*stage=stag0101
+relay: checkpoint_ask
+relay: checkpoint tick=
+relay: state .*purpose=Join .*checkpoint=[1-9]
+b: online-trace: state purpose=1 .*checkpoint=
+b: online-trace: ready .*from-checkpoint
+a: online-trace: join applied .*slot=1
+!b: online-trace: checkpoint bad
+!relay: checkpoint_bad
+shared: a b >= 3000
