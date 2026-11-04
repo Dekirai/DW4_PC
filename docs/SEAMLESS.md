@@ -7631,6 +7631,50 @@ keeper answers a queued value with *wait*, the client's resends do no harm,
 and the keeper merges it when due), so G16's counter-proof on round 59 no
 longer fails; round G adds the reason *queued* and the twins.
 
+**Built as G-core in round 69** (`feat-r69gcore` from main b226bc0, not
+merged; lane plan and progress in `docs/ROUND_G_CORE.md`). Story lane: the
+census makes 503 persistent (setter stag0001; restart.lua's clear is the one
+allowed clear) and writes the key setter stages into `story_sets.json`
+(`setters.keys`: K2 / K3 from stagML02's `SYSctlFlagFolder` SET lines, the
+dropped keys K0, K1, K4-K10 measured from the r25c campaign's pickups:
+dng101b2, dng102b3, dng204b2, dng205b3, dng307b2, dng308b3, dng309b4,
+dng411b3, dng412b4; every key has a stage, none keeps the old rule) and the
+training proof (`training.proof`: the 75 persistent flags whose setters all
+lie outside stagml02 / stagml11 / stag0001); `session_values.txt` drops 503
+from the instance class. `story::apply` / `holds_dropped` take the barrier's
+target (`pending_stage_`, the session's pending stage) and leave 503 alone at
+one into stag0001; `played_training` (C++, C# `StoryMerge.PlayedTraining`,
+Python) and the rebase set 503 (read before the rebase); 9 new golden cases
+(1 merge, 7 rebase, 4 apply with targets). The keeper refuses a key from
+another stage (*stage*) and answers earned values *queued* (11) in rooms of
+protocol 47 and later (`RoomStoryKeeper.EarnedAnswer`; *wait* for older
+rooms); protocol 47 (`kOnlineProtocol`, the production example's
+`Play:MinimumProtocol` / `CurrentProtocol`). Client lane: `callshop.lua`
+under the online rules runs with NINZU read as 4 (its own refusal branch,
+never NEXTSTAGE stagIS13) and the hint "The call shop is not available
+online: everyone plays their own character."; `Engine::common_rebuilt`;
+the Game Start's hold (no live step until the confirmed story, "Loading the
+room story...", 15 s then "The room story did not arrive. Join the room
+again.", `DW4_ONLINE_TEST_STORY_DELAY` in dev builds); the card store's
+story override for a guest (`save::with_story`, every used box of every valid
+copy, checksums fixed); the own story bytes in `CharacterSync` (GET 200, the
+409 reload, zeros at 404; every cached and uploaded record; the entry
+rewrites an old cache before anything reads or backs it up); *queued* like
+*held* without its notice (kept out of the resends until the next barrier);
+the guest's toasts at the Game Start, the "moved on" notice once per visit,
+"Story: yours" / "Story: <owner>'s, phase n, k key items" in the F1 Online
+tab and the room view; `numemon_freed` online from a mask of the account's
+own rises (`numemon_mask`). Not built (19.8.9 / 19.8.10): the hub extras lane
+and the online difficulty dialog rule. Scenarios (named RG*, since `run.py
+G1` is round S1's integration run): RG1 = G1, RG2 = G2 with G3 / G4's
+checks (run.py `own_story`: every used box of the online card and of every
+backup holds the account's own story, its `online_story` revision is
+unchanged, the local card folder stays empty), RG7 = G7, RG10 = G10 with
+G11. `seed_story` is production-like now (the merge sets and the copies of
+the room difficulty, no 503; `"seed_story": "full"` keeps the old copy);
+`upload_card` makes a client's card the account's online character before
+the run. Results and what is left: `docs/ROUND_G_CORE.md`.
+
 ### Before round D: the Cheats tab in rooms (a small fix)
 
 (Round 67's plan: step 0, a precondition of round I1a, because public

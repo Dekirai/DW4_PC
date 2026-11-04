@@ -108,3 +108,21 @@ ctest (all), server unit + integration tests, `story_census.py --check`,
   ID), K4 dng204b2 (SkullGrey ID), K5 dng205b3 (Scorpio ID), K6 dng307b2
   (Shogun ID), K7 dng308b3 (MRδ04 ID), K8 dng309b4 (Diaboro ID), K9
   dng411b3 (MRε05 ID), K10 dng412b4 (LordKnight ID).
+- 04.11 22:00: lane A (story) committed a27fad5a + 8b491f27: census (503,
+  key stages, training proof), C++ / C# / Python rebase and apply with the
+  target, 9 new golden cases, keeper key stages + *queued*, protocol 47.
+  Server unit tests 246 / 246 (GCoreKeeperTests new; the older keeper tests
+  use the sets without key stages where they were written for keys from any
+  stage; HubStoryTests' harness at protocol 47).
+- 04.11 22:15: lane B (client) committed 3670df48: call shop closed,
+  common_rebuilt, the Game Start's hold, card override, own story bytes,
+  queued, toasts / story line / moved-on notice, numemon mask; tests
+  card_store, online_character (guest_records_keep_the_own_story),
+  achievements, online_session (hold, queued). ctest 53 / 53 (build/dev).
+  det.sh on build/rel (no dev): 4004f056 / 396cb219 (run 1 of 2, both
+  copies equal; log work/dref/checks/det/det_r69gcore_a).
+- 04.11 22:20: lane C: run.py production-like seed_story, upload_card,
+  own_story checks, script conditions key:N / difficulty; scenarios RG1
+  (= G1), RG2 (G2-G4), RG7 (G7), RG10 (G10 / G11). RG1 PASS (145 s,
+  tools/online_test/.work/run_20261104_220001). The call shop's refusal
+  seen in RG10's guest.
