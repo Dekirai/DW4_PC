@@ -45,8 +45,18 @@ public sealed class OnlineCharacterOptions
     /// character) before the housekeeping deletes them; account deletion removes them at once.
     /// </summary>
     public int ResetHistoryDays { get; set; } = 30;
-    /// <summary>Revisions of an account's online story kept for a staff restore (online_story_history).</summary>
+    /// <summary>The newest revisions of an account's online story kept in full for a staff restore (online_story_history).</summary>
     public int StoryHistoryRevisions { get; set; } = 100;
+    /// <summary>Older revisions of a room's story are thinned to the first of every this many minutes.</summary>
+    public int StoryHistoryMinutes { get; set; } = 10;
+    /// <summary>Thinned revisions and session starts older than this many days go (the newest StoryHistorySessions session
+    /// starts, resets and restores stay whatever their age).</summary>
+    public int StoryHistoryDays { get; set; } = 90;
+    /// <summary>The story every room session started from (and every reset and restore) is kept; the newest this many of them
+    /// stay beyond StoryHistoryDays.</summary>
+    public int StoryHistorySessions { get; set; } = 20;
+    /// <summary>A room story revision that changed only counters is written at most this often per account (seconds).</summary>
+    public int StoryCounterSaveSeconds { get; set; } = 60;
     public CharacterRules Rules { get; set; } = new();
 }
 
@@ -83,6 +93,9 @@ public sealed class PlayOptions
 
     /// <summary>The lowest floor of any board in milliseconds: a story clear on any difficulty takes at least this long.</summary>
     public long StoryFloorMs => SpeedrunFloorSeconds.Count == 0 ? 0 : Math.Max(0, SpeedrunFloorSeconds.Values.Min()) * 1000;
+    /// <summary>A story clear reported in a room counts when the room's story holds that difficulty's clear flag; the report
+    /// may come before the STORY that brings it, so the server waits up to this long for it (seconds).</summary>
+    public double ClearStoryWaitSeconds { get; set; } = 30;
 }
 
 /// <summary>Service-wide settings announced to clients and shown on the website (section "Service").</summary>

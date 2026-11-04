@@ -63,20 +63,21 @@ public static class OnlineCharacterEndpoints
         group.MapGet("/history", async (OnlineCharacterService characters, HttpContext ctx) =>
             Results.Ok(await characters.HistoryAsync(ctx.Session().AccountId, ctx.RequestAborted)));
 
-        // Ends the current online character and empties the account's online story; the next upload with
-        // If-None-Match: * starts a new one. The account's own room closes (its hub holds the old story).
+        // Ends the current online character and empties the account's online story (also an account that has a story but no
+        // character, an owner whose guests played); the next upload with If-None-Match: * starts a new one. The account's own
+        // room closes (its hub holds the old story).
         group.MapPost("/reset", async (PasswordConfirmation r, OnlineCharacterService characters, AccountService accounts, RoomService rooms,
             HttpContext ctx) =>
         {
             var session = ctx.Session();
             if (await accounts.ConfirmPasswordAsync(session.AccountId, r.CurrentPassword, ctx.Caller(), ctx.RequestAborted) is { Ok: false } wrong)
                 return ApiProblems.From(wrong.Error!);
-            if (await characters.GetAsync(session.AccountId, ctx.RequestAborted) is null)
-                return ApiProblems.Of(StatusCodes.Status404NotFound, "no_online_character", "There is no online character.");
+            if (!await characters.HasResetWorkAsync(session.AccountId, ctx.RequestAborted))
+                return ApiProblems.Of(StatusCodes.Status404NotFound, "no_online_character", "There is no online character and no online story.");
             await rooms.CloseOwnedAsync(session.AccountId, ctx.RequestAborted);
             return await characters.ResetAsync(session.AccountId, session.AccountId, ctx.IpBytes(), ctx.RequestAborted)
                 ? Results.NoContent()
-                : ApiProblems.Of(StatusCodes.Status404NotFound, "no_online_character", "There is no online character.");
+                : ApiProblems.Of(StatusCodes.Status404NotFound, "no_online_character", "There is no online character and no online story.");
         }).RequireRateLimiting(RateLimitPolicies.AccountChange);
     }
 }

@@ -675,6 +675,11 @@ void in_room(online::OnlineLobby& lobby, OnlineUiState& s, const RoomLive* live)
         if (button("Leave room", !lobby.busy())) s.leave_asked = true;
     } else {
         wrapped("Leave the room? The online game ends and you return to the title; your online character is saved first.");
+        // (When the question opens the controller's focus goes to its buttons, asked in its first two frames since a
+        // window's first frame measures itself hidden: it stood in the members table's header, round 59 review.)
+        s.leave_prompt_frames = s.leave_prompt_frame == ImGui::GetFrameCount() - 1 ? s.leave_prompt_frames + 1 : 0;
+        s.leave_prompt_frame = ImGui::GetFrameCount();
+        if (s.leave_prompt_frames < 2) ImGui::SetKeyboardFocusHere();
         if (button("Leave", !lobby.busy(), true)) {
             lobby.request_leave();
             s.leave_asked = false;

@@ -774,6 +774,7 @@ void LoadIntf2Manager::update_ctrl(Engine& engine, PanelRam& ram, SaveCommon& co
                             sys->apply_record(engine, idx, record, idx == 0);
                             engine.log("player " + std::to_string(idx + 1) + " called box " + std::to_string(ram.boxes.cursor()) + " (" +
                                        record.digimon + " level " + std::to_string(record.level) + ")");
+                            engine.port_event({PortEvent::Kind::character_called, idx, std::int32_t(record.unique), ram.boxes.cursor(), {}}); // observe-only
                         }
                     }
                     int unlocked = 0;

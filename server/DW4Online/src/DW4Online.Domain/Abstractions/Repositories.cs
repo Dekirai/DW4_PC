@@ -80,6 +80,8 @@ public interface IOnlineCharacterRepository
     Task<bool> ResetAsync(long accountId, DateTime now, int historyKeep, CancellationToken ct = default);
     /// <summary>When the account's next online character could have started: its last reset, else the account's creation (null: no account).</summary>
     Task<DateTime?> GetStartAsync(long accountId, CancellationToken ct = default);
+    /// <summary>The last record of the character the account's newest reset ended (null: none kept).</summary>
+    Task<byte[]?> GetLastEndedRecordAsync(long accountId, CancellationToken ct = default);
 }
 
 /// <summary>
@@ -90,15 +92,19 @@ public interface IOnlineStoryRepository
 {
     Task<OnlineStoryRow?> GetAsync(long accountId, CancellationToken ct = default);
     /// <summary>
-    /// Writes the row when it is new or its revision is higher than the stored one, and keeps it in the history (the last
-    /// <paramref name="historyKeep"/>); false when nothing changed (an older revision, or a deleted account).
+    /// Writes the row when it is new or its revision is higher than the stored one, and keeps it in the history (by
+    /// <paramref name="history"/>); false when nothing changed (an older revision, or a deleted account).
     /// </summary>
-    Task<bool> SaveAsync(OnlineStoryRow row, int historyKeep, CancellationToken ct = default);
+    Task<bool> SaveAsync(OnlineStoryRow row, StoryHistoryPolicy history, CancellationToken ct = default);
     /// <summary>
     /// Writes <paramref name="row"/>'s story as the next revision whatever the stored one is (a reset, a staff restore)
     /// and keeps it in the history; returns that revision (0: nothing written, the account is deleted).
     /// </summary>
-    Task<long> ReplaceAsync(OnlineStoryRow row, string reason, int historyKeep, CancellationToken ct = default);
+    Task<long> ReplaceAsync(OnlineStoryRow row, string reason, StoryHistoryPolicy history, CancellationToken ct = default);
+    /// <summary>Keeps <paramref name="row"/> (an existing revision) in the history with <paramref name="reason"/> (a room
+    /// session's start), without changing the story; not again when the history keeps that revision as a session start,
+    /// reset or restore already.</summary>
+    Task KeepAsync(OnlineStoryRow row, string reason, StoryHistoryPolicy history, CancellationToken ct = default);
     /// <summary>The kept revisions, newest first.</summary>
     Task<IReadOnlyList<OnlineStoryHistoryRow>> ListHistoryAsync(long accountId, CancellationToken ct = default);
 }

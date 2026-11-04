@@ -64,6 +64,8 @@ struct OnlineUiState {
     char join_password[80]{};
     std::string selected;                // the selected room's code
     bool leave_asked = false;            // "Leave room?" in the room view
+    int leave_prompt_frame = -10;        // the last frame the room view showed "Leave room?" (its buttons take the focus when it opens)
+    int leave_prompt_frames = 0;         // the frames in a row it has shown it
     online::Screen last_screen = online::Screen::welcome;
     bool focus_pending = false;          // put the controller's focus on the new screen's first item
     bool close_requested = false;        // out: "Play" in the room view (the host closes the screens)

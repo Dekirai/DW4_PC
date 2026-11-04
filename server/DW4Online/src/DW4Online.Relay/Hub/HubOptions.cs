@@ -29,9 +29,23 @@ public sealed class InstanceOptions
     /// <summary>STORY messages a member may send per minute beyond <see cref="StoryBurst"/>; more are refused (reason rate) and sent again.</summary>
     public int StoryMessagesPerMinute { get; set; } = 60;
     public int StoryBurst { get; set; } = 10;
-    /// <summary>Phase steps, flags and key items count only from a visit the member has been in this long (the client sends
-    /// them again meanwhile, reason wait); a visit gives one phase step and one key item (SEAMLESS.md 8.7).</summary>
+    /// <summary>Phase steps, flags, key items and counter growth count only from a visit the member has been in this long (the
+    /// client sends them again meanwhile, reason wait); a visit gives one phase step and one key item, a further one is
+    /// earned and merged in a later visit (SEAMLESS.md 8.7).</summary>
     public double StoryMinVisitSeconds { get; set; } = 10;
+    /// <summary>A guest's phase steps count at least this far apart in a room session (an earlier one is earned and merged
+    /// when due); the original's steps follow whole dungeons. The owner's own steps are not spaced (SEAMLESS.md 8.7).</summary>
+    public double StoryPhaseStepSeconds { get; set; } = 300;
+    /// <summary>A guest's key items count at least this far apart in a room session (an earlier one is earned and merged when
+    /// due); not the owner's.</summary>
+    public double StoryKeySeconds { get; set; } = 60;
+    /// <summary>A guest's persistent flags count this many at once, then one more every <see cref="StoryFlagSeconds"/> in a
+    /// room session (the rest is earned and merged when due); not the owner's, not the room's clear flag.</summary>
+    public int StoryFlagBurst { get; set; } = 8;
+    /// <summary>See <see cref="StoryFlagBurst"/>; 0: flags are not spaced.</summary>
+    public double StoryFlagSeconds { get; set; } = 30;
+    /// <summary>The counter lines one member may open in a room session; more are refused (limit).</summary>
+    public int StoryLinesPerMember { get; set; } = 256;
     /// <summary>After the first BARRIER of a sealed instance, the others' reports are awaited this long.</summary>
     public int BarrierReportSeconds { get; set; } = 5;
     /// <summary>Players in one instance (the engine's four slots).</summary>

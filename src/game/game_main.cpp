@@ -929,7 +929,18 @@ int run(const Options& options, dw4::game::Settings& settings) {
             online->open_log(log_override && *log_override ? std::filesystem::path(log_override) : online_folder.parent_path() / "online.log",
                              DW4_PC_VERSION);
         }
+        online->link().start_online(0, 1);
+        // The relay first, the character after it (round 59 review): the
+        // relay's answer replaces a connection of this account that another
+        // PC still holds in the room, whose session then ends without
+        // uploading; loaded the other way round, that PC's leaving save came
+        // after this load and this PC's first upload met a 409.
+        if (!online->connect(steady_seconds(), error)) {
+            online.reset();
+            return false;
+        }
         if (!online->load_character(online_folder, DW4_PC_VERSION, error)) {
+            online->leave(0.0);
             online.reset();
             return false;
         }
@@ -948,6 +959,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     if (entry.path().extension() == ".gci") save = entry.path();
             const auto bytes = dw4::save::read_whole_file(save);
             if (!bytes || !dw4::save::valid_save_gci(*bytes) || !online->character()->card().write(*bytes)) {
+                online->leave(0.0);
                 online.reset();
                 error = "--online-card: no valid save in " + from.string();
                 return false;
@@ -961,11 +973,6 @@ int run(const Options& options, dw4::game::Settings& settings) {
         }
         use_online_card();
         std::cout << "online: " << online->character()->status_text() << " (card " << online->character()->card().file().string() << ")\n";
-        online->link().start_online(0, 1);
-        if (!online->connect(steady_seconds(), error)) {
-            online.reset();
-            return false;
-        }
         // The online account's achievements in the room (SEAMLESS.md 11).
         online_achievements = make_online_achievements(*online, created, options.smoke_frames != 0, online_folder);
         return true;
@@ -2760,6 +2767,9 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     if (ratio != online_audio_ratio && SDL_SetAudioStreamFrequencyRatio(audio, ratio)) online_audio_ratio = ratio;
                 }
                 if (session.closed()) {
+                    // (Another PC of this account took the place: its game goes on from the server's character, so this
+                    // PC's leaving save stays pending in the card cache instead of overwriting that.)
+                    if (session.replaced()) online->replaced();
                     online->save_on_leave(); // (the automatic save when leaving the room, SEAMLESS.md 9)
                     const auto reason = dw4::game::online::tidy_reason(session.close_reason());
                     std::cout << "online: " << reason << '\n';

@@ -9,6 +9,7 @@
 #include <cstdarg>
 #include <cstdlib>
 #include <cstdio>
+#include <thread>
 
 namespace dw4::game::online {
 
@@ -221,6 +222,61 @@ void Session::leave(const std::string& reason) {
     close_reason_ = "You left the room.";
 }
 
+std::size_t Session::read_hello(double now) {
+    std::size_t used = 0;
+    while (used < inbox_.size() && !hello_done_) {
+        const char c = char(inbox_[used++]);
+        if (c != '\n') {
+            line_ += c;
+            if (line_.size() > 256) {
+                lose_connection(now);
+                return inbox_.size();
+            }
+            continue;
+        }
+        const auto answer = w::parse_hello_answer(line_);
+        line_.clear();
+        if (!answer || !answer->ok) {
+            const std::string code = answer ? answer->error : std::string("bad_answer");
+            if (transport_) transport_->close();
+            transport_.reset();
+            mode_ = Mode::closed;
+            close_reason_ = "The relay refused the connection (" + code + ").";
+            return inbox_.size();
+        }
+        hello_done_ = true;
+        member_id_ = answer->member_id;
+        if (!config_.own_name.empty()) names_[member_id_] = config_.own_name;
+        // The instance comes with WELCOME, the server's first frame.
+    }
+    return used;
+}
+
+bool Session::await_hello(double timeout) {
+    const auto clock = [] { return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count(); };
+    const double until = clock() + timeout;
+    while (transport_ && !hello_done_ && mode_ != Mode::closed && clock() < until) {
+        inbox_.clear();
+        const bool open = transport_->receive(inbox_);
+        const std::size_t used = read_hello(now_);
+        // (The frames after the answer wait in the reader for the next poll.)
+        if (hello_done_ && transport_ && used < inbox_.size()) {
+            try {
+                reader_.feed(std::span(inbox_).subspan(used));
+            } catch (const w::WireError&) {
+                lose_connection(now_);
+                return false;
+            }
+        }
+        if (!open && transport_) {
+            lose_connection(now_);
+            return false;
+        }
+        if (!hello_done_) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    return hello_done_;
+}
+
 void Session::poll(double now) {
     now_ = now;
     poll_gap_ = last_poll_at_ >= 0 ? std::clamp(now - last_poll_at_, 0.0, 1.0) : 0.0;
@@ -230,35 +286,13 @@ void Session::poll(double now) {
         const bool open = transport_->receive(inbox_);
         std::size_t used = 0;
         if (!hello_done_) {
-            while (used < inbox_.size() && !hello_done_) {
-                const char c = char(inbox_[used++]);
-                if (c != '\n') {
-                    line_ += c;
-                    if (line_.size() > 256) {
-                        lose_connection(now);
-                        return;
-                    }
-                    continue;
-                }
-                const auto answer = w::parse_hello_answer(line_);
-                line_.clear();
-                if (!answer || !answer->ok) {
-                    const std::string code = answer ? answer->error : std::string("bad_answer");
-                    if (transport_) transport_->close();
-                    transport_.reset();
-                    mode_ = Mode::closed;
-                    close_reason_ = "The relay refused the connection (" + code + ").";
-                    return;
-                }
-                hello_done_ = true;
-                member_id_ = answer->member_id;
-                if (!config_.own_name.empty()) names_[member_id_] = config_.own_name;
-                // The instance comes with WELCOME, the server's first frame.
-            }
+            used = read_hello(now);
+            if (!transport_) return;
         }
-        if (hello_done_ && used < inbox_.size()) {
+        if (hello_done_) {
+            // (Frames await_hello received after the answer are in the reader already.)
             try {
-                reader_.feed(std::span(inbox_).subspan(used));
+                if (used < inbox_.size()) reader_.feed(std::span(inbox_).subspan(used));
                 while (auto frame = reader_.next()) {
                     if (informational(frame->type)) {
                         // A frame that only feeds the indicator, the tags or the
@@ -658,6 +692,7 @@ void Session::handle(const w::Frame& frame, double now) {
         if (transport_) transport_->close();
         transport_.reset();
         mode_ = Mode::closed;
+        close_code_ = std::uint8_t(m.reason);
         close_reason_ = m.reason == w::CloseReason::kicked      ? "You were removed from the room" + (m.text.empty() ? std::string(".") : " (" + m.text + ").")
                         : m.reason == w::CloseReason::room_closed ? "The room was closed" + (m.text.empty() ? std::string(".") : " (" + m.text + ").")
                                                                   : "The relay closed the connection" + (m.text.empty() ? std::string(".") : " (" + m.text + ").");
@@ -1225,7 +1260,8 @@ void Session::on_barrier_ok(const w::BarrierOk& ok, double now) {
                 const auto room = engine::story::decode_story(ok.story, ok.story_revision);
                 const auto dropped = engine::story::decode_keys(ok.dropped);
                 if (engine::story::holds_dropped(engine_.story_values(), room, dropped))
-                    notice("Story progress was not saved: the room owner is away.");
+                    notice(not_started_dropped_ ? "Story progress was not saved: the room owner had not started its story yet."
+                                                : "Story progress was not saved: the room owner is away.");
                 take_story(room);
             } catch (const std::exception&) {
             }
@@ -1713,6 +1749,16 @@ void Session::on_story_ack(const w::StoryAck& ack) {
             if (!held_noticed_) notice("The room owner is away: your story progress is kept until they return.");
             held_noticed_ = true;
             continue; // the server keeps it; the confirmed story brings it once merged
+        }
+        // The owner has no online story yet and its game has not entered a stage: the room starts at zero (8.6), what is
+        // done before is dropped like owner_away's drop (the barrier removes it).
+        if (x.reason == engine::StoryRefusal::not_started) {
+            not_started_dropped_ = true;
+            if (!not_started_noticed_)
+                notice("The room owner has not started its story yet: story progress made before that is not saved.");
+            not_started_noticed_ = true;
+        } else if (x.reason == engine::StoryRefusal::owner_away) {
+            not_started_dropped_ = false;
         }
         if (x.reason == engine::StoryRefusal::wait || x.reason == engine::StoryRefusal::not_member) {
             // Not yet (the visit is too young or already gave its step; the

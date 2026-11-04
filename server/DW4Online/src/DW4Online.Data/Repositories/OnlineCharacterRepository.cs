@@ -199,6 +199,14 @@ public sealed class OnlineCharacterRepository(Database db) : IOnlineCharacterRep
         return done;
     }
 
+    public async Task<byte[]?> GetLastEndedRecordAsync(long accountId, CancellationToken ct = default)
+    {
+        await using var c = await db.OpenAsync(ct);
+        return await c.QuerySingleOrDefaultAsync<byte[]?>(new CommandDefinition(
+            "SELECT record FROM online_character_history WHERE account_id = @a AND ended_at IS NOT NULL ORDER BY ended_at DESC, revision DESC LIMIT 1",
+            new { a = accountId }, cancellationToken: ct));
+    }
+
     public async Task<DateTime?> GetStartAsync(long accountId, CancellationToken ct = default)
     {
         await using var c = await db.OpenAsync(ct);

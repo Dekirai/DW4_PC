@@ -25,6 +25,11 @@ public sealed class RoomStoryData
         return c;
     }
 
+    /// <summary>A new game's story: no flag, no key item, every counter 0 (an account without an online story, or one the
+    /// online character's reset emptied).</summary>
+    public bool IsEmpty => !Flags.AsSpan().ContainsAnyExcept((byte)0) && !Folder.AsSpan().ContainsAnyExcept((byte)0) &&
+                           !Counters.AsSpan().ContainsAnyExcept(0);
+
     public bool SameValues(RoomStoryData o) => Flags.AsSpan().SequenceEqual(o.Flags) && Folder.AsSpan().SequenceEqual(o.Folder) &&
                                                Counters.AsSpan().SequenceEqual(o.Counters);
 
@@ -105,8 +110,11 @@ public enum StoryRefusal : byte
     /// <summary>A counter growth beyond the plausible, or a counter line this member was never in.</summary>
     Limit = 8,
     /// <summary>Not yet (the client sends it again): the sender's visit is younger than Instances:StoryMinVisitSeconds, or it
-    /// already gave its one phase step or key item.</summary>
+    /// already gave its one phase step or key item, or the member's last phase step or key item is too recent.</summary>
     Wait = 9,
+    /// <summary>The room owner's online story has not started (SEAMLESS.md 8.6): an owner without a story starts at zero, so
+    /// what members do before the owner's own game enters a stage is dropped like the owner-away policy drop.</summary>
+    NotStarted = 10,
 }
 
 public enum StoryKeyKind : byte { Phase = 0, Flag = 1, Folder = 2, Counter = 3 }

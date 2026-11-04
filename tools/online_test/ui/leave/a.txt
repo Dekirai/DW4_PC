@@ -1,0 +1,26 @@
+# Round 59 review: B + X + START's "Leave room?" in F1 Online took the controller's focus to the members table's header.
+# Now its buttons have it when it opens (Leave): pad-right is Stay, A answers it, the prompt closes, the room goes on.
+# (The pad hold comes from hold.script; the log must show the prompt and its closing by Stay: scenario.json log_expect.)
+open
+login $UI_A_NAME $UI_A_PASSWORD
+create $UI_ROOM max=4
+wait-session
+sleep 45
+wait 10
+shot overlay
+menu online
+wait 20
+shot prompt_focus
+key pad-right
+wait 10
+shot stay_focus
+key pad-a
+wait 20
+shot after_stay
+menu close
+sleep 3
+wait 10
+shot after_close
+leave
+wait-left 60
+end
