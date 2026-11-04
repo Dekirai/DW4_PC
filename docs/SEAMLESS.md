@@ -2822,7 +2822,10 @@ no effect on anything.
 
 - Each form's package (`_common/p_<form>.igb`, the one the engine loads for a
   player, `Engine::online_join_player`) and each weapon package
-  (`_common/<weapon>.igb`) is read and parsed on a worker thread from a *copy*
+  (`_common/<weapon>.igb`; only a weapon name, `w_` and up to 22 more of
+  A-Z a-z 0-9 _, and at most 16 of them kept: the one asked for longest ago
+  goes for a new one, never one a figure holds) is read and parsed on a
+  worker thread from a *copy*
   of the resources (never the engine's object, which a catch-up replaces);
   their nodes, animation database and geometry live in the figures' own
   `SceneCache`, never the engine's. A form's model is the record 0 instance
@@ -2883,13 +2886,32 @@ fields, then the motion clip (0-16 of A-Z a-z 0-9 _; empty: unknown), flags
 figure stands and the tag hides), a warp counter (the sender counts its stage
 loads and every step that moved its figure more than 24 units, far beyond a
 run's 0.7: receivers never glide across a change), the sender's clock in
-milliseconds (wrapping) and the weapon package (0-24 characters). In PRESENCE2
+milliseconds (wrapping) and the weapon package (0-24 characters). The clock is
+the time of the step whose place the packet carries, on a steady field grid
+(`Session::track_figure`: one field after the step before, at most 50 ms
+behind the wall clock; after 100 ms without a step the poll time), not the
+time of the poll that sends it: a sender at 144 Hz polls between its 60 Hz
+steps, and its poll times put the places up to 13 % off their spacing. HP and
+MP above their maximum (a script's `MDLaddHp` raises them above it) go as the
+maximum. In PRESENCE2
 the stage is empty only while the figure is really gone (a load, a scene, a
 menu stage, the action switch hiding the model); a window keeps the stage and
 sets busy. A member sends it ten times per second while its figure moves,
 turns or changes its clip or flags and five times per second while nothing
 changes (about 70 bytes each: a full room in one lobby relays about 6 KB/s to
 each member).
+
+**Leaving.** A member that leaves its stage shows nowhere from that moment
+until its next stage load: a departure (the stage announces its NEXTSTAGE,
+HEADING: the lobby gate, a mat's scene and fade) or a barrier sends an empty
+stage at once and keeps the stage empty until the load serial moves on (at
+most 10 s), and a load or title screen that begins without either sends one
+empty stage (`Session::depart`, `hide_presence`). The hub forwards that empty
+stage to the members still in the stage it left, whose figure fades out
+there. Before (the round 60 review), the figure faded out on the mat with the
+mat's scene, the end of the scene showed it on the mat again on its own
+machine until NEXTSTAGE parked it, and that last packet stood on the others'
+screens for the two seconds a silent track stays (scenario P3, 16).
 
 **Versions fail safe.** A client sends PRESENCE2 only after a WELCOME with the
 presence-v2 flag (2); an older hub never sets it (and would close a connection
@@ -2903,29 +2925,45 @@ to the others, so old and new clients share a room (the protocol number stays
 appends: the hub reads and checks its version 1 part and forwards only that,
 written at version 1 with the flags version 1 knows (counted as
 `presence_version`), so it never passes on what it cannot check and the
-member's figure still shows; a client takes what it knows. Scenario P2 (16)
+member's figure still shows; a client takes what it knows. Every version stays
+within 256 bytes (version 1 takes at most 105); the hub drops a larger
+PRESENCE2 unread (counted as `presence_oversize`). Scenario P2 (16)
 plays a new and an old member in one lobby (`DW4_ONLINE_TEST_PRESENCE1`
 makes a development client speak PRESENCE only, as before round 60 or
 against an older hub).
 
-**The hub's bounds** (`RoomHub.OnPresence2`, `Presence2Msg`): a malformed frame
-(lengths, a clip or weapon outside its characters, a non-finite position)
-closes the connection like any malformed frame; an implausible one is dropped
-and counted while the connection stays: a form above 15, a coordinate beyond
-100,000, a yaw beyond two turns, a level above 999, HP or MP above their
-maximum, an unknown flag. The rate is a token bucket per member (12 a second,
-3 at once; more is dropped and counted); PRESENCE keeps its 150 ms rule. The
+**The hub's bounds** (`RoomHub.OnPresence2`, `PresenceMsg.Implausible`,
+`Presence2Msg`): a malformed frame (lengths, a clip or weapon outside its
+characters, a non-finite position) closes the connection like any malformed
+frame; an implausible one is dropped and counted while the connection stays:
+a form above 15, a coordinate beyond 100,000, a yaw beyond two turns, a level
+above 999, an unknown flag. HP and MP above a known maximum go on as the
+maximum (the engine allows them above it, so dropping the frame would hide a
+member's tag and figure). PRESENCE of an older client is held to the same
+bounds (it drives a ghost figure too). The rate is a token bucket per member
+(12 a second, 3 at once; more is dropped and counted); PRESENCE keeps its
+150 ms rule. The
 hub also sends a member's presence to the members still in the stage it just
 left (another stage, or hidden while it loads), so its tag and figure go at
 once instead of after the two seconds a silent track takes.
 
 **Interpolation (`PresenceTracks`).** PRESENCE2 packets keep the sender's clock
-(the offset to the receiver's clock is the smallest one seen, relaxed by 2 ms
-per packet against clock drift, so a packet the network held up does not shift
-the others) and are drawn 0.16 s behind the newest (one 100 ms interval and
-room for jitter), between the two packets around that time, the yaw the short
-way round; past the newest packet a member goes on along its last movement for
-at most 60 ms, then holds. A change of the warp counter, a step faster than 900
+and are drawn 0.16 s behind the newest (one 100 ms interval and room for
+jitter), between the two packets around that time, the yaw the short way
+round; past the newest packet a member goes on along its last movement for at
+most 60 ms, then holds. The offset to the receiver's clock aims at the
+smallest arrival minus sent of the last 20 packets (the one the network held
+up least, so a late packet does not shift the others; a slower route or clock
+drift moves it up as the window moves on) and the drawn offset moves towards
+it by at most 2 % of the time that passes: the drawn time never jumps, it runs
+at most 2 % faster or slower. Round 60 first kept the smallest offset seen and
+raised it by 2 ms per packet: the drawn time ran 2 % slow and jumped forward
+at every new smallest offset, a saw the review measured as an uneven walk
+(8.5 % standard deviation of the per-picture step, single pictures 1.85x the
+even step on loopback, 3.65x with 30 +- 20 ms of jitter). Measured now with
+the same harness (`presence2_smooth`): at most 3 % off the even step and a
+standard deviation of at most 0.9 % for senders and pictures at 60 or 144 Hz,
+on loopback and with 30 + 40 ms of jitter. A change of the warp counter, a step faster than 900
 units per second or longer than 120 units, a new stage or instance and a
 restarted sender clock start a new segment: the old figure fades out where it
 was and a new one fades in at the new place (no glide). The remote name tags
@@ -2934,14 +2972,21 @@ their old rule (arrival times, 0.2 s behind).
 
 **Tests.** `dw4_ghosts_tests` (placement, list order, camera fade; with the
 game data a form loaded in the background, faded in, posed, its shadow proxy,
-a jump and a form change faded over, the cap of nine), `online_wire_tests`
+a jump and a form change faded over, the cap of nine; weapons: no package
+that is not a weapon, the sword drawn, a flood of 200 names kept to 16
+packages without dropping the held one), `online_wire_tests`
 (PRESENCE2 round trip, golden bytes shared with the relay's `WireGoldenTests`,
 versions, malformed frames), `online_session_tests` (the sender's clock and
 jitter, warps, extrapolation, busy, yaw; PRESENCE2 only after the WELCOME flag,
-ten or five a second), the relay's `HubPresenceTests` (the WELCOME flag,
-PRESENCE2 to PRESENCE2 members and PRESENCE to the others, the bounds, the
+ten or five a second; `presence2_smooth`: an even walk for senders and
+pictures at 30, 60 and 144 Hz with jitter and a route that gets faster or
+slower; `presence2_walk`: the step clock over the fake hub; `presence2_departure`:
+hidden from a departure to the next stage, gone at once at a barrier, HP above
+the maximum), the relay's `HubPresenceTests` (the WELCOME flag,
+PRESENCE2 to PRESENCE2 members and PRESENCE to the others, the bounds, HP
+above the maximum clamped, the 256-byte bound, PRESENCE by the same bounds, the
 token bucket, leaving a stage, a later version's version 1 part), and the
-real-client scenarios P1 and P2 (16).
+real-client scenarios P1, P2 and P3 (16).
 
 ## 13. Discord
 
@@ -3047,6 +3092,7 @@ anyway; joining goes through the room list.
 | A1 | online achievements: S5's run with achievements on; each machine reports its own player (online_join in its solo lobby, first_defeat in the sealed field) with the ranked context, the counters at the end; the server holds them (`scenario.json` "achievements") | S2 |
 | P1 | ghost figures in the lobby: three members (k7, k10, k2); one stands, one walks around it and stops right in front of it, the third shows another form every 6 s (`DW4_ONLINE_TEST_FORM`, the form PRESENCE2 names; the engine's stays), leaves through the lobby gate for a field (stag0101), falls there and comes back after the game over; `"shots": true` takes the scripts' `shot` pictures (hidden 1920x1009, widescreen, MSAA 4, all tags) and the `ghosts` condition waits on the figures a client shows | 60 |
 | P2 | ghost figures with an older client: two members (k7, k10), b speaks PRESENCE only (`DW4_ONLINE_TEST_PRESENCE1`, as a client before round 60 or one of an older hub); each sees the other's figure, without weapon and with run or wait by the speed of the packets (the hub turns a's PRESENCE2 into PRESENCE for b); b walks around a and stops right in front of it; pictures from both | 60 |
+| P3 | ghost figures, a member leaving over a mat: a (k7) stands by the lobby's mat matz00 and takes a picture every 45 frames while b (k10) walks over it into stagml12; a's trace every 10 frames: b's figure fades out on the mat and never shows again (no later segment of b, never two figures), b's trace has its departure | 60 fix |
 
 - **Real game clients** (round S1 integration): `run.py G1 --game-exe EXE
   --data DATA` starts two hidden `DW4_ONLINE_DEV` game clients instead of fake
@@ -4113,7 +4159,7 @@ Client to server:
 | 0x11 | RATE | replay rate u32 (steps per second) |
 | 0x12 | PONG | nonce u32, client ms u64 |
 | 0x13 | BYE | reason u8 (leaves the relay at once; the room membership stays) |
-| 0x14 | PRESENCE2 | version u8 (1), the PRESENCE fields, clip str (0-16 of A-Z a-z 0-9 _), flags u8 (1 the clip loops, 2 busy), warp u8, sender ms u32, weapon str (0-24, the same characters); only after a WELCOME with flag 2; a later version appends (the hub forwards its checked version 1 part at version 1; round 60, 12.1) |
+| 0x14 | PRESENCE2 | version u8 (1), the PRESENCE fields, clip str (0-16 of A-Z a-z 0-9 _), flags u8 (1 the clip loops, 2 busy), warp u8, sender ms u32, weapon str (0-24, the same characters); only after a WELCOME with flag 2; a later version appends, within 256 bytes in all (the hub forwards its checked version 1 part at version 1, drops a larger one; round 60, 12.1) |
 
 Server to client:
 
