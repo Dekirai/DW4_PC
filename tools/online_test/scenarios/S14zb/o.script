@@ -1,0 +1,10 @@
+# S14zb, room owner o: a new account (no online story: the room starts at zero). It sits at the title until the guest has
+# played its lobby and the first briefing, then the campaign bot starts a new game: its lobby starts the story and gives the
+# room phase 1. It stays in the lobby (present) until the guest has left its briefing.
+log at the title
+idle until epoch>=@360
+campaign until stage=stagml11
+talk until control,frames>=60
+log owner in the lobby
+idle until frames>=15000
+log owner done

@@ -29,13 +29,15 @@ internal sealed class RelayGateway : IRelayGateway
         // stop writes what is left (StoryFlushService).
         if (_hub is not null && _stories is not null)
         {
-            _hub.StorySaver = (owner, story) => _stories.Enqueue(owner, story);
+            _hub.StorySaver = (owner, story, countersOnly) => _stories.Enqueue(owner, story, countersOnly);
             _stories.SaveFailed = (owner, revision, e) =>
                 _log?.LogWarning(e, "Saving the online story of account {Account} (revision {Revision}) failed; it is tried again", owner, revision);
         }
     }
 
     public RoomStoryState? Story(string roomCode) => _hub?.Story(roomCode);
+
+    public int? RecentInstancePlayers(string roomCode, long accountId) => _hub?.RecentInstancePlayers(roomCode, accountId);
 
     public bool Available => _hub is not null;
 
@@ -82,11 +84,15 @@ internal sealed class RelayGateway : IRelayGateway
         {
             if (await check(new RelayAdmission(a.Room, a.AccountId, a.Nonce)) is not { } ok) return null;
             // The owner's online story as stored: the room's story starts from it when this connection creates the room's
-            // hub (a failed load refuses the connection; the client asks for a new ticket).
+            // hub (a failed load refuses the connection; the client asks for a new ticket). An owner without one (or with the
+            // empty story of a reset) starts at zero: nothing counts until the owner's own game enters a stage (8.6).
             RoomStoryInit? story = null;
             if (_stories is not null && ok.OwnerAccountId > 0)
-                story = new RoomStoryInit(ok.OwnerAccountId, await _stories.LoadAsync(ok.OwnerAccountId), ok.Difficulty,
-                    StoryPolicies.Parse(ok.StoryPolicy), ok.OwnerPresent);
+            {
+                var owned = await _stories.LoadAsync(ok.OwnerAccountId);
+                story = new RoomStoryInit(ok.OwnerAccountId, owned, ok.Difficulty, StoryPolicies.Parse(ok.StoryPolicy), ok.OwnerPresent,
+                    Started: !owned.IsEmpty);
+            }
             return new HubAdmitted(ok.MemberIndex, ok.Username, ok.Owner, new RoomInfo(a.Room, ok.Protocol, ok.DataHash, ok.SettingsHash, ok.MaxPlayers, story));
         };
     }

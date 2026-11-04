@@ -107,7 +107,9 @@ const std::vector<std::string_view>& online_forbidden_env() {
         // TITLE2's cursor reach it)
         "DW4_TITLE_ONLINE",
         // a Data Overflow run keeps the test characters' variables and cheats (src/game/overflow_run.hpp)
-        "DW4_OVERFLOW_TEST_CHEATS"};
+        "DW4_OVERFLOW_TEST_CHEATS",
+        // round 63's analysis switch: parts of the status window's pause left out (subwnd.cpp)
+        "DW4_TEST_SUBWND_SKIP"};
     return names;
 }
 
@@ -128,6 +130,15 @@ const std::vector<std::string_view>& online_presentation_env() {
         "DW4_ONLINE_PROFILE",
         // the resync scenarios' injected desync (DW4_ONLINE_DEV builds only, game_main.cpp: it is the point of the test)
         "DW4_ONLINE_TEST_DESYNC",
+        // the ghost figures (round 60, presentation only): off, and the form and old-client tests of the scenarios
+        // (DW4_ONLINE_DEV builds only, session.cpp: the form PRESENCE2 names cycles, the engine's stays; PRESENCE
+        // instead of PRESENCE2)
+        "DW4_GHOSTS", "DW4_ONLINE_TEST_FORM", "DW4_ONLINE_TEST_PRESENCE1",
+        // round 62: the online log's file, the latency scenarios' proxy port and their host-loop throttle (the
+        // relay seals by its clock: a throttled member's own pads come late, the simulation is the same)
+        "DW4_ONLINE_LOG", "DW4_ONLINE_RELAY_PORT", "DW4_ONLINE_TEST_STALL",
+        // the round 62 review's vsync grid of the latency scenarios (a pass ends on a grid of HZ, like a display's vsync)
+        "DW4_ONLINE_TEST_PASS_HZ",
         // round S1 test tools (game_main.cpp)
         "DW4_SNAPSHOT_DUMP", "DW4_PAD_LOG", "DW4_EXTRA_RENDERS", "DW4_EXTRA_WIDEN", "DW4_EXTRA_PREVIOUS",
         "DW4_CAM_CHECK"};
@@ -203,6 +214,9 @@ void Engine::set_online(const OnlineRules& rules) {
     }
     const OnlineRules before = online_;
     online_ = rules;
+    // (The sound output plays the own windows' sound effects of this
+    // machine's member alone, SEAMLESS.md 5.3.)
+    if (auto* sound = get<SoundManager>()) sound->set_listener_slot(online_.enabled ? view_slot_ : -1);
     if (!online_.enabled) {
         personal_ = {};
         barrier_pads_.reset();
@@ -238,8 +252,10 @@ bool Engine::hub_stage(std::string_view stage) {
 bool Engine::membership_safe() const {
     if (rebooting_ || !presenting() || loading() || !pending_stage_.empty() || !stage_active_) return false;
     if (!pad_input_enabled_) return false;
-    if (demo_.running() != 0) return false;
-    if (const auto* windows = get<SubWindowManager>(); windows && windows->window_open()) return false;
+    // (A member's own window or scene pauses nothing and holds up nothing:
+    // a member joins or leaves while another has its menu open, 5.3.)
+    if (demo_.running_unscoped() != 0) return false;
+    if (const auto* windows = get<SubWindowManager>(); windows && windows->shared_window_open()) return false;
     if (pending_fork_) return false;
     return true;
 }
@@ -461,6 +477,8 @@ void Engine::despawn_player(int slot) {
     auto* sys = get<GameSystem>();
     auto* models = get<ModelCtrlManager>();
     const Messenger::PortOnly port_only(messenger_);
+    // Its own window and scenes go with it (5.3).
+    end_own_scenes(slot);
     // As the pits' PLAYER REMOVE (the player class hook closes an open quick
     // panel, the model releases its action, subcommands and timers).
     if (models)
@@ -735,6 +753,19 @@ std::uint64_t Engine::net_fingerprint() {
     }
     h.value(net_fingerprint_cameras(*this));
     h.value(session_context_hash());
+    // The members' own windows and scenes (5.3): their programs, pad and
+    // layer switches, the copies made and the scoped demo works.
+    if (const auto* windows = get<SubWindowManager>()) h.value(windows->own_windows_hash());
+    h.value(scoped_pads_off_);
+    h.value(own_window_hold_);
+    h.value(own_scene_hold_);
+    for (const auto& layers : scoped_layers_off_) {
+        h.value(std::uint32_t(layers.size()));
+        for (const auto& layer : layers) h.text(layer);
+    }
+    h.value(std::uint32_t(copies_made_.size()));
+    h.value(std::uint32_t(demo_.running_unscoped()));
+    h.value(std::uint32_t(demo_.running()));
     return h.h;
 }
 

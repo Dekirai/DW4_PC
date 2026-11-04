@@ -570,7 +570,7 @@ public partial class HubLogicTests
         h.Hub.Disconnect(h.Mem("b"), h.P("b"), h.Now);
         h.Seal(500);
         var b2 = h.Connect("b", 1);
-        Assert.Equal(WelcomeMsg.Resumable, b2.Last(Msg.Welcome, WelcomeMsg.Parse).Flags);
+        Assert.Equal(WelcomeMsg.Resumable | WelcomeMsg.PresenceV2, b2.Last(Msg.Welcome, WelcomeMsg.Parse).Flags);
         h.Send("b", new ResumeMsg(inst, i.Visit, 1, 0).Frame()); // the whole log: refused
         Assert.Equal(2, h.Hub.Counters["resume_refused"]);
         h.Send("b", new ResumeMsg(inst, i.Visit, 1, i.NextSeal - 30).Frame()); // once per connection

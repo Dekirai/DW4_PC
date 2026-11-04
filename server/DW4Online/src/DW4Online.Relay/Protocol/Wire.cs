@@ -45,6 +45,7 @@ public static class Msg
     public const byte Rate = 0x11;
     public const byte Pong = 0x12;
     public const byte Bye = 0x13;
+    public const byte Presence2 = 0x14;
 
     // server -> client
     public const byte Welcome = 0x80;
@@ -62,16 +63,19 @@ public static class Msg
     public const byte Close = 0x8C;
     public const byte Roster = 0x8D;
     public const byte Reassign = 0x8E;
+    public const byte NetStat = 0x8F;
+    public const byte Presence2Out = 0x90;
 
     public static string Name(byte type) => type switch
     {
         Input => "INPUT", Log => "LOG", Heading => "HEADING", Barrier => "BARRIER", BarrierChoice => "BARRIER_CHOICE",
         Split => "SPLIT", Snapshot => "SNAPSHOT", SnapHash => "SNAPHASH", Ready => "READY", JoinAt => "JOIN_AT",
         NetFp => "NETFP", State => "STATE", Intent => "INTENT", Story => "STORY", Presence => "PRESENCE",
-        Resume => "RESUME", Rate => "RATE", Pong => "PONG", Bye => "BYE",
+        Resume => "RESUME", Rate => "RATE", Pong => "PONG", Bye => "BYE", Presence2 => "PRESENCE2",
         Welcome => "WELCOME", Sealed => "SEALED", Live => "LIVE", JoinReq => "JOIN_REQ", BarrierOk => "BARRIER_OK",
         BarrierWait => "BARRIER_WAIT", StateData => "STATE_DATA", PresenceOut => "PRESENCE", Resync => "RESYNC",
-        StoryAck => "STORY_ACK", Room => "ROOM", Ping => "PING", Close => "CLOSE", Roster => "ROSTER", Reassign => "REASSIGN",
+        StoryAck => "STORY_ACK", Room => "ROOM", Ping => "PING", Close => "CLOSE", Roster => "ROSTER", Reassign => "REASSIGN", NetStat => "NETSTAT",
+        Presence2Out => "PRESENCE2",
         _ => "0x" + type.ToString("X2"),
     };
 }

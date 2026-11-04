@@ -42,6 +42,9 @@ std::vector<Lua4Value> string_result(std::string value) { return {Lua4Value::str
 
 void Engine::install_lua() {
     lua_ = std::make_unique<Lua4Vm>();
+    // (Online: the own scenes' talk globals belonged to the old VM.)
+    talk_globals_ = {};
+    talk_globals_side_ = -1;
     lua_->set_global("be", Lua4Value::host_object("be"));
     lua_->set_global("gsub", Lua4Value::host_function("gsub"));
     lua_->set_global("strfind", Lua4Value::host_function("strfind"));
@@ -112,6 +115,15 @@ bool Engine::run_script(std::string_view name) {
     // Seamless online co-op: the gate disc's user forks off first; the
     // members who stay do not run its script (online_exits.cpp).
     if (name == "gatedisc.lua" && online_shared() && !gatedisc_fork()) return true;
+    // Online: a member's own scene runs with its own talk globals and leaves
+    // the instance's as they were (talk_globals_, docs/SEAMLESS.md 5.3;
+    // offline there is no scope and nothing switches).
+    struct TalkSide {
+        Engine& engine;
+        int outer;
+        ~TalkSide() { engine.switch_talk_globals(outer); }
+    } talk_side{*this, talk_globals_side_};
+    switch_talk_globals(scene_scope_);
     // DW4_TRACE_SCRIPT=1 logs every script run (=name: only that one).
     if (static const char* trace = std::getenv("DW4_TRACE_SCRIPT"); trace && (std::string_view(trace) == "1" || name == trace))
         log("script " + std::string(name));
@@ -420,7 +432,11 @@ std::vector<Lua4Value> Engine::lua_call(const Lua4HostCall& call) {
         // with none, SUBWND ISRUN to RAM 0 (0x802ED500, no name) - a running
         // status window gives -1 (0x802ED538..0x802ED544), no answer or a
         // stopped one 0.
-        if (const auto running = demo().running()) return number(double(running));
+        // (Online: another member's own scene does not count, SEAMLESS.md
+        // 5.3, except for a talk's hit script: talks wait for each other,
+        // run_own_talk; offline every work counts.)
+        if (talk_waits_) return number(1.0);
+        if (const auto running = demo().running_for(trigger_slot())) return number(double(running));
         Packet run;
         messenger().send(*this, "SUBWND", std::nullopt, 0, "ISRUN", run);
         return number(!run.bools.empty() && run.bools[0] ? -1.0 : 0.0);

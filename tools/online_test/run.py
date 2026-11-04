@@ -39,7 +39,8 @@ scenario.json with "server": {...} gets its own server with those settings merge
 (S14h / S14a: {"Rooms": {"StoryWhileOwnerAway": "hold"}}); "min_shared_ticks" lowers the 10,000 shared ticks a scenario
 needs (S14: one member plays); "seed_story": true starts the room story from the room creator's card (its online_story
 row, SEAMLESS.md 8.4), so the members' card stories are not new to the room (the title gives every member the room
-story at game start).
+story at game start); "shots": true (scenario or client) lets the scripts' "shot NAME" steps write NAME.bmp into
+the run folder (the client then draws its pictures in its hidden window).
 
 Without a scenario every game scenario runs. G1 is the integration's first game run (a new game from the title, both
 meet in the first field).
@@ -264,6 +265,17 @@ def dll(project, name):
     return os.path.join(SERVER, project, "bin", "Debug", "net10.0", name)
 
 
+# --server-root: the server (API and relay) of another DW4Online checkout, built there (the latency scenarios run the
+# deployed server's code, DW4Online 0.1.0 = main 890e802, against this client); the fake clients and the proxy stay this
+# checkout's.
+SERVER_DLL = None
+SERVER_HAS_STORY = False  # --server-root of a checkout whose server keeps the room story (round 56 and later)
+
+
+def server_dll():
+    return SERVER_DLL or dll("src/DW4Online.Server", "DW4Online.Server.dll")
+
+
 class Api:
     def __init__(self, base, der):
         self.base = base
@@ -320,11 +332,14 @@ def start_server(stack, connection, extra=None, name=""):
         "Web": {"DataProtectionKeysDirectory": "memory"},
         "Logging": {"File": {"Directory": os.path.join(folder, "server-log")}},
     }
+    if getattr(stack.args, "play_protocol", 0):
+        # The deployed server's configuration (Play:MinimumProtocol / CurrentProtocol, the field's 43).
+        settings["Play"] = {"MinimumProtocol": stack.args.play_protocol, "CurrentProtocol": stack.args.play_protocol}
     settings = merged(settings, extra)
     path = os.path.join(folder, "server-settings.json")
     with open(path, "w", encoding="utf-8") as f:
         json.dump(settings, f, indent=1)
-    stack.spawn(["dotnet", dll("src/DW4Online.Server", "DW4Online.Server.dll"), "--settings", path], os.path.join(folder, "server.out"),
+    stack.spawn(["dotnet", server_dll(), "--settings", path], os.path.join(folder, "server.out"),
                 env=dict(os.environ, ASPNETCORE_ENVIRONMENT="Production", DOTNET_gcServer="0"))
     if not wait_port(https, 60) or not wait_port(relay, 30):
         raise RuntimeError("the server did not start (see %s)" % os.path.join(folder, "server.out"))
@@ -594,10 +609,10 @@ def run_real(stack, sc, api, relay_port, pin, diag, lock, connection):
     a = stack.args
     if not a.game_exe or not a.data:
         raise RuntimeError("game scenarios need --game-exe (a DW4_ONLINE_DEV build) and --data (the game data)")
-    src = os.path.join(SCENARIO_DIR, sc["name"])
+    src = os.path.join(SCENARIO_DIR, sc.get("dir", sc["name"]))
     out = os.path.join(stack.dir, sc["name"])
     os.makedirs(out, exist_ok=True)
-    tag = sc["name"].lower() + secrets.token_hex(2)
+    tag = re.sub(r"[^a-z0-9]", "", sc["name"].lower())[:8] + secrets.token_hex(2)
     passwords, accounts = {}, {}
     with lock:
         for c in sc["clients"]:
@@ -607,7 +622,7 @@ def run_real(stack, sc, api, relay_port, pin, diag, lock, connection):
                 raise RuntimeError("register %s: %s %s" % (c["name"], s, body))
             accounts[c["name"]] = body["account"]["id"]
     https_port = api.base.rsplit(":", 1)[1]
-    room_name = sc["name"] + " " + tag
+    room_name = re.sub(r"[^A-Za-z0-9 ]", " ", sc["name"]) + " " + tag
     t0 = time.time()
 
     def script_for(c):
@@ -650,8 +665,26 @@ def run_real(stack, sc, api, relay_port, pin, diag, lock, connection):
                    DW4_ONLINE_PASSWORD=passwords[c["name"]], DW4_ONLINE_TRACE="1")
         env.update(sc.get("env", {}))
         env.update(c.get("env", {}))
+        env["DW4_ONLINE_LOG"] = os.path.join(out, c["name"] + ".online.log")
+        # The client's link (SEAMLESS.md 6.4, the latency scenarios): "impair" {"up": "MS,JITTER,LOSS", "down": ...} of the
+        # client, else of the scenario, else --net (all clients): its own impairment proxy in front of the relay.
+        link = c.get("impair") or sc.get("impair") or net_override()
+        if link:
+            port = free_port(stack)
+            stack.spawn(["dotnet", dll("tests/DW4Online.FakeClient", "DW4Online.FakeClient.dll"), "proxy", "--listen", str(port), "--target",
+                         str(relay_port), "--up", link.get("up", "0,0,0"), "--down", link.get("down", link.get("up", "0,0,0"))],
+                        os.path.join(out, c["name"] + ".proxy.out"))
+            if not wait_port(port, 20):
+                raise RuntimeError("the proxy of %s did not start" % c["name"])
+            env["DW4_ONLINE_RELAY_PORT"] = str(port)
         argv = [a.game_exe, "--data", a.data, "--smoke-test", str(c.get("frames", sc.get("frames", 30000))), "--card-dir", card,
-                "--online-login", tag + c["name"], "--online-script", script_for(c)] + room_args
+                "--online-login", tag + c["name"], "--online-script", script_for(c)] + room_args +             [x.replace("{out}", out) for x in c.get("args", [])]  # (a client's extra game arguments; {out}: the scenario's folder)
+        # "shots": the script's shot steps write NAME.bmp into the run folder (hidden 1920x1009 widescreen MSAA 4
+        # pictures, as a player sees them; P1, the ghost figures).
+        if c.get("shots", sc.get("shots")):
+            argv += ["--screenshot", os.path.join(out, c["name"] + "_shot.bmp")]
+            for k, v in (("DW4_RENDER", "1"), ("DW4_WINDOW", "1920x1009"), ("DW4_WIDESCREEN", "1"), ("DW4_MSAA", "4"), ("DW4_LABELS", "all")):
+                env.setdefault(k, v)
         folder = saved_card(c)
         if folder:
             argv += ["--online-card", folder]
@@ -659,7 +692,7 @@ def run_real(stack, sc, api, relay_port, pin, diag, lock, connection):
         return stack.spawn(argv, os.path.join(out, c["name"] + ".log"), env=env)
 
     clients = sorted(sc["clients"], key=lambda c: c.get("start", 0))
-    if sc.get("seed_story"):
+    if sc.get("seed_story") and (not SERVER_DLL or SERVER_HAS_STORY):  # (an older server, --server-root, has no online_story)
         # The room's creator is its owner: the room story starts from the owner's card.
         owner_card = saved_card(clients[0])
         if not owner_card:
@@ -701,6 +734,7 @@ def run_real(stack, sc, api, relay_port, pin, diag, lock, connection):
             p.terminate()
     stop_watch.set()
     problems, notes = evaluate_real(sc, src, out, code, diag, timed_out, exits)
+    latency_summary(sc, out, notes)
     if sc.get("story_saved"):
         spec = sc["story_saved"]
         seconds = story_saved.get("seconds")
@@ -721,6 +755,59 @@ def run_real(stack, sc, api, relay_port, pin, diag, lock, connection):
     if sc.get("achievements"):
         check_achievements(sc, api, tag, passwords, lock, problems, notes)
     return problems, notes
+
+
+NET_OVERRIDE = None
+
+
+def net_override():
+    """--net UP[/DOWN]: every client of a game scenario behind its own proxy (MS,JITTER,LOSS per direction)."""
+    if not NET_OVERRIDE:
+        return None
+    up, _, down = NET_OVERRIDE.partition("/")
+    return {"up": up, "down": down or up}
+
+
+def latency_summary(sc, out, notes):
+    """The latency scenarios (SEAMLESS.md 6.4): every client's input delay changes, its latency windows ("online-trace:
+    net ..."), its final latency line and its mode changes, as notes and as latency.json in the scenario's folder."""
+    summary = {}
+    for c in sc["clients"]:
+        path = os.path.join(out, c["name"] + ".log")
+        if not os.path.exists(path):
+            continue
+        delays, windows, modes, final, backlogs = [], [], [], None, 0
+        for line in open(path, encoding="utf-8", errors="replace"):
+            line = line.rstrip()
+            if line.startswith("online-trace: delay "):
+                delays.append(line[len("online-trace: "):])
+            elif line.startswith("online-trace: net "):
+                kv = dict(x.split("=", 1) for x in line[len("online-trace: net "):].split() if "=" in x)
+                windows.append(kv)
+            elif line.startswith("online-trace: mode "):
+                modes.append(line[len("online-trace: "):])
+            elif line.startswith("online-trace: backlog "):
+                backlogs += 1
+            elif line.startswith("online: final latency"):
+                final = line[len("online: "):]
+        sealed = [w for w in windows if w.get("mode") == "sealed" and int(w.get("samples", "0")) > 0]
+        summary[c["name"]] = {"delays": delays, "modes": modes, "final": final, "backlogs": backlogs, "windows": windows}
+        if sealed:
+            # The sealed windows after the first 15 s of sealed play (the join's fills and the delay's settling first).
+            settled = sealed[3:] or sealed
+            n = sum(int(w["samples"]) for w in settled)
+            dropped = sum(int(w["dropped"]) for w in settled)
+            exec_avg = sum(float(w["exec_avg"]) * int(w["samples"]) for w in settled) / max(1, n)
+            ds = sorted({int(w["d"]) for w in sealed})
+            notes.append("%s: sealed windows %d, d %s (first %s, last %s), exec avg %.1f ms (settled), max %.1f ms, dropped %d of %d, backlogs %d" % (
+                c["name"], len(sealed), ",".join(map(str, ds)), sealed[0]["d"], sealed[-1]["d"], exec_avg,
+                max(float(w["exec_max"]) for w in settled), dropped, n, backlogs))
+        for d in delays[:12]:
+            notes.append("   %s %s" % (c["name"], d))
+        if final:
+            notes.append("   %s %s" % (c["name"], final))
+    with open(os.path.join(out, "latency.json"), "w", encoding="utf-8") as f:
+        json.dump(summary, f, indent=1)
 
 
 def check_achievements(sc, api, tag, passwords, lock, problems, notes):
@@ -1145,6 +1232,8 @@ def run_ui(stack, sc, connection, servers):
         argv = [a.game_exe, "--data", a.data, "--smoke-test", str(c.get("frames", 400000)), "--card-dir", os.path.join(d, "cards"),
                 "--online-folder", os.path.join(d, "online"), "--online-ui", os.path.join(src, c["script"]),
                 "--screenshot", os.path.join(d, "shot.bmp")] + c.get("args", [])
+        if c.get("online_script"):  # (the game's pad script beside the UI script, in the scenario's folder)
+            argv += ["--online-script", os.path.join(src, c["online_script"])]
         cenv = dict(env)
         cenv.update(c.get("env", {}))
         if c.get("card"):
@@ -1190,6 +1279,10 @@ def run_ui(stack, sc, connection, servers):
                                        encoding="utf-8") if l.split("#")[0].strip())
         if len(steps) < expected:
             problems.append("%s: %d of %d script lines ran (log %s)" % (name, len(steps), expected, os.path.join(d, "log.txt")))
+        # A client's "log_expect": regular expressions its log must match (each one somewhere).
+        for pattern in next(c for c in sc["clients"] if c["name"] == name).get("log_expect", []):
+            if not any(re.search(pattern, l) for l in lines):
+                problems.append("%s: no log line matches %s" % (name, pattern))
     if sc.get("characters"):
         check_characters(sc, api, env, out, problems, notes)
     return problems, notes
@@ -1307,7 +1400,17 @@ def main():
     ap.add_argument("--hidden", action="store_true", help="dev: hidden clients with the campaign bot for --frames frames")
     ap.add_argument("--dev-card", default="", help="dev: a card folder whose saves both online cards start with")
     ap.add_argument("--ui-window", default="1920x1009", help="ui: the hidden window's size")
+    ap.add_argument("--server-root", default="", help="the DW4Online folder of another checkout whose server runs (built there)")
+    ap.add_argument("--play-protocol", type=int, default=0, help="the server's Play:MinimumProtocol / CurrentProtocol (the field: 43)")
+    ap.add_argument("--server-has-story", action="store_true",
+                    help="--server-root's server keeps the room story (round 56 and later, e.g. DW4Online 0.1.2): seed it as for this one")
+    ap.add_argument("--net", default="", help="game scenarios: every client behind its own proxy, UP[/DOWN] as MS,JITTER,LOSS")
     a = ap.parse_args()
+    global SERVER_DLL, NET_OVERRIDE, SERVER_HAS_STORY
+    if a.server_root:
+        SERVER_DLL = os.path.join(a.server_root, "src", "DW4Online.Server", "bin", "Debug", "net10.0", "DW4Online.Server.dll")
+        SERVER_HAS_STORY = a.server_has_story
+    NET_OVERRIDE = a.net or None
     if a.list:
         for sc in (SCENARIOS if a.fake else game_scenarios()):
             print("%-5s %s" % (sc["name"], sc["desc"]))
@@ -1372,12 +1475,22 @@ def main():
     else:
         wanted = []
         real = [s for s in game_scenarios() if (not a.scenarios and not game) or s["name"] in a.scenarios]
+        # NAME@UP[~DOWN] (the latency scenarios): the scenario with every client behind its own proxy, MS,JITTER,LOSS per
+        # direction (DOWN defaults to UP); the run folder is named after the whole argument.
+        by_name = {s["name"]: s for s in game_scenarios()}
+        for n in a.scenarios:
+            base, at, link = n.partition("@")
+            if at and base in by_name:
+                up, _, down = link.partition("~")
+                real.append(dict(by_name[base], name=n, dir=base, impair={"up": up, "down": down or up}))
         unknown = [n for n in a.scenarios if n != "G1" and n not in {s["name"] for s in real}]
         if unknown:
             print("unknown scenario(s): " + " ".join(unknown))
             return 2
     stack = Stack(a)
     failed = 0
+    # A scenario that takes pictures ("shots": P1, P2) keeps the run folder: the pictures are what a person looks at.
+    pictures = any(s.get("shots") or any(c.get("shots") for c in s.get("clients", [])) for s in real)
     try:
         connection = start_mysql(stack)
         base, relay, pin, der, diag = start_server(stack, connection)
@@ -1443,7 +1556,7 @@ def main():
             wanted = wanted + [{"name": "G1"}]
     finally:
         stack.stop()
-        if not a.keep and not failed:
+        if not a.keep and not failed and not pictures:
             shutil.rmtree(stack.dir, ignore_errors=True)
         else:
             print("run folder: " + stack.dir)

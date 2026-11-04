@@ -42,7 +42,7 @@ add_library(dw4_engine src/engine/math.cpp src/engine/gekko_math.cpp src/engine/
   src/engine/hud.cpp src/engine/items.cpp src/engine/panel.cpp
   src/engine/subwnd.cpp src/engine/subwnd_folder.cpp src/engine/subwnd_skill.cpp
   src/engine/subwnd_shop.cpp src/engine/save_state.cpp src/engine/port_events.cpp src/engine/online.cpp
-  src/engine/online_cameras.cpp src/engine/online_exits.cpp src/engine/online_story.cpp)
+  src/engine/online_cameras.cpp src/engine/online_exits.cpp src/engine/online_scenes.cpp src/engine/online_story.cpp)
 # Data Overflow, the survival mode's run engine rules (docs/SURVIVAL.md 13.4):
 # the hooks' values and the native run scripts; inert without OverflowRules.
 target_sources(dw4_engine PRIVATE src/engine/overflow/rules.cpp src/engine/overflow/player_hit.cpp
@@ -65,7 +65,7 @@ endif()
 option(DW4_ONLINE_DEV "Online client development build (loopback test server allowed)" OFF)
 add_library(dw4_online STATIC
   src/game/online/cpu_gate.cpp src/game/online/env_check.cpp src/game/online/pad_wire.cpp src/game/online/wire.cpp
-  src/game/online/pacing.cpp src/game/online/server_config.cpp src/game/online/http.cpp src/game/online/token_store.cpp
+  src/game/online/pacing.cpp src/game/online/net_stats.cpp src/game/online/net_log.cpp src/game/online/host_priority.cpp src/game/online/server_config.cpp src/game/online/http.cpp src/game/online/token_store.cpp
   src/game/online/json.cpp src/game/online/room_settings.cpp src/game/online/api.cpp src/game/online/transport.cpp
   src/game/online/session.cpp src/game/online/presence.cpp src/game/online/engine_adapter.cpp src/game/online/lobby_api.cpp
   src/game/online/lobby.cpp src/game/online/achievement_api.cpp)
@@ -191,6 +191,12 @@ if(BUILD_TESTING)
   target_include_directories(dw4_labels_tests PRIVATE src/game)
   target_link_libraries(dw4_labels_tests PRIVATE dw4_engine)
   add_test(NAME labels COMMAND dw4_labels_tests)
+  # The ghost figures of the hub stages (docs/SEAMLESS.md 12): placement,
+  # draw list order, camera fade; with the game data also a form's figure.
+  add_executable(dw4_ghosts_tests tests/ghosts_tests.cpp src/game/ghost_figures.cpp src/game/overhead_labels.cpp src/game/presence_data.cpp)
+  target_include_directories(dw4_ghosts_tests PRIVATE src/game)
+  target_link_libraries(dw4_ghosts_tests PRIVATE dw4_engine)
+  add_test(NAME ghosts COMMAND dw4_ghosts_tests "${DW4_TEST_DATA}")
   # Seamless online co-op, the engine side. With the game data (a disc image
   # or an extracted folder, never in the repository) it also plays membership
   # scenarios in real stages; without, those are skipped.
@@ -299,7 +305,7 @@ if(DW4_BUILD_APP)
   target_link_libraries(imgui PUBLIC SDL3::SDL3 OpenGL::GL)
   add_executable(dw4_game src/game/game_main.cpp src/game/gl_renderer.cpp src/game/movie_decoder.cpp src/game/settings.cpp src/game/controls.cpp src/game/interpolation.cpp src/game/texture_pack.cpp src/game/rvz.cpp src/game/netplay.cpp src/game/save_store.cpp src/game/mods.cpp src/game/test_path.cpp src/game/campaign.cpp src/game/online_script.cpp
     src/game/discord_ipc.cpp src/game/discord_presence.cpp src/game/presence_data.cpp src/game/presence_art.cpp
-    src/game/overhead_labels.cpp src/game/overhead_labels_draw.cpp src/game/achievements.cpp
+    src/game/overhead_labels.cpp src/game/overhead_labels_draw.cpp src/game/ghost_figures.cpp src/game/achievements.cpp
     src/game/randomizer_save.cpp src/game/dev_present.cpp src/game/online_run.cpp src/game/online_ui.cpp src/game/online_ui_script.cpp src/game/title_entry.cpp
     src/game/online_achievements.cpp src/game/host_view.cpp src/game/overflow_run.cpp src/game/overflow_host.cpp src/game/overflow_driver.cpp)
   target_include_directories(dw4_game PRIVATE ${pl_mpeg_src_SOURCE_DIR} ${stb_src_SOURCE_DIR})

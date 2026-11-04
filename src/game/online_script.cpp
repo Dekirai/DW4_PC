@@ -7,6 +7,7 @@
 #include "dw4/pad.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <bit>
 #include <chrono>
 #include <cstdlib>
@@ -74,14 +75,16 @@ bool playing(engine::Engine& engine, const OnlineScriptFacts& facts) {
 
 bool OnlineScript::known_action(std::string_view name) {
     static constexpr std::string_view names[] = {"campaign", "errand", "idle", "talk",   "gate",   "goto", "route", "follow", "mat",
-                                                 "explore",  "fight",  "wander", "die", "hold", "press", "giveup", "disk", "log"};
+                                                 "explore",  "fight",  "wander", "die", "hold", "press", "giveup", "disk", "log",
+                                                 "menu",     "browse", "talkto", "shot"};
     return std::find(std::begin(names), std::end(names), name) != std::end(names);
 }
 
 bool OnlineScript::known_condition(std::string_view key) {
     static constexpr std::string_view names[] = {"stage", "present", "frames",  "dead",   "alive",    "control",     "mode",
                                                  "slot",  "sealed",  "time",    "epoch",  "answered", "hp",          "prompt",
-                                                 "asking", "asked",  "partnerdead", "apart", "near", "stagechange", "level"};
+                                                 "asking", "asked",  "partnerdead", "apart", "near", "stagechange", "level",
+                                                 "menu",  "menus",   "talking", "scenes", "lost", "enemy", "ghosts"};
     if (key.starts_with("onmat:") || key.starts_with("onme:") || key.starts_with("offme:")) return key.find(':') + 1 < key.size();
     if (key.starts_with("flag:")) return key.size() > 5 && key.find_first_not_of("0123456789", 5) == std::string_view::npos;
     if (key.starts_with("roomflag:")) return key.size() > 9 && key.find_first_not_of("0123456789", 9) == std::string_view::npos;
@@ -112,6 +115,19 @@ bool OnlineScript::load(const std::filesystem::path& file, std::string& error) {
             error = file.string() + ":" + std::to_string(number) + ": unknown action " + step.action;
             steps_.clear();
             return false;
+        }
+        if (step.action == "shot") {
+            // One name of A-Z a-z 0-9 _ (a file name), no conditions.
+            std::string name;
+            words >> name;
+            if (name.empty() || !std::all_of(name.begin(), name.end(), [](char c) { return std::isalnum(static_cast<unsigned char>(c)) || c == '_'; })) {
+                error = file.string() + ":" + std::to_string(number) + ": shot needs a name of A-Z a-z 0-9 _";
+                steps_.clear();
+                return false;
+            }
+            step.args = {name};
+            steps_.push_back(std::move(step));
+            continue;
         }
         if (step.action == "log") {
             // The rest of the line is the text (no conditions).
@@ -198,11 +214,36 @@ bool OnlineScript::holds(engine::Engine& engine, const OnlineScriptFacts& facts,
         return compare(facts.room_story && flag < facts.room_story->flags.size() ? facts.room_story->flags[flag] : 0);
     }
     if (c.key == "present") return compare(std::popcount(unsigned(facts.present)));
+    if (c.key == "ghosts") return compare(facts.ghosts);
     if (c.key == "frames") return compare(step_frames_);
     if (c.key == "dead") return playing(engine, facts) && defeated(engine, facts.own_slot);
     if (c.key == "alive") return playing(engine, facts) && !defeated(engine, facts.own_slot);
     if (c.key == "control")
-        return playing(engine, facts) && me && me->control_enabled && me->seq_name.rfind("SQ_DEMO", 0) != 0 && engine.demo().running() == 0;
+        return playing(engine, facts) && me && me->control_enabled && me->seq_name.rfind("SQ_DEMO", 0) != 0 &&
+               engine.demo().running_for(facts.own_slot) == 0;
+    // Own windows and scenes (docs/SEAMLESS.md 5.3): this member's status
+    // window, how many present members have theirs open, this member's own
+    // scene (an NPC talk or a map recorder), how many have one, the HP this
+    // member lost since the step began.
+    if (c.key == "menu") return compare(engine.own_window_open(facts.own_slot) ? 1 : 0);
+    if (c.key == "talking") return compare(engine.own_scene_running(facts.own_slot) ? 1 : 0);
+    if (c.key == "menus" || c.key == "scenes") {
+        int n = 0;
+        for (int s = 0; s < 4; ++s)
+            if ((facts.present & (1u << s)) && (c.key == "menus" ? engine.own_window_open(s) : engine.own_scene_running(s))) ++n;
+        return compare(n);
+    }
+    if (c.key == "enemy") {
+        // The nearest living enemy is within the distance (enemy<N).
+        if (!me || !models) return false;
+        for (const auto& e : models->rams())
+            if (e->generated && e->node && e->category == "ENEMY" && e->hp > 0 && flat(position(*e), position(*me)) < c.value) return true;
+        return false;
+    }
+    if (c.key == "lost") {
+        const auto* sys = engine.get<engine::GameSystem>();
+        return playing(engine, facts) && sys && compare(step_hp_ - sys->players[std::size_t(facts.own_slot & 3)].hp);
+    }
     if (c.key == "mode") return facts.mode == c.text;
     if (c.key == "slot") return compare(facts.own_slot);
     if (c.key == "sealed") return compare(sealed_ticks_);
@@ -369,6 +410,93 @@ OnlineScript::Output OnlineScript::act(engine::Engine& engine, const OnlineScrip
     }
     if (step.action == "hold" || step.action == "press") {
         out.buttons = parse_buttons(step.args.empty() ? std::string() : step.args[0], out.push);
+        return out;
+    }
+    if (step.action == "menu") {
+        // The status window (START, docs/SEAMLESS.md 5.3): opened while this
+        // member has control and none is open; "menu close" leaves it (B
+        // now and then until it is closed).
+        const bool open = engine.own_window_open(facts.own_slot);
+        const bool close = !step.args.empty() && step.args[0] == "close";
+        if (close) {
+            if (open && frame % 30 < 3) out.buttons = dw4::pad_button::b;
+        } else if (!open && me && me->control_enabled && frame % 30 < 3) {
+            out.buttons = dw4::pad_button::start;
+        }
+        return out;
+    }
+    if (step.action == "browse") {
+        // Inside the status window: the pages one after the other (DOWN
+        // moves to the next, A opens it, B leaves it again), a press every 90
+        // frames from the 60th on (a page is open before its B, so the window
+        // itself never closes).
+        if (!engine.own_window_open(facts.own_slot) || step_frames_ < 60) return out;
+        static constexpr std::uint32_t kCycle[] = {dw4::pad_button::down, dw4::pad_button::a, dw4::pad_button::b};
+        const int beat = (step_frames_ - 60) / 90, phase = (step_frames_ - 60) % 90;
+        if (phase < 3) out.buttons = kCycle[std::size_t(beat % 3)];
+        return out;
+    }
+    if (step.action == "talkto") {
+        // An NPC or a map recorder (MODEL or MODEL#INDEX): walk up to it, face
+        // it and press A; then A now and then while this member's own scene
+        // (the talk) runs, to page through its messages.
+        if (engine.own_scene_running(facts.own_slot)) {
+            if (frame % 40 < 3) out.buttons = dw4::pad_button::a;
+            return out;
+        }
+        if (!me || !models || step.args.empty()) return out;
+        std::string name = step.args[0];
+        int index = 0;
+        if (const auto hash = name.find('#'); hash != std::string::npos) {
+            index = std::atoi(name.c_str() + hash + 1);
+            name.resize(hash);
+        }
+        const engine::ModelCtrlManager::ModelRam* target = nullptr;
+        for (const auto& m : models->rams())
+            if (m->info_name == name && m->index == index && m->generated && m->node) target = m.get();
+        if (!target || !control) return out;
+        const auto at = position(*target);
+        if (flat(at, position(*me)) > 12.0f) {
+            // On the way: an enemy within 15 units is struck first.
+            if (const auto* enemy = nearest_enemy(position(*me).x, position(*me).z, 15.0f)) {
+                const auto e = position(*enemy);
+                if (flat(e, position(*me)) > 10.0f) walk_to(engine, *me, e.x, e.z, 10.0f, frame, out);
+                if (frame % 20 < 3) out.buttons |= dw4::pad_button::a;
+                return out;
+            }
+            walk_to(engine, *me, at.x, at.z, 6.0f, frame, out);
+            return out;
+        }
+        // Close (as the campaign's "talk:", campaign.cpp): A's talk check lies
+        // ahead of the player, so from inside the model's body it passes over
+        // it. A only while 2..7 off the model facing it (within 30 degrees);
+        // nearer, or turned away close by, back off to 10 off it on the side
+        // it came from (past a map recorder in its alcove there is a wall:
+        // backing off away from the model kept a member stuck there) and walk
+        // up again; else up to it, the stick toward it turning the player.
+        const auto here = position(*me);
+        if (!talk_from_set_) {
+            talk_from_ = here;
+            talk_from_set_ = true;
+        }
+        const auto& pm = me->node->matrix;
+        const float fx = pm(2, 0), fz = pm(2, 2), fl = std::hypot(fx, fz);
+        const float d = flat(at, here);
+        const float toward = fl > 0.0f && d > 0.0f ? (fx * (at.x - here.x) + fz * (at.z - here.z)) / (fl * d) : -1.0f;
+        if (d < 2.0f || (toward < 0.0f && d < 9.0f)) {
+            float ax = talk_from_.x - at.x, az = talk_from_.z - at.z, al = std::hypot(ax, az);
+            if (al < 4.0f) ax = here.x - at.x, az = here.z - at.z, al = std::hypot(ax, az);
+            if (al < 0.5f) ax = fl > 0.0f ? -fx : 1.0f, az = fl > 0.0f ? -fz : 0.0f, al = fl > 0.0f ? fl : 1.0f;
+            walk_to(engine, *me, at.x + ax / al * 10.0f, at.z + az / al * 10.0f, 1.0f, frame, out, true);
+        } else if (toward > 0.87f && d <= 7.0f) {
+            if (frame % 20 < 3) out.buttons = dw4::pad_button::a;
+        } else {
+            out.walk = true;
+            out.x = at.x;
+            out.z = at.z;
+            out.reach = 0.0f;
+            if (toward > 0.87f && frame % 20 < 3) out.buttons = dw4::pad_button::a;
+        }
         return out;
     }
     if (step.action == "giveup") {
@@ -576,6 +704,7 @@ OnlineScript::Output OnlineScript::update(engine::Engine& engine, const OnlineSc
     }
     if (facts.mode == "sealed") ++sealed_ticks_;
     trace_prompt(engine, facts);
+    std::string shot; // (a "shot" step that ended in this update)
     for (int guard = 0; guard < 16 && cursor_ < steps_.size(); ++guard) {
         const auto& step = steps_[cursor_];
         if (!step_started_) {
@@ -584,6 +713,7 @@ OnlineScript::Output OnlineScript::update(engine::Engine& engine, const OnlineSc
             route_.clear();
             route_next_ = 0;
             explorer_.reset();
+            talk_from_set_ = false;
             disk_line_ = -1;
             answers_ = 0;
             waypoint_ = 0;
@@ -591,10 +721,11 @@ OnlineScript::Output OnlineScript::update(engine::Engine& engine, const OnlineSc
             step_stage_ = stage;
             failed_ = false;
             route_goal_ = {1e9f, 0, 1e9f};
+            if (const auto* sys = engine.get<engine::GameSystem>()) step_hp_ = sys->players[std::size_t(facts.own_slot & 3)].hp;
             const auto* me = own_player(engine, facts.own_slot);
             std::printf("online-script: step %zu (line %d) %s%s (frame %d, stage %s, slot %d, present %x, mode %s, tick %u, at %.0f,%.0f)\n",
                         cursor_ + 1, step.line, step.action.c_str(),
-                        step.action == "log" && !step.args.empty() ? (": " + step.args[0]).c_str() : "", facts.frame, stage.c_str(),
+                        (step.action == "log" || step.action == "shot") && !step.args.empty() ? (": " + step.args[0]).c_str() : "", facts.frame, stage.c_str(),
                         facts.own_slot, unsigned(facts.present), facts.mode.c_str(), facts.tick, me ? me->node->matrix(3, 0) : 0.0f,
                         me ? me->node->matrix(3, 2) : 0.0f);
             std::fflush(stdout);
@@ -606,6 +737,9 @@ OnlineScript::Output OnlineScript::update(engine::Engine& engine, const OnlineSc
             });
         } else if (step.action == "log") {
             done = true;
+        } else if (step.action == "shot") {
+            done = true;
+            shot = step.args.empty() ? std::string() : step.args[0];
         } else if (step.action == "press") {
             done = step_frames_ >= 6;
         } else if (step.action == "hold") {
@@ -637,6 +771,14 @@ OnlineScript::Output OnlineScript::update(engine::Engine& engine, const OnlineSc
                         if (const auto* mats = engine.get<engine::MatCtrlManager>())
                             if (const auto c = mats->mat_centre(step.args[0]))
                                 extra = " mat " + step.args[0] + " at " + std::to_string(int(c->x)) + "," + std::to_string(int(c->z));
+                    // talkto: the demo works this member's talk would count
+                    // (DMgetCount: the unscoped ones and its own) - a running
+                    // one keeps the talk script from starting.
+                    if (step.action == "talkto")
+                        if (const auto count = engine.demo().running_for(facts.own_slot)) {
+                            extra += " demos " + std::to_string(count);
+                            for (const auto& work : engine.demo().describe()) extra += " [" + work + "]";
+                        }
                     if (every != 300)
                         if (const auto* models = engine.get<engine::ModelCtrlManager>())
                             for (const auto& m : models->rams())
@@ -647,7 +789,9 @@ OnlineScript::Output OnlineScript::update(engine::Engine& engine, const OnlineSc
                                 me->control_enabled ? 1 : 0, unsigned(facts.present), facts.mode.c_str(), facts.tick, facts.frame, extra.c_str());
                     std::fflush(stdout);
                 }
-            return act(engine, facts, step);
+            auto out = act(engine, facts, step);
+            out.shot = shot;
+            return out;
         }
         ++cursor_;
         step_started_ = false;
@@ -656,7 +800,9 @@ OnlineScript::Output OnlineScript::update(engine::Engine& engine, const OnlineSc
             std::fflush(stdout);
         }
     }
-    return {};
+    Output out;
+    out.shot = shot;
+    return out;
 }
 
 } // namespace dw4::game

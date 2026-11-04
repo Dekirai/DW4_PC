@@ -34,8 +34,11 @@ namespace dw4::game {
 // DW4R2, the seamless protocol (the REST "protocol" too): 44 round S1, 45
 // round S2 (the room story in BARRIER_OK, STORY / STORY_ACK, the story at
 // game start; an S1 client in an S2 room would desynchronize at its first
-// barrier, so the rooms of the two never mix).
-inline constexpr std::uint32_t kOnlineProtocol = 45;
+// barrier, so the rooms of the two never mix), 46 round 63 (a member's
+// status window, NPC talks and map recorders are its own and pause nothing,
+// docs/SEAMLESS.md 5.3; a 45 client would pause its instance for them and
+// desynchronize at the first menu).
+inline constexpr std::uint32_t kOnlineProtocol = 46;
 
 struct OnlineOptions {
     std::string user, create, join;
@@ -70,7 +73,10 @@ public:
     online::CharacterSync* character() { return character_.get(); }
     // The card store of the online character (slot A the cache file).
     save::CardStore character_card() const;
-    // Connects to the relay (blocking up to five seconds).
+    // Connects to the relay (blocking up to five seconds for the connection
+    // and up to ten for the relay's answer: a newer connection of the same
+    // account replaces one another PC holds in the room when the relay
+    // answers, so the character loaded after it is the newest; round 59).
     bool connect(double now, std::string& error);
     // Every loop pass: network, catch-up, reconnects, the character's uploads.
     void pass(double now);
@@ -82,8 +88,13 @@ public:
     // the state the member carries into the next stage).
     void after_live_step(double now);
     // The step's port events: card_written of the own slot on card A uploads
-    // the box the save room wrote.
+    // the box the save room wrote; new_character and character_called tell
+    // the character the title's last choice before its Game Start.
     void port_events(const std::vector<engine::PortEvent>& events);
+    // The relay closed the session because a newer connection of this account
+    // (another PC) took its place: the leaving save stays pending in the card
+    // cache instead of overwriting what the other PC goes on from.
+    void replaced();
     // The automatic save when the member leaves the room (also when the
     // server closed the session): the current state's record, then up to
     // `seconds` for the uploads to finish (what does not arrive stays pending
@@ -98,6 +109,27 @@ public:
     // Leaves the room: the character's automatic save (waiting up to
     // `save_seconds` for the uploads), then BYE and the REST leave.
     void leave(double save_seconds = 8.0);
+    // saves/online.log (online/net_log.hpp, round 62): opened for the
+    // session, its first lines are the versions and protocols (the server's
+    // come with its status); the session logs into it from here.
+    void open_log(const std::filesystem::path& path, const std::string& client_version);
+    const online::OnlineLog& log() const { return log_; }
+    // What the host loop did in one pass, for online.log (round 62 review:
+    // with two games on one PC the rates of passes and pictures, vsync, the
+    // display's rate, the frame limit and which window was in front decide
+    // what each game's pads cost; none of it was in the log).
+    struct HostFacts {
+        bool window = false;    // a window exists (test runs without pictures have none)
+        bool presented = false; // this pass swapped a picture
+        bool vsync = false;     // settings.ini vsync
+        int swap_interval = 0;  // what the GL context reports (-1: adaptive)
+        int fps_limit = 0;      // settings.ini fps_limit (0: off)
+        double refresh_hz = 0;  // the window's display (0: unknown)
+        bool focused = false, minimized = false, occluded = false, hidden = false;
+    };
+    // Once per pass of the host loop: a line when the settings or the window's
+    // state change, and every ten seconds the rates of passes and pictures.
+    void host_pass(double now, const HostFacts& facts);
 
 private:
     void dispatch(std::uint64_t id, const online::HttpResponse& response, double now);
@@ -113,6 +145,13 @@ private:
     std::string client_version_;
     online::LeaveCombo combo_;
     std::uint64_t ticket_request_ = 0;
+    std::uint64_t status_request_ = 0; // the server's status for the log
+    online::OnlineLog log_;
+    struct HostWindow {
+        double since = -1, last = -1, longest = 0;
+        std::uint64_t passes = 0, presents = 0;
+    } host_window_;
+    std::optional<HostFacts> host_logged_; // the settings and window state of the last lines
     double next_reconnect_ = 0;
     bool pending_before_ = false; // the last live step had a NEXTSTAGE pending
     bool saved_on_leave_ = false;

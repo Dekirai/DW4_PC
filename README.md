@@ -352,7 +352,22 @@ and walks wherever they like (no leash); members in the same field, dungeon
 or boss stage play one shared stage instance (up to four), a member who
 arrives later joins it mid-stage, exits and the gate disc take only the
 members who say yes, and members who leave the lobby together a few seconds
-apart start the field together. Lobby and menu stages stay single player.
+apart start the field together. Lobby and menu stages stay single player:
+there the other room members in the same lobby appear as ghost figures, their
+Digimon in their current form with their weapon and name tag, walking and
+standing where they really are (look only: no collision, no talks, nothing
+they do changes your game; a figure in your way or inside your own Digimon
+turns see-through). With a server older than this version the figures come
+without their weapon and only run or stand.
+Everyone plays for themselves as in an online game: the status window (START),
+NPC talks and the map recorders in fields and dungeons are the member's own -
+they open on that member's screen only (the others see "Kim is in the menu"
+or "Kim is talking" over the name tag), several members can have their menus
+open at once, and they pause nothing: enemies, generators, the other members,
+timers and music run on, and a member in a menu stands still and can be hit.
+Only one NPC talk runs in an instance at a time, as in local co-op: while
+Kim talks, another member's NPC does not answer yet. An NPC's exchange
+trades with the talking member's own folders.
 
 ```bat
 powershell -ExecutionPolicy Bypass -File scripts\online-dev.ps1
@@ -388,10 +403,26 @@ first one back to the title menu. The screens work with a controller first
 menu's Online tab shows the same screens, and starting a room from there
 ends an offline game only after asking.
 
+While a room plays, a small box in the lower left corner shows the ping (the
+network's round trip to the server) and, while others share your stage, the
+input delay: every member's input waits this many 60 Hz ticks so that all
+machines run the same frames, about the ping plus 25-40 ms (3 ticks, 50 ms, at
+20 ms of ping; 4 ticks, 67 ms, at 25-30 ms with a 60 Hz display). It is green,
+yellow or red by how the link holds up; F1 > Settings can hide it, F1 > Online
+shows the details. Every online session writes `saves/online.log` (the
+versions and protocols, the input delay and why it changed, the link every ten
+seconds, the game's pictures per second, vsync, the display's refresh rate and
+whether its window was in front, losses and resyncs; no password, token or
+room code; rotated at about 1 MB; a second game started from the same folder
+writes `saves/online-2.log`): send that file when online play lags (F1 >
+Online has "Copy path" and "Open folder" for it).
+
 Known limits of the preview:
 
-- Talks, the map recorders, camera tours and the status window still pause
-  the whole instance (every member in it), as in local co-op.
+- Camera tours and tutorials on mats, the shaking mats and the story scenes
+  still pause the whole instance (every member in it), as in local co-op;
+  only the status window, NPC talks and the map recorders are each member's
+  own so far. A map recorder's floor map shows for the member who read it.
 - Pits still darken every member's screen in the instance.
 - Story progress made while the room owner is away is not kept (the
   server's default; the player is told at the next stage change).
@@ -399,6 +430,8 @@ Known limits of the preview:
   keeps one copy of the local save on the server (outside rooms).
 - Online needs a CPU with FMA3 (every machine must compute alike); the game
   refuses online play without it.
+- Ghost figures appear only in the lobby rooms; in the fields and dungeons
+  members of other instances still show only as name tags.
 
 ### Online server (DW4Online)
 

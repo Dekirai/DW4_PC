@@ -27,6 +27,7 @@
 #include <array>
 #include <chrono>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <set>
@@ -36,6 +37,11 @@
 struct ImFont;
 
 namespace dw4::game {
+
+class GhostFigures;
+namespace online {
+struct RemoteSample;
+}
 
 // A key or controller button of the controls tables waiting for input.
 struct KeyCapture {
@@ -69,7 +75,23 @@ struct PictureState {
     std::uint32_t movie_serial = 0;
     std::string movie_stage;    // stage the decoder's movie played in
     int last_picture_slot = -1; // Engine::picture_slot of the last picture (smooth motion restarts on a change)
+    // A picture's list and shadow with the story's ghost figures in
+    // (present_scene's copies; kept here, as the renderer keeps the shadow's
+    // address). Empty in a Data Overflow run.
+    std::vector<engine::DrawItem> ghost_items;
+    engine::ShadowFrame ghost_shadow;
     void reset();
+};
+
+// The story loop's online presentation for present_scene (round 60's ghost
+// figures, docs/SEAMLESS.md 12): the room members' figures and their presence
+// samples of this pass. A Data Overflow run passes none: nothing online
+// reaches a run (OVERFLOW_HOST.md 3).
+struct RemotePresentation {
+    GhostFigures* ghosts = nullptr;                             // drawn into a copy of the picture's list and shadow
+    const std::vector<online::RemoteSample>* samples = nullptr; // the remote tags stand where their figures do
+    std::optional<engine::Vec3f> own_position;                  // this machine's player (the figures' camera fade)
+    double* cost_max = nullptr;                                 // DW4_TRACE_GHOSTS: the figures' own milliseconds a pass
 };
 
 // The window, its renderer, the sound output, the controllers, the F1 menu's
@@ -120,6 +142,7 @@ struct HostView {
 
     // Presents.
     double present_interval = 1.0 / 60.0;
+    double last_present_seconds = 0; // the last present's own interval (DW4_TRACE_GHOSTS' longest present)
     std::array<float, 240> frame_times{}; // ms per presented frame (F1 graph)
     std::size_t frame_time_at = 0;
     std::chrono::steady_clock::time_point last_present, next_present;
@@ -158,8 +181,9 @@ void mix_audio(HostView& view, engine::Engine& engine, int frames);
 // ---- The picture of a pass
 // Every stage load, also of the same stage (the texture cache is keyed by
 // document addresses, which a new load may reuse): the renderer's cache,
-// smooth motion and the name tags start over. True when it did.
-bool note_stage(HostView& view, engine::Engine& engine);
+// smooth motion, the name tags and the story's ghost figures (`ghosts`; none
+// in a run) start over. True when it did.
+bool note_stage(HostView& view, engine::Engine& engine, GhostFigures* ghosts = nullptr);
 enum class PictureMade { kept, drawn, traversed };
 // The draw list of this pass (drawn: view.picture.items, which the caller
 // may still add 2D items to), or without pictures the traversal of it; a
@@ -180,8 +204,11 @@ struct PresentedScene {
 // The picture into the window: smooth motion's blend, the 4:3 screen and the
 // widescreen viewport, the scene, the name tags' places and occlusion, a
 // playing film, the kept picture (after a stage change the last picture
-// stays until the loader draws).
-PresentedScene present_scene(HostView& view, engine::Engine& engine, double accumulator, bool smooth_blending, bool report_blend);
+// stays until the loader draws). `remote` (the story loop online): the ghost
+// figures at the present's own time in a copy of the list and shadow, the
+// remote tags at their presence samples.
+PresentedScene present_scene(HostView& view, engine::Engine& engine, double accumulator, bool smooth_blending, bool report_blend,
+                             const RemotePresentation* remote = nullptr);
 // ImGui's keyboard and controller navigation while a menu takes the input
 // (never while the game reads the pad); `cursor_always`: the cursor shows at
 // once (the game's own menus do).
@@ -197,8 +224,10 @@ void render_ui();
 void write_screenshot(const std::string& path, int width, int height);
 void write_bmp(const std::string& path, int width, int height, const std::vector<std::uint8_t>& rgba);
 // After the menus: about three frames of sound queued across hitches, the
-// swap, the present interval and the F1 frame time graph.
-void finish_present(HostView& view, engine::Engine& engine);
+// swap (`swapped` right after it: the story loop's online session notes the
+// present), a minimized or covered window's 4 ms pause (its swap does not
+// wait for the display), the present interval and the F1 frame time graph.
+void finish_present(HostView& view, engine::Engine& engine, const std::function<void()>& swapped = {});
 // Frame limit (settings.ini fps_limit): presents are spaced out; the
 // simulation keeps its fixed 60 Hz steps.
 void pace_presents(HostView& view);

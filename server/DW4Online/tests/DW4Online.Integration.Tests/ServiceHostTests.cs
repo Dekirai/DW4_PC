@@ -51,11 +51,47 @@ public class ServiceHostTests
             Assert.Equal(ServerStartup.ExitHostFailed, await ServerStartup.RunAsync(app, asService: true));
 
             Assert.All(scm.Statuses(), s => Assert.Equal(ServiceState.StartPending, s.State));
-            var last = LastFail(await ReadLogAsync(logs));
+            var log = await ReadLogAsync(logs);
+            // The hosted services that started before the failing one are stopped, not just disposed: their
+            // cancellation is no "BackgroundService failed" line (that one came after the start's line at times).
+            Assert.DoesNotContain("BackgroundService failed", log);
+            var last = LastFail(log);
             Assert.StartsWith("The host failed: Failed to bind ", last);
             Assert.Contains($"127.0.0.1:{port}", last);
             Assert.Contains("address already in use", last);
             Assert.EndsWith("The service ends now; its restart actions start it again.", last);
+        }
+        finally
+        {
+            DeleteLogs(logs);
+        }
+    }
+
+    /// <summary>
+    /// A failed start stops the hosted services that had started before the failing one: a background service that
+    /// ends with an OperationCanceledException on its stop token is a quiet stop, no "BackgroundService failed" line
+    /// after the start's FAIL line (only disposed, the host logged that cancellation as a failure).
+    /// </summary>
+    [Fact]
+    public async Task A_failed_start_stops_the_started_background_services_before_its_FAIL_line()
+    {
+        using var holder = new TcpListener(IPAddress.Loopback, TestPorts.Next());
+        holder.Start();
+        var port = ((IPEndPoint)holder.LocalEndpoint).Port;
+        var logs = NewLogDirectory();
+        using var scm = new FakeScm();
+        var stopped = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        try
+        {
+            var app = Build(scm, logs, new Dictionary<string, string?> { ["Kestrel:Endpoints:Http:Url"] = $"http://127.0.0.1:{port}" },
+                services => services.AddHostedService(_ => new CancelledOnStop(stopped)));
+
+            Assert.Equal(ServerStartup.ExitHostFailed, await ServerStartup.RunAsync(app, asService: true));
+
+            Assert.True(stopped.Task.IsCompleted, "the started background service was not stopped");
+            var log = await ReadLogAsync(logs);
+            Assert.DoesNotContain("BackgroundService failed", log);
+            Assert.StartsWith("The host failed: Failed to bind ", LastFail(log));
         }
         finally
         {
@@ -162,6 +198,16 @@ public class ServiceHostTests
                 await started.Task.WaitAsync(stop);
             await Task.Delay(100, stop);
             throw new InvalidOperationException("background failure for the test");
+        }
+    }
+
+    /// <summary>Runs until its stop token fires, then ends with the OperationCanceledException of Task.Delay.</summary>
+    private sealed class CancelledOnStop(TaskCompletionSource stopped) : BackgroundService
+    {
+        protected override async Task ExecuteAsync(CancellationToken stop)
+        {
+            await using (stop.Register(() => stopped.TrySetResult()))
+                await Task.Delay(Timeout.Infinite, stop);
         }
     }
 

@@ -7,7 +7,8 @@ DW4_ONLINE_DEV game clients that log in, open a room each and play their pad fro
       at the title; the first stage change creates the online character (If-None-Match: *), the save room writes it
       (the campaign's checkpoint p2: card_written -> upload with If-Match), the story goes on and the member leaves
       the room (the automatic save when leaving). GET /online-character returns the last saved record and the
-      client's own save store (--card-dir) stays untouched.
+      client's own save store (--card-dir) stays untouched. The record's story (the owner's online story) holds phase 2
+      (the first briefing, a minute or two after phase 1: the owner's own steps are not spaced, round 59 fix round).
   C2  S15: an account whose online character exists (a campaign checkpoint's record, uploaded through the API): the
       client builds the virtual card from it and calls it at the title (DW4_CAMPAIGN_LOAD), plays the story; after its
       first upload "another PC" saves the character (a PUT through the API); the client's next upload gets 409, shows
@@ -23,8 +24,15 @@ DW4_ONLINE_DEV game clients that log in, open a room each and play their pad fro
       it (the revision rises, the SHA-256 is the local file's), a kept revision made the latest again (API) is
       downloaded into the local save (the old one copied to backups/ first); a picture of the panel at 1920x1009
       (widescreen, MSAA 4) is kept in the run folder.
+  K3  (round 59) the account's first client makes a new character and two stage-change revisions, then crashes; the
+      second client starts Create Digimon, backs out of the status window, the name entry and the partner selection,
+      and calls the online character from the card: its stage changes and its leaving save go up. K3b: the same with
+      another frame count, so the backed-out new character had another UNIQUE.
+  K5  (round 59) the account's first client plays in its room; a second PC of the account enters the room meanwhile:
+      the relay replaces the first PC's connection, the first PC uploads nothing after that (its last progress stays
+      pending in its card cache), and the second PC (connected before it loads the character) saves without a 409.
 
-    python character_test.py [C1 C2 C3 C4 P1] --game-exe EXE --data DATA --cards CHECKPOINTS
+    python character_test.py [C1 C2 C3 C4 P1 K3 K3b K5] --game-exe EXE --data DATA --cards CHECKPOINTS
                              [--mysql-port 3455] [--ports 54250-54299] [--keep] [--no-build]
 
 The clients run hidden (--smoke-test, DW4_NO_ERROR_BOX=1, below normal priority); network traffic stays on loopback.
@@ -194,6 +202,19 @@ def run_c1(st, args, api, https_port, pin, out):
         summary = body.get("summary") or {}
         notes.append("server: revision %s, %s Lv %s, play %s s" % (body["revision"], summary.get("digimon"), summary.get("level"),
                                                                  body.get("playSeconds")))
+        # The owner's own story (round 61 design on round 59): a new game makes phase 1 at the lobby's first load and phase
+        # 2 at the first briefing a minute or two later (the campaign's checkpoint p2). The room story, and with it the
+        # account's online story that GET composes into the record, must hold phase 2: the five-minute spacing kept the
+        # owner's phase 2 out, and alone in its room nobody else brought it.
+        record = base64.b64decode(body["record"])
+        phases = [p for p in range(1, 7) if record[STORY[0] + p] == 1] + ([7] if record[STORY[0] + 86] == 1 else [])
+        story_phase = max(phases, default=0)
+        reached = any(re.search(r"campaign: checkpoint p2 reached .* phase 2", l) for l in lines)
+        notes.append("the owner's online story: phase %d (the client reached phase 2: %s)" % (story_phase, "yes" if reached else "no"))
+        if not reached:
+            problems.append("the campaign never reached the checkpoint p2 (phase 2)")
+        elif story_phase < 2:
+            problems.append("the owner's online story stayed at phase %d although its game reached phase 2" % story_phase)
     s, history = api.call("GET", "/api/v1/online-character/history", token=token)
     if s == 200:
         notes.append("history: %d revisions" % len(history))
@@ -489,6 +510,184 @@ def run_p1(st, args, api, https_port, pin, out):
     return problems, notes
 
 
+# ---------------------------------------------------------------------------------------------------------------------
+# K3, K3b, K5 (round 59 review, tools of tools/online_test/rv59_k.py of the review): an account's room with two
+# stage-change revisions of its online character, made by a first client.
+# ---------------------------------------------------------------------------------------------------------------------
+
+def k_client(st, args, out, tag, account, password, https_port, pin, script, frames, env_extra, room_args, folder):
+    card = os.path.join(out, "own_card_" + tag)
+    for sub in ("Card A", "Card B"):
+        os.makedirs(os.path.join(card, sub), exist_ok=True)
+    path = os.path.join(out, tag + ".script")
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(script)
+    env = dict(os.environ, DW4_NO_ERROR_BOX="1", DW4_ONLINE_SERVER="127.0.0.1:" + https_port, DW4_ONLINE_PIN=pin,
+               DW4_ONLINE_PASSWORD=password, DW4_ONLINE_TRACE="1", DW4_TRACE_EVENTS="1")
+    env.update(env_extra)
+    argv = [args.game_exe, "--data", args.data, "--smoke-test", str(frames), "--card-dir", card, "--online-login", account,
+            "--online-script", path, "--online-folder", os.path.join(out, folder)] + room_args
+    return st.spawn(argv, os.path.join(out, tag + ".log"), env=env), card
+
+
+def wait_for_line(path, pattern, seconds):
+    t = time.time()
+    while time.time() - t < seconds:
+        if any(re.search(pattern, l) for l in log_lines(path)):
+            return True
+        time.sleep(0.5)
+    return False
+
+
+def room_code(api, name, token):
+    s, rooms = api.call("GET", "/api/v1/rooms", token=token)
+    for r in (rooms if isinstance(rooms, list) else (rooms or {}).get("rooms", [])):
+        if r.get("name") == name:
+            return r.get("code")
+    return None
+
+
+def k3_title(shift=0):
+    """Create Digimon up to the status window (the campaign's new-game presses), B out of it, B through the name entry
+    (removes the letters, then cancels) and the partner selection, DOWN to Call Digimon, A through slot A / box 1 / the
+    status window, START. `shift` frames later: another frame count, another UNIQUE for the new character (K3b)."""
+    steps = ["idle until frames>=%d" % (647 + shift), "press START"]
+    presses = [(1047, "A"), (1137, "A"), (1227, "A"), (1317, "A"), (1377, "RIGHT"), (1437, "RIGHT")]
+    for k in range(4, 21):
+        presses.append((1047 + 90 * k + 180, "A"))
+    at = 1047 + 90 * 20 + 180 + 300
+    presses.append((at, "B"))
+    at += 200
+    for _ in range(14):
+        presses.append((at, "B"))
+        at += 50
+    at += 150
+    presses.append((at, "DOWN"))
+    presses.append((at + 50, "A"))
+    for k in range(10):
+        presses.append((at + 170 + 50 * k, "A"))
+    presses.append((at + 170 + 50 * 10 + 50, "START"))
+    now = 647 + 6  # ("frames>=N" counts the frames of the step; a press lasts 6 frames)
+    for f, b in presses:
+        steps += ["idle until frames>=%d" % max(1, f - now), "press " + b]
+        now = f + 6
+    return steps, at + 800
+
+
+def first_owner_client(st, args, api, https_port, pin, out, name, password, token, room, folder):
+    """The account's first client: opens the room and plays a new character until its revision 2 (two stage changes)."""
+    p1, card1 = k_client(st, args, out, "first", name, password, https_port, pin, "campaign until frames>=40000\n", 40000, {},
+                         ["--online-create", room], folder)
+    log1 = os.path.join(out, "first.log")
+    if not wait_for_line(log1, r"^online-character: saved \(stage change\) revision 2", 600):
+        p1.kill()
+        raise RuntimeError("the first client never reached revision 2")
+    return p1, card1, log1
+
+
+def run_k3(st, args, api, https_port, pin, out, shift=0):
+    """K3 (K3b: another UNIQUE): the second client of the account (the first one crashed) starts Create Digimon, backs
+    out of the status window, the name entry and the partner selection and calls the online character from the card:
+    its stage changes and its leaving save must go up (before round 59 every save of the session was skipped)."""
+    problems, notes = [], []
+    name = ("k3b" if shift else "k3") + secrets.token_hex(3)
+    password, token = register(api, name)
+    room = "crash " + name
+    p1, _, log1 = first_owner_client(st, args, api, https_port, pin, out, name, password, token, room, "online")
+    time.sleep(8)
+    p1.kill()
+    p1.wait()
+    code = room_code(api, room, token)
+    s, body = api.call("GET", "/api/v1/online-character", token=token)
+    first_rev = (body or {}).get("revision", 0)
+    notes.append("room %s, the server's revision after the first client: %s" % (code, first_rev))
+    title, end = k3_title(shift)
+    script = title + ["idle until stage=stagml11 or frames>=2500", "log title done", "talk until control,frames>=60", "log back in the lobby",
+                      "campaign until frames>=7000", "log played on", "idle until frames>=30"]
+    room_args = ["--online-join", code] if code else ["--online-create", room + " again"]
+    p2, card2 = k_client(st, args, out, "second", name, password, https_port, pin, "\n".join(script) + "\n", end + 11000, {}, room_args, "online")
+    try:
+        exit_code = p2.wait((end + 11000) / 59.94 + 400)
+    except Exception:
+        p2.kill()
+        exit_code = "timeout"
+    lines = log_lines(os.path.join(out, "second.log"))
+    ch = character_lines(lines)
+    notes.append("second: " + " | ".join(ch[:24]))
+    common_checks(problems, lines, card2, exit_code)
+    if not any(l.startswith("called box 0") for l in ch):
+        problems.append("the second client did not call box 0 (the title presses missed)")
+    if not any("new character" in l for l in ch):
+        problems.append("the second client did not make (and back out of) a new character first")
+    if any(l.startswith("auto save (") and "skipped" in l or l.startswith("save (") and "not uploaded" in l for l in ch):
+        problems.append("saves of the called online character were skipped")
+    saved = [l for l in ch if re.match(r"saved \(stage change\) revision \d+", l)]
+    if not saved:
+        problems.append("no stage change of the called online character went up")
+    if not any(l.startswith("saved (leaving the room)") or l.startswith("save (leaving the room) unchanged") for l in ch):
+        problems.append("the leaving save did not go up")
+    s, body = api.call("GET", "/api/v1/online-character", token=token)
+    last = (body or {}).get("revision", 0)
+    notes.append("the server's revision after the second client: %s" % last)
+    if last <= first_rev:
+        problems.append("the server stayed at revision %s" % last)
+    return problems, notes
+
+
+def run_k3b(st, args, api, https_port, pin, out):
+    return run_k3(st, args, api, https_port, pin, out, shift=37)
+
+
+def run_k5(st, args, api, https_port, pin, out):
+    """K5: the same account enters the room on a second PC while the first still plays in it. The relay replaces the first
+    PC's connection; the first PC's leaving save stays pending on that PC, the second PC loads the character after its
+    relay connection and saves without a 409 (before round 59 every save of the second PC was blocked)."""
+    problems, notes = [], []
+    name = "k5" + secrets.token_hex(3)
+    password, token = register(api, name)
+    room = "switch " + name
+    p1, card1, log1 = first_owner_client(st, args, api, https_port, pin, out, name, password, token, room, "online_pc1")
+    time.sleep(20)
+    code = room_code(api, room, token)
+    script = ["campaign until stage=stagml11", "talk until control,frames>=60", "log back in the lobby", "campaign until frames>=6000",
+              "log played on", "idle until frames>=30"]
+    p2, card2 = k_client(st, args, out, "second", name, password, https_port, pin, "\n".join(script) + "\n", 9300, {"DW4_CAMPAIGN_LOAD": "1"},
+                         ["--online-join", code], "online_pc2")
+    try:
+        exit_code = p2.wait(9300 / 59.94 + 400)
+    except Exception:
+        p2.kill()
+        exit_code = "timeout"
+    try:
+        p1.wait(60)
+    except Exception:
+        p1.kill()
+    l1, l2 = log_lines(log1), log_lines(os.path.join(out, "second.log"))
+    c1, c2 = character_lines(l1), character_lines(l2)
+    notes.append("first: " + " | ".join(c1[-8:]))
+    notes.append("second: " + " | ".join(c2[:16]))
+    common_checks(problems, l2, card2, exit_code)
+    replaced_at = next((i for i, l in enumerate(c1) if l.startswith("replaced by another connection")), None)
+    if replaced_at is None:
+        problems.append("the first PC was not told that another connection replaced it")
+    elif any(l.startswith("saved (") or l.startswith("upload (") for l in c1[replaced_at:]):
+        problems.append("the first PC uploaded after it was replaced")
+    if any("conflict" in l or "not uploaded: blocked" in l for l in c2):
+        problems.append("the second PC met a conflict")
+    saved = [int(m.group(1)) for l in c2 for m in [re.match(r"saved \(.*\) revision (\d+)", l)] if m]
+    if not saved:
+        problems.append("the second PC saved nothing")
+    s, body = api.call("GET", "/api/v1/online-character", token=token)
+    last = (body or {}).get("revision", 0)
+    notes.append("the server's revision at the end: %s (the second PC's last: %s)" % (last, saved[-1] if saved else None))
+    if saved and last != saved[-1]:
+        problems.append("the server's revision %s is not the second PC's last save %s" % (last, saved[-1]))
+    state = os.path.join(out, "online_pc1", re.sub(r"[^a-z0-9_-]", "_", name.lower()), "online_card.state")
+    if os.path.exists(state):
+        notes.append("the first PC's card state: " + open(state).read().replace("\n", " "))
+    return problems, notes
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("scenarios", nargs="*")
@@ -506,7 +705,7 @@ def main():
     ap.add_argument("--c2-frames-play", type=int, default=9000, help="C2: frames of story play in the lobby and on")
     args = ap.parse_args()
     args.impair = ""
-    wanted = args.scenarios or ["C1", "C2", "C3", "C4", "P1"]
+    wanted = args.scenarios or ["C1", "C2", "C3", "C4", "P1", "K3", "K3b", "K5"]
     if any(n in wanted for n in ("C2", "C3", "P1")) and not args.cards:
         print("C2 needs --cards (a campaign checkpoint set such as work/campaign/checkpoints/r25c)")
         return 2
@@ -532,7 +731,8 @@ def main():
                 problems, notes = ["%s: %s" % (type(e).__name__, e)], []
             results[name] = (problems, notes, time.time() - t)
 
-        threads = [threading.Thread(target=one, args=(n, {"C1": run_c1, "C2": run_c2, "C3": run_c3, "C4": run_c4, "P1": run_p1}[n])) for n in wanted]
+        cases = {"C1": run_c1, "C2": run_c2, "C3": run_c3, "C4": run_c4, "P1": run_p1, "K3": run_k3, "K3b": run_k3b, "K5": run_k5}
+        threads = [threading.Thread(target=one, args=(n, cases[n])) for n in wanted]
         for th in threads:
             th.start()
         for th in threads:

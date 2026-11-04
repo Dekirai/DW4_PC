@@ -37,6 +37,11 @@ public sealed partial class RoomService
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly Dictionary<string, LiveRoom> _rooms = new(StringComparer.Ordinal);
     private readonly Dictionary<long, string> _memberOf = [];
+    // Accounts taken out of the rooms (locked, banned, deleted) and when: their requests that were already on their way
+    // (another session of the same account, the running game) open or join no room for a while (a room created between
+    // the closing of its rooms and the deletion's scrub kept the deleted account's name and story keeper).
+    private readonly Dictionary<long, DateTime> _removedAt = [];
+    private static readonly TimeSpan RemovedBlock = TimeSpan.FromMinutes(2);
 
     public RoomService(IRoomRepository repository, IRelayGateway relay, IAuditLog audit, VersionGate versions, RoomOptions options, TimeProvider time,
         DW4Online.Domain.Story.OnlineStoryService? stories = null)
@@ -135,6 +140,7 @@ public sealed partial class RoomService
         var hash = password is null ? null : _passwords.Hash(password); // expensive: outside the gate
         var version = Truncate(request.ClientVersion?.Trim() ?? "", 32);
 
+        RoomState created;
         await _gate.WaitAsync(ct);
         try
         {
@@ -144,6 +150,7 @@ public sealed partial class RoomService
             if (_rooms.Count >= _options.MaxRooms)
                 return new DomainError(ErrorKind.Unavailable, "rooms_full", "The server has no room for more rooms. Try again later.");
             var now = Clock.Now(_time);
+            if (Removed(accountId, now)) return AccountInactive();
             if (_memberOf.TryGetValue(accountId, out var previous) && _rooms.TryGetValue(previous, out var old))
                 await LeaveLockedAsync(old, accountId, LeaveReasons.Left, now, ct);
 
@@ -190,13 +197,30 @@ public sealed partial class RoomService
             room.Members[accountId] = member;
             _rooms[code] = room;
             _memberOf[accountId] = code;
-            return WithTicket(room, member);
+            created = WithTicket(room, member);
         }
         finally
         {
             _gate.Release();
         }
+        // The story this room session starts from stays in the owner's story history (SEAMLESS.md 8.7): staff can always
+        // put it back, however many revisions the room makes. A failure here never fails the room.
+        if (_stories is not null)
+        {
+            try
+            {
+                await _stories.KeepSessionStartAsync(accountId, ct);
+            }
+            catch (Exception e) when (e is not OperationCanceledException)
+            {
+                SessionKeepFailed?.Invoke(accountId, e);
+            }
+        }
+        return created;
     }
+
+    /// <summary>Called when keeping a room session's start in the story history failed (account, error).</summary>
+    public Action<long, Exception>? SessionKeepFailed { get; set; }
 
     /// <summary>
     /// Joins a room (repeating it is harmless and counts as a heartbeat). The owner always gets back in (their place
@@ -235,6 +259,7 @@ public sealed partial class RoomService
         {
             if (!_rooms.TryGetValue(code, out var room)) return RoomNotFound();
             var now = Clock.Now(_time);
+            if (Removed(accountId, now)) return AccountInactive();
             if (room.Members.TryGetValue(accountId, out var already))
             {
                 already.LastSeen = now;
@@ -368,6 +393,9 @@ public sealed partial class RoomService
         try
         {
             var now = Clock.Now(_time);
+            // (Its requests already on their way open or join nothing for a while; the callers run this again after a
+            // deletion's scrub, which ends the account's sessions.)
+            _removedAt[accountId] = now;
             await CloseOwnedLockedAsync(accountId, CloseReasons.HostLeft, now, ct);
             if (_memberOf.TryGetValue(accountId, out var code) && _rooms.TryGetValue(code, out var room))
                 await LeaveLockedAsync(room, accountId, LeaveReasons.Kicked, now, ct);
@@ -417,6 +445,7 @@ public sealed partial class RoomService
         {
             if (!TryMember(code, accountId, out var room, out var member)) return NotInRoom();
             member.LastSeen = Clock.Now(_time);
+            if (Removed(accountId, member.LastSeen)) return AccountInactive();
             var state = WithTicket(room, member);
             return state.RelayTicket is null ? TicketFailed() : state;
         }
@@ -486,6 +515,8 @@ public sealed partial class RoomService
         try
         {
             var now = Clock.Now(_time);
+            foreach (var (id, at) in _removedAt.ToList())
+                if (now - at > RemovedBlock) _removedAt.Remove(id);
             var limit = TimeSpan.FromSeconds(_options.MemberTimeoutSeconds);
             var removed = 0;
             foreach (var room in _rooms.Values.ToList())
@@ -547,6 +578,11 @@ public sealed partial class RoomService
     }
 
     private int CountOwned(long accountId) => _rooms.Values.Count(r => r.OwnerId == accountId);
+
+    private bool Removed(long accountId, DateTime now) => _removedAt.TryGetValue(accountId, out var at) && now - at <= RemovedBlock;
+
+    private static DomainError AccountInactive() =>
+        DomainError.Forbidden("account_inactive", "This account was locked, banned or deleted.");
 
     /// <summary>The member's state with a fresh one-time relay ticket (it replaces any older one), when the relay runs.</summary>
     private RoomState WithTicket(LiveRoom room, LiveMember member)

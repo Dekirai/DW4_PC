@@ -190,8 +190,11 @@ struct ExitPortAccess {
                 view.asking = -1;
                 // Every other living member on the mat is asked in turn; who
                 // steps on from now on is not part of this departure.
+                // (A member in its own window or scene is not asked: its pad
+                // belongs to that window, 5.3.)
                 if (const auto* mats = engine.get<MatCtrlManager>())
-                    exit.candidates = std::uint8_t(mats->players_on(exit.mat) & engine.online().present & ~(1u << exit.owner));
+                    exit.candidates = std::uint8_t(mats->players_on(exit.mat) & engine.online().present & ~(1u << exit.owner) &
+                                                   ~engine.busy_slots());
                 exit.state = State::ask_next;
                 continue;
             }
@@ -312,7 +315,9 @@ std::vector<Lua4Value> Engine::stage_change_port(std::span<const Lua4Value> args
     const auto* mats = get<MatCtrlManager>();
     const auto running = mats ? mats->running_mat() : std::nullopt;
     if (!running) return {};
-    const int owner = exit_prompt_owner(running->current, running->previous, running->live, online_.present);
+    // (A member in its own window or scene - pushed onto the mat while in it -
+    // gets no prompt: its pad belongs to that window, 5.3.)
+    const int owner = exit_prompt_owner(running->current, running->previous, running->live, std::uint8_t(online_.present & ~busy_slots()));
     if (owner < 0 || (exit_port_ && exit_port_->state != ExitPort::State::done)) return {};
     auto exit = std::make_shared<ExitPort>();
     exit->owner = owner;

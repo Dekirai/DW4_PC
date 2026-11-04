@@ -17,9 +17,22 @@ public sealed record RoomInfo(string Code, int Protocol, ulong DataHash, ulong S
 
 /// <summary>
 /// The room story's start (SEAMLESS.md 8): the owner's account and online story as stored, the room's difficulty (the
-/// story is rebased on it), the owner-away policy and whether the owner is in the room.
+/// story is rebased on it), the owner-away policy, whether the owner is in the room and whether the owner's story has
+/// started (false: the owner has no online story yet, the room starts at zero until the owner's game enters a stage).
 /// </summary>
-public sealed record RoomStoryInit(long OwnerAccountId, RoomStoryData Story, int Difficulty, StoryPolicy Policy, bool OwnerPresent);
+public sealed record RoomStoryInit(long OwnerAccountId, RoomStoryData Story, int Difficulty, StoryPolicy Policy, bool OwnerPresent, bool Started = true);
+
+/// <summary>
+/// What a room keeps while the relay rebuilds its hub (an empty hub is dropped while the room stays open): the room story
+/// keeper with its dropped set, epochs, held values and per-member rules, the last revision handed to the saver, and the
+/// next instance id (a new instance never takes an id an engine line of the old hub names).
+/// </summary>
+public sealed class RoomSessionState
+{
+    public RoomStoryKeeper? Story { get; set; }
+    public RoomStoryData? Saved { get; set; }
+    public uint NextInstance { get; set; } = 1;
+}
 
 /// <summary>A member as the room's state lists it.</summary>
 public sealed record InstanceMemberView(long AccountId, string Username, int Slot, bool Connected, bool Lagging);
@@ -60,12 +73,21 @@ public sealed class HubMember(int index, long accountId, string name, bool owner
     public Heading? Heading { get; set; }
     public PresenceMsg? Presence { get; set; }
     public long PresenceAt { get; set; }
+    /// <summary>The member sends PRESENCE2 (round 60): it is sent PRESENCE2 too. Its last one (null: PRESENCE).</summary>
+    public bool PresenceV2 { get; set; }
+    public Presence2Msg? Presence2 { get; set; }
+    /// <summary>PRESENCE2's token bucket (<see cref="RoomHub.PresenceRate"/> a second, <see cref="RoomHub.PresenceBurst"/>).</summary>
+    public double PresenceTokens { get; set; }
+    public long PresenceTokensAt { get; set; }
     public bool Lagging { get; set; }
 
     public uint PingNonce { get; set; }
     public long PingSentAt { get; set; }
     public long LastHeard { get; set; }
     public RttSamples Rtt { get; } = new();
+    /// <summary>The delay rule of the member's newest sealed stream: the next one keeps its bar (a value that proved too low
+    /// for this member's link and game, SEAMLESS.md 6.4), since the link does not change with the stage.</summary>
+    public DelayController? LastDelay { get; set; }
 
     /// <summary>This connection may send RESUME once (its WELCOME said resumable).</summary>
     public bool ResumeAllowed { get; set; }
@@ -91,11 +113,19 @@ public sealed class HubMember(int index, long accountId, string name, bool owner
     public const int LoneLineLimit = 8;
     /// <summary>The story epoch of the member's last instance visit (its engine was cleaned at that barrier).</summary>
     public long VisitEpoch { get; set; }
+    /// <summary>The room owner has been in the member's last instance visit (<see cref="HubInstance.OwnerSeen"/>).</summary>
+    public bool VisitOwnerSeen { get; set; }
     /// <summary>The stage the member plays alone in while the server has no instance with a stage for it (taken out of its
     /// group, its connection lost in a lobby or at a barrier, a reconnect without resuming), and since when: its STORY counts
     /// against that stage (SEAMLESS.md 8.7).</summary>
     public string? LoneStage { get; set; }
     public long LoneSince { get; set; }
+    /// <summary>The visit key the member's lone play counts under (the instance visit it went on from alone; 0: from
+    /// <see cref="LoneSince"/>), so a reconnect without resuming is no new visit for the per-visit rules.</summary>
+    public ulong LoneKey { get; set; }
+    /// <summary>When the housekeeping last saw the member in an instance of n players (index n, 1..4): the achievements'
+    /// players claim is capped by it (<see cref="RoomHub.RecentInstancePlayers"/>).</summary>
+    public long[] SeenInSize { get; } = new long[Wire.MaxSlots + 1];
     /// <summary>When the member's last BARRIER that arrived alone was decided (at most one per Instances:LoneBarrierMs).</summary>
     public long LoneBarrierAt { get; set; }
     /// <summary>The member's state budget (Relay:StateBytesPerMinute): bytes left and when it was last refilled.</summary>
@@ -335,6 +365,9 @@ public sealed class HubInstance(uint id)
     public StateReason Reason { get; set; } = StateReason.Loading;
     /// <summary>The room story's drop epoch when this visit began (a fork's child keeps its parent's: one engine line).</summary>
     public long StoryEpoch { get; set; }
+    /// <summary>The room owner has been in this visit (a fork's child keeps its parent's): a visit that began before a room's
+    /// story started counts from the owner's arrival on (SEAMLESS.md 8.6).</summary>
+    public bool OwnerSeen { get; set; }
 
     public TickLog Log { get; set; } = new();
     /// <summary>Sealed records beyond the log's end, waiting for the solo leader's LOG to reach them (1 to 2 members).</summary>

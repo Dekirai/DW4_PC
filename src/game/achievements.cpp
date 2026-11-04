@@ -582,6 +582,8 @@ std::vector<AchievementUnlock> AchievementTracker::observe(const AchievementStep
             break; // levels are read from the state below
         case Kind::new_character:
             break; // (the randomizer's bond, game_main)
+        case Kind::character_called:
+            break; // (the online character's Game Start, online_run)
         }
     }
 

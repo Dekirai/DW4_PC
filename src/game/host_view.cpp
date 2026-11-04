@@ -1,6 +1,8 @@
 #include "host_view.hpp"
 
 #include "controls.hpp"
+#include "ghost_figures.hpp"
+#include "online/presence.hpp"
 
 #include <SDL3/SDL_opengl.h>
 #include <imgui.h>
@@ -26,6 +28,8 @@ void PictureState::reset() {
     movie_serial = 0;
     movie_stage.clear();
     last_picture_slot = -1;
+    ghost_items.clear();
+    ghost_shadow = {};
 }
 
 LabelMode HostView::label_mode() const {
@@ -166,7 +170,7 @@ void mix_audio(HostView& view, engine::Engine& engine, int frames) {
     if (view.audio_dump_path) view.audio_dump.insert(view.audio_dump.end(), pcm.begin(), pcm.end());
 }
 
-bool note_stage(HostView& view, engine::Engine& engine) {
+bool note_stage(HostView& view, engine::Engine& engine, GhostFigures* ghosts) {
     auto& picture = view.picture;
     const std::uint64_t serial = engine.stage_snapshot() ? engine.stage_snapshot()->serial : 0;
     if (picture.rendered_stage != engine.stage_name() || picture.rendered_serial != serial) {
@@ -175,6 +179,7 @@ bool note_stage(HostView& view, engine::Engine& engine) {
         picture.rendered_serial = serial;
         view.interpolator.reset();
         view.labels.reset();
+        if (ghosts) ghosts->clear(); // (a new stage: no figure fades across the load)
         return true;
     }
     return false;
@@ -217,7 +222,8 @@ PictureMade make_picture(HostView& view, engine::Engine& engine, int steps, bool
     return PictureMade::drawn;
 }
 
-PresentedScene present_scene(HostView& view, engine::Engine& engine, double accumulator, bool smooth_blending, bool report_blend) {
+PresentedScene present_scene(HostView& view, engine::Engine& engine, double accumulator, bool smooth_blending, bool report_blend,
+                             const RemotePresentation* remote) {
     auto& picture = view.picture;
     auto& items = picture.items;
     auto& camera = picture.camera;
@@ -229,7 +235,30 @@ PresentedScene present_scene(HostView& view, engine::Engine& engine, double accu
     scene.present_alpha = present_alpha;
     // (DW4_DEV_DUMP: what the blend did, for presents.csv.)
     if (smooth_blending) view.interpolator.blend(items, camera, shadow, present_alpha, report_blend ? &scene.blend_report : nullptr);
-    renderer->set_shadow(&shadow);
+    // Ghost figures (ghost_figures.hpp, the story loop online): at the
+    // present's own time, into a copy of the picture's list and shadow (a held
+    // field draws the list again as it is), never the simulation's.
+    const std::vector<engine::DrawItem>* frame_items = &items;
+    const engine::ShadowFrame* frame_shadow = &shadow;
+    auto& ghost_items = picture.ghost_items;
+    auto& ghost_shadow = picture.ghost_shadow;
+    if (!ghost_items.empty()) {
+        ghost_items.clear();
+        ghost_shadow = {};
+    }
+    if (remote && remote->ghosts && remote->ghosts->active() && engine.presenting()) {
+        const auto ghost_draw_start = std::chrono::steady_clock::now();
+        ghost_items = items;
+        ghost_shadow = shadow;
+        const double now = std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+        remote->ghosts->draw(ghost_items, &ghost_shadow, camera, remote->own_position, now);
+        frame_items = &ghost_items;
+        frame_shadow = &ghost_shadow;
+        if (remote->cost_max)
+            *remote->cost_max =
+                std::max(*remote->cost_max, std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - ghost_draw_start).count());
+    }
+    renderer->set_shadow(frame_shadow);
     int width = 0, height = 0;
     SDL_GetWindowSizeInPixels(view.window, &width, &height);
     scene.width = width;
@@ -258,7 +287,7 @@ PresentedScene present_scene(HostView& view, engine::Engine& engine, double accu
     auto& tag_view = scene.tag_view;
     auto& labels = view.labels;
     if (engine.presenting() || !renderer->draw_kept_picture(width, height)) {
-        renderer->render(items, camera, picture.clear, screen, wide, width, height);
+        renderer->render(*frame_items, camera, picture.clear, screen, wide, width, height);
         if (tag_mode != LabelMode::off && !OverheadLabels::hidden(engine)) {
             scene.tags_shown = true;
             tag_view.camera = camera;
@@ -276,6 +305,16 @@ PresentedScene present_scene(HostView& view, engine::Engine& engine, double accu
             tag_view.scale_y = scale.y > 0 ? scale.y : 1.0f;
             // (Between the two steps like the picture: smooth motion's condition.)
             tags = labels.blended(smooth_blending ? present_alpha : 1.0f);
+            // Remote tags at the presence sample of this pass, the one their
+            // ghost figures stand at (no tag trails its figure).
+            if (remote && remote->samples)
+                for (auto& tag : tags)
+                    if (tag.key >= 0x100)
+                        for (const auto& sample : *remote->samples)
+                            if (sample.member == tag.key - 0x100) {
+                                tag.feet = {sample.x, sample.y, sample.z};
+                                tag.head = remote_head(tag.feet, sample.species);
+                            }
             view.traced_occlusion.clear();
             for (auto& tag : tags) {
                 if ((tag.hp <= 0 && !tag.capsule) || !label_visible(tag_mode, tag.own, labels.players())) continue;
@@ -373,13 +412,19 @@ void write_screenshot(const std::string& path, int width, int height) {
     write_bmp(path, width, height, pixels);
 }
 
-void finish_present(HostView& view, engine::Engine& engine) {
+void finish_present(HostView& view, engine::Engine& engine, const std::function<void()>& swapped) {
     // Keep about three frames of audio queued across frame hitches.
     if (view.audio) {
         const int queued = SDL_GetAudioStreamQueued(view.audio) / int(2 * sizeof(std::int16_t));
         if (queued < kAudioFrameSamples * 2) mix_audio(view, engine, kAudioFrameSamples * 3 - queued);
     }
     SDL_GL_SwapWindow(view.window);
+    if (swapped) swapped();
+    // A minimized window's swap does not wait for the display: the loop
+    // would spin and take the CPU from a second game on this PC (two games
+    // for one online room, round 62). Its passes are spaced 4 ms apart (the
+    // steps keep their own clock).
+    if (SDL_GetWindowFlags(view.window) & (SDL_WINDOW_MINIMIZED | SDL_WINDOW_OCCLUDED)) SDL_DelayPrecise(4'000'000);
     {
         const auto now = std::chrono::steady_clock::now();
         const double seconds = std::chrono::duration<double>(now - view.last_present).count();
@@ -387,6 +432,7 @@ void finish_present(HostView& view, engine::Engine& engine) {
         view.present_interval += (std::min(seconds, 0.1) - view.present_interval) * 0.1;
         if (view.dev.presenting()) view.present_interval = 1.0 / view.dev.hz;
         view.frame_times[view.frame_time_at++ % view.frame_times.size()] = float(seconds * 1000.0);
+        view.last_present_seconds = seconds;
     }
 }
 
@@ -487,6 +533,8 @@ void settings_presence_section(HostView& view, const char* discord_status) {
         if (ImGui::Checkbox("Achievements", &settings.achievements)) view.settings_changed = true;
         ImGui::SameLine();
         if (ImGui::Checkbox("Unlock notices", &settings.achievement_popups)) view.settings_changed = true;
+        if (ImGui::Checkbox("Network indicator in online sessions", &settings.net_indicator)) view.settings_changed = true;
+        ImGui::TextDisabled("Ping and input delay in the lower left corner while you play online (details in F1 > Online).");
     }
 }
 

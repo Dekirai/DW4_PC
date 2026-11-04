@@ -172,7 +172,20 @@ public sealed record RelayAdmitted(int MemberIndex, string Username, bool Owner,
 /// many values are held for the owner's return.
 /// </summary>
 public sealed record RoomStoryState(uint Revision, int Phase, IReadOnlyList<int> Flags, IReadOnlyList<int> Folder, IReadOnlyList<int> Counters,
-    string Policy, bool OwnerPresent, IReadOnlyList<int> DroppedFlags, IReadOnlyList<int> DroppedFolder, IReadOnlyList<int> DroppedCounters, int Held);
+    string Policy, bool OwnerPresent, IReadOnlyList<int> DroppedFlags, IReadOnlyList<int> DroppedFolder, IReadOnlyList<int> DroppedCounters, int Held)
+{
+    /// <summary>The owner's story has begun (false: an owner without an online story whose game has not entered a stage yet;
+    /// the room starts at zero and drops what the members do until then).</summary>
+    public bool Started { get; init; } = true;
+    /// <summary>The room's difficulty (its story takes only that difficulty's clear flag).</summary>
+    public int Difficulty { get; init; }
+}
+
+/// <summary>Room codes as the room service keys them.</summary>
+public static class RoomCodes
+{
+    public static string Normalize(string code) => code.Trim().ToUpperInvariant();
+}
 
 /// <summary>The DW4R2 relay as the room service uses it (SEAMLESS.md 6.2, 14).</summary>
 public interface IRelayGateway
@@ -193,6 +206,8 @@ public interface IRelayGateway
     IReadOnlyList<InstanceGroupView> Instances(string roomCode);
     /// <summary>The room story as the relay keeps it (null: no relay room yet).</summary>
     RoomStoryState? Story(string roomCode) => null;
+    /// <summary>The most players the account's relay instance had in the last minute (null: unknown).</summary>
+    int? RecentInstancePlayers(string roomCode, long accountId) => null;
     /// <summary>The check the relay makes after a ticket's signature, expiry and single use checked out.</summary>
     void SetAdmission(Func<RelayAdmission, ValueTask<RelayAdmitted?>> check);
     /// <summary>The relay connection is the room heartbeat: the accounts connected per room, every few seconds.</summary>

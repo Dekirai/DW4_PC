@@ -41,7 +41,9 @@ public static class AdminEndpoints
         {
             if (await accounts.FindAccountAsync(username, ctx.RequestAborted) is not { } account) return NoAccount();
             await rooms.RemoveAccountAsync(account.Id, ctx.RequestAborted);
-            return ApiProblems.Ok(await accounts.AdminDeleteAccountAsync(ctx.Session(), username, ctx.RequestAborted), _ => Results.NoContent());
+            var deleted = await accounts.AdminDeleteAccountAsync(ctx.Session(), username, ctx.RequestAborted);
+            if (deleted.Ok) await rooms.RemoveAccountAsync(account.Id, CancellationToken.None); // (a room opened meanwhile closes)
+            return ApiProblems.Ok(deleted, _ => Results.NoContent());
         }).RequireAuthorization(Policies.Admin);
 
         // Flag (hide from rankings until reviewed) or clear the flag of one unlock; ruleset standard (default) or randomizer.
@@ -86,12 +88,12 @@ public static class AdminEndpoints
             OnlineCharacterService characters, RoomService rooms, HttpContext ctx) =>
         {
             if (await accounts.FindAccountAsync(username, ctx.RequestAborted) is not { } account) return NoAccount();
-            if (await characters.GetAsync(account.Id, ctx.RequestAborted) is null)
-                return ApiProblems.Of(StatusCodes.Status404NotFound, "no_online_character", "There is no online character.");
+            if (!await characters.HasResetWorkAsync(account.Id, ctx.RequestAborted))
+                return ApiProblems.Of(StatusCodes.Status404NotFound, "no_online_character", "There is no online character and no online story.");
             await rooms.CloseOwnedAsync(account.Id, ctx.RequestAborted); // (its hub holds the story the reset empties)
             return await characters.ResetAsync(account.Id, ctx.Session().AccountId, ctx.IpBytes(), ctx.RequestAborted)
                 ? Results.NoContent()
-                : ApiProblems.Of(StatusCodes.Status404NotFound, "no_online_character", "There is no online character.");
+                : ApiProblems.Of(StatusCodes.Status404NotFound, "no_online_character", "There is no online character and no online story.");
         });
 
         // The account's online story: its kept revisions (each with its phase, key items and flag count), and putting one
@@ -106,6 +108,9 @@ public static class AdminEndpoints
             AccountService accounts, OnlineCharacterService characters, RoomService rooms, HttpContext ctx) =>
         {
             if (await accounts.FindAccountAsync(username, ctx.RequestAborted) is not { } account) return NoAccount();
+            // The revision first: a wrong number closed the owner's room for nothing (round 59 review).
+            if (!await characters.HasStoryRevisionAsync(account.Id, revision, ctx.RequestAborted))
+                return ApiProblems.Of(StatusCodes.Status404NotFound, "revision_not_found", "No such kept revision of the online story.");
             await rooms.CloseOwnedAsync(account.Id, ctx.RequestAborted);
             return ApiProblems.Ok(await characters.RestoreStoryAsync(account.Id, revision, ctx.Session().AccountId, ctx.IpBytes(), ctx.RequestAborted),
                 rev => Results.Ok(new { revision = rev }));

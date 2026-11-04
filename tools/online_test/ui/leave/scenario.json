@@ -1,0 +1,8 @@
+{
+  "desc": "B + X + START's \"Leave room?\" in F1 Online with the controller: the focus is on its buttons when it opens (Leave), pad-right and A answer Stay, the prompt closes and the room goes on (round 59 review)",
+  "timeout": 240,
+  "clients": [
+    {"name": "a", "script": "a.txt", "registered": true, "online_script": "hold.script",
+     "log_expect": ["^online: leave prompt at frame", "^online: leave prompt closed .Stay. at frame"]}
+  ]
+}

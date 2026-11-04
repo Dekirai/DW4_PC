@@ -598,6 +598,46 @@ void story_at_the_barrier() {
     }
 }
 
+// 5.3 (the round 63 review): inside a member's own scene the instance-wide
+// control commands reach that member alone - stag0302's Gekomon demo
+// (demo00.lua) sends PLAYER -1 SQ_WAIT and MODELCTRL -1 ONCTRL, which in the
+// original reach every player and hand every model its control back, also a
+// member frozen in its exit prompt.
+void scoped_commands() {
+    Engine engine{dw4::MountedResources{}};
+    OnlineRules rules;
+    rules.enabled = true;
+    rules.present = 0b0011;
+    engine.set_online(rules);
+    std::string storage;
+    Packet packet;
+    std::optional<std::string_view> name;
+    std::int32_t index = -1;
+    {
+        const Engine::SceneScope scope(engine, 1);
+        check(!engine.scope_message("PLAYER", name, index, "OFCTRL", packet, storage) && engine.own_input_held(1) && !engine.own_input_held(0),
+              "scope: PLAYER -1 OFCTRL holds the member's own input");
+        index = -1;
+        check(engine.scope_message("PLAYER", name, index, "SQ_WAIT", packet, storage) && index == 1,
+              "scope: PLAYER -1 SQ_WAIT reaches the member's own player alone");
+        index = -1;
+        check(!engine.scope_message("MODELCTRL", name, index, "ONCTRL", packet, storage) && !engine.own_input_held(1),
+              "scope: MODELCTRL -1 ONCTRL gives the member its input back and no other model its control");
+        index = -1;
+        check(!engine.scope_message("MODELCTRL", name, index, "OFCTRL", packet, storage) && engine.own_input_held(1),
+              "scope: MODELCTRL -1 OFCTRL holds the member's own input");
+        index = 0;
+        std::optional<std::string_view> npc = std::string_view("n_gekoa");
+        check(engine.scope_message("MODELCTRL", npc, index, "SQ_DEMO0302", packet, storage) && npc && *npc == "n_gekoa" && index == 0,
+              "scope: a named model's command reaches it unchanged");
+        engine.hold_own_input(1, false, false);
+    }
+    index = -1;
+    check(engine.scene_scope() < 0 && engine.scope_message("PLAYER", name, index, "SQ_WAIT", packet, storage) && index == -1,
+          "no scope: every player as the original");
+    engine.set_online(OnlineRules{});
+}
+
 // 6.5: a LEAVE that waits for a membership-safe step marks the slot leaving:
 // its pad is neutral and connected, and its readers (a prompt it owns, a
 // status window: SUBWND reads window.player through pad_reader_slot) get the
@@ -664,6 +704,10 @@ struct Scenario {
     // B+X+START on slot 1 from this pre-step frame for 240 frames (0: none).
     std::uint64_t reset_combo_at{};
     std::array<PadSample, 4> pads(std::uint64_t frame) const;
+    // The pads of chosen slots replaced (a menu's presses), and a look at the
+    // engine after every step of the recorded run (A).
+    std::function<void(std::uint64_t frame, std::array<PadSample, 4>& pads)> shape;
+    std::function<void(Engine& engine, std::uint64_t frame)> observe;
 };
 
 PadSample pad_for(std::uint64_t frame, int slot) {
@@ -708,6 +752,7 @@ std::array<PadSample, 4> Scenario::pads(std::uint64_t frame) const {
     auto out = pads_at(frame);
     if (reset_combo_at && frame >= reset_combo_at && frame < reset_combo_at + 240)
         out[1].buttons = dw4::pad_button::b | dw4::pad_button::x | dw4::pad_button::start;
+    if (shape) shape(frame, out);
     return out;
 }
 
@@ -799,6 +844,7 @@ Recording run_scenario(const std::filesystem::path& data, const Scenario& sc, co
         host_step(engine, pads, split);
         if (auto s = engine.take_split()) rec.splits.push_back(*s);
         rec.fingerprints[engine.frame()] = engine.net_fingerprint();
+        if (!replayed && sc.observe) sc.observe(engine, engine.frame());
         rec.rebooted = rec.rebooted || engine.rebooting();
         if (const auto* models = engine.get<ModelCtrlManager>()) {
             int generated = 0;
@@ -1007,6 +1053,228 @@ void barrier_point(const std::filesystem::path& data) {
     engine.set_online(OnlineRules{});
 }
 
+// ---------------------------------------------------------------------------
+// Own talks and gifts (SEAMLESS.md 5.3, the round 63 review): members of one
+// online instance in a stage, driven by `act` before every step (their pads,
+// port-only sends); the net fingerprints of every step.
+// ---------------------------------------------------------------------------
+using MembersAct = std::function<void(Engine& engine, std::uint64_t frame, std::array<PadSample, 4>& pads)>;
+
+std::map<std::uint64_t, std::uint64_t> run_members(const std::filesystem::path& data, const std::string& stage, int players,
+                                                   std::uint64_t steps, const std::function<void(Engine&)>& setup,
+                                                   const MembersAct& act) {
+    std::map<std::uint64_t, std::uint64_t> fingerprints;
+    Engine engine(data);
+    engine.set_card_root(std::filesystem::temp_directory_path() / "dw4_online_tests_cards");
+    auto* sys = engine.get<GameSystem>();
+    sys->direct_start = true;
+    for (int s = 0; s < players; ++s) sys->players[std::size_t(s)].joined = true;
+    if (setup) setup(engine);
+    OnlineRules rules;
+    rules.enabled = true;
+    rules.present = std::uint8_t((1u << players) - 1u);
+    engine.set_online(rules);
+    engine.set_split_identity(0);
+    engine.request_stage(stage);
+    for (std::uint64_t i = 0; i < steps; ++i) {
+        std::array<PadSample, 4> pads{};
+        for (int s = 0; s < players; ++s) pads[std::size_t(s)].connected = true;
+        act(engine, engine.frame(), pads);
+        host_step(engine, pads, nullptr);
+        fingerprints[engine.frame()] = engine.net_fingerprint();
+    }
+    engine.set_online(OnlineRules{});
+    return fingerprints;
+}
+
+// The input scripts' SEND PLAYER MOVETRANS: a member placed before an NPC.
+void place_member(Engine& engine, int slot, const char* where) {
+    Packet packet;
+    parse_packet_arguments(where, packet);
+    const Messenger::PortOnly port(engine.messenger());
+    engine.messenger().send(engine, "PLAYER", std::nullopt, slot, "MOVETRANS", packet);
+}
+
+std::string seq_of(Engine& engine, std::string_view name, int index) {
+    auto* models = engine.get<ModelCtrlManager>();
+    const auto* ram = models ? models->find(name, index) : nullptr;
+    return ram ? ram->seq_name : std::string();
+}
+
+// Each member presses A every 60 frames from `from` until its first own talk
+// has run and ended (started / ended: the frames, 0 none yet); `both`: two
+// own talks ran at once.
+struct TalkTracker {
+    std::array<std::uint64_t, 4> started{}, ended{};
+    bool both = false;
+    void press(Engine& engine, std::uint64_t frame, std::array<PadSample, 4>& pads, std::uint8_t members, std::uint64_t from) {
+        int talking = 0;
+        for (int s = 0; s < 4; ++s) {
+            if (!(members & (1u << s))) continue;
+            const bool running = engine.own_scene_running(s);
+            talking += running ? 1 : 0;
+            if (running && !started[std::size_t(s)]) started[std::size_t(s)] = frame;
+            if (!running && started[std::size_t(s)] && !ended[std::size_t(s)]) ended[std::size_t(s)] = frame;
+            if (!ended[std::size_t(s)] && frame >= from && (frame - from) % 60 < 3) pads[std::size_t(s)].buttons = dw4::pad_button::a;
+        }
+        both = both || talking > 1;
+    }
+    bool done(std::uint8_t members) const {
+        for (int s = 0; s < 4; ++s)
+            if ((members & (1u << s)) && !ended[std::size_t(s)]) return false;
+        return true;
+    }
+};
+
+void own_talks(const std::filesystem::path& data) {
+    // a) stag0101: slot 0 before the field recorder n_recorder#1, slot 1
+    // before n_recorder#0 across the field; both strike theirs in the same
+    // frame. The review's harness: both talks ran at once and shared the
+    // talk globals (g_npcRamNo, g_messPlayerNo), slot 0's close set
+    // n_recorder#0 back and slot 0's scene never ended. Now talks wait for
+    // each other (the original's one talk at a time): one starts, the other
+    // member's strike only hits, and its talk runs after the first ended.
+    {
+        TalkTracker talks;
+        std::uint64_t idle_at = 0;
+        std::string seq0, seq1;
+        bool idle = false;
+        const auto act = [&](Engine& engine, std::uint64_t frame, std::array<PadSample, 4>& pads) {
+            if (frame == 900) {
+                place_member(engine, 0, "V<482,50,136>/V<0,180,0>");
+                place_member(engine, 1, "V<-380,57,-209>/V<0,180,0>");
+            }
+            talks.press(engine, frame, pads, 0b0011, 960);
+            if (!idle_at && talks.done(0b0011)) idle_at = frame + 60;
+            if (idle_at && frame == idle_at) {
+                seq0 = seq_of(engine, "n_recorder", 0);
+                seq1 = seq_of(engine, "n_recorder", 1);
+                idle = engine.busy_slots() == 0 && !engine.own_input_held(0) && !engine.own_input_held(1);
+            }
+        };
+        const auto a = run_members(data, "stag0101", 2, 3200, nullptr, act);
+        std::cout << "  stag0101 two recorders: talks " << talks.started[0] << "-" << talks.ended[0] << " / " << talks.started[1] << "-"
+                  << talks.ended[1] << ", at once " << talks.both << ", recorders " << seq0 << " / " << seq1 << ", idle " << idle << '\n';
+        check(talks.started[0] && talks.started[1] && talks.ended[0] && talks.ended[1], "own talks: both members read their recorders");
+        // (Both struck at frame 960 and every 60 frames after it.)
+        const int first = talks.started[0] <= talks.started[1] ? 0 : 1;
+        check(!talks.both && talks.started[std::size_t(1 - first)] >= talks.ended[std::size_t(first)] &&
+                  talks.started[std::size_t(first)] < 1100,
+              "own talks: the second talk waits for the first (one talk at a time)");
+        check(seq0 == "SQ_WAIT" && seq1 == "SQ_WAIT" && idle, "own talks: both recorders back in SQ_WAIT, no scene and no hold left");
+        TalkTracker again;
+        const auto b = run_members(data, "stag0101", 2, 3200, nullptr, [&](Engine& engine, std::uint64_t frame, std::array<PadSample, 4>& pads) {
+            if (frame == 900) {
+                place_member(engine, 0, "V<482,50,136>/V<0,180,0>");
+                place_member(engine, 1, "V<-380,57,-209>/V<0,180,0>");
+            }
+            again.press(engine, frame, pads, 0b0011, 960);
+        });
+        check(a == b, "own talks: a second engine agrees");
+    }
+    // b) dngq5b1v (Trader Hole, very hard), the common FLAGFOLDER holds the
+    // Strange Figurine (11) that Agumon#0 trades for a Mighty Talon (weapon
+    // 175, n_agumon_00v.lua / itemchange2.lua) and Guilmon#0 for a Battle
+    // Hawk. Slot 1 alone at Agumon: the Mighty Talon goes into slot 1's
+    // device folder, not slot 0's (the scripts name player 0: online that is
+    // the talking member). Then slot 0 at Agumon and slot 1 at Guilmon at
+    // once: one trade, the other talk after it finds no figurine any more.
+    const auto trader = [&](std::uint8_t talkers, const char* where1, std::array<std::size_t, 2>& devices, bool& got175_0, bool& got175_1,
+                            bool& figurine, bool& both) {
+        TalkTracker talks;
+        std::array<std::size_t, 2> before{};
+        bool measured = false;
+        run_members(
+            data, "dngq5b1v", 2, 2900,
+            [](Engine& engine) {
+                auto* sys = engine.get<GameSystem>();
+                sys->difficulty = 2;
+                sys->flag_folder[11] = 1;
+            },
+            [&](Engine& engine, std::uint64_t frame, std::array<PadSample, 4>& pads) {
+                auto* sys = engine.get<GameSystem>();
+                // The quest's opening message (slot 0, the leader's pad).
+                if (frame >= 320 && frame <= 640 && (frame - 320) % 80 < 3) pads[0].buttons = dw4::pad_button::a;
+                if (frame == 700) {
+                    if (talkers & 1) place_member(engine, 0, "V<-80,10,26>/V<0,180,0>");
+                    place_member(engine, 1, where1);
+                    before = {sys->players[0].devices.size(), sys->players[1].devices.size()};
+                }
+                if (frame > 700) talks.press(engine, frame, pads, talkers, 760);
+                if (frame > 700 && !measured && talks.done(talkers)) {
+                    measured = true;
+                    devices = {sys->players[0].devices.size() - before[0], sys->players[1].devices.size() - before[1]};
+                    auto has175 = [&](int s) {
+                        const auto& d = sys->players[std::size_t(s)].devices;
+                        return std::any_of(d.begin(), d.end(), [](const ItemDevice& item) { return item.record == 175; });
+                    };
+                    got175_0 = has175(0);
+                    got175_1 = has175(1);
+                    const auto found = sys->flag_folder.find(11);
+                    figurine = found != sys->flag_folder.end() && found->second;
+                }
+            });
+        both = talks.both;
+        return measured;
+    };
+    {
+        std::array<std::size_t, 2> added{};
+        bool got0 = false, got1 = false, figurine = true, both = false;
+        const bool ran = trader(0b0010, "V<-80,10,26>/V<0,180,0>", added, got0, got1, figurine, both);
+        std::cout << "  dngq5b1v slot 1 trades alone: devices +" << added[0] << " / +" << added[1] << ", Mighty Talon " << got0 << " / " << got1
+                  << ", figurine left " << figurine << '\n';
+        check(ran && added[0] == 0 && added[1] == 1 && !got0 && got1 && !figurine,
+              "own talks: an exchange trades with the talking member's own folder");
+    }
+    {
+        std::array<std::size_t, 2> added{};
+        bool got0 = false, got1 = false, figurine = true, both = false;
+        const bool ran = trader(0b0011, "V<80,10,26>/V<0,180,0>", added, got0, got1, figurine, both);
+        std::cout << "  dngq5b1v Agumon and Guilmon at once: devices +" << added[0] << " / +" << added[1] << ", at once " << both
+                  << ", figurine left " << figurine << '\n';
+        check(ran && !both && added[0] + added[1] == 1 && !figurine, "own talks: one figurine, one exchange (the talks wait for each other)");
+    }
+}
+
+// Gifts look at the partner's room when they are given (the review: two
+// members' own windows gave a device each to a partner with 35 at once, who
+// had 37 then, one more than a folder and a save hold). Three members in
+// stag0101 with 35 devices each; slot 0 and slot 2 give one to slot 1.
+void own_gifts(const std::filesystem::path& data) {
+    std::array<std::size_t, 3> counts{};
+    // The status window: START, Folder, the device folder, the fourth device,
+    // Give, the partner (slot 2: the second line, slot 1), then B to close.
+    const auto give = [](std::uint64_t t, bool second_partner) -> std::uint32_t {
+        namespace b = dw4::pad_button;
+        static constexpr std::pair<std::uint64_t, std::uint32_t> steps[] = {
+            {0, b::start}, {100, b::down}, {200, b::a}, {300, b::a},  {400, b::down}, {460, b::down}, {520, b::down}, {600, b::a},
+            {700, b::down}, {760, b::down}, {860, b::a}, {1060, b::b}, {1120, b::b}, {1180, b::b}, {1240, b::b},  {1300, b::b}, {1360, b::b}};
+        for (const auto& [at, button] : steps)
+            if (t >= at && t < at + 3) return button;
+        if (t >= 900 && t < 903) return second_partner ? b::down : 0;
+        if (t >= 960 && t < 963) return b::a;
+        return 0;
+    };
+    run_members(
+        data, "stag0101", 3, 2700, nullptr, [&](Engine& engine, std::uint64_t frame, std::array<PadSample, 4>& pads) {
+            auto* sys = engine.get<GameSystem>();
+            if (frame == 600)
+                for (int s = 0; s < 3; ++s) {
+                    auto& devices = sys->players[std::size_t(s)].devices;
+                    while (devices.size() < 35) devices.push_back(ItemDevice{0, 50, false, 1, 0});
+                }
+            if (frame >= 1000) {
+                pads[0].buttons = give(frame - 1000, false);
+                pads[2].buttons = give(frame - 1000, true);
+            }
+            if (frame == 2600)
+                for (int s = 0; s < 3; ++s) counts[std::size_t(s)] = sys->players[std::size_t(s)].devices.size();
+        });
+    std::cout << "  stag0101 two gifts to a partner with 35 devices: " << counts[0] << " / " << counts[1] << " / " << counts[2] << '\n';
+    check(counts[1] == 36 && counts[0] + counts[1] + counts[2] == 105 && counts[0] + counts[2] == 69,
+          "own gifts: the partner's folder takes one, the other gift finds it full (36, nothing lost)");
+}
+
 void data_scenarios(const std::filesystem::path& data) {
     // 1. dng101b1: Agumon alone, a Dorumon joins mid-stage (another species:
     // its package loads now), a Veemon joins as the third, the Dorumon leaves
@@ -1181,9 +1449,115 @@ void data_scenarios(const std::filesystem::path& data) {
         check(compare(a5, b5, s5.name) == a5.fingerprints.size(), "give up: the second engine agrees");
     }
 
-    // 6. The transition steps take the pads of the barrier tick.
+    // 6. Own windows (SEAMLESS.md 5.3, round 63): two members in dng101b1;
+    // slot 0 opens its status window with START and walks its pages while
+    // slot 1 plays on, slot 1 opens its own while slot 0's is open, a third
+    // member joins while both are open; nothing pauses (slot 1's player moves
+    // and the enemies run while slot 0 is in its menu), both close again and
+    // their players take their pads again. A second engine and a joiner
+    // restored while the windows are open stay equal.
+    {
+        constexpr std::uint64_t open0 = 1500, open1 = 1700;
+        Scenario s6;
+        s6.name = "dng101b1 own menus";
+        s6.stage = "dng101b1";
+        s6.players = 2;
+        s6.species = {"p_agumon", "p_dorumon"};
+        s6.steps = 3000;
+        s6.identity = 0;
+        s6.join_at = open1 + 80;
+        Planned j;
+        j.kind = Planned::join;
+        j.earliest = open1 + 40;
+        j.slot = 2;
+        j.carry = carry_of("p_vmon", 4, "");
+        j.point = 0;
+        s6.plan = {j};
+        // A member's menu: still, START, then A (Equipment) / B / DOWN / A
+        // (Folder) / B / B (close), 120 frames apart.
+        auto menu_pad = [](std::uint64_t frame, std::uint64_t open, PadSample& pad) {
+            if (frame + 30 < open || frame > open + 900) return;
+            pad = PadSample{};
+            pad.connected = true;
+            static constexpr std::uint32_t presses[] = {dw4::pad_button::start, dw4::pad_button::a, dw4::pad_button::b, dw4::pad_button::down,
+                                                        dw4::pad_button::a,     dw4::pad_button::b, dw4::pad_button::b, dw4::pad_button::b};
+            if (frame < open) return;
+            const std::uint64_t t = frame - open;
+            if (t % 120 < 3 && t / 120 < std::size(presses)) pad.buttons = presses[t / 120];
+        };
+        s6.shape = [&](std::uint64_t frame, std::array<PadSample, 4>& pads) {
+            menu_pad(frame, open0, pads[0]);
+            menu_pad(frame, open1, pads[1]);
+        };
+        struct Seen {
+            bool own0{}, both{}, joined_in_menus{}, closed{}, control_back{}, one_moved{}, enemies_ran{}, copies{};
+            dw4::engine::Vec3f one_at{};
+            std::uint64_t enemies_at{};
+        } seen;
+        auto enemies = [](Engine& engine) {
+            std::uint64_t h = 0;
+            if (const auto* models = engine.get<ModelCtrlManager>())
+                for (const auto& ram : models->rams())
+                    if (ram->category == "ENEMY" && ram->generated && ram->node)
+                        h = h * 1000003u + std::uint64_t(std::int64_t(ram->node->matrix(3, 0) * 16) ^ std::int64_t(ram->node->matrix(3, 2) * 16));
+            return h;
+        };
+        s6.observe = [&](Engine& engine, std::uint64_t frame) {
+            auto* models = engine.get<ModelCtrlManager>();
+            const auto* one = models ? models->player(1) : nullptr;
+            if (frame == open0 + 60) {
+                // (Its player stands without its input but keeps its control: it can be hit.)
+                const auto* zero = models ? models->player(0) : nullptr;
+                seen.own0 = engine.own_window_open(0) && !engine.own_window_open(1) && engine.busy_slots() == 0b0001 &&
+                            engine.own_input_held(0) && !engine.own_input_held(1) && zero && zero->control_enabled;
+                if (one && one->node) seen.one_at = {one->node->matrix(3, 0), 0, one->node->matrix(3, 2)};
+                seen.enemies_at = enemies(engine);
+                seen.enemies_ran = models && std::none_of(models->rams().begin(), models->rams().end(), [](const auto& ram) { return ram->frozen; });
+                seen.copies = models && models->find("i_stmenu01@0", 0) && models->find("i_stbase@0", 0) && !models->find("i_stmenu01@1", 0);
+            }
+            if (frame == open0 + 180 && one && one->node) {
+                const float dx = one->node->matrix(3, 0) - seen.one_at.x, dz = one->node->matrix(3, 2) - seen.one_at.z;
+                seen.one_moved = dx * dx + dz * dz > 1.0f;
+            }
+            if (frame == open1 + 60) {
+                seen.both = engine.own_window_open(0) && engine.own_window_open(1) && models && models->find("i_stmenu01@1", 0);
+                seen.enemies_ran = seen.enemies_ran && models &&
+                                   std::none_of(models->rams().begin(), models->rams().end(), [](const auto& ram) { return ram->frozen; });
+            }
+            if (frame == open1 + 120) seen.joined_in_menus = (engine.online().present & 0b0100) && engine.own_window_open(0) && engine.own_window_open(1);
+            if (frame == open1 + 1100) {
+                seen.closed = !engine.own_window_open(0) && !engine.own_window_open(1) && engine.busy_slots() == 0;
+                const auto* zero = models ? models->player(0) : nullptr;
+                seen.control_back = zero && zero->control_enabled && one && one->control_enabled && !engine.own_input_held(0) &&
+                                    !engine.own_input_held(1);
+            }
+        };
+        const auto a6 = run_scenario(data, s6, nullptr);
+        std::cout << "  " << s6.name << ": events at";
+        for (const auto& e : a6.applied) std::cout << ' ' << e.frame;
+        std::cout << "; own window " << seen.own0 << ", copies " << seen.copies << ", slot 1 moved " << seen.one_moved << ", nothing frozen "
+                  << seen.enemies_ran << ", both " << seen.both << ", joined " << seen.joined_in_menus << ", closed " << seen.closed
+                  << ", control " << seen.control_back << '\n';
+        check(seen.own0 && seen.copies, "own menus: slot 0's window is its own, with its own copies, its player on control without input");
+        check(seen.one_moved && seen.enemies_ran, "own menus: slot 0's window pauses nothing");
+        check(seen.both, "own menus: two windows at once");
+        check(seen.joined_in_menus && !a6.applied.empty() && a6.applied[0].frame < open1 + 120, "own menus: a member joins while both are open");
+        check(seen.closed && seen.control_back, "own menus: both close, both players take their pads again");
+        const auto b6 = run_scenario(data, s6, &a6.applied);
+        check(compare(a6, b6, s6.name) == a6.fingerprints.size(), "own menus: the second engine agrees");
+        const auto c6 = run_joiner(data, s6, a6);
+        const auto m6 = compare(a6, c6, s6.name + " (joiner)");
+        std::cout << "  joiner restored with both windows open: " << m6 << " steps equal after\n";
+        check(m6 > 1000, "own menus: the joiner compared the rest of the run");
+    }
+    // 7. Own talks wait for each other and trade with the talker's folders;
+    // gifts look at the partner's room when given (the round 63 review).
+    own_talks(data);
+    own_gifts(data);
+
+    // 8. The transition steps take the pads of the barrier tick.
     transition_pads(data);
-    // 7. The barrier names the point the exit leads to.
+    // 9. The barrier names the point the exit leads to.
     barrier_point(data);
 }
 
@@ -1249,6 +1623,7 @@ int main(int argc, char** argv) {
         story_at_the_barrier();
         title_application_at_every_game_start();
         leaving_redirect();
+        scoped_commands();
         std::string data = argc > 1 ? argv[1] : "";
         if (data.empty())
             if (const char* env = std::getenv("DW4_TEST_DATA")) data = env;

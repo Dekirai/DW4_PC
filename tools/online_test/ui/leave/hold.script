@@ -1,0 +1,6 @@
+# The pad of the leave scenario: B + X + START held at the online title opens "Leave room?" (the game shows it, F1 too).
+idle until frames>=1200
+log holding B X START
+hold B+X+START 200
+log released
+idle until frames>=100000

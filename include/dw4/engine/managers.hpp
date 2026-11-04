@@ -101,6 +101,11 @@ public:
     void add_info(Engine& engine, const ObjectView& info) override;
     void clear_stage(Engine& engine) override;
     bool command(Engine& engine, Ram& ram, std::string_view command, Packet& packet) override;
+    // The layer group of that name (after ORDER; null without), and all of
+    // them (seamless co-op: a member's own window hides layers in its own
+    // picture only, Engine::scoped_picture_hidden).
+    const Node* group(std::string_view name) const;
+    std::vector<const Node*> groups() const;
 
 private:
     void order(Engine& engine, Ram& ram);
@@ -346,6 +351,11 @@ public:
     // The CRI driver part (stream ramps and fades, SE sequences) also runs
     // while the stage is not active; the cues and the movie are RAM work.
     void update_inactive(Engine& engine) override { update_driver(engine); }
+    // Presentation (seamless co-op, docs/SEAMLESS.md 5.3): the member this
+    // machine plays; the sound effects a member's own window or scene started
+    // (inside its scope) are heard only on that member's machine. -1 (offline):
+    // every sound plays.
+    void set_listener_slot(int slot) { listener_slot_ = slot; }
     // One field of the CRI servers (the stream reads on the simulated drive,
     // decoding, PLAYING; disc_timing.hpp), at the field's VI time (outside a
     // movie the frame's world time), standing for the servers of the next
@@ -503,6 +513,7 @@ private:
         int priority{};                  // entry +34: beSoundData [9] of the sound started last
         int type{};                      // entry +32: beSoundData [4] of the sound started last
         int volume{};                    // fade object +12: the sound's volume, 0.1 dB (beSoundData [8])
+        int owner = -1;                  // presentation: the member whose own window started it (-1 none)
         int out_volume{-999};            // ADXT_SetOutVol (0.1 dB): volume + base, then the fade's steps
         Fade fade;
         // Audio only (never consulted by the game): the decoder the host mixes
@@ -522,6 +533,7 @@ private:
     // sequence number its requests play on (8031CCFC).
     struct SfpEntry {
         std::uint64_t serial{};  // +24: the play id (0: free)
+        int owner = -1;          // presentation: the member whose own window started it (-1 none)
         int type{};              // +32: beSoundData [4]
         int priority{};          // +34: beSoundData [9]
         std::string name;        // +8
@@ -724,6 +736,7 @@ private:
     // DSP at the next frame, 802A8F7C -> 803C325C).
     void record(sndf::Mirror::Call call);
     sndf::Mirror mirror_;
+    int listener_slot_ = -1; // presentation (set_listener_slot)
     float recorded_master_{-1.0f};
     int recorded_reserved_{-1};
     // MIXUpdateSettings for the streams: a stream's output volume reaches
@@ -1064,7 +1077,14 @@ private:
         int align{};              // beFontInfoData [9], enum 804D2048: 0 left, 1 right, 2 center
         std::string style;
         std::vector<ObjectView>* strings{};
+        // Seamless co-op (docs/SEAMLESS.md 5.3): a member's own copy of the
+        // line (its window's text) for that slot; -1 the original. Commands
+        // inside a member's scope reach its copies, all others the originals.
+        int slot = -1;
     };
+    // The member's own copies of the lines a command in its scope addresses
+    // (made on first use, the same on every machine).
+    void make_copies(Engine& engine, int slot, const Ram& ram, std::string_view layer, std::string_view name);
     void load_fonts(Engine& engine);
     void set_text(Engine& engine, Line& line, const std::u16string& value);
     void switch_line(Engine& engine, const Line& line, bool on);
@@ -1095,6 +1115,10 @@ public:
         bool vertical{}, cancel{}, taking_input{};
     };
     std::vector<OpenSelect> open_selects() const;
+    // Seamless co-op (docs/SEAMLESS.md 5.3): a cursor of that name and RAM
+    // index exists; a member's own fresh copy of it, registered as `copy`.
+    bool has(std::string_view name, int index) const;
+    void add_copy(Engine& engine, std::string_view name, int index, const std::string& copy);
 
 private:
     struct SelectRam : Ram {
@@ -1812,6 +1836,12 @@ public:
     // The model info has a sequence of that name (randomizer: a swapped
     // enemy's entry sequence).
     bool has_sequence(std::string_view model, std::string_view sequence) const;
+    // Seamless co-op (docs/SEAMLESS.md 5.3): a member's own copy of a window
+    // model's RAM, registered as `name` ("i_messwn@1") with the original's
+    // index, info data and update rank, on the cloned subtree (`remap` gives
+    // the clone of an original node, null for none); fresh, not generated.
+    ModelRam* add_copy(Engine& engine, const ModelRam& original, const std::string& name,
+                       const std::function<Node*(const Node*)>& remap);
     // Changes whenever the RAM list does (never the same value twice, also
     // across engines), for test code that keeps lookups over the list.
     std::uint64_t rams_generation() const { return rams_generation_; }
@@ -1938,8 +1968,21 @@ public:
     Stock* shop_stock(int program);
     // GETSHOPDATA 9 also returns COUNTER[1] as it was when the junk stock was made.
     int junk_counter() const { return junk_counter_; }
-    // A status / shop window program is open (SUBWND START until its end).
-    bool window_open() const { return running_; }
+    // A status / shop window program is open (SUBWND START until its end):
+    // the original program that pauses the stage (offline, hub stages, the
+    // lobby programs) or any member's own status window.
+    bool window_open() const;
+    // The original program alone (it pauses the whole engine).
+    bool shared_window_open() const { return main_.running; }
+    // Online (docs/SEAMLESS.md 5.3): a member's own status window. It runs
+    // in the simulation with that member's pads, pauses nothing (only the
+    // member's player stops taking its pad) and several can be open at once.
+    bool own_window_open(int slot) const { return slot >= 0 && slot < 4 && own_[std::size_t(slot)].running; }
+    // A LEAVE or the other side of a fork: the member's own window goes at
+    // once (its models and lines are the member's own copies, which hide).
+    void end_own_window(Engine& engine, int slot);
+    // The net fingerprint's part: the own windows' state.
+    std::uint64_t own_windows_hash() const;
 
 private:
     // 80351794: a program start fills the empty stocks from shopWeapon /
@@ -1948,11 +1991,22 @@ private:
     std::array<Stock, 4> stocks_;
     int junk_counter_{};
     std::vector<std::unique_ptr<Ram>> rams_;
-    std::unique_ptr<Window> window_;
-    bool running_{};
-    int state_{}, program_{}, player_{};
-    std::array<int, 11> shown_{}; // UPDATE snapshot for ONPREVIEW / OFPREVIEW
-    int shown_hp_{}, shown_mp_{};
+    struct Program {
+        std::unique_ptr<Window> window;
+        bool running{};
+        int state{}, program{}, player{};
+        std::array<int, 11> shown{}; // UPDATE snapshot for ONPREVIEW / OFPREVIEW
+        int shown_hp{}, shown_mp{};
+        // An own window: the HP / MP its last run left, so OFPREVIEW keeps
+        // what the running world did to them meanwhile.
+        int left_hp{}, left_mp{};
+    };
+    Program main_;
+    std::array<Program, 4> own_;
+    // The program a SUBWND command of `slot` concerns: its own window while
+    // it has one, else the original program.
+    Program& program_of(Engine& engine, int slot);
+    void update_own(Engine& engine, int slot);
 };
 
 // NDMWPANEL (beNDMWPanelWaza, vtable 804E71E8): the per-player quick panels
@@ -2092,6 +2146,11 @@ public:
     // GETAPPEARANCELIST (802F1870): the action of a model (its igActor nodes
     // and animation database with the skeleton).
     const ActionRam* find(std::string_view name, int index) const;
+    // Seamless co-op (docs/SEAMLESS.md 5.3): a member's own copy of a window
+    // model's action, registered as `name` with the original's index, on the
+    // cloned subtree (`remap`), its visibility the switch child `child`.
+    void add_copy(Engine& engine, const ActionRam& original, const std::string& name, const std::function<Node*(const Node*)>& remap,
+                  std::size_t child);
     // Whether the action whose model instance is `node` shows it (its switch
     // bit); true for a node no action owns.
     bool drawn(const Node* node) const;

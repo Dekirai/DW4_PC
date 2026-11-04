@@ -119,6 +119,8 @@ public sealed class IndexModel(
         await rooms.RemoveAccountAsync(session.AccountId, ct);
         var result = await accounts.DeleteAccountAsync(session, CurrentPassword, HttpContext.Caller(), ct);
         if (!result.Ok) return await ShowAsync(ct, error: result.Error!.Message);
+        // Again after the scrub: a room another session of the account opened meanwhile closes.
+        await rooms.RemoveAccountAsync(session.AccountId, CancellationToken.None);
         WebSessions.SignOut(HttpContext);
         return Redirect("~/?deleted=1");
     }

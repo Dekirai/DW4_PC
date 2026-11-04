@@ -1,0 +1,38 @@
+# M1, member b (k10, slot 1): joins a's instance while a is in its menu and sees the field, no window; goes to a and
+# fights the goburi beside it while a's menu stays open; fights near a while a is in its menu again, opens its own
+# while a's is open, walks west (the field route as far as the bush gap) while a is in its menu, wanders there while
+# a talks with the recorder.
+campaign until stage=stagml11,control
+idle until epoch>=@140
+explore mate00 yes until stage=stag0101,control
+log b in the field
+idle until frames>=120 fail menus=0
+log b sees a in its menu
+shot b1_joined_a_in_menu
+follow 20 until near<40 or frames>=1400 fail stagechange,menus=0
+log b fights near a in its menu (after the join)
+fight 470 175 60 until menus=0 or frames>=3000 fail stagechange
+log a closed its menu
+goto 450 50 15 fail stagechange
+fight 440 20 60 until menus>=1 or frames>=3000 fail stagechange,frames>=2990
+log b fights near a in its menu
+fight 440 20 60 until frames>=200 fail stagechange
+shot b2_a_menu_near
+fight 440 20 60 until menus=0 or frames>=1200 fail stagechange
+log a closed its menu again
+menu until menu=1 fail stagechange
+idle until menus=2 or frames>=1800 fail stagechange,menu=0,frames>=1790
+log b sees both menus
+idle until frames>=120 fail stagechange,menu=0
+shot b3_both_menus
+idle until menus=1,frames>=60 or frames>=900 fail stagechange,menu=0
+menu close until menu=0 fail stagechange
+idle until menus=0 fail stagechange
+log b walks west
+route 447,2 442,-3 432,-12 425,-15 416,-19 403,-20 396,-21 383,-24 376,-24 369,-25 362,-27 350,-33 344,-37 337,-49 329,-43 324,-38 311,-33 304,-31 297,-31 290,-30 278,-34 267,-35 254,-31 245,-30 231,-30 218,-26 205,-29 198,-29 191,-27 180,-20 172,-9 172,5 173,17 173,31 171,44 169,57 163,69 159,75 154,80 until scenes>=1 or frames>=7200 fail stagechange,frames>=7190
+log b sees a talking
+wander 165 60 20 until frames>=90 fail stagechange
+shot b5_a_talking
+wander 165 60 20 until scenes=0,frames>=60 or frames>=2400 fail stagechange
+log b moved while a talked
+wander 165 60 20 until frames>=1500 fail stagechange

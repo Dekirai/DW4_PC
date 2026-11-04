@@ -306,6 +306,7 @@ Settings Settings::parse(IniFile document) {
         settings.discord_client_id = kDiscordClientId;
     settings.achievements = ini.get_bool("achievements", "enabled", settings.achievements);
     settings.achievement_popups = ini.get_bool("achievements", "popups", settings.achievement_popups);
+    settings.net_indicator = ini.get_bool("online", "net_indicator", settings.net_indicator);
     settings.data = ini.get_or("data", "path", "");
     settings.save_file = ini.get_or("data", "save", settings.save_file.string());
     settings.save_file_b = ini.get_or("data", "save_b", settings.save_file_b.string());
@@ -376,6 +377,7 @@ void Settings::store() {
     ini_.set("discord", "client_id", discord_client_id);
     ini_.set_bool("achievements", "enabled", achievements);
     ini_.set_bool("achievements", "popups", achievement_popups);
+    ini_.set_bool("online", "net_indicator", net_indicator);
     if (!data.empty()) ini_.set("data", "path", data.string());
     // Where the saves live, so settings.ini shows it.
     ini_.set("data", "save", save_file.generic_string());

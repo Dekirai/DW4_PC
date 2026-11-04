@@ -20,6 +20,7 @@
 #include "achievements.hpp"
 #include "discord_presence.hpp"
 #include "overhead_labels.hpp"
+#include "ghost_figures.hpp"
 #include "presence_art.hpp"
 #include "presence_data.hpp"
 #include "online_run.hpp"
@@ -39,6 +40,7 @@
 #include "dw4/engine/state_archive.hpp"
 #include <algorithm>
 #include <bit>
+#include <cctype>
 #include <cmath>
 
 #include <SDL3/SDL.h>
@@ -899,9 +901,28 @@ int run(const Options& options, dw4::game::Settings& settings) {
             use_online_card();
         };
         hooks.hidden = [&] { return dw4::game::OverheadLabels::hidden(engine); };
+        hooks.figure_hidden = [&] { return dw4::game::OverheadLabels::hidden(engine, false); };
+        hooks.busy = [&] { return dw4::game::OverheadLabels::window_open(engine); };
         online = std::make_unique<dw4::game::OnlineRun>(std::move(http), std::move(room), std::move(hooks), data,
                                                         rate.ok ? std::uint32_t(rate.steps_per_second) : 3000u);
+        {
+            // saves/online.log (round 62): what to send in when online play lags (DW4_ONLINE_LOG: another file, test runs).
+            const char* log_override = std::getenv("DW4_ONLINE_LOG");
+            online->open_log(log_override && *log_override ? std::filesystem::path(log_override) : online_folder.parent_path() / "online.log",
+                             DW4_PC_VERSION);
+        }
+        online->link().start_online(0, 1);
+        // The relay first, the character after it (round 59 review): the
+        // relay's answer replaces a connection of this account that another
+        // PC still holds in the room, whose session then ends without
+        // uploading; loaded the other way round, that PC's leaving save came
+        // after this load and this PC's first upload met a 409.
+        if (!online->connect(steady_seconds(), error)) {
+            online.reset();
+            return false;
+        }
         if (!online->load_character(online_folder, DW4_PC_VERSION, error)) {
+            online->leave(0.0);
             online.reset();
             return false;
         }
@@ -920,6 +941,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     if (entry.path().extension() == ".gci") save = entry.path();
             const auto bytes = dw4::save::read_whole_file(save);
             if (!bytes || !dw4::save::valid_save_gci(*bytes) || !online->character()->card().write(*bytes)) {
+                online->leave(0.0);
                 online.reset();
                 error = "--online-card: no valid save in " + from.string();
                 return false;
@@ -933,11 +955,6 @@ int run(const Options& options, dw4::game::Settings& settings) {
         }
         use_online_card();
         std::cout << "online: " << online->character()->status_text() << " (card " << online->character()->card().file().string() << ")\n";
-        online->link().start_online(0, 1);
-        if (!online->connect(steady_seconds(), error)) {
-            online.reset();
-            return false;
-        }
         // The online account's achievements in the room (SEAMLESS.md 11).
         online_achievements = make_online_achievements(*online, created, options.smoke_frames != 0, online_folder);
         return true;
@@ -1268,10 +1285,29 @@ int run(const Options& options, dw4::game::Settings& settings) {
             return (engine_generation << 40) ^ serial;
         };
         auto own_slot = [&] { return net.active() ? net.local_slot() : online ? online->session().own_slot() : engine.view_slot(); }; // (offline: slot 0 unless a seamless co-op test run sets the view slot)
+        // This machine's player's place (presentation: the ghost figures' cap and camera fade).
+        auto own_position = [&]() -> std::optional<dw4::engine::Vec3f> {
+            if (const auto* models = engine.get<dw4::engine::ModelCtrlManager>())
+                if (const auto* player = models->player(own_slot()); player && player->node && player->generated)
+                    return dw4::engine::Vec3f{player->node->matrix(3, 0), player->node->matrix(3, 1), player->node->matrix(3, 2)};
+            return std::nullopt;
+        };
         // Overhead name tags (settings.ini [hud]; test runs: DW4_LABELS=
         // auto|all|others|off, DW4_TRACE_LABELS=N prints their screen
         // positions every N frames, without a window too).
         auto& labels = view.labels;
+        // Ghost figures (ghost_figures.hpp, SEAMLESS.md 12): the other room
+        // members in this hub stage as their Digimon, from their presence;
+        // presentation only (DW4_GHOSTS=0 turns them off; DW4_TRACE_GHOSTS=N
+        // prints them every N frames in test runs). `present_remote`: the
+        // room members' presence samples of this loop pass (the figures and
+        // the remote tags use the same ones).
+        dw4::game::GhostFigures ghosts;
+        const bool ghosts_enabled = !std::getenv("DW4_GHOSTS") || std::string_view(std::getenv("DW4_GHOSTS")) != "0";
+        const int trace_ghosts = options.smoke_frames && std::getenv("DW4_TRACE_GHOSTS") ? std::atoi(std::getenv("DW4_TRACE_GHOSTS")) : 0;
+        std::vector<dw4::game::online::RemoteSample> present_remote;
+        double ghost_cost_max = 0, present_max = 0; // (DW4_TRACE_GHOSTS: the figures' own milliseconds a pass, the longest present)
+        int ghost_trace_bucket = -1;
         const int trace_labels = options.smoke_frames && std::getenv("DW4_TRACE_LABELS") ? std::atoi(std::getenv("DW4_TRACE_LABELS")) : 0;
         view.trace_labels = trace_labels;
         auto& traced_occlusion = view.traced_occlusion; // the labels the last picture hid (traces)
@@ -1931,6 +1967,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 continue;
             }
             const auto pass_start = std::chrono::steady_clock::now();
+            bool pass_presented = false; // (online.log's pictures per second)
             SDL_Event event;
             while (SDL_PollEvent(&event)) {
                 // A binding being edited, ImGui, quit, the window size,
@@ -2124,7 +2161,9 @@ int run(const Options& options, dw4::game::Settings& settings) {
                         facts.tick = online->session().tick();
                         if (const auto& story = online->session().confirmed_story()) facts.room_story = &*story;
                     }
+                    facts.ghosts = ghosts.shown();
                     const auto out = online_script.update(engine, facts);
+                    if (!out.shot.empty() && !options.screenshot.empty()) ui_shot = out.shot;
                     // The run ends once the script is done.
                     if (online_script.finished()) running = false;
                     input |= out.buttons;
@@ -2672,11 +2711,13 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     state_message = line;
                     message_until = std::chrono::steady_clock::now() + std::chrono::milliseconds(300);
                 }
-                // Room members in this stage outside the own instance: name tags.
+                // Room members in this stage outside the own instance: name tags
+                // (and in a hub stage ghost figures, below).
+                present_remote = session.remote_tags(online_now);
                 std::vector<dw4::game::OverheadLabels::RemotePlayer> remote;
-                for (const auto& tag : session.remote_tags(online_now))
+                for (const auto& tag : present_remote)
                     remote.push_back({tag.member, tag.name, tag.stage, {tag.x, tag.y, tag.z}, tag.species, tag.level, tag.hp, tag.max_hp, tag.mp,
-                                      tag.max_mp});
+                                      tag.max_mp, tag.busy});
                 labels.set_remote_players(std::move(remote));
                 // The audio device follows the simulation's pace (6.4).
                 if (audio) {
@@ -2684,6 +2725,9 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     if (ratio != online_audio_ratio && SDL_SetAudioStreamFrequencyRatio(audio, ratio)) online_audio_ratio = ratio;
                 }
                 if (session.closed()) {
+                    // (Another PC of this account took the place: its game goes on from the server's character, so this
+                    // PC's leaving save stays pending in the card cache instead of overwriting that.)
+                    if (session.replaced()) online->replaced();
                     online->save_on_leave(); // (the automatic save when leaving the room, SEAMLESS.md 9)
                     const auto reason = dw4::game::online::tidy_reason(session.close_reason());
                     std::cout << "online: " << reason << '\n';
@@ -2695,11 +2739,56 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     if (audio) SDL_SetAudioStreamFrequencyRatio(audio, 1.0f);
                     online_audio_ratio = 1.0f;
                     labels.set_remote_players({});
+                    present_remote.clear();
+                    ghosts.clear();
                     if (lobby) lobby->session_ended(reason);
                     // (A UI test run goes on at the offline title, as a player does.)
                     if (options.smoke_frames && !ui_script.loaded()) running = false;
                     else offline_title();
                 }
+            }
+            // Ghost figures (SEAMLESS.md 12): in a hub stage (a solo hub
+            // instance) the room members whose presence names this stage, while
+            // the picture shows the stage (no load, scene or menu; a window of
+            // this member's own keeps them). Members elsewhere are preloaded.
+            // Presentation only: nothing here reaches the engine.
+            const auto ghost_update_start = std::chrono::steady_clock::now();
+            if (online && ghosts_enabled) {
+                ghosts.set_resources(engine.resources());
+                const bool show = online->session().hub() && !dw4::game::OverheadLabels::hidden(engine, false);
+                std::vector<dw4::game::GhostTarget> targets;
+                for (const auto& sample : present_remote) {
+                    ghosts.preload(sample.species, sample.weapon);
+                    if (!show || !dw4::game::same_stage(sample.stage, engine.stage_name())) continue;
+                    targets.push_back({sample.member, sample.segment, {sample.x, sample.y, sample.z}, sample.yaw, sample.species, sample.clip,
+                                       sample.loop, sample.speed, sample.weapon});
+                }
+                ghosts.update(std::move(targets), own_position(), steady_seconds());
+            } else if (ghosts.drawn() || !present_remote.empty()) {
+                present_remote.clear();
+                ghosts.clear();
+            }
+            ghost_cost_max = std::max(ghost_cost_max, std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - ghost_update_start).count());
+            // (Every N frames, also when a pass of several steps jumps over the multiple.)
+            if (trace_ghosts > 0 && steps > 0 && frame / trace_ghosts != ghost_trace_bucket) {
+                ghost_trace_bucket = frame / trace_ghosts;
+                std::printf("[%d] ghosts shown %d, forms %zu, stage %s, own cost at most %.2f ms a pass, longest present %.1f ms\n", frame,
+                            ghosts.shown(), ghosts.loaded_forms(), engine.stage_name().c_str(), ghost_cost_max, present_max);
+                // (The own player's placement against the figure's rebuild from
+                // the presence's yaw: the rows must agree.)
+                if (const auto* models = engine.get<dw4::engine::ModelCtrlManager>())
+                    if (const auto* player = models->player(own_slot()); player && player->node) {
+                        const auto& m = player->node->matrix;
+                        const float yaw = std::atan2(m(2, 0), m(2, 2));
+                        const auto g = dw4::game::ghost_matrix({m(3, 0), m(3, 1), m(3, 2)}, yaw);
+                        float worst = 0;
+                        for (int r = 0; r < 3; ++r)
+                            for (int c = 0; c < 3; ++c) worst = std::max(worst, std::abs(g(r, c) - m(r, c)));
+                        std::printf("[%d] ghost own at (%.1f, %.1f, %.1f) yaw %.2f, rebuilt rotation off by %.4f\n", frame, m(3, 0), m(3, 1), m(3, 2),
+                                    yaw, worst);
+                    }
+                for (const auto& line : ghosts.describe()) std::printf("[%d] ghost %s\n", frame, line.c_str());
+                ghost_cost_max = present_max = 0;
             }
             // The title menu's third entry was chosen: the online screens open
             // over the menu (which stays, its cursor on Online).
@@ -2836,7 +2925,8 @@ int run(const Options& options, dw4::game::Settings& settings) {
             }
             // (Every stage load, also of the same stage: the texture cache is
             // keyed by document addresses, which a new load may reuse.)
-            if (dw4::game::note_stage(view, engine)) save_profile();
+            // (The story's ghost figures start over too: no figure fades across the load.)
+            if (dw4::game::note_stage(view, engine, &ghosts)) save_profile();
             // Smooth motion: the picture is drawn between the previous step
             // and this one (MotionInterpolator::blend below).
             const bool smooth_blending = view.smooth_blending();
@@ -2903,7 +2993,14 @@ int run(const Options& options, dw4::game::Settings& settings) {
             if (draw) {
                 // (DW4_DEV_DUMP: what the blend did, for presents.csv.)
                 const bool report_blend = dev_dumper && dev.dumping(frame);
-                const auto scene = dw4::game::present_scene(view, engine, accumulator, smooth_blending, report_blend);
+                // The story's online presentation (round 60, host_view.hpp): the ghost
+                // figures and the remote tags at this pass's presence samples.
+                dw4::game::RemotePresentation remote_view;
+                remote_view.ghosts = &ghosts;
+                remote_view.samples = &present_remote;
+                if (ghosts.active() && engine.presenting()) remote_view.own_position = own_position();
+                remote_view.cost_max = &ghost_cost_max;
+                const auto scene = dw4::game::present_scene(view, engine, accumulator, smooth_blending, report_blend, &remote_view);
                 const int width = scene.width, height = scene.height;
                 const float present_alpha = scene.present_alpha;
                 const auto& blend_report = scene.blend_report;
@@ -3251,6 +3348,74 @@ int run(const Options& options, dw4::game::Settings& settings) {
                             if (ImGui::Button("Leave room")) leave_room();
                             if (online->leave_prompt && ImGui::Button("Stay")) online->leave_prompt = false;
                         }
+                        // The connection of a room session (round 62): what the
+                        // indicator shows, with the details to report a lag.
+                        if (online) {
+                            const auto& session = online->session();
+                            const auto& net = session.net();
+                            const auto& recent = session.stats().recent();
+                            const auto& delayed = session.stats().delayed_total();
+                            const bool playing = session.mode() == dw4::game::online::Mode::sealed;
+                            const auto quality = dw4::game::online::link_quality(playing ? session.delay() : 0, net.network_rtt_ms(), recent.drop_rate(),
+                                                                                 session.overlay(steady_seconds()).waiting_for_server);
+                            ImGui::SeparatorText("Connection");
+                            const ImVec4 colour = quality == dw4::game::online::LinkQuality::good   ? ImVec4(0.45f, 0.9f, 0.45f, 1)
+                                                  : quality == dw4::game::online::LinkQuality::fair ? ImVec4(1.0f, 0.85f, 0.3f, 1)
+                                                                                                    : ImVec4(1.0f, 0.4f, 0.4f, 1);
+                            // (Wrapped: the lines are longer than the menu is wide; round 62 review.)
+                            const auto dim = [](const char* format, auto... args) {
+                                ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+                                ImGui::TextWrapped(format, args...);
+                                ImGui::PopStyleColor();
+                            };
+                            ImGui::TextColored(colour, "Link: %s", dw4::game::online::link_quality_name(quality));
+                            if (net.rtt_ms >= 0 && net.from_relay)
+                                ImGui::TextWrapped("Ping (network round trip to the server): %.0f ms. The server measures %.0f ms (spread %d ms): that "
+                                                   "includes about %.0f ms of waiting for this game's next picture.",
+                                                   net.network_rtt_ms(), net.rtt_ms, int(net.rtt_spread_ms), std::max(0.0, net.pass_wait_ms));
+                            else if (net.rtt_ms >= 0)
+                                ImGui::TextWrapped("Ping (network round trip to the server): %.0f ms (TCP estimate)", net.rtt_ms);
+                            else
+                                dim("Ping: not measured yet");
+                            if (playing)
+                                ImGui::TextWrapped("Input delay: %d ticks (%.0f ms). With others in your stage every input waits this long.",
+                                                   session.delay(), session.delay() * dw4::engine::kFieldSeconds * 1000.0);
+                            else
+                                ImGui::TextWrapped("Input delay: none (you play this stage on your own)");
+                            if (recent.samples)
+                                ImGui::TextWrapped("Your inputs, last seconds: %.0f ms until they run (max %.0f); %.1f %% came too late for the server.",
+                                                   recent.exec_avg() * 1000.0, recent.exec_max * 1000.0, recent.drop_rate() * 100.0);
+                            if (net.from_relay && net.sealed)
+                                ImGui::TextWrapped("Server: %llu of your inputs filled in, %llu late, of %llu in this stage.",
+                                                   static_cast<unsigned long long>(net.filled), static_cast<unsigned long long>(net.late),
+                                                   static_cast<unsigned long long>(net.sealed));
+                            dim("Session: %llu inputs with others, latency avg %.0f ms; %d reconnects, %d resyncs, %zu stalls caught up.",
+                                static_cast<unsigned long long>(delayed.samples), delayed.exec_avg() * 1000.0, net.reconnects, net.resyncs,
+                                session.backlog_runs());
+                            if (online->log().is_open()) {
+                                const auto log_path = online->log().path();
+                                dim("When online play lags, send this file (it holds no password):");
+                                ImGui::TextWrapped("%s", log_path.string().c_str());
+                                if (ImGui::Button("Copy path")) ImGui::SetClipboardText(log_path.string().c_str());
+                                ImGui::SameLine();
+                                if (ImGui::Button("Open folder")) {
+                                    // A file:/// URL of the folder, UTF-8 percent-encoded (spaces, non-ASCII names).
+                                    std::string url = "file:///";
+                                    const auto folder = log_path.parent_path().generic_u8string();
+                                    for (const auto c : folder) {
+                                        const auto b = static_cast<unsigned char>(c);
+                                        if (std::isalnum(b) || b == '/' || b == ':' || b == '.' || b == '_' || b == '-' || b == '~') {
+                                            url += char(b);
+                                        } else {
+                                            char hex[4];
+                                            std::snprintf(hex, sizeof hex, "%%%02X", unsigned(b));
+                                            url += hex;
+                                        }
+                                    }
+                                    SDL_OpenURL(url.c_str());
+                                }
+                            }
+                        }
                         ImGui::EndTabItem();
                     }
                     if (ImGui::BeginTabItem("Cheats", nullptr, tab_flags("Cheats"))) {
@@ -3505,6 +3670,33 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     for (const auto& line : lines) ImGui::TextUnformatted(line.c_str());
                     ImGui::End();
                 }
+                // The network indicator of a room session (round 62), lower
+                // left: ping and input delay, coloured by the link's quality.
+                if (online && settings.net_indicator && !online->session().closed()) {
+                    const auto& session = online->session();
+                    const auto& net = session.net();
+                    const bool playing = session.mode() == dw4::game::online::Mode::sealed;
+                    const auto overlay_now = session.overlay(steady_seconds());
+                    const auto quality = dw4::game::online::link_quality(playing ? session.delay() : 0, net.network_rtt_ms(),
+                                                                         session.stats().recent().drop_rate(),
+                                                                         overlay_now.waiting_for_server || overlay_now.connection_lost);
+                    const ImVec4 colour = quality == dw4::game::online::LinkQuality::good   ? ImVec4(0.45f, 0.9f, 0.45f, 1)
+                                          : quality == dw4::game::online::LinkQuality::fair ? ImVec4(1.0f, 0.85f, 0.3f, 1)
+                                                                                            : ImVec4(1.0f, 0.4f, 0.4f, 1);
+                    const ImVec2 display = ImGui::GetIO().DisplaySize;
+                    ImGui::SetNextWindowPos(ImVec2(12, display.y - 12), ImGuiCond_Always, ImVec2(0, 1));
+                    ImGui::SetNextWindowBgAlpha(0.45f);
+                    ImGui::Begin("##net", nullptr,
+                                 ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoInputs |
+                                     ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing);
+                    // (The network's round trip: the relay's less the wait for this game's next pass.)
+                    std::string text = net.rtt_ms >= 0 ? "Ping " + std::to_string(int(net.network_rtt_ms() + 0.5)) + " ms" : std::string("Ping -");
+                    if (playing)
+                        text += "  Delay " + std::to_string(session.delay()) + " (" +
+                                std::to_string(int(session.delay() * dw4::engine::kFieldSeconds * 1000.0 + 0.5)) + " ms)";
+                    ImGui::TextColored(colour, "%s", text.c_str());
+                    ImGui::End();
+                }
                 // Achievement notices, top right.
                 while (!toasts.empty() && std::chrono::steady_clock::now() > toasts.front().until) toasts.pop_front();
                 if (!toasts.empty()) {
@@ -3553,6 +3745,8 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     dev_dumper->picture(dev_present, frame, steps, present_alpha, smooth_blending ? &blend_report : nullptr,
                                         engine.stage_name(), width, height, pixels);
                     if (dev.ids && dev.pictures) {
+                        // (The picture's own list: its own shadow, not the ghost figures'.)
+                        renderer->set_shadow(&shadow);
                         renderer->set_id_pass(true);
                         renderer->render(items, camera, clear, screen, wide, width, height);
                         renderer->set_id_pass(false);
@@ -3564,9 +3758,16 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     }
                 }
                 ++dev_present;
-                // The sound queue, the swap and the frame time (host_view.hpp).
-                dw4::game::finish_present(view, engine);
+                // The sound queue, the swap (the online session notes the present
+                // right after it), the frame time (host_view.hpp).
+                dw4::game::finish_present(view, engine, [&] {
+                    pass_presented = true;
+                    if (online) online->session().presented(steady_seconds());
+                });
+                present_max = std::max(present_max, view.last_present_seconds * 1000.0);
             }
+            // (A run without pictures: the pass's end stands for the present, for the input latency of online test runs.)
+            if (!draw && online) online->session().presented(steady_seconds());
             if (trace_loadtime && steps > 0) {
                 const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - pass_start).count();
                 if (const auto* snapshot = engine.stage_snapshot(); snapshot && snapshot->serial != load_timing.serial) {
@@ -3588,9 +3789,69 @@ int run(const Options& options, dw4::game::Settings& settings) {
                             print_load_timing();
                         }
             }
+#ifdef DW4_ONLINE_DEV
+            // DW4_ONLINE_TEST_STALL=PERIOD_MS:STALL_MS[:PASS_MS] (development
+            // builds, the latency scenarios of tools/online_test): this client
+            // behaves like a window Windows throttles in the background, its
+            // host loop stalled for STALL_MS every PERIOD_MS and each pass
+            // taking at least PASS_MS (SEAMLESS.md 6.4, round 62).
+            if (online) {
+                static const auto stall = [] {
+                    std::array<int, 3> v{0, 0, 0};
+                    if (const char* text = std::getenv("DW4_ONLINE_TEST_STALL")) std::sscanf(text, "%d:%d:%d", &v[0], &v[1], &v[2]);
+                    return v;
+                }();
+                static auto next_stall = std::chrono::steady_clock::now() + std::chrono::milliseconds(stall[0]);
+                if (stall[2] > 0) std::this_thread::sleep_for(std::chrono::milliseconds(stall[2]));
+                if (stall[0] > 0 && stall[1] > 0 && std::chrono::steady_clock::now() >= next_stall) {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(stall[1]));
+                    next_stall = std::chrono::steady_clock::now() + std::chrono::milliseconds(stall[0]);
+                }
+            }
+#endif
             // Frame limit (settings.ini fps_limit): presents are spaced out;
             // the simulation keeps its fixed 60 Hz steps.
             dw4::game::pace_presents(view);
+#ifdef DW4_ONLINE_DEV
+            // DW4_ONLINE_TEST_PASS_HZ=HZ (development builds, the latency
+            // scenarios of tools/online_test): each pass ends on a grid of HZ
+            // per second, as a pass that waits for the vsync of a display at
+            // HZ (a hidden test client has none; round 62 review: 60.000 Hz
+            // beats against the relay's 59.94 Hz).
+            if (online) {
+                static const double pass_hz = [] {
+                    const char* text = std::getenv("DW4_ONLINE_TEST_PASS_HZ");
+                    return text ? std::max(0.0, std::atof(text)) : 0.0;
+                }();
+                if (pass_hz > 0) {
+                    static const auto grid = std::chrono::steady_clock::now();
+                    const double at = std::chrono::duration<double>(std::chrono::steady_clock::now() - grid).count();
+                    const double next = (std::floor(at * pass_hz) + 1.0) / pass_hz;
+                    SDL_DelayPrecise(Uint64((next - at) * 1e9));
+                }
+            }
+#endif
+            if (online) {
+                // online.log: the rates of passes and pictures, vsync, the display, the window's state (round 62 review).
+                dw4::game::OnlineRun::HostFacts facts;
+                facts.presented = pass_presented;
+                if (window) {
+                    const auto flags = SDL_GetWindowFlags(window);
+                    facts.window = true;
+                    facts.vsync = settings.vsync;
+                    SDL_GL_GetSwapInterval(&facts.swap_interval);
+                    facts.fps_limit = settings.fps_limit;
+                    if (const auto* mode = SDL_GetCurrentDisplayMode(SDL_GetDisplayForWindow(window)))
+                        facts.refresh_hz = mode->refresh_rate_numerator > 0 && mode->refresh_rate_denominator > 0
+                                               ? double(mode->refresh_rate_numerator) / double(mode->refresh_rate_denominator)
+                                               : double(mode->refresh_rate);
+                    facts.focused = (flags & SDL_WINDOW_INPUT_FOCUS) != 0;
+                    facts.minimized = (flags & SDL_WINDOW_MINIMIZED) != 0;
+                    facts.occluded = (flags & SDL_WINDOW_OCCLUDED) != 0;
+                    facts.hidden = (flags & SDL_WINDOW_HIDDEN) != 0;
+                }
+                online->host_pass(steady_seconds(), facts);
+            }
             // DW4_SMOKE_STAGES=n: a test run also ends once the n-th stage has loaded.
             static const int smoke_stages = options.smoke_frames && std::getenv("DW4_SMOKE_STAGES") ? std::atoi(std::getenv("DW4_SMOKE_STAGES")) : 0;
             if (const auto* snapshot = engine.stage_snapshot(); smoke_stages && snapshot && snapshot->serial >= std::uint64_t(smoke_stages))
@@ -3666,6 +3927,14 @@ int run(const Options& options, dw4::game::Settings& settings) {
                         dw4::game::online::mode_name(online->session().mode()), online->session().inst(), online->session().visit(),
                         online->session().tick(), online->session().own_slot(), online->session().present(),
                         static_cast<unsigned long long>(online->link().net_fingerprint()));
+            {
+                const auto& t = online->session().stats().total();
+                std::printf("online: final latency samples %llu dropped %llu exec avg %.1f ms p50 %.1f p95 %.1f max %.1f, present avg %.1f ms, "
+                            "steps %.2f, delay %d, backlogs %zu, starved %zu\n",
+                            static_cast<unsigned long long>(t.samples), static_cast<unsigned long long>(t.dropped), t.exec_avg() * 1000.0,
+                            t.exec_quantile(0.5) * 1000.0, t.exec_quantile(0.95) * 1000.0, t.exec_max * 1000.0, t.present_avg() * 1000.0,
+                            t.steps_avg(), online->session().delay(), online->session().backlog_runs(), online->session().starved_steps());
+            }
             leave_room();
             online_achievements.reset();
             online.reset();

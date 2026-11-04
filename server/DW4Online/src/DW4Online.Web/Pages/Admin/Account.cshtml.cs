@@ -67,6 +67,8 @@ public sealed class AccountModel(AccountService accounts, OnlineCharacterService
     public async Task<IActionResult> OnPostRestoreStoryAsync(string name, CancellationToken ct)
     {
         if (await accounts.FindAccountAsync(name, ct) is not { } target) return NotFound();
+        if (!await characters.HasStoryRevisionAsync(target.Id, StoryRevision, ct))
+            return await ShowAsync(name, ct, error: "No such kept revision of the online story.");
         // The account's own room closes first: its hub holds the story and would save it again.
         await rooms.CloseOwnedAsync(target.Id, ct);
         var result = await characters.RestoreStoryAsync(target.Id, StoryRevision, HttpContext.WebSession()!.AccountId, HttpContext.Caller().Ip, ct);
@@ -90,6 +92,7 @@ public sealed class AccountModel(AccountService accounts, OnlineCharacterService
         await rooms.RemoveAccountAsync(target.Id, ct);
         var result = await accounts.AdminDeleteAccountAsync(actor, name, ct);
         if (!result.Ok) return await ShowAsync(name, ct, error: result.Error!.Message);
+        await rooms.RemoveAccountAsync(target.Id, CancellationToken.None); // (a room opened meanwhile closes)
         return Redirect("~/admin?q=deleted_" + target.Id);
     }
 

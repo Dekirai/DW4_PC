@@ -1,0 +1,12 @@
+{
+  "desc": "latency, one PC: the host's window throttled in the background (30 fps, a 150 ms stall every 3 s), the guest joins mid-stage; the guest's input delay must not follow the host's",
+  "seed_story": true,
+  "card": "k10",
+  "frames": 60000,
+  "timeout": 900,
+  "min_shared_ticks": 3000,
+  "clients": [
+    {"name": "a", "script": "../L1/a.script", "start": 0, "env": {"DW4_ONLINE_TEST_STALL": "3000:150:33"}},
+    {"name": "b", "script": "../L1/b.script", "start": 3}
+  ]
+}

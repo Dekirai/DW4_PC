@@ -248,6 +248,10 @@ std::size_t Messenger::send(Engine& engine, std::string_view category, std::opti
 
 std::size_t Messenger::dispatch(Engine& engine, std::string_view category, std::optional<std::string_view> name,
                                 std::int32_t index, std::string_view command, Packet& packet, bool model) {
+    // Online: inside a member's own window or scene the message reaches that
+    // member's own copies, its slot, or nobody (SEAMLESS.md 5.3; never offline).
+    std::string scoped_name;
+    if (engine.scene_scope() >= 0 && !engine.scope_message(category, name, index, command, packet, scoped_name)) return 0;
     if (command == "SEARCH") {
         // 0x80305AE0..0x80305C40: a bool (any row) and the count answer.
         const auto n = count(category, name, index);
@@ -360,6 +364,7 @@ void Messenger::post(std::int64_t time, std::string category, std::optional<std:
         std::printf("post %s %s %s for %lld\n", category.c_str(), name ? name->c_str() : "-", command.c_str(), static_cast<long long>(time));
     DeferredMessage message{time, std::move(category), std::move(name), index, std::move(command), std::move(arguments)};
     message.trigger = trigger_;
+    message.scope = scope_;
     if (modelling()) {
         // 80305F9C resets the current object (or makes all), the poster's
         // arguments go into it, 803061BC swaps it into the record.
@@ -409,6 +414,9 @@ void Messenger::update(Engine& engine) {
         DeferredMessage message = std::move(deferred_.front());
         deferred_.erase(deferred_.begin());
         const Engine::TriggerScope trigger(engine, message.trigger);
+        // (Online: a message a member's own window or scene posted is
+        // delivered in its scope again, SEAMLESS.md 5.3.)
+        const Engine::SceneScope scope(engine, message.scope);
         std::optional<std::string_view> name;
         if (message.name) name = *message.name;
         if (static const bool trace = std::getenv("DW4_TRACE_POSTS") != nullptr; trace)
@@ -483,9 +491,23 @@ void DemoManager::end_switch() {
 void DemoManager::run() {
     if (!current_ || in_switch_) return;
     current_->trigger = trigger_;
+    current_->scope = scope_;
     running_.push_back(std::move(current_));
     current_.reset();
     in_switch_ = false;
+}
+
+std::size_t DemoManager::running_unscoped() const {
+    return std::size_t(std::count_if(running_.begin(), running_.end(), [](const auto& work) { return work->scope < 0; }));
+}
+
+std::size_t DemoManager::running_for(int slot) const {
+    return std::size_t(std::count_if(running_.begin(), running_.end(),
+                                     [&](const auto& work) { return work->scope < 0 || (slot >= 0 && work->scope == slot); }));
+}
+
+void DemoManager::drop_scope(int slot) {
+    std::erase_if(running_, [&](const auto& work) { return work->scope >= 0 && work->scope == slot; });
 }
 
 void DemoManager::clear() {
@@ -516,6 +538,7 @@ void DemoManager::update(Engine& engine) {
         auto& records = work->records;
         std::size_t cursor = work->cursor;
         const Engine::TriggerScope trigger(engine, work->trigger);
+        const Engine::SceneScope scope(engine, work->scope);
         while (cursor < records.size()) {
             bool block = false;
             const DemoRecord record = records[cursor];
@@ -584,6 +607,9 @@ void DemoManager::update(Engine& engine) {
         if (w < running_.size() && running_[w].get() == work) work->cursor = cursor;
     }
     std::erase_if(running_, [](const std::unique_ptr<DemoWork>& work) { return work->cursor >= work->records.size(); });
+    // (Online: a member's own scene that ended without its ONCTRL leaves its
+    // player its input again, SEAMLESS.md 5.3; offline no scene holds one.)
+    engine.release_scene_holds();
 }
 
 // ---------------------------------------------------------------------------
@@ -694,6 +720,9 @@ Node* Engine::find_named_node(Node* from, std::string_view name) {
 // (begin_stage_load).
 void Engine::reset_modules() {
     for (auto& m : managers_) m->clear_stage(*this);
+    // Seamless co-op: the members' own window copies go with the stage
+    // (online_scenes.cpp; the parents they hang under are still loaded).
+    clear_scene_copies();
     schedule_.clear();
     messenger_.clear();
     demo_.clear();
@@ -2240,6 +2269,26 @@ void Engine::render(std::vector<DrawItem>& out, FrameCamera& camera, Vec4f& clea
         if (invert(camera.view, inverse_view)) context.camera_position = {inverse_view(3, 0), inverse_view(3, 1), inverse_view(3, 2)};
         // A multi-member instance: other members' item name lines and exit
         // prompts are not this machine's (picture_hidden_roots).
+        picture_hidden_roots(picture_hidden_);
+        if (!picture_hidden_.empty()) context.picture_hidden = &picture_hidden_;
+        traverse(&global_root_, context);
+        std::stable_partition(out.begin(), out.end(), [](const DrawItem& item) { return !item.state.blend_enabled; });
+        if (shadow) {
+            shadow->active = false;
+            if (auto* shadows = get<ShadowManager>()) shadows->render(*this, context, *shadow);
+        }
+        return;
+    }
+    if (online_.enabled && scoped_picture_filter()) {
+        // A member's own window or scene with the shared camera (a solo
+        // instance, SEAMLESS.md 5.3): the step's simulation traversal as
+        // traverse_scene() runs it, then this machine's picture without the
+        // other members' window copies and the layers its own window hides,
+        // which changes nothing (every node on its peek path).
+        traverse_scene();
+        PassTimer timer{traversal_ns[3], traversal_count[3]};
+        TraversalContext context = frame_context(&out, camera, clear_color);
+        context.simulate = false;
         picture_hidden_roots(picture_hidden_);
         if (!picture_hidden_.empty()) context.picture_hidden = &picture_hidden_;
         traverse(&global_root_, context);

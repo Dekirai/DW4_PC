@@ -1,5 +1,7 @@
 #include "online_run.hpp"
 
+#include "online/host_priority.hpp"
+
 #include "online/room_settings.hpp"
 #include "online/token_store.hpp"
 #include "online/transport.hpp"
@@ -9,9 +11,11 @@
 #include <algorithm>
 #include <bit>
 #include <chrono>
+#include <cmath>
 #include <cstdlib>
 #include <iostream>
 #include <thread>
+#include <tuple>
 
 namespace dw4::game {
 
@@ -123,10 +127,28 @@ OnlineRun::OnlineRun(std::unique_ptr<online::HttpWorker> http, OnlineRoom room, 
     session_ = std::make_unique<online::Session>(link_, config);
 }
 
+namespace {
+// The relay port to connect to: the room's, or (development builds, the
+// latency scenarios of tools/online_test) DW4_ONLINE_RELAY_PORT, a latency /
+// jitter / loss proxy in front of the loopback relay.
+int relay_port_for(int port) {
+#ifdef DW4_ONLINE_DEV
+    if (const char* text = std::getenv("DW4_ONLINE_RELAY_PORT"); text && std::atoi(text) > 0 && std::atoi(text) < 65536) return std::atoi(text);
+#endif
+    return port;
+}
+} // namespace
+
 bool OnlineRun::connect(double now, std::string& error) {
-    auto transport = online::connect_tcp(room_.endpoint.host, room_.relay_port, 5000, error);
+    auto transport = online::connect_tcp(room_.endpoint.host, relay_port_for(room_.relay_port), 5000, error);
     if (!transport) return false;
     session_->attach(std::move(transport), now);
+    // The relay's answer: by then it replaced any older connection of this account (a session another PC still holds in
+    // the room ends without uploading). A refusal ends here; a slow relay is waited for in the main loop as before.
+    if (!session_->await_hello(10.0) && session_->closed()) {
+        error = session_->close_reason();
+        return false;
+    }
     return true;
 }
 
@@ -139,16 +161,94 @@ void OnlineRun::pass(double now) {
     if (ticket_request_ == 0 && now >= next_reconnect_) ticket_request_ = http_->submit(online::api::ticket_request(room_.code));
 }
 
+void OnlineRun::open_log(const std::filesystem::path& path, const std::string& client_version) {
+    // A second game from the same folder (two games on one PC for one room)
+    // has the file open already: it writes online-2.log (online-3.log, ...).
+    bool opened = log_.open(path);
+    for (int n = 2; !opened && n <= 4; ++n)
+        opened = log_.open(path.parent_path() / (path.stem().string() + "-" + std::to_string(n) + path.extension().string()));
+    if (!opened) {
+        std::cout << "online: the online log " << path.string() << " cannot be written\n";
+        return;
+    }
+    log_.line("---- online session: game %s, protocol %u, server %s:%d (%s), relay port %d, account %s, room '%s' (max %d players, "
+              "difficulty %d)",
+              client_version.c_str(), unsigned(kOnlineProtocol), room_.endpoint.host.c_str(), room_.endpoint.port,
+              room_.endpoint.development ? "development" : "release", room_.relay_port, room_.account.c_str(), room_.room_name.c_str(),
+              room_.max_players, room_.settings.difficulty);
+    session_->set_log(&log_);
+    status_request_ = http_->submit(online::api::status_request());
+    // (A game in the background, such as the second of two on one PC, keeps its pace: online/host_priority.hpp.)
+    log_.line("background throttling of this process: %s", online::keep_full_speed_in_background() ? "off" : "left to the system");
+}
+
+namespace {
+const char* window_state(const OnlineRun::HostFacts& f) {
+    if (!f.window) return "none";
+    if (f.minimized) return "minimized";
+    if (f.hidden) return "hidden";
+    if (f.occluded) return "covered (occluded)";
+    return f.focused ? "in front (focused)" : "in the background (not focused)";
+}
+} // namespace
+
+void OnlineRun::host_pass(double now, const HostFacts& f) {
+    auto& h = host_window_;
+    if (h.since < 0) h.since = now;
+    if (h.last >= 0) h.longest = std::max(h.longest, now - h.last);
+    h.last = now;
+    ++h.passes;
+    if (f.presented) ++h.presents;
+    const auto settings_of = [](const HostFacts& x) {
+        return std::tuple(x.window, x.vsync, x.swap_interval, x.fps_limit, std::lround(x.refresh_hz * 100.0));
+    };
+    const auto window_of = [](const HostFacts& x) { return std::tuple(x.focused, x.minimized, x.occluded, x.hidden); };
+    if (!host_logged_ || settings_of(*host_logged_) != settings_of(f)) {
+        if (f.window)
+            log_.line("host: vsync %s (swap interval %d), display %.3f Hz, frame limit %s", f.vsync ? "on" : "off", f.swap_interval, f.refresh_hz,
+                      f.fps_limit > 0 ? (std::to_string(f.fps_limit) + " fps").c_str() : "off");
+        else
+            log_.line("host: no window (a run without pictures)");
+    }
+    if (f.window && (!host_logged_ || window_of(*host_logged_) != window_of(f))) log_.line("window: %s", window_state(f));
+    host_logged_ = f;
+    if (now - h.since >= 10.0) {
+        // (A game at 60 pictures a second with vsync on a display of 60.000 Hz
+        // sends its pads on a grid that beats against the relay's 59.94 Hz.)
+        const double span = now - h.since;
+        log_.line("host: %.2f passes/s, %.2f pictures/s, longest pass %.0f ms, window %s", double(h.passes) / span, double(h.presents) / span,
+                  h.longest * 1000.0, window_state(f));
+        h = HostWindow{now, now, 0, 0, 0};
+    }
+}
+
 void OnlineRun::dispatch(std::uint64_t id, const online::HttpResponse& response, double now) {
     if (character_ && character_->on_response(id, response)) return;
+    if (id == status_request_ && status_request_ != 0) {
+        status_request_ = 0;
+        if (const auto status = online::api::parse_status(response)) {
+            log_.line("server: version %s, protocol %d (minimum %d), relay port %d%s", status->current_version.empty() ? "?" : status->current_version.c_str(),
+                      status->current_protocol, status->minimum_protocol, status->relay_port,
+                      status->current_protocol != 0 && status->current_protocol != int(kOnlineProtocol)
+                          ? " - the server is set for another protocol than this game: update the server or the game"
+                          : "");
+        } else {
+            log_.line("server: no status (%s)", online::api::problem_text(response).c_str());
+        }
+        return;
+    }
     if (id != ticket_request_) return;
     ticket_request_ = 0;
     next_reconnect_ = now + 2.0;
     const auto ticket = online::api::parse_ticket(response);
     if (!ticket || left_ || session_->closed() || !session_->wants_transport()) return;
     std::string error;
-    if (auto transport = online::connect_tcp(room_.endpoint.host, room_.relay_port, 2000, error))
+    if (auto transport = online::connect_tcp(room_.endpoint.host, relay_port_for(room_.relay_port), 2000, error)) {
+        log_.line("reconnected to the relay");
         session_->attach(std::move(transport), now, *ticket);
+    } else {
+        log_.line("reconnect failed: %s", error.c_str());
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -231,10 +331,17 @@ void OnlineRun::port_events(const std::vector<engine::PortEvent>& events) {
             character_->set_context(character_context());
             character_->card_written(e.extra);
         }
-        // A character the character select made new (the title is the
-        // member's own solo instance: its slot is this machine's).
+        // A character the character select made new or called from the card
+        // (the title is the member's own solo instance: its slot is this
+        // machine's); the Game Start decides from the last one.
         if (e.kind == engine::PortEvent::Kind::new_character && e.slot == session_->own_slot()) character_->new_game(std::uint32_t(e.value));
+        if (e.kind == engine::PortEvent::Kind::character_called && e.slot == session_->own_slot())
+            character_->character_called(e.extra, std::uint32_t(e.value));
     }
+}
+
+void OnlineRun::replaced() {
+    if (character_) character_->replaced();
 }
 
 void OnlineRun::save_on_leave(double seconds) {
@@ -256,6 +363,16 @@ void OnlineRun::leave(double save_seconds) {
     if (left_) return;
     save_on_leave(save_seconds);
     left_ = true;
+    {
+        // (The latency of the pads that waited for the network: solo ticks run in the step of their sample.)
+        const auto& t = session_->stats().total();
+        const auto& n = session_->stats().delayed_total();
+        log_.line("leaving the room: %llu own pads ran (%llu with others), %llu not sealed as sent, latency with others avg %.0f ms p95 %.0f ms "
+                  "max %.0f ms, input delay %d, reconnects %d, resyncs %d",
+                  static_cast<unsigned long long>(t.samples), static_cast<unsigned long long>(n.samples), static_cast<unsigned long long>(t.dropped),
+                  n.exec_avg() * 1000.0, n.exec_quantile(0.95) * 1000.0, n.exec_max * 1000.0, session_->delay(), session_->net().reconnects,
+                  session_->net().resyncs);
+    }
     session_->leave();
     http_->wait(http_->submit(online::api::leave_request(room_.code)));
 }

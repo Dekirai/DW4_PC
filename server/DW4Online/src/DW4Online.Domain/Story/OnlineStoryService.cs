@@ -11,25 +11,39 @@ public sealed record StoryHistoryEntry(long Revision, string Reason, DateTime Sa
 /// <summary>
 /// The accounts' own online stories (online_story, SEAMLESS.md 8.4): the relay loads the owner's when a room's hub starts
 /// and queues every new revision of the room's story (<see cref="Enqueue"/>: the newest revision per account is written,
-/// a failed write is tried again with a growing pause, and a load sees a queued revision before it is written); the
-/// online character's record is composed from the account's own story (GET) and its uploaded story bytes are ignored
-/// (PUT). Every written revision is kept in the history; the online character's reset empties the story, and staff can
-/// put a kept revision back (both as a new revision).
+/// a revision that changed only counters at most once a minute, a failed write is tried again with a growing pause, and a
+/// load sees a queued revision before it is written); the online character's record is composed from the account's own
+/// story (GET) and its uploaded story bytes are ignored (PUT). The history keeps the revision every room session started
+/// from, the newest revisions in full and older ones thinned out by time (<see cref="StoryHistoryPolicy"/>); the online
+/// character's reset empties the story, and staff can put a kept revision back (both as a new revision).
 /// </summary>
 public sealed class OnlineStoryService(IOnlineStoryRepository stories, TimeProvider time, OnlineCharacterOptions? options = null)
 {
     private readonly object _lock = new();
-    private readonly Dictionary<long, RoomStoryData> _pending = [];
+    private readonly Dictionary<long, Queued> _pending = [];
+    // Per account: when its last queued write went to the database (counter-only revisions wait a minute after it), and
+    // the generation a reset or restore raises (a queued or retried write of an older generation is never written).
+    private readonly Dictionary<long, DateTimeOffset> _lastWrite = [];
+    private readonly Dictionary<long, long> _generation = [];
+    private readonly SemaphoreSlim _writeGate = new(1, 1);
     private bool _draining;
+    private bool _flushing;
     private TaskCompletionSource _wake = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly CancellationTokenSource _stop = new();
 
-    private int HistoryKeep => Math.Max(1, options?.StoryHistoryRevisions ?? 100);
+    private sealed record Queued(RoomStoryData Story, DateTimeOffset NotBefore, long Generation);
+
+    /// <summary>The history's keeping rules (OnlineCharacter:StoryHistory*).</summary>
+    public StoryHistoryPolicy History => new(Math.Max(1, options?.StoryHistoryRevisions ?? 100), Math.Max(1, options?.StoryHistoryMinutes ?? 10),
+        Math.Max(1, options?.StoryHistoryDays ?? 90), Math.Max(1, options?.StoryHistorySessions ?? 20));
 
     /// <summary>Called when a queued write failed (account, revision, error); it is tried again.</summary>
     public Action<long, uint, Exception>? SaveFailed { get; set; }
     /// <summary>The longest pause between two tries of a failed write.</summary>
     public TimeSpan RetryMax { get; init; } = TimeSpan.FromSeconds(30);
+    /// <summary>A revision that changed only counters (junk shop donations, training attempts) is written at most this often
+    /// per account; a newer one replaces it meanwhile (OnlineCharacter:StoryCounterSaveSeconds).</summary>
+    public TimeSpan CounterSaveInterval => TimeSpan.FromSeconds(Math.Max(0, options?.StoryCounterSaveSeconds ?? 60));
 
     /// <summary>Revisions queued and not written yet.</summary>
     public int PendingCount
@@ -43,40 +57,57 @@ public sealed class OnlineStoryService(IOnlineStoryRepository stories, TimeProvi
     /// <summary>The account's story (a queued newer revision first), or an empty one (revision 0) when it has none yet.</summary>
     public async Task<RoomStoryData> LoadAsync(long accountId, CancellationToken ct = default)
     {
+        // The queued revision first: the drain removes it only after it is written, so either it is still queued here or
+        // the database row read below has it (read the other way round, a write in between gave the older row).
+        RoomStoryData? queued;
+        lock (_lock) queued = _pending.TryGetValue(accountId, out var q) ? q.Story.Clone() : null;
         var row = await stories.GetAsync(accountId, ct);
         var stored = row is null ? new RoomStoryData() : RoomStoryData.FromColumns((uint)row.Revision, row.Flags, row.Folder, row.Counters);
-        lock (_lock)
-            if (_pending.TryGetValue(accountId, out var queued) && queued.Revision > stored.Revision) return queued.Clone();
-        return stored;
+        return queued is not null && queued.Revision > stored.Revision ? queued : stored;
     }
 
     /// <summary>Writes a revision now (newer revisions only); false when nothing changed.</summary>
     public Task<bool> SaveAsync(long accountId, RoomStoryData story, CancellationToken ct = default) =>
-        stories.SaveAsync(Row(accountId, story, story.Revision), HistoryKeep, ct);
+        stories.SaveAsync(Row(accountId, story, story.Revision), History, ct);
 
     /// <summary>
     /// Queues a revision to be written (the relay calls it under the room lock: it never waits). Only the newest revision
-    /// per account is written; a failed write is tried again after 1, 2, 4 ... <see cref="RetryMax"/> seconds.
+    /// per account is written; one that changed only counters waits until <see cref="CounterSaveInterval"/> after the
+    /// account's last write (a member reporting a counter every second made a revision every second); a failed write is
+    /// tried again after 1, 2, 4 ... <see cref="RetryMax"/> seconds.
     /// </summary>
-    public void Enqueue(long accountId, RoomStoryData story)
+    public void Enqueue(long accountId, RoomStoryData story, bool countersOnly = false)
     {
         lock (_lock)
         {
-            if (_pending.TryGetValue(accountId, out var queued) && queued.Revision >= story.Revision) return;
-            _pending[accountId] = story;
+            var now = time.GetUtcNow();
+            var notBefore = countersOnly && _lastWrite.TryGetValue(accountId, out var last) ? last + CounterSaveInterval : now;
+            if (_pending.TryGetValue(accountId, out var queued))
+            {
+                if (queued.Story.Revision >= story.Revision) return;
+                if (queued.NotBefore < notBefore) notBefore = queued.NotBefore;
+            }
+            _pending[accountId] = new Queued(story, notBefore, _generation.GetValueOrDefault(accountId));
+            Interlocked.Exchange(ref _wake, new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously)).TrySetResult();
             if (_draining) return;
             _draining = true;
         }
         _ = Task.Run(DrainAsync);
     }
 
-    /// <summary>Drops the account's queued revision (its story is reset or restored, or the account is deleted).</summary>
+    /// <summary>Drops the account's queued revision and raises its generation (its story is reset or restored, or the
+    /// account is deleted): a write of the old story that is queued or tried again never lands after this.</summary>
     public void Forget(long accountId)
     {
-        lock (_lock) _pending.Remove(accountId);
+        lock (_lock)
+        {
+            _pending.Remove(accountId);
+            _generation[accountId] = _generation.GetValueOrDefault(accountId) + 1;
+        }
     }
 
-    /// <summary>Writes the queued revisions now (a pause between tries ends); true when none is left within <paramref name="timeout"/>.</summary>
+    /// <summary>Writes the queued revisions now (a pause between tries ends, counter-only ones do not wait); true when none is
+    /// left within <paramref name="timeout"/>.</summary>
     public async Task<bool> FlushAsync(TimeSpan timeout, CancellationToken ct = default)
     {
         var until = time.GetUtcNow() + timeout;
@@ -85,6 +116,7 @@ public sealed class OnlineStoryService(IOnlineStoryRepository stories, TimeProvi
             lock (_lock)
             {
                 if (_pending.Count == 0) return true;
+                _flushing = true;
                 Interlocked.Exchange(ref _wake, new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously)).TrySetResult();
             }
             if (time.GetUtcNow() >= until) return false;
@@ -100,24 +132,57 @@ public sealed class OnlineStoryService(IOnlineStoryRepository stories, TimeProvi
         var pause = TimeSpan.FromSeconds(1);
         while (!_stop.IsCancellationRequested)
         {
-            List<(long Account, RoomStoryData Story)> batch;
+            List<(long Account, Queued Entry)> batch;
+            DateTimeOffset? next = null;
+            Task wake;
             lock (_lock)
             {
                 if (_pending.Count == 0)
                 {
                     _draining = false;
+                    _flushing = false;
                     return;
                 }
-                batch = _pending.Select(kv => (kv.Key, kv.Value)).ToList();
+                var now = time.GetUtcNow();
+                batch = _pending.Where(kv => _flushing || kv.Value.NotBefore <= now).Select(kv => (kv.Key, kv.Value)).ToList();
+                if (batch.Count == 0) next = _pending.Values.Min(q => q.NotBefore);
+                wake = _wake.Task;
+            }
+            if (next is { } due)
+            {
+                // Only counter-only revisions wait: until the first is due, or a newer revision, a flush or the stop.
+                var wait = due - time.GetUtcNow();
+                try
+                {
+                    if (wait > TimeSpan.Zero) await Task.WhenAny(Task.Delay(wait, _stop.Token), wake);
+                }
+                catch (OperationCanceledException)
+                {
+                }
+                continue;
             }
             var failed = false;
-            foreach (var (account, story) in batch)
+            foreach (var (account, entry) in batch)
             {
                 try
                 {
-                    await SaveAsync(account, story, _stop.Token);
+                    await _writeGate.WaitAsync(_stop.Token);
+                    try
+                    {
+                        // A reset or restore since it was queued: the old story is not written.
+                        bool current;
+                        lock (_lock) current = _generation.GetValueOrDefault(account) == entry.Generation;
+                        if (current) await SaveAsync(account, entry.Story, _stop.Token);
+                    }
+                    finally
+                    {
+                        _writeGate.Release();
+                    }
                     lock (_lock)
-                        if (_pending.TryGetValue(account, out var queued) && ReferenceEquals(queued, story)) _pending.Remove(account);
+                    {
+                        _lastWrite[account] = time.GetUtcNow();
+                        if (_pending.TryGetValue(account, out var queued) && ReferenceEquals(queued, entry)) _pending.Remove(account);
+                    }
                 }
                 catch (OperationCanceledException) when (_stop.IsCancellationRequested)
                 {
@@ -126,7 +191,7 @@ public sealed class OnlineStoryService(IOnlineStoryRepository stories, TimeProvi
                 catch (Exception e)
                 {
                     failed = true;
-                    SaveFailed?.Invoke(account, story.Revision, e);
+                    SaveFailed?.Invoke(account, entry.Story.Revision, e);
                 }
             }
             if (!failed)
@@ -134,7 +199,6 @@ public sealed class OnlineStoryService(IOnlineStoryRepository stories, TimeProvi
                 pause = TimeSpan.FromSeconds(1);
                 continue;
             }
-            Task wake;
             lock (_lock) wake = _wake.Task;
             try
             {
@@ -149,24 +213,58 @@ public sealed class OnlineStoryService(IOnlineStoryRepository stories, TimeProvi
     }
 
     /// <summary>
-    /// Empties the account's story (the online character's reset: a new character starts from a new game's story) as its
-    /// next revision; the old one stays in the history. Returns the new revision (0: the account had no story).
+    /// Empties the account's story (the online character's reset: a new character starts from a new game's story, and an
+    /// owner without a story starts its rooms at zero) as its next revision; the old one stays in the history. Returns the
+    /// new revision (0: the account had no story).
     /// </summary>
     public async Task<long> ResetAsync(long accountId, CancellationToken ct = default)
     {
-        Forget(accountId);
-        if (await stories.GetAsync(accountId, ct) is null) return 0;
-        return await stories.ReplaceAsync(Row(accountId, new RoomStoryData(), 0), StoryWriteReasons.Reset, HistoryKeep, ct);
+        await _writeGate.WaitAsync(ct);
+        try
+        {
+            Forget(accountId);
+            if (await stories.GetAsync(accountId, ct) is null) return 0;
+            return await stories.ReplaceAsync(Row(accountId, new RoomStoryData(), 0), StoryWriteReasons.Reset, History, ct);
+        }
+        finally
+        {
+            _writeGate.Release();
+        }
     }
+
+    /// <summary>Whether the account's history keeps that revision (staff look before they close the account's room).</summary>
+    public async Task<bool> HasRevisionAsync(long accountId, long revision, CancellationToken ct = default) =>
+        (await stories.ListHistoryAsync(accountId, ct)).Any(h => h.Revision == revision);
 
     /// <summary>Staff: makes a kept revision the story again (as the next revision). Null: no such kept revision.</summary>
     public async Task<long?> RestoreAsync(long accountId, long revision, CancellationToken ct = default)
     {
         var kept = (await stories.ListHistoryAsync(accountId, ct)).FirstOrDefault(h => h.Revision == revision);
         if (kept is null) return null;
-        Forget(accountId);
-        var story = RoomStoryData.FromColumns((uint)kept.Revision, kept.Flags, kept.Folder, kept.Counters);
-        return await stories.ReplaceAsync(Row(accountId, story, 0), StoryWriteReasons.AdminRestore, HistoryKeep, ct);
+        await _writeGate.WaitAsync(ct);
+        try
+        {
+            Forget(accountId);
+            var story = RoomStoryData.FromColumns((uint)kept.Revision, kept.Flags, kept.Folder, kept.Counters);
+            return await stories.ReplaceAsync(Row(accountId, story, 0), StoryWriteReasons.AdminRestore, History, ct);
+        }
+        finally
+        {
+            _writeGate.Release();
+        }
+    }
+
+    /// <summary>
+    /// A room session starts from the account's story (its owner opened a room): that revision is kept in the history as a
+    /// session start for as long as <see cref="StoryHistoryPolicy"/> keeps those, whatever the room does to the story
+    /// afterwards (a forging member pushed every honest revision out of a history kept by count). Nothing for an account
+    /// without a story.
+    /// </summary>
+    public async Task KeepSessionStartAsync(long accountId, CancellationToken ct = default)
+    {
+        var story = await LoadAsync(accountId, ct);
+        if (story.Revision == 0) return;
+        await stories.KeepAsync(Row(accountId, story, story.Revision), StoryWriteReasons.Session, History, ct);
     }
 
     /// <summary>The kept revisions, newest first, with their phase, key items and number of flags.</summary>

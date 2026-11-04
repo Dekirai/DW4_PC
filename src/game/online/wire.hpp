@@ -59,6 +59,13 @@ struct WireError : std::runtime_error {
     using std::runtime_error::runtime_error;
 };
 
+// The frame types (SEAMLESS.md 6.3, "Message types"): one number per message
+// on both sides, never given twice. A new message takes the next free number
+// of its direction (client to server 0x15, server to client 0x91 after rounds
+// 60 and 62) and goes into the registry checks of tests/online_wire_tests.cpp
+// and WireGoldenTests.cs. 0x8F is NETSTAT, in the field since DW4Online 0.1.2:
+// a client that cannot decode a frame of a type it knows drops the connection
+// (only the informational ones are skipped, Session::informational).
 enum class Type : std::uint8_t {
     // client -> server (0x01-0x3F)
     input = 0x01,
@@ -80,6 +87,7 @@ enum class Type : std::uint8_t {
     rate = 0x11,
     pong = 0x12,
     bye = 0x13,
+    presence2 = 0x14,
     // server -> client (0x80-0xBF)
     welcome = 0x80,
     sealed = 0x81,
@@ -96,6 +104,8 @@ enum class Type : std::uint8_t {
     close = 0x8C,
     roster = 0x8D,
     reassign = 0x8E,
+    netstat = 0x8F, // round 62: the member's link (older clients skip it)
+    presence2_of = 0x90, // round 60: PRESENCE2 to a member that sends it (12.1)
 };
 const char* type_name(Type type) noexcept;
 
@@ -287,6 +297,23 @@ struct Intent {        // inst | visit | u8 kind | i32 argument (sealed instance
 // u16 max hp | u16 mp | u16 max mp. A member sends at most every 150 ms; an
 // empty stage while it loads or watches a scene (its tag hides), hp 0 while
 // it is defeated.
+//
+// PRESENCE2 (round 60: the ghost figures of the hub stages, SEAMLESS.md 12):
+// [u8 member (server -> client)] | u8 version (1) | the PRESENCE fields |
+// str clip | u8 flags | u8 warp | u32 sent ms | str weapon. `clip` is the
+// motion the member's figure plays ("runD", "waitS"; 0-16 of A-Z a-z 0-9 _,
+// empty: unknown); flags 1: the clip loops, 2: busy (a status or shop
+// window is open: the figure stands where it is, the tag hides); `warp`
+// counts the member's jumps (stage loads, warps: never glided across);
+// `sent ms` is the sender's clock in milliseconds (wrapping: the time of the
+// step whose place it carries), the receivers' interpolation clock; `weapon`
+// the package of the weapon its figure holds (0-24 of the same characters,
+// empty: none). Sent only to a hub whose WELCOME carries Welcome::presence_v2
+// (an older hub closes a connection that sends a frame it does not know); the
+// hub forwards PRESENCE2 to the members that send it and PRESENCE to the
+// others. A later version keeps this layout and appends, within 256 bytes in
+// all: a reader takes what it knows (a version 1 hub forwards only the
+// version 1 part it checked, written at version 1; a larger one it drops).
 struct Presence {
     std::uint8_t member{};
     std::string stage;
@@ -294,8 +321,21 @@ struct Presence {
     float x{}, y{}, z{}, yaw{};
     std::uint8_t species{};
     std::uint16_t level{}, hp{}, max_hp{}, mp{}, max_mp{};
+    // PRESENCE2 (version 0: a PRESENCE, without the fields below).
+    std::uint8_t version{};
+    std::string clip;
+    std::uint8_t flags{};
+    std::uint8_t warp{};
+    std::uint32_t sent_ms{};
+    std::string weapon;
+    static constexpr std::uint8_t loop = 1;
+    static constexpr std::uint8_t busy = 2;
+    static constexpr std::uint8_t known_flags = loop | busy;
     bool operator==(const Presence&) const = default;
 };
+inline constexpr std::uint8_t kPresenceVersion = 1;
+inline constexpr std::size_t kMaxClip = 16;
+inline constexpr std::size_t kMaxWeapon = 24;
 // STORY (SEAMLESS.md 8.3): the member's pending set against the confirmed
 // room story, at every barrier (before BARRIER) and every ten seconds while it
 // is not empty. inst | visit (the member's instance now) | u32 the confirmed
@@ -338,7 +378,8 @@ struct Bye {           // u8 reason
 // ---- server -> client
 // WELCOME: u8 member | inst | visit | u8 slot | u8 mode | str stage |
 // u32 last tick (kNoTick: none) | u8 delay | u16 max catch-up seconds |
-// u8 flags (1 resumable: the member still holds that slot; send RESUME).
+// u8 flags (1 resumable: the member still holds that slot; send RESUME;
+// 2 presence_v2: the hub takes PRESENCE2, round 60).
 struct Welcome {
     std::uint8_t member{};
     std::uint32_t inst{}, visit{};
@@ -350,6 +391,7 @@ struct Welcome {
     std::uint16_t max_catch_up{};
     std::uint8_t flags{};
     static constexpr std::uint8_t resumable = 1;
+    static constexpr std::uint8_t presence_v2 = 2;
 };
 struct Ticks {         // SEALED / LIVE: inst | visit | u32 first tick | u16 count | tick records
     std::uint32_t inst{}, visit{}, first{};
@@ -434,6 +476,14 @@ struct Ping {          // u32 nonce | u64 server time ms | i16 arrival margin ms
     std::int16_t margin_ms{};
     std::uint8_t delay{};
 };
+struct NetStat {       // u16 rtt ms | u16 spread ms | u8 delay | i16 margin ms | u32 sealed | u32 filled | u32 late | u8 flags (1 in a sealed stream)
+    std::uint16_t rtt_ms{}, spread_ms{};
+    std::uint8_t delay{};
+    std::int16_t margin_ms{};
+    std::uint32_t sealed{}, filled{}, late{};
+    std::uint8_t flags{};
+    static constexpr std::uint8_t in_stream = 1;
+};
 struct Close {         // u8 reason | str text
     CloseReason reason{};
     std::string text;
@@ -477,6 +527,8 @@ std::vector<std::uint8_t> encode(const NetFp&);
 std::vector<std::uint8_t> encode(const State&);
 std::vector<std::uint8_t> encode(const Intent&);
 std::vector<std::uint8_t> encode(const Presence&, bool with_member);
+// PRESENCE2 at version kPresenceVersion (whatever `version` holds).
+std::vector<std::uint8_t> encode_presence2(const Presence&, bool with_member);
 std::vector<std::uint8_t> encode(const Resume&);
 std::vector<std::uint8_t> encode(const Story&);
 std::vector<std::uint8_t> encode(const StoryAck&);
@@ -491,6 +543,7 @@ std::vector<std::uint8_t> encode(const BarrierWait&);
 std::vector<std::uint8_t> encode_state_body(const StateData&);
 std::vector<std::uint8_t> encode(const Room&);
 std::vector<std::uint8_t> encode(const Ping&);
+std::vector<std::uint8_t> encode(const NetStat&);
 std::vector<std::uint8_t> encode(const Close&);
 std::vector<std::uint8_t> encode(const Roster&);
 std::vector<std::uint8_t> encode(const InstVisit&);
@@ -510,6 +563,9 @@ NetFp decode_netfp(std::span<const std::uint8_t>);
 State decode_state(std::span<const std::uint8_t>);
 Intent decode_intent(std::span<const std::uint8_t>);
 Presence decode_presence(std::span<const std::uint8_t>, bool with_member);
+// Throws on version 0 and on damaged fields; the bytes a later version
+// appends are skipped (`version` keeps what was sent).
+Presence decode_presence2(std::span<const std::uint8_t>, bool with_member);
 Resume decode_resume(std::span<const std::uint8_t>);
 Story decode_story(std::span<const std::uint8_t>);
 StoryAck decode_story_ack(std::span<const std::uint8_t>);
@@ -525,6 +581,7 @@ BarrierWait decode_barrier_wait(std::span<const std::uint8_t>);
 StateData decode_state_body(std::span<const std::uint8_t>);
 Room decode_room(std::span<const std::uint8_t>);
 Ping decode_ping(std::span<const std::uint8_t>);
+NetStat decode_netstat(std::span<const std::uint8_t>);
 Close decode_close(std::span<const std::uint8_t>);
 Roster decode_roster(std::span<const std::uint8_t>);
 InstVisit decode_inst_visit(std::span<const std::uint8_t>);

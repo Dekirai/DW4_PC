@@ -1,0 +1,14 @@
+{
+  "desc": "ghost figures in the lobby: one stands, one walks around and between the other's camera and player, one shows another form every 6 s, leaves for a field and comes back",
+  "frames": 90000,
+  "timeout": 900,
+  "seed_story": true,
+  "min_shared_ticks": 0,
+  "shots": true,
+  "env": {"DW4_TRACE_GHOSTS": "60"},
+  "clients": [
+    {"name": "a", "script": "a.script", "card": "k7", "start": 0},
+    {"name": "b", "script": "b.script", "card": "k10", "start": 3},
+    {"name": "c", "script": "c.script", "card": "k2", "start": 6, "env": {"DW4_ONLINE_TEST_FORM": "6"}}
+  ]
+}

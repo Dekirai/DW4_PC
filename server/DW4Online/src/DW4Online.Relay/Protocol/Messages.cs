@@ -361,6 +361,103 @@ public sealed record PresenceMsg(string Stage, uint Inst, float X, float Y, floa
         Write(w);
         return w.Frame();
     }
+
+    /// <summary>Plausible bounds of the hub (SEAMLESS.md 12): coordinates within this of the stage origin.</summary>
+    public const float MaxCoordinate = 100000f;
+    /// <summary>Two turns either way (the client sends atan2's -pi..pi).</summary>
+    public const float MaxYaw = 4f * MathF.PI;
+    /// <summary>The player forms of the game ("shinka" rows 0-15).</summary>
+    public const byte MaxSpecies = 15;
+    public const ushort MaxLevel = 999;
+
+    /// <summary>
+    /// Null when the hub forwards it (PRESENCE and PRESENCE2 alike, round 60: a PRESENCE drives a ghost figure too); else
+    /// why not (the frame is dropped and counted, the connection stays). HP and MP above their maximum are no reason: a
+    /// script may raise them above it (MDLaddHp), <see cref="Clamped"/> forwards them as the maximum.
+    /// </summary>
+    public string? Implausible()
+    {
+        if (Species > MaxSpecies) return "species";
+        if (MathF.Abs(X) > MaxCoordinate || MathF.Abs(Y) > MaxCoordinate || MathF.Abs(Z) > MaxCoordinate) return "position";
+        if (MathF.Abs(Yaw) > MaxYaw) return "yaw";
+        if (Level > MaxLevel) return "stats";
+        return null;
+    }
+
+    /// <summary>HP and MP above a known maximum (not 0) as that maximum.</summary>
+    public PresenceMsg Clamped() =>
+        (HpMax > 0 && Hp > HpMax) || (MpMax > 0 && Mp > MpMax)
+            ? this with { Hp = HpMax > 0 ? Math.Min(Hp, HpMax) : Hp, Mp = MpMax > 0 ? Math.Min(Mp, MpMax) : Mp }
+            : this;
+}
+
+/// <summary>
+/// PRESENCE2 (round 60: the ghost figures of the hub stages, SEAMLESS.md 12 and the DW4R2 appendix): u8 version | the
+/// PRESENCE fields | str clip (0-16 of A-Z a-z 0-9 _) | u8 flags (1 the clip loops, 2 busy) | u8 warp | u32 the sender's
+/// clock in ms | str weapon (0-24, the same characters). Only from members whose WELCOME carried
+/// <see cref="WelcomeMsg.PresenceV2"/>; the hub forwards it as PRESENCE2 to the members that send it and as PRESENCE to
+/// the others. A later version appends to this layout and stays within <see cref="MaxBytes"/>: the hub reads and checks
+/// its version 1 part and forwards only that, written at version 1 with the version 1 flags (counted), so an older hub
+/// never forwards what it cannot check; a larger frame is dropped unread (counted).
+/// </summary>
+public sealed record Presence2Msg(byte Version, PresenceMsg Presence, string Clip, byte Flags, byte Warp, uint SentMs, string Weapon)
+{
+    public const byte CurrentVersion = 1;
+    public const int MaxClip = 16;
+    public const int MaxWeapon = 24;
+    public const byte Loop = 1;
+    public const byte Busy = 2;
+    public const byte KnownFlags = Loop | Busy;
+    /// <summary>The largest PRESENCE2 payload of any version (version 1 takes at most 105 bytes).</summary>
+    public const int MaxBytes = 256;
+
+    public static Presence2Msg Read(ref WireReader r)
+    {
+        var version = r.U8();
+        if (version == 0) throw new ProtocolException("presence version 0");
+        var presence = PresenceMsg.Read(ref r);
+        var clip = Name(ref r, MaxClip, "clip");
+        var flags = r.U8();
+        var warp = r.U8();
+        var sent = r.U32();
+        var weapon = Name(ref r, MaxWeapon, "weapon");
+        return new Presence2Msg(version, presence, clip, flags, warp, sent, weapon);
+    }
+
+    /// <summary>A malformed frame throws (the connection closes); a later version's appended bytes are skipped.</summary>
+    public static Presence2Msg Parse(ReadOnlySpan<byte> p)
+    {
+        var r = new WireReader(p);
+        var m = Read(ref r);
+        if (m.Version == CurrentVersion) r.End();
+        var q = m.Presence;
+        if (!float.IsFinite(q.X) || !float.IsFinite(q.Y) || !float.IsFinite(q.Z) || !float.IsFinite(q.Yaw)) throw new ProtocolException("presence position is not finite");
+        return m;
+    }
+
+    /// <summary>Null when the hub forwards it; else why not (the frame is dropped and counted, the connection stays).</summary>
+    public string? Implausible() => Presence.Implausible() ?? ((Flags & ~KnownFlags) != 0 ? "flags" : null);
+
+    public void Write(WireWriter w)
+    {
+        w.U8(CurrentVersion);
+        Presence.Write(w);
+        w.Str(Clip).U8(Flags).U8(Warp).U32(SentMs).Str(Weapon);
+    }
+
+    public byte[] Frame()
+    {
+        var w = new WireWriter(Msg.Presence2);
+        Write(w);
+        return w.Frame();
+    }
+
+    private static string Name(ref WireReader r, int max, string what)
+    {
+        var s = r.Str(max);
+        if (!s.All(c => char.IsAsciiLetterOrDigit(c) || c == '_')) throw new ProtocolException("bad presence " + what);
+        return s;
+    }
 }
 
 /// <summary>RESUME: after a reconnect: the instance, slot and the last tick this machine executed.</summary>
@@ -427,6 +524,8 @@ public sealed record WelcomeMsg(byte Member, uint Inst, uint Visit, byte Slot, I
     ushort MaxCatchUpSeconds, byte Flags)
 {
     public const byte Resumable = 1;
+    /// <summary>This hub takes PRESENCE2 (round 60). A client sends it only then: an older hub closes on an unknown frame.</summary>
+    public const byte PresenceV2 = 2;
     public const uint NoTick = uint.MaxValue;
 
     public static WelcomeMsg Parse(ReadOnlySpan<byte> p)
@@ -755,6 +854,26 @@ public sealed record PresenceOutMsg(byte Member, PresenceMsg Presence)
     }
 }
 
+/// <summary>PRESENCE2 to a member that sends PRESENCE2 itself: the member index, then the sender's PRESENCE2 at version 1.</summary>
+public sealed record Presence2OutMsg(byte Member, Presence2Msg Presence)
+{
+    public static Presence2OutMsg Parse(ReadOnlySpan<byte> p)
+    {
+        var r = new WireReader(p);
+        var member = r.U8();
+        var m = new Presence2OutMsg(member, Presence2Msg.Read(ref r));
+        if (m.Presence.Version == Presence2Msg.CurrentVersion) r.End();
+        return m;
+    }
+
+    public byte[] Frame()
+    {
+        var w = new WireWriter(Msg.Presence2Out).U8(Member);
+        Presence.Write(w);
+        return w.Frame();
+    }
+}
+
 public sealed record ResyncMsg(uint Inst, uint Visit)
 {
     public static ResyncMsg Parse(ReadOnlySpan<byte> p)
@@ -796,6 +915,28 @@ public sealed record PingMsg(uint Nonce, ulong ServerTimeMs, short MarginMs, byt
     }
 
     public byte[] Frame() => new WireWriter(Msg.Ping).U32(Nonce).U64(ServerTimeMs).I16(MarginMs).U8(Delay).Frame();
+}
+
+/// <summary>
+/// NETSTAT (round 62), once per second after PING: the member's link as the relay sees it, for its network indicator and
+/// online.log. Round trip median and spread (p90 above it, host-loop stalls left out, ms), the input delay, the arrival
+/// margin (the delay rule's low quantile, ms), and the pads of its current sealed stream: sealed, filled (its pad was not
+/// there in time) and late (came after its tick was sealed). Flags: 1 = in a sealed stream. Clients before round 62 skip
+/// it (unknown server frames are skipped), so no protocol change.
+/// </summary>
+public sealed record NetStatMsg(ushort RttMs, ushort SpreadMs, byte Delay, short MarginMs, uint Sealed, uint Filled, uint Late, byte Flags)
+{
+    public const byte InStream = 1;
+
+    public static NetStatMsg Parse(ReadOnlySpan<byte> p)
+    {
+        var r = new WireReader(p);
+        var m = new NetStatMsg(r.U16(), r.U16(), r.U8(), r.I16(), r.U32(), r.U32(), r.U32(), r.U8());
+        r.End();
+        return m;
+    }
+
+    public byte[] Frame() => new WireWriter(Msg.NetStat).U16(RttMs).U16(SpreadMs).U8(Delay).I16(MarginMs).U32(Sealed).U32(Filled).U32(Late).U8(Flags).Frame();
 }
 
 public sealed record CloseMsg(CloseReason Reason, string Text)

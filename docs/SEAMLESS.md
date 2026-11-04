@@ -53,9 +53,9 @@ in section 18.
   side despawns the other side's players). If every living member goes, the
   whole instance moves as in the original. Dead members always stay with
   living ones. Gate disc, story triggers, boss starts and *give up* fork the
-  same way; scenes that concern one member (talks, map recorders, camera
-  tours, the status window) are scoped to that member when the others are far
-  away (from round S3, section 5.3).
+  same way. A member's status window, NPC talks and map recorders are its
+  own: they open on its screen only, several at once, and pause nothing
+  (round 63, user decision of 2026-10-31, section 5.3).
 - **Transport.** All traffic goes through the server's relay (protocol DW4R2,
   one TCP connection per client and room). A one-member instance runs on its
   member's own clock (no input delay) and streams its inputs to the server.
@@ -132,10 +132,10 @@ first task of the round that needs it (17).
 | Catch-up numbers optimistic, RESYNC unbounded | clients report their replay rate; joins and resyncs limited by the expected catch-up time; beyond it a member continues alone; S1 measures the final path | 6.6, 6.9 |
 | Console reset (B+X+START) reboots every machine | off online; the local combo opens *Leave room?* | 7.4 |
 | Auto-join surprises at puzzle mats and NINZU timers | auto-join stays (user decision); arrival notices, *Waiting for* hints, question 8 (play alone) | 5 |
-| Talks, recorders, camera tours freeze everyone | class `local_scene` with the proximity rule (S3); an S1-S2 limit | 5.3 |
+| Talks, recorders, camera tours freeze everyone | talks and map recorders are the member's own scene (round 63, the user's decision of 2026-10-31); camera tours, tutorials and shaking mats still freeze everyone | 5.3 |
 | Forks without NEXTSTAGE (boss arenas, Trailmon) undefined | in-stage forks: participants keep the instance; Trailmon does not fork (participants only) | 6.7, 5 |
 | A defeated member's camera freezes at the capsule | view of the nearest living member, *Give up* in S1, capsule marker | 4.1, 5 |
-| Status window freezes everyone (S1-S2), unsafe from S3 | S1-S2 original plus feedback; S3 proximity rule with a local freeze zone (question 6) | 5.3 |
+| Status window freezes everyone (S1-S2), unsafe from S3 | the member's own window: only on its screen, nothing pauses, no protection (round 63, question 6 decided again) | 5.3 |
 | EXP to far or idle members | default: only members near the kill share (question 7) | 5 |
 | Story made while the owner is away lingers or vanishes | pending set against the confirmed room story; *drop* removes refused values at the next barrier with a notice | 8.3, 8.6 |
 | Boss-locked target, boss destinations | *Wait for them / Go alone*; the exit prompt names who stays | 3.4, 5.2 |
@@ -187,7 +187,7 @@ and that the decisions above do not settle are questions in section 18.
 
 | Default | Section |
 | --- | --- |
-| Hub and UI stages are solo instances with presence (question 1) | 3.3 |
+| Hub and UI stages are solo instances with presence: name tags and, since round 60, ghost figures (question 1) | 3.3, 12 |
 | One player per machine online (question 5) | 3.1 |
 | Same stage and same quest context = same instance, automatically (question 8 asks about a *play alone* switch) | 3.4, 3.7 |
 | Arrivals within 3 s start together; later ones wait up to 15 s for the entry scene | 3.4 |
@@ -196,7 +196,7 @@ and that the decisions above do not settle are questions in section 18.
 | A late pad is filled at once (last pad, then neutral); nobody waits | 6.4 |
 | Exits ask every member on the mat; dead members stay with living ones | 5.2, 6.7 |
 | Boss and story mats keep the original gather rule plus a *Go without them* choice | 5 |
-| Scenes of one member (status window, talks, recorders, camera tours): original when everyone is near, scoped to that member with a local freeze otherwise, from round S3 (question 6) | 5.3 |
+| A member's status window, NPC talks and map recorders are its own: only on its screen, several at once, nothing pauses, no protection (question 6, decided again 2026-10-31; built in round 63) | 5.3 |
 | EXP is shared by the members near the kill (question 7) | 5 |
 | Story while the owner is away: server setting, *drop* until the user decides, refused progress removed at the next barrier (question 2) | 8.6 |
 | The online character is uploaded when the save room writes and also automatically at stage changes and when leaving the room (question 3, answered) | 9 |
@@ -227,7 +227,7 @@ and that the decisions above do not settle are questions in section 18.
 | session context | the temporary values that shape a stage's setup beyond the room story (quest flags and counters, 3.7); instances join only with an equal context |
 | fork (split) | one instance becomes two at a frame decided inside the simulation; each side despawns the other side's players |
 | join | a member enters a running instance by snapshot + replay, then a JOIN event spawns it |
-| scoped scene | a scene of one member that pauses and shows only for that member (5.3) |
+| own window / own scene | a member's status window or local scene (NPC talk, map recorder): it runs in the simulation for that member alone, pauses nothing and shows only on its machine (5.3) |
 | hub / UI stage | stagML02, stagML11-14 and every stagIS* (title, character select, save room, call shop, staff roll and the other menu stages) |
 | online rules | `Engine::online()`: the switches that turn the online-only behaviour on; all off = the original game |
 
@@ -284,12 +284,23 @@ Hub and UI stages (2) are always solo instances, never joined:
   the simulation (`src/engine/save_menu.cpp:320-349, 686-741`); solo, each
   machine has its own card and needs no shared instance card.
 
-Members in the same hub stage see each other through *presence* (12): a name
-tag with level, HP and MP at the other member's position, updated about five
-times per second, drawn outside the simulation. Ghost models are a possible
-later addition (question 1). Co-op starts at the area gate: members who leave
-the lobby for the same field within a few seconds start it together as
-co-arrivals (3.4).
+Members in the same hub stage see each other through *presence* (12): since
+round 60 (the user's decision of 31.10, after a first test over the real
+server: "you only see yourself") as *ghost figures*, their Digimon in their
+current form with the weapon they hold, walking, running and turning where
+they really are, standing in their wait motion, with their name tag (level,
+HP, MP) above it; they fade in on arrival and out on leaving. Look only: no
+collision, no hits, no talks, no effect on anything; the PC host draws them
+from PRESENCE2 packets and they never enter the simulation (12.1). A member in
+a status or shop window or a talk keeps standing there (its tag hides); one
+that loads, watches a scene or is in a menu stage has no figure. Co-op starts
+at the area gate: members who leave the lobby for the same field within a few
+seconds start it together as co-arrivals (3.4).
+
+The hub and UI stages are the relay's `StageNames.IsHub` list: stagML02,
+stagML11-14 and every stagIS* (title, character select, save room, call
+shop, staff roll, the menu stages); figures need a picture of the stage, so
+in practice the lobby rooms stagML11-14 and stagML02 show them.
 
 If the user prefers shared lobbies (question 1), hub stages join like fields
 and the scoped scene work of round S3 grows to cover every lobby program; the
@@ -491,9 +502,9 @@ state of 802F2BC0 (centre, moved flag, box, previous box, blend, CAMHOKAN timer,
 saved eye / target, live pivot / eye / target, shake offsets). Each runs the
 original logic with the centre at its own player, which is the original's
 one-player case exactly. Only the shared camera writes the shared scene nodes.
-Shared by the whole instance: the demo viewer (SETDEMOCAMERA, except in scoped
-scenes, 5.3), the SHAKE pattern (applied per slot), SETBOXCAMERA (resets every
-slot). The camera mode and light mode are room settings (3.1), so the camera
+Shared by the whole instance: the demo viewer (SETDEMOCAMERA; a member's own
+camera tour needs a per-slot viewer, later work, 5.3), the SHAKE pattern
+(applied per slot), SETBOXCAMERA (resets every slot). The camera mode and light mode are room settings (3.1), so the camera
 data does not depend on who arrived first. Stages without box data fall back to
 the authored scene camera path; the fallback without viewer follows the slot's
 own player. The original has no camera collision and no zoom, so there is
@@ -712,12 +723,13 @@ local co-op group experienced.
 
 ### 4.7 Demo cameras
 
-A demo viewer is instance-wide, as is PADINPUT, except in a scoped scene (5.3),
-where the viewer applies only to the triggering member's camera and its
-picture. The stage flow rules (5) fork non-participants away before story and
-boss scenes and scope the scenes of one member, so an instance-wide scene only
-ever shows to members who took part or stood near. Every camera comes from
-lockstep data, so the per-slot viewer stays deterministic.
+A demo viewer is instance-wide, as is PADINPUT, except in a member's own
+scene (5.3), where PADINPUT reaches that member's pad alone (a viewer for its
+camera alone is later work: camera tours keep the original). The stage flow
+rules (5) fork non-participants away before story and boss scenes, and a
+member's talks and map recorders set no demo camera, so an instance-wide scene
+only ever shows to members who took part or stood near. Every camera comes
+from lockstep data, so a later per-slot viewer stays deterministic.
 
 ## 5. Stage flow in an instance
 
@@ -742,8 +754,8 @@ player critique decide every case. `funcStageChange`, `funcStageIn`,
 | Boss stages stagBS01-06 | whole arena | entered through exits; boss-locked from the boss intro (the hit_f_* scenes) to the boss's defeat; an arriving member chooses *Wait for them* or *Go alone* (3.4); the exit prompt into a boss stage names who stays (5.2) | boss lock in the simulation | S3 |
 | Boss end (ded_e_*: MOVETRANS 0-3, doors, flags) | everyone | only participants are still there; the lock clears, joins open again | none | - |
 | Stage entry scene (`first.lua`; 52 of them set a demo camera such as 'entry') | at the stage start | runs when the instance starts, with every co-arrival; a later joiner waits for its end (hold, 3.4), never reruns it and appears with its own SQ_ENTR at its entrance | co-arrival, join path | S1 |
-| Scenes of one member: field talks (88 hit_n_* in fields and dungeons, among them the map recorder on every story dungeon floor), camera tours and demos on mats (stag0102 matf00 'Slope', stag0101 matb01 / matx01 / hit_g_lever01z01 camsp0401-0404), tutorials, shaking mats (dng310f3 matt05) | whole group frozen, HUD off, PADINPUT off, demo camera for all | S1-S2: original (a known limit). From S3: class `local_scene` with the proximity rule (5.3): everyone near = original; otherwise only the trigger is frozen and sees it, with a local freeze zone | class table, scoped commands | S3 |
-| Status window (START, SUBWND) | the engine freezes, one window at a time, drawn for all | S1-S2: original instance-wide freeze; a member whose START is refused because another member's window is open sees "<name> has a menu open". From S3: the proximity rule (5.3, question 6); one window per instance at a time; another member's window no longer blocks exits (DMgetCount) | scoped SUBWND + draw filter | S1 / S3 |
+| Scenes of one member: field talks (88 hit_n_* in fields and dungeons, among them the map recorder on every story dungeon floor), camera tours and demos on mats (stag0102 matf00 'Slope', stag0101 matb01 / matx01 / hit_g_lever01z01 camsp0401-0404), tutorials, shaking mats (dng310f3 matt05) | whole group frozen, HUD off, PADINPUT off, demo camera for all | the talks and map recorders (hit_n_*) are the talking member's own scene (5.3): nothing pauses, only that member's player stops, the window, the floor map and the HUD switch show on its screen only; one talk at a time in the instance, as in local co-op (a second talker's strike only hits until the first talk ended). Camera tours, tutorials and shaking mats: original for now | own scene (scope), copies, picture filter | r63 (talks) / later (tours) |
+| Status window (START, SUBWND) | the engine freezes, one window at a time, drawn for all | the member's own window (5.3): opens at once, also while others have theirs open, pauses nothing (only the member's player stops taking its pad and can be hit), drawn and heard on its machine only; another member's window blocks neither exits (DMgetCount) nor joins | own window per slot, copies, picture filter | r63 |
 | Shops, bank, Digi-Lab, card keeper, quest board, event console, NPC talks in the lobby | lobby programs | solo hub instance: single player behaviour | DISSOLVE | S1 |
 | Save room stagIS12 | SAVECTRL; players no longer joined leave the group | solo; writes the virtual card; uploads the own record (9); *leave the group* hidden online | wrapper | S2 |
 | Call shop stagIS13 (LOADCTRL2 without title) | adds or replaces players | off online: `callshop.lua` runs its refusal path with a port hint instead of NEXTSTAGE stagIS13 (every member is its own machine; a call would also reload the card's story into the engine and set the modes to 0, 8.8) | wrapper | G (planned for S3, not built) |
@@ -772,7 +784,9 @@ Online only:
   `story_trigger` and confirmed `boss_mat` / `story_mat` runs fork the
   non-participants away first (6.7), then run the original script on the
   participant side and skip it on the other side. `warp` and `local_scene`
-  runs do not fork: their instance-wide commands are scoped (5.3).
+  runs do not fork: their instance-wide commands are scoped (5.3; round 63
+  builds the `local_scene` part for the hit_n_* scripts by their name, before
+  the class table exists).
 - `boss_mat` and `boss_intro` runs set the boss lock, `boss_end` runs clear it
   (6.5).
 - `NETsplit(mask)` returns whether this copy continues (7.3); it is the only
@@ -851,36 +865,170 @@ Built in round S1 (`src/engine/online_exits.cpp`, `feat-r52cam`):
   runs the original game over into stagML11 point 0, the partner's copy
   despawns it).
 
-### 5.3 Scoped scenes (round S3)
+### 5.3 Own windows and scenes (round 63)
 
-Scenes that concern one member pause the whole engine in the original. Online
-from round S3, the classes `local_scene` and the status window follow the
-*proximity rule*, decided when the scene starts (simulation, the same on every
-machine):
+**Decision (the user, 2026-10-31).** "Everybody plays for themselves, as in a
+real online game": a member's START menu does not open on the other members'
+screens and does not pause their game; the game runs on and the players can
+still be hurt by the enemies. This replaces the first answer to question 6
+(the proximity rule with a local freeze zone): online, a member's status
+window - and by the same principle its NPC talks, map recorders and the other
+single-member windows and scenes of the class `local_scene` -
 
-- **Everyone near.** If every other present member is within `kNearUnits` of
-  the trigger, the scene runs exactly as in the original: the whole instance
-  pauses and every screen shows it, as a local co-op group experienced it.
-- **Someone far.** Otherwise the scene is scoped to the trigger: its
-  instance-wide commands are narrowed while the script run and every demo
-  record it starts are active. PLAYER -1 OFCTRL / ONCTRL and PADINPUT reach
-  only the trigger's slot; ENEMY -1 OFCTRL and GENERATER ONFREEZE reach only
-  the enemies and generators within `kNearUnits` of the trigger (a *local
-  freeze zone*: the original's protection, applied around the member who is
-  in the scene); SETDEMOCAMERA steers only the trigger's camera; windows,
-  overlays (`j_map102b3`), fades and HUD panel closes are drawn only on the
-  trigger's machine; SUBWND REMOVE closes only the trigger's window. Members
-  near the trigger are frozen with it and see "<name> is in a scene".
-- **Status window.** The same rule: near = the original freeze (MODELCTRL,
-  GENERATER, SOUND, messenger, `subwnd.cpp:1042-1059`); far = the owner's
-  player off control, the local freeze zone, the window, its prompts and fades
-  only on the owner's machine, no messenger pause and no SOUND freeze for the
-  others. The first task of the S3 scenes lane is to find out what the
-  messenger pause and the SOUND freeze protect inside a window (a scripted
-  run with each of them left out against the original), and the lane keeps
-  them where a window needs them.
-- Question 6 asks the user whether this is the wanted protection (the
-  alternatives: always the instance-wide freeze; no protection when far).
+1. open only on that member's own screen,
+2. never pause the instance: enemies, generators, the other members, timers,
+   sounds and music run on,
+3. give no protection: the member's Digimon stands without its input and can
+   be hit,
+4. always, whether the others are near or far, and also while the member is
+   alone in its instance (a member may join at any time).
+
+Story scenes the instance shares (the classes `gather`, `boss_intro`,
+`boss_end`, 5.1) keep the original. Offline, in local co-op and in the hub and
+UI stages (solo instances, 3.3) nothing changes (online off is bit-identical,
+section 15).
+
+**What the original's pause protects inside a window.** A scripted hidden run
+(round 63, `build/ana` in the round's worktree: dng101b1, the status window
+opened with START among the enemies and its three pages walked, the switch
+`DW4_TEST_SUBWND_SKIP` leaving out the MODELCTRL freeze, the GENERATER
+freeze, the messenger pause and the SOUND freeze one at a time and all
+together) gives the window's own course - every SELECTCTRL state change and
+every text set with its frame, 147 lines - unchanged in all five variants
+(equal md5 with the original). The messenger pause, the SOUND and the
+GENERATER freeze change nothing inside the window (the window posts nothing,
+its sounds start after the freeze); without the MODELCTRL freeze the world
+moves on, and the member's own Digimon takes the window's buttons (A attacks,
+B guards, the stick walks: `SQ_ATCK1`, `SQ_GUARD`, `SQ_WALK` while the
+window's selects read the same presses). That is the one thing an own window
+keeps: the member's player alone stands without its input while the window
+is open. Not by OFCTRL: a model whose `_isOnCtrl` is clear takes no hit at
+all (`hit_check`, 8030E56C), which is how the original's talks protect
+everyone. The player keeps its control and reads the neutral pad instead
+(`Engine::hold_own_input`, `Engine::player_pad`), so the enemies hit it - a
+hidden run in dng101b1 with the menu opened among the e_nume: 18-19 damage
+every second or so while the window stays open - and the window's own
+cursors still read the member's pad.
+
+**How it is built** (`src/engine/online_scenes.cpp`, `subwnd.cpp`, `ui.cpp`,
+`model_ctrl.cpp`, the picture filter in `online_cameras.cpp` / `engine.cpp`):
+
+- *Scope.* Online outside the hub and UI stages (`Engine::scenes_scoped`), a
+  member's status window runs its program in that member's scope
+  (`Engine::SceneScope`): the START of a present member opens its own window
+  (`SubWindowManager`, one program per slot besides the original one, all of
+  them in the simulation, each fed by its member's sealed pads). An NPC talk
+  or map recorder (a `hit_n_*` script, the talker = the player that struck
+  it) runs in the talker's scope, and so do the demo works it starts
+  (`DemoWork::scope`) and the messages they post (`DeferredMessage::scope`).
+- *Talks wait for each other.* A talk keeps its state in stage globals from
+  its hit script to the scripts its DMsetLua records load later (g_npcRamNo,
+  g_messPlayerNo, func.lua's g_talk, an exchange's g_SItem* / g_TItem*), and
+  what a talk changes is often the instance's (the common FLAGFOLDER an
+  exchange takes its key item from, a quest a Digi-Elf starts, story flags).
+  The original never runs two talks at once. So online a talk's hit script
+  sees DMgetCount 1 while another member's own talk runs (its busy path: the
+  NPC only takes the hit; `Engine::run_own_talk`), as in local co-op, and
+  the member talks once the other talk ended; status windows neither wait
+  for talks nor make them wait. Besides, every member's own scenes keep
+  those talk globals for themselves and the rest of the instance keeps its
+  own (`Engine::talk_globals_`, switched around every script run of a
+  scope), so an instance-wide script that sets g_messPlayerNo or g_talk while
+  a talk runs (a game over, a quest message) leaves the talk alone. The
+  round 63 review found two talks at once sharing them: one member's close
+  sent the other's recorder back, its own scene never ended (no exit prompt
+  and no talk for it any more), and an exchange gave the other talk's item.
+- *Exchanges.* The field NPCs' exchanges (`n_*.lua`, `itemchange*.lua`)
+  name player 0's device and disk folders (SYSctlDeviceFolder /
+  SYSctlDiskFolder) whoever talks; inside a scope player 0 is the talking
+  member, so it trades with its own folders.
+- *Narrowed commands.* Inside a scope the messenger rewrites or drops what
+  would reach the instance: PLAYER -1 OFCTRL / ONCTRL and MODELCTRL -1
+  OFCTRL / ONCTRL become the member's input hold (its player stands without
+  its input and stays hittable; a scene that ends without its ONCTRL
+  releases it; another member frozen in its exit prompt stays frozen), any
+  other PLAYER -1 command reaches the member's own player alone (stag0302's
+  Gekomon demo, `demo00.lua`: PLAYER -1 SQ_WAIT);
+  ENEMY -1 OFCTRL / ONCTRL, every category freeze (ONFREEZE / OFFREEZE to all
+  RAMs, GENERATER), SOUND BGMSTOP / ENVSTOP / SESTOP, a BGM or ambience start
+  and the quest timer's SQ_STOP / SQ_RESTART (`i_timenm*`) stay out;
+  STAGECTL PADINPUT switches the member's own pad (`Engine::pads`), LAYERCTL
+  SWITCH the layers of its own picture (the status window's HUD and world
+  layers, a talk's HUD). No messenger pause.
+- *Own copies.* The window models, cursors and NPC portraits the scope
+  addresses (`i_*`, `j_*` and `n_*ic`, but not the HUD and the shared
+  overlays: status panels and their icons, damage and item numbers, get-item
+  panels, boss HP, quest timer and name, exit prompts, evolution overlays) are
+  the member's own copies, `name@slot` with the original's RAM index: the
+  model's subtree (its action switch's child) cloned under the same switch,
+  hidden until its action shows it, with fresh MODELCTRL, ACTION and
+  SELECTCTRL RAMs (`ModelCtrlManager::add_copy`, `ActionManager::add_copy`,
+  `SelectCtrlManager::add_copy`). Text lines are copied the same way
+  (`TextCtlManager::make_copies`, with their own colour attributes). Copies
+  are made on first use, at the same step on every machine (simulation
+  state), and go with the stage. So two, three or four members can have
+  windows open at once, and an instance-wide scene keeps the originals.
+- *Picture and sound.* Every machine's picture leaves out the copies of the
+  other members and applies only its own member's layer filter
+  (`Engine::picture_hidden_roots`; a one-member instance draws its picture in
+  a separate peek pass after the step's simulation traversal when it has
+  something to leave out). The sound effects a scope starts play only on its
+  member's machine (`SoundManager::set_listener_slot`; the simulation state
+  stays the same everywhere).
+- *Membership and exits.* An own window or scene holds up neither LEAVE nor
+  JOIN (`membership_safe` counts only the unscoped demo works and the
+  original program): a member joins while another has its menu open, and the
+  joiner's catch-up replays the open window. A member who leaves (or who
+  forks to the other side) loses its window and scenes at once
+  (`Engine::end_own_scenes`). DMgetCount counts only the unscoped works and
+  the asking member's own (another member's talk blocks no exit; only a
+  talk's hit script waits for it, above), the exit port neither makes a
+  member in its own window or scene the prompt's owner nor asks it, and the
+  quick panel and START refuse only for the member's own panel and window.
+- *Status window actions.* The window's pages are Equipment (the sockets,
+  pockets and slots), Folder (devices: discard, sort, give; key items
+  to look at; disks: move or give; bits: send) and Techniques (to look at).
+  Everything the window does stays deterministic (the simulation runs it on
+  every machine) and touches the member's own slot only, a gift also the
+  partner's. Equipment changes recalculate the member's own player; its
+  preview's HP / MP restore (OFPREVIEW) keeps what the running world did to
+  them meanwhile (a hit taken in the menu stays), and the window's HP / MP
+  lines follow the world at once (the original's frozen world never moved
+  them), so a member sees the hits it takes in its menu; a member defeated
+  in its window leaves it. Gifts to a partner (devices, disks, bits) reach
+  only a partner still in the instance (the others are no partners any more;
+  nothing is lost), and they look at the partner's room again when they are
+  given, not only when the partner list opened: the partner's folder can
+  fill meanwhile (another member's window gives too, its player picks items
+  up). A device for a full folder stays ("Receiver's device folder is
+  full.", text 149), disks give what still fits below 9 (none fits: text
+  143), bits what fits below 9,999,999 (none: back to the amount). The
+  review had two members give a partner with 35 devices one each at once:
+  37 devices, one more than the save keeps. The status window has no item
+  use, map, retire or quick panel entries.
+- *Presentation.* Name tags show "Kim is in the menu" / "Kim is talking" over
+  that member's tag for the others; the member's own screen hides the tags as
+  the original's window does. A map recorder's floor map (`j_map*`) is the
+  reader's own, and stays on its screen for the floor as in the original.
+
+Not yet own: camera tours and demos on mats, tutorials and the shaking mats
+(they still pause the instance, as the original); the per-slot demo viewer
+they need is later work.
+
+**Proof (round 63).** ctest `online` scenario "dng101b1 own menus" (two
+members, slot 0's window, slot 1's while slot 0's is open, a third member
+joins while both are open: nothing frozen, both close and give their players
+the pad back, a second engine and a joiner restored with both windows open
+stay net-fingerprint-equal); the scenarios after the review: "stag0101 two
+recorders" (two members strike their recorders in the same frame: one talk,
+the other after it, both recorders back in SQ_WAIT, no hold left, a second
+engine equal), "dngq5b1v slot 1 trades alone" (the Mighty Talon in slot 1's
+folder), "dngq5b1v Agumon and Guilmon at once" (one figurine, one exchange)
+and "stag0101 two gifts" (three members with 35 devices, two gifts at once:
+36, nothing lost), and the unit check of the narrowed commands; real hidden
+clients on the local stack (`tools/online_test` scenarios M1, M2, below in
+section 16) with screenshots from both machines; offline unchanged (section
+15).
 
 ## 6. Transport and lockstep groups
 
@@ -929,8 +1077,8 @@ equals. It never runs the game.
 field is in the appendix "DW4R2 wire layout". Golden byte vectors check it on
 both sides (`tests/online_wire_tests.cpp`,
 `server/DW4Online/tests/DW4Online.Tests/WireGoldenTests.cs`): a change on one
-side fails both until the other follows. Message types 0x01-0x13 go client to
-server, 0x80-0x8E server to client; a pad is 6 bytes (6.4); `inst` is the
+side fails both until the other follows. Message types 0x01-0x14 go client to
+server, 0x80-0x90 server to client; a pad is 6 bytes (6.4); `inst` is the
 instance id, `visit` its stage load count, both u32.
 
 Client to server:
@@ -955,12 +1103,13 @@ Client to server:
 | 0x10 | RESUME | inst, visit, slot, last executed tick | after a reconnect that WELCOME calls resumable |
 | 0x11 | RATE | replay steps per second | after WELCOME (the calibration) and after every replay |
 | 0x12 / 0x13 | PONG / BYE | nonce, client time / reason | |
+| 0x14 | PRESENCE2 | version (1), the PRESENCE fields, motion clip, flags (clip loops, busy), warp counter, sender clock (ms), weapon | instead of PRESENCE once WELCOME announced it: ten times per second while the figure moves, turns or changes its motion, five while it stands (round 60, 12.1) |
 
 Server to client:
 
 | Type | Message | Fields | When |
 | --- | --- | --- | --- |
-| 0x80 | WELCOME | member (the room slot 0-9), inst, visit, slot, mode (hub, solo-led, sealed), stage, last tick, delay, max catch-up seconds, flags (resumable) | the first frame after OK: a fresh member's solo hub instance (the title, stage ""), or the instance it still holds |
+| 0x80 | WELCOME | member (the room slot 0-9), inst, visit, slot, mode (hub, solo-led, sealed), stage, last tick, delay, max catch-up seconds, flags (resumable; presence v2: the hub takes PRESENCE2, round 60) | the first frame after OK: a fresh member's solo hub instance (the title, stage ""), or the instance it still holds |
 | 0x81 / 0x82 | SEALED / LIVE | inst, visit, first tick, count, tick records | SEALED to members at each tick's due time (batched when behind), LIVE to observers (the leader's LOG or the sealed ticks) |
 | 0x83 | JOIN_REQ | inst, visit, slot, suggested delay | to the leader of a solo-led instance: choose J |
 | 0x84 | BARRIER_OK | old inst and visit, decision (1 NEW, 2 JOIN, 3 DISSOLVE, 4 CO_ARRIVE), new inst and visit, stage, point, own slot, slot map, mode, delay, co-arrivals (slot, member, carry), story revision, story, dropped set, notice, names | answer to BARRIER |
@@ -974,6 +1123,25 @@ Server to client:
 | 0x8C | CLOSE | reason (left, kicked, room closed, replaced, protocol, abuse, timeout, stopping), text | before the server closes |
 | 0x8D | ROSTER | every member: stage, inst, level, HP, max HP, flags (connected, lagging, owner) | once per second (the room UI) |
 | 0x8E | REASSIGN | old inst, visit, new inst, from tick, mode, flags (departing) | after a fork: this member's copy is the child |
+| 0x8F | NETSTAT | round trip median and spread, d, arrival margin, the stream's sealed / filled / late pads, flags (in a stream) | once per second after PING (round 62: the network indicator and online.log; older clients skip it) |
+| 0x90 | PRESENCE2 | member, the PRESENCE2 fields | instead of PRESENCE to members that send PRESENCE2 themselves (round 60, 12.1) |
+
+**Message types (the registry).** A number belongs to one message on both
+sides and is never given twice, not even across rounds that run in parallel:
+a client that cannot decode a frame of a type it knows drops the connection,
+so two builds that give one number to two messages at the same protocol
+reconnect each other every second. The review of round 62 found exactly that:
+round 60's PRESENCE2 to clients took 0x8F at protocol 45, the number NETSTAT
+holds since DW4Online 0.1.2, which the user runs (NETSTAT goes to every member
+once a second). 0x8F stays NETSTAT; round 60 moved PRESENCE2 to clients to
+0x90 (its PRESENCE2 to the relay is 0x14); a new message takes the next free
+number of its direction (client to server 0x15, server to client 0x91) and is
+entered in the registry checks of both sides
+(`WireGoldenTests.Message_types_are_unique_and_registered`,
+`tests/online_wire_tests.cpp` "type registry"), which fail until it is; a
+number given twice does not compile on either side (the name switches). Since the review the client skips (and logs once) a NETSTAT,
+PRESENCE, PRESENCE2, ROSTER or ROOM frame that does not decode: they only feed the
+indicator, the name tags and figures and the room list.
 
 Events inside a tick record: JOIN (slot, entrance point, carry), LEAVE (slot),
 INTENT (slot, kind, argument), LEAD_FROM (tick: the remaining member leads
@@ -1008,8 +1176,11 @@ are, so that a joiner can replay them.
 59.94 Hz: tick t is due at `S(t) = S0 + t · kFieldSeconds` on its monotonic
 clock. At `S(t)` it seals tick t with every present member's pad and sends
 SEALED; a pad that is not there by then is filled at once with that member's
-last sealed pad (at most six ticks in a row), then neutral. A pad that arrives
-after its tick was sealed is dropped and counted. Nobody waits for anybody:
+newest pad, sealed in time or late (at most six ticks after it came), then
+neutral. A pad that arrives after its tick was sealed is counted, fills the
+slot's next ticks and its new presses go with the slot's next sealed pad
+(round 62 and its review: late by a tick or a few, not lost; a held button
+stays held). Nobody waits for anybody:
 one member's late uplink costs that member its inputs for those ticks, never
 the others a hitch. Machines execute only sealed ticks, their own slot's pad
 included as sealed. A member that has filled pads for 30 ticks in a row is
@@ -1024,16 +1195,52 @@ round-trip spread up to its 99.9th percentile. Only the member's own round
 trip counts: the server's schedule is the common clock, so the other members'
 latencies do not enter (they did in the waiting star of revision 1, where the
 formula also lacked the member's own return path). The server measures each
-member's arrival margin (due time minus arrival) directly; it raises `d_i` by
-one when more than 0.1 % of the last 3,600 pads were late and lowers it by one
-when the 0.1 % quantile of the margin stayed above one tick for 30 s; a change
-is a DELAY event at a sealed tick (the member repeats or skips one sample;
-deterministic, because the sealed pads are what every machine executes).
+member's arrival margin (due time minus arrival) directly. Since round 62 it
+raises `d_i` by one when more than 2 % of the last ten seconds of pads (600)
+came late, in at least three different seconds of them (`Sealing:LateTarget`;
+round 62 had 0.1 %, any one late pad, see its review below), and at once by
+up to three when most pads of the last second were late (by the median margin
+of that second and half a tick); it lowers `d_i` once thirty seconds of pads came since the
+last change (1800: more than one beat of a 60.000 Hz display against the
+59.94 Hz ticks, see the review below) by as many ticks as the 0.5 % quantile
+of their margin allows with 0.15 of a tick kept (at most three at once). A
+fall that has to be undone (d rises again from the value it fell to) bars
+that value: one minute, twice as long at each further failure, at most ten
+minutes; d then goes back to the value it fell from unless the lateness asks
+for more, and the member's next stream (another stage, a fork, a join) keeps
+the bar. The rule sees only paced pads: one that came within
+4 ms of the member's previous pad (a burst after a stall of the client, of its
+downlink or of the relay's sealing, or behind one lost segment) or more than
+eight ticks after it (the first after such a stall) says nothing about the
+link and is left out; a link too slow for `d` still raises it (its pads come
+one by one and late, or in bursts behind gaps of up to eight ticks from a game
+running only 8-20 passes a second), and a member whose pads were filled for
+half a second in a row (lagging) feeds the rule with every pad. A button
+pressed in a pad that came after its tick was sealed, and not held in the
+slot's last sealed pad, is sealed with the slot's next pad: a press inside a
+burst comes a few ticks late instead of being lost, and the late pad fills the
+slot's next ticks. The first `d + 2` ticks of a stream (a sealed start, a
+resync's end) do not count: the client sends those pads at once when it learns
+of the stream, so the first of them are late by design; a JOIN gives every
+stream of the instance `d + 120` ticks (the joiner's spawn loads its packages
+in that step on every machine). (Round S1's
+rule raised `d_i` by one on four late pads in a minute and lowered it by one
+per 30 clean seconds: it turned every hiccup into lasting delay, see
+"Measured in round 62" below.) A change is a DELAY event at a sealed tick (the
+member repeats one sample, or skips samples and sends their buttons with the
+next pad; deterministic, because the sealed pads are what every machine
+executes).
 Bounds 1..15 (`Sealing:MaxDelayTicks`; revision 2 said 10, which the S1 loss
 matrix below showed too small above about 110 ms of round trip). The starting
-value is `ceil((RTT + spread) / 16.683 ms) + 1`, the +1 for the client's
-one-tick playout buffer; measured `d` without loss: 3 at 21 ms RTT, 5 at 61 ms,
-7 at 71 ms with 10 ms jitter, 11 at 121 ms. Inputs are
+value is `ceil((RTT + spread) / 16.683 ms + 1.5)` (round 62; S1:
+`ceil((RTT + spread) / 16.683 ms) + 1` with the spread up to the 99.9th
+percentile of 120 round trips), RTT the median and spread the 90th percentile
+above it of the newest 30 PONG round trips, leaving out answers above twice the
+median plus 50 ms: a client answers PING in its host loop, and a stage load, a
+snapshot restore or a catch-up pass delays single answers by hundreds of ms
+(S1 took the largest of the 120 and started a joiner at 6 at 20 ms of round
+trip). Measured `d` without loss in S1: 3 at 21 ms RTT, 5 at 61 ms, 7 at 71 ms
+with 10 ms jitter, 11 at 121 ms. Inputs are
 indexed by tick, so every machine has its own `d_i`, as the direct sessions
 already allow (`game_main.cpp:1853-1856`).
 
@@ -1070,7 +1277,11 @@ sound manager's mapping to the AX frames (`audio_delta_`,
 `managers_core.cpp:2555-2559`) does not move. Revision 1's ±2 % nudge would
 have shifted the audio by one AX frame every 25 fields. A backlog of more than
 three ticks (after a stall on the member's downlink) runs at once without
-pictures, which moves the audio once, as an offline hitch does.
+pictures, which moves the audio once, as an offline hitch does. A smaller
+excess that lasts (the smoothed level 0.75 ticks above its target of 1.5 for
+half a second) runs one extra step (round 62: after a JOIN's long step the
+joiner's level stayed near 2.5 for a minute, draining at +0.1 %, and every tick
+of it made its pads a tick later at the relay).
 
 **Loss.** Over TCP a lost segment holds back everything behind it: about one
 round trip plus 50 ms with fast retransmit, more for a tail loss. With
@@ -1141,6 +1352,364 @@ affected player 100-150 ms of extra input delay and 15-60 picture stalls per
 minute. Until then TCP works: the relay's delay rule and fill keep everyone
 else unaffected.
 
+**Measured in round 62: the guest's input lag (field report of 31.10).** A
+guest felt massive, constant input lag on the real server ("everything comes
+late"): DW4Online 0.1.0 (the hub of main 890e802, `Play` protocol 43) with a
+client of round 56 (protocol 45), first with a friend, then as his own guest,
+two games on one Windows 11 PC on wired LAN, one window in front and one in
+the background, 20-30 ms of round trip.
+
+*How it was measured.* `tools/online_test` scenario L1: the local stack, every
+hidden game client behind its own impairment proxy (`L1@UP[~DOWN]`, each
+direction `MS,JITTER,LOSS`; `DW4_ONLINE_RELAY_PORT` in development builds),
+the host a into stag0101 first (solo-led), the guest b through the lobby gate
+15 s later, into a's instance by a JOIN with catch-up (JOIN_REQ / JOIN_AT, as
+in the field), then 100 s of sealed play (wander and fight). L2 is L1 with the
+host's game throttled like a background window (`DW4_ONLINE_TEST_STALL`: 30
+passes per second and a 150 ms stall every 3 s). The client measures every own
+pad (`src/game/online/net_stats.hpp`): when it was sampled, the tick it went
+out for (sealed: the executed tick + d), when that tick ran here, when its
+picture came, and whether the relay sealed it as sent (else a fill replaced
+it: the input was lost); `online-trace: net` every 5 s, the delay changes with
+their reason, `latency.json` per scenario. `--server-root` runs the server of
+another checkout (0.1.0 = main 890e802), `--play-protocol 43` its field
+configuration. The clients run hidden at below normal priority on a machine
+busy with other rounds, which is what a background window on a loaded PC
+gets. The latency is sample to tick run here; the picture follows in the same
+host pass (presented within 0.5 ms in these runs without pictures, one
+present later with them).
+
+Every row is one L1 run (two members, 100 s sealed after the join; b is the
+guest that joined mid-stage). "Machine" says how busy the PC was: quiet (few
+other processes), loaded (the hidden clients of up to three other rounds on
+the same 16 threads; stalls of 0.1-0.5 s in every process). d is the input
+delay in ticks (16.7 ms): in the first 5 s of sealed play, its largest value
+and at the end; latency is the second half's average from sampling a pad to
+its tick running here; lost is the share of own pads the relay replaced by a
+fill (whole sealed play). The rule's value is `ceil((RTT + J) / f + 1.5)`: 3 at
+20 ms, 4 at 40 ms (5 with jitter), 7 at 80 ms, 11-12 at 150 ms.
+
+| Server | Link each way (RTT) | Machine | Member | d first / max / end | Latency | Lost |
+| --- | --- | --- | --- | --- | --- | --- |
+| DW4Online 0.1.0 (the field's) | 10 ms (20) | loaded | a host | 5 / 12 / 12 | 98 ms | 3.0 % |
+| | | | b guest | 5 / 12 / 12 | 115 ms | 2.9 % |
+| main before round 62 (the same rule) | 10 ms (20) | loaded | a host | 3 / 8 / 8 | 134 ms | 0.3 % |
+| | | | b guest | 7 / 9 / 9 | 150 ms | 0.3 % |
+| 0.1.0 | 20 ms (40) | quiet | a / b | 6 / 6 / 6, 8 / 8 / 6 | 90 / 104 ms | 0.1 / 0 % |
+| 0.1.0 | 40 ms (80) | quiet | a / b | 8 / 8 / 8, 9 / 9 / 8 | 124 / 134 ms | 0.1 / 0 % |
+| 0.1.0 | 75 ms (150) | quiet | a / b | 13 / 13 / 12, 14 / 14 / 12 | 200 / 204 ms | 0 / 0 % |
+| 0.1.0 | up 5, down 35 (40) | loaded | a / b | 9 / 10 / 8, 9 / 10 / 8 | 146 / 144 ms | 0.1 / 0.1 % |
+| 0.1.0, L2 (host throttled) | 10 ms (20) | loaded | a host / b guest | 13 / 14 / 14, 5 / 8 / 7 | 227 / 127 ms | 0.2 / 0.5 % |
+| round 62 | 10 ms (20) | quiet | a / b | 3 / 3 / 3, 5 / 5 / 3 | 50 / 50 ms | 0 / 1.1 % |
+| round 62 | 20 ms (40) | quiet | a / b | 5 / 5 / 4, 8 / 8 / 5 (before the JOIN's grace) | 67 / 83 ms | 0.1 / 1.6 % |
+| round 62 | 40 ms (80) | quiet | a / b | 7 / 7 / 7, 7 / 7 / 7 | 117 / 117 ms | 0 / 0 % |
+| round 62, L2 (host throttled) | 10 ms (20) | quiet | a host / b guest | 5 / 13 / 13, 3 / 4 / 4 | 193 / 52 ms | 1.8 / 0.1 % |
+| round 62 (paced pads) | 10 ms (20) | loaded | a / b | 3 / 6 / 4, 3 / 6 / 4 | 71 / 77 ms | 1.8 / 1.7 % |
+| round 62 (paced pads) | 20 ms (40) | loaded | a / b | 5 / 7 / 7, 5 / 8 / 6 | 98 / 108 ms | 2.1 / 2.1 % |
+| round 62 (paced pads) | 75 ms (150) | loaded | a / b | 11 / 13 / 13, 11 / 13 / 13 | 201 / 205 ms | 6.4 / 1.7 % |
+| round 62 (paced pads) | 20 ms + 0-5 ms jitter (47) | loaded | a / b | 5 / 7 / 6, 5 / 7 / 6 | 94 / 95 ms | 1.9 / 3.8 % |
+| round 62 (paced pads) | 20 ms, 1 % loss (42) | loaded | a / b | 5 / 6 / 6, 5 / 6 / 5 | 89 / 91 ms | 7.0 / 7.0 % |
+| round 62 (paced pads) | up 5, down 35 (41) | loaded | a / b | 5 / 6 / 5, 5 / 6 / 5 | 87 / 87 ms | 1.2 / 1.1 % |
+
+With the rule of round 62 but before the paced pads (every late pad counted),
+the loaded machine still ratcheted: 3 to 8 / 9 at 20 ms, 5 to 9 at 40 ms, 12
+to 15 at 150 ms, 9-11 at 1 % loss (losing 1.3 %), each rise right after a
+second of backlog runs (the clients' downlink, the relay's sealing or the
+clients themselves stalled). That is what led to the paced pads. A run while
+four rounds' clients shared the PC (stalls of 1-4 s in every process) is no
+measurement of the rule: members were taken out for lag and half the pads
+were filled; it is left out. The rows "paced pads" ran before the last two
+changes of the round: a press in a late pad now goes with the next sealed pad
+(at 1 % loss the 7 % filled pads repeat the previous pad, the presses among
+them come a few ticks late), and a burst's first pad after a gap of up to
+eight ticks (a game running 8-20 passes a second) or any pad of a member that
+lags counts again (two real-client scenarios lost a member to the lag rule on
+the four-round machine with the narrower window).
+
+Offline the same input runs in the step of its pass (0 ms); the picture
+follows as offline. "Lost" is the share of own pads the relay replaced by a
+fill.
+
+*Causes, each shown by these runs.*
+
+1. **The starting d took the largest of 120 round trips.** A client answers
+   PING in its host loop: a stage load, the snapshot restore of a join or a
+   catch-up pass delays single PONGs by hundreds of ms, and
+   `FromRoundTrips` took the 99.9th percentile of 120 samples (the largest).
+   The joiner's JOIN came with d 6 at 20 ms of round trip (main, `delay 3 -> 6`
+   at J); on 0.1.0 the solo suggestion was 4-5 before any join.
+2. **Every join raised the joiner's d by one more.** The joiner learns J when
+   it executes J and then sends its first d pads at once; the first of them
+   are late by design, more than three late pads raised d at the next
+   evaluation (main: 6 -> 7 at J + 33).
+3. **The rule ratcheted.** Four late pads in a minute raised d by one, thirty
+   clean seconds lowered it by one. Any hiccup of a client (a load, a
+   background window's stall, a busy CPU) raised it, and before thirty
+   seconds passed the next one came: both members went from 3 to 8 / 9 (main)
+   and 12 / 12 (0.1.0) within about 15 s of load, then stayed for the rest of
+   the stage (200 ms of input delay at 20 ms of round trip). This is the
+   "massive and constant" lag; the protocol mismatch was not involved.
+4. **The joiner's playout buffer stayed a tick too full.** The JOIN step loads
+   the joiner's packages; afterwards its buffer stood near 2.5 ticks (target
+   1.5) and drained at +0.1 %, a tick per 17 s. Every tick of it made its pads
+   a tick later at the relay, so the rule kept its d a tick above the host's.
+5. **A JOIN's step made every member's next pads late.** The step that applies
+   a JOIN spawns the joiner on every machine (its species and weapon
+   packages load in it): at 40 ms of round trip the joiner rose from 5 to 8
+   in the second after its JOIN and needed 20 s to come back to 5.
+6. **Bursts after stalls raised d although no network was slow.** On a busy
+   PC (other games, other rounds' clients) the clients, their downlink and
+   the relay's sealing thread stalled for 0.1-0.5 s now and then; each stall
+   let a member's pads out late in one burst. Counting them, even the rule of
+   causes 1-3 fixed went from 3 to 8 / 9 at 20 ms within two minutes of load
+   (every rise right after a second of backlog runs). Two games on one PC are
+   such a busy PC.
+7. **Not causes:** the protocol-45 client works with the 0.1.0 hub (one wire
+   layout since S1; 0.1.0 ignores STORY, so the room has no story, `story_ignored`),
+   and its delay rule is main's (SlotStream.cs did not change after 890e802);
+   the relay's sealing timer is high resolution (its log says so) and TCP_NODELAY
+   is set on both ends; the catch-up of the join finished in about one second
+   (3,300-4,200 steps per second). A slow member never slowed the other: in L2
+   the throttled host went to d 13-14, the guest stayed at its own value.
+
+*Fixes (round 62).* Hub: the starting d from the median and the p90 spread of
+the newest 30 round trips with stalls left out, `ceil((RTT + J) / f + 1.5)`;
+no rise from a stream's first `d + 2` ticks, nor from anyone's pads in the
+`d + 120` ticks after a JOIN; the rule above (rise on paced late pads in three
+different seconds of ten, at once on a mostly late second; fall after ten
+seconds by the margin, up to three ticks); presses of late pads go with the
+next sealed pad; NETSTAT for the client. Client:
+a lasting playout excess runs an extra step; skipped samples keep their
+buttons; an online session opts out of Windows' background throttling and a
+minimized window's loop sleeps instead of spinning; the measurements above,
+`saves/online.log` and the network indicator.
+
+*What remains inherent.* Lockstep without prediction delays every input by d
+ticks: `ceil((RTT + J) / 16.683 ms + 1.5)`, the 1.5 for the playout tick and
+the host pass. Measured after the fixes: 3 ticks (50 ms) at 20 ms of round
+trip, 4-5 (67-83 ms) at 40 ms, 7 (117 ms) at 80 ms, 11-13 (183-217 ms) at
+150 ms. The review of round 62 (below) corrected the rest of this paragraph:
+a game presenting at 60 Hz with vsync did not settle at 3-4 at 20-30 ms of
+ping but swung between 3, 4 and 5 every 33 s (since the review it holds 4),
+and on a busy PC d did not come back within 10-20 s (since the review it rises
+less often and falls after 30 s). A member whose PC stalls regularly (a
+throttled background game) raises only its own d. TCP loss still costs a lost
+segment's round trip plus about 50 ms (the S1 matrix); the UDP transport of
+round S4 remains the answer to that.
+
+*Prediction or rollback for the own player: assessed, not built.* The engine
+is deterministic across machines (the net fingerprints agree every 60 ticks
+for 10,000+ ticks in every scenario) and steps without pictures or audio
+(`Engine::set_replay`, 3,300-4,200 steps per second in a catch-up, about
+0.25-0.3 ms per step), so re-simulating d ticks per picture would cost about
+1-2 ms at d 3-6. What it lacks is a state to go back to: a snapshot is the
+stage's load snapshot (21 KB in stag0101) and a state is that snapshot plus
+the pads since the load, restored by loading the stage and replaying every
+step (6,000 ticks into a stage: 1.5-2 s). Rollback needs a copy of the whole
+mutable engine state per tick (the Lua 4 VM heap, every manager, the scene
+graph's matrices, motion and particle state, the sound positions), which the
+engine keeps in pointer-linked heap objects; copying it means either an
+arena for all mutable engine state that is copied and restored as a block
+(its size per stage was not measured here; at memory speed a few MB cost
+about a millisecond) with the read-only resources kept outside, or a
+serializer per manager. Both are a project of several rounds, and the
+presentation side effects inside steps (sounds started, effects spawned) would
+need the replay mode's suppression during every re-simulation. Until then the
+honest number is d.
+
+*Checks of round 62.* ctest 44 of 44; `det` 4004f056 / 396cb219 in four
+runs with online off; the server's unit tests (185) and integration and
+end-to-end tests (90, one skipped: the deploy kit's certificate store); the
+real-client scenarios S2, S3, S18b, S19b and S22a pass with the paced rule's
+first window, S1, S11a and S17a lost a member to the lag rule on the
+four-round machine with it and pass with the final rule (S11a's resync
+included), every instance's net fingerprints equal; L1 and L2 pass in every
+cell above. Hidden windows only: what a visible window in the background does
+to its own loop (vsync of an occluded window, two GL windows on one GPU) was
+not measured here; its effect on the others is L2's, and its own numbers come
+with `saves/online.log` from the field.
+
+**Review of round 62 (04.11): the 60 Hz beat, held buttons, the message
+numbers.** DW4Online 0.1.2 (round 62 as the user got it) had three faults the
+review found and measured; DW4Online 0.1.3 and the client of this branch fix
+them.
+
+1. *A game with vsync at 60 Hz swung its own d.* A game presenting with vsync
+   at 60.000 Hz (the default: `settings.ini` vsync on, a 60 Hz monitor) runs
+   its passes, and so sends its pads, on a 60.000 Hz grid; the relay seals at
+   59.94 Hz. The pad for tick t + d leaves at the first pass after tick t ran,
+   so its arrival margin slides by one pass (16.7 ms) over a beat of 16.7 s and
+   jumps back. Round 62's fall looked at ten seconds with 0.15 of a tick kept:
+   it saw only the high part of the sawtooth, fell, and in the low part most
+   pads of a second came late, which raised d by two: 4 -> 3 -> 5 -> 4 every
+   33 s at 24 ms of round trip (the review's real clients on a 60.000 Hz pass
+   grid: 75-193 of about 5,100 inputs not sealed as sent, about 120 late pads
+   in a row in each cycle; the hub of 0.1.0 held 4). The hidden test clients
+   have no vsync, which is why L1 never showed it. *Fix:* the fall looks at
+   thirty seconds of pads since the last change (more than one beat); a fall
+   that has to be undone bars that value (one minute, twice as long at each
+   further failure, at most ten minutes), d goes back to the value it fell
+   from, and the member's next stream keeps the bar (a display at 59.95 Hz
+   beats every 100 s, longer than any window).
+2. *A held button toggled at 30 Hz.* Round 62 carried a press of a late pad
+   into the next sealed pad, but filled the missing ticks with the last pad
+   sealed in time. Where seals and late pads alternate (d a tick too low: in
+   the low part of the beat above, after a fall, at a join) a held A was sealed
+   0010101... (the carried press on, the old fill off), and after six fills
+   every held button toggled: phantom repeated attacks and confirms. *Fix:*
+   the newest pad, sealed in time or late, is the fill source; the same
+   stretch now seals 0011111... (held, one tick late, released one tick late).
+   A late pad now costs that input a tick or two, not the input.
+3. *One number, two messages.* Round 60's PRESENCE2 to clients took 0x8F at
+   protocol 45, NETSTAT's number since 0.1.2 (6.3 "Message types"); a client
+   that cannot decode a frame of a known type drops the connection, so a
+   round 60 client on a 0.1.2 or later server would reconnect every second.
+   0x8F stays NETSTAT; registry checks on both sides, and the client skips an
+   informational frame (NETSTAT, PRESENCE, ROSTER, ROOM) that does not decode.
+   Round 60 has to move PRESENCE2's server-to-client number to 0x90 before it
+   merges (done in round 60's fix round, with `main` merged in: PRESENCE2 to
+   clients is 0x90 and informational too).
+
+And one consequence of 2: since a late pad costs only a tick of that input,
+the rise no longer reacts to any one paced late pad in three different seconds
+of ten (`Sealing:LateTarget` 0.001), only to more than 2 % (0.02). On a busy PC
+the first pad after each stall of the client, of its downlink or of the relay
+(up to eight ticks of gap: the rule must count a game that runs only 8-20
+passes a second) and the first pad behind each lost TCP segment raised d by a
+tick every few such seconds, and the thirty seconds of fall took long to give
+it back. A link too slow for d still rises at once (most of a second late) or
+by the 2 % (a slow game: the first pad of every burst late). A mostly late
+second raises d by its median lateness and half a tick, no longer a whole
+tick more: a joiner 2 ms late at 20 ms of round trip went from 3 to 5 and,
+with the thirty seconds of fall, needed a minute back to 3 (now 3 -> 4).
+
+*Closed loop* (`server/DW4Online/tests/DW4Online.Tests/DelayLoopTests.cs`, the
+review's model as tests: the real `SlotStream` and `DelayController`, a port
+of `pacing.cpp`, the client's passes on a display's grid, the start value from
+PING round trips that include the wait for the next pass; ten minutes, three
+seeds, late pads counted after the first minute; the same seeds for both
+rules):
+
+| Passes | Round trip | Round 62: late, d changes after the first minute | Review fix |
+| --- | --- | --- | --- |
+| 60.000 Hz | 24 ms | 0.71 %, none (d 3 too low in a part of the beat) | 0.00 %, none, d 4 |
+| 60.000 Hz | 26 ms | 3.43 %, 50 (3 / 4 / 5 every 33 s) | 0.00 %, none, d 4 |
+| 60.000 Hz | 40 ms | 2.52 %, 10 | 0.00 %, none, d 5 |
+| 59.95 Hz (100 s beat) | 24 ms | 0.86 %, 16 | 0.32 %, 4 (tries at about 0.5, 2.5, 5.5, 10.5, 20, 32 minutes; 0.13-0.21 % after 15 minutes) |
+| 59.95 Hz | 40 ms | 1.06 %, 16 | 0.61 %, 6 (0.15-0.17 % after 15 minutes) |
+| 59.94 Hz, 144 Hz, no vsync | 20-150 ms | 0.00 % | 0.00 % (d 3 at 20 ms, 4 at 24-30 ms, 5 at 40-50, 7 at 80, 11 at 150) |
+
+With client stalls of 20-150 ms at random (`LoadTable`; 60 Hz, 24 ms; the
+time from a pad's sample to the seal that carries it, late pads by the seal
+after they came): quiet d 4, 38 ms; 0.2 / 0.5 / 1 stalls a second with 0.1 %:
+mean d 6.1 / 8.4 / 9.9, 64 / 94 / 112 ms, 1.0-1.2 % late; with 2 %: 5.0 / 5.3 /
+7.5, 44 / 43 / 73 ms, 1.6-3.3 % late (without vsync at 0.2 and 0.5 a second it
+stays at 4).
+
+*Real clients* (hidden, loopback, every client behind its own proxy; L3 is L1
+with both games' passes on a 60.000 Hz grid, `DW4_ONLINE_TEST_PASS_HZ=60`, the
+review's case; the machine loaded by other rounds' clients and builds, 50-85 %
+of its CPU):
+
+"Backlogs" is how often a client ran a backlog of sealed ticks at once
+(stalls of the client or its downlink, per client and run), a measure of the
+machine's load; "late input" is the share of own pads not sealed as sent (since
+the review mostly sealed a tick or a few later, not lost); latency as in the
+table above.
+
+| Link each way (RTT) | Hub | Backlogs | d first / max / end (a, b) | Latency a / b | Late input a / b (of ~5,100) |
+| --- | --- | --- | --- | --- | --- |
+| L3: 12 ms + 1 ms jitter (24), 60 Hz grid | 0.1.2, the review's runs | 0-2 | 4 -> 3 -> 5 -> 4 every 33 s | 71 / 71 ms | 75 / 193 and 85 / 91 |
+| | 0.1.2, this branch | 98-109 | 5 / 12 / 6, 5 / 12 / 8 | 157 / 164 ms | 244 / 182 |
+| | fix with 0.1 % | 3-4 | 4 / 6 / 4, 4 / 6 / 4 | 89 / 88 ms | 22 / 3 |
+| | fix (0.1.3), two runs | 0-2 | 4 / 4 / 4, 4 / 4 / 4 | 67 / 67 ms | 0 / 0, 0 / 0 |
+| L3: 13 ms + 1 ms (26), 60 Hz grid | fix with 0.1 % | 0-3 | 4 / 4 / 4, 5 / 5 / 4 | 67 / 70 ms | 0 / 0 |
+| | fix (0.1.3) | 11-14 (stalls to 0.8 s) | 5 / 8 / 8, 5 / 6 / 6 | 92 / 87 ms | 151 / 167 |
+| L3: 15 ms + 1 ms (30), 60 Hz grid | fix (0.1.3) | 0-3 | 5 / 5 / 4, 5 / 5 / 4 | 71 / 70 ms | 0 / 0 |
+| L1: 10 ms (20), no vsync | fix (0.1.3), three runs | 0-2 | 3 / 3 / 3; joiner 5 / 5 / 3, 4 / 4 / 3, 3 / 3 / 3 | 50 / 50-64 ms | 0-2 / 0 |
+| L1: 20 ms (40) | fix with 0.1 % | 0-3 | 5 / 5 / 5, 5 / 5 / 5 | 83 / 83 ms | 0 / 0 |
+| | fix (0.1.3) | 0-3 | 5 / 5 / 5, 5 / 5 / 5 | 83 / 83 ms | 2 / 2 |
+| | fix (0.1.3) | 8-13 (stalls to 0.56 s) | 5 / 9 / 5, 5 / 9 / 5 | 124 / 123 ms | 41 / 46 |
+| L1: 20 ms + 0-5 ms jitter (47) | fix with 0.1 % | 0-3 | 5 / 6 / 6, 5 / 6 / 6 | 87 / 88 ms | 32 / 34 |
+| | fix (0.1.3) | 0-3 | 5 / 5 / 5, 5 / 5 / 5 | 83 / 83 ms | 0 / 0 |
+| L1: 20 ms, 1 % loss (42) | fix with 0.1 % | 56-62 | 5 / 10 / 10, 5 / 11 / 11 | 163 / 165 ms | 35 / 23 |
+| | fix (0.1.3) | 55-66 (the loss's own stalls) | 5 / 8 / 8, 5 / 9 / 9 | 132 / 142 ms | 130 / 119 |
+| L2: 10 ms, the host throttled (30 pictures a second, a 150 ms stall every 3 s) | fix with 0.1 % | 56 / 10 | host 5 / 8 / 8, guest 5 / 7 / 7 | 110 / 98 ms | 230 / 33 |
+| | fix (0.1.3) | 32 / 3 | host 5 / 6 / 6, guest 3 / 4 / 3 | 95 / 59 ms | 199 / 6 |
+| L1: 75 ms (150) | fix with 0.1 % | 16-19 | 11 / 15 / 15, 11 / 15 / 15 | 221 / 224 ms | 66 / 55 |
+
+On a quiet machine the fix holds d where the network puts it, with no late
+input: 3 at 20 ms, 4 at 24-30 ms with the 60 Hz grid, 5 at 40 ms. On the
+loaded machine of this round (other rounds' scenario clients and four 600,000
+frame campaign runs, 75-85 % of the CPU, the test clients at below normal
+priority) the runs differ more by the load of the moment than by the rule;
+stalls of half a second and more make a client's pads late in whole seconds,
+which raises its d by the "most late" rule as it must (a client that cannot
+keep up is filled otherwise), and the thirty-second fall brings it back. Where
+the load was alike, 2 % kept d lower than 0.1 %: jitter 5 instead of 6, 1 %
+loss 8-9 instead of 10-11 (30 ms less input delay, its late pads a tick late
+instead), and L2's guest at 3-4 next to a throttled host (0.1 %: 5 -> 7). TCP
+loss still costs the UDP transport's absence: at 1 % the input delay roughly
+doubles.
+
+*What the round 62 table promised and did not hold.* The review could not
+reproduce two rows: at 1 % loss it measured d 5 -> 10 (155-163 ms, 40 ms of
+round trip), 5 -> 11 with 5 ms of jitter, 4 -> 8 at 0.5 % and 25 ms, not
+"5 / 6 / 5-6 (90 ms)"; under full load (13 compilers, 8-11 hidden clients)
+3 -> 12 at 20 ms and 35 s until 3-4 again, 4 -> 8 at 40 ms and staying, not
+"one or two more, back within 10-20 s". This branch's runs with the 0.1 % rule
+on a loaded machine agree: 5 -> 10 / 11 at 1 % loss (163 ms), 11 -> 15 at
+150 ms and 3 -> 7 for L2's guest. The rows above with 2 % replace them.
+
+*Minors of the review.* A JOIN's grace (`d + 120` ticks of every stream) hid
+the joiner's lateness but did not prevent it: under load the review saw about
+200 of the joiner's 580 pads in the first ten seconds after J late and not
+sealed as sent. With the newest pad as the fill source those pads come a
+tick or a few late instead of being lost: in this branch's L1 runs at 10 ms
+each way the joiner had as many late pads in those ten seconds (220 and 225;
+the review 203 and 210), but only 40 and 38 were sealed other than sent (the
+review 198 and 203), and those mostly a tick late, not lost. (The grace stays:
+a rise in it would follow the JOIN step's long step on every machine, cause 5
+above.) `saves/online.log` now says what the two-window case needs: the
+game's passes and pictures per second with the longest pass (every ten
+seconds), vsync, the swap interval,
+the display's refresh rate, the frame limit, and a line whenever the window
+goes to the background, is covered, minimized or comes back; the session
+latency at the end counts only the pads that waited for the network (it
+mixed in the solo ticks' 0 ms: "17 ms" for 67 ms). The indicator's "Ping" is
+the network's round trip: the relay's PING / PONG median holds the wait of a
+PING for this game's next pass (half a pass on average, 8 ms at 60 pictures a
+second: "34 ms" at 24 ms of network); F1 > Online shows both and wraps its
+lines, with "Copy path" and "Open folder" for the log. A second game whose
+`online.log` the first holds no longer rotates it (it deleted `online.3.log`
+and left no `online.1.log`); a rotation moves the current file aside first.
+
+*What a guest should feel.* Lockstep without prediction delays every input by
+d ticks of 16.7 ms plus the wait for the next picture, nothing else: at 20 ms
+of ping 3 ticks (50 ms), at 25-30 ms with a 60 Hz display 4 (67 ms), at 40 ms
+5 (83 ms), at 80 ms 7 (117 ms), at 150 ms 11-12. The field's "massive,
+constant" lag was round 62's causes 1-3 (0.1.0 ratcheted both members to 12,
+200 ms of input delay, at 20 ms of ping, a throttled host to 14); 0.1.2 fixed
+that but, with a 60 Hz
+display, swung between 3, 4 and 5 with a second of lost or toggled inputs every
+33 s. Two games on one PC are a busy PC: each stall of either game makes its
+own pads late (a tick of that input), and only a lasting share above 2 % or a
+mostly late second raises its own d; the other member's d never follows.
+
+*Checks of the review fixes.* ctest 44 of 44 (new: the type registry, the
+held log of a second game, undecodable informational frames, the pass wait);
+`det` 4004f056 / 396cb219 in two runs with online off; the server's unit tests
+206 (new: `DelayLoopTests`, the bar, the fill source, the registry) and
+integration and end-to-end tests 90 of 91 (one skipped: the deploy kit's
+certificate store; a private database with a fresh data directory); the
+real-client scenarios S1, S2, S3, S11a, S17a, S18b, S19b and S22a pass with
+every instance's net fingerprints equal (S3 once failed on the order of its
+two joins when the machine stalled for three seconds, and passed again); L1,
+L2, L3 and L1s pass in every cell above; the screenshots of L1s show F1 >
+Online's wrapped lines with the log's full path and the two buttons, and the
+indicator "Ping 27 ms  Delay 4 (67 ms)" (27 ms network, 28 ms at the relay for
+a client without vsync).
+
 **1 → 2 members.** The server sends JOIN_REQ to the solo leader; the leader
 answers JOIN_AT(J) with `J = current tick + d`, switches to delayed sampling at
 once and repeats its last pad for the ticks before `J` it has no sample for
@@ -1183,7 +1752,9 @@ before the first step at or after J in which the instance allows them, a
 deterministic test every machine evaluates the same way:
 
 - **membership-safe**: pad input enabled, no demo record running, no SUBWND,
-  not loading, presenting, no fork pending. LEAVE and INTENT wait for it.
+  not loading, presenting, no fork pending. LEAVE and INTENT wait for it. A
+  member's own window or scene (5.3) counts for none of it: a member joins or
+  leaves while another has its menu open or talks.
 - **joinable**: membership-safe, not a hub or UI stage, `boss_lock` clear.
   JOIN waits for it.
 - **boss_lock** is simulation state in `OnlineRules` (7.2): set when a
@@ -2756,7 +3327,8 @@ mode.
 #### 6.13.7 Protocol changes
 
 Proposed numbers; the integration pins them after rounds 60 and 62 merge
-(both claim 0x8F today: PRESENCE2 and NETSTAT; client 0x14 is round 60's).
+(NETSTAT keeps 0x8F, round 60's PRESENCE2 to clients moved to 0x90; client
+0x14 is round 60's).
 
 | Dir | Type | Message | Fields | When |
 | --- | --- | --- | --- | --- |
@@ -2874,7 +3446,7 @@ struct OnlineRules {
     bool enabled = false;            // overrides, despawn, pad redirect, input masking
     std::uint8_t player_cameras = 0; // bit per slot with its own box camera; 0 = shared camera (original)
     bool leash_off = false;          // limit_Circle child hit off
-    bool scoped_scenes = false;      // proximity rule for local scenes and the status window (round S3)
+    bool scoped_scenes = false;      // (unused: round 63 scopes the own windows and scenes online always, 5.3)
     bool near_share = false;         // EXP shared by members near the kill (round S3, question 7)
     std::uint8_t present = 0;        // instance members (bit per slot)
     std::uint8_t leaving = 0;        // members with a pending LEAVE
@@ -2950,6 +3522,7 @@ goes through `set_online` as well. The MXCSR guard compares the control bits
 ```cpp
 std::optional<std::string_view> Engine::pending_stage() const;  // read-only: a NEXTSTAGE waits for its load step
 bool Engine::membership_safe() const;   // pad input on, no demo record, no SUBWND program, not loading, presenting, no fork pending
+                                        // (round 63: a member's own window or scene counts for none of it, 5.3)
 bool Engine::joinable() const;          // membership_safe, not a hub or UI stage, no boss lock
 static bool Engine::hub_stage(std::string_view);
 std::uint64_t Engine::session_context_hash() const;  // FNV-1a over the context values, absent = 0
@@ -3216,6 +3789,67 @@ decision and the freeze was an r48 default, the server gets a setting
 
 The default stays `drop` until the user decides (question 2).
 
+**An owner without a story starts at zero** (the user's decision of 31.10).
+A room whose owner has no online story (none yet, or the empty story of the
+online character's reset; `RoomStoryData.IsEmpty`) starts at zero: the
+owner's own game starts from a new game's story, and nothing a member does
+before that game is in a stage becomes the owner's story. Exactly:
+
+- The room is *not started* until the relay places the owner in an instance
+  of a stage outside the title (`stagIS*`): the owner's Game Start and its
+  first stage (the lobby) start it, for the rest of the room session
+  (`RoomStoryKeeper.Started` / `OwnerStarted()`, the membership log's
+  `story_started`). An owner who sits at the title, who is away, or who never
+  plays leaves the room not started.
+- Until then every story value a member offers (any phase claim up to 7,
+  persistent flags, key items, counter growth: whatever the room story
+  lacks) is refused with the STORY_ACK reason *not_started* (10) and recorded
+  in the room's dropped set with a drop epoch, whatever the plausibility
+  checks would say (a phase jump, a stage that never sets the flag, growth
+  beyond the limit, a visit younger than ten seconds, a member the relay has
+  in no instance or in a UI stage) and whatever `Rooms:StoryWhileOwnerAway`
+  says (also under *hold* and *apply*: nothing is held, nothing merged).
+  Only values that are never merged (*not_story*) and a shrinking counter
+  (*limit*) keep their refusal. Round 59's verification found the gap of the
+  first form, which dropped only what passed the plausibility checks: a
+  guest's phase 2 from the first briefing (its lobby's phase 1 dropped, the
+  room at phase 0) was refused *phase_jump*, never entered the dropped set,
+  so the guest's barriers kept it; once the owner's lobby gave the room phase
+  1 the same claim passed every check and became the owner's phase 2 (OZR
+  with real clients: revision 2, phase 2, while the owner sat in its lobby;
+  the scenario S14zb checks that flow since).
+  This comes before the per-visit rules (8.7), so a value that would only
+  have waited cannot slip in after the start, and nothing is earned (8.7)
+  before it. The membership log notes `story_dropped ... reason=not_started`;
+  the member is told once ("The room owner has not started its story yet:
+  story progress made before that is not saved.").
+- The start is a visit boundary. `OwnerStarted()` opens a new drop epoch,
+  the *start epoch*; the owner's first visit, which begins with the start
+  (the relay places the owner in a visit that begins at that barrier), gets
+  it, and so does every visit that begins later. A visit that began before
+  the start (its epoch is lower) may hold what its engine did before the
+  start, set a moment before it and not yet offered, or offered in a STORY
+  the rate refused, so nothing it offers counts after the start either: its
+  values are dropped with *not_started* as above, recorded at the start epoch
+  (so a visit that began after the start, such as the owner's lobby setting
+  the same phase 1 a guest's old lobby offers, is never refused for them).
+  The guests' earlier *pending* progress (what their engines hold and still
+  send) therefore always ends in the dropped set: their next barrier removes
+  it from their engines (the dropped set of BARRIER_OK, 8.6 drop, the phase
+  falling back to the room's, with the notice "Story progress was not saved:
+  the room owner had not started its story yet."), and it counts again only
+  when a member sets it anew in a visit that began after the start. One
+  exception: a visit that began before the start and that the owner joins
+  after it (a guest waiting in a field the owner comes to; `HubInstance.
+  OwnerSeen`, kept by a fork's child) counts from the owner's arrival on,
+  for every member in it; what it offered before stays refused (its drop
+  epoch is above the visit's) and its barrier removes it. *Held* progress
+  cannot come from that time: a room that has not started holds nothing.
+- Every member's game started in that time starts with the empty room story
+  (the title's application, 8.5), so every engine of the room is at zero too.
+  The room API (`GET /rooms/{code}/story`) shows `started`.
+- An owner whose story is not empty starts as before (started at once).
+
 ### 8.7 Built in round S2 (story lane)
 
 **Census (measured).** `tools/online/story_census.py` reads the 7,168
@@ -3278,9 +3912,11 @@ instance *now* decides: no instance or a stagIS* stage refuses everything
 (not_member); a flag or a phase step only from a stage whose scripts set it
 (stage); the phase rises at most one step beyond the room's (with *hold*: the
 held phase); a counter only from a stage that changes it, growth 0..100,000
-(COUNTER 7) or 0..100,000,000 (COUNTER 1) per line (limit); never-merged
-values refused (not_story); a member's STORY rate is a burst of 10, then 60
-per minute (rate; the client sends again). Then the owner-away policy:
+(COUNTER 7) or 0..20,000,000 (COUNTER 1; 100,000,000 before the round 56
+fix round) per line (limit); never-merged values refused (not_story); a
+member's STORY rate is a burst of 10, then 60 per minute (rate; the client
+sends again). The per-visit and per-member rules below come on top (the
+visit age applies to counters too since round 59). Then the owner-away policy:
 *apply* merges; *hold* keeps phase, flags, keys and line growth and merges
 them when the owner returns (the phase step by step); *drop* refuses
 (owner_away) and records the keys in the room session's dropped set with a
@@ -3317,7 +3953,8 @@ per visit, its age) from the relay: phase steps, flags and key items count
 only from a visit at least `Instances:StoryMinVisitSeconds` (10) old, and a
 visit gives one phase step and one key item; the rest is refused with the
 reason *wait* (9), which the client sends again. A room takes only its own
-difficulty's clear flag (406 + difficulty). COUNTER 1 grows at most
+difficulty's clear flag (406 + difficulty; since round 59 only at phase 6 or
+later). COUNTER 1 grows at most
 20,000,000 per line (wallet and bank hold 9,999,999 each). The relay takes
 counter lines only where it put the member (`Place`, a fork's child; the last
 16) and at most 8 instance 0 lines per room session. A member without an
@@ -3328,6 +3965,125 @@ client plays in (`HubMember.LoneStage`) instead of being refused
 (not_member). A STORY refused for the rate is answered without the story
 blob. This slows a forging client down to real visits; the repair is the
 story history below.
+
+**Round 59 fix round.** The review forged patiently: a guest that BARRIERed
+into stagML02, waited 10.3 s and sent the next phase and a key item, again
+and again, had phase 7, the Normal clear and every key item in the owner's
+story after 113 s, and then pushed 140 counter-only revisions out in 130 s,
+past the history's last 100 (the honest revision 1 could no longer be put
+back). Now:
+
+- A guest's phase steps count at least `Instances:StoryPhaseStepSeconds`
+  (300) apart and its key items `StoryKeySeconds` (60) apart in a room
+  session, per account (leaving and joining again starts nothing new). The
+  original's phase steps follow whole dungeons, its key items single pickups.
+  N accounts still give N steps: the history repairs that. The owner's own
+  steps are not spaced (the spacing guards the owner's story against a
+  guest's client); the owner keeps the per-visit rules.
+- The room's clear flag (406 + difficulty) counts only once the room story
+  (with *hold*: the held phase) is at phase 6, the last briefing: the clear
+  comes from the last boss, after it (phase 7, flag 86, follows in the
+  lobby after the ending: r25c's k10 sets 70 and 406 in stagBS06 at phase 6,
+  86 in stagML11; stagBS06 may set 86 too). The
+  review's guest gave a phase 2 story the clear, and the owner the next
+  difficulty's rooms, with one ten-second visit of stagBS06; that is refused
+  with *phase_jump* now, and a forger has to climb the phases first (300 s
+  per step and guest account).
+- *Earned values* (the round 61 design's queue, 8.8 "Lag", built here on the
+  server alone): a phase step or key item that passed every check (stage,
+  phase limit, visit age) and waits only for the one-per-visit rule or a
+  guest's spacing is kept per account (`RoomStoryKeeper.MergeEarned`) and the
+  relay merges it when it is due, a few times a second from its housekeeping:
+  in a later visit of that member at least ten seconds old, after the
+  spacing, whatever stage the member plays in then, under the owner-away
+  policy of that moment; everyone gets the new revision (membership log
+  `story_earned`). What the room story got meanwhile, or what was dropped
+  after the visit that earned it began, is no longer waited for. The client
+  still gets *wait* and sends the value again (no protocol change; from
+  another stage that resend is refused for the stage, which does no harm).
+  Before, a step that waited was refused for the stage once its member left
+  the stage that set it, and the next step was a phase jump: the room story
+  stopped for the room session. Every new story ran into it as first built in
+  this round (phase 1 at the lobby's first load, phase 2 at the first
+  briefing a minute or two later): C1's owner, alone in its room, kept phase
+  1 in its online story although its game had phase 2 (the round 61 design
+  found it in the code, 8.8; C1 checks phase 2 now).
+- Counter growth waits for a visit ten seconds old as well (a client looping
+  barriers in stag0001 opened about a thousand lines a minute); a member opens
+  at most `Instances:StoryLinesPerMember` (256) counter lines a room session
+  (then *limit*); the lines no member can report any more (in no member's last
+  16, no instance 0 line of a present member) are forgotten (`PruneLines`; a
+  held line's growth beyond what was taken stays held per counter).
+- The keeper lives with the room, not with the relay's hub: an empty hub the
+  relay drops keeps the room's keeper (dropped set, epochs, held values, the
+  per-member rules) and its instance ids for the next connection
+  (`RoomSessionState`). The owner's presence the room service reports while no
+  hub is there, or while the first connection's admission loads the story,
+  reaches the keeper when the hub is built (it started with the admission's
+  older value before). A reconnect without RESUME keeps its visit's key for
+  the per-visit rules (it was a fresh visit with one more phase step and key
+  item before).
+- A story clear in a room (`clear_normal`, `clear_hard`, `clear_veryhard`)
+  counts only when the room's story is at that difficulty and holds its clear
+  flag (406 + difficulty; the server waits up to `Play:ClearStoryWaitSeconds`,
+  30, for the clear's STORY), and the achievements' `players` is capped by the
+  relay's instance in the last minute (one request gave a guest alone in its
+  lobby `mp_fullhouse` and a speedrun board's first place).
+
+A flag set in a visit shorter than ten seconds is only sent again (it is not
+earned: the visit age is a plausibility rule); the next Game Start replaces
+the engine's flags with the room story's, so such a flag is gone then and
+comes back only from a visit of at least ten seconds that sets it again.
+*Measured* (round 59's fix round: r25c's ten segments with
+`DW4_TRACE_EVENTS=1`, every `story_flag` rise of a phase or persistent flag
+against the stage changes): 36 rises outside the title, each in a visit of
+at least 31 s; the earliest in their visits are the lobby's first load
+(flags 1 and 501 at 7 s of a 31 s visit), the briefings (322, 325 and phase
+4 at 3-8 s of 41-42 s visits) and the ending's return to the lobby (86 at
+2.6 s, the segment's end). None would be refused, with the campaign bot's
+shortest routes; quests (dngq*, the lobby's quest flags) are not in r25c and
+stay unmeasured. The same holds for counter growth since this round: a junk
+shop donation (COUNTER 1, stagML13) in a visit of the shop's stage shorter
+than ten seconds is refused for the stage once the member left (a visit with
+a walk to the shop and its menus takes longer).
+
+**Round 59's verification.** Its review of the fix round found the
+owner-zero gap (8.6: a guest's phase 2 refused *phase_jump* before the start
+became the owner's phase 2 after it; now every value before the start, and
+from a visit that began before it, is dropped) and two smaller ones:
+
+- A guest's persistent flags had no spacing: one guest account (P1H) put 78
+  of them into the owner's story in about two minutes, one revision each. A
+  guest's flags now count `Instances:StoryFlagBurst` (8) at once, then one
+  every `StoryFlagSeconds` (30), per account in a room session; the rest is
+  earned like a waiting phase step or key item (refused *wait*, merged by the
+  relay when due, in any later visit at least ten seconds old, whatever its
+  stage). r25c's campaign sets at most 6 persistent flags in a minute and 9
+  in five minutes (segment k2's lobby talks in stagML12 / ML13, measured
+  from the `DW4_TRACE_EVENTS` runs above), so honest play does not wait. The
+  owner's flags are not spaced, nor is the room's clear flag (406 +
+  difficulty: it needs phase 6, whose steps are spaced, and the clear
+  achievement waits only 30 s for it). The 109 persistent flags now take a
+  forging account about 50 minutes; the history repairs what N accounts do.
+- COUNTER 7 could still grow by 256 lines x 100,000 = 25,600,000 per guest
+  account and room session (P2). A member now gets at most
+  `RoomStoryKeeper.MaxSessionGrowth` of a counter merged in a room session,
+  over all its lines: 1,000 for COUNTER 7 (stag0001's training attempts;
+  `matz00.lua` only asks whether it is 10) and 20,000,000 for COUNTER 1 (a
+  full wallet and bank donated in the junk shop). The line that crosses the
+  cap is cut there, everything after it is refused (*limit*); growth the
+  owner-away drop refuses does not count against it.
+- Found on the way: a reconnect without resuming put the member into a
+  stageless instance, which gave it the current drop epoch, while its client
+  plays on alone in its old visit (`HubMember.LoneStage`), whose engine no
+  barrier has cleaned since; a value dropped in that visit (before the start
+  or while the owner was away) counted again from the same engine. The
+  member now keeps its last visit's epoch until the relay places it in a
+  visit with a stage. And a join completes outside `Place`: the owner's
+  arrival by a join neither started a room at zero nor marked the visit as
+  the owner's, and the joiner kept its previous visit's epoch. Both go
+  through `RoomHub.OwnerEnters` now, and a joiner takes the joined visit's
+  epoch.
 
 **Storage.** Migration 0008 adds `online_story (account_id, revision, flags
 VARBINARY(1024), folder BINARY(12), counters BINARY(64) as 16 x i32 LE,
@@ -3341,7 +4097,20 @@ count.
 
 Round 56 fix round: migration 0010 keeps every written revision in
 `online_story_history` (the last `OnlineCharacter:StoryHistoryRevisions`,
-100, with the reason room / reset / admin_restore). The online character's
+100, with the reason room / reset / admin_restore). Round 59 keeps it by time
+and session instead of by count alone (migration 0011, reason *session*):
+opening a room keeps the owner's story as it was then (the revision the room
+session starts from; once per revision, so rooms opened one after another
+add nothing); the newest `StoryHistoryRevisions` (100) stay in full;
+older room revisions stay as the first of every `StoryHistoryMinutes` (10)
+for `StoryHistoryDays` (90); session starts, resets and restores stay for
+`StoryHistoryDays`, the newest `StoryHistorySessions` (20) of them for good.
+A revision that changed only counters is written at most once per
+`StoryCounterSaveSeconds` (60) per account (a newer one replaces it in the
+queue). The queue reads a queued revision before the database row (a write
+in between gave the older row), and a reset or restore waits for a write in
+flight and drops what was queued before it (a generation per account). A
+staff restore looks for the revision before it closes the owner's room. The online character's
 reset empties the story as its next revision (a new character starts from a
 new game's story and Normal); staff list the revisions and put one back as
 the next revision (`GET /admin/accounts/{name}/online-story/history`, `POST
@@ -3881,7 +4650,16 @@ model it):
 
 So the owner's step reaches the room story about ten seconds after it
 happens (a second key of one visit at his next visit) and a guest at its
-next barrier; a guest's own steps that wait are not lost. Sending the
+next barrier; a guest's own steps that wait are not lost.
+
+*Built since (round 59's fix round, 01.11):* the queue (*earned values*,
+`RoomStoryKeeper.MergeEarned`, merged by the relay's housekeeping) and the
+owner's exemption, on the server alone and without a protocol change: the
+keeper still answers a queued value with *wait*, the client's resends do no
+harm (from another stage they are refused for the stage), and character_test
+C1 checks that a new owner's online story reaches phase 2 (8.7, *Round 59
+fix round*). Round G adds the reason *queued* (the client stops resending)
+and the C++ / Python twins. Sending the
 owner's running engine to the guests instead stays rejected: unchecked
 bytes, values the keeper refused would spread through the guests' engines
 and pending sets, and the owner may be anywhere.
@@ -3986,6 +4764,32 @@ empties the online story with it). A refused login or an outdated version
 (401 / 403 / 426) no longer drops the session's later saves: they go into the
 card cache as pending, and the next room entry uploads the newest when the
 server still has the revision it was based on.
+
+**Round 59 fix round.** *Create Digimon* reports `new_character` already at
+the status window, and B takes it back: a player who then called the online
+character from the card (as the toast advised) was never saved for the whole
+session. The engine also reports `character_called` (observe-only: the card
+branch of the character select, the box and the UNIQUE), and
+`CharacterSync::game_started` decides from the title's last choice: a new
+character beside the online one, or a box the save room filled with another
+character this session (a UNIQUE collision uploaded it before), is another
+character; the online character called from its box is the online
+character. The player is told when a new character overwrote the box of the
+online character (leaving and entering the room brings it back). A second PC
+of the account that enters the room connects to the relay first and waits
+for its answer (`Session::await_hello`), then loads the character: the relay
+replaces the first PC's connection there, and that PC's session (closed as
+*replaced*) keeps its leaving save pending in its card cache instead of
+uploading it (`OnlineRun::replaced`; it goes up at that PC's next room entry
+if nobody saved since). Before, the first PC's leaving save came after the
+second PC's load and blocked the second PC with a 409 for the session. After
+a 409 the session's later saves go into the backup the conflict made. The
+server: a save sent again after its answer was lost (the same record on the
+revision right before the stored one) is its own revision, not another PC's;
+the reset empties an online story without a character (an owner whose guests
+played); a character the last reset ended does not come back with
+`If-None-Match: *` (the same UNIQUE, name and partner above level 1:
+`character_was_reset`).
 
 **Built in round S2 (character lane).**
 
@@ -5373,10 +6177,201 @@ are `src/game/online/lobby_api.hpp`; the ImGui screens are
   player in a parallel instance, a member on another quest) come from PRESENCE
   packets through `OverheadLabels::set_remote_players` (exists): interpolated
   between packets, hidden by the same rules (loads, demos, menus, a defeated
-  player). They are presentation only and never touch the scene graph.
+  player). They are presentation only and never touch the scene graph. In a
+  hub stage the tag stands above the member's ghost figure (12.1).
 - A lagging member's tag shows a connection icon.
 - Notices (presentation, a few seconds at the top): "<name> joined", "<name>
-  left for <stage>", "<name> is in a scene", "<name> has a menu open".
+  left for <stage>". A member in its own status window or talk (5.3) shows
+  "<name> is in the menu" / "<name> is talking" over its name tag (round 63).
+
+### 12.1 Ghost figures (round 60)
+
+In a hub stage (3.3: every member has its own solo instance there) the other
+room members in the same stage appear as their Digimon
+(`src/game/ghost_figures.hpp`, `GhostFigures`): the form they play now, with
+the weapon they hold, at their place and facing, playing the motion clip they
+play (their wait, their run, a jump), with their name tag above, fading in
+over 0.35 s when they arrive and out where they were when they leave (another
+stage, a load, a scene, the room). Look only: no collision, no hits, no talks,
+no effect on anything.
+
+**Never in the simulation.** The PC host makes and draws the figures:
+
+- Each form's package (`_common/p_<form>.igb`, the one the engine loads for a
+  player, `Engine::online_join_player`) and each weapon package
+  (`_common/<weapon>.igb`; only a weapon name, `w_` and up to 22 more of
+  A-Z a-z 0-9 _, and at most 16 of them kept: the one asked for longest ago
+  goes for a new one, never one a figure holds) is read and parsed on a
+  worker thread from a *copy*
+  of the resources (never the engine's object, which a catch-up replaces);
+  their nodes, animation database and geometry live in the figures' own
+  `SceneCache`, never the engine's. A form's model is the record 0 instance
+  of its beAction2Info (the beModelCtrlNode2 with its igLod: Kage, High, Low);
+  its wait and run clips come from the control info's SQ_WAIT / SQ_WALK (the
+  first ACTION of the first weapon label, that action's last MOTIONSET:
+  `waitD`, `runD`). The weapon's parts hang under the form's igActor nodes on
+  their bones for the figure's traversal only (as `WeaponManager` GENERATE
+  does), so one form's nodes serve all its figures.
+- Per presented frame the figure's pose comes from the engine's own combiner
+  code (`MotionState`, `evaluate_pose`) on its own clock (a new clip fades in
+  over MOTIONSET's 8 frames from the pose before), and the engine's traversal
+  turns the private nodes into draw items (skinning palettes, the igLod by the
+  real eye distance). They go into a *copy* of the picture's draw list after
+  the simulation's picture was taken and smooth motion blended it: opaque
+  figures after the last opaque item of the 3D scene, fading ones after its
+  last blended item (`ghost_insert_points`), so the 2D layers stay on top; the
+  lights and fog are those of the scene's first lit 3D item (every model hangs
+  below the stage's root light set). The Kage level joins a copy of the shadow
+  frame's casters, so a figure casts its shadow inside the stage shadow's box
+  as the players' proxies do.
+- Nothing of this is in a snapshot, fingerprint, replay or the lockstep path;
+  smooth motion never sees the figures (they are drawn at the present's own
+  time, so they move smoothly at 60 and 144 Hz alike); `DW4_GHOSTS=0` turns
+  them off (test runs). The sender reads its facts from the engine
+  (`GameEngineLink::presence`: the action's current clip and loop mode, the
+  POWERSOCKET weapon, whether the action switch shows the model) and writes
+  nothing.
+- On the own screen the figures go where the name tags go: none while the
+  own game loads, plays a scene or a demo, or shows a menu stage (they fade
+  out over 0.35 s, a stage load drops them at once). A status, shop or talk
+  window of the own player leaves them standing behind it like the stage's
+  other models (only the tags hide), so opening a menu never makes them
+  vanish and come back.
+
+**At most nine** figures (a room has ten members), the nearest to the own
+player. A form whose package is still loading shows once it is ready (it fades
+in then); the packages of members anywhere in the room are loaded ahead, so a
+member who comes back from a field is usually ready. Measured (P1, three hidden
+clients, 13 forms loaded one after another): 0.5-5 ms of reading and about
+1 ms of parsing per package on the worker, the figures' own work at most
+0.3 ms a pass on the main thread, no longer present when a form appeared (the
+longest presents, 60-95 ms, were the screenshots' read-backs).
+
+**Camera.** A figure turns semi-transparent (to 35 %, eased over 0.2 s) when it
+stands in the own player (every member enters its own lobby at the same entry
+point, so a newcomer stands inside the others' figures), between the camera
+and the own player, or within 60 units of the camera. A fading figure draws its
+nearest surface's depth first and then its colour where that depth is, so it
+never shows its inside or its far side through the near one. In the lobby
+rooms the camera stays high above the floor, so a figure blocks the own player
+only when it stands right in front of it, which the own-player rule covers.
+
+**Wire (PRESENCE2, 6.3 and the appendix).** PRESENCE stays as it was; round 60
+adds PRESENCE2 (client 0x14, server 0x90; first 0x8F, which round 62's
+NETSTAT holds in the field: moved in the fix round): a version byte (1), the PRESENCE
+fields, then the motion clip (0-16 of A-Z a-z 0-9 _; empty: unknown), flags
+(1 the clip loops, 2 busy: a status or shop window or a talk is open, the
+figure stands and the tag hides; in a field since round 63 the member's own
+status window sets busy, so members of another instance of that stage see no
+tag for it while its own instance's members see "Kim is in the menu"; an
+own talk sends the presence with an empty stage, so the others drop it as
+for any hidden tag), a warp counter (the sender counts its stage
+loads and every step that moved its figure more than 24 units, far beyond a
+run's 0.7: receivers never glide across a change), the sender's clock in
+milliseconds (wrapping) and the weapon package (0-24 characters). The clock is
+the time of the step whose place the packet carries, on a steady field grid
+(`Session::track_figure`: one field after the step before, at most 50 ms
+behind the wall clock; after 100 ms without a step the poll time), not the
+time of the poll that sends it: a sender at 144 Hz polls between its 60 Hz
+steps, and its poll times put the places up to 13 % off their spacing. HP and
+MP above their maximum (a script's `MDLaddHp` raises them above it) go as the
+maximum. In PRESENCE2
+the stage is empty only while the figure is really gone (a load, a scene, a
+menu stage, the action switch hiding the model); a window keeps the stage and
+sets busy. A member sends it ten times per second while its figure moves,
+turns or changes its clip or flags and five times per second while nothing
+changes (about 70 bytes each: a full room in one lobby relays about 6 KB/s to
+each member).
+
+**Leaving.** A member that leaves its stage shows nowhere from that moment
+until its next stage load: a departure (the stage announces its NEXTSTAGE,
+HEADING: the lobby gate, a mat's scene and fade) or a barrier sends an empty
+stage at once and keeps the stage empty until the load serial moves on (at
+most 10 s), and a load or title screen that begins without either sends one
+empty stage (`Session::depart`, `hide_presence`). The hub forwards that empty
+stage to the members still in the stage it left, whose figure fades out
+there. Before (the round 60 review), the figure faded out on the mat with the
+mat's scene, the end of the scene showed it on the mat again on its own
+machine until NEXTSTAGE parked it, and that last packet stood on the others'
+screens for the two seconds a silent track stays (scenario P3, 16).
+
+**Versions fail safe.** A client sends PRESENCE2 only after a WELCOME with the
+presence-v2 flag (2); an older hub never sets it (and would close a connection
+on an unknown frame), so a new client on an old server sends PRESENCE and shows
+the others' figures from PRESENCE alone (no clip or weapon: a figure runs or
+stands by the speed of its packets). An older client ignores the flag bit and
+never gets a 0x90 frame: the hub sends PRESENCE2 only to members that send
+PRESENCE2 themselves (`HubMember.PresenceV2`) and PRESENCE, the same subset,
+to the others, so old and new clients could share a room (round 60 left the
+protocol number at 45: nothing of the lockstep changed; round 63 raised it to
+46 for its own reason, 5.3, so since then the two speakers meet only at an
+older hub or with a later PRESENCE2 version - scenario P2 plays the old
+client with `DW4_ONLINE_TEST_PRESENCE1`). A later version keeps the layout and
+appends: the hub reads and checks its version 1 part and forwards only that,
+written at version 1 with the flags version 1 knows (counted as
+`presence_version`), so it never passes on what it cannot check and the
+member's figure still shows; a client takes what it knows. Every version stays
+within 256 bytes (version 1 takes at most 105); the hub drops a larger
+PRESENCE2 unread (counted as `presence_oversize`). Scenario P2 (16)
+plays a new and an old member in one lobby (`DW4_ONLINE_TEST_PRESENCE1`
+makes a development client speak PRESENCE only, as before round 60 or
+against an older hub).
+
+**The hub's bounds** (`RoomHub.OnPresence2`, `PresenceMsg.Implausible`,
+`Presence2Msg`): a malformed frame (lengths, a clip or weapon outside its
+characters, a non-finite position) closes the connection like any malformed
+frame; an implausible one is dropped and counted while the connection stays:
+a form above 15, a coordinate beyond 100,000, a yaw beyond two turns, a level
+above 999, an unknown flag. HP and MP above a known maximum go on as the
+maximum (the engine allows them above it, so dropping the frame would hide a
+member's tag and figure). PRESENCE of an older client is held to the same
+bounds (it drives a ghost figure too). The rate is a token bucket per member
+(12 a second, 3 at once; more is dropped and counted); PRESENCE keeps its
+150 ms rule. The
+hub also sends a member's presence to the members still in the stage it just
+left (another stage, or hidden while it loads), so its tag and figure go at
+once instead of after the two seconds a silent track takes.
+
+**Interpolation (`PresenceTracks`).** PRESENCE2 packets keep the sender's clock
+and are drawn 0.16 s behind the newest (one 100 ms interval and room for
+jitter), between the two packets around that time, the yaw the short way
+round; past the newest packet a member goes on along its last movement for at
+most 60 ms, then holds. The offset to the receiver's clock aims at the
+smallest arrival minus sent of the last 20 packets (the one the network held
+up least, so a late packet does not shift the others; a slower route or clock
+drift moves it up as the window moves on) and the drawn offset moves towards
+it by at most 2 % of the time that passes: the drawn time never jumps, it runs
+at most 2 % faster or slower. Round 60 first kept the smallest offset seen and
+raised it by 2 ms per packet: the drawn time ran 2 % slow and jumped forward
+at every new smallest offset, a saw the review measured as an uneven walk
+(8.5 % standard deviation of the per-picture step, single pictures 1.85x the
+even step on loopback, 3.65x with 30 +- 20 ms of jitter). Measured now with
+the same harness (`presence2_smooth`): at most 3 % off the even step and a
+standard deviation of at most 0.9 % for senders and pictures at 60 or 144 Hz,
+on loopback and with 30 + 40 ms of jitter. A change of the warp counter, a step faster than 900
+units per second or longer than 120 units, a new stage or instance and a
+restarted sender clock start a new segment: the old figure fades out where it
+was and a new one fades in at the new place (no glide). The remote name tags
+take the same sample, so a tag never trails its figure. PRESENCE packets keep
+their old rule (arrival times, 0.2 s behind).
+
+**Tests.** `dw4_ghosts_tests` (placement, list order, camera fade; with the
+game data a form loaded in the background, faded in, posed, its shadow proxy,
+a jump and a form change faded over, the cap of nine; weapons: no package
+that is not a weapon, the sword drawn, a flood of 200 names kept to 16
+packages without dropping the held one), `online_wire_tests`
+(PRESENCE2 round trip, golden bytes shared with the relay's `WireGoldenTests`,
+versions, malformed frames), `online_session_tests` (the sender's clock and
+jitter, warps, extrapolation, busy, yaw; PRESENCE2 only after the WELCOME flag,
+ten or five a second; `presence2_smooth`: an even walk for senders and
+pictures at 30, 60 and 144 Hz with jitter and a route that gets faster or
+slower; `presence2_walk`: the step clock over the fake hub; `presence2_departure`:
+hidden from a departure to the next stage, gone at once at a barrier, HP above
+the maximum), the relay's `HubPresenceTests` (the WELCOME flag,
+PRESENCE2 to PRESENCE2 members and PRESENCE to the others, the bounds, HP
+above the maximum clamped, the 256-byte bound, PRESENCE by the same bounds, the
+token bucket, leaving a stage, a later version's version 1 part), and the
+real-client scenarios P1, P2 and P3 (16).
 
 ## 13. Discord
 
@@ -5397,13 +6392,13 @@ anyway; joining goes through the room list.
 
 | Area | Change |
 | --- | --- |
-| Relay | `DW4Online.Relay`: DW4R2 hub replacing the splice: one connection per member, frames, instance groups (solo-led and sealed), server-paced sealing at 59.94 Hz on a dedicated timer thread with immediate fill, delay suggestions from the arrival margins, event stamping, snapshot and log store with canonical hashes and fork lists (6.8), state delivery for join / co-arrival / resync / resume with its own rate limit, fingerprint vote, presence fan-out, pings, the 64 KB/s bucket for game frames |
+| Relay | `DW4Online.Relay`: DW4R2 hub replacing the splice: one connection per member, frames, instance groups (solo-led and sealed), server-paced sealing at 59.94 Hz on a dedicated timer thread with immediate fill, delay suggestions from the arrival margins, event stamping, snapshot and log store with canonical hashes and fork lists (6.8), state delivery for join / co-arrival / resync / resume with its own rate limit, fingerprint vote, presence fan-out (round 60: PRESENCE2 with its bounds and token bucket, the stage a member left, 12.1), pings, the 64 KB/s bucket for game frames |
 | Rooms | `RoomService`: instances as lockstep groups (id, stage, visit, context hash, slots, parent and fork frame, departing, boss lock, joinable), barrier decisions DISSOLVE / co-arrival / JOIN / NEW with holds and the boss choice (3.4), catch-up estimates from the members' replay rates, forks of both kinds, in-band JOIN and LEAVE, preferred slots, no instance end when its first member leaves (`EndInstanceLocked` goes), room-scoped relay tickets, the settings hash, the relay connection as heartbeat. `POST /rooms/{code}/stage` and `/stage/leave` are retired; the room state lists instances with stage and members. Room settings gain camera mode and light mode |
 | Story | migration with `online_story`; `StoryMerge` in the domain with the golden vectors; plausibility table from the census; pending sets with STORY_ACK; the owner-away setting with the session's dropped set; `GET /online-character` composes, `PUT` ignores story bytes; `GET /rooms/{code}/story` for the website and debugging |
 | Character | (round 64 design, 9.1) four boxes per account; `online_slots`, `online_slot_stats`, `online_forms`, `online_devices`, `online_disks`, `online_cards`, `online_rewards` by box, the persistent `/play` binding, the history with its changes and the client's record, refused uploads, edit drafts, the relay's visits by sequence and box, the breaker's state; `GET /online-characters` composes, `PUT /online-characters/{box}` (ETag of generation and revision; a staff revision in between is merged, never 409) validates by the rule table (refuse / flag / off per code, refusing only what the upload changed, against the new-character record for a new box), `POST .../{box}/play`, a reset per box; staff edits on the website (with a preview) and in HeidiSQL (after a quiet time, not applied edits kept as drafts) with completions, the merge, *Reload now* and audit rows; box locks for every writer; the migrator's data step converts today's blob rows inside the started mark |
 | Database | (round 64 design, 9.1.3) hashes stored as hex and addresses as text in their tables, record and file blobs in side tables, virtual columns for the story's phase, keys and counters and the migrations' checksums, the `v_` views; the `game_*` tables (with `game_enemy` and `game_stage_enemies`) imported from the deploy-time export |
 | Achievements | catalogue migration to the client's ids and thresholds (built in S2: migration 0009 (0008 is `online_story`), `data/online/achievements.json`, `roomPlayers`, owner-only story challenges; 11) |
-| Config | `Sealing:MaxDelayTicks` (15, measured in S1, 6.4), `Sealing:LateTarget` (0.001), `Relay:ReconnectSeconds` (10), `Relay:LagLeaveSeconds` (10), `Relay:StateBytesPerSecond`, `Instances:CoArrivalHoldMs` (3000), `Instances:JoinHoldSeconds` (30, measured in S1, 3.4), `Instances:MaxCatchUpSeconds` (30), the flood and recovery limits of the S1 reviews (`Relay:MaxQueuedBytes` 4 MiB, `Relay:MaxQueuedStateBytes` 24 MiB, `Relay:StateBytesPerMinute` 64 MiB, `Relay:MaxConcurrentStateBuilds` 2, `Instances:LoneBarrierMs` 1000, `Instances:MaxAheadSeconds` 15, `Instances:ResyncLimit` 3 in `Instances:ResyncWindowMinutes` 10, 6.6-6.10), `Rooms:StoryWhileOwnerAway` (drop, built in S2), `Instances:StoryBurst` (10) and `Instances:StoryMessagesPerMinute` (60, S2); round 64 design: `OnlineCharacter:Rules:Actions:<code>` (9.1.6), `OnlineCharacter:Rules:BreakerConsecutive` (2) and `BreakerGlobal` (false), `OnlineCharacter:LeaveRoomOnRefusal` (true), `OnlineCharacter:VisitPendingSeconds` (90), `OnlineCharacter:DropPlusMargin` (10), `OnlineCharacter:EditQuietSeconds` (120), `OnlineCharacter:RequireGameData` (false), `OnlineCharacter:RejectedUploadDays` and `VisitDays` (30), `GameData:Directory`; `Play:CurrentProtocol` follows the client. `Sealing:StallMs` and `Instances:MaxJoinLogMinutes` of revision 1 are gone |
+| Config | `Sealing:MaxDelayTicks` (15, measured in S1, 6.4), `Sealing:LateTarget` (0.02 since the review of round 62, 0.001 in round 62: the share of late pads in the delay rule's ten-second window that counts, with three different seconds), `Relay:ReconnectSeconds` (10), `Relay:LagLeaveSeconds` (10), `Relay:StateBytesPerSecond`, `Instances:CoArrivalHoldMs` (3000), `Instances:JoinHoldSeconds` (30, measured in S1, 3.4), `Instances:MaxCatchUpSeconds` (30), the flood and recovery limits of the S1 reviews (`Relay:MaxQueuedBytes` 4 MiB, `Relay:MaxQueuedStateBytes` 24 MiB, `Relay:StateBytesPerMinute` 64 MiB, `Relay:MaxConcurrentStateBuilds` 2, `Instances:LoneBarrierMs` 1000, `Instances:MaxAheadSeconds` 15, `Instances:ResyncLimit` 3 in `Instances:ResyncWindowMinutes` 10, 6.6-6.10), `Rooms:StoryWhileOwnerAway` (drop, built in S2), `Instances:StoryBurst` (10) and `Instances:StoryMessagesPerMinute` (60, S2); round 64 design: `OnlineCharacter:Rules:Actions:<code>` (9.1.6), `OnlineCharacter:Rules:BreakerConsecutive` (2) and `BreakerGlobal` (false), `OnlineCharacter:LeaveRoomOnRefusal` (true), `OnlineCharacter:VisitPendingSeconds` (90), `OnlineCharacter:DropPlusMargin` (10), `OnlineCharacter:EditQuietSeconds` (120), `OnlineCharacter:RequireGameData` (false), `OnlineCharacter:RejectedUploadDays` and `VisitDays` (30), `GameData:Directory`; `Play:CurrentProtocol` follows the client. `Sealing:StallMs` and `Instances:MaxJoinLogMinutes` of revision 1 are gone |
 | Website | the room page shows instances per stage (built in S2: `/rooms` lists each room's instances by stage with the client's stage names from `data/online/areas.json`, "2 together" / "alone" / boss fight / leaving, the hub stages last; names only for signed-in members of the room); round 64 design (9.1.12): player profiles with the four boxes, every form with its picture, stats and gear in the game's colours, the current Digimon as the profile picture, pictures under `/art/` from the export, the admin character editor |
 | Deploy | fixed-key self-signed certificate and the pin script (10); port 52041 as before (built in S2: `tls-key.ps1`, `print-pins.ps1`, the pin build step, DEPLOY.md 4, 6.1, 6.4); round 64 design (9.1.11): `--export-web` on the user's PC, the folder copied to `GameData:Directory`, `CREATE VIEW, SHOW VIEW, DROP` on `dw4online.*` for the restricted database user (checked by the migrator before it starts), the HeidiSQL guide starting at the `v_` views |
 | Tests | unit tests for sealing schedules and fills, events, forks, barrier decisions (holds, co-arrival, context key) and merge vectors; integration tests with scripted fake clients; end-to-end tests with the real game client (16) |
@@ -5414,7 +6409,11 @@ anyway; joining goes through the room list.
   campaign tools and the direct `--host` / `--join` sessions never turn it on.
 - The camera mask 0 is today's camera and traversal code, unchanged.
 - The Lua overrides and wrappers are registered only online.
-- Draw filters (item label lines, exit prompts, scoped scenes) act only online.
+- Draw filters (item label lines, exit prompts, the members' own windows and
+  scenes) act only online. A member's own window or scene (5.3) exists only
+  online outside the hub stages: offline no scope is ever entered, so the
+  messenger, the window programs, the text lines, the demo counts and the
+  sound output run the original code.
 - New port events are observe-only (not in fingerprint or snapshot).
 - The title menu's third entry exists only while the host sets
   `Engine::title_online_entry` (offline with the online screens); test runs,
@@ -5476,7 +6475,7 @@ anyway; joining goes through the room list.
 | S5 | everybody falls: game over, dissolve into solo lobbies | S1 |
 | S6 | boss mat: gather, and *Go without them* (participants boss-locked, the others a joinable instance) | S3 |
 | S7 | story trigger by one member (stagGF03 math00) while the other is elsewhere | S3 |
-| S8 | status window of one member while the other fights far away (scoped) and near (original) | S3 |
+| S8 | status window of one member while the other fights far away and near: the member's own window, nothing pauses (round 63: M1) | r63 |
 | S9 | pit: one member falls and respawns alone, no fade on the other screen | S3 |
 | S10 | disconnect and reconnect within ten seconds; and after the timeout | S4 |
 | S11 | injected desync (test hook) and resync; a resync beyond the limit continues alone | S1 (S11a, S11b: `DW4_ONLINE_TEST_DESYNC` on the shorter / the longer member, resync, equal after), S4 |
@@ -5484,6 +6483,8 @@ anyway; joining goes through the room list.
 | S13 | room of ten: instances 4 + 4 + 2 plus solo members, 30 minutes | S4 |
 | S14 | owner-away policies drop (removal at the barrier, notice) / hold / apply | S2 |
 | S14p | owner present: a guest's new story value reaches the owner's `online_story` within ten seconds (`scenario.json` "story_saved") and the owner's own instance only at its next barrier | S2 |
+| S14z | an owner without an online story starts at zero (8.6): the guest's lobby while the owner sits at the title is dropped (*not_started*), its barrier removes it with the notice, the owner's lobby starts the story | S2 (round 59) |
+| S14zb | the same in the most common flow (round 59's verification, OZR): the guest also plays the first briefing (phase 2) before the start and stays in stagML02 until the owner's lobby gave the room phase 1; phase 2 is dropped, its barrier removes it, no revision reaches phase 2 | S2 (round 59's verification) |
 | S15 | save room upload, 409 from a second machine (`character_test.py` C4; C2 the same after a stage change's upload) | S2 |
 | S16 | quest and story in stag0401: a quest-1 member arrives at point 3 while a story member plays there: separate instances, both keep their state; two members on quest 1 share one | S1 |
 | S17 | two members take the area gate 2 s apart (co-arrival, one entry scene) and 8 s apart (hold, then join) | S1 |
@@ -5493,9 +6494,14 @@ anyway; joining goes through the room list.
 | S21 | B+X+START held for 4 s on slot 1: no reboot anywhere, *Leave room?* on slot 1's machine | S1 |
 | S22 | a joiner whose target leaves the stage during the catch-up (fallback NEW) or forks (follows the instance id) | S1 |
 | S23 | boss-locked target: *Wait for them* (joins after the boss falls) and *Go alone* | S3 |
-| S24 | map recorder (dng102b3) read far from the partner (scoped, local freeze) and near (original) | S3 |
+| S24 | map recorder read while the partner moves: the reader's own scene, the floor map on its screen only (round 63: M2 in dng101b1; dng102b3 with the offline two-member harness) | r63 |
+| M1 | own menus (5.3): a alone opens its status window among the enemies and is hit; b joins while it is open, comes over and fights the goburi that go on hitting a; a's menu while b fights near it; both menus at once; a's menu while b walks far away; a talks with the field recorder while b moves; screenshots from both machines (`"shots": true`, the scripts' `shot NAME`) | r63 |
+| M2 | own scenes (5.3): a and b enter dng101b1 together (both wait on matz00 for each other); b opens its menu among the e_nume while a fights beside it and is hit in it (its window's HP line follows); a reads the map recorder (talk window and floor map) while b walks about; screenshots from both machines | r63 |
 | S25 | Trailmon ride (dng412b3) with one member not aboard: no fork, the rider moves alone | S3 |
 | A1 | online achievements: S5's run with achievements on; each machine reports its own player (online_join in its solo lobby, first_defeat in the sealed field) with the ranked context, the counters at the end; the server holds them (`scenario.json` "achievements") | S2 |
+| P1 | ghost figures in the lobby: three members (k7, k10, k2); one stands, one walks around it and stops right in front of it, the third shows another form every 6 s (`DW4_ONLINE_TEST_FORM`, the form PRESENCE2 names; the engine's stays), leaves through the lobby gate for a field (stag0101), falls there and comes back after the game over; `"shots": true` takes the scripts' `shot` pictures (hidden 1920x1009, widescreen, MSAA 4, all tags) and the `ghosts` condition waits on the figures a client shows | 60 |
+| P2 | ghost figures with an older client: two members (k7, k10), b speaks PRESENCE only (`DW4_ONLINE_TEST_PRESENCE1`, as a client before round 60 or one of an older hub); each sees the other's figure, without weapon and with run or wait by the speed of the packets (the hub turns a's PRESENCE2 into PRESENCE for b); b walks around a and stops right in front of it; pictures from both | 60 |
+| P3 | ghost figures, a member leaving over a mat: a (k7) stands by the lobby's mat matz00 and takes a picture every 45 frames while b (k10) walks over it into stagml12; a's trace every 10 frames: b's figure fades out on the mat and never shows again (no later segment of b, never two figures), b's trace has its departure | 60 fix |
 | D1 | a new account: Create Digimon (its `/play` with the new-character record), the first stage change: box 1's rows in the tables (SQL), `v_characters` and `v_character_devices` readable, the profile shows the box with its face picture | D |
 | D2 | four boxes: characters made in boxes 1 and 2 in two sessions, the character select shows both; the save room's copy of box 1 into box 3 is not uploaded (notice) and gone at the next entry; the profile picture follows the bound box; a forged upload for box 3 is `wrong_box`; `/play` for box 2 inside a stage is refused, at the title after "Continue? No" accepted | D |
 | D3 | a staff edit while the player is offline (an `UPDATE` of BITS and of a form's level, as HeidiSQL sends it, row by row): processed after the quiet time, the next entry's engine has them (trace), an `sql_edit` revision with the completed EXP, an audit row `character_edit` | D |
@@ -5593,7 +6599,7 @@ before round G where it applies):
 | G13 | flag 503 and dropped values (revision 2): (a) `Rooms:StoryWhileOwnerAway = drop`, the owner (phase 2 without 503) leaves the room, the guest enters stag0001: `story_dropped keys=flag:503`, the barrier out of the training (into stag0101 or the lobby) removes 503 with the notice, and back in the lobby the gate leads to stag0001 again; (b) the same with a new owner whose game has not entered a stage (round 59's not_started) |
 | G14 | "Continue? No" (revision 2): the guest loses every life in stag0101 and answers *No*: back at the title, the next Game Start gives exactly the room story again (no own key, no leftover of the last visit beyond the room story) and the room's difficulty |
 | G15 | a 409 after the save room (revision 2): the guest saves in the save room, then the same account's character is saved elsewhere (a PUT through the API with the server's revision, C2's way), the guest's next stage-change save gets 409: the copy in `backups/` and the reloaded card hold its own story bytes, the notice comes, the running engine keeps the room story |
-| G16 | the owner's own steps (revision 2): a new owner (no `online_story`, round 59's zero start) plays from the Game Start through the first briefing (phase 2) into stag0001 within five minutes; the guest stays in its lobby: the room story has phase 2 within about 20 s of the owner's step (`story_saved`), and the guest's next stage change takes it to the gate of stag0001. Counter-proof on round 59: phase 2 waits, is refused with stage once the owner left stagML02, and the room story stays at phase 1 |
+| G16 | the owner's own steps (revision 2): a new owner (no `online_story`, round 59's zero start) plays from the Game Start through the first briefing (phase 2) into stag0001 within five minutes; the guest stays in its lobby: the room story has phase 2 within about 20 s of the owner's step (`story_saved`), and the guest's next stage change takes it to the gate of stag0001. Counter-proof on round 59's first fix commit 57568ec (before its fix round built the queue): phase 2 waits, is refused with stage once the owner left stagML02, and the room story stays at phase 1 |
 
 Unit tests: ctest `online_story` (the census tables with 503 and the key
 setter stages; golden cases: 503 merged by OR, applied at a barrier into
@@ -6105,10 +7111,11 @@ ROSTER at its own merge. The interfaces as pinned:
   condition). A room whose owner has no `online_story` row has the empty
   story (revision 0): a new owner's game starts from a new game's story, and
   so does every member's.
-- *Protocol*: `kOnlineProtocol` 45 (round S2; 44 was S1) for the REST
-  `protocol`, the settings hash and the rooms. The server lists and admits
-  only rooms of the client's own protocol, so S1 and S2 clients never meet
-  (an S1 client would desynchronize at its first barrier).
+- *Protocol*: `kOnlineProtocol` 45 (round S2; 44 was S1; 46 since round 63,
+  5.3) for the REST `protocol`, the settings hash and the rooms. The server
+  lists and admits only rooms of the client's own protocol, so S1 and S2
+  clients never meet (an S1 client would desynchronize at its first barrier;
+  a 45 client would pause its instance for a menu).
 - *Uploads and reports*: the online character's PUT context and the
   achievements' reports carry the same numbers: `players` the own stage
   instance (1-4), `roomPlayers` the room (1-10).
@@ -6294,7 +7301,7 @@ Goal: every case of the table in section 5 behaves as decided.
 | Lane | Scope |
 | --- | --- |
 | classes | the script class table and its generator (with `local_scene`, `gather`, `warp`, `boss_intro`, `boss_end`), MATisAllPlayer per class, in-stage forks before story triggers, boss and story mats with *Go without them*, boss locks set and cleared in the simulation, the boss choice at arrival, Trailmon without a fork (participants only), the 20 direct-NEXTSTAGE exits, dngq6b01 as `gather`, joiners' entry without `first.lua` checked across stage types |
-| scenes | first task: what the messenger pause and the SOUND freeze protect inside a window (scripted runs with each of them left out, against the original); then the proximity rule (5.3) for `local_scene` and the status window: command scoping that sticks to the script run and its demo records, the local freeze zone, the per-slot demo viewer, draw filters for windows, overlays and fades, DMgetCount online, one window per instance; save room and call shop rules |
+| scenes | (the status window, talks and map recorders: done in round 63, 5.3) the per-slot demo viewer for camera tours, tutorials and shaking mats as own scenes; save room and call shop rules |
 | world | per-member pits without the instance-wide steps, *Give up* across stage types, game over and quest rules confirmed, session values across forks and joins (the census classes), the EXP rule chosen in question 7, puzzle mat *Waiting for* hints, NINZU behaviour documented, the local HUD highlight |
 | bots-scenarios | FollowBot and the campaign bot online, scenarios S4, S6-S9, S19 (story trigger), S20, S23-S25, an online two-player story segment (leader and follower) through one area including a dungeon boss |
 
@@ -6312,7 +7319,7 @@ Depends on: S1 (S2 for the save room rules), the answers to questions 6 and 7
 | Lane | Scope |
 | --- | --- |
 | resync | the server's vote with diagnostics, resync by replay with the catch-up limit (beyond it: continue alone), RESUME with missing ticks, LEAVE timeouts, catch-up progress with expected duration |
-| latency | delay tuning from the S1 matrix and S12; a UDP transport for INPUT / SEALED if the matrix showed TCP's loss stalls unacceptable; lag indicators |
+| latency | delay tuning from the S1 matrix and S12; a UDP transport for INPUT / SEALED if the matrix showed TCP's loss stalls unacceptable; lag indicators (round 62, `fix-r62netlag`, after the field report of 31.10: the delay rule, the join's grace, the playout drain, the network indicator and `saves/online.log`, measured in 6.4; its review fixed the 60 Hz beat, held buttons through late pads, the 2 % rise, the message numbers, DW4Online 0.1.3; UDP still open) |
 | determinism | the `dw4::sim` libm routing to MSL routines in online sessions (6.12) and the removal of the FMA3 gate, mod contents in the data hash, version gate, a two-machine test kit and instructions for the user |
 | performance | the cheaper conservative frustum test for extra cameras (strict, no contraction), the picture pass with smooth motion at 144 Hz, cost and replay rate re-measured on the final path (libm routing), a server load test with fake clients (200 rooms) |
 
@@ -6330,7 +7337,7 @@ Depends on: S1-S3.
 
 | Lane | Scope (shaped by the answers in section 18) |
 | --- | --- |
-| presence | ghost models in hub stages if wanted (question 1), roster polish |
+| presence | ghost models in hub stages if wanted (question 1), roster polish. *Ghost figures built in round 60 (r60ghosts, 12.1) at the user's request of 31.10* |
 | travel | warp to a friend's stage from the lobby if wanted (question 4); a *play alone* switch if wanted (question 8) |
 | saves | the upload policy chosen in question 3; second local player if wanted (question 5) |
 | release | README "Online co-op" rewritten, this document updated to what was built, field test checklist for the user (deploy, pin, firewall), domain switch prepared as a build constant |
@@ -6341,6 +7348,148 @@ over the deployed server (deployment stays the user's step). A buffer round
 for what that field test finds is expected.
 
 Depends on: S4 and the answers.
+
+### Round 60 (r60ghosts): ghost figures in the hub stages
+
+Goal: the user's decision of 31.10 after the first test with a friend over
+the real server ("you only see yourself"; question 1): in a member's solo hub
+instance the other room members of the same hub stage appear as their
+Digimon, look only, and nothing of it reaches the simulation. Built as 12.1
+describes: on the client the presentation-only renderer
+(`src/game/ghost_figures.{hpp,cpp}`, the hooks in `game_main.cpp`), the
+PRESENCE2 sender (`Session::send_presence`, `track_figure`, the read-only
+facts of `GameEngineLink::presence`) and the receiver's interpolation
+(`PresenceTracks`); on the hub `Presence2Msg`, `RoomHub.OnPresence2` and
+`FanPresence` with the WELCOME flag; scenarios P1 and P2 (16). The lane of
+round S5 called *presence* is this round's work.
+
+Looked at in the pictures of P1 and P2 (hidden 1920x1009, widescreen, MSAA
+4, from every client): the figures stand on the floor with their shadow and
+face where they walk (a run from (60, -30) to (79.6, -54.4) faces 2.47, the
+direction's angle; the trace's rebuild of the own player's facing from its
+yaw is 0.0000 off), they play the sender's clips (`waitS`, `runS`) with its
+weapon, the form change of the test hook crossfades, a figure walking in
+front of the own player turns faint and the own player stays visible, c's
+figure goes while c plays the field and fades in again at the lobby's entry
+after c's game over, and c's own trace shows no figure in the field. With
+the PRESENCE-only member of P2 each side sees the other's figure without
+weapon, running and standing by the packets' speed. Nothing needed a change
+after these pictures.
+
+Checked on the branch head (the release build with tests and the
+`DW4_ONLINE_DEV` build, both from the same tree): ctest 45 of 45
+(`dw4_ghosts_tests` with the game data: 65 checks); online off `det.sh`
+4004f056 / audio 396cb219 in every run (the release build twice, the
+development build once); r25c 10 of 10 with 1,748,011 frames, every segment
+as before; the server's unit tests 190, integration and end to end 90
+passed and 1 skipped against a private MariaDB with a fresh data directory;
+on hidden real clients P1 and P2 and the 22 scenarios of rounds S1 and S2
+(S1, S2, S3, S5, S11a, S11b, S14, S14a, S14h, S14p, S16, S17a, S17b, S18,
+S18b, S19a, S19b, S19c, S21, S22a, S22b, A1, three at a time): every member
+passes through its solo lobby with the others' figures and the shared field
+instances keep equal net fingerprints (3,060 comparisons, the only two that
+differ are S11a's and S11b's injected desyncs before their resync); the 9
+fake-client scenarios; the 8 UI scenarios.
+
+Open after the round: a server built before this round has no PRESENCE2,
+so until the user's server is updated a new client shows the figures from
+PRESENCE alone
+(without weapon, run or wait by the packets' speed; 12.1 "Versions fail
+safe"). Figures in a field or dungeon (members of other instances there)
+were not asked for; they stay name tags.
+
+**Review fixes (same branch).** The round's review found two things a player
+would see. A member that left the lobby over a mat faded out on the mat, came
+back there about three seconds later (the end of the mat's scene showed its
+model again on its own machine until NEXTSTAGE parked it, and that packet
+went out) and stood two seconds until the packet turned stale: a departure or
+a barrier now hides the member at once until its next stage load (12.1
+"Leaving", scenario P3). And the walk of a figure was uneven: the drawn clock
+offset rose 2 ms a packet and dropped back at every new smallest one (a saw:
+single pictures up to 1.85x the even step on loopback, 3.65x with jitter),
+and a 144 Hz sender stamped its poll time (+-13 %): the offset now moves at
+most 2 % towards the smallest lag of the last 20 packets and the packets
+carry their step's time (12.1 "Interpolation"; the review's harness on the
+new code: at most 3 % off the even step for 60 and 144 Hz on both sides,
+with and without jitter). Of the minors: HP or MP above the maximum no longer
+drop a PRESENCE2 (clamped on the client and in the hub), PRESENCE of an older
+client is held to PRESENCE2's bounds, every PRESENCE2 version stays within
+256 bytes (a larger one is dropped unread), weapon names from the network
+load only as weapon packages and at most 16 are kept, the ghost list and
+shadow outlive the draw block (the renderer keeps the shadow's address) and
+the development ID pass uses the picture's own shadow, `main` is merged in,
+and round 59's branch (fix-r59s2) adds no conflict of round 60's (its two
+with `main`, `game_main.cpp` and the server README, are round 62's and 59's).
+`main` brought round 62 meanwhile, whose NETSTAT holds server type 0x8F in
+the field since DW4Online 0.1.2: round 60 had given 0x8F to PRESENCE2 to
+clients, and a round 60 client would have dropped its connection on every
+NETSTAT of the user's server. PRESENCE2 to clients is 0x90 now (both
+registries know it, and it is informational: one that does not decode is
+skipped); the next free numbers are 0x15 and 0x91 (6.3).
+
+Checked on the fixed head with round 62 merged in (release and
+`DW4_ONLINE_DEV` builds from one tree): ctest 45 of 45 (`dw4_ghosts_tests` 70
+checks, `online_session_tests` 190, `online_wire_tests` with both type
+registries; `presence2_smooth`, `presence2_walk` and `presence2_departure`
+fail on the code before the fixes); online off `det.sh` 4004f056 / audio
+396cb219 in all six runs (the release build twice, the development build
+once; the same before the merge); on hidden real clients all 29 game
+scenarios (the 22 of rounds S1 and S2, A1, round 62's L1, L1s, L2 and L3, P1,
+P2, P3; three at a time): 4,280 fingerprint comparisons, the only two that
+differ are S11a's and S11b's injected desyncs before their resync. S19b
+failed once in that batch: member a's fight step killed every goburi near it,
+so its next step (walk into them until it falls) found none and stood at
+full HP until the timeout, its 1,002 shared fingerprints equal; S19b alone
+passed (288 s), and before the merge it passed in the batch. In P1 c's figure
+fades out at the lobby gate and shows again only at the lobby's entry after
+c's game over; in P3 b's figure fades out on the mat and never shows again
+(the pictures every 45 frames and a's trace every 10 frames). the 8 UI scenarios;
+the server's unit tests 212, integration and end to end 90 passed and 1 skipped against a private MariaDB with a fresh data directory (before the merge one run of ServiceHostTests failed once on the order of two FAIL log lines with the HTTP port busy, then passed six times; nothing of this round touches the service host).
+
+### Round 63: own menus (built)
+
+The user's decision of 2026-10-31 (5.3, question 6): a member's status
+window, NPC talks and map recorders are its own and pause nothing, near or
+far, also alone. Built on main 87d9f0d in branch `feat-r63ownmenus`:
+own window programs per slot, the scene scope with its narrowed commands, the
+members' own copies of window models, cursors and text lines, the picture
+and sound filters, membership and exit rules for busy members, the online
+script's `menu`, `browse`, `talkto`, `shot` and conditions `menu`, `menus`,
+`talking`, `scenes`, `lost`, `enemy`, run.py's `"shots"`, the protocol 46 (a 45 client
+would pause for a menu and desynchronize). Checked: the pause analysis of 5.3,
+ctest 44/44 (the `online` scenario "dng101b1 own menus"), the real-client
+scenarios M1 and M2 with screenshots from both machines (every instance's
+net fingerprints equal at every compared tick), the S1 real-client scenarios
+17/17 unchanged, the offline two-member harness in dng102b3 (`DW4_ONLINE=3
+DW4_CAMERAS=3`, the map recorder from views 0 and 1), offline `det.sh` twice
+(4004f056 / 396cb219), r25c 10/10 (1,748,011 frames), the save state suite
+17/17.
+
+Seen on the way (not a round 63 matter): a member who reached dng101b1 15 s
+after its partner got `OtherContext` and an instance of its own (the session
+context, 3.7, had changed meanwhile); M2 therefore lets both wait on the mat.
+
+Left for later: camera tours, tutorials and shaking mats as own scenes (they
+need a per-slot demo viewer); the story scenes the instance shares stay the
+original by decision.
+
+The review found a blocker (two own talks at once shared the stage's Lua talk
+globals: a recorder scene that never ended, wrong exchanges) and three
+should-fix points; the fix round made talks wait for each other (one NPC talk
+per instance at a time, as in local co-op), keeps the talk globals per scope,
+lets merchants trade with the talker's folders, checks a gift partner's room
+when given and narrows `MODELCTRL` / `PLAYER -1` in a scope to the own slot.
+
+Checked on the merge with main (e4d30bb: round 60's ghost figures and round
+62's lag fix; the `shot` step and run.py's `"shots"` are main's, the shots of
+M1/M2 now lie in the scenario folder at 1920x1009; the name tag rules combine
+round 60's `hidden(engine, windows)` / `window_open` with the own slot): ctest
+45/45, offline `det.sh` 4004f056 / 396cb219, on hidden real clients P1, P2,
+P3, M1, M2 (twice), L1, S1, S11a and S18 all passed (M1 98, M2 250 and 281,
+L1 101, S1 178, S11a 121 with only its injected desync before the resync,
+S18 175 fingerprint comparisons equal), the pictures show the ghosts' tags in
+the lobby, "aaaaaaaa is in the menu" over a member in its own window and the
+own windows only on their owner's machine.
 
 ### Round G (proposed r64): guests on the host's story
 
@@ -6353,10 +7502,10 @@ story, and it is told whose story it plays.
 | --- | --- |
 | story (sets and keeper) | 503 as a story value (census class and setter, `story_sets.json`, `online_story_sets.inc`, the server's sets, `session_values.txt`); the key setter stages (census from the stage data's item drops and the r25c FLAGFOLDER rises; the keeper refuses a key from another stage); `story::apply` and `holds_dropped` with the barrier's target (503 not into stag0001); the rebase derivation for saved stories (C++, C#, Python, golden vectors); the keeper's queue of earned values (reason *queued*, merged when due by the relay), the owner without round 59's spacing; keeper tests; the protocol version |
 | client | the call shop closed online (`callshop.lua` wrapper, hint) and `Engine::common_rebuilt` with its application; the Game Start's hold until the confirmed story (with G7's dev-build switch); the card store's story override for a guest's session and the entry's rewrite of an old cache; the own story bytes in `CharacterSync` (uploads, recovery, 409 reload); *queued* in the session; the toast, the F1 / room view story line and the "moved on" notice; the online difficulty dialog rule; `numemon_freed` by mask |
-| scenarios | the production-like `seed_story`, G1-G16 with counter-proofs on main (G16 on round 59), the regression S2, S3, S5, S14, S14h, S14a, S14p, S14z, S16, S17a and C1-C3 |
+| scenarios | the production-like `seed_story`, G1-G16 with counter-proofs on main (G16 on 57568ec), the regression S2, S3, S5, S14, S14h, S14a, S14p, S14z, S16, S17a and C1-C3 |
 | hub extras (only if question 9 says per player or question 10 says (b)) | rewards: the `online_rewards` store (round 64 design, 9.1.9: keyed by account and box, the box always 1 until round D) and its composition, the keeper routing reward flags to the sender's own store, the room story blob without them, the title's overlay and the personal-class extension at joins and DISSOLVE; quest gates: the owner's tiers from his newest online character record (from round D the box his `/play` binding names, 9.1.9) in every BARRIER_OK into a hub, the wrapper after the ML11-13 `start.lua` derivation |
 
-Done when: G1-G16 pass (G1, G3, G4 and G11 fail on main, G16 on round 59:
+Done when: G1-G16 pass (G1, G3, G4 and G11 fail on main, G16 on 57568ec:
 the counter-proofs); the regression scenarios pass; ctest; the server's
 unit and integration tests; online off bit-identical (`det.sh` 4004f056 /
 audio 396cb219 twice, r25c 10 of 10 with 1,748,011 frames, the save state
@@ -6369,12 +7518,11 @@ Depends on: round 59 merged (the same files: `character.cpp`,
 rewards as room story, quest gates (b), so the hub extras lane runs with
 the quest gates only). The user's step: deploy the server release and the
 client together (the protocol rises); the rebase fixes saved phase-2
-stories at the next room open. Until round G, round 59's spacing stalls a
-new owner's phase 2 (G16's counter-proof); if that is wanted earlier, the
-queue and the owner's exemption can go into round 59's fix round alone
-(server only and without a protocol change: the keeper answers a queued
-value with *wait* as today, the client's resends do no harm, and the
-keeper merges it when due).
+stories at the next room open. Round 59's fix round built the queue and
+the owner's exemption on the server alone (without a protocol change: the
+keeper answers a queued value with *wait*, the client's resends do no harm,
+and the keeper merges it when due), so G16's counter-proof on round 59 no
+longer fails; round G adds the reason *queued* and the twins.
 
 ### Before round D: the Cheats tab in rooms (a small fix)
 
@@ -6588,7 +7736,8 @@ the user's OK while he does not play.
 
 ### Answers (user, 2026-10-29)
 
-1. Lobby: solo (the default).
+1. Lobby: solo (the default). 31.10, after the first test over the real
+   server: the other members appear as ghost figures there (12.1, round 60).
 2. Story while the owner is away: drop (the default).
 3. Saving the online character: **also automatically** at stage changes and
    when leaving the room, in addition to the save room (not the default;
@@ -6596,9 +7745,20 @@ the user's OK while he does not play.
 4. Warp to a friend: no, walking only (the default).
 5. Two players on one PC online: no, one player per PC (the default).
 6. Menus and talks far from the others: (a) only that member pauses, the
-   enemies near it freeze too (the default).
+   enemies near it freeze too (the default). **Replaced on 2026-10-31**
+   after the first field test ("every member plays for themselves, as in a
+   real online game"): a member's status window, NPC talks and map recorders
+   are its own - only on its screen, they never pause the instance, give no
+   protection (its Digimon can be hit), near or far and also alone (5.3,
+   round 63).
 7. EXP: (a) only members near the kill share it (the default).
 8. Play alone in a room: no switch (the default).
+
+### Answer (user, 2026-10-31)
+
+A room owner without an online story starts at zero: the progress a guest
+made in the room before must not become the new owner's story (8.6, "An owner
+without a story starts at zero").
 
 ### Questions of round 61 (2026-10-31)
 
@@ -6767,9 +7927,12 @@ player, means per box with four characters per account: 9.1.9.)
   keep it small; the S4 load test measures it.
 - **Holds at arrival** lengthen the loading screen by up to 3 s (co-arrival)
   or 15 s (entry scene), only when another member is involved.
-- **Scoped scenes** are new behaviour: the local freeze zone protects the
-  member in the scene from nearby enemies only; enemies walking in from
-  outside it are not frozen. Question 6 settles the trade.
+- **Own windows and scenes** are new behaviour by the user's decision (5.3):
+  a member in its menu or a talk can be defeated meanwhile (its window then
+  closes). The window models of a member are copies made in the simulation:
+  a model the classification misses (an overlay every member should see,
+  used inside a talk) would show only on the talker's screen; the names are
+  listed in `online_scenes.cpp` (own_copy_model).
 - **Forks** discard the other side's script run; state changes before the fork
   exist on both sides (deliberate, instance-class values travel with the
   line). Two instances of one stage do not merge again before the next stage.
@@ -6851,8 +8014,9 @@ player, means per box with four characters per account: 9.1.9.)
   50 ms) exceeds it, so without UDP the user's "sometimes 80 ms" would only
   shrink, not go. Round R therefore needs S4's UDP transport and measures
   the frames with a standing frontier in its jitter and loss cells.
-- **Message numbers**: rounds 60 and 62 both claim server type 0x8F
-  (PRESENCE2, NETSTAT); round 65's numbers (6.13.7) leave 0x8F-0x91 to that
+- **Message numbers**: rounds 60 and 62 both claimed server type 0x8F
+  (PRESENCE2, NETSTAT); round 60 moved PRESENCE2 to clients to 0x90 (NETSTAT
+  keeps 0x8F); round 65's numbers (6.13.7) leave 0x8F-0x91 to that
   integration.
 
 ## Appendix: evidence
@@ -6995,12 +8159,13 @@ Client to server:
 | 0x11 | RATE | replay rate u32 (steps per second) |
 | 0x12 | PONG | nonce u32, client ms u64 |
 | 0x13 | BYE | reason u8 (leaves the relay at once; the room membership stays) |
+| 0x14 | PRESENCE2 | version u8 (1), the PRESENCE fields, clip str (0-16 of A-Z a-z 0-9 _), flags u8 (1 the clip loops, 2 busy), warp u8, sender ms u32, weapon str (0-24, the same characters); only after a WELCOME with flag 2; a later version appends, within 256 bytes in all (the hub forwards its checked version 1 part at version 1, drops a larger one; round 60, 12.1) |
 
 Server to client:
 
 | Type | Name | Payload |
 | --- | --- | --- |
-| 0x80 | WELCOME | member u8, inst u32, visit u32, slot u8, mode u8 (0 hub, 1 solo-led, 2 sealed), stage str, last tick u32 (0xFFFFFFFF none), delay u8, max catch-up seconds u16, flags u8 (1 resumable: the member still holds that slot; send RESUME) |
+| 0x80 | WELCOME | member u8, inst u32, visit u32, slot u8, mode u8 (0 hub, 1 solo-led, 2 sealed), stage str, last tick u32 (0xFFFFFFFF none), delay u8, max catch-up seconds u16, flags u8 (1 resumable: the member still holds that slot; send RESUME; 2 presence v2: the hub takes PRESENCE2) |
 | 0x81 / 0x82 | SEALED / LIVE | inst u32, visit u32, first tick u32, count u16, tick records (SEALED to members, LIVE to observers catching up) |
 | 0x83 | JOIN_REQ | inst u32, visit u32, slot u8, leader's delay u8 |
 | 0x84 | BARRIER_OK | old inst u32, old visit u32, decision u8 (1 NEW, 2 JOIN, 3 DISSOLVE, 4 CO_ARRIVE), new inst u32, new visit u32, stage str, point u8, own slot u8, slot map 4 x i8 (old slot -> new slot or -1), mode u8, delay u8, co-arrival count u8 + (slot u8, member u8, carry blob) each, story revision u32, story blob (1,100 bytes: flags 1024, folder 12, counters 16 x i32; the same bytes for every member of a group; empty: none), dropped blob (u16 flag count + u16 flags, u8 key count + u8 keys, u8 counter count + u8 counters; empty: none), notice u8 (0 none, 1 other context, 2 full, 3 too long to catch up, 4 hold expired, 5 went alone, 6 join failed), name count u8 + names |
@@ -7008,12 +8173,14 @@ Server to client:
 | 0x86 | STATE_DATA | inst u32, visit u32, total u32, offset u32, chunk (at most 60 KiB): the state blob |
 | 0x87 | PRESENCE | member u8, then the PRESENCE fields (members in the same stage outside the own instance) |
 | 0x88 | RESYNC | inst u32, visit u32 (a STATE_DATA with purpose resync follows) |
-| 0x89 | STORY_ACK | revision u32, story blob (1,100 bytes or empty), flags u8 (1 the answer to this member's STORY), refused count u16 + (kind u8: 0 phase, 1 flag, 2 key, 3 counter; index u16; reason u8: 1 owner away (dropped), 2 held, 3 stage, 4 phase jump, 5 rate, 6 not a member, 7 not story, 8 limit) each (round S2, 8.7) |
+| 0x89 | STORY_ACK | revision u32, story blob (1,100 bytes or empty), flags u8 (1 the answer to this member's STORY), refused count u16 + (kind u8: 0 phase, 1 flag, 2 key, 3 counter; index u16; reason u8: 1 owner away (dropped), 2 held, 3 stage, 4 phase jump, 5 rate, 6 not a member, 7 not story, 8 limit, 9 wait (round 56), 10 not started (dropped; round 59, 8.6)) each (round S2, 8.7) |
 | 0x8A | ROOM | notice u8 (1 joined, 2 left, 3 owner present, 4 owner away, 5 lagging, 6 lag over, 7 connected, 8 disconnected), member u8, account u64, name str, flags u8 (1 owner) |
 | 0x8B | PING | nonce u32, server ms u64, margin ms i16 (the member's 0.1 % arrival margin), suggested delay u8 (once per second) |
 | 0x8C | CLOSE | reason u8 (1 left, 2 kicked, 3 room closed, 4 replaced, 5 protocol, 6 abuse, 7 timeout, 8 server stopping), text str |
 | 0x8D | ROSTER | count u8 + (member u8, stage str, inst u32, level u16, hp u16, max hp u16, flags u8: 1 connected, 2 lagging, 4 owner) (once per second) |
 | 0x8E | REASSIGN | old inst u32, visit u32, new inst u32, from tick u32, mode u8, flags u8 (1 departing): after a fork the receiver's copy is the child; its stream comes with the new id from that tick |
+| 0x8F | NETSTAT | rtt ms u16 (median of the newest 30 PONG round trips, host-loop stalls out), spread ms u16 (p90 above it), d u8, margin ms i16 (the delay rule's 0.5 % quantile), sealed u32, filled u32, late u32 (the member's current stream), flags u8 (1 in a stream); once per second after PING (round 62; clients skip unknown server frames, so no protocol change; 0x8F is NETSTAT's for good, 6.3 "Message types") |
+| 0x90 | PRESENCE2 | member u8, then the PRESENCE2 fields at version 1 (to members that send PRESENCE2; the others get the same member's PRESENCE) |
 
 **State blob** (reassembled STATE_DATA): purpose u8 (1 join, 2 co-arrival, 3 resync, 4 resume), slot u8, codec u8
 (0 = raw records), snapshot blob (as the leader uploaded it), fork count u8 + (tick u32, leaver mask u8, kind u8,
