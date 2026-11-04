@@ -7778,6 +7778,78 @@ which the journal and the SUBWND lane cover); the answer to question 15. The
 user's step: the server release and the client together (the protocol
 rises).
 
+### Round J (built, r70): instant joins and checkpoints
+
+Built in branch `feat-r70join` from main b226bc0 (progress and lane plan:
+`docs/ROUND_J_NOTES.md`). The joiner of a running field rebuilds from a
+member's tick state instead of replaying the visit; the loading screen
+says "Joining..." without a countdown.
+
+*Engine* (`include/dw4/engine/tick_state.hpp`, `src/engine/tick_state.cpp`,
+`src/engine/tick_state_managers.cpp`): `Engine::state_safe`,
+`save_tick_state(raw / canonical)`, `apply_tick_state`, `tick_state_hash`
+(XXH64 of the canonical form, an own implementation: the core links no
+zstd), `load_end_frame`, `topology_hash`. Sections in a fixed order: the
+topology journal (package loads, a member's own window copies and line
+copies of round 63, re-run on the reader before the topology check), the
+structure pass (the weapon parts a player's GENERATE hangs on its actors,
+made again), the engine (clocks, pads, flags and counters, online fields,
+the exit port with its demo record, now a named functor), the generator,
+the game system, the messenger, the demo works, the Lua VM
+(`Lua4Vm::save_state`: globals, both arenas with slot layout, generations
+and free lists, the collector's counters; closures by program and prototype
+path, values restamped), the scene nodes (a mask and only the field groups
+that differ from a fresh `Node`), the attributes `edit_attribute` handed
+out, and one section per manager (every RAM's mutable fields, the SNDF
+driver with banks and bank slots by name, the CRI streams). TEXTCTL lines
+keep their text and NUMBERCTRL redraws its digits on the reader (the
+joiner's picture). A restored engine loads the session's common sound banks
+before the stage's (`SoundManager::restore`), as the session had them.
+Measured (stag0101 / stag0102 / dng101b1 / stagBS02, two to four players,
+this machine busy with builds): raw 1.07-1.25 MB, zstd level 3 82-85 KB;
+save 3.4-5.2 ms, canonical save and hash 3.4-5 ms in the test and 5-13 ms
+on the hidden clients, apply 2.5-4.5 ms, the donor's upload (save, hash,
+zstd) 10-11 ms.
+
+*Completeness* (ctest `tick_state`, game data): stag0101 x2 with a member
+who joins after the load, dng101b1 x2 with a member's own status window,
+stag0102 x3 with both, stagBS02 x4; at state-safe ticks idempotent bytes,
+divergence trials (1-60 wrong-pad ticks, apply in place, the true pads:
+every net fingerprint equal), rebuilds from the visit's load snapshot and
+load ticks equal to the end of the visit with the same bytes, and a classic
+joiner's canonical states equal the straight run's: 178 trials, 18 rebuilds,
+0 differences. `tools/online/tickstate_diff.py` names the first differing
+section and byte.
+
+*Relay* (DW4Online): STATEHASH (0x15), CHECKPOINT (0x16), CHECKPOINT_BAD
+(0x17), CHECKPOINT_ASK (0x92) as 6.13.7, gated by the room's protocol 47
+and WELCOME flag 4; the agreed K, the store (two per instance; a fork's
+child keeps its parent's), a join's order (fresh, asked and awaited, newest
+stored, classic), STATE_DATA codec 2 (all forks, the load ticks, the
+checkpoint, the ticks from T), periodic uploads every
+`Instances:CheckpointPeriodicMs` (30 s) while joinable instead of every
+agreed `C_k`, resyncs from the newest agreed checkpoint, the suspicion
+rule, `Instances:CheckpointJoins`. A STATEHASH tick is the first tick not
+in the state.
+
+*The join* (J1, real hidden clients, b enters a's field a minute after a):
+BARRIER_OK (JOIN) at 157,637 ms of the relay's clock, CHECKPOINT_ASK at
++1 ms, the checkpoint stored at +13 ms, STATE_DATA (110 KB) at +18 ms, the
+rebuild 136 ms (snapshot, 680 load ticks of the original load timing,
+apply, hash), 3 ticks replayed, READY at +303 ms, the JOIN stamped at
++307 ms; the classic join of the same scenario before (run 1, its
+fallback) replayed 3,622 ticks in 852 ms.
+
+*Found on the way*: the members' STATEHASH differs where engines of one
+instance really differ outside the fingerprint (the SNDF's bank order of a
+restored engine; fixed); round 63's context gap (3.7).
+
+*Open*: SUBWND window trees (a member's open status window makes its ticks
+unsafe; a join then waits for the donor's next safe tick or takes the newest
+stored checkpoint), the music position of a joiner (its streams continue
+from its own load), STATEHASH's cost (one frame's 5-13 ms every ten
+seconds), the scenarios J15 / J30 / J15x4 / JW / JF / JR / JL.
+
 ### Round R (proposed r67): rollback for the own player
 
 Goal: 6.13.6 (the feedback's "sometimes 80 ms"): the own character reacts in
