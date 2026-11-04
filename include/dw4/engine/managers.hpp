@@ -389,6 +389,11 @@ public:
     // (the /s member's SE sets of those models, the sounds they name with
     // their files, and the sfp banks of those files); returns the banks added.
     std::vector<std::string> add_donor_sounds(Engine& engine, const IgbDocument& preliminary, const std::set<std::string, std::less<>>& models);
+    // Data Overflow (H2): sounds of another stage's sound list by name (its
+    // /s member: the BGM and jingle streams of the run's phases), with their
+    // files and sfp banks; the stage's own of the same name stay. Returns the
+    // names added.
+    std::vector<std::string> add_named_sounds(Engine& engine, const IgbDocument& preliminary, const std::set<std::string, std::less<>>& names);
     // The SE cues of a model's set that could not play: a sound the stage
     // lacks or one no loaded sfp bank holds (randomizer sweep). nullopt: the
     // model has no SE set at all.
@@ -1663,8 +1668,26 @@ public:
             float delay{}, end{}, elapsed{};
             Vec3f offset{}, size{};
             bool started{};
+            // Data Overflow (H6, port_hitbox only): the tag its hits carry
+            // (ModelScriptContext::port_tag) and the aim: the box turned to
+            // the world yaw `yaw` (atan2(dx, dz) of the bearing, radians)
+            // instead of the model's, pushed `shift` units along it.
+            std::int32_t tag{};
+            bool aimed{};
+            float yaw{}, shift{};
+            // A port box strikes each target once (a sequence's box hits again
+            // whenever the target's reaction lets it; `repeat` keeps that, a
+            // PCBA body box's push) and, with max_targets above 0, at most
+            // that many targets (the Art's "pierces").
+            bool repeat{};
+            int max_targets{};
+            std::vector<std::pair<std::string, int>> struck;
         };
         std::vector<Hitbox> hitboxes;
+        // Data Overflow (H6): the run's port hitboxes (an Art's boxes). They
+        // belong to no sequence: a sequence start keeps them (the Digimon
+        // walks on), a GENERATE drops them. Empty in every other engine.
+        std::vector<Hitbox> port_hitboxes;
         // Effect subcommands (SETEFFECT, 80310B50 / start 80310340).
         struct Effect {
             std::string model, sequence;
@@ -1766,6 +1789,16 @@ public:
 
     const ModelRam* player(int index) const;
     ModelRam* find(std::string_view name, int index);
+    // Data Overflow (H6, SURVIVAL.md 6.3): an Art's box on a generated model
+    // for its frames without a sequence or animation (kind 10000 PCWA, the
+    // delay and length in frames, offset and size as a sequence's HITBOX
+    // Set; end = delay + length). It fires from the model's next update on,
+    // after its own subcommands, with CHKBULLET and the hit scripts as usual;
+    // the hits carry box.tag. Only a run engine's director calls it.
+    void port_hitbox(ModelRam& ram, const ModelRam::Hitbox& box) { ram.port_hitboxes.push_back(box); }
+    // Data Overflow (4.8): invulnerable frames on a model (the MUTEKI
+    // subcommand's count, which a sequence start keeps while positive).
+    void set_muteki(Engine& engine, ModelRam& ram, float frames);
     // A player's DOWNDATA entry or an enemy's DOWN value (0 before its first
     // status command); what GETPEBASEWORK hands the FIGHTCALC paths.
     int down_value(Engine& engine, const ModelRam& ram, int index) const;
@@ -1786,6 +1819,7 @@ private:
     void land_ride(Engine& engine, ModelRam& ram, const Packet& floor);
     void update_hitboxes(Engine& engine, ModelRam& ram);
     void fire_hitbox(Engine& engine, ModelRam& ram, const ModelRam::Hitbox& box);
+    void update_port_hitboxes(Engine& engine, ModelRam& ram); // Data Overflow (H6)
     void update_enemy(Engine& engine, ModelRam& ram);
     void update_ai_map(Engine& engine, ModelRam& ram);
     void update_homing(Engine& engine, ModelRam& ram);
