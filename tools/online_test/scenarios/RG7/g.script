@@ -1,0 +1,9 @@
+# RG7 = G7 (round G-core), guest g (k2 from the card): DW4_ONLINE_TEST_STORY_DELAY=20 makes its client ignore the room
+# story for its first 20 s in the room, so the title's Game Start comes first: the game waits ("Loading the room
+# story..."), no live step runs, then starts with the room story (503 from the rebase, the owner's K0-K2).
+campaign until stage=stagml11
+talk until control,frames>=60
+log in the lobby
+idle until frames>=60 fail flag:503=0,key:2=0
+log the room story after the hold
+idle until frames>=60

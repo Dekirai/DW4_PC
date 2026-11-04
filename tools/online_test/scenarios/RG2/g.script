@@ -1,0 +1,27 @@
+# RG2 = G2 / G3 / G4 (round G-core), guest g: the k2 character is its online character (uploaded before the run, its
+# own online story seeded from the card: phase 2, K0-K2). The title calls it; the Game Start gives it the owner's story:
+# phase 6 and K0-K10 (none of its own phase 2). It saves in the save room (stagML12's save Digi-Elf, stagIS12): the
+# save room writes the engine's records, which hold the owner's story, but its card store writes its own story (run.py
+# "own_story": every used box of the online card and of every backup, the stored story's revision unchanged, the local
+# card folder empty). Then the lobby gate offers stag0401, whose K9 / K10 entrance opens (905).
+campaign until stage=stagml11
+talk until control,frames>=60
+log in the lobby
+idle until frames>=60 fail flag:6=0,flag:2=1,key:9=0,key:10=0
+log the owner's story: phase 6, K0-K10
+mat matz00 yes until stage=stagml12,control
+log in stagml12
+errand save:n_digilfm#0 stagml12 until stage=stagis12
+log in the save room
+campaign until stage=stagml12,control
+log back from the save room
+idle until frames>=60 fail flag:6=0,key:10=0
+log still the owner's story
+mat matz00 yes until stage=stagml11,control
+log back in the lobby
+explore mate00 until onme:mate00
+gate mate00 3 until stage=stag0401,control
+log in stag0401
+idle until frames>=60 fail flag:905=0
+log the K9 / K10 entrance is open
+idle until frames>=120
