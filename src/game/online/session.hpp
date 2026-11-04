@@ -429,6 +429,7 @@ private:
     std::optional<std::uint32_t> load_end_;  // K: the visit's ticks up to its load end
     std::uint32_t next_statehash_ = 0;       // the next checkpoint period's tick
     bool checkpoint_asked_ = false;          // CHECKPOINT_ASK: upload at the next state-safe tick
+    bool periodic_asked_ = false;            // CHECKPOINT_ASK periodic: upload with the next STATEHASH (an agreed tick)
     bool from_checkpoint_ = false;           // this catch-up started from a checkpoint
     double rebuild_ms_ = 0;                  // its rebuild (snapshot, load ticks, apply, hash)
 

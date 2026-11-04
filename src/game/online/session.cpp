@@ -660,7 +660,10 @@ void Session::handle(const w::Frame& frame, double now) {
     case w::Type::checkpoint_ask: {
         const auto m = w::decode_checkpoint_ask(p);
         if (m.inst == inst_ && m.visit == visit_ && (mode_ == Mode::solo || mode_ == Mode::sealed) && !hub_) {
-            checkpoint_asked_ = true;
+            // A periodic ask waits for the next STATEHASH tick: the members' reports make that checkpoint agreed (a
+            // resync takes only an agreed one); a join's ask is answered at the next state-safe tick.
+            if (m.flags & w::CheckpointAsk::periodic) periodic_asked_ = true;
+            else checkpoint_asked_ = true;
             trace("checkpoint asked inst=%u visit=%u tick=%u", inst_, visit_, tick_);
         }
         break;
@@ -1358,6 +1361,7 @@ void Session::begin_visit(double now) {
     load_end_.reset();
     next_statehash_ = config_.checkpoint_period;
     checkpoint_asked_ = false;
+    periodic_asked_ = false;
     from_checkpoint_ = false;
     serial_at_barrier_ = engine_.load_serial();
     hub_ = mode_of_instance_ == w::Mode::hub || is_hub_stage(engine_.stage());
@@ -1864,6 +1868,10 @@ void Session::checkpoint_tick(double now) {
         trace("statehash inst=%u visit=%u tick=%u hash=%016llx k=%u ms=%.2f", inst_, visit_, tick_, static_cast<unsigned long long>(hash),
               *load_end_, (clock_seconds() - t0) * 1000.0);
         next_statehash_ = (tick_ / config_.checkpoint_period + 1) * config_.checkpoint_period;
+        if (periodic_asked_) {
+            periodic_asked_ = false;
+            checkpoint_asked_ = true;
+        }
     }
     if (checkpoint_asked_) upload_checkpoint();
 }

@@ -304,6 +304,8 @@ struct CheckpointBad { // inst | visit | u32 tick | u8 reason | str section
 struct CheckpointAsk { // inst | visit | u32 tick (0: the next state-safe tick) | u8 flags
     std::uint32_t inst{}, visit{}, tick{};
     std::uint8_t flags{};
+    static constexpr std::uint8_t periodic = 1;  // with the next STATEHASH
+    static constexpr std::uint8_t diagnosis = 2;
 };
 struct JoinAt {        // inst | visit | u32 tick J
     std::uint32_t inst{}, visit{}, tick{};
