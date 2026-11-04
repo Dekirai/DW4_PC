@@ -1628,6 +1628,17 @@ answers.
    unlocked in the simulator (only read, never written), or should
    everything be unlocked in the mode itself?
 
+### 17.1 Answers (user, 2026-11-04)
+
+1. NPC: **Gekomon** with the name joke.
+2. Names: **as proposed** (Data Overflow, Sim Bits, Plug Lab, Data Records, Forge, Train).
+3. MP: **cooldowns only; MP pays heals only.**
+4. Controls in a run: **move only** (A uses disks, L opens the disk panel).
+5. Run length: **about 22-25 minutes** (4 phases + the finale; Endless as an option).
+6. Digivolution in a run: **lines with the same weapon class** (e.g. Agumon -> H-Kabuterimon -> Susanomon).
+7. Story link: **forms the story save has reached are unlocked in the mode** (read only, never written); the rest is
+   unlocked in the mode.
+
 ## 18. Revision 2: the critique and the answers
 
 | Finding | Revision 1 | Revision 2 | Where |
