@@ -866,20 +866,44 @@ void ModelCtrlManager::tick_state(TickArchive& a) {
 void ModelCtrlManager::owned_nodes(std::vector<Node*>&) const {}
 void ModelCtrlManager::tick_rams(std::vector<const Ram*>& out) const { ram_list(out, rams_); }
 
-// ---- WEAPON (the bone selects it hangs on the players' actors)
-void WeaponManager::tick_state(TickArchive& a) {
-    base_rams(a, rams_);
-    a.same(std::uint32_t(attached_.size()), "weapon attachments");
-    for (auto& [player, attached] : attached_) {
-        a.same(player, "weapon player");
+// ---- WEAPON (the bone selects it hangs on the players' actors; a player's
+// GENERATE during play makes them, so the structure pass makes them again)
+void WeaponManager::tick_structure(TickArchive& a) {
+    std::uint32_t players = std::uint32_t(attached_.size());
+    a.io(players);
+    if (a.reading()) {
+        if (players > 4) throw TickStateError("weapons", "implausible attachments");
+        for (int p = 0; p < 4; ++p) remove(p);
+    }
+    auto it = attached_.begin();
+    for (std::uint32_t i = 0; i < players; ++i) {
+        std::int32_t player = a.reading() ? 0 : it->first;
+        a.io(player);
+        auto& attached = attached_[player];
         a.nodes(attached.actors);
-        a.same(std::uint32_t(attached.nodes.size()), "weapon parts");
+        std::uint32_t parts = std::uint32_t(attached.nodes.size());
+        a.io(parts);
+        if (a.reading()) {
+            if (parts > 64) throw TickStateError("weapons", "implausible parts");
+            for (std::uint32_t k = 0; k < parts; ++k) {
+                auto select = std::make_unique<Node>();
+                select->kind = NodeKind::bone_select;
+                attached.nodes.push_back(std::move(select));
+            }
+        }
         for (auto& n : attached.nodes) {
             a.io(n->name);
             a.io(n->bone_index);
+            a.nodes(n->children);
         }
+        if (a.reading())
+            for (auto* actor : attached.actors)
+                if (actor)
+                    for (const auto& n : attached.nodes) actor->children.push_back(n.get());
+        if (!a.reading()) ++it;
     }
 }
+void WeaponManager::tick_state(TickArchive& a) { base_rams(a, rams_); }
 void WeaponManager::owned_nodes(std::vector<Node*>& out) const {
     for (const auto& [player, attached] : attached_)
         for (const auto& n : attached.nodes) out.push_back(n.get());

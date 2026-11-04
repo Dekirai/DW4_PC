@@ -1359,6 +1359,10 @@ public:
     // (none by default), the scene nodes it made itself (not the SceneCache's)
     // in a fixed order, and its RAMs in a fixed order (RAM ids).
     virtual void tick_state(TickArchive& archive) { (void)archive; }
+    // The structure a manager makes during play and can make again from the
+    // state (its owned nodes), applied before the topology check; the
+    // archive's ids name the SceneCache's nodes only.
+    virtual void tick_structure(TickArchive& archive) { (void)archive; }
     virtual void owned_nodes(std::vector<Node*>& out) const { (void)out; }
     virtual void tick_rams(std::vector<const Ram*>& out) const { (void)out; }
 

@@ -41,3 +41,19 @@ story-point credit).
 - 2026-11-04 21:30: worktree reused (the first run committed nothing).
   Lane 0 done (c57d19b): `HubInstance.ArrivalContext` / `EntryContext`,
   `HubRules.ContextMatches`; HubLogicTests 41/41.
+- 22:30: lanes 1-7 built far enough for joins in fields: `tick_state.hpp/.cpp`,
+  `tick_state_managers.cpp`; every manager's section, the SNDF driver and
+  the CRI streams, the Lua VM (`Lua4Vm::save_state`), the exit port, the
+  topology journal (packages, window copies, line copies) and the structure
+  pass (weapon parts). ctest `tick_state` (4 scenarios: stag0101 x2 with a
+  mid-visit join, dng101b1 x2 with an own status window, stag0102 x3 with
+  both, stagBS02 x4): every trial and rebuild equal, idempotent bytes.
+  det.sh 4004f056 / 396cb219 twice (build/det_j1.log).
+  Still unsafe: a running SUBWND program (own status windows, JW); the
+  window trees are not serialized yet. TEXTCTL texts (presentation) not yet.
+  Costs on this machine: raw 2.0-2.4 MB, save 6-10 ms, hash 6-10 ms, apply
+  3-5 ms (too slow for STATEHASH every 600 ticks; optimize).
+- Next: cost (canonical form without the node table where unchanged?),
+  then the relay lane (STATEHASH 0x15, CHECKPOINT 0x16, CHECKPOINT_BAD 0x17,
+  CHECKPOINT_ASK 0x92, STATE_DATA layout 2), then the client lane and the
+  J scenarios.

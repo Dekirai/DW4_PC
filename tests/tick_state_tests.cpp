@@ -19,6 +19,7 @@
 #include "dw4/engine/engine.hpp"
 #include "dw4/engine/managers.hpp"
 #include "dw4/engine/online.hpp"
+#include "dw4/engine/online_membership.hpp"
 #include "dw4/engine/tick_state.hpp"
 
 #include <cctype>
@@ -121,6 +122,9 @@ struct Scenario {
     // Diagnosis: the straight run keeps its raw states of these frames, and
     // a trial's true-pad steps are compared with them section by section.
     std::uint64_t dump_from = 0, dump_to = 0;
+    // A member joins (online_join_player, slot `players`, p_girumon) at the
+    // first joinable tick from this frame (0: none).
+    std::uint64_t join_at = 0;
     std::array<PadSample, 4> pads(std::uint64_t frame) const {
         auto out = pads_at(frame);
         if (menu_at && frame + 30 >= menu_at && frame <= menu_at + 1000) {
@@ -168,7 +172,19 @@ struct Straight {
     std::vector<std::array<PadSample, 4>> load_log;      // the visit's steps from the load step to the load end
     std::uint64_t load_frame{}, load_end{};
     std::map<std::uint64_t, std::vector<std::uint8_t>> states; // Scenario::dump_from..dump_to
+    std::uint64_t joined{}; // the pre-step frame of the join (0: none)
 };
+
+PlayerCarry joiner_carry() {
+    PlayerCarry c;
+    c.slot = GameSystem::PlayerSlot{};
+    c.slot.digimon = "p_girumon";
+    c.slot.weapons = {"w_common02", "", ""};
+    c.slot.stats.level = 5;
+    c.personal.gate_stage_name = "GateOff";
+    c.personal.gate_stage_no = -1;
+    return c;
+}
 
 Straight run_straight(const std::filesystem::path& data, const Scenario& sc) {
     Straight out;
@@ -177,6 +193,10 @@ Straight run_straight(const std::filesystem::path& data, const Scenario& sc) {
     std::uint64_t serial = 0;
     for (std::uint64_t i = 0; i < sc.steps; ++i) {
         const auto pads = sc.pads(engine.frame());
+        if (sc.join_at && !out.joined && engine.frame() >= sc.join_at && engine.joinable()) {
+            out.joined = engine.frame();
+            engine.online_join_player(sc.players, joiner_carry(), 0);
+        }
         host_step(engine, pads);
         if (const auto* s = engine.stage_snapshot(); s && s->serial != serial && !out.load_end) {
             serial = s->serial;
@@ -223,6 +243,7 @@ void run_trials(const std::filesystem::path& data, const Scenario& sc, const Str
     std::uint64_t next_trial = 0;
     int reported = 0;
     while (engine.frame() < straight.fingerprints.rbegin()->first) {
+        if (straight.joined && engine.frame() == straight.joined) engine.online_join_player(sc.players, joiner_carry(), 0);
         host_step(engine, sc.pads(engine.frame()));
         const auto frame = engine.frame();
         if (!straight.fingerprints.contains(frame)) break;
@@ -267,7 +288,12 @@ void run_trials(const std::filesystem::path& data, const Scenario& sc, const Str
         if (again == bytes) ++t.idempotent;
         else soft(false, sc.stage + ": not idempotent at " + std::to_string(frame) + " (" + first_differing_section(bytes, again) + ")");
         // The divergence trial.
-        const int window = 1 + int(rng() % 60);
+        int window = 1 + int(rng() % 60);
+        // (No window across the join: its tick comes from the straight run.)
+        if (straight.joined && frame < straight.joined && frame + std::uint64_t(window) + 1 >= straight.joined) {
+            next_trial = straight.joined + 1;
+            continue;
+        }
         const auto nodes_before = engine.scenes().node_count();
         const auto topology_before = engine.topology_hash();
         for (int k = 0; k < window && engine.online().enabled; ++k) host_step(engine, wrong_pads(rng));
@@ -349,6 +375,7 @@ void run_rebuild(const std::filesystem::path& data, const Scenario& sc, const St
     soft(again == bytes, sc.stage + ": the rebuild saves T's bytes (" + (again == bytes ? std::string() : first_differing_section(bytes, again)) + ")");
     int steps = 0;
     while (engine.frame() < straight.fingerprints.rbegin()->first) {
+        if (straight.joined && engine.frame() == straight.joined) engine.online_join_player(sc.players, joiner_carry(), 0);
         host_step(engine, sc.pads(engine.frame()));
         ++steps;
         if (!straight.fingerprints.contains(engine.frame())) break;
@@ -405,10 +432,14 @@ int main(int argc, char** argv) {
                     sc.dump_from = std::uint64_t(std::atoll(argv[7]));
                     sc.dump_to = std::uint64_t(std::atoll(argv[8]));
                 }
+                if (argc > 9) sc.join_at = std::uint64_t(std::atoll(argv[9]));
                 set.push_back(sc);
             } else {
-                set.push_back({"stag0101", 2, {"p_agumon", "p_dorumon"}, 2500, 97});
-                set.push_back({"dng101b1", 2, {"p_agumon", "p_vmon"}, 2500, 97, 700});
+                // (stage, players, species, steps, trial spacing, own window at, dump range, join at)
+                set.push_back({"stag0101", 2, {"p_agumon", "p_dorumon"}, 3000, 61, 0, 0, 0, 1200});
+                set.push_back({"dng101b1", 2, {"p_agumon", "p_vmon"}, 4000, 61, 700});
+                set.push_back({"stag0102", 3, {"p_agumon", "p_dorumon", "p_vmon"}, 4000, 61, 1600, 0, 0, 900});
+                set.push_back({"stagBS02", 4, {"p_agumon", "p_dorumon", "p_vmon", "p_girumon"}, 3000, 61});
             }
             for (const auto& sc : set) run(data, sc);
         } else {

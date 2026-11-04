@@ -36,6 +36,7 @@ constexpr std::uint32_t kMagic = 0x54345744; // "DW4T"
 // Section tags (fixed order).
 enum : std::uint32_t {
     kJournal = 0,
+    kStructure = 9,
     kEngine = 1,
     kGenerator = 2,
     kSystem = 3,
@@ -50,6 +51,7 @@ enum : std::uint32_t {
 const char* section_name(std::uint32_t tag) {
     switch (tag) {
     case kJournal: return "journal";
+    case kStructure: return "structure";
     case kEngine: return "engine";
     case kGenerator: return "generator";
     case kSystem: return "system";
@@ -799,6 +801,9 @@ std::vector<std::uint8_t> Engine::save_tick_state(TickForm form) {
         w.section(tag, bytes);
     };
     section(kJournal, [&](TickArchive& a) { journal_io(a, journal_); });
+    section(kStructure, [&](TickArchive& a) {
+        for (auto& m : managers_) m->tick_structure(a);
+    });
     section(kEngine, [&](TickArchive& a) { tick_engine(a); });
     section(kGenerator, [&](TickArchive& a) { fight::generator().tick_io(a); });
     section(kSystem, [&](TickArchive& a) {
@@ -881,9 +886,24 @@ void Engine::apply_tick_state(std::span<const std::uint8_t> bytes) {
         if (journal_.size() != theirs.size()) throw TickStateError("topology", "the journal's re-run made other entries");
         journal_ = theirs;
     }
+    // The structure the managers make during play (weapon parts), with the
+    // ids of the files and nodes the journal made.
+    if (sections.size() < 2 || sections[1].tag != kStructure) throw TickStateError("header", "no structure");
+    {
+        TickIds early(*this);
+        TickArchive sa(sections[1].bytes, *this, early);
+        try {
+            for (auto& m : managers_) m->tick_structure(sa);
+        } catch (const TickStateError&) {
+            throw;
+        } catch (const std::exception& error) {
+            throw TickStateError("structure", error.what());
+        }
+        if (!sa.at_end()) throw TickStateError("structure", "trailing bytes");
+    }
     if (h.topology != topology_hash()) throw TickStateError("topology", "the topology hash differs");
     TickIds ids(*this);
-    std::size_t index = 1;
+    std::size_t index = 2;
     auto section = [&](std::uint32_t tag, auto&& body) {
         if (index >= sections.size() || sections[index].tag != tag) throw TickStateError("header", "a missing or misplaced section");
         const auto& s = sections[index++];

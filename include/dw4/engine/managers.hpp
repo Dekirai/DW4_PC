@@ -1953,6 +1953,7 @@ public:
     void clear_stage(Engine& engine) override;
     bool command(Engine& engine, Ram& ram, std::string_view command, Packet& packet) override;
     const std::vector<std::pair<std::string, std::string>>* labels(std::string_view weapon) const;
+    void tick_structure(TickArchive& archive) override;
 
 private:
     // Detaches what GENERATE hung on player index's actors.
