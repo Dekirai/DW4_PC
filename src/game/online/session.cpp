@@ -1836,7 +1836,14 @@ Overlay Session::overlay(double now) const {
 void Session::checkpoint_tick(double now) {
     (void)now;
     if (!hub_checkpoints_ || !load_end_ || inst_ == 0) return;
-    const bool due = tick_ >= next_statehash_;
+    bool due = tick_ >= next_statehash_;
+    // A whole period passed without a report (a member since a moment, or
+    // a stretch without a state-safe tick on every machine alike): the
+    // reports go on with the next period.
+    if (due && tick_ >= next_statehash_ + config_.checkpoint_period) {
+        next_statehash_ = (tick_ / config_.checkpoint_period + 1) * config_.checkpoint_period;
+        due = false;
+    }
     if (!due && !checkpoint_asked_) return;
     if (!engine_.state_safe()) return;
     if (due) {
@@ -1948,6 +1955,7 @@ bool Session::rebuild_from_checkpoint(w::StateData& state, double now) {
     from_checkpoint_ = true;
     load_end_ = k;
     tick_ = state.checkpoint_tick;
+    next_statehash_ = (tick_ / config_.checkpoint_period + 1) * config_.checkpoint_period;
     rebuild_ms_ = (clock_seconds() - t0) * 1000.0;
     hub_ = is_hub_stage(engine_.stage());
     trace("state purpose=%u inst=%u visit=%u slot=%u checkpoint=%u k=%u ticks=%zu rebuild_ms=%.1f raw=%zu", unsigned(state.purpose), state.inst,

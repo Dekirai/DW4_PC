@@ -381,7 +381,30 @@ void SoundManager::tick_state(TickArchive& a) {
     auto bank_bytes = [](const std::shared_ptr<const sndf::BankData>& bank) {
         return bank && bank->bank ? bank->bank->bytes() : std::span<const std::uint8_t>{};
     };
-    driver_.tick_io(a, bank_io, bank_bytes);
+    auto slot_io = [&](std::uint8_t& slot) {
+        // A slot as its bank (kind 3: a slot past the list, as it is).
+        std::uint8_t kind = 3;
+        std::string name;
+        if (!a.reading() && slot < banks_.size() && banks_[slot]) {
+            name = banks_[slot]->name;
+            kind = banks_[slot]->common ? 2 : 1;
+        }
+        a.io(kind);
+        if (kind == 3) {
+            a.io(slot);
+            return;
+        }
+        a.io(name);
+        if (a.reading()) {
+            for (std::size_t i = 0; i < banks_.size(); ++i)
+                if (banks_[i] && banks_[i]->name == name && (banks_[i]->common ? 2 : 1) == kind) {
+                    slot = std::uint8_t(i);
+                    return;
+                }
+            throw TickStateError("topology", "the sound bank " + name + " is not loaded");
+        }
+    };
+    driver_.tick_io(a, bank_io, bank_bytes, slot_io);
 }
 void SoundManager::owned_nodes(std::vector<Node*>&) const {}
 void SoundManager::tick_rams(std::vector<const Ram*>& out) const { ram_list(out, rams_); }

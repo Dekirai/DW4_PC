@@ -195,12 +195,15 @@ public:
     void set_master(float gain) { master_ = gain; }
     bool idle() const;
     // The tick state (round J): every field of the game's driver; `bank`
-    // serializes a bank reference as an id, `bytes` gives a bank's bytes.
-    template <class Archive, class BankIo, class BankBytes> void tick_io(Archive& a, BankIo&& bank, BankBytes&& bytes) {
+    // serializes a bank reference as an id, `bytes` gives a bank's bytes,
+    // `slot` a bank slot (the place in the banks list, which another engine
+    // may order otherwise).
+    template <class Archive, class BankIo, class BankBytes, class SlotIo>
+    void tick_io(Archive& a, BankIo&& bank, BankBytes&& bytes, SlotIo&& slot) {
         for (auto& v : voices_) {
             a.io(v.used);
             a.io(v.key);
-            a.io(v.channel);
+            slot(v.channel);
             a.io(v.priority);
             a.io(v.phase);
             a.io(v.seq);
@@ -230,7 +233,7 @@ public:
         for (auto& t : tracks_) {
             a.io(t.flags);
             a.io(t.seq_flags);
-            a.io(t.channel);
+            slot(t.channel);
             a.io(t.id);
             a.io(t.wait);
             bank(t.bank);
@@ -262,7 +265,7 @@ public:
         for (auto& r : ring_) {
             a.io(r.note);
             a.io(r.message);
-            a.io(r.channel);
+            slot(r.channel);
             a.io(r.key);
             a.io(r.velocity);
             a.io(r.seq);
