@@ -124,10 +124,10 @@ first task of the round that needs it (17).
 | Catch-up numbers optimistic, RESYNC unbounded | clients report their replay rate; joins and resyncs limited by the expected catch-up time; beyond it a member continues alone; S1 measures the final path | 6.6, 6.9 |
 | Console reset (B+X+START) reboots every machine | off online; the local combo opens *Leave room?* | 7.4 |
 | Auto-join surprises at puzzle mats and NINZU timers | auto-join stays (user decision); arrival notices, *Waiting for* hints, question 8 (play alone) | 5 |
-| Talks, recorders, camera tours freeze everyone | class `local_scene` with the proximity rule (S3); an S1-S2 limit | 5.3 |
+| Talks, recorders, camera tours freeze everyone | talks and map recorders are the member's own scene (round 63, the user's decision of 2026-10-31); camera tours, tutorials and shaking mats still freeze everyone | 5.3 |
 | Forks without NEXTSTAGE (boss arenas, Trailmon) undefined | in-stage forks: participants keep the instance; Trailmon does not fork (participants only) | 6.7, 5 |
 | A defeated member's camera freezes at the capsule | view of the nearest living member, *Give up* in S1, capsule marker | 4.1, 5 |
-| Status window freezes everyone (S1-S2), unsafe from S3 | S1-S2 original plus feedback; S3 proximity rule with a local freeze zone (question 6) | 5.3 |
+| Status window freezes everyone (S1-S2), unsafe from S3 | the member's own window: only on its screen, nothing pauses, no protection (round 63, question 6 decided again) | 5.3 |
 | EXP to far or idle members | default: only members near the kill share (question 7) | 5 |
 | Story made while the owner is away lingers or vanishes | pending set against the confirmed room story; *drop* removes refused values at the next barrier with a notice | 8.3, 8.6 |
 | Boss-locked target, boss destinations | *Wait for them / Go alone*; the exit prompt names who stays | 3.4, 5.2 |
@@ -4503,7 +4503,8 @@ are `src/game/online/lobby_api.hpp`; the ImGui screens are
   player). They are presentation only and never touch the scene graph.
 - A lagging member's tag shows a connection icon.
 - Notices (presentation, a few seconds at the top): "<name> joined", "<name>
-  left for <stage>", "<name> is in a scene", "<name> has a menu open".
+  left for <stage>". A member in its own status window or talk (5.3) shows
+  "<name> is in the menu" / "<name> is talking" over its name tag (round 63).
 
 ## 13. Discord
 
@@ -5414,7 +5415,7 @@ Goal: every case of the table in section 5 behaves as decided.
 | Lane | Scope |
 | --- | --- |
 | classes | the script class table and its generator (with `local_scene`, `gather`, `warp`, `boss_intro`, `boss_end`), MATisAllPlayer per class, in-stage forks before story triggers, boss and story mats with *Go without them*, boss locks set and cleared in the simulation, the boss choice at arrival, Trailmon without a fork (participants only), the 20 direct-NEXTSTAGE exits, dngq6b01 as `gather`, joiners' entry without `first.lua` checked across stage types |
-| scenes | first task: what the messenger pause and the SOUND freeze protect inside a window (scripted runs with each of them left out, against the original); then the proximity rule (5.3) for `local_scene` and the status window: command scoping that sticks to the script run and its demo records, the local freeze zone, the per-slot demo viewer, draw filters for windows, overlays and fades, DMgetCount online, one window per instance; save room and call shop rules |
+| scenes | (the status window, talks and map recorders: done in round 63, 5.3) the per-slot demo viewer for camera tours, tutorials and shaking mats as own scenes; save room and call shop rules |
 | world | per-member pits without the instance-wide steps, *Give up* across stage types, game over and quest rules confirmed, session values across forks and joins (the census classes), the EXP rule chosen in question 7, puzzle mat *Waiting for* hints, NINZU behaviour documented, the local HUD highlight |
 | bots-scenarios | FollowBot and the campaign bot online, scenarios S4, S6-S9, S19 (story trigger), S20, S23-S25, an online two-player story segment (leader and follower) through one area including a dungeon boss |
 
