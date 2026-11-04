@@ -912,8 +912,11 @@ public sealed class RoomHub
         loser.Resyncing = true;
         loser.ResyncAt = now;
         loser.ResyncTimes.Enqueue(now);
-        SendState(loser, i, StatePurpose.Resync, s);
-        Note("resync", i, ("slot", s), ("member", loser.Index));
+        // Round J (6.13.4): from the newest agreed checkpoint (the ticks since it, under half a second), else the classic way.
+        var cp = CheckpointPathOpen(i) ? i.Checkpoints.LastOrDefault(c => c.Agreed && UsableCheckpoint(i, c)) : null;
+        loser.ResyncFromCheckpoint = cp is not null;
+        SendState(loser, i, StatePurpose.Resync, s, cp);
+        Note("resync", i, ("slot", s), ("member", loser.Index), ("checkpoint", cp?.Tick ?? 0));
     }
 
     private void OnState(HubMember m, StateMsg msg, long now)
@@ -1657,7 +1660,7 @@ public sealed class RoomHub
 
     /// <summary>The donor (the member that reports STATE: connected, longest in the instance, then the lowest slot) uploads its
     /// tick state at its next state-safe tick.</summary>
-    private void AskCheckpoint(HubInstance t, long now)
+    private void AskCheckpoint(HubInstance t, long now, byte flags = 0)
     {
         if (t.Upload is not null && Ms(now - t.CheckpointAskedAt) < _inst.CheckpointWaitMs * 4) return; // one upload at a time
         var donor = t.Seats.Where(x => x.Member.Connected && !x.Member.Resyncing).OrderBy(x => x.Member.InstanceSince).ThenBy(x => x.Slot)
@@ -1665,9 +1668,9 @@ public sealed class RoomHub
         if (donor?.Peer is null) return;
         t.CheckpointAskedAt = now;
         t.Upload = null;
-        donor.Peer.Send(new CheckpointAskMsg(t.Id, t.Visit, 0, 0).Frame());
+        donor.Peer.Send(new CheckpointAskMsg(t.Id, t.Visit, 0, flags).Frame());
         Count("checkpoint_asks");
-        Note("checkpoint_ask", t, ("donor", donor.Index));
+        if (flags == 0) Note("checkpoint_ask", t, ("donor", donor.Index));
     }
 
     /// <summary>STATEHASH (6.13.4): the members' hashes of a checkpoint tick; equal reports make the load end and a stored
@@ -1749,6 +1752,15 @@ public sealed class RoomHub
     /// <summary>CHECKPOINT_BAD (6.13.5): the joiner's rebuild failed; it gets the classic state.</summary>
     private void OnCheckpointBad(HubMember m, CheckpointBadMsg msg, long now)
     {
+        if (m.Joining is null && m.Resyncing && Mine(m, msg.Inst, msg.Visit) is { } own)
+        {
+            Count("checkpoint_bad");
+            Note("checkpoint_bad", own, ("member", m.Index), ("tick", msg.Tick), ("reason", msg.Reason.ToString()), ("section", msg.Section), ("resync", true));
+            MarkSuspect(own, msg.Tick, "resync_bad");
+            m.ResyncFromCheckpoint = false;
+            SendState(m, own, StatePurpose.Resync, m.Slot);
+            return;
+        }
         if (m.Joining is not { } j || j.Target.Id != msg.Inst || j.Target.Visit != msg.Visit) return;
         Count("checkpoint_bad");
         Note("checkpoint_bad", j.Target, ("member", m.Index), ("tick", msg.Tick), ("reason", msg.Reason.ToString()), ("section", msg.Section));
@@ -1860,9 +1872,17 @@ public sealed class RoomHub
             if (m.Slot >= 0 && own.Streams[m.Slot] is { } resynced)
                 resynced.GraceUntil = Math.Max(resynced.GraceUntil, own.NextSeal + (uint)resynced.Delay.Current + 12);
             Count("resync_ready");
-            Note("resync_ready", own, ("member", m.Index), ("tick", msg.Tick), ("fp", msg.NetFp.ToString("x16")));
+            var rebuilt = (msg.Flags & ReadyMsg.FromCheckpoint) != 0;
+            Note("resync_ready", own, ("member", m.Index), ("tick", msg.Tick), ("fp", msg.NetFp.ToString("x16")), ("checkpoint", rebuilt));
             // Its reports from before the resync are its old engine's: they vote on nothing any more.
             foreach (var reports in own.Fingerprints.Values) reports.Remove(m.Slot);
+            if (rebuilt)
+            {
+                // A rebuild from a checkpoint is not independent of the members (6.13.4): it never judges; a desync soon
+                // after it makes the checkpoint path suspect.
+                own.RebuildTick = msg.Tick;
+                return;
+            }
             // The replay's fingerprint is what the log gives at that tick: a member that reported another one has the
             // engine that is off (with two members the vote cannot tell; before, the healthy one was resynced again and
             // again). Its own reports of that tick are checked as they come (OnNetFp).
@@ -2613,6 +2633,10 @@ public sealed class RoomHub
 
     private void HousekeepInstance(HubInstance i, long now)
     {
+        // Round J: while joinable, the donor uploads a checkpoint now and then (resyncs, a donor that does not answer).
+        if (_inst.CheckpointPeriodicMs > 0 && i.Joinable && CheckpointPathOpen(i) && i.Upload is null && i.Barrier is null &&
+            Ms(now - Math.Max(i.CheckpointAskedAt, i.Checkpoints.LastOrDefault()?.At ?? 0)) >= _inst.CheckpointPeriodicMs)
+            AskCheckpoint(i, now, CheckpointAskMsg.Periodic);
         // Round J: joins that waited for the donor's checkpoint long enough take the newest stored one or the classic path.
         foreach (var o in i.Observers.ToList())
             if (o.Joining is { } oj && oj.Target == i && !oj.StateSent && oj.CheckpointWaitUntil != 0 && now >= oj.CheckpointWaitUntil)

@@ -1408,7 +1408,7 @@ void Session::begin_visit(double now) {
 }
 
 void Session::on_state(w::StateData state, double now) {
-    if (state.checkpoint && state.purpose == w::StatePurpose::join) {
+    if (state.checkpoint && (state.purpose == w::StatePurpose::join || (state.purpose == w::StatePurpose::resync && resyncing_))) {
         if (rebuild_from_checkpoint(state, now)) return;
         // CHECKPOINT_BAD went out: the classic state comes next.
         mode_ = Mode::waiting_state;

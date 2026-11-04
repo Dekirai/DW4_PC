@@ -93,6 +93,8 @@ public sealed class HubMember(int index, long accountId, string name, bool owner
     public bool ResumeAllowed { get; set; }
     /// <summary>A fingerprint vote sent RESYNC: the member catches up from the state until its READY (no JOIN follows).</summary>
     public bool Resyncing { get; set; }
+    /// <summary>Round J: the running resync's state came from a checkpoint.</summary>
+    public bool ResyncFromCheckpoint { get; set; }
     /// <summary>When the last RESYNC went out (at most one per Instances:ResyncCooldownSeconds).</summary>
     public long ResyncAt { get; set; }
     /// <summary>A state transfer for this member is being built outside the room lock: nothing is pumped to it meanwhile.</summary>

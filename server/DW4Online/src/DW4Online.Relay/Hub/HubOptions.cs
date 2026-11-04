@@ -33,6 +33,9 @@ public sealed class InstanceOptions
     public int KeepCheckpoints { get; set; } = 2;
     /// <summary>A desync this many ticks after a rebuild from a checkpoint makes the instance's checkpoint path suspect.</summary>
     public int CheckpointSuspectTicks { get; set; } = 1200;
+    /// <summary>While an instance is joinable its donor uploads a checkpoint this often (the newest stored ones serve a join
+    /// whose donor does not answer in time, and every resync); 0: only on demand.</summary>
+    public int CheckpointPeriodicMs { get; set; } = 30000;
     /// <summary>The replay rate (steps/s) assumed for a member that has not reported one (RATE).</summary>
     public int DefaultReplayRate { get; set; } = 3000;
     /// <summary>A HEADING counts for co-arrivals this long after it arrived.</summary>

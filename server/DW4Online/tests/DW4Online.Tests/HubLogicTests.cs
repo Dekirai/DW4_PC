@@ -395,6 +395,37 @@ public partial class HubLogicTests
     }
 
     [Fact]
+    public void A_resync_starts_from_the_newest_agreed_checkpoint_and_its_ready_never_judges()
+    {
+        var h = CheckpointTarget(new InstanceOptions { CheckpointSuspectTicks = 10 });
+        var i = h.I("a");
+        h.Barrier("b", "stag0101");
+        Upload(h, "a", 650, 0xBEEF, [9, 9, 9]);
+        var ok = h.Decision("b");
+        h.Send("b", new ReadyMsg(ok.NewInst, ok.NewVisit, 690, 0, 0, [7], ReadyMsg.FromCheckpoint).Frame());
+        var req = h.P("a").Last(Msg.JoinReq, JoinReqMsg.Parse);
+        h.Send("a", new JoinAtMsg(req.Inst, req.Visit, 720).Frame());
+        h.Log("a", 700, 20);
+        h.Seal(4000);
+        // Both report the same state at 780; the periodic upload of that tick becomes agreed.
+        h.Send("a", new StateHashMsg(i.Id, i.Visit, 780, 0xABCD, 20, 1).Frame());
+        h.Send("b", new StateHashMsg(i.Id, i.Visit, 780, 0xABCD, 20, 1).Frame());
+        Upload(h, "a", 780, 0xABCD, [4, 4, 4, 4]);
+        Assert.True(i.Checkpoints.Last().Agreed);
+        // b's engine goes off: its resync takes the checkpoint of 780.
+        h.Send("a", new NetFpMsg(i.Id, i.Visit, 840, 1).Frame());
+        h.Send("b", new NetFpMsg(i.Id, i.Visit, 840, 2).Frame());
+        Assert.True(h.Mem("b").Resyncing);
+        var blob = StateBlob.Parse(h.P("b").StateBlob());
+        Assert.Equal((StatePurpose.Resync, 780u), (blob.Purpose, blob.CheckpointTick));
+        Assert.False(i.CheckpointSuspect);
+        h.Send("b", new ReadyMsg(i.Id, i.Visit, 840, 1, 0, [], ReadyMsg.FromCheckpoint).Frame());
+        Assert.False(h.Mem("b").Resyncing);
+        Assert.Empty(i.ReplayFp); // never a judge
+        Assert.Equal(840u, i.RebuildTick);
+    }
+
+    [Fact]
     public void Statehash_reports_agree_on_the_load_end_and_messages_round_trip()
     {
         var sh = new StateHashMsg(3, 4, 1200, 0x0123456789ABCDEFUL, 17, 1);
