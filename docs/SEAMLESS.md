@@ -6589,6 +6589,41 @@ PRESENCE alone
 safe"). Figures in a field or dungeon (members of other instances there)
 were not asked for; they stay name tags.
 
+**Review fixes (same branch).** The round's review found two things a player
+would see. A member that left the lobby over a mat faded out on the mat, came
+back there about three seconds later (the end of the mat's scene showed its
+model again on its own machine until NEXTSTAGE parked it, and that packet
+went out) and stood two seconds until the packet turned stale: a departure or
+a barrier now hides the member at once until its next stage load (12.1
+"Leaving", scenario P3). And the walk of a figure was uneven: the drawn clock
+offset rose 2 ms a packet and dropped back at every new smallest one (a saw:
+single pictures up to 1.85x the even step on loopback, 3.65x with jitter),
+and a 144 Hz sender stamped its poll time (+-13 %): the offset now moves at
+most 2 % towards the smallest lag of the last 20 packets and the packets
+carry their step's time (12.1 "Interpolation"; the review's harness on the
+new code: at most 3 % off the even step for 60 and 144 Hz on both sides,
+with and without jitter). Of the minors: HP or MP above the maximum no longer
+drop a PRESENCE2 (clamped on the client and in the hub), PRESENCE of an older
+client is held to PRESENCE2's bounds, every PRESENCE2 version stays within
+256 bytes (a larger one is dropped unread), weapon names from the network
+load only as weapon packages and at most 16 are kept, the ghost list and
+shadow outlive the draw block (the renderer keeps the shadow's address) and
+the development ID pass uses the picture's own shadow, `main` is merged in,
+and round 59's branch (fix-r59s2) now merges without a conflict.
+
+Checked on the fixed head (release and `DW4_ONLINE_DEV` builds from one tree):
+ctest 45 of 45 (`dw4_ghosts_tests` 70 checks, `online_session_tests` 186;
+`presence2_smooth`, `presence2_walk` and `presence2_departure` fail on the
+code before the fixes); online off `det.sh` 4004f056 / audio 396cb219 in all
+six runs (the release build twice, the development build once); on hidden
+real clients all 25 game scenarios (the 22 of rounds S1 and S2, A1, P1, P2,
+P3; three at a time): 3,060 fingerprint comparisons, the only two that differ
+are S11a's and S11b's injected desyncs before their resync; in P1 c's figure
+fades out at the lobby gate and shows again only at the lobby's entry after
+c's game over; in P3 b's figure fades out on the mat and never shows again
+(the pictures every 45 frames and a's trace every 10 frames); the 8 UI scenarios;
+the server's unit tests 191, integration and end to end 90 passed and 1 skipped against a private MariaDB with a fresh data directory (one earlier run of the same tree failed ServiceHostTests' busy HTTP port once on the order of two FAIL log lines; it passed in the six runs after, and nothing of this round touches the service host).
+
 ### Round G (proposed r64): guests on the host's story
 
 Goal: the user's requirement of 31.10 (8.8). A guest's game in a room has
