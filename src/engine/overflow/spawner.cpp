@@ -1,17 +1,21 @@
 // Data Overflow (docs/SURVIVAL.md 4.2-4.4, 13.5): the director's spawner.
 //
 // Enemies come from the phase's pool (its own families weigh 3, the earlier
-// phases' 0.5, so the pool always keeps RAMs in reserve) on a ring around
-// the player: 32-46 units, 26-36 for the slow walkers, 20-25 for a family
-// that never walks (SURVIVAL_O1A.md S1: from 70-95 most families idle; T6's
-// close-in target with a kiting player moved the 40-60 of S1 closer), 70 %
-// of them on the side the player walks towards, out of the picture where a point is (S3), on the
-// arena's walkable cells. The director tops the living count up to A(t)
-// (+ the surges) with at most two spawns every ten steps, makes one enemy a
-// minute Corrupted (HP x 8; the run's damage-taken rule gives it x 1.5),
-// recycles enemies that stay far or stand still, and at 7:30, 12:30
-// and 17:30 encircles the player with the 16 farthest living enemies,
-// generated again in their own RAMs (no new RAM is needed).
+// phases' 0.5, so the pool always keeps RAMs in reserve; a new phase's
+// families rise from 0 over its first 90 s) on a ring around the player:
+// 32-46 units, 26-36 for the slow walkers, 20-25 for a family that never
+// walks (SURVIVAL_O1A.md S1: from 70-95 most families idle; T6's close-in
+// target moved the 40-60 of S1 closer), 70 % of them on the side the player
+// walks towards, out of the picture where a point is (S3; one in the
+// picture enters with SQ_ENTR at least visible_min away, never next to the
+// player), on the arena's walkable cells. The director tops the living
+// count up to A(t) (+ the surges) with at most two spawns every ten steps,
+// makes one enemy a minute Corrupted (HP x 8; the run's damage-taken rule
+// gives it x 1.5), and brings enemies back near the player that stay far,
+// stand still or were left behind by a moving player (4.3: no closer for
+// 4 s while farther than 40), with the HP they had; at 7:30, 12:30 and 17:30
+// it encircles the player with the 16 farthest living enemies, generated
+// again in their own RAMs (no new RAM is needed), four a step.
 #include "dw4/engine/overflow_director.hpp"
 
 #include "director_util.hpp"
@@ -94,7 +98,7 @@ void OverflowDirector::build_walkable(Engine& engine) {
                std::to_string(int(centre_.z)) + "), radius " + std::to_string(int(radius_)));
 }
 
-bool OverflowDirector::spawn_point(Engine& engine, const Vec3f& centre, float lo, float hi, bool ahead, Vec3f& out) {
+bool OverflowDirector::spawn_point(Engine& engine, const Vec3f& centre, float lo, float hi, bool ahead, Vec3f& out, float visible_min) {
     // The walking direction: the player's way over the last half second.
     float heading = 0;
     bool walking = false;
@@ -105,10 +109,23 @@ bool OverflowDirector::spawn_point(Engine& engine, const Vec3f& centre, float lo
             walking = true;
         }
     }
+    // A point out of the picture wins; else one in the picture at least
+    // visible_min away (its draw pushed out to it on the floor), else the
+    // farthest one in the picture.
     std::optional<Vec3f> seen;
+    float seen_distance = -1.0f;
+    const auto& t = config_.tuning;
+    const float side_min = t.ahead_angle_min * kPi / 180.0f, side_max = t.ahead_angle_max * kPi / 180.0f;
     for (int attempt = 0; attempt < 16; ++attempt) {
-        const float angle = ahead && walking ? heading + float(next_unit(random_) * 2.0 - 1.0) * (kPi / 3.0f)
-                                             : float(next_unit(random_)) * 2.0f * kPi;
+        // Ahead: beside the way (ahead_angle_min..max off the heading, left
+        // or right), so a walking player passes it rather than runs into it.
+        float angle;
+        if (ahead && walking) {
+            const float u = float(next_unit(random_) * 2.0 - 1.0);
+            angle = heading + (u < 0.0f ? -1.0f : 1.0f) * (side_min + std::fabs(u) * (side_max - side_min));
+        } else {
+            angle = float(next_unit(random_)) * 2.0f * kPi;
+        }
         const float r = lo + float(next_unit(random_)) * (hi - lo);
         const float x = centre.x + r * std::sin(angle), z = centre.z + r * std::cos(angle);
         const int ix = int(std::lround((x - grid_x0_) / grid_step_)), iz = int(std::lround((z - grid_z0_) / grid_step_));
@@ -116,21 +133,42 @@ bool OverflowDirector::spawn_point(Engine& engine, const Vec3f& centre, float lo
         const auto& cell = grid_[std::size_t(iz * grid_n_ + ix)];
         if (!cell.walkable) continue;
         const Vec3f point{x, cell.y, z};
-        // Out of the picture where it can be (S3); a visible one enters with SQ_ENTR.
+        // Out of the picture where it can be (S3); a visible one enters with
+        // SQ_ENTR, at least visible_min away (not next to the player).
         if (!on_screen(engine, {x, cell.y + 5.0f, z})) {
             out = point;
             return true;
         }
-        if (!seen) seen = point;
+        if (seen_distance >= visible_min) continue;
+        Vec3f candidate = point;
+        float distance = r;
+        if (r < visible_min) {
+            const float vx = centre.x + visible_min * std::sin(angle), vz = centre.z + visible_min * std::cos(angle);
+            const int jx = int(std::lround((vx - grid_x0_) / grid_step_)), jz = int(std::lround((vz - grid_z0_) / grid_step_));
+            if (jx >= 0 && jz >= 0 && jx < grid_n_ && jz < grid_n_ && grid_[std::size_t(jz * grid_n_ + jx)].walkable) {
+                candidate = Vec3f{vx, grid_[std::size_t(jz * grid_n_ + jx)].y, vz};
+                distance = visible_min;
+            }
+        }
+        if (distance > seen_distance) {
+            seen = candidate;
+            seen_distance = distance;
+        }
     }
     if (!seen) return false;
     out = *seen;
     return true;
 }
 
+// The spawn ring's least distance of a point in the picture: the families
+// that never walk keep their near ring (they must be met where they stand).
+float OverflowDirector::visible_min(const FamilyRow& row) const { return row.ring == 2 ? 0.0f : config_.tuning.visible_min; }
+
 // GENERATE one enemy of `row`: a free RAM (or `reuse_ram`, an encirclement or
-// a recycle), its Normal record and the run's HP (4.3), SQ_ENTR, ONCTRL.
-bool OverflowDirector::spawn_one(Engine& engine, const FamilyRow& row, bool corrupted, std::optional<Vec3f> at, int reuse_ram) {
+// a recycle), its Normal record and the run's HP (4.3), SQ_ENTR, ONCTRL. An
+// enemy that comes again (`reuse_ram`) keeps `hp_share` of its HP: a hurt
+// one does not come back healed.
+bool OverflowDirector::spawn_one(Engine& engine, const FamilyRow& row, bool corrupted, std::optional<Vec3f> at, int reuse_ram, double hp_share) {
     auto* db = engine.get<DatabaseManager>();
     if (!db) return false;
     int ram = reuse_ram;
@@ -146,22 +184,26 @@ bool OverflowDirector::spawn_one(Engine& engine, const FamilyRow& row, bool corr
     } else {
         const auto& t = config_.tuning;
         const bool ahead = next_unit(random_) < double(t.ahead_share);
-        if (!spawn_point(engine, player_position(engine), ring_min(row), ring_max(row), ahead, point)) {
+        if (!spawn_point(engine, player_position(engine), ring_min(row), ring_max(row), ahead, point, visible_min(row))) {
             ++spawn_failures_;
             return false;
         }
     }
     const auto& t = config_.tuning;
-    const double minutes = run_seconds() / 60.0;
-    double hp = double(db->number("enemy", row.record, "HPMAX").value_or(50)) * (1.0 + double(t.hp_per_minute) * minutes);
-    if (phase() == 1) hp *= double(t.warm_up);
+    double hp = double(db->number("enemy", row.record, "HPMAX").value_or(50)) * hp_factor(run_seconds() / 60.0);
     if (corrupted) hp *= double(t.corrupted_hp);
     Packet generate;
     generate.vectors = {point, Vec3f{0, 0, 0}};
     generate.strings.emplace_back(std::string("SQ_ENTR"));
-    generate.ints = {row.record, std::max(1, int(std::lround(hp)))};
+    const int max_hp = std::max(1, int(std::lround(hp)));
+    generate.ints = {row.record, max_hp};
     port_send(engine, "MODELCTRL", row.family, ram, "GENERATE", generate);
     port_send(engine, "MODELCTRL", row.family, ram, "ONCTRL");
+    if (hp_share < 1.0) {
+        Packet keep;
+        keep.ints.push_back(std::clamp(int(std::lround(double(max_hp) * hp_share)), 1, max_hp));
+        port_send(engine, "MODELCTRL", row.family, ram, "SETHP", keep);
+    }
     if (rules_) rules_->set_enemy_class(row.family, ram, corrupted ? EnemyClass::corrupted : EnemyClass::normal);
     if (corrupted) {
         // A sign over it (the status line's rare icon; the metal look of 4.4
@@ -182,6 +224,8 @@ bool OverflowDirector::spawn_one(Engine& engine, const FamilyRow& row, bool corr
     entry->closer_at = clock_;
     entry->corrupted = corrupted;
     entry->nearest = flat_distance(point, player_position(engine));
+    entry->best = entry->nearest;
+    entry->best_at = clock_;
     entry->anchor = point;
     ++spawned_;
     if (corrupted) ++corrupted_spawned_;
@@ -193,11 +237,13 @@ void OverflowDirector::spawner(Engine& engine) {
     // Corrupted: from 1:30 one a minute (the next spawn).
     bool corrupted = false;
     if (clock_ >= std::uint64_t(t.corrupted_from) && clock_ >= next_corrupted_) corrupted = true;
-    // Encirclements (4.3) by reuse.
+    // Encirclements (4.3) by reuse, a few enemies a step (T8: one step for
+    // all 16 GENERATEs was the run's slowest).
     if (encircled_ < t.encircle_at.size() && clock_ >= std::uint64_t(t.encircle_at[encircled_])) {
         encircle(engine);
         ++encircled_;
     }
+    place_encircled(engine);
     if (clock_ < next_spawn_) return;
     next_spawn_ = clock_ + std::uint64_t(t.spawn_every);
     const double minutes = run_seconds() / 60.0;
@@ -208,10 +254,12 @@ void OverflowDirector::spawner(Engine& engine) {
     if (want <= 0 && !corrupted) return;
     want = std::max(want, corrupted ? 1 : 0);
     // A new phase's families come in over its first 90 s (their weight rises
-    // from the earlier phases' 0.5 to 3), so a phase change is no wall.
+    // from 0 to 3, past the earlier phases' 0.5 after 15 s), so a phase
+    // change is no wall.
     const std::uint64_t into = clock_ % std::uint64_t(t.phase_steps);
     const float ramp = phase() == 1 ? 1.0f : std::min(1.0f, float(into) / float(t.phase_ramp_steps));
-    const auto pool = phase_pool(phase(), 0.5f + 2.5f * ramp, 0.5f);
+    auto pool = phase_pool(phase(), 3.0f * ramp, 0.5f);
+    std::erase_if(pool, [](const PoolEntry& entry) { return entry.weight <= 0.0f; });
     double total = 0;
     for (const auto& entry : pool) total += entry.weight;
     for (int n = 0; n < want; ++n) {
@@ -253,26 +301,54 @@ void OverflowDirector::encircle(Engine& engine) {
         if (living_enemy(*ram) && family_row(ram->info_name)) living.push_back({flat_distance(ram_position(*ram), me), ram.get()});
     std::stable_sort(living.begin(), living.end(), [](const Far& a, const Far& b) { return a.distance > b.distance; });
     const int count = std::min<int>(config_.tuning.encircle_count, int(living.size()));
-    int placed = 0;
+    encircle_queue_.clear();
+    encircle_placed_ = 0;
     for (int k = 0; k < count; ++k) {
-        auto* ram = living[std::size_t(k)].ram;
-        const auto* row = family_row(ram->info_name);
-        bool corrupted = false;
+        const auto* ram = living[std::size_t(k)].ram;
+        Encircled entry;
+        entry.family = ram->info_name;
+        entry.ram = ram->index;
+        entry.slot = k;
+        entry.count = count;
         for (const auto& e : enemies_)
-            if (e.ram == ram->index && e.family == ram->info_name) corrupted = e.corrupted;
-        // Evenly round the player on the 45-unit ring; a point off the floor
-        // turns a little further.
+            if (e.ram == ram->index && e.family == ram->info_name) entry.corrupted = e.corrupted;
+        entry.hp_share = ram->max_hp > 0 ? std::clamp(double(ram->hp) / double(ram->max_hp), 0.0, 1.0) : 1.0;
+        encircle_queue_.push_back(entry);
+    }
+    event_log_.push_back({clock_, "encirclement " + std::to_string(count)});
+    place_encircled(engine);
+}
+
+// The queued encirclement: encircle_per_step enemies a step, each evenly
+// round the player on the 45-unit ring (a point off the floor turns a
+// little further), with the HP it had.
+void OverflowDirector::place_encircled(Engine& engine) {
+    if (encircle_queue_.empty()) return;
+    auto* models = engine.get<ModelCtrlManager>();
+    if (!models) return;
+    const Vec3f me = player_position(engine);
+    const int per_step = std::max(1, config_.tuning.encircle_per_step);
+    int done = 0;
+    while (!encircle_queue_.empty() && done < per_step) {
+        const Encircled entry = encircle_queue_.front();
+        encircle_queue_.erase(encircle_queue_.begin());
+        ++done;
+        const auto* row = family_row(entry.family);
+        const auto* ram = models->find(entry.family, entry.ram);
+        if (!row || !ram || !living_enemy(*ram)) continue; // (defeated meanwhile)
         for (int turn = 0; turn < 8; ++turn) {
-            const float angle = 2.0f * kPi * (float(k) + 0.15f * float(turn)) / float(count);
+            const float angle = 2.0f * kPi * (float(entry.slot) + 0.15f * float(turn)) / float(entry.count);
             const float x = me.x + config_.tuning.encircle_ring * std::sin(angle), z = me.z + config_.tuning.encircle_ring * std::cos(angle);
             const int ix = int(std::lround((x - grid_x0_) / grid_step_)), iz = int(std::lround((z - grid_z0_) / grid_step_));
             if (ix < 0 || iz < 0 || ix >= grid_n_ || iz >= grid_n_ || !grid_[std::size_t(iz * grid_n_ + ix)].walkable) continue;
-            if (spawn_one(engine, *row, corrupted, Vec3f{x, grid_[std::size_t(iz * grid_n_ + ix)].y, z}, ram->index)) ++placed;
+            if (spawn_one(engine, *row, entry.corrupted, Vec3f{x, grid_[std::size_t(iz * grid_n_ + ix)].y, z}, entry.ram, entry.hp_share)) {
+                ++encircle_placed_;
+                ++encircled_total_;
+            }
             break;
         }
     }
-    encircled_total_ += std::uint64_t(placed);
-    event_log_.push_back({clock_, "encirclement " + std::to_string(placed)});
+    if (encircle_queue_.empty()) event_log_.push_back({clock_, "encircled " + std::to_string(encircle_placed_)});
 }
 
 // Each step: the living count, each enemy's approach (14.2's close-in
@@ -324,16 +400,27 @@ void OverflowDirector::track_enemies(Engine& engine) {
                 }
             }
         }
+        // (Left behind: it has not come 2 units closer than its best for
+        // behind_steps. A standing player's followers keep coming closer;
+        // a moving player's fall behind and come again on its way.)
+        if (d < e.best - 2.0f) {
+            e.best = d;
+            e.best_at = clock_;
+        }
         e.far_since = d > t.recycle_far ? (e.far_since ? e.far_since : clock_) : 0;
         const bool far = e.far_since && clock_ - e.far_since >= std::uint64_t(t.recycle_far_steps);
         // (The ranged families keep their distance on purpose: only the far rule moves them.)
         const bool idle = d > t.idle_far && clock_ - e.closer_at >= std::uint64_t(t.idle_steps) && row && !row->ranged;
-        if ((far || idle) && row && recycles < 2) {
-            // Its RAM comes back near the player (ahead of it).
+        // (The ranged families keep their distance on purpose and are not brought
+        // back on the way: a walking player leaves their shots behind.)
+        const bool behind = row && !row->ranged && d > t.behind_far && clock_ - e.best_at >= std::uint64_t(t.behind_steps);
+        if ((far || idle || behind) && row && recycles < 2) {
+            // Its RAM comes back near the player (ahead of it) with the HP it had.
             Vec3f point;
-            if (spawn_point(engine, me, ring_min(*row), ring_max(*row), true, point)) {
+            if (spawn_point(engine, me, ring_min(*row), ring_max(*row), true, point, visible_min(*row))) {
                 const bool corrupted = e.corrupted;
-                spawn_one(engine, *row, corrupted, point, e.ram);
+                const double share = ram->max_hp > 0 ? std::clamp(double(ram->hp) / double(ram->max_hp), 0.0, 1.0) : 1.0;
+                spawn_one(engine, *row, corrupted, point, e.ram, share);
                 ++recycled_;
                 ++recycles;
             }

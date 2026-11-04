@@ -59,6 +59,16 @@ int run_level_hp(int old_value, int old_max, int new_max, double heal) {
     return int(value);
 }
 
+RunPoison run_poison(int tick, int ticks, int max_hp, double factor, int max_ticks, double share) {
+    RunPoison out;
+    if (tick <= 0 || ticks <= 0) return out;
+    const int total = std::max(1, int(std::floor(double(std::max(max_hp, 1)) * share)));
+    out.tick = std::clamp(int(double(tick) * factor), 1, total);
+    out.ticks = max_ticks > 0 ? std::min(ticks, max_ticks) : ticks;
+    out.ticks = std::max(1, std::min(out.ticks, total / out.tick));
+    return out;
+}
+
 // ---------------------------------------------------------------------------
 // Enemy classes
 // ---------------------------------------------------------------------------
@@ -149,6 +159,15 @@ int OverflowRules::taken(Engine& engine, const ModelScriptContext& context, int 
         tally.highest_hit_share = std::max(tally.highest_hit_share, double(out) / double(max_hp));
     }
     return out;
+}
+
+RunPoison OverflowRules::poison(const ModelScriptContext& context, int max_hp, int tick, int ticks) const {
+    const auto kind = enemy_class(context.shooter_name, context.shooter);
+    if (kind == EnemyClass::guardian) return {tick, ticks};
+    double factor = damage.taken_factor;
+    if (kind == EnemyClass::corrupted) factor *= damage.corrupted_factor;
+    if (const auto found = damage.family_factor.find(context.shooter_name); found != damage.family_factor.end()) factor *= found->second;
+    return run_poison(tick, ticks, max_hp, factor, player_hit.poison_ticks, player_hit.poison_share);
 }
 
 int OverflowRules::next_exp(int level) const {

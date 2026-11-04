@@ -89,6 +89,9 @@ struct HitTaken {
     bool guarded{};       // classic buttons: a guarded hit at half damage
     bool missed{};        // a core's BOUGYORITSU or the evasion: no damage
     int hp_after{}, max_hp{};
+    // The poison the hit left (the run's poison rule, PlayerHit): a 2 s tick
+    // of this many HP, this many times (0: none).
+    int poison_tick{}, poison_ticks{};
 };
 
 // H2: what the run engine loads beside its arena (after boot.lua, before the
@@ -165,6 +168,15 @@ int run_technique_level(int lock, int num, int den);
 // The level-up rule (4.5): the new maximum times the old fraction plus
 // `heal` of the new maximum (a full bar stays full), at most the maximum.
 int run_level_hp(int old_value, int old_max, int new_max, double heal);
+// The run's poison (4.8, OverflowRules::PlayerHit): DW4's tick (MaxHP x the
+// attack's KOUKARANK / 100) times `factor` (the damage-taken rule's time,
+// tier, Corrupted and family factors), at least 1; DW4's tick count (the
+// SETPOISON time / 120 + 1) at most `max_ticks`, and the poisoning's total
+// (tick x ticks) at most `share` of MaxHP. {0, 0} for no poison.
+struct RunPoison {
+    int tick{}, ticks{};
+};
+RunPoison run_poison(int tick, int ticks, int max_hp, double factor, int max_ticks, double share);
 
 class OverflowRules {
 public:
@@ -217,6 +229,15 @@ public:
         int status_cap = 30;                        // stun / sleep / bind of normal enemies, frames
         int guard_percent = 50;                     // classic buttons: a guarded hit's share
         float heal_cap = 0.20f;                     // a heal technique restores at most this share of MaxHP (6.4)
+        // A normal or Corrupted enemy's poison: its ticks go through the
+        // damage-taken rule (run_poison), at most poison_ticks of them and
+        // poison_share of MaxHP in all, and a tick never takes the player's
+        // last HP (DW4's poison never takes an enemy's; a run's defeat is
+        // the hit rule's, where Raise can answer it). A Guardian's poison
+        // is the original's.
+        int poison_ticks = 5;
+        float poison_share = 0.10f;
+        bool poison_keeps_one = true;
     } player_hit;
     float pickup_radius = 8.0f;                     // instant pickups (items.cpp: the original's 8)
     float walk_factor = 1.0f;                       // the player's walk speed (Boost, traits)
@@ -247,6 +268,10 @@ public:
     bool always_hits(const ModelScriptContext& context) const;
     int dealt(Engine& engine, const ModelScriptContext& context, int damage, int attribute);
     int taken(Engine& engine, const ModelScriptContext& context, int slot, int max_hp, int damage);
+    // The poison of an enemy hit under the run's rule (run_poison with the
+    // damage-taken rule's factors of the hit's shooter); a Guardian's stays
+    // DW4's {tick, ticks}.
+    RunPoison poison(const ModelScriptContext& context, int max_hp, int tick, int ticks) const;
     int next_exp(int level) const;
     int exp_gain(int exp) const;
     // apply_level_ups after the levels: the run's HP / MP instead of the refill.

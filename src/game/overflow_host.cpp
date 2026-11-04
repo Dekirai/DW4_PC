@@ -193,6 +193,9 @@ RunOutcome run_loop(HostView& view, engine::Engine& run, RunDriver& driver, cons
         if (ran > 0 && view.draw) view.interpolator.advance();
         if (ran > 0 && view.label_mode() != LabelMode::off) view.labels.capture(run, 0);
         if (host.discord) {
+            // (As the story loop: the run's F1 Settings tab switches the
+            // presence on and off at once, not after the return.)
+            host.discord->configure(view.test_run ? true : view.settings.discord, view.settings.discord_client_id);
             const auto status = driver.status(run);
             discord::Activity activity;
             activity.start = started;

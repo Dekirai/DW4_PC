@@ -9,21 +9,27 @@
 // (the game has no name table for its enemies, 9.7).
 
 // The damage factors (14.3): DW4's area rows are made for characters with
-// gear and levels far above a run's (12 at 5:00, 22 at 10:00, 32 at 15:00,
-// 40 at 20:00, 4.5), so each family gets its own factor that brings its
-// worst measured hit (critical hits included) at its phase's start and end
-// level to about 16 % of a Rookie's MaxHP in phase 1 and 12 % from phase 2
-// on, where crowds hit more often (24 % / 18 % for a Corrupted one; the
-// clamp is 35 %). Pharaohmon warps to the player: x 0.6 more. Measured by
-// tests/overflow_director_tests.cpp ("report"); `balance` checks them.
+// gear and levels far above a run's (about 16 at 5:00, 28 at 10:00, 37 at
+// 15:00 in the kite bot's runs), so each family gets its own factor. With
+// the run's damage growth (e^(0.18 x minutes), Tuning::damage_growth) the
+// factors bring each family's worst measured hit (critical hits and its
+// poison included) at its phase's start to about 8 % of a Rookie's MaxHP in
+// phase 2, 9 % in phase 3 and 10 % in phase 4, about what the phase before
+// hits at its end: no wall at a phase change (the review of O1a: phase 2
+// ended near 3 %, phase 3 began at 16-21 % and the runs ended in its first
+// two minutes). Within a phase the hits grow a little (the growth outruns
+// the levels' DEF and MaxHP); a Corrupted one hits x 1.5, the clamp is 35 %.
+// Measured by tests/overflow_director_tests.cpp ("report"); `balance` checks
+// them (35 %, 16 % at a phase's start, no step above x 3).
 //
 // The ranged families (Numemon, Sukamon, MarineDevimon) shoot from beyond
 // the Art's reach: they come at half the weight of the others and hit
-// softer, so their chip damage does not decide a run alone.
+// softer, so their chip damage does not decide a run alone; a standing
+// player takes most of their shots, a walking one leaves many behind.
 //
 // family, name, Normal record, phase, ranged (S1), spawn ring (Tuning: 0 32-46, 1 26-36 for
-// the slow walkers of S1, 2 20-25 for Kokatorimon, which never walks, and
-// Tortomon, Megadramon and MRε05, the slowest walkers), damage factor, spawn weight
+// the slow walkers of S1 and Tortomon, 2 20-25 for Kokatorimon, which never walks, and
+// Megadramon and MRε05, the slowest walkers), damage factor, spawn weight
 const FamilyRow kFamilies[] = {
     // Phase 1, Death Valley (61 RAMs)
     {"e_goburi", "Goblimon", 0, 1, false, 0, 1.0f, 1.0f},
@@ -33,23 +39,23 @@ const FamilyRow kFamilies[] = {
     {"e_cockatri", "Kokatorimon", 91, 1, false, 2, 0.25f, 1.0f},
     {"e_mecha1", "MRα01", 42, 1, false, 1, 0.66f, 1.0f},
     // Phase 2, Dry Land (33)
-    {"e_mummy", "Mummymon", 114, 2, false, 1, 0.28f, 1.0f},
-    {"e_minotaru", "Minotarumon", 159, 2, false, 1, 0.23f, 1.0f},
-    {"e_pharaoh", "Pharaohmon", 168, 2, false, 1, 0.17f, 1.0f},
-    {"e_mecha2", "MRβ02", 126, 2, false, 0, 0.4f, 1.0f},
-    {"e_tyrano", "Tyrannomon", 150, 2, false, 1, 0.24f, 1.0f},
+    {"e_mummy", "Mummymon", 114, 2, false, 1, 0.235f, 1.0f},
+    {"e_minotaru", "Minotarumon", 159, 2, false, 1, 0.2f, 1.0f},
+    {"e_pharaoh", "Pharaohmon", 168, 2, false, 1, 0.22f, 0.5f},
+    {"e_mecha2", "MRβ02", 126, 2, false, 0, 0.35f, 1.0f},
+    {"e_tyrano", "Tyrannomon", 150, 2, false, 1, 0.2f, 1.0f},
     // Phase 3, Venom Jungle (38)
-    {"e_otama", "Otamamon", 213, 3, false, 0, 1.3f, 1.0f},
-    {"e_geko", "Gekomon", 225, 3, false, 0, 1.05f, 1.0f},
-    {"e_mecha3", "MRγ03", 252, 3, false, 0, 0.63f, 1.0f},
-    {"e_maridevi", "MarineDevimon", 243, 3, true, 0, 0.38f, 0.5f},
-    {"e_torta", "Tortomon", 234, 3, false, 2, 1.1f, 1.0f},
+    {"e_otama", "Otamamon", 213, 3, false, 0, 0.27f, 1.0f},
+    {"e_geko", "Gekomon", 225, 3, false, 0, 0.15f, 1.0f},
+    {"e_mecha3", "MRγ03", 252, 3, false, 0, 0.11f, 1.0f},
+    {"e_maridevi", "MarineDevimon", 243, 3, true, 0, 0.05f, 0.5f},
+    {"e_torta", "Tortomon", 234, 3, false, 1, 0.215f, 1.0f},
     // Phase 4, Machine Pit (34)
-    {"e_infermo", "Infermon", 306, 4, false, 1, 0.32f, 1.0f},
-    {"e_megadra", "Megadramon", 315, 4, false, 2, 0.36f, 1.0f},
-    {"e_rare", "Rare", 324, 4, false, 1, 0.66f, 1.0f},
-    {"e_mecha5", "MRε05", 341, 4, false, 2, 0.55f, 1.0f},
-    {"e_mecha4", "MRδ04", 58, 4, false, 1, 0.37f, 1.0f},
+    {"e_infermo", "Infermon", 306, 4, false, 1, 0.035f, 1.0f},
+    {"e_megadra", "Megadramon", 315, 4, false, 2, 0.045f, 1.0f},
+    {"e_rare", "Rare", 324, 4, false, 1, 0.061f, 1.0f},
+    {"e_mecha5", "MRε05", 341, 4, false, 2, 0.061f, 1.0f},
+    {"e_mecha4", "MRδ04", 58, 4, false, 1, 0.043f, 1.0f},
 };
 
 // The phase music (4.2) and a stage whose sound list has it (H2 streams).

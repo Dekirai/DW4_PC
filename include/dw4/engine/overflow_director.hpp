@@ -46,7 +46,7 @@ struct FamilyRow {
     int record;           // its Normal row in the enemy table (4.2)
     int phase;            // the phase whose families it belongs to (1-4)
     bool ranged;          // fights from range (S1): left out of the close-in target of 14.2
-    int ring;             // where it spawns: 0 the 40-55 ring, 1 30-42 (slow walkers, S1), 2 20-25 (never walks: Kokatorimon)
+    int ring;             // where it spawns: 0 the 32-46 ring, 1 26-36 (slow walkers, S1), 2 20-25 (never walks: Kokatorimon; the slowest)
     float damage;         // its own damage factor (14.3)
     float weight;         // its spawn weight on top of the pool's (the ranged families 0.5)
 };
@@ -80,14 +80,33 @@ struct Tuning {
     float slow_min = 26.0f, slow_max = 36.0f;    // slow walkers (S1: under 0.1 units a frame from 50)
     float near_min = 20.0f, near_max = 25.0f;    // families that never walk
     float ahead_share = 0.7f;                    // spawns from the side the player walks towards
+    // ... beside its way, not on it: between these angles off the heading
+    // (degrees), so a walking player passes them within the Art's reach
+    // instead of running into them.
+    float ahead_angle_min = 40.0f, ahead_angle_max = 70.0f;
+    float visible_min = 40.0f;                   // a spawn in the picture comes at least this far away (SQ_ENTR)
     float recycle_far = 140.0f;  int recycle_far_steps = 5 * 60;
     float idle_far = 30.0f;      int idle_steps = 6 * 60;
-    // HP = HPMAX x (1 + hp_per_minute x minutes), x warm_up in phase 1
-    float hp_per_minute = 0.15f, warm_up = 0.6f;   // (4.3 had 0.10)
-    // damage taken x (1 + damage_per_minute x minutes) x the tier
-    float damage_per_minute = 0.14f;             // (4.3 had 0.04; the O1a balance pass, docs/OVERFLOW_DIRECTOR.md)
-    std::array<int, 3> curve{70, 65, 13};        // the run's NEXTEXP terms (4.5 had 80 / 50 / 6)
-    float damage_warm_up = 0.6f;                 // the damage side of the warm-up: x 0.6 at 0:00, rising to x 1 at 5:00
+    // 4.3: an enemy that has not come closer for behind_steps while farther
+    // than behind_far is left behind by a moving player: its RAM comes again
+    // ahead of the player (the ranged families stay where they shoot from).
+    float behind_far = 40.0f;
+    int behind_steps = 4 * 60;
+    int encircle_per_step = 4;                   // an encirclement places this many a step (T8)
+    float art_range = 22.0f;                     // the Art's reach (6.3: at least 20)
+    // ... growing with the Digimon's walking speed to art_range_moving at
+    // full stick (0.70 units a frame): the enemies close in 3 to 40 times
+    // slower than the player walks (SURVIVAL_O1A.md S1), so a walking
+    // Digimon passes them where a standing one waits for them.
+    float art_range_moving = 34.0f;
+    // HP = HPMAX x (1 + hp_per_minute x minutes), x warm_up in phase 1 (rising to 1 from 4:00 to 6:00)
+    float hp_per_minute = 0.10f, warm_up = 0.6f;   // (4.3 had 0.10; the O1a balance pass 0.15)
+    float hp_growth = 0.08f;                     // x e^(hp_growth x minutes) on top (the O1a review round: late crowds outlast the Art)
+    // damage taken x (1 + damage_per_minute x minutes) x e^(damage_growth x minutes) x the tier
+    float damage_per_minute = 0.0f;              // (4.3 had 0.04, the O1a balance pass 0.14)
+    float damage_growth = 0.18f;                 // (the O1a review round: no wall, docs/OVERFLOW_DIRECTOR.md)
+    std::array<int, 3> curve{70, 65, 16};        // the run's NEXTEXP terms (4.5 had 80 / 50 / 6, the O1a balance pass 70 / 65 / 13)
+    float damage_warm_up = 0.4f;                 // the damage side of the warm-up: x 0.4 at 0:00, rising to x 1 at 5:00
     int status_cap = 6;                          // frames of a normal enemy's stun / sleep / bind (4.8 had 30)
     double level_heal = 0.05;                    // a level-up adds this share of MaxHP (4.5: 3 %, at most 5 %)
     int corrupted_from = 90 * 60, corrupted_every = 60 * 60;
@@ -96,10 +115,15 @@ struct Tuning {
     float mp_regen = 0.02f;                      // of MaxMP a second
     float heal_below = 0.70f;                    // Heal Lt waits until HP is below this share
     int phase_steps = 300 * 60;                  // five minutes a phase
-    int phase_ramp_steps = 90 * 60;              // a new phase's families come in over 90 s
+    int phase_ramp_steps = 90 * 60;              // a new phase's families come in over 90 s (their weight from 0)
+    float phase_intro = 0.2f;                    // ... and their damage from this share of their factor
+    int phase_intro_steps = 120 * 60;            //     to all of it over two minutes
     bool spawning = true, abilities = true;      // (the balance test measures with both off,
     bool time_scaling = true;                    //  and sets the damage-taken factor itself)
     int end_steps = 1200 * 60;                   // O1a: the run completes at 20:00
+    float bot_flee = 16.0f;                      // the kite bot walks away from an enemy this near (14.1)
+    int level_window_gap = 20 * 60;              // at most one level-up window (freeze) in this many run steps
+    int muteki = 30;                             // MUTEKI frames after a hit (4.8 had 50: a crowd round a standing Digimon must cost)
 };
 
 // ---------------------------------------------------------------------------
@@ -115,7 +139,15 @@ struct OfferState {
     int forge = 1;                     // families opened (1-5)
     std::array<int, 3> train{};        // Train steps taken per group (Blast, Heal, Force; 0-4)
     std::array<bool, 3> groups{};      // the form has a run technique of that group
+    // The run level at which the group's first run technique is learned (its
+    // TECHn_LEVEL x 2/3; 0: from the start). Train shows from two levels
+    // before it: a Train Heal at level 2 for a Heal Lt of level 15 would be
+    // a choice that does nothing for minutes.
+    std::array<int, 3> unlock_level{};
+    int level = 1;                     // the run level of the window
 };
+// Train shows this many run levels before its group's first technique.
+constexpr int kTrainLead = 2;
 // The group cap after `steps` Train offers: 300, 750, 1250, 1750, 2500.
 int train_cap(int steps);
 // The UPCNT points of a Plug at a run level: 10 + 2 x level.
@@ -126,9 +158,10 @@ const char* plug_name(int upcnt_index);
 // Every offer that may show (the plugs always).
 std::vector<Offer> eligible_offers(const OfferState& state);
 // Three different offers by the weights of 4.6 (Forge 25, Train 25 split
-// over its groups, Plug 20 split over its stats; a Plug takes a line only
-// by its weight or when fewer than three others are possible). `random`
-// is the director's splitmix64 state.
+// over its groups, Plug 20 split over its stats, a resistance at a quarter
+// of a stat's share: in O1a few attacks carry an element; a Plug takes a
+// line only by its weight or when fewer than three others are possible).
+// `random` is the director's splitmix64 state.
 std::vector<Offer> draw_offers(const OfferState& state, std::uint64_t& random);
 // The priority list of the test bot (offers=priority): Forge, Train Blast,
 // Train Heal, then the plugs in plug_stats order.
@@ -136,6 +169,8 @@ int offer_priority(const Offer& offer);
 
 // The Art's class factor of a form (on top of OverflowRules' 2.5; 14.3).
 float art_class_factor(std::string_view form);
+// A run technique's own damage factor (pcTech base row; 1 for most).
+float technique_damage(int family);
 
 // splitmix64 draws (the randomizer's pattern).
 std::uint64_t next_random(std::uint64_t& state);
@@ -153,6 +188,8 @@ struct RunConfig {
     std::string offers;      // "priority" / "random": a test policy takes the offers; empty: the player
     int results_hold = 0;    // test runs: the results close after this many steps (0: they wait for A)
     Tuning tuning;
+    std::map<std::string, float> family_damage; // a balance pass's own family damage factors (tables.inc otherwise)
+    float art_class = 0;     // a balance pass's own Art class factor (0: art_class_factor)
 };
 
 // Why the run ended (the host maps it to its RunEnd).
@@ -166,6 +203,7 @@ struct MinuteLog {
     int minute{}, level{}, defeats{}, hits_taken{}, clamps{}, alive{};
     std::uint64_t no_control{}, steps{};
     double highest_hit{}; // of MaxHP
+    double taken{};       // the damage taken in this minute (hits and their poison), in MaxHPs
 };
 
 class OverflowDirector final : public Director {
@@ -211,6 +249,7 @@ public:
     const std::vector<Offer>& offers() const { return offers_; }
     std::string offer_text(const Engine& engine, const Offer& offer) const;
     std::string offer_detail(const Engine& engine, const Offer& offer) const;
+    std::string offer_about(const Engine& engine, const Offer& offer) const; // one line about the cursor's offer (9.4)
     std::uint64_t run_steps() const { return clock_; }
     std::uint64_t steps() const { return steps_; }    // every director step (frozen ones too)
     double run_seconds() const;
@@ -238,11 +277,19 @@ public:
     const std::map<std::string, std::pair<int, double>>& hits_by_family() const { return hits_by_family_; }
     void reset_hits_by_family() { hits_by_family_.clear(); }
     bool walkable(float x, float z) const;
-    bool sample_spawn_point(Engine& engine, float lo, float hi, bool ahead, Vec3f& out) {
-        return spawn_point(engine, player_position(engine), lo, hi, ahead, out);
+    bool sample_spawn_point(Engine& engine, float lo, float hi, bool ahead, Vec3f& out, float visible_min = 0.0f) {
+        return spawn_point(engine, player_position(engine), lo, hi, ahead, out, visible_min);
     }
     void encircle_now(Engine& engine) { encircle(engine); }
+    // The enemies the spawner has brought back (stayed far, stood, left behind).
+    std::uint64_t recycled() const { return recycled_; }
+    // The poisonings of the run's poison rule and the largest one's total (of MaxHP).
+    int poisonings() const { return poisonings_; }
+    double highest_poison() const { return highest_poison_; }
     float damage_factor(double minutes) const;
+    float family_damage(const FamilyRow& row) const; // a family's own damage factor
+    float art_factor() const { return config_.art_class > 0 ? config_.art_class : art_class_factor(config_.form); }
+    double hp_factor(double minutes) const;   // an enemy's HPMAX factor at a run time
     const Vec3f& arena_centre() const { return centre_; }
     float arena_radius() const { return radius_; }
 
@@ -259,12 +306,15 @@ private:
     void step_running(Engine& engine);
     void update_factors(Engine& engine);
     void build_walkable(Engine& engine);
-    bool spawn_point(Engine& engine, const Vec3f& centre, float lo, float hi, bool ahead, Vec3f& out);
+    bool spawn_point(Engine& engine, const Vec3f& centre, float lo, float hi, bool ahead, Vec3f& out, float visible_min = 0.0f);
     float ring_min(const FamilyRow& row) const;
     float ring_max(const FamilyRow& row) const;
-    bool spawn_one(Engine& engine, const FamilyRow& row, bool corrupted, std::optional<Vec3f> at = std::nullopt, int reuse_ram = -1);
+    float visible_min(const FamilyRow& row) const;
+    bool spawn_one(Engine& engine, const FamilyRow& row, bool corrupted, std::optional<Vec3f> at = std::nullopt, int reuse_ram = -1,
+                   double hp_share = 1.0);
     void spawner(Engine& engine);
     void encircle(Engine& engine);
+    void place_encircled(Engine& engine);
     void track_enemies(Engine& engine);
     void cast_art(Engine& engine);
     void cast_techniques(Engine& engine);
@@ -321,6 +371,8 @@ private:
         float nearest = 1e9f;            // its closest distance to the player so far
         Vec3f anchor{};                  // where it stood when it last moved (4 units)
         std::uint64_t closer_at = 0;     // the run step it last moved
+        float best = 1e9f;               // its closest distance since it last came closer (2 units)
+        std::uint64_t best_at = 0;       // the run step it last came closer
         std::uint64_t far_since = 0;     // the run step it went past recycle_far (0: not)
         bool corrupted = false;
         bool closed = false;             // came within 30 units in 8 s
@@ -333,6 +385,16 @@ private:
     std::uint64_t next_spawn_ = 0;
     std::uint64_t next_corrupted_ = 0;
     std::size_t encircled_ = 0;
+    // An encirclement's enemies waiting for their place (encircle_per_step a step).
+    struct Encircled {
+        std::string family;
+        int ram = -1;
+        int slot = 0, count = 1;   // its place on the ring
+        bool corrupted = false;
+        double hp_share = 1.0;     // the HP it keeps
+    };
+    std::vector<Encircled> encircle_queue_;
+    int encircle_placed_ = 0;
     int alive_ = 0;
     std::vector<Vec3f> trail_;           // the player's recent positions (its walking direction)
 
@@ -347,7 +409,6 @@ private:
     std::array<std::string, 4> forge_steps_;     // what Forge 2-5 add to the Art
     std::vector<std::string> family_names_;      // the class's five weapon families (Forge's names)
     int ladder_base_ = 0, art_skill_ = 0;
-    float art_range_ = 22.0f;
     int art_cooldown_ = 75;
     std::uint64_t art_ready_ = 0;
     std::string weapon_model_;
@@ -363,6 +424,8 @@ private:
         std::uint64_t ready = 0;
         int casts = 0;
         std::string name;         // "Fire"
+        int group = 0;            // 0 Blast, 1 Heal, 2 Force
+        int lock = 1;             // the run level it is learned at (TECHn_LEVEL x 2/3)
     };
     std::map<int, std::string> actions_;         // pcTech row -> the SQ_WAZA action (HFIRE1)
     std::map<std::string, std::uint64_t> sound_at_; // a cast sound at most every 4 steps
@@ -389,6 +452,7 @@ private:
     std::map<std::string, std::pair<int, int>> closed_by_family_; // closed, spawned (measured families)
     std::vector<int> art_hits_per_kill_;                          // phase 1, Art-only defeats
     std::vector<std::uint64_t> level_up_steps_;
+    std::vector<std::uint64_t> window_steps_;                     // the run steps the level-up windows opened
     std::vector<std::pair<std::uint64_t, std::string>> command_log_;
     std::vector<std::pair<std::uint64_t, std::string>> event_log_;
     std::string pad_log_;                                         // run-length "count:buttons/x/y" lines
@@ -396,6 +460,11 @@ private:
     std::uint64_t last_pad_count_ = 0;
     std::vector<MinuteLog> minutes_;
     int hits_taken_ = 0, misses_ = 0, clamps_ = 0;
+    int poisonings_ = 0;
+    double highest_poison_ = 0;      // the largest poisoning's total, of MaxHP
+    double taken_share_ = 0;         // the damage taken (hits and their poison), in MaxHPs
+    double minute_taken_mark_ = 0;   // taken_share_ at the last minute line
+    std::string end_reason_ = "-";   // what ended the run (RunEnd's reason, retire, clear)
     std::uint64_t no_control_ = 0;   // run steps (not the ending's) without control (14.2)
     double highest_hit_ = 0;
     int panels_min_gap_ = 1 << 30;
@@ -407,6 +476,7 @@ private:
     std::uint64_t notice_step_ = 0;
     // the kite bot
     int bot_a_ = 0, bot_l_ = 0;
+    float bot_dx_ = 0, bot_dz_ = 0;  // its last way (it keeps walking)
     bool control_seen_ = false;
     int last_disks_ = 0;
 };

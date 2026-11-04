@@ -64,17 +64,20 @@ void OverflowDirector::attach(Engine& engine, OverflowRules& rules) {
     // The run's skill caps start at the first Train step (6.2); the class
     // cap follows the Forge at the field start.
     rules.skills.cap.fill(train_cap(0));
-    rules.damage.tag_factor[kTagArt] = art_class_factor(config_.form);
+    rules.damage.tag_factor[kTagArt] = art_factor();
+    for (const int family : {0, 10, 25, 30, 40})
+        if (technique_damage(family) != 1.0f) rules.damage.technique_factor[family] = technique_damage(family);
     // A normal enemy's stun, sleep or bind is a hitch, not a stop (4.8; 14.2
     // allows 5 % of the frames without control).
     rules.player_hit.status_cap = config_.tuning.status_cap;
+    rules.player_hit.muteki = config_.tuning.muteki;
     rules.levels.level_heal = config_.tuning.level_heal;
     rules.levels.curve_base = config_.tuning.curve[0];
     rules.levels.curve_linear = config_.tuning.curve[1];
     rules.levels.curve_square = config_.tuning.curve[2];
     // The families' own damage factors (14.3).
     for (const auto& row : family_table())
-        if (row.damage != 1.0f) rules.damage.family_factor[row.family] = row.damage;
+        if (family_damage(row) != 1.0f) rules.damage.family_factor[row.family] = family_damage(row);
 }
 
 Vec3f OverflowDirector::player_position(Engine& engine) const {
@@ -247,23 +250,62 @@ void OverflowDirector::step_running(Engine& engine) {
         return;
     }
     // (Two steps after the level-up: its HUD values, posted a frame ahead,
-    // arrive before the freeze holds the messenger.)
-    if (pending_levels_ > 0 && !level_up_steps_.empty() && clock_ >= level_up_steps_.back() + 2) open_level_up(engine);
+    // arrive before the freeze holds the messenger.) At most one window every
+    // level_window_gap run steps: the levels that come sooner wait and open
+    // one after another in the next one (the first minute brought five
+    // freezes; the review of O1a).
+    if (pending_levels_ > 0 && !level_up_steps_.empty() && clock_ >= level_up_steps_.back() + 2 &&
+        (window_steps_.empty() || clock_ >= window_steps_.back() + std::uint64_t(config_.tuning.level_window_gap)))
+        open_level_up(engine);
 }
 
-// The damage taken at a run time (4.3): the tier, + 4 % a minute, and the
-// warm-up rising from x 0.6 at 0:00 to x 1 at 5:00 (no step at the phase change).
+// The damage taken at a run time (4.3): the tier, the time's growth (4.3's
+// + 4 % a minute became e^(damage_growth x minutes): a run's levels raise
+// DEF and MaxHP so fast that a linear factor let every phase's hits shrink
+// to a third by its end, and each new phase came as a step; the review of
+// O1a), and the warm-up rising from x damage_warm_up (0.4) at 0:00 to x 1 at
+// 5:00 (no step at the phase change).
 float OverflowDirector::damage_factor(double minutes) const {
     static constexpr float kTierDamage[3] = {1.0f, 1.2f, 1.4f};
-    const double phase_minutes = double(config_.tuning.phase_steps) / 3600.0;
-    const double warm = std::min(1.0, double(config_.tuning.damage_warm_up) + (1.0 - double(config_.tuning.damage_warm_up)) * minutes / phase_minutes);
-    return float(double(kTierDamage[std::clamp(config_.tier, 0, 2)]) * (1.0 + double(config_.tuning.damage_per_minute) * minutes) * warm);
+    const auto& t = config_.tuning;
+    const double phase_minutes = double(t.phase_steps) / 3600.0;
+    const double warm = std::min(1.0, double(t.damage_warm_up) + (1.0 - double(t.damage_warm_up)) * minutes / phase_minutes);
+    const double growth = (1.0 + double(t.damage_per_minute) * minutes) * std::exp(double(t.damage_growth) * minutes);
+    return float(double(kTierDamage[std::clamp(config_.tier, 0, 2)]) * growth * warm);
+}
+
+// An enemy's HP at a run time (4.3): HPMAX x (1 + hp_per_minute x minutes)
+// x e^(hp_growth x minutes), x warm_up in phase 1, rising to x 1 over the
+// minute before and after its end (no step at 5:00).
+double OverflowDirector::hp_factor(double minutes) const {
+    const auto& t = config_.tuning;
+    const double end = double(t.phase_steps) / 3600.0;
+    const double warm = std::clamp(double(t.warm_up) + (1.0 - double(t.warm_up)) * (minutes - (end - 1.0)) / 2.0, double(t.warm_up), 1.0);
+    return (1.0 + double(t.hp_per_minute) * minutes) * std::exp(double(t.hp_growth) * minutes) * warm;
 }
 
 // The time factor of the damage taken, every second.
 void OverflowDirector::update_factors(Engine& engine) {
     (void)engine;
-    if (rules_ && config_.tuning.time_scaling) rules_->damage.taken_factor = damage_factor(run_seconds() / 60.0);
+    if (!rules_ || !config_.tuning.time_scaling) return;
+    rules_->damage.taken_factor = damage_factor(run_seconds() / 60.0);
+    // A new phase's families also come in softly: their damage rises from
+    // phase_intro of their own factor to all of it over phase_intro_steps,
+    // as their spawn weight rises (no wall at a phase change).
+    const auto& t = config_.tuning;
+    const int now = phase();
+    const std::uint64_t into = clock_ - std::uint64_t(now - 1) * std::uint64_t(t.phase_steps);
+    const double intro = now == 1 ? 1.0
+                                  : std::min(1.0, double(t.phase_intro) + (1.0 - double(t.phase_intro)) * double(into) /
+                                                                                 double(std::max(1, t.phase_intro_steps)));
+    for (const auto& row : family_table())
+        if (row.phase == now && now > 1) rules_->damage.family_factor[row.family] = float(double(family_damage(row)) * intro);
+}
+
+// A family's own damage factor (tables.inc, or a balance pass's override).
+float OverflowDirector::family_damage(const FamilyRow& row) const {
+    if (const auto found = config_.family_damage.find(row.family); found != config_.family_damage.end()) return found->second;
+    return row.damage;
 }
 
 bool OverflowDirector::walkable(float x, float z) const {
@@ -406,6 +448,8 @@ void OverflowDirector::level_up(Engine& engine, int slot, int level) {
 }
 
 void OverflowDirector::open_level_up(Engine& engine) {
+    window_steps_.push_back(clock_);
+    offer_state_.level = level(engine);
     offers_ = draw_offers(offer_state_, random_);
     screen_ = Screen::level_up;
     cursor_ = 0;
@@ -427,7 +471,7 @@ void OverflowDirector::take_offer(Engine& engine, const Offer& offer) {
         offer_state_.forge = std::clamp(offer.value, 1, 5);
         rules_->skills.cap[std::size_t(art_skill_)] =
             db->number("weapon", ladder_base_ + (offer_state_.forge - 1) * 5 + 4, "SKILLPOINT").value_or(rules_->skills.cap[std::size_t(art_skill_)]);
-        if (offer_state_.forge >= 3) rules_->damage.tag_factor[kTagArt] = 1.2f * art_class_factor(config_.form);
+        if (offer_state_.forge >= 3) rules_->damage.tag_factor[kTagArt] = 1.2f * art_factor();
         equip_ladder(engine, false);
         sys->recalc_player(engine, 0);
         sys->store_species(0);
@@ -465,6 +509,7 @@ void OverflowDirector::take_offer(Engine& engine, const Offer& offer) {
     }
     pending_levels_ = std::max(0, pending_levels_ - 1);
     if (pending_levels_ > 0) {
+        offer_state_.level = level(engine);
         offers_ = draw_offers(offer_state_, random_);
         cursor_ = 0;
         return;
@@ -485,20 +530,78 @@ std::string OverflowDirector::offer_text(const Engine& engine, const Offer& offe
     return {};
 }
 
+// "Fire", "Fire and Cutter", "Fire, Cutter and Bomb".
+namespace {
+std::string join_names(const std::vector<std::string>& names) {
+    std::string out;
+    for (std::size_t i = 0; i < names.size(); ++i) out += (i == 0 ? "" : i + 1 == names.size() ? " and " : ", ") + names[i];
+    return out;
+}
+} // namespace
+
 std::string OverflowDirector::offer_detail(const Engine& engine, const Offer& offer) const {
-    auto* db = const_cast<Engine&>(engine).get<DatabaseManager>();
     switch (offer.kind) {
     case OfferKind::forge: {
-        const int cap = db ? db->number("weapon", ladder_base_ + (offer.value - 1) * 5 + 4, "SKILLPOINT").value_or(0) : 0;
         const std::string step = offer.value >= 2 && offer.value <= 5 ? forge_steps_[std::size_t(offer.value - 2)] : std::string();
-        return std::string(kClassNames[std::clamp(art_skill_, 0, 5)]) + " cap " + std::to_string(cap) + ", " + step;
+        return "Art: " + step;
     }
     case OfferKind::train: {
         const int group = std::clamp(offer.value - kBlastSkill, 0, 2);
         const int steps = offer_state_.train[std::size_t(group)];
-        return "cap " + std::to_string(train_cap(steps)) + " > " + std::to_string(train_cap(steps + 1)) + ", " + kGroupNames[group] + " +100";
+        const int now = level(engine);
+        int lock = 0;
+        bool learned = false;
+        for (const auto& t : techniques_)
+            if (t.group == group) {
+                if (t.lock <= now) learned = true;
+                else if (lock == 0 || t.lock < lock) lock = t.lock;
+            }
+        if (!learned && lock > 0)
+            for (const auto& t : techniques_)
+                if (t.group == group && t.lock == lock) return t.name + " at Lv " + std::to_string(lock) + "; " + kGroupNames[group] + " +100";
+        return std::string(kGroupNames[group]) + " +100, cap " + std::to_string(train_cap(steps)) + " > " + std::to_string(train_cap(steps + 1));
     }
     case OfferKind::plug: return std::string(plug_name(offer.value)) + " +" + std::to_string(plug_points(level(engine)));
+    }
+    return {};
+}
+
+// One line about the offer under the cursor (9.4: "A Take" and a line of text).
+std::string OverflowDirector::offer_about(const Engine& engine, const Offer& offer) const {
+    auto* db = const_cast<Engine&>(engine).get<DatabaseManager>();
+    switch (offer.kind) {
+    case OfferKind::forge: {
+        const int cap = db ? db->number("weapon", ladder_base_ + (offer.value - 1) * 5 + 4, "SKILLPOINT").value_or(0) : 0;
+        const std::string family =
+            offer.value >= 1 && offer.value <= int(family_names_.size()) ? family_names_[std::size_t(offer.value - 1)] : std::string("?");
+        return "The heart of the build: " + art_name_ + " grows at once, and the weapon may climb to " + family + " \xCE\xB5 (" +
+               kClassNames[std::clamp(art_skill_, 0, 5)] + " skill " + std::to_string(cap) + ").";
+    }
+    case OfferKind::train: {
+        const int group = std::clamp(offer.value - kBlastSkill, 0, 2);
+        const int now = level(engine);
+        std::vector<std::string> names, locked;
+        int lock = 0;
+        for (const auto& t : techniques_) {
+            if (t.group != group) continue;
+            if (t.lock <= now) names.push_back(t.name);
+            else {
+                locked.push_back(t.name);
+                if (lock == 0 || t.lock < lock) lock = t.lock;
+            }
+        }
+        const int steps = offer_state_.train[std::size_t(group)];
+        if (names.empty() && lock > 0)
+            return join_names(locked) + " is learned at Lv " + std::to_string(lock) + "; until then this only stores " + kGroupNames[group] + " skill.";
+        return join_names(names) + " rank up with " + kGroupNames[group] + " skill: +100 now, and it may grow to " +
+               std::to_string(train_cap(steps + 1)) + ".";
+    }
+    case OfferKind::plug: {
+        static constexpr const char* kElements[4] = {"fire", "ice", "thunder", "dark"};
+        const std::string plug = std::string(plug_name(offer.value)) + " +" + std::to_string(plug_points(level(engine))) + " for this run";
+        if (offer.value >= 7 && offer.value <= 10) return plug + ": only " + kElements[offer.value - 7] + " attacks hit softer.";
+        return plug + ".";
+    }
     }
     return {};
 }
@@ -572,13 +675,22 @@ void OverflowDirector::player_hit(Engine& engine, const HitTaken& hit) {
     if (hit.damage <= 0) return;
     ++hits_taken_;
     if (hit.clamped) ++clamps_;
-    const double share = hit.max_hp > 0 ? double(hit.damage) / double(hit.max_hp) : 0.0;
+    // A hit costs its damage and the whole of the poison it left (the run's
+    // poison rule): 14.2's highest hit and the balance test see both.
+    const int poison = hit.poison_tick * hit.poison_ticks;
+    const double share = hit.max_hp > 0 ? double(hit.damage + poison) / double(hit.max_hp) : 0.0;
+    if (poison > 0) {
+        ++poisonings_;
+        highest_poison_ = std::max(highest_poison_, double(poison) / double(std::max(1, hit.max_hp)));
+    }
+    taken_share_ += share;
     // DW4_TRACE_OVERFLOW_HITS: every hit taken (the balance passes).
     static const bool trace = std::getenv("DW4_TRACE_OVERFLOW_HITS") != nullptr;
     if (trace)
         engine.log("overflow hit " + hit.shooter + "#" + std::to_string(hit.shooter_index) + " kind " + std::to_string(hit.kind) + " raw " +
                    std::to_string(hit.raw) + " damage " + std::to_string(hit.damage) + " of " + std::to_string(hit.max_hp) + " factor " +
-                   std::to_string(rules_ ? rules_->damage.taken_factor : 0.0f));
+                   std::to_string(rules_ ? rules_->damage.taken_factor : 0.0f) +
+                   (poison > 0 ? " poison " + std::to_string(hit.poison_tick) + "x" + std::to_string(hit.poison_ticks) : std::string()));
     if (hit.enemy != EnemyClass::guardian) highest_hit_ = std::max(highest_hit_, share);
     auto& by = hits_by_family_[hit.shooter + (hit.enemy == EnemyClass::corrupted ? "*" : "")];
     ++by.first;
@@ -591,6 +703,8 @@ void OverflowDirector::player_hit(Engine& engine, const HitTaken& hit) {
 void OverflowDirector::run_end(Engine& engine, const RunEnd& end) {
     // H3: a defeat (or the original's game over) ends the run; a stage the
     // run did not ask for (O1a has no exit) counts as Retire.
+    static const char* const reasons[] = {"stage_exit", "game_over", "player_defeated"};
+    if (outcome_ == Outcome::none) end_reason_ = reasons[int(end.reason)];
     begin_end(engine, end.reason == EndReason::stage_exit ? Outcome::retired : Outcome::defeated);
 }
 
@@ -600,7 +714,8 @@ void OverflowDirector::begin_end(Engine& engine, Outcome outcome) {
     ending_since_ = steps_;
     ending_phase_ = 0;
     static const char* names[] = {"none", "retired", "defeated", "cleared"};
-    event_log_.push_back({clock_, std::string("end ") + names[int(outcome)]});
+    if (end_reason_ == "-") end_reason_ = names[int(outcome)];
+    event_log_.push_back({clock_, std::string("end ") + names[int(outcome)] + " (" + end_reason_ + ")"});
     log_minute(engine);
     if (outcome == Outcome::retired) {
         ending_phase_ = 99;
@@ -669,48 +784,63 @@ PadSample OverflowDirector::bot_pad(Engine& engine) {
     const auto* self = models->find(sys->players[0].digimon, 0);
     if (!self || !self->node) return host_pad_sample(input);
     const Vec3f me = ram_position(*self);
-    // Away from the enemies within 40 units, weighted 1/d^2: of 16 ways the
-    // one whose point 25 units ahead has the least sum of 1/d^2 to them
-    // (so a crowd's gap wins over its middle), back towards the centre past
-    // 70 % of the arena's radius. It stands while nothing is within 20
-    // units (the Art reaches 22), walks at half speed while the nearest is
-    // within 20 and runs below 12.
+    // 14.1, as a player of the move-only mode plays it (10): it never stands.
+    // With an enemy within bot_flee (16) units it walks away from the
+    // enemies within 40, weighted 1/d^2 (of 16 ways the one whose point 25
+    // units ahead has the least sum of 1/d^2 to them, so a crowd's gap wins
+    // over its middle; 0.7 of the stick, full stick within half of bot_flee).
+    // Else it walks at half the stick towards the nearest enemy within 60
+    // (into the Art's reach), else on its last way. Back towards the centre
+    // past 70 % of the arena's radius; a small cost for turning keeps it from
+    // dithering between two ways. (Lane C's bot stood until an enemy came
+    // within 20, so the balance was made for a player who waits.)
     struct Threat {
         Vec3f at;
     };
     std::vector<Threat> threats;
     float nearest = 1e9f;
+    Vec3f nearest_at{};
     for (const auto& ram : models->rams()) {
         if (!living_enemy(*ram)) continue;
         const Vec3f q = ram_position(*ram);
         const float d = flat_distance(q, me);
-        if (d > 40.0f) continue;
-        threats.push_back({q});
-        nearest = std::min(nearest, d);
+        if (d < nearest) {
+            nearest = d;
+            nearest_at = q;
+        }
+        if (d <= 40.0f) threats.push_back({q});
     }
+    const float flee_at = config_.tuning.bot_flee;
+    const bool flee = nearest < flee_at, approach = !flee && nearest < 60.0f;
     const float r = flat_distance(me, centre_);
-    float magnitude = nearest < 12.0f ? 1.0f : nearest < 20.0f ? 0.5f : 0.0f;
+    float magnitude = flee ? (nearest < 0.5f * flee_at ? 1.0f : 0.7f) : 0.5f;
     if (r > 0.7f * radius_) magnitude = std::max(magnitude, std::min(1.0f, (r - 0.7f * radius_) / (0.2f * radius_)));
     float dx = 0, dz = 0;
-    if (magnitude > 0.0f) {
+    {
         float best = 1e30f;
         for (int k = 0; k < 16; ++k) {
             const float angle = 6.2831853f * float(k) / 16.0f;
             const float sx = std::sin(angle), sz = std::cos(angle);
             const Vec3f p{me.x + 25.0f * sx, me.y, me.z + 25.0f * sz};
             float cost = 0;
-            for (const auto& t : threats) {
-                const float d = std::max(3.0f, flat_distance(p, t.at));
-                cost += 1.0f / (d * d);
-            }
+            if (flee)
+                for (const auto& t : threats) {
+                    const float d = std::max(3.0f, flat_distance(p, t.at));
+                    cost += 1.0f / (d * d);
+                }
+            else if (approach)
+                cost += 0.0001f * flat_distance(p, nearest_at);
             const float pr = flat_distance(p, centre_);
             if (pr > 0.7f * radius_) cost += 0.02f * (pr - 0.7f * radius_) * (pr - 0.7f * radius_) / (radius_ * radius_) * 100.0f;
+            cost += 0.0004f * (1.0f - (sx * bot_dx_ + sz * bot_dz_));
             if (cost < best) {
                 best = cost;
                 dx = sx;
                 dz = sz;
             }
         }
+        bot_dx_ = dx;
+        bot_dz_ = dz;
     }
     if (magnitude > 0.05f && (dx != 0 || dz != 0)) {
         // World direction to the stick: up is away from the camera on the
@@ -790,6 +920,8 @@ void OverflowDirector::log_minute(Engine& engine) {
     line.clamps = clamps_;
     line.alive = alive_;
     line.highest_hit = highest_hit_;
+    line.taken = taken_share_ - minute_taken_mark_;
+    minute_taken_mark_ = taken_share_;
     if (rules_) {
         line.no_control = rules_->tally.no_control_steps;
         line.steps = rules_->tally.steps;
@@ -875,7 +1007,8 @@ std::string OverflowDirector::log_text() const {
     for (const auto& [step, text] : event_log_) out << "event " << step << ' ' << text << '\n';
     for (const auto& m : minutes_)
         out << "minute " << m.minute << " level " << m.level << " defeats " << m.defeats << " hits " << m.hits_taken << " clamps " << m.clamps
-            << " alive " << m.alive << " no_control " << m.no_control << '/' << m.steps << " highest " << m.highest_hit << '\n';
+            << " alive " << m.alive << " no_control " << m.no_control << '/' << m.steps << " highest " << m.highest_hit << " taken " << m.taken
+            << '\n';
     out << "pads\n" << pad_log_;
     if (last_pad_count_ > 0) {
         char line[96];
@@ -890,7 +1023,8 @@ std::string OverflowDirector::log_text() const {
 std::string OverflowDirector::summary_text(const Engine& engine) const {
     std::ostringstream out;
     static const char* names[] = {"none", "retired", "defeated", "cleared"};
-    out << "form " << config_.form << "\nseed " << config_.seed << "\nend " << names[int(outcome_)] << "\n";
+    out << "form " << config_.form << "\nseed " << config_.seed << "\nbot " << (config_.bot.empty() ? "-" : config_.bot) << "\nend "
+        << names[int(outcome_)] << "\nend_reason " << end_reason_ << "\n";
     out << "run_steps " << clock_ << "\nrun_seconds " << run_seconds() << "\nlevel " << level(engine) << "\ndefeats " << defeats_
         << "\ncorrupted_defeats " << corrupted_defeats_ << "\n";
     const double first = level_up_steps_.empty() ? -1.0 : double(level_up_steps_.front()) * 1001.0 / 60000.0;
@@ -908,8 +1042,25 @@ std::string OverflowDirector::summary_text(const Engine& engine) const {
     }
     out << "phase1_level_ups " << phase1 << "\nphase1_level_up_gaps_s " << (gaps.empty() ? "-" : gaps) << "\n";
     out << "level_ups " << level_up_steps_.size() << "\n";
+    {
+        // The level-up windows (freezes) of phase 1: how many in the first
+        // minute, and their gaps.
+        int first_minute = 0;
+        std::string windows;
+        std::uint64_t last_window = 0;
+        for (const auto step : window_steps_) {
+            if (step > std::uint64_t(config_.tuning.phase_steps)) break;
+            if (double(step) * 1001.0 / 60000.0 <= 60.0) ++first_minute;
+            char gap[32];
+            std::snprintf(gap, sizeof gap, "%s%.1f", windows.empty() ? "" : ",", double(step - last_window) * 1001.0 / 60000.0);
+            windows += gap;
+            last_window = step;
+        }
+        out << "windows_first_minute " << first_minute << "\nphase1_window_gaps_s " << (windows.empty() ? "-" : windows) << "\n";
+    }
     out << "art_hits_per_kill_median " << median(art_hits_per_kill_) << "\nart_kills_phase1 " << art_hits_per_kill_.size() << "\n";
     out << "hits_taken " << hits_taken_ << "\nmisses " << misses_ << "\nclamps " << clamps_ << "\nhighest_hit_share " << highest_hit_ << "\n";
+    out << "poisonings " << poisonings_ << "\nhighest_poison_share " << highest_poison_ << "\ntaken_share " << taken_share_ << "\n";
     if (rules_) {
         const auto& tally = rules_->tally;
         out << "no_control_share " << (clock_ ? double(no_control_) / double(clock_) : 0.0) << "\n";
@@ -945,7 +1096,7 @@ std::string OverflowDirector::summary_text(const Engine& engine) const {
     out << "lua_errors " << lua_errors << "\n";
     for (const auto& m : minutes_)
         out << "minute " << m.minute << " level " << m.level << " defeats " << m.defeats << " hits " << m.hits_taken << " alive " << m.alive
-            << " highest " << m.highest_hit << '\n';
+            << " highest " << m.highest_hit << " taken " << m.taken << '\n';
     return out.str();
 }
 

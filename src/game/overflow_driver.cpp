@@ -47,6 +47,18 @@ std::string option(const RunRequest& request, std::string_view key, std::string 
     return found == request.options.end() ? fallback : found->second;
 }
 
+// "NAME:F,NAME:F" (the balance passes' factor lists).
+std::vector<std::pair<std::string, float>> pairs(const std::string& text) {
+    std::vector<std::pair<std::string, float>> out;
+    for (std::size_t begin = 0; begin < text.size();) {
+        const std::size_t end = std::min(text.find(',', begin), text.size());
+        const std::string token = text.substr(begin, end - begin);
+        if (const auto colon = token.find(':'); colon != std::string::npos) out.push_back({token.substr(0, colon), std::strtof(token.c_str() + colon + 1, nullptr)});
+        begin = end + 1;
+    }
+    return out;
+}
+
 class DirectorDriver final : public RunDriver {
 public:
     explicit DirectorDriver(RunRequest request) : request_(std::move(request)) {
@@ -68,7 +80,26 @@ public:
         };
         real("damage_per_minute", config.tuning.damage_per_minute);
         real("hp_per_minute", config.tuning.hp_per_minute);
+        real("damage_growth", config.tuning.damage_growth);
+        real("hp_growth", config.tuning.hp_growth);
         real("alive_per_minute", config.tuning.alive_per_minute);
+        real("art_range", config.tuning.art_range);
+        real("art_range_moving", config.tuning.art_range_moving);
+        real("damage_warm_up", config.tuning.damage_warm_up);
+        real("warm_up", config.tuning.warm_up);
+        real("mp_regen", config.tuning.mp_regen);
+        real("behind_far", config.tuning.behind_far);
+        real("visible_min", config.tuning.visible_min);
+        real("ahead_share", config.tuning.ahead_share);
+        real("ahead_angle_min", config.tuning.ahead_angle_min);
+        real("ahead_angle_max", config.tuning.ahead_angle_max);
+        real("phase_intro", config.tuning.phase_intro);
+        real("art_class", config.art_class);
+        real("bot_flee", config.tuning.bot_flee);
+        if (const auto gap = option(request_, "window_gap"); !gap.empty()) config.tuning.level_window_gap = std::atoi(gap.c_str());
+        if (const auto muteki = option(request_, "muteki"); !muteki.empty()) config.tuning.muteki = std::atoi(muteki.c_str());
+        // (family_damage=FAMILY:F,...: a family's own damage factor.)
+        for (const auto& [key, value] : pairs(option(request_, "family_damage"))) config.family_damage[key] = value;
         timing_ = option(request_, "timing") == "1";
         // commands=STEP KIND[VALUE],... (test runs with pictures): the menu keys
         // at given director steps (frozen ones count), e.g. 600p,640m1,660a: pause, the cursor down, A.
@@ -91,6 +122,8 @@ public:
         // (curve=B,L,S: the balance passes' NEXTEXP terms.)
         if (const auto curve = option(request_, "curve"); !curve.empty())
             std::sscanf(curve.c_str(), "%d,%d,%d", &rules_->levels.curve_base, &rules_->levels.curve_linear, &rules_->levels.curve_square);
+        // (technique_damage=FAMILY:F,...: a pcTech family's damage factor.)
+        for (const auto& [key, value] : pairs(option(request_, "technique_damage"))) rules_->damage.technique_factor[std::atoi(key.c_str())] = value;
         run.set_overflow_rules(rules_);
     }
 
@@ -135,10 +168,14 @@ public:
         if (request_.bot == "kite") {
             pad = director_->bot_pad(run);
         } else if (request_.bot == "circle") {
-            // (Lane A's isolation test, T3: a slow circle.)
+            // (Lane A's isolation test, T3: a slow circle at full stick; the
+            // movement check of 14.2: a player who never stops walking.)
             ++circle_;
             const float angle = float(circle_) * 0.01f;
             pad = director_->filter_pad(run, host_pad_sample({0, 0, 0, {std::sin(angle), std::cos(angle)}, {}}));
+        } else if (request_.bot == "stand") {
+            // (The movement check of 14.2: a player who never walks.)
+            pad = director_->filter_pad(run, host_pad_sample({}));
         } else {
             pad = director_->filter_pad(run, live);
         }
@@ -294,6 +331,12 @@ private:
         }
         ImGui::Separator();
         ImGui::TextDisabled("A Take");
+        if (const int cursor = director_->cursor(); cursor >= 0 && cursor < int(offers.size())) {
+            ImGui::SameLine();
+            ImGui::PushTextWrapPos(0.0f);
+            ImGui::TextColored(ImVec4(0.85f, 0.85f, 0.85f, 1), "%s", director_->offer_about(run, offers[std::size_t(cursor)]).c_str());
+            ImGui::PopTextWrapPos();
+        }
         ImGui::End();
     }
 

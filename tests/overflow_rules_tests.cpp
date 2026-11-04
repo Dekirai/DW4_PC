@@ -1,7 +1,8 @@
 // Data Overflow (docs/SURVIVAL.md 13.4): the run engine's rules without game
 // data. The curve, the technique lock and the level-up rule; the damage
 // rules (Art factor, tags, techniques, elements, the 35 % clamp, Corrupted,
-// Guardians); the exits (H3: the first request, the director's field change,
+// Guardians); the poison rule (its ticks through the damage-taken rule, at
+// most 10 % of MaxHP a poisoning); the exits (H3: the first request, the director's field change,
 // every other change refused and reported once; no soft or console reset);
 // the native game over (H10); the rule set "original" leaving every hook
 // but the player hit script alone; an engine without rules unchanged.
@@ -114,6 +115,43 @@ void damage_rules() {
     check(rules.tally.highest_hit_share > 0.34 && rules.tally.highest_hit_share < 0.36, "the highest non-Guardian hit share");
 }
 
+// 4.8, the review of O1a: poison went around the run's damage rule (MRβ02's
+// rank 3 poison, 23 ticks of 3 % of MaxHP: 69 % from a hit of 1).
+void poison_rule() {
+    // DW4's: MaxHP x KOUKARANK / 100 a tick, KOUKATIME 2700 / 120 + 1 ticks.
+    check(run_poison(30, 23, 1000, 1.0, 0, 1.0).tick == 30 && run_poison(30, 23, 1000, 1.0, 0, 1.0).ticks == 23, "no limit: DW4's poison");
+    const auto rank3 = run_poison(30, 23, 1000, 1.0, 5, 0.10);
+    check(rank3.tick == 30 && rank3.ticks == 3, "rank 3: 3 % a tick, the 10 % total cuts the ticks (" + std::to_string(rank3.ticks) + ")");
+    const auto rank8 = run_poison(80, 23, 1000, 1.0, 5, 0.10);
+    check(rank8.tick == 80 && rank8.ticks == 1, "rank 8: one tick of 8 %");
+    const auto scaled = run_poison(30, 23, 1000, 0.4, 5, 0.10);
+    check(scaled.tick == 12 && scaled.ticks == 5, "the damage-taken factor scales the tick; at most five ticks");
+    check(run_poison(30, 23, 1000, 0.01, 5, 0.10).tick == 1, "never below 1 a tick");
+    const auto big = run_poison(30, 23, 100, 9.0, 5, 0.10);
+    check(big.tick == 10 && big.ticks == 1, "a tick is at most the total");
+    check(run_poison(0, 23, 1000, 1.0, 5, 0.10).ticks == 0 && run_poison(30, 0, 1000, 1.0, 5, 0.10).tick == 0, "no poison");
+    for (int rank = 1; rank <= 8; ++rank)
+        for (const double factor : {0.17, 0.4, 1.0, 1.5, 3.1 * 1.5 * 1.3})
+            for (const int max_hp : {150, 1000, 4000}) {
+                const auto p = run_poison(max_hp * rank / 100, 23, max_hp, factor, 5, 0.10);
+                check(p.tick * p.ticks <= std::max(1, max_hp / 10), "one poisoning takes at most 10 % of MaxHP");
+            }
+    // Through the rules: the shooter's factors, Guardians unchanged.
+    OverflowRules rules;
+    ModelScriptContext enemy;
+    enemy.shooter_name = "e_mecha2";
+    enemy.shooter = 1;
+    rules.damage.taken_factor = 2.0f;
+    rules.damage.family_factor["e_mecha2"] = 0.4f;
+    const auto normal = rules.poison(enemy, 1000, 30, 23);
+    check(normal.tick == 24 && normal.ticks == 4, "the run's factors: 30 x 2 x 0.4 = 24, four ticks within 10 %");
+    rules.set_enemy_class("e_mecha2", 1, EnemyClass::corrupted);
+    check(rules.poison(enemy, 1000, 30, 23).tick == 36, "Corrupted x 1.5");
+    rules.set_enemy_class("e_mecha2", 1, EnemyClass::guardian);
+    check(rules.poison(enemy, 1000, 30, 23).tick == 30 && rules.poison(enemy, 1000, 30, 23).ticks == 23, "a Guardian's poison is DW4's");
+    check(rules.player_hit.poison_keeps_one, "poison never takes the last HP in a run");
+}
+
 void exits() {
     Recorder director;
     auto rules = std::make_shared<OverflowRules>();
@@ -191,6 +229,7 @@ int main() {
         technique_lock();
         level_rule();
         damage_rules();
+        poison_rule();
         exits();
         original_rule_set();
         without_rules();

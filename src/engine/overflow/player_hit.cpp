@@ -17,7 +17,9 @@
 //   its shake; no damage sequence and no turn towards the attacker, so the
 //   Digimon walks on; the element's hit spark (the damage action's own
 //   starter, SDMG<F/I/T/D>1) and PC_DMG01; stun, sleep and bind last at most
-//   status_cap frames, poison and the downs keep their times;
+//   status_cap frames, the downs keep their times; poison ticks through the
+//   damage-taken rule, at most poison_ticks times and poison_share of MaxHP
+//   in all (OverflowRules::poison), and never takes the last HP (status.cpp);
 // - a Guardian's hit: the original reaction by damage rank and statuses;
 // - after every damaging hit player_hit.muteki frames of MUTEKI;
 // - a miss shows the guard effect (the guard action's starter, GURD?2) and
@@ -91,17 +93,36 @@ void reaction(Calls& be, double rank) {
     be.call("MDLsetSeq", {S(sequence)});
 }
 
+// The run's poison rule for one hit (RuleSet::run): the rules, the hit's
+// context and the hit report that learns the poison.
+struct RunPoisonRule {
+    const OverflowRules& rules;
+    const ModelScriptContext& context;
+    HitTaken& hit;
+};
+
 // L321..L391: the statuses of a damaging hit (none at rank 3). `cap` > 0
-// limits stun and bind (the run's rule for normal enemies).
-void damage_statuses(Calls& be, const Lua4Value& damage, double rank, int cap) {
+// limits stun and bind (the run's rule for normal enemies); `run` puts the
+// poison through the run's poison rule (OverflowRules::poison: its ticks
+// through the damage-taken rule, their count and total limited).
+void damage_statuses(Calls& be, const Lua4Value& damage, double rank, int cap, const RunPoisonRule* run = nullptr) {
     if (rank == 3) return;
     auto capped = [&](double value) { return cap > 0 ? std::min(value, double(cap)) : value; };
     if (const double stun = be.num("BLPgetStunTime", {damage, N(rank)}); stun > 0) be.call("MDLsetSD", {S("SETSTUN"), S("I<" + text(capped(stun)) + ">")});
     if (const double bind = be.num("BLPgetBindTime"); bind > 0) be.call("MDLsetSD", {S("SETBIND"), S("I<" + text(capped(bind)) + ">")});
     if (const double poison = be.num("BLPgetPoisonTime", {S("TIME")}); poison > 0) {
-        const auto amount = be.call("BLPgetPoisonTime", {S("DAMAGE")});
+        auto amount = be.call("BLPgetPoisonTime", {S("DAMAGE")});
         const auto gedoku = be.call("BLPgetPoisonTime", {S("GEDOKU")});
-        be.call("MDLsetSD", {S("SETPOISON"), S("I<" + text(poison) + ">/I<" + text(amount) + ">/I<" + text(gedoku) + ">")});
+        std::string time = text(poison);
+        if (run) {
+            // (SETPOISON ticks time / 120 + 1 times.)
+            const auto out = run->rules.poison(run->context, run->hit.max_hp, int(number_of(amount)), int(poison) / 120 + 1);
+            amount = N(out.tick);
+            time = text(double((out.ticks - 1) * 120));
+            run->hit.poison_tick = out.tick;
+            run->hit.poison_ticks = out.ticks;
+        }
+        be.call("MDLsetSD", {S("SETPOISON"), S("I<" + time + ">/I<" + text(amount) + ">/I<" + text(gedoku) + ">")});
     }
 }
 
@@ -295,7 +316,8 @@ void run_hit(Engine& engine, OverflowRules& rules, Calls& be, double kind) {
             if (letter) broadcast(engine, self->info_name, self->index, std::string("SDMG") + letter + "1");
             play_sound(engine, "PC_DMG01");
         }
-        damage_statuses(be, damage, std::min(rank, 2.0), rules.player_hit.status_cap);
+        const RunPoisonRule poison{rules, *context, hit};
+        damage_statuses(be, damage, std::min(rank, 2.0), rules.player_hit.status_cap, &poison);
     }
     if (rules.player_hit.muteki > 0) models->set_muteki(engine, *self, float(rules.player_hit.muteki));
     hud(be);

@@ -51,7 +51,8 @@ std::vector<Offer> eligible_offers(const OfferState& state) {
     std::vector<Offer> out;
     if (state.forge < 5) out.push_back({OfferKind::forge, state.forge + 1});
     for (int g = 0; g < 3; ++g)
-        if (state.groups[std::size_t(g)] && state.train[std::size_t(g)] < 4) out.push_back({OfferKind::train, kBlastSkill + g});
+        if (state.groups[std::size_t(g)] && state.train[std::size_t(g)] < 4 && state.level + kTrainLead >= state.unlock_level[std::size_t(g)])
+            out.push_back({OfferKind::train, kBlastSkill + g});
     for (const int stat : kPlugStats) out.push_back({OfferKind::plug, stat});
     return out;
 }
@@ -68,16 +69,19 @@ double next_unit(std::uint64_t& state) { return double(next_random(state) >> 11)
 
 std::vector<Offer> draw_offers(const OfferState& state, std::uint64_t& random) {
     auto pool = eligible_offers(state);
-    int trains = 0, plugs = 0;
+    // (A resistance plug weighs a quarter of a stat plug: UPCNT 7-10.)
+    auto plug_share = [](int stat) { return stat >= 7 ? 0.25 : 1.0; };
+    int trains = 0;
+    double plugs = 0;
     for (const auto& offer : pool) {
         trains += offer.kind == OfferKind::train ? 1 : 0;
-        plugs += offer.kind == OfferKind::plug ? 1 : 0;
+        if (offer.kind == OfferKind::plug) plugs += plug_share(offer.value);
     }
     auto weight = [&](const Offer& offer) {
         switch (offer.kind) {
         case OfferKind::forge: return kForgeWeight;
         case OfferKind::train: return kTrainWeight / double(std::max(1, trains));
-        case OfferKind::plug: return kPlugWeight / double(std::max(1, plugs));
+        case OfferKind::plug: return kPlugWeight * plug_share(offer.value) / std::max(0.25, plugs);
         }
         return 0.0;
     };

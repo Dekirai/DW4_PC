@@ -50,27 +50,40 @@ struct ArtDef {
     std::array<const char*, 4> forge;
 };
 // SURVIVAL.md 6.3 (O1a: Cleaver and Blade Arc). The class factors make
-// Kokatorimon's warm-up HP (54) a two-hit kill at level 1 (overflow_balance).
+// Kokatorimon's warm-up HP (54) a two-hit kill at level 1 (overflow_balance);
+// Cleaver's is the larger: Veemon has Impact and Bolt's jumps for crowds,
+// Agumon only its Art (the review round's bot runs: Agumon fell minutes
+// behind Veemon with a walking player).
 constexpr ArtDef kArts[] = {
-    {"p_agumon", "Cleaver", 0, "VATCX1", "axe", 1.3f, {"a second line on the next target", "+20 % damage", "side lines", "a bigger fan"}},
+    {"p_agumon", "Cleaver", 0, "VATCX1", "axe", 2.0f, {"a second line on the next target", "+20 % damage", "side lines", "a bigger fan"}},
     {"p_vmon", "Blade Arc", 25, "VATCS1", "slash", 1.4f, {"an arc on the next target", "+20 % damage", "the return arc", "+30 % size"}},
 };
 
-// O1a's techniques (pcTech base rows) with their cooldowns and cast sounds.
+// O1a's techniques (pcTech base rows) with their cooldowns, cast sounds and
+// damage factors. Impact's rings strike every enemy within 20 at once each
+// time: x 0.5 (the review round's bot runs: with it Veemon outlasted Agumon
+// by minutes).
 struct TechDef {
     int family;
     int cooldown;
     const char* sound;
     bool aim, heal;
+    float damage;
 };
 constexpr TechDef kTechniques[] = {
-    {0, 150, "plMAGIC1", true, false},   // Fire, 2.5 s
-    {30, 150, "plMAGIC1", true, false},  // Cutter, 2.5 s
-    {10, 150, "plMAGIC1", true, false},  // Bolt, 2.5 s
-    {25, 120, "plIMPACT", false, false}, // Impact, 2.0 s
-    {40, 720, "plHEAL01", false, true},  // Heal Lt, 12 s
+    {0, 150, "plMAGIC1", true, false, 1.0f},   // Fire, 2.5 s
+    {30, 150, "plMAGIC1", true, false, 1.0f},  // Cutter, 2.5 s
+    {10, 150, "plMAGIC1", true, false, 1.0f},  // Bolt, 2.5 s
+    {25, 120, "plIMPACT", false, false, 0.5f}, // Impact, 2.0 s
+    {40, 720, "plHEAL01", false, true, 1.0f},  // Heal Lt, 12 s
 };
 } // namespace
+
+float technique_damage(int family) {
+    for (const auto& def : kTechniques)
+        if (def.family == family) return def.damage;
+    return 1.0f;
+}
 
 float art_class_factor(std::string_view form) {
     for (const auto& def : kArts)
@@ -136,8 +149,10 @@ void OverflowDirector::load_art_pattern(Engine& engine) {
         box.delay = box.delay - first + 1.0f;
         box.end = box.end - first + 1.0f;
     }
-    // The techniques of the form that O1a plays.
+    // The techniques of the form that O1a plays, and the run level each
+    // group's first one is learned at (the Train offers wait for it).
     techniques_.clear();
+    offer_state_.unlock_level = {9999, 9999, 9999};
     const int species = sys->players[0].stats.species;
     for (int n = 1; n <= 6; ++n) {
         const int base = db->number("shinka", species, "TECH" + std::to_string(n)).value_or(-1);
@@ -152,11 +167,19 @@ void OverflowDirector::load_art_pattern(Engine& engine) {
             std::string name = detail::plain_name(db->text("pcTech", base, "NAME"));
             if (const auto space = name.find(' '); space != std::string::npos) name.erase(0, space + 1); // "Petty Fire" -> "Fire"
             t.name = name;
-            techniques_.push_back(t);
+            const int lock = db->number("shinka", species, "TECH" + std::to_string(n) + "_LEVEL").value_or(1);
+            t.lock = std::max(1, rules_ ? rules_->technique_level(lock) : lock);
             const int group = db->number("pcTech", base, "SKILL").value_or(kBlastSkill) - kBlastSkill;
-            if (group >= 0 && group < 3) offer_state_.groups[std::size_t(group)] = true;
+            t.group = std::clamp(group, 0, 2);
+            techniques_.push_back(t);
+            if (group >= 0 && group < 3) {
+                offer_state_.groups[std::size_t(group)] = true;
+                offer_state_.unlock_level[std::size_t(group)] = std::min(offer_state_.unlock_level[std::size_t(group)], t.lock);
+            }
         }
     }
+    for (auto& unlock : offer_state_.unlock_level)
+        if (unlock == 9999) unlock = 0;
     engine.log("overflow: Art " + art_name_ + " (" + art_label_ + ", " + std::to_string(pattern_.size()) + " boxes, tip " +
                std::to_string(int(pattern_tip_)) + "), " + std::to_string(techniques_.size()) + " techniques");
 }
@@ -236,12 +259,17 @@ void OverflowDirector::cast_art(Engine& engine) {
         float d;
         Vec3f at;
     };
+    // The reach grows with the walking speed of the last half second.
+    const auto& t = config_.tuning;
+    float speed = 0.0f;
+    if (trail_.size() >= 2) speed = flat_distance(trail_.front(), trail_.back()) / float(trail_.size() - 1);
+    const float reach = t.art_range + (t.art_range_moving - t.art_range) * std::clamp(speed / 0.70f, 0.0f, 1.0f);
     std::vector<Target> targets;
     for (const auto& ram : models->rams()) {
         if (!living_enemy(*ram)) continue;
         const Vec3f q = ram_position(*ram);
         const float d = flat_distance(q, me);
-        if (d <= art_range_) targets.push_back({d, q});
+        if (d <= reach) targets.push_back({d, q});
     }
     if (targets.empty()) return; // (the Art waits for a target)
     std::stable_sort(targets.begin(), targets.end(), [](const Target& a, const Target& b) { return a.d < b.d; });

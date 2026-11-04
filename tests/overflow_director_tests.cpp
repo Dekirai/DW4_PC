@@ -2,20 +2,31 @@
 // director's unit tests). One program, one ctest entry per part:
 //   offers   (no data)  eligibility, weights, never an empty window or the
 //                       same offer twice, the Train caps, the plug points,
-//                       the test bot's priority
+//                       Train waiting for its group's first technique, the
+//                       resistance plugs' smaller weight, the test bot's
+//                       priority
 //   rng      (no data)  the director's own generator: a seed gives one
 //                       stream, the system generator is not drawn by it;
 //                       the story's generator survives a run engine
 //   spawn    (data)     the Violet Ring's walkable cells, spawn points on
-//                       them at the ring's distance, the living count
-//                       topped up to A(t), an encirclement that reuses the
-//                       RAMs of the 16 farthest enemies
+//                       them at the ring's distance (one in the picture at
+//                       least visible_min away), the living count topped
+//                       up to A(t), an encirclement that reuses the RAMs of
+//                       the 16 farthest enemies and keeps their HP, the
+//                       followers a walking player leaves behind brought
+//                       back on its way
+//   poison   (data)     4.8: a poison tick never takes the last HP and never
+//                       ends the run; MRβ02's poison through the run's rule
+//                       takes at most 10 % of MaxHP a poisoning
 //   balance  (data)     14.3: no one-hit enemies (the worst hit of every
-//                       family at its phase's expected levels, Corrupted
-//                       included, measured with the run's damage-taken
-//                       rule, at most 35 % of MaxHP), quick early kills of
-//                       the start Art and TECH1, enough RAMs per phase, no
-//                       Guardian family in the pools
+//                       family, its poison included, at its phase's
+//                       expected levels, Corrupted included, measured with
+//                       the run's damage-taken rule, at most 35 % of MaxHP),
+//                       no wall at a phase change (a new phase's families
+//                       hit at its start about as the phase before hit at
+//                       its end), quick early kills of the start Art and
+//                       TECH1, enough RAMs per phase, no Guardian family in
+//                       the pools
 // `report` prints the balance table without failing (the tuning pass).
 #include "dw4/engine/engine.hpp"
 #include "dw4/engine/managers.hpp"
@@ -82,6 +93,28 @@ void offers() {
         const auto window = draw_offers(spent, random);
         check(window.size() == 3 && std::all_of(window.begin(), window.end(), [](const Offer& o) { return o.kind == OfferKind::plug; }),
               "no empty window: the plugs fill it");
+    }
+    // Train waits for its group's first technique (two levels ahead): Heal Lt
+    // at run level 15 (Agumon's and Veemon's TECH3) shows no Train Heal at 2.
+    OfferState early = state;
+    early.unlock_level = {1, 15, 0};
+    early.level = 2;
+    auto none = eligible_offers(early);
+    check(std::none_of(none.begin(), none.end(), [](const Offer& o) { return o.kind == OfferKind::train && o.value == kHealSkill; }) &&
+              std::any_of(none.begin(), none.end(), [](const Offer& o) { return o.kind == OfferKind::train && o.value == kBlastSkill; }),
+          "no Train Heal at level 2 for a Heal Lt of level 15, Train Blast for Fire");
+    early.level = 13;
+    none = eligible_offers(early);
+    check(std::any_of(none.begin(), none.end(), [](const Offer& o) { return o.kind == OfferKind::train && o.value == kHealSkill; }),
+          "Train Heal from two levels before Heal Lt");
+    // A resistance plug weighs a quarter of a stat plug.
+    {
+        std::map<int, int> by_stat;
+        std::uint64_t r = 99;
+        for (int i = 0; i < 6000; ++i)
+            for (const auto& offer : draw_offers(spent, r)) ++by_stat[offer.value];
+        std::cout << "  offers: plug lines Strength " << by_stat[2] << ", Fire RES " << by_stat[7] << '\n';
+        check(by_stat[7] * 2 < by_stat[2], "a resistance plug comes less often than a stat plug");
     }
     // The bot's priority: Forge, Train Blast, Train Heal, then Strength first.
     check(offer_priority({OfferKind::forge, 3}) < offer_priority({OfferKind::train, kBlastSkill}) &&
@@ -234,6 +267,23 @@ void spawn(const std::filesystem::path& data) {
         check(director.walkable(at.x, at.z), "a ring point on a walkable cell");
     }
     check(points >= 280, "the ring has room on the Violet Ring");
+    // A point in the picture comes at least visible_min away (the review of
+    // O1a: enemies entered next to the player): the slow walkers' 26-36 ring.
+    int visible = 0, hidden = 0;
+    for (int i = 0; i < 300; ++i) {
+        Vec3f at;
+        if (!director.sample_spawn_point(engine, 26.0f, 36.0f, i % 3 != 0, at, 40.0f)) continue;
+        const float d = flat(at, me);
+        if (on_screen(engine, {at.x, at.y + 5.0f, at.z})) {
+            ++visible;
+            check(d >= 39.0f, "a spawn in the picture is not next to the player (" + std::to_string(d) + ")");
+        } else {
+            ++hidden;
+            check(d >= 25.0f && d <= 37.0f, "a hidden spawn keeps its ring (" + std::to_string(d) + ")");
+        }
+    }
+    std::cout << "  spawn: 26-36 ring with visible_min 40: " << visible << " in the picture, " << hidden << " out of it\n";
+    check(visible + hidden >= 280, "the near ring has room");
     // A(t): 14 + 3.2 a minute, two spawns every ten steps.
     for (int i = 0; i < 600; ++i) run_step(run, false);
     int alive = 0;
@@ -244,23 +294,112 @@ void spawn(const std::filesystem::path& data) {
     // after it, 16 of them about 45 units round the player.
     for (int i = 0; i < 1200; ++i) run_step(run, false);
     std::set<std::pair<std::string, int>> before, after;
-    for (const auto& ram : models->rams())
-        if (living(*ram)) before.insert({ram->info_name, ram->index});
+    ModelCtrlManager::ModelRam* farthest = nullptr;
+    {
+        const Vec3f at = position(*models->player(0));
+        for (const auto& ram : models->rams())
+            if (living(*ram)) {
+                before.insert({ram->info_name, ram->index});
+                if (!farthest || flat(position(*ram), at) > flat(position(*farthest), at)) farthest = ram.get();
+            }
+    }
+    // (A hurt enemy keeps its HP when it comes again: the farthest at half.)
+    check(farthest != nullptr, "a living enemy");
+    const std::pair<std::string, int> hurt{farthest->info_name, farthest->index};
+    {
+        const Messenger::PortOnly scope(engine.messenger());
+        Packet half;
+        half.ints.push_back(std::max(1, farthest->max_hp / 2));
+        engine.messenger().send(engine, "MODELCTRL", farthest->info_name, farthest->index, "SETHP", half);
+    }
     director.encircle_now(engine);
-    for (int i = 0; i < 2; ++i) run_step(run, false);
+    // (Four a step: the 16 are placed within four steps, T8.)
+    for (int i = 0; i < 5; ++i) run_step(run, false);
     const Vec3f here = position(*models->player(0));
     int ring = 0;
+    double hurt_share = -1;
     for (const auto& ram : models->rams())
         if (living(*ram)) {
             after.insert({ram->info_name, ram->index});
             if (std::fabs(flat(position(*ram), here) - 45.0f) < 6.0f) ++ring;
+            if (ram->info_name == hurt.first && ram->index == hurt.second) hurt_share = double(ram->hp) / double(std::max(1, ram->max_hp));
         }
     std::cout << "  spawn: encirclement: " << before.size() << " living before, " << after.size() << " after, " << ring
-              << " on the 45-unit ring\n";
+              << " on the 45-unit ring; the hurt one at " << hurt_share * 100.0 << " % of its HP\n";
     check(before.size() >= 14, "enough enemies for an encirclement");
     check(std::includes(before.begin(), before.end(), after.begin(), after.end()) && after.size() + 2 >= before.size(),
           "the encirclement made no new RAM");
     check(ring >= int(std::min<std::size_t>(before.size(), 16)) - 3, "the encircled enemies stand round the player");
+    check(hurt_share > 0.4 && hurt_share < 0.6, "an encircled enemy keeps the HP it had (not healed)");
+    // Left behind (4.3): a player who walks on leaves its followers behind;
+    // they come again on its way. A standing player's followers come
+    // closer and stay.
+    const auto recycled_before = director.recycled();
+    for (int i = 0; i < 900; ++i) run_step(run, false);
+    const auto standing = director.recycled() - recycled_before;
+    for (int i = 0; i < 900; ++i) {
+        std::array<PadSample, 4> pads{};
+        const float angle = float(i) * 0.01f;
+        pads[0] = director.filter_pad(engine, dw4::host_pad_sample({0, 0, 0, {std::sin(angle), std::cos(angle)}, {}}));
+        engine.step(pads);
+        if (!engine.held()) engine.traverse_scene();
+    }
+    const auto walking = director.recycled() - recycled_before - standing;
+    std::cout << "  spawn: brought back in 15 s standing " << standing << ", walking " << walking << '\n';
+    check(walking >= 8 && walking > 2 * standing, "a walking player's followers come again on its way");
+}
+
+// ---------------------------------------------------------------------------
+// poison (4.8): the run's poison rule on the run's engine
+// ---------------------------------------------------------------------------
+void set_level(Engine& engine, int level);
+int spawn_around(Engine& engine, const FamilyRow& row, int count, float ring);
+
+void poison(const std::filesystem::path& data) {
+    RunConfig config;
+    config.seed = 4;
+    config.offers = "priority";
+    config.tuning.abilities = false;
+    config.tuning.spawning = false;
+    config.tuning.time_scaling = false;
+    auto run = start_run(data, config, false);
+    until_started(run);
+    auto& engine = *run.engine;
+    auto* sys = engine.get<GameSystem>();
+    auto* models = engine.get<ModelCtrlManager>();
+    // A tick never takes the last HP: 5 HP, a poison of 50 a tick, 8 ticks.
+    auto& player = sys->players[0];
+    auto* self = models->find(player.digimon, 0);
+    check(self != nullptr, "the run's player");
+    self->hp = player.hp = 5;
+    {
+        const Messenger::PortOnly scope(engine.messenger());
+        Packet poison;
+        poison.ints = {7 * 120, 50};
+        engine.messenger().send(engine, "MODELCTRL", player.digimon, 0, "SETPOISON", poison);
+    }
+    for (int i = 0; i < 1200; ++i) run_step(run, false);
+    std::cout << "  poison: 5 HP and 8 ticks of 50: " << self->hp << " HP left, outcome " << int(run.director->outcome()) << '\n';
+    check(self->hp == 1 && player.hp == 1, "poison never takes the last HP in a run");
+    check(run.director->outcome() == Outcome::none, "and never ends the run");
+    // MRβ02's poison (eneatk 29, KOUKARANK 3, 2700 frames) through the hit
+    // rule: level 25 at 10:00's damage factor, six of them round the player
+    // (the player healed every second so it lives on).
+    set_level(engine, 25);
+    run.rules->damage.taken_factor = run.director->damage_factor(10.0);
+    const auto* row = family_row("e_mecha2");
+    check(row != nullptr, "MRβ02 in the table");
+    // (Its poison is a shot from range: half of them near, half farther.)
+    spawn_around(engine, *row, 5, 12.0f);
+    spawn_around(engine, *row, 5, 28.0f);
+    for (int i = 0; i < 3600; ++i) {
+        if (i % 60 == 0) self->hp = player.hp = player.max_hp;
+        run_step(run, false);
+    }
+    std::cout << "  poison: MRβ02 x10 for 60 s: " << run.director->poisonings() << " poisonings, the largest "
+              << run.director->highest_poison() * 100.0 << " % of MaxHP\n";
+    check(run.director->poisonings() > 0, "MRβ02 poisons");
+    check(run.director->highest_poison() <= 0.1001, "one poisoning takes at most 10 % of MaxHP");
 }
 
 // ---------------------------------------------------------------------------
@@ -272,6 +411,8 @@ void spawn(const std::filesystem::path& data) {
 // meets phase 3 two or three levels lower, where a Corrupted enemy's
 // critical hit can pass 35 %: the run's clamp takes it (it never did in T6).
 constexpr int kLevelAt[5] = {1, 15, 25, 32, 40};
+// No wall at a phase change (the review of O1a): see balance().
+constexpr double kWallStep = 3.0, kStartShare = 0.16;
 
 void set_level(Engine& engine, int level) {
     auto* sys = engine.get<GameSystem>();
@@ -358,11 +499,11 @@ void balance(const std::filesystem::path& data, bool report) {
             const auto& stats = sys->players[0].stats;
             const int skill = level == 1 ? 1 : 150;
             const int tech_skill = level == 1 ? 1 : 150;
-            const double minutes = level == 1 ? 0.0 : 4.99;
+            const double minutes = level == 1 ? 0.0 : 4.0; // (the warm-up HP: x 0.6 until 4:00, then rising to x 1 at 6:00)
             const int tech = db->number("shinka", stats.species, "TECH1").value_or(0);
             for (const auto& row : family_table()) {
                 if (row.phase != 1) continue;
-                const double hp = double(db->number("enemy", row.record, "HPMAX").value_or(1)) * (1.0 + double(RunConfig{}.tuning.hp_per_minute) * minutes) * 0.6;
+                const double hp = double(db->number("enemy", row.record, "HPMAX").value_or(1)) * run.director->hp_factor(minutes);
                 const int mamori = db->number("enemy", row.record, "MAMORI").value_or(1);
                 const double art = double(stats.tsuyosa * 6 + skill * 4) / double(mamori) * 2.5 * double(art_class_factor(form));
                 const int spirit = db->number("enemy", row.record, "SEISHIN").value_or(1);
@@ -385,7 +526,14 @@ void balance(const std::filesystem::path& data, bool report) {
             }
         }
         // No one-hit enemies: each family at its phase's start and end level
-        // with the time factor there, Corrupted x 1.5 on top.
+        // with the time factor there, Corrupted x 1.5 on top. (A hit's share
+        // includes the whole of the poison it left.) And no wall at a phase
+        // change: a new phase's families hit at its start at most
+        // kWallStep times what the phase before hit at its end, and no
+        // walking family of phase 2-4 more than kStartShare at its start
+        // (the review of O1a: phase 2 ended near 3 %, phase 3 began at
+        // 16-21 %, and every run ended in its first two minutes).
+        std::array<std::array<double, 2>, 5> phase_worst{};
         for (int phase = 1; phase <= 4; ++phase)
             for (int end = 0; end < 2; ++end) {
                 const int level = kLevelAt[phase - 1 + end];
@@ -411,10 +559,29 @@ void balance(const std::filesystem::path& data, bool report) {
                         failed = true;
                         if (first_failure.empty()) first_failure = std::string(form) + ": " + row.family + " hits for more than 35 % of MaxHP";
                     }
+                    if (!row.ranged) {
+                        auto& worst = phase_worst[std::size_t(phase)][std::size_t(end)];
+                        worst = std::max(worst, share);
+                        if (phase >= 2 && end == 0 && share > kStartShare) {
+                            failed = true;
+                            if (first_failure.empty())
+                                first_failure = std::string(form) + ": " + row.family + " hits for more than " + std::to_string(int(kStartShare * 100)) +
+                                                " % at its phase's start";
+                        }
+                    }
                     // (Start over per family and level: the table keeps the worst.)
                     run.director->reset_hits_by_family();
                 }
             }
+        for (int phase = 2; phase <= 4; ++phase) {
+            const double before = phase_worst[std::size_t(phase - 1)][1], after = phase_worst[std::size_t(phase)][0];
+            std::printf("  wall %s phase %d: the phase before ends at %4.1f %%, it starts at %4.1f %% (x%.1f)\n", form, phase, before * 100.0,
+                        after * 100.0, before > 0 ? after / before : 0.0);
+            if (after > kWallStep * before) {
+                failed = true;
+                if (first_failure.empty()) first_failure = std::string(form) + ": a wall at the start of phase " + std::to_string(phase);
+            }
+        }
     }
     if (!report) check(!failed, first_failure);
 }
@@ -429,12 +596,13 @@ int main(int argc, char** argv) {
     try {
         if (part == "offers") offers();
         else if (part == "rng") rng();
-        else if (part == "spawn" || part == "balance" || part == "report") {
+        else if (part == "spawn" || part == "poison" || part == "balance" || part == "report") {
             if (data.empty() || !std::filesystem::exists(data)) {
                 std::cout << "overflow " << part << ": skipped (no game data: DW4_TEST_DATA)\n";
                 return 0;
             }
             if (part == "spawn") spawn(data);
+            else if (part == "poison") poison(data);
             else balance(data, part == "report");
         } else {
             std::cerr << "unknown part " << part << '\n';
