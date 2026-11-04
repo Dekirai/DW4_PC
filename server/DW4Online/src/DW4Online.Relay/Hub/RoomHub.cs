@@ -1445,13 +1445,16 @@ public sealed class RoomHub
         if (m.Instance != i) m.InstanceSince = now;
         m.Instance = i;
         m.Slot = slot;
-        if (!string.IsNullOrEmpty(i.Stage))
+        // (A member that plays on alone in its last visit, a reconnect without resuming placed in an instance without a
+        // stage, keeps that visit's epoch: no barrier has cleaned its engine since. Before round 59's verification it took
+        // the current epoch, and what was dropped in that visit counted again from the same engine.)
+        if (!string.IsNullOrEmpty(i.Stage) || m.LoneStage is null)
         {
-            // (The instance without a stage a reconnect without resuming gets keeps the last visit's epoch: the client
-            // plays on alone in that visit, whose engine no barrier has cleaned since; before round 59's verification the
-            // reconnect took the current epoch, and what was dropped in that visit counted again.)
             m.VisitEpoch = i.StoryEpoch;
             m.VisitOwnerSeen = i.OwnerSeen;
+        }
+        if (!string.IsNullOrEmpty(i.Stage))
+        {
             m.LoneStage = null;
             m.LoneKey = 0;
             // The engine line this visit's counters grow in: besides its own instance 0 lines the only kind of line the
