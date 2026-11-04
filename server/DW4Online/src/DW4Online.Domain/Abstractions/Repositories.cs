@@ -102,7 +102,8 @@ public interface IOnlineStoryRepository
     /// </summary>
     Task<long> ReplaceAsync(OnlineStoryRow row, string reason, StoryHistoryPolicy history, CancellationToken ct = default);
     /// <summary>Keeps <paramref name="row"/> (an existing revision) in the history with <paramref name="reason"/> (a room
-    /// session's start), without changing the story.</summary>
+    /// session's start), without changing the story; not again when the history keeps that revision as a session start,
+    /// reset or restore already.</summary>
     Task KeepAsync(OnlineStoryRow row, string reason, StoryHistoryPolicy history, CancellationToken ct = default);
     /// <summary>The kept revisions, newest first.</summary>
     Task<IReadOnlyList<OnlineStoryHistoryRow>> ListHistoryAsync(long accountId, CancellationToken ct = default);

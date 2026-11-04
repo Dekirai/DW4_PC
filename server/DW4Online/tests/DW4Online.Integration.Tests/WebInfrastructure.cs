@@ -31,12 +31,14 @@ public static class RelaySettings
 
 /// <summary>
 /// Ports for listeners of the tests: from DW4ONLINE_TEST_PORTS ("53100-53199", free ones only) when set, so parallel work on
-/// the same machine keeps to its own range; otherwise 0 (the system picks a free port).
+/// the same machine keeps to its own range; otherwise 0 (the system picks a free port). Once every port of the range was
+/// handed out, the free ones are handed out again (not one handed out in the last minute: its test may not listen yet).
 /// </summary>
 public static class TestPorts
 {
     private static readonly Lock Gate = new();
-    private static Queue<int>? _free;
+    private static readonly Queue<int> Free = new();
+    private static readonly Dictionary<int, long> HandedAt = [];
 
     public static int Next()
     {
@@ -44,25 +46,31 @@ public static class TestPorts
         if (string.IsNullOrEmpty(range)) return 0;
         lock (Gate)
         {
-            if (_free is null)
+            for (var round = 0; round < 2; ++round)
             {
-                var parts = range.Split('-');
-                var props = System.Net.NetworkInformation.IPGlobalProperties.GetIPGlobalProperties();
-                var used = props.GetActiveTcpListeners().Select(e => e.Port).ToHashSet();
-                _free = new Queue<int>(Enumerable.Range(int.Parse(parts[0]), int.Parse(parts[1]) - int.Parse(parts[0]) + 1).Where(p => !used.Contains(p)));
-            }
-            while (_free.Count > 0)
-            {
-                var p = _free.Dequeue();
-                try
+                if (Free.Count == 0)
                 {
-                    var probe = new TcpListener(IPAddress.Loopback, p);
-                    probe.Start();
-                    probe.Stop();
-                    return p;
+                    var parts = range.Split('-');
+                    var props = System.Net.NetworkInformation.IPGlobalProperties.GetIPGlobalProperties();
+                    var used = props.GetActiveTcpListeners().Select(e => e.Port).ToHashSet();
+                    var now = Environment.TickCount64;
+                    foreach (var p in Enumerable.Range(int.Parse(parts[0]), int.Parse(parts[1]) - int.Parse(parts[0]) + 1))
+                        if (!used.Contains(p) && !(HandedAt.TryGetValue(p, out var at) && now - at < 60_000)) Free.Enqueue(p);
                 }
-                catch (SocketException)
+                while (Free.Count > 0)
                 {
+                    var p = Free.Dequeue();
+                    try
+                    {
+                        var probe = new TcpListener(IPAddress.Loopback, p);
+                        probe.Start();
+                        probe.Stop();
+                        HandedAt[p] = Environment.TickCount64;
+                        return p;
+                    }
+                    catch (SocketException)
+                    {
+                    }
                 }
             }
         }

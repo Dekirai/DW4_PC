@@ -313,6 +313,12 @@ public class OnlineStoryTests
         honest.Flags[505] = 1;
         Assert.True(await stories.SaveAsync(id, honest));
         Assert.Equal(HttpStatusCode.Created, (await host.Client(token).PostAsJsonAsync("/api/v1/rooms", NewRoom())).StatusCode);
+        // A session start of the same revision (rooms opened one after another without play) is kept once.
+        await stories.KeepSessionStartAsync(id);
+        await stories.KeepSessionStartAsync(id);
+        await using (var check = await host.SqlAsync())
+            Assert.Equal(1, await check.ExecuteScalarAsync<int>(
+                "SELECT COUNT(*) FROM online_story_history WHERE account_id = @id AND reason = 'session'", new { id }));
         // 140 forged revisions in a little over two minutes.
         for (uint r = 2; r <= 141; ++r)
         {

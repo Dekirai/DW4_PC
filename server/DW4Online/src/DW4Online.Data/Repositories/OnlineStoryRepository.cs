@@ -65,11 +65,16 @@ public sealed class OnlineStoryRepository(Database db) : IOnlineStoryRepository
     {
         await using var c = await db.OpenAsync(ct);
         await using var tx = await c.BeginTransactionAsync(MySqlErrors.RevisionedWrite, ct);
-        // (Only for a live account with a story: a deleted one keeps nothing.)
+        // (Only for a live account with a story: a deleted one keeps nothing. A revision the history already keeps as a
+        // session start, reset or restore is not kept again: rooms opened one after another without play in between, or a
+        // loop of room creations, add nothing.)
         var live = await c.ExecuteScalarAsync<long?>(new CommandDefinition(
             $"SELECT s.revision FROM online_story s JOIN accounts a ON a.id = s.account_id WHERE s.account_id = @AccountId AND a.{Live}",
             row, tx, cancellationToken: ct));
-        if (live is not null) await KeepAsync(c, tx, row, row.Revision, reason, history, ct);
+        var kept = live is not null && await c.ExecuteScalarAsync<long>(new CommandDefinition(
+            "SELECT COUNT(*) FROM online_story_history WHERE account_id = @AccountId AND revision = @Revision AND reason <> 'room'",
+            row, tx, cancellationToken: ct)) > 0;
+        if (live is not null && !kept) await KeepAsync(c, tx, row, row.Revision, reason, history, ct);
         await tx.CommitAsync(ct);
     }
 
