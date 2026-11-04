@@ -1,7 +1,10 @@
-# M2: a's own map recorder scene in dng101b1 (SEAMLESS.md 5.3) while b walks about; every machine's net fingerprints
+# M2: b is hit in its own menu while a fights beside it, then a's own map recorder scene in dng101b1 (SEAMLESS.md 5.3)
+# while b walks about; every machine's net fingerprints
 # are equal (checked by run.py).
 a: online-script: step .* log: in the dungeon
 b: online-script: step .* log: b in the dungeon
+a: online-script: step .* log: a fights near b in its menu
+b: online-script: step .* log: b was hit in its menu
 a: online-script: step .* log: a reads the map recorder
 b: online-script: step .* log: b sees a reading the map
 a: online-script: step .* log: a read the map recorder

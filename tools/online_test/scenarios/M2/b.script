@@ -1,4 +1,5 @@
-# M2, member b (k10): with a into dng101b1, walks about near the entrance (fighting GENE-01's e_nume) while a
+# M2, member b (k10): with a into dng101b1; opens its menu among GENE-01's e_nume near the entrance while a fights
+# them beside it and is hit there; then walks about near the entrance (fighting the e_nume) while a
 # reads the map recorder far away.
 campaign until stage=stagml11,control
 idle until epoch>=@91
@@ -6,6 +7,13 @@ explore mate00 yes until stage=stag0101,control
 log in the field
 explore matz00 yes 2 until stage=dng101b1,control
 log b in the dungeon
+goto -300 335 10 fail stagechange
+menu until menu=1 fail stagechange
+idle until lost>=1 fail stagechange,menu=0,frames>=3000
+log b was hit in its menu
+idle until frames>=120 fail stagechange,menu=0
+shot b_hit_in_menu
+menu close until menu=0 fail stagechange
 wander -300 330 40 until scenes>=1 or frames>=14000 fail stagechange,frames>=13990
 log b sees a reading the map
 wander -300 330 40 until frames>=150 fail stagechange

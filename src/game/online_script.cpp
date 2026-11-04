@@ -455,17 +455,24 @@ OnlineScript::Output OnlineScript::act(engine::Engine& engine, const OnlineScrip
         // Close (as the campaign's "talk:", campaign.cpp): A's talk check lies
         // ahead of the player, so from inside the model's body it passes over
         // it. A only while 2..7 off the model facing it (within 30 degrees);
-        // nearer, or turned away close by, back off to 10 off it and walk up
-        // again; else up to it, the stick toward it turning the player.
+        // nearer, or turned away close by, back off to 10 off it on the side
+        // it came from (past a map recorder in its alcove there is a wall:
+        // backing off away from the model kept a member stuck there) and walk
+        // up again; else up to it, the stick toward it turning the player.
         const auto here = position(*me);
+        if (!talk_from_set_) {
+            talk_from_ = here;
+            talk_from_set_ = true;
+        }
         const auto& pm = me->node->matrix;
         const float fx = pm(2, 0), fz = pm(2, 2), fl = std::hypot(fx, fz);
         const float d = flat(at, here);
         const float toward = fl > 0.0f && d > 0.0f ? (fx * (at.x - here.x) + fz * (at.z - here.z)) / (fl * d) : -1.0f;
         if (d < 2.0f || (toward < 0.0f && d < 9.0f)) {
-            const float ax = d >= 0.5f ? (here.x - at.x) / d : fl > 0.0f ? -fx / fl : 1.0f;
-            const float az = d >= 0.5f ? (here.z - at.z) / d : fl > 0.0f ? -fz / fl : 0.0f;
-            walk_to(engine, *me, at.x + ax * 10.0f, at.z + az * 10.0f, 1.0f, frame, out, true);
+            float ax = talk_from_.x - at.x, az = talk_from_.z - at.z, al = std::hypot(ax, az);
+            if (al < 4.0f) ax = here.x - at.x, az = here.z - at.z, al = std::hypot(ax, az);
+            if (al < 0.5f) ax = fl > 0.0f ? -fx : 1.0f, az = fl > 0.0f ? -fz : 0.0f, al = fl > 0.0f ? fl : 1.0f;
+            walk_to(engine, *me, at.x + ax / al * 10.0f, at.z + az / al * 10.0f, 1.0f, frame, out, true);
         } else if (toward > 0.87f && d <= 7.0f) {
             if (frame % 20 < 3) out.buttons = dw4::pad_button::a;
         } else {
@@ -690,6 +697,7 @@ OnlineScript::Output OnlineScript::update(engine::Engine& engine, const OnlineSc
             route_.clear();
             route_next_ = 0;
             explorer_.reset();
+            talk_from_set_ = false;
             disk_line_ = -1;
             answers_ = 0;
             waypoint_ = 0;
@@ -747,6 +755,14 @@ OnlineScript::Output OnlineScript::update(engine::Engine& engine, const OnlineSc
                         if (const auto* mats = engine.get<engine::MatCtrlManager>())
                             if (const auto c = mats->mat_centre(step.args[0]))
                                 extra = " mat " + step.args[0] + " at " + std::to_string(int(c->x)) + "," + std::to_string(int(c->z));
+                    // talkto: the demo works this member's talk would count
+                    // (DMgetCount: the unscoped ones and its own) - a running
+                    // one keeps the talk script from starting.
+                    if (step.action == "talkto")
+                        if (const auto count = engine.demo().running_for(facts.own_slot)) {
+                            extra += " demos " + std::to_string(count);
+                            for (const auto& work : engine.demo().describe()) extra += " [" + work + "]";
+                        }
                     if (every != 300)
                         if (const auto* models = engine.get<engine::ModelCtrlManager>())
                             for (const auto& m : models->rams())

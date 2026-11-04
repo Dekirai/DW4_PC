@@ -167,6 +167,10 @@ private:
     bool failed_ = false;       // a fail condition of this step held (traced once)
     int menu_at_ = -1;          // the gate action: the frame the menu came up
     int step_hp_ = 0;           // this member's HP when the step began (lost)
+    // talkto: where this member stood when it first came within 12 units of
+    // the model (the free side to back off to).
+    engine::Vec3f talk_from_{};
+    bool talk_from_set_ = false;
     std::string shot_;          // a "shot" step's name, handed out with the frame's output
     // The route action: where this member stood 40 frames ago, held up.
     engine::Vec3f stuck_at_{};

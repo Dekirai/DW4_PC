@@ -4613,7 +4613,7 @@ anyway; joining goes through the room list.
 | S23 | boss-locked target: *Wait for them* (joins after the boss falls) and *Go alone* | S3 |
 | S24 | map recorder read while the partner moves: the reader's own scene, the floor map on its screen only (round 63: M2 in dng101b1; dng102b3 with the offline two-member harness) | r63 |
 | M1 | own menus (5.3): a alone opens its status window among the enemies and is hit; b joins while it is open, comes over and fights the goburi that go on hitting a; a's menu while b fights near it; both menus at once; a's menu while b walks far away; a talks with the field recorder while b moves; screenshots from both machines (`"shots": true`, the scripts' `shot NAME`) | r63 |
-| M2 | own scenes (5.3): a and b enter dng101b1 together (both wait on matz00 for each other), a reads the map recorder there (talk window and floor map) while b walks about; screenshots from both machines | r63 |
+| M2 | own scenes (5.3): a and b enter dng101b1 together (both wait on matz00 for each other); b opens its menu among the e_nume while a fights beside it and is hit in it (its window's HP line follows); a reads the map recorder (talk window and floor map) while b walks about; screenshots from both machines | r63 |
 | S25 | Trailmon ride (dng412b3) with one member not aboard: no fork, the rider moves alone | S3 |
 | A1 | online achievements: S5's run with achievements on; each machine reports its own player (online_join in its solo lobby, first_defeat in the sealed field) with the ranked context, the counters at the end; the server holds them (`scenario.json` "achievements") | S2 |
 | D1 | a new account: Create Digimon (its `/play` with the new-character record), the first stage change: box 1's rows in the tables (SQL), `v_characters` and `v_character_devices` readable, the profile shows the box with its face picture | D |
@@ -5474,10 +5474,17 @@ and sound filters, membership and exit rules for busy members, the online
 script's `menu`, `browse`, `talkto`, `shot` and conditions `menu`, `menus`,
 `talking`, `scenes`, `lost`, run.py's `"shots"`, the protocol 46 (a 45 client
 would pause for a menu and desynchronize). Checked: the pause analysis of 5.3,
-ctest (the `online` scenario "dng101b1 own menus"), the real-client
-scenarios M1 and M2 with screenshots, the offline two-member harness in
-dng102b3 (`DW4_ONLINE=3 DW4_CAMERAS=3`, the map recorder from views 0 and
-1), offline `det.sh` twice, r25c 10/10, the save state suite 17/17.
+ctest 44/44 (the `online` scenario "dng101b1 own menus"), the real-client
+scenarios M1 and M2 with screenshots from both machines (every instance's
+net fingerprints equal at every compared tick), the S1 real-client scenarios
+17/17 unchanged, the offline two-member harness in dng102b3 (`DW4_ONLINE=3
+DW4_CAMERAS=3`, the map recorder from views 0 and 1), offline `det.sh` twice
+(4004f056 / 396cb219), r25c 10/10 (1,748,011 frames), the save state suite
+17/17.
+
+Seen on the way (not a round 63 matter): a member who reached dng101b1 15 s
+after its partner got `OtherContext` and an instance of its own (the session
+context, 3.7, had changed meanwhile); M2 therefore lets both wait on the mat.
 
 Left for later: camera tours, tutorials and shaking mats as own scenes (they
 need a per-slot demo viewer); the story scenes the instance shares stay the
