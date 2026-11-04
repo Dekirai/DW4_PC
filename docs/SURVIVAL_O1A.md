@@ -48,9 +48,11 @@ director's).
 the host's `request_stage(field)`; that is where the rules go in
 (`Engine::set_overflow_rules`) and `OverflowRules::director` is set. The host
 destroys the run's engine before the driver, so a director the driver owns
-outlives every hook call. Until lane C, the host's stand-in driver gives the
-engine `OverflowRules` with this lane's initial values and no director (no
-spawns, no revive) and ends the run on `OverflowRules::ended()`.
+outlives every hook call. Lane C's director (docs/OVERFLOW_DIRECTOR.md) uses
+these interfaces and added `Director::damage_dealt`, the rules'
+`damage.family_factor` and `player_hit.heal_cap`, a strike's shared struck
+list on the port hitbox (`Hitbox::shared_struck`) and the silent answer to
+`ded_e_*.lua` (its section 4).
 
 ## 3. The hooks as built
 

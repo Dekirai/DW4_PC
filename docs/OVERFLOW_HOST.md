@@ -13,7 +13,7 @@ F-keys, Discord and achievements, the pacing reset and the dev start. Lane B
 | `src/game/host_view.hpp/.cpp` | The extraction (13.3, T11): `HostView` (window, renderer, sound output, controllers, F1 state, picture state) and the functions both loops call: `host_event`, `toggle_menu`, `read_live_input`, `live_pad_sample`, `mix_audio` (with the host `gain`), `note_stage`, `make_picture`, `present_scene`, `set_menu_navigation`, `new_ui_frame`, `draw_tags`, `render_ui`, `write_screenshot`, `finish_present`, `pace_presents`, and the F1 Settings tab's display, audio, presence, keyboard and controller sections. The statements moved out of `game_main.cpp`'s `run()` in their order; the story loop keeps its old names as references into `HostView`. |
 | `src/game/overflow_run.hpp/.cpp` | The run without a window: `RunRequest` and `parse_run_request` (`--overflow-run`), `RunEnd`, `StoryRandomGuard`, `TestEnvironmentScope`, `RunCards`, `prepare_run_engine`, `StorySwitch`, and the `RunDriver` interface. |
 | `src/game/overflow_host.hpp/.cpp` | `run_from_story` (13.3 steps 2-4) and the run loop, the run's F1 menu, the fades, `start_refusal`, the F1 Gameplay tab's dev start. |
-| `src/game/overflow_driver.cpp` | `make_run_driver`: the host's stand-in until lane C's director plugs in (lane C replaces this file's body). Since the integration (section 7) it gives the run's engine lane B's `OverflowRules` and ends the run on their report. |
+| `src/game/overflow_driver.cpp` | `make_run_driver`: since lane C the director's driver (docs/OVERFLOW_DIRECTOR.md 5: the run's moves, the menus, the overlay boxes, the summary and log). Before it, the host's stand-in of section 7. |
 | `tests/overflow_host_tests.cpp` | ctest `overflow_host`: the request, the story generator across a run engine's construction and life, the test variables, the cards, the engine setup, the run engine with lane B's rules (H3: the arena's request passes, every other stage change and both resets stay out), the switch. |
 
 ## 2. Interfaces for lane C (and B)
@@ -30,7 +30,7 @@ the run loop:
 | `retire(run, why)` | F1 > Data Overflow > Retire, the window closing (`window_closed`, the program then quits), a test run's limit (`frames=`, else `--smoke-test`'s count) | Retire at the next step: write what was earned, show the results, then report the end |
 | `ended()` | every pass | the end without another step (the host stops stepping and fades out) |
 | `decorate(run, items)` | after `Engine::render`, before the renderer draws | 2D items into the draw list (the TitleEntry technique, SURVIVAL.md 13.6) |
-| `draw_overlay(run, frame)` | inside the ImGui frame after the picture (`OverlayFrame`: window size, the 4:3 screen, F1 open, run steps) | O1a's plain overlay boxes (level-up, pause, results) |
+| `draw_overlay(run, frame)` | inside the ImGui frame after the picture (`OverlayFrame`: window size, the 4:3 screen, F1 open, run steps, the host's bold UI font) | O1a's plain overlay boxes (level-up, pause, results) |
 | `draw_menu(run)` | inside F1 > Data Overflow, after the host's Retire | debug lines, run options |
 | `status(run)` | every pass (Discord, the F1 tab, the log) | form name, run level, the run clock (frozen while the run is) |
 
@@ -182,3 +182,12 @@ Results with the integrated build (commit b1ef13d, Release, all hidden):
 | run hash | staggf01, `seed=7`, 2,400 steps: the same hash twice headless and with `DW4_DEV_PRESENT=144 DW4_DEV_SMOOTH=1` drawn |
 | hidden run with pictures | the Violet Ring with the HUD after the native start, Agumon walking its circle, no boss |
 | st_all | 17 / 17 identical after loading |
+
+## 8. Lane C on the host (round O1a)
+
+The director's driver replaced the stand-in (docs/OVERFLOW_DIRECTOR.md).
+The run loop got two things for it: `OverlayFrame::font` (the name tags'
+bold face, which has the Greek grades of the weapon names) and, with the
+request's `timing=1` (T8), the picture's cost per pass (traverse and draw
+list, the draw items) and each pass's work with its present, printed when
+the run ends.
