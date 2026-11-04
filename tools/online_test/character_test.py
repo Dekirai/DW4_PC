@@ -7,7 +7,8 @@ DW4_ONLINE_DEV game clients that log in, open a room each and play their pad fro
       at the title; the first stage change creates the online character (If-None-Match: *), the save room writes it
       (the campaign's checkpoint p2: card_written -> upload with If-Match), the story goes on and the member leaves
       the room (the automatic save when leaving). GET /online-character returns the last saved record and the
-      client's own save store (--card-dir) stays untouched.
+      client's own save store (--card-dir) stays untouched. The record's story (the owner's online story) holds phase 2
+      (the first briefing, a minute or two after phase 1: the owner's own steps are not spaced, round 59 fix round).
   C2  S15: an account whose online character exists (a campaign checkpoint's record, uploaded through the API): the
       client builds the virtual card from it and calls it at the title (DW4_CAMPAIGN_LOAD), plays the story; after its
       first upload "another PC" saves the character (a PUT through the API); the client's next upload gets 409, shows
@@ -201,6 +202,19 @@ def run_c1(st, args, api, https_port, pin, out):
         summary = body.get("summary") or {}
         notes.append("server: revision %s, %s Lv %s, play %s s" % (body["revision"], summary.get("digimon"), summary.get("level"),
                                                                  body.get("playSeconds")))
+        # The owner's own story (round 61 design on round 59): a new game makes phase 1 at the lobby's first load and phase
+        # 2 at the first briefing a minute or two later (the campaign's checkpoint p2). The room story, and with it the
+        # account's online story that GET composes into the record, must hold phase 2: the five-minute spacing kept the
+        # owner's phase 2 out, and alone in its room nobody else brought it.
+        record = base64.b64decode(body["record"])
+        phases = [p for p in range(1, 7) if record[STORY[0] + p] == 1] + ([7] if record[STORY[0] + 86] == 1 else [])
+        story_phase = max(phases, default=0)
+        reached = any(re.search(r"campaign: checkpoint p2 reached .* phase 2", l) for l in lines)
+        notes.append("the owner's online story: phase %d (the client reached phase 2: %s)" % (story_phase, "yes" if reached else "no"))
+        if not reached:
+            problems.append("the campaign never reached the checkpoint p2 (phase 2)")
+        elif story_phase < 2:
+            problems.append("the owner's online story stayed at phase %d although its game reached phase 2" % story_phase)
     s, history = api.call("GET", "/api/v1/online-character/history", token=token)
     if s == 200:
         notes.append("history: %d revisions" % len(history))
