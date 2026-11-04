@@ -735,7 +735,7 @@ player critique decide every case. `funcStageChange`, `funcStageIn`,
 | Boss stages stagBS01-06 | whole arena | entered through exits; boss-locked from the boss intro (the hit_f_* scenes) to the boss's defeat; an arriving member chooses *Wait for them* or *Go alone* (3.4); the exit prompt into a boss stage names who stays (5.2) | boss lock in the simulation | S3 |
 | Boss end (ded_e_*: MOVETRANS 0-3, doors, flags) | everyone | only participants are still there; the lock clears, joins open again | none | - |
 | Stage entry scene (`first.lua`; 52 of them set a demo camera such as 'entry') | at the stage start | runs when the instance starts, with every co-arrival; a later joiner waits for its end (hold, 3.4), never reruns it and appears with its own SQ_ENTR at its entrance | co-arrival, join path | S1 |
-| Scenes of one member: field talks (88 hit_n_* in fields and dungeons, among them the map recorder on every story dungeon floor), camera tours and demos on mats (stag0102 matf00 'Slope', stag0101 matb01 / matx01 / hit_g_lever01z01 camsp0401-0404), tutorials, shaking mats (dng310f3 matt05) | whole group frozen, HUD off, PADINPUT off, demo camera for all | the talks and map recorders (hit_n_*) are the talking member's own scene (5.3): nothing pauses, only that member's player stops, the window, the floor map and the HUD switch show on its screen only. Camera tours, tutorials and shaking mats: original for now | own scene (scope), copies, picture filter | r63 (talks) / later (tours) |
+| Scenes of one member: field talks (88 hit_n_* in fields and dungeons, among them the map recorder on every story dungeon floor), camera tours and demos on mats (stag0102 matf00 'Slope', stag0101 matb01 / matx01 / hit_g_lever01z01 camsp0401-0404), tutorials, shaking mats (dng310f3 matt05) | whole group frozen, HUD off, PADINPUT off, demo camera for all | the talks and map recorders (hit_n_*) are the talking member's own scene (5.3): nothing pauses, only that member's player stops, the window, the floor map and the HUD switch show on its screen only; one talk at a time in the instance, as in local co-op (a second talker's strike only hits until the first talk ended). Camera tours, tutorials and shaking mats: original for now | own scene (scope), copies, picture filter | r63 (talks) / later (tours) |
 | Status window (START, SUBWND) | the engine freezes, one window at a time, drawn for all | the member's own window (5.3): opens at once, also while others have theirs open, pauses nothing (only the member's player stops taking its pad and can be hit), drawn and heard on its machine only; another member's window blocks neither exits (DMgetCount) nor joins | own window per slot, copies, picture filter | r63 |
 | Shops, bank, Digi-Lab, card keeper, quest board, event console, NPC talks in the lobby | lobby programs | solo hub instance: single player behaviour | DISSOLVE | S1 |
 | Save room stagIS12 | SAVECTRL; players no longer joined leave the group | solo; writes the virtual card; uploads the own record (9); *leave the group* hidden online | wrapper | S2 |
@@ -902,10 +902,34 @@ cursors still read the member's pad.
   or map recorder (a `hit_n_*` script, the talker = the player that struck
   it) runs in the talker's scope, and so do the demo works it starts
   (`DemoWork::scope`) and the messages they post (`DeferredMessage::scope`).
+- *Talks wait for each other.* A talk keeps its state in stage globals from
+  its hit script to the scripts its DMsetLua records load later (g_npcRamNo,
+  g_messPlayerNo, func.lua's g_talk, an exchange's g_SItem* / g_TItem*), and
+  what a talk changes is often the instance's (the common FLAGFOLDER an
+  exchange takes its key item from, a quest a Digi-Elf starts, story flags).
+  The original never runs two talks at once. So online a talk's hit script
+  sees DMgetCount 1 while another member's own talk runs (its busy path: the
+  NPC only takes the hit; `Engine::run_own_talk`), as in local co-op, and
+  the member talks once the other talk ended; status windows neither wait
+  for talks nor make them wait. Besides, every member's own scenes keep
+  those talk globals for themselves and the rest of the instance keeps its
+  own (`Engine::talk_globals_`, switched around every script run of a
+  scope), so an instance-wide script that sets g_messPlayerNo or g_talk while
+  a talk runs (a game over, a quest message) leaves the talk alone. The
+  round 63 review found two talks at once sharing them: one member's close
+  sent the other's recorder back, its own scene never ended (no exit prompt
+  and no talk for it any more), and an exchange gave the other talk's item.
+- *Exchanges.* The field NPCs' exchanges (`n_*.lua`, `itemchange*.lua`)
+  name player 0's device and disk folders (SYSctlDeviceFolder /
+  SYSctlDiskFolder) whoever talks; inside a scope player 0 is the talking
+  member, so it trades with its own folders.
 - *Narrowed commands.* Inside a scope the messenger rewrites or drops what
-  would reach the instance: PLAYER -1 OFCTRL / ONCTRL become the member's
-  input hold (its player stands without its input and stays hittable; a
-  scene that ends without its ONCTRL releases it);
+  would reach the instance: PLAYER -1 OFCTRL / ONCTRL and MODELCTRL -1
+  OFCTRL / ONCTRL become the member's input hold (its player stands without
+  its input and stays hittable; a scene that ends without its ONCTRL
+  releases it; another member frozen in its exit prompt stays frozen), any
+  other PLAYER -1 command reaches the member's own player alone (stag0302's
+  Gekomon demo, `demo00.lua`: PLAYER -1 SQ_WAIT);
   ENEMY -1 OFCTRL / ONCTRL, every category freeze (ONFREEZE / OFFREEZE to all
   RAMs, GENERATER), SOUND BGMSTOP / ENVSTOP / SESTOP, a BGM or ambience start
   and the quest timer's SQ_STOP / SQ_RESTART (`i_timenm*`) stay out;
@@ -938,10 +962,10 @@ cursors still read the member's pad.
   joiner's catch-up replays the open window. A member who leaves (or who
   forks to the other side) loses its window and scenes at once
   (`Engine::end_own_scenes`). DMgetCount counts only the unscoped works and
-  the asking member's own (another member's talk blocks no exit and no talk),
-  the exit port neither makes a member in its own window or scene the prompt's
-  owner nor asks it, and the quick panel and START refuse only for the
-  member's own panel and window.
+  the asking member's own (another member's talk blocks no exit; only a
+  talk's hit script waits for it, above), the exit port neither makes a
+  member in its own window or scene the prompt's owner nor asks it, and the
+  quick panel and START refuse only for the member's own panel and window.
 - *Status window actions.* The window's pages are Equipment (the sockets,
   pockets and slots), Folder (devices: discard, sort, give; key items
   to look at; disks: move or give; bits: send) and Techniques (to look at).
@@ -954,8 +978,15 @@ cursors still read the member's pad.
   them), so a member sees the hits it takes in its menu; a member defeated
   in its window leaves it. Gifts to a partner (devices, disks, bits) reach
   only a partner still in the instance (the others are no partners any more;
-  nothing is lost). The status window has no item use, map, retire or quick
-  panel entries.
+  nothing is lost), and they look at the partner's room again when they are
+  given, not only when the partner list opened: the partner's folder can
+  fill meanwhile (another member's window gives too, its player picks items
+  up). A device for a full folder stays ("Receiver's device folder is
+  full.", text 149), disks give what still fits below 9 (none fits: text
+  143), bits what fits below 9,999,999 (none: back to the amount). The
+  review had two members give a partner with 35 devices one each at once:
+  37 devices, one more than the save keeps. The status window has no item
+  use, map, retire or quick panel entries.
 - *Presentation.* Name tags show "Kim is in the menu" / "Kim is talking" over
   that member's tag for the others; the member's own screen hides the tags as
   the original's window does. A map recorder's floor map (`j_map*`) is the
@@ -969,9 +1000,16 @@ they need is later work.
 members, slot 0's window, slot 1's while slot 0's is open, a third member
 joins while both are open: nothing frozen, both close and give their players
 the pad back, a second engine and a joiner restored with both windows open
-stay net-fingerprint-equal); real hidden clients on the local stack
-(`tools/online_test` scenarios M1, M2, below in section 16) with screenshots
-from both machines; offline unchanged (section 15).
+stay net-fingerprint-equal); the scenarios after the review: "stag0101 two
+recorders" (two members strike their recorders in the same frame: one talk,
+the other after it, both recorders back in SQ_WAIT, no hold left, a second
+engine equal), "dngq5b1v slot 1 trades alone" (the Mighty Talon in slot 1's
+folder), "dngq5b1v Agumon and Guilmon at once" (one figurine, one exchange)
+and "stag0101 two gifts" (three members with 35 devices, two gifts at once:
+36, nothing lost), and the unit check of the narrowed commands; real hidden
+clients on the local stack (`tools/online_test` scenarios M1, M2, below in
+section 16) with screenshots from both machines; offline unchanged (section
+15).
 
 ## 6. Transport and lockstep groups
 

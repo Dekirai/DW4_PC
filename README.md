@@ -356,9 +356,12 @@ apart start the field together. Lobby and menu stages stay single player.
 Everyone plays for themselves as in an online game: the status window (START),
 NPC talks and the map recorders in fields and dungeons are the member's own -
 they open on that member's screen only (the others see "Kim is in the menu"
-or "Kim is talking" over the name tag), several members can have theirs open
-at once, and they pause nothing: enemies, generators, the other members,
+or "Kim is talking" over the name tag), several members can have their menus
+open at once, and they pause nothing: enemies, generators, the other members,
 timers and music run on, and a member in a menu stands still and can be hit.
+Only one NPC talk runs in an instance at a time, as in local co-op: while
+Kim talks, another member's NPC does not answer yet. An NPC's exchange
+trades with the talking member's own folders.
 
 ```bat
 powershell -ExecutionPolicy Bypass -File scripts\online-dev.ps1
