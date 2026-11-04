@@ -735,6 +735,18 @@ def run_real(stack, sc, api, relay_port, pin, diag, lock, connection):
                 return " ".join(points[points.index(m.group(3)):])
             return " ".join(points[:points.index(m.group(2)) + 1] if m.group(2) else points)
         text = re.sub(r"\{route:(\w+)(?::(-?\d+,-?\d+)|>(-?\d+,-?\d+))?\}", route, text)
+        if a.compat_scripts:
+            # (--compat-scripts: a client before round G-core, a counter-proof on main, knows no key:N / difficulty
+            # condition; they leave its scripts, so the scenario's other checks still run.)
+            cond = r"(?:key:\d+|difficulty)(?:>=|<=|=|<|>)\d+"
+            lines = []
+            for line in text.splitlines():
+                if not line.startswith("#"):
+                    line = re.sub("," + cond, "", line)
+                    line = re.sub("(?<= )" + cond + ",", "", line)
+                    line = re.sub(" (?:until|fail) " + cond + "(?= |$)", "", line)
+                lines.append(line)
+            text = "\n".join(lines) + "\n"
         path = os.path.join(out, c["name"] + ".script")
         with open(path, "w", encoding="utf-8") as f:
             f.write(text)
@@ -1540,6 +1552,8 @@ def main():
     ap.add_argument("--server-has-story", action="store_true",
                     help="--server-root's server keeps the room story (round 56 and later, e.g. DW4Online 0.1.2): seed it as for this one")
     ap.add_argument("--net", default="", help="game scenarios: every client behind its own proxy, UP[/DOWN] as MS,JITTER,LOSS")
+    ap.add_argument("--compat-scripts", action="store_true",
+                    help="game scenarios: drop the key:N and difficulty conditions of round G-core (a counter-proof client before it)")
     a = ap.parse_args()
     global SERVER_DLL, NET_OVERRIDE, SERVER_HAS_STORY
     if a.server_root:
