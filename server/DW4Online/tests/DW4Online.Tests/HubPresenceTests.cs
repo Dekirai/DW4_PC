@@ -5,9 +5,10 @@ namespace DW4Online.Tests;
 
 /// <summary>
 /// Presence through the hub (SEAMLESS.md 12, round 60): WELCOME announces PRESENCE2; PRESENCE2 goes to the members that
-/// send it and PRESENCE to the others; the hub bounds the new fields (an implausible frame is dropped and counted, a
-/// later version's checked version 1 part goes on, a malformed one closes) and the rate (a token bucket); a member that
-/// leaves a stage is shown leaving to those still there.
+/// send it and PRESENCE to the others; the hub bounds the new fields (an implausible frame is dropped and counted, HP or
+/// MP above the maximum go as the maximum, a later version's checked version 1 part goes on, a larger frame is dropped
+/// unread, a malformed one closes) and the rate (a token bucket), PRESENCE by the same bounds; a member that leaves a stage
+/// is shown leaving to those still there.
 /// </summary>
 public partial class HubLogicTests
 {
@@ -76,13 +77,17 @@ public partial class HubLogicTests
         Try(Presence2("stagML11", species: 16));
         Try(Presence2("stagML11", x: 2e6f));
         Try(Presence2("stagML11") with { Presence = Presence("stagML11") with { Yaw = 20 } });
-        Try(Presence2("stagML11") with { Presence = Presence("stagML11") with { Hp = 41 } });
         Try(Presence2("stagML11") with { Presence = Presence("stagML11") with { Level = 1000 } });
         Try(Presence2("stagML11", flags: 4));
-        Assert.Equal(6, h.Hub.Counters["presence_implausible"]);
+        Assert.Equal(5, h.Hub.Counters["presence_implausible"]);
         Assert.Equal(1, h.Hub.Counters["presence_implausible_species"]);
         Assert.Equal(1, h.Hub.Counters["presence_implausible_flags"]);
         Assert.False(h.P("b").Has(Msg.Presence2Out));
+        // HP and MP above the maximum (a script may raise them: MDLaddHp) go on as the maximum, the tag and figure stay.
+        Try(Presence2("stagML11") with { Presence = Presence("stagML11") with { Hp = 41, Mp = 60 } });
+        sent++;
+        var full = h.P("b").Last(Msg.Presence2Out, Presence2OutMsg.Parse).Presence.Presence;
+        Assert.Equal(((ushort)40, (ushort)40, (ushort)10, (ushort)10), (full.Hp, full.HpMax, full.Mp, full.MpMax));
         // A later version (appended bytes, a flag version 1 does not know): its version 1 part goes on, written at
         // version 1 without the unknown flag and the appended bytes; the connection stays.
         h.Advance(200);
@@ -101,16 +106,54 @@ public partial class HubLogicTests
         laterBad[Wire.HeaderBytes] = 2;
         h.Hub.Receive(h.Mem("a"), laterBad[0], laterBad[Wire.HeaderBytes..], h.Now);
         Assert.Equal(2, h.Hub.Counters["presence_version"]);
-        Assert.Equal(7, h.Hub.Counters["presence_implausible"]);
+        Assert.Equal(6, h.Hub.Counters["presence_implausible"]);
         Assert.Equal(sent, h.P("b").All(Msg.Presence2Out, Presence2OutMsg.Parse).Count);
         // A plausible one goes through.
         Try(Presence2("stagML11", species: 15));
         sent++;
         Assert.Equal(sent, h.P("b").All(Msg.Presence2Out, Presence2OutMsg.Parse).Count);
+        // Any version stays within MaxBytes: a larger frame is dropped unread (counted), the connection stays.
+        h.Advance(200);
+        var huge = Presence2("stagML11", x: 44).Frame();
+        huge[Wire.HeaderBytes] = 2;
+        var payload = huge[Wire.HeaderBytes..].Concat(new byte[Presence2Msg.MaxBytes]).ToArray();
+        h.Hub.Receive(h.Mem("a"), huge[0], payload, h.Now);
+        Assert.Equal(1, h.Hub.Counters["presence_oversize"]);
+        Assert.Equal(sent, h.P("b").All(Msg.Presence2Out, Presence2OutMsg.Parse).Count);
+        Assert.True(Presence2("stagML11").Frame().Length - Wire.HeaderBytes <= Presence2Msg.MaxBytes);
+        Assert.Null(h.P("a").Closed);
         // Malformed: the connection layer closes on the exception.
         var bad = Presence2("stagML11", clip: "runD").Frame();
         bad[^(1 + 4 + 4 + 1 + 1 + 4)] = (byte)'/';
         Assert.Throws<ProtocolException>(() => h.Send("a", bad));
+        Assert.Null(h.P("a").Closed);
+    }
+
+    [Fact]
+    public void Presence_of_an_older_client_is_bounded_like_presence2()
+    {
+        // A PRESENCE drives a ghost figure as well (round 60): the same bounds, HP above the maximum as the maximum.
+        var h = new Harness();
+        h.Connect("a", 0);
+        h.Connect("b", 1);
+        h.Send("b", Presence2("stagML11").Frame());
+        void Try(PresenceMsg m)
+        {
+            h.Advance(200);
+            h.Send("a", m.Frame());
+        }
+        Try(Presence("stagML11", species: 255));
+        Try(Presence("stagML11", x: 1e30f));
+        Try(Presence("stagML11") with { Yaw = -30 });
+        Try(Presence("stagML11") with { Level = 5000 });
+        Assert.Equal(4, h.Hub.Counters["presence_implausible"]);
+        Assert.False(h.P("b").Has(Msg.PresenceOut) || h.P("b").Has(Msg.Presence2Out));
+        Try(Presence("stagML11", x: 7) with { Hp = 900, Mp = 11 });
+        var out1 = h.P("b").Last(Msg.PresenceOut, PresenceOutMsg.Parse).Presence;
+        Assert.Equal((7f, (ushort)40, (ushort)10), (out1.X, out1.Hp, out1.Mp));
+        // A maximum of 0 (stats not known yet) keeps the HP as sent.
+        Try(Presence("stagML11") with { Hp = 5, HpMax = 0 });
+        Assert.Equal((ushort)5, h.P("b").Last(Msg.PresenceOut, PresenceOutMsg.Parse).Presence.Hp);
         Assert.Null(h.P("a").Closed);
     }
 

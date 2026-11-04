@@ -361,6 +361,34 @@ public sealed record PresenceMsg(string Stage, uint Inst, float X, float Y, floa
         Write(w);
         return w.Frame();
     }
+
+    /// <summary>Plausible bounds of the hub (SEAMLESS.md 12): coordinates within this of the stage origin.</summary>
+    public const float MaxCoordinate = 100000f;
+    /// <summary>Two turns either way (the client sends atan2's -pi..pi).</summary>
+    public const float MaxYaw = 4f * MathF.PI;
+    /// <summary>The player forms of the game ("shinka" rows 0-15).</summary>
+    public const byte MaxSpecies = 15;
+    public const ushort MaxLevel = 999;
+
+    /// <summary>
+    /// Null when the hub forwards it (PRESENCE and PRESENCE2 alike, round 60: a PRESENCE drives a ghost figure too); else
+    /// why not (the frame is dropped and counted, the connection stays). HP and MP above their maximum are no reason: a
+    /// script may raise them above it (MDLaddHp), <see cref="Clamped"/> forwards them as the maximum.
+    /// </summary>
+    public string? Implausible()
+    {
+        if (Species > MaxSpecies) return "species";
+        if (MathF.Abs(X) > MaxCoordinate || MathF.Abs(Y) > MaxCoordinate || MathF.Abs(Z) > MaxCoordinate) return "position";
+        if (MathF.Abs(Yaw) > MaxYaw) return "yaw";
+        if (Level > MaxLevel) return "stats";
+        return null;
+    }
+
+    /// <summary>HP and MP above a known maximum (not 0) as that maximum.</summary>
+    public PresenceMsg Clamped() =>
+        (HpMax > 0 && Hp > HpMax) || (MpMax > 0 && Mp > MpMax)
+            ? this with { Hp = HpMax > 0 ? Math.Min(Hp, HpMax) : Hp, Mp = MpMax > 0 ? Math.Min(Mp, MpMax) : Mp }
+            : this;
 }
 
 /// <summary>
@@ -368,8 +396,9 @@ public sealed record PresenceMsg(string Stage, uint Inst, float X, float Y, floa
 /// PRESENCE fields | str clip (0-16 of A-Z a-z 0-9 _) | u8 flags (1 the clip loops, 2 busy) | u8 warp | u32 the sender's
 /// clock in ms | str weapon (0-24, the same characters). Only from members whose WELCOME carried
 /// <see cref="WelcomeMsg.PresenceV2"/>; the hub forwards it as PRESENCE2 to the members that send it and as PRESENCE to
-/// the others. A later version appends to this layout: the hub reads and checks its version 1 part and forwards only that,
-/// written at version 1 with the version 1 flags (counted), so an older hub never forwards what it cannot check.
+/// the others. A later version appends to this layout and stays within <see cref="MaxBytes"/>: the hub reads and checks
+/// its version 1 part and forwards only that, written at version 1 with the version 1 flags (counted), so an older hub
+/// never forwards what it cannot check; a larger frame is dropped unread (counted).
 /// </summary>
 public sealed record Presence2Msg(byte Version, PresenceMsg Presence, string Clip, byte Flags, byte Warp, uint SentMs, string Weapon)
 {
@@ -379,13 +408,8 @@ public sealed record Presence2Msg(byte Version, PresenceMsg Presence, string Cli
     public const byte Loop = 1;
     public const byte Busy = 2;
     public const byte KnownFlags = Loop | Busy;
-    /// <summary>Plausible bounds of the hub (SEAMLESS.md 12): coordinates within this of the stage origin.</summary>
-    public const float MaxCoordinate = 100000f;
-    /// <summary>Two turns either way (the client sends atan2's -pi..pi).</summary>
-    public const float MaxYaw = 4f * MathF.PI;
-    /// <summary>The player forms of the game ("shinka" rows 0-15).</summary>
-    public const byte MaxSpecies = 15;
-    public const ushort MaxLevel = 999;
+    /// <summary>The largest PRESENCE2 payload of any version (version 1 takes at most 105 bytes).</summary>
+    public const int MaxBytes = 256;
 
     public static Presence2Msg Read(ref WireReader r)
     {
@@ -412,16 +436,7 @@ public sealed record Presence2Msg(byte Version, PresenceMsg Presence, string Cli
     }
 
     /// <summary>Null when the hub forwards it; else why not (the frame is dropped and counted, the connection stays).</summary>
-    public string? Implausible()
-    {
-        var q = Presence;
-        if (q.Species > MaxSpecies) return "species";
-        if (MathF.Abs(q.X) > MaxCoordinate || MathF.Abs(q.Y) > MaxCoordinate || MathF.Abs(q.Z) > MaxCoordinate) return "position";
-        if (MathF.Abs(q.Yaw) > MaxYaw) return "yaw";
-        if (q.Level > MaxLevel || q.Hp > q.HpMax || q.Mp > q.MpMax) return "stats";
-        if ((Flags & ~KnownFlags) != 0) return "flags";
-        return null;
-    }
+    public string? Implausible() => Presence.Implausible() ?? ((Flags & ~KnownFlags) != 0 ? "flags" : null);
 
     public void Write(WireWriter w)
     {

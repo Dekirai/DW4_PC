@@ -311,7 +311,11 @@ public sealed class RoomHub
             case Msg.Intent: OnIntent(m, IntentMsg.Parse(p), now); break;
             case Msg.Story: OnStory(m, StoryMsg.Parse(p), now); break;
             case Msg.Presence: OnPresence(m, PresenceMsg.Parse(p), now); break;
-            case Msg.Presence2: OnPresence2(m, Presence2Msg.Parse(p), now); break;
+            case Msg.Presence2:
+                // (Any version stays within MaxBytes: a larger one is dropped unread.)
+                if (p.Length > Presence2Msg.MaxBytes) Count("presence_oversize");
+                else OnPresence2(m, Presence2Msg.Parse(p), now);
+                break;
             case Msg.Resume: OnResume(m, ResumeMsg.Parse(p), now); break;
             case Msg.Rate: m.Rate = Math.Min(RateMsg.Parse(p).StepsPerSecond, MaxReplayRate); break;
             case Msg.Pong: OnPong(m, PongMsg.Parse(p), now); break;
@@ -422,7 +426,17 @@ public sealed class RoomHub
             Count("presence_dropped");
             return;
         }
-        FanPresence(m, msg, null, now);
+        // (The bounds of PRESENCE2: a PRESENCE drives a ghost figure too.)
+        if (!Plausible(msg)) return;
+        FanPresence(m, msg.Clamped(), null, now);
+    }
+
+    private bool Plausible(PresenceMsg msg)
+    {
+        if (msg.Implausible() is not { } why) return true;
+        Count("presence_implausible");
+        Count("presence_implausible_" + why);
+        return false;
     }
 
     private void OnPresence2(HubMember m, Presence2Msg msg, long now)
@@ -443,6 +457,7 @@ public sealed class RoomHub
             Count("presence_implausible_" + why);
             return;
         }
+        msg = msg with { Presence = msg.Presence.Clamped() };
         // The token bucket: about ten a second while a figure moves, five while it stands; more is dropped (counted).
         m.PresenceTokens = m.PresenceTokensAt == 0
             ? PresenceBurst
