@@ -126,3 +126,20 @@ ctest (all), server unit + integration tests, `story_census.py --check`,
   (= G1), RG2 (G2-G4), RG7 (G7), RG10 (G10 / G11). RG1 PASS (145 s,
   tools/online_test/.work/run_20261104_220001). The call shop's refusal
   seen in RG10's guest.
+- 04.11 22:45: all four RG scenarios PASS on build/dev: RG1 (145 s,
+  .work/run_20261104_220001), RG10 (call shop refused twice with the hint,
+  no stagIS13, the owner's story stays at revision 1, the guest's 2 used
+  card boxes hold its own story; .work/run_20261104_220252), RG2 and RG7
+  (.work/run_20261104_222xxx, build/scen_RG7_RG2b.log). G7's switch now
+  counts from the first Game Start (the title's length varies).
+  Counter-proofs on main b226bc0 (worktree DW4_PC-wt/r69main, detached:
+  its dev client and Debug server; build/g_scen_main.sh with
+  --compat-scripts) started: build/scen_main_counterproofs.log.
+
+Next (if this run is cut off): the counter-proofs' result into this note
+and SEAMLESS.md 17; the regression S14p, S14, S14z, S2, S17a, S16 and
+character_test C1-C3 on build/dev (build/g_scen.sh dev/dw4_game.exe run.py
+...; character_test.py the same way); det.sh a second time on a fresh
+build/rel; then G6 / G13 / G14 / G16 scenarios if time allows (not built:
+G5, G6, G8, G9, G12-G16 as real-client runs; G8 and G15 are covered by
+online_character's guest_records_keep_the_own_story).
