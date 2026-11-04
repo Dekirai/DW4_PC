@@ -229,10 +229,10 @@ MergeResult merge(const RoomStory& room, const StoryDelta& delta, int difficulty
 
 bool apply(std::map<std::int32_t, std::uint8_t>& flags, std::map<std::int32_t, std::uint8_t>& folder,
            std::map<std::int32_t, std::int32_t>& counters, const RoomStory& room, const StoryKeys& dropped,
-           std::string_view target) {
+           std::string_view target_stage) {
     bool removed = false;
     // A barrier into the training field leaves 503 as the engine has it (8.8).
-    const bool keep_training = target == kTrainingStage;
+    const bool keep_training = target_stage == kTrainingStage;
     const std::set<std::int32_t> dflags(dropped.flags.begin(), dropped.flags.end());
     const std::set<std::int32_t> dfolder(dropped.folder.begin(), dropped.folder.end());
     const std::set<std::int32_t> dcounters(dropped.counters.begin(), dropped.counters.end());
