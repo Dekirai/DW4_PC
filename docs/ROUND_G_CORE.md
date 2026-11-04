@@ -143,3 +143,9 @@ character_test C1-C3 on build/dev (build/g_scen.sh dev/dw4_game.exe run.py
 build/rel; then G6 / G13 / G14 / G16 scenarios if time allows (not built:
 G5, G6, G8, G9, G12-G16 as real-client runs; G8 and G15 are covered by
 online_character's guest_records_keep_the_own_story).
+- 04.11 23:15: counter-proofs on main b226bc0 (its client and server,
+  --compat-scripts; build/scen_main_counterproofs.log) all FAIL as they
+  should: RG1 (the guest's room story lacks 503, its lobby gate leads into
+  stag0001, the training), RG10 (the call shop goes to stagIS13; the online
+  card's box 0 holds the owner's story), RG2 (the save room put the owner's
+  story into the online card's box 0). Regression runs next.
