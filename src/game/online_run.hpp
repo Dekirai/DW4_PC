@@ -158,7 +158,7 @@ private:
     void dispatch(std::uint64_t id, const online::HttpResponse& response, double now);
     // The Game Start with the confirmed story (or the hold without one).
     void begin_game(double now);
-    std::optional<engine::RoomStory> story_for_start(double now) const;
+    std::optional<engine::RoomStory> story_for_start(double now);
     void save_character(online::CharacterSync::Why why);
     online::character_api::Context character_context() const;
 
@@ -180,7 +180,7 @@ private:
     std::optional<HostFacts> host_logged_; // the settings and window state of the last lines
     double next_reconnect_ = 0;
     double story_hold_since_ = -1;     // the Game Start waits for the room story since then (-1: no hold)
-    double story_ignore_until_ = 0;    // DW4_ONLINE_TEST_STORY_DELAY (dev builds, G7): the story counts from then
+    double story_ignore_until_ = 0;    // DW4_ONLINE_TEST_STORY_DELAY (dev builds, G7): the story counts from then (set at the first Game Start)
     int callshop_seen_ = 0;            // Engine::callshop_refused already told
     std::vector<std::string> notices_;
     bool pending_before_ = false; // the last live step had a NEXTSTAGE pending

@@ -157,11 +157,6 @@ int relay_port_for(int port) {
 bool OnlineRun::connect(double now, std::string& error) {
     auto transport = online::connect_tcp(room_.endpoint.host, relay_port_for(room_.relay_port), 5000, error);
     if (!transport) return false;
-#ifdef DW4_ONLINE_DEV
-    // G7 (round G-core): the room story counts only N seconds after the connection, so the title's Game Start comes first.
-    if (const char* delay = std::getenv("DW4_ONLINE_TEST_STORY_DELAY"); delay && std::atof(delay) > 0 && story_ignore_until_ == 0)
-        story_ignore_until_ = now + std::atof(delay);
-#endif
     session_->attach(std::move(transport), now);
     // The relay's answer: by then it replaced any older connection of this account (a session another PC still holds in
     // the room ends without uploading). A refusal ends here; a slow relay is waited for in the main loop as before.
@@ -331,8 +326,12 @@ save::CardStore OnlineRun::character_card() const {
     return store;
 }
 
-std::optional<engine::RoomStory> OnlineRun::story_for_start(double now) const {
+std::optional<engine::RoomStory> OnlineRun::story_for_start(double now) {
 #ifdef DW4_ONLINE_DEV
+    // G7 (round G-core): the room story counts only N seconds after the session's first Game Start, so the Game Start
+    // finds none and holds (the hold must outlast the room's await_hello, whatever the title's length).
+    if (story_ignore_until_ == 0)
+        if (const char* delay = std::getenv("DW4_ONLINE_TEST_STORY_DELAY"); delay && std::atof(delay) > 0) story_ignore_until_ = now + std::atof(delay);
     if (now < story_ignore_until_) return std::nullopt;
 #else
     (void)now;

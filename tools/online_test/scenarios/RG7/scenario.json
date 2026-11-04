@@ -1,5 +1,5 @@
 {
-  "desc": "RG7 = G7 (round G-core): a guest whose client ignores the room story for its first 20 s (DW4_ONLINE_TEST_STORY_DELAY) reaches the title's Game Start first: the game holds ('Loading the room story...') and starts with the room story once it counts, never with the character's own",
+  "desc": "RG7 = G7 (round G-core): a guest whose client ignores the room story for 8 s after its first Game Start (DW4_ONLINE_TEST_STORY_DELAY): the game holds ('Loading the room story...') and starts with the room story once it counts, never with the character's own",
   "card": "k2",
   "seed_story": true,
   "frames": 9000,
@@ -7,6 +7,6 @@
   "min_shared_ticks": 0,
   "clients": [
     {"name": "o", "script": "o.script", "start": 0},
-    {"name": "g", "script": "g.script", "start": 3, "env": {"DW4_ONLINE_TEST_STORY_DELAY": "20"}}
+    {"name": "g", "script": "g.script", "start": 3, "env": {"DW4_ONLINE_TEST_STORY_DELAY": "8"}}
   ]
 }
