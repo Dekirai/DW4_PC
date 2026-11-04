@@ -7030,20 +7030,33 @@ client is held to PRESENCE2's bounds, every PRESENCE2 version stays within
 load only as weapon packages and at most 16 are kept, the ghost list and
 shadow outlive the draw block (the renderer keeps the shadow's address) and
 the development ID pass uses the picture's own shadow, `main` is merged in,
-and round 59's branch (fix-r59s2) now merges without a conflict.
+and round 59's branch (fix-r59s2) adds no conflict of round 60's (its two
+with `main`, `game_main.cpp` and the server README, are round 62's and 59's).
+`main` brought round 62 meanwhile, whose NETSTAT holds server type 0x8F in
+the field since DW4Online 0.1.2: round 60 had given 0x8F to PRESENCE2 to
+clients, and a round 60 client would have dropped its connection on every
+NETSTAT of the user's server. PRESENCE2 to clients is 0x90 now (both
+registries know it, and it is informational: one that does not decode is
+skipped); the next free numbers are 0x15 and 0x91 (6.3).
 
-Checked on the fixed head (release and `DW4_ONLINE_DEV` builds from one tree):
-ctest 45 of 45 (`dw4_ghosts_tests` 70 checks, `online_session_tests` 186;
-`presence2_smooth`, `presence2_walk` and `presence2_departure` fail on the
-code before the fixes); online off `det.sh` 4004f056 / audio 396cb219 in all
-six runs (the release build twice, the development build once); on hidden
-real clients all 25 game scenarios (the 22 of rounds S1 and S2, A1, P1, P2,
-P3; three at a time): 3,060 fingerprint comparisons, the only two that differ
-are S11a's and S11b's injected desyncs before their resync; in P1 c's figure
+Checked on the fixed head with round 62 merged in (release and
+`DW4_ONLINE_DEV` builds from one tree): ctest 45 of 45 (`dw4_ghosts_tests` 70
+checks, `online_session_tests` 190, `online_wire_tests` with both type
+registries; `presence2_smooth`, `presence2_walk` and `presence2_departure`
+fail on the code before the fixes); online off `det.sh` 4004f056 / audio
+396cb219 in all six runs (the release build twice, the development build
+once; the same before the merge); on hidden real clients all 29 game
+scenarios (the 22 of rounds S1 and S2, A1, round 62's L1, L1s, L2 and L3, P1,
+P2, P3; three at a time): 4,280 fingerprint comparisons, the only two that
+differ are S11a's and S11b's injected desyncs before their resync. S19b
+failed once in that batch: member a's fight step killed every goburi near it,
+so its next step (walk into them until it falls) found none and stood at
+full HP until the timeout, its 1,002 shared fingerprints equal; S19b alone
+passed (288 s), and before the merge it passed in the batch. In P1 c's figure
 fades out at the lobby gate and shows again only at the lobby's entry after
 c's game over; in P3 b's figure fades out on the mat and never shows again
-(the pictures every 45 frames and a's trace every 10 frames); the 8 UI scenarios;
-the server's unit tests 191, integration and end to end 90 passed and 1 skipped against a private MariaDB with a fresh data directory (one earlier run of the same tree failed ServiceHostTests' busy HTTP port once on the order of two FAIL log lines; it passed in the six runs after, and nothing of this round touches the service host).
+(the pictures every 45 frames and a's trace every 10 frames). the 8 UI scenarios;
+the server's unit tests 212, integration and end to end 90 passed and 1 skipped against a private MariaDB with a fresh data directory (before the merge one run of ServiceHostTests failed once on the order of two FAIL log lines with the HTTP port busy, then passed six times; nothing of this round touches the service host).
 
 ### Round G (proposed r64): guests on the host's story
 
