@@ -114,8 +114,8 @@ HttpRequest put_request(const CharacterRecord& record, int revision, std::int64_
     if (revision > 0) r.headers.emplace_back("If-Match", "\"" + std::to_string(revision) + "\"");
     else r.headers.emplace_back("If-None-Match", "*");
     std::string ctx = "{\"players\":" + std::to_string(std::clamp(context.players, 1, 10)) + ",\"randomizer\":" +
-                      (context.randomizer ? "true" : "false") +
-                      ",\"cheats\":false,\"rebalanced\":false,\"saveStateLoaded\":false,\"difficulty\":" +
+                      (context.randomizer ? "true" : "false") + ",\"cheats\":" + (context.cheats ? "true" : "false") +
+                      ",\"rebalanced\":" + (context.rebalanced ? "true" : "false") + ",\"saveStateLoaded\":false,\"difficulty\":" +
                       std::to_string(std::clamp(context.difficulty, 0, 2)) + ",\"protocol\":" + std::to_string(context.protocol) +
                       ",\"clientVersion\":" + json::quote(context.client_version);
     if (!context.room_code.empty()) ctx += ",\"roomCode\":" + json::quote(context.room_code);

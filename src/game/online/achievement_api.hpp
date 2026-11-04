@@ -29,6 +29,8 @@ struct ReportContext {
     int players = 1;       // in the reporter's stage instance (1-4)
     int room_players = 1;  // in the room (1-10)
     bool randomizer = false;
+    bool cheats = false;     // the engine's cheat flags (God mode, Infinite MP, One-hit)
+    bool rebalanced = false; // the engine's rebalancing (EXP / damage rates not 100%)
     int difficulty = 0;
     int protocol = 0;
     std::string client_version;

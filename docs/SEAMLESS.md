@@ -5775,6 +5775,18 @@ the engines' generator. So, plainly:
   `online` is set, and `cheats` in the upload and achievement contexts from
   the engine's real flags (an upload with cheats on is refused by today's
   ranked check).
+  **Fixed in round 68** (`fix-r68cheats`, the "Before round D" fix of 17):
+  the Cheats tab tests `net.active() || online` (the old direct connection
+  or a room): its controls are disabled, its player buttons hidden, and in a
+  room it reads "Cheats are off online."; `Engine::step` applies
+  `online_cheats` on every online step, so whatever sets them after
+  `set_online` (the tab, the Settings presets, the Loading choice) is off
+  again before the step runs (the room's randomizer stays); `cheats` and
+  `rebalanced` in the character context (`OnlineRun::character_context`)
+  and the achievement context (`OnlineAchievements::set_cheats` before every
+  observe) come from the engine's real flags. ctest `online` (an online step
+  turns the cheats off again, offline it keeps them) and
+  `online_character` (both contexts report the flags).
 - Within the game's rules nothing is caught: luckier drops than chance,
   faster kills inside the bounds, a bot that plays all night, a client that
   changes values inside the limits (a few more EXP per kill, a better
@@ -7635,6 +7647,25 @@ rooms."; `cheats` in the character and achievement contexts
 (`character.cpp:118`, `achievement_api.cpp:13`) from the engine's real flags.
 Checks: a hidden room run where the buttons are absent and the context says
 false; online off bit-identical (UI only).
+
+**Fixed in round 68** (`fix-r68cheats` from main `f590383`): the tab (still
+in `game_main.cpp`, not moved by round O1a) disables its controls and hides
+its player buttons for `net.active() || online`, a room shows "Cheats are
+off online." above them (the old direct connection keeps "Online, the
+host's settings apply."); the engine keeps them off online
+(`Engine::step` applies `online_cheats` each online step, not only
+`set_online` when the engine is built; the room's randomizer and loading
+choice stay); the character context and the achievement context send
+`cheats` / `rebalanced` from the engine's flags (`OnlineRun::character_context`,
+`OnlineAchievements::set_cheats`). Checks: ctest `online` and
+`online_character` with new cases, every ctest (53 of 53), `det.sh`
+4004f056 / 396cb219 twice (online off unchanged), the F1 Cheats tab offline
+byte-identical to main's (hidden screenshot), and `run.py ui cheats` (new:
+`menu cheats` in `--online-ui` scripts) on the loopback stack: in a room the
+tab reads "Cheats are off online." with its controls disabled and no player
+buttons. Open: a room run in a field with joined players (the buttons'
+absence there and an upload whose context says false; the code paths are
+the same as at the title).
 
 ### Round D (after round G): the server's character
 

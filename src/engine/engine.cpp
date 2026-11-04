@@ -1946,6 +1946,10 @@ void Engine::step(const std::array<PadSample, 4>& samples) {
     }
     // Online (7.4): no console reset however the game sets beSystem +0x5F.
     if (console_reset_.enabled()) console_reset_.set_enabled(false);
+    // Online no cheats and no rebalancing, whatever set them after
+    // set_online (the F1 menu, a settings preset; SEAMLESS.md 9.1.10): every
+    // member steps the room's values. The room's randomizer stays.
+    cheats_ = online_cheats(cheats_);
     const auto effective = online_samples(samples);
     close_leaving_prompt();
     step_impl(effective);

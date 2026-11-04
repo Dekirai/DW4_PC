@@ -26,7 +26,7 @@
 //   expect-screens open|closed
 //   panel open|close           the online screens over the title, opened without the menu
 //   open                       the lobby without a panel (version gate, remembered login)
-//   menu online|close          the F1 menu on its Online tab
+//   menu online|cheats|close   the F1 menu on its Online (or Cheats) tab
 //   screen NAME                go to a screen (welcome login register account password rooms create join ...)
 //   back                       the Back button
 //   view                       the controller's View / Back button (opens / closes the F1 menu)

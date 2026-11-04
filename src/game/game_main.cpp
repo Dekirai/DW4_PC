@@ -1552,6 +1552,9 @@ int run(const Options& options, dw4::game::Settings& settings) {
             if (online_on) {
                 using Mode = dw4::game::online::Mode;
                 const auto mode = online->session().mode();
+                const auto& cheats = engine.cheats();
+                online_achievements->set_cheats(cheats.god || cheats.infinite_mp || cheats.one_hit,
+                                                cheats.exp_rate != 100 || cheats.damage_dealt != 100 || cheats.damage_taken != 100);
                 if (mode == Mode::solo || mode == Mode::sealed || mode == Mode::transition)
                     for (const auto& unlock : online_achievements->observe(step, events, last_gate, randomized(), unix_now(), steady_seconds()))
                         if (unlock.def && options.smoke_frames)
@@ -3422,7 +3425,12 @@ int run(const Options& options, dw4::game::Settings& settings) {
                         ImGui::TextWrapped("Optional cheats for this session. They change the original game; what they "
                                            "give (levels, bits) stays in saves.");
                         auto& cheats = engine.cheats();
-                        ImGui::BeginDisabled(net.active());
+                        // Online, the old direct connection or a room (SEAMLESS.md
+                        // 9.1.10): the controls disabled, the player buttons hidden
+                        // (the engine keeps the cheats off in a room, Engine::step).
+                        const bool cheats_online = net.active() || online != nullptr;
+                        if (online) ImGui::TextColored(ImVec4(1, 0.75f, 0.4f, 1), "Cheats are off online.");
+                        ImGui::BeginDisabled(cheats_online);
                         ImGui::Checkbox("God mode (players lose no HP)", &cheats.god);
                         ImGui::Checkbox("Infinite MP", &cheats.infinite_mp);
                         ImGui::Checkbox("One-hit defeats (player hits)", &cheats.one_hit);
@@ -3500,13 +3508,13 @@ int run(const Options& options, dw4::game::Settings& settings) {
                                             "spoiler log beside it); a save from before keeps playing the original game until you "
                                             "bind the settings to it above.");
                         ImGui::PopTextWrapPos();
-                        if (gameplay_changed) {
+                        if (gameplay_changed && !cheats_online) {
                             apply_gameplay(cheats);
                             settings_changed = true;
                         }
                         ImGui::EndDisabled();
                         if (net.active()) ImGui::TextDisabled("Online, the host's settings apply.");
-                        if (auto* sys = engine.get<dw4::engine::GameSystem>(); sys && !net.active()) {
+                        if (auto* sys = engine.get<dw4::engine::GameSystem>(); sys && !cheats_online) {
                             for (int slot = 0; slot < 4; ++slot) {
                                 auto& player = sys->players[std::size_t(slot)];
                                 if (!player.joined || !player.stats.ready) continue;

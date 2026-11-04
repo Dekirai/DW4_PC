@@ -37,6 +37,8 @@ api::ReportContext OnlineAchievements::report_context() const {
     c.players = std::clamp(instance_players_, 1, 4);
     c.room_players = std::clamp(std::max(room_members_, instance_players_), 1, 10);
     c.randomizer = config_.randomizer;
+    c.cheats = cheats_;
+    c.rebalanced = rebalanced_;
     c.difficulty = difficulty_;
     c.protocol = config_.protocol;
     c.client_version = config_.client_version;

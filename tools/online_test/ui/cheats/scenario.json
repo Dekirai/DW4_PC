@@ -1,0 +1,7 @@
+{
+  "desc": "the F1 Cheats tab in a room (round 68, SEAMLESS.md 9.1.10): \"Cheats are off online.\", its controls disabled, no player buttons",
+  "timeout": 240,
+  "clients": [
+    {"name": "a", "script": "a.txt", "registered": true}
+  ]
+}
