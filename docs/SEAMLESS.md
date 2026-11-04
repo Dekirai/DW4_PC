@@ -508,6 +508,19 @@ while a story player is there would lose the quest (or carry it into the story
 player's lobby). With it they play in separate instances; two players on the
 same quest share one.
 
+**Arrival context (round J, r70).** A stage's own load scripts may change a
+context value: every dungeon's first floor sets COUNTER 2 at its load
+(`dng101b1_m1__start.lua:11-12`). The running instance then reports
+another context than its members arrived with, while a partner's barrier
+hash is taken in the previous stage, so round 63's M2 saw a partner 15 s
+later get `OtherContext` and an instance of its own. The relay keeps each
+visit's *arrival context* (its barrier's hash) and its *entry context*
+(the context of its first joinable state); an arrival may join an instance
+that runs its context now, or that arrived with it while nothing of the
+play since the entry changed it (`HubRules.ContextMatches`): exactly what a
+co-arrival would have shared. A change made by the play after the entry (a
+quest step) still keeps an arrival with the old context out.
+
 The temporary flags of the instance class travel with the engine line, which
 is an inherent result of seamless play: a member who pulled the lever in
 stag0301 (flag 56) and then joins a friend's stag0302 instance adopts that
@@ -2499,8 +2512,9 @@ that can be taken at any tick and put back. This section designs it in two
 forms. The **tick state** is portable: a serializer per manager with stable
 ids and a canonical hash, for joins, checkpoints, resyncs and desync
 diagnosis. The **state arena** is in-process: the online engine's heap in one
-write-watched region, saved per tick as dirty pages, for rollback. Nothing of
-it is built; rounds J and R (17) build it.
+write-watched region, saved per tick as dirty pages, for rollback. Round J
+(r70, "Round J (built)" below) built the tick state, the checkpoints and the
+join from one; the state arena is round R's.
 
 **Revision 2** (the critique of d0e489a; every point checked against the
 code before it was taken, plus two probes of this revision, 6.13.1). The two
