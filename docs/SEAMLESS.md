@@ -8142,6 +8142,17 @@ Further answers (the same day):
     on purpose: the instance ends for everyone at once (after the 3 s
     notice).
 
+### Answers of round 67, second set (2026-11-04)
+
+The user took every default: 32 (a) free travel inside the instance;
+34 (a) the host removes a guest from the Online menu (10 minutes out,
+blocking removes too); 35 (a) help mode for quest instances; 36 (a) a
+player who was only a guest gets, once at the update, a copy of the story
+of the room he spent the most time in; 37 (a) a defeated host gets the
+60 s return ("Your guests are still playing. Return to them?"; before
+round I3 the instance ends at once). 33 was not asked; the design keeps
+(a), the same main story.
+
 ## 19. Instances without rooms, friends and the instance browser (round 67 design)
 
 The user's wishes of 2026-11-04 (German, translated):
