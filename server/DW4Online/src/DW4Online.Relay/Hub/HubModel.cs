@@ -60,12 +60,21 @@ public sealed class HubMember(int index, long accountId, string name, bool owner
     public Heading? Heading { get; set; }
     public PresenceMsg? Presence { get; set; }
     public long PresenceAt { get; set; }
+    /// <summary>The member sends PRESENCE2 (round 60): it is sent PRESENCE2 too. Its last one (null: PRESENCE).</summary>
+    public bool PresenceV2 { get; set; }
+    public Presence2Msg? Presence2 { get; set; }
+    /// <summary>PRESENCE2's token bucket (<see cref="RoomHub.PresenceRate"/> a second, <see cref="RoomHub.PresenceBurst"/>).</summary>
+    public double PresenceTokens { get; set; }
+    public long PresenceTokensAt { get; set; }
     public bool Lagging { get; set; }
 
     public uint PingNonce { get; set; }
     public long PingSentAt { get; set; }
     public long LastHeard { get; set; }
     public RttSamples Rtt { get; } = new();
+    /// <summary>The delay rule of the member's newest sealed stream: the next one keeps its bar (a value that proved too low
+    /// for this member's link and game, SEAMLESS.md 6.4), since the link does not change with the stage.</summary>
+    public DelayController? LastDelay { get; set; }
 
     /// <summary>This connection may send RESUME once (its WELCOME said resumable).</summary>
     public bool ResumeAllowed { get; set; }

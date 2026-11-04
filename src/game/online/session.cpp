@@ -5,7 +5,9 @@
 #include <algorithm>
 #include <bit>
 #include <chrono>
+#include <cmath>
 #include <cstdarg>
+#include <cstdlib>
 #include <cstdio>
 
 namespace dw4::game::online {
@@ -81,6 +83,70 @@ void Session::trace(const char* format, ...) const {
     std::fflush(stdout);
 }
 
+void Session::log(const char* format, ...) const {
+    if (!online_log_ || !online_log_->is_open()) return;
+    char line[768];
+    va_list args;
+    va_start(args, format);
+    std::vsnprintf(line, sizeof line, format, args);
+    va_end(args);
+    online_log_->line("%s", line);
+}
+
+void Session::set_delay(int d, const char* why) {
+    if (d == delay_) return;
+    trace("delay %d -> %d (%s) mode=%s inst=%u visit=%u tick=%u", delay_, d, why, mode_name(mode_), inst_, visit_, tick_);
+    log("input delay %d -> %d ticks (%s, %s, stage %s)", delay_, d, why, mode_name(mode_), engine_.stage().c_str());
+    delay_ = d;
+}
+
+void Session::note_mode() {
+    if (mode_ == traced_mode_) return;
+    trace("mode %s -> %s inst=%u visit=%u tick=%u d=%d", mode_name(traced_mode_), mode_name(mode_), inst_, visit_, tick_, delay_);
+    log("mode %s -> %s (instance %u visit %u tick %u, stage %s, input delay %d, present %x)", mode_name(traced_mode_), mode_name(mode_), inst_,
+        visit_, tick_, engine_.stage().c_str(), delay_, unsigned(present_));
+    if (mode_ == Mode::closed && !close_reason_.empty()) log("closed: %s", close_reason_.c_str());
+    traced_mode_ = mode_;
+}
+
+void Session::report_window(double now, bool force) {
+    stats_.roll_recent(now);
+    if (transport_ && now - tcp_checked_at_ >= 1.0) {
+        tcp_checked_at_ = now;
+        net_.tcp_rtt_ms = transport_->tcp_rtt_ms();
+        net_.tcp_loss = transport_->tcp_retransmits();
+        if (!net_.from_relay) net_.rtt_ms = net_.tcp_rtt_ms;
+    }
+    if (!force && now - window_at_ < 5.0) return;
+    window_at_ = now;
+    const auto w = stats_.take_window();
+    log_window_.add(w);
+    if (force || now - log_window_at_ >= 10.0) {
+        log_window_at_ = now;
+        const auto& l = log_window_;
+        if (l.samples)
+            log("link: %s, stage %s, input delay %d ticks (%.0f ms), round trip %.0f ms (network about %.0f, wait for this game's pass %.1f, "
+                "spread %.0f, tcp %.1f), relay margin %d ms, "
+                "own pads %llu (not sealed as sent: %llu), latency avg %.0f ms p95 %.0f max %.0f ms, relay: %llu sealed, %llu filled, "
+                "%llu late, backlog runs %zu, starved %zu, drained %zu, tcp loss episodes %lld",
+                mode_name(mode_), engine_.stage().c_str(), delay_, delay_ * kFieldSeconds * 1000.0, net_.rtt_ms, net_.network_rtt_ms(),
+                net_.pass_wait_ms, net_.rtt_spread_ms, net_.tcp_rtt_ms,
+                net_.margin_ms, static_cast<unsigned long long>(l.samples), static_cast<unsigned long long>(l.dropped), l.exec_avg() * 1000.0,
+                l.exec_quantile(0.95) * 1000.0, l.exec_max * 1000.0, static_cast<unsigned long long>(net_.sealed),
+                static_cast<unsigned long long>(net_.filled), static_cast<unsigned long long>(net_.late), backlog_runs_, pace_.starved(),
+                pace_.drained(), net_.tcp_loss);
+        log_window_ = {};
+    }
+    if (!w.samples && !force) return;
+    trace("net mode=%s inst=%u visit=%u tick=%u d=%d samples=%llu dropped=%llu exec_avg=%.1f exec_p50=%.1f exec_p95=%.1f exec_max=%.1f "
+          "present_avg=%.1f present_max=%.1f steps=%.2f starved=%zu backlogs=%zu level=%.2f rtt=%.1f spread=%.1f margin=%d late=%llu filled=%llu "
+          "sealed=%llu",
+          mode_name(mode_), inst_, visit_, tick_, delay_, static_cast<unsigned long long>(w.samples), static_cast<unsigned long long>(w.dropped),
+          w.exec_avg() * 1000.0, w.exec_quantile(0.5) * 1000.0, w.exec_quantile(0.95) * 1000.0, w.exec_max * 1000.0, w.present_avg() * 1000.0,
+          w.present_max * 1000.0, w.steps_avg(), pace_.starved(), backlog_runs_, pace_.level(), net_.rtt_ms, net_.rtt_spread_ms, net_.margin_ms,
+          static_cast<unsigned long long>(net_.late), static_cast<unsigned long long>(net_.filled), static_cast<unsigned long long>(net_.sealed));
+}
+
 std::string Session::member_name(std::uint32_t member) const {
     if (const auto it = names_.find(member); it != names_.end() && !it->second.empty()) return it->second;
     return member != kNoMember ? "Player " + std::to_string(member + 1) : std::string("A player");
@@ -134,6 +200,8 @@ void Session::lose_connection(double now) {
     }
     // A solo member plays on (its LOG waits); everyone else freezes.
     resume_after_lost_ = true;
+    ++net_.reconnects;
+    log("connection to the relay lost (%s); reconnecting", mode_name(mode_));
     if (mode_ == Mode::solo || mode_ == Mode::transition) {
         notice("Connection lost, reconnecting...");
         return;
@@ -155,6 +223,8 @@ void Session::leave(const std::string& reason) {
 
 void Session::poll(double now) {
     now_ = now;
+    poll_gap_ = last_poll_at_ >= 0 ? std::clamp(now - last_poll_at_, 0.0, 1.0) : 0.0;
+    last_poll_at_ = now;
     if (transport_) {
         inbox_.clear();
         const bool open = transport_->receive(inbox_);
@@ -190,7 +260,23 @@ void Session::poll(double now) {
             try {
                 reader_.feed(std::span(inbox_).subspan(used));
                 while (auto frame = reader_.next()) {
-                    handle(*frame, now);
+                    if (informational(frame->type)) {
+                        // A frame that only feeds the indicator, the tags or the
+                        // room list and does not decode is skipped, not a broken
+                        // connection: the same type number given to another
+                        // message by another build (round 62 review: round 60's
+                        // PRESENCE2 on 0x8F, NETSTAT's number since 0.1.2) would
+                        // otherwise reconnect this client once a second.
+                        try {
+                            handle(*frame, now);
+                        } catch (const w::WireError& error) {
+                            if (net_.skipped_frames++ == 0)
+                                log("a %s frame from the relay did not decode (%s); skipped (another server build?)", w::type_name(frame->type),
+                                    error.what());
+                        }
+                    } else {
+                        handle(*frame, now);
+                    }
                     if (!transport_) break;
                 }
             } catch (const w::WireError&) {
@@ -201,6 +287,8 @@ void Session::poll(double now) {
         if (!open && transport_) lose_connection(now);
     }
     if (mode_ == Mode::catching_up) run_catch_up(now);
+    note_mode();
+    if (mode_ == Mode::solo || mode_ == Mode::sealed || mode_ == Mode::observing) report_window(now, false);
     // A solo group parked without an answer goes on as NEW (3.4); a larger
     // group keeps waiting. A held barrier (BARRIER_WAIT: the server holds it
     // for a co-arrival, a join or a boss choice) is an answer: the five
@@ -226,29 +314,154 @@ void Session::poll(double now) {
             story_checked_at_ = now;
             send_story(now, false);
         }
-        if (now - presence_at_ >= config_.presence_interval) {
-            presence_at_ = now;
-            const auto facts = engine_.presence(slot_);
-            if (facts.in_stage) {
-                w::Presence p;
-                // An empty stage hides the tag (loads, scenes, menus); hp 0 shows a defeated member.
-                p.stage = facts.hidden ? std::string() : engine_.stage();
-                p.inst = inst_;
-                p.x = facts.x;
-                p.y = facts.y;
-                p.z = facts.z;
-                p.yaw = facts.yaw;
-                p.species = std::uint8_t(std::clamp(facts.species, 0, 255));
-                p.level = std::uint16_t(std::clamp(facts.level, 0, 65535));
-                p.hp = std::uint16_t(std::clamp(facts.hp, 0, 65535));
-                p.max_hp = std::uint16_t(std::clamp(facts.max_hp, 0, 65535));
-                p.mp = std::uint16_t(std::clamp(facts.mp, 0, 65535));
-                p.max_mp = std::uint16_t(std::clamp(facts.max_mp, 0, 65535));
-                if (facts.defeated) p.hp = 0;
-                send(w::Type::presence, w::encode(p, false));
-            }
-        }
+        send_presence(now);
     }
+}
+
+namespace {
+// A clip or weapon name as PRESENCE2 carries it: A-Z a-z 0-9 _ up to `limit`
+// characters, anything else unknown (empty).
+std::string wire_name(const std::string& name, std::size_t limit) {
+    if (name.size() > limit) return {};
+    for (const char c : name)
+        if (!((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_')) return {};
+    return name;
+}
+} // namespace
+
+void Session::send_presence(double now) {
+    // PRESENCE2 to a hub that takes it: ten a second while the figure moves,
+    // turns or changes its motion (the others' ghost figures walk smoothly),
+    // five while nothing changes; PRESENCE five a second to an older hub.
+    const double since = now - presence_at_;
+    if (since < (presence_v2_ ? config_.presence_moving_interval : config_.presence_interval)) return;
+    if (departing_ && (engine_.load_serial() != departing_serial_ || now - departing_at_ > kDepartingLimit)) departing_ = false;
+    const auto facts = engine_.presence(slot_);
+    if (!facts.in_stage) {
+        // Loading, a title screen: the member left the stage it showed (once).
+        hide_presence(now);
+        presence_at_ = now;
+        return;
+    }
+    w::Presence p;
+    // An empty stage hides the tag (loads, scenes, menus, a departure); hp 0
+    // shows a defeated member. (HP and MP above their maximum, as a script's
+    // MDLaddHp allows, show full.)
+    const bool hidden = departing_ || (presence_v2_ ? facts.figure_hidden : facts.hidden);
+    p.stage = hidden ? std::string() : engine_.stage();
+    p.inst = inst_;
+    p.x = facts.x;
+    p.y = facts.y;
+    p.z = facts.z;
+    p.yaw = facts.yaw;
+    p.species = std::uint8_t(std::clamp(facts.species, 0, 255));
+    p.level = std::uint16_t(std::clamp(facts.level, 0, 65535));
+    p.max_hp = std::uint16_t(std::clamp(facts.max_hp, 0, 65535));
+    p.max_mp = std::uint16_t(std::clamp(facts.max_mp, 0, 65535));
+    p.hp = std::uint16_t(std::clamp(facts.hp, 0, p.max_hp > 0 ? int(p.max_hp) : 65535));
+    p.mp = std::uint16_t(std::clamp(facts.mp, 0, p.max_mp > 0 ? int(p.max_mp) : 65535));
+    if (facts.defeated) p.hp = 0;
+    if (!presence_v2_) {
+        transmit(std::move(p), now);
+        return;
+    }
+#ifdef DW4_ONLINE_DEV
+    // DW4_ONLINE_TEST_FORM=SECONDS (development builds; the ghost figure
+    // scenarios of tools/online_test): the form the others' figures show
+    // moves on by one every SECONDS (the engine's form stays as it is).
+    static const double form_cycle = [] {
+        const char* text = std::getenv("DW4_ONLINE_TEST_FORM");
+        return text && *text ? std::atof(text) : 0.0;
+    }();
+    if (form_cycle > 0) p.species = std::uint8_t((facts.species + int(now / form_cycle)) % 16);
+#endif
+    p.version = w::kPresenceVersion;
+    p.clip = wire_name(facts.clip, w::kMaxClip);
+    p.flags = std::uint8_t((facts.clip_loops ? w::Presence::loop : 0) | (facts.busy ? w::Presence::busy : 0));
+    p.warp = warp_;
+    p.weapon = wire_name(facts.weapon, w::kMaxWeapon);
+    // (The clock is compared below without it.)
+    if (presence_sent_ && since < config_.presence_interval) {
+        auto same = *presence_sent_;
+        same.sent_ms = 0;
+        const bool still = same.stage == p.stage && same.inst == p.inst && std::abs(same.x - p.x) < 0.01f && std::abs(same.y - p.y) < 0.01f &&
+                           std::abs(same.z - p.z) < 0.01f && std::abs(same.yaw - p.yaw) < 0.001f && same.clip == p.clip &&
+                           same.flags == p.flags && same.warp == p.warp && same.species == p.species && same.weapon == p.weapon;
+        if (still) return;
+    }
+    transmit(std::move(p), now);
+}
+
+void Session::hide_presence(double now) {
+    // The last one sent at once with an empty stage: the hub sends it to the
+    // members still in the stage it showed (its "left" path), whose tag and
+    // figure of this member fade out now.
+    if (!presence_sent_ || presence_sent_->stage.empty()) return;
+    auto p = *presence_sent_;
+    p.stage.clear();
+    transmit(std::move(p), now);
+}
+
+void Session::depart(double now) {
+    // A departure: from here until the next stage load the member shows
+    // nowhere (the stage's own scene and fade end on its machine alone).
+    if (!departing_) {
+        departing_ = true;
+        departing_serial_ = engine_.load_serial();
+        departing_at_ = now;
+        trace("presence hidden until the next stage load (serial %llu)", static_cast<unsigned long long>(departing_serial_));
+    }
+    hide_presence(now);
+}
+
+void Session::transmit(w::Presence p, double now) {
+    presence_at_ = now;
+    if (p.version == 0) {
+        send(w::Type::presence, w::encode(p, false));
+    } else {
+        // PRESENCE2's clock: the step whose place this is (track_figure),
+        // the poll time after a pause without steps; always later than the
+        // last one sent (the receivers start over at a clock that goes back).
+        const double clock = now - step_at_ <= kStepStale ? step_at_ : now;
+        p.sent_ms = std::uint32_t(std::llround(clock * 1000.0));
+        if (presence_sent_ && presence_sent_->version != 0 && std::int32_t(p.sent_ms - presence_sent_->sent_ms) <= 0)
+            p.sent_ms = presence_sent_->sent_ms + 1;
+        send(w::Type::presence2, w::encode_presence2(p, false));
+    }
+    presence_sent_ = std::move(p);
+}
+
+void Session::track_figure(double now) {
+    // PRESENCE2's warp counter: a stage load or a step that moved the figure
+    // farther than any walk (a warp, a gate) counts, so the others' figures
+    // jump instead of gliding across; and its step clock. Reads the engine
+    // only.
+    if (!presence_v2_) return;
+    step_at_ = now - step_at_ < 0.25 ? std::clamp(step_at_ + kFieldSeconds, now - kStepSlack, now) : now;
+    const auto serial = engine_.load_serial();
+    if (serial != figure_serial_) {
+        figure_serial_ = serial;
+        ++warp_;
+        figure_known_ = false;
+    }
+    const auto facts = engine_.presence(slot_);
+    if (!facts.in_stage || facts.figure_hidden) {
+        figure_known_ = false;
+        return;
+    }
+    if (figure_known_) {
+        const float dx = facts.x - figure_x_, dy = facts.y - figure_y_, dz = facts.z - figure_z_;
+        if (dx * dx + dy * dy + dz * dz > kWarpStep * kWarpStep) ++warp_;
+    }
+    figure_x_ = facts.x;
+    figure_y_ = facts.y;
+    figure_z_ = facts.z;
+    figure_known_ = true;
+}
+
+bool Session::informational(w::Type type) noexcept {
+    return type == w::Type::netstat || type == w::Type::presence_of || type == w::Type::presence2_of || type == w::Type::roster ||
+           type == w::Type::room;
 }
 
 void Session::handle(const w::Frame& frame, double now) {
@@ -267,7 +480,7 @@ void Session::handle(const w::Frame& frame, double now) {
         // 1 -> 2 (6.4): J = the current tick + d (the server suggests d);
         // delayed sampling at once, the last pad repeated for the ticks
         // before J without a sample.
-        if (m.delay >= 1) delay_ = std::min<int>(m.delay, 15);
+        if (m.delay >= 1) set_delay(std::min<int>(m.delay, 15), "join_req");
         const std::uint32_t j = tick_ + std::uint32_t(std::max(1, delay_));
         join_at_ = j;
         delayed_.assign(std::size_t(j - tick_), last_own_);
@@ -322,6 +535,9 @@ void Session::handle(const w::Frame& frame, double now) {
         }
         notice("Lost sync with the group - catching up again...");
         trace("resync inst=%u visit=%u tick=%u", inst_, visit_, tick_);
+        ++net_.resyncs;
+        log("RESYNC: this machine lost sync with the group at tick %u of instance %u (stage %s); catching up again", tick_, inst_,
+            engine_.stage().c_str());
         resyncing_ = true;
         ready_sent_ = false;
         ticks_.clear(); // the state brings every tick from 0 again
@@ -331,8 +547,9 @@ void Session::handle(const w::Frame& frame, double now) {
         assembler_.reset();
         break;
     }
-    case w::Type::presence_of: {
-        auto m = w::decode_presence(p, true);
+    case w::Type::presence_of:
+    case w::Type::presence2_of: {
+        auto m = frame.type == w::Type::presence2_of ? w::decode_presence2(p, true) : w::decode_presence(p, true);
         if (m.member == member_id_) break;
         auto& r = remote_[m.member];
         r.name = member_name(m.member);
@@ -390,9 +607,32 @@ void Session::handle(const w::Frame& frame, double now) {
     }
     case w::Type::ping: {
         const auto m = w::decode_ping(p);
-        if (m.delay >= 1 && m.delay <= 15 && mode_ != Mode::sealed) delay_ = m.delay; // sealed: DELAY events change it
+        // (The PING came at some time since the last pass: on average half that gap ago.)
+        pass_waits_[pass_wait_count_++ % pass_waits_.size()] = poll_gap_ * 500.0;
+        {
+            std::array<double, 31> waits{};
+            const std::size_t n = std::min(pass_wait_count_, pass_waits_.size());
+            std::copy_n(pass_waits_.begin(), n, waits.begin());
+            std::nth_element(waits.begin(), waits.begin() + std::ptrdiff_t(n / 2), waits.begin() + std::ptrdiff_t(n));
+            net_.pass_wait_ms = waits[n / 2];
+        }
+        if (m.delay >= 1 && m.delay <= 15 && mode_ != Mode::sealed) set_delay(m.delay, "ping"); // sealed: DELAY events change it
+        net_.margin_ms = m.margin_ms;
+        net_.suggested_delay = m.delay;
         const auto ms = std::uint64_t(clock_seconds() * 1000.0);
         send(w::Type::pong, w::encode(w::Pong{m.nonce, ms}));
+        break;
+    }
+    case w::Type::netstat: {
+        // The relay's view of this member's link (round 62): the network indicator, F1 > Online, online.log.
+        const auto m = w::decode_netstat(p);
+        net_.rtt_ms = m.rtt_ms;
+        net_.rtt_spread_ms = m.spread_ms;
+        net_.margin_ms = m.margin_ms;
+        net_.late = m.late;
+        net_.filled = m.filled;
+        net_.sealed = m.sealed;
+        net_.from_relay = true;
         break;
     }
     case w::Type::reassign: {
@@ -446,6 +686,20 @@ void Session::on_welcome(const w::Welcome& m, double now) {
     if (!hello_seen_) welcome_at_ = now;
     hello_seen_ = true;
     member_id_ = m.member;
+    // (Every WELCOME: a reconnect may reach another hub build.)
+    presence_v2_ = (m.flags & w::Welcome::presence_v2) != 0;
+#ifdef DW4_ONLINE_DEV
+    // DW4_ONLINE_TEST_PRESENCE1=1 (development builds; the ghost figure
+    // scenario P2 of tools/online_test): this client acts as one from before
+    // round 60 or as a client of an older hub: it sends PRESENCE, so the hub
+    // sends it PRESENCE too, and its figures come from PRESENCE alone.
+    static const bool presence1 = [] {
+        const char* text = std::getenv("DW4_ONLINE_TEST_PRESENCE1");
+        return text && *text && *text != '0';
+    }();
+    if (presence1) presence_v2_ = false;
+#endif
+    presence_sent_.reset();
     if (!config_.own_name.empty()) names_[member_id_] = config_.own_name;
     if (resume_after_lost_) {
         resume_after_lost_ = false;
@@ -474,6 +728,7 @@ void Session::on_welcome(const w::Welcome& m, double now) {
     if (mode_ != Mode::connecting) return;
     // A fresh member: the server's solo hub instance (the title).
     trace("welcome member=%u inst=%u visit=%u slot=%u mode=%u", unsigned(m.member), m.inst, m.visit, unsigned(m.slot), unsigned(m.mode));
+    log("relay welcome: member %u, instance %u, input delay %u", unsigned(m.member), m.inst, unsigned(m.delay));
     inst_ = m.inst;
     visit_ = m.visit;
     slot_ = m.slot;
@@ -481,7 +736,7 @@ void Session::on_welcome(const w::Welcome& m, double now) {
     slot_members_ = {kNoMember, kNoMember, kNoMember, kNoMember};
     slot_members_[std::size_t(slot_)] = member_id_;
     mode_of_instance_ = m.mode;
-    if (m.delay >= 1) delay_ = m.delay;
+    if (m.delay >= 1) set_delay(m.delay, "welcome");
     mode_ = Mode::solo;
     hub_ = m.mode == w::Mode::hub || is_hub_stage(engine_.stage());
     log_first_ = tick_;
@@ -492,12 +747,15 @@ void Session::take_decision(const w::BarrierOk& ok) {
     trace("decision %u inst=%u visit=%u -> inst=%u visit=%u stage=%s slot=%u mode=%u delay=%u co_arrivals=%zu notice=%u", unsigned(ok.decision),
           ok.inst, ok.visit, ok.new_inst, ok.new_visit, ok.stage.c_str(), unsigned(ok.own_slot), unsigned(ok.mode), unsigned(ok.delay),
           ok.co_arrivals.size(), unsigned(ok.notice));
+    log("barrier: decision %u to stage %s (instance %u visit %u, slot %u, %s, input delay %u, notice %u)", unsigned(ok.decision), ok.stage.c_str(),
+        ok.new_inst, ok.new_visit, unsigned(ok.own_slot), ok.mode == w::Mode::sealed ? "sealed" : ok.mode == w::Mode::solo ? "solo-led" : "hub",
+        unsigned(ok.delay), unsigned(ok.notice));
     inst_ = ok.new_inst;
     visit_ = ok.new_visit;
     slot_ = ok.own_slot;
     present_ = ok.present();
     mode_of_instance_ = ok.mode;
-    if (ok.delay >= 1) delay_ = std::min<int>(ok.delay, 15);
+    if (ok.delay >= 1) set_delay(std::min<int>(ok.delay, 15), "barrier_ok");
     previous_inst_.reset();
     // Who sits where in the new instance (names): the own slot, the
     // co-arrivals; the base group's other members keep their names by slot.
@@ -538,7 +796,12 @@ int Session::steps_allowed(int host_steps, double elapsed) {
         // Only consecutive ticks from the next one count as waiting.
         std::size_t waiting = 0;
         for (auto it = ticks_.find(tick_); it != ticks_.end() && it->first == tick_ + waiting; ++it) ++waiting;
-        return pace_.due_steps(elapsed, waiting);
+        const int due = pace_.due_steps(elapsed, waiting);
+        if (pace_.catching_up()) {
+            ++backlog_runs_;
+            trace("backlog inst=%u visit=%u tick=%u waiting=%zu run=%d", inst_, visit_, tick_, waiting, due);
+        }
+        return due;
     }
     default: return 0;
     }
@@ -611,11 +874,13 @@ bool Session::apply_events(bool replaying) {
             if (slot != slot_ && slot_members_[std::size_t(slot)] == kNoMember) slot_members_[std::size_t(slot)] = roster_member_for(slot);
             trace("join applied inst=%u visit=%u tick=%u slot=%d present=%x%s", inst_, visit_, tick_, slot, unsigned(present_),
                   replaying ? " (replay)" : "");
+            if (!replaying) log("join: slot %d joined at tick %u (present %x)", slot, tick_, unsigned(present_));
             if (!replaying && slot != slot_) notice(slot_name(slot) + " joined");
             if (slot == slot_ && mode_ == Mode::observing) become_member(now_);
             break;
         case w::EventKind::leave:
             trace("leave applied inst=%u visit=%u tick=%u slot=%d", inst_, visit_, tick_, slot);
+            if (!replaying) log("leave: slot %d left at tick %u", slot, tick_);
             // (Only for a member that was there: a joiner whose carry every
             // engine dropped never was.)
             if (!replaying && slot != slot_ && (present_ & (1u << slot))) notice(slot_name(slot) + " left");
@@ -634,7 +899,7 @@ bool Session::apply_events(bool replaying) {
             else if (replaying && resyncing_) resync_lead_ = e.tick;
             break;
         case w::EventKind::delay:
-            if (slot == slot_ && replaying && resyncing_) delay_ = std::clamp(int(e.delay), 1, 15);
+            if (slot == slot_ && replaying && resyncing_) set_delay(std::clamp(int(e.delay), 1, 15), "delay_replayed");
             if (slot == slot_ && !replaying && mode_ == Mode::sealed) {
                 // The member repeats or skips one sample (6.4).
                 const int d = std::clamp(int(e.delay), 1, 15);
@@ -643,7 +908,7 @@ bool Session::apply_events(bool replaying) {
                 // run out (before_step sends up to tick + d).
                 if (d > delay_ && mode_ == Mode::sealed)
                     for (int k = delay_; k < d; ++k) send_input_ahead(last_own_);
-                delay_ = d;
+                set_delay(d, "delay_event");
             }
             break;
         }
@@ -661,6 +926,7 @@ void Session::send_input_ahead(const w::WirePad& pad) {
 void Session::start_sealed(const w::WirePad& pad) {
     // Pads for the first d ticks go out at once (6.7), then one per step.
     input_next_ = tick_;
+    skipped_buttons_ = 0;
     for (int k = 0; k < delay_; ++k) send_input_ahead(pad);
     pace_.reset();
     mode_ = Mode::sealed;
@@ -689,7 +955,20 @@ std::array<PadSample, 4> Session::before_step(const PadSample& local, double now
         for (auto& e : body.events) events_.push_back({tick_, std::move(e)});
         apply_events(false);
         if (mode_ == Mode::sealed) {
-            while (input_next_ <= tick_ + std::uint32_t(delay_)) send_input_ahead(own);
+            if (body.present & (1u << slot_)) stats_.executed(visit_, tick_, now, steps_, body.pads[std::size_t(slot_)]);
+            if (input_next_ > tick_ + std::uint32_t(delay_)) {
+                // A shorter delay skips samples until the sent pads run out
+                // (6.4): their buttons go with the next pad sent, so a press
+                // made meanwhile is late by a tick or two, never lost.
+                skipped_buttons_ = std::uint16_t(skipped_buttons_ | own.buttons);
+            }
+            while (input_next_ <= tick_ + std::uint32_t(delay_)) {
+                w::WirePad pad = own;
+                pad.buttons = std::uint16_t(pad.buttons | skipped_buttons_);
+                skipped_buttons_ = 0;
+                stats_.sampled(visit_, input_next_, now, steps_, pad);
+                send_input_ahead(pad);
+            }
             last_own_ = own;
         }
         pads = pads_of(body);
@@ -711,9 +990,13 @@ std::array<PadSample, 4> Session::before_step(const PadSample& local, double now
             // ticks ago; the new sample is for tick + d (from J an INPUT).
             pad = delayed_.empty() ? last_own_ : delayed_.front();
             if (!delayed_.empty()) delayed_.pop_front();
+            stats_.sampled(visit_, tick_ + std::uint32_t(delay_), now, steps_, own);
             if (tick_ + std::uint32_t(delay_) >= *join_at_) send_input_ahead(own);
             else delayed_.push_back(own);
+        } else {
+            stats_.sampled(visit_, tick_, now, steps_, own);
         }
+        stats_.executed(visit_, tick_, now, steps_, pad, join_at_.has_value());
         last_own_ = pad;
         pads[std::size_t(slot_)] = dequantize_pad(pad, true);
         for (int s = 0; s < 4; ++s)
@@ -736,11 +1019,14 @@ std::array<PadSample, 4> Session::before_step(const PadSample& local, double now
 
 void Session::after_step(double now) {
     now_ = now;
+    ++steps_;
+    note_mode();
     if (mode_ == Mode::transition) {
         if (engine_.load_serial() != serial_at_barrier_) begin_visit(now);
         return;
     }
     if (mode_ != Mode::solo && mode_ != Mode::sealed && mode_ != Mode::observing) return;
+    if (mode_ != Mode::observing) track_figure(now);
     const std::uint32_t executed = tick_;
     const bool member = mode_ != Mode::observing;
     // A fork in this step: from here the two sides' engines differ (each has
@@ -813,9 +1099,13 @@ void Session::after_step(double now) {
         // server's LEAD_FROM: from that tick it leads alone.)
     }
     // (Also from a hub instance: the lobby gate announces a field, 3.4.)
-    if (const auto heading = engine_.take_heading(); heading && member)
+    if (const auto heading = engine_.take_heading(); heading && member) {
         send(w::Type::heading, w::encode(w::Heading{inst_, heading->stage, std::uint8_t(std::clamp(heading->point, 0, 255)),
                                                     engine_.session_context_hash()}));
+        // (The scene and fade before its NEXTSTAGE show nowhere else: the
+        // others' figure of this member does not come back at the gate.)
+        depart(now);
+    }
     if (engine_.supports_barriers()) {
         if (engine_.pending_stage()) park(now);
     } else if (member && engine_.load_serial() != serial_at_barrier_) {
@@ -885,6 +1175,9 @@ void Session::report_state(double now, bool force) {
 
 // ---- barrier
 void Session::park(double now) {
+    // The member leaves its stage: its tag and figure go at once (no
+    // presence goes until the next stage's).
+    depart(now);
     flush_log(now, true);
     barrier_tick_ = tick_ - 1;
     serial_at_barrier_ = engine_.load_serial();
@@ -1014,6 +1307,7 @@ void Session::begin_visit(double now) {
     events_.clear();
     log_.clear();
     log_first_ = 0;
+    stats_.forget_in_flight();
     serial_at_barrier_ = engine_.load_serial();
     hub_ = mode_of_instance_ == w::Mode::hub || is_hub_stage(engine_.stage());
     state_flags_ = 0xFF;
@@ -1242,6 +1536,7 @@ void Session::finish_resync(double now) {
     resync_lead_.reset();
     trace("resynced inst=%u visit=%u tick=%u slot=%d", inst_, visit_, tick_, slot_);
     input_next_ = tick_;
+    skipped_buttons_ = 0;
     for (int k = 0; k < delay_; ++k) send_input_ahead(last_own_);
     mode_ = Mode::sealed;
     notice("Back in sync with the group.");
@@ -1255,6 +1550,7 @@ void Session::go_alone() {
     // the first membership-safe step (marked leaving meanwhile: neutral pads,
     // their prompts closed), nothing is logged or compared.
     trace("alone inst=%u visit=%u tick=%u slot=%d present=%x", inst_, visit_, tick_, slot_, unsigned(present_));
+    log("taken out of the group at tick %u (lag, too many resyncs or a missing hash): playing on alone", tick_);
     const std::uint8_t others = std::uint8_t(present_ & ~(1u << slot_));
     for (int s = 0; s < 4; ++s)
         if (others & (1u << s)) {
@@ -1289,6 +1585,7 @@ void Session::become_member(double now) {
     engine_.set_view_slot(slot_);
     trace("member inst=%u visit=%u tick=%u slot=%d", inst_, visit_, tick_, slot_);
     input_next_ = tick_ + 1;
+    skipped_buttons_ = 0;
     for (int k = 0; k < delay_; ++k) send_input_ahead(last_own_);
     mode_ = Mode::sealed;
     last_tick_at_ = now;

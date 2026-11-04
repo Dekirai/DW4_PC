@@ -142,6 +142,10 @@ float form_head_rise(int species, float joint_height) {
     return head ? std::max(0.0f, joint_height + head->reach - head->height) : 0.0f;
 }
 
+engine::Vec3f remote_head(const engine::Vec3f& feet, int species) {
+    return {feet.x, feet.y + form_label_height(species) + kHeadGap, feet.z};
+}
+
 int label_species(std::string_view drawn_model, std::string_view player_model, int stats_species) {
     if (const auto* drawn = form_by_model(drawn_model)) return drawn->species;
     if (stats_species >= 0) return stats_species;
@@ -405,9 +409,10 @@ void OverheadLabels::capture(std::vector<OverheadLabel> local, int local_players
                         [](char a, char b) { return std::tolower(static_cast<unsigned char>(a)) == std::tolower(static_cast<unsigned char>(b)); }))
             continue;
         ++players_;
+        if (remote.busy) continue; // (a window open: the figure stands there, without its tag)
         OverheadLabel label;
         label.key = 0x100 + remote.id;
-        label.head = {remote.position.x, remote.position.y + form_label_height(remote.species) + kHeadGap, remote.position.z};
+        label.head = remote_head(remote.position, remote.species);
         label.feet = remote.position;
         label.name = remote.name;
         label.level = remote.level;
@@ -547,16 +552,19 @@ std::vector<LabelBox> layout_overhead_labels(const std::vector<OverheadLabel>& l
     return boxes;
 }
 
-bool OverheadLabels::hidden(engine::Engine& engine) {
-    if (engine.loading() || !engine.presenting() || engine.rebooting() || !engine.pad_input_enabled()) return true;
+bool OverheadLabels::hidden(engine::Engine& engine, bool windows) {
+    if (engine.loading() || !engine.presenting() || engine.rebooting()) return true;
     // (Offline every demo work and window is unscoped and counts.)
-    const int own = engine.view_slot();
-    if (engine.demo().running_for(own) > 0) return true;
+    if (engine.demo().running_for(engine.view_slot()) > 0) return true;
     if (is_menu_stage(engine.stage_name())) return true;
-    if (const auto* windows = engine.get<engine::SubWindowManager>();
-        windows && (windows->shared_window_open() || windows->own_window_open(own)))
-        return true;
-    return false;
+    return windows && window_open(engine);
+}
+
+bool OverheadLabels::window_open(engine::Engine& engine) {
+    // (Pad input off: a talk, a scripted pause; the player stands where it is.)
+    if (!engine.pad_input_enabled()) return true;
+    const auto* windows = engine.get<engine::SubWindowManager>();
+    return windows && (windows->shared_window_open() || windows->own_window_open(engine.view_slot()));
 }
 
 } // namespace dw4::game

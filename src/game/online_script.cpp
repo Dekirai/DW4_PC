@@ -7,6 +7,7 @@
 #include "dw4/pad.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <bit>
 #include <chrono>
 #include <cstdlib>
@@ -83,7 +84,7 @@ bool OnlineScript::known_condition(std::string_view key) {
     static constexpr std::string_view names[] = {"stage", "present", "frames",  "dead",   "alive",    "control",     "mode",
                                                  "slot",  "sealed",  "time",    "epoch",  "answered", "hp",          "prompt",
                                                  "asking", "asked",  "partnerdead", "apart", "near", "stagechange", "level",
-                                                 "menu",  "menus",   "talking", "scenes", "lost", "enemy"};
+                                                 "menu",  "menus",   "talking", "scenes", "lost", "enemy", "ghosts"};
     if (key.starts_with("onmat:") || key.starts_with("onme:") || key.starts_with("offme:")) return key.find(':') + 1 < key.size();
     if (key.starts_with("flag:")) return key.size() > 5 && key.find_first_not_of("0123456789", 5) == std::string_view::npos;
     if (key.starts_with("roomflag:")) return key.size() > 9 && key.find_first_not_of("0123456789", 9) == std::string_view::npos;
@@ -114,6 +115,19 @@ bool OnlineScript::load(const std::filesystem::path& file, std::string& error) {
             error = file.string() + ":" + std::to_string(number) + ": unknown action " + step.action;
             steps_.clear();
             return false;
+        }
+        if (step.action == "shot") {
+            // One name of A-Z a-z 0-9 _ (a file name), no conditions.
+            std::string name;
+            words >> name;
+            if (name.empty() || !std::all_of(name.begin(), name.end(), [](char c) { return std::isalnum(static_cast<unsigned char>(c)) || c == '_'; })) {
+                error = file.string() + ":" + std::to_string(number) + ": shot needs a name of A-Z a-z 0-9 _";
+                steps_.clear();
+                return false;
+            }
+            step.args = {name};
+            steps_.push_back(std::move(step));
+            continue;
         }
         if (step.action == "log") {
             // The rest of the line is the text (no conditions).
@@ -200,6 +214,7 @@ bool OnlineScript::holds(engine::Engine& engine, const OnlineScriptFacts& facts,
         return compare(facts.room_story && flag < facts.room_story->flags.size() ? facts.room_story->flags[flag] : 0);
     }
     if (c.key == "present") return compare(std::popcount(unsigned(facts.present)));
+    if (c.key == "ghosts") return compare(facts.ghosts);
     if (c.key == "frames") return compare(step_frames_);
     if (c.key == "dead") return playing(engine, facts) && defeated(engine, facts.own_slot);
     if (c.key == "alive") return playing(engine, facts) && !defeated(engine, facts.own_slot);
@@ -689,6 +704,7 @@ OnlineScript::Output OnlineScript::update(engine::Engine& engine, const OnlineSc
     }
     if (facts.mode == "sealed") ++sealed_ticks_;
     trace_prompt(engine, facts);
+    std::string shot; // (a "shot" step that ended in this update)
     for (int guard = 0; guard < 16 && cursor_ < steps_.size(); ++guard) {
         const auto& step = steps_[cursor_];
         if (!step_started_) {
@@ -709,7 +725,7 @@ OnlineScript::Output OnlineScript::update(engine::Engine& engine, const OnlineSc
             const auto* me = own_player(engine, facts.own_slot);
             std::printf("online-script: step %zu (line %d) %s%s (frame %d, stage %s, slot %d, present %x, mode %s, tick %u, at %.0f,%.0f)\n",
                         cursor_ + 1, step.line, step.action.c_str(),
-                        step.action == "log" && !step.args.empty() ? (": " + step.args[0]).c_str() : "", facts.frame, stage.c_str(),
+                        (step.action == "log" || step.action == "shot") && !step.args.empty() ? (": " + step.args[0]).c_str() : "", facts.frame, stage.c_str(),
                         facts.own_slot, unsigned(facts.present), facts.mode.c_str(), facts.tick, me ? me->node->matrix(3, 0) : 0.0f,
                         me ? me->node->matrix(3, 2) : 0.0f);
             std::fflush(stdout);
@@ -722,8 +738,8 @@ OnlineScript::Output OnlineScript::update(engine::Engine& engine, const OnlineSc
         } else if (step.action == "log") {
             done = true;
         } else if (step.action == "shot") {
-            if (!step.args.empty()) shot_ = step.args[0];
             done = true;
+            shot = step.args.empty() ? std::string() : step.args[0];
         } else if (step.action == "press") {
             done = step_frames_ >= 6;
         } else if (step.action == "hold") {
@@ -774,7 +790,7 @@ OnlineScript::Output OnlineScript::update(engine::Engine& engine, const OnlineSc
                     std::fflush(stdout);
                 }
             auto out = act(engine, facts, step);
-            out.shot = std::exchange(shot_, std::string());
+            out.shot = shot;
             return out;
         }
         ++cursor_;
@@ -785,7 +801,7 @@ OnlineScript::Output OnlineScript::update(engine::Engine& engine, const OnlineSc
         }
     }
     Output out;
-    out.shot = std::exchange(shot_, std::string());
+    out.shot = shot;
     return out;
 }
 

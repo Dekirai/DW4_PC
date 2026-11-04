@@ -1,0 +1,32 @@
+# P3, member a (k7): stands near the lobby's mat matz00 and takes a picture every 45 frames while b walks over it into
+# stagml12 (the round 60 review: b's figure faded out on the mat, came back there about three seconds later and stood
+# two seconds until its last presence turned stale).
+campaign until stage=stagml11,control
+talk until control,frames>=60
+log in the lobby
+idle until epoch>=@84
+goto -25 -45 6
+idle until epoch>=@112
+log b to the mat
+idle until frames>=90
+shot a_mat_1
+idle until frames>=45
+shot a_mat_2
+idle until frames>=45
+shot a_mat_3
+idle until frames>=45
+shot a_mat_4
+idle until frames>=45
+shot a_mat_5
+idle until frames>=45
+shot a_mat_6
+idle until frames>=45
+shot a_mat_7
+idle until frames>=45
+shot a_mat_8
+idle until frames>=45
+shot a_mat_9
+idle until frames>=45
+shot a_mat_10
+idle until frames>=120
+log done

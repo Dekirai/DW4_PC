@@ -1,0 +1,13 @@
+{
+  "desc": "latency, pictures: L1 with screenshots of F1 > Online's Connection section (a) and the network indicator (b) into the scenario's folder (hidden windows)",
+  "seed_story": true,
+  "card": "k10",
+  "frames": 60000,
+  "timeout": 900,
+  "min_shared_ticks": 3000,
+  "clients": [
+    {"name": "a", "script": "../L1/a.script", "start": 0, "env": {"DW4_OPEN_MENU": "1", "DW4_MENU_TAB": "Online"},
+     "args": ["--screenshot", "{out}/a_menu.bmp", "--screenshot-frames", "7000,8000,9500,11000"]},
+    {"name": "b", "script": "../L1/b.script", "start": 3, "args": ["--screenshot", "{out}/b_indicator.bmp", "--screenshot-frames", "6500,7500,9000,11000"]}
+  ]
+}

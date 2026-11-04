@@ -139,7 +139,7 @@ public sealed class RoomHub
         var inst = m.Instance!;
         peer.Send(new WelcomeMsg((byte)m.Index, inst.Id, inst.Visit, (byte)m.Slot, inst.Mode, inst.Stage,
             resumable && m.Cursor > 0 ? m.Cursor - 1 : WelcomeMsg.NoTick, (byte)(inst.Streams[m.Slot]?.Delay.Current ?? 0),
-            (ushort)_inst.MaxCatchUpSeconds, resumable ? WelcomeMsg.Resumable : (byte)0).Frame());
+            (ushort)_inst.MaxCatchUpSeconds, (byte)((resumable ? WelcomeMsg.Resumable : 0) | WelcomeMsg.PresenceV2)).Frame());
         // The confirmed room story to start from (the title applies it at game start; SEAMLESS.md 8.5).
         peer.Send(new StoryAckMsg(Story.Story.Revision, Story.Story.ToBlob(), 0, []).Frame());
         foreach (var other in _members.Values)
@@ -311,6 +311,11 @@ public sealed class RoomHub
             case Msg.Intent: OnIntent(m, IntentMsg.Parse(p), now); break;
             case Msg.Story: OnStory(m, StoryMsg.Parse(p), now); break;
             case Msg.Presence: OnPresence(m, PresenceMsg.Parse(p), now); break;
+            case Msg.Presence2:
+                // (Any version stays within MaxBytes: a larger one is dropped unread.)
+                if (p.Length > Presence2Msg.MaxBytes) Count("presence_oversize");
+                else OnPresence2(m, Presence2Msg.Parse(p), now);
+                break;
             case Msg.Resume: OnResume(m, ResumeMsg.Parse(p), now); break;
             case Msg.Rate: m.Rate = Math.Min(RateMsg.Parse(p).StepsPerSecond, MaxReplayRate); break;
             case Msg.Pong: OnPong(m, PongMsg.Parse(p), now); break;
@@ -334,7 +339,7 @@ public sealed class RoomHub
         {
             var tick = msg.FirstTick + (uint)k;
             var margin = i.Sealing || i.S0 != 0 ? Ms(Due(i, tick) - now) : 1000.0;
-            switch (s.Offer(tick, msg.Pads[k], i.NextSeal, margin))
+            switch (s.Offer(tick, msg.Pads[k], i.NextSeal, margin, Ms(now)))
             {
                 case SlotStream.Submit.Late: Count("late_pads"); break;
                 case SlotStream.Submit.TooEarly: Count("early_pads"); break;
@@ -410,6 +415,10 @@ public sealed class RoomHub
         Note("heading", m.Instance, ("member", m.Index), ("to", msg.Stage), ("point", msg.Point));
     }
 
+    /// <summary>PRESENCE2 a member may send per second on average (ten while its figure moves) and at once.</summary>
+    public const double PresenceRate = 12;
+    public const double PresenceBurst = 3;
+
     private void OnPresence(HubMember m, PresenceMsg msg, long now)
     {
         if (m.PresenceAt != 0 && Ms(now - m.PresenceAt) < 150)
@@ -417,15 +426,74 @@ public sealed class RoomHub
             Count("presence_dropped");
             return;
         }
+        // (The bounds of PRESENCE2: a PRESENCE drives a ghost figure too.)
+        if (!Plausible(msg)) return;
+        FanPresence(m, msg.Clamped(), null, now);
+    }
+
+    private bool Plausible(PresenceMsg msg)
+    {
+        if (msg.Implausible() is not { } why) return true;
+        Count("presence_implausible");
+        Count("presence_implausible_" + why);
+        return false;
+    }
+
+    private void OnPresence2(HubMember m, Presence2Msg msg, long now)
+    {
+        // (Sent PRESENCE2 from now on, also when this one is dropped.)
+        m.PresenceV2 = true;
+        // A later version: only its version 1 part was read (its appended bytes skipped) and that part alone goes on,
+        // checked below and written at version 1 (Presence2Msg.Write), with the flags version 1 knows; so the hub never
+        // forwards what it cannot check, and the member's tag and figure still show.
+        if (msg.Version != Presence2Msg.CurrentVersion)
+        {
+            Count("presence_version");
+            msg = msg with { Version = Presence2Msg.CurrentVersion, Flags = (byte)(msg.Flags & Presence2Msg.KnownFlags) };
+        }
+        if (msg.Implausible() is { } why)
+        {
+            Count("presence_implausible");
+            Count("presence_implausible_" + why);
+            return;
+        }
+        msg = msg with { Presence = msg.Presence.Clamped() };
+        // The token bucket: about ten a second while a figure moves, five while it stands; more is dropped (counted).
+        m.PresenceTokens = m.PresenceTokensAt == 0
+            ? PresenceBurst
+            : Math.Min(PresenceBurst, m.PresenceTokens + Ms(now - m.PresenceTokensAt) / 1000.0 * PresenceRate);
+        m.PresenceTokensAt = now;
+        if (m.PresenceTokens < 1)
+        {
+            Count("presence_dropped");
+            return;
+        }
+        m.PresenceTokens -= 1;
+        FanPresence(m, msg.Presence, msg, now);
+    }
+
+    /// <summary>
+    /// A member's presence to the room members in the same stage outside its sealed instance (name tags, and in a hub
+    /// stage ghost figures): PRESENCE2 to those that send it, PRESENCE to the others. A member that just left a stage
+    /// (another stage, or hidden while it loads) is also sent to those still in the stage it left, so its tag and figure
+    /// go at once instead of after the two seconds a stale one stays.
+    /// </summary>
+    private void FanPresence(HubMember m, PresenceMsg msg, Presence2Msg? msg2, long now)
+    {
+        var left = m.Presence?.Stage;
+        if (string.IsNullOrEmpty(left) || string.Equals(left, msg.Stage, StringComparison.OrdinalIgnoreCase)) left = null;
         m.Presence = msg;
+        m.Presence2 = msg2;
         m.PresenceAt = now;
-        var frame = new PresenceOutMsg((byte)m.Index, msg).Frame();
+        byte[]? v1 = null, v2 = null;
         foreach (var o in _members.Values)
         {
             if (o == m || o.Peer is null || o.Presence is null) continue;
-            if (!string.Equals(o.Presence.Stage, msg.Stage, StringComparison.OrdinalIgnoreCase)) continue;
+            if (!string.Equals(o.Presence.Stage, msg.Stage, StringComparison.OrdinalIgnoreCase) &&
+                (left is null || !string.Equals(o.Presence.Stage, left, StringComparison.OrdinalIgnoreCase))) continue;
             if (o.Instance is not null && m.Instance is not null && o.Instance == m.Instance && o.Instance.Mode != InstanceMode.Hub) continue;
-            o.Peer.Send(frame);
+            if (msg2 is not null && o.PresenceV2) o.Peer.Send(v2 ??= new Presence2OutMsg((byte)m.Index, msg2).Frame());
+            else o.Peer.Send(v1 ??= new PresenceOutMsg((byte)m.Index, msg).Frame());
         }
     }
 
@@ -562,6 +630,16 @@ public sealed class RoomHub
         return n;
     }
 
+    /// <summary>A member's sealed stream from <paramref name="from"/> with delay <paramref name="d"/>: the configured bound
+    /// and late share, and the bar of the member's previous stream (DelayController.Inherit).</summary>
+    private SlotStream NewStream(HubMember m, int slot, uint from, int d)
+    {
+        var stream = new SlotStream(slot, from, d) { Delay = { Max = _sealing.MaxDelayTicks, LateTarget = _sealing.LateTarget } };
+        stream.Delay.Inherit(m.LastDelay);
+        m.LastDelay = stream.Delay;
+        return stream;
+    }
+
     private void EvaluateDelays(HubInstance i, uint t)
     {
         foreach (var st in i.Streams)
@@ -571,7 +649,7 @@ public sealed class RoomHub
             {
                 i.AddEvent(t + 2, TickEvent.Delay(st.Slot, d));
                 Count("delay_changes");
-                Note("delay", i, ("slot", st.Slot), ("d", d), ("tick", t + 2));
+                Note("delay", i, ("slot", st.Slot), ("d", d), ("tick", t + 2), ("why", st.Delay.LastReason), ("barred", st.Delay.Barred));
             }
         }
     }
@@ -674,7 +752,12 @@ public sealed class RoomHub
     {
         if (i.Mode != InstanceMode.Sealed || i.Sealing || i.Barrier is not null || i.SoloPending) return;
         if (i.Seats.Any(x => !i.Snapshot.Hashes.ContainsKey(x.Slot) && x.Member.Connected)) return;
-        var rtt = i.Members.Select(x => x.Rtt.Max).DefaultIfEmpty(0).Max();
+        // (The members' round trips without their host-loop stalls: a load's late PONG once placed S0 half a second out.)
+        var rtt = i.Members.Select(x =>
+        {
+            var (median, spread) = DelayController.RoundTrip(x.Rtt.All);
+            return median + spread;
+        }).DefaultIfEmpty(0).Max();
         i.S0 = now + FromMs(Math.Min(rtt, 500)) + 2 * TickTs - (long)(i.NextSeal * Wire.TickSeconds * Freq);
         i.Sealing = true;
         Note("sealing", i, ("from", i.NextSeal));
@@ -1286,7 +1369,7 @@ public sealed class RoomHub
         var delays = map.Keys.ToDictionary(x => x, x => DelayController.FromRoundTrips(x.Rtt.All, _sealing.MaxDelayTicks));
         if (inst.Mode == InstanceMode.Sealed)
             foreach (var (member, slot) in map)
-                inst.Streams[slot] = new SlotStream(slot, 0, delays[member]) { Delay = { Max = _sealing.MaxDelayTicks, LateTarget = _sealing.LateTarget } };
+                inst.Streams[slot] = NewStream(member, slot, 0, delays[member]);
 
         // The base engine spawns the co-arrivals (and followers) in its load step with their carries.
         var coList = new List<CoArrival>();
@@ -1565,6 +1648,9 @@ public sealed class RoomHub
             // A resync's end: the member never left the instance and sends its pads again (no JOIN, 6.9).
             m.Resyncing = false;
             if (msg.Rate > 0) m.Rate = Math.Min(msg.Rate, MaxReplayRate);
+            // Its first pads after the resync go out at once and come late by design: the delay rule does not count them.
+            if (m.Slot >= 0 && own.Streams[m.Slot] is { } resynced)
+                resynced.GraceUntil = Math.Max(resynced.GraceUntil, own.NextSeal + (uint)resynced.Delay.Current + 12);
             Count("resync_ready");
             Note("resync_ready", own, ("member", m.Index), ("tick", msg.Tick), ("fp", msg.NetFp.ToString("x16")));
             // Its reports from before the resync are its old engine's: they vote on nothing any more.
@@ -1620,7 +1706,9 @@ public sealed class RoomHub
             var at = StampTick(target);
             target.AddEvent(at, TickEvent.Join(j.Slot, j.From.Point, j.Carry));
             target.AddEvent(at, TickEvent.Delay(j.Slot, d));
-            target.Streams[j.Slot] = new SlotStream(j.Slot, at, d) { Delay = { Max = _sealing.MaxDelayTicks, LateTarget = _sealing.LateTarget } };
+            target.Streams[j.Slot] = NewStream(m, j.Slot, at, d);
+            foreach (var st in target.Streams)
+                st?.GraceThrough(at + (uint)st.Delay.Current + SlotStream.JoinGraceTicks);
             j.Stamped = true;
             BecomeMember(target, m, j);
             Note("join", target, ("member", m.Index), ("slot", j.Slot), ("tick", at));
@@ -1677,7 +1765,7 @@ public sealed class RoomHub
         i.LogOwner = m;
         i.Mode = InstanceMode.Sealed;
         i.SoloJoin = null;
-        i.Streams[m.Slot] = new SlotStream(m.Slot, at, p.LeaderDelay) { Delay = { Max = _sealing.MaxDelayTicks, LateTarget = _sealing.LateTarget } };
+        i.Streams[m.Slot] = NewStream(m, m.Slot, at, p.LeaderDelay);
         m.Cursor = at;
         if (orphan)
         {
@@ -1687,10 +1775,12 @@ public sealed class RoomHub
         }
         else
         {
-            i.Streams[p.Slot] = new SlotStream(p.Slot, at, p.JoinerDelay) { Delay = { Max = _sealing.MaxDelayTicks, LateTarget = _sealing.LateTarget } };
+            i.Streams[p.Slot] = NewStream(p.Joiner, p.Slot, at, p.JoinerDelay);
             i.AddEvent(at, TickEvent.Join(p.Slot, p.Point, p.Carry));
             i.AddEvent(at, TickEvent.Delay(p.Slot, p.JoinerDelay));
             i.AddEvent(at, TickEvent.Delay(m.Slot, p.LeaderDelay));
+            foreach (var st in i.Streams)
+                st?.GraceThrough(at + (uint)st.Delay.Current + SlotStream.JoinGraceTicks);
             BecomeMember(i, p.Joiner, p.Joiner.Joining!);
             Note("join", i, ("member", p.Joiner.Index), ("slot", p.Slot), ("tick", at), ("solo_leader", m.Index));
         }
@@ -1825,7 +1915,7 @@ public sealed class RoomHub
         {
             if ((leavers & (1 << s)) == 0 || i.Slots[s] is not { } m) continue;
             var old = i.Streams[s];
-            var stream = new SlotStream(s, from, old?.Delay.Current ?? 2) { Delay = { Max = _sealing.MaxDelayTicks, LateTarget = _sealing.LateTarget } };
+            var stream = NewStream(m, s, from, old?.Delay.Current ?? 2);
             old?.MoveAhead(stream, from);
             if (old is not null) old.UntilTick = from;
             child.Streams[s] = stream;
@@ -2093,6 +2183,11 @@ public sealed class RoomHub
                 var margin = st?.Delay.LowMargin() is { } low ? (short)Math.Clamp(low, short.MinValue, short.MaxValue) : (short)0;
                 var d = st?.Delay.Current ?? DelayController.FromRoundTrips(m.Rtt.All, _sealing.MaxDelayTicks);
                 m.Peer.Send(new PingMsg(m.PingNonce, (ulong)(now * 1000.0 / Freq), margin, (byte)d).Frame());
+                // What the member's network indicator and online.log show (round 62; older clients skip the frame).
+                var (rttMedian, rttSpread) = DelayController.RoundTrip(m.Rtt.All);
+                m.Peer.Send(new NetStatMsg((ushort)Math.Clamp(Math.Round(rttMedian), 0, ushort.MaxValue), (ushort)Math.Clamp(Math.Round(rttSpread), 0, ushort.MaxValue),
+                    (byte)d, margin, (uint)Math.Min(uint.MaxValue, st?.Sealed ?? 0), (uint)Math.Min(uint.MaxValue, st?.Filled ?? 0),
+                    (uint)Math.Min(uint.MaxValue, st?.Late ?? 0), st is null ? (byte)0 : NetStatMsg.InStream).Frame());
             }
         }
         foreach (var i in _instances.Values.ToList())

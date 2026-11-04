@@ -34,6 +34,10 @@ public class HubCoreTests
         var presence = new PresenceMsg("stagML11", 9, 1.5f, -2, 3, 0.25f, 4, 99, 500, 600, 70, 80);
         Assert.Equal(presence, PresenceMsg.Parse(Payload(presence.Frame())));
         Assert.Equal(new PresenceOutMsg(3, presence), PresenceOutMsg.Parse(Payload(new PresenceOutMsg(3, presence).Frame())));
+        var ghost = new Presence2Msg(1, presence, "runD", Presence2Msg.Loop, 200, 123456, "w_aguclaw01");
+        Assert.Equal(ghost, Presence2Msg.Parse(Payload(ghost.Frame())));
+        Assert.Equal(new Presence2OutMsg(3, ghost), Presence2OutMsg.Parse(Payload(new Presence2OutMsg(3, ghost).Frame())));
+        Assert.Equal(new Presence2Msg(1, presence, "", 0, 0, 0, ""), Presence2Msg.Parse(Payload(new Presence2Msg(1, presence, "", 0, 0, 0, "").Frame())));
         Assert.Equal(new ResumeMsg(1, 2, 3, 4), ResumeMsg.Parse(Payload(new ResumeMsg(1, 2, 3, 4).Frame())));
         Assert.Equal(new PongMsg(5, 6), PongMsg.Parse(Payload(new PongMsg(5, 6).Frame())));
         Assert.Equal(new WelcomeMsg(1, 2, 3, 0, InstanceMode.Sealed, "stag0101", 99, 3, 30, 1),
@@ -74,6 +78,24 @@ public class HubCoreTests
         Assert.Throws<ProtocolException>(() => SplitMsg.Parse(new SplitMsg(1, 1, 1, 0, SplitKind.Exit).Frame()[Wire.HeaderBytes..]));
         Assert.Throws<ProtocolException>(() => SnapshotMsg.Parse(new SnapshotMsg(1, 1, 4, 3, [1, 2]).Frame()[Wire.HeaderBytes..]));
         Assert.Throws<ProtocolException>(() => TickRecord.Parse([0x10, 0]));
+        // PRESENCE2: version 0, a cut frame, a byte too many, a clip outside A-Z a-z 0-9 _, a clip of 17, a NaN position.
+        var presence = new PresenceMsg("stagML11", 9, 1.5f, -2, 3, 0.25f, 4, 99, 500, 600, 70, 80);
+        var ghost = new Presence2Msg(1, presence, "runD", 1, 0, 0, "w_a1").Frame()[Wire.HeaderBytes..];
+        var versionZero = (byte[])ghost.Clone();
+        versionZero[0] = 0;
+        Assert.Throws<ProtocolException>(() => Presence2Msg.Parse(versionZero));
+        Assert.Throws<ProtocolException>(() => Presence2Msg.Parse(ghost[..^1]));
+        Assert.Throws<ProtocolException>(() => Presence2Msg.Parse(ghost.Concat(new byte[] { 0 }).ToArray()));
+        var dash = (byte[])ghost.Clone();
+        dash[ghost.Length - 1 - 4 - 4 - 1 - 1 - 4] = (byte)'-'; // the clip's first letter
+        Assert.Throws<ProtocolException>(() => Presence2Msg.Parse(dash));
+        Assert.Throws<ProtocolException>(() => Presence2Msg.Parse(new Presence2Msg(1, presence, new string('a', 17), 1, 0, 0, "").Frame()[Wire.HeaderBytes..]));
+        Assert.Throws<ProtocolException>(() => Presence2Msg.Parse(new Presence2Msg(1, presence with { X = float.NaN }, "runD", 1, 0, 0, "").Frame()[Wire.HeaderBytes..]));
+        // A later version appends: its version 1 part is read, the rest skipped.
+        var later = (byte[])ghost.Clone();
+        later[0] = 2;
+        var read = Presence2Msg.Parse(later.Concat(new byte[] { 9, 9, 9 }).ToArray());
+        Assert.Equal(((byte)2, "runD", "w_a1"), (read.Version, read.Clip, read.Weapon));
     }
 
     [Fact]
@@ -148,7 +170,8 @@ public class HubCoreTests
         Assert.Equal(SlotStream.Submit.Late, s.Offer(15, P(2), 19, -60));
         Assert.Equal(1, s.Late - 1); // the one before the stream plus this one
         Assert.Equal(SlotStream.Submit.Accepted, s.Offer(19, P(4), 19, 10));
-        Assert.Equal(P(4), s.Take(19, 0, out filled));
+        // (The late pad's press goes with the next sealed pad, round 62.)
+        Assert.Equal(P(4) with { Buttons = (ushort)(P(4).Buttons | P(2).Buttons) }, s.Take(19, 0, out filled));
         Assert.False(filled);
         Assert.Equal(0, s.FillStreak);
         Assert.Equal(8, s.Filled);
@@ -163,35 +186,234 @@ public class HubCoreTests
     }
 
     [Fact]
-    public void The_delay_rises_with_late_pads_and_falls_after_thirty_clean_seconds()
+    public void The_delay_follows_the_link_not_single_stalls()
     {
-        var d = new DelayController(3) { Max = 5 };
-        for (var i = 0; i < 1000; ++i) d.Record(20, late: false);
+        // Round 62 (SEAMLESS.md 6.4): more than 2 % of the last ten seconds' pads late, in three different seconds of them,
+        // raise d by one; one burst does not, nor a late pad now and then (since the review of round 62 a late pad fills
+        // its slot's next ticks: it costs that input a tick, a higher d every input).
+        Assert.Equal(0.02, new DelayController(3).LateTarget);
+        var d = new DelayController(3) { Max = 6 };
+        for (var i = 0; i < 600; ++i) d.Record(20, late: false);
         Assert.Null(d.Evaluate());
-        for (var i = 0; i < 4; ++i) d.Record(-5, late: true); // 4 of 3,600 > 0.1 %
+        for (var i = 0; i < 8; ++i) d.Record(-5, late: true); // one stall: eight late pads in one second
+        Assert.Null(d.Evaluate());
+        for (var i = 0; i < 60; ++i) d.Record(20, late: false);
+        for (var i = 0; i < 2; ++i) d.Record(-5, late: true); // a second second with late pads
+        Assert.Null(d.Evaluate());
+        for (var i = 0; i < 60; ++i) d.Record(20, late: false);
+        d.Record(-5, late: true); // a third: eleven late pads of 600, below 2 %
+        Assert.Null(d.Evaluate());
+        for (var i = 0; i < 2; ++i) d.Record(-5, late: true); // thirteen: above
         Assert.Equal(4, d.Evaluate());
-        for (var i = 0; i < 4; ++i) d.Record(-5, late: true);
-        Assert.Equal(5, d.Evaluate());
-        for (var i = 0; i < 4; ++i) d.Record(-5, late: true);
-        Assert.Null(d.Evaluate()); // bound
-        for (var i = 0; i < DelayController.LowerWindow; ++i) d.Record(40, late: false);
-        Assert.Equal(4, d.Evaluate()); // the late pads left the 30 s window
-        for (var i = 0; i < DelayController.LowerWindow; ++i) d.Record(i == 5 ? 10 : 40, late: false); // one margin below a tick, but above the 0.1 % quantile
-        Assert.Equal(3, d.Evaluate());
-        for (var i = 0; i < DelayController.LowerWindow; ++i) d.Record(i < 3 ? 10 : 40, late: false); // three: the 0.1 % quantile is 10 ms < one tick
-        Assert.Null(d.Evaluate());
-        var e = new DelayController(2);
-        for (var i = 0; i < DelayController.LowerWindow - 1; ++i) e.Record(40, late: false);
-        Assert.Null(e.Evaluate()); // not 30 s yet
-        e.Record(40, late: false);
-        Assert.Equal(1, e.Evaluate());
-        for (var i = 0; i < DelayController.LowerWindow; ++i) e.Record(40, late: false);
-        Assert.Null(e.Evaluate()); // the lower bound
+        Assert.Equal("late", d.LastReason);
+        Assert.Null(d.Evaluate()); // the window starts afresh
+        // Round 62's 0.1 % (Sealing:LateTarget 0.001) rose on the third second's one pad.
+        var old = new DelayController(3) { Max = 6, LateTarget = 0.001 };
+        for (var i = 0; i < 600; ++i) old.Record(20, late: false);
+        for (var k = 0; k < 3; ++k)
+        {
+            old.Record(-5, late: true);
+            for (var i = 0; i < 60; ++i) old.Record(20, late: false);
+        }
+        Assert.Equal(4, old.Evaluate());
 
+        // Most pads late (the start value was too low): it rises by the median's lateness at once (at most three), after
+        // one second of them, not three.
+        var low = new DelayController(2) { Max = 10 };
+        for (var i = 0; i < 59; ++i) low.Record(-30, late: true);
+        Assert.Null(low.Evaluate()); // not a whole second yet
+        low.Record(-30, late: true);
+        Assert.Equal(5, low.Evaluate()); // ceil((30 + 8.34) / 16.68) = 3 more
+        var half = new DelayController(3) { Max = 10 };
+        for (var i = 0; i < 60; ++i) half.Record(i % 2 == 0 ? -5 : 10, late: i % 2 == 0);
+        Assert.Null(half.Evaluate()); // half of them: the median margin is not below zero (one second, one block)
+        var bound = new DelayController(5) { Max = 6 };
+        for (var i = 0; i < 300; ++i) bound.Record(-30, late: true);
+        Assert.Equal(6, bound.Evaluate()); // the bound
+
+        // It falls after thirty seconds (more than one 60 Hz vsync beat) by the ticks the 0.5 % quantile of the margin
+        // leaves (0.15 of a tick kept), at most three.
+        Assert.Equal(1800, DelayController.LowerHold);
+        var f = new DelayController(9) { Max = 15 };
+        for (var i = 0; i < DelayController.LowerHold - 1; ++i) f.Record(60, late: false);
+        Assert.Null(f.Evaluate()); // not thirty seconds yet
+        f.Record(60, late: false);
+        Assert.Equal(6, f.Evaluate()); // floor((60 - 2.5) / 16.68) = 3
+        Assert.Equal("margin", f.LastReason);
+        for (var i = 0; i < DelayController.LowerHold; ++i) f.Record(i < 9 ? 5 : 30, late: false); // nine low margins: below the 0.5 % quantile
+        Assert.Equal(5, f.Evaluate()); // floor((30 - 2.5) / 16.68) = 1
+        for (var i = 0; i < DelayController.LowerHold; ++i) f.Record(i < 10 ? 5 : 30, late: false); // ten: the quantile is 5 ms
+        Assert.Null(f.Evaluate());
+        for (var i = 0; i < DelayController.LowerHold; ++i) f.Record(19, late: false); // 19 ms is below 1.15 ticks
+        Assert.Null(f.Evaluate());
+        for (var i = 0; i < DelayController.LowerHold; ++i) f.Record(20, late: false); // 20 ms is above: one tick, 3.3 ms left
+        Assert.Equal(4, f.Evaluate());
+        for (var i = 0; i < DelayController.LowerHold; ++i) f.Record(3, late: false); // 3 ms: it stays
+        Assert.Null(f.Evaluate());
+        var one = new DelayController(1);
+        for (var i = 0; i < DelayController.LowerHold; ++i) one.Record(100, late: false);
+        Assert.Null(one.Evaluate()); // the lower bound
+
+        // The start: median plus the 90th percentile's spread of the newest 30 round trips, host-loop stalls left out.
         Assert.Equal(3, DelayController.FromRoundTrips([], 10));
-        Assert.Equal(2, DelayController.FromRoundTrips([5, 6, 7], 10)); // ceil(8 / 16.68) + 1
-        Assert.Equal(6, DelayController.FromRoundTrips(Enumerable.Repeat(60.0, 99).Append(70).ToList(), 10)); // ceil((60 + 10 + 1) / 16.68) + 1
+        Assert.Equal(2, DelayController.FromRoundTrips([5, 6, 7], 10)); // ceil((6 + 1) / 16.68 + 1.5)
+        Assert.Equal(3, DelayController.FromRoundTrips(Enumerable.Repeat(20.0, 28).Append(450).Append(900).ToList(), 15)); // two load stalls
+        Assert.Equal(6, DelayController.FromRoundTrips(Enumerable.Repeat(60.0, 99).Append(70).ToList(), 10)); // ceil(60 / 16.68 + 1.5)
+        Assert.Equal(7, DelayController.FromRoundTrips(Enumerable.Repeat(60.0, 25).Concat(Enumerable.Repeat(80.0, 5)).ToList(), 10)); // p90 80
         Assert.Equal(10, DelayController.FromRoundTrips([400], 10));
+        // Only the newest 30 count: an old slow stretch is forgotten.
+        Assert.Equal(3, DelayController.FromRoundTrips(Enumerable.Repeat(200.0, 90).Concat(Enumerable.Repeat(20.0, 30)).ToList(), 15));
+
+        // The grace after a stream starts: its first pads come late by design and do not feed the rule.
+        var s = new SlotStream(0, 100, 4);
+        Assert.Equal(106u, s.GraceUntil);
+        for (uint g = 100; g < 106; ++g) Assert.Equal(SlotStream.Submit.Late, s.Offer(g, P(1), 110, -20));
+        Assert.Equal(6, s.LateInGrace);
+        Assert.Equal((0, 0), s.Delay.LateInWindow());
+        Assert.Equal(SlotStream.Submit.Late, s.Offer(107, P(1), 110, -5));
+        Assert.Equal((1, 1), s.Delay.LateInWindow());
+        // Pads in a burst (within 4 ms of the previous one) or right after a stall (over three ticks later) do not feed the
+        // rule: a stall of the client, its downlink or the relay is no lasting delay of the link.
+        var b = new SlotStream(0, 0, 3);
+        double at = 1000;
+        uint t = 10;
+        for (; t < 70; ++t, at += 16.7) b.Offer(t, P(1), t - 2, 30, at); // paced, on time
+        Assert.Equal(0, b.Unpaced);
+        at += 150; // a stall of the client: its next pads come at once, late
+        for (var k = 0; k < 8; ++k, ++t) b.Offer(t, P(1), t + 3, -40 + 16.7 * k, at + 0.3 * k);
+        Assert.Equal(8, b.Unpaced);
+        Assert.Equal((0, 0), b.Delay.LateInWindow());
+        at += 16.7;
+        b.Offer(t, P(1), t + 1, -2, at); // a paced late pad counts
+        Assert.Equal((1, 1), b.Delay.LateInWindow());
+        Assert.Equal(SlotStream.Submit.Accepted, b.Offer(t + 5, P(1), t, 20)); // no arrival time: paced
+        // A game of 15 passes a second sends four pads at once every 67 ms: the first of each burst counts.
+        var slow = new SlotStream(0, 0, 3);
+        double s15 = 1000;
+        for (uint k = 10; k < 70; ++k) slow.Offer(k, P(1), k + 1, -10, s15 + (k % 4 == 0 ? 0 : 0.2 * (k % 4)) + 66.7 * (k / 4));
+        Assert.Equal(44, slow.Unpaced); // (the very first pad has no gap: paced)
+        Assert.Equal((16, 1), slow.Delay.LateInWindow());
+        // A member that lags (its pads filled for half a second in a row) counts in any case.
+        var lag = new SlotStream(0, 0, 3);
+        for (uint k = 0; k < 40; ++k) lag.Take(k, 0, out _);
+        Assert.Equal(SlotStream.Submit.Late, lag.Offer(20, P(1), 40, -300, 5000));
+        Assert.Equal(SlotStream.Submit.Late, lag.Offer(21, P(1), 40, -280, 5000.5));
+        Assert.Equal((2, 1), lag.Delay.LateInWindow());
+
+        // A press in a late pad (after its tick was sealed) goes with the next sealed pad: late, not lost.
+        var c = new SlotStream(2, 0, 3);
+        Assert.Equal(SlotStream.Submit.Accepted, c.Offer(10, new Pad(0x0010, 0, 0, 0, 0), 10, 20));
+        Assert.Equal(new Pad(0x0010, 0, 0, 0, 0), c.Take(10, 0, out var cf));
+        Assert.Equal(SlotStream.Submit.Late, c.Offer(11, new Pad(0x0110, 5, 0, 0, 0), 12, -10)); // A (0x0100) pressed, late
+        Assert.Equal(SlotStream.Submit.Accepted, c.Offer(12, new Pad(0x0010, 5, 0, 0, 0), 12, 5)); // released again
+        Assert.Equal(new Pad(0x0110, 5, 0, 0, 0), c.Take(12, 0, out cf)); // sealed with the carried press
+        Assert.False(cf);
+        Assert.Equal(1, c.Carried);
+        Assert.Equal(new Pad(0x0010, 5, 0, 0, 0), c.Take(13, 0, out cf)); // a fill: the last real pad, nothing carried any more
+        Assert.True(cf);
+        // A button already held in the last sealed pad is no new press; the late pad, newer than the last one sealed in
+        // time, fills the next tick.
+        Assert.Equal(SlotStream.Submit.Late, c.Offer(13, new Pad(0x0010, 0, 0, 0, 0), 14, -10));
+        Assert.Equal(new Pad(0x0010, 0, 0, 0, 0), c.Take(14, 0, out cf));
+        Assert.Equal(1, c.Carried);
+
+        // A JOIN extends it (the spawn's long step on every machine), never shortens it.
+        s.GraceThrough(300);
+        s.GraceThrough(200);
+        Assert.Equal(300u, s.GraceUntil);
+        Assert.Equal(SlotStream.Submit.Late, s.Offer(250, P(1), 260, -30));
+        Assert.Equal((1, 1), s.Delay.LateInWindow());
+    }
+
+    [Fact]
+    public void A_fall_that_is_undone_bars_its_value()
+    {
+        // Round 62 review: a game presenting at 60.000 Hz or 59.95 Hz against the relay's 59.94 Hz has a margin that
+        // swings by one pass over a beat; a fall in its high part is undone in its low part. The value it fell to is barred
+        // for a minute, twice as long when a fall to it fails again (SEAMLESS.md 6.4).
+        var h = new DelayController(4) { Max = 10 };
+        for (var i = 0; i < DelayController.LowerHold; ++i) h.Record(25, late: false);
+        Assert.Equal(3, h.Evaluate()); // floor((25 - 2.5) / 16.68) = 1
+        Assert.Equal(0, h.Barred);
+        for (var i = 0; i < DelayController.Block; ++i) h.Record(-3, late: true); // most of a second late at 3
+        Assert.Equal(4, h.Evaluate()); // back to the value it fell from
+        Assert.Equal("most_late", h.LastReason);
+        Assert.Equal(3, h.Barred);
+        for (var i = 0; i < DelayController.LowerHold; ++i) h.Record(45, late: false);
+        Assert.Null(h.Evaluate()); // the margin allows two ticks (to 2): the bar holds 4
+        for (var i = 0; i < DelayController.LowerHold; ++i) h.Record(25, late: false);
+        Assert.Equal(0, h.Barred); // a minute of pads since the bar
+        Assert.Equal(3, h.Evaluate());
+        for (var i = 0; i < DelayController.Block; ++i) h.Record(-3, late: true); // and again too low
+        Assert.Equal(4, h.Evaluate());
+        Assert.Equal(3, h.Barred);
+        for (var k = 0; k < 3; ++k)
+        {
+            for (var i = 0; i < DelayController.LowerHold; ++i) h.Record(25, late: false);
+            Assert.Null(h.Evaluate()); // two minutes this time
+        }
+        Assert.Equal(3, h.Barred);
+        for (var i = 0; i < DelayController.LowerHold; ++i) h.Record(25, late: false);
+        Assert.Equal(3, h.Evaluate());
+        // Lateness beyond the value it fell from takes d further, and a rise that follows no fall bars nothing (a
+        // stretch of stalls, a start value too low).
+        for (var i = 0; i < DelayController.Block; ++i) h.Record(-40, late: true);
+        Assert.Equal(6, h.Evaluate()); // ceil(40 / 16.68) = 3
+        // The member's next stream (another stage) keeps the bar with the pads it has left.
+        var next = new DelayController(4);
+        next.Inherit(h);
+        Assert.Equal(3, next.Barred);
+        for (var i = 0; i < DelayController.LowerHold; ++i) next.Record(25, late: false);
+        Assert.Null(next.Evaluate());
+        var fresh = new DelayController(4);
+        fresh.Inherit(null);
+        for (var i = 0; i < DelayController.LowerHold; ++i) fresh.Record(25, late: false);
+        Assert.Equal(3, fresh.Evaluate());
+        var r = new DelayController(3) { Max = 10 };
+        for (var i = 0; i < DelayController.Block; ++i) r.Record(-3, late: true);
+        Assert.Equal(4, r.Evaluate()); // ceil((3 + 8.34) / 16.68) = 1 (round 62: + 1 tick, 2)
+        var r2 = new DelayController(3) { Max = 10 };
+        for (var i = 0; i < DelayController.Block; ++i) r2.Record(-10, late: true);
+        Assert.Equal(5, r2.Evaluate()); // ceil((10 + 8.34) / 16.68) = 2
+        Assert.Equal(0, r.Barred);
+    }
+
+    [Fact]
+    public void A_held_button_stays_held_through_late_pads()
+    {
+        // Round 62 review: the player holds A (0x0100) from tick 11 to 39; every pad from tick 10 on comes 5 ms after its
+        // tick was sealed (d one tick too low), so seals and late pads alternate. Filled with the last pad sealed in time
+        // plus the carried press, A toggled at 30 Hz (0010101...) and after six fills every held button did; the newest
+        // (late) pad as the fill source keeps it held, one tick late, and lets it go one tick late.
+        var s = new SlotStream(0, 0, 3);
+        for (uint t = 0; t < 10; ++t)
+        {
+            s.Offer(t, Pad.Neutral, t, 10, 1000 + 16.68 * t);
+            s.Take(t, 0, out _);
+        }
+        var sealedA = "";
+        for (uint t = 10; t < 50; ++t)
+        {
+            var sealedPad = s.Take(t, 0, out var filled);
+            Assert.True(filled);
+            sealedA += (sealedPad.Buttons & 0x0100) != 0 ? '1' : '0';
+            var held = t is >= 11 and < 40 ? (ushort)0x0100 : (ushort)0;
+            Assert.Equal(SlotStream.Submit.Late, s.Offer(t, new Pad(held, 20, 0, 0, 0), t + 1, -5, 1000 + 16.68 * t + 5));
+        }
+        Assert.Equal("00" + new string('1', 29) + new string('0', 9), sealedA);
+        // The lag rule still sees every tick its own pads missed.
+        Assert.Equal(40, s.FillStreak);
+        Assert.True(s.FillStreak >= SlotStream.LagFills);
+        // Once nothing comes any more: the newest pad six times, then neutral.
+        var tail = Enumerable.Range(50, 8).Select(t => s.Take((uint)t, 0, out _)).ToList();
+        Assert.Equal(Enumerable.Repeat(new Pad(0, 20, 0, 0, 0), 6).Concat([Pad.Neutral, Pad.Neutral]), tail);
+        // A pad older than the fill source (out of order) does not replace it.
+        var o = new SlotStream(0, 0, 3);
+        o.Offer(5, new Pad(0x0010, 0, 0, 0, 0), 5, 10);
+        o.Take(5, 0, out _);
+        Assert.Equal(SlotStream.Submit.Late, o.Offer(4, new Pad(0x0020, 0, 0, 0, 0), 6, -30));
+        Assert.Equal(new Pad(0x0030, 0, 0, 0, 0), o.Take(6, 0, out _)); // the carried press with the newer source
+        Assert.Equal(new Pad(0x0010, 0, 0, 0, 0), o.Take(7, 0, out _));
     }
 
     [Fact]

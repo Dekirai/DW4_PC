@@ -182,6 +182,359 @@ void presence_tracks() {
     check(tracks.sample(1.8).empty(), "defeated (hp 0): no tag");
 }
 
+// PRESENCE2 (round 60): the sender's clock spaces the packets, a held-up
+// packet does not shift the others, jumps never glide, a short way past the
+// newest packet, the clip at the drawn time, busy and the weapon.
+void presence2_tracks() {
+    PresenceTracks tracks;
+    w::Presence p;
+    p.member = 2;
+    p.stage = "stagml11";
+    p.inst = 1;
+    p.level = 7;
+    p.hp = p.max_hp = 40;
+    p.version = w::kPresenceVersion;
+    p.flags = w::Presence::loop;
+    p.weapon = "w_test01";
+    // Ten a second, x 10 per packet (100 units per second); the network
+    // delays them 50 ms, the fourth 130 ms (jitter). The clock offset is
+    // 15.05 s (the smallest delay); drawn 0.16 s behind on the sender's clock.
+    for (int i = 0; i <= 8; ++i) {
+        p.x = float(i * 10);
+        p.sent_ms = std::uint32_t(5000 + i * 100);
+        p.clip = i < 5 ? "waitD" : "runD";
+        tracks.add(p, "kim", 20.0 + i * 0.1 + (i == 3 ? 0.13 : 0.05));
+    }
+    auto s = tracks.sample(20.9); // drawn time 5.69
+    check(s.size() == 1 && std::abs(s[0].x - 69.0f) < 0.05f, "drawn on the sender's clock (" + std::to_string(s.empty() ? -1 : s[0].x) + ")");
+    check(s[0].v2 && s[0].clip == "runD" && s[0].loop && s[0].weapon == "w_test01" && !s[0].busy, "the clip at the drawn time, the weapon");
+    check(std::abs(s[0].speed - 100.0f) < 0.5f, "the speed between the packets");
+    s = tracks.sample(20.8); // 5.59
+    check(std::abs(s[0].x - 59.0f) < 0.05f && s[0].clip == "runD", "evenly spaced through the late packet");
+    s = tracks.sample(20.66); // 5.45
+    check(std::abs(s[0].x - 45.0f) < 0.05f && s[0].clip == "waitD", "the clip of the packet before the drawn time");
+    // Past the newest packet: on for at most kExtrapolate, then it holds.
+    s = tracks.sample(21.2); // 5.99
+    check(std::abs(s[0].x - (80.0f + 100.0f * float(PresenceTracks::kExtrapolate))) < 0.05f, "a short way past the newest packet, then it holds");
+    // A warp: the next packet's warp counter changed, far away. No glide.
+    p.warp = 1;
+    p.x = 500;
+    p.sent_ms = 5900;
+    tracks.add(p, "kim", 20.95);
+    const auto before = tracks.sample(21.0); // 5.79
+    check(std::abs(before[0].x - 79.0f) < 0.05f, "before the warp's packet time: the old way");
+    const auto after = tracks.sample(21.06); // 5.85
+    check(after[0].x == 80.0f && after[0].segment == before[0].segment, "between the last old packet and the warp: it holds there");
+    const auto warped = tracks.sample(21.12); // 5.91
+    check(warped[0].x == 500.0f && warped[0].segment != before[0].segment, "at the warp's time: the new place, a new segment");
+    // A step faster than any walk without a warp counter change snaps too.
+    p.x = 900;
+    p.sent_ms = 6000;
+    tracks.add(p, "kim", 21.05);
+    check(tracks.sample(21.3)[0].segment != warped[0].segment, "a jump of 400 units in 0.1 s is a new segment");
+    // Busy: the tag hides, the figure stays.
+    p.flags = w::Presence::busy;
+    p.sent_ms = 6100;
+    tracks.add(p, "kim", 21.15);
+    s = tracks.sample(21.4);
+    check(s.size() == 1 && s[0].busy && !s[0].loop, "busy and the clip's loop flag come along");
+    // A restarted sender clock starts the track over.
+    p.sent_ms = 10;
+    p.x = 0;
+    tracks.add(p, "kim", 21.3);
+    s = tracks.sample(21.35);
+    check(s.size() == 1 && s[0].x == 0.0f, "a sender clock that went back starts over");
+    // Yaw goes the short way round.
+    PresenceTracks turn;
+    p.flags = 0;
+    p.yaw = 3.0f;
+    p.sent_ms = 100;
+    turn.add(p, "kim", 1.0);
+    p.yaw = -3.0f;
+    p.sent_ms = 200;
+    turn.add(p, "kim", 1.1);
+    const float yaw = turn.sample(1.21)[0].yaw; // halfway
+    check(std::abs(yaw) > 3.0f, "yaw turns through pi, not through 0 (" + std::to_string(yaw) + ")");
+}
+
+// PRESENCE2 end to end over the fake hub: only after a WELCOME that
+// announces it; else PRESENCE as before (an older hub).
+void presence2_session() {
+    for (const bool v2 : {false, true}) {
+        World world;
+        world.hub.presence_v2 = v2;
+        auto& a = world.add("kim", 1);
+        auto& b = world.add("lee", 2);
+        b.engine.figure_clip = "runD";
+        world.run(3);
+        check(a.session->presence_v2() == v2 && b.session->presence_v2() == v2, "the WELCOME flag decides");
+        check(world.hub.unknown_frames == 0, "no PRESENCE2 to a hub that does not take it");
+        if (v2) check(world.hub.presence2_frames > 10 && world.hub.presence_frames == 0, "PRESENCE2 only");
+        else check(world.hub.presence_frames > 10 && world.hub.presence2_frames == 0, "PRESENCE only");
+        const auto tags = a.session->remote_tags(world.now);
+        check(tags.size() == 1 && tags[0].name == "lee", "A has B's sample");
+        check(tags[0].v2 == v2 && tags[0].clip == (v2 ? "runD" : "") && tags[0].weapon == (v2 ? "w_test01" : ""),
+              "PRESENCE2 brings the clip and the weapon");
+    }
+    // Ten a second while the figure changes, five while it stands.
+    World world;
+    world.hub.presence_v2 = true;
+    auto& a = world.add("kim", 1);
+    a.engine.figure_x = 5.0f;
+    world.run(2);
+    const auto standing = world.hub.presence2_frames;
+    world.run(4);
+    const auto still = world.hub.presence2_frames - standing;
+    check(still >= 19 && still <= 21, "five a second while nothing changes (" + std::to_string(still) + ")");
+    a.engine.figure_x.reset();
+    const auto moving_from = world.hub.presence2_frames;
+    world.run(4);
+    const auto moving = world.hub.presence2_frames - moving_from;
+    check(moving >= 36 && moving <= 41, "ten a second while it moves (" + std::to_string(moving) + ")");
+}
+
+// How evenly a figure walks: the steps of the samples drawn at `rate`
+// pictures a second against the even step (speed / rate): the mean, the
+// standard deviation and the largest difference from 1 of their ratios.
+struct Evenness {
+    double mean{}, sd{}, worst{};
+    std::size_t frames{};
+};
+Evenness evenness(const std::vector<double>& xs, double speed, double rate) {
+    Evenness e;
+    double sum = 0, squares = 0;
+    for (std::size_t i = 1; i < xs.size(); ++i) {
+        const double r = (xs[i] - xs[i - 1]) / (speed / rate);
+        sum += r;
+        squares += r * r;
+        e.worst = std::max(e.worst, std::abs(r - 1.0));
+        ++e.frames;
+    }
+    if (e.frames == 0) return e;
+    e.mean = sum / double(e.frames);
+    e.sd = std::sqrt(std::max(0.0, squares / double(e.frames) - e.mean * e.mean));
+    return e;
+}
+std::string describe(const Evenness& e) {
+    char text[160];
+    std::snprintf(text, sizeof text, "%zu frames, mean %.3f, sd %.3f, worst %.3f", e.frames, e.mean, e.sd, e.worst);
+    return text;
+}
+
+// The review of round 60 measured the walk of a ghost figure per picture:
+// the clock offset rose 2 ms a packet and dropped back at every new smallest
+// one (a saw: 8.5 % standard deviation, single pictures 1.85x, with 30+-20 ms
+// of jitter 3.65x), and a sender at 144 Hz stamped its poll time (+-13 %).
+// Now the offset moves at most kOffsetSlew towards the smallest lag of the
+// last packets and the packets carry the time of their step: a walk at a
+// steady speed moves the same way every picture, for any sender and
+// receiver picture rate and with the network's jitter (the relay is TCP:
+// a held-up packet holds up the ones after it).
+void presence2_smooth() {
+    struct Case {
+        double sender_hz, present_hz, delay, jitter;
+    };
+    for (const Case c : {Case{60, 60, 0.0005, 0}, Case{60, 144, 0.0005, 0}, Case{144, 60, 0.0005, 0}, Case{144, 144, 0.0005, 0},
+                         Case{60, 60, 0.03, 0.01}, Case{60, 144, 0.03, 0.02}, Case{144, 144, 0.03, 0.04}, Case{144, 60, 0.03, 0.04},
+                         Case{30, 144, 0.08, 0.04}}) {
+        std::uint32_t seed = 12345;
+        auto uniform = [&seed] {
+            seed = seed * 1664525u + 1013904223u;
+            return double(seed >> 8) / double(1u << 24);
+        };
+        const double speed = 42.0; // units per second (a run in the lobby)
+        struct Packet {
+            double arrives;
+            w::Presence p;
+        };
+        std::vector<Packet> packets;
+        // The sender: a pass every 1 / sender_hz (with a little scheduling
+        // noise); the poll before the pass's steps sends the place of the
+        // last step, stamped with that step's time (Session::track_figure).
+        double presence_at = -100, accumulator = 0, last_pass = 0, arrives = 0;
+        int executed = -1;
+        for (int j = 0;; ++j) {
+            const double pass = j / c.sender_hz + uniform() * 0.0005;
+            if (pass > 30.0) break;
+            if (pass - presence_at >= 0.1 && executed >= 0) {
+                w::Presence p;
+                p.member = 1;
+                p.stage = "stagml11";
+                p.inst = 1;
+                p.hp = p.max_hp = 10;
+                p.version = w::kPresenceVersion;
+                p.x = float(speed * executed * kFieldSeconds);
+                p.sent_ms = std::uint32_t(std::llround(executed * kFieldSeconds * 1000.0)) + 1000000u;
+                presence_at = pass;
+                arrives = std::max(arrives, pass + c.delay + uniform() * c.jitter);
+                packets.push_back({arrives, p});
+            }
+            accumulator += pass - last_pass;
+            last_pass = pass;
+            while (accumulator >= kFieldSeconds) {
+                accumulator -= kFieldSeconds;
+                ++executed;
+            }
+        }
+        // The receiver: the packets that came by a picture's pass, then the
+        // sample of the picture (online_now, a little later).
+        PresenceTracks tracks;
+        std::size_t next = 0;
+        std::vector<double> xs;
+        for (int i = 0;; ++i) {
+            const double q = i / c.present_hz;
+            if (q > 30.0) break;
+            while (next < packets.size() && packets[next].arrives <= q) tracks.add(packets[next++].p, "kim", q);
+            const auto s = tracks.sample(q + 0.002);
+            if (q >= 3.0) xs.push_back(s.empty() ? -1.0 : s[0].x);
+        }
+        const auto e = evenness(xs, speed, c.present_hz);
+        char name[96];
+        std::snprintf(name, sizeof name, "sender %.0f Hz, pictures %.0f Hz, %.0f+%.0f ms: ", c.sender_hz, c.present_hz, c.delay * 1000,
+                      c.jitter * 1000);
+        check(std::find(xs.begin(), xs.end(), -1.0) == xs.end(), std::string(name) + "a sample every picture");
+        check(e.sd < 0.015 && e.worst < 0.06, std::string(name) + "an even walk (" + describe(e) + ")");
+    }
+    // The route gets faster by 60 ms (the packets come that much earlier
+    // from the twentieth on) or slower: the drawn time moves over at most
+    // kOffsetSlew faster or slower, it never jumps.
+    for (const double change : {-0.06, 0.06}) {
+        PresenceTracks tracks;
+        w::Presence p;
+        p.member = 1;
+        p.stage = "stagml11";
+        p.inst = 1;
+        p.hp = p.max_hp = 10;
+        p.version = w::kPresenceVersion;
+        int k = 0;
+        std::vector<double> xs;
+        for (int i = 0; i < 144 * 8; ++i) {
+            const double q = i / 144.0;
+            while (k * 0.1 + 0.09 + (k >= 20 ? change : 0.0) <= q) {
+                p.x = float(k * 4.2);
+                p.sent_ms = std::uint32_t(1000 + k * 100);
+                tracks.add(p, "kim", q);
+                ++k;
+            }
+            const auto s = tracks.sample(q + 0.002);
+            if (q > 1.0) xs.push_back(s.empty() ? -1.0 : s[0].x);
+        }
+        const auto e = evenness(xs, 42.0, 144.0);
+        check(std::find(xs.begin(), xs.end(), -1.0) == xs.end() && e.worst < 0.05,
+              std::string(change < 0 ? "a faster" : "a slower") + " route: no jump (" + describe(e) + ")");
+    }
+}
+
+// The same over the fake hub: PRESENCE2's clock is the time of the step
+// whose place it carries (the polls come at any time between the steps),
+// and the walk A draws of B is even at every pass.
+void presence2_walk() {
+    World world;
+    world.hub.presence_v2 = true;
+    auto& a = world.add("kim", 1);
+    auto& b = world.add("lee", 2);
+    b.engine.figure_walk = 0.7f; // units a step: 42 a second
+    world.run(3);
+    const double speed = 0.7 / kFieldSeconds;
+    const w::Presence* before = nullptr;
+    double worst = 0;
+    int pairs = 0;
+    for (const auto& p : world.hub.presence2_seen) {
+        if (p.member != 2 || p.stage.empty()) continue;
+        if (before && p.x > before->x && p.warp == before->warp) {
+            const double seconds = double(std::int32_t(p.sent_ms - before->sent_ms)) / 1000.0;
+            worst = std::max(worst, std::abs((p.x - before->x) / seconds / speed - 1.0));
+            ++pairs;
+        }
+        before = &p;
+    }
+    // (sent_ms has whole milliseconds: up to 1 % of 100 ms.)
+    check(pairs > 20 && worst < 0.015, "PRESENCE2's clock is the step's (" + std::to_string(pairs) + " pairs, worst " + std::to_string(worst) + ")");
+    std::vector<double> xs;
+    for (int i = 0; i < 480; ++i) {
+        world.run(World::kPass * 0.999);
+        const auto tags = a.session->remote_tags(world.now);
+        if (tags.size() == 1) xs.push_back(tags[0].x);
+    }
+    const auto e = evenness(xs, speed, 1.0 / World::kPass);
+    check(xs.size() == 480 && e.sd < 0.02 && e.worst < 0.08, "A draws B's walk evenly at every pass (" + describe(e) + ")");
+}
+
+// Leaving a hub stage (the round 60 review): B's figure faded out at the mat
+// (its scene), came back there about three seconds later when B answered
+// the barrier and stood two seconds until its last packet turned stale. A
+// departure (HEADING) or a barrier now hides B at once until its next stage
+// load.
+void presence2_departure() {
+    World world;
+    world.hub.presence_v2 = true;
+    auto& a = world.add("kim", 1);
+    auto& b = world.add("lee", 2);
+    b.engine.figure_x = 30.0f;
+    world.run(2);
+    auto sees = [&](const char* stage) {
+        for (const auto& t : a.session->remote_tags(world.now))
+            if (t.name == "lee" && (!stage || t.stage == stage)) return true;
+        return false;
+    };
+    const std::string first = b.engine.stage();
+    check(sees(nullptr), "A sees B");
+    // The mat's scene: B's model is not shown.
+    b.engine.figure_hidden = true;
+    world.run(0.5);
+    check(!sees(nullptr), "B is hidden while its model is not shown");
+    // Its NEXTSTAGE is due (HEADING); the scene ends, B's model shows on its
+    // own screen again until the stage changes: not on A's.
+    b.engine.heading = HeadingInfo{"stag0101", 1};
+    world.run(0.1);
+    b.engine.figure_hidden = false;
+    bool seen = false;
+    for (int i = 0; i < 300; ++i) {
+        world.run(0.01);
+        seen |= sees(nullptr);
+    }
+    check(!seen, "after a departure B stays hidden on A's screen");
+    // NEXTSTAGE and a slow load: still nothing, then B in its next stage.
+    b.engine.transition_steps = 120;
+    bool exit = true;
+    b.input = [&exit](const fake::Client& c) -> std::uint32_t { return exit && c.engine.frame_ >= 20 ? fake::kExitButton : 0u; };
+    check(world.run_until(5, [&] { return b.engine.pending_.has_value(); }), "B takes the exit");
+    exit = false;
+    for (int i = 0; i < 100; ++i) {
+        world.run(0.01);
+        seen |= sees(nullptr);
+    }
+    check(!seen, "nothing while B loads");
+    check(world.run_until(10, [&] { return b.engine.stage() != first && sees(b.engine.stage().c_str()); }), "B shows in its next stage");
+
+    // A barrier without a departure (an exit without a scene): B goes from
+    // A's screen at once, not when its last packet turns stale.
+    World world2;
+    world2.hub.presence_v2 = true;
+    auto& c = world2.add("kim", 1);
+    auto& d = world2.add("lee", 2);
+    d.engine.figure_x = 30.0f;
+    d.engine.transition_steps = 600;
+    world2.run(2);
+    auto c_sees_d = [&] { return !c.session->remote_tags(world2.now).empty(); };
+    check(c_sees_d(), "C sees D");
+    bool take = true;
+    d.input = [&take](const fake::Client& client) -> std::uint32_t { return take && client.engine.frame_ >= 20 ? fake::kExitButton : 0u; };
+    check(world2.run_until(5, [&] { return d.engine.pending_.has_value(); }), "D takes the exit");
+    take = false;
+    const double parked = world2.now;
+    check(world2.run_until(3, [&] { return !c_sees_d(); }) && world2.now - parked < 0.2,
+          "D goes from C's screen at once (" + std::to_string(world2.now - parked) + " s)");
+
+    // HP above the maximum (MDLaddHp allows it): shown full, never dropped.
+    d.engine.figure_hp = 80;
+    check(world2.run_until(15, [&] {
+              const auto tags = c.session->remote_tags(world2.now);
+              return tags.size() == 1 && tags[0].hp == 50 && tags[0].max_hp == 50;
+          }),
+          "HP above the maximum goes as the maximum");
+}
+
 void co_arrival() {
     World world;
     world.hub.co_arrival_hold = 3.0;
@@ -575,6 +928,25 @@ void pacing_and_lag() {
                   seen[1].max_hp == 250,
               "the roster reaches the room view");
     }
+    {
+        // An informational frame that does not decode (round 62 review: round 60's PRESENCE2 to clients on 0x8F, the
+        // number NETSTAT holds since 0.1.2) is skipped; the session stays connected and sealed.
+        std::vector<std::uint8_t> other(40, 0x55);
+        world.hub.send(1, w::Type::netstat, other, world.now);
+        world.hub.send(1, w::Type::roster, {0x07}, world.now);
+        world.hub.send(1, w::Type::presence2_of, {0x02, 0x00}, world.now);
+        world.run(0.5);
+        check(a.session->mode() == Mode::sealed && a.session->net().reconnects == 0 && a.session->net().skipped_frames == 3,
+              "undecodable NETSTAT / ROSTER / PRESENCE2 frames are skipped, not a lost connection");
+        world.hub.send(1, w::Type::netstat, w::encode(w::NetStat{30, 4, 3, 12, 900, 2, 1, w::NetStat::in_stream}), world.now);
+        world.run(0.5);
+        const auto& net = a.session->net();
+        check(net.from_relay && net.rtt_ms == 30 && net.sealed == 900, "the next NETSTAT counts");
+        // A PING waits here for the next pass: half the gap between passes (1/240 s here), which the network's round
+        // trip leaves out (round 62 review: "Ping 34 ms" at 24 ms of network with 60 passes a second).
+        check(net.pass_wait_ms > 1.5 && net.pass_wait_ms < 2.6, "the pass wait: " + std::to_string(net.pass_wait_ms));
+        check(std::abs(net.network_rtt_ms() - (30 - net.pass_wait_ms)) < 1e-9, "the network's round trip");
+    }
     const double ratio = a.session->audio_ratio();
     check(ratio >= 0.999 && ratio <= 1.001, "the audio ratio stays within 0.1 %");
     // Lag: the server fills B's pads when they stop (B's uplink gone, its downlink alive).
@@ -654,6 +1026,11 @@ int main(int argc, char** argv) {
         std::cout << "solo, join, fork\n";
         solo_join_fork();
         presence_tracks();
+        presence2_tracks();
+        presence2_session();
+        presence2_smooth();
+        presence2_walk();
+        presence2_departure();
         std::cout << "co-arrival, reconnect\n";
         co_arrival();
         std::cout << "target moves on\n";

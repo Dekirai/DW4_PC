@@ -37,12 +37,22 @@ struct HeadingInfo {
     int point{};
 };
 
-// What a member shows the others (PRESENCE, name tags).
+// What a member shows the others (PRESENCE, name tags; PRESENCE2, the ghost
+// figures of the hub stages). Read from the engine, never written to it.
 struct PresenceFacts {
     bool in_stage = false; // false: title screens, loading
     float x{}, y{}, z{}, yaw{};
     int species{}, level{}, hp{}, max_hp{}, mp{}, max_mp{};
     bool defeated = false, hidden = false;
+    // PRESENCE2: `figure_hidden` is `hidden` without the windows (a status
+    // or shop window only makes the member `busy`: its figure stands where
+    // it is), or the player model not shown (before its entry); the motion
+    // clip its figure plays and whether that loops; the weapon package it
+    // holds (POWERSOCKETNAME[0], empty: none).
+    bool figure_hidden = false, busy = false;
+    std::string clip;
+    bool clip_loops = true;
+    std::string weapon;
 };
 
 class EngineLink {

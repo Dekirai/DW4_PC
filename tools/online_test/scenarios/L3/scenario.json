@@ -1,0 +1,12 @@
+{
+  "desc": "latency, vsync: L1 with both games' passes on a 60.000 Hz grid (a display's vsync; the relay seals at 59.94 Hz, a 16.7 s beat); the input delay must hold still (round 62 review: d 4 -> 3 -> 5 -> 4 every 33 s)",
+  "seed_story": true,
+  "card": "k10",
+  "frames": 60000,
+  "timeout": 900,
+  "min_shared_ticks": 3000,
+  "clients": [
+    {"name": "a", "script": "../L1/a.script", "start": 0, "env": {"DW4_ONLINE_TEST_PASS_HZ": "60"}},
+    {"name": "b", "script": "../L1/b.script", "start": 3, "env": {"DW4_ONLINE_TEST_PASS_HZ": "60"}}
+  ]
+}

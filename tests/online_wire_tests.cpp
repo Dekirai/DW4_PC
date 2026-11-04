@@ -2,14 +2,21 @@
 // round trip, golden bytes shared with the relay's C# tests (one layout:
 // server/DW4Online/tests/DW4Online.Tests/WireGoldenTests.cs), the handshake
 // lines, framing with partial reads and the 1 MiB limit, chunked state
-// transfers; the +-0.1 % pacing of sealed instances; the local leave combo.
+// transfers; the +-0.1 % pacing of sealed instances; the local leave combo;
+// the input latency statistics, the link quality and the rotated online log
+// of round 62.
 #include "online/leave_combo.hpp"
+#include "online/net_log.hpp"
+#include "online/net_stats.hpp"
 #include "online/pacing.hpp"
 #include "online/pad_wire.hpp"
 #include "online/wire.hpp"
 
 #include <cmath>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
+#include <iterator>
 #include <random>
 #include <stdexcept>
 #include <string>
@@ -138,6 +145,57 @@ void messages() {
     check(w::decode_presence(w::encode(presence, true), true) == presence, "PRESENCE (server)");
     presence.stage.clear();
     check(w::decode_presence(w::encode(presence, true), true).stage.empty(), "PRESENCE with an empty stage (hidden)");
+    // PRESENCE2 (round 60): the version, the PRESENCE fields and the figure's.
+    w::Presence ghost{0, "stagML11", 9, 1.5f, -2.0f, 300.25f, 0.5f, 3, 12, 80, 120, 10, 30};
+    ghost.version = w::kPresenceVersion;
+    ghost.clip = "runD";
+    ghost.flags = w::Presence::loop | w::Presence::busy;
+    ghost.warp = 250;
+    ghost.sent_ms = 0xFFFFFFF0u;
+    ghost.weapon = "w_aguclaw01";
+    const auto ghost_bytes = w::encode_presence2(ghost, false);
+    check(ghost_bytes.front() == 1 && w::decode_presence2(ghost_bytes, false) == ghost, "PRESENCE2 (client)");
+    ghost.member = 9;
+    check(w::decode_presence2(w::encode_presence2(ghost, true), true) == ghost, "PRESENCE2 (server)");
+    check(w::encode(ghost, false).size() + 1 + 1 + 4 + 1 + 1 + 4 + 1 + 11 == ghost_bytes.size(), "PRESENCE2 is PRESENCE plus the figure's fields");
+    check(w::decode_presence(w::encode(ghost, false), false).version == 0, "PRESENCE carries no version");
+    ghost.clip.clear();
+    ghost.weapon.clear();
+    check(w::decode_presence2(w::encode_presence2(ghost, true), true) == ghost, "PRESENCE2 without a clip or weapon");
+    ghost.clip = "run-D";
+    check(throws([&] { w::encode_presence2(ghost, false); }), "a clip outside A-Z a-z 0-9 _ is refused");
+    ghost.clip = std::string(17, 'a');
+    check(throws([&] { w::encode_presence2(ghost, false); }), "a clip of 17 characters is refused");
+    ghost.clip = "runD";
+    {
+        auto bytes = w::encode_presence2(ghost, false);
+        auto zero = bytes;
+        zero[0] = 0;
+        check(throws([&] { w::decode_presence2(zero, false); }), "version 0 is refused");
+        auto later = bytes;
+        later[0] = 2;
+        later.push_back(0xAB);
+        later.push_back(0xCD);
+        const auto read = w::decode_presence2(later, false);
+        check(read.version == 2 && read.clip == "runD" && read.warp == 250, "a later version's appended bytes are skipped");
+        auto extra = bytes;
+        extra.push_back(0);
+        check(throws([&] { w::decode_presence2(extra, false); }), "version 1 with a byte too many is refused");
+        auto cut = bytes;
+        cut.pop_back();
+        check(throws([&] { w::decode_presence2(cut, false); }), "a cut PRESENCE2 is refused");
+        auto bad = bytes;
+        const std::size_t clip_at = bytes.size() - (1 + 1 + 4 + 1 + ghost.weapon.size()) - ghost.clip.size();
+        bad[clip_at] = '-';
+        check(throws([&] { w::decode_presence2(bad, false); }), "a received clip with a '-' is refused");
+        auto nan = bytes;
+        const std::size_t x_at = 1 + 1 + ghost.stage.size() + 4;
+        nan[x_at] = 0;
+        nan[x_at + 1] = 0;
+        nan[x_at + 2] = 0xC0;
+        nan[x_at + 3] = 0x7F;
+        check(throws([&] { w::decode_presence2(nan, false); }), "a NaN position is refused");
+    }
     auto resume = w::decode_resume(w::encode(w::Resume{7, 3, 1, 999}));
     check(resume.slot == 1 && resume.last_tick == 999, "RESUME");
     check(w::decode_rate(w::encode(std::uint32_t(4321))) == 4321, "RATE");
@@ -145,6 +203,10 @@ void messages() {
     check(w::decode_bye(w::encode(w::Bye{1})).reason == 1, "BYE");
     // Server -> client.
     w::Welcome welcome{3, 41, 1, 0, w::Mode::hub, "", w::kNoTick, 0, 30, 0};
+    check((w::decode_welcome(w::encode(w::Welcome{3, 41, 1, 0, w::Mode::hub, "", w::kNoTick, 0, 30,
+                                                  std::uint8_t(w::Welcome::resumable | w::Welcome::presence_v2)}))
+               .flags & w::Welcome::presence_v2) != 0,
+          "WELCOME's presence_v2 flag");
     auto welcome2 = w::decode_welcome(w::encode(welcome));
     check(welcome2.member == 3 && welcome2.inst == 41 && welcome2.mode == w::Mode::hub && welcome2.stage.empty() &&
               welcome2.last_tick == w::kNoTick && welcome2.max_catch_up == 30,
@@ -210,6 +272,29 @@ void messages() {
     check(room.kind == w::RoomEvent::joined && room.member == 3 && room.account == 99 && room.name == "kim" && room.flags == 1, "ROOM");
     auto ping = w::decode_ping(w::encode(w::Ping{9, 1000, -2, 3}));
     check(ping.margin_ms == -2 && ping.delay == 3, "PING");
+    // NETSTAT (round 62): golden bytes shared with WireGoldenTests.cs.
+    check(hex(w::encode(w::NetStat{24, 6, 3, -2, 1000, 5, 7, w::NetStat::in_stream})) == "1800" "0600" "03" "feff" "e8030000" "05000000" "07000000" "01",
+          "golden NETSTAT");
+    const auto netstat = w::decode_netstat(w::encode(w::NetStat{24, 6, 3, -2, 1000, 5, 7, 1}));
+    check(netstat.rtt_ms == 24 && netstat.spread_ms == 6 && netstat.delay == 3 && netstat.margin_ms == -2 && netstat.sealed == 1000 &&
+              netstat.filled == 5 && netstat.late == 7 && netstat.flags == 1,
+          "NETSTAT round trip");
+    check(std::uint8_t(w::Type::netstat) == 0x8F && std::string(w::type_name(w::Type::netstat)) == "NETSTAT", "NETSTAT type");
+    {
+        // The type registry (SEAMLESS.md 6.3; WireGoldenTests.Message_types_are_unique_and_registered): the numbers
+        // type_name knows are exactly these. A number given twice does not compile (type_name's switch); a new type
+        // fails this until it is entered here and in WireGoldenTests.cs (round 62 review: round 60's PRESENCE2 on 0x8F).
+        std::string known;
+        for (int b = 0; b < 256; ++b)
+            if (std::string(w::type_name(w::Type(b))) != "?") known += (known.empty() ? "" : " ") + std::string(w::type_name(w::Type(b)));
+        check(known == "INPUT LOG HEADING BARRIER BARRIER_CHOICE SPLIT SNAPSHOT SNAPHASH READY JOIN_AT NETFP STATE INTENT STORY PRESENCE RESUME "
+                       "RATE PONG BYE PRESENCE2 WELCOME SEALED LIVE JOIN_REQ BARRIER_OK BARRIER_WAIT STATE_DATA PRESENCE RESYNC STORY_ACK ROOM PING "
+                       "CLOSE ROSTER REASSIGN NETSTAT PRESENCE2",
+              "type registry: " + known);
+        check(std::uint8_t(w::Type::bye) == 0x13 && std::uint8_t(w::Type::reassign) == 0x8E, "the registry's last numbers before NETSTAT");
+        // Round 60's PRESENCE2: 0x14 to the relay, 0x90 back (first 0x8F, NETSTAT's since DW4Online 0.1.2).
+        check(std::uint8_t(w::Type::presence2) == 0x14 && std::uint8_t(w::Type::presence2_of) == 0x90, "PRESENCE2's numbers");
+    }
     auto close = w::decode_close(w::encode(w::Close{w::CloseReason::kicked, "bye"}));
     check(close.reason == w::CloseReason::kicked && close.text == "bye", "CLOSE");
     w::Roster roster{{{1, "stag0101", 8, 3, 50, 60, 3}, {2, "", 9, 1, 1, 1, 0}}};
@@ -229,6 +314,18 @@ void messages() {
     check(hex(w::encode(w::State{7, 3, 61, 5, 5, w::NotJoinable::boss})) == "07000000030000003d00000005050000000000000005", "golden STATE");
     check(hex(w::encode(w::Welcome{3, 41, 1, 0, w::Mode::hub, "", w::kNoTick, 0, 30, 0})) == "032900000001000000000000ffffffff001e0000",
           "golden WELCOME");
+    {
+        // (HubCoreTests / WireGoldenTests "PRESENCE2" on the relay's side.)
+        w::Presence g{0, "stagml11", 9, 1.5f, -2.0f, 3.0f, 0.25f, 4, 99, 500, 600, 70, 80};
+        g.clip = "runD";
+        g.flags = w::Presence::loop | w::Presence::busy;
+        g.warp = 7;
+        g.sent_ms = 0x01020304u;
+        g.weapon = "w_a1";
+        check(hex(w::encode_presence2(g, false)) == "01" "08737461676d6c3131" "09000000" "0000c03f" "000000c0" "00004040" "0000803e" "04" "6300"
+                                                    "f401" "5802" "4600" "5000" "0472756e44" "03" "07" "04030201" "04775f6131",
+              "golden PRESENCE2 " + hex(w::encode_presence2(g, false)));
+    }
     w::BarrierOk golden;
     golden.inst = 7;
     golden.visit = 3;
@@ -398,6 +495,27 @@ void pacing() {
     check(pace.due_steps(0.01, 2) == 1, "starts with one tick in reserve");
     const int burst = pace.due_steps(0.3, 19);
     check(pace.catching_up() && burst == 18, "a backlog above three ticks runs at once, keeping one");
+    // Round 62: an excess below the backlog rule that lasts (a join's long step left three ticks waiting) drains by
+    // extra steps within about a second instead of 17 s per tick at +0.1 %.
+    {
+        PaceController p;
+        double now = 0, next_arrival = 0;
+        std::size_t arrived = 0, executed = 0;
+        const double pass = 1.0 / 60.0;
+        // Steady arrivals, but the first second's ticks pile up to three waiting (below the backlog rule).
+        while (now < 10.0) {
+            now += pass;
+            while (next_arrival <= now) {
+                ++arrived;
+                next_arrival += kFieldSeconds;
+            }
+            if (now < 0.06) continue; // the long step: nothing runs
+            executed += std::size_t(p.due_steps(pass, arrived - executed));
+            if (now > 6.0) check(arrived - executed <= 2, "the excess drained (" + std::to_string(arrived - executed) + " waiting at " + std::to_string(now) + ")");
+        }
+        check(p.drained() >= 1 && p.drained() <= 3, "a few extra steps (" + std::to_string(p.drained()) + ")");
+        check(!p.catching_up(), "no backlog run for it");
+    }
 }
 
 void leave_combo() {
@@ -416,6 +534,104 @@ void leave_combo() {
 }
 } // namespace
 
+void net_stats() {
+    // A pad sampled at step 10 for tick 13 runs at step 13 (three ticks of input delay, 50 ms); its picture follows.
+    NetStats stats;
+    const WirePad a{0x0100, 1, 2, 3, 4}, b{0x0200, 0, 0, 0, 0};
+    stats.sampled(1, 13, 1.000, 10, a);
+    stats.sampled(1, 14, 1.017, 11, b);
+    stats.executed(1, 13, 1.050, 13, a);
+    stats.presented(1.060);
+    stats.executed(1, 14, 1.067, 14, a); // the relay sealed a fill (the previous pad): this input was lost
+    stats.presented(1.080);
+    const auto w = stats.take_window();
+    check(w.samples == 2 && w.dropped == 1, "two inputs ran, one not as sent");
+    check(std::abs(w.exec_avg() - 0.050) < 1e-9 && std::abs(w.steps_avg() - 3.0) < 1e-9, "50 ms, three steps");
+    check(w.presented == 2 && std::abs(w.present_avg() - 0.0615) < 1e-9, "the pictures after them");
+    check(std::abs(w.exec_quantile(0.5) - 3 * kFieldSeconds) < 1e-9, "the median is three fields");
+    check(stats.take_window().samples == 0 && stats.total().samples == 2, "a window starts afresh, the total stays");
+    // A tick that never runs here (a new visit) is forgotten, not counted.
+    stats.sampled(1, 20, 2.0, 20, a);
+    stats.forget_in_flight();
+    stats.executed(1, 20, 2.05, 23, a);
+    check(stats.total().samples == 2, "forgotten samples do not count");
+    // The rolling window holds the last seconds only.
+    stats.sampled(2, 1, 10.0, 30, a);
+    stats.executed(2, 1, 10.0, 30, a);
+    stats.roll_recent(10.5);
+    check(stats.recent().samples == 1, "the recent window");
+    stats.roll_recent(20.0);
+    check(stats.recent().samples == 0, "the recent window forgets");
+
+    check(link_quality(3, 25, 0, false) == LinkQuality::good, "d 3 at 25 ms is good");
+    check(link_quality(5, 40, 0, false) == LinkQuality::fair, "d 5 is fair");
+    check(link_quality(3, 25, 0.02, false) == LinkQuality::fair, "2 % lost inputs are fair");
+    check(link_quality(8, 25, 0, false) == LinkQuality::poor, "d 8 is poor");
+    check(link_quality(3, 200, 0, false) == LinkQuality::poor, "200 ms is poor");
+    check(link_quality(0, -1, 0, true) == LinkQuality::poor, "waiting for the server is poor");
+    check(link_quality(0, -1, 0, false) == LinkQuality::good, "solo, nothing known yet");
+}
+
+void online_log() {
+    // saves/online.log: appended, rotated above its size (online.1.log ... online.3.log, the oldest goes).
+    const auto folder = std::filesystem::temp_directory_path() / ("dw4_online_log_test_" + std::to_string(std::random_device{}()));
+    std::filesystem::remove_all(folder);
+    const auto path = folder / "online.log";
+    {
+        OnlineLog log;
+        check(log.open(path, 4096, 3), "the log opens (and makes its folder)");
+        for (int i = 0; i < 400; ++i) log.line("line %d of the link: input delay %d ticks", i, i % 9);
+    }
+    check(std::filesystem::exists(path), "online.log");
+    check(std::filesystem::exists(rotated_log_name(path, 1)) && std::filesystem::exists(rotated_log_name(path, 3)), "rotated files");
+    check(!std::filesystem::exists(rotated_log_name(path, 4)), "at most three old ones");
+    check(std::filesystem::file_size(path) <= 4096 + 200, "the current file stays small");
+    check(rotated_log_name(path, 2).filename() == "online.2.log", "rotated names");
+    std::ifstream in(path);
+    std::string first;
+    std::getline(in, first);
+    check(first.size() > 24 && first[4] == '-' && first[10] == ' ' && first[19] == '.' && first.find("of the link") != std::string::npos,
+          "lines carry the date and time: " + first);
+    in.close();
+#ifdef _WIN32
+    {
+        // Two games from one folder (round 62 review): the second finds online.log over its size and held by the first.
+        // It writes nothing there and rotates nothing: online.1-3.log keep what they held (OnlineRun::open_log then
+        // takes online-2.log).
+        const auto two = folder / "two";
+        std::filesystem::create_directories(two);
+        const auto held = two / "online.log";
+        auto put = [](const std::filesystem::path& p, const std::string& text) {
+            std::ofstream out(p, std::ios::binary);
+            out << text;
+        };
+        auto get = [](const std::filesystem::path& p) {
+            std::ifstream in(p, std::ios::binary);
+            return std::string(std::istreambuf_iterator<char>(in), {});
+        };
+        put(held, std::string(10000, 'x'));
+        for (int n = 1; n <= 3; ++n) put(rotated_log_name(held, n), "old " + std::to_string(n));
+        OnlineLog game1;
+        check(game1.open(held, 1u << 20, 3), "the first game holds online.log");
+        OnlineLog game2;
+        check(!game2.open(held, 4096, 3), "the second game cannot write the held online.log");
+        check(get(rotated_log_name(held, 1)) == "old 1" && get(rotated_log_name(held, 2)) == "old 2" && get(rotated_log_name(held, 3)) == "old 3",
+              "the older logs are untouched");
+        check(std::filesystem::file_size(held) == 10000, "the held log is untouched");
+        game1.line("still the first game's");
+        game1.close();
+        // The first game rotates its own file when it is over the size.
+        OnlineLog again;
+        check(again.open(held, 4096, 3), "online.log again");
+        check(get(rotated_log_name(held, 1)).size() > 10000 && get(rotated_log_name(held, 2)) == "old 1" && get(rotated_log_name(held, 3)) == "old 2",
+              "rotated once: online.log became online.1.log, the oldest went");
+        check(!std::filesystem::exists(two / "online.log.rotating"), "nothing left aside");
+    }
+#endif
+    std::error_code ignored;
+    std::filesystem::remove_all(folder, ignored);
+}
+
 int main() {
     try {
         pads();
@@ -423,6 +639,8 @@ int main() {
         handshake_and_frames();
         pacing();
         leave_combo();
+        net_stats();
+        online_log();
     } catch (const std::exception& error) {
         std::cerr << "FAIL: " << error.what() << '\n';
         return 1;

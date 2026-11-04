@@ -1,0 +1,10 @@
+# L1 (latency), member a (k10), the host: first into stag0101 (NEW); b joins about 15 s later by a JOIN with catch-up
+# (the field report of 31.10); both wander for 100 s of sealed play. Run with --net UP[/DOWN] (each client behind its own
+# proxy) or a scenario "impair".
+campaign until stage=stagml11,control
+idle until epoch>=@90
+explore mate00 yes until stage=stag0101,control
+log in the field
+wander 460 170 15 until present=2,sealed>=6000
+log enough
+idle until frames>=60

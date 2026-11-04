@@ -102,6 +102,9 @@ struct Settings {
     // unlock notices.
     bool achievements = true;
     bool achievement_popups = true;
+    // [online] net_indicator: the small ping / input delay box in online
+    // sessions (round 62).
+    bool net_indicator = true;
     // [data]
     std::filesystem::path data;
     // The save files of memory card slots A and B (GCI bytes; relative paths

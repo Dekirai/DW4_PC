@@ -5,6 +5,7 @@
 #define NOMINMAX
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#include <mstcpip.h>
 #else
 #include <arpa/inet.h>
 #include <fcntl.h>
@@ -19,6 +20,8 @@
 #include <cerrno>
 #include <deque>
 #include <mutex>
+#include <optional>
+#include <utility>
 
 namespace dw4::game::online {
 
@@ -89,8 +92,31 @@ public:
         if (socket_ != kInvalid) close_socket(socket_);
         socket_ = kInvalid;
     }
+    double tcp_rtt_ms() const override {
+        const auto info = tcp_info();
+        return info ? info->first : -1.0;
+    }
+    long long tcp_retransmits() const override {
+        const auto info = tcp_info();
+        return info ? info->second : -1;
+    }
 
 private:
+    // (rtt ms, loss episodes) from SIO_TCP_INFO (Windows 10 1703 and later).
+    std::optional<std::pair<double, long long>> tcp_info() const {
+#if defined(_WIN32) && defined(SIO_TCP_INFO)
+        if (socket_ == kInvalid) return std::nullopt;
+        DWORD version = 0, returned = 0;
+        TCP_INFO_v0 info{};
+        if (WSAIoctl(socket_, SIO_TCP_INFO, &version, sizeof version, &info, sizeof info, &returned, nullptr, nullptr) != 0 ||
+            returned < sizeof info)
+            return std::nullopt;
+        // (Loss episodes: fast retransmissions and retransmission timeouts.)
+        return std::pair{double(info.RttUs) / 1000.0, (long long)info.FastRetrans + (long long)info.TimeoutEpisodes};
+#else
+        return std::nullopt;
+#endif
+    }
     bool flush() {
         while (!pending_.empty()) {
             const int n = int(::send(socket_, reinterpret_cast<const char*>(pending_.data()), int(pending_.size()), 0));
