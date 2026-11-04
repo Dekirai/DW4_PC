@@ -52,7 +52,7 @@ struct ArtDef {
 // SURVIVAL.md 6.3 (O1a: Cleaver and Blade Arc). The class factors make
 // Kokatorimon's warm-up HP (54) a two-hit kill at level 1 (overflow_balance).
 constexpr ArtDef kArts[] = {
-    {"p_agumon", "Cleaver", 0, "VATCX1", "axe", 1.15f, {"a second line on the next target", "+20 % damage", "side lines", "a bigger fan"}},
+    {"p_agumon", "Cleaver", 0, "VATCX1", "axe", 1.3f, {"a second line on the next target", "+20 % damage", "side lines", "a bigger fan"}},
     {"p_vmon", "Blade Arc", 25, "VATCS1", "slash", 1.4f, {"an arc on the next target", "+20 % damage", "the return arc", "+30 % size"}},
 };
 

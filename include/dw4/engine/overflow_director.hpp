@@ -6,9 +6,9 @@
 // commands, in a Messenger::PortOnly scope:
 //   - the clock (the steps the run is not frozen) and the phases of 4.2 on
 //     the Violet Ring (O1a: no Guardians; at 20:00 the run completes);
-//   - the spawner of 4.3: the phase pools with their reserves, the 40-60
-//     ring (SURVIVAL_O1A.md S1), surges, Corrupted enemies, recycling and
-//     the encirclements by reuse;
+//   - the spawner of 4.3: the phase pools with their reserves, the spawn
+//     rings (closer than S1's 40-60, docs/OVERFLOW_DIRECTOR.md 3), surges,
+//     Corrupted enemies, recycling and the encirclements by reuse;
 //   - the Art (6.3: Cleaver for Agumon, Blade Arc for Veemon, aimed port
 //     hitboxes from the form's own SQ_ATCK1 boxes) and the weapon ladder;
 //   - the techniques Fire, Cutter, Bolt, Impact and Heal Lt (6.4) on
@@ -86,7 +86,7 @@ struct Tuning {
     float hp_per_minute = 0.15f, warm_up = 0.6f;   // (4.3 had 0.10)
     // damage taken x (1 + damage_per_minute x minutes) x the tier
     float damage_per_minute = 0.14f;             // (4.3 had 0.04; the O1a balance pass, docs/OVERFLOW_DIRECTOR.md)
-    std::array<int, 3> curve{80, 50, 12};        // the run's NEXTEXP terms (4.5 had 80 / 50 / 6)
+    std::array<int, 3> curve{70, 65, 13};        // the run's NEXTEXP terms (4.5 had 80 / 50 / 6)
     float damage_warm_up = 0.6f;                 // the damage side of the warm-up: x 0.6 at 0:00, rising to x 1 at 5:00
     int status_cap = 6;                          // frames of a normal enemy's stun / sleep / bind (4.8 had 30)
     double level_heal = 0.05;                    // a level-up adds this share of MaxHP (4.5: 3 %, at most 5 %)
@@ -396,6 +396,7 @@ private:
     std::uint64_t last_pad_count_ = 0;
     std::vector<MinuteLog> minutes_;
     int hits_taken_ = 0, misses_ = 0, clamps_ = 0;
+    std::uint64_t no_control_ = 0;   // run steps (not the ending's) without control (14.2)
     double highest_hit_ = 0;
     int panels_min_gap_ = 1 << 30;
     std::int64_t last_panel_frame_ = -1;

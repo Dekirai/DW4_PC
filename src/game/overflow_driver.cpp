@@ -151,6 +151,10 @@ public:
             // (T8: the run's steps, the stage load left out.)
             const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - step_started_).count();
             step_ms_.push_back(float(ms));
+            // (The five slowest steps with their run step, for the log.)
+            slowest_.push_back({float(ms), director_->run_steps()});
+            std::sort(slowest_.begin(), slowest_.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
+            if (slowest_.size() > 5) slowest_.pop_back();
         }
         if (end_) return end_;
         if (director_->over()) {
@@ -240,9 +244,14 @@ private:
         double sum = 0;
         for (const float v : sorted) sum += v;
         char line[160];
-        std::snprintf(line, sizeof line, "step_ms mean %.3f p95 %.3f max %.3f (%zu steps)\n", sum / double(sorted.size()),
+        std::snprintf(line, sizeof line, "step_ms mean %.3f p95 %.3f max %.3f (%zu steps); slowest", sum / double(sorted.size()),
                       double(sorted[sorted.size() * 95 / 100]), double(sorted.back()), sorted.size());
-        return line;
+        std::string text = line;
+        for (const auto& [ms, step] : slowest_) {
+            std::snprintf(line, sizeof line, " %.2f@%llu", double(ms), (unsigned long long)step);
+            text += line;
+        }
+        return text + "\n";
     }
 
     // O1a's HUD line: the run clock, the level, the defeats; the last visible
@@ -329,6 +338,7 @@ private:
     };
     std::vector<ScriptCommand> script_;
     std::vector<float> step_ms_;
+    std::vector<std::pair<float, std::uint64_t>> slowest_;
 };
 
 } // namespace

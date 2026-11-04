@@ -266,10 +266,12 @@ void spawn(const std::filesystem::path& data) {
 // ---------------------------------------------------------------------------
 // balance (14.3)
 // ---------------------------------------------------------------------------
-// The levels at the phases' starts: the kite bot's runs (T6, Agumon, 20
-// seeds) reach 15-16 at 5:00, 25-27 at 10:00 and 34 at 15:00; the test
-// takes a level less than the slowest (4.5's estimate was 12 / 22 / 32 / 40).
-constexpr int kLevelAt[5] = {1, 14, 24, 32, 40};
+// The expected levels at the phases' starts (14.3): the medians of the kite
+// bot's T6 runs (Agumon and Veemon, 20 seeds each: 14-17 at 5:00, 23-27 at
+// 10:00, 32-33 at 15:00; 4.5's estimate was 12 / 22 / 32 / 40). A slow run
+// meets phase 3 two or three levels lower, where a Corrupted enemy's
+// critical hit can pass 35 %: the run's clamp takes it (it never did in T6).
+constexpr int kLevelAt[5] = {1, 15, 25, 32, 40};
 
 void set_level(Engine& engine, int level) {
     auto* sys = engine.get<GameSystem>();

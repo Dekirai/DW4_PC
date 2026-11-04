@@ -2,13 +2,14 @@
 //
 // Enemies come from the phase's pool (its own families weigh 3, the earlier
 // phases' 0.5, so the pool always keeps RAMs in reserve) on a ring around
-// the player: 40-60 units (SURVIVAL_O1A.md S1: from 70-95 most families
-// idle), 20-25 for a family that never walks, 70 % of them on the side the
-// player walks towards, out of the picture where a point is (S3), on the
+// the player: 32-46 units, 26-36 for the slow walkers, 20-25 for a family
+// that never walks (SURVIVAL_O1A.md S1: from 70-95 most families idle; T6's
+// close-in target with a kiting player moved the 40-60 of S1 closer), 70 %
+// of them on the side the player walks towards, out of the picture where a point is (S3), on the
 // arena's walkable cells. The director tops the living count up to A(t)
 // (+ the surges) with at most two spawns every ten steps, makes one enemy a
 // minute Corrupted (HP x 8; the run's damage-taken rule gives it x 1.5),
-// recycles enemies that stay far or stop coming closer, and at 7:30, 12:30
+// recycles enemies that stay far or stand still, and at 7:30, 12:30
 // and 17:30 encircles the player with the 16 farthest living enemies,
 // generated again in their own RAMs (no new RAM is needed).
 #include "dw4/engine/overflow_director.hpp"

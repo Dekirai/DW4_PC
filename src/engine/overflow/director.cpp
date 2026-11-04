@@ -121,6 +121,13 @@ void OverflowDirector::start_running(Engine& engine) {
         for (int c = 0; c < 9; ++c)
             if (c < 6 && c != art_skill_) rules_->skills.cap[std::size_t(c)] = player.stats.skill[std::size_t(c)];
         // Family 1 alpha of the class in the socket (5.3: a Rookie starts there).
+        // The ladder's five weapon packages now, inside the start: a Forge
+        // later changes the model in hand without reading a package (T8).
+        if (auto* weapons = engine.get<WeaponManager>())
+            for (int f = 0; f < 5; ++f) {
+                const std::string model(db->text("weapon", ladder_base_ + f * 5, "MODEL"));
+                if (!model.empty() && !weapons->labels(model)) engine.load_common_now("_common/" + model + ".igb");
+            }
         equip_ladder(engine, true);
         sys->recalc_player(engine, 0);
         sys->store_species(0);
@@ -192,11 +199,19 @@ void OverflowDirector::step(Engine& engine) {
 void OverflowDirector::step_running(Engine& engine) {
     ++clock_;
     const Vec3f me = player_position(engine);
-    if (!control_seen_)
-        if (auto* models = engine.get<ModelCtrlManager>(); models && models->player(0) && models->player(0)->control_enabled) {
+    if (auto* models = engine.get<ModelCtrlManager>(); models && models->player(0) && models->player(0)->generated) {
+        const auto* self = models->player(0);
+        if (!control_seen_ && self->control_enabled) {
             control_seen_ = true;
             event_log_.push_back({clock_, "control"});
         }
+        // (14.2 counts the run's own frames: a damage reaction, a control
+        // status, no control; the defeat's knock-down belongs to the ending.)
+        static constexpr std::string_view kReactions[] = {"SQ_SDMG", "SQ_MDMG", "SQ_LDMG", "SQ_DDMG", "SQ_DEAD",
+                                                          "SQ_SLEP", "SQ_STUN", "SQ_GUARDR", "SQ_CMBK", "SQ_CMBK02"};
+        if (!self->control_enabled || std::find(std::begin(kReactions), std::end(kReactions), self->seq_name) != std::end(kReactions))
+            ++no_control_;
+    }
     trail_.push_back(me);
     if (trail_.size() > 30) trail_.erase(trail_.begin());
     if (clock_ % 60 == 1) update_factors(engine);
@@ -897,7 +912,8 @@ std::string OverflowDirector::summary_text(const Engine& engine) const {
     out << "hits_taken " << hits_taken_ << "\nmisses " << misses_ << "\nclamps " << clamps_ << "\nhighest_hit_share " << highest_hit_ << "\n";
     if (rules_) {
         const auto& tally = rules_->tally;
-        out << "no_control_share " << (tally.steps ? double(tally.no_control_steps) / double(tally.steps) : 0.0) << "\n";
+        out << "no_control_share " << (clock_ ? double(no_control_) / double(clock_) : 0.0) << "\n";
+        out << "rules_no_control_share " << (tally.steps ? double(tally.no_control_steps) / double(tally.steps) : 0.0) << "\n";
         out << "rules_clamps " << tally.clamps << "\npanels " << tally.panels << "\npanels_skipped " << tally.panels_skipped << "\n";
         for (const auto& [source, amount] : tally.dealt_by) out << "dealt " << technique_name(source) << ' ' << amount << '\n';
     }
