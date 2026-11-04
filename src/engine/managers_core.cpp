@@ -2611,6 +2611,13 @@ std::shared_ptr<const void> SoundManager::persistent() const {
 
 void SoundManager::restore(Engine& engine, const std::shared_ptr<const void>& opaque) {
     if (!opaque) return;
+    // The session's common banks were loaded with its first sound effect,
+    // long before this stage's banks: in the Cri's list they stand first. A
+    // restored engine loads them now, before the stage load adds the stage's,
+    // so a request whose group two banks hold finds the same bank as in the
+    // session it came from (round J: a joiner's sound effects and SNDF
+    // state, which the members' STATEHASH compares).
+    load_common_banks(engine);
     const auto& state = *static_cast<const SoundState*>(opaque.get());
     for (std::size_t i = 0; i < streams_.size() && i < state.streams.size(); ++i) {
         const auto& s = state.streams[i];
