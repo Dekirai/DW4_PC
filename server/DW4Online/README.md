@@ -169,7 +169,9 @@ error 13 (no restart); a database that never answered, a host that could not sta
 relay's, which binds in `StartAsync` so the error names the port) or a host that stopped after RUNNING without a STOP
 from the SCM (a failed background service) ends the process without STOPPED, so the service's restart actions run.
 The host is started and awaited by `ServerStartup` itself (not `RunAsync`, which disposed the log providers before
-the FAIL line could be written) and disposed only after that line. Release 0.1.0 migrated before it connected; when
+the FAIL line could be written) and disposed only after that line. A host whose start failed is stopped before that
+line is written: the hosted services that had started end quietly, so the start's FAIL line is the log's last (only
+disposed, their cancellation came as a later "BackgroundService failed" line at times). Release 0.1.0 migrated before it connected; when
 migration 0001 hung on the server, the SCM ended it after 30 s. `tests/DW4Online.Tests/ServiceStartTests.cs` runs
 this against a fake SCM, `tests/DW4Online.Integration.Tests/ServiceHostTests.cs` runs the real host under it.
 

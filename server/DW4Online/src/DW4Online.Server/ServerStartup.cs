@@ -61,10 +61,36 @@ internal static class ServerStartup
             // logged (the event log provider then threw out of here, the file log dropped the FAIL line).
             run: async () =>
             {
-                await app.StartAsync();
+                try
+                {
+                    await app.StartAsync();
+                }
+                catch
+                {
+                    await StopAfterFailedStartAsync(app, log);
+                    throw;
+                }
                 await app.WaitForShutdownAsync();
             },
             dispose: app.DisposeAsync);
+    }
+
+    /// <summary>
+    /// A host whose start failed does not stop the hosted services that started before the failing one (the relay, the
+    /// room sweeper ...). Disposing them without a stop made the host log their cancellation as "BackgroundService
+    /// failed", at times after the start's own FAIL line; stopped first, they end quietly and that line stays the last.
+    /// </summary>
+    private static async Task StopAfterFailedStartAsync(WebApplication app, ILogger log)
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        try
+        {
+            await app.StopAsync(timeout.Token);
+        }
+        catch (Exception e)
+        {
+            log.LogWarning(e, "Stopping the host after its failed start: {Message}", e.Message);
+        }
     }
 
     /// <summary>The start with its steps as delegates (the tests drive it with a fake SCM); <paramref name="run"/> does not dispose.</summary>
