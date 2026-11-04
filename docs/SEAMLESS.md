@@ -7658,9 +7658,14 @@ host's settings apply."); the engine keeps them off online
 choice stay); the character context and the achievement context send
 `cheats` / `rebalanced` from the engine's flags (`OnlineRun::character_context`,
 `OnlineAchievements::set_cheats`). Checks: ctest `online` and
-`online_character` with new cases, every ctest, `det.sh` online off
-unchanged, the F1 Cheats tab offline unchanged (hidden screenshot). Open:
-the hidden room run of the check above (buttons absent, context false).
+`online_character` with new cases, every ctest (53 of 53), `det.sh`
+4004f056 / 396cb219 twice (online off unchanged), the F1 Cheats tab offline
+byte-identical to main's (hidden screenshot), and `run.py ui cheats` (new:
+`menu cheats` in `--online-ui` scripts) on the loopback stack: in a room the
+tab reads "Cheats are off online." with its controls disabled and no player
+buttons. Open: a room run in a field with joined players (the buttons'
+absence there and an upload whose context says false; the code paths are
+the same as at the title).
 
 ### Round D (after round G): the server's character
 
