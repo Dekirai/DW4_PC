@@ -268,8 +268,16 @@ public sealed class DelayController(int initial)
 
     public int Current { get; private set; } = initial;
     public int Max { get; set; } = 10;
-    /// <summary>The share of late pads in the window that counts (with <see cref="RaiseSeconds"/> different seconds).</summary>
-    public double LateTarget { get; set; } = 0.001;
+    /// <summary>The share of late pads in the rise window that counts (with <see cref="RaiseSeconds"/> different seconds): 2 %,
+    /// twelve of ten seconds. Round 62 had 0.1 % (any one late pad); since a late pad fills its slot's next ticks (its
+    /// presses carried, a held button held) it costs that input a tick or two, while every tick of d costs every input
+    /// 16.7 ms for at least the fall window. A busy PC's stalls (the first pad after each, up to eight ticks of gap) and a
+    /// lost TCP segment's first pad raised d by one per few such seconds and the fall took it back only after 30 s: in the
+    /// closed loop of tests/DW4Online.Tests/DelayLoopTests.cs (LoadTable) client stalls of 20-150 ms 0.2 / 0.5 / 1 times
+    /// a second at 24 ms and 60 Hz kept d at 6.1 / 8.4 / 9.9 (input 64 / 94 / 112 ms; quiet: 4, 38 ms) with 1.0-1.2 % of
+    /// the pads late; at 2 % 5.0 / 5.3 / 7.5 (44 / 43 / 73 ms) with 1.6-3.3 % late. A link too slow for d (most of a
+    /// second late) still rises at once, and a game of 8-20 passes a second (the first pad of every burst late) by this.</summary>
+    public double LateTarget { get; set; } = 0.02;
     /// <summary>Why the last change came: "late" (late pads in three seconds), "most_late" (most of a second late),
     /// "margin" (the fall), for the relay's log.</summary>
     public string LastReason { get; private set; } = "";

@@ -166,9 +166,12 @@ public class HubCoreTests
     [Fact]
     public void The_delay_follows_the_link_not_single_stalls()
     {
-        // Round 62 (SEAMLESS.md 6.4): late pads in three different seconds of the last ten raise d by one; one burst does not.
+        // Round 62 (SEAMLESS.md 6.4): more than 2 % of the last ten seconds' pads late, in three different seconds of them,
+        // raise d by one; one burst does not, nor a late pad now and then (since the review of round 62 a late pad fills
+        // its slot's next ticks: it costs that input a tick, a higher d every input).
+        Assert.Equal(0.02, new DelayController(3).LateTarget);
         var d = new DelayController(3) { Max = 6 };
-        for (var i = 0; i < 300; ++i) d.Record(20, late: false);
+        for (var i = 0; i < 600; ++i) d.Record(20, late: false);
         Assert.Null(d.Evaluate());
         for (var i = 0; i < 8; ++i) d.Record(-5, late: true); // one stall: eight late pads in one second
         Assert.Null(d.Evaluate());
@@ -176,9 +179,21 @@ public class HubCoreTests
         for (var i = 0; i < 2; ++i) d.Record(-5, late: true); // a second second with late pads
         Assert.Null(d.Evaluate());
         for (var i = 0; i < 60; ++i) d.Record(20, late: false);
-        d.Record(-5, late: true); // a third
+        d.Record(-5, late: true); // a third: eleven late pads of 600, below 2 %
+        Assert.Null(d.Evaluate());
+        for (var i = 0; i < 2; ++i) d.Record(-5, late: true); // thirteen: above
         Assert.Equal(4, d.Evaluate());
+        Assert.Equal("late", d.LastReason);
         Assert.Null(d.Evaluate()); // the window starts afresh
+        // Round 62's 0.1 % (Sealing:LateTarget 0.001) rose on the third second's one pad.
+        var old = new DelayController(3) { Max = 6, LateTarget = 0.001 };
+        for (var i = 0; i < 600; ++i) old.Record(20, late: false);
+        for (var k = 0; k < 3; ++k)
+        {
+            old.Record(-5, late: true);
+            for (var i = 0; i < 60; ++i) old.Record(20, late: false);
+        }
+        Assert.Equal(4, old.Evaluate());
 
         // Most pads late (the start value was too low): it rises by the median's lateness at once (at most three), after
         // one second of them, not three.
