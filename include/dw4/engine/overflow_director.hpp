@@ -204,6 +204,14 @@ struct MinuteLog {
     std::uint64_t no_control{}, steps{};
     double highest_hit{}; // of MaxHP
     double taken{};       // the damage taken in this minute (hits and their poison), in MaxHPs
+    // ... by source (the balance round of 05.11): a hit from an attacker
+    // within 15 units (a melee swing, a body attack), one from farther (a
+    // shot), and the poison the hits left; in MaxHPs.
+    double contact{}, shot{}, poison{};
+    // The living enemies within 15 and 30 units (the minute's mean) and the
+    // share of its steps the player was trapped: no 90-degree way out
+    // between the enemies within 20 units (the user: "no gap to run").
+    double near15{}, near30{}, trapped{};
 };
 
 class OverflowDirector final : public Director {
@@ -238,6 +246,16 @@ public:
     // B, X, Y, R and Z never reach it. The kite bot's pad replaces player 1's.
     PadSample filter_pad(Engine& engine, const PadSample& live);
     PadSample bot_pad(Engine& engine);
+    // The human bot (bot=human, the balance round of 05.11): a newcomer as
+    // the user played his first run. It sees the enemies 250-300 ms late,
+    // looks again only every 6-14 steps (while it roams every 20-40), flees
+    // from the middle of the near ones (no search for the gap, its way off by
+    // up to 30 degrees, at times by 70), so it may run into the next group;
+    // it roams to points of the arena and at times towards a group (to let
+    // the Art work), stops now and then when nothing is near, and takes the
+    // offers as a newcomer (offers=newcomer: the first line or a random one).
+    // Seeded from the run's seed, its own generator: deterministic.
+    PadSample human_pad(Engine& engine);
     // The run log's pad line for this step (after filter_pad).
     void record_pad(const PadSample& pad);
 
@@ -324,6 +342,13 @@ private:
     void log_minute(Engine& engine);
     void notice(std::string text);
     Vec3f player_position(Engine& engine) const;
+    // The stick that walks the player on the ground way (dx, dz) at this
+    // magnitude, through the box camera (the bots).
+    PadStick stick_for(Engine& engine, const Vec3f& me, float dx, float dz, float magnitude) const;
+    // The bots' item handling: A on a labelled item, the HP disk from the
+    // item panel (L, then A) once the HP is below num / den for more than
+    // `wait` steps.
+    void bot_buttons(Engine& engine, HostPadInput& input, int num, int den, int wait);
 
     RunConfig config_;
     OverflowRules* rules_ = nullptr;
@@ -464,6 +489,10 @@ private:
     double highest_poison_ = 0;      // the largest poisoning's total, of MaxHP
     double taken_share_ = 0;         // the damage taken (hits and their poison), in MaxHPs
     double minute_taken_mark_ = 0;   // taken_share_ at the last minute line
+    // This minute's damage by source and the crowd round the player (MinuteLog).
+    double minute_contact_ = 0, minute_shot_ = 0, minute_poison_ = 0;
+    double minute_near15_ = 0, minute_near30_ = 0;
+    std::uint64_t minute_trapped_ = 0, minute_steps_ = 0;
     std::string end_reason_ = "-";   // what ended the run (RunEnd's reason, retire, clear)
     std::uint64_t no_control_ = 0;   // run steps (not the ending's) without control (14.2)
     double highest_hit_ = 0;
@@ -479,6 +508,20 @@ private:
     float bot_dx_ = 0, bot_dz_ = 0;  // its last way (it keeps walking)
     bool control_seen_ = false;
     int last_disks_ = 0;
+    int disk_wait_ = 0;              // steps the bot has been below its disk share
+    // the human bot (human_pad)
+    struct Human {
+        std::uint64_t random = 0;
+        std::vector<std::vector<Vec3f>> seen; // the enemies' positions of the last steps (seen[0] the oldest)
+        int reaction = 16;                    // what it acts on is this many steps old
+        int look_in = 0;                      // steps until it looks again
+        enum class Mode : std::uint8_t { roam, escape, stop } mode = Mode::roam;
+        int mode_left = 0;                    // steps the mode holds at least
+        Vec3f goal{};
+        int goal_left = 0;                    // steps until it picks another goal
+        float want_x = 0, want_z = 0, want_magnitude = 0; // where it means to go
+        float dx = 0, dz = 0, magnitude = 0;              // where the stick points (it turns there quickly, not at once)
+    } human_;
 };
 
 } // namespace dw4::engine::overflow

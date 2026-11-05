@@ -70,8 +70,9 @@ public:
         const std::string tier = option(request_, "tier", "normal");
         config.tier = tier == "hard" ? 1 : tier == "veryhard" ? 2 : 0;
         test_ = !request_.bot.empty();
-        // Test runs take the offers by a policy (priority unless offers= says otherwise).
-        config.offers = option(request_, "offers", test_ ? "priority" : "");
+        // Test runs take the offers by a policy (priority unless offers= says
+        // otherwise; the human bot as a newcomer: the first line or a random one).
+        config.offers = option(request_, "offers", test_ ? (request_.bot == "human" ? "newcomer" : "priority") : "");
         if (config.offers == "player") config.offers.clear();
         config.results_hold = test_ ? 60 : 0;
         // Development switches of the balance passes (initial values of SURVIVAL.md otherwise).
@@ -167,6 +168,9 @@ public:
         engine::PadSample pad;
         if (request_.bot == "kite") {
             pad = director_->bot_pad(run);
+        } else if (request_.bot == "human") {
+            // (The balance round of 05.11: a newcomer, the director's human_pad.)
+            pad = director_->human_pad(run);
         } else if (request_.bot == "circle") {
             // (Lane A's isolation test, T3: a slow circle at full stick; the
             // movement check of 14.2: a player who never stops walking.)

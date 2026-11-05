@@ -43,6 +43,8 @@ double median(std::vector<int> values) {
 OverflowDirector::OverflowDirector(RunConfig config) : config_(std::move(config)) {
     random_ = 0x0F10F10F00000000ull ^ std::uint64_t(config_.seed) * 0x9E3779B97F4A7C15ull;
     next_corrupted_ = std::uint64_t(config_.tuning.corrupted_from);
+    // (The human bot's own stream: its draws leave the spawner's alone.)
+    human_.random = 0x4855AA5500000000ull ^ std::uint64_t(config_.seed) * 0xD1B54A32D192ED03ull;
 }
 
 void OverflowDirector::attach(Engine& engine, OverflowRules& rules) {
@@ -187,6 +189,9 @@ void OverflowDirector::step(Engine& engine) {
             std::size_t pick = 0;
             if (config_.offers == "random") {
                 pick = std::size_t(next_random(random_) % offers_.size());
+            } else if (config_.offers == "newcomer") {
+                // (The human bot: the first line or, as often, any of them.)
+                if (next_unit(human_.random) >= 0.5) pick = std::size_t(next_random(human_.random) % offers_.size());
             } else {
                 for (std::size_t i = 1; i < offers_.size(); ++i)
                     if (offer_priority(offers_[i]) < offer_priority(offers_[pick])) pick = i;
@@ -239,6 +244,33 @@ void OverflowDirector::step_running(Engine& engine) {
     }
     drop_items(engine);
     track_enemies(engine);
+    {
+        // The crowd round the player (the run log's minute lines): the living
+        // enemies within 15 and 30 units, and whether a 90-degree way out is
+        // left between the ones within 20 (eight sectors; one within 10 also
+        // closes its neighbours: its body and its swing).
+        int near15 = 0, near30 = 0;
+        std::array<bool, 8> closed{};
+        if (auto* models = engine.get<ModelCtrlManager>())
+            for (const auto& ram : models->rams()) {
+                if (!living_enemy(*ram)) continue;
+                const Vec3f q = ram_position(*ram);
+                const float d = flat_distance(q, me);
+                near15 += d <= 15.0f ? 1 : 0;
+                near30 += d <= 30.0f ? 1 : 0;
+                if (d > 20.0f) continue;
+                const float angle = std::atan2(q.x - me.x, q.z - me.z) + 3.14159265f;
+                const int sector = std::clamp(int(angle / (3.14159265f / 4.0f)), 0, 7);
+                closed[std::size_t(sector)] = true;
+                if (d <= 10.0f) closed[std::size_t((sector + 1) % 8)] = closed[std::size_t((sector + 7) % 8)] = true;
+            }
+        bool gap = false;
+        for (int k = 0; k < 8; ++k) gap = gap || (!closed[std::size_t(k)] && !closed[std::size_t((k + 1) % 8)]);
+        minute_near15_ += near15;
+        minute_near30_ += near30;
+        minute_trapped_ += gap ? 0 : 1;
+        ++minute_steps_;
+    }
     if (config_.tuning.spawning) spawner(engine);
     if (config_.tuning.abilities) {
         cast_art(engine);
@@ -684,6 +716,17 @@ void OverflowDirector::player_hit(Engine& engine, const HitTaken& hit) {
         highest_poison_ = std::max(highest_poison_, double(poison) / double(std::max(1, hit.max_hp)));
     }
     taken_share_ += share;
+    {
+        // By source: an attacker within 15 units hit with its body or a
+        // swing, a farther one with a shot; the poison apart.
+        float distance = 0.0f;
+        if (auto* models = engine.get<ModelCtrlManager>())
+            if (const auto* shooter = models->find(hit.shooter, hit.shooter_index); shooter && shooter->node)
+                distance = flat_distance(ram_position(*shooter), player_position(engine));
+        const double part = hit.max_hp > 0 ? double(hit.damage) / double(hit.max_hp) : 0.0;
+        (distance > 15.0f ? minute_shot_ : minute_contact_) += part;
+        minute_poison_ += share - part;
+    }
     // DW4_TRACE_OVERFLOW_HITS: every hit taken (the balance passes).
     static const bool trace = std::getenv("DW4_TRACE_OVERFLOW_HITS") != nullptr;
     if (trace)
@@ -779,8 +822,7 @@ PadSample OverflowDirector::bot_pad(Engine& engine) {
     if (screen_ != Screen::none || outcome_ != Outcome::none || !started_) return host_pad_sample(input);
     auto* models = engine.get<ModelCtrlManager>();
     auto* sys = engine.get<GameSystem>();
-    auto* cameras = engine.get<CameraManager>();
-    if (!models || !sys || !cameras) return host_pad_sample(input);
+    if (!models || !sys || !engine.get<CameraManager>()) return host_pad_sample(input);
     const auto* self = models->find(sys->players[0].digimon, 0);
     if (!self || !self->node) return host_pad_sample(input);
     const Vec3f me = ram_position(*self);
@@ -842,43 +884,59 @@ PadSample OverflowDirector::bot_pad(Engine& engine) {
         bot_dx_ = dx;
         bot_dz_ = dz;
     }
-    if (magnitude > 0.05f && (dx != 0 || dz != 0)) {
-        // World direction to the stick: up is away from the camera on the
-        // ground, right is the picture's right.
-        FrameCamera camera;
-        cameras->frame_camera(engine, camera);
-        Mat4 inverse;
-        invert(camera.view, inverse);
-        const Vec3f eye{inverse(3, 0), inverse(3, 1), inverse(3, 2)};
-        float fx = me.x - eye.x, fz = me.z - eye.z;
-        const float fl = std::hypot(fx, fz);
-        if (fl > 1e-3f) {
-            fx /= fl;
-            fz /= fl;
-            // The right of the picture: the one of the two side directions that projects to +x.
-            const Mat4 vp = camera.view * camera.projection;
-            auto clip_x = [&](float x, float z) {
-                const float cx = x * vp(0, 0) + me.y * vp(1, 0) + z * vp(2, 0) + vp(3, 0);
-                const float w = x * vp(0, 3) + me.y * vp(1, 3) + z * vp(2, 3) + vp(3, 3);
-                return w > 1e-4f ? cx / w : 0.0f;
-            };
-            float rx = fz, rz = -fx;
-            if (clip_x(me.x + rx * 10.0f, me.z + rz * 10.0f) < clip_x(me.x - rx * 10.0f, me.z - rz * 10.0f)) {
-                rx = -rx;
-                rz = -rz;
-            }
-            const float up = dx * fx + dz * fz, right = dx * rx + dz * rz;
-            input.stick = {right * magnitude, up * magnitude};
-        }
+    if (magnitude > 0.05f && (dx != 0 || dz != 0)) input.stick = stick_for(engine, me, dx, dz, magnitude);
+    bot_buttons(engine, input, 1, 3, 0);
+    return host_pad_sample(input);
+}
+
+// World direction to the stick: up is away from the camera on the ground,
+// right is the picture's right.
+PadStick OverflowDirector::stick_for(Engine& engine, const Vec3f& me, float dx, float dz, float magnitude) const {
+    PadStick stick{};
+    auto* cameras = engine.get<CameraManager>();
+    if (!cameras) return stick;
+    FrameCamera camera;
+    cameras->frame_camera(engine, camera);
+    Mat4 inverse;
+    invert(camera.view, inverse);
+    const Vec3f eye{inverse(3, 0), inverse(3, 1), inverse(3, 2)};
+    float fx = me.x - eye.x, fz = me.z - eye.z;
+    const float fl = std::hypot(fx, fz);
+    if (fl <= 1e-3f) return stick;
+    fx /= fl;
+    fz /= fl;
+    // The right of the picture: the one of the two side directions that projects to +x.
+    const Mat4 vp = camera.view * camera.projection;
+    auto clip_x = [&](float x, float z) {
+        const float cx = x * vp(0, 0) + me.y * vp(1, 0) + z * vp(2, 0) + vp(3, 0);
+        const float w = x * vp(0, 3) + me.y * vp(1, 3) + z * vp(2, 3) + vp(3, 3);
+        return w > 1e-4f ? cx / w : 0.0f;
+    };
+    float rx = fz, rz = -fx;
+    if (clip_x(me.x + rx * 10.0f, me.z + rz * 10.0f) < clip_x(me.x - rx * 10.0f, me.z - rz * 10.0f)) {
+        rx = -rx;
+        rz = -rz;
     }
-    // A takes a labelled item; the HP disks wait in the folder for the panel.
+    const float up = dx * fx + dz * fz, right = dx * rx + dz * rz;
+    stick = {right * magnitude, up * magnitude};
+    return stick;
+}
+
+// A takes a labelled item; the HP disks wait in the folder for the panel:
+// L, then A on its first line, once the HP is below num / den for more than
+// `wait` steps.
+void OverflowDirector::bot_buttons(Engine& engine, HostPadInput& input, int num, int den, int wait) {
+    auto* models = engine.get<ModelCtrlManager>();
+    auto* sys = engine.get<GameSystem>();
+    if (!models || !sys) return;
     bool label = false;
     for (const auto& ram : models->rams())
         if (ram->generated && ram->category == "ITEM" && ram->item_label == 0) label = true;
     auto& player = sys->players[0];
     const int disks = player.disk_count(0);
-    // The item panel (L, then A on its first line) below a third of the HP.
-    if (bot_l_ == 0 && disks > 0 && player.hp > 0 && player.hp * 3 < player.max_hp) bot_l_ = 1;
+    const bool low = player.hp > 0 && player.hp * den < player.max_hp * num;
+    disk_wait_ = low ? disk_wait_ + 1 : 0;
+    if (bot_l_ == 0 && disks > 0 && low && disk_wait_ > wait) bot_l_ = 1;
     if (bot_l_ > 0) {
         if (bot_l_ == 1) input.buttons |= pad_button::l;
         if (bot_l_ == 20) input.buttons |= pad_button::a;
@@ -889,7 +947,6 @@ PadSample OverflowDirector::bot_pad(Engine& engine) {
     }
     if (disks < last_disks_) ++disks_used_;
     last_disks_ = disks;
-    return host_pad_sample(input);
 }
 
 void OverflowDirector::record_pad(const PadSample& pad) {
@@ -922,6 +979,16 @@ void OverflowDirector::log_minute(Engine& engine) {
     line.highest_hit = highest_hit_;
     line.taken = taken_share_ - minute_taken_mark_;
     minute_taken_mark_ = taken_share_;
+    line.contact = minute_contact_;
+    line.shot = minute_shot_;
+    line.poison = minute_poison_;
+    if (minute_steps_ > 0) {
+        line.near15 = minute_near15_ / double(minute_steps_);
+        line.near30 = minute_near30_ / double(minute_steps_);
+        line.trapped = double(minute_trapped_) / double(minute_steps_);
+    }
+    minute_contact_ = minute_shot_ = minute_poison_ = minute_near15_ = minute_near30_ = 0;
+    minute_trapped_ = minute_steps_ = 0;
     if (rules_) {
         line.no_control = rules_->tally.no_control_steps;
         line.steps = rules_->tally.steps;
@@ -1008,7 +1075,8 @@ std::string OverflowDirector::log_text() const {
     for (const auto& m : minutes_)
         out << "minute " << m.minute << " level " << m.level << " defeats " << m.defeats << " hits " << m.hits_taken << " clamps " << m.clamps
             << " alive " << m.alive << " no_control " << m.no_control << '/' << m.steps << " highest " << m.highest_hit << " taken " << m.taken
-            << '\n';
+            << " contact " << m.contact << " shot " << m.shot << " poison " << m.poison << " near15 " << m.near15 << " near30 " << m.near30
+            << " trapped " << m.trapped << '\n';
     out << "pads\n" << pad_log_;
     if (last_pad_count_ > 0) {
         char line[96];
@@ -1096,7 +1164,8 @@ std::string OverflowDirector::summary_text(const Engine& engine) const {
     out << "lua_errors " << lua_errors << "\n";
     for (const auto& m : minutes_)
         out << "minute " << m.minute << " level " << m.level << " defeats " << m.defeats << " hits " << m.hits_taken << " alive " << m.alive
-            << " highest " << m.highest_hit << " taken " << m.taken << '\n';
+            << " highest " << m.highest_hit << " taken " << m.taken << " contact " << m.contact << " shot " << m.shot << " poison " << m.poison
+            << " near15 " << m.near15 << " near30 " << m.near30 << " trapped " << m.trapped << '\n';
     return out.str();
 }
 
