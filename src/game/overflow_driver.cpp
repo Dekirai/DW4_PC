@@ -82,6 +82,8 @@ public:
         real("damage_per_minute", config.tuning.damage_per_minute);
         real("hp_per_minute", config.tuning.hp_per_minute);
         real("damage_growth", config.tuning.damage_growth);
+        real("damage_late_minutes", config.tuning.damage_late_minutes);
+        real("damage_growth_late", config.tuning.damage_growth_late);
         real("hp_growth", config.tuning.hp_growth);
         // (KEY=A,B,C,D,E: the knots at 0:00, 5:00, 10:00, 15:00, 20:00.)
         auto five = [&](std::string_view key, std::array<float, 5>& value) {
@@ -101,6 +103,13 @@ public:
         seconds("corrupted_from", config.tuning.corrupted_from);
         seconds("phase_ramp", config.tuning.phase_ramp_steps);
         seconds("phase_intro_time", config.tuning.phase_intro_steps);
+        // (The forge round of 05.11: phase 4's own entry, the run's end, a
+        // test policy without the early Forge.)
+        seconds("last_ramp", config.tuning.last_ramp_steps);
+        seconds("last_intro_time", config.tuning.last_intro_steps);
+        seconds("end", config.tuning.end_steps);
+        seconds("forge_from", config.forge_from);
+        if (const auto sure = option(request_, "forge_sure"); !sure.empty()) config.forge_sure = std::atoi(sure.c_str());
         if (const auto extra = option(request_, "surge_extra"); !extra.empty()) config.tuning.surge_extra = std::atoi(extra.c_str());
         real("gap_radius", config.tuning.gap_radius);
         real("damage_warm_minutes", config.tuning.damage_warm_minutes);
@@ -127,6 +136,8 @@ public:
         if (const auto muteki = option(request_, "muteki"); !muteki.empty()) config.tuning.muteki = std::atoi(muteki.c_str());
         // (family_damage=FAMILY:F,...: a family's own damage factor.)
         for (const auto& [key, value] : pairs(option(request_, "family_damage"))) config.family_damage[key] = value;
+        // (family_ring=FAMILY:R,...: a family's own spawn ring, 0-2.)
+        for (const auto& [key, value] : pairs(option(request_, "family_ring"))) config.family_ring[key] = int(value);
         timing_ = option(request_, "timing") == "1";
         // commands=STEP KIND[VALUE],... (test runs with pictures): the menu keys
         // at given director steps (frozen ones count), e.g. 600p,640m1,660a: pause, the cursor down, A.

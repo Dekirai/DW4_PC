@@ -74,8 +74,47 @@ void offers() {
     check(std::count_if(eligible.begin(), eligible.end(), [](const Offer& o) { return o.kind == OfferKind::train; }) == 2,
           "Train for the form's two groups only");
     check(std::count_if(eligible.begin(), eligible.end(), [](const Offer& o) { return o.kind == OfferKind::plug; }) == 11, "every plug stat");
-    // Draws: three different offers, by the weights.
     std::uint64_t random = 12345;
+    // The sure first Forge (the forge round of 05.11): the first line of each
+    // of the first kForgeSure offers while Forge 1 is all the form has, the
+    // other two lines by weight; not after them, not once a Forge is taken,
+    // never for a form whose class has a single family.
+    {
+        OfferState sure = state;
+        std::map<OfferKind, int> second;
+        for (int i = 0; i < 3000; ++i) {
+            sure.drawn = i % kForgeSure;
+            const auto window = draw_offers(sure, random);
+            check(window.size() == 3 && window[0] == Offer{OfferKind::forge, 2}, "the first Forge on the first line of the first offers");
+            check(std::count_if(window.begin(), window.end(), [](const Offer& o) { return o.kind == OfferKind::forge; }) == 1, "one Forge line");
+            ++second[window[1].kind];
+        }
+        check(second[OfferKind::train] > 0 && second[OfferKind::plug] > 0, "the other lines by weight");
+        int forge_lines = 0;
+        sure.drawn = kForgeSure;
+        for (int i = 0; i < 2000; ++i) forge_lines += draw_offers(sure, random)[0].kind == OfferKind::forge ? 1 : 0;
+        std::cout << "  offers: the first Forge on line 1 after the sure offers: " << forge_lines / 20.0 << " %\n";
+        check(forge_lines > 500 && forge_lines < 1000, "after the first offers the Forge line is drawn by weight again (25 of 70)");
+        sure.drawn = 0;
+        sure.forge = 2;
+        forge_lines = 0;
+        for (int i = 0; i < 2000; ++i) forge_lines += draw_offers(sure, random)[0].kind == OfferKind::forge ? 1 : 0;
+        check(forge_lines < 1000, "Forge 3 is not sure");
+        sure.forge = 1;
+        sure.forge_families = 1;
+        for (int i = 0; i < 200; ++i) {
+            const auto window = draw_offers(sure, random);
+            check(std::none_of(window.begin(), window.end(), [](const Offer& o) { return o.kind == OfferKind::forge; }),
+                  "no Forge for a class with one family");
+        }
+        sure.forge_families = 5;
+        sure.forge_sure = 0;
+        forge_lines = 0;
+        for (int i = 0; i < 2000; ++i) forge_lines += draw_offers(sure, random)[0].kind == OfferKind::forge ? 1 : 0;
+        check(forge_lines < 1000, "forge_sure 0: the balance round's draws");
+    }
+    // Draws: three different offers, by the weights (after the sure Forge).
+    state.drawn = kForgeSure;
     std::map<OfferKind, int> lines;
     for (int i = 0; i < 4000; ++i) {
         const auto window = draw_offers(state, random);

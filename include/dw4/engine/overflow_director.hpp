@@ -124,6 +124,10 @@ struct Tuning {
     // damage taken x (1 + damage_per_minute x minutes) x e^(damage_growth x minutes) x the tier
     float damage_per_minute = 0.0f;              // (4.3 had 0.04, the O1a balance pass 0.14)
     float damage_growth = 0.13f;                 // (the O1a review round 0.18: no wall; the balance round of 05.11, docs/OVERFLOW_DIRECTOR.md 10)
+    // ... and from damage_late_minutes on by damage_growth_late a minute
+    // instead (the run's late growth; continuous at the knot).
+    float damage_late_minutes = 1.0e9f;
+    float damage_growth_late = 0.13f;
     std::array<int, 3> curve{70, 65, 16};        // the run's NEXTEXP terms (4.5 had 80 / 50 / 6, the O1a balance pass 70 / 65 / 13)
     float damage_warm_up = 0.2f;                 // the damage side of the warm-up: x 0.2 at 0:00, rising to x 1 at
     float damage_warm_minutes = 8.0f;            // ... this run minute (the review round: 0.4, 5:00)
@@ -146,6 +150,9 @@ struct Tuning {
     int phase_ramp_steps = 90 * 60;              // a new phase's families come in over 90 s (their weight from 0)
     float phase_intro = 0.2f;                    // ... and their damage from this share of their factor
     int phase_intro_steps = 120 * 60;            //     to all of it over two minutes
+    // Phase 4's families (the last phase's) over their own times (0: the
+    // two above).
+    int last_ramp_steps = 0, last_intro_steps = 0;
     bool spawning = true, abilities = true;      // (the balance test measures with both off,
     bool time_scaling = true;                    //  and sets the damage-taken factor itself)
     int end_steps = 1200 * 60;                   // O1a: the run completes at 20:00
@@ -165,6 +172,12 @@ struct Offer {
 };
 struct OfferState {
     int forge = 1;                     // families opened (1-5)
+    // The families of the Art's weapon class in the weapon table (the
+    // form's data, read at the field start): a Forge opens 2 up to this.
+    // A form whose class has a single family has no Forge at all.
+    int forge_families = 5;
+    int drawn = 0;                     // the level-up offers drawn so far (the sure first Forge)
+    int forge_sure = 3;                // ... in this many of the first offers (kForgeSure; 0: none, the balance round's draws)
     std::array<int, 3> train{};        // Train steps taken per group (Blast, Heal, Force; 0-4)
     std::array<bool, 3> groups{};      // the form has a run technique of that group
     // The run level at which the group's first run technique is learned (its
@@ -176,6 +189,15 @@ struct OfferState {
 };
 // Train shows this many run levels before its group's first technique.
 constexpr int kTrainLead = 2;
+// The first Forge is sure (the forge round of 05.11, docs/OVERFLOW_DIRECTOR.md
+// 11): a form with a Forge finds it on the first line (where the cursor
+// starts, with the line about it) of each of its first kForgeSure level-up
+// offers until it takes it. It stays a choice: the other two lines are drawn
+// as always. (A newcomer's Agumon runs whose first Forge came after the
+// third offer ended before 10:00 five times in twelve; never when it came
+// sooner.)
+constexpr int kForgeSure = 3;
+static_assert(kForgeSure == OfferState{}.forge_sure);
 // The group cap after `steps` Train offers: 300, 750, 1250, 1750, 2500.
 int train_cap(int steps);
 // The UPCNT points of a Plug at a run level: 10 + 2 x level.
@@ -189,6 +211,7 @@ std::vector<Offer> eligible_offers(const OfferState& state);
 // over its groups, Plug 20 split over its stats, a resistance at a quarter
 // of a stat's share: in O1a few attacks carry an element; a Plug takes a
 // line only by its weight or when fewer than three others are possible).
+// The first Forge takes the first line of the first kForgeSure offers.
 // `random` is the director's splitmix64 state.
 std::vector<Offer> draw_offers(const OfferState& state, std::uint64_t& random);
 // The priority list of the test bot (offers=priority): Forge, Train Blast,
@@ -217,6 +240,11 @@ struct RunConfig {
     int results_hold = 0;    // test runs: the results close after this many steps (0: they wait for A)
     Tuning tuning;
     std::map<std::string, float> family_damage; // a balance pass's own family damage factors (tables.inc otherwise)
+    std::map<std::string, int> family_ring;     // ... and spawn rings (0-2, FamilyRow::ring)
+    // A test policy takes no Forge before this run step (the forge round's
+    // measurement of a form without its early Forge): it takes the next line.
+    int forge_from = 0;
+    int forge_sure = kForgeSure; // (forge_sure=0: the balance round's offers, for its before measurement)
     float art_class = 0;     // a balance pass's own Art class factor (0: art_class_factor)
 };
 
@@ -236,6 +264,9 @@ struct MinuteLog {
     // within 15 units (a melee swing, a body attack), one from farther (a
     // shot), and the poison the hits left; in MaxHPs.
     double contact{}, shot{}, poison{};
+    // The defeats of the minute whose last hit was the Art's, and the
+    // others' (the techniques).
+    int art_kills{}, tech_kills{};
     // The living enemies within 15 and 30 units (the minute's mean) and the
     // share of its steps the player was trapped: no 90-degree way out
     // between the enemies within 20 units (the user: "no gap to run").
@@ -359,6 +390,7 @@ private:
     // (bit k: sector k), and whether one more at `point` leaves a way out.
     void update_gap(Engine& engine);
     bool keeps_gap(const Vec3f& point) const;
+    int family_ring(const FamilyRow& row) const; // its spawn ring (tables.inc or RunConfig::family_ring)
     float ring_min(const FamilyRow& row) const;
     float ring_max(const FamilyRow& row) const;
     float visible_min(const FamilyRow& row) const;
@@ -438,6 +470,7 @@ private:
         bool counted = false;            // its close-in result is in the tally
         int art_hits = 0;
         bool other_damage = false;       // a technique hit it too
+        bool last_art = false;           // the last hit was the Art's
         bool alive = true;
     };
     std::vector<Enemy> enemies_;
@@ -532,6 +565,7 @@ private:
     // This minute's damage by source and the crowd round the player (MinuteLog).
     double minute_contact_ = 0, minute_shot_ = 0, minute_poison_ = 0;
     double minute_near15_ = 0, minute_near30_ = 0;
+    int minute_art_kills_ = 0, minute_tech_kills_ = 0;
     std::uint64_t minute_trapped_ = 0, minute_steps_ = 0;
     std::string end_reason_ = "-";   // what ended the run (RunEnd's reason, retire, clear)
     std::uint64_t no_control_ = 0;   // run steps (not the ending's) without control (14.2)
