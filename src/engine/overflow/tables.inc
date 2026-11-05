@@ -11,16 +11,22 @@
 // The damage factors (14.3): DW4's area rows are made for characters with
 // gear and levels far above a run's (about 16 at 5:00, 28 at 10:00, 37 at
 // 15:00 in the kite bot's runs), so each family gets its own factor. With
-// the run's damage growth (e^(0.18 x minutes), Tuning::damage_growth) the
-// factors bring each family's worst measured hit (critical hits and its
-// poison included) at its phase's start to about 8 % of a Rookie's MaxHP in
-// phase 2, 9 % in phase 3 and 10 % in phase 4, about what the phase before
-// hits at its end: no wall at a phase change (the review of O1a: phase 2
+// the review round's damage growth (e^(0.18 x minutes)) the factors brought
+// each family's worst measured hit (critical hits and its poison included)
+// at its phase's start to about 8 % of a Rookie's MaxHP in phase 2, 9 % in
+// phase 3 and 10 % in phase 4, about what the phase before hits at its end
+// (the balance round of 05.11 grows slower, Tuning::damage_growth, so every
+// phase hits softer; the ratios stay): no wall at a phase change (the review of O1a: phase 2
 // ended near 3 %, phase 3 began at 16-21 % and the runs ended in its first
 // two minutes). Within a phase the hits grow a little (the growth outruns
 // the levels' DEF and MaxHP); a Corrupted one hits x 1.5, the clamp is 35 %.
 // Measured by tests/overflow_director_tests.cpp ("report"); `balance` checks
 // them (35 %, 16 % at a phase's start, no step above x 3).
+//
+// The balance round of 05.11 (docs/OVERFLOW_DIRECTOR.md 10) lowered two:
+// Mummymon (a slow walker a newcomer walks into: 0.45 MaxHP a minute of
+// phase 2's contact for Agumon, who has no Impact) and Tortomon (it outlasts
+// Veemon's Art and Impact: 0.55-0.65 MaxHP a minute in phase 3).
 //
 // The ranged families (Numemon, Sukamon, MarineDevimon) shoot from beyond
 // the Art's reach: they come at half the weight of the others and hit
@@ -39,7 +45,7 @@ const FamilyRow kFamilies[] = {
     {"e_cockatri", "Kokatorimon", 91, 1, false, 2, 0.25f, 1.0f},
     {"e_mecha1", "MRα01", 42, 1, false, 1, 0.66f, 1.0f},
     // Phase 2, Dry Land (33)
-    {"e_mummy", "Mummymon", 114, 2, false, 1, 0.235f, 1.0f},
+    {"e_mummy", "Mummymon", 114, 2, false, 1, 0.16f, 1.0f},     // (0.235 before the balance round of 05.11)
     {"e_minotaru", "Minotarumon", 159, 2, false, 1, 0.2f, 1.0f},
     {"e_pharaoh", "Pharaohmon", 168, 2, false, 1, 0.22f, 0.5f},
     {"e_mecha2", "MRβ02", 126, 2, false, 0, 0.35f, 1.0f},
@@ -49,7 +55,7 @@ const FamilyRow kFamilies[] = {
     {"e_geko", "Gekomon", 225, 3, false, 0, 0.15f, 1.0f},
     {"e_mecha3", "MRγ03", 252, 3, false, 0, 0.11f, 1.0f},
     {"e_maridevi", "MarineDevimon", 243, 3, true, 0, 0.05f, 0.5f},
-    {"e_torta", "Tortomon", 234, 3, false, 1, 0.215f, 1.0f},
+    {"e_torta", "Tortomon", 234, 3, false, 1, 0.13f, 1.0f},     // (0.215 before the balance round of 05.11)
     // Phase 4, Machine Pit (34)
     {"e_infermo", "Infermon", 306, 4, false, 1, 0.035f, 1.0f},
     {"e_megadra", "Megadramon", 315, 4, false, 2, 0.045f, 1.0f},

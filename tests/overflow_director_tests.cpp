@@ -516,11 +516,12 @@ void poison(const std::filesystem::path& data) {
 // balance (14.3)
 // ---------------------------------------------------------------------------
 // The expected levels at the phases' starts (14.3): the medians of the kite
-// bot's T6 runs (Agumon and Veemon, 20 seeds each: 14-17 at 5:00, 23-27 at
-// 10:00, 32-33 at 15:00; 4.5's estimate was 12 / 22 / 32 / 40). A slow run
-// meets phase 3 two or three levels lower, where a Corrupted enemy's
-// critical hit can pass 35 %: the run's clamp takes it (it never did in T6).
-constexpr int kLevelAt[5] = {1, 15, 25, 32, 40};
+// bot's T6 runs (the balance round of 05.11, Agumon and Veemon: 15-16 at
+// 5:00, 23-25 at 10:00, 31-32 at 15:00, 34-35 at 18:00-19:00, so 36 at
+// 20:00; the review round's 15 / 25 / 32 / 40, 4.5's estimate 12 / 22 / 32 /
+// 40). A slow run meets a phase a few levels lower, where a Corrupted
+// enemy's critical hit can pass 35 %: the run's clamp takes it.
+constexpr int kLevelAt[5] = {1, 15, 24, 31, 36};
 // No wall at a phase change (the review of O1a): see balance().
 constexpr double kWallStep = 3.0, kStartShare = 0.16;
 
@@ -653,6 +654,13 @@ void balance(const std::filesystem::path& data, bool report) {
                 const double minutes = 5.0 * double(phase - 1 + end) - (end ? 0.01 : 0.0);
                 set_level(engine, level);
                 rules.damage.taken_factor = run.director->damage_factor(minutes);
+                {
+                    // (The near and far factors of that time: the larger of the two for
+                    // every hit, the ranged families shoot from 12 units here.)
+                    const Tuning tuning;
+                    const float range = std::max(OverflowDirector::knots(tuning.contact_at, minutes), OverflowDirector::knots(tuning.shot_at, minutes));
+                    rules.damage.near_factor = rules.damage.far_factor = range;
+                }
                 for (const auto& row : family_table()) {
                     if (row.phase != phase) continue;
                     const int made = spawn_around(engine, row, 6, 12.0f);

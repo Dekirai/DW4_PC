@@ -70,20 +70,23 @@ const std::array<PhaseMusic, 4>& phase_music();
 struct Tuning {
     // 4.3: A(t), the living count the spawner tops up to, by knots at 0:00,
     // 5:00, 10:00, 15:00 and 20:00 (linear between them), at most alive_cap.
-    std::array<float, 5> alive_at{14.0f, 30.0f, 46.0f, 62.0f, 78.0f};
+    // (4.3 and the review round: 14 + 3.2 a minute; the balance round of
+    // 05.11: 10 at the start, a newcomer was surrounded in two minutes.)
+    std::array<float, 5> alive_at{10.0f, 24.0f, 40.0f, 54.0f, 60.0f};
     int alive_cap = 60;
     int spawn_every = 10, spawns_per_tick = 2;  // at most 2 spawns every 10 frames
     // ... and at most refill_at spawns a second (knots as alive_at): the
     // enemies a fast Art defeats come back no faster (a lull after a group).
-    std::array<float, 5> refill_at{12.0f, 12.0f, 12.0f, 12.0f, 12.0f};
+    // (The review round: 12, unlimited; the balance round: 3 a second at the start.)
+    std::array<float, 5> refill_at{3.0f, 5.0f, 8.0f, 12.0f, 12.0f};
     int surge_every = 90 * 60, surge_length = 20 * 60, surge_extra = 12;
-    int surge_first = 90 * 60;                   // the first surge (run steps)
+    int surge_first = 180 * 60;                  // the first surge (run steps; the review round: 1:30)
     // A spawn never closes the player's last way out before this run step:
     // of the eight 45-degree sectors round the player, the ones with a living
     // enemy within gap_radius are closed, and a spawn point that would leave
     // no two neighbouring sectors open is drawn again (the user: "no gap to
     // run"). The encirclements keep their ring.
-    int keep_gap_until = 0;
+    int keep_gap_until = 600 * 60;               // (phases 1 and 2)
     float gap_radius = 40.0f;
     std::array<int, 3> encircle_at{450 * 60, 750 * 60, 1050 * 60}; // 7:30, 12:30, 17:30 (run steps)
     int encircle_count = 16;
@@ -116,21 +119,21 @@ struct Tuning {
     float hp_growth = 0.08f;                     // x e^(hp_growth x minutes) on top (the O1a review round: late crowds outlast the Art)
     // damage taken x (1 + damage_per_minute x minutes) x e^(damage_growth x minutes) x the tier
     float damage_per_minute = 0.0f;              // (4.3 had 0.04, the O1a balance pass 0.14)
-    float damage_growth = 0.18f;                 // (the O1a review round: no wall, docs/OVERFLOW_DIRECTOR.md)
+    float damage_growth = 0.13f;                 // (the O1a review round 0.18: no wall; the balance round of 05.11, docs/OVERFLOW_DIRECTOR.md 10)
     std::array<int, 3> curve{70, 65, 16};        // the run's NEXTEXP terms (4.5 had 80 / 50 / 6, the O1a balance pass 70 / 65 / 13)
-    float damage_warm_up = 0.4f;                 // the damage side of the warm-up: x 0.4 at 0:00, rising to x 1 at
-    float damage_warm_minutes = 5.0f;            // ... this run minute
+    float damage_warm_up = 0.2f;                 // the damage side of the warm-up: x 0.2 at 0:00, rising to x 1 at
+    float damage_warm_minutes = 8.0f;            // ... this run minute (the review round: 0.4, 5:00)
     // The damage of a hit from an attacker within 15 units (its body, a
     // swing: a player who walks away is not hit) and from farther (a shot),
     // by knots at 0:00-20:00 (OverflowRules near_factor / far_factor): the
     // first minutes' contact soft, later the crowd's contact the threat a
     // good player avoids, the shots a little softer.
-    std::array<float, 5> contact_at{1.0f, 1.0f, 1.0f, 1.0f, 1.0f};
-    std::array<float, 5> shot_at{1.0f, 1.0f, 1.0f, 1.0f, 1.0f};
+    std::array<float, 5> contact_at{0.7f, 1.0f, 1.3f, 1.5f, 1.6f};
+    std::array<float, 5> shot_at{0.8f, 0.7f, 0.65f, 0.6f, 0.6f};
     int status_cap = 6;                          // frames of a normal enemy's stun / sleep / bind (4.8 had 30)
     double level_heal = 0.05;                    // a level-up adds this share of MaxHP (4.5: 3 %, at most 5 %)
-    float exp_factor = 1.0f;                     // the EXP of a defeat (Normal; a run with fewer enemies keeps its level pace)
-    int corrupted_from = 90 * 60, corrupted_every = 60 * 60;
+    float exp_factor = 1.35f;                    // the EXP of a defeat (Normal; fewer enemies, the same level pace: Heal Lt at Lv 15)
+    int corrupted_from = 150 * 60, corrupted_every = 60 * 60; // (the review round: from 1:30)
     float corrupted_hp = 8.0f;
     int disk_percent = 20;                       // a Corrupted enemy drops an HP Disk alpha
     float mp_regen = 0.02f;                      // of MaxMP a second

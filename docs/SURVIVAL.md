@@ -1483,12 +1483,16 @@ points, Normal:
 | hits of the start Art to defeat a normal enemy in phase 1 | median ≤ 2 |
 | first level-up | ≤ 20 s |
 | level-ups in phase 1 | one every 20-40 s |
-| survival time of the kite bot | between 7:00 and 14:00 in at least 70 % of the seeds |
+| survival time of the kite bot | between 15:00 and 20:00 (O1a's clear) in at least 70 % of the seeds, not every seed clears (O1a had 7:00-14:00; the balance round of 05.11, 17.1's 22-25 minutes for a run that goes well) |
+| survival time of the human bot (`bot=human`, a newcomer; 05.11) | no defeat before 3:00, median at least 8:00, most seeds reach 5:00 |
+| Agumon against Veemon | the medians within about 20 % of each other, for the human and the kite bot |
 | highest single hit of a non-Guardian | ≤ 35 % of MaxHP; the clamp never triggers |
 | frames without control | ≤ 5 % of the run's frames |
 | enemies that close in | ≥ 80 % of each family's spawns come within 30 units in 8 s |
 | skill-up panels | at most one every 30 frames |
 
+(The user's first run, 05.11: dead after two minutes; the human bot came
+from it, docs/OVERFLOW_DIRECTOR.md 10.)
 The user also plays O1a himself; his verdict on the first five minutes
 counts more than the numbers.
 

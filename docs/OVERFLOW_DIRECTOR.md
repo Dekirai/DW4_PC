@@ -41,8 +41,12 @@ frozen. Phases 1-4 change every five minutes (ST_DEATH, ST_DRYLA, ST_VENOM,
 ST_MACHI); at 20:00 the run is complete: the enemies leave (SQ_ERAS), BT_WIN02,
 then the results. No Guardians in O1a.
 
-**Spawner (4.3).** A(t) = min(60, 14 + 3.2 a minute), two spawns every ten
-steps, every 90 s a surge of 12 for 20 s. The pool is the phase's families at
+**Spawner (4.3).** A(t) by knots: 10 at 0:00, 24 at 5:00, 40 at 10:00, 54 at
+15:00, 60 at 20:00 (the review round: min(60, 14 + 3.2 a minute)), at most
+two spawns every ten steps and at most 3 / 5 / 8 / 12 a second at those
+times (a lull after the Art clears a group), from 3:00 every 90 s a surge of
+12 for 20 s; until 10:00 a spawn point never closes the player's last
+90-degree way out (section 10). The pool is the phase's families at
 weight 3 and every earlier one at 0.5 (times the family's own weight, below);
 a new phase's families come in over its first 90 s, their weight rising from
 0, and their damage rises from a fifth of their factor to all of it over its
@@ -54,7 +58,7 @@ the picture where one is (`on_screen`, S3), else they enter visibly with
 SQ_ENTR at least 40 units away (never next to the player; the families that
 never walk keep their 20-25 ring). HP = HPMAX x (1 + 0.10 a minute) x
 e^(0.08 x minutes), x 0.6 in phase 1 rising to x 1 from 4:00 to 6:00. From
-1:30 one spawn a minute is Corrupted (HP x 8, the rules' damage x 1.5, the
+2:30 one spawn a minute is Corrupted (HP x 8, the rules' damage x 1.5, the
 status line's rare icon as its sign). An enemy is generated again in its own
 RAM ahead of the player, with the HP share it had, when it has not moved 4
 units in 6 s while more than 30 units away (not the ranged families), stays
@@ -151,8 +155,13 @@ everything is in `Tuning` and `tables.inc`:
 | spawn ring | 70-95 (S1: 40-60) | 32-46; slow walkers and Tortomon 26-36; Kokatorimon, Megadramon and MRε05 20-25; in the picture at least 40 | 14.2's close-in target with a kiting player; no enemy enters next to the player |
 | spawns ahead | 70 % from the walking side | 70 %, 40-70 degrees off the heading | a walking player passes them, it does not run into them |
 | enemy HP growth | +10 % a minute | (1 + 0.10 a minute) x e^(0.08 x minutes), x 0.6 in phase 1 rising to x 1 from 4:00 to 6:00 | late crowds outlast the Art; no step at 5:00 |
-| damage taken growth | +4 % a minute | e^(0.18 x minutes) | the levels' DEF and MaxHP shrank every phase's hits to a third by its end, so each new phase came as a step (the review's wall at 10:00) |
-| the damage warm-up | (none) | x 0.4 at 0:00 rising to x 1 at 5:00 | the first minutes' hits about 1-3 % of MaxHP |
+| damage taken growth | +4 % a minute | e^(0.13 x minutes) (the review round: 0.18) | the review: the levels' DEF and MaxHP shrank every phase's hits to a third by its end, so each new phase came as a step (the wall at 10:00); the balance round of 05.11: a good run lasts 15-20 minutes (section 10) |
+| the damage warm-up | (none) | x 0.2 at 0:00 rising to x 1 at 8:00 (the review round: x 0.4 to 5:00) | a newcomer's first minutes (section 10) |
+| contact and shots | (none) | a hit from within 15 units x 0.7 / 1.0 / 1.3 / 1.5 / 1.6 at 0:00 / 5:00 / 10:00 / 15:00 / 20:00, from farther x 0.8 / 0.7 / 0.65 / 0.6 / 0.6 (its poison with it) | the first minutes' contact soft; later the crowd a good player walks away from is the threat, not the shots he cannot (section 10) |
+| A(t) | 14 + 3.2 a minute | 10 / 24 / 40 / 54 / 60 at 0:00 / 5:00 / ... / 20:00; at most 3 / 5 / 8 / 12 / 12 spawns a second | a newcomer was surrounded in two minutes (section 10) |
+| the way out | (none) | until 10:00 a spawn never closes the last 90 degrees round the player (enemies within 40 units) | "no gap to run" (section 10) |
+| first surge, first Corrupted | 1:30, 1:30 | 3:00, 2:30 | the newcomer's deaths came just after 1:30 |
+| EXP | x 1 | x 1.35 | fewer enemies, the same level pace (Heal Lt at Lv 15 near 5:00) |
 | a new phase's families | at once | weight from 0 over 90 s, damage from x 0.2 over 120 s | no wall at a phase change |
 | run curve | 80 / 50 / 6 | 70 / 65 / 13 | the first level-up within 20 s, one every 20-40 s in phase 1 |
 | level-up windows | one per level | at most one freeze every 15 s (the waiting levels open one after another) | the first minute brought five freezes |
@@ -160,7 +169,7 @@ everything is in `Tuning` and `tables.inc`:
 | MUTEKI after a hit | 50 frames | 35 | a crowd round a standing Digimon costs; a walking one leaves it |
 | a normal enemy's stun / sleep / bind | at most 30 frames | at most 6 | 14.2: at most 5 % of the frames without control (counted over the run's own steps; the defeat's knock-down belongs to the ending) |
 | poison | DW4's | ticks through the damage-taken rule, at most 5 ticks and 10 % of MaxHP, never the last HP | the review: MRβ02's poison took 69 % from a hit of 1 |
-| family damage factors | 1 | 0.035-1.0 per family (`tables.inc`) | 14.3: the worst hit (its poison included) at a phase's start about 8 / 9 / 10 % in phases 2 / 3 / 4, close to what the phase before hits at its end; Corrupted at most 35 % |
+| family damage factors | 1 | 0.035-1.0 per family (`tables.inc`; Mummymon 0.16 and Tortomon 0.13 since the balance round of 05.11) | 14.3: the worst hit (its poison included) at a phase's start about 8 / 9 / 10 % in phases 2 / 3 / 4, close to what the phase before hits at its end; Corrupted at most 35 % |
 | family spawn weight | 1 | 0.5 for Numemon, Sukamon, MarineDevimon and Pharaohmon | the ranged shots and Pharaohmon's warps hit a walking player as much as a standing one |
 | Art reach | 22 (Cleaver, Blade Arc) | 22 standing, 34 at full stick | the enemies are 3-40 times slower than the player (S1): a walking Digimon passes them |
 | Art class factor | 1 | Cleaver 2.2, Blade Arc 1.4 | 14.3: two hits for every phase 1 family at level 1; Cleaver more: Agumon has no Impact and no jumping Bolt |
@@ -189,10 +198,11 @@ T10 comparison (`RuleSet::original`) is unchanged.
 ## 5. The host's side
 
 `make_run_driver` returns the director's driver. Request keys beside lane A's:
-`tier=normal`, `bot=kite` (the test bot), `circle` (lane A's T3: full stick
-round a slow circle, a player who never stops walking) or `stand` (no input,
-a player who never walks), `offers=priority|random|player` (test runs
-default to priority), `summary=PATH` and `log=PATH` (written when the results
+`tier=normal`, `bot=kite` (the test bot), `human` (a newcomer, section
+10.1), `circle` (lane A's T3: full stick round a slow circle, a player who
+never stops walking) or `stand` (no input, a player who never walks),
+`offers=priority|random|newcomer|player` (test runs default to priority,
+the human bot to newcomer), `summary=PATH` and `log=PATH` (written when the results
 close), `timing=1` (T8), `commands=900p,960m1,980a` (menu keys at director
 steps, for pictures of the screens), and the balance passes' `curve=B,L,S`,
 `damage_per_minute=`, `damage_growth=`, `damage_warm_up=`, `hp_per_minute=`,
@@ -200,7 +210,12 @@ steps, for pictures of the screens), and the balance passes' `curve=B,L,S`,
 `art_range_moving=`, `art_class=`, `ahead_share=`, `ahead_angle_min=`,
 `ahead_angle_max=`, `visible_min=`, `behind_far=`, `phase_intro=`,
 `bot_flee=`, `window_gap=`, `muteki=`, `mp_regen=`,
-`family_damage=FAMILY:F,...` and `technique_damage=ROW:F,...`. Test runs
+`family_damage=FAMILY:F,...` and `technique_damage=ROW:F,...`; since the
+balance round of 05.11 also `alive=`, `refill=`, `contact=` and `shot=`
+(five knots at 0:00-20:00), `surge_first=`, `keep_gap=`,
+`corrupted_from=`, `phase_ramp=`, `phase_intro_time=` (seconds),
+`surge_extra=`, `gap_radius=`, `damage_warm_minutes=`, `ring_min=`,
+`ring_max=`, `slow_min=`, `slow_max=`, `corrupted_hp=` and `exp=`. Test runs
 close the results after 60 steps. `OverlayFrame::font` hands the driver the
 host's bold UI face.
 
@@ -427,3 +442,31 @@ Veemon: 0.59 / 0.55 / 0.29 taken, 0.52 / 0.49 / 0.28 of it contact. The
 kite bot (Agumon) in the same minutes: 0.34 / 0.22 / 0.26 taken, 0.07 /
 0.06 / 0.08 contact (near15 0.18-0.24), then 0.23 at 4:00-5:00, 0.77 and
 1.39 in the two minutes after 5:00 (shots 0.45 / 0.85, poison 0.14 / 0.31).
+
+### 10.3 Why a newcomer died at about 2:00
+
+- **Contact, not single hits.** The human bot's hits were 1.6-2.7 % of
+  MaxHP each (1.8 % on average, the highest 10 %), but 27 a minute: 0.45-0.56
+  MaxHP a minute came from attackers within 15 units, against 0.06-0.08 for
+  the kite bot. It had 0.7-1.1 enemies within 15 units on average (the kite
+  bot 0.2); a full ring without a way out was rare (2-4 % of the steps):
+  the crowd did not wall it in, it walked into it and the hits came one
+  after another (MUTEKI 30 frames: up to two a second). The user's "a few
+  hits cost a lot" is this stream, not one large hit.
+- **The phase 1 families.** Ogremon (the strongest walker), Kokatorimon (it
+  never walks and spawns 20-25 units away, in the picture: a walking
+  newcomer runs into it) and Goblimon brought most of it.
+- **The ramp.** The damage-taken factor rose from x 0.4 at 0:00 to x 2.46 at
+  5:00 (the warm-up times e^(0.18 x minutes)), made for the kite bot's
+  levels (Lv 15 at 5:00); the newcomer was Lv 9 at 2:00 and Lv 11 at 3:00.
+  Agumon's only heal in phase 1 is the level-up's 5 % until Heal Lt at Lv 15.
+- **1:30.** The first surge (12 more for 20 s: 31 living) and the first
+  Corrupted enemy came at 1:30, just before the deaths.
+- **Fewer enemies alone starve the levels.** The first sweep (`s1`: A(t) 9
+  at 0:00, at most 1.5 spawns a second) moved the newcomer's deaths to
+  3:13-6:24, but the kite bot reached Lv 13 at 5:00 instead of 15, learned
+  Heal Lt late and died at 6:07 instead of 8:18: the kills are the EXP.
+- **5:00.** In phase 2 the kite bot died of shots (MRβ02's poison shots,
+  Pharaohmon's magic, Tyrannomon: 0.8-1.0 MaxHP a minute of shots and
+  0.2-0.5 of poison) as the human bot of contact (Mummymon, 0.36 MaxHP a
+  minute alone).
