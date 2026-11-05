@@ -429,9 +429,11 @@ void OnlineRun::after_live_step(double now) {
     // starts the next one with the room story and modes again.)
     if (link_.game_start() && story_hold_since_ < 0) begin_game(now);
     // The call shop is closed online (round G-core): its refusal branch ran.
+    // (Only a rise: a join, co-arrival or resync restores into a fresh engine
+    // whose count starts at 0 again, and that is no new refusal.)
     if (const int refused = engine_().callshop_refused; refused != callshop_seen_) {
+        if (refused > callshop_seen_) notices_.push_back("The call shop is not available online: everyone plays their own character.");
         callshop_seen_ = refused;
-        notices_.push_back("The call shop is not available online: everyone plays their own character.");
     }
     if (!character_) return;
     auto& engine = engine_();
