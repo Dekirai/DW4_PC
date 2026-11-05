@@ -286,7 +286,10 @@ struct Ready {         // inst | visit | u32 tick (a multiple of 60) | u64 net f
 };
 // Round J (6.13.4): the canonical tick state's XXH64 at a checkpoint tick
 // (the first tick not in the state) with the visit's load end K.
-struct StateHash {     // inst | visit | u32 tick | u64 hash | u32 load end | u8 flags (1 bytes kept)
+// flags: 1 bytes kept; 2 load_end_only (round J's review: a solo leader has
+// nobody to compare with; it tells only K, hash 0, and computes nothing).
+struct StateHash {     // inst | visit | u32 tick | u64 hash | u32 load end | u8 flags
+    static constexpr std::uint8_t kept = 1, load_end_only = 2;
     std::uint32_t inst{}, visit{}, tick{};
     std::uint64_t hash{};
     std::uint32_t load_end{};

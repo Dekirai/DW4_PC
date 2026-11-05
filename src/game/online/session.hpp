@@ -446,6 +446,14 @@ private:
     bool periodic_asked_ = false;            // CHECKPOINT_ASK periodic: upload with the next STATEHASH (an agreed tick)
     bool from_checkpoint_ = false;           // this catch-up started from a checkpoint
     double rebuild_ms_ = 0;                  // its rebuild (snapshot, load ticks, apply, hash)
+    // Round J's review: writing the tick state failed in this visit (a
+    // TickStateError: a node, closure or bank outside the serializer's
+    // lists); no STATEHASH or upload until the next visit (before, the error
+    // left after_step and closed every member's game in the same tick).
+    bool checkpoints_off_ = false;
+    bool load_end_told_ = false;             // a solo leader's load_end_only STATEHASH went out
+    // The hash of this tick's STATEHASH, for an upload in the same tick (no second hash).
+    std::optional<std::pair<std::uint32_t, std::uint64_t>> tick_hash_;
 
     NetStats stats_;
     NetView net_;

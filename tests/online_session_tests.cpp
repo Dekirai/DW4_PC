@@ -1023,6 +1023,70 @@ double late_fraction(double one_way, double jitter, int delay) {
 // The smallest delay without late pads for each one-way time and jitter, and
 // what the design formula d = ceil((RTT + J) / field) gives; the client
 // executes a tick one playout tick plus up to one host pass after it arrives.
+// Round J's review, the client side of the checkpoints: a solo leader tells
+// only its load end (no hash, nobody to compare with); every member's
+// STATEHASH stays on the 600-tick raster, a classic joiner's too (it kept
+// begin_visit's 600 and reported its first member tick, off the raster); a
+// tick state writer's error stops the visit's reports instead of leaving the
+// step (it closed every member's game in the same STATEHASH tick).
+void checkpoint_reports() {
+    World world;
+    world.hub.checkpoints = true;
+    auto& a = world.add("kim", 1);
+    a.engine.tick_states = true;
+    a.input = press_in({{"stagis10", 30}, {"stagml11", 40}}, fake::kExitButton);
+    check(world.run_until(10, [&] { return a.engine.stage() == "stag0101" && a.session->mode() == Mode::solo; }), "A reaches stag0101 solo");
+    world.run(11.5);
+    check(a.session->tick() > 650, "A played past tick 600 alone");
+    check(a.engine.tick_state_hashes == 0, "a solo leader computes no tick state hash");
+    check(world.hub.statehashes.size() == 1 && (world.hub.statehashes[0].second.flags & w::StateHash::load_end_only) &&
+              world.hub.statehashes[0].second.hash == 0 && world.hub.statehashes[0].second.load_end > 0,
+          "a solo leader tells its load end once, without a hash (" + std::to_string(world.hub.statehashes.size()) + " reports)");
+    auto& b = world.add("lee", 2);
+    b.engine.tick_states = true;
+    b.input = press_in({{"stagis10", 30}, {"stagml11", 40}}, fake::kExitButton);
+    check(world.run_until(20, [&] { return b.session->mode() == Mode::sealed && a.session->mode() == Mode::sealed; }), "B joins (classic)");
+    check(b.session->tick() > 600 && b.session->tick() < 1200, "B became a member between 600 and 1200 (" + std::to_string(b.session->tick()) + ")");
+    world.run(25);
+    int from_a = 0, from_b = 0;
+    for (const auto& [name, sh] : world.hub.statehashes) {
+        if (sh.flags & w::StateHash::load_end_only) continue;
+        check(sh.tick % 600 == 0, name + "'s STATEHASH of tick " + std::to_string(sh.tick) + " is on the raster");
+        (name == "kim" ? from_a : from_b) += 1;
+    }
+    check(from_a >= 2 && from_b >= 2 && from_a == from_b, "both report every period (" + std::to_string(from_a) + ", " + std::to_string(from_b) + ")");
+    const auto before = world.hub.statehashes.size();
+    a.engine.tick_state_throws = b.engine.tick_state_throws = true;
+    std::string error;
+    try {
+        world.run(25);
+    } catch (const std::exception& e) {
+        error = e.what();
+    }
+    check(error.empty(), "a tick state error stays in the session (" + error + ")");
+    check(world.hub.statehashes.size() == before, "no STATEHASH after it in this visit");
+    check(a.session->mode() == Mode::sealed && b.session->mode() == Mode::sealed && world.hub.netfp_mismatches == 0, "both play on together");
+}
+
+// Round J's review: after a READY the relay answers with the state again (a
+// READY mismatch; from a checkpoint the classic state follows), the joiner
+// catches up again and sends READY again (ready_sent_ stayed set: no READY,
+// "Joining..." for good).
+void ready_after_a_refused_ready() {
+    World world;
+    world.hub.refuse_ready = 1;
+    auto& a = world.add("kim", 1);
+    a.input = press_in({{"stagis10", 30}, {"stagml11", 40}}, fake::kExitButton);
+    check(world.run_until(10, [&] { return a.engine.stage() == "stag0101" && a.session->mode() == Mode::solo; }), "A reaches stag0101 solo");
+    world.run(4);
+    auto& b = world.add("lee", 2);
+    b.input = press_in({{"stagis10", 30}, {"stagml11", 40}}, fake::kExitButton);
+    const bool joined = world.run_until(30, [&] { return b.session->mode() == Mode::sealed && a.session->mode() == Mode::sealed; });
+    check(world.hub.ready_refused == 1, "the first READY was answered with the state again");
+    check(joined, "B sent READY again after the second catch-up and joined");
+    check(b.engine.restores >= 2, "B restored the state twice");
+}
+
 void delay_table(bool print) {
     struct Row {
         double one_way, jitter;
@@ -1086,6 +1150,10 @@ int main(int argc, char** argv) {
         taken_out_continues_alone();
         std::cout << "room story\n";
         room_story();
+        std::cout << "checkpoint reports\n";
+        checkpoint_reports();
+        std::cout << "READY after a refused READY\n";
+        ready_after_a_refused_ready();
         std::cout << "pacing, lag\n";
         pacing_and_lag();
         std::cout << "input delay\n";

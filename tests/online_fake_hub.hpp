@@ -149,6 +149,24 @@ public:
     // is due after a scene; a test sets it, the next step reports it).
     std::optional<HeadingInfo> heading;
     std::optional<HeadingInfo> take_heading() override { return std::exchange(heading, std::nullopt); }
+    // Round J (checkpoint tests): a tick state of state_ and frame_, state-safe
+    // and past the visit's load end from frame 10; tick_state_throws makes its
+    // writer fail as a TickStateError does (a node outside the serializer's lists).
+    bool tick_states = false;
+    bool tick_state_throws = false;
+    int tick_state_hashes = 0;
+    bool state_safe() const override { return tick_states && !pending_; }
+    bool load_ended() const override { return tick_states && !pending_ && frame_ >= 10; }
+    std::vector<std::uint8_t> save_tick_state(bool canonical) override {
+        (void)canonical;
+        if (tick_state_throws) throw std::runtime_error("tick state: a node outside the scene cache");
+        return serialize();
+    }
+    std::uint64_t tick_state_hash() override {
+        if (tick_state_throws) throw std::runtime_error("tick state: a node outside the scene cache");
+        ++tick_state_hashes;
+        return mix(state_, frame_);
+    }
 
     void step(const std::array<dw4::PadSample, 4>& pads) {
         ++frame_;
@@ -380,6 +398,11 @@ public:
     double co_arrival_hold = 3.0;
     // Round 60: WELCOME announces PRESENCE2 (a hub of this round), and what came.
     bool presence_v2 = false;
+    // Round J: WELCOME's flag 4 (this hub takes STATEHASH) and the reports that came (member name, report).
+    bool checkpoints = false;
+    std::vector<std::pair<std::string, w::StateHash>> statehashes;
+    // A joiner's first READYs answered with its whole state again, as the relay answers a READY mismatch.
+    int refuse_ready = 0, ready_refused = 0;
     std::uint64_t presence_frames = 0, presence2_frames = 0, unknown_frames = 0; // (unknown: PRESENCE2 without presence_v2)
     std::vector<w::Presence> presence2_seen; // every PRESENCE2 that came, its member set
     double state_delay = 0.0; // extra delay of STATE_DATA (a slow state transfer)
@@ -509,7 +532,8 @@ public:
         }
         const auto& inst = instances[m.inst];
         w::Welcome welcome{std::uint8_t(m.id), inst.id, inst.visit, std::uint8_t(m.slot), inst.mode(), inst.stage, w::kNoTick, 0, 30,
-                           std::uint8_t((resumable ? w::Welcome::resumable : 0) | (presence_v2 ? w::Welcome::presence_v2 : 0))};
+                           std::uint8_t((resumable ? w::Welcome::resumable : 0) | (presence_v2 ? w::Welcome::presence_v2 : 0) |
+                                        (checkpoints ? w::Welcome::checkpoints : 0))};
         send(m.id, w::Type::welcome, w::encode(welcome), now);
         send(m.id, w::Type::story_ack, w::encode(w::StoryAck{room_story.revision, dw4::engine::story::encode_story(room_story), 0, {}}), now);
         for (auto& [id, other] : members)
@@ -983,6 +1007,19 @@ public:
                 log_lines.push_back("resynced " + m.name + " at tick " + std::to_string(r.tick));
                 break;
             }
+            if (refuse_ready > 0 && m.observing == r.inst) {
+                --refuse_ready;
+                ++ready_refused;
+                w::StateData state;
+                state.purpose = w::StatePurpose::join;
+                state.slot = std::uint8_t(m.observe_slot);
+                state.snapshot = inst.snapshot;
+                state.first = 0;
+                for (std::uint32_t t = 0; inst.log.contains(t); ++t) state.ticks.push_back(inst.log.at(t));
+                for (const auto& c : w::make_chunks(inst.id, inst.visit, w::encode_state_body(state))) send(id, w::Type::state_data, w::encode(c), now);
+                log_lines.push_back("ready of " + m.name + " at tick " + std::to_string(r.tick) + " refused: the state again");
+                break;
+            }
             // Compare with the members' fingerprint of that tick.
             if (const auto fp = inst.netfp.find(r.tick); fp != inst.netfp.end())
                 for (const auto& [member, hash] : fp->second) {
@@ -1089,6 +1126,7 @@ public:
             break;
         }
         case w::Type::story: on_story(m, w::decode_story(f.payload), now); break;
+        case w::Type::statehash: statehashes.emplace_back(m.name, w::decode_statehash(f.payload)); break;
         case w::Type::presence: {
             ++presence_frames;
             auto p = w::decode_presence(f.payload, false);
