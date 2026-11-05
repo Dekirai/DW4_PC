@@ -1,0 +1,12 @@
+# JB (round J, 6.13.5): a's uploads are damaged (DW4_ONLINE_TEST_BAD_CHECKPOINT); b's rebuild fails its check,
+# CHECKPOINT_BAD takes it the classic way (the snapshot and every tick), and both play on equal.
+b: (?i)decision 2 .*stage=stag0101
+relay: checkpoint_ask
+relay: state .*purpose=Join .*checkpoint=[1-9]
+b: online-trace: checkpoint bad
+relay: checkpoint_bad
+relay: state .*purpose=Join .*checkpoint=0
+b: online-trace: ready
+a: online-trace: join applied .*slot=1
+!relay: statehash_mismatch
+shared: a b >= 3000

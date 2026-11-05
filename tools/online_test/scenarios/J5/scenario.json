@@ -1,0 +1,12 @@
+{
+  "desc": "round J: b enters a's field five minutes after a and joins from a checkpoint (no catch-up of the visit)",
+  "seed_story": true,
+  "card": "k10",
+  "frames": 60000,
+  "timeout": 1200,
+  "min_shared_ticks": 3000,
+  "clients": [
+    {"name": "a", "script": "a.script", "start": 0},
+    {"name": "b", "script": "b.script", "start": 3}
+  ]
+}

@@ -117,6 +117,18 @@ public:
     // Presentation only: whose camera the picture uses (a defeated member
     // watches the nearest living member).
     virtual void set_view_slot(int slot) = 0;
+
+    // ---- Round J: the tick state (docs/SEAMLESS.md 6.13). The defaults are
+    // an engine without one (test fakes): never state-safe, no checkpoints.
+    virtual bool state_safe() const { return false; }
+    virtual bool load_ended() const { return false; } // the visit reached its load end
+    virtual std::vector<std::uint8_t> save_tick_state(bool canonical) { (void)canonical; return {}; }
+    virtual std::uint64_t tick_state_hash() { return 0; }
+    // "" applied; else the section that failed ("header", "topology", ...).
+    virtual std::string apply_tick_state(std::span<const std::uint8_t> bytes) {
+        (void)bytes;
+        return "unsupported";
+    }
 };
 
 // Hub and UI stages (2): stagML02, stagML11-14 and every stagIS*. Solo

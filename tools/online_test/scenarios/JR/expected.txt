@@ -1,0 +1,15 @@
+# JR (round J, 6.13.4): a and b co-arrive; the relay keeps periodic checkpoints at STATEHASH ticks, which both members'
+# reports make agreed; b's engine draws one extra random number at sealed tick 2500; the vote resyncs b from the newest
+# agreed checkpoint (the ticks since it, not the visit), its READY from the checkpoint does not judge, both equal after.
+a: online-trace: statehash
+relay: ^checkpoint .*tick=
+b: online: test desync at tick
+relay: desync
+relay: resync .*slot=1 .*checkpoint=[1-9]
+b: online-trace: state purpose=3 .*checkpoint=
+relay: resync_ready .*checkpoint=True
+!relay: resync .*slot=0
+!relay: checkpoint_bad
+!relay: statehash_mismatch
+!a: online-trace: resync inst
+shared: a b >= 6000

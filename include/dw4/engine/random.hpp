@@ -71,6 +71,13 @@ public:
         return in;
     }
 
+    // The tick state (tick_state.hpp): the index and the words, binary.
+    template <class Archive> void tick_io(Archive& a) {
+        a.io(index_);
+        a.io(state_);
+        if (a.reading() && (index_ < 0 || index_ > kWords)) index_ = kWords;
+    }
+
 private:
     static constexpr int kWords = 624;
     static constexpr int kShift = 397;

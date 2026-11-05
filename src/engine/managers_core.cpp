@@ -2611,6 +2611,13 @@ std::shared_ptr<const void> SoundManager::persistent() const {
 
 void SoundManager::restore(Engine& engine, const std::shared_ptr<const void>& opaque) {
     if (!opaque) return;
+    // The session's common banks were loaded with its first sound effect,
+    // long before this stage's banks: in the Cri's list they stand first. A
+    // restored engine loads them now, before the stage load adds the stage's,
+    // so a request whose group two banks hold finds the same bank as in the
+    // session it came from (round J: a joiner's sound effects and SNDF
+    // state, which the members' STATEHASH compares).
+    load_common_banks(engine);
     const auto& state = *static_cast<const SoundState*>(opaque.get());
     for (std::size_t i = 0; i < streams_.size() && i < state.streams.size(); ++i) {
         const auto& s = state.streams[i];
@@ -2656,44 +2663,24 @@ void SoundManager::restore(Engine& engine, const std::shared_ptr<const void>& op
     cri_ = state.cri;
 }
 
-void SoundManager::serialize_persistent(StateArchive& a, std::shared_ptr<const void>& opaque, bool canonical) {
-    bool present = opaque != nullptr;
-    a.io(present);
-    if (!present) return;
-    auto state = a.reading() ? std::make_shared<SoundState>() : std::make_shared<SoundState>(*static_cast<const SoundState*>(opaque.get()));
-    std::uint32_t count = std::uint32_t(state->streams.size());
-    a.io(count);
-    if (a.reading()) {
-        if (count > 64) throw std::runtime_error("save state holds an implausible stream count");
-        state->streams.resize(count);
-    }
-    for (auto& s : state->streams) {
-        a.io(s.name);
-        a.io(s.file);
-        if (canonical && !a.reading()) {
-            std::uint64_t none = 0;
-            a.io(none);
-        } else {
-            a.io(s.frames_read);
-        }
-        a.io(s.serial);
-        a.io(s.priority);
-        a.io(s.type);
-        a.io(s.volume);
-        a.io(s.out_volume);
-        a.io(s.fade.running);
-        a.io(s.fade.from);
-        a.io(s.fade.to);
-        a.io(s.fade.position);
-        a.io(s.fade.increment);
-    }
-    a.io(state->current_bgm);
-    a.io(state->serial);
-    a.io(state->pause_next);
-    a.io(state->se_volume);
-    a.io(state->base_volume);
-    a.io(state->random);
-    auto& cri = state->cri;
+// Online, at a live load's snapshot (Engine::begin_stage_load): a restored
+// engine is a new one with the snapshot's sound state, so its game SNDF and
+// sfp pool start free (save state version 36: "their state is not kept").
+// A member that loaded the visit live had the sounds of the stage it left
+// still in them (a common bank's one-shots, freed entries' flags, the
+// allocation counters since its own last restore), so a co-arrival's or a
+// classic joiner's tick state differed from its members' (round J: their
+// STATEHASH never agreed). Every member now starts the visit with the
+// restored engine's game SNDF and pool; the audio's copy (mirror_) is not
+// touched: what still rings plays out (or ends at its sequence's next use,
+// as before), nothing is cut. Offline never comes here.
+void SoundManager::fresh_game_driver() {
+    driver_ = sndf::Driver{};
+    sfp_ = {};
+}
+
+// The CRI streams' state (the stage snapshot's and the tick state's).
+void serialize_cri(StateArchive& a, CriStreams& cri) {
     a.io(cri.drive.buffer_start_offset);
     a.io(cri.drive.buffer_end_offset);
     a.io(cri.drive.buffer_start_time);
@@ -2760,6 +2747,48 @@ void SoundManager::serialize_persistent(StateArchive& a, std::shared_ptr<const v
     a.io(movie.write_pos);
     a.io(movie.written);
     a.io(movie.consumed);
+}
+
+void SoundManager::serialize_persistent(StateArchive& a, std::shared_ptr<const void>& opaque, bool canonical) {
+    bool present = opaque != nullptr;
+    a.io(present);
+    if (!present) return;
+    auto state = a.reading() ? std::make_shared<SoundState>() : std::make_shared<SoundState>(*static_cast<const SoundState*>(opaque.get()));
+    std::uint32_t count = std::uint32_t(state->streams.size());
+    a.io(count);
+    if (a.reading()) {
+        if (count > 64) throw std::runtime_error("save state holds an implausible stream count");
+        state->streams.resize(count);
+    }
+    for (auto& s : state->streams) {
+        a.io(s.name);
+        a.io(s.file);
+        if (canonical && !a.reading()) {
+            std::uint64_t none = 0;
+            a.io(none);
+        } else {
+            a.io(s.frames_read);
+        }
+        a.io(s.serial);
+        a.io(s.priority);
+        a.io(s.type);
+        a.io(s.volume);
+        a.io(s.out_volume);
+        a.io(s.fade.running);
+        a.io(s.fade.from);
+        a.io(s.fade.to);
+        a.io(s.fade.position);
+        a.io(s.fade.increment);
+    }
+    a.io(state->current_bgm);
+    a.io(state->serial);
+    a.io(state->pause_next);
+    a.io(state->se_volume);
+    a.io(state->base_volume);
+    a.io(state->random);
+    auto& cri = state->cri;
+    serialize_cri(a, cri);
+    const auto& movie = cri.movie;
     if (a.reading() && (cri.inflight.slot < -1 || cri.inflight.slot > CriStreams::kMovieHeaderSlot))
         throw std::runtime_error("save state holds an invalid stream read");
     if (a.reading() && (movie.pos > movie.sectors || movie.request > CriStreams::kMovieRingSectors ||

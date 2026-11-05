@@ -96,6 +96,24 @@ std::uint64_t GameEngineLink::net_fingerprint() {
 #endif
 }
 
+// ---- Round J (docs/SEAMLESS.md 6.13).
+bool GameEngineLink::state_safe() const { return e().state_safe(); }
+bool GameEngineLink::load_ended() const { return e().load_end_frame() != 0; }
+std::vector<std::uint8_t> GameEngineLink::save_tick_state(bool canonical) {
+    return e().save_tick_state(canonical ? engine::TickForm::canonical : engine::TickForm::raw);
+}
+std::uint64_t GameEngineLink::tick_state_hash() { return e().tick_state_hash(); }
+std::string GameEngineLink::apply_tick_state(std::span<const std::uint8_t> bytes) {
+    try {
+        e().apply_tick_state(bytes);
+        return {};
+    } catch (const engine::TickStateError& error) {
+        return error.section() + ": " + error.what();
+    } catch (const std::exception& error) {
+        return std::string("apply: ") + error.what();
+    }
+}
+
 bool GameEngineLink::membership_safe() const {
 #ifdef DW4_ONLINE_ENGINE_API
     return e().membership_safe();

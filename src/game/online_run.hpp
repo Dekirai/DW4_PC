@@ -37,10 +37,12 @@ namespace dw4::game {
 // barrier, so the rooms of the two never mix), 46 round 63 (a member's
 // status window, NPC talks and map recorders are its own and pause nothing,
 // docs/SEAMLESS.md 5.3; a 45 client would pause its instance for them and
-// desynchronize at the first menu), 47 round G-core (flag 503 is story and
-// merged at barriers, left alone at one into stag0001; the STORY_ACK reason
-// queued; docs/SEAMLESS.md 8.8: a 46 client would not add 503 at a barrier
-// where 47 clients do, and the instance would desynchronize).
+// desynchronize at the first menu), 47 rounds G-core and J, shipped together
+// (G-core: flag 503 is story and merged at barriers, left alone at one into
+// stag0001; the STORY_ACK reason queued; docs/SEAMLESS.md 8.8: a 46 client
+// would not add 503 at a barrier where 47 clients do, and the instance would
+// desynchronize. J: checkpoints - STATEHASH, CHECKPOINT, CHECKPOINT_BAD,
+// CHECKPOINT_ASK, STATE_DATA codec 2, docs/SEAMLESS.md 6.13.7).
 inline constexpr std::uint32_t kOnlineProtocol = 47;
 
 struct OnlineOptions {

@@ -103,6 +103,8 @@ public class WireGoldenTests
             ["Intent"] = 0x0D, ["Story"] = 0x0E, ["Presence"] = 0x0F, ["Resume"] = 0x10, ["Rate"] = 0x11, ["Pong"] = 0x12, ["Bye"] = 0x13,
             // Round 60: PRESENCE2 to the relay.
             ["Presence2"] = 0x14,
+            // Round J: the checkpoints (SEAMLESS.md 6.13.7).
+            ["StateHash"] = 0x15, ["Checkpoint"] = 0x16, ["CheckpointBad"] = 0x17,
             ["Welcome"] = 0x80, ["Sealed"] = 0x81, ["Live"] = 0x82, ["JoinReq"] = 0x83, ["BarrierOk"] = 0x84, ["BarrierWait"] = 0x85,
             ["StateData"] = 0x86, ["PresenceOut"] = 0x87, ["Resync"] = 0x88, ["StoryAck"] = 0x89, ["Room"] = 0x8A, ["Ping"] = 0x8B,
             ["Close"] = 0x8C, ["Roster"] = 0x8D, ["Reassign"] = 0x8E,
@@ -110,6 +112,8 @@ public class WireGoldenTests
             ["NetStat"] = 0x8F,
             // Round 60: PRESENCE2 to the members that send it (first 0x8F: moved when round 62 merged).
             ["Presence2Out"] = 0x90,
+            // Round J (0x91 stays free; 0x93 is round R's EVENT_AHEAD).
+            ["CheckpointAsk"] = 0x92,
         };
         Assert.Equal(registry.OrderBy(x => x.Value), types.OrderBy(x => x.Value));
         foreach (var (name, value) in types) Assert.NotEqual("0x" + value.ToString("X2"), Msg.Name(value));

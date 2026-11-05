@@ -29,6 +29,10 @@ const char* type_name(Type type) noexcept {
     case Type::pong: return "PONG";
     case Type::bye: return "BYE";
     case Type::presence2: return "PRESENCE2";
+    case Type::statehash: return "STATEHASH";
+    case Type::checkpoint: return "CHECKPOINT";
+    case Type::checkpoint_bad: return "CHECKPOINT_BAD";
+    case Type::checkpoint_ask: return "CHECKPOINT_ASK";
     case Type::welcome: return "WELCOME";
     case Type::sealed: return "SEALED";
     case Type::live: return "LIVE";
@@ -530,6 +534,7 @@ std::vector<std::uint8_t> encode(const Ready& m) {
     w.u64(m.fingerprint);
     w.u32(m.rate);
     w.blob(m.carry);
+    if (m.flags) w.u8(m.flags);
     return std::move(w.out);
 }
 Ready decode_ready(std::span<const std::uint8_t> b) {
@@ -541,6 +546,98 @@ Ready decode_ready(std::span<const std::uint8_t> b) {
     m.fingerprint = r.u64();
     m.rate = r.u32();
     m.carry = r.blob(kMaxCarry);
+    if (!r.done()) m.flags = r.u8();
+    r.end();
+    return m;
+}
+
+std::vector<std::uint8_t> encode(const StateHash& m) {
+    Writer w;
+    w.u32(m.inst);
+    w.u32(m.visit);
+    w.u32(m.tick);
+    w.u64(m.hash);
+    w.u32(m.load_end);
+    w.u8(m.flags);
+    return std::move(w.out);
+}
+StateHash decode_statehash(std::span<const std::uint8_t> b) {
+    Reader r{b};
+    StateHash m;
+    m.inst = r.u32();
+    m.visit = r.u32();
+    m.tick = r.u32();
+    m.hash = r.u64();
+    m.load_end = r.u32();
+    m.flags = r.u8();
+    r.end();
+    if (m.load_end > m.tick) throw WireError("load end beyond the checkpoint");
+    return m;
+}
+
+std::vector<std::uint8_t> encode(const Checkpoint& m) {
+    Writer w;
+    w.u32(m.inst);
+    w.u32(m.visit);
+    w.u32(m.tick);
+    w.u64(m.hash);
+    w.u32(m.load_end);
+    w.u32(m.total);
+    w.u32(m.offset);
+    w.raw(m.bytes);
+    return std::move(w.out);
+}
+Checkpoint decode_checkpoint(std::span<const std::uint8_t> b) {
+    Reader r{b};
+    Checkpoint m;
+    m.inst = r.u32();
+    m.visit = r.u32();
+    m.tick = r.u32();
+    m.hash = r.u64();
+    m.load_end = r.u32();
+    m.total = r.u32();
+    m.offset = r.u32();
+    m.bytes = r.rest();
+    if (m.bytes.empty() || std::uint64_t(m.offset) + m.bytes.size() > m.total) throw WireError("checkpoint chunk beyond its total");
+    return m;
+}
+
+std::vector<std::uint8_t> encode(const CheckpointBad& m) {
+    Writer w;
+    w.u32(m.inst);
+    w.u32(m.visit);
+    w.u32(m.tick);
+    w.u8(std::uint8_t(m.reason));
+    w.str8(m.section.substr(0, 64));
+    return std::move(w.out);
+}
+CheckpointBad decode_checkpoint_bad(std::span<const std::uint8_t> b) {
+    Reader r{b};
+    CheckpointBad m;
+    m.inst = r.u32();
+    m.visit = r.u32();
+    m.tick = r.u32();
+    m.reason = CheckpointBadReason(r.u8());
+    m.section = r.str8(64);
+    r.end();
+    return m;
+}
+
+std::vector<std::uint8_t> encode(const CheckpointAsk& m) {
+    Writer w;
+    w.u32(m.inst);
+    w.u32(m.visit);
+    w.u32(m.tick);
+    w.u8(m.flags);
+    return std::move(w.out);
+}
+CheckpointAsk decode_checkpoint_ask(std::span<const std::uint8_t> b) {
+    Reader r{b};
+    CheckpointAsk m;
+    m.inst = r.u32();
+    m.visit = r.u32();
+    m.tick = r.u32();
+    m.flags = r.u8();
     r.end();
     return m;
 }
@@ -1044,7 +1141,7 @@ std::vector<std::uint8_t> encode_state_body(const StateData& m) {
     Writer w;
     w.u8(std::uint8_t(m.purpose));
     w.u8(m.slot);
-    w.u8(0); // codec: raw tick records
+    w.u8(m.checkpoint ? 2 : 0); // codec: raw tick records (2: with a checkpoint)
     w.blob(m.snapshot);
     if (m.forks.size() > 255) throw WireError("too many forks");
     w.u8(std::uint8_t(m.forks.size()));
@@ -1053,6 +1150,14 @@ std::vector<std::uint8_t> encode_state_body(const StateData& m) {
         w.u8(f.leavers);
         w.u8(std::uint8_t(f.kind));
         w.u8(f.side);
+    }
+    if (m.checkpoint) {
+        w.u32(std::uint32_t(m.load_ticks.size()));
+        for (const auto& t : m.load_ticks) write_tick(w, t);
+        w.u32(m.checkpoint_tick);
+        w.u64(m.checkpoint_hash);
+        w.u8(m.checkpoint_flags);
+        w.blob(*m.checkpoint);
     }
     w.u32(m.first);
     w.u32(std::uint32_t(m.ticks.size()));
@@ -1067,7 +1172,8 @@ StateData decode_state_body(std::span<const std::uint8_t> b) {
     m.purpose = StatePurpose(purpose);
     m.slot = r.u8();
     if (m.slot > 3) throw WireError("state slot above 3");
-    if (r.u8() != 0) throw WireError("unknown state codec");
+    const auto codec = r.u8();
+    if (codec != 0 && codec != 2) throw WireError("unknown state codec");
     m.snapshot = r.blob(4u << 20);
     const int forks = r.u8();
     for (int i = 0; i < forks; ++i) {
@@ -1080,6 +1186,15 @@ StateData decode_state_body(std::span<const std::uint8_t> b) {
         f.kind = SplitKind(kind);
         f.side = r.u8();
         m.forks.push_back(f);
+    }
+    if (codec == 2) {
+        const std::uint32_t load = r.u32();
+        if (load > 1u << 20) throw WireError("implausible load ticks");
+        for (std::uint32_t i = 0; i < load; ++i) m.load_ticks.push_back(read_tick(r));
+        m.checkpoint_tick = r.u32();
+        m.checkpoint_hash = r.u64();
+        m.checkpoint_flags = r.u8();
+        m.checkpoint = r.blob(8u << 20);
     }
     m.first = r.u32();
     const std::uint32_t count = r.u32();

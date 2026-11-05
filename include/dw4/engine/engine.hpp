@@ -4,6 +4,7 @@
 #include "dw4/engine/online.hpp"
 #include "dw4/engine/port_events.hpp"
 #include "dw4/engine/scene_graph.hpp"
+#include "dw4/engine/tick_state.hpp"
 #include "dw4/card_store.hpp"
 #include "dw4/console_reset.hpp"
 #include "dw4/igb_document.hpp"
@@ -144,6 +145,7 @@ public:
     State state() const { return made_ ? State{current_, objects_[current_].bools, objects_[current_].first_bool} : State{}; }
     State state(std::size_t object) const { return holds(object) ? State{object, objects_[object].bools, objects_[object].first_bool} : State{}; }
     std::size_t objects() const { return objects_.size(); }
+    void tick_state(TickArchive& a); // tick_state.cpp
 
     static constexpr std::size_t kRecords = 32;
 
@@ -226,6 +228,10 @@ public:
     void set_trigger(int slot) { trigger_ = slot; }
     // The scene scope posts take (Engine::SceneScope).
     void set_scope(int slot) { scope_ = slot; }
+    // The tick state (tick_state.cpp): the deferred messages, the message
+    // objects and the pause (the rows are topology).
+    void tick_state(TickArchive& a);
+    bool between_steps() const { return port_only_ == 0 && trigger_ == -1 && scope_ == -1; }
 
 private:
     int trigger_ = -1;
@@ -317,6 +323,12 @@ public:
     void set_trigger(int slot) { trigger_ = slot; }
     // The scene scope new works take (Engine::SceneScope).
     void set_scope(int slot) { scope_ = slot; }
+    // The tick state (tick_state.cpp): the running works. Between steps no
+    // work is under construction; a work with a port record (the exit
+    // port's) is not state-safe yet (has_port).
+    void tick_state(TickArchive& a);
+    bool between_steps() const { return !current_ && !in_switch_ && trigger_ == -1 && scope_ == -1; }
+    bool has_port() const;
 
 private:
     int trigger_ = -1;
@@ -688,6 +700,62 @@ public:
     // Simulation entries that found another MXCSR than 0x1F80 and repaired
     // it for their duration (diagnostics, 6.12).
     static std::uint64_t mxcsr_repairs();
+
+    // ---- Round J: the tick state (tick_state.hpp, docs/SEAMLESS.md 6.13.2).
+    // Online only. A state-safe tick: online in a joinable kind of stage (no
+    // hub or UI stage), the stage active and loaded, no stage pending, no
+    // teardown, reboot, held field, barrier or fork, the transient fields
+    // empty between steps (script depth 0, no trigger or scene scope, no demo
+    // under construction, no model script context) and, until the later
+    // lanes cover them, no SUBWND program and no exit port running.
+    bool state_safe() const;
+    // Why not (diagnostics; "" when state_safe()).
+    std::string state_unsafe_reason() const;
+    // Between steps at a state-safe tick (throws std::logic_error otherwise).
+    std::vector<std::uint8_t> save_tick_state(TickForm form = TickForm::raw);
+    // Between steps, into an engine whose topology equals the taker's (the
+    // same visit rebuilt to the state's frame, or the taker itself): every
+    // section overwrites the mutable fields it names. Throws TickStateError
+    // (the section) on a damaged or foreign state; the engine is then
+    // unusable for the instance (the caller falls back).
+    void apply_tick_state(std::span<const std::uint8_t> bytes);
+    // XXH64 of the canonical form.
+    std::uint64_t tick_state_hash();
+    // A demo record's port in the tick state (online_exits.cpp).
+    void tick_port(TickArchive& a, std::function<int(Engine&)>& port);
+    // The visit's load end: the frame after the first step of this stage's
+    // load whose end found the stage active and the loader idle (0 before).
+    std::uint64_t load_end_frame() const { return load_end_frame_; }
+    // A test of the checkpoint path's suspicion rule (scenario JS, the host
+    // of a development build sets it): the tick state leaves the model RAMs'
+    // HP out, so a rebuild keeps the values of its load end and drifts.
+    // Never read by the simulation.
+    static void set_tick_state_skip_hp(bool on);
+    static bool tick_state_skip_hp();
+    // The topology hash (files in order, every manager's RAM count, the
+    // messenger rows, the schedule order, the owned nodes).
+    std::uint64_t topology_hash() const;
+    // The topology journal (6.13.2 step 3; online only, read by nothing in
+    // the simulation): the operations that change the topology after the
+    // stage's load began, in their order with their frames, at the level
+    // where they act: a package load (load_common_now), a member's own copy
+    // of a window model (make_window_copy) and of a window's text lines
+    // (TextCtlManager's copies). apply_tick_state re-runs the entries the
+    // reader lacks before it checks the topology hash.
+    struct TopologyEntry {
+        enum Kind : std::uint8_t { package = 1, window_copy = 2, line_copies = 3 };
+        std::uint64_t frame{};
+        std::uint8_t kind{};
+        std::string text, text2;
+        std::int32_t a{}, b{};
+        bool operator==(const TopologyEntry&) const = default;
+    };
+    void journal(TopologyEntry entry) {
+        if (!online_.enabled) return;
+        entry.frame = frame_;
+        journal_.push_back(std::move(entry));
+    }
+    const std::vector<TopologyEntry>& topology_journal() const { return journal_; }
 
     // ---- Data Overflow (docs/SURVIVAL.md 13.4; dw4/engine/overflow.hpp).
     // A survival run's engine carries its rules, set by the host before the
@@ -1207,6 +1275,13 @@ private:
     ExitPromptView exit_view_;
     struct ExitPort;
     std::shared_ptr<ExitPort> exit_port_;     // the running exit prompt (shared with its demo records)
+    // The exit port's demo record (a named type, so the tick state can find
+    // the port it steps).
+    struct ExitStep {
+        std::shared_ptr<ExitPort> exit;
+        int operator()(Engine& engine) const;
+    };
+    void tick_exit(TickArchive& a);
     std::vector<const Node*> picture_hidden_; // render(): picture_hidden_roots
     std::vector<Lua4Value> stage_change_port(std::span<const Lua4Value> args);
     bool gatedisc_fork();
@@ -1263,6 +1338,16 @@ private:
     void scoped_picture_hidden(std::vector<const Node*>& out);
     bool scoped_picture_filter() const;
     void step_impl(const std::array<PadSample, 4>& samples);
+    // Round J (tick_state.cpp).
+    std::uint64_t load_end_frame_{};
+    std::vector<TopologyEntry> journal_;
+    void rerun(const TopologyEntry& entry);
+    void tick_engine(TickArchive& a);
+    void tick_nodes(TickArchive& a);
+    void tick_lua(TickArchive& a);
+    void tick_attributes(TickArchive& a);
+    friend class DemoManager;
+    friend class TickIds;
 };
 
 // Base class for original be* managers. Registration follows the original
@@ -1299,9 +1384,22 @@ public:
         return false;
     }
     virtual void fallback(Engine& engine, Ram& ram, std::string_view command, Packet& packet);
+    // Round J (tick_state.hpp): the manager's mutable state in the tick state
+    // (none by default), the scene nodes it made itself (not the SceneCache's)
+    // in a fixed order, and its RAMs in a fixed order (RAM ids).
+    virtual void tick_state(TickArchive& archive) { (void)archive; }
+    // The structure a manager makes during play and can make again from the
+    // state (its owned nodes), applied before the topology check; the
+    // archive's ids name the SceneCache's nodes only.
+    virtual void tick_structure(TickArchive& archive) { (void)archive; }
+    virtual void owned_nodes(std::vector<Node*>& out) const { (void)out; }
+    virtual void tick_rams(std::vector<const Ram*>& out) const { (void)out; }
 
 protected:
     std::string type_name_;
 };
+
+// The three round J hooks of a manager class (tick_state_managers.cpp).
+#define DW4_TICK_STATE_HOOKS                                                                                       void tick_state(TickArchive& archive) override;                                                              void owned_nodes(std::vector<Node*>& out) const override;                                                    void tick_rams(std::vector<const Ram*>& out) const override;
 
 } // namespace dw4::engine

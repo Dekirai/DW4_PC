@@ -1,0 +1,12 @@
+{
+  "desc": "round J: the donor's checkpoint is damaged on the way (test hook): the joiner refuses it and joins the classic way",
+  "seed_story": true,
+  "card": "k10",
+  "frames": 60000,
+  "timeout": 900,
+  "min_shared_ticks": 3000,
+  "clients": [
+    {"name": "a", "script": "a.script", "start": 0, "env": {"DW4_ONLINE_TEST_BAD_CHECKPOINT": "1"}},
+    {"name": "b", "script": "b.script", "start": 3}
+  ]
+}

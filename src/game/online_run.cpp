@@ -10,6 +10,8 @@
 
 #include "dw4/engine/online_story.hpp"
 
+#include <zstd.h>
+
 #include <algorithm>
 #include <bit>
 #include <cctype>
@@ -132,6 +134,23 @@ OnlineRun::OnlineRun(std::unique_ptr<online::HttpWorker> http, OnlineRoom room, 
     config.room_owner = room_.room_owner;
     config.owner_name = room_.owner_name;
     config.rate = rate;
+    // Round J: checkpoints travel zstd-compressed (level 3; docs/SEAMLESS.md 6.13.2).
+    config.compress = [](std::span<const std::uint8_t> raw) {
+        std::vector<std::uint8_t> out(ZSTD_compressBound(raw.size()));
+        const std::size_t n = ZSTD_compress(out.data(), out.size(), raw.data(), raw.size(), 3);
+        if (ZSTD_isError(n)) throw std::runtime_error(std::string("checkpoint compression: ") + ZSTD_getErrorName(n));
+        out.resize(n);
+        return out;
+    };
+    config.decompress = [](std::span<const std::uint8_t> packed) {
+        const unsigned long long size = ZSTD_getFrameContentSize(packed.data(), packed.size());
+        if (size == ZSTD_CONTENTSIZE_ERROR || size == ZSTD_CONTENTSIZE_UNKNOWN || size > (64ull << 20))
+            throw std::runtime_error("checkpoint: a damaged or oversized frame");
+        std::vector<std::uint8_t> out(static_cast<std::size_t>(size));
+        const std::size_t n = ZSTD_decompress(out.data(), out.size(), packed.data(), packed.size());
+        if (ZSTD_isError(n) || n != out.size()) throw std::runtime_error("checkpoint: a damaged frame");
+        return out;
+    };
     config.trace = std::getenv("DW4_ONLINE_TRACE") != nullptr;
     // DW4_ONLINE_RATE=N (test runs): this machine replays at most N steps per
     // second and reports that rate (a slower machine, SEAMLESS.md 6.6).

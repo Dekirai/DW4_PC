@@ -35,6 +35,8 @@ class Lua4Program {
 public:
     Lua4Program() = default;
     const Lua4ProgramInfo& info() const;
+    // The program a closure runs (Lua4Vm::save_state's ids).
+    const void* identity() const noexcept { return impl_.get(); }
 private:
     struct Impl;
     std::shared_ptr<const Impl> impl_;
@@ -198,6 +200,18 @@ public:
     // only from that same logical callback; completed children allow siblings.
     Lua4Execution begin_nested(const Lua4Program& program);
     Lua4RunResult resume(Lua4Execution& execution);
+    // The tick state (docs/SEAMLESS.md 6.13.2, round J), only between roots:
+    // the globals, both object arenas with their slot layout, generations and
+    // free lists, the collector's counters and the stack limit. A closure
+    // names its program by `program_id` (of Lua4Program::identity) and its
+    // prototype by its path ("main/0"); load_state takes the programs back
+    // by those ids. Values keep their handles; their owner becomes this VM.
+    // load_state throws Lua4Error on damaged bytes (the VM is then unusable).
+    std::vector<std::uint8_t> save_state(const std::function<std::uint64_t(const void* program)>& program_id) const;
+    void load_state(std::span<const std::uint8_t> bytes, const std::function<Lua4Program(std::uint64_t id)>& program);
+    // One value in the same layout (the host's own Lua values).
+    void write_value(std::vector<std::uint8_t>& out, const Lua4Value& value) const;
+    Lua4Value read_value(std::span<const std::uint8_t> in, std::size_t& at) const;
 private:
     friend struct Lua4Execution::Impl;
     struct Impl;

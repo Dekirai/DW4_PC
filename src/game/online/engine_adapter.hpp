@@ -55,6 +55,11 @@ public:
     std::uint64_t load_serial() const override;
     std::vector<std::uint8_t> snapshot_bytes(bool canonical) const override;
     std::uint64_t net_fingerprint() override;
+    bool state_safe() const override;
+    bool load_ended() const override;
+    std::vector<std::uint8_t> save_tick_state(bool canonical) override;
+    std::uint64_t tick_state_hash() override;
+    std::string apply_tick_state(std::span<const std::uint8_t> bytes) override;
     bool membership_safe() const override;
     bool joinable(wire::NotJoinable& reason) const override;
     bool boss_lock() const override;

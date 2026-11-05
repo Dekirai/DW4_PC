@@ -707,7 +707,32 @@ const Attribute* SceneCache::attribute(const ObjectView& view) {
     if (!view) return nullptr;
     const Key key{view.document(), view.reference()};
     if (auto found = attributes_.find(key); found != attributes_.end()) return found->second.get();
-    auto a = std::make_unique<Attribute>();
+    auto owned = std::make_unique<Attribute>();
+    fill_attribute(*owned, view);
+    auto* raw = owned.get();
+    attributes_.emplace(key, std::move(owned));
+    return raw;
+}
+
+void SceneCache::reset_edited_attributes(const std::set<const Attribute*>& keep) {
+    for (auto it = edited_.begin(); it != edited_.end();) {
+        const auto found = attributes_.find({it->first, it->second});
+        if (found == attributes_.end()) {
+            it = edited_.erase(it);
+            continue;
+        }
+        if (!keep.contains(found->second.get())) {
+            *found->second = Attribute{};
+            fill_attribute(*found->second, ObjectView(it->first, it->second));
+            it = edited_.erase(it);
+        } else {
+            ++it;
+        }
+    }
+}
+
+void SceneCache::fill_attribute(Attribute& target, const ObjectView& view) {
+    Attribute* a = &target;
     a->object = view;
     const auto& type = view.type();
     if (type == "igGeometryAttr1_5" || view.is_a("igGeometryAttr")) {
@@ -833,9 +858,6 @@ const Attribute* SceneCache::attribute(const ObjectView& view) {
         a->e1 = view.i32(5);
         a->unit = view.i32(6);
     }
-    auto* raw = a.get();
-    attributes_.emplace(key, std::move(a));
-    return raw;
 }
 
 Node* SceneCache::find(const IgbDocument* document, std::uint32_t reference) const {
@@ -852,6 +874,14 @@ void SceneCache::release_document(const IgbDocument* document) {
     }
     for (auto it = nodes_.begin(); it != nodes_.end();) {
         if (it->first.document == document) it = nodes_.erase(it);
+        else ++it;
+    }
+    // The edited keys go too: a later document may take this one's address
+    // (a stage loaded again), whose attributes nobody edited (round J: a stale
+    // key named an attribute of the next stage as edited in the tick state, on
+    // one member only; S2's visits after a fork).
+    for (auto it = edited_.begin(); it != edited_.end();) {
+        if (it->first == document) it = edited_.erase(it);
         else ++it;
     }
 }

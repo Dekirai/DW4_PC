@@ -2505,6 +2505,16 @@ int run(const Options& options, dw4::game::Settings& settings) {
                         const char* text = std::getenv("DW4_ONLINE_TEST_DESYNC");
                         return text && *text ? std::atoll(text) : -1LL;
                     }();
+                    // DW4_ONLINE_TEST_TICKSTATE_SKIP=1 (scenario JS): the tick
+                    // state misses the model RAMs' HP and the system generator
+                    // on this machine.
+                    static const bool skip_hp = [] {
+                        const char* text = std::getenv("DW4_ONLINE_TEST_TICKSTATE_SKIP");
+                        const bool on = text && *text == '1';
+                        dw4::engine::Engine::set_tick_state_skip_hp(on);
+                        return on;
+                    }();
+                    (void)skip_hp;
                     static bool desynced = false;
                     if (!desynced && desync_tick >= 0 && online->session().mode() == dw4::game::online::Mode::sealed &&
                         online->session().tick() >= std::uint64_t(desync_tick)) {

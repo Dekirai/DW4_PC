@@ -40,6 +40,8 @@
 #include <array>
 #include <cstdint>
 #include <deque>
+#include <functional>
+#include <span>
 #include <map>
 #include <memory>
 #include <optional>
@@ -71,6 +73,10 @@ struct SessionConfig {
     // guest's notices ("<owner>'s story moved on").
     bool room_owner = true;
     std::string owner_name;
+    // Round J (6.13): a checkpoint's compression (the app's zstd); unset:
+    // the bytes go raw. A payload starts with its codec byte (0 raw, 1 this).
+    std::function<std::vector<std::uint8_t>(std::span<const std::uint8_t>)> compress, decompress;
+    std::uint32_t checkpoint_period = 600; // STATEHASH at the first state-safe tick at or after every multiple
 };
 
 enum class Mode : std::uint8_t { connecting, solo, sealed, parked, transition, waiting_state, catching_up, observing, lost, closed };
@@ -274,6 +280,10 @@ private:
     // One line of saves/online.log (when set).
     void log(const char* format, ...) const;
     std::string slot_name(int slot) const;
+    // Round J (6.13.4-6.13.5).
+    void checkpoint_tick(double now);
+    void upload_checkpoint();
+    bool rebuild_from_checkpoint(wire::StateData& state, double now);
 
     EngineLink& engine_;
     SessionConfig config_;
@@ -428,6 +438,15 @@ private:
     bool engine_replaced_ = false;
 
     // Network facts and the input latency (net_stats.hpp).
+    // Round J: the checkpoints (6.13.4) and the join from one (6.13.5).
+    bool hub_checkpoints_ = false;           // the hub's WELCOME has flag 4
+    std::optional<std::uint32_t> load_end_;  // K: the visit's ticks up to its load end
+    std::uint32_t next_statehash_ = 0;       // the next checkpoint period's tick
+    bool checkpoint_asked_ = false;          // CHECKPOINT_ASK: upload at the next state-safe tick
+    bool periodic_asked_ = false;            // CHECKPOINT_ASK periodic: upload with the next STATEHASH (an agreed tick)
+    bool from_checkpoint_ = false;           // this catch-up started from a checkpoint
+    double rebuild_ms_ = 0;                  // its rebuild (snapshot, load ticks, apply, hash)
+
     NetStats stats_;
     NetView net_;
     std::uint64_t steps_ = 0;       // live steps run (the latency's step count)
