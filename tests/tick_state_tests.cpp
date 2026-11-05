@@ -516,6 +516,11 @@ int main(int argc, char** argv) {
                 set.push_back({"dng101b1", 2, {"p_agumon", "p_vmon"}, 4000, 61, 700});
                 set.push_back({"stag0102", 3, {"p_agumon", "p_dorumon", "p_vmon"}, 4000, 61, 1600, 0, 0, 900});
                 set.push_back({"stagBS02", 4, {"p_agumon", "p_dorumon", "p_vmon", "p_girumon"}, 3000, 61});
+                // Round J's review (STATEHASH runs in every field stage, not only these): a dungeon's boss
+                // floor, a boss stage and a quest's boss floor (its kill writes a context flag).
+                set.push_back({"dng102b3", 2, {"p_agumon", "p_vmon"}, 3000, 61});
+                set.push_back({"stagBS01", 2, {"p_dorumon", "p_girumon"}, 3000, 61});
+                set.push_back({"dngq1b2e", 2, {"p_agumon", "p_dorumon"}, 3000, 61});
             }
             for (const auto& sc : set) run(data, sc);
         } else {
