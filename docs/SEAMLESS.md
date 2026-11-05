@@ -11126,7 +11126,10 @@ the decision stays under the lock).
   again with `loadgate --sockets` and in-process, all cells, on a quiet
   machine, criteria unchanged; it decides phase 1 or 2. Whether the max
   may be read at p99.99 when a busy machine's single pauses are the only
-  holds over 5 ms is the user's call (open point), not this round's. Not
+  holds over 5 ms was the user's call: yes (relayed in round 72, section
+  18), so the hold criterion reads "p99 at most 0.5 ms and p99.99 at most
+  5 ms", which every in-process cell above meets (p99.99 1.9-3.2 ms);
+  the relay's CPU over sockets is still open (e). Not
   measured: STORY merges and mirrors at barriers (the keepers per account
   and the mirror come with I1a's story lane), joins over sockets (the
   in-process joins cell only), an incremental margin and the selection off
@@ -11442,8 +11445,27 @@ with 1,748,011 frames, the save state suite 17 of 17.
   member / removal bar, for every list (prompt, browser, friend list,
   co-arrival, presence, the website).
 - `MatchingTests`: candidates (stage, context, states), the order and the
-  preselection, the automatic co-arrival only with starting groups, a lone
-  host moving on, travel rows, the re-check at the decision.
+  preselection, the automatic co-arrival only with starting groups, travel
+  rows, the re-check at the decision; round 72: candidates per area, the
+  JOIN where the instance has a stage group, the guest's NEW at a gate or
+  visited stage, *Not here yet* elsewhere, the tie-breaker "players here",
+  a lone host's move inside his area never prompted (it was "a lone host
+  moving on").
+- `AreaTableTests` (round 72): `areas.json` format 2 against the client's
+  table; every arrival stage from home (the gate stages, the 29 Security
+  Gate stages, the quest start) has exactly one area; each area's scope
+  (the stages reachable from its arrival stages without a hub stage, by
+  `campaign.cpp`'s stage graph) is pinned (Death Valley's with the
+  Fortress and stag0205); every dungeon and boss stage has its dungeon key.
+- `GoAlongTests` (round 72): an offer only for field to dungeon stage, none
+  inside a dungeon, from a dungeon, from home or at a reconnect; one per
+  instance and dungeon with entrants added; who is offered (fields only,
+  not mid-change, the entrants' context, connected, never spectators) and
+  who gets the notice (HEADING's asked mask); the target following the
+  first entrant deeper; closing on leave, game over, end; INTENT 4's checks
+  and the GO stamped sealed and through JOIN_REQ *go*; two INTENTs in one
+  stamp; the GO's barrier matched and decided with the offer's stage group
+  first, a new stage group when it has gone; the seat kept.
 - `WorldLifecycleTests`: creation, visibility by the host and staff, HOME
   stamping (sealed and solo-led), every end of 19.6.5, the grace with resume
   and with its end, removal and bar, the seats.
@@ -11487,13 +11509,22 @@ history.
 **Client ctest:** `online_wire` (the new messages, the JOIN spawn kind,
 HOME, both registries); `online_session` (two confirmed stories and the
 owner key, the input hold and its release, B, the loading-screen prompt,
-the travel, HOME, the reconnect inside the instance, toasts); `online` (the
-engine's new paths on two engines with equal fingerprints:
+the travel, HOME, the reconnect inside the instance, toasts; round 72: the
+go-along notice, its waits (an own scene, defeated, loading) and its
+*Instance* page box, INTENT 4 only while the own player can go); `online`
+(the engine's new paths on two engines with equal fingerprints:
 `redirect_pending_stage` only for a solo parked engine, the replace at
 DISSOLVE, HOME for a mask, the spawn ring and the safe positions, the
-settings at a restore); `online_lobby` (the home screen and the friends
-screens over the scripted HTTP queue); `dw4_ghosts_tests` (cap 30, the
-order, the NPC figure).
+settings at a restore; round 72: the replace at a guest's NEW; GO for a
+living slot (a fork), for the last living one with a defeated partner
+(taken along), for every present member (the group move), for a defeated,
+absent or leaving slot (nothing), with the slot's own exit prompt open (it
+waits), with its own status window or talk open (closed), two GO slots in
+one tick (one departure), with the zone shuffle on (the barrier's stage,
+no second remap); HEADING's asked mask); `online_lobby` (the home screen
+and the friends screens over the scripted HTTP queue); `dw4_ghosts_tests`
+(cap 30, the order, the NPC figure); `dw4_presence_tests` (`areas.json`
+format 2 exported and checked in).
 
 **Hidden real game clients on loopback** (`tools/online_test`, hidden
 window, no sound, r25c checkpoints as cards; every scenario also checks
@@ -11516,7 +11547,7 @@ means round I1a):
 | W8 | I1 | free travel: b leaves a's stag0101 for dng101b1 alone (a stage group of a's instance, a's story), sets a story value there that a's story gets (guest rules); a follows to dng101b1 and joins b's stage group at its barrier (inside the instance, no prompt) |
 | W9 | I1 | not in step: b (own phase 2) goes home through an exit into stagML02 while a's story is at phase 4: b is redirected to stagML11 point 3 with its own story |
 | W10 | I1b | a removes b: b goes home; b's prompt and the browser do not list a's instance for 10 minutes; W10b: b is defeated when a removes it: b still goes home (`ForkKind::home`), a's stage group plays on; W10c: a test hook keeps b's client from answering: its STORY with a's key is refused at once and its stage group is detached |
-| W11 | I1b | a lone host moving on: a (alone in its instance) takes stag0101's exit to dng101b1 where c hosts: the loading-screen prompt; *Join*: a's instance ends, a is c's guest; *B*: a continues alone. W11b: a quest board's start the census cannot name, with a running instance there: the loading-screen prompt; *B* takes a back into the lobby next to the board, on its own story |
+| W11 | I1a / I1b | (changed in round 72) a lone host moving inside his area: a (alone in its instance) takes stag0101's exit to dng101b1 where c's instance has a stage group: no prompt, a's instance goes on with a (a new stage group of it), a sees none of c's members. W11b (I1b): a quest board's start the census cannot name, with a running instance there: the loading-screen prompt; *B* takes a back into the lobby next to the board, on its own story |
 | W12 | I1 | settings: a hosts Hard with the randomizer and camera mode 1; b (Normal, 0, no randomizer) joins: in the instance b's engine is Hard / 1 / randomizer, at home Normal / 0 / none |
 | W13 | I3 | quest help: a on board quest 1 (stag0401 point 3); b without the quest travels to a: at the quest's end b is home with its own 409, 376-381 and COUNTER 2 and no reward; a gets the reward |
 | W14 | I3 | browser travel: b joins a in dng101b1 through the NPC; spawn within 3 units of a; a in a pit or mid-jump: b appears at a's last safe position without waiting; next to fighting enemies: recorded; every member of a's stage group defeated: the join waits (no rescue join); under 1.0 s at any visit length (J's measure); a failure after the restore (a test hook) puts b back in its lobby from the kept snapshot |
@@ -11535,6 +11566,16 @@ means round I1a):
 | W27 | I1 | a host's game over: before I3 the instance ends ("Kim was defeated. The instance ends."); I3: the return hold, *A* puts a next to b, *B* ends it; the last living guest's exit home pulls the defeated host along: the same hold (question 37) |
 | W28 | I1 | a story reset and an admin restore while a plays at home and while a hosts b: the keeper reloads, a's hosted instance ends, nothing of the old story is saved again |
 | W29 | I1 | achievements in the world: *Lone Tamer* alone, `online_host` with three guests (fake clients for two), a clear as the host |
+| W30 | I1a | (round 72) the area join: a hosts Dry Land and walks to dng205b1; b (another phase, other settings) takes the gate to stag0201: I1a enters b into a's instance as a guest in a new stage group at stag0201 (b's engine has a's phase, flags and settings, its own context), b's toast names a's stage; b walks to stag0202 and into dng205b1 and joins a's stage group there without a prompt; b's gate disc: home on its own story, `online_card.dat` and b's server revision unchanged (counter-proof: with the replace at the guest's NEW switched off, b's engine has its own phase in stag0201 and the test fails) |
+| W30b | I1a / I1b | (round 72) the visited rule: a's Dry Land instance has never been at dng205b2; b arrives by the return mat at dng205b2: I1a gives b a NEW of its own, I1b shows a's row greyed *Not here yet*; after a walked to dng205b2, b's next arrival there joins a without leaving a's story |
+| W31 | I1b | (round 72) go along: a, b and c in a's Dry Land instance, a and b in stag0201, c in stag0202; a takes matz01 into dng204b1 alone: within 1 s of a's BARRIER_OK b and c show the notice; b answers (View, A): b's GO departure, b joins a's stage group at dng204b1's entrance from a checkpoint once it is joinable; c lets the notice run out: gone after 20 s, c plays on, the offer stays on c's *Instance* page; a takes matz02 to dng204b2: no new notice, c's row reads B2; c answers: c joins at B2's entrance; equal NETFP and STATEHASH in every shared stage group; the times from the press to control recorded (19.30.7's estimate) |
+| W31b | I1b | (round 72) the mat: a and b on stag0201's matz01; a confirms, b says No in its own prompt: b gets no notice (HEADING's asked mask) but the offer on its page; c, elsewhere in stag0201, gets the notice |
+| W31c | I1b | (round 72) races: a goes into dng204b1 and back to stag0201 before b answers: the offer closes ("Kim left Sand Labyrinth."), b's late A is refused (*go refused*); a test hook holds a's way back until b's GO is stamped: b lands alone in dng204b1 in a stage group of a's instance ("... before you arrived."), its seat kept |
+| W31d | I1b | (round 72) defeated: b defeated in stag0201 when a goes in: no notice until b is raised; c, the last living member of b's stage group, goes along: b is taken along (the side rule), no game over; a test hook defeats c between its A and the GO's step: the GO does nothing on every engine, "Couldn't go along: you were defeated." |
+| W31e | I1b | (round 72) two dungeons: a goes into dng204b1 and c into dng205b1 within 2 s: b shows two lines, answers c's and joins c; a's offer closes for b, which is in a dungeon then |
+| W31f | I1b | (round 72) the host goes in: host a goes into dng204b1, guest b in stag0201 lets the offer run out, nothing moves b; a test hook defeats dng204b2's boss and a takes matz02 into stagML11: a's prompt shows "Your guests will return to their lobbies.", b goes home 3 s later (`end_reason` host_left) |
+| W32 | I1a | (round 72) the Fortress: a hosts Death Valley (a seed with flag 20) and walks stag0101 -> staggf01 -> gf02 -> gf04 -> stag0205 (point 1) and back: the instance never ends; b at the gate to Dry Land gets no row for a's instance (its area is Death Valley). W32b: the zone shuffle on: c goes along into a remapped dungeon entrance and lands in the stage a's barrier named (no second remap) |
+| W33 | I3 | (round 72) after I3: b goes into dng204b1; a spectator d watching a gets no offer; a goes along and d follows a through the GO's barrier; a appears next to b, not at the entrance; later c's *Go to a* from the *Instance* page lands c next to a without leaving the instance (seat kept, no HOME) |
 
 **The harness** (`tools/online_test/run.py`) is room-based today: it
 creates rooms (around lines 358-362), starts clients with
@@ -11572,8 +11613,8 @@ splits the world into two mergeable halves that the user deploys together.
 | 0 | **Cheats tab fix** (section 17, "Before round D") | G-core | S (UI only) | a precondition of I1a: Public is the default from I1a on, so strangers meet from then, not only from I3 |
 | 1 | **G-core** (round G trimmed) | J's engine lanes (tick state core and rest) | M | 503 as story, the key setter stages, the rebase, the Game Start's hold, the call shop closed, `common_rebuilt`, the card override, the own story bytes, the reason *queued*, the twins. Dropped: the hub extras lane (the `online_rewards` store is not needed, the quest gates have no case, 19.8.9) and the online difficulty dialog rule ("the room decides the difficulty"), which I1a would take back (19.8.7) |
 | 2 | **J** (as designed, 6.13) | **I2-social**: the friend service, blocks, its own migration `friends`, `IWorldNotifier` as a no-op, REST, `/account/friends`, the profile buttons (domain, API, web: no relay or client session files) | L; I2-social S-M | J on the room hub; its scenarios as designed. I2-social ships with its own server release (friends on the website before the game shows them) |
-| 3 | **I1a: the world without rooms** | - | L (four lanes and the harness) | automatic joins by visibility; the protocol rises (merged, not yet deployed) |
-| 4 | **I1b: the prompt, removal, *Report player*** | - | M (two lanes) | the user deploys I1a and I1b together, one protocol rise |
+| 3 | **I1a: the world without rooms** | - | L (four lanes and the harness) | automatic joins by visibility; instances per area (round 72); the protocol rises (merged, not yet deployed) |
+| 4 | **I1b: the prompt, go along, removal, *Report player*** | - | M-L (three lanes; go along added in round 72) | the user deploys I1a and I1b together, one protocol rise |
 | 5 | **I2: friends in the game, blocks everywhere, the shared story point** | - | M | its server and web parts came in step 2 |
 | 6 | **I3: browser, joins next to the host, staff spectators, the defeated host's return** | - | M-L | needs J (P3) |
 | 7 | **I4: parties** | D's tables and web lanes | M | |
@@ -11611,7 +11652,7 @@ The design changes the results force, for the lanes:
 | M1 | A restore keeps the host's modes (the snapshot's GameSystem) but `GameEngineLink::start_online` puts the joiner's own randomizer and fast loading over the snapshot's cheats: with other settings a classic join differs from the next stage load (randomizer) or the next stage change (fast loading), a checkpoint join is refused; drops alone were not exercised (no drop in the 4,199 frames; by code the first drop differs) (19.8.7) | after every restore the snapshot's cheats stay (only `online_cheats`' forced-offs); no settings in BARRIER_OK or STATE_DATA and no join filter are needed; the own modes and cheats come back in the parked DISSOLVE before the module reload: the load then reads the files and latches the fast loading of a Game Start with them (the reload's length and the load's duration follow the departing visit) | client |
 | M2 | A redirect at BARRIER_OK, in the module reload's held fields or before the load step (the top of `apply_barrier`) equals a NEXTSTAGE to that stage and point (load snapshot and about 3,977 frames of net fingerprints), solo and for a parked guest of a stage group of two or three with own slot 1; without the point it differs (19.8.3) | `redirect_pending_stage` = `request_stage` + `PlayerPointManager::set_point_no`, called from `on_barrier_ok` or the top of `apply_barrier`, never later; it asserts a DISSOLVE decision and a pending stage, not a solo engine | client |
 | M3 | Only defeated players after a HOME reach the original game over (one update after the HOME, NEXTSTAGE stagml11 374-402 frames later, as offline: 383); every such barrier, and the exit prompt's (stag0101 point 2) when HOME left a defeated member alone on an exit mat, has alive mask 0; that prompt is HOME's doing (offline, two defeats on the same mat run the game over) (19.6.5) | the relay reads "defeated" from the barrier's alive mask 0, not from the target stagML11, except in a give-up copy (INTENT *give_up* and its fork: on purpose, answers 24 and 37); such a barrier of an ended instance is redirected home | relay |
-| M4 | Phase 1 (one lock) passes the holds' p99 (12-23 µs) and, over sockets with `TryEnter` as built, the sealing lateness p99 (under 2 ms; misses 0.5-1.1 %); it fails the max of 5 ms in every cell with sealed groups (the ping pass sorts 1,800 margins per sealed member, 7.5-21 ms once a second; GC and the busy machine) and the relay's CPU over sockets (base 0.72-0.85 cores, select 0.66, a full hub 4) from the connection path, one write and two reads per frame; the in-process TryEnter misses (15-35 %) were the harness's coincident timer wakes; the lock is busy 1.1-1.8 %, so phase 2 fixes none of it (19.17.4) | phase 1 kept provisionally; the gate's criteria unchanged; the PING margin incremental or cached; `TryEnter` stays (`SealRoom` counts misses, reads its time with the lock held; `SealLateness`); the presence selection computed off the lock; the fan-out by selection; the relay lane cuts the CPU per frame (coalesced writes alone did nothing measurable); then the gate again, both harnesses, on a quiet machine; reading the max at p99.99 is a question for the user | relay |
+| M4 | Phase 1 (one lock) passes the holds' p99 (12-23 µs) and, over sockets with `TryEnter` as built, the sealing lateness p99 (under 2 ms; misses 0.5-1.1 %); it fails the max of 5 ms in every cell with sealed groups (the ping pass sorts 1,800 margins per sealed member, 7.5-21 ms once a second; GC and the busy machine) and the relay's CPU over sockets (base 0.72-0.85 cores, select 0.66, a full hub 4) from the connection path, one write and two reads per frame; the in-process TryEnter misses (15-35 %) were the harness's coincident timer wakes; the lock is busy 1.1-1.8 %, so phase 2 fixes none of it (19.17.4) | phase 1 kept provisionally; the gate's criteria unchanged; the PING margin incremental or cached; `TryEnter` stays (`SealRoom` counts misses, reads its time with the lock held; `SealLateness`); the presence selection computed off the lock; the fan-out by selection; the relay lane cuts the CPU per frame (coalesced writes alone did nothing measurable); then the gate again, both harnesses, on a quiet machine; reading the max at p99.99 was a question for the user, answered yes (relayed in round 72): the in-process holds pass at p99.99 (1.9-3.2 ms), the CPU over sockets stays open | relay |
 | M5 | 30 ghost figures cost 0.40-0.45 ms a pass at 144 Hz (CPU 0.25-0.30 ms) on the RTX 5070 Ti with a hidden window; the half rate as measured skipped only the pose of the farther 20 and saved 0.03-0.04 ms (19.13) | 30 at full rate by default; the half rate and the distance cap with its F1 setting stay designed as the fallback, built only if a weaker GPU (the iGPU, a visible window) measures over the 1.5 ms budget | client |
 
 | Lane | Scope |
@@ -11622,9 +11663,19 @@ The design changes the results force, for the lanes:
 | client | the replace at DISSOLVE and `redirect_pending_stage` with the generate point; HOME with `ForkKind::home`; the local way home (19.6.10); the settings at a restore and at DISSOLVE; the original difficulty dialog online; the world session, member ids, two confirmed stories; the home screen (room screens removed), Online > Settings; the F1 Online tab's *Instance* page (visibility, *Leave instance*), the line under the own status window, notices and toasts; 30 ghost figures, the farther ones at half rate; Discord; `--online-play` |
 | harness | a fresh server per scenario, the world's membership log per instance, `--online-play`, `DW4_ONLINE_AUTOCHOICE`, the regression ported |
 
+**Round 72 adds to I1a** (decision 38, 19.30.2-19.30.4): first task, the
+guest's NEW against a Game Start with the host's story and settings
+(19.30.4); relay world lane: the instance's area and visited set, the
+index by area, candidates per area with the guest's NEW and *Not here
+yet*, no prompt and no automatic join for a lone host's moves; story lane:
+the replace with the host's story at a guest's NEW in BARRIER_OK; client
+lane: the replace at a guest's NEW, `areas.json` format 2 and its
+exporter; server: the relay embeds `areas.json`. Size: still L.
+
 Done when: W1 (the automatic join), W3, W4, W4b, W5 (without friends), W6,
-W7, W7b-W7e, W8, W9, W12, W18 (playing staff), W19 (without friends), W22
-and W24-W29 (W27 the end before I3) pass, with W1 failing on a build with
+W7, W7b-W7e, W8, W9, W11, W12, W18 (playing staff), W19 (without friends),
+W22, W24-W29 (W27 the end before I3), W30, W30b (its I1a part) and W32
+pass, with W1 failing on a build with
 the replace switched off (the counter-proof); the ported regression passes;
 ctest and the server's unit, integration and load tests pass; online off is
 bit-identical (`det.sh` 4004f056 / audio 396cb219 twice, r25c 10 of 10 with
@@ -11634,20 +11685,25 @@ Depends on: the Cheats tab fix, G-core and J merged (J preferred: without
 it I1's joins take the classic path, refused beyond 30 s and shown so in
 the lists); I2-social merged (its tables and the notifier's interface); the
 answers to questions 32 and 36 (the defaults otherwise; 32 (b) adds a lane
-with round S3's script classes, 32 (c) rewrites the exit port). Round I3
-depends on the answers to 35 and 37 as well.
+with round S3's script classes, 32 (c) rewrites the exit port; 32 and 36
+are answered, section 18) and to questions 39 and 40 of round 72 (the
+defaults otherwise; 39 (b) adds a relay check of the Fortress stages, 40
+(b) only changes I3's prompt rows). Round I3 depends on the answers to 35
+and 37 as well.
 
-**Round I1b: the prompt, removal and *Report player*** (proposed r69; M,
-two lanes).
+**Round I1b: the prompt, go along, removal and *Report player*** (proposed
+r69; M, two lanes; round 72 adds the third lane *go along*, M-L).
 
 | Lane | Scope |
 | --- | --- |
 | prompt | the departure census and `pending_departure_choice()` for each hub departure (19.7.4, its first task); the input hold with `World:PlanWaitMs` and the release on a lost connection; PLAN / OPTIONS / CHOICE with PLAN's throttle; the relay's prompt hold, candidates and order; the loading-screen form with *Back to the lobby* (the redirect) and *Continue alone*, closed on a disconnect; the overlay in both forms |
 | moderation | INSTANCE_OP *remove* with the bar, the owner switch and the detachment (19.6.6); *Report player* (REPORT, `player_reports` in the still unreleased `world` migration, `POST /reports`, `/admin/reports`); the player card's *Report* |
+| go along (round 72, 19.30.5-19.30.7) | first task: the GO departure against the exit port's own departure to the same stage and point (fingerprints, both copies of the fork, with the zone shuffle on and off); relay: the offers (made, extended, followed, closed), OFFER, INTENT 4's checks, GO stamped sealed and through JOIN_REQ *go*, the GO's barrier with the offer's stage group first, HEADING's asked mask; engine: `Engine::online_go`, the asked mask in `ExitHeading`; client: the notice, the *Instance* page's *Go along* box, its waits and texts; the prompt's area rows with *Here* and *Not here yet* |
 
-Done when W1 (the prompt), W2, W2b, W10-W10c, W11 and W11b pass, plus the
-I1a scenarios again, the regression, ctest, the server's tests and online
-off; a DW4Online release with the migration and the new protocol exists.
+Size with the third lane: M-L. Done when W1 (the prompt), W2, W2b,
+W10-W10c, W11b, W30b, W31 and W31b-W31f pass, plus the I1a scenarios
+again, the regression, ctest, the server's tests and online off; a
+DW4Online release with the migration and the new protocol exists.
 The user's steps (19.22 step 7): a fresh backup in HeidiSQL,
 `Play:MinimumProtocol` 47, the server release, the client release,
 together.
@@ -11691,8 +11747,8 @@ release.
   are not audited); the hourly housekeeping purges expired requests and
   delivers waiting ones to accounts whose places an expiry or a deleted
   account freed.
-- **Two rules of 19.11 changed** (the user may still choose otherwise; both
-  serve "a block is never revealed", 19.16):
+- **Two rules of 19.11 changed** (approved by the user, relayed in round
+  72, section 18; both serve "a block is never revealed", 19.16):
   - A block keeps the blocked player's pending request to the blocker and
     makes it silent (`delivered = 0`): it stays "sent" in his list, so the
     block is not revealed by a vanishing row; the blocker's own request to
@@ -11790,12 +11846,12 @@ host's return** (M-L, after J; three lanes).
 | Lane | Scope |
 | --- | --- |
 | engine | the JOIN spawn next to a slot with the safe positions; `online_depart_home()` at home; the travel's restore without the lobby's transition, with the kept snapshot of the parked engine as the fallback; help-mode carries; the spectator's observer engine with the kept lobby snapshot |
-| relay | GOTO and GOTO_RESULT, BROWSE and INSTANCE_LIST (one row per instance), decision SPECTATE, *Join as moderator*, the spectator limits, the travel hold (no rescue joins), help mode across contexts; the defeated host's return hold (question 37) |
-| client and web | the browser NPC (renderer check first) and its window, the title's and the F1 Online tab's *Instances*, *Join* in the friend list, *Go to host*, *Spectate*, the return prompt on the host's loading screen; *Quick join* and the area counts at the gate (19.26) |
+| relay | GOTO and GOTO_RESULT, BROWSE and INSTANCE_LIST (one row per instance), decision SPECTATE, *Join as moderator*, the spectator limits, the travel hold (no rescue joins), help mode across contexts; the defeated host's return hold (question 37); round 72: GOTO modes 4 and 8 inside the own instance as GO (19.9.6), the go-along JOIN with the spawn next to the first entrant and following a target that moved on, *Join at <host>* for area rows |
+| client and web | the browser NPC (renderer check first) and its window, the title's and the F1 Online tab's *Instances*, *Join* in the friend list, *Go to <member>* on the *Instance* page's rows, *Spectate*, the return prompt on the host's loading screen; *Quick join* and the area counts at the gate (19.26); round 72: the prompt's *Y: Join at <host>* |
 
-Done when W13, W14, W15, W18 and W27's return part pass (a browser join
-under 1.0 s at any visit length), plus the regression, ctest, the server's
-tests and online off.
+Done when W13, W14, W15, W18, W27's return part and W33 pass (a browser
+join under 1.0 s at any visit length), plus the regression, ctest, the
+server's tests and online off.
 
 **Round I4: parties** (M, two or three lanes): the party model, PARTY_OP /
 PARTY_STATE, invites with the preference and blocks, follow, the party's
@@ -11837,11 +11893,12 @@ not decided; ranked by player value against effort.
 | 14 | **Co-op lines** on the profile ("Helped 12 players") and co-op achievements | medium | M | after I3 |
 | 15 | **Discord "Ask to join"** for Public and Friends instances | medium | M | later |
 | 16 | **Friends spectate** a friend's instance with the host's consent | low-medium | M | later |
-| 17 | **Area rows in the prompt** (added after the review): instances in the same area but another stage as travel rows under the target stage's own ("Kim's instance - B3 - join at the host"), so entering B1 while a friend is in B3 does not silently start a new instance | medium-high | S on I3's travel | I3 |
+| 17 | **Area rows in the prompt** (added after the review): instances in the same area but another stage as travel rows under the target stage's own ("Kim's instance - B3 - join at the host"), so entering B1 while a friend is in B3 does not silently start a new instance. **Decided (decision 38, round 72):** rows per area are the rule from I1a / I1b, entering where the player walked in (19.30.3); the travel to the host is the row's *Y: Join at <host>* from I3 | medium-high | S on I3's travel | I1a, I1b, I3 |
 
 **Recommended for the first rounds:** 7 in I1a; 5 in I1b; 1, 2 and 8 in
-I2; 3, 4, 6 and 17 in I3. **Later:** 9 and 10 (I6, already decided), then
-11-16.
+I2; 3, 4 and 6 in I3 (17 is decided: 19.30). **Later:** 9 and 10 (I6,
+already decided), then 11-16. Idea 4's *Gather* can stamp GO for the
+members who accept (19.9.6).
 
 ### 19.27 Risks (added to section 20)
 
@@ -11888,6 +11945,26 @@ I2; 3, 4, 6 and 17 in I3. **Later:** 9 and 10 (I6, already decided), then
   reports show abuse are the answer.
 - **The mirror** writes into a second account's story; it copies only what
   that account's own engine reported (19.8.6).
+- **Entering as a guest** (round 72, 19.30.4) runs the replace of 19.8.3
+  the other way: a mistake leaves the arrival's own story in a stage group
+  of the host's instance, whose STORY then reaches the host's keeper as
+  guest progress. The first task (a Game Start with the host's story as
+  the reference) and W30's counter-proof check it.
+- **GO** is a departure no mat started: a slot in a state the tests missed
+  (a pit, a warp, a scene of its stage group) could leave half. It applies
+  only at a membership-safe step, does nothing for a defeated, absent or
+  leaving slot, and takes the exit port's built departure; the client
+  ctest runs it in each of those states.
+- **Offers in a busy area**: members going in and out of dungeons make
+  notices. At most three lines, none for moves inside a dungeon or out of
+  one, and each disappears after 20 s; if players find them noisy, a
+  switch "Go-along notices: on / friends and party only / off" is the
+  fallback.
+- **The host's lobby exit after a dungeon's boss** ends the instance for
+  guests elsewhere in the area who did nothing (answer 24 as the user
+  wants it); the line in the host's exit prompt warns him (19.30.1).
+- **The area table** is a judgement (the kinds, the Fortress, the dungeon
+  keys); `AreaTableTests` pins every area's scope against the stage graph.
 
 ### 19.28 Changes elsewhere in this document
 
@@ -11903,6 +11980,12 @@ instance host and the replace at DISSOLVE (8.6 removed); 9.1.1 the binding
 per world session; 10 the home screen; 11 the instance context; 12.1 the
 server-wide selection; 13 the party; 14 the server table; 16 the W
 scenarios; 17 the rounds.
+
+Round 72 (decision 38, 19.30) adds, for the same rewrite: 3.4 (arrivals
+from home choose per area; the guest's NEW with the replace), 5.2 (HEADING
+carries the port's asked mask; GO runs the port's departure for one slot),
+6.3 and 6.5 (OFFER 0x9B, INTENT kind 4, the tick event GO, JOIN_REQ kind
+*go*) and 14's server table (`areas.json` format 2 in the relay).
 
 ### 19.29 The review and what became of each point
 
