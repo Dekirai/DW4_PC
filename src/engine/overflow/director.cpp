@@ -236,6 +236,13 @@ void OverflowDirector::step_running(Engine& engine) {
         detail::play_sound(engine, phase_music()[std::size_t(now_phase - 1)].name);
         if (now_phase > 1) event_log_.push_back({clock_, "phase " + std::to_string(now_phase)});
     }
+    // Phase 4 goes on past its five minutes until the run's end (the forge
+    // round of 05.11: the finale's five minutes, 4.4, without LordKnightmon
+    // in O1a): the HUD says how long.
+    if (const auto& t = config_.tuning; t.end_steps > 4 * t.phase_steps && clock_ == std::uint64_t(4 * t.phase_steps)) {
+        const int end = t.end_steps / 60;
+        notice("Hold out until " + std::to_string(end / 60) + ":" + (end % 60 < 10 ? "0" : "") + std::to_string(end % 60));
+    }
     // MP comes back by 2 % of MaxMP a second (4.8).
     if (auto* sys = engine.get<GameSystem>(); sys && sys->players[0].hp > 0) {
         auto& player = sys->players[0];

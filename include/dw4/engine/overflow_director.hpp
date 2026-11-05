@@ -5,7 +5,8 @@
 // dw4/engine/overflow.hpp (Director) and the engine's own messenger
 // commands, in a Messenger::PortOnly scope:
 //   - the clock (the steps the run is not frozen) and the phases of 4.2 on
-//     the Violet Ring (O1a: no Guardians; at 20:00 the run completes);
+//     the Violet Ring (O1a: no Guardians; phase 4 goes on to 25:00, the
+//     finale's five minutes without LordKnightmon, and the run completes);
 //   - the spawner of 4.3: the phase pools with their reserves, the spawn
 //     rings (closer than S1's 40-60, docs/OVERFLOW_DIRECTOR.md 3), surges,
 //     Corrupted enemies, recycling and the encirclements by reuse;
@@ -122,26 +123,33 @@ struct Tuning {
     float hp_per_minute = 0.10f, warm_up = 0.6f;   // (4.3 had 0.10; the O1a balance pass 0.15)
     float hp_growth = 0.08f;                     // x e^(hp_growth x minutes) on top (the O1a review round: late crowds outlast the Art)
     // ... and from hp_late_minutes on by hp_growth_late a minute instead
-    // (continuous at the knot).
-    float hp_late_minutes = 1.0e9f;
-    float hp_growth_late = 0.08f;
+    // (continuous at the knot; the forge round of 05.11: a good player's Art
+    // keeps up with the crowd after 15:00 instead of being outgrown by it,
+    // docs/OVERFLOW_DIRECTOR.md 11).
+    float hp_late_minutes = 15.0f;
+    float hp_growth_late = 0.03f;
     // damage taken x (1 + damage_per_minute x minutes) x e^(damage_growth x minutes) x the tier
     float damage_per_minute = 0.0f;              // (4.3 had 0.04, the O1a balance pass 0.14)
     float damage_growth = 0.13f;                 // (the O1a review round 0.18: no wall; the balance round of 05.11, docs/OVERFLOW_DIRECTOR.md 10)
     // ... and from damage_late_minutes on by damage_growth_late a minute
-    // instead (the run's late growth; continuous at the knot).
-    float damage_late_minutes = 1.0e9f;
-    float damage_growth_late = 0.13f;
+    // instead (the run's late growth; continuous at the knot; the forge
+    // round of 05.11: the contact knots carry the late threat, so the time a
+    // run lasts depends on how it is played, not on one wall).
+    float damage_late_minutes = 12.0f;
+    float damage_growth_late = 0.09f;
     std::array<int, 3> curve{70, 65, 16};        // the run's NEXTEXP terms (4.5 had 80 / 50 / 6, the O1a balance pass 70 / 65 / 13)
     float damage_warm_up = 0.2f;                 // the damage side of the warm-up: x 0.2 at 0:00, rising to x 1 at
     float damage_warm_minutes = 8.0f;            // ... this run minute (the review round: 0.4, 5:00)
     // The damage of a hit from an attacker within 15 units (its body, a
     // swing: a player who walks away is not hit) and from farther (a shot),
-    // by knots at 0:00-20:00 (OverflowRules near_factor / far_factor): the
-    // first minutes' contact soft, later the crowd's contact the threat a
-    // good player avoids, the shots a little softer.
-    std::array<float, 5> contact_at{0.7f, 1.0f, 1.3f, 1.5f, 1.6f};
-    std::array<float, 5> shot_at{0.8f, 0.7f, 0.65f, 0.6f, 0.6f};
+    // by knots at 0:00-20:00 (OverflowRules near_factor / far_factor; past
+    // 20:00 the last knot): the first minutes' contact soft, later the
+    // crowd's contact the threat a good player avoids, the shots softer.
+    // (The balance round of 05.11: 0.7 / 1.0 / 1.3 / 1.5 / 1.6 and 0.8 /
+    // 0.7 / 0.65 / 0.6 / 0.6; the forge round raised the late contact and
+    // lowered the late shots: after 10:00 skill decides, docs/OVERFLOW_DIRECTOR.md 11.)
+    std::array<float, 5> contact_at{0.7f, 1.0f, 1.3f, 2.2f, 2.4f};
+    std::array<float, 5> shot_at{0.8f, 0.7f, 0.5f, 0.4f, 0.3f};
     int status_cap = 6;                          // frames of a normal enemy's stun / sleep / bind (4.8 had 30)
     double level_heal = 0.05;                    // a level-up adds this share of MaxHP (4.5: 3 %, at most 5 %)
     float exp_factor = 1.35f;                    // the EXP of a defeat (Normal; fewer enemies, the same level pace: Heal Lt at Lv 15)
@@ -155,11 +163,15 @@ struct Tuning {
     float phase_intro = 0.2f;                    // ... and their damage from this share of their factor
     int phase_intro_steps = 120 * 60;            //     to all of it over two minutes
     // Phase 4's families (the last phase's) over their own times (0: the
-    // two above).
-    int last_ramp_steps = 0, last_intro_steps = 0;
+    // two above; the forge round of 05.11: 3:30 and 4:00, phase 4 was a wall
+    // with 90 s and 120 s: 13-16 of 20 runs ended in its first two minutes).
+    int last_ramp_steps = 210 * 60, last_intro_steps = 240 * 60;
     bool spawning = true, abilities = true;      // (the balance test measures with both off,
     bool time_scaling = true;                    //  and sets the damage-taken factor itself)
-    int end_steps = 1200 * 60;                   // O1a: the run completes at 20:00
+    // The run completes at 25:00 (the forge round of 05.11; O1a had 20:00):
+    // phase 4 goes on for the finale's five minutes (4.4; O1a has no
+    // LordKnightmon), so a run that goes well lasts 22-25 minutes (17.1).
+    int end_steps = 1500 * 60;
     float bot_flee = 16.0f;                      // the kite bot walks away from an enemy this near (14.1)
     int level_window_gap = 20 * 60;              // at most one level-up window (freeze) in this many run steps
     int muteki = 30;                             // MUTEKI frames after a hit (4.8 had 50: a crowd round a standing Digimon must cost)
