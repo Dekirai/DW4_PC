@@ -1966,6 +1966,16 @@ bool Session::rebuild_from_checkpoint(w::StateData& state, double now) {
         return bad(section == "header" ? w::CheckpointBadReason::version : w::CheckpointBadReason::topology, error);
     }
     if (engine_.tick_state_hash() != state.checkpoint_hash) return bad(w::CheckpointBadReason::hash, "hash");
+    // The members the state has: a JOIN or LEAVE before T is not among the
+    // ticks from T, whose events the classic path replays (apply_events), so
+    // the session takes them from the engine (S3: the second joiner had the
+    // first joiner's slot missing and waited for three members for good).
+    present_ = engine_.present_mask();
+    for (int s = 0; s < 4; ++s) {
+        if (s == slot_) continue;
+        if (!(present_ & (1u << s))) slot_members_[std::size_t(s)] = kNoMember;
+        else if (slot_members_[std::size_t(s)] == kNoMember) slot_members_[std::size_t(s)] = roster_member_for(s);
+    }
     // At T: the ticks from T follow as a catch-up (a few, 6.13.5).
     from_checkpoint_ = true;
     load_end_ = k;
