@@ -23,6 +23,16 @@ public sealed class DbFactAttribute : FactAttribute
     }
 }
 
+/// <summary>A theory that only runs with a private test database (DW4ONLINE_TEST_MYSQL).</summary>
+public sealed class DbTheoryAttribute : TheoryAttribute
+{
+    public DbTheoryAttribute()
+    {
+        if (string.IsNullOrEmpty(TestDb.AdminConnectionString))
+            Skip = "DW4ONLINE_TEST_MYSQL is not set (start a private MariaDB with scripts/local-db.ps1).";
+    }
+}
+
 public static class TestDb
 {
     public static string? AdminConnectionString => Environment.GetEnvironmentVariable("DW4ONLINE_TEST_MYSQL");
