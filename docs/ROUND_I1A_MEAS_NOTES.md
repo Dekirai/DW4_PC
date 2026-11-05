@@ -61,3 +61,18 @@ as 19.17.4 asks; M2 measured only solo; the alive mask never read; minors.
   before the load step; homeover with the alive mask of every stage change
   and offline cases; settings DISSOLVE with fast loading; the card folder
   removed on failure), `build/meas2/run_probes.sh r1`; then SEAMLESS.md.
+- 17:41: probes `build/meas2/redirect_r1.log`, `settings_r1.log`,
+  `homeover_r2.log` (+ `.err` with DW4_TRACE_SCRIPT=1), single cases
+  `ho_r1_c*`, `ho_r2_c*`. Load gate: in-process all valid (fullhub 398,538
+  frames/s, 141 KB/s per receiver; select 23 KB/s); wake diagnostics: the
+  in-process TryEnter misses are coincident timer wakes; sockets (real
+  relay): misses 0.5-1.1 %, lateness p99 under 2 ms, relay CPU base
+  0.72-0.85 / select 0.66 / fullhub 4.0 cores (fails); the write/read
+  coalescing experiment (`build/meas2/connection_batch_experiment.patch`,
+  reverted) changed nothing measurable (`loadgate_net_batch_r1.json`).
+- 17:50: SEAMLESS.md 19.6.5 (Give up exception, alive masks, offline, the
+  mat prompt is HOME's), 19.8.3 (two and three present, before the load
+  step, the assertion), 19.8.7 (the DISSOLVE set-back), 19.13 (nine reports,
+  the half rate, M5 conditional, 16 KB/s), 19.17.4 (redone), 19.25 (M1-M5).
+  Next: ctest, server tests (unit + integration on mysqld 3624, ports
+  56800-56849).
