@@ -943,7 +943,10 @@ public sealed class RoomHub
         i.BossLock = boss;
         i.Reason = msg.Reason;
         i.ContextHash = msg.ContextHash;
-        if (i.Joinable && i.EntryContext is null) i.EntryContext = msg.ContextHash;
+        // The entry context: the first report after the load end, joinable or not (review of round J: from the first joinable
+        // report, a visit that ran from its entry into a boss took the boss kill's context - a quest flag - as its entry, and
+        // an arrival with the old context joined after the kill and took that progress).
+        if ((msg.Flags & StateMsg.LoadEnded) != 0 && i.EntryContext is null) i.EntryContext = msg.ContextHash;
         CheckHolds(now);
     }
 
@@ -1291,6 +1294,15 @@ public sealed class RoomHub
                     {
                         _holds.Remove(g);
                         g.Hold = HoldKind.None;
+                        JoinOrNew(g, now);
+                    }
+                    else if (!HubRules.ContextMatches(g.Target, g.Context))
+                    {
+                        // The target's play changed its context while the arrival waited (a quest step): it may not join
+                        // any more; JoinOrNew finds another instance or answers NEW (OtherContext).
+                        _holds.Remove(g);
+                        g.Hold = HoldKind.None;
+                        Count("hold_context_changed");
                         JoinOrNew(g, now);
                     }
                     else if (g.Target.Joinable && g.Target.Snapshot.Complete && !g.Target.BossLock)

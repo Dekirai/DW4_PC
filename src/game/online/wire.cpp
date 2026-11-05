@@ -695,7 +695,7 @@ State decode_state(std::span<const std::uint8_t> b) {
     m.visit = r.u32();
     m.tick = r.u32();
     m.flags = r.u8();
-    if (m.flags > 7) throw WireError("unknown state flags");
+    if (m.flags > 15) throw WireError("unknown state flags");
     m.context = r.u64();
     m.reason = NotJoinable(r.u8());
     r.end();

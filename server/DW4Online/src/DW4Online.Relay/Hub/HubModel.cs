@@ -379,9 +379,10 @@ public sealed class HubInstance(uint id)
     /// <summary>The context the visit's members arrived with (their barrier's hash, taken before the load; a fork's child
     /// keeps its parent's).</summary>
     public ulong ArrivalContext { get; set; }
-    /// <summary>The context when the visit first became joinable, after its own load and entry scripts ran (null before;
-    /// a fork's child keeps its parent's). A dungeon's first floor sets COUNTER 2 at its load, so a later arrival's barrier
-    /// hash (taken in the previous stage) equals <see cref="ArrivalContext"/>, not the running context.</summary>
+    /// <summary>The context at the visit's load end K, after its own load scripts ran (the first STATE with
+    /// <see cref="StateMsg.LoadEnded"/>; null before and from members without it, below protocol 47; a fork's child keeps
+    /// its parent's). A dungeon's first floor sets COUNTER 2 at its load (start.lua, loader state 7), so a later arrival's
+    /// barrier hash (taken in the previous stage) equals <see cref="ArrivalContext"/>, not the running context.</summary>
     public ulong? EntryContext { get; set; }
     public InstanceMode Mode { get; set; }
     public bool Ended { get; set; }
@@ -517,11 +518,13 @@ public static class HubRules
 {
     /// <summary>
     /// An arrival with barrier context <paramref name="context"/> may join <paramref name="x"/> (SEAMLESS.md 3.7): the
-    /// instance runs that context now, or it arrived with it and nothing of the play since its entry changed it (the
-    /// stage's own load scripts did; the arrival's own load would have done the same, as a co-arrival's did).
+    /// instance runs that context now, or it arrived with it and nothing of the play since its load end changed it (the
+    /// stage's own load scripts did; the arrival's own load would have done the same, as a co-arrival's did). Before the
+    /// load end is known only the running context counts (review of round J: an unknown entry let an arrival join after a
+    /// boss kill that changed the context before the visit ever became joinable).
     /// </summary>
     public static bool ContextMatches(HubInstance x, ulong context) =>
-        x.ContextHash == context || (x.ArrivalContext == context && (x.EntryContext is not { } entry || entry == x.ContextHash));
+        x.ContextHash == context || (x.ArrivalContext == context && x.EntryContext is { } entry && entry == x.ContextHash);
 
     /// <summary>
     /// The slot map of a NEW (SEAMLESS.md 3.6): each member keeps its preferred slot when free, else its current slot when

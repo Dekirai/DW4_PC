@@ -137,6 +137,9 @@ void messages() {
     check(w::decode_netfp(w::encode(w::NetFp{7, 3, 60, 77})).hash == 77, "NETFP");
     auto state = w::decode_state(w::encode(w::State{7, 3, 61, w::state_flag::joinable | w::state_flag::boss_lock, 5, w::NotJoinable::boss}));
     check(state.tick == 61 && state.flags == 5 && state.reason == w::NotJoinable::boss, "STATE");
+    check(w::decode_state(w::encode(w::State{7, 3, 61, w::state_flag::load_ended | w::state_flag::boss_lock, 5, w::NotJoinable::boss})).flags == 12,
+          "STATE with the load end");
+    check(throws([&] { w::decode_state(w::encode(w::State{7, 3, 61, 16, 5, w::NotJoinable::none})); }), "STATE with an unknown flag is refused");
     auto intent = w::decode_intent(w::encode(w::Intent{7, 3, w::IntentKind::give_up, 0}));
     check(intent.kind == w::IntentKind::give_up, "INTENT");
     w::Presence presence{0, "stagml11", 9, 1.5f, -2.0f, 300.25f, 0.5f, 3, 12, 80, 120, 10, 30};

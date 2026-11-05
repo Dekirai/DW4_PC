@@ -208,7 +208,10 @@ enum class CloseReason : std::uint8_t {
     left = 1, kicked = 2, room_closed = 3, replaced = 4, protocol = 5, abuse = 6, timeout = 7, stopping = 8
 };
 namespace state_flag {
-inline constexpr std::uint8_t joinable = 1, membership_safe = 2, boss_lock = 4;
+// load_ended (protocol 47, round J's review): the visit reached its load end K;
+// the relay takes the first such STATE's context as the visit's entry context
+// (docs/SEAMLESS.md 3.7), joinable or not.
+inline constexpr std::uint8_t joinable = 1, membership_safe = 2, boss_lock = 4, load_ended = 8;
 }
 
 // ---- tick records and events

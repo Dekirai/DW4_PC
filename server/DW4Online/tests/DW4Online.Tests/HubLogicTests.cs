@@ -92,10 +92,12 @@ public partial class HubLogicTests
             Send(name, new LogMsg(i.Id, i.Visit, first, Enumerable.Range(0, count).Select(k => new Pad((ushort)(first + k), 0, 0, 0, 0)).ToArray()).Frame());
         }
 
-        public void Joinable(string name, bool joinable = true, ulong context = 5)
+        /// <summary>A STATE (by default after the visit's load end, as every joinable report of a protocol 47 client).</summary>
+        public void Joinable(string name, bool joinable = true, ulong context = 5, bool loaded = true)
         {
             var i = I(name);
-            Send(name, new StateMsg(i.Id, i.Visit, 0, (byte)(joinable ? StateMsg.Joinable | StateMsg.MembershipSafe : 0), context,
+            Send(name, new StateMsg(i.Id, i.Visit, 0,
+                (byte)((joinable ? StateMsg.Joinable | StateMsg.MembershipSafe : 0) | (loaded ? StateMsg.LoadEnded : 0)), context,
                 joinable ? StateReason.None : StateReason.EntryScene).Frame());
         }
 
@@ -253,8 +255,9 @@ public partial class HubLogicTests
         h.Connect("c", 2);
         h.Barrier("a", "dng101b1", context: 1);
         h.Snapshot("a");
-        h.Joinable("a", joinable: false, context: 1);
-        h.Joinable("a", joinable: false, context: 7); // the load's COUNTERset(2, 101), during the entry
+        h.Joinable("a", joinable: false, context: 1, loaded: false);
+        h.Joinable("a", joinable: false, context: 7, loaded: false); // the load's COUNTERset(2, 101) (start.lua, before the load end)
+        h.Joinable("a", joinable: false, context: 7); // the load end: the entry context
         h.Joinable("a", context: 7);
         h.Barrier("b", "dng101b1", context: 1);
         Assert.Equal(BarrierDecision.Join, h.Decision("b").Decision);
@@ -276,8 +279,85 @@ public partial class HubLogicTests
         x.ContextHash = 8;
         Assert.False(HubRules.ContextMatches(x, 1));
         Assert.True(HubRules.ContextMatches(x, 8));
-        var loading = new HubInstance(2) { ContextHash = 7, ArrivalContext = 1 }; // not joinable yet: the hold waits
-        Assert.True(HubRules.ContextMatches(loading, 1));
+        // Before the load end only the running context counts (review of round J): what changed it is not known yet.
+        var loading = new HubInstance(2) { ContextHash = 7, ArrivalContext = 1 };
+        Assert.False(HubRules.ContextMatches(loading, 1));
+        Assert.True(HubRules.ContextMatches(loading, 7));
+    }
+
+    // Review of round J (rev70's probes, kept as regression tests): the entry context is the load end's, not the first
+    // joinable report's. A visit that runs from its entry into a boss is never joinable before the kill; the kill writes a
+    // context value (dngq1b2e's ded_e_mammos.lua sets 384). Before, the kill's context became the entry and an arrival with
+    // the old context joined after it (Join / None instead of New / OtherContext): progress it did not earn.
+
+    [Fact]
+    public void A_boss_kill_before_the_first_joinable_state_is_not_the_entry_context()
+    {
+        var h = new Harness();
+        h.Connect("a", 0);
+        h.Connect("b", 1);
+        h.Barrier("a", "stagBS01", context: 5);
+        h.Snapshot("a");
+        var i = h.I("a");
+        h.Send("a", new StateMsg(i.Id, i.Visit, 0, StateMsg.BossLock, 5, StateReason.Boss).Frame());
+        h.Barrier("b", "stagBS01", context: 5);
+        h.Send("b", new BarrierChoiceMsg(0, BarrierChoiceMsg.Wait).Frame());
+        h.Send("a", new StateMsg(i.Id, i.Visit, 0, StateMsg.Joinable | StateMsg.MembershipSafe, 9, StateReason.None).Frame()); // the kill: 9
+        var d = h.Decision("b");
+        Assert.Equal((BarrierDecision.New, BarrierNotice.OtherContext), (d.Decision, d.Notice));
+    }
+
+    [Fact]
+    public void A_late_arrival_after_a_boss_kill_that_preceded_the_first_joinable_state_gets_its_own_instance()
+    {
+        var h = new Harness();
+        h.Connect("a", 0);
+        h.Connect("c", 2);
+        h.Barrier("a", "stagBS01", context: 5);
+        h.Snapshot("a");
+        var i = h.I("a");
+        h.Send("a", new StateMsg(i.Id, i.Visit, 0, StateMsg.BossLock, 5, StateReason.Boss).Frame());
+        h.Send("a", new StateMsg(i.Id, i.Visit, 0, StateMsg.Joinable | StateMsg.MembershipSafe, 9, StateReason.None).Frame());
+        h.Barrier("c", "stagBS01", context: 5);
+        var d = h.Decision("c");
+        Assert.Equal((BarrierDecision.New, BarrierNotice.OtherContext), (d.Decision, d.Notice));
+    }
+
+    [Fact]
+    public void The_load_end_report_fixes_the_entry_context_and_a_boss_kill_after_it_ends_the_old_contexts_joins()
+    {
+        // The protocol 47 client: its load end's STATE (boss-locked from the entry) names the entry context; the kill changes
+        // the running context; a waiting arrival with the old context gets its own instance.
+        var h = new Harness();
+        h.Connect("a", 0);
+        h.Connect("b", 1);
+        h.Barrier("a", "stagBS01", context: 5);
+        h.Snapshot("a");
+        var i = h.I("a");
+        h.Send("a", new StateMsg(i.Id, i.Visit, 0, StateMsg.BossLock | StateMsg.LoadEnded, 5, StateReason.Boss).Frame());
+        Assert.Equal(5UL, i.EntryContext);
+        h.Barrier("b", "stagBS01", context: 5);
+        h.Send("b", new BarrierChoiceMsg(0, BarrierChoiceMsg.Wait).Frame());
+        h.Send("a", new StateMsg(i.Id, i.Visit, 0, StateMsg.Joinable | StateMsg.MembershipSafe | StateMsg.LoadEnded, 9, StateReason.None).Frame());
+        Assert.Equal(5UL, i.EntryContext);
+        Assert.Equal((BarrierDecision.New, BarrierNotice.OtherContext), (h.Decision("b").Decision, h.Decision("b").Notice));
+    }
+
+    [Fact]
+    public void A_held_join_whose_target_changes_its_context_meanwhile_is_decided_again()
+    {
+        // b waits for a's entry scene (Join hold); a's play changes the context before the scene ends: b may not join.
+        var h = new Harness();
+        h.Connect("a", 0);
+        h.Connect("b", 1);
+        h.Barrier("a", "stag0101", context: 5);
+        h.Snapshot("a");
+        h.Joinable("a", joinable: false, context: 5);
+        h.Barrier("b", "stag0101", context: 5);
+        Assert.Equal(WaitReason.NotJoinable, h.P("b").Last(Msg.BarrierWait, BarrierWaitMsg.Parse).Reason);
+        h.Joinable("a", joinable: false, context: 6);
+        Assert.Equal((BarrierDecision.New, BarrierNotice.OtherContext), (h.Decision("b").Decision, h.Decision("b").Notice));
+        Assert.Equal(1, h.Hub.Counters["hold_context_changed"]);
     }
 
     // ---- Round J: joins from a checkpoint (SEAMLESS.md 6.13.4-6.13.5)

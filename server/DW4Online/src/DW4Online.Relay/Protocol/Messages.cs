@@ -391,19 +391,23 @@ public sealed record NetFpMsg(uint Inst, uint Visit, uint Tick, ulong Hash)
     public byte[] Frame() => new WireWriter(Msg.NetFp).U32(Inst).U32(Visit).U32(Tick).U64(Hash).Frame();
 }
 
-/// <summary>STATE: the instance's joinable / membership-safe / boss lock flags and the session context hash, on change.</summary>
+/// <summary>STATE: the instance's joinable / membership-safe / boss lock / load end flags and the session context hash, on
+/// change.</summary>
 public sealed record StateMsg(uint Inst, uint Visit, uint Tick, byte Flags, ulong ContextHash, StateReason Reason)
 {
     public const byte Joinable = 1;
     public const byte MembershipSafe = 2;
     public const byte BossLock = 4;
+    /// <summary>Protocol 47 (round J's review): the visit reached its load end K; the first such STATE's context is the
+    /// visit's entry context (SEAMLESS.md 3.7), joinable or not.</summary>
+    public const byte LoadEnded = 8;
 
     public static StateMsg Parse(ReadOnlySpan<byte> p)
     {
         var r = new WireReader(p);
         var m = new StateMsg(r.U32(), r.U32(), r.U32(), r.U8(), r.U64(), (StateReason)r.U8());
         r.End();
-        if (m.Flags > 7) throw new ProtocolException("unknown state flags");
+        if (m.Flags > 15) throw new ProtocolException("unknown state flags");
         return m;
     }
 

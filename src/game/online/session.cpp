@@ -1202,15 +1202,21 @@ void Session::report_state(double now, bool force) {
     if (hub_) return;
     w::NotJoinable reason{};
     const bool joinable = engine_.joinable(reason);
+    // (load_ended: the relay takes the context of the first STATE after the
+    // load end as the visit's entry context, joinable or not; round J's review:
+    // from the first joinable STATE, a visit that ran into a boss right after
+    // its load took the boss kill's context as its entry, and an arrival with
+    // the old context joined after the kill.)
     const std::uint8_t flags = std::uint8_t((joinable ? w::state_flag::joinable : 0) | (engine_.membership_safe() ? w::state_flag::membership_safe : 0) |
-                                            (engine_.boss_lock() ? w::state_flag::boss_lock : 0));
+                                            (engine_.boss_lock() ? w::state_flag::boss_lock : 0) |
+                                            (load_end_ ? w::state_flag::load_ended : 0));
     const std::uint64_t context = engine_.session_context_hash();
     if (flags == state_flags_ && context == state_context_ && !force) {
         state_pending_ = false;
         return;
     }
-    // The boss lock and the context at once, the rest at most once a second.
-    const bool urgent = force || context != state_context_ || ((flags ^ state_flags_) & w::state_flag::boss_lock);
+    // The boss lock, the load end and the context at once, the rest at most once a second.
+    const bool urgent = force || context != state_context_ || ((flags ^ state_flags_) & (w::state_flag::boss_lock | w::state_flag::load_ended));
     if (!urgent && now - state_sent_at_ < 1.0) {
         state_pending_ = true;
         return;
