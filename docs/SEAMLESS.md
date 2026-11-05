@@ -11571,7 +11571,7 @@ means round I1a):
 | W31 | I1b | (round 72) go along: a, b and c in a's Dry Land instance, a and b in stag0201, c in stag0202; a takes matz01 into dng204b1 alone: within 1 s of a's BARRIER_OK b and c show the notice; b answers (View, A): b's GO departure, b joins a's stage group at dng204b1's entrance from a checkpoint once it is joinable; c lets the notice run out: gone after 20 s, c plays on, the offer stays on c's *Instance* page; a takes matz02 to dng204b2: no new notice, c's row reads B2; c answers: c joins at B2's entrance; equal NETFP and STATEHASH in every shared stage group; the times from the press to control recorded (19.30.7's estimate) |
 | W31b | I1b | (round 72) the mat: a and b on stag0201's matz01; a confirms, b says No in its own prompt: b gets no notice (HEADING's asked mask) but the offer on its page; c, elsewhere in stag0201, gets the notice |
 | W31c | I1b | (round 72) races: a goes into dng204b1 and back to stag0201 before b answers: the offer closes ("Kim left Sand Labyrinth."), b's late A is refused (*go refused*); a test hook holds a's way back until b's GO is stamped: b lands alone in dng204b1 in a stage group of a's instance ("... before you arrived."), its seat kept |
-| W31d | I1b | (round 72) defeated: b defeated in stag0201 when a goes in: no notice until b is raised; c, the last living member of b's stage group, goes along: b is taken along (the side rule), no game over; a test hook defeats c between its A and the GO's step: the GO does nothing on every engine, "Couldn't go along: you were defeated." |
+| W31d | I1b | (round 72) defeated: b defeated in stag0201 when a goes in: no notice while b is defeated (it shows when b lives again); c, the last living member of b's stage group, goes along: b is taken along (the side rule), no game over; a test hook defeats c between its A and the GO's step: the GO does nothing on every engine, "Couldn't go along: you were defeated." |
 | W31e | I1b | (round 72) two dungeons: a goes into dng204b1 and c into dng205b1 within 2 s: b shows two lines, answers c's and joins c; a's offer closes for b, which is in a dungeon then |
 | W31f | I1b | (round 72) the host goes in: host a goes into dng204b1, guest b in stag0201 lets the offer run out, nothing moves b; a test hook defeats dng204b2's boss and a takes matz02 into stagML11: a's prompt shows "Your guests will return to their lobbies.", b goes home 3 s later (`end_reason` host_left) |
 | W32 | I1a | (round 72) the Fortress: a hosts Death Valley (a seed with flag 20) and walks stag0101 -> staggf01 -> gf02 -> gf04 -> stag0205 (point 1) and back: the instance never ends; b at the gate to Dry Land gets no row for a's instance (its area is Death Valley). W32b: the zone shuffle on: c goes along into a remapped dungeon entrance and lands in the stage a's barrier named (no second remap) |
@@ -12070,15 +12070,17 @@ and the exit port (`src/engine/online_exits.cpp`).
 - **Four facts that shape the design:**
   1. The Fortress (staggf01-04, "gate fields") is a walk between two areas:
      from Death Valley's stag0101 (matz01, with flag 37, the Gob Gate's
-     security switch reset at every load, or flag 20, Leomon, kept) through
+     security switch, one of the flags 36-66 a loaded game starts without,
+     or flag 20, Leomon, which stays; `campaign.cpp` 449) through
      the gate fields to stag0205 point 1, a plateau of Dry Land's Power
      Plant walled in by kind 0x802 walls, with no way to the train side
      (point 0) and the rest of Dry Land (`campaign.cpp` 313-316, 474-476).
   2. Every story dungeon's last floor after its boss (dng101b2, 102b3,
      204b2, 205b3, 307b2, 308b3, 309b4, 411b3, 412b4: matz02) and the boss
      stages stagBS01-03 lead only to the lobby (stagML11), stagBS06 to the
-     credits (stagIS20), and the quest dungeons' ends to stagML11 too. A
-     host who takes such an exit goes home and ends the instance for
+     credits (stagIS20); the quest dungeons' ends and stag0401's mats00
+     lead to stagML11 too. A host who takes such an exit goes home and ends
+     the instance for
      everyone (answer 24); to stay in the area he walks back the way he
      came. His exit prompt says so ("Your guests will return to their
      lobbies.", 19.5.4).
@@ -12172,8 +12174,9 @@ ending, with seats for the whole group, and where the group may enter at S:
 The *visited* set holds the stage of every stage group the instance had
 (its first NEW, every NEW, JOIN and co-arrival inside it). A gate stage is
 reachable on every story that has the area: the lobby gate offers it by the
-area's own flag (4, 5, 6 or 86), and the host's story had the area when he
-entered it. The training stages (stag0000 / 0001) are no gate stages: the
+area's own flag (`stagML11_m1__mate00.lua`: Death Valley after flag 503,
+Dry Land with flag 4, Venom Jungle 5, Machine Pit 6 or 86), and the host's
+story had the area when he entered it. The training stages (stag0000 / 0001) are no gate stages: the
 gate offers stag0001 only before flag 503, and a story past it never plays
 there.
 
@@ -12262,15 +12265,18 @@ port already asked on the same mat for the same departure (5.2: "on *Yes*,
 every other living member on the mat is asked"; they said no or let its
 600 frames pass). The port knows them (`ExitPort::asked`), and HEADING now
 carries them (19.18), so nobody is asked twice for one departure; they
-still find the offer on the *Instance* page. A new entrant added to an open
-offer shows the notice again, with the new names, to the members that did
-not go along.
+still find the offer on the *Instance* page. A member who goes into the
+same dungeon on his own (through a mat) joins the open offer's entrants and
+shows the notice again, with the new names, to the members that did not go
+along; one who arrives there by *Go along* joins the entrants silently (the
+others were offered that already).
 
 **Lifetime.** The offer is open while at least one of its entrants is in
 that dungeon (any of its stages), and it follows them inside it: its target
 is the stage of its first entrant still in the dungeon and the point
-through which that entrant's stage group entered it (the BARRIER's point
-after the zone remap). It closes when the last entrant has left the dungeon
+through which that entrant's stage group entered it (the stage and point
+of that stage group's barrier, the stage after the zone remap). It closes
+when the last entrant has left the dungeon
 (to a field, home, or by a game over) and when the instance ends; for one
 member when that member goes along, enters a dungeon itself, leaves or is
 removed. The notice is on screen for `World:GoAlongNoticeSeconds` (20);
@@ -12338,9 +12344,12 @@ straight to its target:
    sends it only while its own player can go: in a field, alive, not at a
    barrier, no GO of its own pending.
 2. **The relay** checks that the offer is open and the sender offered
-   (19.30.5), takes the offer's target (stage and point) and stamps a
-   **GO** tick event (slot, point, stage) in the sender's stage group as it
-   stamps an INTENT (6.5): sealed, at the stamp tick; solo-led, through
+   (19.30.5), takes the offer's target (stage and point; while the
+   target's stage group is at a barrier, the INTENT waits for that
+   decision, at most `Instances:JoinHoldSeconds`, and then takes the
+   deeper floor or is refused when the entrants left the dungeon) and
+   stamps a **GO** tick event (slot, point, stage) in the sender's stage
+   group as it stamps an INTENT (6.5): sealed, at the stamp tick; solo-led, through
    JOIN_REQ kind *go* and the leader's JOIN_AT, as HOME (19.6.5). Two
    members of one stage group whose INTENTs for the same offer meet one
    stamp get the same tick, so they leave together. One open GO per member
@@ -12364,9 +12373,10 @@ straight to its target:
    when its point goes with it). No new fork kind: an exit's fork with an
    exit's side rule.
 4. **The barrier** is one inside the instance (19.6.3). The relay matches
-   it to the member's `GoAlong` (the same stage and point) and decides with
-   the offer's stage group first: a co-arrival while that group is still
-   parked or announced (3.4); else a JOIN at the entrance the entrants came
+   it to the member's `GoAlong` (the same stage and point) and decides by
+   3.4 among the instance's stage groups, with the offer's stage group
+   first (two GO members of different stage groups heading there together
+   co-arrive as 3.4 allows): a JOIN at the entrance the entrants came
    through, held until joinable (3.4: its load and entry scene) and while
    every present member there is defeated (no rescue joins, 19.9.3), from
    round J's checkpoint (merged; 0.3-0.45 s from the barrier to the
@@ -12405,7 +12415,7 @@ stage and the spawn next to him.
 | --- | --- |
 | The entrant goes in alone; others of his stage group stay | members the port asked on the mat get no notice; every other member in a field does, those of his own stage group included; the offer is on everyone's page |
 | Several members go in together (one exit, one barrier) | one offer naming them ("Kim and Lee went into ...") |
-| A member of another stage group goes into the same dungeon later | added to the open offer; the notice again for those who did not go |
+| A member of another stage group goes into the same dungeon later | added to the open offer; the notice again for those who did not go (silently when he came by *Go along*) |
 | Two members go into two different dungeons close together | two offers, two notice lines, both on the page; going along with one closes the other for that member (he is in a dungeon then) |
 | The entrants move deeper before the answer | the offer follows them: "Kim is in Ancient Ruins B2 now."; a yes goes to B2's entrance |
 | The entrants move on while a stamped GO is on its way | the GO's barrier finds no stage group at B1: a new stage group there ("Kim went on to B2."); from round I3 the join follows its target once, as a travel's (19.9.4) |
@@ -12414,7 +12424,7 @@ stage and the spawn next to him.
 | The target stage group is full | cannot happen: an instance has at most four players and the member is not in that stage group, so a slot is free (3.6; spectators take none) |
 | A boss-locked target | round S3's lock (never set before S3: `engine.cpp` 793 and `online.cpp` 625 only clear it): *Wait for <names>* or *Go alone* (a new stage group of the instance); before S3 the join lands in a running boss fight, as in rooms today |
 | The member is in the F1 menu, its own status window, a talk, a map recorder, a camera tour | the notice shows at once over the F1 menu and the status window; it waits for the end of a talk, a recorder or a demo of its stage group (19.30.6) |
-| The member is defeated | no notice while defeated; after a revival it shows if the offer is open; defeated between its A and the GO: the GO does nothing ("Couldn't go along: you were defeated.") |
+| The member is defeated | no notice while defeated; when it lives again it shows if the offer is open; defeated between its A and the GO: the GO does nothing ("Couldn't go along: you were defeated.") |
 | The member is in its own stage change (an exit, a fork's departure, loading) | no notice; on arrival in a field it shows if the offer is open; on arrival in a dungeon never |
 | The member's own exit prompt is open | the GO waits (a running demo record is not membership-safe); his Yes there takes him elsewhere and the GO does nothing; his No lets the GO run |
 | A defeated partner in the member's stage group | the side rule: when the member is its last living one, the defeated go along (as through an exit, 5.2); else they stay with the living |
