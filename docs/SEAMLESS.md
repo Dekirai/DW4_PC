@@ -515,11 +515,18 @@ another context than its members arrived with, while a partner's barrier
 hash is taken in the previous stage, so round 63's M2 saw a partner 15 s
 later get `OtherContext` and an instance of its own. The relay keeps each
 visit's *arrival context* (its barrier's hash) and its *entry context*
-(the context of its first joinable state); an arrival may join an instance
-that runs its context now, or that arrived with it while nothing of the
-play since the entry changed it (`HubRules.ContextMatches`): exactly what a
-co-arrival would have shared. A change made by the play after the entry (a
-quest step) still keeps an arrival with the old context out.
+(the context at its load end K: the first STATE with the flag *load ended*,
+8, joinable or not; protocol 47); an arrival may join an instance that runs
+its context now, or that arrived with it while nothing of the play since
+the load end changed it (`HubRules.ContextMatches`): exactly what a
+co-arrival would have shared. Before the load end is known only the running
+context counts. A change made by the play after the load end (a quest step,
+a boss kill) still keeps an arrival with the old context out, also one
+already waiting in a hold (the hold's release checks the context again).
+(The review of round J: taken from the first *joinable* state, a visit that
+ran from its entry into a boss took the kill's context, dngQ1B2E's flag
+384, as its entry, and an arrival with the old context joined after the
+kill.)
 
 The temporary flags of the instance class travel with the engine line, which
 is an inherent result of seamless play: a member who pulled the lever in
@@ -2968,6 +2975,10 @@ restores (6.13.6).
   the missed one, and it logs `checkpoint_suspect` (instance, build,
   checkpoint tick, donor). A desync with another cause inside the window
   costs the instance its checkpoint path too, which errs on the safe side.
+  Built (review of round J): a member whose engine came from a checkpoint
+  stays *rebuilt* until a classic state or a new visit; it never makes a
+  majority in a NETFP vote, and a desync it is part of makes the path suspect
+  at any time; every STATEHASH mismatch does too (also outside the window).
   `Instances:CheckpointJoins` (true) turns the checkpoint path off for the
   whole relay, for a released build whose serializer is known to miss a
   field, without a client release.
@@ -8016,6 +8027,31 @@ Start with the room story, the join from the checkpoint of tick 3,580,
 rebuild 132 ms, 2 ticks replayed, 4,020 shared ticks equal). Logs:
 `build/` of the worktree (`ctest1.log`, `server_unit1.log`, `det1.log`,
 `census_check1.log`, `scen1.log`, `scen2.log`).
+
+**Review fixes (int-r69r70, 05.11).** G-core: the title's online screens
+decide the room owner too (`api::owns_room`, `set_room_owner`; before, every
+guest from the room list played as the owner and its card took the room
+story); the training proof only from stages behind the training's gate
+(stag0001, stagIS*, stagML*, dngQ* count as before it: 25 proof flags, from
+75); a 409's reload gives a guest's card store the new own story; a
+replay's call shop refusal shows no hint. J: the entry context at the load
+end (3.7); a tick state writer's error stops the visit's STATEHASH and
+uploads instead of closing every member's game; `ready_sent_` resets with
+every state; READY after a checkpoint names the first multiple of 60 it
+replayed and the relay waits up to `Instances:ReadyFingerprintWaitMs` (2 s)
+for the members' NETFP of it; a joiner without READY falls back to NEW after
+the catch-up limit plus 30 s; the classic fallback of a planned checkpoint
+join checks the whole visit's catch-up; the rebuilt member never judges
+(6.13.4); a fork drops the parent's state of the leavers' side after the
+fork tick and no client does checkpoint work in a fork's step; a solo
+leader sends one STATEHASH with K alone (flag 2, no hash) and gets no
+periodic asks; only the asked donor's upload is taken, an abandoned one is
+dropped; the STATEHASH raster restarts when a member joins or resyncs; the
+Lua collector's per-content string count and the restore's common banks
+first are online only (offline as on main); a tick state's stream whose
+file changed gets that file's decoder; TEXTURECTRL binds after a state over
+infos the journal added; `Lua4Vm::load_state` checks its free lists; ctest
+`tick_state` covers dng102b3, stagBS01 and dngQ1B2E too.
 
 ### Round R (proposed r67): rollback for the own player
 

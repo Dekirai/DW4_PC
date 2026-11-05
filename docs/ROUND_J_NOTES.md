@@ -112,3 +112,10 @@ story-point credit).
   three), the integration with round G-core (both protocol 47).
 - 11:05: on the final build (6945f60) JB, JR and JS pass again
   (build/jset_run10.log), JL too (build/jl_run1.log).
+- 05.11 afternoon (integration branch `int-r69r70`): the review's findings
+  fixed there (blockers: the entry context at the load end, a tick state
+  writer's error no longer closes the game; the should_fix list and the cheap
+  minors); SEAMLESS.md 17 "Integration of G-core and J", "Review fixes".
+  Open: the joiner's music position within an unchanged file, STATEHASH /
+  upload cost on a worker, AskCheckpoint's donor choice, the common loops
+  over a live load (`fresh_game_driver`).

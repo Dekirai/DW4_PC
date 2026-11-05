@@ -200,3 +200,12 @@ stag0001; its counter-proof on 57568ec); r25c 10 of 10 and the save state
 suite were not rerun in this round (det.sh covers online off). The user's
 steps: review, merge into main together with J, the DW4Online release with
 protocol 47 (server and client together).
+
+## Review fixes (05.11, on `int-r69r70`)
+
+The room owner through the title's online screens (`api::owns_room`), the
+training proof only from stages behind the training's gate (25 flags), a
+409's own story in the card store, no call shop hint from a replay, the
+MergeEarned comment. Not changed: the 404 rewrite before the backup (an old
+cache may hold a borrowed room story; the backups can be imported) and the
+key setter stages (one Normal run; a Hard pickup run is open).
