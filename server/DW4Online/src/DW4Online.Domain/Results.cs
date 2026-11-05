@@ -13,6 +13,7 @@ public enum ErrorKind
     Outdated,             // 426
     TooLarge,             // 413
     Unavailable,          // 503
+    TooManyRequests,      // 429 (with retryAfterSeconds)
 }
 
 /// <summary>A failed operation: a stable machine code, an English message and optional extra fields.</summary>
@@ -23,6 +24,9 @@ public sealed record DomainError(ErrorKind Kind, string Code, string Message, IR
     public static DomainError Conflict(string code, string message, IReadOnlyDictionary<string, object?>? extra = null) => new(ErrorKind.Conflict, code, message, extra);
     public static DomainError Forbidden(string code, string message) => new(ErrorKind.Forbidden, code, message);
     public static DomainError Unauthorized(string code, string message) => new(ErrorKind.Unauthorized, code, message);
+
+    public static DomainError TooMany(string code, string message, int retryAfterSeconds) =>
+        new(ErrorKind.TooManyRequests, code, message, new Dictionary<string, object?> { ["retryAfterSeconds"] = Math.Max(1, retryAfterSeconds) });
 }
 
 /// <summary>Either a value or a <see cref="DomainError"/>.</summary>

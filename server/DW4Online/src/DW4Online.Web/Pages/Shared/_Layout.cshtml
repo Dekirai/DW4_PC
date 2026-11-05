@@ -22,6 +22,7 @@
                 @if (session is not null)
                 {
                     <a href="~/u/@session.Username">Profile</a>
+                    <a href="~/account/friends">Friends</a>
                     <a href="~/account">Account</a>
                     @if (session.IsStaff())
                     {

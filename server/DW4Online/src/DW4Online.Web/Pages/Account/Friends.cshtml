@@ -1,0 +1,164 @@
+@page "/account/friends"
+@model DW4Online.Web.Pages.Account.FriendsModel
+@{
+    ViewData["Title"] = "Friends";
+    var o = Model.Overview;
+}
+<h1>Friends</h1>
+
+@if (Model.Message is not null)
+{
+    <div class="notice ok">@Model.Message</div>
+}
+@if (Model.Error is not null)
+{
+    <div class="notice error">@Model.Error</div>
+}
+
+<h2>Add a friend</h2>
+<div class="panel">
+    <form method="post" asp-page-handler="Add" class="stack">
+        <label>User name <input type="text" asp-for="Username" autocomplete="off" required minlength="3" maxlength="20" /></label>
+        <button type="submit">Send friend request</button>
+        <span class="muted small">Type the exact user name (any case): there is no search. The other player accepts or
+            declines; a request expires after @o.Limits.RequestDays days.</span>
+    </form>
+</div>
+
+<h2>Friend requests</h2>
+@if (o.RequestsIn.Count == 0)
+{
+    <p class="muted">No friend requests.</p>
+}
+else
+{
+    <div class="table-wrap">
+        <table>
+            <thead><tr><th>From</th><th>Sent</th><th></th></tr></thead>
+            <tbody>
+            @foreach (var r in o.RequestsIn)
+            {
+                <tr>
+                    <td><a href="~/u/@r.Username">@r.Username</a></td>
+                    <td>@Format.Date(r.SentAt)</td>
+                    <td>
+                        <form method="post" asp-page-handler="Accept" class="inline">
+                            <input type="hidden" name="Username" value="@r.Username" />
+                            <button type="submit">Accept</button>
+                        </form>
+                        <form method="post" asp-page-handler="Decline" class="inline">
+                            <input type="hidden" name="Username" value="@r.Username" />
+                            <button type="submit" class="secondary">Decline</button>
+                        </form>
+                    </td>
+                </tr>
+            }
+            </tbody>
+        </table>
+    </div>
+    <p class="muted small">Declining is silent: the sender is not told.</p>
+}
+
+<h2>Sent requests</h2>
+@if (o.RequestsOut.Count == 0)
+{
+    <p class="muted">No open requests from you.</p>
+}
+else
+{
+    <div class="table-wrap">
+        <table>
+            <thead><tr><th>To</th><th>Sent</th><th>Expires</th><th></th></tr></thead>
+            <tbody>
+            @foreach (var r in o.RequestsOut)
+            {
+                <tr>
+                    <td><a href="~/u/@r.Username">@r.Username</a></td>
+                    <td>@Format.Date(r.SentAt)</td>
+                    <td>@Format.Day(r.ExpiresAt)</td>
+                    <td>
+                        <form method="post" asp-page-handler="Cancel" class="inline">
+                            <input type="hidden" name="Username" value="@r.Username" />
+                            <button type="submit" class="link">Cancel</button>
+                        </form>
+                    </td>
+                </tr>
+            }
+            </tbody>
+        </table>
+    </div>
+    <p class="muted small">A request stays here until the other player accepts it or it expires (@o.RequestsOut.Count of @o.Limits.MaxPendingOut open).</p>
+}
+
+<h2>Your friends (@o.Friends.Count of @o.Limits.MaxFriends)</h2>
+@if (o.Friends.Count == 0)
+{
+    <p class="muted">No friends yet.</p>
+}
+else
+{
+    <div class="table-wrap">
+        <table>
+            <thead><tr><th>Name</th><th>Friends since</th><th></th></tr></thead>
+            <tbody>
+            @foreach (var f in o.Friends)
+            {
+                <tr>
+                    <td><a href="~/u/@f.Username">@f.Username</a></td>
+                    <td>@Format.Day(f.Since)</td>
+                    <td>
+                        <form method="post" asp-page-handler="Remove" class="inline">
+                            <input type="hidden" name="Username" value="@f.Username" />
+                            <button type="submit" class="link">Remove</button>
+                        </form>
+                        &middot;
+                        <form method="post" asp-page-handler="Block" class="inline">
+                            <input type="hidden" name="Username" value="@f.Username" />
+                            <button type="submit" class="link">Block</button>
+                        </form>
+                    </td>
+                </tr>
+            }
+            </tbody>
+        </table>
+    </div>
+    <p class="muted small">Removing a friend is not announced; they see it in their own list.</p>
+}
+
+<h2>Blocked players</h2>
+@if (o.Blocks.Count == 0)
+{
+    <p class="muted">You block nobody.</p>
+}
+else
+{
+    <div class="table-wrap">
+        <table>
+            <thead><tr><th>Name</th><th>Blocked since</th><th></th></tr></thead>
+            <tbody>
+            @foreach (var b in o.Blocks)
+            {
+                <tr>
+                    <td><a href="~/u/@b.Username">@b.Username</a></td>
+                    <td>@Format.Day(b.Since)</td>
+                    <td>
+                        <form method="post" asp-page-handler="Unblock" class="inline">
+                            <input type="hidden" name="Username" value="@b.Username" />
+                            <button type="submit" class="link">Unblock</button>
+                        </form>
+                    </td>
+                </tr>
+            }
+            </tbody>
+        </table>
+    </div>
+}
+<div class="panel">
+    <form method="post" asp-page-handler="Block" class="stack">
+        <label>Block a player by user name <input type="text" asp-for="Username" autocomplete="off" required minlength="3" maxlength="20" /></label>
+        <button type="submit" class="secondary">Block</button>
+        <span class="muted small">A blocked player is never told. Blocking ends your friendship and your request to them,
+            and their requests no longer reach you (to them they still look sent). You can block up to
+            @o.Limits.MaxBlocks players.</span>
+    </form>
+</div>

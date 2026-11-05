@@ -198,3 +198,7 @@ dl.facts dd { margin: 0; }
 ul.stages { margin: 0.25rem 0 0; padding-left: 1.2rem; }
 ul.stages li { margin: 0.1rem 0; }
 tr.room-row td { border-bottom: none; }
+
+/* Friends: the profile's friend and block buttons, the friends page's row buttons. */
+.panel.social { display: flex; flex-wrap: wrap; gap: 0.5rem 1rem; align-items: center; }
+td form.inline + form.inline { margin-left: 0.5rem; }

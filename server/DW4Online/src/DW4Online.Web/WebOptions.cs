@@ -26,6 +26,7 @@ public sealed class WebRateLimits
     public int WebLoginPerMinute { get; set; } = 5;     // per IP: login and recovery
     public int WebRegisterPerHour { get; set; } = 3;    // per IP
     public int WebAccountChangesPerMinute { get; set; } = 10; // per account: the account page's forms (password confirmations)
+    public int WebSocialPerMinute { get; set; } = 60; // per account: the friends page's and the profile's friend and block buttons
 }
 
 public static class WebPolicies
@@ -36,6 +37,7 @@ public static class WebPolicies
     public const string LoginLimit = "web-login";
     public const string RegisterLimit = "web-register";
     public const string AccountChangeLimit = "web-account-change";
+    public const string SocialLimit = "web-social";
 }
 
 /// <summary>Display names of the 16 partner forms (Species.Models order); unknown models show their model name.</summary>

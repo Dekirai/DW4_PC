@@ -51,6 +51,7 @@ public static class ServerApp
         var character = Bind<OnlineCharacterOptions>(config, "OnlineCharacter");
         var cloud = Bind<CloudSaveOptions>(config, "CloudSave");
         var play = Bind<PlayOptions>(config, "Play");
+        var friends = Bind<FriendsOptions>(config, "Friends");
         var service = Bind<ServiceOptions>(config, "Service");
         var limits = Bind<RateLimitOptions>(config, "RateLimits");
         var relay = Bind<RelayOptions>(config, "Relay");
@@ -66,7 +67,7 @@ public static class ServerApp
         services.TryAddSingleton(TimeProvider.System); // tests register a controllable clock first
         services.AddSingleton(accounts).AddSingleton(character).AddSingleton(cloud).AddSingleton(play)
             .AddSingleton(service).AddSingleton(limits).AddSingleton(relay).AddSingleton(rooms).AddSingleton(database)
-            .AddSingleton(sealing).AddSingleton(instances);
+            .AddSingleton(sealing).AddSingleton(instances).AddSingleton(friends);
         services.AddSingleton(_ => new Database(database.ConnectionString));
         services.AddSingleton<IAccountRepository, AccountRepository>();
         services.AddSingleton<ISessionRepository, SessionRepository>();
@@ -77,6 +78,9 @@ public static class ServerApp
         services.AddSingleton<IAchievementRepository, AchievementRepository>();
         services.AddSingleton<IRoomDirectory, RoomDirectory>();
         services.AddSingleton<IRoomRepository, RoomRepository>();
+        services.AddSingleton<ISocialRepository, SocialRepository>();
+        // Round I2-social: nobody listens yet; round I1's relay replaces this with its in-process implementation.
+        services.TryAddSingleton<IWorldNotifier>(NullWorldNotifier.Instance);
         services.AddSingleton<MaintenanceRepository>();
         services.AddSingleton(_ => new PasswordHasher(accounts.PasswordIterations));
         services.AddSingleton<DW4Online.Domain.Accounts.LoginThrottle>();
@@ -86,6 +90,7 @@ public static class ServerApp
         services.AddSingleton<DW4Online.Domain.Story.OnlineStoryService>();
         services.AddSingleton<OnlineCharacterService>();
         services.AddSingleton<CloudSaveService>();
+        services.AddSingleton<SocialService>();
         services.AddHostedService<MaintenanceService>();
 
         // Relay:TicketKey signs relay tickets and (through HKDF) keys the security log's tags of unknown user names.
@@ -268,9 +273,12 @@ public static class ServerApp
     }
 }
 
-/// <summary>Hourly housekeeping: audit retention (180 days), expired sessions and the history of reset online characters.</summary>
-internal sealed class MaintenanceService(MaintenanceRepository repository, OnlineCharacterOptions characters, TimeProvider time,
-    ILogger<MaintenanceService> log) : BackgroundService
+/// <summary>
+/// Hourly housekeeping: audit retention (180 days), expired sessions, the history of reset online characters and expired
+/// friend requests (Friends:RequestDays).
+/// </summary>
+internal sealed class MaintenanceService(MaintenanceRepository repository, SocialService social, OnlineCharacterOptions characters,
+    TimeProvider time, ILogger<MaintenanceService> log) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stop)
     {
@@ -282,8 +290,10 @@ internal sealed class MaintenanceService(MaintenanceRepository repository, Onlin
                 try
                 {
                     var (audit, sessions, revisions) = await repository.PruneAsync(Clock.Now(time), 180, characters.ResetHistoryDays, stop);
-                    if (audit + sessions + revisions > 0)
-                        log.LogInformation("Pruned {Audit} audit rows, {Sessions} sessions and {Revisions} revisions of reset characters", audit, sessions, revisions);
+                    var requests = await social.PurgeExpiredAsync(stop);
+                    if (audit + sessions + revisions + requests > 0)
+                        log.LogInformation("Pruned {Audit} audit rows, {Sessions} sessions, {Revisions} revisions of reset characters and {Requests} expired friend requests",
+                            audit, sessions, revisions, requests);
                 }
                 catch (MySqlConnector.MySqlException e)
                 {

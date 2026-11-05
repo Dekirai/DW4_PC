@@ -37,6 +37,7 @@
             <dt>Last login</dt><dd>@Format.Date(Model.Account.LastLoginAt)</dd>
             <dt>E-mail</dt><dd>@(Model.Account.Email ?? "none")</dd>
             <dt>Profile</dt><dd><a href="~/u/@Model.Account.Username">@(Model.Account.ProfilePublic ? "public" : "private")</a></dd>
+            <dt>Friends</dt><dd><a href="~/account/friends">friends, requests and blocks</a></dd>
         </dl>
     </div>
     <div class="panel">
