@@ -507,3 +507,85 @@ What the sweeps showed:
   factors lower (s7) the medians are within 6 % of each other for both bots.
 - The growth decides where the good runs end: 0.13 puts the kite bot at
   17-19 minutes, 0.16 at 12-17 (s6), and the human bot of s6 near 8:00.
+
+The sweeps' last step (s8, on the s7 build with `art_range=14`): with the
+softer shots and the smaller crowd `bot=stand` outlasted the kite bot (s7's
+defaults: Agumon 18:08, 2 of 10 clear), its Art's 22 units standing
+defeated every walker before it struck. The Art's reach standing is 14 now
+(20 from 30 % of the stick, 34 at full stick): standing Agumon died at
+2:45-4:16 again, the human and the kite bot kept their runs.
+
+### 10.5 After (branch fix-o1a-balance, 0fcb0c9)
+
+The same measurement as 10.2 (`build/t/sweep.sh EXE a2`, the defaults, no
+request keys):
+
+| Bot | Agumon: death times | Veemon |
+| --- | --- | --- |
+| human | median 16:32 (12:00-18:37); none before 3:00, 20 of 20 reach 5:00 and 10:00, 18 reach 15:00 | median 16:40 (12:37-18:19); none before 3:00, 20 reach 5:00 and 10:00, 15 reach 15:00 |
+| kite | median 18:32 (17:22-20:01); 4 of 20 clear at 20:00 | median 16:52 (14:46-19:23); 19 of 20 between 15:00 and 20:00 |
+| stand | median 3:28 (2:45-4:16) | median 9:54 (2:51-14:21) |
+| circle | median 6:34 (6:11-7:08) | median 7:01 (6:22-7:25) |
+
+Veemon / Agumon: human 1.01, kite 0.91. The human bot's minutes (Agumon;
+before in 10.2):
+
+| min | taken | contact | shot | poison | near15 | near30 | trapped | alive | level | runs |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 1 | 0.12 | 0.11 | 0.02 | 0.00 | 0.47 | 2.53 | 0.01 | 12 | 6 | 20 |
+| 2 | 0.15 | 0.14 | 0.02 | 0.00 | 0.56 | 2.89 | 0.01 | 15 | 8 | 20 |
+| 3 | 0.22 | 0.18 | 0.02 | 0.00 | 0.62 | 3.30 | 0.01 | 18 | 11 | 20 |
+| 4 | 0.20 | 0.18 | 0.02 | 0.00 | 0.82 | 4.42 | 0.03 | 20 | 12 | 20 |
+| 5 | 0.22 | 0.20 | 0.01 | 0.00 | 0.89 | 4.88 | 0.03 | 22 | 14 | 20 |
+| 6 | 0.33 | 0.24 | 0.06 | 0.01 | 0.91 | 5.04 | 0.03 | 26 | 16 | 20 |
+| 7 | 0.74 | 0.56 | 0.14 | 0.07 | 1.08 | 6.04 | 0.04 | 30 | 18 | 20 |
+| 8 | 1.17 | 0.79 | 0.16 | 0.13 | 1.18 | 6.61 | 0.05 | 32 | 20 | 20 |
+| 10 | 1.00 | 0.78 | 0.14 | 0.09 | 1.19 | 6.98 | 0.06 | 37 | 23 | 20 |
+| 11 | 0.89 | 0.70 | 0.13 | 0.04 | 1.67 | 8.98 | 0.11 | 42 | 25 | 20 |
+| 15 | 1.18 | 1.01 | 0.16 | 0.00 | 2.16 | 11.36 | 0.17 | 52 | 31 | 18 |
+| 17 | 1.57 | 1.21 | 0.21 | 0.15 | 2.64 | 14.48 | 0.25 | 56 | 33 | 6 |
+
+Veemon's human bot: 0.15 / 0.16 / 0.19 / 0.17 / 0.16 taken in phase 1, 0.56-0.66
+in minutes 7-10, 1.1-1.2 from 13:00. The kite bot (Agumon): 0.13-0.17 in
+phase 1 (shots), 0.65-0.92 in minutes 7-10 (shots and MRβ02's poison),
+0.58-0.68 in phase 3, 1.2-1.5 from 17:00. The other targets of 14.2 over
+the human and the kite bot's runs (`fix_targets.py` of the review round):
+the first level-up at 6-11 s (median; at most 18 s), 12-15 level-ups in phase
+1 (20-23 s apart), 3 level-up windows in the first minute and then at least
+20 s apart, 1 Art hit per phase 1 defeat, the highest hit 11.1-16.4 % (its
+poison included), no clamp, the largest poisoning 10.0 %, at most 0.62 % of
+the frames without control, at least 92 % of every walking family close in,
+skill-up panels at least 30 frames apart, no Lua error.
+
+### 10.6 Tests, bounds and checks
+
+| Check | Result |
+| --- | --- |
+| ctest | 55 / 55 (new: `overflow_gap`, `overflow_human`) |
+| `overflow_gap` | six of eight sectors closed: 300 spawn points, none in the last way out |
+| `overflow_human` | two runs of seed 7 (40 s): the same trail; walked 1,657 units, its Art defeated 27 |
+| `overflow_balance` | the expected levels are the new kite medians (15 / 24 / 31 / 36 at 5:00 / 10:00 / 15:00 / 20:00; the review round's 15 / 25 / 32 / 40), the hits measured with the larger of the near and far factors of their time, the RAM check reads A(t) from `Tuning` (52 / 68 / 82 / 88 needed, 61 / 94 / 132 / 166 there); no wall: Agumon x 0.9 / 1.2 / 0.9, Veemon x 1.1 / 1.0 / 1.0 at the phases 2-4 |
+| `overflow_spawn` | the mechanisms keep the review round's crowd (A(t) 14 + 3.2 a minute, no refill limit, no way out) explicitly |
+| det.sh | 4004f056 / 396cb219 in two runs of two (`det_o1abal_1`, `_2`) |
+| drawn run | `build/t/runshots.sh`: `bot=human` seed 1 in a hidden window, pictures at 1:00, 3:00 and 6:00; its minute lines 1-6 equal the headless run's |
+| SURVIVAL.md 14.2 | the kite bot 15:00-20:00 (was 7:00-14:00), the human bot's targets, Agumon against Veemon within about 20 % |
+
+### 10.7 Open
+
+- **Phase 4's entry.** Most runs of both bots end between 15:30 and 17:40
+  (13-16 of 20 deaths in two minutes; the review round accepted 12): the
+  phase 4 families come in by 17:00 (weight over 90 s, damage over 120 s)
+  and MRε05 on the 20-25 ring brings 0.27-0.33 MaxHP a minute alone. Next:
+  phase 4's intro over 180-240 s, MRε05 on the slow walkers' ring or a lower
+  factor, then the growth again so the kite bot stays at 17-20 minutes.
+- **Skill after 10:00.** The human bot lasts nearly as long as the kite bot
+  (Agumon 16:32 against 18:32): from phase 3 on the time decides more than
+  the play. A higher contact factor late, or the offers mattering more (O1b's
+  gear), would widen it; the newcomer's targets of this round hold either way.
+- **Standing Veemon** lasts 9:54 (Impact strikes the walkers round it),
+  standing Agumon 3:28; the circle bot (it leaves its kills behind, Lv 9-11
+  at 5:00) 6:34 / 7:01.
+- **Kokatorimon** (never walks, enters 20-25 units away in the picture) is
+  still the second source of the newcomer's phase 1 contact.
+- **The user's next run** decides: the human bot is a model of his first
+  two minutes, not of him.
