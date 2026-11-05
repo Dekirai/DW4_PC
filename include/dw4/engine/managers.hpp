@@ -786,6 +786,11 @@ private:
     std::vector<ObjectView> ctrl_attrs_;  // beTextureCtrlAttr
     std::vector<std::unique_ptr<Attribute>> owned_;
     bool pending_{};
+    // Round J's review (presentation): a tick state read over infos this
+    // engine's journal added after the load end (pending_ was set, the donor
+    // had bound them): bind at the next update, as the members did; the bind
+    // changes Node::attributes only, which the tick state leaves out.
+    bool rebind_after_state_{};
 };
 
 // beParticleCtrl2 (manager vtable 804DF2B0): particle effects answering as

@@ -3063,6 +3063,7 @@ void TextureCtrlManager::clear_stage(Engine&) {
     ctrl_attrs_.clear();
     owned_.clear();
     pending_ = false;
+    rebind_after_state_ = false;
 }
 
 void TextureCtrlManager::bind_all(Engine& engine) {
@@ -3091,8 +3092,9 @@ void TextureCtrlManager::bind_all(Engine& engine) {
 }
 
 void TextureCtrlManager::update(Engine& engine) {
-    if (!pending_) return;
+    if (!pending_ && !rebind_after_state_) return;
     pending_ = false;
+    rebind_after_state_ = false;
     bind_all(engine);
 }
 

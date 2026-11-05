@@ -420,7 +420,9 @@ void SoundManager::tick_rams(std::vector<const Ram*>& out) const { ram_list(out,
 // ---- TEXTURECTRL
 void TextureCtrlManager::tick_state(TickArchive& a) {
     base_rams(a, rams_);
+    const bool own = pending_;
     a.io(pending_);
+    if (a.reading() && own && !pending_) rebind_after_state_ = true;
 }
 void TextureCtrlManager::owned_nodes(std::vector<Node*>&) const {}
 void TextureCtrlManager::tick_rams(std::vector<const Ram*>& out) const { ram_list(out, rams_); }
