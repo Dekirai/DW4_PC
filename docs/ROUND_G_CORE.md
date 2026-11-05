@@ -172,3 +172,31 @@ online_character's guest_records_keep_the_own_story).
   plan's regression list is complete. Next: RG1 / RG2 / RG7 / RG10 again on
   d0dcdb6b (build/scen_RG_final.log), character_test C4 K3 K3b K5, ctest,
   server tests, det.sh twice on build/rel of d0dcdb6b.
+- 05.11 08:55: final checks on d0dcdb6b (the code; later commits are docs):
+  RG1 (145 s), RG10 (293 s), RG2 (243 s), RG7 (110 s) PASS again
+  (build/scen_RG_final.log); character_test C4 (230 s), K3 (326 s), K3b
+  (327 s), K5 (267 s) PASS (build/char_C4K3.log, build/char_K5.log);
+  ctest 53 / 53 (build/ctest_final.log); server unit tests 246 / 246
+  (build/server_unit_final.log), integration tests 93 passed, 4 skipped
+  (the end-to-end ones without the WinHTTP client / Python; private
+  MariaDB on 3550 through scripts/local-db.ps1 -Port 3550, stopped after;
+  build/server_integration_final.log); `story_census.py --check`: both files
+  equal (build/census_check_final.log); det.sh twice on build/rel of
+  8ecc5e85: 4004f056 / 396cb219 in all four runs
+  (work/dref/checks/det/det_r69gcore_c and det_r69gcore_d).
+
+## State (05.11 09:00)
+
+Lanes A (story) and B (client) built and tested; lane C: RG1 / RG2 / RG7 /
+RG10 with counter-proofs, the whole regression list and C1-C4 / K3 / K3b /
+K5 pass. Protocol 47 (shared with round J, which ships with it).
+
+Left for a later run (not needed for the merge, the plan's "as far as the
+time allows"): real-client scenarios G5 (the moved-on notice and the next
+barrier), G6 (Retry in the training), G9 (one stag0101 instance over three
+barriers), G12 (a Hard room), G13 (503 dropped while the owner is away and
+at not_started), G14 (Continue? No), G16 (the owner's own steps into
+stag0001; its counter-proof on 57568ec); r25c 10 of 10 and the save state
+suite were not rerun in this round (det.sh covers online off). The user's
+steps: review, merge into main together with J, the DW4Online release with
+protocol 47 (server and client together).

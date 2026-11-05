@@ -7674,7 +7674,21 @@ unchanged, the local card folder stays empty), RG7 = G7, RG10 = G10 with
 G11. `seed_story` is production-like now (the merge sets and the copies of
 the room difficulty, no 503; `"seed_story": "full"` keeps the old copy);
 `upload_card` makes a client's card the account's online character before
-the run. Results and what is left: `docs/ROUND_G_CORE.md`.
+the run. Checks (05.11, on d0dcdb6b / 8ecc5e85): RG1, RG2, RG7, RG10 pass;
+their counter-proofs on main b226bc0 fail as they should (RG1: the guest's
+gate leads into the training; RG10: the call shop goes to stagIS13 and the
+online card's box 0 holds the owner's story; RG2: the save room puts the
+owner's story into the online card); the regression S2, S3, S5, S14, S14a,
+S14h, S14p, S14z, S16, S17a and character_test C1-C4, K3, K3b, K5 pass (C1 /
+C2 found that the own story had replaced the room owner's records too, so
+his story-only saves were "unchanged": fixed, only a guest's records get
+it); ctest 53 of 53, the server's unit tests 246 of 246 and integration
+tests 93 (4 skipped end-to-end), `story_census.py --check` equal, `det.sh`
+4004f056 / 396cb219 twice. Not run as real-client scenarios: G5, G6, G8, G9,
+G12-G16 (G8 and G15 are covered by `online_character`'s
+`guest_records_keep_the_own_story`). Not done: the DW4Online release with
+protocol 47 (the user's step, together with the client). Details:
+`docs/ROUND_G_CORE.md`.
 
 ### Before round D: the Cheats tab in rooms (a small fix)
 
