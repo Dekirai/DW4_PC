@@ -6,6 +6,7 @@
   "timeout": 900,
   "min_shared_ticks": 4500,
   "allow_resync": true,
+  "expect_relay": {"checkpoint_suspect": 1},
   "min_after_resync": 3000,
   "clients": [
     {"name": "a", "script": "a.script", "start": 0},

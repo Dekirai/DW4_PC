@@ -656,8 +656,12 @@ re-encodes the text and silently turns every non-ASCII character into `?` (the r
    folder inherits the root's permissions (service read and execute), and the firewall rules and the service name the
    same path, so nothing else changes. Settings that a release asks for go into `config\appsettings.Production.json`
    before the start: an update from release 0.1.0 (its example file had 43) sets `Play:MinimumProtocol` and
-   `Play:CurrentProtocol` to the game client's protocol (45 since round S2, 46 since round 63, 47 since round G-core, 48 since the READY check at the check tick of round J's joins); the room story settings
-   work with their defaults (section 10).
+   `Play:CurrentProtocol` to the game client's protocol (45 since round S2, 46 since round 63, 47 since round G-core,
+   48 since release 0.1.6: the READY check at the check tick of round J's joins); the room story settings work with
+   their defaults (section 10). A release that raises the protocol goes on the server first and the game client after
+   it: an older relay (0.1.5, minimum 47) admits a 48 client but checks its READY at the check tick only when the
+   donor's report happens to be there already; the new relay with `Play:MinimumProtocol` 48 asks older clients to
+   update.
 
 Rollback: stop the service, swap `app` and `app.previous` back; if the update applied a migration (or one failed half
 way), restore the backup from step 2 into `dw4online` first (the old build refuses a database that is newer than

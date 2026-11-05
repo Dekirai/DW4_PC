@@ -143,10 +143,23 @@ story-point credit).
   checkpoint: 318-423 ms, median 340 ms (J1 370 / 318 / 417 ms, J5 339, JL
   423, JS2 334, RGJ1 327, S3 340 / 348); every READY checked after 15-16
   replayed steps. JS: the drift found at the check tick (`ready_mismatch`
-  at 3,595), the classic join. (A first J1 run, 315 ms, failed only in
-  run.py's parse of the check NETFP's trace line, fixed in 508164e4.)
+  at 3,595), the classic join. (A first J1 run, 315 ms, failed only because
+  run.py could not parse the check NETFP's trace line; 508164e4 changed the
+  client's trace format.)
   ctest 56/56, DW4Online.Tests 269/269, `det.sh` 4004f056 / 396cb219
   (`build/det1.log`). SEAMLESS.md 6.13.5 and 17 *READY at the check tick*.
   Open: DW4Online 0.1.6 with protocol 48 (server and client release), the
   classic fallback's join time (JS 1,230 ms, JB 1,141 ms: the visit's
   catch-up, unchanged), a donor with unsafe ticks (M1: `CheckpointWaitMs`).
+- 05.11 evening, lane `jready`'s review (same branch): the blocker S3
+  (`statehash_mismatch` / `checkpoint_suspect` at 1,800, hidden by a PASS)
+  is a Lua chunk's label: the tick state listed only the closures' programs,
+  a rebuilt engine compiled a chunk two script names share under the other
+  name (b21a65dc, tick layout 2; ctest `tick_state` now compares a rebuild's
+  STATEHASH, the stag0102 case fails without the fix). Relay: fork window,
+  48's READY ticks, evicted checkpoints (49f8fea5, DW4Online.Tests 285/285,
+  three new tests fail with the old hub). Client: open check ticks as a
+  list, fake-hub checkpoint joins, session test (abc9b420, 252 checks).
+  run.py fails on `statehash_mismatch` / `checkpoint_suspect`. Running:
+  scenarios J1 J5 JB JR JS JS2 RGJ1 S3 JL S2 S17b L1 L2 M1
+  (`build/fix_scen_set1.log`), then det.sh.
