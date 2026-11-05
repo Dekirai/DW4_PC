@@ -23,7 +23,7 @@ down at any time). Keep it short; the design stays in SEAMLESS.md.
 | 7 | tick state rest | Lua VM `io` (slot layout, GC counters, closures by prototype path), CAMERA, HitLand / collision / ChangePos, sound simulation (sfp, SNDF driver, streams' game parts, `CriStreams`), the small managers, TEXTCTL lines keep their text, SUBWND programs reachable in fields | divergence trials over the stage set |
 | 8 | relay | STATEHASH (0x15) with K and its vote, CHECKPOINT_ASK (0x92), CHECKPOINT (0x16) store (two per instance, fork-aware), CHECKPOINT_BAD (0x17), STATE_DATA layout 2, the join with a fresh or stored checkpoint and its waits, the fallbacks (retry, classic path, NEW), resync from the checkpoint, the suspicion rule, `Instances:CheckpointJoins`, READY's *from checkpoint* flag, protocol version | relay unit tests, fake clients |
 | 9 | client | zstd encoder in the build; checkpoints in the session (STATEHASH at `C_k`, the donor's upload in chunks), the join path (rebuild, K check, self check, short catch-up, "Joining..." without a countdown), fallbacks, resync from a checkpoint | ctest `online`, real-client scenarios |
-| 10 | scenarios | `tools/online_test`: J1 / J5 / J15 / J30, J15x4, JW, JF, JR, JB, JS, JL; regression S1, S2, S3, S11a, S17a/b, S18b, S19b, L1, L2, M1, M2 | hidden clients on the own loopback stack (mysqld 3560, ports 56150-56199) |
+| 10 | scenarios | `tools/online_test`: J1 / J5 / J15 / J30, J15x4, JW, JF, JR, JB, JS, JS2 (review), JL; regression S1, S2, S3, S11a, S17a/b, S18b, S19b, L1, L2, M1, M2 | hidden clients on the own loopback stack (mysqld 3560, ports 56150-56199) |
 
 Offline stays bit-identical: `work/dref/checks/det.sh EXE NAME` must give
 4004f056 / 396cb219 (twice) after each engine lane.
@@ -119,3 +119,11 @@ story-point credit).
   Open: the joiner's music position within an unchanged file, STATEHASH /
   upload cost on a worker, AskCheckpoint's donor choice, the common loops
   over a live load (`fresh_game_driver`).
+- 05.11 evening (`int-r69r70`): with the review's READY check JS's missing
+  field shows at READY (`ready_mismatch`, `checkpoint_suspect` why=ready, the
+  classic state, no desync; run.py's per-scenario `expect_relay`); the new
+  JS2 (`DW4_ONLINE_TEST_DESYNC=join+1500`, development builds only) covers
+  the drift after a passed READY (`desync_rebuilt`, the classic resync).
+  SEAMLESS.md 17 "JS and JS2 after the review". Independent check: JS, JS2,
+  J1, J5, RGJ1, S3, JR and ui newchars pass, ctest 54/54, det.sh 4004f056 /
+  396cb219 twice on a build without DW4_ONLINE_DEV (build/k_*.log).
