@@ -876,6 +876,14 @@ void SceneCache::release_document(const IgbDocument* document) {
         if (it->first.document == document) it = nodes_.erase(it);
         else ++it;
     }
+    // The edited keys go too: a later document may take this one's address
+    // (a stage loaded again), whose attributes nobody edited (round J: a stale
+    // key named an attribute of the next stage as edited in the tick state, on
+    // one member only; S2's visits after a fork).
+    for (auto it = edited_.begin(); it != edited_.end();) {
+        if (it->first == document) it = edited_.erase(it);
+        else ++it;
+    }
 }
 
 Node* SceneCache::node(const IgbDocument* document, std::uint32_t reference) {
