@@ -1037,7 +1037,7 @@ std::vector<std::string> OverflowDirector::build_lines(const Engine& engine) con
     out.push_back("Art: " + art_name_ + " with " + (weapon ? detail::plain_name(db->text("weapon", weapon->record, "NAME")) : std::string("-")));
     out.push_back(std::string("  ") + kClassNames[std::clamp(art_skill_, 0, 5)] + " skill " + std::to_string(skill) + " / cap " +
                   std::to_string(rules_ ? rules_->skills.cap[std::size_t(art_skill_)] : 0) + ", Forge " + std::to_string(offer_state_.forge) +
-                  " of 5");
+                  " of " + std::to_string(std::min(5, offer_state_.forge_families)));
     for (const auto& t : techniques_) {
         int row = -1;
         for (const int learned : player.wazalist)
