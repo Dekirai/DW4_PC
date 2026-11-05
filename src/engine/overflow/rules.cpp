@@ -145,6 +145,19 @@ int OverflowRules::taken(Engine& engine, const ModelScriptContext& context, int 
     double factor = damage.taken_factor;
     if (kind == EnemyClass::corrupted) factor *= damage.corrupted_factor;
     if (const auto found = damage.family_factor.find(context.shooter_name); found != damage.family_factor.end()) factor *= found->second;
+    // Near or far: the attacker's distance on the ground when the hit lands.
+    last_taken.range = 1.0;
+    if (damage.near_factor != 1.0f || damage.far_factor != 1.0f)
+        if (auto* models = engine.get<ModelCtrlManager>()) {
+            const auto* shooter = models->find(context.shooter_name, context.shooter);
+            const auto* self = models->find(context.name, context.index);
+            if (shooter && self && shooter->node && self->node) {
+                const float dx = shooter->node->matrix(3, 0) - self->node->matrix(3, 0);
+                const float dz = shooter->node->matrix(3, 2) - self->node->matrix(3, 2);
+                last_taken.range = std::hypot(dx, dz) <= damage.near_distance ? damage.near_factor : damage.far_factor;
+            }
+        }
+    factor *= last_taken.range;
     int out = std::clamp(int(double(value) * factor), 1, 99999);
     last_taken.raw = out;
     last_taken.clamped = false;
@@ -167,6 +180,7 @@ RunPoison OverflowRules::poison(const ModelScriptContext& context, int max_hp, i
     double factor = damage.taken_factor;
     if (kind == EnemyClass::corrupted) factor *= damage.corrupted_factor;
     if (const auto found = damage.family_factor.find(context.shooter_name); found != damage.family_factor.end()) factor *= found->second;
+    factor *= last_taken.range; // (the hit's near or far factor: taken() came first)
     return run_poison(tick, ticks, max_hp, factor, player_hit.poison_ticks, player_hit.poison_share);
 }
 

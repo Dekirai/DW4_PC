@@ -74,6 +74,7 @@ void OverflowDirector::attach(Engine& engine, OverflowRules& rules) {
     rules.player_hit.status_cap = config_.tuning.status_cap;
     rules.player_hit.muteki = config_.tuning.muteki;
     rules.levels.level_heal = config_.tuning.level_heal;
+    rules.levels.exp_factor = config_.tuning.exp_factor;
     rules.levels.curve_base = config_.tuning.curve[0];
     rules.levels.curve_linear = config_.tuning.curve[1];
     rules.levels.curve_square = config_.tuning.curve[2];
@@ -323,6 +324,8 @@ void OverflowDirector::update_factors(Engine& engine) {
     (void)engine;
     if (!rules_ || !config_.tuning.time_scaling) return;
     rules_->damage.taken_factor = damage_factor(run_seconds() / 60.0);
+    rules_->damage.near_factor = knots(config_.tuning.contact_at, run_seconds() / 60.0);
+    rules_->damage.far_factor = knots(config_.tuning.shot_at, run_seconds() / 60.0);
     // A new phase's families also come in softly: their damage rises from
     // phase_intro of their own factor to all of it over phase_intro_steps,
     // as their spawn weight rises (no wall at a phase change).

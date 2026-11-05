@@ -90,6 +90,8 @@ public:
         };
         five("alive", config.tuning.alive_at);
         five("refill", config.tuning.refill_at);
+        five("contact", config.tuning.contact_at);
+        five("shot", config.tuning.shot_at);
         // (KEY=SECONDS: a run time.)
         auto seconds = [&](std::string_view key, int& value) {
             if (const auto text = option(request_, key); !text.empty()) value = int(std::lround(std::strtod(text.c_str(), nullptr) * 60.0));
@@ -107,6 +109,7 @@ public:
         real("slow_min", config.tuning.slow_min);
         real("slow_max", config.tuning.slow_max);
         real("corrupted_hp", config.tuning.corrupted_hp);
+        real("exp", config.tuning.exp_factor);
         real("art_range", config.tuning.art_range);
         real("art_range_moving", config.tuning.art_range_moving);
         real("damage_warm_up", config.tuning.damage_warm_up);

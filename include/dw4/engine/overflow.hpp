@@ -205,6 +205,11 @@ public:
         float corrupted_factor = 1.5f;
         std::map<std::string, float, std::less<>> family_factor; // a family's own damage factor (14.3; the director's table)
         float hit_clamp = 0.35f;                    // a non-Guardian hit takes at most this share of MaxHP
+        // A hit from an attacker within near_distance (its body, a swing:
+        // the player could have walked away) and one from farther (a shot)
+        // weigh their own factors; the poison a hit leaves goes with it
+        // (the balance round of 05.11: the director sets them by the time).
+        float near_factor = 1.0f, far_factor = 1.0f, near_distance = 15.0f;
     } damage;
     struct Levels {
         bool run_curve = true;                      // NEXTEXP of run_next_exp instead of DW4's
@@ -312,6 +317,7 @@ public:
     struct LastTaken {
         int raw{};
         bool clamped{};
+        double range = 1.0; // the hit's near or far factor (its poison's too)
     } last_taken;
 
 private:

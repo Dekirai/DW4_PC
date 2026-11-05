@@ -120,8 +120,16 @@ struct Tuning {
     std::array<int, 3> curve{70, 65, 16};        // the run's NEXTEXP terms (4.5 had 80 / 50 / 6, the O1a balance pass 70 / 65 / 13)
     float damage_warm_up = 0.4f;                 // the damage side of the warm-up: x 0.4 at 0:00, rising to x 1 at
     float damage_warm_minutes = 5.0f;            // ... this run minute
+    // The damage of a hit from an attacker within 15 units (its body, a
+    // swing: a player who walks away is not hit) and from farther (a shot),
+    // by knots at 0:00-20:00 (OverflowRules near_factor / far_factor): the
+    // first minutes' contact soft, later the crowd's contact the threat a
+    // good player avoids, the shots a little softer.
+    std::array<float, 5> contact_at{1.0f, 1.0f, 1.0f, 1.0f, 1.0f};
+    std::array<float, 5> shot_at{1.0f, 1.0f, 1.0f, 1.0f, 1.0f};
     int status_cap = 6;                          // frames of a normal enemy's stun / sleep / bind (4.8 had 30)
     double level_heal = 0.05;                    // a level-up adds this share of MaxHP (4.5: 3 %, at most 5 %)
+    float exp_factor = 1.0f;                     // the EXP of a defeat (Normal; a run with fewer enemies keeps its level pace)
     int corrupted_from = 90 * 60, corrupted_every = 60 * 60;
     float corrupted_hp = 8.0f;
     int disk_percent = 20;                       // a Corrupted enemy drops an HP Disk alpha
