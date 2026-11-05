@@ -9043,12 +9043,66 @@ turn HOME for a defeated guest into no departure at all (no living leaver)
 and HOME for the last living member into a move of every defeated one, the
 host included. HOME is a server decision about accounts, so the side rule
 does not apply to it. A stage group whose present slots are all defeated
-after a HOME runs the original game over (round I1a's first task checks
-that a stage with only defeated players reaches it in online rules; that
-game over is "defeated" for a host, 19.6.5). The barrier into stagML11 is
+after a HOME runs the original game over (that game over is "defeated" for
+a host, 19.6.5; measured below). Its barrier is recognized by its alive
+mask, not by its target: BARRIER carries `alive` (`Session::park`,
+`session.cpp` 1259, `GameEngineLink::alive_mask`), and a barrier with no
+living present slot is the game over whatever stage it names (measured
+below: it can name the field). The barrier into stagML11 is
 a DISSOLVE: every member home on its own story (19.8.3). A member's own window or talk closes as the gate
 disc closes it. Members parked at a barrier get their DISSOLVE redirected
 home (19.8.3); spectators go home.
+
+**Measured r71: only defeated players after a HOME.** `dw4_world_probe
+DATA homeover` (`tools/world_probe.cpp`, headless, online rules, dng101b1
+direct start with two or three players): a defeat as in a fight (GAMERAM
+ADDHP 0 and SQ_DEAD, as `tests/online_tests.cpp`'s *kill*), then HOME
+emulated in the copy that keeps the other slots (`online_remove_player` per
+HOME slot: the despawn and membership step the fork's other side gets,
+`online.cpp` 485-525). The game over is the bit capsule's: with no player
+model generated it runs `end_g_000bcaps.lua` on every update
+(`ModelCtrlManager::update_capsule`, `model_ctrl.cpp` 2353-2377), and HOME's
+despawn removes the last living model (`despawn_player` sends PLAYER
+REMOVE, `online.cpp` 492-497). The defeat is ordered at the frame given
+(the kill), its SQ_ERAS ("player N defeated") comes 72 frames later. Logs
+`build/meas/homeover2.log` with the script trace `homeover2.err`,
+`ho4_c2.*` (three players), traces of the exit prompt `ho_c*.err`,
+`ho_s*.log` (worktree `i1ameas`).
+
+| Case | Defeated (SQ_ERAS) | HOME | `end_g_000bcaps.lua` | The stage change (NEXTSTAGE) |
+| --- | --- | --- | --- | --- |
+| two players; 1 defeated stays, HOME takes the living 0, 300 frames after the kill | 1273 | 1501 | 1502 (+1) | 1884 stagml11 |
+| the same, HOME 10 frames after the kill (the death sequence still runs) | 1273 | 1211 | 1364 | 1464 **stag0101** (the exit prompt, below) |
+| the same with the kill at 1800, HOME +10 / +300 | 1873 | 1811 / 2101 | 1964 / 2102 | 2366 / 2476 stagml11 |
+| the same with the kill at 2600, HOME +10 | 2673 | 2611 | 2764 | 3142 stagml11 |
+| three players; 1 and 2 defeated stay, HOME takes 0 | 1273, 1274 | 1502 | 1503 | 1884 stagml11 |
+| two players; HOME takes the defeated 1, the living 0 stays | 1273 | 1501 | - | none: play goes on |
+| two players, nobody defeated, HOME takes 0 | - | 1500 | - | none: slot 1 plays on alone |
+| the original: both defeated, no HOME | 1273, 1274 | - | 1364 | 1747 stagml11 |
+| the original, one player, no HOME | 1273 | - | 1364 | 1747 stagml11 |
+
+So yes: a stage group left with only defeated players reaches the original
+game over in online rules, one update after the HOME that removes the last
+living model, or 91 frames after the last SQ_ERAS when HOME came during the
+death sequence (as the original's own game over: 1273 to 1364), and the
+game over's NEXTSTAGE stagml11 follows 374-402 frames after the script, as
+offline (383). One case leaves elsewhere: a defeated
+player lying on an exit mat. Once the copy is solo (one present slot) the
+exit port is gone (`install_online_lua`: the port only while two or more
+are present, `online_exits.cpp` 434-444) and `MATisAllPlayer` is the
+original's, true with nobody alive (80302B40, `mat_ctrl.cpp` 173-178); the
+model's removal at the defeat changes the mat (dng101b1's matz01, the way
+back), its script opens the exit prompt (frame 1286), the leader's pad
+(the defeated slot's) answers it (1355) and the NEXTSTAGE stag0101 follows at 1464,
+before the game over's own NEXTSTAGE. By the original's rule that happens to
+a solo player who falls on an exit mat (the two-member case without HOME
+went through the port and got the game over), not something HOME adds;
+HOME only makes a solo copy of a defeated member likely. **Design change
+(r71):** the relay reads the game over from the barrier's alive mask (0),
+not from its target stagML11: such a barrier is "defeated" for a host
+(question 37's return in I3, the end before I3) and, when its instance has
+ended, it is redirected home like every barrier of an ended instance
+(19.8.3).
 
 HOME also serves a removal (one slot), a guest's *Leave instance* (its slot)
 and a staff removal. EXP, items and Bits stay with every member; its
@@ -9462,6 +9516,60 @@ in the world.
   when their instance ends, a returning host whose grace ran out (19.6.7),
   a defeated host's *End* when his barrier led elsewhere than stagML11
   (19.6.5), and B in the loading-screen form from home (19.7.5).
+- **Measured r71: the redirect against a NEXTSTAGE.** The stage change's
+  path, with the places a redirect could go:
+  1. *Lua.* The original's NEXTSTAGE is data (an exit's funcStageChange, a
+     boss's end script, the gate disc; the port's own departures post
+     PLAYERPOINT SETGENERATEPOS and STAGECTL NEXTSTAGE with delay 10,
+     `online_exits.cpp` 147-148): no single place, and the relay has not
+     decided yet. Not here.
+  2. *The engine's stage request.* STAGECTL NEXTSTAGE
+     (`StageCtlManager::command`, `managers_core.cpp` 1102-1129: the picture
+     black, SESTOP / ENVSTOP, the randomizer's zone remap 1115-1125, then
+     `Engine::request_stage`, `engine.cpp` 660-666) sets `pending_stage_`;
+     SETGENERATEPOS set `PlayerPointManager::point_no_` before it
+     (`managers_core.cpp` 3130-3133; first.lua reads it through
+     PLAYERgetPos, 3707-3716, and the player's GENERATE through GETMATRIX).
+     After that step the client parks (`Session::park`, `session.cpp`
+     1237-1275, the BARRIER with the target and point it read) and steps
+     the engine no more until BARRIER_OK. Still before the relay's answer.
+  3. *BARRIER_OK, before the next step* (`Session::on_barrier_ok` ->
+     `set_barrier`, `session.cpp` 1277): the first place that knows the
+     decision. Then the transition steps: the module reload
+     (`engine.cpp` 1994-2023, its length from the departing stage's files,
+     not the target) with its held fields, then the load step: `apply_barrier`
+     (the story's 503 rule reads `pending_stage_`, `online.cpp` 621) and
+     `begin_stage_load`, which consumes `pending_stage_` (737) and takes the
+     snapshot with `point_no` (819). The generate point: everything before
+     `begin_stage_load`.
+
+  `dw4_world_probe DATA redirect` (headless, online rules, stag0101 direct
+  start, the departure at frame 1202, DISSOLVE answered at the park; the
+  redirect is `request_stage` plus `PlayerPointManager::set_point_no`, which
+  is all `redirect_pending_stage` has to do; log `build/meas/redirect1.log`):
+
+  | Departure | Redirect to stagml11 point 3 | Load snapshot (canonical, 16,667 bytes) | Net fingerprints, 3,978 frames |
+  | --- | --- | --- | --- |
+  | NEXTSTAGE stagML11 point 3 (the reference) | - | - | - |
+  | NEXTSTAGE stagML02 point 0 | at the park (place 3) | equal | equal |
+  | NEXTSTAGE stag0102 point 0 | at the park | equal | equal |
+  | NEXTSTAGE stagML02 point 0 | after the first transition step (in the held fields) | equal | equal |
+  | NEXTSTAGE stagML02 point 0 | the stage alone, the point left at 0 | differs from byte 7,185 (the point) | differ from frame 1629 |
+  | zone shuffle on: NEXTSTAGE dng101b1 point 0 (remapped to dng102b1 by NEXTSTAGE) | at the park | equal to the zone-shuffle reference | equal |
+
+  The park is the NEXTSTAGE's step (1202), the load step 21 steps later
+  (1223: the module reload's 20 held fields): a redirect anywhere from
+  BARRIER_OK to the top of `apply_barrier` gives the state of a NEXTSTAGE to
+  that stage and point, bit for bit, and it needs the generate point (a
+  redirect of the stage alone puts the player at the old point number).
+  The zone remap happens in NEXTSTAGE, so a redirect's target is taken as
+  it is (right for a way home). **Design:** `redirect_pending_stage` is
+  called from `on_barrier_ok` (before `set_barrier`'s first step) or at the
+  very top of `apply_barrier`, never later (the 503 rule and the snapshot
+  read the target there); it asserts a solo engine with a pending stage. The
+  BARRIER already went out with the original target (the relay redirects,
+  so it knows both); a HEADING sent for the original target is the relay's
+  to drop.
 - This closes 8.8's "barriers only add" for leaving: no engine takes the
   host's story, quest state or gate disc return home (invariant 5).
 
@@ -9554,6 +9662,72 @@ in the world.
   and whether a restore with them equals a Game Start with them (hidden
   two-client runs per setting, fingerprints). A setting that fails becomes a
   join filter (rows *Other settings*, greyed) until a later round fixes it.
+- **Measured r71.** Where each setting is read (code, and the stage
+  descriptors in the game data: 98 of them pick `aaaCamera.igb` /
+  `aaaCameraL.igb` by SYSgetCameraMode, `generatorN/H/V.igb` by
+  SYSgetDifficulty and a light pack by SYSgetLightMode; start.lua's
+  funcStartLayerSet sets LIGHTCTRL SETCOLOR by the light mode):
+
+  | Setting | Where | Read when |
+  | --- | --- | --- |
+  | difficulty | `GameSystem::difficulty` (SYSgetDifficulty, `managers_core.cpp` 3706) | the stage load (the descriptor's generator file; stag0101: generatorn / generatorv) and scripts (flags 406+) |
+  | camera mode | `GameSystem::camera_mode` (SYSgetCameraMode, 3720) | the stage load (the descriptor's camera file) |
+  | light mode | `GameSystem::light_mode` (SYSgetLightMode, 3820) | the stage load (stag0101 / stagML11: `ls_pack` for 0, `lh_pack` for 1) and start.lua |
+  | fast loading | `Cheats::fast_loading` | latched at `begin_stage_load` (`loader_fast_`, `engine.cpp` 800) and read at NEXTSTAGE for the module reload's length (1997) |
+  | randomizer enemies | `Cheats::rand_seed` / `rand_enemies` | the load (the donor packages, `engine.cpp` 1822), every enemy GENERATE (298) and wave (`generater.cpp` 237-330) |
+  | randomizer zones | `rand_zones` | NEXTSTAGE (`managers_core.cpp` 1115-1125) |
+  | randomizer drops | `drop_seed` | every drop (`generater.cpp` 339-377) |
+
+  A restore (`GameEngineLink::restore`, `engine_adapter.cpp` 269-285) takes
+  the modes with the snapshot's GameSystem (`Engine::restore`, `engine.cpp`
+  864-869) and the cheats with the snapshot (850; `begin_stage_load` latches
+  the snapshot's fast loading for the load in progress), and then
+  `start_online` applies the joiner's **own** settings over the cheats
+  (`apply_room_cheats(settings_, ...)`, 301: the rooms' assumption that
+  every member has the same). A checkpoint join's tick state brings the
+  host's cheats back at T (`tick_state.cpp` 468), after the load ticks ran
+  with the joiner's own.
+
+  `dw4_world_probe DATA settings` (headless, online rules): a host's Game
+  Start with settings H (the modes as `after_live_step` writes them, the
+  cheats as `start_online` sets them) direct into stag0101, the field's
+  dungeon entrance (SETGENERATEPOS 0, NEXTSTAGE dng101b1) at the load step
+  + 1100; a joiner restores the stag0101 load snapshot through
+  `GameEngineLink::restore` with its own settings J and replays the pads
+  (4,199 frames compared, the stage change at 1102); a second joiner takes
+  round J's path (the load ticks to K, the host's tick state at T = 901).
+  Log `build/meas/settings3.log`.
+
+  | Host H / joiner J | Classic join (restore + log) | Checkpoint join |
+  | --- | --- | --- |
+  | the same (defaults; and all non-default on both: Very Hard, camera 1, light 0, fast loading, randomizer 4242 with all three) | equal | equal |
+  | J fast loading, H not (and the reverse) | differ from the stage change + 1 (the module reload's length) | equal (T brings H's cheats) |
+  | J randomizer, H not (and the reverse; another seed) | differ from the next load (+21; the zones: another stage, dng102b1 against dng101b1; another seed: +59) | refused: `apply_tick_state` "a document id beyond the engine's files" (the donor packages) or "structure", then the classic path |
+  | H enemies only / zones only | differ from the next load / take another stage | refused (enemies) |
+  | H drops only | equal for 4,199 frames (no drop happened; by code the first drop differs) | - |
+  | H Very Hard, J Normal | equal (the snapshot's GameSystem) | equal |
+  | the same, J's own modes applied after the restore | differ from load + 351 (the first wave: generatorn instead of generatorv) | - |
+  | H camera 1 / light 0, J's own modes applied | equal for 4,199 frames (stag0101 has no camera file; the light packs did not change the load's timing here) | - |
+
+  And the way back: a host's modes (Very Hard, camera 1, light 0) kept
+  into a DISSOLVE load stagML11 with `ls_pack`; the own modes set while the
+  stage change is parked (before the load step) load exactly the files of
+  a Game Start with them (`lh_pack`; 9 files, equal lists).
+
+  **What it means for a joiner, and the design changes (r71):** every
+  setting is the stage group's, i.e. the host's, while a member plays in
+  the instance: the modes need nothing (the snapshot and the tick state
+  carry the host's GameSystem); the cheats (randomizer, fast loading) are
+  in the snapshot and the tick state too, so **no BARRIER_OK or STATE_DATA
+  field is needed for them**: a restore must keep the snapshot's cheats
+  (only the forced-off cheats of `online_cheats`), and `start_online` after
+  a restore must stop applying the member's own `RoomSettings`; that one
+  line is what breaks a join with other settings today. No setting needs a
+  join filter. The member's own settings come back only at the DISSOLVE,
+  set in the parked stage change before the load step (19.8.3's load step),
+  which equals a Game Start with them. The light mode measured as
+  presentation only; it stays a host setting until a round checks that no
+  stage's light packs change the original loading's timing.
 - Lists show "Hard", "Very Hard", "Randomizer".
 
 #### 19.8.8 Quests (question 35)
@@ -9923,6 +10097,43 @@ a hundred requests are one toast, not two hundred seconds of them).
   (hidden; budget 1.5 ms per frame) with and without the half rate, and
   caps the drawn count by distance (the farthest first, down to 20) if it
   is still over; the cap is a client setting the F1 menu shows.
+- **Measured r71: 30 figures.** A Release build without DW4_ONLINE_DEV
+  with the test-only build option `DW4_GHOST_PROBE` (`ghost_figures.hpp`,
+  `game_main.cpp`; never in a player build): `DW4_PROBE_GHOSTS=30` stands 30
+  figures of the 16 forms (three of four with a weapon, every second one
+  running a 10-unit circle) on a spiral around the own player in stagML11
+  (direct start, no online session), `DW4_PROBE_GHOSTS_FULL=10` poses the
+  nearest 10 every draw and the others every second draw (the half rate).
+  Hidden window, `DW4_DEV_PRESENT=144` (a virtual 144 Hz: 0.42 steps a
+  pass), the pass time from the pass's start to after the swap with a
+  `glFinish` first (the GPU's work counts), 720 passes a report, the
+  reports after the forms loaded; Ryzen 7 7800X3D, GeForce RTX 5070 Ti
+  (OpenGL 3.3, driver 621.01), other rounds running beside it. Logs
+  `build/meas/g_r1_*.log`, `g_r2_*.log`.
+
+  The ranges are over a run's eight reports after the first (the forms
+  load in the first):
+
+  | Figures | Pass mean / p99, 1920x1080 | Pass mean / p99, 2560x1440 MSAA 4 | Figures' CPU a pass (update + draw), 1080p | of it pose / traversal |
+  | --- | --- | --- | --- | --- |
+  | none (two runs) | 0.57-0.72 / 0.81-0.94 ms | 0.67-0.82 / 0.92-1.11 ms | - | - |
+  | 9 (today's cap) | 0.71-0.78 / 0.97-1.12 ms | - | 0.08-0.10 ms | 0.03 / 0.04-0.05 ms |
+  | 30, full rate | 0.97-1.08 / 1.34-1.55 ms | 1.07-1.14 / 1.54-1.65 ms | 0.25-0.30 ms | 0.09-0.11 / 0.13-0.16 ms |
+  | 30, half rate beyond the nearest 10 | 0.97-1.05 / 1.40-1.55 ms | 1.10-1.20 / 1.56-1.69 ms | 0.22-0.25 ms | 0.06-0.07 / 0.13-0.15 ms |
+  | 30 close together (2 units apart), full rate | 0.97-1.07 / 1.30-1.58 ms | 1.11-1.16 / 1.52-1.69 ms | 0.24-0.29 ms | 0.09-0.11 / 0.13-0.15 ms |
+  | 30 close together, half rate | 1.00-1.09 / 1.40-1.64 ms | 1.11-1.19 / 1.55-1.77 ms | 0.22-0.26 ms | 0.06-0.08 / 0.13-0.16 ms |
+
+  30 figures cost about 0.40-0.45 ms a pass in all (CPU and GPU), under a
+  third of the 1.5 ms budget; they make 59 draw items (one skinned body
+  each, and the weapons). The half rate saves only the pose of 20 figures
+  every second pass, 0.03-0.04 ms (the traversal, which builds the skinning
+  palette, stays), inside the noise of the pass time. Single passes of up
+  to 9 ms in four of the 13 runs are the machine's other work (other rounds
+  ran beside it). **Design change (r71):** all 30
+  figures at full rate; no half rate, no distance cap and no F1 cap setting
+  (`kMaxFigures` 30, `kMaxWeapons` 32 stay). The probe stays in the tree
+  (`DW4_GHOST_PROBE`) for a weaker machine's check; the iGPU of this PC
+  was not measured.
 - **Tags** coloured by relation (19.5.2); a lagging member's icon as today.
 - **Known limit.** The lobby's layout depends on each player's own phase
   (`start.lua`), so a ghost from another phase can walk where the viewer's
@@ -10307,6 +10518,99 @@ the decision stays under the lock).
   sealing lateness p99 at most 2 ms, the relay under half a core on the
   reference machine (a full core in the storm cell, for its 10 s). A pass
   keeps phase 1; the numbers go into this section.
+
+  **Measured r71.** `DW4Online.FakeClient loadgate` and `joins`
+  (`tests/DW4Online.FakeClient/LoadGate.cs`): today's `RoomHub` (one lock)
+  holding all 200 members in-process, without sockets (the lock is
+  measured, not the network); eight worker threads send each member's
+  frames through `Receive` under `hub.Sync` at the gate's rates (a sealed
+  member's INPUT every tick, two ticks ahead, NETFP every 60; a solo
+  leader's LOG every 100 ms and STATE every second; a lobby member's
+  PRESENCE2 at 10 Hz; one solo barrier a second with its snapshot; the
+  browser as `hub.Views()` ten times a second); the sealing thread as
+  `RelayHub.SealLoop` (`TryEnter`, one retry a millisecond later), the
+  housekeeping every 250 ms as `RelayHub.HousekeepAsync`; server GC as the
+  service (`Sdk.Web`); 3 s warm-up, 30 s measured per cell; Ryzen 7
+  7800X3D with other rounds running. The world layer is not built, so the
+  cells run today's code at the world's scale: *fullhub* fans every
+  PRESENCE2 out to all 199 others (today's loop); *select* splits the 200
+  into seven presence stages (about 29 receivers each, the selection's
+  fan-out) and computes a prototype of the selection (for each of the 200
+  receivers the nearest 30, one pass a second) under the lock. Logs
+  `build/meas/loadgate2.json`, `loadgate3_nomargin.json`, `joins2.json`.
+
+  | Cell | Lock acquisitions | Hold p50 / p99 / p99.9 / max | Sealing lateness p50 / p99 / max | TryEnter misses | CPU (in-process) | Working set |
+  | --- | --- | --- | --- | --- | --- | --- |
+  | base (30x4 sealed, 20 solo, 60 lobby) | 8,369/s | 0.2 µs / 11.6 µs / 0.07 / 11.0 ms | 0.46 / **4.85** / 9.7 ms | 102/s of 308 passes | 0.06 cores | 85 MB |
+  | fullhub (200 in stagML11, today's fan-out) | 2,031/s | 4.2 µs / 14.1 µs / 0.12 / 0.88 ms | - | - | 0.02 | 82 MB |
+  | select (seven presence stages, the selection prototype) | 2,033/s | 3.9 µs / 12.8 µs / 0.14 / 4.71 ms | - | - | 0.03 | 75 MB |
+  | storm (base, 200 reconnects in 10 s) | 8,405/s | 0.2 µs / 15.0 µs / 0.06 / 30.9 ms | 0.45 / **4.91** / 28.2 ms | 87/s of 314 | 0.05 | 90 MB |
+  | sealonly (the 30 groups alone) | 7,568/s | 0.2 µs / 12.0 µs / 0.04 / 18.4 ms | 0.32 / **3.37** / 18.4 ms | 45/s of 301 | 0.03 | 81 MB |
+  | base, the sealer waits up to 2 ms for the lock | 8,395/s | 0.2 µs / 16.0 µs / 0.06 / 8.5 ms | 0.24 / 0.61 / 7.6 ms | 0 | 0.06 | 92 MB |
+  | storm, the sealer waits up to 2 ms | 8,310/s | 0.2 µs / 19.2 µs / 0.06 / 23.6 ms | 0.23 / 0.97 / 14.2 ms | 0 | 0.06 | 103 MB |
+  | base-wait without the margin quantile (experiment, below) | 8,543/s | 0.2 µs / 9.4 µs / 0.06 / 5.7 ms | 0.24 / 0.54 / 5.6 ms | 0 | 0.05 | 99 MB |
+  | storm-wait without the margin quantile | 8,393/s | 0.2 µs / 13.4 µs / 0.06 / 8.2 ms | 0.24 / 0.54 / 2.6 ms | 0 | 0.07 | 87 MB |
+
+  Per path (base): INPUT p99 0.8 µs (213,450 in 30 s), PRESENCE2 to the
+  59 others 8.5 µs, LOG 8.8 µs, a solo barrier 0.15-0.25 ms, `Views()`
+  33 µs (p99 1.0 ms), `Seal` 61 µs p99; fullhub's PRESENCE2 to 199 others
+  11.4 µs p99; the storm's Connect 32 µs p50 / 1.1 ms p99 (two ROOM frames
+  per member each way), Disconnect 22 / 64 µs, RESUME 12 µs. The joins
+  (one join into a solo-led visit of 1, 10 and 25 minutes of log, three
+  runs each after a warm-up join; the state built off the lock as
+  `RunStateJobAsync`): the joiner's BARRIER (decision and capture)
+  0.02-0.05 ms, `FinishState` 0.01-2.0 ms, READY and JOIN_AT under
+  0.01 ms, a checkpoint's 32 KB chunk at most 0.54 ms, the build off the
+  lock 0.5-11 ms (51 KB of state after a minute, 310 KB after ten, a
+  checkpoint's 1.1 MB); after 25 minutes the classic join is refused (the
+  catch-up would pass `MaxCatchUpSeconds`) and only the checkpoint path
+  joins. Ten joins a minute are 0.002 % of the acquisitions: they move
+  nothing.
+
+  What fails, and why:
+  1. **The housekeeping's ping pass** holds the lock 8-9 ms once a second
+     (the p99 of the housekeeping holds; 31 ms with the storm and the
+     machine's other work): for every sealed member it sends PING with the
+     delay rule's low margin, `DelayController.LowMargin()` (`RoomHub.cs`
+     2637), which copies and sorts the stream's whole fall window, up to
+     1,800 margins (`SlotStream.cs` 299-306, 319). With 120 sealed members
+     that is 120 sorts of 1,800 a second, growing with the window over the
+     first 30 s (2.4 ms at 8 s, 5.2 ms at 16 s). A room had at most ten
+     members, so it never showed. With the margin left out (an experiment,
+     not committed) the housekeeping's p99 is 1.3-1.7 ms.
+  2. **The sealing thread's `TryEnter`** misses the lock in 15-35 % of its
+     passes (45-140 a second) although the lock is busy only 1-1.5 % of the
+     time: 200 members' frames come in bursts from many threads, and a miss
+     costs a millisecond (the retry), so the lateness p99 is 3.4-4.9 ms. In
+     a hub per room a miss let the other rooms seal on time; with one hub
+     there is nothing else to seal. Waiting up to 2 ms for the lock instead
+     gives a lateness p99 of 0.54-0.97 ms and no misses.
+  3. The selection prototype in one piece holds the lock 0.58-0.70 ms
+     (p50) to 4.7 ms once a second.
+  4. What stays: single holds of 5.6-8.4 ms (`Seal`, the housekeeping)
+     with both fixes, from the server GC (26-49 collections in 30 s, 0.6-
+     1.2 ms mean pause) and the machine's other work. The CPU of the lock's
+     work is 0.02-0.07 cores; the sockets come on top (not measured here):
+     fullhub's fan-out sends 216,000 frames a second (15.7 MB/s, 78 KB/s
+     per receiver), the selection's 30,500 (2.8 MB/s, 14 KB/s per
+     receiver, the estimate was 12 KB/s).
+
+  **Design changes (r71), phase 1 kept:** (a) the margin PING carries is
+  computed incrementally or cached per stream (the delay rule's own
+  `Evaluate` every 60 ticks may keep it), never sorted per PING; (b) the
+  sealing thread waits for the world hub's lock (bounded, 2 ms) instead of
+  `TryEnter` and a retry a millisecond later; (c) the presence selection is
+  computed off the lock from an immutable copy of the positions (built in
+  housekeeping, as the browser snapshot) and only swapped in under it;
+  (d) the fan-out by selection stays (19.13): without it a lobby of 200
+  sends 78 KB/s to every member. Then every cell passes p99 (holds 9-19 µs,
+  lateness 0.54 ms) and the CPU budget; the max of 5 ms holds except for
+  single GC pauses and the machine's other work, so the gate's max becomes
+  "at most 5 ms at p99.99" for a measurement on a busy machine, and the
+  storm's 10 s are measured again once (a)-(c) are built. Not measured:
+  STORY merges and mirrors at barriers (the keepers per account and the
+  mirror come with I1a's story lane), real sockets and TLS-free TCP writes
+  for 200 connections.
 - **Phase 2** (only if the gate fails; one lane): a lock and an inbox per
   stage cell, a registry lock taken briefly; lock order cell, then
   registry, never two cells; a barrier that moves members posts
@@ -10740,6 +11044,21 @@ with the generate point (19.8.3); a stage with only defeated players after
 a HOME reaches the original game over in online rules (19.6.5); the load
 gate with all its cells (19.17.4); 30 ghost figures' frame time with and
 without the half rate (19.13).
+
+**Measured r71** (branch `dref-i1a-meas`; the numbers are at the places
+named; the tools: `tools/world_probe.cpp` (`dw4_world_probe`, headless
+engine probes), the build option `DW4_GHOST_PROBE` (ghost figures in a
+test build), `tests/DW4Online.FakeClient/LoadGate.cs` (`loadgate`, `joins`);
+the progress note `docs/ROUND_I1A_MEAS_NOTES.md`). The design changes the
+results force, for the lanes:
+
+| # | Result | Change | Lane |
+| --- | --- | --- | --- |
+| M1 | A restore keeps the host's modes (the snapshot's GameSystem) but `GameEngineLink::start_online` puts the joiner's own randomizer and fast loading over the snapshot's cheats: a classic join with other settings differs from the next stage change, a checkpoint join is refused (19.8.7) | after every restore the snapshot's cheats stay (only `online_cheats`' forced-offs); no settings in BARRIER_OK or STATE_DATA and no join filter are needed; the own modes and cheats come back in the parked DISSOLVE before the load step (measured equal to a Game Start) | client |
+| M2 | A redirect at BARRIER_OK or in the module reload's held fields equals a NEXTSTAGE to that stage and point (load snapshot and 3,978 frames of net fingerprints); without the point it differs (19.8.3) | `redirect_pending_stage` = `request_stage` + `PlayerPointManager::set_point_no`, called from `on_barrier_ok` or the top of `apply_barrier`, never later | client |
+| M3 | Only defeated players after a HOME reach the original game over (one update after the HOME, NEXTSTAGE stagml11 374-402 frames later), but a defeated player on an exit mat in a now solo copy can open the exit prompt first and leave to the field (19.6.5) | the relay reads "defeated" from the barrier's alive mask 0, not from the target stagML11; such a barrier of an ended instance is redirected home | relay |
+| M4 | Phase 1 passes the gate's p99 (holds 9-19 µs) and CPU in every cell, fails max and the sealing lateness: the ping pass sorts 1,800 margins per sealed member (8-9 ms a second), and `TryEnter` with a 1 ms retry misses 15-35 % of the sealing passes (lateness p99 3.4-4.9 ms) (19.17.4) | phase 1 kept; the PING margin incremental or cached; the sealer waits up to 2 ms for the world hub's lock (lateness p99 0.54 ms measured); the presence selection computed off the lock; the gate's max read at p99.99 on a busy machine | relay |
+| M5 | 30 ghost figures cost 0.40-0.45 ms a pass at 144 Hz (CPU 0.25-0.30 ms), the half rate saves 0.03-0.04 ms (19.13) | no half rate, no distance cap, no F1 cap setting; 30 at full rate | client |
 
 | Lane | Scope |
 | --- | --- |

@@ -697,7 +697,7 @@ void homeover_probe(int only) {
         {"2 players: defeat at 1800, HOME 300 frames after", 2, 0b0010, 0b0001, 300, 1800},
         {"2 players: defeat at 2600, HOME 10 frames after", 2, 0b0010, 0b0001, 10, 2600},
     };
-    const char* species[4] = {"p_agumon", "p_dorumon", "p_veemon", "p_guilmon"};
+    const char* species[4] = {"p_agumon", "p_dorumon", "p_agumon", "p_dorumon"}; // (three or four players load the q_ packages: these two exist)
     std::printf("homeover probe: dng101b1 direct start, online rules; HOME emulated in the copy that keeps the other slots\n"
                 "(Engine::online_remove_player per HOME slot: the despawn and membership step the fork's other side gets)\n");
     for (int index = 0; index < int(std::size(cases)); ++index) {

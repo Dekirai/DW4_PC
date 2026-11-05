@@ -24,6 +24,14 @@ Logs: `build/meas/*.log`.
 ## Progress
 
 - 2026-11-05 16:00: worktree created, `build/rel` built.
-- 16:40: `tools/world_probe.cpp` (redirect, homeover, settings). redirect
-  and homeover measured (`build/meas/redirect1.log`, `homeover1.log`,
-  `ho2_c*.log`, traces `ho_s*.log`).
+- 16:20: `tools/world_probe.cpp` (redirect, homeover, settings) measured:
+  `build/meas/redirect1.log`, `homeover2.log` (+ `.err` script trace),
+  `ho4_c2.*`, exit prompt traces `ho_c*.err` / `ho_s*.log`, `settings3.log`
+  (classic and checkpoint joins).
+- 16:30: ghost probe (`DW4_GHOST_PROBE`, `build/ghost`) at 1080p and 1440p
+  MSAA 4: `g_r1_*`, `g_r2_*` (`g_table.py` sums them up).
+- 16:45: load gate cells and joins: `loadgate2.json`, `joins2.json`
+  (`lg_table.py`); the experiment without the PING margin
+  `loadgate3_nomargin.json` (RoomHub.cs restored afterwards, not committed).
+- 16:50: SEAMLESS.md 19.6.5, 19.8.3, 19.8.7, 19.13, 19.17.4 and 19.25
+  (M1-M5) written. Open: det.sh and ctest on this branch's build.
