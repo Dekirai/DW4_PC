@@ -307,6 +307,7 @@ bool OnlineRun::load_character(const std::filesystem::path& online_folder, const
     config.context = character_context();
     config.submit = [http = http_.get()](online::HttpRequest request) { return http->submit(std::move(request)); };
     config.trace = std::getenv("DW4_ONLINE_TRACE") != nullptr;
+    config.guest = !room_.room_owner;
     character_ = std::make_unique<online::CharacterSync>(std::move(config));
     const auto response = http_->wait(http_->submit(online::character_api::get_request()));
     if (!character_->enter(response, error)) {

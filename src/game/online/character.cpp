@@ -532,10 +532,11 @@ void CharacterSync::auto_save(const CharacterRecord& record, Why why) {
 }
 
 void CharacterSync::request(const Save& given, bool write_cache) {
-    // Every cached or uploaded record carries the account's own story (round G-core, 8.8): the engine's records hold the
-    // room owner's story in someone else's room, and the "unchanged" check below compares like with like.
+    // A guest's cached or uploaded records carry the account's own story (round G-core, 8.8): the engine's records hold the
+    // room owner's story in someone else's room, and the "unchanged" check below compares like with like. The room owner's
+    // engine story is his own: his records keep it (a save that only moved his story on is not "unchanged").
     Save save = given;
-    put_own_story(save.record);
+    if (config_.guest) put_own_story(save.record);
     if (blocked_) {
         // (The cache holds the server's character again, and the next room entry rebuilds it: the session's later progress
         // goes into the backup the conflict made, which keeps the newest.)

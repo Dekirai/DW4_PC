@@ -211,9 +211,10 @@ void cache_state() {
     std::filesystem::remove_all(card.folder());
 }
 
-CharacterSync make_sync(const OnlineCard& card, FakeHttp& http) {
+CharacterSync make_sync(const OnlineCard& card, FakeHttp& http, bool guest = false) {
     CharacterSync::Config config;
     config.card = card;
+    config.guest = guest;
     config.context.protocol = 44;
     config.submit = [&http](HttpRequest r) { return http.submit(std::move(r)); };
     return CharacterSync(config);
@@ -539,7 +540,7 @@ void guest_records_keep_the_own_story() {
     old = card_with_record(&old, borrowed, 2, true, 0);
     card.write(old);
     FakeHttp http;
-    auto sync = make_sync(card, http);
+    auto sync = make_sync(card, http, true);
     std::string error;
     check(sync.enter(answer(200, character_json(3, own, 100)), error), "enter with the own character");
     check(sync.own_story() == story_of(own), "the own story comes from the GET");
@@ -590,7 +591,7 @@ void guest_records_keep_the_own_story() {
     const OnlineCard empty(fresh_folder("ownstory404"));
     empty.write(card_with_record(nullptr, borrowed, 0, true, 0));
     FakeHttp http2;
-    auto none = make_sync(empty, http2);
+    auto none = make_sync(empty, http2, true);
     check(none.enter(answer(404, "{\"code\":\"no_online_character\"}"), error), "404 enters");
     check(none.own_story() == dw4::save::StoryBytes{}, "no character: no own story");
     for (const auto& entry : std::filesystem::directory_iterator(empty.backups())) {
@@ -604,13 +605,34 @@ void guest_records_keep_the_own_story() {
     crash.write(card_with_record(nullptr, with_story_bytes(make_record(77, 13, "Guest"), 6, 10), 0, true, 0));
     crash.set_state({3, 100, true, 0, 77});
     FakeHttp http3;
-    auto again = make_sync(crash, http3);
+    auto again = make_sync(crash, http3, true);
     check(again.enter(answer(200, character_json(3, own, 100)), error), "enter with an unsent save");
     auto [id3, put3] = http3.take();
     check(story_of(body_record(put3)) == story_of(own) && dw4::save::decode(body_record(put3)).level == 13,
           "the recovered save goes up with the own story");
     check(story_of(*record_of_box(*crash.read(), 0)) == story_of(own), "and is on the card with it");
     std::filesystem::remove_all(crash.folder());
+}
+
+void owner_records_keep_the_engine_story() {
+    // The room owner's engine story is his own (the room story): a stage change or save room save that only moved it on
+    // goes up with it (character_test C1 / C2: "unchanged" would skip the save room's upload and the one that meets a 409).
+    const OnlineCard card(fresh_folder("ownerstory"));
+    FakeHttp http;
+    auto sync = make_sync(card, http, false);
+    std::string error;
+    const auto start = with_story_bytes(make_record(88, 5, "Owner"), 1, 0);
+    check(sync.enter(answer(200, character_json(1, start, 50)), error), "the owner enters with his character");
+    check(story_of(*record_of_box(*card.read(), 0)) == story_of(start), "the entry's card holds his story");
+    const auto moved = with_story_bytes(make_record(88, 5, "Owner"), 2, 0); // the same character, the story one phase on
+    sync.auto_save(moved, CharacterSync::Why::stage_change);
+    auto [id, put] = http.take();
+    check(body_record(put) == moved, "a save that only moved the owner's story on goes up with the engine's story");
+    check(story_of(*record_of_box(*card.read(), 0)) == story_of(moved), "the owner's cache holds the engine's story");
+    sync.on_response(id, answer(200, "{\"revision\":2}"));
+    sync.auto_save(moved, CharacterSync::Why::leave);
+    check(http.sent.empty(), "the same record again is unchanged");
+    std::filesystem::remove_all(card.folder());
 }
 
 void sha256_vectors() {
@@ -710,6 +732,7 @@ int main() {
         saves_after_a_conflict_go_into_its_backup();
         refused_login_keeps_saving_into_the_cache();
         guest_records_keep_the_own_story();
+        owner_records_keep_the_engine_story();
         sha256_vectors();
         cloud_backup();
     } catch (const std::exception& e) {
