@@ -33,7 +33,9 @@ canonical snapshot hashes of every NEW (and co-arrival) are equal, the relay log
 was closed or crashed; then the scenario's expected log (in order per source; "!" lines must not appear; "shared: a b >=
 N" asks for N ticks of equal fingerprints with both present in one instance). A scenario with "allow_resync" (S11a, S11b:
 a client's DW4_ONLINE_TEST_DESYNC injects a desync) may differ up to its instance's last resync READY and must then be
-equal for "min_after_resync" ticks; its expected log checks the votes and resyncs. A scenario's "achievements" asks the
+equal for "min_after_resync" ticks; its expected log checks the votes and resyncs. A scenario with "expect_relay"
+({"ready_mismatch": 1}: JS, a READY from a checkpoint the members' fingerprints contradict) needs exactly that count of
+that relay event instead of none. A scenario's "achievements" asks the
 server for each client account's online achievements afterwards (check_achievements). Network traffic stays on loopback. A
 scenario.json with "server": {...} gets its own server with those settings merged over the stack's and its own database
 (S14h / S14a: {"Rooms": {"StoryWhileOwnerAway": "hold"}}); "min_shared_ticks" lowers the 10,000 shared ticks a scenario
@@ -1092,9 +1094,23 @@ def evaluate_real(sc, src, out, code, diag, timed_out, exits):
     for e in relay:
         kinds[e["ev"]] = kinds.get(e["ev"], 0) + 1
     notes.append("relay: " + ", ".join("%s %d" % kv for kv in sorted(kinds.items())))
-    for bad in ("desync", "snaphash_mismatch", "split_mismatch", "barrier_mismatch", "barrier_split", "resync", "ready_mismatch"):
+    bad_kinds = ("desync", "snaphash_mismatch", "split_mismatch", "barrier_mismatch", "barrier_split", "resync", "ready_mismatch")
+    # "expect_relay" ({"ready_mismatch": 1}, JS): a scenario that provokes one of these on purpose names it with its exact
+    # count; that count is then required (fewer or more is a problem), every other one stays an error.
+    expect_relay = sc.get("expect_relay", {})
+    for ev, count in sorted(expect_relay.items()):
+        if ev not in bad_kinds or ev in ("desync", "resync"):
+            problems.append("scenario.json: expect_relay names %s (only %s; desync and resync go by allow_resync)" %
+                            (ev, ", ".join(k for k in bad_kinds if k not in ("desync", "resync"))))
+        elif kinds.get(ev, 0) != count:
+            problems.append("relay logged %d x %s, the scenario expects exactly %d" % (kinds.get(ev, 0), ev, count))
+        else:
+            notes.append("relay logged %d x %s as the scenario expects" % (count, ev))
+    for bad in bad_kinds:
         if sc.get("allow_resync") and bad in ("desync", "resync"):
             continue  # (the resync scenarios inject them; their expected.txt checks how they end)
+        if bad in expect_relay:
+            continue  # (checked above)
         if kinds.get(bad):
             problems.append("relay logged %d x %s" % (kinds[bad], bad))
     relay_lines = [" ".join([e["ev"]] + ["%s=%s" % (k, v) for k, v in e.items() if k != "ev"]) for e in relay]
