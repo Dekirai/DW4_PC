@@ -299,6 +299,9 @@ REBASE_CASES = [
     ("503 from a key item", 0, room([2, 701, 518], [0])),
     ("503 from a stag0101 flag (the hint panel 505)", 0, room([2, 701, 505])),
     ("no 503 from a lobby-only phase 2 (the briefing and the lobby's intro)", 0, room([2, 701, 501, 502, 22])),
+    # Review of round G-core: the rooms behind the lobby's doors are reached before the training too.
+    ("no 503 from phase 2 and a stagML12 talk (405, n_prmame_00)", 0, room([2, 701, 405])),
+    ("no 503 from phase 2 and a stagML13 talk (35, n_metete_00)", 0, room([2, 701, 35])),
     ("a Hard room of an owner who cleared Normal keeps 503 (no copies of 503)", 1, room([86, 713, 503, 7, 518, 519])),
     ("503 from another difficulty's phase copy", 2, room([9])),
 ]

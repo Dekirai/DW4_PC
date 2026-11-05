@@ -7653,8 +7653,11 @@ allowed clear) and writes the key setter stages into `story_sets.json`
 dropped keys K0, K1, K4-K10 measured from the r25c campaign's pickups:
 dng101b2, dng102b3, dng204b2, dng205b3, dng307b2, dng308b3, dng309b4,
 dng411b3, dng412b4; every key has a stage, none keeps the old rule) and the
-training proof (`training.proof`: the 75 persistent flags whose setters all
-lie outside stagml02 / stagml11 / stag0001); `session_values.txt` drops 503
+training proof (`training.proof`: the persistent flags whose setters all
+lie outside the stages a story may reach before or with the training; the
+review of round 69 found stagML12 / stagML13's talks, 35 and 405, set in
+phase 1 and 2, so the list is stag0001, every stagIS* and stagML* stage and
+the quest dungeons dngQ*: 25 flags, from 75); `session_values.txt` drops 503
 from the instance class. `story::apply` / `holds_dropped` take the barrier's
 target (`pending_stage_`, the session's pending stage) and leave 503 alone at
 one into stag0001; `played_training` (C++, C# `StoryMerge.PlayedTraining`,

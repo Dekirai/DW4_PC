@@ -32,6 +32,8 @@
     {"name": "503 from a key item", "difficulty": 0, "room": {"revision": 0, "flags": [2, 518, 701], "folder": [0], "counters": []}, "expect": {"revision": 0, "flags": [2, 503, 518, 701], "folder": [0], "counters": []}},
     {"name": "503 from a stag0101 flag (the hint panel 505)", "difficulty": 0, "room": {"revision": 0, "flags": [2, 505, 701], "folder": [], "counters": []}, "expect": {"revision": 0, "flags": [2, 503, 505, 701], "folder": [], "counters": []}},
     {"name": "no 503 from a lobby-only phase 2 (the briefing and the lobby's intro)", "difficulty": 0, "room": {"revision": 0, "flags": [2, 22, 501, 502, 701], "folder": [], "counters": []}, "expect": {"revision": 0, "flags": [2, 22, 501, 502, 701], "folder": [], "counters": []}},
+    {"name": "no 503 from phase 2 and a stagML12 talk (405, n_prmame_00)", "difficulty": 0, "room": {"revision": 0, "flags": [2, 405, 701], "folder": [], "counters": []}, "expect": {"revision": 0, "flags": [2, 405, 701], "folder": [], "counters": []}},
+    {"name": "no 503 from phase 2 and a stagML13 talk (35, n_metete_00)", "difficulty": 0, "room": {"revision": 0, "flags": [2, 35, 701], "folder": [], "counters": []}, "expect": {"revision": 0, "flags": [2, 35, 701], "folder": [], "counters": []}},
     {"name": "a Hard room of an owner who cleared Normal keeps 503 (no copies of 503)", "difficulty": 1, "room": {"revision": 0, "flags": [7, 86, 503, 518, 519, 713], "folder": [], "counters": []}, "expect": {"revision": 0, "flags": [1, 7, 503, 518, 519, 713], "folder": [], "counters": []}},
     {"name": "503 from another difficulty's phase copy", "difficulty": 2, "room": {"revision": 0, "flags": [9], "folder": [], "counters": []}, "expect": {"revision": 0, "flags": [9, 503], "folder": [], "counters": []}}
   ],

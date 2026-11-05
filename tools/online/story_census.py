@@ -95,9 +95,17 @@ DERIVED = {0, 508, 611} | set(range(900, 938))
 # The clears a persistent flag may have (the census stops on any other): 503's is the retry's (restart.lua clears it
 # right before its NEXTSTAGE stag0001, so the intro plays again; the barrier into stag0001 leaves 503 alone).
 ALLOWED_CLEARS = {503: {"stag0001_m1__restart.lua"}}
-# The training flag and the stages a story reaches before and with the training (the rebase's proof, 8.8).
+# The training flag and the stages a story may reach before and with the training (the rebase's proof, 8.8): the
+# training stag0001, the title (stagIS*), every lobby stage (stagML*: ML02 / ML11 and the rooms ML12 / ML13 / ML14
+# behind their doors; the moves from ML11 into ML12 / ML13, matz00 / matz01, check no phase, and their scripts set
+# flags such as 35 (stagML13 n_metete_00, no condition) or 405 (stagML12 n_prmame_00, every phase but 3) in phase 1
+# and 2) and the quest dungeons (dngQ*: quests are taken at the lobby's desk, stagML11 bML01013; that none is open
+# before the training is not established). Review of round G-core: with only ML02 / ML11 / stag0001 an owner who
+# talked to such a lobby NPC before his training got 503 at his next room start and he and his guests never played
+# it. Old stories keep their proof in the phase (3 and up), COUNTER 7 (the training's) and the keys.
 TRAINING_FLAG = 503
-TRAINING_STAGES = {"stagml02", "stagml11", "stag0001"}
+TRAINING_STAGE = "stag0001"
+BEFORE_TRAINING_PREFIXES = ("stagis", "stagml", "dngq")
 # The key items no script sets with a constant: drops of item table 2 (impItem, items.cpp pick_item), picked up in the
 # r25c campaign's segments (work/campaign runs/seg/*/<segment>.log "picked up <name> ID" after "stage change -> <stage>";
 # the names map to the keys by the impItem table's row order - Blosso, Mammothmon, Boat Key, Ophanimon ID, SkullGrey,
@@ -215,7 +223,9 @@ def census(dec: Path) -> dict:
     unmeasured = [k for k in range(KEY_COUNT) if not keys[k]]
     if TRAINING_FLAG not in persistent:
         raise SystemExit(f"flag {TRAINING_FLAG} is not persistent")
-    training_proof = sorted(f for f in persistent if setters.get(f) and not (setters[f] & TRAINING_STAGES))
+    stages = {stage_of(path.name) for path in files}
+    training_stages = {TRAINING_STAGE} | {s for s in stages if s.startswith(BEFORE_TRAINING_PREFIXES)}
+    training_proof = sorted(f for f in persistent if setters.get(f) and not (setters[f] & training_stages))
 
     groups = []
     for first, count, *cps in WORKING_GROUPS:
@@ -241,7 +251,7 @@ def census(dec: Path) -> dict:
         "keyCopies": KEY_COPIES,
         "counters": ADDITIVE_COUNTERS,
         "never": {"flags": never_flags, "folder": [QUEST_ITEM], "counters": SESSION_COUNTERS},
-        "training": {"flag": TRAINING_FLAG, "stages": sorted(TRAINING_STAGES), "proof": training_proof},
+        "training": {"flag": TRAINING_FLAG, "stages": sorted(training_stages), "proof": training_proof},
         "setters": {
             "flags": {str(f): sorted(setters.get(f, set())) for f in sorted(persistent | phase)},
             "counters": {str(c): sorted(counter_setters.get(c, set())) for c in ADDITIVE_COUNTERS},

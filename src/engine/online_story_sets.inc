@@ -31,12 +31,9 @@ inline constexpr std::array<std::int32_t, 110> kPersistent{
     509, 510, 511, 512, 513, 556, 557, 558, 561, 570, 576, 582, 588, 595,
 };
 inline constexpr std::int32_t kTrainingFlag = 503;
-inline constexpr std::array<std::int32_t, 75> kTrainingProof{
-    19, 20, 35, 49, 67, 68, 69, 70, 83, 89, 90, 91, 92, 93, 94, 95,
-    96, 97, 98, 321, 324, 329, 330, 331, 332, 333, 335, 383, 392, 393, 394, 395,
-    396, 397, 398, 399, 400, 401, 402, 403, 404, 405, 406, 407, 408, 430, 431, 432,
-    437, 438, 439, 444, 445, 446, 447, 448, 449, 450, 451, 452, 469, 470, 471, 472,
-    473, 474, 476, 479, 505, 506, 507, 576, 582, 588, 595,
+inline constexpr std::array<std::int32_t, 25> kTrainingProof{
+    20, 49, 67, 68, 69, 70, 83, 89, 90, 91, 92, 93, 94, 95, 96, 97,
+    98, 333, 383, 406, 407, 408, 505, 506, 507,
 };
 inline constexpr std::int32_t kKeys = 11;
 inline constexpr std::array<std::int32_t, 3> kKeyCopies{518, 530, 542};
