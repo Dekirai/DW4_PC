@@ -15,6 +15,7 @@
 #include "dw4/engine/managers.hpp"
 #include "dw4/engine/online.hpp"
 #include "dw4/engine/online_membership.hpp"
+#include "dw4/engine/tick_state.hpp"
 #include "online/engine_adapter.hpp"
 #include "online/room_settings.hpp"
 
@@ -121,10 +122,14 @@ struct HostRun {
     std::uint64_t load_frame{};
     std::vector<std::array<PadSample, 4>> log;          // every step after the load step
     std::map<std::uint64_t, std::uint64_t> fingerprints; // post-step frame -> net fingerprint
+    std::uint64_t post_frame{};                         // the pre-step frame the departure was posted at (the joiner posts it too)
     std::uint64_t change_frame{};                       // the step whose NEXTSTAGE made the stage change pending
-    std::string second_stage;                           // the stage the change loaded (a zone remap shows here)
+    std::string second_stage;                          // the stage the change loaded (a zone remap shows here)
     std::uint64_t second_load_frame{};
     std::vector<std::string> first_files, second_files; // the loaded files at the end of each load
+    std::uint64_t load_end{};                            // the stag0101 visit's load end (round J's K, as a frame)
+    std::vector<std::uint8_t> tick_bytes;                // round J's checkpoint at tick_frame
+    std::uint64_t tick_hash{}, tick_frame{};
 };
 
 void set_modes(Engine& engine, const RoomSettings& s) {
@@ -158,6 +163,7 @@ HostRun run_host(const RoomSettings& h, std::uint64_t steps) {
         const std::uint64_t frame = engine.frame();
         if (!posted && run.load_frame && frame >= run.load_frame + 1100 && engine.membership_safe()) {
             post_departure(engine, "dng101b1", 0);
+            run.post_frame = frame;
             posted = true;
         }
         const auto pads = pads_at(frame);
@@ -187,6 +193,13 @@ HostRun run_host(const RoomSettings& h, std::uint64_t steps) {
             run.second_files = file_names(engine);
         }
         if (!run.load_bytes.empty()) run.fingerprints[engine.frame()] = engine.net_fingerprint();
+        if (!run.load_end && engine.stage_name() == "stag0101" && engine.load_end_frame()) run.load_end = engine.load_end_frame();
+        // Round J's checkpoint at T = load + 900 (the first state-safe step).
+        if (run.tick_bytes.empty() && run.load_frame && engine.frame() >= run.load_frame + 900 && !posted && engine.state_safe()) {
+            run.tick_bytes = engine.save_tick_state(TickForm::raw);
+            run.tick_hash = engine.tick_state_hash();
+            run.tick_frame = engine.frame();
+        }
     }
     engine.set_online(OnlineRules{});
     return run;
@@ -222,6 +235,9 @@ JoinResult run_joiner(const HostRun& host, const RoomSettings& j, JoinModes mode
     bool second_loaded = false;
     std::vector<std::string> second_files;
     for (const auto& pads : host.log) {
+        // (The departure is the probe's own message, not in the pads: the
+        // joiner gets it at the same frame, as a script would post it.)
+        if (engine.frame() == host.post_frame) post_departure(engine, "dng101b1", 0);
         step(engine, pads);
         const auto* snapshot = engine.stage_snapshot();
         if (snapshot && snapshot->serial != serial) {
@@ -238,6 +254,52 @@ JoinResult run_joiner(const HostRun& host, const RoomSettings& j, JoinModes mode
         if (!r.first_diff && it->second != engine.net_fingerprint()) r.first_diff = engine.frame();
     }
     r.files_differ = second_loaded && second_files != host.second_files;
+    engine.set_online(OnlineRules{});
+    return r;
+}
+
+// Round J's join from a checkpoint (Session's checkpoint path): the load
+// snapshot through GameEngineLink::restore, the visit's load ticks up to its
+// load end K, then the tick state at T, its hash, and the ticks from T.
+JoinResult run_checkpoint_joiner(const HostRun& host, const RoomSettings& j) {
+    JoinResult r;
+    if (host.tick_bytes.empty() || !host.load_end) {
+        r.why = "no checkpoint";
+        return r;
+    }
+    std::optional<Engine> holder;
+    dw4::game::online::EngineHooks hooks;
+    hooks.engine = [&]() -> Engine& { return *holder; };
+    hooks.fresh_engine = [&] { new_engine(holder); };
+    dw4::game::online::GameEngineLink link(hooks, j);
+    if (!link.restore(host.load_bytes)) {
+        r.why = "restore failed";
+        return r;
+    }
+    auto& engine = *holder;
+    std::size_t k = 0;
+    while (k < host.log.size() && !engine.load_end_frame()) step(engine, host.log[k++]);
+    if (engine.load_end_frame() != host.load_end) {
+        r.why = "load end at " + std::to_string(engine.load_end_frame()) + ", the host's at " + std::to_string(host.load_end);
+        return r;
+    }
+    try {
+        engine.apply_tick_state(host.tick_bytes);
+    } catch (const std::exception& e) {
+        r.why = std::string("apply_tick_state refused: ") + e.what();
+        return r;
+    }
+    if (engine.tick_state_hash() != host.tick_hash) r.why = "tick state hash differs after the apply; ";
+    for (std::size_t i = std::size_t(host.tick_frame - host.load_frame); i < host.log.size(); ++i) {
+        if (engine.frame() == host.post_frame) post_departure(engine, "dng101b1", 0);
+        step(engine, host.log[i]);
+        const auto* snapshot = engine.stage_snapshot();
+        if (snapshot && snapshot->stage != "stag0101") r.second_stage = snapshot->stage;
+        const auto it = host.fingerprints.find(engine.frame());
+        if (it == host.fingerprints.end()) continue;
+        ++r.compared;
+        if (!r.first_diff && it->second != engine.net_fingerprint()) r.first_diff = engine.frame();
+    }
     engine.set_online(OnlineRules{});
     return r;
 }
@@ -300,6 +362,7 @@ void settings_probe() {
     };
     constexpr std::uint64_t kSteps = 4200;
     std::map<std::string, HostRun> hosts;
+    std::vector<std::string> base_files;
     std::printf("settings probe: host Game Start with H direct into stag0101, dungeon entrance at load + 1100, %llu steps;\n"
                 "joiner GameEngineLink::restore of the stag0101 load snapshot with its own J, the host's pads replayed\n",
                 static_cast<unsigned long long>(kSteps));
@@ -320,6 +383,16 @@ void settings_probe() {
             }
             std::printf("    stag0101 files %zu (camera %s, generator %s), %s files %zu\n", h.first_files.size(), camera_file.c_str(),
                         generator_file.c_str(), h.second_stage.c_str(), h.second_files.size());
+            // The files against the first host's (the defaults).
+            if (base_files.empty()) {
+                base_files = h.first_files;
+                for (const auto& f : h.first_files) std::printf("      %s\n", f.c_str());
+            } else {
+                for (const auto& f : h.first_files)
+                    if (std::find(base_files.begin(), base_files.end(), f) == base_files.end()) std::printf("      + %s\n", f.c_str());
+                for (const auto& f : base_files)
+                    if (std::find(h.first_files.begin(), h.first_files.end(), f) == h.first_files.end()) std::printf("      - %s\n", f.c_str());
+            }
         }
         const auto& host = hosts[key];
         const auto r = run_joiner(host, c.joiner, c.modes);
@@ -342,6 +415,29 @@ void settings_probe() {
                     static_cast<unsigned long long>(r.compared), where.c_str(), r.second_stage.c_str(),
                     r.second_stage != host.second_stage ? " (host: " : "", r.second_stage != host.second_stage ? (host.second_stage + ")").c_str() : "");
         if (r.files_differ) std::printf("    the second stage's loaded files differ from the host's\n");
+    }
+    // Round J's checkpoint joins with the same pairs.
+    const Case checkpoint_cases[] = {
+        {"checkpoint: same settings", base, base, JoinModes::snapshot},
+        {"checkpoint: all non-default on both", all, all, JoinModes::snapshot},
+        {"checkpoint: joiner fast loading", base, fast, JoinModes::snapshot},
+        {"checkpoint: joiner randomizer (all)", base, rand, JoinModes::snapshot},
+        {"checkpoint: host randomizer (all)", rand, base, JoinModes::snapshot},
+        {"checkpoint: host enemies only", enemies, base, JoinModes::snapshot},
+        {"checkpoint: host Very Hard, joiner Normal", hard, base, JoinModes::snapshot},
+        {"checkpoint: host all, joiner default", all, base, JoinModes::snapshot},
+    };
+    for (const auto& c : checkpoint_cases) {
+        const auto& host = hosts[settings_text(c.host)];
+        const auto r = run_checkpoint_joiner(host, c.joiner);
+        std::printf("  %-44s J [%s]: K %llu, T %llu: %s%llu frames compared, %s; second stage %s (host %s)\n", c.name, settings_text(c.joiner).c_str(),
+                    static_cast<unsigned long long>(host.load_end), static_cast<unsigned long long>(host.tick_frame), r.why.c_str(),
+                    static_cast<unsigned long long>(r.compared),
+                    r.first_diff ? ("differs from frame " + std::to_string(r.first_diff) +
+                                    (r.first_diff >= host.change_frame ? " (stage change + " + std::to_string(r.first_diff - host.change_frame) + ")" : ""))
+                                       .c_str()
+                                 : "equal",
+                    r.second_stage.c_str(), host.second_stage.c_str());
     }
     // DISSOLVE: the modes set back in the parked stage change (before the
     // load step) against a Game Start with them: the hub's loaded files.
@@ -412,6 +508,10 @@ void settings_probe() {
                 host_kept == direct_own ? "yes" : "no");
     std::printf("  host modes, own set back at the park: %s, %s; equal to own: %s\n", describe(set_back).c_str(), l3.c_str(),
                 set_back == direct_own ? "yes" : "no");
+    for (const auto& f : host_kept)
+        if (std::find(direct_own.begin(), direct_own.end(), f) == direct_own.end()) std::printf("    host modes load %s\n", f.c_str());
+    for (const auto& f : direct_own)
+        if (std::find(host_kept.begin(), host_kept.end(), f) == host_kept.end()) std::printf("    own modes load %s\n", f.c_str());
     if (set_back != direct_own) {
         for (std::size_t k = 0; k < std::max(set_back.size(), direct_own.size()); ++k) {
             const std::string a = k < set_back.size() ? set_back[k] : "-";
