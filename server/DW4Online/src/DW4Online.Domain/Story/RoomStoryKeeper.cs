@@ -160,7 +160,8 @@ public sealed class RoomStoryKeeper
     /// (round 59's fix round built the queue without a protocol change; the old client's resends do no harm).
     /// </summary>
     public StoryRefusal EarnedAnswer { get; init; } = StoryRefusal.Queued;
-    /// <summary>The first protocol whose clients know <see cref="StoryRefusal.Queued"/> and flag 503 as story (round G).</summary>
+    /// <summary>The first protocol whose clients know <see cref="StoryRefusal.Queued"/> and flag 503 as story (round G). The
+    /// relay's Wire.CheckpointProtocol (round J's checkpoints) is the same 47: the two rounds ship together.</summary>
     public const int QueuedProtocol = 47;
     /// <summary>Rises with every drop and at the start; an instance remembers the epoch its visit began in.</summary>
     public long Epoch { get; private set; }

@@ -21,7 +21,8 @@ public static class Wire
     public const byte SlotMask = 0x0F;
     public const int MaxStageName = 24;
     /// <summary>Round J: rooms of this client protocol and later take checkpoints (STATEHASH, CHECKPOINT, STATE_DATA codec 2);
-    /// an older room's members would refuse a codec 2 state.</summary>
+    /// an older room's members would refuse a codec 2 state. The same protocol as RoomStoryKeeper.QueuedProtocol (round
+    /// G-core: STORY_ACK's queued, flag 503 as story): the two rounds ship together as 47.</summary>
     public const int CheckpointProtocol = 47;
 }
 

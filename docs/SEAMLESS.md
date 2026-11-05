@@ -7974,6 +7974,46 @@ cost (see the third run's numbers above), the scenarios J15 / J30 / JF and
 J15x4 / J30x4 (four clients: more than this machine's three game processes
 of a run).
 
+### Integration of G-core and J (int-r69r70, 05.11)
+
+Branch `int-r69r70` from main b226bc0: `feat-r69gcore`, then `feat-r70join`
+(both `--no-ff`). Both rounds are protocol 47 and ship together:
+`kOnlineProtocol` is 47 once (its comment names both rounds); on the server
+`RoomStoryKeeper.QueuedProtocol` (G-core) and `Wire.CheckpointProtocol` (J)
+are the same 47. Message numbers do not collide: G-core adds no wire type
+(only the STORY_ACK reason *queued* = 11), J holds client 0x15-0x17 and
+server 0x92 (0x91 free), WELCOME flag 4 and READY flag 1. Conflicts were
+textual only (`SessionConfig` keeps both rounds' fields; both includes of
+`online_run.cpp`); `run.py` / `online_script` are G-core's (J added no
+condition), and this section keeps both rounds' texts above.
+
+Where G-core's story meets J's join, two fixes: the rebuild from a
+checkpoint opens the joiner's counter line at the visit's load snapshot, as
+the classic join and resync do (one line, taken once, round 59b's d54d7b0;
+opened at T it lost the growth before T), and G-core's call shop hint shows
+only on a new refusal (a join, co-arrival or resync restores into a fresh
+engine whose `callshop_refused` starts at 0, which showed the hint again).
+The Game Start's hold and a checkpoint join do not overlap (the hold is at
+the title, a solo instance; joins come at field barriers); the tick state
+holds none of G-core's host fields (`common_rebuilt`, `callshop_refused`;
+`callshop_closed_` is set only inside a script run, never at a state-safe
+tick). A guest that joins from a checkpoint has the room story from its Game
+Start and the instance's story from the state, as a classic joiner.
+
+Checks on the dev build of the integration (Release, tests,
+`DW4_ONLINE_DEV`): ctest 54 of 54, DW4Online.Tests 254 of 254 (246 + 248
+over main's 240), `story_census.py --check` equal, `det.sh` 4004f056 /
+396cb219 (both runs). Real hidden clients on a private stack (mysqld 3590,
+ports 56300-56349): RG1 (145 s), J1 (226 s: the guest's Game Start with the
+room story, then its join from the checkpoint of tick 3,605, rebuild 208 ms,
+0 ticks replayed) and S3 (300 s) pass; RGJ1 (new: J1 whose guest's Game
+Start holds 8 s for the room story, `DW4_ONLINE_TEST_STORY_DELAY`, before
+it joins from a checkpoint) passes too (225 s: the hold 8,000 ms, the Game
+Start with the room story, the join from the checkpoint of tick 3,580,
+rebuild 132 ms, 2 ticks replayed, 4,020 shared ticks equal). Logs:
+`build/` of the worktree (`ctest1.log`, `server_unit1.log`, `det1.log`,
+`census_check1.log`, `scen1.log`, `scen2.log`).
+
 ### Round R (proposed r67): rollback for the own player
 
 Goal: 6.13.6 (the feedback's "sometimes 80 ms"): the own character reacts in
