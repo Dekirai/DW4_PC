@@ -8680,8 +8680,13 @@ endpoints of 19.19 for friends, blocks and players, `/account/friends`, the
 profile buttons and the privacy page; the decisions it took where 19.11 left
 a case open, the two rules of 19.11 it changed (a block keeps the blocked
 player's request silent; the incoming cap never answers a sender) and what it
-left for round I1 are under "Round I2-social" in 19.25. Rounds I1a-I6 are not
-built.
+left for round I1 are under "Round I2-social" in 19.25. **Round I1a's first
+tasks are measured** (branch `dref-i1a-meas`, "Measured r71" in 19.25 with
+the design changes M1-M5). Rounds I1a-I6 are not built.
+**Integration r71** (branch `int-r71` from main 236e26f3): I2-social,
+round J's READY at the check tick (`fix-j-ready`, protocol 48, 6.13.5) and
+the I1a measurements together, with one server release, DW4Online 0.1.6
+(protocol 48, migrations up to `0012_friends`, schema 12).
 
 **How it was made.** Three independent drafts (architecture first, player
 first, risk first) read the relay (`RoomHub.cs` with `Decide`, `JoinOrNew`
@@ -11552,7 +11557,10 @@ release.
 - **At the merge:** raise the server version (0.1.5's release zip without
   `0012` exists already; this is its own release, 0.1.6 unless another lane
   takes that number first) and check the migration number against what
-  main has by then.
+  main has by then. *Done in integration r71 (`int-r71`):* lane jready
+  had taken 0.1.6 for protocol 48; both ship together as DW4Online 0.1.6
+  (protocol 48, `0012_friends` the next free number after main's 0011,
+  schema 12).
 
 **Round I2: friends in the game, blocks everywhere, the shared story
 point** (M, two lanes).
