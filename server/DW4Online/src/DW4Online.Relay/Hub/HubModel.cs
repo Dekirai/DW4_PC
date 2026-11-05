@@ -95,6 +95,10 @@ public sealed class HubMember(int index, long accountId, string name, bool owner
     public bool Resyncing { get; set; }
     /// <summary>Round J: the running resync's state came from a checkpoint.</summary>
     public bool ResyncFromCheckpoint { get; set; }
+    /// <summary>Round J's review: the member's engine was rebuilt from a checkpoint (its READY said so) and has not had a
+    /// classic state or a new visit since. It is not independent of its donor: it never makes a majority in a fingerprint
+    /// vote, and a desync or STATEHASH mismatch it is part of makes the instance's checkpoint path suspect (6.13.4).</summary>
+    public bool RebuiltFromCheckpoint { get; set; }
     /// <summary>When the last RESYNC went out (at most one per Instances:ResyncCooldownSeconds).</summary>
     public long ResyncAt { get; set; }
     /// <summary>A state transfer for this member is being built outside the room lock: nothing is pumped to it meanwhile.</summary>
@@ -182,6 +186,18 @@ public sealed class JoinState(HubInstance target, int slot, ArrivalGroup from, i
     public bool Classic { get; set; }
     /// <summary>READY arrived (the joiner caught up).</summary>
     public bool Ready { get; set; }
+    /// <summary>When the state went out (0: not yet): a joiner without READY falls back to NEW after the catch-up limit plus
+    /// half a minute (round J's review: a READY mismatch's classic state left a client that never sent READY again).</summary>
+    public long StateSentAt { get; set; }
+    /// <summary>Round J's review: the ranking took the checkpoint path's short catch-up; a fallback to the classic state
+    /// checks the whole visit's catch-up time again.</summary>
+    public bool PlannedCheckpoint { get; set; }
+    /// <summary>A READY from a checkpoint whose tick the members have not reported yet: checked when their NETFP comes
+    /// (round J's review: READY of T - 1 met no fingerprint and went unchecked).</summary>
+    public ReadyMsg? PendingReady { get; set; }
+    public long PendingReadyAt { get; set; }
+    /// <summary>The members' fingerprint of the pending READY's tick never came in time: it is taken unchecked.</summary>
+    public bool ReadyWaitExpired { get; set; }
     /// <summary>The JOIN is stamped (sealed) or JOIN_REQ went to the solo leader.</summary>
     public bool Stamped { get; set; }
 }
@@ -190,6 +206,8 @@ public sealed class JoinState(HubInstance target, int slot, ArrivalGroup from, i
 public sealed record StoredCheckpoint(uint Tick, ulong Hash, uint LoadEnd, byte[] Bytes, long At)
 {
     public bool Agreed { get; set; }
+    /// <summary>The member that uploaded it (a fork drops the parent's checkpoints of leaver donors after the fork tick).</summary>
+    public HubMember? Donor { get; init; }
 }
 
 /// <summary>A donor's checkpoint arriving in chunks.</summary>
@@ -460,6 +478,9 @@ public sealed class HubInstance(uint id)
     public CheckpointUpload? Upload { get; set; }
     /// <summary>When the donor was last asked (0: never).</summary>
     public long CheckpointAskedAt { get; set; }
+    /// <summary>The member asked for the next upload (round J's review: only its upload is taken; an unasked one replaced a
+    /// running upload and reserved up to 8 MB each time).</summary>
+    public HubMember? AskedDonor { get; set; }
     /// <summary>STATEHASH reports per checkpoint tick: slot -> (hash, load end).</summary>
     public SortedDictionary<uint, Dictionary<int, (ulong Hash, uint LoadEnd)>> StateHashes { get; } = [];
     /// <summary>The visit's load end K as the members' reports agree (a solo leader's alone).</summary>

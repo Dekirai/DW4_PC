@@ -811,6 +811,14 @@ public sealed class RoomHub
             return;
         }
         while (i.Fingerprints.Count > 64) i.Fingerprints.Remove(i.Fingerprints.Keys.First());
+        // A joiner's READY from a checkpoint that waited for this tick's fingerprint is checked now (round J's review).
+        foreach (var o in i.Observers.ToList())
+            if (o.Joining is { PendingReady: { } pending } oj && oj.Target == i && pending.Tick == msg.Tick)
+            {
+                oj.PendingReady = null;
+                OnReady(o, pending, now);
+                if (i.Ended) return;
+            }
         // A resync's replay of the log tells what every engine had at this tick (6.9).
         if (i.ReplayFp.TryGetValue(msg.Tick, out var truth) && truth != msg.Hash)
         {
@@ -846,18 +854,26 @@ public sealed class RoomHub
     {
         ++i.Desyncs;
         Count("desync_votes");
-        var groups = slots.GroupBy(s => d[s]).OrderByDescending(g => g.Count()).ToList();
+        // A member rebuilt from a checkpoint never judges (6.13.4, round J's review): it is no independent engine (its donor's
+        // state, a field the rebuild missed), so the majority is taken among the others; it joins one only as the last resort.
+        var rebuilt = slots.Where(s => i.Slots[s] is { RebuiltFromCheckpoint: true }).ToList();
+        var judges = slots.Except(rebuilt).ToList();
+        if (judges.Count == 0) judges = slots;
+        var groups = judges.GroupBy(s => d[s]).OrderByDescending(g => g.Count()).ToList();
         ulong winner;
         if (groups[0].Count() >= 2 && (groups.Count == 1 || groups[1].Count() < groups[0].Count())) winner = groups[0].Key;
         else
         {
-            var trusted = slots.Select(s => i.Slots[s]!).OrderBy(x => x.ReplayMismatches).ThenBy(x => x.InstanceSince).First();
+            var trusted = judges.Select(s => i.Slots[s]!).OrderBy(x => x.ReplayMismatches).ThenBy(x => x.InstanceSince).First();
             winner = d[trusted.Slot];
         }
         _log.LogWarning("Room {Room} instance {Inst}: net fingerprints differ at tick {Tick}", Code, i.Id, tick);
-        Note("desync", i, ("tick", tick), ("fingerprints", slots.ToDictionary(s => s.ToString(), s => d[s].ToString("x16"))));
-        // A desync soon after a rebuild from a checkpoint: that rebuild may have missed a field (6.13.4).
-        if (i.RebuildTick is { } rebuilt && tick <= rebuilt + (uint)_inst.CheckpointSuspectTicks) MarkSuspect(i, tick, "desync");
+        Note("desync", i, ("tick", tick), ("fingerprints", slots.ToDictionary(s => s.ToString(), s => d[s].ToString("x16"))),
+            ("rebuilt", rebuilt.ToArray()));
+        // A desync soon after a rebuild from a checkpoint, or one a rebuilt member is part of (at any time): that rebuild may
+        // have missed a field (6.13.4).
+        if (rebuilt.Count > 0) MarkSuspect(i, tick, "desync_rebuilt");
+        else if (i.RebuildTick is { } rebuiltAt && tick <= rebuiltAt + (uint)_inst.CheckpointSuspectTicks) MarkSuspect(i, tick, "desync");
         foreach (var s in slots.Where(s => d[s] != winner))
         {
             Resync(i, s, now);
@@ -1416,6 +1432,7 @@ public sealed class RoomHub
         {
             if (member.Instance is { } old && old != inst) DetachFromOld(old, member);
             Place(member, inst, slot, now);
+            member.RebuiltFromCheckpoint = false; // (the new visit's engine is the member's own load or the base's snapshot)
         }
         var uploader = g.Members.Select(a => a.Member).OrderBy(x => map[x]).First();
         inst.Snapshot.Uploader = uploader;
@@ -1615,7 +1632,7 @@ public sealed class RoomHub
             m.Instance = null;
             m.Slot = -1;
             m.Arrival = null;
-            m.Joining = new JoinState(target, slot, g, a.Slot) { Carry = a.Carry };
+            m.Joining = new JoinState(target, slot, g, a.Slot) { Carry = a.Carry, PlannedCheckpoint = CheckpointPathOpen(target) };
             target.Observers.Add(m);
             var none = new sbyte[Wire.MaxSlots];
             Array.Fill(none, (sbyte)-1);
@@ -1655,13 +1672,25 @@ public sealed class RoomHub
             if (cp is not null)
             {
                 j.StateSent = true;
+                j.StateSentAt = now;
                 j.FromCheckpoint = true;
                 Count("checkpoint_joins");
                 SendState(m, t, StatePurpose.Join, j.Slot, cp);
                 return;
             }
         }
+        // The classic state after a planned checkpoint join (CHECKPOINT_BAD, no checkpoint in time, a READY mismatch, a path
+        // that became suspect): the ranking took the short catch-up, the whole visit may be far longer (round J's review: a
+        // long visit's joiner waited well over 30 s where it got NEW before).
+        if (j.PlannedCheckpoint && HubRules.CatchUpSeconds(t.StreamEnd, m.Rate == 0 ? _inst.DefaultReplayRate : m.Rate) > _inst.MaxCatchUpSeconds)
+        {
+            Count("classic_too_long");
+            Note("classic_too_long", t, ("member", m.Index), ("ticks", t.StreamEnd));
+            FallbackNew(m, now, BarrierNotice.TooLongToCatchUp);
+            return;
+        }
         j.StateSent = true;
+        j.StateSentAt = now;
         j.FromCheckpoint = false;
         SendState(m, t, StatePurpose.Join, j.Slot);
     }
@@ -1686,6 +1715,7 @@ public sealed class RoomHub
         if (donor?.Peer is null) return;
         t.CheckpointAskedAt = now;
         t.Upload = null;
+        t.AskedDonor = donor;
         donor.Peer.Send(new CheckpointAskMsg(t.Id, t.Visit, 0, flags).Frame());
         Count("checkpoint_asks");
         if (flags == 0) Note("checkpoint_ask", t, ("donor", donor.Index));
@@ -1696,6 +1726,16 @@ public sealed class RoomHub
     private void OnStateHash(HubMember m, StateHashMsg msg, long now)
     {
         if (Mine(m, msg.Inst, msg.Visit) is not { } i) return;
+        if ((msg.Flags & StateHashMsg.LoadEndOnly) != 0)
+        {
+            // A solo leader's report (round J's review): no hash to compare, only the visit's load end K.
+            if (i.AgreedLoadEnd is null)
+            {
+                i.AgreedLoadEnd = msg.LoadEnd;
+                Note("load_end", i, ("k", msg.LoadEnd), ("agreed", false));
+            }
+            return;
+        }
         if (!i.StateHashes.TryGetValue(msg.Tick, out var d)) i.StateHashes[msg.Tick] = d = [];
         if (!d.TryAdd(m.Slot, (msg.Hash, msg.LoadEnd)))
         {
@@ -1703,6 +1743,9 @@ public sealed class RoomHub
             return;
         }
         while (i.StateHashes.Count > 16) i.StateHashes.Remove(i.StateHashes.Keys.First());
+        // A fork reported at or before the tick waits for its confirmation: the sides' states differ from the fork on (a
+        // leaver's report may still come under the parent's id), so nothing is compared (round J's review).
+        if (i.Splits.Values.Any(v => !v.Done && msg.Tick > v.Tick)) return;
         var expected = i.Seats.Where(x => x.Member.Connected && !x.Member.Resyncing && (i.Streams[x.Slot] is not { } s || s.FromTick <= msg.Tick))
             .Select(x => x.Slot).ToList();
         if (expected.Count == 0 || !expected.All(d.ContainsKey)) return;
@@ -1710,10 +1753,11 @@ public sealed class RoomHub
         if (values.Count > 1)
         {
             // A mismatch: the fingerprint vote (NETFP) resyncs the member that is off; the checkpoint path of the instance
-            // is not trusted any more (6.13.4).
+            // is not trusted any more (6.13.4; round J's review: at any time, not only soon after a rebuild - two engines
+            // whose tick states differ make no checkpoint to trust).
             Count("statehash_mismatch");
             Note("statehash_mismatch", i, ("tick", msg.Tick), ("hashes", expected.ToDictionary(s => s.ToString(), s => d[s].Hash.ToString("x16"))));
-            if (i.RebuildTick is { } rebuilt && msg.Tick <= rebuilt + (uint)_inst.CheckpointSuspectTicks) MarkSuspect(i, msg.Tick, "statehash");
+            MarkSuspect(i, msg.Tick, expected.Any(s => i.Slots[s] is { RebuiltFromCheckpoint: true }) ? "statehash_rebuilt" : "statehash");
             return;
         }
         var (hash, k) = values[0];
@@ -1735,7 +1779,17 @@ public sealed class RoomHub
     private void OnCheckpoint(HubMember m, CheckpointMsg msg, long now)
     {
         if (Mine(m, msg.Inst, msg.Visit) is not { } i) return;
-        if (msg.Offset == 0) i.Upload = new CheckpointUpload(m, msg.Tick, msg.Hash, msg.LoadEnd, msg.Total);
+        if (msg.Offset == 0)
+        {
+            // Only the asked donor's upload (round J's review: any member's chunk at offset 0 replaced a running upload and
+            // reserved up to 8 MB, unasked and as often as it liked).
+            if (i.AskedDonor != m)
+            {
+                Count("checkpoint_unasked");
+                return;
+            }
+            i.Upload = new CheckpointUpload(m, msg.Tick, msg.Hash, msg.LoadEnd, msg.Total);
+        }
         if (i.Upload is not { } u || u.Donor != m || u.Tick != msg.Tick || u.Hash != msg.Hash || u.Buffer.Length != msg.Total || msg.Offset != u.Received)
         {
             Count("checkpoint_chunk_dropped");
@@ -1745,7 +1799,8 @@ public sealed class RoomHub
         u.Received += (uint)msg.Chunk.Length;
         if (u.Received < u.Buffer.Length) return;
         i.Upload = null;
-        var stored = new StoredCheckpoint(u.Tick, u.Hash, u.LoadEnd, u.Buffer, now);
+        i.AskedDonor = null;
+        var stored = new StoredCheckpoint(u.Tick, u.Hash, u.LoadEnd, u.Buffer, now) { Donor = m };
         if (i.StateHashes.TryGetValue(u.Tick, out var d))
         {
             var expected = i.Seats.Where(x => x.Member.Connected).Select(x => x.Slot).ToList();
@@ -1808,6 +1863,7 @@ public sealed class RoomHub
     private bool SendState(HubMember m, HubInstance i, StatePurpose purpose, int slot, StoredCheckpoint? checkpoint = null)
     {
         if (m.Peer is not { } peer) return false;
+        if (checkpoint is null) m.RebuiltFromCheckpoint = false; // (a classic state replaces the member's engine)
         var end = i.StreamEnd;
         var ahead = new List<byte[]>();
         for (var t = i.Log.Count; t < end && i.Ahead.TryGetValue(t, out var rec); ++t) ahead.Add(rec);
@@ -1891,6 +1947,7 @@ public sealed class RoomHub
                 resynced.GraceUntil = Math.Max(resynced.GraceUntil, own.NextSeal + (uint)resynced.Delay.Current + 12);
             Count("resync_ready");
             var rebuilt = (msg.Flags & ReadyMsg.FromCheckpoint) != 0;
+            m.RebuiltFromCheckpoint = rebuilt;
             Note("resync_ready", own, ("member", m.Index), ("tick", msg.Tick), ("fp", msg.NetFp.ToString("x16")), ("checkpoint", rebuilt));
             // Its reports from before the resync are its old engine's: they vote on nothing any more.
             foreach (var reports in own.Fingerprints.Values) reports.Remove(m.Slot);
@@ -1919,6 +1976,20 @@ public sealed class RoomHub
         var fromCheckpoint = (msg.Flags & ReadyMsg.FromCheckpoint) != 0;
         if (msg.Rate > 0 && !fromCheckpoint) m.Rate = Math.Min(msg.Rate, MaxReplayRate); // (a few ticks measure no rate)
         if (msg.Carry.Length > 0) j.Carry = msg.Carry;
+        // A READY from a checkpoint names the first fingerprint tick it replayed (a multiple of 60): when the members have not
+        // reported it yet (a sealed tick reaches them and the joiner at about the same time), the READY waits for their NETFP
+        // (OnNetFp), at most Instances:ReadyFingerprintWaitMs (round J's review: unchecked, a rebuild that missed a field
+        // only showed at the next vote after the JOIN, a resync screen right after joining).
+        if (fromCheckpoint && !j.ReadyWaitExpired && msg.Tick % 60 == 0 && !(target.Fingerprints.TryGetValue(msg.Tick, out var known) && known.Count > 0))
+        {
+            if (j.PendingReady is null)
+            {
+                j.PendingReady = msg;
+                j.PendingReadyAt = now;
+                Count("ready_deferred");
+            }
+            return;
+        }
         if (target.Fingerprints.TryGetValue(msg.Tick, out var fps) && fps.Count > 0)
         {
             var common = fps.Values.GroupBy(x => x).OrderByDescending(x => x.Count()).First().Key;
@@ -1932,6 +2003,7 @@ public sealed class RoomHub
                 {
                     MarkSuspect(target, msg.Tick, "ready");
                     j.Classic = true;
+                    j.ReadyWaitExpired = false;
                 }
                 if (j.Attempts >= 2 && !fromCheckpoint)
                 {
@@ -1944,6 +2016,7 @@ public sealed class RoomHub
             }
         }
         j.Ready = true;
+        m.RebuiltFromCheckpoint = fromCheckpoint;
         if (fromCheckpoint)
         {
             target.RebuildTick = msg.Tick;
@@ -2187,8 +2260,16 @@ public sealed class RoomHub
         child.Snapshot = i.Snapshot.Share();
         child.ArrivalContext = i.ArrivalContext;
         child.EntryContext = i.EntryContext;
-        // Round J: the parent's checkpoints before the fork until the child's own (one engine line up to it).
+        // Round J: the parent's checkpoints before the fork until the child's own (one engine line up to it). The parent keeps
+        // no state of the leavers' side after the fork (round J's review: a leaver donor's upload of f + 1, sent before the
+        // relay forked, would have rebuilt a later joiner of the parent with the wrong players), and no report after it.
         child.Checkpoints = i.Checkpoints.Where(c => c.Tick <= f).ToList();
+        var leaverMembers = Enumerable.Range(0, Wire.MaxSlots).Where(s => (leavers & (1 << s)) != 0).Select(s => i.Slots[s]).OfType<HubMember>().ToHashSet();
+        var dropped = i.Checkpoints.RemoveAll(c => c.Tick > f && c.Donor is { } donor && leaverMembers.Contains(donor));
+        if (dropped > 0) Count("checkpoint_fork_dropped", dropped);
+        if (i.Upload is { } upload && leaverMembers.Contains(upload.Donor)) i.Upload = null;
+        if (i.AskedDonor is { } asked && leaverMembers.Contains(asked)) i.AskedDonor = null;
+        foreach (var t in i.StateHashes.Keys.Where(t => t > f).ToList()) i.StateHashes.Remove(t);
         child.AgreedLoadEnd = i.AgreedLoadEnd;
         child.CheckpointSuspect = i.CheckpointSuspect;
         child.VisitStartedAt = i.VisitStartedAt;
@@ -2651,14 +2732,43 @@ public sealed class RoomHub
 
     private void HousekeepInstance(HubInstance i, long now)
     {
-        // Round J: while joinable, the donor uploads a checkpoint now and then (resyncs, a donor that does not answer).
-        if (_inst.CheckpointPeriodicMs > 0 && i.Joinable && CheckpointPathOpen(i) && i.Upload is null && i.Barrier is null &&
-            Ms(now - Math.Max(i.CheckpointAskedAt, i.Checkpoints.LastOrDefault()?.At ?? 0)) >= _inst.CheckpointPeriodicMs)
+        // Round J: an upload that does not finish (its donor left the instance or the connection, a chunk was dropped) no longer
+        // blocks the periodic checkpoints for the rest of the visit (round J's review).
+        if (i.Upload is { } upload && (upload.Donor.Instance != i || !upload.Donor.Connected || Ms(now - i.CheckpointAskedAt) > _inst.CheckpointWaitMs * 4))
+        {
+            Count("checkpoint_upload_abandoned");
+            i.Upload = null;
+            i.AskedDonor = null;
+        }
+        // Round J: while joinable, the donor uploads a checkpoint now and then (resyncs, a donor that does not answer); not in a
+        // solo-led visit (round J's review: nobody to resync, and a join asks for a fresh one anyway).
+        if (_inst.CheckpointPeriodicMs > 0 && i.Joinable && i.Mode != InstanceMode.SoloLed && CheckpointPathOpen(i) && i.Upload is null &&
+            i.Barrier is null && Ms(now - Math.Max(i.CheckpointAskedAt, i.Checkpoints.LastOrDefault()?.At ?? 0)) >= _inst.CheckpointPeriodicMs)
             AskCheckpoint(i, now, CheckpointAskMsg.Periodic);
         // Round J: joins that waited for the donor's checkpoint long enough take the newest stored one or the classic path.
         foreach (var o in i.Observers.ToList())
-            if (o.Joining is { } oj && oj.Target == i && !oj.StateSent && oj.CheckpointWaitUntil != 0 && now >= oj.CheckpointWaitUntil)
+        {
+            if (o.Joining is not { } oj || oj.Target != i) continue;
+            if (!oj.StateSent && oj.CheckpointWaitUntil != 0 && now >= oj.CheckpointWaitUntil)
                 DeliverState(o, now);
+            else if (oj.PendingReady is { } pending && Ms(now - oj.PendingReadyAt) >= _inst.ReadyFingerprintWaitMs)
+            {
+                // The members' fingerprint of that tick did not come: the READY is taken unchecked (as before).
+                Count("ready_unchecked");
+                oj.PendingReady = null;
+                oj.ReadyWaitExpired = true;
+                OnReady(o, pending, now);
+            }
+            else if (oj.StateSent && !oj.Ready && oj.StateSentAt != 0 && Ms(now - oj.StateSentAt) > (_inst.MaxCatchUpSeconds + 30) * 1000.0)
+            {
+                // A joiner that never sends READY (round J's review: after a READY mismatch's classic state a client kept
+                // waiting in 'Joining...' for good): its own stage as NEW.
+                Count("join_ready_timeout");
+                Note("join_ready_timeout", i, ("member", o.Index));
+                FallbackNew(o, now, BarrierNotice.JoinFailed);
+            }
+            if (i.Ended) return;
+        }
         // Barrier reports that do not come.
         if (i.Barrier is { } b && Ms(now - b.FirstAt) >= _inst.BarrierReportSeconds * 1000.0 && !i.Members.Any(x => x.Arrival is not null))
         {

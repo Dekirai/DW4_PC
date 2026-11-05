@@ -29,6 +29,9 @@ public sealed class InstanceOptions
     public int FreshCheckpointMs { get; set; } = 2000;
     /// <summary>How long a join waits for the donor's checkpoint before it takes the newest stored one or the classic path.</summary>
     public int CheckpointWaitMs { get; set; } = 1000;
+    /// <summary>A joiner's READY from a checkpoint waits this long for the members' fingerprint of its tick (round J's review);
+    /// then it is taken unchecked.</summary>
+    public int ReadyFingerprintWaitMs { get; set; } = 2000;
     /// <summary>Checkpoints kept per instance.</summary>
     public int KeepCheckpoints { get; set; } = 2;
     /// <summary>A desync this many ticks after a rebuild from a checkpoint makes the instance's checkpoint path suspect.</summary>

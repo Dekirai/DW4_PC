@@ -420,6 +420,7 @@ public partial class HubLogicTests
         var h = CheckpointTarget();
         var i = h.I("a");
         i.CheckpointAskedAt = h.Now;
+        i.AskedDonor = h.Mem("a"); // (an ask: only the asked donor's upload is taken)
         Upload(h, "a", 640, 0xBEEF, [1, 2, 3]);
         Assert.Single(i.Checkpoints);
         h.Barrier("b", "stag0101");
@@ -482,7 +483,8 @@ public partial class HubLogicTests
         h.Barrier("b", "stag0101");
         Upload(h, "a", 650, 0xBEEF, [9, 9, 9]);
         var ok = h.Decision("b");
-        h.Send("b", new ReadyMsg(ok.NewInst, ok.NewVisit, 690, 0, 0, [7], ReadyMsg.FromCheckpoint).Frame());
+        // (b's READY as a classic joiner's: a rebuilt member's own desync makes the path suspect, the next test.)
+        h.Send("b", new ReadyMsg(ok.NewInst, ok.NewVisit, 690, 0, 0, [7]).Frame());
         var req = h.P("a").Last(Msg.JoinReq, JoinReqMsg.Parse);
         h.Send("a", new JoinAtMsg(req.Inst, req.Visit, 720).Frame());
         h.Log("a", 700, 20);
@@ -490,6 +492,7 @@ public partial class HubLogicTests
         // Both report the same state at 780; the periodic upload of that tick becomes agreed.
         h.Send("a", new StateHashMsg(i.Id, i.Visit, 780, 0xABCD, 20, 1).Frame());
         h.Send("b", new StateHashMsg(i.Id, i.Visit, 780, 0xABCD, 20, 1).Frame());
+        i.AskedDonor = h.Mem("a"); // (the periodic ask)
         Upload(h, "a", 780, 0xABCD, [4, 4, 4, 4]);
         Assert.True(i.Checkpoints.Last().Agreed);
         // b's engine goes off: its resync takes the checkpoint of 780.
@@ -503,6 +506,187 @@ public partial class HubLogicTests
         Assert.False(h.Mem("b").Resyncing);
         Assert.Empty(i.ReplayFp); // never a judge
         Assert.Equal(840u, i.RebuildTick);
+        Assert.True(h.Mem("b").RebuiltFromCheckpoint);
+    }
+
+    // ---- Round J's review: the relay's checkpoint rules
+
+    /// <summary>b joined a's stag0101 from a checkpoint (READY at 690 from it); a and b sealed from 720.</summary>
+    private static Harness RebuiltPair(InstanceOptions options)
+    {
+        var h = CheckpointTarget(options);
+        h.Barrier("b", "stag0101");
+        Upload(h, "a", 650, 0xBEEF, [9, 9, 9]);
+        var ok = h.Decision("b");
+        h.Send("b", new ReadyMsg(ok.NewInst, ok.NewVisit, 690, 0, 0, [7], ReadyMsg.FromCheckpoint).Frame());
+        var req = h.P("a").Last(Msg.JoinReq, JoinReqMsg.Parse);
+        h.Send("a", new JoinAtMsg(req.Inst, req.Visit, 720).Frame());
+        h.Log("a", 700, 20);
+        h.Seal(4000);
+        Assert.True(h.Mem("b").RebuiltFromCheckpoint);
+        return h;
+    }
+
+    [Fact]
+    public void A_desync_a_rebuilt_member_is_part_of_makes_the_path_suspect_at_any_time()
+    {
+        // The suspicion window (CheckpointSuspectTicks) is long past at 900: before, nothing marked the path, and a field the
+        // rebuild missed sent the member into a resync loop from the next agreed checkpoint until ResyncLimit took it out.
+        var h = RebuiltPair(new InstanceOptions { CheckpointSuspectTicks = 10 });
+        var i = h.I("a");
+        h.Send("a", new NetFpMsg(i.Id, i.Visit, 900, 1).Frame());
+        h.Send("b", new NetFpMsg(i.Id, i.Visit, 900, 2).Frame());
+        Assert.True(i.CheckpointSuspect);
+        Assert.True(h.Mem("b").Resyncing); // the rebuilt member is the one resynced (it never judges)
+        Assert.False(h.Mem("a").Resyncing);
+        Assert.Null(StateBlob.Parse(h.P("b").StateBlob()).Checkpoint); // the classic way
+    }
+
+    [Fact]
+    public void A_statehash_mismatch_makes_the_path_suspect_outside_the_window_too()
+    {
+        var h = SealedPair(out _);
+        var i = h.I("a");
+        h.Send("a", new StateHashMsg(i.Id, i.Visit, 600, 7, 20, 1).Frame());
+        h.Send("b", new StateHashMsg(i.Id, i.Visit, 600, 8, 20, 1).Frame());
+        Assert.True(i.CheckpointSuspect);
+    }
+
+    [Fact]
+    public void A_ready_from_a_checkpoint_waits_for_the_members_fingerprint_of_its_tick()
+    {
+        foreach (var equal in new[] { true, false })
+        {
+            var h = CheckpointTarget();
+            var i = h.I("a");
+            h.Barrier("b", "stag0101");
+            Upload(h, "a", 650, 0xBEEF, [9, 9, 9]);
+            var ok = h.Decision("b");
+            // The first fingerprint tick the joiner replayed (720); the leader has not reported it yet.
+            h.Send("b", new ReadyMsg(ok.NewInst, ok.NewVisit, 720, 0x77, 0, [7], ReadyMsg.FromCheckpoint).Frame());
+            Assert.False(h.P("a").Has(Msg.JoinReq));
+            Assert.Equal(1, h.Hub.Counters["ready_deferred"]);
+            var states = h.P("b").Frames.Count(f => f.Type == Msg.StateData);
+            h.Send("a", new NetFpMsg(i.Id, i.Visit, 720, equal ? 0x77UL : 0x78UL).Frame());
+            if (equal)
+            {
+                Assert.True(h.P("a").Has(Msg.JoinReq));
+                Assert.False(i.CheckpointSuspect);
+            }
+            else
+            {
+                // The rebuild is off: the path is suspect, the joiner gets the classic state instead of joining.
+                Assert.False(h.P("a").Has(Msg.JoinReq));
+                Assert.True(i.CheckpointSuspect);
+                Assert.True(h.P("b").Frames.Count(f => f.Type == Msg.StateData) > states);
+            }
+        }
+        // No fingerprint within Instances:ReadyFingerprintWaitMs: taken unchecked.
+        var late = CheckpointTarget();
+        late.Barrier("b", "stag0101");
+        Upload(late, "a", 650, 0xBEEF, [9, 9, 9]);
+        var lateOk = late.Decision("b");
+        late.Send("b", new ReadyMsg(lateOk.NewInst, lateOk.NewVisit, 720, 0x77, 0, [7], ReadyMsg.FromCheckpoint).Frame());
+        late.Advance(2100);
+        late.Hub.Housekeep(late.Now);
+        Assert.True(late.P("a").Has(Msg.JoinReq));
+        Assert.Equal(1, late.Hub.Counters["ready_unchecked"]);
+    }
+
+    [Fact]
+    public void A_joiner_that_never_sends_ready_falls_back_to_its_own_stage()
+    {
+        var h = CheckpointTarget(new InstanceOptions { MaxCatchUpSeconds = 5 });
+        h.Barrier("b", "stag0101");
+        Upload(h, "a", 650, 0xBEEF, [9, 9, 9]);
+        Assert.NotNull(h.Mem("b").Joining);
+        h.Advance(30_000);
+        h.Hub.Housekeep(h.Now);
+        Assert.NotNull(h.Mem("b").Joining);
+        h.Advance(6_000);
+        h.Hub.Housekeep(h.Now);
+        Assert.Null(h.Mem("b").Joining);
+        Assert.Equal(1, h.Hub.Counters["join_ready_timeout"]);
+        Assert.Equal((BarrierDecision.New, BarrierNotice.JoinFailed), (h.Decision("b").Decision, h.Decision("b").Notice));
+    }
+
+    [Fact]
+    public void The_classic_fallback_of_a_planned_checkpoint_join_checks_the_whole_visits_catch_up()
+    {
+        // A long visit (3,000 ticks): the ranking takes the checkpoint path's K + 1,200 ticks (about 5 s for this joiner); the
+        // donor does not answer, and the whole visit would take about 12 s: NEW, not a long countdown.
+        var h = CheckpointTarget(new InstanceOptions { MaxCatchUpSeconds = 10, CheckpointWaitMs = 500 });
+        h.Advance(40_000);
+        for (var first = 700u; first < 3000u; first += 230) h.Log("a", first, 230);
+        h.Mem("b").Rate = 300;
+        h.Barrier("b", "stag0101");
+        Assert.Equal(BarrierDecision.Join, h.Decision("b").Decision);
+        h.Advance(600);
+        h.Hub.Housekeep(h.Now);
+        Assert.Equal(1, h.Hub.Counters["classic_too_long"]);
+        Assert.Equal((BarrierDecision.New, BarrierNotice.TooLongToCatchUp), (h.Decision("b").Decision, h.Decision("b").Notice));
+        Assert.False(h.P("b").Has(Msg.StateData));
+    }
+
+    [Fact]
+    public void Only_the_asked_donors_upload_is_taken_and_an_abandoned_one_frees_the_periodic_ask()
+    {
+        var h = CheckpointTarget();
+        var i = h.I("a");
+        Upload(h, "a", 640, 0xBEEF, [1, 2, 3]); // unasked
+        Assert.Empty(i.Checkpoints);
+        Assert.Null(i.Upload);
+        Assert.True(h.Hub.Counters["checkpoint_unasked"] >= 1);
+        // An asked upload that stops after its first chunk.
+        i.AskedDonor = h.Mem("a");
+        i.CheckpointAskedAt = h.Now;
+        h.Send("a", new CheckpointMsg(i.Id, i.Visit, 640, 0xBEEF, 20, 10, 0, [1, 2, 3]).Frame());
+        Assert.NotNull(i.Upload);
+        h.Advance(4100);
+        h.Hub.Housekeep(h.Now);
+        Assert.Null(i.Upload);
+        Assert.Equal(1, h.Hub.Counters["checkpoint_upload_abandoned"]);
+    }
+
+    [Fact]
+    public void A_solo_leader_tells_its_load_end_alone_and_gets_no_periodic_asks()
+    {
+        var h = new Harness(new InstanceOptions { CheckpointPeriodicMs = 1000 });
+        h.Connect("a", 0);
+        h.Barrier("a", "stag0101");
+        h.Snapshot("a");
+        h.Joinable("a");
+        var i = h.I("a");
+        h.Send("a", new StateHashMsg(i.Id, i.Visit, 600, 0, 20, StateHashMsg.LoadEndOnly).Frame());
+        Assert.Equal(20u, i.AgreedLoadEnd);
+        Assert.Empty(i.StateHashes);
+        h.Advance(5000);
+        h.Hub.Housekeep(h.Now);
+        Assert.False(h.P("a").Has(Msg.CheckpointAsk));
+    }
+
+    [Fact]
+    public void A_fork_drops_the_parents_state_of_the_leavers_side_after_the_fork_tick()
+    {
+        var h = SealedPair(out var inst);
+        var i = h.I("a");
+        h.Seal(600);
+        var k = i.NextSeal - 3;
+        Assert.True(k > 21);
+        // a (the leaver) was asked and uploads the state of k + 1, the child's side, before the relay forks.
+        i.AskedDonor = h.Mem("a");
+        h.Send("a", new SplitMsg(inst, i.Visit, k, 0b01, SplitKind.Exit).Frame());
+        h.Send("a", new CheckpointMsg(i.Id, i.Visit, k + 1, 0xA1, 20, 3, 0, [1, 2, 3]).Frame());
+        h.Send("a", new StateHashMsg(i.Id, i.Visit, k + 1, 0xA1, 20, 0).Frame());
+        h.Send("b", new StateHashMsg(i.Id, i.Visit, k + 1, 0xB2, 20, 0).Frame());
+        Assert.False(h.Hub.Counters.ContainsKey("statehash_mismatch")); // not compared while the fork waits
+        Assert.Single(i.Checkpoints);
+        h.Send("b", new SplitMsg(inst, i.Visit, k, 0b01, SplitKind.Exit).Frame());
+        Assert.NotSame(i, h.I("a"));
+        Assert.Empty(i.Checkpoints);
+        Assert.DoesNotContain(i.StateHashes.Keys, t => t > k);
+        Assert.False(i.CheckpointSuspect);
+        Assert.Empty(h.I("a").Checkpoints); // the child keeps only the parent's checkpoints up to the fork
     }
 
     [Fact]
@@ -534,6 +718,7 @@ public partial class HubLogicTests
         h.Send("b", new StateHashMsg(i.Id, i.Visit, 600, 8, 20, 1).Frame());
         Assert.Null(i.AgreedLoadEnd);
         Assert.Equal(1, h.Hub.Counters["statehash_mismatch"]);
+        Assert.True(i.CheckpointSuspect); // (round J's review: any mismatch)
         h.Send("a", new StateHashMsg(i.Id, i.Visit, 1200, 9, 20, 1).Frame());
         h.Send("b", new StateHashMsg(i.Id, i.Visit, 1200, 9, 20, 1).Frame());
         Assert.Equal(20u, i.AgreedLoadEnd);

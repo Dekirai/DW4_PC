@@ -286,10 +286,14 @@ public sealed record ReadyMsg(uint Inst, uint Visit, uint Tick, ulong NetFp, uin
 
 /// <summary>
 /// STATEHASH (round J, SEAMLESS.md 6.13.4): a member's XXH64 of its canonical tick state at a checkpoint tick (the first
-/// tick not in the state), with the visit's load end K its engine reached; flags bit 0: it keeps the state's bytes.
+/// tick not in the state), with the visit's load end K its engine reached; flags bit 0: it keeps the state's bytes; bit 1
+/// (round J's review): a solo leader's report of K alone, hash 0 (nobody to compare with, nothing computed).
 /// </summary>
 public sealed record StateHashMsg(uint Inst, uint Visit, uint Tick, ulong Hash, uint LoadEnd, byte Flags)
 {
+    public const byte Kept = 1;
+    public const byte LoadEndOnly = 2;
+
     public static StateHashMsg Parse(ReadOnlySpan<byte> p)
     {
         var r = new WireReader(p);
