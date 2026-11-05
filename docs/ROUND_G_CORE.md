@@ -166,3 +166,9 @@ online_character's guest_records_keep_the_own_story).
   `owner_records_keep_the_engine_story` (fails without the fix: no upload).
   C1-C3 PASS on build/dev of d0dcdb6b (build/char_C1C3c.log: C1 363 s,
   C2 210 s, C3 11 s).
+- 05.11 08:25: regression on build/dev of d0dcdb6b PASS: S14a (256 s),
+  S14h (258 s), S16 (392 s), S3 (305 s), S5 (288 s)
+  (build/scen_regress2.log). With 23:55's S14, S14p, S14z, S17a, S2 the
+  plan's regression list is complete. Next: RG1 / RG2 / RG7 / RG10 again on
+  d0dcdb6b (build/scen_RG_final.log), character_test C4 K3 K3b K5, ctest,
+  server tests, det.sh twice on build/rel of d0dcdb6b.

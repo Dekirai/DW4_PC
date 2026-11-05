@@ -7658,8 +7658,9 @@ room story...", 15 s then "The room story did not arrive. Join the room
 again.", `DW4_ONLINE_TEST_STORY_DELAY` in dev builds); the card store's
 story override for a guest (`save::with_story`, every used box of every valid
 copy, checksums fixed); the own story bytes in `CharacterSync` (GET 200, the
-409 reload, zeros at 404; every cached and uploaded record; the entry
-rewrites an old cache before anything reads or backs it up); *queued* like
+409 reload, zeros at 404; every cached and uploaded record of a guest, while
+the room owner's records keep his engine's story, which is his own; the
+entry rewrites an old cache before anything reads or backs it up); *queued* like
 *held* without its notice (kept out of the resends until the next barrier);
 the guest's toasts at the Game Start, the "moved on" notice once per visit,
 "Story: yours" / "Story: <owner>'s, phase n, k key items" in the F1 Online
