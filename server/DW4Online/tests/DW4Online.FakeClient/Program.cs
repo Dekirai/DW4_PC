@@ -14,6 +14,9 @@ using DW4Online.FakeClient;
 //   proxy   --listen PORT --target PORT [--one-way MS] [--jitter MS] [--loss P] [--up MS,JITTER,LOSS] [--down MS,JITTER,LOSS]
 //           (--up / --down: an asymmetric link, client to server / server to client; each overrides the symmetric values)
 //   matrix  [--ports 53100-53199] [--clients 3] [--warmup 20] [--seconds 40] [--parallel 3] [--out FILE.json] [--md FILE.md] [--quick]
+//   loadgate [--seconds 30] [--threads 8] [--cells base,fullhub,select,storm] [--out FILE.json]
+//           round I1a's load gate on one in-process hub (SEAMLESS.md 19.17.4, LoadGate.cs; no sockets)
+//   joins   [--minutes 1,10,25] [--out FILE.json]   the lock's holds of one classic join per log length
 var args2 = args.Skip(1).ToArray();
 string Opt(string name, string fallback = "")
 {
@@ -143,7 +146,36 @@ switch (args.FirstOrDefault())
         Console.WriteLine(md);
         return 0;
     }
+    case "loadgate":
+    {
+        // Round I1a's load gate (SEAMLESS.md 19.17.4): one in-process hub, the cells one after another.
+        var seconds = double.Parse(Opt("--seconds", "30"), CultureInfo.InvariantCulture);
+        var threads = int.Parse(Opt("--threads", "8"), CultureInfo.InvariantCulture);
+        var only = Opt("--cells");
+        var results = new List<Dictionary<string, object>>();
+        foreach (var cell in LoadGate.Cells())
+        {
+            if (only.Length > 0 && !only.Split(',').Contains(cell.Name)) continue;
+            var r = LoadGate.Run(cell, seconds, threads, Console.WriteLine);
+            Console.WriteLine(LoadGate.Json(r));
+            results.Add(r);
+            GC.Collect();
+            await Task.Delay(1000);
+        }
+        if (Opt("--out") is { Length: > 0 } outFile) await File.WriteAllTextAsync(outFile, LoadGate.Json(results));
+        return 0;
+    }
+    case "joins":
+    {
+        // Round I1a's load gate, the joins cell (SEAMLESS.md 19.17.4): the lock's holds of one classic join per log length.
+        var minutes = Opt("--minutes", "1,10,25").Split(',').Select(s => double.Parse(s, CultureInfo.InvariantCulture)).ToArray();
+        LoadGate.Join(1, _ => { }); // (warm-up: the first join JIT-compiles the decision and the state paths)
+        var results = minutes.Select(m => LoadGate.Join(m, Console.WriteLine)).ToList();
+        Console.WriteLine(LoadGate.Json(results));
+        if (Opt("--out") is { Length: > 0 } outFile) await File.WriteAllTextAsync(outFile, LoadGate.Json(results));
+        return 0;
+    }
     default:
-        Console.Error.WriteLine("usage: DW4Online.FakeClient client|proxy|matrix ... (see Program.cs)");
+        Console.Error.WriteLine("usage: DW4Online.FakeClient client|proxy|matrix|loadgate|joins ... (see Program.cs)");
         return 1;
 }
