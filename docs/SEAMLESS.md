@@ -8111,6 +8111,53 @@ it drift 1,500 ticks after its JOIN (tick 5,160, outside
 turns suspect (`desync_rebuilt`), the classic resync's READY at 5,220 judges
 and both are equal for 3,840 ticks after (without the hook JS2 fails).
 
+*READY at the check tick* (lane `jready`, branch `fix-j-ready` from main
+a475b98, 05.11; protocol 48, 6.13.5). The last verification found the price
+of the review's READY check: a joiner from a checkpoint waited for the next
+multiple of 60 after T, up to 59 live ticks (J1 859 ms from the relay's join
+decision to the JOIN with 49 ticks to wait, J5 526 ms, JL 387 ms; about
+1.2 s at worst, over 6.13's one second). Now the donor of a checkpoint of T
+sends its NETFP of the check tick T + 14 as well, the joiner replays at least
+to it and names it in READY (or a later multiple of 60 it replayed), and the
+relay compares it with the donor's report (`StoredCheckpoint.CheckFp`); a
+47 room keeps 47's rule. Client: `wire::kReadyCheckTicks`,
+`Session::check_fp_tick_` / `ready_check_tick_`, `kOnlineProtocol` 48;
+relay: `Wire.ReadyCheckProtocol` / `ReadyCheckTicks`, `OnNetFp`, `OnReady`;
+the example settings and DEPLOY.md name 48.
+
+Measured on the local stack (hidden clients, mysqld 3620, ports
+56600-56649, `--parallel 1`, the machine busy with another round), the join
+decision to the JOIN (sealed: stamped; solo-led: JOIN_REQ) from the relay's
+log:
+
+| Scenario | Checkpoint T, READY tick | Rebuild | Decision to JOIN |
+| --- | --- | --- | --- |
+| J1 (three runs) | 3,607, 3,621 / 3,492, 3,506 / 3,585, 3,600 | 137 / 143 / 239 ms | 370 / 318 / 417 ms (worst 417, median 370) |
+| J5 (five minutes) | 17,859, 17,873 | 150 ms | 339 ms |
+| JL (J1 behind 20 ms each way) | 3,590, 3,604 | 138 ms | 423 ms |
+| JS2 | 3,555, 3,569 | 131 ms | 334 ms |
+| RGJ1 | 3,585, 3,600 (the multiple of 60 after the check tick) | 136 ms | 327 ms |
+| S3, first joiner (solo-led) | 1,311, 1,325 | 146 ms | 340 ms |
+| S3, second joiner (sealed) | 1,753, 1,767 | 171 ms | 348 ms |
+
+Every READY from a checkpoint was checked (`ready ... checked=True`), after
+15 or 16 replayed steps; it waited 5-64 ms for the check tick after the
+rebuild (the joiner's own transition and load and the rebuild take about
+0.3 s, the check tick a quarter second after T). The donor's check NETFP
+costs 0.14-0.2 ms (once 0.44 ms), once per upload. Worst of all checkpoint
+joins 423 ms (JL), median 340 ms (nine joins) (main a475b98 on the same stack: J1 522 ms,
+`build/scen_base_j1.log`). JS: the drift found at the check tick 3,595
+(`ready_mismatch`, `checkpoint_suspect` why=ready), the classic state joins
+it (1,230 ms from the decision: the classic catch-up of 3,648 ticks). JB:
+the damaged checkpoint refused, the classic join (1,141 ms). JR: the resync
+from the agreed checkpoint of 1,800 (READY at 2,520), equal after. All nine
+pass (`build/scen_set1.log`, J1 again in `build/scen_j1_rep2.log` and
+`scen_j1_rep3.log`); ctest 56 of 56, DW4Online.Tests 269 of 269 (the three
+new relay tests: two fail against the old `RoomHub.cs`, the 47 room's passes
+with both), session tests 233 checks (new: *checkpoint check tick*),
+`det.sh` 4004f056 / 396cb219 in both runs on a build without
+`DW4_ONLINE_DEV` (`build/det1.log`). Logs in `build/` of the worktree.
+
 ### Round R (proposed r67): rollback for the own player
 
 Goal: 6.13.6 (the feedback's "sometimes 80 ms"): the own character reacts in

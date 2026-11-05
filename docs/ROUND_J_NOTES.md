@@ -136,3 +136,17 @@ story-point credit).
   compares it there. Relay c98a553f, client e1aacb45; HubLogicTests 62/62,
   session tests 233 checks. Baseline J1 on this machine (main):
   522 ms (`build/scen_base_j1.log`). Next: scenarios, docs.
+- 05.11 17:10, lane `jready` done: all nine scenarios pass with
+  `--parallel 1` (J1, J5, JB, JR, JS, JS2, RGJ1, S3, J1@20,0,0:
+  `build/scen_set1.log`; J1 again: `build/scen_j1_rep2.log`,
+  `build/scen_j1_rep3.log`). Join decision to JOIN for the nine joins from a
+  checkpoint: 318-423 ms, median 340 ms (J1 370 / 318 / 417 ms, J5 339, JL
+  423, JS2 334, RGJ1 327, S3 340 / 348); every READY checked after 15-16
+  replayed steps. JS: the drift found at the check tick (`ready_mismatch`
+  at 3,595), the classic join. (A first J1 run, 315 ms, failed only in
+  run.py's parse of the check NETFP's trace line, fixed in 508164e4.)
+  ctest 56/56, DW4Online.Tests 269/269, `det.sh` 4004f056 / 396cb219
+  (`build/det1.log`). SEAMLESS.md 6.13.5 and 17 *READY at the check tick*.
+  Open: DW4Online 0.1.6 with protocol 48 (server and client release), the
+  classic fallback's join time (JS 1,230 ms, JB 1,141 ms: the visit's
+  catch-up, unchanged), a donor with unsafe ticks (M1: `CheckpointWaitMs`).
