@@ -467,6 +467,43 @@ kite bot (Agumon) in the same minutes: 0.34 / 0.22 / 0.26 taken, 0.07 /
   3:13-6:24, but the kite bot reached Lv 13 at 5:00 instead of 15, learned
   Heal Lt late and died at 6:07 instead of 8:18: the kills are the EXP.
 - **5:00.** In phase 2 the kite bot died of shots (MRβ02's poison shots,
-  Pharaohmon's magic, Tyrannomon: 0.8-1.0 MaxHP a minute of shots and
-  0.2-0.5 of poison) as the human bot of contact (Mummymon, 0.36 MaxHP a
-  minute alone).
+  Pharaohmon's magic, Tyrannomon: 0.7-1.0 MaxHP a minute of shots and
+  0.2-0.5 of poison in s2's minutes 7-9) as the human bot of contact
+  (Mummymon: 0.36 MaxHP a minute of phase 2 alone in s3; section 10.4).
+
+### 10.4 The sweeps
+
+Request keys on one build (`build/t/sweep.sh`, `QUICK=1`: the human and the
+kite bot), 10 seeds a form and bot unless named; the median survival and the
+range (A Agumon, V Veemon):
+
+| Sweep | Change (on top of the row before, unless named) | human A | human V | kite A | kite V |
+| --- | --- | --- | --- | --- | --- |
+| b0 | main (20 seeds) | 2:09 (1:20-13:07) | 2:18 (1:16-12:11) | 8:18 (4:20-12:54) | 10:32 (8:39-11:52) |
+| s1 | A(t) 9 / 22 / 40 / 56 / 64, at most 1.5 / 3 / 6 / 10 / 12 spawns a second, the way out until 10:00, the first surge 3:00, the first Corrupted 2:30, the damage warm-up x 0.2 to 8:00 (human 20 seeds) | 4:45 (3:13-6:24) | 5:23 (2:54-8:35) | 6:07 (5:51-7:20) | 6:09 (5:53-7:33) |
+| s2 | s1 and the damage growth 0.13 (human 20 seeds) | 5:38 (3:42-8:08) | 5:55 (3:06-13:08) | 7:42 (6:11-16:13) | 7:13 (6:00-9:21) |
+| s3 | s2 with A(t) 10 / 24 / 40 / 54 / 60, 3 / 5 / 8 / 12 / 12 a second, EXP x 1.35 | 17:10 (5:00-18:08) | 15:51 (12:08-18:19) | 17:29 (16:42-18:51) | 13:58 (10:54-17:44) |
+| s4 | s3 and MUTEKI 45 (not taken) | 19:01 (17:57-20:01) | 17:48 (14:41-20:01) | 20:01 (9 of 10 clear) | 17:05 (13:22-19:04) |
+| s5 | s3 and contact x 0.7 / 1.0 / 1.3 / 1.5 / 1.6, shots x 0.8 / 0.7 / 0.65 / 0.6 / 0.6 | 11:18 (5:42-18:13) | 14:18 (11:54-17:51) | 18:10 (17:20-19:59) | 14:14 (11:59-17:19) |
+| s6 | s5 with the growth 0.16 (not taken) | 8:12 (5:14-13:52) | 12:18 (11:44-13:04) | 16:29 (12:48-17:08) | 12:15 (11:34-12:51) |
+| s7 | s5 and Mummymon 0.16, Tortomon 0.13: the new defaults | 17:14 (5:47-17:33) | 16:39 (12:35-17:02) | 18:30 (17:22-19:08) | 17:27 (16:20-19:05) |
+
+What the sweeps showed:
+
+- Fewer and slower spawns, the way out and the soft warm-up end the deaths
+  of the first three minutes (s1), but alone they cost levels: the kills are
+  the EXP, and Agumon's Heal Lt (Lv 15) came late. EXP x 1.35 (s3) gives the
+  old level pace back (the kite bot Lv 15 at 5:00, as before) with fewer
+  enemies; it is the round's largest lever, with MUTEKI (s4: every
+  frame more is a crowd's hit less; 45 makes the run easy, 30 stays).
+- The phase 2 shots (MRβ02, Pharaohmon, Tyrannomon) killed the kite bot,
+  contact (Mummymon) the human bot; the near / far factors (s5) make the
+  crowd the threat a good player walks away from, and the shots softer.
+- The forms differ in what hurts them: Agumon has no Impact, so the slow
+  walkers that reach it (Mummymon: 0.45 MaxHP a minute of phase 2 for the
+  human bot) decide its runs; Tortomon outlasts Veemon's Blade Arc, Bolt
+  and Impact (0.55-0.65 MaxHP a minute of phase 3 for Veemon, 0.09-0.12 for
+  Agumon). With both
+  factors lower (s7) the medians are within 6 % of each other for both bots.
+- The growth decides where the good runs end: 0.13 puts the kite bot at
+  17-19 minutes, 0.16 at 12-17 (s6), and the human bot of s6 near 8:00.
