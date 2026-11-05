@@ -125,7 +125,27 @@ public:
     // One line per figure (traces: DW4_TRACE_GHOSTS).
     std::vector<std::string> describe() const;
 
+#ifdef DW4_GHOST_PROBE
+    // Round I1a's ghost measurement (docs/SEAMLESS.md 19.13; the build option
+    // DW4_GHOST_PROBE, never in a player build): DW4_PROBE_GHOSTS_MAX raises
+    // the cap of kMaxFigures, DW4_PROBE_GHOSTS_FULL=N poses the nearest N
+    // figures every draw and the farther ones every second draw only (half
+    // rate: their places still move every draw). probe_costs: the last
+    // draw's milliseconds in pose() and in the traversals, figures posed and
+    // poses reused.
+    struct ProbeCosts {
+        double pose_ms{}, traverse_ms{};
+        int posed{}, reused{}, items{}; // (items: the draw items the figures made, a measure of how many are in view)
+    };
+    ProbeCosts probe_costs() const { return probe_costs_; }
+#endif
+
 private:
+#ifdef DW4_GHOST_PROBE
+    std::size_t probe_max_ = kMaxFigures, probe_full_ = 0;
+    std::uint64_t probe_draws_{};
+    ProbeCosts probe_costs_{};
+#endif
     struct Model;
     struct Weapon;
     struct Figure;

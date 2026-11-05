@@ -151,6 +151,11 @@ target_link_libraries(dw4_overflow_probe PRIVATE dw4_engine)
 if(WIN32)
   target_link_libraries(dw4_overflow_probe PRIVATE psapi)
 endif()
+# Round I1a's first tasks (docs/SEAMLESS.md 19.25): headless engine probes for
+# the world without rooms (settings at a restore, the stage redirect, HOME and
+# the game over). A development tool, never part of the game.
+add_executable(dw4_world_probe tools/world_probe.cpp)
+target_link_libraries(dw4_world_probe PRIVATE dw4_engine dw4_online)
 
 if(BUILD_TESTING)
   foreach(suite assets igb igb_document resources packages scripts lua4 textures meshes skinning animation_math enbaya adx save_data save_import card_store sfp sfd ini disc)
@@ -334,6 +339,13 @@ if(DW4_BUILD_APP)
   target_sources(dw4_game PRIVATE src/game/cloud_backup_panel.cpp)
   if(WIN32)
     target_link_libraries(dw4_game PRIVATE ws2_32)
+  endif()
+  # Round I1a's ghost figure measurement (docs/SEAMLESS.md 19.13): a test
+  # build's DW4_PROBE_GHOSTS* switches (ghost_figures.hpp, game_main.cpp).
+  # Never in a player build.
+  option(DW4_GHOST_PROBE "Ghost figure measurement switches (test builds only)" OFF)
+  if(DW4_GHOST_PROBE)
+    target_compile_definitions(dw4_game PRIVATE DW4_GHOST_PROBE=1)
   endif()
   if(BUILD_TESTING)
     # Keyboard / controller bindings -> GameCube pad input, settings.ini migration (SDL, no device or window).

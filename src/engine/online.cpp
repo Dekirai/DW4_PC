@@ -147,7 +147,9 @@ const std::vector<std::string_view>& online_presentation_env() {
         "DW4_ONLINE_TEST_STORY_DELAY",
         // round S1 test tools (game_main.cpp)
         "DW4_SNAPSHOT_DUMP", "DW4_PAD_LOG", "DW4_EXTRA_RENDERS", "DW4_EXTRA_WIDEN", "DW4_EXTRA_PREVIOUS",
-        "DW4_CAM_CHECK"};
+        "DW4_CAM_CHECK",
+        // round I1a's ghost figure measurement (DW4_GHOST_PROBE test builds only, game_main.cpp, ghost_figures.cpp)
+        "DW4_PROBE_GHOSTS*"};
     return names;
 }
 

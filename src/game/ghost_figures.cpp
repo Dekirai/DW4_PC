@@ -13,6 +13,11 @@
 #include <cstdio>
 #include <exception>
 
+#ifdef DW4_GHOST_PROBE
+#include <chrono>
+#include <cstdlib>
+#endif
+
 namespace dw4::game {
 
 using engine::ActorPose;
@@ -187,7 +192,14 @@ std::string sequence_clip(const ObjectView& control, const ObjectView& action, s
 }
 } // namespace
 
+#ifdef DW4_GHOST_PROBE
+GhostFigures::GhostFigures() {
+    if (const char* max = std::getenv("DW4_PROBE_GHOSTS_MAX")) probe_max_ = std::size_t(std::clamp(std::atoi(max), 1, 64));
+    if (const char* full = std::getenv("DW4_PROBE_GHOSTS_FULL")) probe_full_ = std::size_t(std::clamp(std::atoi(full), 0, 64));
+}
+#else
 GhostFigures::GhostFigures() = default;
+#endif
 
 GhostFigures::~GhostFigures() {
     {
@@ -412,13 +424,18 @@ void GhostFigures::update(std::vector<GhostTarget> targets, std::optional<Vec3f>
     const double dt = last_update_ > 0 ? std::clamp(now - last_update_, 0.0, 0.25) : 0.0;
     last_update_ = now;
     // The nearest kMaxFigures (one per member).
+#ifdef DW4_GHOST_PROBE
+    const std::size_t cap = probe_max_;
+#else
+    constexpr std::size_t cap = kMaxFigures;
+#endif
     std::erase_if(targets, [](const GhostTarget& t) { return !form_by_species(t.species); });
-    if (own && targets.size() > kMaxFigures) {
+    if (own && targets.size() > cap) {
         std::stable_sort(targets.begin(), targets.end(), [&](const GhostTarget& a, const GhostTarget& b) {
             return engine::length(a.position - *own) < engine::length(b.position - *own);
         });
     }
-    if (targets.size() > kMaxFigures) targets.resize(kMaxFigures);
+    if (targets.size() > cap) targets.resize(cap);
     for (const auto& t : targets) preload(t.species, t.weapon);
     for (auto& figure : figures_) {
         const auto found = std::find_if(targets.begin(), targets.end(), [&](const GhostTarget& t) { return t.key == figure->key; });
@@ -520,12 +537,38 @@ void GhostFigures::draw(std::vector<DrawItem>& items, engine::ShadowFrame* shado
     const double dt = last_draw_ > 0 ? std::clamp(now - last_draw_, 0.0, 0.25) : 0.0;
     last_draw_ = now;
     std::vector<DrawItem> opaque, blended;
+#ifdef DW4_GHOST_PROBE
+    // The half rate: the figures beyond the nearest probe_full_ keep the pose
+    // of their last draw every second draw (alternating between figures).
+    std::vector<std::size_t> rank(figures_.size(), 0);
+    if (probe_full_ > 0 && own) {
+        std::vector<std::pair<float, std::size_t>> by_distance;
+        for (std::size_t i = 0; i < figures_.size(); ++i) by_distance.emplace_back(engine::length(figures_[i]->position - *own), i);
+        std::sort(by_distance.begin(), by_distance.end());
+        for (std::size_t r = 0; r < by_distance.size(); ++r) rank[by_distance[r].second] = r;
+    }
+    ++probe_draws_;
+    probe_costs_ = {};
+    std::size_t probe_index = 0;
+#endif
     for (auto& figure : figures_) {
         auto& f = *figure;
+#ifdef DW4_GHOST_PROBE
+        const std::size_t index = probe_index++;
+#endif
         if (f.alpha <= 0.0) continue;
         Model* m = model(f.species);
         if (!m || !m->root) continue;
+#ifdef DW4_GHOST_PROBE
+        const bool half = probe_full_ > 0 && rank[index] >= probe_full_ && f.started && ((probe_draws_ + index) & 1u) != 0;
+        const auto pose_start = std::chrono::steady_clock::now();
+        if (!half) pose(f, *m, now);
+        probe_costs_.pose_ms += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - pose_start).count();
+        ++(half ? probe_costs_.reused : probe_costs_.posed);
+        const auto traverse_start = std::chrono::steady_clock::now();
+#else
         pose(f, *m, now);
+#endif
         const float height = form_label_height(f.species);
         if (eye) {
             const Vec3f centre{f.position.x, f.position.y + height * 0.5f, f.position.z};
@@ -568,6 +611,10 @@ void GhostFigures::draw(std::vector<DrawItem>& items, engine::ShadowFrame* shado
         if (arms)
             for (Node* actor : m->actors)
                 for (const auto& select : arms->selects) std::erase(actor->children, select.get());
+#ifdef DW4_GHOST_PROBE
+        probe_costs_.traverse_ms += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - traverse_start).count();
+        probe_costs_.items += int(out.size());
+#endif
         ++drawn_;
         const std::uint64_t instance = 0x9e3779b97f4a7c15ull ^ (f.key * 0x100000001b3ull) ^ (std::uint64_t(f.segment) << 40);
         for (auto& item : out) item.instance ^= instance;
