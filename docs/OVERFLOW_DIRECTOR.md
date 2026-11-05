@@ -640,3 +640,75 @@ human runs have a tail the seeds 1-20 did not show: 4:40, 5:32, 5:39,
   bound for the offers and a fair model of the first minutes' movement.
 - **Checks.** ctest 55 / 55 in `build/chk`; det.sh `o1abal_chk`: 4004f056
   / 396cb219 (both runs).
+
+## 11. The forge round of 05.11 (the early Forge and phase 4)
+
+Two things 10.7 and 10.8 left open: Agumon's early deaths depend on when
+the newcomer takes its first Forge, and phase 4 is a wall (13-16 of 20
+runs of every bot and form end within two minutes, mostly 15:30-18:00;
+the kite bot lasts hardly longer than the human bot after 10:00). The
+targets: the early Forge reliable without making it automatic; `bot=human`
+median 14-18 minutes, `bot=kite` median 20-24 minutes with at least 6 of 20
+reaching 22:00 (17.1: a run that goes well lasts 22-25 minutes), no
+two-minute window with more than 9 of 20 deaths of one bot and form, the
+kite bot at least 3 minutes above the human bot; phase 1 as it is (with
+`bot=human` no defeat before 3:00, at most 1 of 40 Agumon runs, seeds 1-20
+and 101-120, before 10:00, the first level-up within 18 s, the forms within
+about 15 %). Branch `fix-o1a-forge` from main da44ddd; this section is the
+round's progress note. The runs: `build/f/pair.sh` (`runs.sh` with nice 19
+and at most two at a time), `build/f/targets.py` (this round's targets),
+`build/f/minutes.py` (the minute medians with the kills by the Art and by
+the techniques, new in the minute lines).
+
+### 11.1 Why the early Forge decides Agumon's first minutes
+
+The measurement: `bot=human` with `forge_from=300` (the newcomer's policy,
+but it takes no Forge before 5:00), seeds 1-20, the build of 651bbb5
+(`build/f/runs_e1`):
+
+| Form | Death times | Before 10:00 |
+| --- | --- | --- |
+| Agumon | median 4:51 (3:55-7:55) | 20 of 20 |
+| Veemon | median 13:12 (5:25-16:33) | 3 of 20 |
+
+The minutes (medians over the runs alive; kills of the minute by the Art
+and by the techniques):
+
+| min | Agumon Art kills | Agumon technique kills | Agumon contact | Veemon Art kills | Veemon technique kills | Veemon contact |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1 | 41 | 8 | 0.14 | 30 | 15 | 0.17 |
+| 2 | 54 | 16 | 0.18 | 50 | 28 | 0.21 |
+| 3 | 55 | 42 | 0.24 | 38 | 94 | 0.16 |
+| 4 | 58 | 60 | 0.35 | 43 | 160 | 0.20 |
+| 5 | 61 | 80 | 0.41 | 36 | 221 | 0.18 |
+
+- **The start Art is not weaker.** Cleaver (x 2.0) defeats as many as
+  Blade Arc (x 1.4) or more in every minute; changing it would not move
+  the tail.
+- **The gap is the crowd technique.** Both forms learn their TECH4 at run
+  level 8 with Blast 331 (about 2:30-3:00): Veemon's Impact strikes every
+  enemy within 20 units every 2 s (25 casts a minute, 160-220 kills a
+  minute by 4:00), Agumon's Cutter is one shell at one target (13 casts a
+  minute). Agumon's answer to a crowd is the Forge: its second strike from
+  Forge 2, the side lines from Forge 4 (6.3, the class factor's comment in
+  `abilities.cpp`). Without it the crowd round Agumon grows (near15 1.3 at
+  5:00 against Veemon's 0.7) and the contact with it.
+- **So the Forge has to come.** Over the balance round's 40 default Agumon
+  runs the newcomer took its first Forge after the third offer in 12, and
+  5 of them ended before 10:00. The human bot takes the first line half the
+  time and a random one otherwise; a Forge that is merely among the lines
+  of the first three offers changes little (a simulation of the draws:
+  31 % of the newcomers without a Forge in their first three picks, 28 %
+  with a Forge line in each), a Forge on the first line does (4 %).
+
+The answer (`offers.cpp`, `kForgeSure`): a form's first Forge takes the
+first line of each of its first three level-up offers until it is taken;
+the cursor starts on it and the line under the window says what a Forge
+does ("A Forge makes Cleaver stronger at once and lets its weapon grow into
+Van Blade."). It stays a choice: the other two lines are drawn by weight
+as before, and after the third offer the Forge is drawn by weight again.
+Whether a form has a Forge, and how many, is the weapon table's: the
+families of the Art's class (`OfferState::forge_families`); a class with
+one family gets no Forge line at all. Veemon gets the same rule (its
+late-Forge runs did not die early, but nothing in the data makes it a
+special case either way).
