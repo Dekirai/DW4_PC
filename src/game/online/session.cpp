@@ -1100,7 +1100,7 @@ void Session::after_step(double now) {
             const auto t0 = clock_seconds();
             const auto fp = engine_.net_fingerprint();
             send(w::Type::netfp, w::encode(w::NetFp{inst_, visit_, executed, fp}));
-            trace("netfp inst=%u visit=%u tick=%u mode=%s present=%x fp=%016llx check ms=%.3f", inst_, visit_, executed, mode_name(mode_),
+            trace("netfp inst=%u visit=%u tick=%u mode=%s present=%x fp=%016llx check=1 ms=%.3f", inst_, visit_, executed, mode_name(mode_),
                   unsigned(present_), static_cast<unsigned long long>(fp), (clock_seconds() - t0) * 1000.0);
         }
         check_fp_tick_.reset();
@@ -1603,12 +1603,11 @@ void Session::run_catch_up(double now) {
         w::Ready ready{inst_, visit_, last->first, last->second, config_.rate, own_carry_};
         if (from_checkpoint_) ready.flags = w::Ready::from_checkpoint;
         send(w::Type::ready, w::encode(ready));
-        trace("ready inst=%u visit=%u tick=%u fp=%016llx rate=%u%s replayed=%llu catchup_ms=%.0f", inst_, visit_, last->first,
+        // (checked: the steps replayed from the checkpoint through the READY's tick.)
+        const std::uint32_t checked = from_checkpoint_ && ready_check_tick_ ? last->first + w::kReadyCheckTicks - *ready_check_tick_ : 0;
+        trace("ready inst=%u visit=%u tick=%u fp=%016llx rate=%u%s replayed=%llu catchup_ms=%.0f checked=%u", inst_, visit_, last->first,
               static_cast<unsigned long long>(last->second), config_.rate, from_checkpoint_ ? " from-checkpoint" : "",
-              static_cast<unsigned long long>(replayed_steps_), (clock_seconds() - catch_up_started_) * 1000.0);
-        if (from_checkpoint_ && ready_check_tick_)
-            trace("ready check inst=%u visit=%u tick=%u check=%u checked_steps=%u", inst_, visit_, last->first, *ready_check_tick_,
-                  last->first + 1 - (*ready_check_tick_ + 1 - w::kReadyCheckTicks));
+              static_cast<unsigned long long>(replayed_steps_), (clock_seconds() - catch_up_started_) * 1000.0, checked);
         send(w::Type::rate, w::encode(config_.rate));
         ready_sent_ = true;
         engine_.set_replay(false);
