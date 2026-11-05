@@ -144,11 +144,22 @@ public sealed class ServiceOptions
     /// </summary>
     public string PathBase { get; set; } = "";
     /// <summary>
-    /// Behind a reverse proxy on the same machine (IIS, nginx, Caddy forwarding to 127.0.0.1): take the client address and
-    /// the scheme from X-Forwarded-For / X-Forwarded-Proto, but only from a loopback proxy. Off when Kestrel faces the
-    /// internet itself (a client could fake its address otherwise).
+    /// Behind a reverse proxy on the same machine (Traefik, IIS, nginx, Caddy forwarding to http://127.0.0.1:5280): take
+    /// the client address, the scheme and the stripped path prefix from X-Forwarded-For / X-Forwarded-Proto /
+    /// X-Forwarded-Prefix, but only on plain-HTTP connections from this machine (never from a direct client, never on the
+    /// HTTPS endpoint). Off when Kestrel faces the internet itself (a client could fake its address otherwise). Kestrel's
+    /// HTTPS endpoint keeps serving direct clients (the game) either way. DEPLOY.md section 6.2; DW4Online.Server.ProxyHeaders.
     /// </summary>
     public bool BehindProxy { get; set; }
+    /// <summary>
+    /// With <see cref="BehindProxy"/>: the networks (CIDR) of the proxies in front of the local one, for example
+    /// Cloudflare's published ranges (https://www.cloudflare.com/ips/). When the local proxy reports an address of these
+    /// networks as its client, the X-Forwarded-For entry before it (the one that edge appended) is the client's address.
+    /// One edge hop only, and only behind the local proxy: an address of these networks connecting to the service directly
+    /// is not trusted. Empty (the default): the address the local proxy saw counts. The local proxy must keep the edge's
+    /// X-Forwarded-For (Traefik: entryPoints.&lt;name&gt;.forwardedHeaders.trustedIPs with the same networks).
+    /// </summary>
+    public string[] TrustedProxyNetworks { get; set; } = [];
 
     /// <summary><see cref="PathBase"/> as "/name" (leading slash, no trailing slash), or "" for the root.</summary>
     public string NormalizedPathBase()

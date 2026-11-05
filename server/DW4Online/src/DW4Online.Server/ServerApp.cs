@@ -13,7 +13,6 @@ using DW4Online.Relay;
 using DW4Online.Relay.Hub;
 using DW4Online.Web;
 using DW4Online.Web.Auth;
-using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 
 namespace DW4Online.Server;
@@ -53,6 +52,7 @@ public static class ServerApp
         var play = Bind<PlayOptions>(config, "Play");
         var friends = Bind<FriendsOptions>(config, "Friends");
         var service = Bind<ServiceOptions>(config, "Service");
+        var proxy = ProxyHeaders.From(service); // (checks Service:PathBase and Service:TrustedProxyNetworks)
         var limits = Bind<RateLimitOptions>(config, "RateLimits");
         var relay = Bind<RelayOptions>(config, "Relay");
         var rooms = Bind<RoomOptions>(config, "Rooms");
@@ -132,15 +132,18 @@ public static class ServerApp
                 WebSetup.IsWebPath(ctx.Request.Path) ? WebSessionHandler.SchemeName : TokenAuthenticationHandler.SchemeName);
 
         var app = builder.Build();
-        if (service.BehindProxy)
+        // The forwarded headers of a proxy on this machine (Service:BehindProxy, Service:TrustedProxyNetworks) and
+        // Service:PathBase, before everything else: the client address the rate limits see, the scheme, the path base of
+        // every link, redirect and cookie (ProxyHeaders, DEPLOY.md section 6.2).
+        if (proxy.BehindProxy)
+            app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Proxy").LogInformation(
+                "Behind a proxy: X-Forwarded-For, -Proto and -Prefix from plain-HTTP connections of this machine, {Count} trusted edge network(s)",
+                proxy.Edges.Count);
+        app.Use((context, next) =>
         {
-            // Only a proxy on this machine is trusted (the defaults: 127.0.0.0/8 and ::1).
-            app.UseForwardedHeaders(new ForwardedHeadersOptions
-            {
-                ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto,
-            });
-        }
-        if (service.NormalizedPathBase() is { Length: > 0 } pathBase) app.UsePathBase(pathBase);
+            proxy.Apply(context);
+            return next(context);
+        });
         app.UseDw4Web(app.Services.GetRequiredService<WebOptions>(), app.Environment.IsDevelopment());
         app.UseDw4Api();
         app.MapDw4Api();
