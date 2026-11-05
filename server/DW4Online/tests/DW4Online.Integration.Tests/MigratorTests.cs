@@ -38,7 +38,7 @@ public class MigratorTests
             Assert.Equal(72, await c.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM achievements WHERE active = 1"));
             Assert.Equal(0, await c.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM achievements WHERE active = 1 AND code IN ('speed_6h', 'online_ten')"));
             Assert.Equal(12, await c.ExecuteScalarAsync<int>("SELECT goal FROM achievements WHERE code = 'lowlevel_apocalymon'"));
-            Assert.Equal(18, await c.ExecuteScalarAsync<int>( // (0008: online_story, 0010: online_story_history)
+            Assert.Equal(21, await c.ExecuteScalarAsync<int>( // (0008: online_story, 0010: online_story_history, 0012: the friend tables)
                 "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE()"));
 
             // What the log shows: the plan, each migration with its time, the total.
@@ -341,6 +341,109 @@ public class MigratorTests
         }
         finally
         {
+            await TestDb.DropAsync(name);
+        }
+    }
+
+    /// <summary>What the migrator did up to <paramref name="version"/> (the files and their schema_version rows).</summary>
+    private static async Task ApplyUpToAsync(MySqlConnection c, int version)
+    {
+        foreach (var m in Migrator.LoadEmbedded().Where(m => m.Version <= version))
+        {
+            await using (var cmd = new MySqlCommand(m.Sql, c)) await cmd.ExecuteNonQueryAsync();
+            await c.ExecuteAsync("INSERT INTO schema_version (version, description, checksum, applied_at) VALUES (@v, @d, @c, UTC_TIMESTAMP(3))",
+                new { v = m.Version, d = m.Description, c = m.Checksum });
+        }
+    }
+
+    /// <summary>
+    /// Migration 0012 (friends, round I2-social) on a database at schema 11 with accounts: three plain tables a person can
+    /// read in HeidiSQL (no binary columns, text enums, a comment on every table and column), the pair rules as CHECK
+    /// constraints, foreign keys to accounts with ON DELETE CASCADE (a row deleted by hand takes its pairs along).
+    /// </summary>
+    [DbFact]
+    public async Task Migration_12_adds_the_friend_tables_readable_in_HeidiSQL()
+    {
+        var name = await TestDb.CreateAsync();
+        try
+        {
+            await using var c = new MySqlConnection(TestDb.ConnectionString(name));
+            await c.OpenAsync();
+            await ApplyUpToAsync(c, 11);
+            await c.ExecuteAsync("INSERT INTO accounts (username, username_norm, password_hash, created_at) VALUES " +
+                "('Kim', 'kim', 'x', UTC_TIMESTAMP(3)), ('Lee', 'lee', 'x', UTC_TIMESTAMP(3)), ('Max', 'max', 'x', UTC_TIMESTAMP(3))");
+            var ids = (await c.QueryAsync<long>("SELECT CAST(id AS SIGNED) FROM accounts ORDER BY id")).ToList();
+            await using var db = new Database(TestDb.ConnectionString(name));
+            Assert.Contains(12, await new Migrator(db).MigrateAsync());
+
+            string[] tables = ["friendships", "friend_requests", "account_blocks"];
+            var columns = (await c.QueryAsync<(string Table, string Column, string Type, string Comment)>(
+                "SELECT table_name, column_name, column_type, column_comment FROM information_schema.columns " +
+                "WHERE table_schema = DATABASE() AND table_name IN @tables ORDER BY table_name, ordinal_position", new { tables })).ToList();
+            Assert.Equal(3 + 7 + 3, columns.Count);
+            Assert.All(columns, col => Assert.DoesNotMatch("blob|binary", col.Type));
+            Assert.All(columns, col => Assert.False(string.IsNullOrWhiteSpace(col.Comment), $"{col.Table}.{col.Column} has no comment"));
+            Assert.Equal("enum('pending','declined')", columns.Single(col => col.Column == "state").Type);
+            Assert.Equal(3, await c.ExecuteScalarAsync<int>(
+                "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name IN @tables AND table_comment <> ''", new { tables }));
+
+            var (kim, lee, max) = (ids[0], ids[1], ids[2]);
+            const string friendship = "INSERT INTO friendships (account_lo, account_hi, created_at) VALUES (@lo, @hi, UTC_TIMESTAMP(3))";
+            await c.ExecuteAsync(friendship, new { lo = kim, hi = lee });
+            await Assert.ThrowsAsync<MySqlException>(() => c.ExecuteAsync(friendship, new { lo = max, hi = kim }));     // lo < hi
+            await Assert.ThrowsAsync<MySqlException>(() => c.ExecuteAsync(friendship, new { lo = kim, hi = kim }));
+            await Assert.ThrowsAsync<MySqlException>(() => c.ExecuteAsync(friendship, new { lo = kim, hi = 999999L })); // foreign key
+            const string request = "INSERT INTO friend_requests (from_account_id, to_account_id, created_at) VALUES (@a, @b, UTC_TIMESTAMP(3))";
+            await c.ExecuteAsync(request, new { a = max, b = kim });
+            Assert.Equal(("pending", true), await c.QuerySingleAsync<(string, bool)>("SELECT state, delivered FROM friend_requests"));
+            await Assert.ThrowsAsync<MySqlException>(() => c.ExecuteAsync(request, new { a = lee, b = lee }));
+            await Assert.ThrowsAsync<MySqlException>(() => c.ExecuteAsync("UPDATE friend_requests SET state = 'accepted'"));
+            const string block = "INSERT INTO account_blocks (account_id, blocked_account_id, created_at) VALUES (@a, @b, UTC_TIMESTAMP(3))";
+            await c.ExecuteAsync(block, new { a = lee, b = max });
+            await Assert.ThrowsAsync<MySqlException>(() => c.ExecuteAsync(block, new { a = max, b = max }));
+
+            // A hard delete (by hand; the service only anonymises) takes the pairs along.
+            await c.ExecuteAsync("DELETE FROM accounts WHERE id = @max", new { max });
+            Assert.Equal(0, await c.ExecuteScalarAsync<int>("SELECT (SELECT COUNT(*) FROM friend_requests) + (SELECT COUNT(*) FROM account_blocks)"));
+            Assert.Equal(1, await c.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM friendships"));
+        }
+        finally
+        {
+            await TestDb.DropAsync(name);
+        }
+    }
+
+    /// <summary>
+    /// Every migration runs as the restricted service user of DEPLOY.md section 2 (SELECT, INSERT, UPDATE, DELETE, CREATE,
+    /// ALTER, INDEX, REFERENCES on the database, nothing else): 0012 needs no new grant (no CREATE VIEW, no DROP), so its
+    /// release needs only the backup (SEAMLESS.md 19.22 step 7).
+    /// </summary>
+    [DbFact]
+    public async Task Migrations_need_only_the_restricted_service_users_grants()
+    {
+        var name = await TestDb.CreateAsync();
+        var user = "dw4it_" + Guid.NewGuid().ToString("N")[..8];
+        var password = Guid.NewGuid().ToString("N");
+        await using var admin = new MySqlConnection(TestDb.AdminConnectionString);
+        try
+        {
+            foreach (var host in new[] { "127.0.0.1", "localhost" })
+            {
+                await admin.ExecuteAsync($"CREATE USER '{user}'@'{host}' IDENTIFIED BY '{password}'");
+                await admin.ExecuteAsync($"GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, INDEX, REFERENCES ON `{name}`.* TO '{user}'@'{host}'");
+            }
+            var restricted = new MySqlConnectionStringBuilder(TestDb.ConnectionString(name)) { UserID = user, Password = password }.ConnectionString;
+            await using var db = new Database(restricted);
+            Assert.Equal(From(1), await new Migrator(db).MigrateAsync());
+            await using var c = new MySqlConnection(restricted);
+            Assert.Equal(0, await c.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM account_blocks"));
+            Assert.Equal(0, await c.ExecuteScalarAsync<int>(
+                "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE() AND table_type = 'VIEW'"));
+        }
+        finally
+        {
+            foreach (var host in new[] { "127.0.0.1", "localhost" })
+                await admin.ExecuteAsync($"DROP USER IF EXISTS '{user}'@'{host}'");
             await TestDb.DropAsync(name);
         }
     }

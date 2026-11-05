@@ -46,8 +46,9 @@
                 <td>Until 30 days after the session ended or expired</td>
             </tr>
             <tr>
-                <td>Security log: logins, failed logins, account changes, uploads flagged by plausibility checks and staff
-                    actions, each with the IP address. A failed login with a user name that belongs to no account keeps
+                <td>Security log: logins, failed logins, account changes, uploads flagged by plausibility checks, friend
+                    requests and blocks refused by a limit (which limit, not the other player) and staff actions, each
+                    with the IP address. A failed login with a user name that belongs to no account keeps
                     only a keyed hash of the typed name, never the name itself</td>
                 <td>Protecting accounts and the service against abuse (Art. 6(1)(f), legitimate interest)</td>
                 <td>180 days</td>
@@ -81,6 +82,16 @@
                 <td>Until you delete the account</td>
             </tr>
             <tr>
+                <td>Friends and blocks: who your friends are and since when, the friend requests you sent and received
+                    (with the time they were sent and whether one was declined) and the players you block</td>
+                <td>The friend list you use (Art. 6(1)(b)); keeping declines and blocks silent protects players from
+                    unwanted contact (Art. 6(1)(f))</td>
+                <td>A friendship until either of you removes it or an account is deleted; a block until the player who
+                    set it lifts it or an account is deleted; a request until it is accepted, cancelled by its sender or
+                    expires 30 days after it was last sent. A declined request is kept until it expires even when its
+                    sender cancels it, so that the decline holds</td>
+            </tr>
+            <tr>
                 <td>Rooms: room name, who was a member and when; while a room is open, in which stages its members play
                     and how many play together (relay state, not stored)</td>
                 <td>Running rooms and checking that achievements happened in online play (Art. 6(1)(b))</td>
@@ -108,6 +119,12 @@
     this website; room names and the host's user name are visible in the room list while a room is open, together with
     the stages its members play in and how many play together there (the members' names in that list only to the members
     of the same room).</p>
+<p>Friends: your friends see your user name in their friend list with the date you became friends; a player you send
+    a friend request sees your user name with it once it reaches him (at most 100 requests reach a player at a time,
+    further ones wait their turn) until he answers or it expires. Nobody else sees who your friends are.
+    There is no search for players: a request or a block names the exact user name. Declining a request is not told to
+    its sender (it stays "sent" for him until it expires), and a block is never revealed: the blocked player is not
+    told, and while you block him his requests to you still look sent to him but never reach you.</p>
 
 <h2>Automated checks</h2>
 <p>Uploads of the online character are checked for plausibility. A failed check only marks the upload for the staff
@@ -123,9 +140,10 @@
 <h2>Deleting your data</h2>
 <p>You can delete your account at any time in your <a href="~/account">account settings</a>, or ask the operator to do
     it. Deleting removes your online character, your online story and its revisions, cloud save, achievements,
-    statistics, best times, sessions and e-mail address at once, and closes a room you own. The account row stays only as an anonymous placeholder ("deleted_" and a number), and the
+    statistics, best times, friendships, friend requests and blocks (yours and those about you), sessions and e-mail
+    address at once, and closes a room you own. The account row stays only as an anonymous placeholder ("deleted_" and a number), and the
     security log keeps its entries without your IP address until they expire after 180 days (failed logins typed with
     your user name lose its hash and their IP address too). Database backups roll over
     within about two months.</p>
 
-<p class="muted small">Last updated: 31 October 2026.</p>
+<p class="muted small">Last updated: 5 November 2026.</p>

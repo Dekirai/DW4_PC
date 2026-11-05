@@ -4,6 +4,54 @@
     ViewData["Title"] = Model.Account.Username;
 }
 <h1>@Model.Account.Username</h1>
+@if (Model.Message is not null)
+{
+    <div class="notice ok">@Model.Message</div>
+}
+@if (Model.Error is not null)
+{
+    <div class="notice error">@Model.Error</div>
+}
+@switch (Model.Relation)
+{
+    case null:
+        <p class="muted small"><a href="~/login?returnUrl=@Uri.EscapeDataString(HttpContext.Request.PathBase + "/u/" + Model.Account.Username)">Log in</a>
+            to add @Model.Account.Username as a friend.</p>
+        break;
+    case "self":
+        <p class="muted small">This is your profile. <a href="~/account/friends">Your friends</a></p>
+        break;
+    default:
+        <div class="panel social">
+            @switch (Model.Relation)
+            {
+                case "friends":
+                    <span class="badge ok">Friends</span>
+                    <form method="post" asp-page-handler="RemoveFriend" class="inline"><button type="submit" class="link">Remove friend</button></form>
+                    break;
+                case "request_sent":
+                    <span class="badge">Request sent</span>
+                    <form method="post" asp-page-handler="CancelRequest" class="inline"><button type="submit" class="link">Cancel request</button></form>
+                    break;
+                case "request_received":
+                    <form method="post" asp-page-handler="Accept" class="inline"><button type="submit">Accept request</button></form>
+                    <form method="post" asp-page-handler="Decline" class="inline"><button type="submit" class="secondary">Decline</button></form>
+                    break;
+                case "blocked":
+                    <span class="badge bad">Blocked</span>
+                    <form method="post" asp-page-handler="Unblock" class="inline"><button type="submit" class="link">Unblock</button></form>
+                    break;
+                default:
+                    <form method="post" asp-page-handler="AddFriend" class="inline"><button type="submit">Add friend</button></form>
+                    break;
+            }
+            @if (Model.Relation != "blocked")
+            {
+                <form method="post" asp-page-handler="Block" class="inline"><button type="submit" class="link">Block</button></form>
+            }
+        </div>
+        break;
+}
 @if (Model.Hidden)
 {
     <div class="notice">This profile is private.</div>

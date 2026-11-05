@@ -144,6 +144,16 @@ public sealed class AccountRepository(Database db) : IAccountRepository
         await using var tx = await c.BeginTransactionAsync(ct);
         foreach (var table in owned)
             await c.ExecuteAsync(new CommandDefinition($"DELETE FROM {table} WHERE account_id = @id", new { id }, tx, cancellationToken: ct));
+        // Friends and blocks (0012) name the account in two columns each: it is nobody's friend, requester or blocker
+        // afterwards, and nobody blocks it (the anonymous row would otherwise keep the pairs alive: no ON DELETE fires).
+        string[] pairs =
+        [
+            "DELETE FROM friendships WHERE account_lo = @id OR account_hi = @id",
+            "DELETE FROM friend_requests WHERE from_account_id = @id OR to_account_id = @id",
+            "DELETE FROM account_blocks WHERE account_id = @id OR blocked_account_id = @id",
+        ];
+        foreach (var sql in pairs)
+            await c.ExecuteAsync(new CommandDefinition(sql, new { id }, tx, cancellationToken: ct));
         await c.ExecuteAsync(new CommandDefinition(
             "UPDATE audit_log SET ip = NULL WHERE account_id = @id OR actor_id = @id", new { id }, tx, cancellationToken: ct));
         if (nameTag is not null)

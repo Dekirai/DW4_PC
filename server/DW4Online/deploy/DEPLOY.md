@@ -774,6 +774,55 @@ releases connect before the database step, so only a very slow first start of fr
 scan of the release) is left, and the `migrate` run before the start (sections 5 and 8) has already loaded them once.
 `Start-Service DW4Online` again.
 
+### 9.1 Migration 0012 `friends` (round I2-social): what it adds and the HeidiSQL check
+
+The release with migration 0012 adds friends and blocks on the website and in the API (the game shows them from a
+later release on). It creates three tables and changes nothing that exists:
+
+| Table | One row per | Columns |
+| --- | --- | --- |
+| `friendships` | pair of friends | `account_lo`, `account_hi` (the two account ids, the smaller first), `created_at` |
+| `friend_requests` | open friend request | `from_account_id`, `to_account_id`, `state` (`pending` / `declined`), `delivered` (0: the receiver blocks the sender, the request never reaches him), `created_at`, `decided_at`, `cancelled_at` |
+| `account_blocks` | block | `account_id` (who blocks), `blocked_account_id`, `created_at` |
+
+Every table and column carries a comment (HeidiSQL shows it in the table editor's *Comment* column); there are no
+binary columns. The migration needs no new right: the service user of section 2 (and root, section 2.1) can run it,
+so the update is section 8 as always, with the backup in step 2 as the way back. No setting has to change: the new
+`Friends:*` and `RateLimits:SocialPerMinute` / `FriendListSeconds` / `WebSocialPerMinute` keys have their defaults
+(section 10). Requests expire 30 days after they were sent; the hourly housekeeping deletes them then (the log line
+`Pruned ... expired friend requests`).
+
+The check in HeidiSQL after the update (connect as root or as `dw4backup`, select the database `dw4online`, open a
+*Query* tab, paste a query and press F9):
+
+```sql
+-- 1. The migration is applied: the top row is 12 "friends".
+SELECT version, description, applied_at FROM schema_version ORDER BY version DESC LIMIT 3;
+
+-- 2. The three tables exist (right after the update all three counts are 0).
+SELECT (SELECT COUNT(*) FROM friendships) AS friendships, (SELECT COUNT(*) FROM friend_requests) AS requests,
+       (SELECT COUNT(*) FROM account_blocks) AS blocks;
+
+-- 3. Later, with user names: friendships, requests and blocks.
+SELECT a.username AS player, b.username AS friend, f.created_at
+  FROM friendships f JOIN accounts a ON a.id = f.account_lo JOIN accounts b ON b.id = f.account_hi
+  ORDER BY f.created_at DESC;
+SELECT a.username AS from_player, b.username AS to_player, r.state, r.delivered, r.created_at, r.decided_at, r.cancelled_at
+  FROM friend_requests r JOIN accounts a ON a.id = r.from_account_id JOIN accounts b ON b.id = r.to_account_id
+  ORDER BY r.created_at DESC;
+SELECT a.username AS player, b.username AS blocks_player, k.created_at
+  FROM account_blocks k JOIN accounts a ON a.id = k.account_id JOIN accounts b ON b.id = k.blocked_account_id
+  ORDER BY k.created_at DESC;
+```
+
+Look, do not edit: the website and the API keep the rules (a declined request stays "sent" to its sender, a block is
+never revealed), and a hand-made row can break them (a `delivered = 1` request from a blocked player reaches the
+blocker). `delivered = 0` on a request from a player who is not blocked means it waits for a place among the
+receiver's 100 open requests; the next answer, cancel or block of that receiver, or the hourly housekeeping, delivers it.
+Deleting a whole row by hand (a friendship, a request, a block) is harmless. A deleted account (`deleted_<id>`)
+has no rows in any of the three tables. The views with user names (`v_friends`, `v_friend_requests`, `v_blocks`) come
+with a later release that also grants `CREATE VIEW`; until then the queries above stand in for them.
+
 ## 10. Operating notes
 
 - The room story while the owner is away (`Rooms:StoryWhileOwnerAway` in `appsettings.Production.json`, SEAMLESS.md
@@ -785,12 +834,18 @@ scan of the release) is left, and the `migrate` run before the start (sections 5
   back (*Put back*) when misuse or an error damaged it; resetting the online character empties the story.
 - `Play:MinimumProtocol` and `Play:CurrentProtocol` follow the game client (45 since round S2, 46 since round 63: a
   member's own menus, 47 since round G-core: flag 503 as story and the reason queued): older clients are asked to update.
+- Friends and blocks (section 9.1, SEAMLESS.md 19.11): the limits per account in `Friends:*` (`RequestsPerHour` 20,
+  `RequestsPerDay` 100, `MaxPendingOut` 50, `MaxPendingIn` 100, `MaxFriends` 200, `MaxBlocks` 500, `RequestDays` 30)
+  and `RateLimits:SocialPerMinute` (60), `FriendListSeconds` (one `GET /friends` per 2 s), `WebSocialPerMinute` (60)
+  rarely need a change. A request refused by one of them writes an audit row `social_limit` with the limit's name (at
+  most once per account and limit an hour); friend and block changes themselves are not audited (the tables are the
+  record). `MaxPendingIn` never refuses: requests beyond it wait and are delivered as places free.
 - Logs: `logs\dw4online-yyyyMMdd.log` (UTC, 30 days) when `Logging:File:Directory` is set; errors are ` FAIL ` lines
   (with the exception below them), crashes also appear in the Windows Application event log (source ".NET Runtime").
 - Staff tools without the website: `DW4Online.Server.exe reset-password <user> --settings ...`, the `/api/v1/admin/...`
   endpoints with an admin token.
-- Privacy (GDPR, the server is in Germany): the database holds user names, optional e-mail addresses, IP addresses in
-  `sessions.created_ip` and `audit_log.ip` (audit rows are deleted after 180 days, old sessions after 30 days). The
+- Privacy (GDPR, the server is in Germany): the database holds user names, optional e-mail addresses, who is friends
+  with whom, friend requests and blocks (section 9.1), IP addresses in `sessions.created_ip` and `audit_log.ip` (audit rows are deleted after 180 days, old sessions after 30 days). The
   website has a privacy page (`/privacy`, fill in the `Web:Operator*` settings) and account deletion (by the player in
   the account settings, or by an admin on request on the admin page); deleting removes the personal records at once
   and leaves an anonymous `deleted_<id>` row. Backups keep deleted data until they roll over (14 daily + 8 weekly).

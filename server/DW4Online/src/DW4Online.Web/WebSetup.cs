@@ -76,6 +76,9 @@ public static class WebSetup
             // account changes, so a signed-in browser cannot guess passwords or burn CPU at the global rate.
             o.AddPolicy(WebPolicies.AccountChangeLimit, ctx => PostWindow(ctx, "account", limits.WebAccountChangesPerMinute, TimeSpan.FromMinutes(1),
                 ctx.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value));
+            // Friend and block buttons (the friends page, profiles): per account; the friend service has its own limits too.
+            o.AddPolicy(WebPolicies.SocialLimit, ctx => PostWindow(ctx, "social", limits.WebSocialPerMinute, TimeSpan.FromMinutes(1),
+                ctx.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value));
             var api = o.OnRejected;
             o.OnRejected = async (context, ct) =>
             {

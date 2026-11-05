@@ -21,6 +21,7 @@ public static class ApiProblems
         ErrorKind.Outdated => StatusCodes.Status426UpgradeRequired,
         ErrorKind.TooLarge => StatusCodes.Status413PayloadTooLarge,
         ErrorKind.Unavailable => StatusCodes.Status503ServiceUnavailable,
+        ErrorKind.TooManyRequests => StatusCodes.Status429TooManyRequests,
         _ => StatusCodes.Status500InternalServerError,
     };
 

@@ -68,6 +68,30 @@ public sealed class CloudSaveOptions
     public int HistoryRevisions { get; set; } = 5;
 }
 
+/// <summary>
+/// Friends and blocks (section "Friends", SEAMLESS.md 19.11): the limits per account. Requests name the exact user name;
+/// a declined request stays "sent" to its sender until it expires, and a block is never revealed.
+/// </summary>
+public sealed class FriendsOptions
+{
+    /// <summary>Friend requests an account may send per hour (counted in memory; a restart starts afresh).</summary>
+    public int RequestsPerHour { get; set; } = 20;
+    /// <summary>Friend requests an account may send per day (counted in memory).</summary>
+    public int RequestsPerDay { get; set; } = 100;
+    /// <summary>Open outgoing requests (pending and declined ones look the same to the sender: both "sent").</summary>
+    public int MaxPendingOut { get; set; } = 50;
+    /// <summary>
+    /// Open requests that reach an account at a time; further ones answer "Request sent." like any other and wait
+    /// undelivered until a place frees (oldest first), so the cap never tells a sender anything. Requests from blocked
+    /// senders neither count nor reach the account.
+    /// </summary>
+    public int MaxPendingIn { get; set; } = 100;
+    public int MaxFriends { get; set; } = 200;
+    public int MaxBlocks { get; set; } = 500;
+    /// <summary>Pending and declined requests expire this many days after they were sent; the housekeeping purges them.</summary>
+    public int RequestDays { get; set; } = 30;
+}
+
 /// <summary>What counts as online play (section "Play").</summary>
 public sealed class PlayOptions
 {

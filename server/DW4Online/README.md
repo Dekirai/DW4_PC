@@ -19,7 +19,7 @@ separate work (see "Open ends"); `tests/winhttp_client` shows the client side of
 | `src/DW4Online.Relay` | The DW4R2 relay (port 52041, SEAMLESS.md 6): `Protocol` (frames and messages), `Hub` (one connection per member and room, instances as solo-led and sealed lockstep groups, server-paced sealing on a dedicated high-resolution timer thread, barrier decisions, forks, the tick log, state delivery, the presence fan-out: PRESENCE and since round 60 PRESENCE2 for the ghost figures of the lobby, with its bounds and token bucket, SEAMLESS.md 12.1), HMAC room tickets. |
 | `src/DW4Online.Web` | The Razor Pages website (English, server-rendered, no scripts): home, register, login, recovery, account settings, profiles, achievements, rooms, admin, privacy. |
 | `src/DW4Online.Server` | The executable: composition root, configuration, Windows-service mode, CLI tools, TLS certificate selector, file log. |
-| `sql/` | Numbered migrations `NNNN_description.sql` (0001 schema, 0002 achievement definitions, 0003-0011 see "Database"). |
+| `sql/` | Numbered migrations `NNNN_description.sql` (0001 schema, 0002 achievement definitions, 0003-0012 see "Database"). |
 | `tests/DW4Online.Tests` | Unit tests (no database). |
 | `tests/DW4Online.Integration.Tests` | HTTP + MariaDB tests against a private local instance (API, rooms with the real relay and fake clients, website forms, end to end on real Kestrel). |
 | `tests/DW4Online.FakeClient` | Fake DW4R2 clients (a deterministic stand-in engine that speaks the protocol as the game will), the latency / jitter / loss proxy and the loss matrix; a console tool (`client`, `proxy`, `matrix`) and a library for the tests. |
@@ -86,6 +86,16 @@ from memory (`TlsCertificateSource`), never from a certificate store. With `DW4O
 current user's store (a `CN=127.0.0.2` test certificate whose key cannot be exported, removed with its key
 afterwards), serves it from the store as the service does and runs the client with the pin the script printed.
 
+A fresh data directory of XAMPP's `mysql_install_db` came up on 05.11 with its Aria system tables (`mysql.db`,
+`mysql.global_priv`) marked as crashed, which only `MigratorTests.Migrations_need_only_the_restricted_service_users_grants`
+notices (it creates a user): `mysqlcheck --repair --databases mysql` (and `REPAIR TABLE mysql.global_priv EXTENDED`)
+as root on the private instance, then `local-db.ps1 stop` and `start`, and it works. A `mysqld` that is killed instead
+of shut down (an agent shell that ends takes the processes it started with it, also `local-db.ps1 start`'s hidden one)
+can leave `mysql.global_priv`'s index broken so that the next start aborts ("Can't open and lock privilege tables"):
+start that `mysqld` once with the same arguments plus `--skip-grant-tables` (still bound to 127.0.0.1), run `REPAIR
+TABLE mysql.global_priv USE_FRM` and `REPAIR TABLE` for the other system tables `CHECK TABLE` names, `SHUTDOWN`, and
+start it normally. Run it from a shell that outlives the tests and stop it with `local-db.ps1 stop` (SQL `SHUTDOWN`).
+
 `local-db.ps1` uses XAMPP's MariaDB binaries (`-MySqlBin` for others) with its **own** data directory in
 `server/DW4Online/.local` (gitignored), its own port and `--bind-address=127.0.0.1`; it never touches XAMPP's data,
 other databases or services and stops only the `mysqld` it started (by PID). XAMPP ships MariaDB 10.4, whose native
@@ -118,7 +128,8 @@ and user secrets (Development) work as usual.
 | `OnlineCharacter` | `HistoryRevisions` (20), `ResetHistoryDays` (30: the revisions of a reset character stay that long), `StoryHistoryRevisions` (100: the newest revisions of an account's online story kept in full, online_story_history), `StoryHistoryMinutes` (10: older room revisions are kept as the first of every this many minutes), `StoryHistoryDays` (90: how long those and the session starts, resets and restores stay), `StoryHistorySessions` (20: the newest session starts, resets and restores stay for good), `StoryCounterSaveSeconds` (60: a room story revision that changed only counters is written at most this often per account), `Rules:MaxLevelsPerPlayHour` (120), `Rules:PlayTimeSlackSeconds` (600). |
 | `CloudSave` | `MaxBytes` (1 MiB), `HistoryRevisions` (5). |
 | `Play` | `RequireRoom` (true), `MinimumProtocol` / `CurrentProtocol` (netplay `kProtocol`), `MinimumClientVersion` / `CurrentClientVersion`, `SpeedrunFloorSeconds` (per board `story_normal` / `story_hard` / `story_veryhard`, 2700 each: see "Speedrun floor"), `ClearStoryWaitSeconds` (30: a story clear reported in a room counts when the room's story holds that difficulty's clear flag; the server waits this long for it). |
-| `RateLimits` | `GlobalPerMinute` 300 (per IP), `LoginPerMinute` 5 (per IP, login + recovery), `RegisterPerHour` 3 (per IP), `CharacterWritesPerMinute` 12, `CloudWritesPerHour` 6, `AchievementsPerMinute` 60, `AccountChangesPerMinute` 10, `StaffPerMinute` 60, `RoomCreatesPerMinute` 5, `RoomJoinsPerMinute` 20, `StageChangesPerMinute` 30 (stage enter + leave) (per account); `WebLoginPerMinute` 5 (website login + recovery), `WebRegisterPerHour` 3 (per IP, POSTs only), `WebAccountChangesPerMinute` 10 (per account, the account page's POSTs). |
+| `RateLimits` | `GlobalPerMinute` 300 (per IP), `LoginPerMinute` 5 (per IP, login + recovery), `RegisterPerHour` 3 (per IP), `CharacterWritesPerMinute` 12, `CloudWritesPerHour` 6, `AchievementsPerMinute` 60, `AccountChangesPerMinute` 10, `StaffPerMinute` 60, `RoomCreatesPerMinute` 5, `RoomJoinsPerMinute` 20, `StageChangesPerMinute` 30 (stage enter + leave) (per account); `WebLoginPerMinute` 5 (website login + recovery), `WebRegisterPerHour` 3 (per IP, POSTs only), `WebAccountChangesPerMinute` 10 (per account, the account page's POSTs); `SocialPerMinute` 60 (per account: friend requests and answers, blocks, player cards), `FriendListSeconds` 2 (one `GET /friends` per account per this many seconds; 0 = no limit), `WebSocialPerMinute` 60 (per account, the friend and block buttons of the website, POSTs only). |
+| `Friends` | `RequestsPerHour` (20) and `RequestsPerDay` (100) per sender (counted in memory), `MaxPendingOut` (50: open requests a player sees as sent), `MaxPendingIn` (100: open requests that reach a player at a time; further ones wait their turn), `MaxFriends` (200), `MaxBlocks` (500), `RequestDays` (30: pending and declined requests expire, then the hourly housekeeping deletes them). See "Friends and blocks". |
 | `Rooms` | `MaxRooms` (200), `PlayersPerInstance` (4), `HeartbeatSeconds` (10), `MemberTimeoutSeconds` (35), `RoomsPerOwner` (1), `PasswordIterations` (20000, room passwords live in memory only), `SettingsMaxBytes` (4096), `RankedDataHashes` (empty = every data hash is ranked; decimal or 0x-hex). |
 | `Relay` | `Enabled` (true), `ListenAddress` (127.0.0.1; 0.0.0.0 on the server), `Port` (52041), `TicketKey` (secret, base64 32 bytes: `DW4Online.Server gen-relay-key`; required outside Development), `TicketLifetimeSeconds` (60), `HandshakeTimeoutSeconds` (10), `IdleTimeoutSeconds` (60), `MaxConnectionsPerIp` (16), `MaxRooms` (200), inbound limits per connection `BytesPerSecond` (65536) / `BurstBytes` (1 MiB) / `FramesPerSecond` (400) / `FrameBurst` (2000), state transfers `StateBytesPerSecond` (4 MB/s) / `StateBurstBytes` (16 MiB), `MaxQueuedBytes` (32 MiB: a connection that does not read is closed), `ReconnectSeconds` (10), `LagLeaveSeconds` (10), `DiagnosticsDirectory` (empty; a folder gets one JSON-lines membership log per room). |
 | `Sealing` | `MaxDelayTicks` (15), `LateTarget` (0.02: d rises by one when more than this share of the last 600 paced pads, ten seconds, came late in at least three different seconds; SEAMLESS.md 6.4), `EventMarginTicks` (2: added to the largest member horizon for JOIN, LEAVE, INTENT). |
@@ -190,7 +201,9 @@ only the relay writes it, newer revisions only; SEAMLESS.md 8); 0009 the game cl
 merge, the reset that goes with an online character's reset, or a staff restore; the last
 `OnlineCharacter:StoryHistoryRevisions` per account, removed with the account); 0011 the history's reason `session` (the
 story a room session started from, kept when its owner opens a room; the history is kept by time and session since,
-see `OnlineCharacter:StoryHistory*`).
+see `OnlineCharacter:StoryHistory*`); 0012 `friendships`, `friend_requests` and `account_blocks` (round I2-social,
+SEAMLESS.md 19.11; plain columns with a comment on each for HeidiSQL, no views: `CREATE VIEW` is not among the service
+user's rights of DEPLOY.md 2, the views come with a later migration; DEPLOY.md 9.1 has the queries with user names).
 
 ## API (`/api/v1`, JSON, errors as problem details)
 
@@ -229,6 +242,12 @@ Authenticated calls send `Authorization: Bearer dw4_<43 characters>`.
 | `GET /rooms/{code}/story` | token | Members: the room story the relay keeps (SEAMLESS.md 8): `{revision, phase (0-7), flags, folder, counters (16), policy, ownerPresent, droppedFlags, droppedFolder, droppedCounters, held, started, difficulty}` (`started` false: the owner has no online story yet and its game has not entered a stage; the room starts at zero and drops what members do until then, SEAMLESS.md 8.6). 404 `not_in_room`, 404 `no_story` before the room's first relay connection. |
 | `POST /rooms/{code}/heartbeat` | token | Every `heartbeatSeconds` (10) while the relay connection is down (a live relay connection counts as the heartbeat); silent members leave after 35 s. Answers the room state; 404 `not_in_room` means join again. |
 | `POST /rooms/{code}/leave`, `POST /rooms/{code}/kick` `{username}`, `DELETE /rooms/{code}` | token | Leave; the owner (present) kicks a guest (no re-join); the owner closes the room for everyone. |
+| `GET /friends` | token | `{friends: [{username, since, presence}], requestsIn: [{username, sentAt, expiresAt}], requestsOut: [...], blocks: [{username, since}], limits: {maxFriends, maxPendingOut, maxPendingIn, maxBlocks, requestDays}}`; `presence` is null until the world relay (round I1). One call per `RateLimits:FriendListSeconds` (2). |
+| `POST /friends/requests` | token | `{username}` (the exact user name, any case) -> `{result: "sent" or "friends", message}`; "friends" when the other player's request to the caller was open. 404 `player_not_found`, 422 `own_account`, 409 `you_blocked` / `already_friends` / `friend_limit` / `other_friend_limit` / `outgoing_limit`, 429 `friend_request_rate` with `retryAfterSeconds`. A request to a player who blocks the caller, whose open requests are full (it waits) or a repeat answers exactly like any other. Every write here may answer 503 `social_busy` when it waited 10 s for the accounts' lock. |
+| `POST /friends/requests/{username}/accept`, `.../decline`, `DELETE /friends/requests/{username}` | token | Accept (-> `{result: "friends", message}`), decline (204, silent for the sender), cancel the caller's own request (204). 404 `request_not_found`. |
+| `DELETE /friends/{username}` | token | End a friendship (204; 404 `not_friends`). |
+| `GET /blocks`, `POST /blocks` `{username}`, `DELETE /blocks/{username}` | token | The caller's blocks; block (204, repeating changes nothing, 409 `block_limit`); unblock (204, 404 `not_blocked`). |
+| `GET /players/{username}` | token | The public card: `{username, memberSince, hidden, character: {digimon, playerName, level} or null, relation}`; `relation` is `self`, `friends`, `request_sent`, `request_received`, `blocked` (the caller blocks him) or `none` (never the other side's block). A private or banned profile is `hidden` with `memberSince` and `character` null (nothing but the name and the relation), as on the website. |
 | `GET /admin/accounts?query=`, `POST /admin/accounts/{user}/reset-password` (admin), `.../status`, `.../role` (admin), `.../online-character/history`, `.../online-character/restore/{rev}`, `.../online-character/reset` | staff | Moderation; every action is audited. A locked or banned account leaves its room. `status` is active, locked or banned (deleting is `DELETE /admin/accounts/{user}`, admins only); a temporary password only from an admin (whoever knows it owns the account). |
 | `POST /admin/accounts/{user}/achievements/{code}/flag` `{ruleset?, flagged}`, `DELETE /admin/accounts/{user}/achievements/{code}?ruleset=`, `POST /admin/rooms/{code}/close`, `DELETE /admin/accounts/{user}` (admin) | staff | Flag / unflag or revoke an unlock, close a room, erase an account on request. |
 | `GET /health` (no prefix) | - | `{status, schema}` or 503 when the database is unreachable. |
@@ -294,6 +313,23 @@ and stats must carry `protocol` / `clientVersion` (426 `client_outdated` otherwi
   `accounts.online_reset_at` goes back to the reset before).
 - **Cloud save**: one per account, latest + 5 older revisions, at most 1 MiB, SHA-256 checked, GCI (90176 bytes) or raw
   (90112 bytes) with a valid copy; private (never on the website, never used for achievements).
+- **Friends and blocks** (SEAMLESS.md 19.11): a request names the exact user name (no search); the other player
+  accepts or declines; a request to a player whose own request to the caller is open makes both friends at once. A
+  decline is silent: the request stays "sent" for its sender until it expires (30 days), a new request from him
+  meanwhile answers "Request sent." and changes nothing, and his cancel only hides it from him (the decline holds).
+  Either side removes a friendship without the other being told. A block ends the friendship and the blocker's own
+  request; the blocked player's request to the blocker stays "sent" for him but no longer reaches the blocker
+  (`delivered = 0`), and so do his new ones: a block is never revealed. At most `Friends:MaxPendingIn` (100) requests
+  reach a player at a time; a request beyond it answers "Request sent." like any other and waits (`delivered = 0`)
+  until a place frees (an answer, a cancel, a block or an expiry), oldest first, so the cap never tells a sender
+  anything about a block or a decline; an unblock lets the formerly blocked player's request wait its turn the same way.
+  Limits per account in `Friends:*` (only the sender's own limits refuse a request); a refusal by a limit writes an
+  audit row `social_limit` (which limit) at most once per account and limit an hour, the changes themselves are not
+  audited. Every social write holds the locks of both accounts (striped by account id), so crossing requests and the
+  caps cannot race while other accounts' writes run on; after 10 s of waiting it answers 503 `social_busy`. Account
+  deletion removes the account's rows in all three tables, in both directions.
+  `IWorldNotifier` (`FriendsChanged`, `BlocksChanged`, ...) tells the relay in-process; until round I1 nobody listens
+  (`NullWorldNotifier`).
 - **Rooms**: a name (1-32 characters), an optional password (4-64, PBKDF2 in memory only, never stored), 2..10
   players, the netplay protocol and data hash of the host (only compatible clients join). The owner is the host: the
   room's story is the owner's online save. When the owner leaves (or times out), the room **keeps running with the
@@ -398,7 +434,8 @@ Razor Pages in `src/DW4Online.Web`, English, one embedded stylesheet (`/css/site
 | `/register` | User name, password twice, optional e-mail, a honeypot field; shows the recovery code once and signs in. |
 | `/login`, `/logout`, `/recover` | Sign in (optionally persistent), sign out (POST), reset a forgotten password with the recovery code (shows the next one). |
 | `/account` | Overview, online character, password (ends every other session), e-mail, new recovery code, public / private profile, cloud save info, download and deletion (with the password), sessions (log out one or all others), account deletion. A temporary password from an admin must be changed first; every other page redirects here until then. |
-| `/u/{name}` | Profile: online character (Digimon, name, level, play time, forms, story clears) and achievements with unlock dates, rulesets, player counts and progress bars. Private profiles show only to the owner and staff; unlocks under review only to them. |
+| `/u/{name}` | Profile: online character (Digimon, name, level, play time, forms, story clears) and achievements with unlock dates, rulesets, player counts and progress bars. Private profiles show only to the owner and staff; unlocks under review only to them. Signed-in visitors get the friend and block buttons of their relation (*Add friend*, *Request sent* / *Cancel request*, *Accept request* / *Decline*, *Friends* / *Remove friend*, *Block* / *Unblock*), on private profiles too; the other side's block never shows. |
+| `/account/friends` | Friends (Remove, Block), friend requests (Accept, Decline), sent requests (Cancel; declined ones stay listed until they expire), blocked players (Unblock), a request or a block by exact user name. |
 | `/achievements` | Every definition by category with tier, points and rarity (share of players holding it); hidden ones masked unless the visitor holds them. |
 | `/rooms` | Open rooms, read-only (host away = story paused). |
 | `/admin`, `/admin/account/{name}` | Staff: account search, open rooms (close), lock / unlock, ban / unban, temporary password, flag / unflag / revoke unlocks; admins also set roles and erase accounts. |
