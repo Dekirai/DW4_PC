@@ -14,7 +14,7 @@ are unchanged (section 7).
 | File | What |
 | --- | --- |
 | `include/dw4/engine/overflow_director.hpp` | `OverflowDirector` (the engine's `Director`), `RunConfig`, `Tuning` (the run's numbers), the offers' pure functions, the table accessors |
-| `src/engine/overflow/director.cpp` | the clock, the phases and their music, the commands and screens (level-up, pause, Build, Retire, results), the freeze, the end (defeat, the clear at 20:00, Retire), the move-only pad filter, the kite bot, the run log and the summary |
+| `src/engine/overflow/director.cpp` | the clock, the phases and their music, the commands and screens (level-up, pause, Build, Retire, results), the freeze, the end (defeat, the clear at 25:00, Retire), the move-only pad filter, the kite bot, the run log and the summary |
 | `src/engine/overflow/spawner.cpp` | the walkable cells, the spawn rings, A(t) with the surges, Corrupted enemies, recycling, the encirclements by reuse, the drops |
 | `src/engine/overflow/abilities.cpp` | the Art (Cleaver, Blade Arc) from the form's own SQ_ATCK1 boxes, aimed; the weapon ladder and the model in hand; Fire, Cutter, Bolt, Impact and Heal Lt |
 | `src/engine/overflow/offers.cpp`, `tables.inc` | the family table (Normal rows, names, rings, damage factors, weights), the phase music, the offers (Forge, Train, Plug) |
@@ -38,7 +38,10 @@ reads none), plays QS_START and four seconds later the phase music.
 
 **Clock and phases (4.2).** The run clock counts the steps the run is not
 frozen. Phases 1-4 change every five minutes (ST_DEATH, ST_DRYLA, ST_VENOM,
-ST_MACHI); at 20:00 the run is complete: the enemies leave (SQ_ERAS), BT_WIN02,
+ST_MACHI); phase 4 goes on past 20:00 for the finale's five minutes (4.4,
+without LordKnightmon in O1a; the HUD says "Hold out until 25:00"), and at
+25:00 the run is complete (20:00 before the forge round, section 11): the
+enemies leave (SQ_ERAS), BT_WIN02,
 then the results. No Guardians in O1a.
 
 **Spawner (4.3).** A(t) by knots: 10 at 0:00, 24 at 5:00, 40 at 10:00, 54 at
@@ -48,7 +51,8 @@ times (a lull after the Art clears a group), from 3:00 every 90 s a surge of
 12 for 20 s; until 10:00 a spawn point never closes the player's last
 90-degree way out (section 10). The pool is the phase's families at
 weight 3 and every earlier one at 0.5 (times the family's own weight, below);
-a new phase's families come in over its first 90 s, their weight rising from
+a new phase's families come in over its first 90 s (phase 4's over 3:30,
+section 11), their weight rising from
 0, and their damage rises from a fifth of their factor to all of it over its
 first two minutes (no wall at a phase change, section 9). Spawn points are on
 the walkable cells; 70 % come on the side the player walks towards (its last
@@ -152,24 +156,25 @@ everything is in `Tuning` and `tables.inc`:
 
 | Value | SURVIVAL.md | O1a | Why |
 | --- | --- | --- | --- |
-| spawn ring | 70-95 (S1: 40-60) | 32-46; slow walkers and Tortomon 26-36; Kokatorimon, Megadramon and MRε05 20-25; in the picture at least 40 | 14.2's close-in target with a kiting player; no enemy enters next to the player |
+| spawn ring | 70-95 (S1: 40-60) | 32-46; slow walkers, Tortomon and MRε05 26-36; Kokatorimon and Megadramon 20-25; in the picture at least 40 | 14.2's close-in target with a kiting player; no enemy enters next to the player (MRε05 on 20-25 until the forge round: section 11) |
 | spawns ahead | 70 % from the walking side | 70 %, 40-70 degrees off the heading | a walking player passes them, it does not run into them |
-| enemy HP growth | +10 % a minute | (1 + 0.10 a minute) x e^(0.08 x minutes), x 0.6 in phase 1 rising to x 1 from 4:00 to 6:00 | late crowds outlast the Art; no step at 5:00 |
-| damage taken growth | +4 % a minute | e^(0.13 x minutes) (the review round: 0.18) | the review: the levels' DEF and MaxHP shrank every phase's hits to a third by its end, so each new phase came as a step (the wall at 10:00); the balance round of 05.11: a good run lasts 15-20 minutes (section 10) |
+| enemy HP growth | +10 % a minute | (1 + 0.10 a minute) x e^(0.08 x minutes), from 15:00 e^0.03 a minute (the forge round), x 0.6 in phase 1 rising to x 1 from 4:00 to 6:00 | late crowds outlast the Art; no step at 5:00; after 15:00 a good player's Art keeps up (section 11) |
+| damage taken growth | +4 % a minute | e^(0.13 x minutes), from 12:00 e^0.09 a minute (the review round: 0.18 throughout) | the review: the levels' DEF and MaxHP shrank every phase's hits to a third by its end, so each new phase came as a step (the wall at 10:00); the balance round of 05.11: the first minutes (section 10); the forge round: the late contact carries the threat, not one wall (section 11) |
 | the damage warm-up | (none) | x 0.2 at 0:00 rising to x 1 at 8:00 (the review round: x 0.4 to 5:00) | a newcomer's first minutes (section 10) |
-| contact and shots | (none) | a hit from within 15 units x 0.7 / 1.0 / 1.3 / 1.5 / 1.6 at 0:00 / 5:00 / 10:00 / 15:00 / 20:00, from farther x 0.8 / 0.7 / 0.65 / 0.6 / 0.6 (its poison with it) | the first minutes' contact soft; later the crowd a good player walks away from is the threat, not the shots he cannot (section 10) |
+| contact and shots | (none) | a hit from within 15 units x 0.7 / 1.0 / 1.3 / 2.2 / 2.4 at 0:00 / 5:00 / 10:00 / 15:00 / 20:00 (and after), from farther x 0.8 / 0.7 / 0.5 / 0.4 / 0.3 (its poison with it); the balance round of 05.11: 1.5 / 1.6 and 0.65 / 0.6 / 0.6 | the first minutes' contact soft; later the crowd a good player walks away from is the threat, not the shots he cannot (sections 10 and 11) |
 | A(t) | 14 + 3.2 a minute | 10 / 24 / 40 / 54 / 60 at 0:00 / 5:00 / ... / 20:00; at most 3 / 5 / 8 / 12 / 12 spawns a second | a newcomer was surrounded in two minutes (section 10) |
+| the run's end | the finale: LordKnightmon under a five-minute timer (4.4) | 25:00: phase 4 goes on after 20:00 (O1a: 20:00 until the forge round) | 17.1: a run that goes well lasts 22-25 minutes (section 11) |
 | the way out | (none) | until 10:00 a spawn never closes the last 90 degrees round the player (enemies within 40 units) | "no gap to run" (section 10) |
 | first surge, first Corrupted | 1:30, 1:30 | 3:00, 2:30 | the newcomer's deaths came just after 1:30 |
 | EXP | x 1 | x 1.35 | fewer enemies, the same level pace (Heal Lt at Lv 15 near 5:00) |
-| a new phase's families | at once | weight from 0 over 90 s, damage from x 0.2 over 120 s | no wall at a phase change |
+| a new phase's families | at once | weight from 0 over 90 s, damage from x 0.2 over 120 s; phase 4's over 210 s and 240 s (the forge round) | no wall at a phase change; phase 4 was one with 90 / 120 s (section 11) |
 | run curve | 80 / 50 / 6 | 70 / 65 / 13 | the first level-up within 20 s, one every 20-40 s in phase 1 |
 | level-up windows | one per level | at most one freeze every 15 s (the waiting levels open one after another) | the first minute brought five freezes |
 | level-up heal | 3 % | 5 % (4.5's upper bound) | |
 | MUTEKI after a hit | 50 frames | 35 | a crowd round a standing Digimon costs; a walking one leaves it |
 | a normal enemy's stun / sleep / bind | at most 30 frames | at most 6 | 14.2: at most 5 % of the frames without control (counted over the run's own steps; the defeat's knock-down belongs to the ending) |
 | poison | DW4's | ticks through the damage-taken rule, at most 5 ticks and 10 % of MaxHP, never the last HP | the review: MRβ02's poison took 69 % from a hit of 1 |
-| family damage factors | 1 | 0.035-1.0 per family (`tables.inc`; Mummymon 0.16 and Tortomon 0.13 since the balance round of 05.11) | 14.3: the worst hit (its poison included) at a phase's start about 8 / 9 / 10 % in phases 2 / 3 / 4, close to what the phase before hits at its end; Corrupted at most 35 % |
+| family damage factors | 1 | 0.035-1.0 per family (`tables.inc`; Mummymon 0.16 since the balance round of 05.11, Tortomon 0.10 and MRε05 0.045 since the forge round) | 14.3: the worst hit (its poison included) at a phase's start about 8 / 9 / 10 % in phases 2 / 3 / 4, close to what the phase before hits at its end; Corrupted at most 35 % |
 | family spawn weight | 1 | 0.5 for Numemon, Sukamon, MarineDevimon and Pharaohmon | the ranged shots and Pharaohmon's warps hit a walking player as much as a standing one |
 | Art reach | 22 (Cleaver, Blade Arc) | 14 standing (the review round: 22), 34 at full stick; 20 from 30 % of the stick | the enemies are 3-40 times slower than the player (S1): a walking Digimon passes them; a standing one must be reached again (section 10) |
 | Art class factor | 1 | Cleaver 2.2, Blade Arc 1.4 | 14.3: two hits for every phase 1 family at level 1; Cleaver more: Agumon has no Impact and no jumping Bolt |
@@ -215,7 +220,13 @@ balance round of 05.11 also `alive=`, `refill=`, `contact=` and `shot=`
 (five knots at 0:00-20:00), `surge_first=`, `keep_gap=`,
 `corrupted_from=`, `phase_ramp=`, `phase_intro_time=` (seconds),
 `surge_extra=`, `gap_radius=`, `damage_warm_minutes=`, `ring_min=`,
-`ring_max=`, `slow_min=`, `slow_max=`, `corrupted_hp=` and `exp=`. Test runs
+`ring_max=`, `slow_min=`, `slow_max=`, `corrupted_hp=` and `exp=`; since
+the forge round (section 11) also `last_ramp=` and `last_intro_time=`
+(phase 4's own entry, seconds), `end=` (the run's end, seconds),
+`damage_late_minutes=`, `damage_growth_late=`, `hp_late_minutes=`,
+`hp_growth_late=`, `family_ring=FAMILY:R,...`, `forge_sure=` (0: the
+balance round's offers) and `forge_from=` (seconds: a test policy takes no
+Forge before then). Test runs
 close the results after 60 steps. `OverlayFrame::font` hands the driver the
 host's bold UI face.
 
@@ -712,3 +723,56 @@ families of the Art's class (`OfferState::forge_families`); a class with
 one family gets no Forge line at all. Veemon gets the same rule (its
 late-Forge runs did not die early, but nothing in the data makes it a
 special case either way).
+
+### 11.2 Phase 4's wall and the late game
+
+Why the runs ended together (the balance round's runs, `build/t/runs_a2`):
+
+- **Every run met the same steepening at the same time.** The damage grew
+  e^(0.13 x minutes) (x 1.9 in five minutes), the enemies' HP
+  e^(0.08 x minutes) on top of +10 % a minute, so from 13:00 the kite bot's
+  kills fell (Agumon 308 a minute at 13:00, 154 at 18:00) while the crowd
+  grew to A(t)'s 60. Phase 4's families were there in full by 16:30
+  (weight) and 17:00 (damage), and the encirclement came at 17:30: the kite
+  bot's intake rose from 0.84 to 1.21 MaxHP a minute (Agumon) and from 1.17
+  to 1.53 (Veemon) between 16:00 and 17:00. With a wall that steep a run
+  that plays better buys seconds, not minutes.
+- **MRε05** attacks about twice a second; on the 20-25 ring it entered the
+  Art's reach at once and took 0.26-0.34 MaxHP a minute of phase 4 alone
+  (0.55 for Veemon's human bot).
+- **Why skill hardly mattered.** The kite bot avoids contact (0.27-0.36
+  MaxHP a minute at 13:00-16:00 against the human bot's 0.9-1.0) but takes
+  two to three times the human bot's shots (0.32-0.57 against 0.15-0.24),
+  and both grew alike; for Veemon the kite bot lasted 16:52 against the
+  human bot's 16:40. Tortomon took Veemon 0.3-0.4 MaxHP a minute of phases 3
+  and 4 for both bots.
+- **The run ended at 20:00**, so the targets' 22:00 could not be reached:
+  17.1's 22-25 minutes are four phases and the finale.
+
+What changed (the sweeps on 10 seeds a bot and form; s3 on 20 seeds is the
+new defaults, 11.3):
+
+| Sweep | Change (on top of the row before) | human A | human V | kite A | kite V |
+| --- | --- | --- | --- | --- | --- |
+| a2 | the balance round (20 seeds, the run ends at 20:00) | 16:32 (12:00-18:37) | 16:40 (12:37-18:19) | 18:32 (17:22-20:01), 4 clear | 16:52 (14:46-19:23) |
+| s1 | the run to 25:00; phase 4's families over 210 s (weight) and 240 s (damage); MRε05 on the 26-36 ring; damage e^0.09 a minute from 12:00; contact x 2.0 / 2.4 at 15:00 / 20:00, shots x 0.5 / 0.45 | 16:48 (9:13-20:02) | 17:16 (13:30-19:14) | 20:38 (18:42-21:15) | 18:23 (12:27-24:44) |
+| s2 | shots x 0.5 / 0.4 / 0.3 at 10:00 / 15:00 / 20:00; enemy HP e^0.03 a minute from 15:00; MRε05 x 0.045; Tortomon x 0.10 | 17:42 (10:03-19:57) | 17:24 (13:31-20:00) | 22:09 (19:57-25:01), 3 clear | 23:47 (19:26-25:01), 3 clear |
+| s3 | contact x 2.2 at 15:00: the new defaults | 11.3 | 11.3 | 11.3 | 11.3 |
+
+- **The run lasts until 25:00** (`Tuning::end_steps`): phase 4 goes on for
+  the finale's five minutes (4.4; O1a has no LordKnightmon), the HUD says
+  "Hold out until 25:00" at 20:00, the clear comes at 25:00. The knots of
+  A(t), the refill, the contact and the shots hold their 20:00 value.
+- **Phase 4 comes in over 3:30 and 4:00** (`last_ramp_steps`,
+  `last_intro_steps`; phases 2 and 3 keep 1:30 and 2:00), MRε05 spawns with
+  the slow walkers (26-36, it still closes in 99.7 % of its spawns) at
+  x 0.045, Tortomon x 0.10.
+- **The late growth is flatter and the contact carries it**: the damage
+  e^0.09 a minute from 12:00, the enemies' HP e^0.03 a minute from 15:00
+  (the kite bot's Art keeps up with the crowd), the contact x 2.2 / 2.4 at
+  15:00 / 20:00 and the shots x 0.5 / 0.4 / 0.3 at 10:00 / 15:00 / 20:00. A
+  player who walks into the crowd (the human bot: contact is 80-90 % of what
+  it takes after 10:00) meets the late game about where it did; one who
+  keeps the crowd off (the kite bot: half of its intake were shots) lasts
+  minutes longer. The first five minutes are unchanged (every knot and
+  growth at 0:00-5:00 as the balance round left them).
