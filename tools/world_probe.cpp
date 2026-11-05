@@ -763,8 +763,8 @@ void homeover_probe(int only) {
         {"2 players: defeat at 2600, HOME 10 frames after", 2, 0b0010, 0b0001, 10, 2600},
         {"offline: 1 player defeated", 1, 0b0001, 0b0000, 300, 1200, false},
         {"offline: 2 players, both defeated", 2, 0b0011, 0b0000, 300, 1200, false},
-        {"offline: 1 player defeated on matz01", 1, 0b0001, 0b0000, 300, 1200, false, 0},
-        {"1 player defeated on matz01 (online rules)", 1, 0b0001, 0b0000, 300, 1200, true, 0},
+        {"offline: 1 player on matz01 from 1140, defeat due at 1200", 1, 0b0001, 0b0000, 300, 1200, false, 0},
+        {"1 player on matz01 from 1140, defeat due at 1200 (online rules)", 1, 0b0001, 0b0000, 300, 1200, true, 0},
     };
     const char* species[4] = {"p_agumon", "p_dorumon", "p_agumon", "p_dorumon"}; // (three or four players load the q_ packages: these two exist)
     std::printf("homeover probe: dng101b1 direct start; HOME emulated in the copy that keeps the other slots\n"
