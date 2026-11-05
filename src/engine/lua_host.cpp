@@ -128,7 +128,7 @@ bool Engine::run_script(std::string_view name) {
     } callshop_side{*this, callshop_closed_};
     if (online_.enabled && name == "callshop.lua") {
         callshop_closed_ = true;
-        ++callshop_refused;
+        if (!replay_) ++callshop_refused; // (a catch-up's replay refuses nobody: no hint from it; G-core review)
         log("online: the call shop is closed (its refusal branch runs)");
     }
     // Online: a member's own scene runs with its own talk globals and leaves

@@ -2415,7 +2415,9 @@ public sealed class RoomHub
     /// The earned story values that are due (SEAMLESS.md 8.7): a phase step or key item that waited only for the
     /// one-per-visit rule or a guest's spacing is merged in its member's later visit, whatever stage the member plays in
     /// then (the stage that set it may be long left, where a resend would be refused for the stage); every member gets the
-    /// new revision. The client keeps sending such a value meanwhile and is answered wait, as before.
+    /// new revision. Rooms of protocol 47 and later (round G-core) answer such a value queued: the client sends it no more
+    /// until its next barrier, where it goes out again with the pending set (an older room answers wait and the client keeps
+    /// sending it meanwhile).
     /// </summary>
     private void MergeEarned(long now)
     {
