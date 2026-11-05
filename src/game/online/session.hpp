@@ -460,6 +460,11 @@ private:
     bool load_end_told_ = false;             // a solo leader's load_end_only STATEHASH went out
     // The hash of this tick's STATEHASH, for an upload in the same tick (no second hash).
     std::optional<std::pair<std::uint32_t, std::uint64_t>> tick_hash_;
+    // Protocol 48: the check tick of this member's last checkpoint upload (its
+    // NETFP goes out when it is executed, wire::kReadyCheckTicks) and, as a
+    // joiner from a checkpoint, the check tick its READY waits for.
+    std::optional<std::uint32_t> check_fp_tick_;
+    std::optional<std::uint32_t> ready_check_tick_;
 
     NetStats stats_;
     NetView net_;

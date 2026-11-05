@@ -1087,6 +1087,47 @@ void ready_after_a_refused_ready() {
     check(b.engine.restores >= 2, "B restored the state twice");
 }
 
+// Protocol 48 (SEAMLESS.md 6.13.5): a checkpoint upload of tick T is followed
+// by the donor's NETFP of the check tick T + kReadyCheckTicks - 1 (a joiner
+// from that checkpoint names it in READY; on a multiple of 60 the ordinary
+// NETFP is that report); no other NETFP leaves the 60-tick raster.
+void checkpoint_check_tick() {
+    World world;
+    world.hub.checkpoints = true;
+    auto& a = world.add("kim", 1);
+    a.engine.tick_states = true;
+    a.input = press_in({{"stagis10", 30}, {"stagml11", 40}}, fake::kExitButton);
+    check(world.run_until(10, [&] { return a.engine.stage() == "stag0101" && a.session->mode() == Mode::solo; }), "A reaches stag0101 solo");
+    world.run(2);
+    auto& b = world.add("lee", 2);
+    b.engine.tick_states = true;
+    b.input = press_in({{"stagis10", 30}, {"stagml11", 40}}, fake::kExitButton);
+    check(world.run_until(20, [&] { return b.session->mode() == Mode::sealed && a.session->mode() == Mode::sealed; }), "B joins; both sealed");
+    world.run(1);
+    world.hub.netfps.clear();
+    for (const auto* donor : {"kim", "lee", "kim", "kim"}) {
+        world.hub.ask_checkpoint(donor, world.now);
+        world.run(0.77);
+    }
+    world.run(1);
+    check(world.hub.uploads.size() == 4, "four uploads (" + std::to_string(world.hub.uploads.size()) + ")");
+    for (const auto& [donor, tick] : world.hub.uploads) {
+        const auto at = w::check_tick(tick);
+        int from_donor = 0, from_other = 0;
+        for (const auto& [name, n] : world.hub.netfps)
+            if (n.tick == at) (name == donor ? from_donor : from_other) += 1;
+        check(from_donor == 1, donor + "'s NETFP of the check tick " + std::to_string(at) + " of its upload of " + std::to_string(tick));
+        check(from_other == (at % 60 == 0 ? 1 : 0), "the other's NETFP of " + std::to_string(at) + " only on the raster");
+    }
+    for (const auto& [name, n] : world.hub.netfps) {
+        if (n.tick % 60 == 0) continue;
+        bool upload = false;
+        for (const auto& [donor, tick] : world.hub.uploads) upload = upload || (donor == name && w::check_tick(tick) == n.tick);
+        check(upload, name + "'s NETFP of " + std::to_string(n.tick) + " off the raster is the check tick of its own upload");
+    }
+    check(world.hub.netfp_mismatches == 0, "no mismatch");
+}
+
 void delay_table(bool print) {
     struct Row {
         double one_way, jitter;
@@ -1154,6 +1195,8 @@ int main(int argc, char** argv) {
         checkpoint_reports();
         std::cout << "READY after a refused READY\n";
         ready_after_a_refused_ready();
+        std::cout << "checkpoint check tick\n";
+        checkpoint_check_tick();
         std::cout << "pacing, lag\n";
         pacing_and_lag();
         std::cout << "input delay\n";

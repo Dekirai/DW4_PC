@@ -1089,6 +1089,22 @@ void Session::after_step(double now) {
         trace("netfp inst=%u visit=%u tick=%u mode=%s present=%x fp=%016llx", inst_, visit_, executed, mode_name(mode_), unsigned(present_),
               static_cast<unsigned long long>(fp));
     }
+    if (check_fp_tick_ && executed >= *check_fp_tick_) {
+        // The check tick of this member's checkpoint upload (protocol 48,
+        // wire::kReadyCheckTicks): a joiner rebuilt from that checkpoint
+        // names it in READY, the relay compares the two. (On a multiple of 60
+        // the NETFP above is the one; none in a fork's step: from there the
+        // sides differ, and the relay takes such a READY unchecked after
+        // Instances:ReadyFingerprintWaitMs.)
+        if (executed == *check_fp_tick_ && member && !hub_ && executed % 60 != 0 && !split) {
+            const auto t0 = clock_seconds();
+            const auto fp = engine_.net_fingerprint();
+            send(w::Type::netfp, w::encode(w::NetFp{inst_, visit_, executed, fp}));
+            trace("netfp inst=%u visit=%u tick=%u mode=%s present=%x fp=%016llx check ms=%.3f", inst_, visit_, executed, mode_name(mode_),
+                  unsigned(present_), static_cast<unsigned long long>(fp), (clock_seconds() - t0) * 1000.0);
+        }
+        check_fp_tick_.reset();
+    }
     ++tick_;
     if (!load_end_ && engine_.load_ended()) load_end_ = tick_;
     // (Not in a fork's step, review of round J: SPLIT goes out below, and a
@@ -1381,6 +1397,8 @@ void Session::begin_visit(double now) {
     checkpoints_off_ = false;
     load_end_told_ = false;
     tick_hash_.reset();
+    check_fp_tick_.reset();
+    ready_check_tick_.reset();
     serial_at_barrier_ = engine_.load_serial();
     hub_ = mode_of_instance_ == w::Mode::hub || is_hub_stage(engine_.stage());
     state_flags_ = 0xFF;
@@ -1438,6 +1456,8 @@ void Session::on_state(w::StateData state, double now) {
         return;
     }
     from_checkpoint_ = false;
+    ready_check_tick_.reset();
+    check_fp_tick_.reset(); // (a new engine: an upload of the old one has no check tick here)
     // A new state means a new catch-up and its READY (round J's review: after a
     // READY mismatch the relay sends the classic state; ready_sent_ stayed
     // true, no READY went out again, and the join hung in "Joining..." for good).
@@ -1539,7 +1559,7 @@ void Session::run_catch_up(double now) {
         apply_events(true);
         engine_.replay_step(pads_of(body));
         (void)engine_.take_split(); // an observer keeps the side that keeps the instance id
-        if (tick_ % 60 == 0) replay_fingerprints_[tick_] = engine_.net_fingerprint();
+        if (tick_ % 60 == 0 || tick_ == ready_check_tick_) replay_fingerprints_[tick_] = engine_.net_fingerprint();
         ++tick_;
         ++done;
         if (!load_end_ && engine_.load_ended()) load_end_ = tick_;
@@ -1573,7 +1593,11 @@ void Session::run_catch_up(double now) {
     if (done > 0 && (tick_ / 600 != (tick_ - done) / 600 || (engine_.supports_barriers() && engine_.pending_stage())))
         trace("catch-up inst=%u visit=%u tick=%u remaining=%u rate=%.0f%s", inst_, visit_, tick_, remaining, rate,
               engine_.supports_barriers() && engine_.pending_stage() ? " (stage pending)" : "");
-    if (!ready_sent_ && remaining <= 10 && (tick_ > state_first_ || from_checkpoint_) && !replay_fingerprints_.empty()) {
+    // (From a checkpoint: not before its check tick, at least kReadyCheckTicks
+    // replayed steps; a multiple of 60 before it does not count.)
+    const bool checked_far_enough = !replay_fingerprints_.empty() &&
+                                    (!from_checkpoint_ || !ready_check_tick_ || replay_fingerprints_.rbegin()->first >= *ready_check_tick_);
+    if (!ready_sent_ && remaining <= 10 && (tick_ > state_first_ || from_checkpoint_) && checked_far_enough) {
         const auto last = std::prev(replay_fingerprints_.end());
         if (replayed_steps_ > 600 && replay_seconds_ > 0) config_.rate = std::uint32_t(std::min(1e6, rate));
         w::Ready ready{inst_, visit_, last->first, last->second, config_.rate, own_carry_};
@@ -1582,6 +1606,9 @@ void Session::run_catch_up(double now) {
         trace("ready inst=%u visit=%u tick=%u fp=%016llx rate=%u%s replayed=%llu catchup_ms=%.0f", inst_, visit_, last->first,
               static_cast<unsigned long long>(last->second), config_.rate, from_checkpoint_ ? " from-checkpoint" : "",
               static_cast<unsigned long long>(replayed_steps_), (clock_seconds() - catch_up_started_) * 1000.0);
+        if (from_checkpoint_ && ready_check_tick_)
+            trace("ready check inst=%u visit=%u tick=%u check=%u checked_steps=%u", inst_, visit_, last->first, *ready_check_tick_,
+                  last->first + 1 - (*ready_check_tick_ + 1 - w::kReadyCheckTicks));
         send(w::Type::rate, w::encode(config_.rate));
         ready_sent_ = true;
         engine_.set_replay(false);
@@ -2003,8 +2030,10 @@ void Session::upload_checkpoint() {
         c.bytes.assign(payload.begin() + std::ptrdiff_t(off), payload.begin() + std::ptrdiff_t(std::min(payload.size(), off + kChunk)));
         send(w::Type::checkpoint, w::encode(c));
     }
-    trace("checkpoint inst=%u visit=%u tick=%u raw=%zu sent=%zu ms=%.2f", inst_, visit_, tick_, raw.size(), payload.size(),
-          (clock_seconds() - t0) * 1000.0);
+    // Its check tick's NETFP follows when that tick is executed (after_step).
+    check_fp_tick_ = w::check_tick(tick_);
+    trace("checkpoint inst=%u visit=%u tick=%u raw=%zu sent=%zu ms=%.2f check=%u", inst_, visit_, tick_, raw.size(), payload.size(),
+          (clock_seconds() - t0) * 1000.0, *check_fp_tick_);
 }
 
 // A join from a checkpoint (6.13.2 steps 1-5): the visit's load snapshot,
@@ -2095,10 +2124,15 @@ bool Session::rebuild_from_checkpoint(w::StateData& state, double now) {
     state_first_ = state.first;
     state_last_ = state.first + std::uint32_t(state.ticks.size());
     events_.clear();
-    // READY names the first multiple of 60 the catch-up replays (at most a
-    // second more): the relay has the members' fingerprints only there, and
-    // READY of T - 1 went unchecked (round J's review); it waits for the
-    // members' NETFP of that tick.
+    // READY names the checkpoint's check tick T + kReadyCheckTicks - 1, whose
+    // NETFP the donor sends a quarter second after its upload, or a later
+    // multiple of 60 the catch-up replayed (the members' NETFP): the relay
+    // compares the rebuild with the instance after at least kReadyCheckTicks
+    // replayed steps (round J's review: READY of T - 1 met no fingerprint and
+    // went unchecked; since then it named the first multiple of 60 after T and
+    // waited up to a second for it; protocol 48).
+    check_fp_tick_.reset();
+    ready_check_tick_ = w::check_tick(state.checkpoint_tick);
     replay_fingerprints_.clear();
     replayed_steps_ = 0;
     replay_seconds_ = 0;

@@ -401,6 +401,15 @@ public:
     // Round J: WELCOME's flag 4 (this hub takes STATEHASH) and the reports that came (member name, report).
     bool checkpoints = false;
     std::vector<std::pair<std::string, w::StateHash>> statehashes;
+    // Protocol 48: the checkpoint uploads that began (member name, tick) and every NETFP (member name, report).
+    std::vector<std::pair<std::string, std::uint32_t>> uploads;
+    std::vector<std::pair<std::string, w::NetFp>> netfps;
+    // CHECKPOINT_ASK to a member (a join's ask: its next state-safe tick).
+    void ask_checkpoint(const std::string& name, double now) {
+        for (auto& [id, m] : members)
+            if (m.name == name && instances.contains(m.inst))
+                send(id, w::Type::checkpoint_ask, w::encode(w::CheckpointAsk{m.inst, instances[m.inst].visit, 0, 0}), now);
+    }
     // A joiner's first READYs answered with its whole state again, as the relay answers a READY mismatch.
     int refuse_ready = 0, ready_refused = 0;
     std::uint64_t presence_frames = 0, presence2_frames = 0, unknown_frames = 0; // (unknown: PRESENCE2 without presence_v2)
@@ -1062,6 +1071,7 @@ public:
         }
         case w::Type::netfp: {
             const auto n = w::decode_netfp(f.payload);
+            netfps.emplace_back(m.name, n);
             auto it = instances.find(n.inst);
             if (it == instances.end()) break;
             auto& per = it->second.netfp[n.tick];
@@ -1127,6 +1137,11 @@ public:
         }
         case w::Type::story: on_story(m, w::decode_story(f.payload), now); break;
         case w::Type::statehash: statehashes.emplace_back(m.name, w::decode_statehash(f.payload)); break;
+        case w::Type::checkpoint: {
+            const auto c = w::decode_checkpoint(f.payload);
+            if (c.offset == 0) uploads.emplace_back(m.name, c.tick);
+            break;
+        }
         case w::Type::presence: {
             ++presence_frames;
             auto p = w::decode_presence(f.payload, false);

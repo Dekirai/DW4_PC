@@ -42,8 +42,12 @@ namespace dw4::game {
 // stag0001; the STORY_ACK reason queued; docs/SEAMLESS.md 8.8: a 46 client
 // would not add 503 at a barrier where 47 clients do, and the instance would
 // desynchronize. J: checkpoints - STATEHASH, CHECKPOINT, CHECKPOINT_BAD,
-// CHECKPOINT_ASK, STATE_DATA codec 2, docs/SEAMLESS.md 6.13.7).
-inline constexpr std::uint32_t kOnlineProtocol = 47;
+// CHECKPOINT_ASK, STATE_DATA codec 2, docs/SEAMLESS.md 6.13.7), 48 the READY
+// check of a join from a checkpoint at its check tick (the donor's NETFP of
+// T + 14 after an upload of T, wire::kReadyCheckTicks; a 47 joiner names the
+// next multiple of 60 and a 47 donor never sends that NETFP, docs/SEAMLESS.md
+// 6.13.5).
+inline constexpr std::uint32_t kOnlineProtocol = 48;
 
 struct OnlineOptions {
     std::string user, create, join;
