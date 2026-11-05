@@ -110,3 +110,5 @@ story-point credit).
   position, STATEHASH cost (7-10 ms every 600 ticks), scenarios J15 / J30 /
   JF (J15x4 / J30x4 need four game processes: more than this machine's
   three), the integration with round G-core (both protocol 47).
+- 11:05: on the final build (6945f60) JB, JR and JS pass again
+  (build/jset_run10.log), JL too (build/jl_run1.log).
