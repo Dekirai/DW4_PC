@@ -15,6 +15,10 @@
 //                       the 16 farthest enemies and keeps their HP, the
 //                       followers a walking player leaves behind brought
 //                       back on its way
+//   gap      (data)     a spawn point never closes the player's last way
+//                       out (Tuning::keep_gap_until)
+//   human    (data)     the human bot (bot=human): one seed, one run; it
+//                       walks, stops at times, its Art defeats enemies
 //   poison   (data)     4.8: a poison tick never takes the last HP and never
 //                       ends the run; MRβ02's poison through the run's rule
 //                       takes at most 10 % of MaxHP a poisoning
@@ -246,6 +250,11 @@ void spawn(const std::filesystem::path& data) {
     config.seed = 3;
     config.offers = "priority";
     config.tuning.abilities = false; // (nothing dies: the living count is the spawner's)
+    // (The mechanisms with the review round's crowd: A(t) = 14 + 3.2 a
+    // minute, the refill unlimited, no way out kept; `gap` tests that rule.)
+    config.tuning.alive_at = {14.0f, 30.0f, 46.0f, 62.0f, 78.0f};
+    config.tuning.refill_at = {12.0f, 12.0f, 12.0f, 12.0f, 12.0f};
+    config.tuning.keep_gap_until = 0;
     auto run = start_run(data, config, true);
     until_started(run);
     auto& engine = *run.engine;
@@ -350,10 +359,111 @@ void spawn(const std::filesystem::path& data) {
 }
 
 // ---------------------------------------------------------------------------
-// poison (4.8): the run's poison rule on the run's engine
+// gap (the balance round of 05.11): a spawn never closes the last way out
 // ---------------------------------------------------------------------------
 void set_level(Engine& engine, int level);
 int spawn_around(Engine& engine, const FamilyRow& row, int count, float ring);
+
+// The sector (of eight, Tuning::keep_gap_until) of a point round `me`.
+int sector_of(const Vec3f& me, const Vec3f& at) {
+    const float angle = std::atan2(at.x - me.x, at.z - me.z) + 3.14159265f;
+    return std::clamp(int(angle / (3.14159265f / 4.0f)), 0, 7);
+}
+
+void gap(const std::filesystem::path& data) {
+    RunConfig config;
+    config.seed = 6;
+    config.offers = "priority";
+    config.tuning.abilities = false;
+    config.tuning.spawning = false;
+    config.tuning.keep_gap_until = 1200 * 60;
+    auto run = start_run(data, config, true);
+    until_started(run);
+    auto& engine = *run.engine;
+    auto& director = *run.director;
+    auto* models = engine.get<ModelCtrlManager>();
+    const Vec3f me = position(*models->player(0));
+    // Six of the eight sectors closed: a Goblimon in the middle of each at 25 units.
+    const auto* row = family_row("e_goburi");
+    check(row != nullptr, "Goblimon in the table");
+    {
+        const Messenger::PortOnly scope(engine.messenger());
+        for (int k = 0; k < 6; ++k) {
+            Packet find;
+            engine.messenger().send(engine, "MODELCTRL", row->family, -1, "FIND_SPACE", find);
+            check(!find.ints.empty(), "a free Goblimon RAM");
+            const float a = -3.14159265f + (float(k) + 0.5f) * 3.14159265f / 4.0f;
+            Packet generate;
+            generate.vectors = {Vec3f{me.x + 25.0f * std::sin(a), me.y, me.z + 25.0f * std::cos(a)}, Vec3f{}};
+            generate.strings.emplace_back(std::string("SQ_ENTR"));
+            generate.ints = {row->record, 99999};
+            engine.messenger().send(engine, "MODELCTRL", row->family, find.ints[0], "GENERATE", generate);
+        }
+    }
+    for (int i = 0; i < 2; ++i) run_step(run, false);
+    int points = 0, in_gap = 0;
+    std::array<int, 8> by_sector{};
+    for (int i = 0; i < 300; ++i) {
+        Vec3f at;
+        if (!director.sample_spawn_point(engine, 26.0f, 38.0f, false, at)) continue;
+        ++points;
+        const int s = sector_of(me, at);
+        ++by_sector[std::size_t(s)];
+        in_gap += s >= 6 ? 1 : 0;
+    }
+    std::cout << "  gap: six sectors closed, " << points << " spawn points, " << in_gap << " in the last way out (sectors 6-7)\n";
+    check(points >= 250, "the spawner still finds points");
+    check(in_gap == 0, "no spawn point closes the last way out");
+    for (int k = 0; k < 6; ++k) check(by_sector[std::size_t(k)] > 0, "the closed sectors take the spawns");
+}
+
+// ---------------------------------------------------------------------------
+// human (the balance round of 05.11): the human bot plays the same run for
+// the same seed, walks, and flees from a near enemy late
+// ---------------------------------------------------------------------------
+void human(const std::filesystem::path& data) {
+    std::vector<std::string> trails;
+    for (int pass = 0; pass < 2; ++pass) {
+        RunConfig config;
+        config.seed = 7;
+        config.bot = "human";
+        config.offers = "newcomer";
+        auto run = start_run(data, config, true);
+        until_started(run);
+        auto& engine = *run.engine;
+        auto* models = engine.get<ModelCtrlManager>();
+        std::string trail;
+        float walked = 0.0f;
+        Vec3f last = position(*models->player(0));
+        int moving = 0;
+        for (int i = 0; i < 2400; ++i) {
+            std::array<PadSample, 4> pads{};
+            pads[0] = run.director->human_pad(engine);
+            moving += (std::fabs(pads[0].left.x) + std::fabs(pads[0].left.y)) > 0.05f ? 1 : 0;
+            engine.step(pads);
+            if (!engine.held()) engine.traverse_scene();
+            const Vec3f at = position(*models->player(0));
+            walked += flat(at, last);
+            last = at;
+            if (i % 60 == 59) {
+                char text[64];
+                std::snprintf(text, sizeof text, "%.2f,%.2f;", double(at.x), double(at.z));
+                trail += text;
+            }
+        }
+        std::cout << "  human: pass " << pass + 1 << ": walked " << walked << " units in 40 s, the stick moved in " << moving
+                  << " of 2400 steps, level " << run.director->level(engine) << ", " << run.director->defeats() << " defeats\n";
+        check(walked > 300.0f, "the human bot walks");
+        check(moving > 1200 && moving < 2400, "it walks most of the time and stops at times");
+        check(run.director->defeats() > 0, "its Art defeats enemies");
+        trails.push_back(trail);
+    }
+    check(trails[0] == trails[1], "one seed, one run of the human bot");
+}
+
+// ---------------------------------------------------------------------------
+// poison (4.8): the run's poison rule on the run's engine
+// ---------------------------------------------------------------------------
 
 void poison(const std::filesystem::path& data) {
     RunConfig config;
@@ -485,7 +595,10 @@ void balance(const std::filesystem::path& data, bool report) {
         if (std::string(form) == "p_agumon") {
             std::map<std::string, int> rams;
             for (const auto& ram : models->rams()) ++rams[ram->info_name];
-            const int highest[5] = {0, 30, 46, 60, 60};
+            // (A phase's highest A(t): its end's knot, at most the cap.)
+            const Tuning tuning;
+            int highest[5] = {0, 0, 0, 0, 0};
+            for (int p = 1; p <= 4; ++p) highest[p] = std::min(tuning.alive_cap, int(OverflowDirector::knots(tuning.alive_at, 5.0 * p)));
             for (int phase = 1; phase <= 4; ++phase) {
                 int total = 0;
                 for (const auto& entry : phase_pool(phase)) total += rams[entry.row->family];
@@ -596,12 +709,14 @@ int main(int argc, char** argv) {
     try {
         if (part == "offers") offers();
         else if (part == "rng") rng();
-        else if (part == "spawn" || part == "poison" || part == "balance" || part == "report") {
+        else if (part == "spawn" || part == "gap" || part == "human" || part == "poison" || part == "balance" || part == "report") {
             if (data.empty() || !std::filesystem::exists(data)) {
                 std::cout << "overflow " << part << ": skipped (no game data: DW4_TEST_DATA)\n";
                 return 0;
             }
             if (part == "spawn") spawn(data);
+            else if (part == "gap") gap(data);
+            else if (part == "human") human(data);
             else if (part == "poison") poison(data);
             else balance(data, part == "report");
         } else {

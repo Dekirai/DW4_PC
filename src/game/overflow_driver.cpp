@@ -83,7 +83,30 @@ public:
         real("hp_per_minute", config.tuning.hp_per_minute);
         real("damage_growth", config.tuning.damage_growth);
         real("hp_growth", config.tuning.hp_growth);
-        real("alive_per_minute", config.tuning.alive_per_minute);
+        // (KEY=A,B,C,D,E: the knots at 0:00, 5:00, 10:00, 15:00, 20:00.)
+        auto five = [&](std::string_view key, std::array<float, 5>& value) {
+            if (const auto text = option(request_, key); !text.empty())
+                std::sscanf(text.c_str(), "%f,%f,%f,%f,%f", &value[0], &value[1], &value[2], &value[3], &value[4]);
+        };
+        five("alive", config.tuning.alive_at);
+        five("refill", config.tuning.refill_at);
+        // (KEY=SECONDS: a run time.)
+        auto seconds = [&](std::string_view key, int& value) {
+            if (const auto text = option(request_, key); !text.empty()) value = int(std::lround(std::strtod(text.c_str(), nullptr) * 60.0));
+        };
+        seconds("surge_first", config.tuning.surge_first);
+        seconds("keep_gap", config.tuning.keep_gap_until);
+        seconds("corrupted_from", config.tuning.corrupted_from);
+        seconds("phase_ramp", config.tuning.phase_ramp_steps);
+        seconds("phase_intro_time", config.tuning.phase_intro_steps);
+        if (const auto extra = option(request_, "surge_extra"); !extra.empty()) config.tuning.surge_extra = std::atoi(extra.c_str());
+        real("gap_radius", config.tuning.gap_radius);
+        real("damage_warm_minutes", config.tuning.damage_warm_minutes);
+        real("ring_min", config.tuning.ring_min);
+        real("ring_max", config.tuning.ring_max);
+        real("slow_min", config.tuning.slow_min);
+        real("slow_max", config.tuning.slow_max);
+        real("corrupted_hp", config.tuning.corrupted_hp);
         real("art_range", config.tuning.art_range);
         real("art_range_moving", config.tuning.art_range_moving);
         real("damage_warm_up", config.tuning.damage_warm_up);

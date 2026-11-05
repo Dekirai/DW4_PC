@@ -235,6 +235,8 @@ if(BUILD_TESTING)
   add_test(NAME overflow_offers COMMAND dw4_overflow_director_tests offers)
   add_test(NAME overflow_rng COMMAND dw4_overflow_director_tests rng)
   add_test(NAME overflow_spawn COMMAND dw4_overflow_director_tests spawn "${DW4_TEST_DATA}")
+  add_test(NAME overflow_gap COMMAND dw4_overflow_director_tests gap "${DW4_TEST_DATA}")
+  add_test(NAME overflow_human COMMAND dw4_overflow_director_tests human "${DW4_TEST_DATA}")
   add_test(NAME overflow_poison COMMAND dw4_overflow_director_tests poison "${DW4_TEST_DATA}")
   add_test(NAME overflow_balance COMMAND dw4_overflow_director_tests balance "${DW4_TEST_DATA}")
   # The online client (asset free; the env test reads the sources).

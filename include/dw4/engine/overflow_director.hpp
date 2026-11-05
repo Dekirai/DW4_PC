@@ -68,11 +68,23 @@ const std::array<PhaseMusic, 4>& phase_music();
 
 // The run's numbers (initial values; SURVIVAL.md 4.3-4.5, 14.2).
 struct Tuning {
-    // 4.3: A(t) = min(cap, base + per_minute x minutes)
-    float alive_base = 14.0f, alive_per_minute = 3.2f;
+    // 4.3: A(t), the living count the spawner tops up to, by knots at 0:00,
+    // 5:00, 10:00, 15:00 and 20:00 (linear between them), at most alive_cap.
+    std::array<float, 5> alive_at{14.0f, 30.0f, 46.0f, 62.0f, 78.0f};
     int alive_cap = 60;
     int spawn_every = 10, spawns_per_tick = 2;  // at most 2 spawns every 10 frames
+    // ... and at most refill_at spawns a second (knots as alive_at): the
+    // enemies a fast Art defeats come back no faster (a lull after a group).
+    std::array<float, 5> refill_at{12.0f, 12.0f, 12.0f, 12.0f, 12.0f};
     int surge_every = 90 * 60, surge_length = 20 * 60, surge_extra = 12;
+    int surge_first = 90 * 60;                   // the first surge (run steps)
+    // A spawn never closes the player's last way out before this run step:
+    // of the eight 45-degree sectors round the player, the ones with a living
+    // enemy within gap_radius are closed, and a spawn point that would leave
+    // no two neighbouring sectors open is drawn again (the user: "no gap to
+    // run"). The encirclements keep their ring.
+    int keep_gap_until = 0;
+    float gap_radius = 40.0f;
     std::array<int, 3> encircle_at{450 * 60, 750 * 60, 1050 * 60}; // 7:30, 12:30, 17:30 (run steps)
     int encircle_count = 16;
     float encircle_ring = 45.0f;
@@ -106,7 +118,8 @@ struct Tuning {
     float damage_per_minute = 0.0f;              // (4.3 had 0.04, the O1a balance pass 0.14)
     float damage_growth = 0.18f;                 // (the O1a review round: no wall, docs/OVERFLOW_DIRECTOR.md)
     std::array<int, 3> curve{70, 65, 16};        // the run's NEXTEXP terms (4.5 had 80 / 50 / 6, the O1a balance pass 70 / 65 / 13)
-    float damage_warm_up = 0.4f;                 // the damage side of the warm-up: x 0.4 at 0:00, rising to x 1 at 5:00
+    float damage_warm_up = 0.4f;                 // the damage side of the warm-up: x 0.4 at 0:00, rising to x 1 at
+    float damage_warm_minutes = 5.0f;            // ... this run minute
     int status_cap = 6;                          // frames of a normal enemy's stun / sleep / bind (4.8 had 30)
     double level_heal = 0.05;                    // a level-up adds this share of MaxHP (4.5: 3 %, at most 5 %)
     int corrupted_from = 90 * 60, corrupted_every = 60 * 60;
@@ -306,6 +319,8 @@ public:
     double highest_poison() const { return highest_poison_; }
     float damage_factor(double minutes) const;
     float family_damage(const FamilyRow& row) const; // a family's own damage factor
+    // A(t) and the refill rate at a run time (Tuning's knots).
+    static float knots(const std::array<float, 5>& at, double minutes);
     float art_factor() const { return config_.art_class > 0 ? config_.art_class : art_class_factor(config_.form); }
     double hp_factor(double minutes) const;   // an enemy's HPMAX factor at a run time
     const Vec3f& arena_centre() const { return centre_; }
@@ -325,6 +340,10 @@ private:
     void update_factors(Engine& engine);
     void build_walkable(Engine& engine);
     bool spawn_point(Engine& engine, const Vec3f& centre, float lo, float hi, bool ahead, Vec3f& out, float visible_min = 0.0f);
+    // The sectors round the player with a living enemy within gap_radius
+    // (bit k: sector k), and whether one more at `point` leaves a way out.
+    void update_gap(Engine& engine);
+    bool keeps_gap(const Vec3f& point) const;
     float ring_min(const FamilyRow& row) const;
     float ring_max(const FamilyRow& row) const;
     float visible_min(const FamilyRow& row) const;
@@ -408,6 +427,11 @@ private:
     };
     std::vector<Enemy> enemies_;
     std::uint64_t next_spawn_ = 0;
+    double refill_credit_ = 0;       // spawns the refill rate allows (Tuning::refill_at)
+    std::uint32_t gap_sectors_ = 0;  // the closed sectors (update_gap)
+    Vec3f gap_centre_{};
+    bool gap_active_ = false;
+    std::uint64_t gap_refused_ = 0;  // spawn points drawn again for the gap
     std::uint64_t next_corrupted_ = 0;
     std::size_t encircled_ = 0;
     // An encirclement's enemies waiting for their place (encircle_per_step a step).
@@ -474,6 +498,7 @@ private:
     int defeats_ = 0, corrupted_defeats_ = 0;
     std::map<std::string, int> defeats_by_family_;
     std::map<std::string, std::pair<int, double>> hits_by_family_; // hits taken, the highest share of MaxHP
+    std::map<std::pair<int, std::string>, double> taken_by_family_; // the damage taken per phase and family (MaxHPs, poison included)
     std::map<std::string, std::pair<int, int>> closed_by_family_; // closed, spawned (measured families)
     std::vector<int> art_hits_per_kill_;                          // phase 1, Art-only defeats
     std::vector<std::uint64_t> level_up_steps_;

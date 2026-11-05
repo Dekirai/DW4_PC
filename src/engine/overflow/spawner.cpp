@@ -133,6 +133,10 @@ bool OverflowDirector::spawn_point(Engine& engine, const Vec3f& centre, float lo
         const auto& cell = grid_[std::size_t(iz * grid_n_ + ix)];
         if (!cell.walkable) continue;
         const Vec3f point{x, cell.y, z};
+        if (!keeps_gap(point)) {
+            ++gap_refused_;
+            continue;
+        }
         // Out of the picture where it can be (S3); a visible one enters with
         // SQ_ENTR, at least visible_min away (not next to the player).
         if (!on_screen(engine, {x, cell.y + 5.0f, z})) {
@@ -158,6 +162,33 @@ bool OverflowDirector::spawn_point(Engine& engine, const Vec3f& centre, float lo
     if (!seen) return false;
     out = *seen;
     return true;
+}
+
+// The way out (Tuning::keep_gap_until): the eight sectors round the player
+// with a living enemy within gap_radius, once a step before the spawner.
+void OverflowDirector::update_gap(Engine& engine) {
+    gap_sectors_ = 0;
+    gap_active_ = clock_ < std::uint64_t(std::max(0, config_.tuning.keep_gap_until));
+    if (!gap_active_) return;
+    auto* models = engine.get<ModelCtrlManager>();
+    if (!models) return;
+    gap_centre_ = player_position(engine);
+    for (const auto& ram : models->rams()) {
+        if (!living_enemy(*ram)) continue;
+        const Vec3f q = ram_position(*ram);
+        if (flat_distance(q, gap_centre_) > config_.tuning.gap_radius) continue;
+        const float angle = std::atan2(q.x - gap_centre_.x, q.z - gap_centre_.z) + kPi;
+        gap_sectors_ |= 1u << std::clamp(int(angle / (kPi / 4.0f)), 0, 7);
+    }
+}
+
+bool OverflowDirector::keeps_gap(const Vec3f& point) const {
+    if (!gap_active_ || flat_distance(point, gap_centre_) > config_.tuning.gap_radius) return true;
+    const float angle = std::atan2(point.x - gap_centre_.x, point.z - gap_centre_.z) + kPi;
+    const std::uint32_t closed = gap_sectors_ | (1u << std::clamp(int(angle / (kPi / 4.0f)), 0, 7));
+    for (int k = 0; k < 8; ++k)
+        if (!(closed & (1u << k)) && !(closed & (1u << ((k + 1) % 8)))) return true;
+    return false;
 }
 
 // The spawn ring's least distance of a point in the picture: the families
@@ -227,9 +258,19 @@ bool OverflowDirector::spawn_one(Engine& engine, const FamilyRow& row, bool corr
     entry->best = entry->nearest;
     entry->best_at = clock_;
     entry->anchor = point;
+    if (gap_active_ && flat_distance(point, gap_centre_) <= config_.tuning.gap_radius) {
+        const float angle = std::atan2(point.x - gap_centre_.x, point.z - gap_centre_.z) + kPi;
+        gap_sectors_ |= 1u << std::clamp(int(angle / (kPi / 4.0f)), 0, 7);
+    }
     ++spawned_;
     if (corrupted) ++corrupted_spawned_;
     return true;
+}
+
+float OverflowDirector::knots(const std::array<float, 5>& at, double minutes) {
+    const double k = std::clamp(minutes / 5.0, 0.0, 4.0);
+    const int i = std::min(3, int(k));
+    return float(double(at[std::size_t(i)]) + (double(at[std::size_t(i + 1)]) - double(at[std::size_t(i)])) * (k - double(i)));
 }
 
 void OverflowDirector::spawner(Engine& engine) {
@@ -247,10 +288,15 @@ void OverflowDirector::spawner(Engine& engine) {
     if (clock_ < next_spawn_) return;
     next_spawn_ = clock_ + std::uint64_t(t.spawn_every);
     const double minutes = run_seconds() / 60.0;
-    int target = std::min(t.alive_cap, int(t.alive_base + t.alive_per_minute * minutes));
-    // Surges: every 90 s, 12 more for 20 s (the first at 1:30).
-    if (clock_ >= std::uint64_t(t.surge_every) && (clock_ % std::uint64_t(t.surge_every)) < std::uint64_t(t.surge_length)) target += t.surge_extra;
-    int want = std::min(t.spawns_per_tick, target - alive_);
+    int target = std::min(t.alive_cap, int(knots(t.alive_at, minutes)));
+    // Surges: every 90 s, 12 more for 20 s (the first at surge_first).
+    if (clock_ >= std::uint64_t(t.surge_first) &&
+        ((clock_ - std::uint64_t(t.surge_first)) % std::uint64_t(t.surge_every)) < std::uint64_t(t.surge_length))
+        target += t.surge_extra;
+    // The refill rate: spawns a second, kept as a credit of whole spawns.
+    refill_credit_ = std::min(refill_credit_ + double(knots(t.refill_at, minutes)) * double(t.spawn_every) / 60.0,
+                              double(std::max(1, t.spawns_per_tick)));
+    int want = std::min({t.spawns_per_tick, target - alive_, int(refill_credit_ + 1e-9)});
     if (want <= 0 && !corrupted) return;
     want = std::max(want, corrupted ? 1 : 0);
     // A new phase's families come in over its first 90 s (their weight rises
@@ -279,6 +325,7 @@ void OverflowDirector::spawner(Engine& engine) {
         }
         if (made) {
             ++alive_;
+            refill_credit_ = std::max(0.0, refill_credit_ - 1.0);
             if (corrupted) {
                 corrupted = false;
                 next_corrupted_ = clock_ + std::uint64_t(t.corrupted_every);

@@ -271,6 +271,8 @@ void OverflowDirector::step_running(Engine& engine) {
         minute_trapped_ += gap ? 0 : 1;
         ++minute_steps_;
     }
+    // (The way out the spawn points keep, for the spawner and the recycling.)
+    update_gap(engine);
     if (config_.tuning.spawning) spawner(engine);
     if (config_.tuning.abilities) {
         cast_art(engine);
@@ -300,8 +302,8 @@ void OverflowDirector::step_running(Engine& engine) {
 float OverflowDirector::damage_factor(double minutes) const {
     static constexpr float kTierDamage[3] = {1.0f, 1.2f, 1.4f};
     const auto& t = config_.tuning;
-    const double phase_minutes = double(t.phase_steps) / 3600.0;
-    const double warm = std::min(1.0, double(t.damage_warm_up) + (1.0 - double(t.damage_warm_up)) * minutes / phase_minutes);
+    const double warm_minutes = std::max(0.01, double(t.damage_warm_minutes));
+    const double warm = std::min(1.0, double(t.damage_warm_up) + (1.0 - double(t.damage_warm_up)) * minutes / warm_minutes);
     const double growth = (1.0 + double(t.damage_per_minute) * minutes) * std::exp(double(t.damage_growth) * minutes);
     return float(double(kTierDamage[std::clamp(config_.tier, 0, 2)]) * growth * warm);
 }
@@ -736,6 +738,7 @@ void OverflowDirector::player_hit(Engine& engine, const HitTaken& hit) {
                    (poison > 0 ? " poison " + std::to_string(hit.poison_tick) + "x" + std::to_string(hit.poison_ticks) : std::string()));
     if (hit.enemy != EnemyClass::guardian) highest_hit_ = std::max(highest_hit_, share);
     auto& by = hits_by_family_[hit.shooter + (hit.enemy == EnemyClass::corrupted ? "*" : "")];
+    taken_by_family_[{phase(), hit.shooter + (hit.enemy == EnemyClass::corrupted ? "*" : "")}] += share;
     ++by.first;
     by.second = std::max(by.second, share);
 }
@@ -1137,6 +1140,8 @@ std::string OverflowDirector::summary_text(const Engine& engine) const {
         for (const auto& [source, amount] : tally.dealt_by) out << "dealt " << technique_name(source) << ' ' << amount << '\n';
     }
     for (const auto& [family, by] : hits_by_family_) out << "hits_by " << family << ' ' << by.first << ' ' << by.second << '\n';
+    // (The damage taken per phase and family: who the balance has to answer.)
+    for (const auto& [key, total] : taken_by_family_) out << "taken_by " << key.first << ' ' << key.second << ' ' << total << '\n';
     out << "panels_min_gap " << (panels_min_gap_ == (1 << 30) ? -1 : panels_min_gap_) << "\n";
     double worst = 1.0;
     std::string worst_family = "-";
@@ -1150,7 +1155,7 @@ std::string OverflowDirector::summary_text(const Engine& engine) const {
     }
     out << "closed_in_worst " << worst_family << ' ' << worst << "\n";
     out << "spawned " << spawned_ << "\ncorrupted_spawned " << corrupted_spawned_ << "\nrecycled " << recycled_ << "\nencircled " << encircled_total_
-        << "\nspawn_failures " << spawn_failures_ << "\n";
+        << "\nspawn_failures " << spawn_failures_ << "\ngap_refused " << gap_refused_ << "\n";
     out << "disks_taken " << disks_taken_ << "\ndisks_used " << disks_used_ << "\nplugs_picked " << plugs_picked_ << "\n";
     out << "forge " << offer_state_.forge << "\ntrain " << offer_state_.train[0] << ' ' << offer_state_.train[1] << ' ' << offer_state_.train[2]
         << "\n";
