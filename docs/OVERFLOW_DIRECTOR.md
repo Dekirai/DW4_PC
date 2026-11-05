@@ -73,7 +73,7 @@ had.
 z 4 to 17 (the line and the fan at its tip); Blade Arc: the "slash" section,
 five 8-unit boxes in an arc. Without the animation the boxes start at once
 (their own spacing kept). A strike turns the pattern to the nearest enemy
-within its reach and pushes it until its tip reaches it: 22 units standing,
+within its reach and pushes it until its tip reaches it: 14 units standing (22 before section 10),
 growing with the walking speed of the last half second to 34 at full stick
 (the enemies close in 3 to 40 times slower than the player walks, S1, so a
 walking Digimon passes them where a standing one waits); the boxes of a strike
@@ -171,7 +171,7 @@ everything is in `Tuning` and `tables.inc`:
 | poison | DW4's | ticks through the damage-taken rule, at most 5 ticks and 10 % of MaxHP, never the last HP | the review: MRβ02's poison took 69 % from a hit of 1 |
 | family damage factors | 1 | 0.035-1.0 per family (`tables.inc`; Mummymon 0.16 and Tortomon 0.13 since the balance round of 05.11) | 14.3: the worst hit (its poison included) at a phase's start about 8 / 9 / 10 % in phases 2 / 3 / 4, close to what the phase before hits at its end; Corrupted at most 35 % |
 | family spawn weight | 1 | 0.5 for Numemon, Sukamon, MarineDevimon and Pharaohmon | the ranged shots and Pharaohmon's warps hit a walking player as much as a standing one |
-| Art reach | 22 (Cleaver, Blade Arc) | 22 standing, 34 at full stick | the enemies are 3-40 times slower than the player (S1): a walking Digimon passes them |
+| Art reach | 22 (Cleaver, Blade Arc) | 14 standing (the review round: 22), 34 at full stick; 20 from 30 % of the stick | the enemies are 3-40 times slower than the player (S1): a walking Digimon passes them; a standing one must be reached again (section 10) |
 | Art class factor | 1 | Cleaver 2.2, Blade Arc 1.4 | 14.3: two hits for every phase 1 family at level 1; Cleaver more: Agumon has no Impact and no jumping Bolt |
 | technique factor | 1 | Impact x 0.5 | its rings strike every enemy within 20 at once each time |
 

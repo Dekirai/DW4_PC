@@ -108,7 +108,11 @@ struct Tuning {
     float behind_far = 40.0f;
     int behind_steps = 4 * 60;
     int encircle_per_step = 4;                   // an encirclement places this many a step (T8)
-    float art_range = 22.0f;                     // the Art's reach (6.3: at least 20)
+    // The Art's reach standing (6.3: at least 20; the balance round of 05.11:
+    // 14, so a Digimon that never walks is reached by the walkers again; 20
+    // from 30 % of the stick, the review round's 22 standing let bot=stand
+    // outlast the kite bot once the shots were softer)
+    float art_range = 14.0f;
     // ... growing with the Digimon's walking speed to art_range_moving at
     // full stick (0.70 units a frame): the enemies close in 3 to 40 times
     // slower than the player walks (SURVIVAL_O1A.md S1), so a walking

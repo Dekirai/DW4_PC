@@ -765,7 +765,9 @@ swing sounds (PC_SUBURI01-09, PC_SHOT01).
 enemy, or the densest group where the table says so), turns its pattern to
 the target's bearing and, when the target is beyond the pattern's own
 reach, shifts the pattern outward along that bearing so its reach ends at
-the target. The range is at least 20 units. The Digimon does not turn: in
+the target. The range is at least 20 units (O1a: for a Digimon that walks;
+standing it is 14 since the balance round of 05.11, a Digimon that never
+walks must be reached, docs/OVERFLOW_DIRECTOR.md 10). The Digimon does not turn: in
 this genre the player walks away from the enemies, and an Art that only
 strikes forwards would never hit (revision 1's Cleaver reached z 4-17 and
 Blade Arc z 8-14, in the walking direction only). A forwards-only variant
