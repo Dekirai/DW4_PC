@@ -8755,16 +8755,19 @@ what was taken. A review against the code (`RoomHub.cs`, `RelayHub.cs`,
 - **Instances.** Outside the hub stages everything happens in an
   *instance*: a host, a visibility (Public, Friends, Private), up to four
   players, the host's story and settings. It begins when a player leaves
-  home for a field, dungeon or boss stage and starts a new one; it spans
-  every stage its members walk to (they travel freely inside it, as room
-  members do today); it ends when its host goes home on purpose, when a
-  lost host is not back within 60 s, or when staff end it. No hand-over.
+  home for a field, dungeon or boss stage and starts a new one; it covers
+  the whole area its host entered (decision 38: Death Valley, Dry Land,
+  Venom Jungle or Machine Pit with all their fields, dungeons and boss
+  stages; its members travel freely in it, as room members do today, and
+  the only way out of an area is home, 19.30); it ends when its host goes
+  home on purpose, when a lost host is not back within 60 s, or when staff
+  end it. No hand-over.
   Every member then returns to his own lobby with his own EXP, items and
   Bits. A defeated host (a game over) gets 60 s to return to his guests
   from round I3 on (question 37).
-- **The arrival prompt.** A player who arrives from home (or who is alone
-  in his instance and moves on) and finds a running instance he may join
-  gets the prompt: the instances, best first (party, friends, then ping and
+- **The arrival prompt.** A player who arrives from home and finds a
+  running instance of that area he may join gets the prompt: the
+  instances with where they are, best first (party, friends, then ping and
   free seats; *Same story point* is a badge), and *New instance* with
   Public / Friends / Private (Public by default, the last choice
   remembered). At the lobby gate it opens before the departure, without a
@@ -8772,6 +8775,14 @@ what was taken. A review against the code (`RoomHub.cs`, `RelayHub.cs`,
   his own loading screen, where B takes him back to where he left. Players
   who take the gate up to about ten seconds after each other land together
   without a question while the first one's new instance is still starting.
+  Choosing an instance whose players are elsewhere in the area puts him
+  into it where he walked in, as a guest in the host's story (19.30.3).
+- **Go along.** When a member goes from a field into a dungeon, every
+  member in a field gets "Kim went into Ancient Ruins B1. Go along?  View:
+  answer" (20 s on screen; nothing pauses, no game button is taken); *Go
+  along* takes him into that floor at its entrance (next to Kim from round
+  I3), inside the instance on the host's story; members already in a
+  dungeon are never asked (decision 38, 19.30.5-19.30.7).
 - **Story only in the field.** In an instance every engine holds the host's
   story; at home every engine holds its player's own: the return home
   replaces the engine's story with the own (a new engine path). Guests'
@@ -8809,8 +8820,8 @@ what was taken. A review against the code (`RoomHub.cs`, `RelayHub.cs`,
   `Engine::online()`.
 - **Plan.** Rounds I1-I6 interleaved with G, J, D and R (19.25): the
   Cheats tab fix first; I1a the world without rooms (automatic joins by
-  visibility), I1b the prompt, removal and *Report player* (deployed
-  together with I1a), I2 friends, blocks and the shared story point, I3 the
+  visibility, instances per area), I1b the prompt, go along, removal and
+  *Report player* (deployed together with I1a), I2 friends, blocks and the shared story point, I3 the
   browser and joins at the host (after J), I4 parties, I5 reconnect seats,
   I6 emotes, quick chat and the LFG flag.
 
@@ -8842,6 +8853,7 @@ what was taken. A review against the code (`RoomHub.cs`, `RelayHub.cs`,
 | 29 (Q12) | Staff and a full instance: invisible spectator without an own Digimon (a player's camera or a free camera); with a free seat staff play normally | 19.14 |
 | 30 (Q13) | The prompt preselects the best instance; no time limit, only the player's own loading waits; B closes it and leaves the player standing at the gate | 19.7.3-19.7.5 |
 | 31 (Q14) | Room stories become the owners' own online stories (box 1 after round D); accounts, characters and achievements stay; rooms disappear | 19.22 |
+| 38 (2026-11-05) | One instance per area: someone can join in the area, everyone goes anywhere in it (dungeons and other sections included), the instance ends only when its host leaves the area completely (back to the lobby, for example); when anyone goes into a dungeon, the others get a prompt unless they are in a dungeon themselves | 19.30 |
 
 **Standing decisions that stay:** at most four players per stage group (the
 engine's slots 0-3; staff bypass the visibility always, the blocks and the
@@ -8863,7 +8875,8 @@ question 8 (play alone in a room: no switch), whose switch a Private
 instance now is; question 2 (owner away: drop), which the host's grace
 replaces (19.8.5); 8.6 and round 59's owner-at-zero machinery (19.8.10);
 answer 10 (b)'s board rule, which has no case once every board is at home
-(19.8.9).
+(19.8.9). Decision 38 (round 72) replaces none of the user's answers 18-37,
+only the design defaults marked "round 72" below (19.30.10).
 
 **Defaults this design chooses** (those with a question number are open,
 section 18):
@@ -8871,13 +8884,17 @@ section 18):
 | Default | Section |
 | --- | --- |
 | Guests travel freely inside the instance as room members do today; any member's progress counts for the host's story (question 32) | 19.6.3 |
-| The prompt appears only when a running instance open to the player exists at the target; otherwise a new instance with the remembered visibility and a toast | 19.7.1 |
-| The prompt is for arrivals from home and for a host alone in his instance moving on; a group with a guest in it never gets it and never merges with another instance | 19.7.1 |
+| The prompt appears only when a running instance open to the player exists in the target's area (round 72; before: at the target stage); otherwise a new instance with the remembered visibility and a toast | 19.7.1, 19.30.3 |
+| The prompt is for arrivals from home only (round 72: a host alone in his instance moves inside his area and is never prompted); a group already in an instance never gets it and never merges with another instance | 19.7.1, 19.30.3 |
+| An instance's area is the one its host entered from home; the Fortress belongs to Death Valley (question 39); boss stages count as dungeon stages | 19.30.2 |
+| An arrival that chooses an instance with no stage group at its stage enters it there as a guest (a new stage group, the host's story by the replace), only at a gate stage or a stage the instance has visited; else the row reads *Not here yet* (question 40) | 19.30.3, 19.30.4 |
+| The go-along notice: 20 s on screen, answered through View (the F1 menu's *Instance* page), the offer open there while its entrants are in that dungeon; no offer for moves inside a dungeon, from a dungeon, or for arrivals from home | 19.30.5, 19.30.6 |
+| *Go along* departs straight to the target inside the instance (GO, the exit port's departure and side rule), the seat kept, its fallback a new stage group of the instance; it spawns at the floor's entrance until round I3, then next to the first entrant | 19.30.7, 19.9.6 |
 | Automatic co-arrival only with a group that starts a new instance, up to `World:StartingSeconds` (10) after its NEW; the arriving group of a running instance is a prompt row instead | 19.7.6 |
 | The prompt's order is the user's (party, friends, ping, free seats); *Same story point* is a badge and the last tie-breaker | 19.7.3 |
-| B in the loading-screen form takes a player who left home back to where he left (a redirect); *Continue alone* only for a lone host in a field | 19.7.5 |
-| A join from the prompt enters at the stage's entrance point (the player walked in); a join by travel (browser, friend list, party, seat, *Go to host*) appears next to its target | 19.7.7, 19.9 |
-| A travel never falls back to a new instance: when it fails the player is in his lobby | 19.9.2 |
+| B in the loading-screen form takes a player who left home back to where he left (a redirect); *Continue alone* went with round 72 (no lone host is prompted) | 19.7.5 |
+| A join from the prompt enters at the stage's entrance point (the player walked in), or as a guest in a new stage group at that stage (round 72); a join by travel (browser, friend list, party, seat, *Go to host*) appears next to its target | 19.7.7, 19.9, 19.30.4 |
+| A travel from home or into another instance never falls back to a new instance: when it fails the player is in his lobby; a travel inside the own instance (*Go along*, *Go to <member>*) falls back to a new stage group of it (round 72) | 19.9.2, 19.9.6 |
 | The host may remove a guest; the removed player cannot see or join that instance for 10 minutes (question 34) | 19.6.6 |
 | The host's settings apply in his instance: his box's difficulty, randomizer, camera and light mode, fast loading | 19.8.7 |
 | Quest instances can be joined by travel to help; the quest's end and reward only for players who took it (question 35) | 19.8.8 |
@@ -8912,6 +8929,14 @@ section 18):
 | Message numbers | from 0x15 / 0x91 | after round J: from 0x18 / 0x94 | provisional 0x15 / 0x91 | **after round J** (player): J holds 0x15-0x17 and 0x92-0x93 (6.13.7); 0x91 is free |
 | Questions | go along, guest exits, realms, quests | story point, staff marker, kick, friends-only | exits, boss starts, quests, story point | 32-35 (section 18), after the review 32, 34-37 (33 not asked); the staff marker (Q12: invisible), *Friends* (the host's friends) and realms (one world, host settings) are decided above |
 
+**Round 72 (decision 38) revisits two rows.** *What the prompt lists*: the
+instances of the arrival's area (the player draft's "whole area", without
+its join at the host's stage until round I3: the arrival enters where it
+walked in, 19.30.3). *Travel inside an instance*: free travel stays, and
+the architecture draft's "Go along?" returns for dungeon entries only:
+offered when any member goes into a dungeon, to every member in a field,
+with no host lead and no leash (19.30.5).
+
 ### 19.3 Terms
 
 In this section *instance* is the user's instance. The lockstep group that
@@ -8923,15 +8948,21 @@ stays `inst`.
 | world | every player connected to the server's relay; replaces the room; one per server |
 | member | an account in the world: one machine, one player, a member id (u32) for the server run |
 | home | where a member is when it is in no instance: its solo hub and UI stages (lobby, briefing room, Digi-Lab, shops, title) on its own story |
-| instance | server object `WorldInstance`: id (u32, `wid` on the wire), host, visibility, settings, seats (up to four players), spectators, the host's story keeper, its stage groups; from its first NEW to its end |
+| instance | server object `WorldInstance`: id (u32, `wid` on the wire), host, visibility, settings, seats (up to four players), spectators, the host's story keeper, its area, its stage groups; from its first NEW to its end |
+| area | Death Valley, Dry Land, Venom Jungle or Machine Pit: the stages reachable on foot from the area's lobby gate stage without a hub stage, i.e. its fields, dungeons and boss stages (Death Valley also the Fortress and stag0205's plateau); an instance's area is the one its host entered from home (19.30.2) |
+| dungeon stage | a stage of kind `dungeon` or `boss` in `data/online/areas.json` (19.30.2); every other stage outside the hub is a *field* here |
+| gate stage | the lobby gate's arrival stage of an area after the training: stag0101, stag0201, stag0301, stag0401 (19.30.3) |
+| visited | the stages where an instance has had a stage group; an arrival may enter an instance as a guest only at a gate stage or a visited stage (19.30.3) |
+| go-along offer | the relay's offer, when members go from a field into a dungeon, to the members in fields to follow them; one per instance and dungeon (19.30.5) |
+| GO | a stamped tick event: one slot takes the exit port's departure to a stage and point of its own instance (*Go along*, *Go to <member>*, 19.30.7) |
 | stage group | today's instance (`HubInstance`): one stage, slots 0-3, solo-led or sealed; it now belongs to one instance |
 | host | the member whose story and settings an instance runs on: the user's "leader" (UI: *Host*). Not a stage group's technical *leader* (2, the lowest present slot), which stays internal |
 | guest | any other player in an instance |
 | seat | one of an instance's four places: *taken*, *held* (a guest's reconnect, the host's grace or return) or *reserved* (a party member, I4) |
 | starting instance | a new instance whose host came from home, until its stage group is first joinable or `World:StartingSeconds` (10) after its NEW: the window of automatic co-arrival (19.7.6) |
 | visibility | Public (everyone), Friends (the host's friends and party), Private (the host's party); staff see all |
-| fresh arrival | an arriving group from home, or a host alone in his instance moving on; never a group with a guest in it |
-| travel | entering an instance without walking there (browser, friend list, party follow, seat, *Go to host*): it departs toward home and joins next to its target (19.9) |
+| fresh arrival | an arriving group from home; never a group already in an instance (round 72: a host alone in his instance moving on is none any more, 19.30.3) |
+| travel | entering an instance without walking there (browser, friend list, party follow, seat, *Go to host*): it departs toward home and joins next to its target (19.9); inside the own instance (*Go along*, *Go to <member>*) it departs straight to its target by GO (19.9.6) |
 | story point | difficulty, phase, the main-line flags and K0-K10 of a story (19.8.6) |
 | in step | a guest whose own story point equals the host's (19.8.6) |
 | party | up to four accounts with a leader, kept in relay memory (19.12) |
@@ -8943,11 +8974,13 @@ stays `inst`.
 
 **Home and instances.** A member is home (a solo hub instance on its own
 story, 3.3) or in exactly one instance. Leaving home for a joinable stage
-makes it a guest of an instance that runs there or the host of a new one.
-Inside the instance everything is today's room play among the instance's
-members: free travel, exits per member, forks, co-arrivals, joins and new
-stage groups (3.4, 5.2, 6.7), filtered to the instance. A barrier into a hub
-stage takes the member home (DISSOLVE, 3.4).
+makes it a guest of an instance that runs in that stage's area or the host
+of a new one (decision 38, 19.30). Inside the instance everything is
+today's room play among the instance's members, anywhere in its area: free
+travel, exits per member, forks, co-arrivals, joins and new stage groups
+(3.4, 5.2, 6.7), filtered to the instance, plus the go-along offer at
+dungeon entries (19.30.5). A barrier into a hub stage takes the member
+home (DISSOLVE, 3.4); it is the only way out of an area.
 
 **Invariants** (each has a test, 19.24):
 
@@ -8962,10 +8995,20 @@ stage takes the member home (DISSOLVE, 3.4).
    the own (19.8.3).
 6. No engine loads a stage on its own story that it did not walk to: a
    travel departs toward home and falls back home, never to a solo copy of
-   the target stage.
+   the target stage. (Round 72:) An arrival from home enters an instance
+   only at the stage it walked to, and as a guest without a stage group
+   there only at a gate stage or a stage the instance has visited
+   (19.30.3); a departure straight to another stage of the own instance
+   (GO: *Go along*, *Go to <member>*) goes only where a stage group of the
+   instance is, so where the instance's story has been, and falls back to
+   a new stage group of the instance there, never home and never to a new
+   instance (19.9.6, 19.30.7).
 7. A member is in at most one instance and one world session.
 8. Nothing of this runs offline: every engine path hangs off the online
    rules.
+9. An instance stays in its area (round 72): every stage its members reach
+   without passing a hub stage lies in the scope of the area its host
+   entered (19.30.2), so its host leaves the area only by going home.
 
 **What replaces the room's jobs.**
 
@@ -9031,25 +9074,32 @@ stage takes the member home (DISSOLVE, 3.4).
 #### 19.5.3 At the lobby gate
 
 The player chooses an area in the gate's own list as always. If a running
-instance he may join is at that stage (19.7.2), the prompt opens over the
-frozen game where the list was:
+instance he may join is in that area (19.7.2, 19.30.3), the prompt opens
+over the frozen game where the list was:
 
 ```
- Death Valley: Cliff Dungeon B1                          Your ping: 38 ms
- > Kim's instance (friend)   2/4   Chapter 4, Hard   41 ms   Same story point
-   Lee's instance            3/4   Chapter 2         55 ms
-   Mo's instance             4/4   Full
-   Ann's instance            1/4   Boss fight        90 ms
+ Dry Land: Mummy Desert                                       Your ping: 38 ms
+ > Kim's instance (friend)  2/4  Ancient Ruins B2    Chapter 4, Hard  41 ms  Same story point
+   Lee's instance           3/4  Here (2)            Chapter 2        55 ms
+   Mo's instance            4/4  Station X           Full
+   Ann's instance           1/4  Demon Shift         Chapter 5        90 ms
    New instance   < Public >
  A: Choose   Left/Right: visibility   X: Details   B: Back
 ```
 
-- *A* on an instance: the gate's own departure runs (fade, loading), then
-  "Joining Kim..." and the player enters at the stage's entrance; every
-  member sees "Lee joined."; the guest's toast: "You're a guest in Kim's
-  story (Chapter 4, Hard). Your level, items and Digimon stay yours." In
-  step also: "Same story point: progress here also counts for your own
-  story."
+- *A* on an instance: the gate's own departure runs (fade, loading). With
+  players of the instance at that stage ("Here"): "Joining Lee..." and the
+  player enters at the stage's entrance. Else he starts the stage as a
+  guest in a new stage group of the instance, on the host's story
+  (19.30.4), and the toast adds "Kim is in Ancient Ruins B2."; he meets
+  the others on foot or through the next go-along offer (19.30.5); from
+  round I3 *Y: Join at Kim* travels next to the host instead (question
+  40). Every member sees "Lee joined."; the guest's toast: "You're a guest
+  in Kim's story (Chapter 4, Hard). Your level, items and Digimon stay
+  yours." In step also: "Same story point: progress here also counts for
+  your own story."
+- A row greyed *Not here yet*: the instance's story has not been at this
+  stage (a return-mat arrival, 19.30.3); not choosable before round I3.
 - *A* on *New instance*: a new instance with the chosen visibility, which is
   remembered.
 - *X*: the members with form and level, the instance's settings.
@@ -9066,18 +9116,27 @@ will move.
 
 #### 19.5.4 In an instance
 
-- Unchanged: free travel, the own camera, own menus, real co-op in a stage,
-  exits per member (5.2), name tags.
+- Unchanged: free travel (anywhere in the instance's area, decision 38),
+  the own camera, own menus, real co-op in a stage, exits per member
+  (5.2), name tags.
+- **Go along** (decision 38, 19.30.5-19.30.7): when another member goes
+  from a field into a dungeon, a member in a field gets the notice "Kim
+  went into Ancient Ruins B1. Go along?  View: answer" for 20 s, a window
+  without input; View/Back (F1) opens the F1 menu on the *Instance* page,
+  whose *Go along* box answers it (A: go along, B: stay) while the offer is
+  open. Nothing pauses; members already in a dungeon are never asked.
 - **The Online menu** is the F1 menu's *Online* tab: View/Back on the pad
   (`back_button_free`, as today) and F1 on the keyboard open the F1 menu,
   which opens on that tab while a world session runs; online it pauses
   nothing (the game gets neutral pads while it is open, round 63). Pages
   *Instance*, *Party*, *Friends*, *Nearby* (lobby only), *Instances*.
-  - *Instance*: the host and the visibility (the host cycles it with A;
+  - *Instance*: at its top the *Go along* box while an offer is open
+    (19.30.6); the host and the visibility (the host cycles it with A;
     members see "Kim made the instance Friends only."), the members with
     form, Lv, stage, ping and connection, *Invite* (I4), *Remove* (host,
-    question 34), *Report* (I1b), *Go to Kim* (a guest's travel to the host,
-    I3) and *Leave instance* ("Leave Kim's instance? You return to your
+    question 34), *Report* (I1b), *Go to Kim* on every other member's row
+    (a travel to that member inside the instance, I3, 19.9.6) and *Leave
+    instance* ("Leave Kim's instance? You return to your
     lobby."; for the host "End the instance for everyone?").
 - **The own status window** (round 63's own window program, Q9's "status
   menu") shows an overlay line at its foot while it is open: "Instance:
@@ -9113,9 +9172,10 @@ will move.
 | Where | Text |
 | --- | --- |
 | Home screen | "Play: <form> Lv <n> (Box <b>)", "Choose character", "Friends (<n> online)", "Party", "Instances", "Settings", "Account", "Log out", "Online now: <n> players, <m> instances" |
-| Prompt | "<area>: <stage>", "<host>'s instance", "(party)", "(friend)", "New instance", "Public", "Friends", "Private", "Same story point", "Boss fight", "Quest: <name>", "Full", "Host reconnecting", "Arriving now", "Other settings", "Hard", "Very Hard", "Randomizer", "A: Choose   Left/Right: visibility   X: Details   B: Back" (loading-screen form from home: "B: Back to the lobby"; a lone host in a field: "B: Continue alone") |
+| Prompt | "<area>: <stage>", "<host>'s instance", "(party)", "(friend)", "<stage of the host>", "Here (<n>)", "Not here yet", "New instance", "Public", "Friends", "Private", "Same story point", "Boss fight", "Quest: <name>", "Full", "Host reconnecting", "Arriving now", "Other settings", "Hard", "Very Hard", "Randomizer", "A: Choose   Left/Right: visibility   X: Details   B: Back" (loading-screen form from home: "B: Back to the lobby"; from round I3 on rows of players elsewhere: "Y: Join at <host>") |
 | Loading | "Joining <host>...", "<host> is in a boss fight. Waiting...", "B: Back to the lobby", "X: Join <member> instead", "<host>'s instance is full now.", "Couldn't join <host>: <reason>.", "Waiting for <host> (reconnecting, <s> s)", "Returning to <host>'s instance...", "Your guests are still playing. Return to them?", "A: Return   B: End the instance" |
-| Arrival | "You're a guest in <host>'s story (<story point>). Your level, items and Digimon stay yours.", "Same story point: progress here also counts for your own story.", "New instance (<visibility>). View: Online menu", "You arrived together with <host>: you're a guest in <host>'s story." |
+| Arrival | "You're a guest in <host>'s story (<story point>). Your level, items and Digimon stay yours.", "<host> is in <stage>.", "Same story point: progress here also counts for your own story.", "New instance (<visibility>). View: Online menu", "You arrived together with <host>: you're a guest in <host>'s story." |
+| Go along (19.30.6) | "<name> went into <stage>. Go along?", "<name> and <name> went into <stage>. Go along?", "View: answer" (keyboard "F1: answer"), "Go along", "<name> is in <stage>.", "A: Go along", "B: Stay", "<name> is in <stage> now.", "<name> left <dungeon>.", "<name> was defeated in <stage>.", "(defeated)", "(loading)", "(other quest)", "Couldn't go along: you were defeated.", "Couldn't go along: <name> left <dungeon>.", "<name> left <stage> before you arrived.", "<name> went on to <stage>." |
 | In the instance | "<name> joined.", "<name> left.", "<name> went to <stage>.", "<host> made the instance <visibility>.", "Shared story progress saved to your story.", "<name> is not available.", "Reconnected. You're playing apart from <host> until the next area.", "You joined <host>'s instance. Leave: Online menu" (I1a's automatic join) |
 | End | "<host> left. The instance ends.", "<host> lost the connection. Waiting for <host>... <s> s", "<host> is back.", "<host> did not come back. The instance ends.", "<host> was defeated. Waiting for <host>... <s> s", "<host> was defeated. The instance ends.", "The instance has ended.", "A moderator ended this instance.", "You were removed from <host>'s instance.", "Back on your own story.", "The server restarted. Back on your own story.", "Server restart in <s> s." |
 | Leaving | "Leave <host>'s instance? You return to your lobby.", "End the instance for everyone?", "Your guests will return to their lobbies.", "Leave <host>'s instance and join <name>?" |
@@ -9127,14 +9187,17 @@ will move.
 | --- | --- | --- |
 | Online screens of the title | as today: D-pad, A, B, the on-screen keyboard for names | as today |
 | Online menu = the F1 menu's *Online* tab (in the game) | View/Back opens and closes the F1 menu as today (`game_main.cpp`, `back_button_free`); LB/RB switch pages; D-pad moves; A selects; B goes back or closes; X and Y are the page's second and third action | F1, arrows, Enter, Esc, Tab |
-| Prompt | D-pad up/down chooses a row; left/right the visibility on *New instance*; A chooses; X details; B back (gate form, and the loading-screen form from home) or continue alone (a lone host in a field) | arrows, Enter, Backspace for B |
+| Prompt | D-pad up/down chooses a row; left/right the visibility on *New instance*; A chooses; X details; B back (gate form, and the loading-screen form, which since round 72 only arrivals from home get); from round I3 Y *Join at <host>* on a row whose players are elsewhere | arrows, Enter, Backspace for B |
+| Go-along notice (19.30.6) | nothing while it only shows (it takes no button); View/Back opens the F1 menu on the *Instance* page with the offer focused; there D-pad up/down chooses an offer, A goes along, B closes the menu (stay) | F1, arrows, Enter, Esc |
 | Browser NPC | A near it, facing it (the press is held from the pad stream, 19.10); then as the *Instances* page | the A keys (Enter, Space, K) near it; not E, which is the game's R |
 | Player card | from the *Nearby* page (A on a row), the friend list, the *Instance* page; no pad button at the figure | C near a figure (unbound in the game's defaults) |
 | Spectator (staff) | LB/RB cycle the members' cameras; Y the free camera (right stick); View opens the menu with *Stop watching* | Tab, F, mouse |
 
 While the F1 menu or the prompt is open the game gets neutral pads, so LB,
 RB, X and Y there reach no game button (L, Z, X, Y); in a field nothing
-pauses (round 63), so the player's Digimon stands where it is. A spectator
+pauses (round 63), so the player's Digimon stands where it is. The
+go-along notice is no overlay: it takes no input, so the game keeps every
+button while it shows. A spectator
 has no slot, so its buttons reach no game either. Outside these overlays
 every pad button stays the game's: the GameCube layout of `settings.cpp`
 (Y is Y, LB is L, RB is Z, the keyboard's E is R and Tab is Start).
@@ -9154,6 +9217,8 @@ A NEW decision for a fresh arrival (19.7) makes an instance:
   leak), so the relay never separates the two.
 - **Visibility:** the prompt's choice, else `online_prefs.default_visibility`.
 - **Settings:** the host's (19.8.7). **Story:** the host's keeper (19.8.1).
+- **Area:** the area of the stage the host entered (19.30.2), fixed for
+  the instance's life; that stage starts its visited set (19.30.3).
 - A row of `instance_history` is queued (19.17.1).
 
 BARRIER_OK tells every member of the arriving group the instance id, the
@@ -9191,8 +9256,14 @@ host's member id and the settings; INSTANCE_INFO follows.
   travel with the living", `Engine::online_split`) stays as built: when the
   last living member of the host's stage group takes an exit home, a
   defeated host goes along, and that counts as defeated, not on purpose.
-- *Go to Kim* (I3): a guest's travel to the host inside the instance
-  (19.9), for a guest who wandered off.
+- *Go to Kim* (I3): a member's travel to another member (the host or any
+  other) inside the instance, for one who wandered off; it never leaves
+  the instance (GO, 19.9.6).
+- **The area and the offer** (decision 38): every stage the members reach
+  lies in the instance's area (19.30.2); a member who goes from a field
+  into a dungeon makes the go-along offer to the members in fields
+  (19.30.5), and *Go along* departs straight to the target inside the
+  instance (GO, 19.30.7).
 
 #### 19.6.4 A guest leaves
 
@@ -9221,7 +9292,12 @@ An instance ends when:
 - the server stops.
 
 Q7's "exit" is read as an exit that leads home. An exit into another field,
-dungeon or boss stage is travel inside the instance (19.6.3).
+dungeon or boss stage is travel inside the instance (19.6.3). Decision 38
+says the same in the user's words: the instance ends when its host leaves
+the area completely, and the only way out of an area is home (19.30.2,
+the Fortress counting as Death Valley's). A dungeon's last exit after its
+boss and a boss stage's exit lead into the lobby, so a host who takes
+them ends the instance (19.30.1, fact 2).
 
 **The defeated host's return** (question 37, round I3). His barrier into
 the hub stage is held (BARRIER_WAIT reason *return*, `HoldKind.Return`)
@@ -9417,6 +9493,8 @@ STORY counts by its role.
 | Event | Server | Engines | Players see |
 | --- | --- | --- | --- |
 | A member takes an exit to another field | barrier inside the instance (3.4 filtered) | 5.2 as built | "Lee went to B2." |
+| A member goes from a field into a dungeon | barrier inside the instance; the go-along offer to the members in fields (19.30.5) | 5.2 as built | "Kim went into Ancient Ruins B1. Go along?  View: answer" |
+| A member goes along | INTENT 4, GO stamped; its barrier joins the entrants at the entrance (19.30.7) | the exit port's departure for that slot (`ForkKind::exit`) | "Joining Kim..."; "Lee joined." |
 | A guest goes home (exit into a hub, gate disc, game over) | DISSOLVE, seat freed | as built | "Lee left." |
 | A guest's *Leave instance* | HOME(slot) | home departure (fork) | "Lee left." |
 | The host goes home on purpose | END `host_left`, HOME(all) after 3 s | home departure | "Kim left. The instance ends." |
@@ -9455,26 +9533,29 @@ and the server revisions unchanged by the foreign story.
 #### 19.7.1 When
 
 At the departure of a *fresh arrival* into a joinable stage (not
-`StageNames.IsHub`): a group from home, or a host alone in his instance
-moving on. Never for a group with a guest in it (it travels inside its
-instance), a party member arriving with its leader (I4), a travel, a seat
-rejoin.
+`StageNames.IsHub`): a group from home. Never for a group already in an
+instance (it travels inside its instance and its area; since round 72 a
+host alone in his instance too, 19.30.3), a party member arriving with its
+leader (I4), a travel, a seat rejoin.
 
 - A *starting* instance (19.3, 19.7.6) at that stage that the arrival may
   see and that has seats for it: co-arrival without a prompt (answer 21).
-- Else candidates exist (19.7.2): the prompt, in the gate form (19.7.4) or
-  the loading-screen form (19.7.5).
+- Else candidates exist in the stage's area (19.7.2, 19.30.3): the prompt,
+  in the gate form (19.7.4) or the loading-screen form (19.7.5).
 - Nothing: NEW with the remembered visibility, the toast.
 
 Round I1a builds the world without the prompt: there an arrival from home
-with candidates JOINs the first of them by 19.7.3's order automatically
-(today's `JoinOrNew`, filtered by Visible() and the instance), with the
-toast "You joined Kim's instance. Leave: Online menu"; a lone host moving
-on keeps his instance. Round I1b puts the prompt in front of both. Both are merged separately and deployed together (19.25).
+with candidates enters the first of them by 19.7.3's order automatically
+(today's `JoinOrNew`, filtered by Visible() and the instance, at the
+stage, or as a guest in a new stage group there, 19.30.4), with the toast
+"You joined Kim's instance. Kim is in <stage>. Leave: Online menu". Round
+I1b puts the prompt in front. Both are merged separately and deployed
+together (19.25).
 
-A host alone in his instance who chooses *Join* ends his own instance
-(nobody else is in it) and becomes a guest; *New instance* keeps his
-instance, which moves on with him.
+(Before round 72 a host alone in his instance who moved on was a fresh
+arrival too, with *Join* ending his instance and *Continue alone* keeping
+it. With instances per area his moves stay inside his instance and are
+never prompted, 19.30.3.)
 
 #### 19.7.2 Who sees what: Visible() and the candidates
 
@@ -9496,12 +9577,17 @@ without a logged reason.
 The relay recomputes it at every OPTIONS, BROWSE, friend list update and
 decision, from its social cache (19.17.2), and never trusts a client's list.
 
-**Candidates of an arrival at stage S with context hash C** (3.7): the
-instances visible to every member of the arriving group that have a stage
-group at S with context C and the arrival's data hash (19.17.3), are not
-ending, and are listed with their state:
+**Candidates of an arrival at stage S with context hash C** (3.7; round 72:
+per area, 19.30.3): the instances of S's area visible to every member of
+the arriving group, with context C and the arrival's data hash (19.17.3),
+not ending, and listed with their state:
 
-- joinable now, with seats for the whole group;
+- joinable now, with seats for the whole group: a JOIN at S when the
+  instance has a stage group there, else entering as a guest in a new
+  stage group at S (19.30.4) when S is a gate stage or visited;
+- *Not here yet* (greyed): no stage group at S, and S is neither a gate
+  stage nor visited (19.30.3); choosable from round I3 by *Join at
+  <host>*;
 - *Boss fight* (boss-locked): choosing it waits (19.7.7);
 - *Host reconnecting* (greyed, not choosable);
 - *Full* (greyed; for staff *Spectate*, I3);
@@ -9515,11 +9601,14 @@ Plus, at the top, the own party's instance wherever it is (I4), as a travel
 row ("Join your party (Kim): Cliff Dungeon B3"). At most 8 rows, then *New
 instance* always last.
 
-The prompt lists only the target stage: a player who enters Cliff Dungeon
-B1 while Kim's instance is in B3 gets no row for it. *Proposal* (not
-decided, 19.26 idea 17): from round I3, instances of the same area elsewhere
-as travel rows under the stage's own ("Kim's instance - B3 - join at the
-host"), a travel (19.9) like the party row.
+The states *Boss fight*, *Arriving now* and *Too long to catch up* are
+those of the instance's stage group at S. The prompt lists the instances
+of the arrival's area (decision 38; until round 72 only those with a stage
+group at the target stage, with 19.26 idea 17's area rows as a proposal):
+a player who takes the gate to Dry Land while Kim's instance is in Ancient
+Ruins B2 gets Kim's row ("Ancient Ruins B2") and enters as a guest where
+he walked in (19.30.3, 19.30.4); from round I3 the row's *Y: Join at Kim*
+travels next to Kim (19.9, question 40).
 
 #### 19.7.3 Order and preselection (Q13)
 
@@ -9531,13 +9620,15 @@ Q13's order: "party and friends first, then the best ping and free slots".
    instance's members, the relay's `RttSamples`, lowest first; pings within
    10 ms of each other count as equal);
 4. more free seats for the arriving group;
-5. the same story point as the arriving player's own (19.8.6; from round
+5. more of the instance's players at the arrival's stage (round 72,
+   19.30.3; a badge "Here (n)" on the row);
+6. the same story point as the arriving player's own (19.8.6; from round
    I2), only as the last tie-breaker; it is a badge on the row ("Same story
    point"), so a player who wants it sees it;
-6. the older instance.
+7. the older instance.
 
-Greyed and waiting rows (boss fight, host reconnecting, full) come after the
-joinable ones. The first row is preselected. The relay sends OPTIONS again on
+Greyed and waiting rows (boss fight, host reconnecting, full, not here yet)
+come after the joinable ones. The first row is preselected. The relay sends OPTIONS again on
 a change, at most once a second, and the client keeps the cursor on the same
 instance.
 
@@ -9581,10 +9672,10 @@ instance.
 #### 19.7.5 The loading-screen form
 
 Every other fresh arrival (a quest board's start if the census cannot name
-it, a host alone in his instance at a field exit, any departure the census
+it, the return mat's arrival if it cannot, any departure the census
 missed): the relay holds its barrier (`HoldKind.Prompt`, BARRIER_WAIT reason
 *choice* with OPTIONS) without a time limit. Only its own loading screen
-waits: the arriving group is alone (from home, or the lone host). The
+waits: the arriving group is alone (from home). The
 client's five-second "no answer, go on as NEW" rule (3.4) does not fire
 while it shows the prompt. *A*: JOIN or NEW with the visibility.
 
@@ -9596,8 +9687,9 @@ loading screen can:
   the departure it took (the census of 19.7.4 names it; stagML11 point 3
   when it names none). A reload of the lobby, on the own story; nothing of
   the field was played.
-- **A lone host in a field moving on:** B is *Continue alone*, a NEW (his
-  instance moves on with him; there is no gate to go back to).
+- Since round 72 every fresh arrival comes from home (19.30.3), so B is
+  always *Back to the lobby*; the lone host's *Continue alone* went with
+  his prompt.
 
 **The connection lost meanwhile.** The relay forgets the hold at a
 disconnect (`DetachLocked` drops `m.Arrival`), so a prompt shown after it
@@ -9640,9 +9732,13 @@ later groups spawned in the base's load step). In the world:
 CHOICE is checked again at the decision:
 
 - **Join:** JOIN at the entrance point the arrival came through (3.4), with
-  3.4's hold until joinable.
+  3.4's hold until joinable; where the instance has no stage group at the
+  stage (round 72), a NEW as a guest: a new stage group of the instance
+  with the host's story by the replace (19.30.4).
 - **Boss-locked:** BARRIER_WAIT's existing *Wait for <names>* (JOIN when the
-  lock clears) or *Go alone*, which is NEW.
+  lock clears) or *Go alone*, which since round 72 is a new stage group of
+  the chosen instance at that stage, as a guest (19.30.4); before, a new
+  instance.
 - **Full, ended, no longer visible meanwhile:** a refreshed prompt with the
   line "Kim's instance is full now." (gate form: before the departure;
   loading-screen form: the barrier keeps waiting).
