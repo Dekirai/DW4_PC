@@ -572,10 +572,11 @@ skill-up panels at least 30 frames apart, no Lua error.
 
 ### 10.7 Open
 
-- **Phase 4's entry.** Most runs of both bots end between 15:30 and 17:40
-  (13-16 of 20 deaths in two minutes; the review round accepted 12): the
+- **Phase 4's entry.** Most runs end in phase 4's first three minutes, 13-16
+  of 20 deaths within two minutes for each bot and form (the review round
+  accepted 12; human Agumon 15:20-17:27, kite Veemon 16:04-17:54): the
   phase 4 families come in by 17:00 (weight over 90 s, damage over 120 s)
-  and MRε05 on the 20-25 ring brings 0.27-0.33 MaxHP a minute alone. Next:
+  and MRε05 on the 20-25 ring brings 0.26-0.34 MaxHP a minute alone. Next:
   phase 4's intro over 180-240 s, MRε05 on the slow walkers' ring or a lower
   factor, then the growth again so the kite bot stays at 17-20 minutes.
 - **Skill after 10:00.** The human bot lasts nearly as long as the kite bot
