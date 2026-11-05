@@ -6,7 +6,8 @@ engine-wide *temporary* value a stage script reads or writes:
 
   - the FLAG indexes gameStart.lua (stagIS10) clears when a character is
     called, minus the story working set it restores from its copies, plus
-    the values the story merge never takes (0, 503, 508, 611, 900-937);
+    the values the story merge never takes (0, 508, 611, 900-937; 503 is
+    story since round G, docs/SEAMLESS.md 8.8);
   - COUNTER 0 and 2..6 (COUNTER 1 and 7 are story counters);
   - flag folder 11 (the quest item; folder 0..10 are key items);
   - GATESTAGE name / number (the gate disc's return point).
@@ -58,7 +59,7 @@ STORY = set()
 for first, count in STORY_GROUPS:
     STORY.update(range(first, first + count))
 # Never merged although not cleared by gameStart.lua (docs/SEAMLESS.md 8.2).
-NEVER_MERGED = {0, 503, 508, 611} | set(range(900, 938))
+NEVER_MERGED = {0, 508, 611} | set(range(900, 938))
 TEMPORARY_FLAGS = (TEMP - STORY) | NEVER_MERGED
 TEMPORARY_COUNTERS = {0, 2, 3, 4, 5, 6}
 

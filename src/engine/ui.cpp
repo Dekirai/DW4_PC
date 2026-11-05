@@ -239,6 +239,7 @@ void TextCtlManager::set_text(Engine& engine, Line& target, const std::u16string
         }
         engine.log("text " + target.layer + "/" + target.name + ": " + ascii);
     }
+    target.text = value;
     Node* geometry_node = find_geometry(target.node);
     if (!geometry_node) return;
     auto font_it = fonts_.find(target.style.empty() ? "NORMAL" : target.style);
@@ -357,6 +358,19 @@ void TextCtlManager::make_copies(Engine& engine, int slot, const Ram& ram, std::
         copy.index = int(index);
         lines_.push_back(std::move(copy));
     }
+    // Round J: the topology journal (the RAM by its place in this manager).
+    if (lines_.size() != count)
+        for (std::size_t r = 0; r < rams_.size(); ++r)
+            if (rams_[r].get() == &ram) {
+                engine.journal({0, Engine::TopologyEntry::line_copies, std::string(layer), std::string(name), std::int32_t(r), slot});
+                break;
+            }
+}
+
+void TextCtlManager::replay_copies(Engine& engine, int slot, int ram, std::string_view layer, std::string_view name) {
+    if (ram < 0 || std::size_t(ram) >= rams_.size()) throw TickStateError("topology", "a text copy of an unknown RAM");
+    const Engine::SceneScope scope(engine, slot);
+    make_copies(engine, slot, *rams_[std::size_t(ram)], layer, name);
 }
 
 bool TextCtlManager::command(Engine& engine, Ram& ram, std::string_view command, Packet& packet) {

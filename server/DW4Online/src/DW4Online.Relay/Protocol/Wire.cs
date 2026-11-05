@@ -20,6 +20,10 @@ public static class Wire
     public const int MaxSlots = 4;
     public const byte SlotMask = 0x0F;
     public const int MaxStageName = 24;
+    /// <summary>Round J: rooms of this client protocol and later take checkpoints (STATEHASH, CHECKPOINT, STATE_DATA codec 2);
+    /// an older room's members would refuse a codec 2 state. The same protocol as RoomStoryKeeper.QueuedProtocol (round
+    /// G-core: STORY_ACK's queued, flag 503 as story): the two rounds ship together as 47.</summary>
+    public const int CheckpointProtocol = 47;
 }
 
 /// <summary>Frame types. Client to server 0x01-0x3F, server to client 0x80-0xBF.</summary>
@@ -46,6 +50,12 @@ public static class Msg
     public const byte Pong = 0x12;
     public const byte Bye = 0x13;
     public const byte Presence2 = 0x14;
+    /// <summary>Round J (SEAMLESS.md 6.13.7): the canonical tick state's hash at a checkpoint tick, with the load end.</summary>
+    public const byte StateHash = 0x15;
+    /// <summary>Round J: a chunk of the donor's checkpoint (its raw tick state, compressed).</summary>
+    public const byte Checkpoint = 0x16;
+    /// <summary>Round J: a joiner's rebuild from a checkpoint failed.</summary>
+    public const byte CheckpointBad = 0x17;
 
     // server -> client
     public const byte Welcome = 0x80;
@@ -65,6 +75,8 @@ public static class Msg
     public const byte Reassign = 0x8E;
     public const byte NetStat = 0x8F;
     public const byte Presence2Out = 0x90;
+    /// <summary>Round J: the donor uploads its tick state at its next state-safe tick (0x91 stays free).</summary>
+    public const byte CheckpointAsk = 0x92;
 
     public static string Name(byte type) => type switch
     {
@@ -72,6 +84,7 @@ public static class Msg
         Split => "SPLIT", Snapshot => "SNAPSHOT", SnapHash => "SNAPHASH", Ready => "READY", JoinAt => "JOIN_AT",
         NetFp => "NETFP", State => "STATE", Intent => "INTENT", Story => "STORY", Presence => "PRESENCE",
         Resume => "RESUME", Rate => "RATE", Pong => "PONG", Bye => "BYE", Presence2 => "PRESENCE2",
+        StateHash => "STATEHASH", Checkpoint => "CHECKPOINT", CheckpointBad => "CHECKPOINT_BAD", CheckpointAsk => "CHECKPOINT_ASK",
         Welcome => "WELCOME", Sealed => "SEALED", Live => "LIVE", JoinReq => "JOIN_REQ", BarrierOk => "BARRIER_OK",
         BarrierWait => "BARRIER_WAIT", StateData => "STATE_DATA", PresenceOut => "PRESENCE", Resync => "RESYNC",
         StoryAck => "STORY_ACK", Room => "ROOM", Ping => "PING", Close => "CLOSE", Roster => "ROSTER", Reassign => "REASSIGN", NetStat => "NETSTAT",

@@ -6,6 +6,7 @@
 #include "dw4/card_store.hpp"
 #include "dw4/save_data.hpp"
 
+#include <algorithm>
 #include <cstdlib>
 #include <ctime>
 #include <filesystem>
@@ -179,6 +180,56 @@ void validity() {
 
 } // namespace
 
+// Round G-core (docs/SEAMLESS.md 8.8): a store with a story override writes it
+// into every used box of both copies with valid checksums and leaves empty
+// boxes and damaged copies alone; without one the bytes are written unchanged.
+void story_override(const fs::path& root) {
+    dw4::save::Record used;
+    used.blank = false;
+    used.used = true;
+    used.unique = 5;
+    used.level = 3;
+    used.flags[2] = 1;  // the engine's (borrowed) story: phase 2 ...
+    used.flag_folder[5] = 1;
+    const auto record = dw4::save::encode(used);
+    std::vector<dw4::save::Record> records(2);
+    records[0] = used;     // box 0 used, box 1 empty
+    const auto file = dw4::save::write_file(std::vector<std::uint8_t>(dw4::save::kHeaderSize, 0), records);
+    std::vector<std::uint8_t> gci(dw4::save::kGciEntrySize, 0);
+    gci.insert(gci.end(), file.begin(), file.end());
+    check(dw4::save::valid_save_gci(gci), "the test save is valid");
+    dw4::save::StoryBytes own{};
+    own[1] = 1;            // ... its own: phase 1
+    own[1024 + 0] = 1;     // K0
+    own[1028 + 3] = 7;     // a counter byte
+    auto store = dw4::save::CardStore::single_file(root / "story_a.dat", root / "story_b.dat");
+    check(store.write(0, gci), "a write without an override");
+    check(*store.read(0) == gci, "without an override the bytes are written unchanged");
+    store.set_story_override(own);
+    check(store.write(0, gci), "a write with an override");
+    const auto out = *store.read(0);
+    check(dw4::save::valid_save_gci(out), "the overridden save is valid (checksums fixed)");
+    for (const auto offset : dw4::save::kCopyOffsets) {
+        const auto copy = dw4::save::kGciEntrySize + offset;
+        const auto box0 = copy + 8 + dw4::save::kStoryOffset;
+        check(std::equal(own.begin(), own.end(), out.begin() + std::ptrdiff_t(box0)), "box 0 of each copy holds the override");
+        const auto box1 = copy + 8 + dw4::save::kRecordStride;
+        check(std::all_of(out.begin() + std::ptrdiff_t(box1), out.begin() + std::ptrdiff_t(box1 + dw4::save::kRecordSize),
+                          [](std::uint8_t b) { return b == 0; }), "an empty box stays empty");
+        check(std::equal(out.begin() + std::ptrdiff_t(copy + 8), out.begin() + std::ptrdiff_t(copy + 8 + dw4::save::kStoryOffset), record.begin()),
+              "the personal bytes stay");
+    }
+    // A damaged copy is left as it is.
+    auto damaged = gci;
+    damaged[dw4::save::kGciEntrySize + dw4::save::kCopyOffsets[1] + 100] ^= 0xFF;
+    const auto fixed = dw4::save::with_story(damaged, own);
+    check(std::equal(fixed.begin() + std::ptrdiff_t(dw4::save::kGciEntrySize + dw4::save::kCopyOffsets[1]),
+                     fixed.begin() + std::ptrdiff_t(dw4::save::kGciEntrySize + dw4::save::kCopyOffsets[1] + dw4::save::kCopySize),
+                     damaged.begin() + std::ptrdiff_t(dw4::save::kGciEntrySize + dw4::save::kCopyOffsets[1])),
+          "a damaged copy stays as it is");
+    check(dw4::save::with_story(std::vector<std::uint8_t>(10, 1), own) == std::vector<std::uint8_t>(10, 1), "short bytes come back unchanged");
+}
+
 int main() {
     const auto root = fs::temp_directory_path() / ("dw4_card_store_test_" + std::to_string(std::rand()) + "_" + std::to_string(std::time(nullptr)));
     try {
@@ -187,6 +238,7 @@ int main() {
         folder(root / "folder");
         migration(root / "migration");
         validity();
+        story_override(root / "story");
     } catch (const std::exception& error) {
         std::cerr << "FAIL: " << error.what() << '\n';
         std::error_code ignored;

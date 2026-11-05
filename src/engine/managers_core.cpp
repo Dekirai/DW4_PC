@@ -2611,34 +2611,23 @@ std::shared_ptr<const void> SoundManager::persistent() const {
 
 void SoundManager::restore(Engine& engine, const std::shared_ptr<const void>& opaque) {
     if (!opaque) return;
+    // The session's common banks were loaded with its first sound effect,
+    // long before this stage's banks: in the Cri's list they stand first. A
+    // restored engine loads them now, before the stage load adds the stage's,
+    // so a request whose group two banks hold finds the same bank as in the
+    // session it came from (round J: a joiner's sound effects and SNDF
+    // state, which the members' STATEHASH compares). Online only (round J's
+    // review): an offline save state restores as before round J (Engine::
+    // restore applied the snapshot's online rules before this).
+    if (engine.online().enabled) load_common_banks(engine);
     const auto& state = *static_cast<const SoundState*>(opaque.get());
     for (std::size_t i = 0; i < streams_.size() && i < state.streams.size(); ++i) {
         const auto& s = state.streams[i];
         auto& stream = streams_[i];
         stream = Stream{};
-        if (!s.file.empty()) {
-            unsigned archive = 0, entry = 0;
-            char close = 0;
-            try {
-                const auto& archives = engine.resources().archives();
-                if (std::sscanf(s.file.c_str(), "[%u.%u%c", &archive, &entry, &close) == 3 && archive < archives.size()) {
-                    stream.decoder = std::make_unique<adx::Decoder>(archives[archive].read(entry, 64u * 1024u * 1024u));
-                    std::int16_t scratch[16 * 512];
-                    const std::uint32_t channels = std::max<std::uint32_t>(1, stream.decoder->header().channels);
-                    std::uint64_t left = s.frames_read;
-                    while (left > 0) {
-                        const auto chunk = std::size_t(std::min<std::uint64_t>(left, sizeof scratch / sizeof scratch[0] / channels));
-                        const auto got = stream.decoder->read(scratch, chunk);
-                        if (got == 0) break;
-                        left -= got;
-                    }
-                    stream.file = s.file;
-                    stream.frames_read = s.frames_read - left;
-                }
-            } catch (const std::exception&) {
-                stream.decoder.reset();
-            }
-        }
+        stream.file = s.file;
+        open_decoder(engine, stream, s.frames_read);
+        if (!stream.decoder) stream.file.clear();
         stream.name = s.name;
         stream.serial = s.serial;
         stream.priority = s.priority;
@@ -2656,44 +2645,51 @@ void SoundManager::restore(Engine& engine, const std::shared_ptr<const void>& op
     cri_ = state.cri;
 }
 
-void SoundManager::serialize_persistent(StateArchive& a, std::shared_ptr<const void>& opaque, bool canonical) {
-    bool present = opaque != nullptr;
-    a.io(present);
-    if (!present) return;
-    auto state = a.reading() ? std::make_shared<SoundState>() : std::make_shared<SoundState>(*static_cast<const SoundState*>(opaque.get()));
-    std::uint32_t count = std::uint32_t(state->streams.size());
-    a.io(count);
-    if (a.reading()) {
-        if (count > 64) throw std::runtime_error("save state holds an implausible stream count");
-        state->streams.resize(count);
-    }
-    for (auto& s : state->streams) {
-        a.io(s.name);
-        a.io(s.file);
-        if (canonical && !a.reading()) {
-            std::uint64_t none = 0;
-            a.io(none);
-        } else {
-            a.io(s.frames_read);
+void SoundManager::open_decoder(Engine& engine, Stream& stream, std::uint64_t frames) {
+    stream.decoder.reset();
+    stream.frames_read = 0;
+    stream.src = {};
+    if (stream.file.empty()) return;
+    unsigned archive = 0, entry = 0;
+    char close = 0;
+    try {
+        const auto& archives = engine.resources().archives();
+        if (std::sscanf(stream.file.c_str(), "[%u.%u%c", &archive, &entry, &close) != 3 || archive >= archives.size()) return;
+        stream.decoder = std::make_unique<adx::Decoder>(archives[archive].read(entry, 64u * 1024u * 1024u));
+        std::int16_t scratch[16 * 512];
+        const std::uint32_t channels = std::max<std::uint32_t>(1, stream.decoder->header().channels);
+        std::uint64_t left = frames;
+        while (left > 0) {
+            const auto chunk = std::size_t(std::min<std::uint64_t>(left, sizeof scratch / sizeof scratch[0] / channels));
+            const auto got = stream.decoder->read(scratch, chunk);
+            if (got == 0) break;
+            left -= got;
         }
-        a.io(s.serial);
-        a.io(s.priority);
-        a.io(s.type);
-        a.io(s.volume);
-        a.io(s.out_volume);
-        a.io(s.fade.running);
-        a.io(s.fade.from);
-        a.io(s.fade.to);
-        a.io(s.fade.position);
-        a.io(s.fade.increment);
+        stream.frames_read = frames - left;
+    } catch (const std::exception&) {
+        stream.decoder.reset();
+        stream.frames_read = 0;
     }
-    a.io(state->current_bgm);
-    a.io(state->serial);
-    a.io(state->pause_next);
-    a.io(state->se_volume);
-    a.io(state->base_volume);
-    a.io(state->random);
-    auto& cri = state->cri;
+}
+
+// Online, at a live load's snapshot (Engine::begin_stage_load): a restored
+// engine is a new one with the snapshot's sound state, so its game SNDF and
+// sfp pool start free (save state version 36: "their state is not kept").
+// A member that loaded the visit live had the sounds of the stage it left
+// still in them (a common bank's one-shots, freed entries' flags, the
+// allocation counters since its own last restore), so a co-arrival's or a
+// classic joiner's tick state differed from its members' (round J: their
+// STATEHASH never agreed). Every member now starts the visit with the
+// restored engine's game SNDF and pool; the audio's copy (mirror_) is not
+// touched: what still rings plays out (or ends at its sequence's next use,
+// as before), nothing is cut. Offline never comes here.
+void SoundManager::fresh_game_driver() {
+    driver_ = sndf::Driver{};
+    sfp_ = {};
+}
+
+// The CRI streams' state (the stage snapshot's and the tick state's).
+void serialize_cri(StateArchive& a, CriStreams& cri) {
     a.io(cri.drive.buffer_start_offset);
     a.io(cri.drive.buffer_end_offset);
     a.io(cri.drive.buffer_start_time);
@@ -2760,6 +2756,48 @@ void SoundManager::serialize_persistent(StateArchive& a, std::shared_ptr<const v
     a.io(movie.write_pos);
     a.io(movie.written);
     a.io(movie.consumed);
+}
+
+void SoundManager::serialize_persistent(StateArchive& a, std::shared_ptr<const void>& opaque, bool canonical) {
+    bool present = opaque != nullptr;
+    a.io(present);
+    if (!present) return;
+    auto state = a.reading() ? std::make_shared<SoundState>() : std::make_shared<SoundState>(*static_cast<const SoundState*>(opaque.get()));
+    std::uint32_t count = std::uint32_t(state->streams.size());
+    a.io(count);
+    if (a.reading()) {
+        if (count > 64) throw std::runtime_error("save state holds an implausible stream count");
+        state->streams.resize(count);
+    }
+    for (auto& s : state->streams) {
+        a.io(s.name);
+        a.io(s.file);
+        if (canonical && !a.reading()) {
+            std::uint64_t none = 0;
+            a.io(none);
+        } else {
+            a.io(s.frames_read);
+        }
+        a.io(s.serial);
+        a.io(s.priority);
+        a.io(s.type);
+        a.io(s.volume);
+        a.io(s.out_volume);
+        a.io(s.fade.running);
+        a.io(s.fade.from);
+        a.io(s.fade.to);
+        a.io(s.fade.position);
+        a.io(s.fade.increment);
+    }
+    a.io(state->current_bgm);
+    a.io(state->serial);
+    a.io(state->pause_next);
+    a.io(state->se_volume);
+    a.io(state->base_volume);
+    a.io(state->random);
+    auto& cri = state->cri;
+    serialize_cri(a, cri);
+    const auto& movie = cri.movie;
     if (a.reading() && (cri.inflight.slot < -1 || cri.inflight.slot > CriStreams::kMovieHeaderSlot))
         throw std::runtime_error("save state holds an invalid stream read");
     if (a.reading() && (movie.pos > movie.sectors || movie.request > CriStreams::kMovieRingSectors ||
@@ -3025,6 +3063,7 @@ void TextureCtrlManager::clear_stage(Engine&) {
     ctrl_attrs_.clear();
     owned_.clear();
     pending_ = false;
+    rebind_after_state_ = false;
 }
 
 void TextureCtrlManager::bind_all(Engine& engine) {
@@ -3053,8 +3092,9 @@ void TextureCtrlManager::bind_all(Engine& engine) {
 }
 
 void TextureCtrlManager::update(Engine& engine) {
-    if (!pending_) return;
+    if (!pending_ && !rebind_after_state_) return;
     pending_ = false;
+    rebind_after_state_ = false;
     bind_all(engine);
 }
 
@@ -3658,6 +3698,8 @@ bool GameSystem::script_call(Engine& engine, const std::string& method, std::spa
     if (method == "SYSgetPlayerNinzu") {
         int n = 0;
         for (const auto& p : players) n += p.joined ? 1 : 0;
+        // (Online, the call shop's script reads 4: its refusal branch, round G-core.)
+        if (engine.online_callshop_closed()) n = 4;
         out = {Lua4Value::number(n)};
         return true;
     }

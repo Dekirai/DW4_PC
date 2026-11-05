@@ -63,6 +63,7 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace {
@@ -927,6 +928,12 @@ int run(const Options& options, dw4::game::Settings& settings) {
             return false;
         }
         *online_card = online->character_card();
+        // (A 409's reload gives a guest's own story anew: the store with it, for this
+        // engine and the fresh ones of joins and resyncs; round G-core's review.)
+        online->card_story_changed = [&engine, online_card, run = online.get()] {
+            *online_card = run->character_card();
+            engine.set_card_store(*online_card);
+        };
         // --online-card FOLDER (development builds, test runs): the card
         // starts with the DW4 save of FOLDER (or of its "Card A") instead of
         // the server's character, a character to call at the title; its
@@ -2500,17 +2507,45 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 // live sealed tick at or after TICK, one draw of the system
                 // generator that no other machine makes: a desync the relay's
                 // fingerprint vote finds and a resync repairs (6.9).
+                // DW4_ONLINE_TEST_DESYNC=join+N (scenario JS2): the same draw N
+                // sealed ticks after this member's own JOIN in a visit (a
+                // joiner whose engine came from a checkpoint drifts after its
+                // READY passed: 6.13.4's rebuilt member).
                 if (online) {
-                    static const long long desync_tick = [] {
+                    struct DesyncHook {
+                        long long tick = -1; // TICK, or N after the own JOIN
+                        bool after_join = false;
+                    };
+                    static const DesyncHook desync = [] {
+                        DesyncHook hook;
                         const char* text = std::getenv("DW4_ONLINE_TEST_DESYNC");
-                        return text && *text ? std::atoll(text) : -1LL;
+                        if (!text || !*text) return hook;
+                        hook.after_join = std::string_view(text).starts_with("join+");
+                        hook.tick = std::max(-1LL, std::atoll(hook.after_join ? text + 5 : text));
+                        return hook;
                     }();
+                    const auto joined = online->session().joined_tick();
+                    const long long desync_tick = !desync.after_join ? desync.tick : desync.tick >= 0 && joined ? *joined + desync.tick : -1LL;
+                    // DW4_ONLINE_TEST_TICKSTATE_SKIP=1 (scenario JS): the tick
+                    // state misses the model RAMs' HP and the system generator
+                    // on this machine.
+                    static const bool skip_hp = [] {
+                        const char* text = std::getenv("DW4_ONLINE_TEST_TICKSTATE_SKIP");
+                        const bool on = text && *text == '1';
+                        dw4::engine::Engine::set_tick_state_skip_hp(on);
+                        return on;
+                    }();
+                    (void)skip_hp;
                     static bool desynced = false;
                     if (!desynced && desync_tick >= 0 && online->session().mode() == dw4::game::online::Mode::sealed &&
                         online->session().tick() >= std::uint64_t(desync_tick)) {
                         desynced = true;
                         (void)dw4::engine::fight::random();
-                        std::printf("online: test desync at tick %u\n", online->session().tick());
+                        if (desync.after_join)
+                            std::printf("online: test desync at tick %u (%lld ticks after the own join at %u%s)\n", online->session().tick(),
+                                        desync.tick, *joined, online->session().from_checkpoint() ? ", engine from a checkpoint" : "");
+                        else
+                            std::printf("online: test desync at tick %u\n", online->session().tick());
                     }
                 }
 #endif
@@ -2688,6 +2723,11 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     std::cout << "online: " << notice << '\n';
                     toasts.push_back({"Online", notice, std::chrono::steady_clock::now() + std::chrono::seconds(5)});
                 }
+                // (Round G-core: the guest's story at its Game Start, the closed call shop.)
+                for (auto& notice : online->take_notices()) {
+                    std::cout << "online: " << notice << '\n';
+                    toasts.push_back({"Online", notice, std::chrono::steady_clock::now() + std::chrono::seconds(8)});
+                }
                 if (auto* character = online->character())
                     for (auto& notice : character->take_notices()) {
                         std::cout << "online: character: " << notice << '\n';
@@ -2822,6 +2862,10 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     room.relay_port = ready->relay_port;
                     room.settings = ready->joined.settings;
                     room.max_players = ready->joined.max_players;
+                    // (The room's owner as the --online-* way decides it: a guest from the
+                    // room list played as the owner before, and its card took the room story.)
+                    dw4::game::set_room_owner(room, ready->joined, ready->created);
+                    std::cout << "online: " << (room.room_owner ? std::string("the room's owner") : "a guest of " + room.owner_name) << '\n';
                     auto http = std::make_unique<dw4::game::online::HttpWorker>(dw4::game::online::server_endpoint(),
                                                                                  std::string("DW4_PC/") + DW4_PC_VERSION);
                     http->set_token(ready->token);
@@ -3038,6 +3082,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     room_live.leave_prompt = online->leave_prompt;
                     room_live.in_game = online->link().game_started();
                     if (auto* character = online->character()) room_live.character = character->status_text();
+                    room_live.story = online->story_line();
                     for (const auto& e : session.roster())
                         room_live.members.push_back({e.member, session.member_name(e.member), e.stage, e.inst, e.level, e.hp, e.max_hp,
                                                      (e.flags & 1) != 0, (e.flags & 2) != 0, (e.flags & 4) != 0});
@@ -3347,6 +3392,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                             ImGui::Text("Instance %u, slot %d, %s, input delay %d", online->session().inst(), online->session().own_slot() + 1,
                                         dw4::game::online::mode_name(online->session().mode()), online->session().delay());
                             if (auto* character = online->character()) ImGui::TextDisabled("%s", character->status_text().c_str());
+                            ImGui::TextDisabled("%s", online->story_line().c_str());
                             if (online->leave_prompt) ImGui::TextColored(ImVec4(1, 0.85f, 0.3f, 1), "Leave room?");
                             if (ImGui::Button("Leave room")) leave_room();
                             if (online->leave_prompt && ImGui::Button("Stay")) online->leave_prompt = false;

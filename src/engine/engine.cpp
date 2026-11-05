@@ -732,6 +732,8 @@ void Engine::reset_modules() {
 }
 
 void Engine::begin_stage_load(const StageSnapshot* restoring) {
+    load_end_frame_ = 0; // (round J: the new visit's load end comes at its end)
+    journal_.clear();    // (round J: a new visit's topology journal)
     const std::string next = pending_stage_;
     pending_stage_.clear();
     log("stage change -> " + next);
@@ -824,6 +826,10 @@ void Engine::begin_stage_load(const StageSnapshot* restoring) {
     snapshot.personal = personal_;
     snapshot.serial = ++snapshot_serial_;
     snapshot_ = std::move(snapshot);
+    // Online (round J): from here every member of the visit has the game SNDF
+    // and sfp pool a restored engine has (SoundManager::fresh_game_driver).
+    if (online_.enabled)
+        if (auto* sound = get<SoundManager>()) sound->fresh_game_driver();
 }
 
 void Engine::restore(const StageSnapshot& snapshot) {
@@ -965,6 +971,7 @@ bool Engine::load_common_now(const std::string& logical_path) {
     std::vector<ObjectView> infos;
     load_file(logical_path, false, infos);
     for (const auto& info : infos) register_info(info);
+    if (files_.size() != before) journal({0, TopologyEntry::package, logical_path});
     return files_.size() != before;
 }
 
@@ -2077,6 +2084,9 @@ void Engine::step_impl(const std::array<PadSample, 4>& samples) {
     update_managers();
     // Data Overflow (H9): the director's step, after the managers.
     if (overflow_run_) overflow_->step(*this);
+    // Round J: the visit's load end (the tick state's K; read by nothing in
+    // the simulation).
+    if (!load_end_frame_ && stage_active_ && loader_state_ == -1 && pending_stage_.empty()) load_end_frame_ = frame_;
 }
 
 // The scheduler run (8028B7B0): the managers scheduled at registration, then

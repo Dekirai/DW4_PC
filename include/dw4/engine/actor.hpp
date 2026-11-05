@@ -47,6 +47,8 @@ public:
     // clip no MOTIONSET has set yet keeps the source's default 0 (loop).
     bool looping(std::string_view name) const;
     void set_looping(std::string_view name, bool loop);
+    // The tick state: MOTIONSET's loop flags of this database's clips.
+    std::map<std::string, bool, std::less<>>& loops() { return looping_; }
 
 private:
     ObjectView object_;

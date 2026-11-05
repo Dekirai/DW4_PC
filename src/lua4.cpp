@@ -1,5 +1,7 @@
 #include "dw4/lua4.hpp"
 
+#include <cstring>
+
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -9,6 +11,7 @@
 #include <limits>
 #include <optional>
 #include <map>
+#include <string_view>
 #include <unordered_set>
 #include <utility>
 
@@ -394,6 +397,7 @@ struct Lua4Vm::Impl {
     // L->top inside the running host callback (a nested chunk's closure).
     std::size_t stack_last{}, stack_peak{}, error_top{}, callback_top{};
     bool stopped{}, running{};
+    bool strings_by_content{}; // the collector counts a string once per content (online), else per object
     Lua4Site site;
 
     explicit Impl(Lua4Limits requested) : limits(requested), work_remaining(requested.max_string_work) {
@@ -567,11 +571,22 @@ struct Lua4Vm::Impl {
         std::vector<std::uint8_t> table_marks(tables.slots.size()), closure_marks(closures.slots.size());
         std::vector<std::uint32_t> table_work, closure_work;
         // Sharing sets: membership only, so the byte sum does not depend on hashing order.
-        std::unordered_set<const std::string*> strings;
+        // A string counts once per content, as Lua 4's interned TStrings do
+        // (luaS_new): the sum does not depend on which values happen to share
+        // one std::string, which a restored tick state (round J) cannot keep
+        // (values sharing a program's constant or a host's string; a joiner's
+        // collections came at other times than its members'). Online only
+        // (strings_by_content, set by the engine from its online rules; round
+        // J's review): offline the count stays per std::string object, as
+        // before round J, so offline collections come at the same steps.
+        std::unordered_set<std::string_view> strings;
+        std::unordered_set<const std::string*> string_objects;
         std::unordered_set<const Lua4Program::Impl*> programs;
         std::size_t live = state_bytes, entries = 0;
         auto text = [&](const std::shared_ptr<const std::string>& value) {
-            if (value && strings.insert(value.get()).second) live += string_bytes(value->size());
+            if (!value) return;
+            if (strings_by_content ? strings.insert(std::string_view(*value)).second : string_objects.insert(value.get()).second)
+                live += string_bytes(value->size());
         };
         auto object = [&](Lua4Type type, std::uint64_t handle) {
             const auto at = static_cast<std::uint32_t>(handle);
@@ -1067,6 +1082,9 @@ void Lua4Vm::set_resumable_host_handler(Lua4ResumableHostHandler handler) {
         fail("cannot replace the resumable host owner of an inactive/running/stopped or suspended VM");
     impl_->resumable_host=std::move(handler);
 }
+void Lua4Vm::set_strings_by_content(bool on) {
+    if (impl_) impl_->strings_by_content = on;
+}
 void Lua4Vm::set_global(std::string name, const Lua4Value& value) {
     if (!impl_ || impl_->running || impl_->stopped || impl_->pending_execution()) fail("cannot modify an inactive/running/stopped VM or suspended VM");
     impl_->import(value); impl_->set_global(std::move(name), value);
@@ -1165,6 +1183,202 @@ Lua4RunResult Lua4Vm::resume(Lua4Execution& handle) {
     }
     return result;
 }
+// ---- The tick state (round J): little-endian fields, strings with a u32
+// length, numbers as their bits.
+namespace {
+struct StateWriter {
+    std::vector<std::uint8_t>& out;
+    void u8(std::uint8_t v) { out.push_back(v); }
+    void u32(std::uint32_t v) { for (int i = 0; i < 4; ++i) out.push_back(std::uint8_t(v >> (8 * i))); }
+    void u64(std::uint64_t v) { for (int i = 0; i < 8; ++i) out.push_back(std::uint8_t(v >> (8 * i))); }
+    void f64(double v) { std::uint64_t b; std::memcpy(&b, &v, 8); u64(b); }
+    void str(std::string_view s) { u32(std::uint32_t(s.size())); out.insert(out.end(), s.begin(), s.end()); }
+};
+struct StateReader {
+    std::span<const std::uint8_t> in;
+    std::size_t& at;
+    void need(std::size_t n) const { if (n > in.size() - at) fail("tick state: truncated Lua state"); }
+    std::uint8_t u8() { need(1); return in[at++]; }
+    std::uint32_t u32() { need(4); std::uint32_t v = 0; for (int i = 0; i < 4; ++i) v |= std::uint32_t(in[at++]) << (8 * i); return v; }
+    std::uint64_t u64() { need(8); std::uint64_t v = 0; for (int i = 0; i < 8; ++i) v |= std::uint64_t(in[at++]) << (8 * i); return v; }
+    double f64() { const auto b = u64(); double v; std::memcpy(&v, &b, 8); return v; }
+    std::string str() {
+        const auto n = u32();
+        if (n > max_value_string) fail("tick state: oversized Lua string");
+        need(n);
+        std::string s(reinterpret_cast<const char*>(in.data() + at), n);
+        at += n;
+        return s;
+    }
+    std::uint32_t count(std::uint32_t limit) { const auto n = u32(); if (n > limit) fail("tick state: implausible Lua count"); return n; }
+};
+std::shared_ptr<const Proto> proto_at(const std::shared_ptr<const Proto>& root, std::string_view path) {
+    if (!root) return nullptr;
+    if (root->path == path) return root;
+    for (const auto& child : root->children)
+        if (auto found = proto_at(child, path)) return found;
+    return nullptr;
+}
+} // namespace
+
+void Lua4Vm::write_value(std::vector<std::uint8_t>& out, const Lua4Value& value) const {
+    StateWriter w{out};
+    w.u8(std::uint8_t(value.type_));
+    switch (value.type_) {
+    case Lua4Type::Nil: break;
+    case Lua4Type::Number: w.f64(value.number_); break;
+    case Lua4Type::String: case Lua4Type::HostObject: case Lua4Type::HostFunction:
+        w.str(value.text_ ? std::string_view(*value.text_) : std::string_view()); break;
+    case Lua4Type::Table: case Lua4Type::Function: w.u64(value.handle_); break;
+    }
+}
+Lua4Value Lua4Vm::read_value(std::span<const std::uint8_t> in, std::size_t& at) const {
+    StateReader r{in, at};
+    Lua4Value v;
+    const auto type = r.u8();
+    if (type > std::uint8_t(Lua4Type::HostFunction)) fail("tick state: an unknown Lua value type");
+    v.type_ = Lua4Type(type);
+    switch (v.type_) {
+    case Lua4Type::Nil: break;
+    case Lua4Type::Number: v.number_ = r.f64(); break;
+    case Lua4Type::String: case Lua4Type::HostObject: case Lua4Type::HostFunction:
+        v.text_ = std::make_shared<const std::string>(r.str()); break;
+    case Lua4Type::Table: case Lua4Type::Function:
+        v.handle_ = r.u64();
+        v.owner_ = impl_ ? impl_->identity : 0;
+        break;
+    }
+    return v;
+}
+
+std::vector<std::uint8_t> Lua4Vm::save_state(const std::function<std::uint64_t(const void* program)>& program_id) const {
+    if (!impl_) fail("inactive VM");
+    const auto& s = *impl_;
+    if (s.running || s.pending_execution() || !s.executions.empty()) fail("tick state: a Lua state inside a run");
+    std::vector<std::uint8_t> out;
+    StateWriter w{out};
+    w.u32(std::uint32_t(s.globals.size()));
+    for (const auto& [name, value] : s.globals) {
+        w.str(name);
+        write_value(out, value);
+    }
+    // Tables: every slot (present or not), then the generations and the free list.
+    w.u32(std::uint32_t(s.tables.slots.size()));
+    for (const auto& table : s.tables.slots) {
+        w.u8(table ? 1 : 0);
+        if (!table) continue;
+        w.u32(std::uint32_t(table->values.size()));
+        for (const auto& [key, value] : table->values) {
+            w.u8(std::uint8_t(key.type));
+            w.f64(key.number);
+            w.str(key.text);
+            w.u64(key.handle);
+            write_value(out, value);
+        }
+    }
+    for (const auto g : s.tables.generation) w.u32(g);
+    w.u32(std::uint32_t(s.tables.free.size()));
+    for (const auto f : s.tables.free) w.u32(f);
+    w.u32(std::uint32_t(s.closures.slots.size()));
+    for (const auto& closure : s.closures.slots) {
+        w.u8(closure ? 1 : 0);
+        if (!closure) continue;
+        w.u64(program_id(closure->program.get()));
+        w.str(closure->proto ? std::string_view(closure->proto->path) : std::string_view());
+        w.u32(std::uint32_t(closure->upvalues.size()));
+        for (const auto& value : closure->upvalues) write_value(out, value);
+    }
+    for (const auto g : s.closures.generation) w.u32(g);
+    w.u32(std::uint32_t(s.closures.free.size()));
+    for (const auto f : s.closures.free) w.u32(f);
+    for (const auto v : {s.nblocks, s.threshold, s.collections, s.objects_live, s.entries_live, s.object_trigger, s.entry_trigger,
+                         s.work_remaining, s.instructions, s.host_calls, s.depth, s.stack_last, s.stack_peak, s.error_top, s.callback_top})
+        w.u64(v);
+    w.u8(s.stopped ? 1 : 0);
+    w.str(s.site.source);
+    w.str(s.site.prototype);
+    w.u64(s.site.pc);
+    w.u64(s.next_execution);
+    w.u64(s.next_call);
+    return out;
+}
+
+void Lua4Vm::load_state(std::span<const std::uint8_t> bytes, const std::function<Lua4Program(std::uint64_t id)>& program) {
+    if (!impl_) fail("inactive VM");
+    auto& s = *impl_;
+    if (s.running || s.pending_execution() || !s.executions.empty()) fail("tick state: a Lua state inside a run");
+    std::size_t at = 0;
+    StateReader r{bytes, at};
+    s.globals.clear();
+    for (auto n = r.count(1u << 20); n > 0; --n) {
+        auto name = r.str();
+        s.globals[std::move(name)] = read_value(bytes, at);
+    }
+    const auto tables = r.count(1u << 24);
+    s.tables.slots.clear();
+    s.tables.slots.resize(tables);
+    for (auto& table : s.tables.slots) {
+        if (!r.u8()) continue;
+        table = std::make_unique<Impl::Table>();
+        for (auto n = r.count(1u << 24); n > 0; --n) {
+            Impl::Key key;
+            const auto type = r.u8();
+            if (type > std::uint8_t(Lua4Type::HostFunction)) fail("tick state: an unknown Lua key type");
+            key.type = Lua4Type(type);
+            key.number = r.f64();
+            key.text = r.str();
+            key.handle = r.u64();
+            table->values[std::move(key)] = read_value(bytes, at);
+        }
+    }
+    s.tables.generation.resize(tables);
+    for (auto& g : s.tables.generation) g = r.u32();
+    s.tables.free.resize(r.count(tables));
+    for (auto& f : s.tables.free) f = r.u32();
+    const auto closures = r.count(1u << 24);
+    s.closures.slots.clear();
+    s.closures.slots.resize(closures);
+    for (auto& closure : s.closures.slots) {
+        if (!r.u8()) continue;
+        closure = std::make_unique<Impl::Closure>();
+        const auto id = r.u64();
+        const auto path = r.str();
+        const Lua4Program p = program(id);
+        if (!p.impl_) fail("tick state: a closure of an unknown program");
+        closure->program = p.impl_;
+        closure->proto = proto_at(p.impl_->root, path);
+        if (!closure->proto) fail("tick state: a closure of an unknown prototype " + path);
+        for (auto n = r.count(1u << 16); n > 0; --n) closure->upvalues.push_back(read_value(bytes, at));
+    }
+    s.closures.generation.resize(closures);
+    for (auto& g : s.closures.generation) g = r.u32();
+    s.closures.free.resize(r.count(closures));
+    for (auto& f : s.closures.free) f = r.u32();
+    // The free lists name empty slots of their arrays, each once (round J's
+    // review: Arena::place wrote slots[free.back()] unchecked, and a forged
+    // checkpoint with its own hash wrote past the array).
+    auto check_free = [](const auto& arena, const char* what) {
+        std::vector<std::uint8_t> seen(arena.slots.size());
+        for (const auto f : arena.free) {
+            if (f >= arena.slots.size() || arena.slots[f] || seen[f]) fail(std::string("tick state: a bad Lua ") + what + " free list");
+            seen[f] = 1;
+        }
+    };
+    check_free(s.tables, "table");
+    check_free(s.closures, "closure");
+    for (auto* v : {&s.nblocks, &s.threshold, &s.collections, &s.objects_live, &s.entries_live, &s.object_trigger, &s.entry_trigger,
+                    &s.work_remaining, &s.instructions, &s.host_calls, &s.depth, &s.stack_last, &s.stack_peak, &s.error_top,
+                    &s.callback_top})
+        *v = std::size_t(r.u64());
+    s.stopped = r.u8() != 0;
+    s.site.source = r.str();
+    s.site.prototype = r.str();
+    s.site.pc = std::size_t(r.u64());
+    s.next_execution = r.u64();
+    s.next_call = r.u64();
+    if (at != bytes.size()) fail("tick state: trailing Lua state bytes");
+}
+
 Lua4RunResult Lua4Vm::execute(const Lua4Program& program) {
     if(!impl_)fail("inactive VM");
     if(impl_->running || impl_->stopped || impl_->pending_execution()) {

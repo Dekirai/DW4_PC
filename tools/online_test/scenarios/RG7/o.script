@@ -1,0 +1,5 @@
+# RG7 = G7 (round G-core), room owner o (k2): plays into its lobby and waits there.
+campaign until stage=stagml11
+talk until control,frames>=60
+log in the lobby
+idle until frames>=4000

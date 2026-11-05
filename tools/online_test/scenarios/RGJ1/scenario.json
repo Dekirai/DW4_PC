@@ -1,0 +1,12 @@
+{
+  "desc": "integration G-core + J: the guest's Game Start holds 8 s for the room story (DW4_ONLINE_TEST_STORY_DELAY), then it enters the owner's field a minute after him and joins from a checkpoint",
+  "seed_story": true,
+  "card": "k10",
+  "frames": 60000,
+  "timeout": 900,
+  "min_shared_ticks": 3000,
+  "clients": [
+    {"name": "a", "script": "a.script", "start": 0},
+    {"name": "b", "script": "b.script", "start": 3, "env": {"DW4_ONLINE_TEST_STORY_DELAY": "8"}}
+  ]
+}

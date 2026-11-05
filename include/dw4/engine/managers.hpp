@@ -97,6 +97,7 @@ private:
 class LayerManager final : public Manager {
 public:
     LayerManager() : Manager("beLayerCtl") {}
+    DW4_TICK_STATE_HOOKS
     bool accepts(const ObjectView& info) const override { return info.type() == "beLayerInfo"; }
     void add_info(Engine& engine, const ObjectView& info) override;
     void clear_stage(Engine& engine) override;
@@ -119,6 +120,7 @@ private:
 class BkColorManager final : public Manager {
 public:
     BkColorManager() : Manager("beBkColor") {}
+    DW4_TICK_STATE_HOOKS
     bool accepts(const ObjectView& info) const override { return info.type() == "beBkColorInfo"; }
     void add_info(Engine& engine, const ObjectView& info) override;
     void clear_stage(Engine& engine) override;
@@ -137,6 +139,7 @@ private:
 class CameraManager final : public Manager {
 public:
     CameraManager() : Manager("beCameraCtrl") {}
+    DW4_TICK_STATE_HOOKS
     bool accepts(const ObjectView& info) const override { return info.type() == "beCameraCtrlInfo"; }
     void add_info(Engine& engine, const ObjectView& info) override;
     void clear_stage(Engine& engine) override;
@@ -282,6 +285,7 @@ private:
 class StageCtlManager final : public Manager {
 public:
     StageCtlManager() : Manager("beNDMWStageCtl") {}
+    DW4_TICK_STATE_HOOKS
     bool accepts(const ObjectView& info) const override { return info.type() == "beNDMWStageCtlInfo"; }
     void add_info(Engine& engine, const ObjectView& info) override;
     void clear_stage(Engine& engine) override;
@@ -298,6 +302,7 @@ private:
 class SwitchCtrlManager final : public Manager {
 public:
     SwitchCtrlManager() : Manager("beSwitchCtrl") {}
+    DW4_TICK_STATE_HOOKS
     bool accepts(const ObjectView& info) const override { return info.type() == "beSwitchCtrlInfo"; }
     void add_info(Engine& engine, const ObjectView& info) override;
     void clear_stage(Engine& engine) override;
@@ -343,6 +348,7 @@ private:
 class SoundManager final : public Manager {
 public:
     SoundManager() : Manager("beSound") {}
+    DW4_TICK_STATE_HOOKS
     bool accepts(const ObjectView& info) const override;
     void add_info(Engine& engine, const ObjectView& info) override;
     void clear_stage(Engine& engine) override;
@@ -464,6 +470,10 @@ public:
     // Save states: the streams that play on into the next stage, and back.
     std::shared_ptr<const void> persistent() const;
     void restore(Engine& engine, const std::shared_ptr<const void>& state);
+    // Online (round J): the game's SNDF and sfp pool as a restored engine has
+    // them (fresh: the stage snapshot does not keep them), at a live load's
+    // snapshot. The audio's copy (the mirror) keeps what still rings.
+    void fresh_game_driver();
     // `canonical`: the hashes' form (SnapshotForm::canonical) writes 0 for the
     // decoding positions (frames_read: audio only, never read by the game).
     static void serialize_persistent(class StateArchive& archive, std::shared_ptr<const void>& state, bool canonical = false);
@@ -637,6 +647,10 @@ private:
     void sndf_effect(Engine& engine, int bank, int preset);
     // 802F5F98: the entry stops (serial, name and fade cleared, ADXT_Stop).
     void stop(int channel);
+    // The audio's decoder of a stream (presentation only): `stream.file`
+    // opened and decoded up to `frames` source frames (a save state's and a
+    // tick state's streams; none for an empty or unreadable file).
+    void open_decoder(Engine& engine, Stream& stream, std::uint64_t frames);
     std::vector<std::unique_ptr<Ram>> rams_;
     std::map<std::string, SoundData, std::less<>> sounds_;
     std::vector<std::string> files_;
@@ -759,6 +773,7 @@ private:
 class TextureCtrlManager final : public Manager {
 public:
     TextureCtrlManager() : Manager("beTextureCtrl") {}
+    DW4_TICK_STATE_HOOKS
     bool accepts(const ObjectView& info) const override { return info.type() == "beTextureCtrlInfo"; }
     void add_info(Engine& engine, const ObjectView& info) override;
     void clear_stage(Engine& engine) override;
@@ -771,6 +786,11 @@ private:
     std::vector<ObjectView> ctrl_attrs_;  // beTextureCtrlAttr
     std::vector<std::unique_ptr<Attribute>> owned_;
     bool pending_{};
+    // Round J's review (presentation): a tick state read over infos this
+    // engine's journal added after the load end (pending_ was set, the donor
+    // had bound them): bind at the next update, as the members did; the bind
+    // changes Node::attributes only, which the tick state leaves out.
+    bool rebind_after_state_{};
 };
 
 // beParticleCtrl2 (manager vtable 804DF2B0): particle effects answering as
@@ -783,6 +803,7 @@ private:
 class ParticleCtrlManager final : public Manager {
 public:
     ParticleCtrlManager() : Manager("beParticleCtrl2") {}
+    DW4_TICK_STATE_HOOKS
     bool accepts(const ObjectView& info) const override { return info.type() == "beParticleCtrl2Info"; }
     void add_info(Engine& engine, const ObjectView& info) override;
     void clear_stage(Engine& engine) override;
@@ -812,6 +833,7 @@ private:
 class WaterPlainManager final : public Manager {
 public:
     WaterPlainManager() : Manager("beWaterPlain") {}
+    DW4_TICK_STATE_HOOKS
     bool accepts(const ObjectView& info) const override { return info.type() == "beWaterPlainInfo"; }
     void add_info(Engine& engine, const ObjectView& info) override;
     void clear_stage(Engine& engine) override;
@@ -861,6 +883,7 @@ private:
 class LightCtrlManager final : public Manager {
 public:
     LightCtrlManager() : Manager("beLightCtrl") {}
+    DW4_TICK_STATE_HOOKS
     bool accepts(const ObjectView& info) const override { return info.type() == "beLightCtrlInfo"; }
     void add_info(Engine& engine, const ObjectView& info) override;
     void clear_stage(Engine& engine) override;
@@ -881,6 +904,7 @@ private:
 class ShadowManager final : public Manager {
 public:
     ShadowManager() : Manager("beShadow01") {}
+    DW4_TICK_STATE_HOOKS
     bool accepts(const ObjectView& info) const override { return info.type() == "beShadow01Info"; }
     void add_info(Engine& engine, const ObjectView& info) override;
     void clear_stage(Engine& engine) override;
@@ -917,6 +941,7 @@ private:
 class PlayerPointManager final : public Manager {
 public:
     PlayerPointManager() : Manager("bePoint01") {}
+    DW4_TICK_STATE_HOOKS
     bool accepts(const ObjectView& info) const override { return info.type() == "bePoint01Info"; }
     void add_info(Engine& engine, const ObjectView& info) override;
     void clear_stage(Engine& engine) override;
@@ -936,6 +961,7 @@ private:
 class HitLandManager final : public Manager {
 public:
     HitLandManager() : Manager("beHitLandModel") {}
+    DW4_TICK_STATE_HOOKS
     bool accepts(const ObjectView& info) const override {
         return info.type() == "beHitLandModelInfo" || info.type() == "beHitLandDelivInfo";
     }
@@ -1018,6 +1044,7 @@ private:
 class ChangePosManager final : public Manager {
 public:
     ChangePosManager() : Manager("beChangePosTransform") {}
+    DW4_TICK_STATE_HOOKS
     bool accepts(const ObjectView& info) const override { return info.type() == "beChangePosTransformInfo"; }
     void add_info(Engine& engine, const ObjectView& info) override;
     void clear_stage(Engine& engine) override { (void)engine; rams_.clear(); }
@@ -1057,6 +1084,7 @@ GeometryData layout_text(const FontImage& font, std::u16string_view text, int al
 class TextCtlManager final : public Manager {
 public:
     TextCtlManager() : Manager("beFont") {}
+    DW4_TICK_STATE_HOOKS
     bool accepts(const ObjectView& info) const override { return info.type() == "beFontInfo"; }
     void add_info(Engine& engine, const ObjectView& info) override;
     void clear_stage(Engine& engine) override;
@@ -1064,6 +1092,8 @@ public:
     // The node of a text line (layer, line name such as "ITNAMEFONT",
     // "font01"), null without (the picture filter of seamless co-op).
     const Node* line_node(std::string_view layer, std::string_view name) const;
+    // Round J: a journal entry's line copies made again (Engine::rerun).
+    void replay_copies(Engine& engine, int slot, int ram, std::string_view layer, std::string_view name);
 
 private:
     struct Line {
@@ -1081,6 +1111,9 @@ private:
         // line (its window's text) for that slot; -1 the original. Commands
         // inside a member's scope reach its copies, all others the originals.
         int slot = -1;
+        // The text it was set with (round J: a joiner's picture lays it out
+        // again; nothing in the simulation reads it).
+        std::optional<std::u16string> text;
     };
     // The member's own copies of the lines a command in its scope addresses
     // (made on first use, the same on every machine).
@@ -1102,6 +1135,7 @@ private:
 class SelectCtrlManager final : public Manager {
 public:
     SelectCtrlManager() : Manager("beSelectCtrl") {}
+    DW4_TICK_STATE_HOOKS
     bool accepts(const ObjectView& info) const override { return info.type() == "beSelectCtrlInfo"; }
     void add_info(Engine& engine, const ObjectView& info) override;
     void clear_stage(Engine& engine) override;
@@ -1252,6 +1286,7 @@ private:
 class NumberCtrlManager final : public Manager {
 public:
     NumberCtrlManager() : Manager("beNumberCtrl") {}
+    DW4_TICK_STATE_HOOKS
     bool accepts(const ObjectView& info) const override { return info.type() == "beNumberCtrlInfo"; }
     void add_info(Engine& engine, const ObjectView& info) override;
     void clear_stage(Engine& engine) override { (void)engine; rams_.clear(); }
@@ -1276,6 +1311,7 @@ private:
 class MeterCtrlManager final : public Manager {
 public:
     MeterCtrlManager() : Manager("beMeterCtrl") {}
+    DW4_TICK_STATE_HOOKS
     bool accepts(const ObjectView& info) const override { return info.type() == "beMeterCtrlInfo"; }
     void add_info(Engine& engine, const ObjectView& info) override;
     void clear_stage(Engine& engine) override { (void)engine; rams_.clear(); }
@@ -1303,6 +1339,7 @@ private:
 class GeneraterManager final : public Manager {
 public:
     GeneraterManager() : Manager("beGenerater") {}
+    DW4_TICK_STATE_HOOKS
     bool accepts(const ObjectView& info) const override { return info.type() == "beGeneraterInfo"; }
     void add_info(Engine& engine, const ObjectView& info) override;
     void clear_stage(Engine& engine) override {
@@ -1460,6 +1497,7 @@ private:
 class MatCtrlManager final : public Manager {
 public:
     MatCtrlManager() : Manager("beMatCtrl") {}
+    DW4_TICK_STATE_HOOKS
     bool accepts(const ObjectView& info) const override { return info.type() == "beMatCtrlInfo"; }
     void add_info(Engine& engine, const ObjectView& info) override;
     void clear_stage(Engine& engine) override;
@@ -1577,6 +1615,7 @@ private:
 class PassiveManager final : public Manager {
 public:
     PassiveManager() : Manager("passive") {}
+    DW4_TICK_STATE_HOOKS
     bool accepts(const ObjectView& info) const override;
     void add_info(Engine& engine, const ObjectView& info) override;
     void clear_stage(Engine& engine) override;
@@ -1590,6 +1629,7 @@ class ActionManager;
 class ModelCtrlManager final : public Manager {
 public:
     ModelCtrlManager() : Manager("beModelCtrl") {}
+    DW4_TICK_STATE_HOOKS
     bool accepts(const ObjectView& info) const override;
     void add_info(Engine& engine, const ObjectView& info) override;
     void clear_stage(Engine& engine) override;
@@ -1923,11 +1963,13 @@ private:
 class WeaponManager final : public Manager {
 public:
     WeaponManager() : Manager("beWeapon") {}
+    DW4_TICK_STATE_HOOKS
     bool accepts(const ObjectView& info) const override { return info.type() == "beWeaponInfo"; }
     void add_info(Engine& engine, const ObjectView& info) override;
     void clear_stage(Engine& engine) override;
     bool command(Engine& engine, Ram& ram, std::string_view command, Packet& packet) override;
     const std::vector<std::pair<std::string, std::string>>* labels(std::string_view weapon) const;
+    void tick_structure(TickArchive& archive) override;
 
 private:
     // Detaches what GENERATE hung on player index's actors.
@@ -1955,6 +1997,7 @@ private:
 class SubWindowManager final : public Manager {
 public:
     SubWindowManager();
+    DW4_TICK_STATE_HOOKS
     ~SubWindowManager() override;
     bool accepts(const ObjectView& info) const override { return info.type() == "beNDMWStatusInfo"; }
     void add_info(Engine& engine, const ObjectView& info) override;
@@ -2019,6 +2062,7 @@ private:
 class PanelManager final : public Manager {
 public:
     PanelManager() : Manager("beNDMWPanelWaza") {}
+    DW4_TICK_STATE_HOOKS
     bool accepts(const ObjectView& info) const override { return info.type() == "beNDMWPanelWazaInfo"; }
     void add_info(Engine& engine, const ObjectView& info) override;
     void clear_stage(Engine& engine) override;
@@ -2060,6 +2104,7 @@ private:
 class ActionStarterManager final : public Manager {
 public:
     ActionStarterManager() : Manager("beActionStarter") {}
+    DW4_TICK_STATE_HOOKS
     bool accepts(const ObjectView& info) const override { return info.type() == "beActionStarterInfo"; }
     void add_info(Engine& engine, const ObjectView& info) override;
     void clear_stage(Engine& engine) override {
@@ -2082,6 +2127,7 @@ private:
 class ActionManager final : public Manager {
 public:
     ActionManager() : Manager("beAction2") {}
+    DW4_TICK_STATE_HOOKS
     bool accepts(const ObjectView& info) const override { return info.type() == "beAction2Info"; }
     void add_info(Engine& engine, const ObjectView& info) override;
     void clear_stage(Engine& engine) override;

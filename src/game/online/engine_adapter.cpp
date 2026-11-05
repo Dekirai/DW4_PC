@@ -96,6 +96,24 @@ std::uint64_t GameEngineLink::net_fingerprint() {
 #endif
 }
 
+// ---- Round J (docs/SEAMLESS.md 6.13).
+bool GameEngineLink::state_safe() const { return e().state_safe(); }
+bool GameEngineLink::load_ended() const { return e().load_end_frame() != 0; }
+std::vector<std::uint8_t> GameEngineLink::save_tick_state(bool canonical) {
+    return e().save_tick_state(canonical ? engine::TickForm::canonical : engine::TickForm::raw);
+}
+std::uint64_t GameEngineLink::tick_state_hash() { return e().tick_state_hash(); }
+std::string GameEngineLink::apply_tick_state(std::span<const std::uint8_t> bytes) {
+    try {
+        e().apply_tick_state(bytes);
+        return {};
+    } catch (const engine::TickStateError& error) {
+        return error.section() + ": " + error.what();
+    } catch (const std::exception& error) {
+        return std::string("apply: ") + error.what();
+    }
+}
+
 bool GameEngineLink::membership_safe() const {
 #ifdef DW4_ONLINE_ENGINE_API
     return e().membership_safe();
@@ -424,21 +442,25 @@ void GameEngineLink::set_view_slot(int slot) {
 #endif
 }
 
-void GameEngineLink::after_live_step() {
+bool GameEngineLink::after_live_step() {
     auto& engine = e();
-    if (!engine.title_game_start) return;
+    if (!engine.title_game_start && !engine.common_rebuilt) return false;
+    // (No Game Start without the confirmed room story: the host holds, 8.8.)
+    if (!room_story_) return false;
     engine.title_game_start = false;
+    engine.common_rebuilt = false;
     auto* sys = engine.get<engine::GameSystem>();
-    if (!sys) return;
+    if (!sys) return false;
     // (The character select wrote DIFFICULTY before GAMESTART, 0x803687D4;
     // gameStart.lua runs a few steps later, once the card worker is gone.)
-    if (room_story_) engine.apply_room_story(*room_story_);
+    engine.apply_room_story(*room_story_);
     sys->difficulty = std::clamp(settings_.difficulty, 0, 2);
     sys->camera_mode = settings_.camera_mode;
     sys->light_mode = settings_.light_mode;
+    return true;
 }
 
-bool GameEngineLink::game_start() const { return e().title_game_start; }
+bool GameEngineLink::game_start() const { return e().title_game_start || e().common_rebuilt; }
 
 bool GameEngineLink::game_started() const {
     const auto* sys = e().get<engine::GameSystem>();

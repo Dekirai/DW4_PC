@@ -1,0 +1,8 @@
+# J5 (round J), member a (k10): first into stag0101 (NEW); plays alone for five minutes, then b joins.
+campaign until stage=stagml11,control
+idle until epoch>=@90
+explore mate00 yes until stage=stag0101,control
+log in the field
+wander 460 170 15 until present=2,sealed>=4000
+log enough
+idle until frames>=60

@@ -656,7 +656,7 @@ re-encodes the text and silently turns every non-ASCII character into `?` (the r
    folder inherits the root's permissions (service read and execute), and the firewall rules and the service name the
    same path, so nothing else changes. Settings that a release asks for go into `config\appsettings.Production.json`
    before the start: an update from release 0.1.0 (its example file had 43) sets `Play:MinimumProtocol` and
-   `Play:CurrentProtocol` to the game client's protocol (45 since round S2, 46 since round 63); the room story settings
+   `Play:CurrentProtocol` to the game client's protocol (45 since round S2, 46 since round 63, 47 since round G-core); the room story settings
    work with their defaults (section 10).
 
 Rollback: stop the service, swap `app` and `app.previous` back; if the update applied a migration (or one failed half
@@ -784,7 +784,7 @@ scan of the release) is left, and the `migrate` run before the start (sections 5
   story is kept (`OnlineCharacter:StoryHistoryRevisions`, 100): the admin page of an account lists them and puts one
   back (*Put back*) when misuse or an error damaged it; resetting the online character empties the story.
 - `Play:MinimumProtocol` and `Play:CurrentProtocol` follow the game client (45 since round S2, 46 since round 63: a
-  member's own menus): older clients are asked to update.
+  member's own menus, 47 since round G-core: flag 503 as story and the reason queued): older clients are asked to update.
 - Logs: `logs\dw4online-yyyyMMdd.log` (UTC, 30 days) when `Logging:File:Directory` is set; errors are ` FAIL ` lines
   (with the exception below them), crashes also appear in the Windows Application event log (source ".NET Runtime").
 - Staff tools without the website: `DW4Online.Server.exe reset-password <user> --settings ...`, the `/api/v1/admin/...`

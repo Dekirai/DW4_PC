@@ -74,6 +74,8 @@
 //         roomflag:N=V (flag N of the room story this machine holds as
 //         confirmed, docs/SEAMLESS.md 8.3: the server's newest it was sent,
 //         ahead of the engine until the next barrier; 0 without one)
+//         key:N=V (the engine's key item N, the common flag folder; round
+//         G-core)  difficulty=N (the engine's difficulty, 0-2)
 //         menu=0|1 (this member's own status window is open, 5.3)
 //         menus=N (present members with their own window open)
 //         talking=0|1 (this member's own talk or map recorder runs)

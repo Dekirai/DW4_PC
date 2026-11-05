@@ -37,8 +37,13 @@ namespace dw4::game {
 // barrier, so the rooms of the two never mix), 46 round 63 (a member's
 // status window, NPC talks and map recorders are its own and pause nothing,
 // docs/SEAMLESS.md 5.3; a 45 client would pause its instance for them and
-// desynchronize at the first menu).
-inline constexpr std::uint32_t kOnlineProtocol = 46;
+// desynchronize at the first menu), 47 rounds G-core and J, shipped together
+// (G-core: flag 503 is story and merged at barriers, left alone at one into
+// stag0001; the STORY_ACK reason queued; docs/SEAMLESS.md 8.8: a 46 client
+// would not add 503 at a barrier where 47 clients do, and the instance would
+// desynchronize. J: checkpoints - STATEHASH, CHECKPOINT, CHECKPOINT_BAD,
+// CHECKPOINT_ASK, STATE_DATA codec 2, docs/SEAMLESS.md 6.13.7).
+inline constexpr std::uint32_t kOnlineProtocol = 47;
 
 struct OnlineOptions {
     std::string user, create, join;
@@ -56,7 +61,20 @@ struct OnlineRoom {
     int relay_port = 52041;
     online::RoomSettings settings;
     int max_players = 0; // the room's size (the Discord party)
+    // The room's owner (room.owner) and whether this account is it (round
+    // G-core, docs/SEAMLESS.md 8.8: a guest plays on the owner's story, its
+    // card and uploads keep its own).
+    // (Not the owner by default: both ways into a room set it with
+    // set_room_owner. A guest taken for the owner put the room story into
+    // its card, the leak round G-core closes; the other way round only its
+    // own story would stand on the owner's card.)
+    std::string owner_name;
+    bool room_owner = false;
 };
+// The room's owner and whether `room.account` is it (api::owns_room): every
+// way into a room calls this (--online-create / --online-join and the title's
+// online screens, game_main's take_ready).
+void set_room_owner(OnlineRoom& room, const online::api::RoomJoined& joined, bool created);
 std::optional<OnlineRoom> online_enter_room(online::HttpWorker& http, const OnlineOptions& options, std::uint64_t data_hash,
                                             const std::string& client_version, const std::filesystem::path& token_folder, std::string& error);
 
@@ -71,8 +89,13 @@ public:
     // gave neither the character nor 404.
     bool load_character(const std::filesystem::path& online_folder, const std::string& client_version, std::string& error);
     online::CharacterSync* character() { return character_.get(); }
-    // The card store of the online character (slot A the cache file).
+    // The card store of the online character (slot A the cache file). A
+    // guest's store writes the account's own story into every used box (round
+    // G-core: the save room's write never puts the owner's story on the card).
     save::CardStore character_card() const;
+    // Called by pass() when a guest's own story changed since the last
+    // character_card() (a 409's reload): the host gives the engine a new store.
+    std::function<void()> card_story_changed;
     // Connects to the relay (blocking up to five seconds for the connection
     // and up to ten for the relay's answer: a newer connection of the same
     // account replaces one another PC holds in the room when the relay
@@ -86,7 +109,20 @@ public:
     // the character's play time, and its
     // automatic save at the barrier tick (the step that executed NEXTSTAGE:
     // the state the member carries into the next stage).
+    // Round G-core (docs/SEAMLESS.md 8.8): no Game Start without the confirmed
+    // room story. A Game Start (or Engine::common_rebuilt) that finds none holds
+    // the next live step (Session::hold_for_story, "Loading the room story...")
+    // until it comes; after 15 s without it the room is left ("The room story
+    // did not arrive. Join the room again.").
     void after_live_step(double now);
+    // Messages for the player (toasts): the guest's story at its Game Start, the
+    // closed call shop.
+    std::vector<std::string> take_notices();
+    // "Story: yours" / "Story: <owner>'s, phase n, k key items" for the F1 Online
+    // tab and the room view.
+    std::string story_line() const;
+    // The Game Start waits for the room story.
+    bool story_held() const { return story_hold_since_ >= 0; }
     // The step's port events: card_written of the own slot on card A uploads
     // the box the save room wrote; new_character and character_called tell
     // the character the title's last choice before its Game Start.
@@ -108,7 +144,7 @@ public:
     bool leave_prompt = false;
     // Leaves the room: the character's automatic save (waiting up to
     // `save_seconds` for the uploads), then BYE and the REST leave.
-    void leave(double save_seconds = 8.0);
+    void leave(double save_seconds = 8.0, const std::string& reason = {});
     // saves/online.log (online/net_log.hpp, round 62): opened for the
     // session, its first lines are the versions and protocols (the server's
     // come with its status); the session logs into it from here.
@@ -133,6 +169,9 @@ public:
 
 private:
     void dispatch(std::uint64_t id, const online::HttpResponse& response, double now);
+    // The Game Start with the confirmed story (or the hold without one).
+    void begin_game(double now);
+    std::optional<engine::RoomStory> story_for_start(double now);
     void save_character(online::CharacterSync::Why why);
     online::character_api::Context character_context() const;
 
@@ -153,6 +192,11 @@ private:
     } host_window_;
     std::optional<HostFacts> host_logged_; // the settings and window state of the last lines
     double next_reconnect_ = 0;
+    double story_hold_since_ = -1;     // the Game Start waits for the room story since then (-1: no hold)
+    double story_ignore_until_ = 0;    // DW4_ONLINE_TEST_STORY_DELAY (dev builds, G7): the story counts from then (set at the first Game Start)
+    int callshop_seen_ = 0;            // Engine::callshop_refused already told
+    mutable std::optional<save::StoryBytes> handed_story_; // the own story of the last character_card() (a guest's)
+    std::vector<std::string> notices_;
     bool pending_before_ = false; // the last live step had a NEXTSTAGE pending
     bool saved_on_leave_ = false;
     bool left_ = false;

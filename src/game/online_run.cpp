@@ -8,8 +8,13 @@
 
 #include "dw4/engine/managers.hpp"
 
+#include "dw4/engine/online_story.hpp"
+
+#include <zstd.h>
+
 #include <algorithm>
 #include <bit>
+#include <cctype>
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
@@ -18,6 +23,12 @@
 #include <tuple>
 
 namespace dw4::game {
+
+void set_room_owner(OnlineRoom& room, const online::api::RoomJoined& joined, bool created) {
+    room.room_owner = online::api::owns_room(joined, room.account, created);
+    room.owner_name = joined.owner;
+    if (room.owner_name.empty() && room.room_owner) room.owner_name = room.account;
+}
 
 std::optional<OnlineRoom> online_enter_room(online::HttpWorker& http, const OnlineOptions& options, std::uint64_t data_hash,
                                             const std::string& client_version, const std::filesystem::path& token_folder, std::string& error) {
@@ -93,6 +104,7 @@ std::optional<OnlineRoom> online_enter_room(online::HttpWorker& http, const Onli
     room.settings = joined->settings;
     room.member_id = joined->member_id;
     room.max_players = joined->max_players;
+    set_room_owner(room, *joined, !options.create.empty());
     if (joined->relay_port) room.relay_port = joined->relay_port;
     room.ticket = joined->ticket;
     if (room.ticket.empty()) {
@@ -116,7 +128,26 @@ OnlineRun::OnlineRun(std::unique_ptr<online::HttpWorker> http, OnlineRoom room, 
     config.data_hash = data_hash;
     config.settings_hash = online::settings_hash(room_.settings, kOnlineProtocol, data_hash);
     config.own_name = room_.account;
+    config.room_owner = room_.room_owner;
+    config.owner_name = room_.owner_name;
     config.rate = rate;
+    // Round J: checkpoints travel zstd-compressed (level 3; docs/SEAMLESS.md 6.13.2).
+    config.compress = [](std::span<const std::uint8_t> raw) {
+        std::vector<std::uint8_t> out(ZSTD_compressBound(raw.size()));
+        const std::size_t n = ZSTD_compress(out.data(), out.size(), raw.data(), raw.size(), 3);
+        if (ZSTD_isError(n)) throw std::runtime_error(std::string("checkpoint compression: ") + ZSTD_getErrorName(n));
+        out.resize(n);
+        return out;
+    };
+    config.decompress = [](std::span<const std::uint8_t> packed) {
+        const unsigned long long size = ZSTD_getFrameContentSize(packed.data(), packed.size());
+        if (size == ZSTD_CONTENTSIZE_ERROR || size == ZSTD_CONTENTSIZE_UNKNOWN || size > (64ull << 20))
+            throw std::runtime_error("checkpoint: a damaged or oversized frame");
+        std::vector<std::uint8_t> out(static_cast<std::size_t>(size));
+        const std::size_t n = ZSTD_decompress(out.data(), out.size(), packed.data(), packed.size());
+        if (ZSTD_isError(n) || n != out.size()) throw std::runtime_error("checkpoint: a damaged frame");
+        return out;
+    };
     config.trace = std::getenv("DW4_ONLINE_TRACE") != nullptr;
     // DW4_ONLINE_RATE=N (test runs): this machine replays at most N steps per
     // second and reports that rate (a slower machine, SEAMLESS.md 6.6).
@@ -156,6 +187,20 @@ void OnlineRun::pass(double now) {
     session_->poll(now);
     while (auto done = http_->poll()) dispatch(done->first, done->second, now);
     if (character_) character_->tick(now);
+    // A 409's reload gave the guest's own story anew (round G-core's review): the
+    // engine's card store writes the newer one from now on (before, the story
+    // of the room entry until the next entry).
+    if (character_ && card_story_changed && handed_story_ && *handed_story_ != character_->own_story()) card_story_changed();
+    // The Game Start's hold (round G-core): the story may have come with this pass.
+    if (story_hold_since_ >= 0 && !left_ && !session_->closed()) {
+        if (link_.game_start()) begin_game(now);
+        if (story_hold_since_ >= 0 && now - story_hold_since_ > 15.0) {
+            std::cout << "online: the room story did not arrive within 15 s; leaving the room\n";
+            log_.line("the room story did not arrive within 15 s after the Game Start: leaving the room");
+            leave(8.0, "The room story did not arrive. Join the room again.");
+            return;
+        }
+    }
     if (left_ || session_->closed() || !session_->wants_transport()) return;
     // Reconnect: a new one-time ticket, then the relay again (6.10).
     if (ticket_request_ == 0 && now >= next_reconnect_) ticket_request_ = http_->submit(online::api::ticket_request(room_.code));
@@ -282,6 +327,7 @@ bool OnlineRun::load_character(const std::filesystem::path& online_folder, const
     config.context = character_context();
     config.submit = [http = http_.get()](online::HttpRequest request) { return http->submit(std::move(request)); };
     config.trace = std::getenv("DW4_ONLINE_TRACE") != nullptr;
+    config.guest = !room_.room_owner;
     character_ = std::make_unique<online::CharacterSync>(std::move(config));
     const auto response = http_->wait(http_->submit(online::character_api::get_request()));
     if (!character_->enter(response, error)) {
@@ -293,7 +339,81 @@ bool OnlineRun::load_character(const std::filesystem::path& online_folder, const
 }
 
 save::CardStore OnlineRun::character_card() const {
-    return character_ ? character_->card().store() : save::CardStore{};
+    if (!character_) return save::CardStore{};
+    auto store = character_->card().store();
+    // A guest's card keeps its own story (round G-core, 8.8): the save room writes the engine's records, which hold the
+    // owner's story, and the file, its backups and an import of it must not (the owner's engine story is his own).
+    if (!room_.room_owner) {
+        store.set_story_override(character_->own_story());
+        handed_story_ = character_->own_story();
+    }
+    return store;
+}
+
+std::optional<engine::RoomStory> OnlineRun::story_for_start(double now) {
+#ifdef DW4_ONLINE_DEV
+    // G7 (round G-core): the room story counts only N seconds after the session's first Game Start, so the Game Start
+    // finds none and holds (the hold must outlast the room's await_hello, whatever the title's length).
+    if (story_ignore_until_ == 0)
+        if (const char* delay = std::getenv("DW4_ONLINE_TEST_STORY_DELAY"); delay && std::atof(delay) > 0) story_ignore_until_ = now + std::atof(delay);
+    if (now < story_ignore_until_) return std::nullopt;
+#else
+    (void)now;
+#endif
+    return session_->confirmed_story();
+}
+
+void OnlineRun::begin_game(double now) {
+    const auto story = story_for_start(now);
+    if (!story) {
+        if (story_hold_since_ < 0) {
+            // (The title is a solo instance: no tick waits for this member, as in a loading hitch. The session sends no
+            // STORY from a stagIS* stage, so nothing of the character's own story leaves meanwhile.)
+            story_hold_since_ = now;
+            session_->hold_for_story(true);
+            std::cout << "online: the Game Start waits for the room story\n";
+            log_.line("the Game Start waits for the room story");
+        }
+        return;
+    }
+    const bool rebuilt = engine_().common_rebuilt && !engine_().title_game_start;
+    link_.set_room_story(story);
+    if (!link_.after_live_step()) return;
+    if (story_hold_since_ >= 0) {
+        std::cout << "online: the room story came " << int((now - story_hold_since_) * 1000) << " ms after the Game Start\n";
+        story_hold_since_ = -1;
+        session_->hold_for_story(false);
+    }
+    if (rebuilt) {
+        std::cout << "online: a character call outside the title: the room story replaced the common story again (revision " << story->revision << ")\n";
+        return;
+    }
+    std::cout << "online: the game starts with the room story (revision " << story->revision << ")\n";
+    if (character_) character_->game_started();
+    if (!room_.room_owner) {
+        static constexpr const char* kDifficulty[] = {"Normal", "Hard", "Very Hard"};
+        const auto owner = room_.owner_name.empty() ? std::string("the room owner") : room_.owner_name;
+        notices_.push_back("Playing on " + owner + "'s story (" + kDifficulty[std::clamp(room_.settings.difficulty, 0, 2)] + ").");
+        notices_.push_back("Your level, items and Digimon stay yours. The story stays in " + owner + "'s save.");
+    }
+}
+
+std::vector<std::string> OnlineRun::take_notices() {
+    auto out = std::move(notices_);
+    notices_.clear();
+    return out;
+}
+
+std::string OnlineRun::story_line() const {
+    if (room_.room_owner) return "Story: yours";
+    const auto owner = room_.owner_name.empty() ? std::string("the room owner") : room_.owner_name;
+    const auto& story = session_->confirmed_story();
+    if (!story) return "Story: " + owner + "'s (loading)";
+    const int phase = engine::story::phase(*story);
+    int keys = 0;
+    for (int k = 0; k < engine::story::kKeys; ++k) keys += story->folder[std::size_t(k)] ? 1 : 0;
+    return "Story: " + owner + "'s, " + (phase >= engine::story::kPhases ? std::string("game cleared") : "phase " + std::to_string(phase)) +
+           ", " + std::to_string(keys) + (keys == 1 ? " key item" : " key items");
 }
 
 void OnlineRun::save_character(online::CharacterSync::Why why) {
@@ -306,18 +426,19 @@ void OnlineRun::after_live_step(double now) {
     // The title starts a game: the confirmed room story replaces the
     // character's FLAG / FLAGFOLDER / COUNTER before gameStart.lua runs
     // (GameEngineLink applies it with the room's modes on this very step).
-    // Without a confirmed story yet the character's own stays until the
-    // first barrier's merge.
+    // Round G-core: never without a confirmed story; without one the next
+    // live step waits until it comes (begin_game, pass), so the character's
+    // own story never plays in the room nor reaches a pending set.
     // (Every Game Start of the session: after "Continue? No" the title
     // starts the next one with the room story and modes again.)
-    if (link_.game_start()) {
-        const auto& story = session_->confirmed_story();
-        link_.set_room_story(story);
-        if (story) std::cout << "online: the game starts with the room story (revision " << story->revision << ")\n";
-        else std::cout << "online: the game starts without a room story yet (the character's own until the first barrier)\n";
-        if (character_) character_->game_started();
+    if (link_.game_start() && story_hold_since_ < 0) begin_game(now);
+    // The call shop is closed online (round G-core): its refusal branch ran.
+    // (Only a rise: a join, co-arrival or resync restores into a fresh engine
+    // whose count starts at 0 again, and that is no new refusal.)
+    if (const int refused = engine_().callshop_refused; refused != callshop_seen_) {
+        if (refused > callshop_seen_) notices_.push_back("The call shop is not available online: everyone plays their own character.");
+        callshop_seen_ = refused;
     }
-    link_.after_live_step();
     if (!character_) return;
     auto& engine = engine_();
     // Play time without loads, as the server compares it with real time.
@@ -366,7 +487,7 @@ void OnlineRun::save_on_leave(double seconds) {
         std::cout << "online: the online character's last save did not reach the server; the next room entry uploads it\n";
 }
 
-void OnlineRun::leave(double save_seconds) {
+void OnlineRun::leave(double save_seconds, const std::string& reason) {
     if (left_) return;
     save_on_leave(save_seconds);
     left_ = true;
@@ -380,7 +501,7 @@ void OnlineRun::leave(double save_seconds) {
                   n.exec_avg() * 1000.0, n.exec_quantile(0.95) * 1000.0, n.exec_max * 1000.0, session_->delay(), session_->net().reconnects,
                   session_->net().resyncs);
     }
-    session_->leave();
+    session_->leave(reason.empty() ? std::string("left") : reason);
     http_->wait(http_->submit(online::api::leave_request(room_.code)));
 }
 

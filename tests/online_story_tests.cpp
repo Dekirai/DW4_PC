@@ -170,13 +170,14 @@ void golden_vectors() {
         auto e = values_of(c["engine"]);
         const auto room = room_of(c["room"]);
         const auto dropped = keys_of(c["dropped"]);
-        const bool would = story::holds_dropped(e, room, dropped);
-        const bool removed = story::apply(e, room, dropped);
+        const std::string target = c["target"].str().value_or("");
+        const bool would = story::holds_dropped(e, room, dropped, target);
+        const bool removed = story::apply(e, room, dropped, target);
         check(e == values_of(c["expect"]["engine"]), "apply '" + name + "': engine values");
         check(removed == c["expect"]["removed"].flag().value_or(false) && would == removed, "apply '" + name + "': removed");
         // A second application changes nothing (the barrier merge is idempotent).
         auto again = e;
-        story::apply(again, room, StoryKeys{});
+        story::apply(again, room, StoryKeys{}, target);
         check(again == e, "apply '" + name + "': idempotent");
         ++cases;
     }

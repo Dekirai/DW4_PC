@@ -214,12 +214,12 @@ void Session::lose_connection(double now) {
 
 void Session::leave(const std::string& reason) {
     flush_log(now_, true);
-    (void)reason;
     send(w::Type::bye, w::encode(w::Bye{0}));
     if (transport_) transport_->close();
     transport_.reset();
     mode_ = Mode::closed;
-    close_reason_ = "You left the room.";
+    // ("left": the player's own choice; another reason is the client's, e.g. the room story that never came.)
+    close_reason_ = reason.empty() || reason == "left" ? std::string("You left the room.") : reason;
 }
 
 std::size_t Session::read_hello(double now) {
@@ -657,6 +657,17 @@ void Session::handle(const w::Frame& frame, double now) {
         send(w::Type::pong, w::encode(w::Pong{m.nonce, ms}));
         break;
     }
+    case w::Type::checkpoint_ask: {
+        const auto m = w::decode_checkpoint_ask(p);
+        if (m.inst == inst_ && m.visit == visit_ && (mode_ == Mode::solo || mode_ == Mode::sealed) && !hub_) {
+            // A periodic ask waits for the next STATEHASH tick: the members' reports make that checkpoint agreed (a
+            // resync takes only an agreed one); a join's ask is answered at the next state-safe tick.
+            if (m.flags & w::CheckpointAsk::periodic) periodic_asked_ = true;
+            else checkpoint_asked_ = true;
+            trace("checkpoint asked inst=%u visit=%u tick=%u", inst_, visit_, tick_);
+        }
+        break;
+    }
     case w::Type::netstat: {
         // The relay's view of this member's link (round 62): the network indicator, F1 > Online, online.log.
         const auto m = w::decode_netstat(p);
@@ -723,6 +734,7 @@ void Session::on_welcome(const w::Welcome& m, double now) {
     member_id_ = m.member;
     // (Every WELCOME: a reconnect may reach another hub build.)
     presence_v2_ = (m.flags & w::Welcome::presence_v2) != 0;
+    hub_checkpoints_ = (m.flags & w::Welcome::checkpoints) != 0;
 #ifdef DW4_ONLINE_DEV
     // DW4_ONLINE_TEST_PRESENCE1=1 (development builds; the ghost figure
     // scenario P2 of tools/online_test): this client acts as one from before
@@ -843,6 +855,8 @@ int Session::steps_allowed(int host_steps, double elapsed) {
 }
 
 bool Session::step_ready() const {
+    // (The Game Start's hold, round G-core: the title waits for the room story.)
+    if (story_hold_) return false;
     switch (mode_) {
     case Mode::solo:
     case Mode::transition: return true;
@@ -1076,6 +1090,11 @@ void Session::after_step(double now) {
               static_cast<unsigned long long>(fp));
     }
     ++tick_;
+    if (!load_end_ && engine_.load_ended()) load_end_ = tick_;
+    // (Not in a fork's step, review of round J: SPLIT goes out below, and a
+    // STATEHASH or upload of tick f + 1 went into the parent before the relay
+    // forked, a leaver's state of the child's side among them.)
+    if (member && !hub_ && !split) checkpoint_tick(now);
     if (mode_ == Mode::sealed && lead_from_ && tick_ >= *lead_from_) {
         // LEAD_FROM: from this tick the remaining member leads alone (its own
         // clock, delay 0, LOG from here); nothing more is sealed.
@@ -1186,15 +1205,21 @@ void Session::report_state(double now, bool force) {
     if (hub_) return;
     w::NotJoinable reason{};
     const bool joinable = engine_.joinable(reason);
+    // (load_ended: the relay takes the context of the first STATE after the
+    // load end as the visit's entry context, joinable or not; round J's review:
+    // from the first joinable STATE, a visit that ran into a boss right after
+    // its load took the boss kill's context as its entry, and an arrival with
+    // the old context joined after the kill.)
     const std::uint8_t flags = std::uint8_t((joinable ? w::state_flag::joinable : 0) | (engine_.membership_safe() ? w::state_flag::membership_safe : 0) |
-                                            (engine_.boss_lock() ? w::state_flag::boss_lock : 0));
+                                            (engine_.boss_lock() ? w::state_flag::boss_lock : 0) |
+                                            (load_end_ ? w::state_flag::load_ended : 0));
     const std::uint64_t context = engine_.session_context_hash();
     if (flags == state_flags_ && context == state_context_ && !force) {
         state_pending_ = false;
         return;
     }
-    // The boss lock and the context at once, the rest at most once a second.
-    const bool urgent = force || context != state_context_ || ((flags ^ state_flags_) & w::state_flag::boss_lock);
+    // The boss lock, the load end and the context at once, the rest at most once a second.
+    const bool urgent = force || context != state_context_ || ((flags ^ state_flags_) & (w::state_flag::boss_lock | w::state_flag::load_ended));
     if (!urgent && now - state_sent_at_ < 1.0) {
         state_pending_ = true;
         return;
@@ -1259,7 +1284,10 @@ void Session::on_barrier_ok(const w::BarrierOk& ok, double now) {
             try {
                 const auto room = engine::story::decode_story(ok.story, ok.story_revision);
                 const auto dropped = engine::story::decode_keys(ok.dropped);
-                if (engine::story::holds_dropped(engine_.story_values(), room, dropped))
+                // (The engine's pending stage is the barrier's target: a barrier into the
+                // training field leaves 503 alone, as the load step does, 8.8.)
+                const auto target = engine_.pending_stage();
+                if (engine::story::holds_dropped(engine_.story_values(), room, dropped, target ? std::string_view(*target) : std::string_view()))
                     notice(not_started_dropped_ ? "Story progress was not saved: the room owner had not started its story yet."
                                                 : "Story progress was not saved: the room owner is away.");
                 take_story(room);
@@ -1344,6 +1372,15 @@ void Session::begin_visit(double now) {
     log_.clear();
     log_first_ = 0;
     stats_.forget_in_flight();
+    load_end_.reset();
+    next_statehash_ = config_.checkpoint_period;
+    checkpoint_asked_ = false;
+    periodic_asked_ = false;
+    from_checkpoint_ = false;
+    joined_tick_.reset();
+    checkpoints_off_ = false;
+    load_end_told_ = false;
+    tick_hash_.reset();
     serial_at_barrier_ = engine_.load_serial();
     hub_ = mode_of_instance_ == w::Mode::hub || is_hub_stage(engine_.stage());
     state_flags_ = 0xFF;
@@ -1393,6 +1430,18 @@ void Session::begin_visit(double now) {
 }
 
 void Session::on_state(w::StateData state, double now) {
+    if (state.checkpoint && (state.purpose == w::StatePurpose::join || (state.purpose == w::StatePurpose::resync && resyncing_))) {
+        if (rebuild_from_checkpoint(state, now)) return;
+        // CHECKPOINT_BAD went out: the classic state comes next.
+        mode_ = Mode::waiting_state;
+        loading_ = "Joining...";
+        return;
+    }
+    from_checkpoint_ = false;
+    // A new state means a new catch-up and its READY (round J's review: after a
+    // READY mismatch the relay sends the classic state; ready_sent_ stayed
+    // true, no READY went out again, and the join hung in "Joining..." for good).
+    ready_sent_ = false;
     if (!engine_.restore(state.snapshot)) {
         // Damaged state: back to the own stage.
         notice("The group's state could not be loaded; you play this stage on your own.");
@@ -1493,6 +1542,7 @@ void Session::run_catch_up(double now) {
         if (tick_ % 60 == 0) replay_fingerprints_[tick_] = engine_.net_fingerprint();
         ++tick_;
         ++done;
+        if (!load_end_ && engine_.load_ended()) load_end_ = tick_;
         if (engine_.supports_barriers() && engine_.pending_stage()) {
             if (resyncing_) {
                 // A resyncing member is still one of the instance: it reaches
@@ -1518,16 +1568,20 @@ void Session::run_catch_up(double now) {
     const double wall = clock_seconds() - catch_up_started_ - starved_ - (starved_since_ > 0 ? clock_seconds() - starved_since_ : 0.0);
     const double rate = wall > 0.05 && replayed_steps_ > 0 ? double(replayed_steps_) / wall : double(config_.rate);
     const double behind = rate > 60.0 ? double(remaining) / (rate - 59.94) : 0;
-    loading_ = "Joining... (catching up, about " + std::to_string(int(behind + 0.999)) + " s)";
+    // (From a checkpoint the few ticks since it go by at once: no countdown, 6.13.5.)
+    loading_ = from_checkpoint_ ? std::string("Joining...") : "Joining... (catching up, about " + std::to_string(int(behind + 0.999)) + " s)";
     if (done > 0 && (tick_ / 600 != (tick_ - done) / 600 || (engine_.supports_barriers() && engine_.pending_stage())))
         trace("catch-up inst=%u visit=%u tick=%u remaining=%u rate=%.0f%s", inst_, visit_, tick_, remaining, rate,
               engine_.supports_barriers() && engine_.pending_stage() ? " (stage pending)" : "");
-    if (!ready_sent_ && remaining <= 10 && tick_ > state_first_ && !replay_fingerprints_.empty()) {
+    if (!ready_sent_ && remaining <= 10 && (tick_ > state_first_ || from_checkpoint_) && !replay_fingerprints_.empty()) {
         const auto last = std::prev(replay_fingerprints_.end());
         if (replayed_steps_ > 600 && replay_seconds_ > 0) config_.rate = std::uint32_t(std::min(1e6, rate));
-        send(w::Type::ready, w::encode(w::Ready{inst_, visit_, last->first, last->second, config_.rate, own_carry_}));
-        trace("ready inst=%u visit=%u tick=%u fp=%016llx rate=%u", inst_, visit_, last->first, static_cast<unsigned long long>(last->second),
-              config_.rate);
+        w::Ready ready{inst_, visit_, last->first, last->second, config_.rate, own_carry_};
+        if (from_checkpoint_) ready.flags = w::Ready::from_checkpoint;
+        send(w::Type::ready, w::encode(ready));
+        trace("ready inst=%u visit=%u tick=%u fp=%016llx rate=%u%s replayed=%llu catchup_ms=%.0f", inst_, visit_, last->first,
+              static_cast<unsigned long long>(last->second), config_.rate, from_checkpoint_ ? " from-checkpoint" : "",
+              static_cast<unsigned long long>(replayed_steps_), (clock_seconds() - catch_up_started_) * 1000.0);
         send(w::Type::rate, w::encode(config_.rate));
         ready_sent_ = true;
         engine_.set_replay(false);
@@ -1570,6 +1624,7 @@ void Session::finish_resync(double now) {
         return;
     }
     resync_lead_.reset();
+    next_statehash_ = (tick_ / config_.checkpoint_period + 1) * config_.checkpoint_period;
     trace("resynced inst=%u visit=%u tick=%u slot=%d", inst_, visit_, tick_, slot_);
     input_next_ = tick_;
     skipped_buttons_ = 0;
@@ -1620,11 +1675,17 @@ void Session::become_member(double now) {
     engine_.set_split_identity(slot_);
     engine_.set_view_slot(slot_);
     trace("member inst=%u visit=%u tick=%u slot=%d", inst_, visit_, tick_, slot_);
+    joined_tick_ = tick_;
     input_next_ = tick_ + 1;
     skipped_buttons_ = 0;
     for (int k = 0; k < delay_; ++k) send_input_ahead(last_own_);
     mode_ = Mode::sealed;
     last_tick_at_ = now;
+    // The STATEHASH raster from here (round J's review: a classic joiner kept
+    // begin_visit's 600 and reported its first member tick in [600, 1200),
+    // off the raster: a report the relay never completes, 5-10 ms in the
+    // moment of the join).
+    next_statehash_ = (tick_ / config_.checkpoint_period + 1) * config_.checkpoint_period;
     // Who is there: the roster's members of this instance (a JOIN names no
     // member), else the slots' known names.
     std::vector<std::string> names;
@@ -1735,7 +1796,27 @@ void Session::send_story(double now, bool at_barrier) {
 }
 
 void Session::on_story_ack(const w::StoryAck& ack) {
-    if (!ack.story.empty()) take_story(engine::story::decode_story(ack.story, ack.revision));
+    if (!ack.story.empty()) {
+        auto story = engine::story::decode_story(ack.story, ack.revision);
+        // Round G-core (8.8): a guest inside a stage is told once per visit when
+        // the owner's story gains a phase step or a key item its engine lacks;
+        // the engine takes it only at the next barrier (never mid-stage, 8.5).
+        if (!config_.room_owner && confirmed_ && mode_ != Mode::parked && !ui_stage(engine_.stage()) &&
+            moved_on_noticed_ != std::make_pair(inst_, visit_)) {
+            const auto values = engine_.story_values();
+            bool moved = engine::story::phase(story) > std::max(engine::story::phase(*confirmed_), engine::story::phase(values));
+            for (int k = 0; k < engine::story::kKeys && !moved; ++k) {
+                const auto it = values.folder.find(k);
+                moved = story.folder[std::size_t(k)] && !confirmed_->folder[std::size_t(k)] && (it == values.folder.end() || !it->second);
+            }
+            if (moved) {
+                moved_on_noticed_ = std::make_pair(inst_, visit_);
+                const std::string owner = config_.owner_name.empty() ? std::string("The room owner") : config_.owner_name;
+                notice(owner + "'s story moved on. It reaches your game at your next stage change.");
+            }
+        }
+        take_story(story);
+    }
     if (!(ack.flags & w::StoryAck::answer) || story_in_flight_.empty()) return;
     const auto sent = std::move(story_in_flight_.front());
     story_in_flight_.pop_front();
@@ -1749,6 +1830,18 @@ void Session::on_story_ack(const w::StoryAck& ack) {
             if (!held_noticed_) notice("The room owner is away: your story progress is kept until they return.");
             held_noticed_ = true;
             continue; // the server keeps it; the confirmed story brings it once merged
+        }
+        // Round G-core (8.8): earned, the server merges it when due (the one-per-visit rule or a guest's spacing); not
+        // sent again before the next barrier (a resend from another stage would only be refused for the stage), no
+        // notice: the confirmed story brings it.
+        if (x.reason == engine::StoryRefusal::queued) {
+            switch (x.kind) {
+            case engine::StoryRefused::Kind::phase: refused_phase_ = std::max<std::uint8_t>(refused_phase_, std::uint8_t(x.index)); break;
+            case engine::StoryRefused::Kind::flag: refused_flags_.insert(x.index); break;
+            case engine::StoryRefused::Kind::folder: refused_folder_.insert(x.index); break;
+            case engine::StoryRefused::Kind::counter: break;
+            }
+            continue;
         }
         // The owner has no online story yet and its game has not entered a stage: the room starts at zero (8.6), what is
         // done before is dropped like owner_away's drop (the barrier removes it).
@@ -1787,6 +1880,7 @@ void Session::on_story_ack(const w::StoryAck& ack) {
 Overlay Session::overlay(double now) const {
     Overlay o;
     o.loading = loading_;
+    if (o.loading.empty() && story_hold_) o.loading = "Loading the room story...";
     o.boss_choice = boss_choice_;
     o.connection_lost = mode_ == Mode::lost || (resume_after_lost_ && !hello_done_);
     if (o.connection_lost && o.loading.empty() && mode_ == Mode::lost) o.loading = "Connection lost, reconnecting...";
@@ -1798,6 +1892,222 @@ Overlay Session::overlay(double now) const {
                                     lagging_members_.contains(slot_members_[std::size_t(s)]);
     o.slow_uplink = lagging_members_.contains(member_id_);
     return o;
+}
+
+// ---- Round J: checkpoints and the join from one (docs/SEAMLESS.md 6.13.4-6.13.5)
+
+// After a member's step: STATEHASH at the first state-safe tick at or after
+// every checkpoint period (with the load end K), and the donor's upload
+// asked for by CHECKPOINT_ASK at the next state-safe tick.
+void Session::checkpoint_tick(double now) {
+    (void)now;
+    if (!hub_checkpoints_ || !load_end_ || inst_ == 0 || checkpoints_off_) return;
+    // A solo leader (round J's review): nobody to compare a hash with, so no
+    // hash every period (5-7 ms each); the relay needs only K, once (a join
+    // asks for a fresh upload anyway). From the first joiner on (sealed) the
+    // reports come with hashes again.
+    const bool solo = mode_ == Mode::solo;
+    if (solo && load_end_told_ && !checkpoint_asked_) return;
+    bool due = tick_ >= next_statehash_;
+    // A whole period passed without a report (a member since a moment, or
+    // a stretch without a state-safe tick on every machine alike): the
+    // reports go on with the next period.
+    if (due && tick_ >= next_statehash_ + config_.checkpoint_period) {
+        next_statehash_ = (tick_ / config_.checkpoint_period + 1) * config_.checkpoint_period;
+        due = false;
+    }
+    if (!due && !checkpoint_asked_) return;
+    if (!engine_.state_safe()) return;
+    if (due && solo) {
+        send(w::Type::statehash, w::encode(w::StateHash{inst_, visit_, tick_, 0, *load_end_, w::StateHash::load_end_only}));
+        trace("statehash inst=%u visit=%u tick=%u k=%u load end only (solo)", inst_, visit_, tick_, *load_end_);
+        load_end_told_ = true;
+        next_statehash_ = (tick_ / config_.checkpoint_period + 1) * config_.checkpoint_period;
+        periodic_asked_ = false;
+        due = false;
+    }
+    if (due) {
+        const auto t0 = clock_seconds();
+        std::uint64_t hash = 0;
+        try {
+            hash = engine_.tick_state_hash();
+        } catch (const std::exception& error) {
+            // (A TickStateError: every engine of the instance is alike, so
+            // every member stops here; the joins of this visit go the classic way.)
+            checkpoints_off_ = true;
+            checkpoint_asked_ = periodic_asked_ = false;
+            log("tick state not written at tick %u (%s): no checkpoints in this visit", tick_, error.what());
+            trace("statehash off inst=%u visit=%u tick=%u: %s", inst_, visit_, tick_, error.what());
+            return;
+        }
+        tick_hash_ = std::pair{tick_, hash};
+        send(w::Type::statehash, w::encode(w::StateHash{inst_, visit_, tick_, hash, *load_end_, 0}));
+        // DW4_TRACE_TICKSTATE_DUMP=DIR (test runs): the canonical state of every STATEHASH, for
+        // tools/online/tickstate_diff.py.
+        if (const char* dir = std::getenv("DW4_TRACE_TICKSTATE_DUMP"); dir && *dir) try {
+            const auto bytes = engine_.save_tick_state(true);
+            const std::string path = std::string(dir) + "/statehash_" + config_.own_name + "_" + std::to_string(inst_) + "_" +
+                                     std::to_string(visit_) + "_" + std::to_string(tick_) + ".bin";
+            if (FILE* f = std::fopen(path.c_str(), "wb")) {
+                std::fwrite(bytes.data(), 1, bytes.size(), f);
+                std::fclose(f);
+            }
+        } catch (const std::exception&) {
+        }
+        trace("statehash inst=%u visit=%u tick=%u hash=%016llx k=%u ms=%.2f", inst_, visit_, tick_, static_cast<unsigned long long>(hash),
+              *load_end_, (clock_seconds() - t0) * 1000.0);
+        next_statehash_ = (tick_ / config_.checkpoint_period + 1) * config_.checkpoint_period;
+        if (periodic_asked_) {
+            periodic_asked_ = false;
+            checkpoint_asked_ = true;
+        }
+    }
+    if (checkpoint_asked_) upload_checkpoint();
+}
+
+void Session::upload_checkpoint() {
+    checkpoint_asked_ = false;
+    const auto t0 = clock_seconds();
+    std::vector<std::uint8_t> raw;
+    std::uint64_t hash = 0;
+    try {
+        raw = engine_.save_tick_state(false);
+        // (The STATEHASH of this tick computed it already: the upload of a
+        // periodic ask comes with it, one hash less in that frame.)
+        hash = tick_hash_ && tick_hash_->first == tick_ ? tick_hash_->second : engine_.tick_state_hash();
+    } catch (const std::exception& error) {
+        checkpoints_off_ = true;
+        log("checkpoint not taken at tick %u (%s): no checkpoints in this visit", tick_, error.what());
+        return;
+    }
+    if (raw.empty()) return;
+    std::vector<std::uint8_t> payload;
+    if (config_.compress) {
+        payload.push_back(1);
+        const auto packed = config_.compress(raw);
+        payload.insert(payload.end(), packed.begin(), packed.end());
+    } else {
+        payload.push_back(0);
+        payload.insert(payload.end(), raw.begin(), raw.end());
+    }
+#ifdef DW4_ONLINE_DEV
+    // DW4_ONLINE_TEST_BAD_CHECKPOINT=1 (development builds; scenario JB): the
+    // upload is damaged on the way (one byte of the state flipped), so the
+    // joiner's rebuild fails and the relay falls back.
+    if (const char* bad = std::getenv("DW4_ONLINE_TEST_BAD_CHECKPOINT"); bad && *bad == '1' && payload.size() > 64)
+        payload[payload.size() / 2] ^= 0x5A;
+#endif
+    constexpr std::size_t kChunk = 60 * 1024;
+    for (std::size_t off = 0; off < payload.size(); off += kChunk) {
+        w::Checkpoint c{inst_, visit_, tick_, hash, *load_end_, std::uint32_t(payload.size()), std::uint32_t(off), {}};
+        c.bytes.assign(payload.begin() + std::ptrdiff_t(off), payload.begin() + std::ptrdiff_t(std::min(payload.size(), off + kChunk)));
+        send(w::Type::checkpoint, w::encode(c));
+    }
+    trace("checkpoint inst=%u visit=%u tick=%u raw=%zu sent=%zu ms=%.2f", inst_, visit_, tick_, raw.size(), payload.size(),
+          (clock_seconds() - t0) * 1000.0);
+}
+
+// A join from a checkpoint (6.13.2 steps 1-5): the visit's load snapshot,
+// its load ticks [0, K) (the load end must come exactly at K), the tick
+// state of T, its hash; then the ticks from T as a catch-up. false: the
+// rebuild failed and CHECKPOINT_BAD went out (the classic state follows).
+bool Session::rebuild_from_checkpoint(w::StateData& state, double now) {
+    const double t0 = clock_seconds();
+    auto bad = [&](w::CheckpointBadReason reason, const std::string& section) {
+        send(w::Type::checkpoint_bad, w::encode(w::CheckpointBad{inst_, visit_, state.checkpoint_tick, reason, section.substr(0, 64)}));
+        log("checkpoint of tick %u refused (%u): %s", state.checkpoint_tick, unsigned(reason), section.c_str());
+        trace("checkpoint bad inst=%u visit=%u tick=%u reason=%u section=%s", inst_, visit_, state.checkpoint_tick, unsigned(reason),
+              section.c_str());
+        from_checkpoint_ = false;
+        return false;
+    };
+    const auto& payload = *state.checkpoint;
+    if (payload.empty()) return bad(w::CheckpointBadReason::decode, "payload");
+    std::vector<std::uint8_t> raw;
+    try {
+        if (payload[0] == 0) raw.assign(payload.begin() + 1, payload.end());
+        else if (payload[0] == 1 && config_.decompress) raw = config_.decompress(std::span(payload).subspan(1));
+        else return bad(w::CheckpointBadReason::decode, "codec");
+    } catch (const std::exception&) {
+        return bad(w::CheckpointBadReason::decode, "decompress");
+    }
+    if (!engine_.restore(state.snapshot)) return bad(w::CheckpointBadReason::decode, "snapshot");
+    engine_replaced_ = true;
+    ready_sent_ = false;
+    // The visit's counter line from its load, as the classic path opens it (a
+    // joiner's growth includes the instance's: one line, taken once, round 59b
+    // d54d7b0); opened at T it would leave out the growth before T (integration
+    // of rounds G-core and J).
+    open_line();
+    slot_ = state.slot;
+    engine_.set_view_slot(slot_);
+    present_ = engine_.present_mask();
+    engine_.set_split_identity(-1);
+    engine_.set_fork_sides(state.forks);
+    engine_.set_replay(true);
+    events_.clear();
+    // The load ticks: the load end comes at K exactly (6.13.2 step 2).
+    const std::uint32_t k = std::uint32_t(state.load_ticks.size());
+    tick_ = 0;
+    for (auto& body : state.load_ticks) {
+        if (engine_.load_ended()) return bad(w::CheckpointBadReason::load_end, "early");
+        for (auto& e : body.events) events_.push_back({tick_, std::move(e)});
+        apply_events(true);
+        engine_.replay_step(pads_of(body));
+        (void)engine_.take_split();
+        ++tick_;
+    }
+    if (!engine_.load_ended()) return bad(w::CheckpointBadReason::load_end, "late");
+    // (The apply and the hash's writer may throw on a damaged or foreign
+    // state: a CHECKPOINT_BAD and the classic state, never the game's end;
+    // round J's review.)
+    try {
+        if (const auto error = engine_.apply_tick_state(raw); !error.empty()) {
+            const auto colon = error.find(':');
+            const auto section = error.substr(0, colon);
+            return bad(section == "header" ? w::CheckpointBadReason::version : w::CheckpointBadReason::topology, error);
+        }
+        if (engine_.tick_state_hash() != state.checkpoint_hash) return bad(w::CheckpointBadReason::hash, "hash");
+    } catch (const std::exception& error) {
+        return bad(w::CheckpointBadReason::topology, std::string("throws: ") + error.what());
+    }
+    // The members the state has: a JOIN or LEAVE before T is not among the
+    // ticks from T, whose events the classic path replays (apply_events), so
+    // the session takes them from the engine (S3: the second joiner had the
+    // first joiner's slot missing and waited for three members for good).
+    present_ = engine_.present_mask();
+    for (int s = 0; s < 4; ++s) {
+        if (s == slot_) continue;
+        if (!(present_ & (1u << s))) slot_members_[std::size_t(s)] = kNoMember;
+        else if (slot_members_[std::size_t(s)] == kNoMember) slot_members_[std::size_t(s)] = roster_member_for(s);
+    }
+    // At T: the ticks from T follow as a catch-up (a few, 6.13.5).
+    from_checkpoint_ = true;
+    load_end_ = k;
+    tick_ = state.checkpoint_tick;
+    next_statehash_ = (tick_ / config_.checkpoint_period + 1) * config_.checkpoint_period;
+    rebuild_ms_ = (clock_seconds() - t0) * 1000.0;
+    hub_ = is_hub_stage(engine_.stage());
+    trace("state purpose=%u inst=%u visit=%u slot=%u checkpoint=%u k=%u ticks=%zu rebuild_ms=%.1f raw=%zu", unsigned(state.purpose), state.inst,
+          state.visit, unsigned(state.slot), state.checkpoint_tick, k, state.ticks.size(), rebuild_ms_, raw.size());
+    for (std::size_t i = 0; i < state.ticks.size(); ++i) ticks_.emplace(state.first + std::uint32_t(i), std::move(state.ticks[i]));
+    std::erase_if(ticks_, [&](const auto& t) { return t.first < state.first; });
+    state_first_ = state.first;
+    state_last_ = state.first + std::uint32_t(state.ticks.size());
+    events_.clear();
+    // READY names the first multiple of 60 the catch-up replays (at most a
+    // second more): the relay has the members' fingerprints only there, and
+    // READY of T - 1 went unchecked (round J's review); it waits for the
+    // members' NETFP of that tick.
+    replay_fingerprints_.clear();
+    replayed_steps_ = 0;
+    replay_seconds_ = 0;
+    starved_ = 0;
+    starved_since_ = 0;
+    catch_up_started_ = t0;
+    mode_ = Mode::catching_up;
+    run_catch_up(now);
+    return true;
 }
 
 } // namespace dw4::game::online

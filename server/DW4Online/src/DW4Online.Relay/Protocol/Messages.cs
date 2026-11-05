@@ -262,17 +262,109 @@ public sealed record SnapHashMsg(uint Inst, uint Visit, ulong Hash)
 }
 
 /// <summary>READY: a joiner caught up; tick = a multiple of 60 with its net fingerprint, its replay rate and its carry.</summary>
-public sealed record ReadyMsg(uint Inst, uint Visit, uint Tick, ulong NetFp, uint Rate, byte[] Carry)
+public sealed record ReadyMsg(uint Inst, uint Visit, uint Tick, ulong NetFp, uint Rate, byte[] Carry, byte Flags = 0)
 {
+    /// <summary>Round J: the engine was rebuilt from a checkpoint (such a READY never judges a vote, SEAMLESS.md 6.13.4).</summary>
+    public const byte FromCheckpoint = 1;
+
     public static ReadyMsg Parse(ReadOnlySpan<byte> p)
     {
         var r = new WireReader(p);
         var m = new ReadyMsg(r.U32(), r.U32(), r.U32(), r.U64(), r.U32(), r.Blob(BarrierMsg.MaxCarry));
+        if (!r.AtEnd) m = m with { Flags = r.U8() };
         r.End();
         return m;
     }
 
-    public byte[] Frame() => new WireWriter(Msg.Ready, 32 + Carry.Length).U32(Inst).U32(Visit).U32(Tick).U64(NetFp).U32(Rate).Blob(Carry).Frame();
+    public byte[] Frame()
+    {
+        var w = new WireWriter(Msg.Ready, 33 + Carry.Length).U32(Inst).U32(Visit).U32(Tick).U64(NetFp).U32(Rate).Blob(Carry);
+        if (Flags != 0) w.U8(Flags);
+        return w.Frame();
+    }
+}
+
+/// <summary>
+/// STATEHASH (round J, SEAMLESS.md 6.13.4): a member's XXH64 of its canonical tick state at a checkpoint tick (the first
+/// tick not in the state), with the visit's load end K its engine reached; flags bit 0: it keeps the state's bytes; bit 1
+/// (round J's review): a solo leader's report of K alone, hash 0 (nobody to compare with, nothing computed).
+/// </summary>
+public sealed record StateHashMsg(uint Inst, uint Visit, uint Tick, ulong Hash, uint LoadEnd, byte Flags)
+{
+    public const byte Kept = 1;
+    public const byte LoadEndOnly = 2;
+
+    public static StateHashMsg Parse(ReadOnlySpan<byte> p)
+    {
+        var r = new WireReader(p);
+        var m = new StateHashMsg(r.U32(), r.U32(), r.U32(), r.U64(), r.U32(), r.U8());
+        r.End();
+        if (m.LoadEnd > m.Tick) throw new ProtocolException("load end beyond the checkpoint");
+        return m;
+    }
+
+    public byte[] Frame() => new WireWriter(Msg.StateHash).U32(Inst).U32(Visit).U32(Tick).U64(Hash).U32(LoadEnd).U8(Flags).Frame();
+}
+
+/// <summary>CHECKPOINT (round J): a chunk of the donor's tick state at tick T (codec byte + data), its hash and load end.</summary>
+public sealed record CheckpointMsg(uint Inst, uint Visit, uint Tick, ulong Hash, uint LoadEnd, uint Total, uint Offset, byte[] Chunk)
+{
+    public const int MaxBytes = 8 * 1024 * 1024;
+
+    public static CheckpointMsg Parse(ReadOnlySpan<byte> p)
+    {
+        var r = new WireReader(p);
+        var m = new CheckpointMsg(r.U32(), r.U32(), r.U32(), r.U64(), r.U32(), r.U32(), r.U32(), r.Rest().ToArray());
+        if (m.Total == 0 || m.Total > MaxBytes) throw new ProtocolException("checkpoint size");
+        if (m.Chunk.Length == 0 || m.Chunk.Length > Wire.MaxChunkBytes) throw new ProtocolException("checkpoint chunk size");
+        if ((ulong)m.Offset + (ulong)m.Chunk.Length > m.Total) throw new ProtocolException("checkpoint chunk beyond its total");
+        if (m.LoadEnd > m.Tick) throw new ProtocolException("load end beyond the checkpoint");
+        return m;
+    }
+
+    public byte[] Frame() => new WireWriter(Msg.Checkpoint, 36 + Chunk.Length).U32(Inst).U32(Visit).U32(Tick).U64(Hash).U32(LoadEnd).U32(Total)
+        .U32(Offset).Bytes(Chunk).Frame();
+}
+
+/// <summary>Why a rebuild from a checkpoint failed (CHECKPOINT_BAD).</summary>
+public enum CheckpointBadReason : byte
+{
+    Version = 1,
+    Decode = 2,
+    LoadEnd = 3,
+    Topology = 4,
+    Hash = 5,
+}
+
+/// <summary>CHECKPOINT_BAD (round J): a joiner's rebuild failed at the section named; the relay falls back.</summary>
+public sealed record CheckpointBadMsg(uint Inst, uint Visit, uint Tick, CheckpointBadReason Reason, string Section)
+{
+    public static CheckpointBadMsg Parse(ReadOnlySpan<byte> p)
+    {
+        var r = new WireReader(p);
+        var m = new CheckpointBadMsg(r.U32(), r.U32(), r.U32(), (CheckpointBadReason)r.U8(), r.Str(64));
+        r.End();
+        return m;
+    }
+
+    public byte[] Frame() => new WireWriter(Msg.CheckpointBad).U32(Inst).U32(Visit).U32(Tick).U8((byte)Reason).Str(Section).Frame();
+}
+
+/// <summary>CHECKPOINT_ASK (round J): the donor uploads its tick state (tick 0: at its next state-safe tick).</summary>
+public sealed record CheckpointAskMsg(uint Inst, uint Visit, uint Tick, byte Flags)
+{
+    public const byte Periodic = 1;
+    public const byte Diagnosis = 2;
+
+    public static CheckpointAskMsg Parse(ReadOnlySpan<byte> p)
+    {
+        var r = new WireReader(p);
+        var m = new CheckpointAskMsg(r.U32(), r.U32(), r.U32(), r.U8());
+        r.End();
+        return m;
+    }
+
+    public byte[] Frame() => new WireWriter(Msg.CheckpointAsk).U32(Inst).U32(Visit).U32(Tick).U8(Flags).Frame();
 }
 
 /// <summary>JOIN_AT: the solo leader's answer to JOIN_REQ: from tick J the instance is sealed and the JOIN applies.</summary>
@@ -303,19 +395,23 @@ public sealed record NetFpMsg(uint Inst, uint Visit, uint Tick, ulong Hash)
     public byte[] Frame() => new WireWriter(Msg.NetFp).U32(Inst).U32(Visit).U32(Tick).U64(Hash).Frame();
 }
 
-/// <summary>STATE: the instance's joinable / membership-safe / boss lock flags and the session context hash, on change.</summary>
+/// <summary>STATE: the instance's joinable / membership-safe / boss lock / load end flags and the session context hash, on
+/// change.</summary>
 public sealed record StateMsg(uint Inst, uint Visit, uint Tick, byte Flags, ulong ContextHash, StateReason Reason)
 {
     public const byte Joinable = 1;
     public const byte MembershipSafe = 2;
     public const byte BossLock = 4;
+    /// <summary>Protocol 47 (round J's review): the visit reached its load end K; the first such STATE's context is the
+    /// visit's entry context (SEAMLESS.md 3.7), joinable or not.</summary>
+    public const byte LoadEnded = 8;
 
     public static StateMsg Parse(ReadOnlySpan<byte> p)
     {
         var r = new WireReader(p);
         var m = new StateMsg(r.U32(), r.U32(), r.U32(), r.U8(), r.U64(), (StateReason)r.U8());
         r.End();
-        if (m.Flags > 7) throw new ProtocolException("unknown state flags");
+        if (m.Flags > 15) throw new ProtocolException("unknown state flags");
         return m;
     }
 
@@ -526,6 +622,9 @@ public sealed record WelcomeMsg(byte Member, uint Inst, uint Visit, byte Slot, I
     public const byte Resumable = 1;
     /// <summary>This hub takes PRESENCE2 (round 60). A client sends it only then: an older hub closes on an unknown frame.</summary>
     public const byte PresenceV2 = 2;
+    /// <summary>This hub takes STATEHASH, CHECKPOINT and CHECKPOINT_BAD (round J). A client sends them only then: an older hub
+    /// closes on an unknown frame.</summary>
+    public const byte Checkpoints = 4;
     public const uint NoTick = uint.MaxValue;
 
     public static WelcomeMsg Parse(ReadOnlySpan<byte> p)
@@ -798,13 +897,37 @@ public sealed record ForkSide(uint Tick, byte LeaverMask, SplitKind Kind, byte S
 }
 
 /// <summary>
-/// The reassembled STATE_DATA: purpose u8, slot u8 (the slot the receiver gets or holds), codec u8 (0 = raw tick records),
-/// snapshot (u32 length + the bytes the leader uploaded), fork count u8 + forks (tick u32, leaver mask u8, kind u8, side u8),
-/// first tick u32, tick count u32, then the tick records. LIVE frames continue the stream after the last tick.
+/// The reassembled STATE_DATA: purpose u8, slot u8 (the slot the receiver gets or holds), codec u8 (0 = raw tick records,
+/// 2 = with a checkpoint), snapshot (u32 length + the bytes the leader uploaded), fork count u8 + forks (tick u32, leaver
+/// mask u8, kind u8, side u8); codec 2 then: the load end K u32 + the records [0, K), the checkpoint tick T u32 (the first
+/// tick not in the state), its hash u64, flags u8 (1 agreed), its bytes (u32 length + the donor's upload); then first tick
+/// u32, tick count u32 and the tick records. LIVE frames continue the stream after the last tick.
 /// </summary>
 public sealed record StateBlob(StatePurpose Purpose, byte Slot, byte[] Snapshot, IReadOnlyList<ForkSide> Forks, uint FirstTick, IReadOnlyList<TickRecord> Ticks)
 {
     public const int MaxSnapshot = 4 * 1024 * 1024;
+    public const byte CheckpointAgreed = 1;
+    public IReadOnlyList<TickRecord> LoadTicks { get; init; } = [];
+    public uint CheckpointTick { get; init; }
+    public ulong CheckpointHash { get; init; }
+    public byte CheckpointFlags { get; init; }
+    public byte[]? Checkpoint { get; init; }
+
+    /// <summary>Codec 2: the load ticks [0, K), the checkpoint of tick T and the records from T on.</summary>
+    public static byte[] BuildWithCheckpoint(StatePurpose purpose, byte slot, ReadOnlySpan<byte> snapshot, IReadOnlyList<ForkSide> forks,
+        IReadOnlyList<byte[]> loadRecords, uint checkpointTick, ulong checkpointHash, byte checkpointFlags, ReadOnlySpan<byte> checkpoint,
+        IReadOnlyList<byte[]> records)
+    {
+        var w = new WireWriter(0, 40 + snapshot.Length + checkpoint.Length + forks.Count * 7 + loadRecords.Sum(x => x.Length) + records.Sum(x => x.Length))
+            .U8((byte)purpose).U8(slot).U8(2).Blob(snapshot).U8((byte)forks.Count);
+        foreach (var f in forks) w.U32(f.Tick).U8(f.LeaverMask).U8((byte)f.Kind).U8(f.Side);
+        w.U32((uint)loadRecords.Count);
+        foreach (var rec in loadRecords) w.Bytes(rec);
+        w.U32(checkpointTick).U64(checkpointHash).U8(checkpointFlags).Blob(checkpoint);
+        w.U32(checkpointTick).U32((uint)records.Count);
+        foreach (var rec in records) w.Bytes(rec);
+        return w.Frame()[Wire.HeaderBytes..];
+    }
 
     public static byte[] Build(StatePurpose purpose, byte slot, ReadOnlySpan<byte> snapshot, IReadOnlyList<ForkSide> forks, uint firstTick, IReadOnlyList<byte[]> records)
     {
@@ -821,17 +944,35 @@ public sealed record StateBlob(StatePurpose Purpose, byte Slot, byte[] Snapshot,
         var r = new WireReader(blob);
         var purpose = (StatePurpose)r.U8();
         var slot = r.U8();
-        if (r.U8() != 0) throw new ProtocolException("unknown state codec");
+        var codec = r.U8();
+        if (codec != 0 && codec != 2) throw new ProtocolException("unknown state codec");
         var snapshot = r.Blob(MaxSnapshot);
         var nf = r.U8();
         var forks = new List<ForkSide>(nf);
         for (var i = 0; i < nf; ++i) forks.Add(new ForkSide(r.U32(), r.U8(), (SplitKind)r.U8(), r.U8()));
+        var load = new List<TickRecord>();
+        uint cpTick = 0;
+        ulong cpHash = 0;
+        byte cpFlags = 0;
+        byte[]? cp = null;
+        if (codec == 2)
+        {
+            var k = r.U32();
+            for (var i = 0u; i < k; ++i) load.Add(TickRecord.Read(ref r));
+            cpTick = r.U32();
+            cpHash = r.U64();
+            cpFlags = r.U8();
+            cp = r.Blob(CheckpointMsg.MaxBytes);
+        }
         var first = r.U32();
         var count = r.U32();
         var ticks = new List<TickRecord>((int)Math.Min(count, 1_000_000));
         for (var i = 0u; i < count; ++i) ticks.Add(TickRecord.Read(ref r));
         r.End();
-        return new StateBlob(purpose, slot, snapshot, forks, first, ticks);
+        return new StateBlob(purpose, slot, snapshot, forks, first, ticks)
+        {
+            LoadTicks = load, CheckpointTick = cpTick, CheckpointHash = cpHash, CheckpointFlags = cpFlags, Checkpoint = cp,
+        };
     }
 }
 

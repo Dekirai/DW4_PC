@@ -88,6 +88,8 @@ bool OnlineScript::known_condition(std::string_view key) {
     if (key.starts_with("onmat:") || key.starts_with("onme:") || key.starts_with("offme:")) return key.find(':') + 1 < key.size();
     if (key.starts_with("flag:")) return key.size() > 5 && key.find_first_not_of("0123456789", 5) == std::string_view::npos;
     if (key.starts_with("roomflag:")) return key.size() > 9 && key.find_first_not_of("0123456789", 9) == std::string_view::npos;
+    if (key.starts_with("key:")) return key.size() > 4 && key.find_first_not_of("0123456789", 4) == std::string_view::npos;
+    if (key == "difficulty") return true;
     return std::find(std::begin(names), std::end(names), key) != std::end(names);
 }
 
@@ -208,6 +210,17 @@ bool OnlineScript::holds(engine::Engine& engine, const OnlineScriptFacts& facts,
     if (c.key.rfind("flag:", 0) == 0) {
         const auto found = engine.flags().find(std::atoi(c.key.c_str() + 5));
         return compare(found != engine.flags().end() ? found->second : 0);
+    }
+    if (c.key.rfind("key:", 0) == 0) {
+        // (Round G-core: the engine's key item N, the common flag folder; absent counts as 0.)
+        const auto* sys = engine.get<engine::GameSystem>();
+        if (!sys) return compare(0);
+        const auto found = sys->flag_folder.find(std::atoi(c.key.c_str() + 4));
+        return compare(found != sys->flag_folder.end() ? found->second : 0);
+    }
+    if (c.key == "difficulty") {
+        const auto* sys = engine.get<engine::GameSystem>();
+        return compare(sys ? sys->difficulty : 0);
     }
     if (c.key.rfind("roomflag:", 0) == 0) {
         const auto flag = std::size_t(std::atoi(c.key.c_str() + 9));

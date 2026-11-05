@@ -33,7 +33,9 @@ canonical snapshot hashes of every NEW (and co-arrival) are equal, the relay log
 was closed or crashed; then the scenario's expected log (in order per source; "!" lines must not appear; "shared: a b >=
 N" asks for N ticks of equal fingerprints with both present in one instance). A scenario with "allow_resync" (S11a, S11b:
 a client's DW4_ONLINE_TEST_DESYNC injects a desync) may differ up to its instance's last resync READY and must then be
-equal for "min_after_resync" ticks; its expected log checks the votes and resyncs. A scenario's "achievements" asks the
+equal for "min_after_resync" ticks; its expected log checks the votes and resyncs. A scenario with "expect_relay"
+({"ready_mismatch": 1}: JS, a READY from a checkpoint the members' fingerprints contradict) needs exactly that count of
+that relay event instead of none. A scenario's "achievements" asks the
 server for each client account's online achievements afterwards (check_achievements). Network traffic stays on loopback. A
 scenario.json with "server": {...} gets its own server with those settings merged over the stack's and its own database
 (S14h / S14a: {"Rooms": {"StoryWhileOwnerAway": "hold"}}); "min_shared_ticks" lowers the 10,000 shared ticks a scenario
@@ -49,6 +51,7 @@ import argparse
 import base64
 import re
 import threading
+import glob
 import hashlib
 import json
 import os
@@ -543,17 +546,110 @@ def card_story(folder):
     raise RuntimeError("no valid DW4 save in " + folder)
 
 
-def seed_story(stack, connection, account_id, folder):
+STORY_SETS = os.path.join(os.path.dirname(os.path.dirname(HERE)), "data", "online", "story_sets.json")
+
+
+def production_story(flags, folder_bytes, counters, difficulty=0, with_training=False):
+    """The story a server's merges leave (round G-core, SEAMLESS.md 16 "Round G"): only the merge sets of a card's story -
+    the phase one-hot, the persistent flags, K0-K10, COUNTER 1 and 7 - and the copies of `difficulty` derived from them,
+    as the keeper does. Flag 503 only with `with_training`: stories saved before round G never hold it (it was never
+    merged), and the rebase at the room's open has to derive it. (The first form copied all 1024 flag bytes, 503 and
+    the temporaries included, which hid the tutorial bug of 8.8.)"""
+    sets = json.load(open(STORY_SETS, encoding="utf-8"))
+    phase = sets["phase"]
+    out = bytearray(1024)
+    index = max((i + 1 for i, f in enumerate(phase) if flags[f]), default=0)
+    if index:
+        out[phase[index - 1]] = 1
+    for f in sets["persistent"]:
+        if flags[f] and (f != sets["training"]["flag"] or with_training):
+            out[f] = 1
+    keys = bytearray(12)
+    for k in range(sets["keys"]):
+        keys[k] = 1 if folder_bytes[k] else 0
+    for i, f in enumerate(phase):
+        out[sets["phaseCopies"][difficulty][i]] = out[f]
+    for g in sets["working"]:
+        for j in range(g["count"]):
+            out[g["copies"][difficulty] + j] = out[g["first"] + j]
+    for k in range(sets["keys"]):
+        out[sets["keyCopies"][difficulty] + k] = keys[k]
+    kept = [counters[i] if i in sets["counters"] else 0 for i in range(16)]
+    return bytes(out), bytes(keys), kept
+
+
+def seed_story(stack, connection, account_id, folder, difficulty=0, with_training=False, full=False):
     """The account's online story (online_story, SEAMLESS.md 8.4) from the card's story: the room story of a room this
     account opens starts from it, as if the online character had played that far (test runs that start from saved
-    cards; the title gives every member the room story at game start)."""
+    cards; the title gives every member the room story at game start). Production-like since round G-core
+    (production_story); `full` (scenario.json "seed_story": "full") copies the card's bytes as before."""
     flags, folder_bytes, counters = card_story(folder)
+    if not full:
+        flags, folder_bytes, counters = production_story(flags, folder_bytes, counters, difficulty, with_training)
     db = dict(kv.split("=", 1) for kv in connection.split(";") if "=" in kv)["Database"]
     port, pw = stack.mysql
     sql = ("REPLACE INTO online_story (account_id, revision, flags, folder, counters, updated_at) VALUES (%d, 1, X'%s', X'%s', X'%s', "
            "UTC_TIMESTAMP(3))" % (int(account_id), flags.hex(), folder_bytes.hex(), struct.pack("<16i", *counters).hex()))
     subprocess.run([os.path.join(MYSQL_BIN, "mysql.exe"), "--protocol=tcp", "-h", "127.0.0.1", "-P", str(port), "-u", "root", "--password=" + pw,
                     db, "-e", sql], check=True, capture_output=True, creationflags=NO_WINDOW)
+
+
+def stored_story(stack, connection, account_id):
+    """(revision, the story bytes as a record holds them: flags 1024, folder 12, counters 16 x i32 big endian) of the
+    account's online_story row; (0, 1100 zero bytes) without one (round G-core: the guest's own story)."""
+    db = dict(kv.split("=", 1) for kv in connection.split(";") if "=" in kv)["Database"]
+    port, pw = stack.mysql
+    sql = "SELECT revision, HEX(flags), HEX(folder), HEX(counters) FROM online_story WHERE account_id = %d" % int(account_id)
+    out = subprocess.run([os.path.join(MYSQL_BIN, "mysql.exe"), "--protocol=tcp", "-h", "127.0.0.1", "-P", str(port), "-u", "root", "--password=" + pw,
+                          "-N", "-B", db, "-e", sql], check=True, capture_output=True, text=True, creationflags=NO_WINDOW).stdout.split()
+    if len(out) < 4:
+        return 0, bytes(1100)
+    flags = bytes.fromhex(out[1]).ljust(1024, b"\0")[:1024]
+    folder = bytes.fromhex(out[2]).ljust(12, b"\0")[:12]
+    counters = struct.unpack("<16i", bytes.fromhex(out[3]).ljust(64, b"\0")[:64])
+    return int(out[0]), flags + folder + struct.pack(">16i", *counters)
+
+
+def card_boxes_story(path):
+    """The story bytes (792..1891) of every used box of every valid data copy of a GCI file: [(copy, box, bytes)]."""
+    data = open(path, "rb").read()
+    found = []
+    for copy in CARD_COPIES:
+        base = GCI_ENTRY + copy
+        if len(data) < base + CARD_COPY_SIZE:
+            continue
+        words = struct.unpack(">%dI" % ((CARD_COPY_SIZE - 4) // 4), data[base + 4:base + CARD_COPY_SIZE])
+        if struct.unpack(">I", data[base:base + 4])[0] != sum(words) & 0xFFFFFFFF:
+            continue
+        for box in range(4):
+            rec = base + 8 + box * 0x2000
+            if data[rec]:
+                found.append((copy, box, data[rec + 792:rec + 1892]))
+    return found
+
+
+def own_story_checks(stack, connection, sc, out, accounts, seeded, problems, notes):
+    """Round G-core (G3, G4, G10): a guest's online card, its backups and its local card hold its own story, never the
+    owner's; its own online_story row keeps its seeded revision."""
+    for name in sc.get("own_story", []):
+        revision, own = stored_story(stack, connection, accounts[name])
+        if name in seeded and revision != seeded[name]:
+            problems.append("%s: its own online_story moved from revision %d to %d" % (name, seeded[name], revision))
+        files = glob.glob(os.path.join(out, "online_" + name, "*", "online_card.dat")) + \
+            glob.glob(os.path.join(out, "online_" + name, "*", "backups", "*.dat"))
+        if not files:
+            problems.append("%s: no online card file" % name)
+        boxes = 0
+        for path in files:
+            for copy, box, story in card_boxes_story(path):
+                boxes += 1
+                if story != own:
+                    problems.append("%s: %s copy 0x%x box %d does not hold its own story" % (name, os.path.basename(path), copy, box))
+        notes.append("%s: %d used boxes in %d online card files hold its own story (online_story revision %d)" % (name, boxes, len(files), revision))
+        local = os.path.join(out, "card_" + name)
+        left = [os.path.join(r, f) for r, _, fs in os.walk(local) for f in fs]
+        if left:
+            problems.append("%s: the local card folder got files: %s" % (name, ", ".join(os.path.relpath(p, local) for p in left)))
 
 
 def stored_story_flag(stack, connection, account_id, flag):
@@ -613,7 +709,7 @@ def run_real(stack, sc, api, relay_port, pin, diag, lock, connection):
     out = os.path.join(stack.dir, sc["name"])
     os.makedirs(out, exist_ok=True)
     tag = re.sub(r"[^a-z0-9]", "", sc["name"].lower())[:8] + secrets.token_hex(2)
-    passwords, accounts = {}, {}
+    passwords, accounts, tokens = {}, {}, {}
     with lock:
         for c in sc["clients"]:
             passwords[c["name"]] = "online test " + c["name"] + " " + secrets.token_hex(4)
@@ -621,6 +717,7 @@ def run_real(stack, sc, api, relay_port, pin, diag, lock, connection):
             if s != 201:
                 raise RuntimeError("register %s: %s %s" % (c["name"], s, body))
             accounts[c["name"]] = body["account"]["id"]
+            tokens[c["name"]] = body.get("token")
     https_port = api.base.rsplit(":", 1)[1]
     room_name = re.sub(r"[^A-Za-z0-9 ]", " ", sc["name"]) + " " + tag
     t0 = time.time()
@@ -640,6 +737,18 @@ def run_real(stack, sc, api, relay_port, pin, diag, lock, connection):
                 return " ".join(points[points.index(m.group(3)):])
             return " ".join(points[:points.index(m.group(2)) + 1] if m.group(2) else points)
         text = re.sub(r"\{route:(\w+)(?::(-?\d+,-?\d+)|>(-?\d+,-?\d+))?\}", route, text)
+        if a.compat_scripts:
+            # (--compat-scripts: a client before round G-core, a counter-proof on main, knows no key:N / difficulty
+            # condition; they leave its scripts, so the scenario's other checks still run.)
+            cond = r"(?:key:\d+|difficulty)(?:>=|<=|=|<|>)\d+"
+            lines = []
+            for line in text.splitlines():
+                if not line.startswith("#"):
+                    line = re.sub("," + cond, "", line)
+                    line = re.sub("(?<= )" + cond + ",", "", line)
+                    line = re.sub(" (?:until|fail) " + cond + "(?= |$)", "", line)
+                lines.append(line)
+            text = "\n".join(lines) + "\n"
         path = os.path.join(out, c["name"] + ".script")
         with open(path, "w", encoding="utf-8") as f:
             f.write(text)
@@ -679,6 +788,8 @@ def run_real(stack, sc, api, relay_port, pin, diag, lock, connection):
             env["DW4_ONLINE_RELAY_PORT"] = str(port)
         argv = [a.game_exe, "--data", a.data, "--smoke-test", str(c.get("frames", sc.get("frames", 30000))), "--card-dir", card,
                 "--online-login", tag + c["name"], "--online-script", script_for(c)] + room_args +             [x.replace("{out}", out) for x in c.get("args", [])]  # (a client's extra game arguments; {out}: the scenario's folder)
+        # (Round G-core: each client's online card cache in the run folder, for the own story checks.)
+        argv += ["--online-folder", os.path.join(out, "online_" + c["name"])]
         # "shots": the script's shot steps write NAME.bmp into the run folder (hidden 1920x1009 widescreen MSAA 4
         # pictures, as a player sees them; P1, the ghost figures).
         if c.get("shots", sc.get("shots")):
@@ -686,7 +797,11 @@ def run_real(stack, sc, api, relay_port, pin, diag, lock, connection):
             for k, v in (("DW4_RENDER", "1"), ("DW4_WINDOW", "1920x1009"), ("DW4_WIDESCREEN", "1"), ("DW4_MSAA", "4"), ("DW4_LABELS", "all")):
                 env.setdefault(k, v)
         folder = saved_card(c)
-        if folder:
+        if folder and c.get("upload_card"):
+            # (Round G-core: the card's character is the account's online character on the server already; the room
+            # entry's GET brings it with the account's own story, the bot calls it at the title.)
+            env["DW4_CAMPAIGN_LOAD"] = "1"
+        elif folder:
             argv += ["--online-card", folder]
             env["DW4_CAMPAIGN_LOAD"] = "1"
         return stack.spawn(argv, os.path.join(out, c["name"] + ".log"), env=env)
@@ -698,7 +813,38 @@ def run_real(stack, sc, api, relay_port, pin, diag, lock, connection):
         if not owner_card:
             raise RuntimeError("seed_story needs a card for the room's creator %s" % clients[0]["name"])
         with lock:
-            seed_story(stack, connection, accounts[clients[0]["name"]], owner_card)
+            seed_story(stack, connection, accounts[clients[0]["name"]], owner_card, int(sc.get("seed_difficulty", 0)),
+                       bool(sc.get("seed_503")), sc.get("seed_story") == "full")
+        # A guest's own online story (round G-core: G2, G3, G10 seed the guest's from its card too).
+        for c in clients[1:]:
+            if c.get("seed_story"):
+                guest_card = saved_card(c)
+                if not guest_card:
+                    raise RuntimeError("seed_story of %s needs a card" % c["name"])
+                with lock:
+                    seed_story(stack, connection, accounts[c["name"]], guest_card)
+    seeded = {}
+    for c in clients:
+        if c.get("upload_card"):
+            # The card's first record as the account's online character (PUT, If-None-Match: *): the server stores it
+            # with the account's own story (8.4).
+            card_dir = saved_card(c)
+            if not card_dir:
+                raise RuntimeError("upload_card of %s needs a card" % c["name"])
+            gci = [f for f in os.listdir(os.path.join(card_dir, "Card A") if os.path.isdir(os.path.join(card_dir, "Card A")) else card_dir)
+                   if f.endswith(".gci")]
+            base_dir = os.path.join(card_dir, "Card A") if os.path.isdir(os.path.join(card_dir, "Card A")) else card_dir
+            data = open(os.path.join(base_dir, gci[0]), "rb").read()
+            record = data[GCI_ENTRY + CARD_COPIES[0] + 8:GCI_ENTRY + CARD_COPIES[0] + 8 + 3316]
+            import character_test
+            with lock:
+                s, body = character_test.put_character(api, tokens[c["name"]], record, 0, 3600)
+            if s not in (200, 201):
+                raise RuntimeError("upload_card %s: %s %s" % (c["name"], s, body))
+    for c in clients:
+        if c.get("seed_story") or (c is clients[0] and sc.get("seed_story")):
+            with lock:
+                seeded[c["name"]] = stored_story(stack, connection, accounts[c["name"]])[0]
     procs = [(clients[0]["name"], start(clients[0], ["--online-create", room_name]))]
     story_saved, stop_watch = {}, threading.Event()
     if sc.get("story_saved"):
@@ -734,6 +880,9 @@ def run_real(stack, sc, api, relay_port, pin, diag, lock, connection):
             p.terminate()
     stop_watch.set()
     problems, notes = evaluate_real(sc, src, out, code, diag, timed_out, exits)
+    if sc.get("own_story"):
+        with lock:
+            own_story_checks(stack, connection, sc, out, accounts, seeded, problems, notes)
     latency_summary(sc, out, notes)
     if sc.get("story_saved"):
         spec = sc["story_saved"]
@@ -945,9 +1094,23 @@ def evaluate_real(sc, src, out, code, diag, timed_out, exits):
     for e in relay:
         kinds[e["ev"]] = kinds.get(e["ev"], 0) + 1
     notes.append("relay: " + ", ".join("%s %d" % kv for kv in sorted(kinds.items())))
-    for bad in ("desync", "snaphash_mismatch", "split_mismatch", "barrier_mismatch", "barrier_split", "resync", "ready_mismatch"):
+    bad_kinds = ("desync", "snaphash_mismatch", "split_mismatch", "barrier_mismatch", "barrier_split", "resync", "ready_mismatch")
+    # "expect_relay" ({"ready_mismatch": 1}, JS): a scenario that provokes one of these on purpose names it with its exact
+    # count; that count is then required (fewer or more is a problem), every other one stays an error.
+    expect_relay = sc.get("expect_relay", {})
+    for ev, count in sorted(expect_relay.items()):
+        if ev not in bad_kinds or ev in ("desync", "resync"):
+            problems.append("scenario.json: expect_relay names %s (only %s; desync and resync go by allow_resync)" %
+                            (ev, ", ".join(k for k in bad_kinds if k not in ("desync", "resync"))))
+        elif kinds.get(ev, 0) != count:
+            problems.append("relay logged %d x %s, the scenario expects exactly %d" % (kinds.get(ev, 0), ev, count))
+        else:
+            notes.append("relay logged %d x %s as the scenario expects" % (count, ev))
+    for bad in bad_kinds:
         if sc.get("allow_resync") and bad in ("desync", "resync"):
             continue  # (the resync scenarios inject them; their expected.txt checks how they end)
+        if bad in expect_relay:
+            continue  # (checked above)
         if kinds.get(bad):
             problems.append("relay logged %d x %s" % (kinds[bad], bad))
     relay_lines = [" ".join([e["ev"]] + ["%s=%s" % (k, v) for k, v in e.items() if k != "ev"]) for e in relay]
@@ -1304,6 +1467,27 @@ def gci_record(path, box=0):
     raise RuntimeError("no valid data copy in " + path)
 
 
+def guest_card_problems(name, folder, notes):
+    """Round G-core: a guest without an own story (the screens' way into a room, ui/newchars' b) keeps empty story bytes in
+    every used box of its online card cache, the cache's .bak and its backups (the server's record alone does not show it:
+    the server composes the own story into every upload). Before the room-owner fix the screens' way left every guest the
+    owner, and the save room wrote the room story into the guest's card (from there into savedata.dat by F1 > Saves >
+    Import and the cloud backup). Returns the problems."""
+    problems, boxes = [], 0
+    files = [p for p in [os.path.join(folder, "online_card.dat"), os.path.join(folder, "online_card.dat.bak")] if os.path.exists(p)]
+    files += glob.glob(os.path.join(folder, "backups", "*.dat"))
+    if not files:
+        problems.append("%s: no online card file in %s" % (name, folder))
+    for path in files:
+        for copy, box, story in card_boxes_story(path):
+            boxes += 1
+            if any(story):
+                problems.append("%s: %s copy 0x%x box %d holds story bytes (the room story; its own story is empty)" %
+                                (name, os.path.basename(path), copy, box))
+    notes.append("%s: %d used boxes in %d online card files checked for an empty own story" % (name, boxes, len(files)))
+    return problems
+
+
 def check_characters(sc, api, env, out, problems, notes):
     """scenario.json "characters" (SEAMLESS.md 9 and the S2 done-when): per client, its online character as the client
     logged it ("online-character: ..." lines) and as the server holds it. Every client entered without a character (a new
@@ -1327,8 +1511,14 @@ def check_characters(sc, api, env, out, problems, notes):
         reasons = [r for r, _ in saves]
         if not saves or saves[0] != ("stage change", 1):
             problems.append("%s: the first stage change did not create the online character as revision 1" % name)
-        if "save room" not in reasons:
+        # A guest (own_story "none"; round G-core, 8.8) keeps its own story in every record: a save room save that moved
+        # only the room story on is unchanged since its last upload (before the room-owner fix of the title's screens the
+        # guest played as the owner and that save uploaded the room story's change).
+        guest_unchanged = want.get("own_story") == "none" and any(re.match(r"save \(save room\) unchanged since revision \d+$", l) for l in ch)
+        if "save room" not in reasons and not guest_unchanged:
             problems.append("%s: no upload from the save room" % name)
+        if guest_unchanged and "save room" not in reasons:
+            notes.append("%s (a guest): its save room save was unchanged since its last upload (its own story, nothing else moved)" % name)
         # The automatic save when leaving: the last save line of the run. It uploads what changed since the last upload
         # ("leave_upload": true asks for that) and finds nothing to do when the server holds the character as it is.
         leave = [l for l in ch if l.startswith(("save (", "saved (", "upload ("))][-1:]
@@ -1373,6 +1563,8 @@ def check_characters(sc, api, env, out, problems, notes):
         story = record[UI_STORY[0]:UI_STORY[1]]
         if want.get("own_story") == "none" and any(story):
             problems.append("%s: the record's story bytes are not empty (a guest's own story must stay untouched)" % name)
+        if want.get("own_story") == "none":
+            problems.extend(guest_card_problems(name, folder, notes))
         if "phase" in want and record[UI_STORY[0] + int(want["phase"])] != 1:
             problems.append("%s: the record's story lacks the phase flag %s" % (name, want["phase"]))
 
@@ -1405,6 +1597,8 @@ def main():
     ap.add_argument("--server-has-story", action="store_true",
                     help="--server-root's server keeps the room story (round 56 and later, e.g. DW4Online 0.1.2): seed it as for this one")
     ap.add_argument("--net", default="", help="game scenarios: every client behind its own proxy, UP[/DOWN] as MS,JITTER,LOSS")
+    ap.add_argument("--compat-scripts", action="store_true",
+                    help="game scenarios: drop the key:N and difficulty conditions of round G-core (a counter-proof client before it)")
     a = ap.parse_args()
     global SERVER_DLL, NET_OVERRIDE, SERVER_HAS_STORY
     if a.server_root:

@@ -88,6 +88,10 @@ enum class Type : std::uint8_t {
     pong = 0x12,
     bye = 0x13,
     presence2 = 0x14,
+    // round J (docs/SEAMLESS.md 6.13.7): only to a hub whose WELCOME has flag 4
+    statehash = 0x15,
+    checkpoint = 0x16,
+    checkpoint_bad = 0x17,
     // server -> client (0x80-0xBF)
     welcome = 0x80,
     sealed = 0x81,
@@ -106,6 +110,7 @@ enum class Type : std::uint8_t {
     reassign = 0x8E,
     netstat = 0x8F, // round 62: the member's link (older clients skip it)
     presence2_of = 0x90, // round 60: PRESENCE2 to a member that sends it (12.1)
+    checkpoint_ask = 0x92, // round J: upload the tick state at the next state-safe tick
 };
 const char* type_name(Type type) noexcept;
 
@@ -203,7 +208,10 @@ enum class CloseReason : std::uint8_t {
     left = 1, kicked = 2, room_closed = 3, replaced = 4, protocol = 5, abuse = 6, timeout = 7, stopping = 8
 };
 namespace state_flag {
-inline constexpr std::uint8_t joinable = 1, membership_safe = 2, boss_lock = 4;
+// load_ended (protocol 47, round J's review): the visit reached its load end K;
+// the relay takes the first such STATE's context as the visit's entry context
+// (docs/SEAMLESS.md 3.7), joinable or not.
+inline constexpr std::uint8_t joinable = 1, membership_safe = 2, boss_lock = 4, load_ended = 8;
 }
 
 // ---- tick records and events
@@ -268,11 +276,42 @@ struct SnapHash {      // inst | visit | u64 canonical hash
     std::uint32_t inst{}, visit{};
     std::uint64_t hash{};
 };
-struct Ready {         // inst | visit | u32 tick (a multiple of 60) | u64 net fingerprint | u32 rate | blob carry
+struct Ready {         // inst | visit | u32 tick (a multiple of 60) | u64 net fingerprint | u32 rate | blob carry [| u8 flags]
     std::uint32_t inst{}, visit{}, tick{};
     std::uint64_t fingerprint{};
     std::uint32_t rate{};
     std::vector<std::uint8_t> carry;
+    std::uint8_t flags{}; // round J: written only when nonzero
+    static constexpr std::uint8_t from_checkpoint = 1;
+};
+// Round J (6.13.4): the canonical tick state's XXH64 at a checkpoint tick
+// (the first tick not in the state) with the visit's load end K.
+// flags: 1 bytes kept; 2 load_end_only (round J's review: a solo leader has
+// nobody to compare with; it tells only K, hash 0, and computes nothing).
+struct StateHash {     // inst | visit | u32 tick | u64 hash | u32 load end | u8 flags
+    static constexpr std::uint8_t kept = 1, load_end_only = 2;
+    std::uint32_t inst{}, visit{}, tick{};
+    std::uint64_t hash{};
+    std::uint32_t load_end{};
+    std::uint8_t flags{};
+};
+struct Checkpoint {    // inst | visit | u32 tick | u64 hash | u32 load end | u32 total | u32 offset | chunk (the rest)
+    std::uint32_t inst{}, visit{}, tick{};
+    std::uint64_t hash{};
+    std::uint32_t load_end{}, total{}, offset{};
+    std::vector<std::uint8_t> bytes;
+};
+enum class CheckpointBadReason : std::uint8_t { version = 1, decode = 2, load_end = 3, topology = 4, hash = 5 };
+struct CheckpointBad { // inst | visit | u32 tick | u8 reason | str section
+    std::uint32_t inst{}, visit{}, tick{};
+    CheckpointBadReason reason{};
+    std::string section;
+};
+struct CheckpointAsk { // inst | visit | u32 tick (0: the next state-safe tick) | u8 flags
+    std::uint32_t inst{}, visit{}, tick{};
+    std::uint8_t flags{};
+    static constexpr std::uint8_t periodic = 1;  // with the next STATEHASH
+    static constexpr std::uint8_t diagnosis = 2;
 };
 struct JoinAt {        // inst | visit | u32 tick J
     std::uint32_t inst{}, visit{}, tick{};
@@ -392,6 +431,7 @@ struct Welcome {
     std::uint8_t flags{};
     static constexpr std::uint8_t resumable = 1;
     static constexpr std::uint8_t presence_v2 = 2;
+    static constexpr std::uint8_t checkpoints = 4; // round J: the hub takes STATEHASH / CHECKPOINT / CHECKPOINT_BAD
 };
 struct Ticks {         // SEALED / LIVE: inst | visit | u32 first tick | u16 count | tick records
     std::uint32_t inst{}, visit{}, first{};
@@ -460,6 +500,13 @@ struct StateData {
     std::uint8_t slot{};
     std::vector<std::uint8_t> snapshot;
     std::vector<Fork> forks;
+    // Round J (codec 2): the load ticks [0, K), the checkpoint of tick T
+    // (the first tick not in it), its hash, flags (1 agreed) and bytes.
+    std::vector<TickBody> load_ticks;
+    std::uint32_t checkpoint_tick{};
+    std::uint64_t checkpoint_hash{};
+    std::uint8_t checkpoint_flags{};
+    std::optional<std::vector<std::uint8_t>> checkpoint;
     std::uint32_t first{};
     std::vector<TickBody> ticks;
 };
@@ -524,6 +571,10 @@ std::vector<std::uint8_t> encode(const SnapHash&);
 std::vector<std::uint8_t> encode(const Ready&);
 std::vector<std::uint8_t> encode(const JoinAt&);
 std::vector<std::uint8_t> encode(const NetFp&);
+std::vector<std::uint8_t> encode(const StateHash&);
+std::vector<std::uint8_t> encode(const Checkpoint&);
+std::vector<std::uint8_t> encode(const CheckpointBad&);
+std::vector<std::uint8_t> encode(const CheckpointAsk&);
 std::vector<std::uint8_t> encode(const State&);
 std::vector<std::uint8_t> encode(const Intent&);
 std::vector<std::uint8_t> encode(const Presence&, bool with_member);
@@ -560,6 +611,10 @@ SnapHash decode_snaphash(std::span<const std::uint8_t>);
 Ready decode_ready(std::span<const std::uint8_t>);
 JoinAt decode_join_at(std::span<const std::uint8_t>);
 NetFp decode_netfp(std::span<const std::uint8_t>);
+StateHash decode_statehash(std::span<const std::uint8_t>);
+Checkpoint decode_checkpoint(std::span<const std::uint8_t>);
+CheckpointBad decode_checkpoint_bad(std::span<const std::uint8_t>);
+CheckpointAsk decode_checkpoint_ask(std::span<const std::uint8_t>);
 State decode_state(std::span<const std::uint8_t>);
 Intent decode_intent(std::span<const std::uint8_t>);
 Presence decode_presence(std::span<const std::uint8_t>, bool with_member);

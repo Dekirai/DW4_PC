@@ -11,7 +11,9 @@ public sealed record WorkingGroup(int First, int Count, int[] Copies);
 /// tests/online_story_tests.cpp and StorySetsTests compare both with the file). Phase (one-hot, the furthest wins),
 /// persistent flags (OR), keys 0-10 (OR), additive counters (per engine line); the save room copies of the working set
 /// are derived, never taken from a member. The setter table names the stages whose scripts set a flag (the plausibility
-/// check of 8.4).
+/// check of 8.4) and, since round G (8.8), the stages a key item comes from (K2 / K3 from stagML02's scripts, the
+/// dropped keys from the r25c campaign's pickups); the training flag 503 is persistent, and the training proof lists
+/// the persistent flags whose setters all lie beyond the training (the rebase sets 503 for a story holding one).
 /// </summary>
 public sealed class StorySets
 {
@@ -32,11 +34,23 @@ public sealed class StorySets
     public IReadOnlyDictionary<int, IReadOnlySet<string>> FlagSetters { get; }
     /// <summary>Additive counter -> the stages (lower case) that change it.</summary>
     public IReadOnlyDictionary<int, IReadOnlySet<string>> CounterSetters { get; }
+    /// <summary>Key item -> the stages (lower case) it comes from (round G); a key without stages has no stage check.</summary>
+    public IReadOnlyDictionary<int, IReadOnlySet<string>> KeySetters { get; }
+    /// <summary>Flag 503 ("has been to the training field"): persistent since round G; a barrier into
+    /// <see cref="TrainingStage"/> leaves it alone (the retry clears it on purpose).</summary>
+    public int TrainingFlag { get; }
+    /// <summary>The stages a story reaches before and with the training (stagml02, stagml11, stag0001).</summary>
+    public IReadOnlySet<string> TrainingStages { get; }
+    public const string TrainingStage = "stag0001";
 
     private StorySets(IReadOnlyList<int> phase, IReadOnlyList<int[]> phaseCopies, IReadOnlyList<WorkingGroup> working,
         IReadOnlyList<int> persistent, int keys, IReadOnlyList<int> keyCopies, IReadOnlyList<int> counters,
-        IReadOnlyDictionary<int, IReadOnlySet<string>> flagSetters, IReadOnlyDictionary<int, IReadOnlySet<string>> counterSetters)
+        IReadOnlyDictionary<int, IReadOnlySet<string>> flagSetters, IReadOnlyDictionary<int, IReadOnlySet<string>> counterSetters,
+        IReadOnlyDictionary<int, IReadOnlySet<string>> keySetters, int trainingFlag, IReadOnlySet<string> trainingStages)
     {
+        KeySetters = keySetters;
+        TrainingFlag = trainingFlag;
+        TrainingStages = trainingStages;
         Phase = phase;
         PhaseCopies = phaseCopies;
         Working = working;
@@ -73,6 +87,15 @@ public sealed class StorySets
     public bool ChangesCounter(string stage, int counter) =>
         CounterSetters.TryGetValue(counter, out var s) && s.Contains(stage.ToLowerInvariant());
 
+    /// <summary>Whether key item <paramref name="key"/> may come from <paramref name="stage"/> (round G, 8.8): one of its
+    /// measured stages; a key without measured stages keeps the old rule (anywhere).</summary>
+    public bool GivesKey(string stage, int key) =>
+        !KeySetters.TryGetValue(key, out var s) || s.Count == 0 || s.Contains(stage.ToLowerInvariant());
+
+    /// <summary>The training proof (8.8): a persistent flag with setter stages, none of them before or with the training.</summary>
+    public bool ProvesTraining(int flag) =>
+        IsPersistent(flag) && FlagSetters.TryGetValue(flag, out var s) && s.Count > 0 && !s.Overlaps(TrainingStages);
+
     private static StorySets LoadEmbedded()
     {
         using var stream = typeof(StorySets).Assembly.GetManifestResourceStream("DW4Online.Domain.Story.story_sets.json")
@@ -94,7 +117,14 @@ public sealed class StorySets
         var working = r.GetProperty("working").EnumerateArray()
             .Select(g => new WorkingGroup(g.GetProperty("first").GetInt32(), g.GetProperty("count").GetInt32(), Ints(g.GetProperty("copies")))).ToArray();
         var setters = r.GetProperty("setters");
+        var keySetters = setters.TryGetProperty("keys", out var ks) ? Setters(ks) : new Dictionary<int, IReadOnlySet<string>>();
+        var training = r.TryGetProperty("training", out var tr) ? tr : default;
+        var trainingFlag = training.ValueKind == JsonValueKind.Object ? training.GetProperty("flag").GetInt32() : 503;
+        IReadOnlySet<string> trainingStages = training.ValueKind == JsonValueKind.Object
+            ? training.GetProperty("stages").EnumerateArray().Select(s => s.GetString()!.ToLowerInvariant()).ToHashSet(StringComparer.Ordinal)
+            : new HashSet<string>(["stagml02", "stagml11", "stag0001"], StringComparer.Ordinal);
         return new StorySets(Ints(r.GetProperty("phase")), phaseCopies, working, Ints(r.GetProperty("persistent")), r.GetProperty("keys").GetInt32(),
-            Ints(r.GetProperty("keyCopies")), Ints(r.GetProperty("counters")), Setters(setters.GetProperty("flags")), Setters(setters.GetProperty("counters")));
+            Ints(r.GetProperty("keyCopies")), Ints(r.GetProperty("counters")), Setters(setters.GetProperty("flags")), Setters(setters.GetProperty("counters")),
+            keySetters, trainingFlag, trainingStages);
     }
 }

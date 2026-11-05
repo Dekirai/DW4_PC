@@ -1,0 +1,10 @@
+# RG1 = G1, room owner o (k2: phase 2 after the training, K0-K2, COUNTER 7 = 1). seed_story writes its story as the server's
+# merges leave it (no 503: no story saved before round G-core holds it), so only the rebase at the room's open can give
+# the room story 503 (the story shows the training: COUNTER 7 and the key items). o plays into its lobby and waits
+# there while the guest plays.
+campaign until stage=stagml11
+talk until control,frames>=60
+log in the lobby
+idle until frames>=120 fail flag:503=0
+log 503 in the owner's lobby
+idle until frames>=6000

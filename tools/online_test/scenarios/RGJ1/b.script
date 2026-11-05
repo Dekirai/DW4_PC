@@ -1,0 +1,10 @@
+# RGJ1 (integration of rounds G-core and J), guest b (k10): DW4_ONLINE_TEST_STORY_DELAY=8 holds its first Game Start
+# for 8 s ("Loading the room story..."); then through the lobby gate 60 s after a, into a's instance from a checkpoint.
+campaign until stage=stagml11,control
+log in the lobby
+idle until epoch>=@150
+explore mate00 yes until stage=stag0101,control
+log in the field
+wander 470 160 15 until sealed>=4000 or present<=1,frames>=60
+log enough
+idle until frames>=60

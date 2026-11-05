@@ -1,0 +1,8 @@
+# JS (round J), member b (k10, DW4_ONLINE_TEST_TICKSTATE_SKIP=1): through the lobby gate 60 s after a; its READY from a checkpoint mismatches, it joins the classic way.
+campaign until stage=stagml11,control
+idle until epoch>=@150
+explore mate00 yes until stage=stag0101,control
+log in the field
+wander 470 160 15 until sealed>=4000 or present<=1,frames>=60
+log enough
+idle until frames>=60

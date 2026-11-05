@@ -25,6 +25,20 @@ namespace dw4::save {
 // Dolphin's name of the save in a GCI folder (maker, game, file name).
 inline constexpr std::string_view kSaveFileName = "B2-GDJE-NDMWSaveData.gci";
 
+// The story bytes of a 3,316-byte record (docs/SAVES.md, docs/SEAMLESS.md 8.1):
+// BASE_FLAG (1024 at 792), BASE_FLAGFOLDER (12 at 1816) and BASE_COUNTER
+// (16 x i32 big endian at 1828), 1,100 bytes as the record holds them.
+inline constexpr std::size_t kStoryOffset = 792;
+inline constexpr std::size_t kStoryBytes = 1100;
+using StoryBytes = std::array<std::uint8_t, kStoryBytes>;
+
+// The GCI bytes with `story` in the story bytes of every used box (ISUSE != 0)
+// of every data copy whose checksum and version hold, each such copy's
+// checksum fixed; damaged copies and empty boxes stay as they are (round
+// G-core, docs/SEAMLESS.md 8.8: the online card of a guest holds its own
+// story, never the room's). Bytes too short for a save come back unchanged.
+std::vector<std::uint8_t> with_story(std::span<const std::uint8_t> gci, const StoryBytes& story);
+
 // The blocks and directory entries the files of a card take.
 struct CardUsage {
     std::uint32_t blocks{};
@@ -57,12 +71,21 @@ public:
     CardUsage usage(int slot) const;
     // Where the slot's save lives, for the menus and logs.
     std::string describe(int slot) const;
+    // Round G-core (docs/SEAMLESS.md 8.8): every write puts these story bytes
+    // into every used box (with_story) before the atomic write. A guest's
+    // online card store has the account's own story here, so the save room's
+    // write (the engine's records hold the room owner's story) never reaches
+    // the file; empty for the owner, offline and everywhere else (the bytes
+    // are then written as given).
+    void set_story_override(std::optional<StoryBytes> story) { story_override_ = std::move(story); }
+    const std::optional<StoryBytes>& story_override() const { return story_override_; }
     bool operator==(const CardStore&) const = default;
 
 private:
     Kind kind_ = Kind::folder;
     std::filesystem::path root_ = "saves/GC/USA";
     std::array<std::filesystem::path, 2> files_{};
+    std::optional<StoryBytes> story_override_;
 };
 
 // A whole file; none when it cannot be read.

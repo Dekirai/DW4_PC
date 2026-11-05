@@ -508,6 +508,26 @@ while a story player is there would lose the quest (or carry it into the story
 player's lobby). With it they play in separate instances; two players on the
 same quest share one.
 
+**Arrival context (round J, r70).** A stage's own load scripts may change a
+context value: every dungeon's first floor sets COUNTER 2 at its load
+(`dng101b1_m1__start.lua:11-12`). The running instance then reports
+another context than its members arrived with, while a partner's barrier
+hash is taken in the previous stage, so round 63's M2 saw a partner 15 s
+later get `OtherContext` and an instance of its own. The relay keeps each
+visit's *arrival context* (its barrier's hash) and its *entry context*
+(the context at its load end K: the first STATE with the flag *load ended*,
+8, joinable or not; protocol 47); an arrival may join an instance that runs
+its context now, or that arrived with it while nothing of the play since
+the load end changed it (`HubRules.ContextMatches`): exactly what a
+co-arrival would have shared. Before the load end is known only the running
+context counts. A change made by the play after the load end (a quest step,
+a boss kill) still keeps an arrival with the old context out, also one
+already waiting in a hold (the hold's release checks the context again).
+(The review of round J: taken from the first *joinable* state, a visit that
+ran from its entry into a boss took the kill's context, dngQ1B2E's flag
+384, as its entry, and an arrival with the old context joined after the
+kill.)
+
 The temporary flags of the instance class travel with the engine line, which
 is an inherent result of seamless play: a member who pulled the lever in
 stag0301 (flag 56) and then joins a friend's stag0302 instance adopts that
@@ -2499,8 +2519,9 @@ that can be taken at any tick and put back. This section designs it in two
 forms. The **tick state** is portable: a serializer per manager with stable
 ids and a canonical hash, for joins, checkpoints, resyncs and desync
 diagnosis. The **state arena** is in-process: the online engine's heap in one
-write-watched region, saved per tick as dirty pages, for rollback. Nothing of
-it is built; rounds J and R (17) build it.
+write-watched region, saved per tick as dirty pages, for rollback. Round J
+(r70, "Round J (built)" below) built the tick state, the checkpoints and the
+join from one; the state arena is round R's.
 
 **Revision 2** (the critique of d0e489a; every point checked against the
 code before it was taken, plus two probes of this revision, 6.13.1). The two
@@ -2954,6 +2975,10 @@ restores (6.13.6).
   the missed one, and it logs `checkpoint_suspect` (instance, build,
   checkpoint tick, donor). A desync with another cause inside the window
   costs the instance its checkpoint path too, which errs on the safe side.
+  Built (review of round J): a member whose engine came from a checkpoint
+  stays *rebuilt* until a classic state or a new visit; it never makes a
+  majority in a NETFP vote, and a desync it is part of makes the path suspect
+  at any time; every STATEHASH mismatch does too (also outside the window).
   `Instances:CheckpointJoins` (true) turns the checkpoint path off for the
   whole relay, for a released build whose serializer is known to miss a
   field, without a client release.
@@ -7631,6 +7656,68 @@ keeper answers a queued value with *wait*, the client's resends do no harm,
 and the keeper merges it when due), so G16's counter-proof on round 59 no
 longer fails; round G adds the reason *queued* and the twins.
 
+**Built as G-core in round 69** (`feat-r69gcore` from main b226bc0, not
+merged; lane plan and progress in `docs/ROUND_G_CORE.md`). Story lane: the
+census makes 503 persistent (setter stag0001; restart.lua's clear is the one
+allowed clear) and writes the key setter stages into `story_sets.json`
+(`setters.keys`: K2 / K3 from stagML02's `SYSctlFlagFolder` SET lines, the
+dropped keys K0, K1, K4-K10 measured from the r25c campaign's pickups:
+dng101b2, dng102b3, dng204b2, dng205b3, dng307b2, dng308b3, dng309b4,
+dng411b3, dng412b4; every key has a stage, none keeps the old rule) and the
+training proof (`training.proof`: the persistent flags whose setters all
+lie outside the stages a story may reach before or with the training; the
+review of round 69 found stagML12 / stagML13's talks, 35 and 405, set in
+phase 1 and 2, so the list is stag0001, every stagIS* and stagML* stage and
+the quest dungeons dngQ*: 25 flags, from 75); `session_values.txt` drops 503
+from the instance class. `story::apply` / `holds_dropped` take the barrier's
+target (`pending_stage_`, the session's pending stage) and leave 503 alone at
+one into stag0001; `played_training` (C++, C# `StoryMerge.PlayedTraining`,
+Python) and the rebase set 503 (read before the rebase); 9 new golden cases
+(1 merge, 7 rebase, 4 apply with targets). The keeper refuses a key from
+another stage (*stage*) and answers earned values *queued* (11) in rooms of
+protocol 47 and later (`RoomStoryKeeper.EarnedAnswer`; *wait* for older
+rooms); protocol 47 (`kOnlineProtocol`, the production example's
+`Play:MinimumProtocol` / `CurrentProtocol`). Client lane: `callshop.lua`
+under the online rules runs with NINZU read as 4 (its own refusal branch,
+never NEXTSTAGE stagIS13) and the hint "The call shop is not available
+online: everyone plays their own character."; `Engine::common_rebuilt`;
+the Game Start's hold (no live step until the confirmed story, "Loading the
+room story...", 15 s then "The room story did not arrive. Join the room
+again.", `DW4_ONLINE_TEST_STORY_DELAY` in dev builds); the card store's
+story override for a guest (`save::with_story`, every used box of every valid
+copy, checksums fixed); the own story bytes in `CharacterSync` (GET 200, the
+409 reload, zeros at 404; every cached and uploaded record of a guest, while
+the room owner's records keep his engine's story, which is his own; the
+entry rewrites an old cache before anything reads or backs it up); *queued* like
+*held* without its notice (kept out of the resends until the next barrier);
+the guest's toasts at the Game Start, the "moved on" notice once per visit,
+"Story: yours" / "Story: <owner>'s, phase n, k key items" in the F1 Online
+tab and the room view; `numemon_freed` online from a mask of the account's
+own rises (`numemon_mask`). Not built (19.8.9 / 19.8.10): the hub extras lane
+and the online difficulty dialog rule. Scenarios (named RG*, since `run.py
+G1` is round S1's integration run): RG1 = G1, RG2 = G2 with G3 / G4's
+checks (run.py `own_story`: every used box of the online card and of every
+backup holds the account's own story, its `online_story` revision is
+unchanged, the local card folder stays empty), RG7 = G7, RG10 = G10 with
+G11. `seed_story` is production-like now (the merge sets and the copies of
+the room difficulty, no 503; `"seed_story": "full"` keeps the old copy);
+`upload_card` makes a client's card the account's online character before
+the run. Checks (05.11, on d0dcdb6b / 8ecc5e85): RG1, RG2, RG7, RG10 pass;
+their counter-proofs on main b226bc0 fail as they should (RG1: the guest's
+gate leads into the training; RG10: the call shop goes to stagIS13 and the
+online card's box 0 holds the owner's story; RG2: the save room puts the
+owner's story into the online card); the regression S2, S3, S5, S14, S14a,
+S14h, S14p, S14z, S16, S17a and character_test C1-C4, K3, K3b, K5 pass (C1 /
+C2 found that the own story had replaced the room owner's records too, so
+his story-only saves were "unchanged": fixed, only a guest's records get
+it); ctest 53 of 53, the server's unit tests 246 of 246 and integration
+tests 93 (4 skipped end-to-end), `story_census.py --check` equal, `det.sh`
+4004f056 / 396cb219 twice. Not run as real-client scenarios: G5, G6, G8, G9,
+G12-G16 (G8 and G15 are covered by `online_character`'s
+`guest_records_keep_the_own_story`). Not done: the DW4Online release with
+protocol 47 (the user's step, together with the client). Details:
+`docs/ROUND_G_CORE.md`.
+
 ### Before round D: the Cheats tab in rooms (a small fix)
 
 (Round 67's plan: step 0, a precondition of round I1a, because public
@@ -7739,7 +7826,7 @@ First tasks (measurements, into 6.13 before the lanes build on them):
 | tick state core | `include/dw4/engine/tick_state.hpp` (the archive with the id codecs, sections, raw and canonical form, XXH64), engine scalars, generator, game system, online fields; the topology journal and its six entry kinds with their re-run; scene graph nodes and edited attributes, `AnimationDatabase::looping_`, MODELCTRL, ACTION2, GENERATER; `Engine::state_safe` with the transient-field assertions; the size guards; the completeness harness (`DW4_TICKSTATE_TEST`, ctest `tick_state`) with the continuation test and the divergence trials (in-place apply after random wrong pads, 6.13.3), and `tools/online/tickstate_diff.py`; a test hook that leaves one field out of the serializer (for JS) |
 | tick state rest | `Lua4Vm::io` (slot layout, generations, free list, GC counters, prototype ids, the owner restamp), messenger and demo (the exit step's port), CAMERA, HitLand, collision groups and ChangePos, the sound simulation (sfp, the SNDF driver with bank and offset ids, the streams' game parts, `CriStreams`) and the joiner's music position from the CRI counters, the small managers, TEXTCTL `Line` keeping its text, the SUBWND window trees reachable in field stages (the status window's pages, folders, skill: about 25 classes; the shop windows assert they never open in a state-safe instance) |
 | relay | STATEHASH with K and its vote (NETFP's rules), the donor, CHECKPOINT_ASK and the CHECKPOINT store (two per instance, fork-aware), the agreed K, STATE_DATA layout 2, the join with a fresh or stored checkpoint and its waits, CHECKPOINT_BAD with one retry, then the classic path, then NEW; `JoinOrNew`'s catch-up estimate from the checkpoint; resync from the checkpoint; the whole log kept (the classic path for every fallback); the suspicion rule (rebuilds noted, a mismatch within `CheckpointSuspectTicks` switches the instance to the classic path, both sides' states asked for, `checkpoint_suspect` logged), `Instances:CheckpointJoins`, READY's *from checkpoint* flag that never judges; unit and integration tests with fake clients; the protocol version |
-| client | zstd's encoder sources in the build; the session's checkpoints (STATEHASH with K at `C_k`, the bytes of the last one kept, the donor's upload in chunks under the state budget), the join path (rebuild, the K check, self check, the short catch-up, "Joining..." without a countdown), the fallbacks, resync from a checkpoint; scenarios on the local stack: J1 / J5 / J15 / J30 (two members, stag0101, as measured for this design), J15x4 and J30x4 (three members play, a fourth joins), JW (a join while a member's own status window is open and while an NPC talk runs), JF (into a fork's child before its first own checkpoint), JR (an injected desync, resynced from the checkpoint), JB (a damaged checkpoint), JS (a serializer that misses a field through the test hook: the joiner drifts, the path turns suspect, the classic path repairs it; two members, so the READY from the checkpoint must not judge), JL (40 ms of round trip through the proxy) |
+| client | zstd's encoder sources in the build; the session's checkpoints (STATEHASH with K at `C_k`, the bytes of the last one kept, the donor's upload in chunks under the state budget), the join path (rebuild, the K check, self check, the short catch-up, "Joining..." without a countdown), the fallbacks, resync from a checkpoint; scenarios on the local stack: J1 / J5 / J15 / J30 (two members, stag0101, as measured for this design), J15x4 and J30x4 (three members play, a fourth joins), JW (a join while a member's own status window is open and while an NPC talk runs), JF (into a fork's child before its first own checkpoint), JR (an injected desync, resynced from the checkpoint), JB (a damaged checkpoint), JS (a serializer that misses a field through the test hook: the joiner drifts, the path turns suspect, the classic path repairs it; two members, so the READY from the checkpoint must not judge), JS2 (the review's: a joiner from a checkpoint whose READY passes drifts after its JOIN), JL (40 ms of round trip through the proxy) |
 
 Done when: barrier to member under 1.0 s in J1, J5, J15, J30, J15x4,
 J30x4, JW and JF on the reference machine (timed from the clients' and the
@@ -7763,6 +7850,219 @@ the message numbers both 60 and 62 claim, round 63's own windows and copies,
 which the journal and the SUBWND lane cover); the answer to question 15. The
 user's step: the server release and the client together (the protocol
 rises).
+
+### Round J (built, r70): instant joins and checkpoints
+
+Built in branch `feat-r70join` from main b226bc0 (progress and lane plan:
+`docs/ROUND_J_NOTES.md`). The joiner of a running field rebuilds from a
+member's tick state instead of replaying the visit; the loading screen
+says "Joining..." without a countdown.
+
+*Engine* (`include/dw4/engine/tick_state.hpp`, `src/engine/tick_state.cpp`,
+`src/engine/tick_state_managers.cpp`): `Engine::state_safe`,
+`save_tick_state(raw / canonical)`, `apply_tick_state`, `tick_state_hash`
+(XXH64 of the canonical form, an own implementation: the core links no
+zstd), `load_end_frame`, `topology_hash`. Sections in a fixed order: the
+topology journal (package loads, a member's own window copies and line
+copies of round 63, re-run on the reader before the topology check), the
+structure pass (the weapon parts a player's GENERATE hangs on its actors,
+made again), the engine (clocks, pads, flags and counters, online fields,
+the exit port with its demo record, now a named functor), the generator,
+the game system, the messenger, the demo works, the Lua VM
+(`Lua4Vm::save_state`: globals, both arenas with slot layout, generations
+and free lists, the collector's counters; closures by program and prototype
+path, values restamped), the scene nodes (a mask and only the field groups
+that differ from a fresh `Node`), the attributes `edit_attribute` handed
+out, and one section per manager (every RAM's mutable fields, the SNDF
+driver with banks and bank slots by name, the CRI streams). TEXTCTL lines
+keep their text and NUMBERCTRL redraws its digits on the reader (the
+joiner's picture). A restored engine loads the session's common sound banks
+before the stage's (`SoundManager::restore`), as the session had them.
+Measured (stag0101 / stag0102 / dng101b1 / stagBS02, two to four players,
+this machine busy with builds): raw 1.07-1.25 MB, zstd level 3 82-85 KB;
+save 3.4-5.2 ms, canonical save and hash 3.4-5 ms in the test and 5-13 ms
+on the hidden clients, apply 2.5-4.5 ms, the donor's upload (save, hash,
+zstd) 10-11 ms.
+
+*Completeness* (ctest `tick_state`, game data): stag0101 x2 with a member
+who joins after the load, dng101b1 x2 with a member's own status window,
+stag0102 x3 with both, stagBS02 x4; at state-safe ticks idempotent bytes,
+divergence trials (1-60 wrong-pad ticks, apply in place, the true pads:
+every net fingerprint equal), rebuilds from the visit's load snapshot and
+load ticks equal to the end of the visit with the same bytes, and a classic
+joiner's canonical states equal the straight run's: 178 trials, 18 rebuilds,
+0 differences. `tools/online/tickstate_diff.py` names the first differing
+section and byte.
+
+*Relay* (DW4Online): STATEHASH (0x15), CHECKPOINT (0x16), CHECKPOINT_BAD
+(0x17), CHECKPOINT_ASK (0x92) as 6.13.7, gated by the room's protocol 47
+and WELCOME flag 4; the agreed K, the store (two per instance; a fork's
+child keeps its parent's), a join's order (fresh, asked and awaited, newest
+stored, classic), STATE_DATA codec 2 (all forks, the load ticks, the
+checkpoint, the ticks from T), periodic uploads every
+`Instances:CheckpointPeriodicMs` (30 s) while joinable instead of every
+agreed `C_k`, resyncs from the newest agreed checkpoint, the suspicion
+rule, `Instances:CheckpointJoins`. A STATEHASH tick is the first tick not
+in the state.
+
+*The join* (J1, real hidden clients, b enters a's field a minute after a):
+BARRIER_OK (JOIN) at 157,637 ms of the relay's clock, CHECKPOINT_ASK at
++1 ms, the checkpoint stored at +13 ms, STATE_DATA (110 KB) at +18 ms, the
+rebuild 136 ms (snapshot, 680 load ticks of the original load timing,
+apply, hash), 3 ticks replayed, READY at +303 ms, the JOIN stamped at
++307 ms; the classic join of the same scenario before (run 1, its
+fallback) replayed 3,622 ticks in 852 ms.
+
+*Found on the way*: the members' STATEHASH differs where engines of one
+instance really differ outside the fingerprint, which NETFP never saw:
+
+- the SNDF's bank order of a restored engine (it loads the session's common
+  banks first, as the session had them; the ctest's straight run, a direct
+  start, now loads them first too);
+- the game SNDF and sfp pool at a visit's start: a restored engine is a new
+  one and starts them free (save state 36: "their state is not kept"), a
+  member that loaded the visit live kept the last stage's ringing common
+  sounds, its freed entries' flags and its allocation counters since its own
+  last restore, so a co-arrival's (JR) and a classic joiner's (JB) STATEHASH
+  never agreed. Online, a live load's snapshot now gives the game SNDF and
+  the pool the restored engine's state (`SoundManager::fresh_game_driver`);
+  the audio's mirror keeps what still rings, so nothing is cut (a leftover
+  ends as before, or when its sequence is used again). Offline unchanged;
+- the Lua collector's live bytes after a rebuild: strings were summed once
+  per `std::string` object, and a restored VM cannot keep which values share
+  one (a program's constant, a host's string), so a resynced member's
+  collections came at other times (JR: +46 bytes after the resync). Strings
+  now count once per content, as Lua 4's interned TStrings do; collections
+  never change script results, only their pacing (`det.sh` unchanged);
+- the session's present mask after a checkpoint rebuild: a JOIN before T is
+  not among the ticks from T (the classic path replays it), so S3's second
+  joiner kept the first joiner's slot out (its script waited for three
+  members for good; that slot's lag mark and name were missing). The
+  session now takes the members from the engine after the apply;
+- the SceneCache's edited-attribute keys (document addresses) outlived a
+  released document: a stage loaded again at a reused address listed a
+  stale edited attribute on one member only (S2's visit after the fork:
+  every STATEHASH differed, now none). The keys go with the document; only
+  the tick state reads them;
+- round 63's context gap (3.7).
+
+*Third run* (05.11, hidden clients on the local stack, mysqld 3560, ports
+56150-56199): J1, J5, JB, JS and JR pass. J5 (b enters a's field five
+minutes after a): BARRIER_OK (JOIN) at 398,085 ms of the relay's clock,
+CHECKPOINT_ASK at +1 ms, the checkpoint stored at +28 ms, STATE_DATA
+(111 KB) at +41 ms, the rebuild 190 ms, 0 ticks replayed, READY at +353 ms,
+the JOIN stamped at +360 ms (this design's classic number: 6.34 s). JR: the
+desync at tick 2,500 resynced from the agreed checkpoint of tick 1,800 (READY
+from the checkpoint at 2,520), no STATEHASH mismatch. JS: the drift found at
+the first fingerprint, `checkpoint_suspect`, the classic resync, equal after.
+JB: the damaged checkpoint refused, the classic join, STATEHASH equal after.
+JL (J1 with every client behind its own proxy, 20 ms each way, `--net
+20,0,0`): BARRIER_OK at 158,301 ms, the checkpoint stored at +59 ms,
+STATE_DATA at +67 ms, the rebuild 129 ms, 4 ticks replayed, READY at
++327 ms, the JOIN at +373 ms (input delay 5 from the round trip).
+
+*Regression* (`build/reg_run1.log`, then `build/jset_run9.log` after the two
+last fixes): S1, S2, S3, S11a, S17a, S17b, S18b, S19b, L1, L2, M1, M2, J1
+and JB pass, every instance's NETFP equal; no `statehash_mismatch` after the
+fixes. Joins from a checkpoint among them: L1 and L2 (rebuild 184 / 182 ms,
+4 / 0 ticks replayed), S17b after the entry scene (242 ms, 8 ticks), S2's
+join into the fork's stag0102 (232 ms, 14 ticks), S3's two joins (135 /
+134 ms, 5 / 10 ticks). M1's join while a's status window is open takes the
+classic path: the donor's ticks are unsafe and no checkpoint was stored
+(a's menu was open since tick ~1,300, before the first periodic one), so the
+ask waits `CheckpointWaitMs` and the visit's 3,052 ticks replay in 1,134 ms
+(2.3 s from BARRIER_OK to the JOIN). S11a's desync comes before the first
+agreed checkpoint and resyncs the classic way. STATEHASH costs 7-10 ms on
+the hidden clients (without the test dumps), the donor's upload 10-19 ms.
+ctest 54 of 54 (`tick_state`: 84 checks, 0 failures), DW4Online.Tests 248 of
+248, `det.sh` 4004f056 / 396cb219 twice (`build/det_j3.log`,
+`build/det_j4.log`).
+
+*Open*: SUBWND window trees (a member's open status window makes its ticks
+unsafe; a join then waits for the donor's next safe tick or takes the newest
+stored checkpoint and replays the ticks since: M1's join; until the window
+trees are in the state, a donor whose ticks are unsafe could answer the
+ask at once instead of letting the relay wait a second), the music
+position of a joiner (its streams continue from its own load), STATEHASH's
+cost (see the third run's numbers above), the scenarios J15 / J30 / JF and
+J15x4 / J30x4 (four clients: more than this machine's three game processes
+of a run).
+
+### Integration of G-core and J (int-r69r70, 05.11)
+
+Branch `int-r69r70` from main b226bc0: `feat-r69gcore`, then `feat-r70join`
+(both `--no-ff`). Both rounds are protocol 47 and ship together:
+`kOnlineProtocol` is 47 once (its comment names both rounds); on the server
+`RoomStoryKeeper.QueuedProtocol` (G-core) and `Wire.CheckpointProtocol` (J)
+are the same 47. Message numbers do not collide: G-core adds no wire type
+(only the STORY_ACK reason *queued* = 11), J holds client 0x15-0x17 and
+server 0x92 (0x91 free), WELCOME flag 4 and READY flag 1. Conflicts were
+textual only (`SessionConfig` keeps both rounds' fields; both includes of
+`online_run.cpp`); `run.py` / `online_script` are G-core's (J added no
+condition), and this section keeps both rounds' texts above.
+
+Where G-core's story meets J's join, two fixes: the rebuild from a
+checkpoint opens the joiner's counter line at the visit's load snapshot, as
+the classic join and resync do (one line, taken once, round 59b's d54d7b0;
+opened at T it lost the growth before T), and G-core's call shop hint shows
+only on a new refusal (a join, co-arrival or resync restores into a fresh
+engine whose `callshop_refused` starts at 0, which showed the hint again).
+The Game Start's hold and a checkpoint join do not overlap (the hold is at
+the title, a solo instance; joins come at field barriers); the tick state
+holds none of G-core's host fields (`common_rebuilt`, `callshop_refused`;
+`callshop_closed_` is set only inside a script run, never at a state-safe
+tick). A guest that joins from a checkpoint has the room story from its Game
+Start and the instance's story from the state, as a classic joiner.
+
+Checks on the dev build of the integration (Release, tests,
+`DW4_ONLINE_DEV`): ctest 54 of 54, DW4Online.Tests 254 of 254 (246 + 248
+over main's 240), `story_census.py --check` equal, `det.sh` 4004f056 /
+396cb219 (both runs). Real hidden clients on a private stack (mysqld 3590,
+ports 56300-56349): RG1 (145 s), J1 (226 s: the guest's Game Start with the
+room story, then its join from the checkpoint of tick 3,605, rebuild 208 ms,
+0 ticks replayed) and S3 (300 s) pass; RGJ1 (new: J1 whose guest's Game
+Start holds 8 s for the room story, `DW4_ONLINE_TEST_STORY_DELAY`, before
+it joins from a checkpoint) passes too (225 s: the hold 8,000 ms, the Game
+Start with the room story, the join from the checkpoint of tick 3,580,
+rebuild 132 ms, 2 ticks replayed, 4,020 shared ticks equal). Logs:
+`build/` of the worktree (`ctest1.log`, `server_unit1.log`, `det1.log`,
+`census_check1.log`, `scen1.log`, `scen2.log`).
+
+**Review fixes (int-r69r70, 05.11).** G-core: the title's online screens
+decide the room owner too (`api::owns_room`, `set_room_owner`; before, every
+guest from the room list played as the owner and its card took the room
+story); the training proof only from stages behind the training's gate
+(stag0001, stagIS*, stagML*, dngQ* count as before it: 25 proof flags, from
+75); a 409's reload gives a guest's card store the new own story; a
+replay's call shop refusal shows no hint. J: the entry context at the load
+end (3.7); a tick state writer's error stops the visit's STATEHASH and
+uploads instead of closing every member's game; `ready_sent_` resets with
+every state; READY after a checkpoint names the first multiple of 60 it
+replayed and the relay waits up to `Instances:ReadyFingerprintWaitMs` (2 s)
+for the members' NETFP of it; a joiner without READY falls back to NEW after
+the catch-up limit plus 30 s; the classic fallback of a planned checkpoint
+join checks the whole visit's catch-up; the rebuilt member never judges
+(6.13.4); a fork drops the parent's state of the leavers' side after the
+fork tick and no client does checkpoint work in a fork's step; a solo
+leader sends one STATEHASH with K alone (flag 2, no hash) and gets no
+periodic asks; only the asked donor's upload is taken, an abandoned one is
+dropped; the STATEHASH raster restarts when a member joins or resyncs; the
+Lua collector's per-content string count and the restore's common banks
+first are online only (offline as on main); a tick state's stream whose
+file changed gets that file's decoder; TEXTURECTRL binds after a state over
+infos the journal added; `Lua4Vm::load_state` checks its free lists; ctest
+`tick_state` covers dng102b3, stagBS01 and dngQ1B2E too.
+
+*JS and JS2 after the review* (05.11): with the READY check, JS's missing
+field shows at READY (`ready_mismatch` at tick 3,600, `checkpoint_suspect`
+why=ready, the classic state, the JOIN, no desync; run.py's per-scenario
+`expect_relay` allows exactly that one `ready_mismatch`), so the new JS2
+covers the path JS took before: b joins from a checkpoint, its READY
+matches, and `DW4_ONLINE_TEST_DESYNC=join+1500` (development builds) makes
+it drift 1,500 ticks after its JOIN (tick 5,160, outside
+`CheckpointSuspectTicks`); the rebuilt member makes no majority, the path
+turns suspect (`desync_rebuilt`), the classic resync's READY at 5,220 judges
+and both are equal for 3,840 ticks after (without the hook JS2 fails).
 
 ### Round R (proposed r67): rollback for the own player
 

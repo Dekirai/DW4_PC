@@ -2,6 +2,8 @@
 
 #include "json.hpp"
 
+#include <cctype>
+
 namespace dw4::game::online::api {
 
 namespace {
@@ -101,6 +103,14 @@ std::optional<RoomJoined> parse_room(const HttpResponse& response) {
     r.member_id = std::uint32_t((*v)["you"]["accountId"].u64().value_or(0));
     if (const auto port = (*v)["relay"]["port"].i64(); port && *port > 0 && *port < 65536) r.relay_port = int(*port);
     return r;
+}
+
+bool owns_room(const RoomJoined& joined, const std::string& account, bool created) {
+    if (created) return true;
+    if (joined.owner.empty() || joined.owner.size() != account.size()) return false;
+    for (std::size_t i = 0; i < account.size(); ++i)
+        if (std::tolower(static_cast<unsigned char>(joined.owner[i])) != std::tolower(static_cast<unsigned char>(account[i]))) return false;
+    return true;
 }
 
 std::optional<std::string> parse_ticket(const HttpResponse& response) {

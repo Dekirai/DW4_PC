@@ -93,6 +93,12 @@ public sealed class HubMember(int index, long accountId, string name, bool owner
     public bool ResumeAllowed { get; set; }
     /// <summary>A fingerprint vote sent RESYNC: the member catches up from the state until its READY (no JOIN follows).</summary>
     public bool Resyncing { get; set; }
+    /// <summary>Round J: the running resync's state came from a checkpoint.</summary>
+    public bool ResyncFromCheckpoint { get; set; }
+    /// <summary>Round J's review: the member's engine was rebuilt from a checkpoint (its READY said so) and has not had a
+    /// classic state or a new visit since. It is not independent of its donor: it never makes a majority in a fingerprint
+    /// vote, and a desync or STATEHASH mismatch it is part of makes the instance's checkpoint path suspect (6.13.4).</summary>
+    public bool RebuiltFromCheckpoint { get; set; }
     /// <summary>When the last RESYNC went out (at most one per Instances:ResyncCooldownSeconds).</summary>
     public long ResyncAt { get; set; }
     /// <summary>A state transfer for this member is being built outside the room lock: nothing is pumped to it meanwhile.</summary>
@@ -172,10 +178,47 @@ public sealed class JoinState(HubInstance target, int slot, ArrivalGroup from, i
     /// <summary>JOIN_REQ sent to the solo leader without its JOIN_AT (a few, then the joiner falls back to NEW).</summary>
     public int JoinRequests { get; set; }
     public bool StateSent { get; set; }
+    /// <summary>Round J: the checkpoint the join waits for (the relay asked the donor) until this time (0: not waiting).</summary>
+    public long CheckpointWaitUntil { get; set; }
+    /// <summary>Round J: the joiner's state came from a checkpoint; the classic path is the fallback.</summary>
+    public bool FromCheckpoint { get; set; }
+    /// <summary>Round J: the next state is the classic one (a checkpoint failed).</summary>
+    public bool Classic { get; set; }
     /// <summary>READY arrived (the joiner caught up).</summary>
     public bool Ready { get; set; }
+    /// <summary>When the state went out (0: not yet): a joiner without READY falls back to NEW after the catch-up limit plus
+    /// half a minute (round J's review: a READY mismatch's classic state left a client that never sent READY again).</summary>
+    public long StateSentAt { get; set; }
+    /// <summary>Round J's review: the ranking took the checkpoint path's short catch-up; a fallback to the classic state
+    /// checks the whole visit's catch-up time again.</summary>
+    public bool PlannedCheckpoint { get; set; }
+    /// <summary>A READY from a checkpoint whose tick the members have not reported yet: checked when their NETFP comes
+    /// (round J's review: READY of T - 1 met no fingerprint and went unchecked).</summary>
+    public ReadyMsg? PendingReady { get; set; }
+    public long PendingReadyAt { get; set; }
+    /// <summary>The members' fingerprint of the pending READY's tick never came in time: it is taken unchecked.</summary>
+    public bool ReadyWaitExpired { get; set; }
     /// <summary>The JOIN is stamped (sealed) or JOIN_REQ went to the solo leader.</summary>
     public bool Stamped { get; set; }
+}
+
+/// <summary>A checkpoint the relay keeps (round J): the donor's tick state at Tick, with its hash and the load end.</summary>
+public sealed record StoredCheckpoint(uint Tick, ulong Hash, uint LoadEnd, byte[] Bytes, long At)
+{
+    public bool Agreed { get; set; }
+    /// <summary>The member that uploaded it (a fork drops the parent's checkpoints of leaver donors after the fork tick).</summary>
+    public HubMember? Donor { get; init; }
+}
+
+/// <summary>A donor's checkpoint arriving in chunks.</summary>
+public sealed class CheckpointUpload(HubMember donor, uint tick, ulong hash, uint loadEnd, uint total)
+{
+    public HubMember Donor { get; } = donor;
+    public uint Tick { get; } = tick;
+    public ulong Hash { get; } = hash;
+    public uint LoadEnd { get; } = loadEnd;
+    public byte[] Buffer { get; } = new byte[total];
+    public uint Received { get; set; }
 }
 
 public enum HoldKind
@@ -349,7 +392,16 @@ public sealed class HubInstance(uint id)
     public uint Id { get; } = id;
     public string Stage { get; set; } = "";
     public uint Visit { get; set; }
+    /// <summary>The session context its engine reports now (STATE; SEAMLESS.md 3.7).</summary>
     public ulong ContextHash { get; set; }
+    /// <summary>The context the visit's members arrived with (their barrier's hash, taken before the load; a fork's child
+    /// keeps its parent's).</summary>
+    public ulong ArrivalContext { get; set; }
+    /// <summary>The context at the visit's load end K, after its own load scripts ran (the first STATE with
+    /// <see cref="StateMsg.LoadEnded"/>; null before and from members without it, below protocol 47; a fork's child keeps
+    /// its parent's). A dungeon's first floor sets COUNTER 2 at its load (start.lua, loader state 7), so a later arrival's
+    /// barrier hash (taken in the previous stage) equals <see cref="ArrivalContext"/>, not the running context.</summary>
+    public ulong? EntryContext { get; set; }
     public InstanceMode Mode { get; set; }
     public bool Ended { get; set; }
     public HubMember?[] Slots { get; } = new HubMember?[Wire.MaxSlots];
@@ -419,6 +471,25 @@ public sealed class HubInstance(uint id)
     public long CreatedAt { get; set; }
     public long Desyncs { get; set; }
 
+    // Round J: checkpoints (SEAMLESS.md 6.13.4)
+    /// <summary>The newest checkpoints, oldest first.</summary>
+    public List<StoredCheckpoint> Checkpoints { get; set; } = [];
+    /// <summary>The donor's upload in progress.</summary>
+    public CheckpointUpload? Upload { get; set; }
+    /// <summary>When the donor was last asked (0: never).</summary>
+    public long CheckpointAskedAt { get; set; }
+    /// <summary>The member asked for the next upload (round J's review: only its upload is taken; an unasked one replaced a
+    /// running upload and reserved up to 8 MB each time).</summary>
+    public HubMember? AskedDonor { get; set; }
+    /// <summary>STATEHASH reports per checkpoint tick: slot -> (hash, load end).</summary>
+    public SortedDictionary<uint, Dictionary<int, (ulong Hash, uint LoadEnd)>> StateHashes { get; } = [];
+    /// <summary>The visit's load end K as the members' reports agree (a solo leader's alone).</summary>
+    public uint? AgreedLoadEnd { get; set; }
+    /// <summary>A desync after a rebuild from a checkpoint: joins and resyncs take the classic path from now on.</summary>
+    public bool CheckpointSuspect { get; set; }
+    /// <summary>The tick of the last READY from a checkpoint (the suspicion window counts from it).</summary>
+    public uint? RebuildTick { get; set; }
+
     public IEnumerable<HubMember> Members => Slots.Where(m => m is not null)!;
     /// <summary>The filled slots with their members (by index: never trusts a member's own slot number).</summary>
     public IEnumerable<(int Slot, HubMember Member)> Seats
@@ -466,6 +537,16 @@ public sealed record PendingSoloJoin(HubMember Joiner, int Slot, byte Point, byt
 /// <summary>Pure rules of the instance model, unit-tested on their own.</summary>
 public static class HubRules
 {
+    /// <summary>
+    /// An arrival with barrier context <paramref name="context"/> may join <paramref name="x"/> (SEAMLESS.md 3.7): the
+    /// instance runs that context now, or it arrived with it and nothing of the play since its load end changed it (the
+    /// stage's own load scripts did; the arrival's own load would have done the same, as a co-arrival's did). Before the
+    /// load end is known only the running context counts (review of round J: an unknown entry let an arrival join after a
+    /// boss kill that changed the context before the visit ever became joinable).
+    /// </summary>
+    public static bool ContextMatches(HubInstance x, ulong context) =>
+        x.ContextHash == context || (x.ArrivalContext == context && x.EntryContext is { } entry && entry == x.ContextHash);
+
     /// <summary>
     /// The slot map of a NEW (SEAMLESS.md 3.6): each member keeps its preferred slot when free, else its current slot when
     /// free, else the lowest free one; then, when slot 0 is free, the member in the lowest slot moves to slot 0.

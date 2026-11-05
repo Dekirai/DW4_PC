@@ -22,6 +22,23 @@ public sealed class InstanceOptions
     public int JoinHoldSeconds { get; set; } = 30;
     /// <summary>A JOIN (and a resync) is offered only when the slowest member catches up within this many seconds.</summary>
     public int MaxCatchUpSeconds { get; set; } = 30;
+    /// <summary>Round J (SEAMLESS.md 6.13.5): a joiner gets a checkpoint of the target instead of its whole log (false: every
+    /// join and resync takes the classic path, for a released build whose tick state is known to miss a field).</summary>
+    public bool CheckpointJoins { get; set; } = true;
+    /// <summary>A stored checkpoint this young serves a join at once; an older one only after the donor did not answer.</summary>
+    public int FreshCheckpointMs { get; set; } = 2000;
+    /// <summary>How long a join waits for the donor's checkpoint before it takes the newest stored one or the classic path.</summary>
+    public int CheckpointWaitMs { get; set; } = 1000;
+    /// <summary>A joiner's READY from a checkpoint waits this long for the members' fingerprint of its tick (round J's review);
+    /// then it is taken unchecked.</summary>
+    public int ReadyFingerprintWaitMs { get; set; } = 2000;
+    /// <summary>Checkpoints kept per instance.</summary>
+    public int KeepCheckpoints { get; set; } = 2;
+    /// <summary>A desync this many ticks after a rebuild from a checkpoint makes the instance's checkpoint path suspect.</summary>
+    public int CheckpointSuspectTicks { get; set; } = 1200;
+    /// <summary>While an instance is joinable its donor uploads a checkpoint this often (the newest stored ones serve a join
+    /// whose donor does not answer in time, and every resync); 0: only on demand.</summary>
+    public int CheckpointPeriodicMs { get; set; } = 30000;
     /// <summary>The replay rate (steps/s) assumed for a member that has not reported one (RATE).</summary>
     public int DefaultReplayRate { get; set; } = 3000;
     /// <summary>A HEADING counts for co-arrivals this long after it arrived.</summary>

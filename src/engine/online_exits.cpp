@@ -150,6 +150,21 @@ static std::unique_ptr<DemoWork> departure_work(Engine& engine, const std::strin
 }
 
 struct ExitPortAccess {
+    // Round J: the exit port's fields in the tick state.
+    static void fields(TickArchive& a, Engine::ExitPort& e) {
+        a.io(e.state);
+        a.io(e.owner);
+        a.io(e.stage);
+        a.io(e.mat);
+        a.io(e.kind);
+        a.io(e.point);
+        a.io(e.text);
+        a.io(e.candidates);
+        a.io(e.asked);
+        a.io(e.asking);
+        a.io(e.opened);
+        a.io(e.finish_at);
+    }
     // One update of the exit after the owner's answer; nonzero while it
     // waits (the port record blocks its work).
     static int step(Engine& engine, Engine::ExitPort& exit) {
@@ -347,7 +362,7 @@ std::vector<Lua4Value> Engine::stage_change_port(std::span<const Lua4Value> args
     prompt_records(*work, owner, exit->text);
     DemoRecord step;
     step.type = 8;
-    step.port = [exit](Engine& engine) { return ExitPortAccess::step(engine, *exit); };
+    step.port = ExitStep{exit};
     work->records.push_back(std::move(step));
     demo_.start(std::move(work));
     return {};
@@ -420,6 +435,53 @@ void Engine::install_online_lua() {
     const auto original = lua_->get_global("__dw4_funcStageChange");
     if (original.type() != Lua4Type::Function) return;
     lua_->set_global("funcStageChange", online_shared() ? Lua4Value::host_function("funcStageChange") : original);
+}
+
+int Engine::ExitStep::operator()(Engine& engine) const { return ExitPortAccess::step(engine, *exit); }
+
+// ---- Round J: the exit port in the tick state (tick_state.hpp).
+
+void Engine::tick_exit(TickArchive& a) {
+    bool has = exit_port_ != nullptr;
+    a.io(has);
+    if (a.reading()) exit_port_ = has ? std::make_shared<ExitPort>() : nullptr;
+    if (has) ExitPortAccess::fields(a, *exit_port_);
+    a.io(exit_view_.active);
+    a.io(exit_view_.owner);
+    a.io(exit_view_.asking);
+    a.io(exit_view_.yes);
+    a.io(exit_view_.stays);
+    a.io(exit_view_.sees_fade);
+    a.io(exit_view_.stage);
+    a.io(exit_view_.boss_destination);
+}
+
+// A demo record's port (the exit step is the only one): 0 none, 1 the
+// step of the running exit port, 2 the step of an older one (inline).
+void Engine::tick_port(TickArchive& a, std::function<int(Engine&)>& port) {
+    std::uint8_t kind = 0;
+    const ExitStep* step = nullptr;
+    if (!a.reading() && port) {
+        step = port.target<ExitStep>();
+        if (!step) throw TickStateError("demo", "a demo record with an unknown port");
+        kind = step->exit == exit_port_ ? 1 : 2;
+    }
+    a.io(kind);
+    if (kind > 2) throw TickStateError("demo", "an unknown port kind");
+    if (kind == 0) {
+        if (a.reading()) port = nullptr;
+        return;
+    }
+    if (kind == 1) {
+        if (a.reading()) {
+            if (!exit_port_) throw TickStateError("demo", "an exit step without its exit port");
+            port = ExitStep{exit_port_};
+        }
+        return;
+    }
+    auto exit = a.reading() ? std::make_shared<ExitPort>() : step->exit;
+    ExitPortAccess::fields(a, *exit);
+    if (a.reading()) port = ExitStep{exit};
 }
 
 } // namespace dw4::engine

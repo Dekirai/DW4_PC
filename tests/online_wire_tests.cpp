@@ -137,6 +137,9 @@ void messages() {
     check(w::decode_netfp(w::encode(w::NetFp{7, 3, 60, 77})).hash == 77, "NETFP");
     auto state = w::decode_state(w::encode(w::State{7, 3, 61, w::state_flag::joinable | w::state_flag::boss_lock, 5, w::NotJoinable::boss}));
     check(state.tick == 61 && state.flags == 5 && state.reason == w::NotJoinable::boss, "STATE");
+    check(w::decode_state(w::encode(w::State{7, 3, 61, w::state_flag::load_ended | w::state_flag::boss_lock, 5, w::NotJoinable::boss})).flags == 12,
+          "STATE with the load end");
+    check(throws([&] { w::decode_state(w::encode(w::State{7, 3, 61, 16, 5, w::NotJoinable::none})); }), "STATE with an unknown flag is refused");
     auto intent = w::decode_intent(w::encode(w::Intent{7, 3, w::IntentKind::give_up, 0}));
     check(intent.kind == w::IntentKind::give_up, "INTENT");
     w::Presence presence{0, "stagml11", 9, 1.5f, -2.0f, 300.25f, 0.5f, 3, 12, 80, 120, 10, 30};
@@ -280,6 +283,49 @@ void messages() {
               netstat.filled == 5 && netstat.late == 7 && netstat.flags == 1,
           "NETSTAT round trip");
     check(std::uint8_t(w::Type::netstat) == 0x8F && std::string(w::type_name(w::Type::netstat)) == "NETSTAT", "NETSTAT type");
+    // Round J (SEAMLESS.md 6.13.7): STATEHASH's golden bytes are WireGoldenTests.cs's too.
+    check(hex(w::encode(w::StateHash{3, 4, 1200, 0x0123456789ABCDEFull, 17, 1})) == "03000000" "04000000" "b0040000" "efcdab8967452301" "11000000" "01",
+          "golden STATEHASH");
+    {
+        const auto sh = w::decode_statehash(w::encode(w::StateHash{3, 4, 1200, 5, 17, 1}));
+        check(sh.tick == 1200 && sh.hash == 5 && sh.load_end == 17 && sh.flags == 1, "STATEHASH round trip");
+        bool refused = false;
+        try {
+            (void)w::decode_statehash(w::encode(w::StateHash{3, 4, 10, 5, 11, 0}));
+        } catch (const w::WireError&) {
+            refused = true;
+        }
+        check(refused, "STATEHASH: a load end beyond the tick is refused");
+        w::Checkpoint c{3, 4, 1200, 9, 17, 10, 4, {1, 2, 3}};
+        const auto cb = w::decode_checkpoint(w::encode(c));
+        check(cb.tick == 1200 && cb.load_end == 17 && cb.total == 10 && cb.offset == 4 && cb.bytes == c.bytes, "CHECKPOINT round trip");
+        const auto bad = w::decode_checkpoint_bad(w::encode(w::CheckpointBad{1, 2, 3, w::CheckpointBadReason::topology, "journal"}));
+        check(bad.reason == w::CheckpointBadReason::topology && bad.section == "journal", "CHECKPOINT_BAD round trip");
+        const auto ask = w::decode_checkpoint_ask(w::encode(w::CheckpointAsk{1, 2, 0, 1}));
+        check(ask.inst == 1 && ask.visit == 2 && ask.flags == 1, "CHECKPOINT_ASK round trip");
+        w::Ready ready{1, 2, 3, 4, 5, {6}};
+        check(w::decode_ready(w::encode(ready)).flags == 0 && w::encode(ready).size() == 29, "READY without flags as before");
+        ready.flags = w::Ready::from_checkpoint;
+        check(w::decode_ready(w::encode(ready)).flags == w::Ready::from_checkpoint, "READY from a checkpoint");
+        // STATE_DATA codec 2: the load ticks, the checkpoint and the ticks from T.
+        w::StateData sd;
+        sd.purpose = w::StatePurpose::join;
+        sd.slot = 1;
+        sd.snapshot = {7, 7};
+        sd.load_ticks.resize(3);
+        sd.checkpoint_tick = 650;
+        sd.checkpoint_hash = 0xBEEF;
+        sd.checkpoint_flags = 1;
+        sd.checkpoint = std::vector<std::uint8_t>{0, 1, 2};
+        sd.first = 650;
+        sd.ticks.resize(2);
+        const auto back = w::decode_state_body(w::encode_state_body(sd));
+        check(back.checkpoint && *back.checkpoint == *sd.checkpoint && back.load_ticks.size() == 3 && back.checkpoint_tick == 650 &&
+                  back.checkpoint_hash == 0xBEEF && back.checkpoint_flags == 1 && back.first == 650 && back.ticks.size() == 2,
+              "STATE_DATA with a checkpoint");
+        sd.checkpoint.reset();
+        check(!w::decode_state_body(w::encode_state_body(sd)).checkpoint, "STATE_DATA without one");
+    }
     {
         // The type registry (SEAMLESS.md 6.3; WireGoldenTests.Message_types_are_unique_and_registered): the numbers
         // type_name knows are exactly these. A number given twice does not compile (type_name's switch); a new type
@@ -288,8 +334,8 @@ void messages() {
         for (int b = 0; b < 256; ++b)
             if (std::string(w::type_name(w::Type(b))) != "?") known += (known.empty() ? "" : " ") + std::string(w::type_name(w::Type(b)));
         check(known == "INPUT LOG HEADING BARRIER BARRIER_CHOICE SPLIT SNAPSHOT SNAPHASH READY JOIN_AT NETFP STATE INTENT STORY PRESENCE RESUME "
-                       "RATE PONG BYE PRESENCE2 WELCOME SEALED LIVE JOIN_REQ BARRIER_OK BARRIER_WAIT STATE_DATA PRESENCE RESYNC STORY_ACK ROOM PING "
-                       "CLOSE ROSTER REASSIGN NETSTAT PRESENCE2",
+                       "RATE PONG BYE PRESENCE2 STATEHASH CHECKPOINT CHECKPOINT_BAD WELCOME SEALED LIVE JOIN_REQ BARRIER_OK BARRIER_WAIT STATE_DATA "
+                       "PRESENCE RESYNC STORY_ACK ROOM PING CLOSE ROSTER REASSIGN NETSTAT PRESENCE2 CHECKPOINT_ASK",
               "type registry: " + known);
         check(std::uint8_t(w::Type::bye) == 0x13 && std::uint8_t(w::Type::reassign) == 0x8E, "the registry's last numbers before NETSTAT");
         // Round 60's PRESENCE2: 0x14 to the relay, 0x90 back (first 0x8F, NETSTAT's since DW4Online 0.1.2).

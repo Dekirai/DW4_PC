@@ -130,6 +130,9 @@ const std::vector<std::string_view>& online_presentation_env() {
         "DW4_ONLINE_PROFILE",
         // the resync scenarios' injected desync (DW4_ONLINE_DEV builds only, game_main.cpp: it is the point of the test)
         "DW4_ONLINE_TEST_DESYNC",
+        // round J's damaged checkpoint and the tick state that misses a field (DW4_ONLINE_DEV builds only, session.cpp,
+        // game_main.cpp: scenarios JB and JS)
+        "DW4_ONLINE_TEST_BAD_CHECKPOINT", "DW4_ONLINE_TEST_TICKSTATE_SKIP",
         // the ghost figures (round 60, presentation only): off, and the form and old-client tests of the scenarios
         // (DW4_ONLINE_DEV builds only, session.cpp: the form PRESENCE2 names cycles, the engine's stays; PRESENCE
         // instead of PRESENCE2)
@@ -139,6 +142,9 @@ const std::vector<std::string_view>& online_presentation_env() {
         "DW4_ONLINE_LOG", "DW4_ONLINE_RELAY_PORT", "DW4_ONLINE_TEST_STALL",
         // the round 62 review's vsync grid of the latency scenarios (a pass ends on a grid of HZ, like a display's vsync)
         "DW4_ONLINE_TEST_PASS_HZ",
+        // round G-core's G7: the room story ignored for N seconds after the first Game Start (DW4_ONLINE_DEV builds only, online_run.cpp:
+        // the Game Start's hold until the confirmed story is the point of the test)
+        "DW4_ONLINE_TEST_STORY_DELAY",
         // round S1 test tools (game_main.cpp)
         "DW4_SNAPSHOT_DUMP", "DW4_PAD_LOG", "DW4_EXTRA_RENDERS", "DW4_EXTRA_WIDEN", "DW4_EXTRA_PREVIOUS",
         "DW4_CAM_CHECK"};
@@ -214,6 +220,9 @@ void Engine::set_online(const OnlineRules& rules) {
     }
     const OnlineRules before = online_;
     online_ = rules;
+    // (Round J's review: the Lua collector counts strings per content online
+    // only; offline it stays as before, the rule "offline bit-identical".)
+    if (lua_) lua_->set_strings_by_content(online_.enabled);
     // (The sound output plays the own windows' sound effects of this
     // machine's member alone, SEAMLESS.md 5.3.)
     if (auto* sound = get<SoundManager>()) sound->set_listener_slot(online_.enabled ? view_slot_ : -1);
@@ -605,7 +614,9 @@ void Engine::apply_barrier() {
     // step, before the stage's load scripts read the flags and before the
     // snapshot, so a joiner gets the same state. (JOIN and CO_ARRIVE merge it
     // into the member's own fallback load.)
-    if (b.story) story::apply(flags_, sys->flag_folder, counters_, *b.story, b.dropped);
+    // (pending_stage_ holds the barrier's target: a barrier into the training
+    // field leaves flag 503 alone, 8.8.)
+    if (b.story) story::apply(flags_, sys->flag_folder, counters_, *b.story, b.dropped, pending_stage_);
     auto rules = b.rules;
     rules.enabled = true;
     rules.leaving = 0;

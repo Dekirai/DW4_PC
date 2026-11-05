@@ -657,6 +657,7 @@ void in_room(online::OnlineLobby& lobby, OnlineUiState& s, const RoomLive* live)
     if (live && live->active) {
         if (live->in_game) {
             if (!live->character.empty()) wrapped_disabled(live->character.c_str());
+            if (!live->story.empty()) wrapped_disabled(live->story.c_str());
         } else if (const auto& c = lobby.character(); c && c->exists)
             wrapped_disabled(("You play " + (c->name.empty() ? std::string("your online character") : c->name) + " (" + c->digimon + ", level " +
                               std::to_string(c->level) + "): Play, then START and Game Start at the title, and load it from the card. "

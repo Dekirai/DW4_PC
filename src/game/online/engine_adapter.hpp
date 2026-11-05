@@ -55,6 +55,11 @@ public:
     std::uint64_t load_serial() const override;
     std::vector<std::uint8_t> snapshot_bytes(bool canonical) const override;
     std::uint64_t net_fingerprint() override;
+    bool state_safe() const override;
+    bool load_ended() const override;
+    std::vector<std::uint8_t> save_tick_state(bool canonical) override;
+    std::uint64_t tick_state_hash() override;
+    std::string apply_tick_state(std::span<const std::uint8_t> bytes) override;
     bool membership_safe() const override;
     bool joinable(wire::NotJoinable& reason) const override;
     bool boss_lock() const override;
@@ -95,9 +100,16 @@ public:
     // took the player back to the title, and the title's option menu sets it
     // without a game start, so the next Game Start of the session got neither
     // the room story nor the room's modes (round 56 review).
-    void after_live_step();
-    // A Game Start is waiting for after_live_step (set by the step's
-    // GAMESTART): the host hands the confirmed room story over first.
+    // Round G-core (docs/SEAMLESS.md 8.8): never without a confirmed story.
+    // Without one the Game Start stays pending (game_start() stays true) and
+    // nothing is applied: the host holds the next live step until the story
+    // arrives and calls this again. A character call of player 1 outside the
+    // title's mode (Engine::common_rebuilt, the call shop's path) is treated
+    // as a Game Start. Returns true when the story and modes were applied.
+    bool after_live_step();
+    // A Game Start (or a rebuilt common story) is waiting for after_live_step
+    // (set by the step's GAMESTART): the host hands the confirmed room story
+    // over first.
     bool game_start() const;
     // The room story for game_started (SEAMLESS.md 8.5): the confirmed room
     // story the session has when the game starts. Without one the

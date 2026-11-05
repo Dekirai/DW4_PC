@@ -42,7 +42,8 @@ add_library(dw4_engine src/engine/math.cpp src/engine/gekko_math.cpp src/engine/
   src/engine/hud.cpp src/engine/items.cpp src/engine/panel.cpp
   src/engine/subwnd.cpp src/engine/subwnd_folder.cpp src/engine/subwnd_skill.cpp
   src/engine/subwnd_shop.cpp src/engine/save_state.cpp src/engine/port_events.cpp src/engine/online.cpp
-  src/engine/online_cameras.cpp src/engine/online_exits.cpp src/engine/online_scenes.cpp src/engine/online_story.cpp)
+  src/engine/online_cameras.cpp src/engine/online_exits.cpp src/engine/online_scenes.cpp src/engine/online_story.cpp
+  src/engine/tick_state.cpp src/engine/tick_state_managers.cpp)
 # Data Overflow, the survival mode's run engine rules (docs/SURVIVAL.md 13.4):
 # the hooks' values and the native run scripts; inert without OverflowRules.
 target_sources(dw4_engine PRIVATE src/engine/overflow/rules.cpp src/engine/overflow/player_hit.cpp
@@ -206,6 +207,11 @@ if(BUILD_TESTING)
   target_link_libraries(dw4_online_tests PRIVATE dw4_engine dw4_online) # (dw4_online: the GameEngineLink checks)
   target_compile_definitions(dw4_online_tests PRIVATE DW4_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
   add_test(NAME online COMMAND dw4_online_tests "${DW4_TEST_DATA}")
+  # Round J's tick state (docs/SEAMLESS.md 6.13.3): idempotence, divergence
+  # trials and the rebuild from the visit's load in real stages (game data).
+  add_executable(dw4_tick_state_tests tests/tick_state_tests.cpp)
+  target_link_libraries(dw4_tick_state_tests PRIVATE dw4_engine)
+  add_test(NAME tick_state COMMAND dw4_tick_state_tests "${DW4_TEST_DATA}")
   # The online test driver's script language (src/game/online_script.hpp, tools/online_test).
   add_executable(dw4_online_script_tests tests/online_script_tests.cpp src/game/online_script.cpp src/game/test_path.cpp src/game/campaign.cpp)
   target_include_directories(dw4_online_script_tests PRIVATE src/game)
@@ -296,6 +302,16 @@ if(DW4_BUILD_APP)
     ${ZSTD_LIB}/decompress/zstd_decompress.c ${ZSTD_LIB}/decompress/zstd_decompress_block.c)
   target_include_directories(zstd_decoder PUBLIC ${ZSTD_LIB})
   target_compile_definitions(zstd_decoder PRIVATE ZSTD_DISABLE_ASM)
+  # Round J: the checkpoints' compression (docs/SEAMLESS.md 6.13.2), the
+  # single-threaded encoder of the same release.
+  add_library(zstd_encoder STATIC
+    ${ZSTD_LIB}/common/fse_decompress.c ${ZSTD_LIB}/compress/fse_compress.c ${ZSTD_LIB}/compress/hist.c ${ZSTD_LIB}/compress/huf_compress.c
+    ${ZSTD_LIB}/compress/zstd_compress.c ${ZSTD_LIB}/compress/zstd_compress_literals.c ${ZSTD_LIB}/compress/zstd_compress_sequences.c
+    ${ZSTD_LIB}/compress/zstd_compress_superblock.c ${ZSTD_LIB}/compress/zstd_double_fast.c ${ZSTD_LIB}/compress/zstd_fast.c
+    ${ZSTD_LIB}/compress/zstd_lazy.c ${ZSTD_LIB}/compress/zstd_ldm.c ${ZSTD_LIB}/compress/zstd_opt.c)
+  target_include_directories(zstd_encoder PUBLIC ${ZSTD_LIB})
+  target_compile_definitions(zstd_encoder PRIVATE ZSTD_DISABLE_ASM)
+  target_link_libraries(zstd_encoder PUBLIC zstd_decoder)
   find_package(OpenGL REQUIRED)
   add_library(imgui STATIC
     ${imgui_src_SOURCE_DIR}/imgui.cpp
@@ -313,7 +329,7 @@ if(DW4_BUILD_APP)
     src/game/online_achievements.cpp src/game/host_view.cpp src/game/overflow_run.cpp src/game/overflow_host.cpp src/game/overflow_driver.cpp)
   target_include_directories(dw4_game PRIVATE ${pl_mpeg_src_SOURCE_DIR} ${stb_src_SOURCE_DIR})
   target_compile_definitions(dw4_game PRIVATE DW4_PC_VERSION="${PROJECT_VERSION}")
-  target_link_libraries(dw4_game PRIVATE dw4_engine dw4_online imgui zstd_decoder SDL3::SDL3 OpenGL::GL)
+  target_link_libraries(dw4_game PRIVATE dw4_engine dw4_online imgui zstd_decoder zstd_encoder SDL3::SDL3 OpenGL::GL)
   # F1 Saves > Cloud backup (the online character's lane, docs/SEAMLESS.md 9).
   target_sources(dw4_game PRIVATE src/game/cloud_backup_panel.cpp)
   if(WIN32)

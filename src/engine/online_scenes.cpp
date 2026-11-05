@@ -222,6 +222,7 @@ bool Engine::make_window_copy(std::string_view name, int index, int slot) {
     if (model) models->add_copy(*this, *model, copy, remap);
     if (action) actions->add_copy(*this, *action, copy, remap, child);
     if (select) selects->add_copy(*this, name, index, copy);
+    journal({0, TopologyEntry::window_copy, std::string(name), {}, index, slot});
     if (static const bool trace = std::getenv("DW4_TRACE_SCENES") != nullptr; trace)
         log("own copy " + key + (root ? " (" + std::to_string(map.size()) + " nodes)" : " (no subtree)"));
     return true;

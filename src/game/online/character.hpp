@@ -182,6 +182,11 @@ public:
         // on_response.
         std::function<std::uint64_t(HttpRequest)> submit;
         bool trace = false; // "online-character: ..." lines on stdout (test runs)
+        // In someone else's room (round G-core, 8.8): the engine's records hold
+        // the room owner's story, so every cached or uploaded record gets the
+        // own story. The room owner's engine story is his own (the room story):
+        // his records keep it, and a save that only moved it on goes up.
+        bool guest = false;
     };
     explicit CharacterSync(Config config);
 
@@ -220,6 +225,16 @@ public:
     void add_play_time(double seconds) { session_play_ += seconds; }
     // The room's context changes (members, ...).
     void set_context(const character_api::Context& context) { config_.context = context; }
+    // Round G-core (docs/SEAMLESS.md 8.8): the account's own story bytes
+    // (record 792..1891) from the record GET /online-character returned at the
+    // room entry, from the record of a 409 reload, zeros without a character on
+    // the server (404). The room entry puts them into every used box of the
+    // card cache; a guest's records carry them in the cache and in every
+    // upload (Config::guest; the server composes the own story anyway; the
+    // cache and its backups so never hold a borrowed story), and a guest's
+    // online card store writes them (save::CardStore::set_story_override).
+    const save::StoryBytes& own_story() const { return own_story_; }
+    void put_own_story(CharacterRecord& record) const;
 
     // An answer of the HTTP worker; false when the id is not this sync's.
     bool on_response(std::uint64_t id, const HttpResponse& response);
@@ -255,6 +270,7 @@ private:
     void skipped(Why why); // a save of another character than the online one
 
     Config config_;
+    save::StoryBytes own_story_{};    // the account's own story bytes (round G-core)
     bool entered_ = false;
     int revision_ = 0;                // the server's revision of the online character (0: none yet)
     std::uint32_t unique_ = 0;        // the online character's UNIQUE (0: none yet)

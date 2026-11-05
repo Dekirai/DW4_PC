@@ -123,7 +123,8 @@ public class StoryGoldenTests
                 Folder = [.. Ints(dropped.GetProperty("folder"))],
                 Counters = [.. Ints(dropped.GetProperty("counters"))],
             };
-            var removed = StoryMerge.Apply(e, Room(c.GetProperty("room")), keys);
+            var target = c.TryGetProperty("target", out var t) ? t.GetString() : null;
+            var removed = StoryMerge.Apply(e, Room(c.GetProperty("room")), keys, targetStage: target);
             var want = c.GetProperty("expect");
             Assert.True(Describe(Values(want.GetProperty("engine"))) == Describe(e), $"{name}: {Describe(e)}");
             Assert.True(want.GetProperty("removed").GetBoolean() == removed, $"{name}: removed");

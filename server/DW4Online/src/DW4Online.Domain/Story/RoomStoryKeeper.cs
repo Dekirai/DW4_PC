@@ -153,6 +153,16 @@ public sealed class RoomStoryKeeper
     public double FlagSeconds { get; init; } = 30;
     /// <summary>The counter lines one member may open in a room session (Instances:StoryLinesPerMember); more are refused (limit).</summary>
     public int MaxLinesPerMember { get; init; } = 256;
+    /// <summary>
+    /// The answer to an earned value (one that passed every check and waits only for the one-per-visit rule or a guest's
+    /// spacing; <see cref="MergeEarned"/> merges it when due): <see cref="StoryRefusal.Queued"/> from protocol 47 on (round G,
+    /// SEAMLESS.md 8.8: the client stops sending it again), <see cref="StoryRefusal.Wait"/> for a room of an older protocol
+    /// (round 59's fix round built the queue without a protocol change; the old client's resends do no harm).
+    /// </summary>
+    public StoryRefusal EarnedAnswer { get; init; } = StoryRefusal.Queued;
+    /// <summary>The first protocol whose clients know <see cref="StoryRefusal.Queued"/> and flag 503 as story (round G). The
+    /// relay's Wire.CheckpointProtocol (round J's checkpoints) is the same 47: the two rounds ship together.</summary>
+    public const int QueuedProtocol = 47;
     /// <summary>Rises with every drop and at the start; an instance remembers the epoch its visit began in.</summary>
     public long Epoch { get; private set; }
     /// <summary>
@@ -249,7 +259,12 @@ public sealed class RoomStoryKeeper
         foreach (var k in delta.Folder.Distinct())
         {
             if (!_sets.IsKey(k)) refused.Add(new(StoryKeyKind.Folder, k, StoryRefusal.NotStory));
-            else if (Story.Folder[k] == 0) ok.Folder.Add(k); // key items come from item pickups anywhere: no stage table
+            else if (Story.Folder[k] != 0) { }
+            // Round G (8.8): a key only from the stages it comes from (K2 / K3 from stagML02's scripts, the dropped keys
+            // from their dungeon floors); a guest's own key that reached its engine some other way (the call shop, before
+            // it was closed online) cannot enter the owner's story from the lobby.
+            else if (!_sets.GivesKey(stage, k)) refused.Add(new(StoryKeyKind.Folder, k, StoryRefusal.Stage));
+            else ok.Folder.Add(k);
         }
         foreach (var g in delta.Counters)
         {
@@ -586,7 +601,7 @@ public sealed class RoomStoryKeeper
         {
             if (tally.PhaseSteps > 0 || (!v.Owner && v.At - last.Item1 < PhaseStepSeconds))
             {
-                refused.Add(new(StoryKeyKind.Phase, ok.Phase, StoryRefusal.Wait));
+                refused.Add(new(StoryKeyKind.Phase, ok.Phase, EarnedAnswer));
                 var earned = EarnedOf(account);
                 if (ok.Phase > earned.Phase) (earned.Phase, earned.PhaseEpoch) = (ok.Phase, visitEpoch);
                 else if (ok.Phase == earned.Phase) earned.PhaseEpoch = Math.Max(earned.PhaseEpoch, visitEpoch);
@@ -604,7 +619,7 @@ public sealed class RoomStoryKeeper
         {
             if (tally.Keys > 0 || (!v.Owner && v.At - last.Item2 < KeySeconds))
             {
-                refused.Add(new(StoryKeyKind.Folder, k, StoryRefusal.Wait));
+                refused.Add(new(StoryKeyKind.Folder, k, EarnedAnswer));
                 var earned = EarnedOf(account);
                 earned.Keys[k] = Math.Max(earned.Keys.GetValueOrDefault(k, long.MinValue), visitEpoch);
             }
@@ -630,7 +645,7 @@ public sealed class RoomStoryKeeper
                     tokens -= 1;
                     continue;
                 }
-                refused.Add(new(StoryKeyKind.Flag, f, StoryRefusal.Wait));
+                refused.Add(new(StoryKeyKind.Flag, f, EarnedAnswer));
                 var earned = EarnedOf(account);
                 earned.Flags[f] = Math.Max(earned.Flags.GetValueOrDefault(f, long.MinValue), visitEpoch);
                 ok.Flags.Remove(f);

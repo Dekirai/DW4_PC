@@ -40,6 +40,8 @@
 #include <array>
 #include <cstdint>
 #include <deque>
+#include <functional>
+#include <span>
 #include <map>
 #include <memory>
 #include <optional>
@@ -67,6 +69,14 @@ struct SessionConfig {
     double story_check_interval = 1.0;  // the pending set is looked at once a second (sent when it changed)
     double story_interval = 10.0;       // and sent again every ten seconds while it is not empty (8.3)
     double story_retry_interval = 3.0;  // after a wait / not_member answer: sent again this soon (8.7)
+    // Round G-core (8.8): this member owns the room (its engine story is its own) and the owner's name for the
+    // guest's notices ("<owner>'s story moved on").
+    bool room_owner = true;
+    std::string owner_name;
+    // Round J (6.13): a checkpoint's compression (the app's zstd); unset:
+    // the bytes go raw. A payload starts with its codec byte (0 raw, 1 this).
+    std::function<std::vector<std::uint8_t>(std::span<const std::uint8_t>)> compress, decompress;
+    std::uint32_t checkpoint_period = 600; // STATEHASH at the first state-safe tick at or after every multiple
 };
 
 enum class Mode : std::uint8_t { connecting, solo, sealed, parked, transition, waiting_state, catching_up, observing, lost, closed };
@@ -187,6 +197,11 @@ public:
     std::uint32_t inst() const { return inst_; }
     std::uint32_t visit() const { return visit_; }
     std::uint32_t tick() const { return tick_; }
+    // The tick at which this member's own JOIN applied in this visit (none
+    // until then, none in a visit it did not join), and whether its engine
+    // came from a checkpoint (6.13.5) that no classic state replaced since.
+    std::optional<std::uint32_t> joined_tick() const { return joined_tick_; }
+    bool from_checkpoint() const { return from_checkpoint_; }
     int delay() const { return delay_; }
     bool hub() const { return hub_; }
     std::uint32_t measured_rate() const { return config_.rate; }
@@ -194,6 +209,12 @@ public:
     // (STORY_ACK after WELCOME and on every revision, BARRIER_OK). Nothing
     // until the server sent one. The title applies it at game_started (8.5).
     const std::optional<engine::RoomStory>& confirmed_story() const { return confirmed_; }
+    // The Game Start's hold (round G-core, 8.8): no live step while set (the
+    // title is a solo instance: as a loading hitch), the loading line "Loading
+    // the room story..." meanwhile. The host sets it when a Game Start finds no
+    // confirmed story and clears it once the story came.
+    void hold_for_story(bool on) { story_hold_ = on; }
+    bool story_held() const { return story_hold_; }
     // The host must supply a new connection (lost, reconnecting).
     bool wants_transport() const { return mode_ == Mode::lost || (resume_after_lost_ && !transport_); }
 
@@ -264,6 +285,10 @@ private:
     // One line of saves/online.log (when set).
     void log(const char* format, ...) const;
     std::string slot_name(int slot) const;
+    // Round J (6.13.4-6.13.5).
+    void checkpoint_tick(double now);
+    void upload_checkpoint();
+    bool rebuild_from_checkpoint(wire::StateData& state, double now);
 
     EngineLink& engine_;
     SessionConfig config_;
@@ -405,6 +430,10 @@ private:
     // A STORY_ACK said wait / not_member: the pending set goes again at this
     // time even if it did not change (0: none due).
     double story_retry_at_ = 0;
+    // Round G-core: the Game Start waits for the confirmed story (hold_for_story).
+    bool story_hold_ = false;
+    // Round G-core: "<owner>'s story moved on" once per visit (inst, visit) of a guest.
+    std::optional<std::pair<std::uint32_t, std::uint32_t>> moved_on_noticed_;
     bool held_noticed_ = false;
 
     std::map<std::uint32_t, RemoteMember> remote_;
@@ -414,6 +443,24 @@ private:
     bool engine_replaced_ = false;
 
     // Network facts and the input latency (net_stats.hpp).
+    // Round J: the checkpoints (6.13.4) and the join from one (6.13.5).
+    bool hub_checkpoints_ = false;           // the hub's WELCOME has flag 4
+    std::optional<std::uint32_t> load_end_;  // K: the visit's ticks up to its load end
+    std::uint32_t next_statehash_ = 0;       // the next checkpoint period's tick
+    bool checkpoint_asked_ = false;          // CHECKPOINT_ASK: upload at the next state-safe tick
+    bool periodic_asked_ = false;            // CHECKPOINT_ASK periodic: upload with the next STATEHASH (an agreed tick)
+    bool from_checkpoint_ = false;           // this catch-up started from a checkpoint
+    std::optional<std::uint32_t> joined_tick_; // this member's own JOIN in this visit (joined_tick())
+    double rebuild_ms_ = 0;                  // its rebuild (snapshot, load ticks, apply, hash)
+    // Round J's review: writing the tick state failed in this visit (a
+    // TickStateError: a node, closure or bank outside the serializer's
+    // lists); no STATEHASH or upload until the next visit (before, the error
+    // left after_step and closed every member's game in the same tick).
+    bool checkpoints_off_ = false;
+    bool load_end_told_ = false;             // a solo leader's load_end_only STATEHASH went out
+    // The hash of this tick's STATEHASH, for an upload in the same tick (no second hash).
+    std::optional<std::pair<std::uint32_t, std::uint64_t>> tick_hash_;
+
     NetStats stats_;
     NetView net_;
     std::uint64_t steps_ = 0;       // live steps run (the latency's step count)

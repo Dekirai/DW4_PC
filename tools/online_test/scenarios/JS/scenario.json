@@ -1,0 +1,13 @@
+{
+  "desc": "round J: a tick state that misses a field (the models' HP and the system generator, test hook on both): the joiner's READY from the checkpoint mismatches, the path turns suspect, the classic state joins it",
+  "seed_story": true,
+  "card": "k10",
+  "frames": 60000,
+  "timeout": 900,
+  "min_shared_ticks": 3000,
+  "expect_relay": {"ready_mismatch": 1},
+  "clients": [
+    {"name": "a", "script": "a.script", "start": 0, "env": {"DW4_ONLINE_TEST_TICKSTATE_SKIP": "1"}},
+    {"name": "b", "script": "b.script", "start": 3, "env": {"DW4_ONLINE_TEST_TICKSTATE_SKIP": "1"}}
+  ]
+}
