@@ -487,7 +487,14 @@ always possible, so no window is ever empty.
 
 Weights (initial): Forge 25 %, Train 25 %, gear 30 %, Plug 20 %; a window
 never shows the same offer twice, and Plug takes a line only when fewer than
-three others are possible or by its weight. The Core and Board steps follow
+three others are possible or by its weight. **The first Forge is sure**
+(the forge round of 05.11, docs/OVERFLOW_DIRECTOR.md 11): a form whose
+class has more than one family finds its first Forge on the first line of
+each of its first three level-up offers until it takes it (the cursor
+starts there, and the line under the window says what a Forge does); the
+other lines are drawn as always. Agumon's crowd answer is its Art's Forge
+steps (Veemon has Impact): a newcomer who took no Forge in the first three
+minutes ended before 10:00 nearly every time. The Core and Board steps follow
 DW4: a core needs the run level to reach its LVPOINT; boards have only
 their α row in a run (β needs level 61) and grow by value.
 
@@ -1483,11 +1490,13 @@ points, Normal:
 | Target | Value |
 | --- | --- |
 | hits of the start Art to defeat a normal enemy in phase 1 | median ≤ 2 |
-| first level-up | ≤ 20 s |
+| first level-up | ≤ 18 s |
 | level-ups in phase 1 | one every 20-40 s |
-| survival time of the kite bot | between 15:00 and 20:00 (O1a's clear) in at least 70 % of the seeds, not every seed clears (O1a had 7:00-14:00; the balance round of 05.11, 17.1's 22-25 minutes for a run that goes well) |
-| survival time of the human bot (`bot=human`, a newcomer; 05.11) | no defeat before 3:00, median at least 8:00, most seeds reach 5:00 |
-| Agumon against Veemon | the medians within about 20 % of each other, for the human and the kite bot |
+| survival time of the kite bot | median 20:00-24:00, at least 6 of 20 seeds reach 22:00, not every seed clears (O1a's clear at 25:00 since the forge round of 05.11: phase 4 goes on for the finale's five minutes; 17.1's 22-25 minutes for a run that goes well. O1a had 7:00-14:00, the balance round of 05.11 15:00-20:00) |
+| survival time of the human bot (`bot=human`, a newcomer; 05.11) | no defeat before 3:00, median 14:00-18:00, at most 1 of 40 Agumon runs (seeds 1-20 and 101-120) ends before 10:00 (the forge round: the first Forge is sure, docs/OVERFLOW_DIRECTOR.md 11) |
+| skill after 10:00 | the kite bot's median at least 3 minutes above the human bot's, for each form |
+| no wall | no two-minute window holds more than 9 of 20 defeats of one bot and form |
+| Agumon against Veemon | the medians within about 15 % of each other, for the human and the kite bot |
 | highest single hit of a non-Guardian | ≤ 35 % of MaxHP; the clamp never triggers |
 | frames without control | ≤ 5 % of the run's frames |
 | enemies that close in | ≥ 80 % of each family's spawns come within 30 units in 8 s |
@@ -1535,7 +1544,7 @@ Overflow (test)" (offline only) or `--overflow-run`.
 | --- | --- | --- |
 | A host | the extraction of 13.3 (T11 first), the run loop and the switch, the generator save / restore, the static audit, renderer / audio / input / F-key / Discord / achievement isolation, pacing reset, the dev start | T11, T1, T3, T4, T5 pass; a run starts and returns in a hidden run |
 | B hooks | OverflowRules and H2, H3, H4 (incl. the level-up rule and the skill rule), H6 with aim, H8, H9, H10 (the player hit handler and the Violet Ring's start); spikes: enemy approach and speed per family (4.3), the player's body push against crowds and the encirclement (N1), the camera (H7), the jump's MUTEKI, the weapon model change in hand (5.3), the memory of all 21 families on one arena | ctest passes; T1, T2 unchanged; T10 passes; a spike note per item |
-| C director | spawner with the pools and reserves of 4.2, recycling and encirclement by reuse, phases 1-4 on the Violet Ring without Guardians (at 20:00 the run completes), Corrupted, Agumon and Veemon with Cleaver and Blade Arc (aimed), the techniques Fire, Cutter, Bolt, Impact and Heal Lt (the rest of both forms' lists stays locked in O1a), skill growth and caps, the ladder, offers Forge / Train / Plug, the run curve, disks from Corrupted with A and the L panel, defeat, overlay boxes for level-up, pause and results, the run log, the kite bot | T6 with the targets of 14.2, T7 (offers, spawn, rng, balance), T8 pass |
+| C director | spawner with the pools and reserves of 4.2, recycling and encirclement by reuse, phases 1-4 on the Violet Ring without Guardians (at 20:00 the run completed; since the forge round of 05.11 phase 4 goes on to 25:00, the finale's five minutes), Corrupted, Agumon and Veemon with Cleaver and Blade Arc (aimed), the techniques Fire, Cutter, Bolt, Impact and Heal Lt (the rest of both forms' lists stays locked in O1a), skill growth and caps, the ladder, offers Forge / Train / Plug, the run curve, disks from Corrupted with A and the L panel, defeat, overlay boxes for level-up, pause and results, the run log, the kite bot | T6 with the targets of 14.2, T7 (offers, spawn, rng, balance), T8 pass |
 
 Merge order B, A, C. **Done:** the user starts a run from F1 with Agumon or
 Veemon, plays it, and says whether the first five minutes are fun; the

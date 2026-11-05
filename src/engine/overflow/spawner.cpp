@@ -34,13 +34,20 @@ namespace {
 constexpr float kPi = 3.14159265358979f;
 }
 
+// A family's spawn ring (tables.inc, or a balance pass's own).
+int OverflowDirector::family_ring(const FamilyRow& row) const {
+    if (const auto found = config_.family_ring.find(row.family); found != config_.family_ring.end()) return std::clamp(found->second, 0, 2);
+    return row.ring;
+}
 float OverflowDirector::ring_min(const FamilyRow& row) const {
     const auto& t = config_.tuning;
-    return row.ring == 2 ? t.near_min : row.ring == 1 ? t.slow_min : t.ring_min;
+    const int ring = family_ring(row);
+    return ring == 2 ? t.near_min : ring == 1 ? t.slow_min : t.ring_min;
 }
 float OverflowDirector::ring_max(const FamilyRow& row) const {
     const auto& t = config_.tuning;
-    return row.ring == 2 ? t.near_max : row.ring == 1 ? t.slow_max : t.ring_max;
+    const int ring = family_ring(row);
+    return ring == 2 ? t.near_max : ring == 1 ? t.slow_max : t.ring_max;
 }
 
 // The arena's walkable cells (4.3): a 5-unit grid of the collision floor
@@ -193,7 +200,7 @@ bool OverflowDirector::keeps_gap(const Vec3f& point) const {
 
 // The spawn ring's least distance of a point in the picture: the families
 // that never walk keep their near ring (they must be met where they stand).
-float OverflowDirector::visible_min(const FamilyRow& row) const { return row.ring == 2 ? 0.0f : config_.tuning.visible_min; }
+float OverflowDirector::visible_min(const FamilyRow& row) const { return family_ring(row) == 2 ? 0.0f : config_.tuning.visible_min; }
 
 // GENERATE one enemy of `row`: a free RAM (or `reuse_ram`, an encirclement or
 // a recycle), its Normal record and the run's HP (4.3), SQ_ENTR, ONCTRL. An
@@ -302,8 +309,10 @@ void OverflowDirector::spawner(Engine& engine) {
     // A new phase's families come in over its first 90 s (their weight rises
     // from 0 to 3, past the earlier phases' 0.5 after 15 s), so a phase
     // change is no wall.
-    const std::uint64_t into = clock_ % std::uint64_t(t.phase_steps);
-    const float ramp = phase() == 1 ? 1.0f : std::min(1.0f, float(into) / float(t.phase_ramp_steps));
+    // (Phase 4's own time: last_ramp_steps; past its five minutes it stays in.)
+    const std::uint64_t into = clock_ - std::uint64_t(phase() - 1) * std::uint64_t(t.phase_steps);
+    const int ramp_steps = phase() == 4 && t.last_ramp_steps > 0 ? t.last_ramp_steps : t.phase_ramp_steps;
+    const float ramp = phase() == 1 ? 1.0f : std::min(1.0f, float(into) / float(std::max(1, ramp_steps)));
     auto pool = phase_pool(phase(), 3.0f * ramp, 0.5f);
     std::erase_if(pool, [](const PoolEntry& entry) { return entry.weight <= 0.0f; });
     double total = 0;

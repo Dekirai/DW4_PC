@@ -14,7 +14,7 @@ are unchanged (section 7).
 | File | What |
 | --- | --- |
 | `include/dw4/engine/overflow_director.hpp` | `OverflowDirector` (the engine's `Director`), `RunConfig`, `Tuning` (the run's numbers), the offers' pure functions, the table accessors |
-| `src/engine/overflow/director.cpp` | the clock, the phases and their music, the commands and screens (level-up, pause, Build, Retire, results), the freeze, the end (defeat, the clear at 20:00, Retire), the move-only pad filter, the kite bot, the run log and the summary |
+| `src/engine/overflow/director.cpp` | the clock, the phases and their music, the commands and screens (level-up, pause, Build, Retire, results), the freeze, the end (defeat, the clear at 25:00, Retire), the move-only pad filter, the kite bot, the run log and the summary |
 | `src/engine/overflow/spawner.cpp` | the walkable cells, the spawn rings, A(t) with the surges, Corrupted enemies, recycling, the encirclements by reuse, the drops |
 | `src/engine/overflow/abilities.cpp` | the Art (Cleaver, Blade Arc) from the form's own SQ_ATCK1 boxes, aimed; the weapon ladder and the model in hand; Fire, Cutter, Bolt, Impact and Heal Lt |
 | `src/engine/overflow/offers.cpp`, `tables.inc` | the family table (Normal rows, names, rings, damage factors, weights), the phase music, the offers (Forge, Train, Plug) |
@@ -38,7 +38,10 @@ reads none), plays QS_START and four seconds later the phase music.
 
 **Clock and phases (4.2).** The run clock counts the steps the run is not
 frozen. Phases 1-4 change every five minutes (ST_DEATH, ST_DRYLA, ST_VENOM,
-ST_MACHI); at 20:00 the run is complete: the enemies leave (SQ_ERAS), BT_WIN02,
+ST_MACHI); phase 4 goes on past 20:00 for the finale's five minutes (4.4,
+without LordKnightmon in O1a; the HUD says "Hold out until 25:00"), and at
+25:00 the run is complete (20:00 before the forge round, section 11): the
+enemies leave (SQ_ERAS), BT_WIN02,
 then the results. No Guardians in O1a.
 
 **Spawner (4.3).** A(t) by knots: 10 at 0:00, 24 at 5:00, 40 at 10:00, 54 at
@@ -48,7 +51,8 @@ times (a lull after the Art clears a group), from 3:00 every 90 s a surge of
 12 for 20 s; until 10:00 a spawn point never closes the player's last
 90-degree way out (section 10). The pool is the phase's families at
 weight 3 and every earlier one at 0.5 (times the family's own weight, below);
-a new phase's families come in over its first 90 s, their weight rising from
+a new phase's families come in over its first 90 s (phase 4's over 3:30,
+section 11), their weight rising from
 0, and their damage rises from a fifth of their factor to all of it over its
 first two minutes (no wall at a phase change, section 9). Spawn points are on
 the walkable cells; 70 % come on the side the player walks towards (its last
@@ -152,24 +156,25 @@ everything is in `Tuning` and `tables.inc`:
 
 | Value | SURVIVAL.md | O1a | Why |
 | --- | --- | --- | --- |
-| spawn ring | 70-95 (S1: 40-60) | 32-46; slow walkers and Tortomon 26-36; Kokatorimon, Megadramon and MRε05 20-25; in the picture at least 40 | 14.2's close-in target with a kiting player; no enemy enters next to the player |
+| spawn ring | 70-95 (S1: 40-60) | 32-46; slow walkers, Tortomon and MRε05 26-36; Kokatorimon and Megadramon 20-25; in the picture at least 40 | 14.2's close-in target with a kiting player; no enemy enters next to the player (MRε05 on 20-25 until the forge round: section 11) |
 | spawns ahead | 70 % from the walking side | 70 %, 40-70 degrees off the heading | a walking player passes them, it does not run into them |
-| enemy HP growth | +10 % a minute | (1 + 0.10 a minute) x e^(0.08 x minutes), x 0.6 in phase 1 rising to x 1 from 4:00 to 6:00 | late crowds outlast the Art; no step at 5:00 |
-| damage taken growth | +4 % a minute | e^(0.13 x minutes) (the review round: 0.18) | the review: the levels' DEF and MaxHP shrank every phase's hits to a third by its end, so each new phase came as a step (the wall at 10:00); the balance round of 05.11: a good run lasts 15-20 minutes (section 10) |
+| enemy HP growth | +10 % a minute | (1 + 0.10 a minute) x e^(0.08 x minutes), from 15:00 e^0.03 a minute (the forge round), x 0.6 in phase 1 rising to x 1 from 4:00 to 6:00 | late crowds outlast the Art; no step at 5:00; after 15:00 a good player's Art keeps up (section 11) |
+| damage taken growth | +4 % a minute | e^(0.13 x minutes), from 12:00 e^0.09 a minute (the review round: 0.18 throughout) | the review: the levels' DEF and MaxHP shrank every phase's hits to a third by its end, so each new phase came as a step (the wall at 10:00); the balance round of 05.11: the first minutes (section 10); the forge round: the late contact carries the threat, not one wall (section 11) |
 | the damage warm-up | (none) | x 0.2 at 0:00 rising to x 1 at 8:00 (the review round: x 0.4 to 5:00) | a newcomer's first minutes (section 10) |
-| contact and shots | (none) | a hit from within 15 units x 0.7 / 1.0 / 1.3 / 1.5 / 1.6 at 0:00 / 5:00 / 10:00 / 15:00 / 20:00, from farther x 0.8 / 0.7 / 0.65 / 0.6 / 0.6 (its poison with it) | the first minutes' contact soft; later the crowd a good player walks away from is the threat, not the shots he cannot (section 10) |
+| contact and shots | (none) | a hit from within 15 units x 0.7 / 1.0 / 1.3 / 2.2 / 2.4 at 0:00 / 5:00 / 10:00 / 15:00 / 20:00 (and after), from farther x 0.8 / 0.7 / 0.5 / 0.4 / 0.3 (its poison with it); the balance round of 05.11: 1.5 / 1.6 and 0.65 / 0.6 / 0.6 | the first minutes' contact soft; later the crowd a good player walks away from is the threat, not the shots he cannot (sections 10 and 11) |
 | A(t) | 14 + 3.2 a minute | 10 / 24 / 40 / 54 / 60 at 0:00 / 5:00 / ... / 20:00; at most 3 / 5 / 8 / 12 / 12 spawns a second | a newcomer was surrounded in two minutes (section 10) |
+| the run's end | the finale: LordKnightmon under a five-minute timer (4.4) | 25:00: phase 4 goes on after 20:00 (O1a: 20:00 until the forge round) | 17.1: a run that goes well lasts 22-25 minutes (section 11) |
 | the way out | (none) | until 10:00 a spawn never closes the last 90 degrees round the player (enemies within 40 units) | "no gap to run" (section 10) |
 | first surge, first Corrupted | 1:30, 1:30 | 3:00, 2:30 | the newcomer's deaths came just after 1:30 |
 | EXP | x 1 | x 1.35 | fewer enemies, the same level pace (Heal Lt at Lv 15 near 5:00) |
-| a new phase's families | at once | weight from 0 over 90 s, damage from x 0.2 over 120 s | no wall at a phase change |
+| a new phase's families | at once | weight from 0 over 90 s, damage from x 0.2 over 120 s; phase 4's over 210 s and 240 s (the forge round) | no wall at a phase change; phase 4 was one with 90 / 120 s (section 11) |
 | run curve | 80 / 50 / 6 | 70 / 65 / 13 | the first level-up within 20 s, one every 20-40 s in phase 1 |
 | level-up windows | one per level | at most one freeze every 15 s (the waiting levels open one after another) | the first minute brought five freezes |
 | level-up heal | 3 % | 5 % (4.5's upper bound) | |
 | MUTEKI after a hit | 50 frames | 35 | a crowd round a standing Digimon costs; a walking one leaves it |
 | a normal enemy's stun / sleep / bind | at most 30 frames | at most 6 | 14.2: at most 5 % of the frames without control (counted over the run's own steps; the defeat's knock-down belongs to the ending) |
 | poison | DW4's | ticks through the damage-taken rule, at most 5 ticks and 10 % of MaxHP, never the last HP | the review: MRβ02's poison took 69 % from a hit of 1 |
-| family damage factors | 1 | 0.035-1.0 per family (`tables.inc`; Mummymon 0.16 and Tortomon 0.13 since the balance round of 05.11) | 14.3: the worst hit (its poison included) at a phase's start about 8 / 9 / 10 % in phases 2 / 3 / 4, close to what the phase before hits at its end; Corrupted at most 35 % |
+| family damage factors | 1 | 0.035-1.0 per family (`tables.inc`; Mummymon 0.16 since the balance round of 05.11, Tortomon 0.10 and MRε05 0.045 since the forge round) | 14.3: the worst hit (its poison included) at a phase's start about 8 / 9 / 10 % in phases 2 / 3 / 4, close to what the phase before hits at its end; Corrupted at most 35 % |
 | family spawn weight | 1 | 0.5 for Numemon, Sukamon, MarineDevimon and Pharaohmon | the ranged shots and Pharaohmon's warps hit a walking player as much as a standing one |
 | Art reach | 22 (Cleaver, Blade Arc) | 14 standing (the review round: 22), 34 at full stick; 20 from 30 % of the stick | the enemies are 3-40 times slower than the player (S1): a walking Digimon passes them; a standing one must be reached again (section 10) |
 | Art class factor | 1 | Cleaver 2.2, Blade Arc 1.4 | 14.3: two hits for every phase 1 family at level 1; Cleaver more: Agumon has no Impact and no jumping Bolt |
@@ -215,7 +220,13 @@ balance round of 05.11 also `alive=`, `refill=`, `contact=` and `shot=`
 (five knots at 0:00-20:00), `surge_first=`, `keep_gap=`,
 `corrupted_from=`, `phase_ramp=`, `phase_intro_time=` (seconds),
 `surge_extra=`, `gap_radius=`, `damage_warm_minutes=`, `ring_min=`,
-`ring_max=`, `slow_min=`, `slow_max=`, `corrupted_hp=` and `exp=`. Test runs
+`ring_max=`, `slow_min=`, `slow_max=`, `corrupted_hp=` and `exp=`; since
+the forge round (section 11) also `last_ramp=` and `last_intro_time=`
+(phase 4's own entry, seconds), `end=` (the run's end, seconds),
+`damage_late_minutes=`, `damage_growth_late=`, `hp_late_minutes=`,
+`hp_growth_late=`, `family_ring=FAMILY:R,...`, `forge_sure=` (0: the
+balance round's offers) and `forge_from=` (seconds: a test policy takes no
+Forge before then). Test runs
 close the results after 60 steps. `OverlayFrame::font` hands the driver the
 host's bold UI face.
 
@@ -348,7 +359,7 @@ box as between two runs of main).
 - Guardians, the finale and its timer, Sim Bits, the meta file, Raise.
 - The close-in target counts the walking families only; the ranged ones keep
   their distance by design (S1).
-- Phase 4 and the 20:00 end: the kite bot ends in phases 2 and 3 now (14.2's
+- (Section 11: the run lasts until 25:00 now.) Phase 4 and the 20:00 end: the kite bot ends in phases 2 and 3 now (14.2's
   7-14 minutes); a human with O1b's gear may go further. Phase 3 is reached
   by 11 of 20 Veemon and 4 of 20 Agumon runs.
 - T8's single-step maximum (section 6.2): warm the families up at the start.
@@ -640,3 +651,288 @@ human runs have a tail the seeds 1-20 did not show: 4:40, 5:32, 5:39,
   bound for the offers and a fair model of the first minutes' movement.
 - **Checks.** ctest 55 / 55 in `build/chk`; det.sh `o1abal_chk`: 4004f056
   / 396cb219 (both runs).
+
+## 11. The forge round of 05.11 (the early Forge and phase 4)
+
+Two things 10.7 and 10.8 left open: Agumon's early deaths depend on when
+the newcomer takes its first Forge, and phase 4 is a wall (13-16 of 20
+runs of every bot and form end within two minutes, mostly 15:30-18:00;
+the kite bot lasts hardly longer than the human bot after 10:00). The
+targets: the early Forge reliable without making it automatic; `bot=human`
+median 14-18 minutes, `bot=kite` median 20-24 minutes with at least 6 of 20
+reaching 22:00 (17.1: a run that goes well lasts 22-25 minutes), no
+two-minute window with more than 9 of 20 deaths of one bot and form, the
+kite bot at least 3 minutes above the human bot; phase 1 as it is (with
+`bot=human` no defeat before 3:00, at most 1 of 40 Agumon runs, seeds 1-20
+and 101-120, before 10:00, the first level-up within 18 s, the forms within
+about 15 %). Branch `fix-o1a-forge` from main da44ddd; this section is the
+round's progress note. The runs: `build/f/pair.sh` (`runs.sh` with nice 19
+and at most two at a time), `build/f/targets.py` (this round's targets),
+`build/f/minutes.py` (the minute medians with the kills by the Art and by
+the techniques, new in the minute lines).
+
+### 11.1 Why the early Forge decides Agumon's first minutes
+
+The measurement: `bot=human` with `forge_from=300` (the newcomer's policy,
+but it takes no Forge before 5:00), seeds 1-20, the build of 651bbb5
+(`build/f/runs_e1`):
+
+| Form | Death times | Before 10:00 |
+| --- | --- | --- |
+| Agumon | median 4:51 (3:55-7:55) | 20 of 20 |
+| Veemon | median 13:12 (5:25-16:33) | 3 of 20 |
+
+The minutes (medians over the runs alive; kills of the minute by the Art
+and by the techniques):
+
+| min | Agumon Art kills | Agumon technique kills | Agumon contact | Veemon Art kills | Veemon technique kills | Veemon contact |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1 | 41 | 8 | 0.14 | 30 | 15 | 0.17 |
+| 2 | 54 | 16 | 0.18 | 50 | 28 | 0.21 |
+| 3 | 55 | 42 | 0.24 | 38 | 94 | 0.16 |
+| 4 | 58 | 60 | 0.35 | 43 | 160 | 0.20 |
+| 5 | 61 | 80 | 0.41 | 36 | 221 | 0.18 |
+
+- **The start Art is not weaker.** Cleaver (x 2.0) defeats as many as
+  Blade Arc (x 1.4) or more in every minute; changing it would not move
+  the tail.
+- **The gap is the crowd technique.** Both forms learn their TECH4 at run
+  level 8 with Blast 331 (about 2:30-3:00): Veemon's Impact strikes every
+  enemy within 20 units every 2 s (25 casts a minute, 160-220 kills a
+  minute by 4:00), Agumon's Cutter is one shell at one target (13 casts a
+  minute). Agumon's answer to a crowd is the Forge: its second strike from
+  Forge 2, the side lines from Forge 4 (6.3, the class factor's comment in
+  `abilities.cpp`). Without it the crowd round Agumon grows (near15 1.3 at
+  5:00 against Veemon's 0.7) and the contact with it.
+- **So the Forge has to come.** Over the balance round's 40 default Agumon
+  runs the newcomer took its first Forge after the third offer in 12, and
+  5 of them ended before 10:00. The human bot takes the first line half the
+  time and a random one otherwise; a Forge that is merely among the lines
+  of the first three offers changes little (a simulation of the draws:
+  31 % of the newcomers without a Forge in their first three picks, 28 %
+  with a Forge line in each), a Forge on the first line does (4 %).
+
+The answer (`offers.cpp`, `kForgeSure`): a form's first Forge takes the
+first line of each of its first three level-up offers until it is taken;
+the cursor starts on it and the line under the window says what a Forge
+does ("A Forge makes Cleaver stronger at once and lets its weapon grow into
+Van Blade."). It stays a choice: the other two lines are drawn by weight
+as before, and after the third offer the Forge is drawn by weight again.
+Whether a form has a Forge, and how many, is the weapon table's: the
+families of the Art's class (`OfferState::forge_families`); a class with
+one family gets no Forge line at all. Veemon gets the same rule (its
+late-Forge runs did not die early, but nothing in the data makes it a
+special case either way).
+
+### 11.2 Phase 4's wall and the late game
+
+Why the runs ended together (the balance round's runs, `build/t/runs_a2`):
+
+- **Every run met the same steepening at the same time.** The damage grew
+  e^(0.13 x minutes) (x 1.9 in five minutes), the enemies' HP
+  e^(0.08 x minutes) on top of +10 % a minute, so from 13:00 the kite bot's
+  kills fell (Agumon 308 a minute at 13:00, 154 at 18:00) while the crowd
+  grew to A(t)'s 60. Phase 4's families were there in full by 16:30
+  (weight) and 17:00 (damage), and the encirclement came at 17:30: the kite
+  bot's intake rose from 0.84 to 1.21 MaxHP a minute (Agumon) and from 1.17
+  to 1.53 (Veemon) between 16:00 and 17:00. With a wall that steep a run
+  that plays better buys seconds, not minutes.
+- **MRε05** attacks about twice a second; on the 20-25 ring it entered the
+  Art's reach at once and took 0.26-0.34 MaxHP a minute of phase 4 alone
+  (0.55 for Veemon's human bot).
+- **Why skill hardly mattered.** The kite bot avoids contact (0.27-0.36
+  MaxHP a minute at 13:00-16:00 against the human bot's 0.9-1.0) but takes
+  two to three times the human bot's shots (0.32-0.57 against 0.15-0.24),
+  and both grew alike; for Veemon the kite bot lasted 16:52 against the
+  human bot's 16:40. Tortomon took Veemon 0.3-0.4 MaxHP a minute of phases 3
+  and 4 for both bots.
+- **The run ended at 20:00**, so the targets' 22:00 could not be reached:
+  17.1's 22-25 minutes are four phases and the finale.
+
+What changed (the sweeps on 10 seeds a bot and form; s3 on 20 seeds is the
+new defaults, 11.3):
+
+| Sweep | Change (on top of the row before) | human A | human V | kite A | kite V |
+| --- | --- | --- | --- | --- | --- |
+| a2 | the balance round (20 seeds, the run ends at 20:00) | 16:32 (12:00-18:37) | 16:40 (12:37-18:19) | 18:32 (17:22-20:01), 4 clear | 16:52 (14:46-19:23) |
+| s1 | the run to 25:00; phase 4's families over 210 s (weight) and 240 s (damage); MRε05 on the 26-36 ring; damage e^0.09 a minute from 12:00; contact x 2.0 / 2.4 at 15:00 / 20:00, shots x 0.5 / 0.45 | 16:48 (9:13-20:02) | 17:16 (13:30-19:14) | 20:38 (18:42-21:15) | 18:23 (12:27-24:44) |
+| s2 | shots x 0.5 / 0.4 / 0.3 at 10:00 / 15:00 / 20:00; enemy HP e^0.03 a minute from 15:00; MRε05 x 0.045; Tortomon x 0.10 | 17:42 (10:03-19:57) | 17:24 (13:31-20:00) | 22:09 (19:57-25:01), 3 clear | 23:47 (19:26-25:01), 3 clear |
+| s3 | contact x 2.2 at 15:00: the new defaults (20 seeds, 11.3) | 16:33 (10:03-20:43) | 15:09 (12:42-19:53) | 22:07 (19:21-25:01), 5 clear | 20:53 (15:05-25:01), 1 clear |
+
+- **The run lasts until 25:00** (`Tuning::end_steps`): phase 4 goes on for
+  the finale's five minutes (4.4; O1a has no LordKnightmon), the HUD says
+  "Hold out until 25:00" at 20:00, the clear comes at 25:00. The knots of
+  A(t), the refill, the contact and the shots hold their 20:00 value.
+- **Phase 4 comes in over 3:30 and 4:00** (`last_ramp_steps`,
+  `last_intro_steps`; phases 2 and 3 keep 1:30 and 2:00), MRε05 spawns with
+  the slow walkers (26-36, it still closes in 99.7 % of its spawns) at
+  x 0.045, Tortomon x 0.10.
+- **The late growth is flatter and the contact carries it**: the damage
+  e^0.09 a minute from 12:00, the enemies' HP e^0.03 a minute from 15:00
+  (the kite bot's Art keeps up with the crowd), the contact x 2.2 / 2.4 at
+  15:00 / 20:00 and the shots x 0.5 / 0.4 / 0.3 at 10:00 / 15:00 / 20:00. A
+  player who walks into the crowd (the human bot: contact is 80-90 % of what
+  it takes after 10:00) meets the late game about where it did; one who
+  keeps the crowd off (the kite bot: half of its intake were shots) lasts
+  minutes longer. The first five minutes are unchanged (every knot and
+  growth at 0:00-5:00 as the balance round left them).
+
+### 11.3 After (branch fix-o1a-forge, fc8affc)
+
+The same measurement as 10.5 and 10.8 (`build/f/pair.sh`, the defaults, no
+request keys; `build/f/runs_s3`, `runs_s3b`); before: the balance round's
+`build/t/runs_a2` (seeds 1-20) and `build/chk_t/runs_m1` (101-120). "Most
+in 2 min" counts the defeats in the fullest two-minute window (a clear is
+no defeat).
+
+| Bot, form, seeds | Before (da44ddd) | After |
+| --- | --- | --- |
+| human Agumon 1-20 | median 16:32 (12:00-18:37); most in 2 min 16 | median 16:33 (10:03-20:43); most in 2 min 7 |
+| human Agumon 101-120 | median 16:04 (4:40-17:35); 5 before 10:00; most in 2 min 13 | median 14:42 (8:51-19:38); 1 before 10:00; most in 2 min 8 |
+| human Veemon 1-20 | median 16:40 (12:37-18:19); most in 2 min 14 | median 15:09 (12:42-19:53); most in 2 min 9 |
+| kite Agumon 1-20 | median 18:32 (17:22-20:01); 4 clear at 20:00, none can reach 22:00; most in 2 min 16 | median 22:07 (19:21-25:01); 11 reach 22:00, 5 clear at 25:00; most in 2 min 8 |
+| kite Veemon 1-20 | median 16:52 (14:46-19:23); most in 2 min 17 | median 20:53 (15:05-25:01); 7 reach 22:00, 1 clears; most in 2 min 7 |
+
+| Target | Before | After |
+| --- | --- | --- |
+| human: no defeat before 3:00 | 0 of 80 | 0 of 60 |
+| human Agumon before 10:00 (40 runs, seeds 1-20 and 101-120) | 5 (4:40, 5:32, 5:39, 7:49, 9:24) | 1 (8:51, seed 106: it took the Forge at once; Mummymon and MRβ02 in phase 2) |
+| human Agumon whose first Forge came after the third offer | 12 of 40 | 1 of 40 |
+| human median 14-18 minutes | 16:32 / 16:40 (Agumon 40 runs 16:21) | 16:33 / 15:09 (Agumon 40 runs 15:23) |
+| kite median 20-24 minutes, at least 6 of 20 reach 22:00 | 18:32 / 16:52, 0 / 0 | 22:07 / 20:53, 11 / 7 |
+| at most 9 of 20 defeats in two minutes (seeds 1-20; 101-120 in the rows above) | 14-17 | 7-9 |
+| the kite bot at least 3 minutes above the human bot | +2.0 / +0.2 | +5.6 / +5.7 |
+| Veemon / Agumon within about 15 % | human 1.01, kite 0.91 | human 0.92, kite 0.94 |
+| first level-up within 18 s (the slowest run) | 18.0 s | 18.0 s |
+
+The first five minutes are the balance round's (the human bot, Agumon,
+medians over the 20 runs; before in 10.5):
+
+| min | taken | contact | shot | near15 | near30 | alive | level | kills | Art kills | technique kills |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 1 | 0.12 | 0.11 | 0.02 | 0.47 | 2.37 | 12 | 6 | 65 | 58 | 7 |
+| 2 | 0.13 | 0.12 | 0.01 | 0.53 | 3.02 | 15 | 9 | 105 | 89 | 11 |
+| 3 | 0.18 | 0.17 | 0.01 | 0.63 | 3.40 | 18 | 11 | 131 | 104 | 33 |
+| 4 | 0.21 | 0.18 | 0.02 | 0.81 | 4.33 | 20 | 13 | 192 | 140 | 52 |
+| 5 | 0.23 | 0.20 | 0.02 | 0.83 | 4.79 | 22 | 14 | 210 | 158 | 52 |
+
+(10.5: 0.12 / 0.15 / 0.22 / 0.20 / 0.22 taken.) The late game, the kite
+bot (Agumon; Veemon in brackets): 0.53 (0.87) MaxHP a minute at 15:00,
+0.78 (0.94) at 17:00, 1.01 (1.21) at 19:00, 1.1-1.4 (1.2-1.4) from 21:00;
+kills 245 a minute at 15:00, 194 at 19:00, about 150-180 after 22:00
+(before: 253 at 15:00, 154 at 18:00). The human bot (Agumon) takes 1.1-1.2
+MaxHP a minute from 8:00 to 17:00, 85-90 % of it contact.
+
+The other targets of 14.2 over the 80 runs of seeds 1-20 (`build/f/extra.py`):
+the first level-up at 6-11 s (median; at most 18 s), 12-15 level-ups in
+phase 1, 3 level-up windows in the first minute, 1 Art hit per phase 1
+defeat, the highest hit 15.7-26.1 % (its poison included; the largest is
+the kite bot's Veemon after 20:00, contact x 2.4 and Corrupted; before
+11.1-16.4 %), no clamp, the largest poisoning 10.0 %, at most 0.67 % of the
+frames without control, at least 86 % of every walking family close in,
+skill-up panels at least 31 frames apart, no Lua error.
+
+Pictures (hidden, drawn, `build/f/shot.sh`): `build/f/shots_k17/` the kite
+bot at 17:00 (seed 1, Agumon and Veemon: phase 4's crowd, 50-56 living,
+Megadramon, MRε05, Rare and the earlier families round the player),
+`build/f/shots_lvup/` the first level-up window (Agumon, `offers=player`:
+"Forge: Van Blade" on the first line under the cursor, the line about it
+below).
+
+### 11.4 Tests, bounds and checks
+
+| Check | Result |
+| --- | --- |
+| ctest | 55 / 55 (`build/rel`) |
+| `overflow_offers` | the first Forge on the first line of each of the first three offers, once, the other two lines by weight; after them by weight again (36 % on the first line); not for Forge 3; no Forge line for a class with one family; `forge_sure=0` gives the balance round's draws. The weight check of the windows now runs after the sure offers (Forge in 79 % of the windows, as before) |
+| `overflow_balance` | phase 4's end is the run's end (25:00) at the kite bot's level there, 38 (the expected levels 15 / 24 / 31 at 5:00 / 10:00 / 15:00 stay; 35 at 20:00, 38 at 25:00; the balance round's 36 at its 20:00 end); the worst hit at the end 17.3 % (Corrupted 25.9 %, under 35 %); no wall: Agumon x 0.9 / 1.2 / 0.9, Veemon x 1.1 / 1.0 / 1.0 at the phases 2-4 |
+| the balance round replayed | the build of 651bbb5 with `forge_sure=0` (the new keys' defaults were the balance round's then): Agumon seed 1 `bot=kite` run hash 85d02b24617288b1, `bot=human` dc71c7f11dc9ed55 in 59707 steps, both as in `build/t/runs_a2` |
+| det.sh | 4004f056 / 396cb219 in two runs of two (`det_o1aforge_1`, `_2`) |
+| drawn runs | `build/f/shots_k17` and `shots_lvup` (above) |
+| SURVIVAL.md | 4.6 (the sure first Forge), 14.2 (the kite bot's 20-24 minutes and 22:00, the human bot's 14-18 minutes and the Agumon tail, skill after 10:00, no wall, the forms within 15 %, the first level-up within 18 s), 15.1's note on the run's end |
+
+### 11.5 Open
+
+- **Veemon's human bot sits on the wall target**: 9 of 20 defeats between
+  13:50 and 15:14 (the limit is 9). Its intake rises from 0.5 to 1.2 MaxHP
+  a minute between 10:00 and 13:00 (phase 3's families and the contact
+  knot); Tortomon is still its largest source in phases 3 and 4.
+- **Agumon still needs its Forge for crowds**: the sure first line makes
+  it near certain for a newcomer (the bot took it later than the third
+  offer in 1 of 40 runs), but a player who refuses it three times meets the
+  balance round's tail. The real answer is a crowd technique or trait for
+  Agumon (6.4's Fire splash, 5.2's traits), not a number.
+- **One human Agumon run** (seed 106) ended at 8:51 in phase 2 with its
+  Forge taken at once, another (seed 2) at 10:03: phase 2's contact
+  (Mummymon, MRβ02) is the human bot's hardest stretch (1.1-1.4 MaxHP a
+  minute at 7:00-9:00).
+- **25:00 stands in for the finale**: no LordKnightmon, no timer, no
+  QS_HURRY, no BT_BOSS2; the music stays ST_MACHI. The third encirclement
+  stays at 17:30.
+- **Late hits are larger** (up to 26 % with a Corrupted enemy after
+  20:00): under 35 % and never clamped, but the user may feel them.
+- **The user's next run** decides again; the bots model a newcomer's
+  movement (blind to the offers) and a kiting player, not him.
+- T8's timing was not measured again: the 20:00-25:00 stretch keeps 60
+  living enemies, as at 20:00 before.
+
+### 11.6 The independent check (05.11, seeds 201-220)
+
+A second build of the branch (`build/chk2`, fc806f3) and the same
+measurement on new seeds, 201-220 (`bot=human` and `bot=kite`, Agumon and
+Veemon, 20 seeds each, headless, nice 19, two at a time;
+`build/chk2_t/runs_m201`, `report_m201.txt`, read by `build/chk2_t/eval.py`).
+Before: the build of 651bbb5 with `forge_sure=0` (the balance round, 11.4)
+on the same seeds, human Agumon only (`runs_b201`).
+
+| Bot, form, seeds 201-220 | Median (range) | Targets |
+| --- | --- | --- |
+| human Agumon | 15:06 (7:27-20:14) | none before 3:00; 3 before 10:00 (7:27, 8:02, 9:54); most in 2 min 8 |
+| human Agumon, before | 16:04 (5:22-17:48) | none before 3:00; 3 before 10:00 (5:22, 5:24, 5:43); most in 2 min 11; first Forge after the third pick in 7 of 20 |
+| human Veemon | 17:26 (13:16-20:07) | none before 3:00 and 10:00; most in 2 min 8 |
+| kite Agumon | 23:05 (18:11-25:01) | 12 reach 22:00, 5 clear; most in 2 min 7 |
+| kite Veemon | 19:52 (13:51-25:01) | 5 reach 22:00, 3 clear; most in 2 min 8 |
+
+Kite minus human: Agumon +8.0, Veemon +2.4 minutes. Veemon / Agumon:
+human 1.15, kite 0.86. First level-up at most 15.1 s, highest hit
+20.8 %, no clamp, no Lua error, at most 0.68 % of the frames without
+control, 5 Forge families for both forms. The human bot's (Agumon) first
+five minutes: 0.11 / 0.14 / 0.17 / 0.22 / 0.22 MaxHP taken (before on the
+same seeds 0.14 / 0.17 / 0.20 / 0.24 / 0.27).
+
+Over 40 seeds (1-20 and 201-220): human Agumon 15:49, Veemon 16:57; kite
+Agumon 22:57 (23 of 40 reach 22:00), Veemon 20:04 (12 of 40); kite minus
+human +7.1 / +3.1; Veemon / Agumon human 1.07, kite 0.87. Human Agumon
+before 10:00: 4 of 60 (seeds 1-20, 101-120, 201-220; before the round
+8 of 60).
+
+- **Confirmed**: no defeat before 3:00 (0 of 40), the human medians within
+  14-18 minutes, the kite Agumon target (20-24 minutes, at least 6 of 20
+  at 22:00), no two-minute window above 9 of 20, the first level-up within
+  18 s, the hits under 35 % without a clamp. The sure first Forge works for
+  both forms out of the weapon table (the newcomer passed it three times
+  in 1 of 40 Agumon runs and 3 of 40 Veemon runs, seeds 1-20 and 201-220).
+- **Not robust: kite Veemon.** On the new seeds it misses its targets
+  narrowly (median 19:52, 5 of 20 at 22:00, +2.4 minutes over the human
+  bot); over 40 seeds it sits on the bounds (20:04, 6 of 20, +3.1).
+  Tortomon is its largest source again (0.34 MaxHP a run-minute of phase
+  3, 0.41 of phase 4; Agumon's kite bot 0.06 / 0.15). A knob test with
+  `family_damage=e_torta:0.07` (`runs_t201`, kite Veemon only) moved it to
+  23:27 (15 of 20 at 22:00) but bunched 10 of 20 defeats in 23:03-25:01:
+  about x 0.085 is the next try, with a full measurement (not taken).
+- **Not robust: the human Agumon tail.** 3 of 20 new seeds end in phase 2
+  (7:27-9:54) with the Forge taken at once (picks 1-2): 1.1-1.8 MaxHP a
+  minute from 7:00, Mummymon and MRβ02 first (phase 2 for the human bot:
+  Mummymon 0.30, MRβ02 0.21 MaxHP a run-minute). The balance round had 3
+  of 20 on these seeds too, but at the phase change (5:22-5:43); the round
+  moved them later, not away. Phase 2's contact is the next lever for the
+  newcomer (10.7, 11.5), not the Forge.
+- **Determinism**: seeds 202 and 210 of `bot=human` replay bit for bit with
+  the build of the fix below, e7750c4 (run hashes 603b808f84f2f79d,
+  a3972a6fe3f52f4e); a drawn hidden run of kite Agumon seed 205 (`build/chk2_t/shots_k20`) has the
+  headless run's minute lines 1-20 and shows "Hold out until 25:00" under
+  the clock at 20:01. ctest `-R overflow` 10 / 10; det.sh `o1aforge_chk2`
+  and `o1aforge_chk2b`: 4004f056 / 396cb219 (both runs). The branch merges
+  into main a475b98 without conflicts.
+- **Fixed in the check**: the pause screen said "Forge N of 5"; it says the
+  form's Forge families now (the weapon table's, as the offers).

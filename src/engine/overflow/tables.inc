@@ -33,9 +33,15 @@
 // softer, so their chip damage does not decide a run alone; a standing
 // player takes most of their shots, a walking one leaves many behind.
 //
+// The forge round of 05.11 (docs/OVERFLOW_DIRECTOR.md 11) lowered two more
+// and moved one: MRε05 (it attacks twice a second: on the 20-25 ring, in the
+// Art's reach at once, it alone took 0.26-0.34 MaxHP a minute of phase 4)
+// spawns with the slow walkers now and hits softer; Tortomon took Veemon
+// 0.3-0.4 MaxHP a minute of phases 3 and 4 for both bots.
+//
 // family, name, Normal record, phase, ranged (S1), spawn ring (Tuning: 0 32-46, 1 26-36 for
-// the slow walkers of S1 and Tortomon, 2 20-25 for Kokatorimon, which never walks, and
-// Megadramon and MRε05, the slowest walkers), damage factor, spawn weight
+// the slow walkers of S1, Tortomon and MRε05, 2 20-25 for Kokatorimon, which never walks,
+// and Megadramon, the slowest walker), damage factor, spawn weight
 const FamilyRow kFamilies[] = {
     // Phase 1, Death Valley (61 RAMs)
     {"e_goburi", "Goblimon", 0, 1, false, 0, 1.0f, 1.0f},
@@ -55,12 +61,12 @@ const FamilyRow kFamilies[] = {
     {"e_geko", "Gekomon", 225, 3, false, 0, 0.15f, 1.0f},
     {"e_mecha3", "MRγ03", 252, 3, false, 0, 0.11f, 1.0f},
     {"e_maridevi", "MarineDevimon", 243, 3, true, 0, 0.05f, 0.5f},
-    {"e_torta", "Tortomon", 234, 3, false, 1, 0.13f, 1.0f},     // (0.215 before the balance round of 05.11)
+    {"e_torta", "Tortomon", 234, 3, false, 1, 0.10f, 1.0f},     // (0.215 before the balance round of 05.11, 0.13 before the forge round)
     // Phase 4, Machine Pit (34)
     {"e_infermo", "Infermon", 306, 4, false, 1, 0.035f, 1.0f},
     {"e_megadra", "Megadramon", 315, 4, false, 2, 0.045f, 1.0f},
     {"e_rare", "Rare", 324, 4, false, 1, 0.061f, 1.0f},
-    {"e_mecha5", "MRε05", 341, 4, false, 2, 0.061f, 1.0f},
+    {"e_mecha5", "MRε05", 341, 4, false, 1, 0.045f, 1.0f},      // (0.061 on the 20-25 ring before the forge round of 05.11)
     {"e_mecha4", "MRδ04", 58, 4, false, 1, 0.043f, 1.0f},
 };
 

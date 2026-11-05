@@ -106,12 +106,20 @@ void OverflowDirector::load_art_pattern(Engine& engine) {
     art_skill_ = std::clamp(db->number("weapon", ladder_base_, "SKILL").value_or(0), 0, 5);
     for (int i = 0; i < 4; ++i) forge_steps_[std::size_t(i)] = art->forge[std::size_t(i)];
     family_names_.clear();
+    // The Forge's families: the class's rows of the weapon table, five a
+    // family (alpha to epsilon), as long as they are there and of the Art's
+    // class (the form's data; a class with one family has no Forge).
+    offer_state_.forge_families = 0;
     for (int f = 0; f < 5; ++f) {
         std::string name = detail::plain_name(db->text("weapon", ladder_base_ + f * 5, "NAME"));
         // "Battle Hawk α" -> "Battle Hawk" (the family; the grade is the ladder's rung)
         if (const auto space = name.find_last_of(' '); space != std::string::npos) name.erase(space);
+        const bool there = !name.empty() && db->number("weapon", ladder_base_ + f * 5, "SKILL").value_or(-1) == art_skill_;
+        if (there && offer_state_.forge_families == f) offer_state_.forge_families = f + 1;
         family_names_.push_back(name);
     }
+    offer_state_.forge_families = std::max(1, offer_state_.forge_families);
+    engine.log("overflow: Forge families " + std::to_string(offer_state_.forge_families));
     auto* self = models->find(sys->players[0].digimon, 0);
     art_label_ = art->label;
     if (self)

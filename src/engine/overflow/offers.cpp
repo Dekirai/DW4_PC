@@ -49,7 +49,7 @@ const char* plug_name(int upcnt_index) { return upcnt_index >= 0 && upcnt_index 
 
 std::vector<Offer> eligible_offers(const OfferState& state) {
     std::vector<Offer> out;
-    if (state.forge < 5) out.push_back({OfferKind::forge, state.forge + 1});
+    if (state.forge < std::min(5, state.forge_families)) out.push_back({OfferKind::forge, state.forge + 1});
     for (int g = 0; g < 3; ++g)
         if (state.groups[std::size_t(g)] && state.train[std::size_t(g)] < 4 && state.level + kTrainLead >= state.unlock_level[std::size_t(g)])
             out.push_back({OfferKind::train, kBlastSkill + g});
@@ -89,6 +89,13 @@ std::vector<Offer> draw_offers(const OfferState& state, std::uint64_t& random) {
     // weight, and since every plug stat is always possible the window is
     // never empty (the plugs fill it once Forge and Train are spent).
     std::vector<Offer> out;
+    // The sure first Forge (kForgeSure): the first line of the first offers
+    // until it is taken; the other two lines by weight.
+    if (state.forge == 1 && state.drawn < state.forge_sure)
+        if (const auto forge = std::find(pool.begin(), pool.end(), Offer{OfferKind::forge, 2}); forge != pool.end()) {
+            out.push_back(*forge);
+            pool.erase(forge);
+        }
     while (out.size() < 3 && !pool.empty()) {
         double total = 0;
         for (const auto& offer : pool) total += weight(offer);
