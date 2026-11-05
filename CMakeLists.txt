@@ -151,6 +151,11 @@ target_link_libraries(dw4_overflow_probe PRIVATE dw4_engine)
 if(WIN32)
   target_link_libraries(dw4_overflow_probe PRIVATE psapi)
 endif()
+# Round I1a's first tasks (docs/SEAMLESS.md 19.25): headless engine probes for
+# the world without rooms (settings at a restore, the stage redirect, HOME and
+# the game over). A development tool, never part of the game.
+add_executable(dw4_world_probe tools/world_probe.cpp)
+target_link_libraries(dw4_world_probe PRIVATE dw4_engine dw4_online)
 
 if(BUILD_TESTING)
   foreach(suite assets igb igb_document resources packages scripts lua4 textures meshes skinning animation_math enbaya adx save_data save_import card_store sfp sfd ini disc)
