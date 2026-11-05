@@ -214,7 +214,11 @@ public:
     struct Levels {
         bool run_curve = true;                      // NEXTEXP of run_next_exp instead of DW4's
         int curve_base = 80, curve_linear = 50, curve_square = 6;
-        float exp_factor = 1.0f;                    // the tier's EXP factor
+        // The EXP factor of a defeat: the director sets Tuning::exp_factor
+        // (the balance round of 05.11: x 1.35 on Normal); a tier's own EXP
+        // factor (SURVIVAL.md 4.3: Hard x 1.5, Very Hard x 2) is not built
+        // yet and would go on top of it, not replace it.
+        float exp_factor = 1.0f;
         bool keep_fractions = true;                 // no refill on a level-up (4.5)
         double level_heal = 0.03;                   // ... but this share of the new MaxHP
         int tech_lock_num = 2, tech_lock_den = 3;   // TECHn_LEVEL x 2/3, rounded up
