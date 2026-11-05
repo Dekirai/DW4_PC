@@ -1,7 +1,7 @@
-# JS (round J, 6.13.4): both machines' tick state leaves the models' HP out; b joins from a checkpoint and keeps the
-# HP of its load end, so the instance's fingerprints part soon; the desync within CheckpointSuspectTicks of the rebuild
-# makes the checkpoint path suspect and b's resync takes the classic way (the snapshot and every tick); a is never
-# resynced and both are equal again.
+# JS (round J, 6.13.4): both machines' tick state leaves the models' HP and the system generator out; b joins from a
+# checkpoint and keeps the values of its load end (the generator is in the net fingerprint), so the instance's
+# fingerprints part at once; the desync within CheckpointSuspectTicks of the rebuild makes the checkpoint path suspect
+# and b's resync takes the classic way (the snapshot and every tick); a is never resynced and both are equal again.
 b: online-trace: state purpose=1 .*checkpoint=
 relay: ^ready .*checkpoint=True
 relay: desync

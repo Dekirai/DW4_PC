@@ -396,6 +396,9 @@ std::string first_differing_section(std::span<const std::uint8_t> a, std::span<c
 
 // ---- the engine
 namespace {
+// Scenario JS (set_tick_state_skip_hp): the model RAMs' HP and the system
+// generator are left out; the generator is in the net fingerprint, so a
+// rebuild drifts at once whenever the visit drew from it after its load.
 bool g_tick_state_skip_hp = false;
 }
 void Engine::set_tick_state_skip_hp(bool on) { g_tick_state_skip_hp = on; }
@@ -923,7 +926,9 @@ std::vector<std::uint8_t> Engine::save_tick_state(TickForm form) {
         for (auto& m : managers_) m->tick_structure(a);
     });
     section(kEngine, [&](TickArchive& a) { tick_engine(a); });
-    section(kGenerator, [&](TickArchive& a) { fight::generator().tick_io(a); });
+    section(kGenerator, [&](TickArchive& a) {
+        if (!g_tick_state_skip_hp) fight::generator().tick_io(a); // (scenario JS's missed field)
+    });
     section(kSystem, [&](TickArchive& a) {
         auto* sys = get<GameSystem>();
         a.io(sys->registered_);
@@ -1014,7 +1019,9 @@ void Engine::apply_tick_state(std::span<const std::uint8_t> bytes) {
         if (!a.at_end()) throw TickStateError(s.name, "the section has trailing bytes");
     };
     section(kEngine, [&](TickArchive& a) { tick_engine(a); });
-    section(kGenerator, [&](TickArchive& a) { fight::generator().tick_io(a); });
+    section(kGenerator, [&](TickArchive& a) {
+        if (!g_tick_state_skip_hp) fight::generator().tick_io(a); // (scenario JS's missed field)
+    });
     section(kSystem, [&](TickArchive& a) {
         auto* sys = get<GameSystem>();
         a.io(sys->registered_);

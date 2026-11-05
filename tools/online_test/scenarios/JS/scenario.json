@@ -1,5 +1,5 @@
 {
-  "desc": "round J: a tick state that misses a field (the models' HP, test hook on both): the joiner drifts, the path turns suspect, the classic resync repairs it",
+  "desc": "round J: a tick state that misses a field (the models' HP and the system generator, test hook on both): the joiner drifts, the path turns suspect, the classic resync repairs it",
   "seed_story": true,
   "card": "k10",
   "frames": 60000,

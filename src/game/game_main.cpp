@@ -2506,7 +2506,8 @@ int run(const Options& options, dw4::game::Settings& settings) {
                         return text && *text ? std::atoll(text) : -1LL;
                     }();
                     // DW4_ONLINE_TEST_TICKSTATE_SKIP=1 (scenario JS): the tick
-                    // state misses the model RAMs' HP on this machine.
+                    // state misses the model RAMs' HP and the system generator
+                    // on this machine.
                     static const bool skip_hp = [] {
                         const char* text = std::getenv("DW4_ONLINE_TEST_TICKSTATE_SKIP");
                         const bool on = text && *text == '1';
