@@ -1979,6 +1979,11 @@ bool Session::rebuild_from_checkpoint(w::StateData& state, double now) {
     }
     if (!engine_.restore(state.snapshot)) return bad(w::CheckpointBadReason::decode, "snapshot");
     engine_replaced_ = true;
+    // The visit's counter line from its load, as the classic path opens it (a
+    // joiner's growth includes the instance's: one line, taken once, round 59b
+    // d54d7b0); opened at T it would leave out the growth before T (integration
+    // of rounds G-core and J).
+    open_line();
     slot_ = state.slot;
     engine_.set_view_slot(slot_);
     present_ = engine_.present_mask();
@@ -2031,7 +2036,6 @@ bool Session::rebuild_from_checkpoint(w::StateData& state, double now) {
     replay_fingerprints_.clear();
     // (The state's own fingerprint: READY can go out after a few ticks.)
     if (tick_ > 0) replay_fingerprints_[tick_ - 1] = engine_.net_fingerprint();
-    open_line();
     replayed_steps_ = 0;
     replay_seconds_ = 0;
     starved_ = 0;
