@@ -1,0 +1,9 @@
+# JS2 (round J's review), member b (k10, DW4_ONLINE_TEST_DESYNC=join+1500): through the lobby gate 60 s after a, into
+# a's instance from a checkpoint; 1,500 sealed ticks after its JOIN its engine draws one random number a's does not.
+campaign until stage=stagml11,control
+idle until epoch>=@150
+explore mate00 yes until stage=stag0101,control
+log in the field
+wander 470 160 15 until sealed>=5400 or present<=1,frames>=60
+log enough
+idle until frames>=60

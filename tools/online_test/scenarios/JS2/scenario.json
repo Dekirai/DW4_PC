@@ -1,0 +1,14 @@
+{
+  "desc": "round J's review: a joiner from a checkpoint (complete tick state, its READY passes) drifts 1,500 ticks after its JOIN (test hook): it makes no majority, the path turns suspect, the classic resync repairs it",
+  "seed_story": true,
+  "card": "k10",
+  "frames": 60000,
+  "timeout": 900,
+  "min_shared_ticks": 4500,
+  "allow_resync": true,
+  "min_after_resync": 3000,
+  "clients": [
+    {"name": "a", "script": "a.script", "start": 0},
+    {"name": "b", "script": "b.script", "start": 3, "env": {"DW4_ONLINE_TEST_DESYNC": "join+1500"}}
+  ]
+}

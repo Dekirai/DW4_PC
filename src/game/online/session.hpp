@@ -197,6 +197,11 @@ public:
     std::uint32_t inst() const { return inst_; }
     std::uint32_t visit() const { return visit_; }
     std::uint32_t tick() const { return tick_; }
+    // The tick at which this member's own JOIN applied in this visit (none
+    // until then, none in a visit it did not join), and whether its engine
+    // came from a checkpoint (6.13.5) that no classic state replaced since.
+    std::optional<std::uint32_t> joined_tick() const { return joined_tick_; }
+    bool from_checkpoint() const { return from_checkpoint_; }
     int delay() const { return delay_; }
     bool hub() const { return hub_; }
     std::uint32_t measured_rate() const { return config_.rate; }
@@ -445,6 +450,7 @@ private:
     bool checkpoint_asked_ = false;          // CHECKPOINT_ASK: upload at the next state-safe tick
     bool periodic_asked_ = false;            // CHECKPOINT_ASK periodic: upload with the next STATEHASH (an agreed tick)
     bool from_checkpoint_ = false;           // this catch-up started from a checkpoint
+    std::optional<std::uint32_t> joined_tick_; // this member's own JOIN in this visit (joined_tick())
     double rebuild_ms_ = 0;                  // its rebuild (snapshot, load ticks, apply, hash)
     // Round J's review: writing the tick state failed in this visit (a
     // TickStateError: a node, closure or bank outside the serializer's

@@ -1377,6 +1377,7 @@ void Session::begin_visit(double now) {
     checkpoint_asked_ = false;
     periodic_asked_ = false;
     from_checkpoint_ = false;
+    joined_tick_.reset();
     checkpoints_off_ = false;
     load_end_told_ = false;
     tick_hash_.reset();
@@ -1674,6 +1675,7 @@ void Session::become_member(double now) {
     engine_.set_split_identity(slot_);
     engine_.set_view_slot(slot_);
     trace("member inst=%u visit=%u tick=%u slot=%d", inst_, visit_, tick_, slot_);
+    joined_tick_ = tick_;
     input_next_ = tick_ + 1;
     skipped_buttons_ = 0;
     for (int k = 0; k < delay_; ++k) send_input_ahead(last_own_);

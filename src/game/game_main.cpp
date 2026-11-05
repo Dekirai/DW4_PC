@@ -63,6 +63,7 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace {
@@ -2506,11 +2507,25 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 // live sealed tick at or after TICK, one draw of the system
                 // generator that no other machine makes: a desync the relay's
                 // fingerprint vote finds and a resync repairs (6.9).
+                // DW4_ONLINE_TEST_DESYNC=join+N (scenario JS2): the same draw N
+                // sealed ticks after this member's own JOIN in a visit (a
+                // joiner whose engine came from a checkpoint drifts after its
+                // READY passed: 6.13.4's rebuilt member).
                 if (online) {
-                    static const long long desync_tick = [] {
+                    struct DesyncHook {
+                        long long tick = -1; // TICK, or N after the own JOIN
+                        bool after_join = false;
+                    };
+                    static const DesyncHook desync = [] {
+                        DesyncHook hook;
                         const char* text = std::getenv("DW4_ONLINE_TEST_DESYNC");
-                        return text && *text ? std::atoll(text) : -1LL;
+                        if (!text || !*text) return hook;
+                        hook.after_join = std::string_view(text).starts_with("join+");
+                        hook.tick = std::max(-1LL, std::atoll(hook.after_join ? text + 5 : text));
+                        return hook;
                     }();
+                    const auto joined = online->session().joined_tick();
+                    const long long desync_tick = !desync.after_join ? desync.tick : desync.tick >= 0 && joined ? *joined + desync.tick : -1LL;
                     // DW4_ONLINE_TEST_TICKSTATE_SKIP=1 (scenario JS): the tick
                     // state misses the model RAMs' HP and the system generator
                     // on this machine.
@@ -2526,7 +2541,11 @@ int run(const Options& options, dw4::game::Settings& settings) {
                         online->session().tick() >= std::uint64_t(desync_tick)) {
                         desynced = true;
                         (void)dw4::engine::fight::random();
-                        std::printf("online: test desync at tick %u\n", online->session().tick());
+                        if (desync.after_join)
+                            std::printf("online: test desync at tick %u (%lld ticks after the own join at %u%s)\n", online->session().tick(),
+                                        desync.tick, *joined, online->session().from_checkpoint() ? ", engine from a checkpoint" : "");
+                        else
+                            std::printf("online: test desync at tick %u\n", online->session().tick());
                     }
                 }
 #endif

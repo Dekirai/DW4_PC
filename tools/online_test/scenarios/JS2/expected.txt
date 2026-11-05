@@ -1,0 +1,29 @@
+# JS2 (round J's review, 6.13.4): the path JS took before the READY check. b joins a's field from a checkpoint; the tick
+# state is complete, so its READY from the checkpoint matches and it joins. 1,500 sealed ticks after its JOIN (beyond
+# CheckpointSuspectTicks after the rebuild) b's engine draws one random number no other machine draws
+# (DW4_ONLINE_TEST_DESYNC=join+1500); the next fingerprints differ. b was rebuilt from a checkpoint and never makes a
+# majority, so a's fingerprint wins; a desync a rebuilt member is part of makes the path suspect at any time
+# (why=desync_rebuilt), so b's resync takes the classic way (the snapshot and every tick), its READY judges, and both
+# are equal after (run.py: allow_resync, min_after_resync). a is never resynced.
+b: online-trace: state purpose=1 .*checkpoint=[1-9]
+b: online-trace: ready .*from-checkpoint
+relay: ^state .*purpose=Join .*checkpoint=[1-9]
+relay: ^ready .*member=1 .*checkpoint=True
+relay: ^join .*slot=1
+b: online-trace: join applied .*slot=1
+b: online: test desync at tick \d+ \(1500 ticks after the own join at \d+, engine from a checkpoint\)
+relay: ^desync .*rebuilt=\[1\]
+relay: ^checkpoint_suspect .*why=desync_rebuilt
+relay: ^resync .*slot=1 .*checkpoint=0( |$)
+b: online-trace: resync inst
+b: online-trace: resynced inst
+relay: ^resync_ready .*member=1 .*checkpoint=False
+!relay: ready_mismatch
+!relay: checkpoint_bad
+!relay: statehash_mismatch
+!relay: ^resync .*slot=0
+!relay: ^resync .*checkpoint=[1-9]
+!relay: resync_limit
+!relay: resync_too_long
+!a: online-trace: resync inst
+shared: a b >= 3000
