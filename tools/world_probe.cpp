@@ -746,7 +746,7 @@ struct HomeCase {
     std::uint64_t home_after; // frames after the last kill
     std::uint64_t kill_from = 1200;
     bool online = true;       // online rules (else offline: the original's rules)
-    int onto_mat = -1;        // this slot is put onto dng101b1's matz01 (the way back) with its defeat
+    int onto_mat = -1;        // this slot is put onto dng101b1's matz01 (the way back) 60 frames before the defeats and stands there
 };
 
 void homeover_probe(int only) {
@@ -805,16 +805,21 @@ void homeover_probe(int only) {
         std::uint64_t kills_done_at = 0, home_at = 0, first_change = 0;
         int next_kill = 0;
         std::string events, mat_at_kill;
+        bool on_mat = false;
         for (int i = 0; i < 6000; ++i) {
             const std::uint64_t frame = engine.frame();
+            // Onto the mat a second before the defeat, standing still from then on
+            // (a defeat in the frame of the move did not take: the mat's script
+            // takes and gives back control in that frame).
+            if (c.onto_mat >= 0 && !on_mat && frame + 60 >= c.kill_from && engine.stage_name() == "dng101b1" && engine.membership_safe()) {
+                const auto* mats = engine.get<MatCtrlManager>();
+                const auto centre = mats ? mats->mat_centre("matz01") : std::nullopt;
+                if (!centre || !teleport(engine, c.onto_mat, *centre)) mat_at_kill += "(teleport failed) ";
+                on_mat = true;
+            }
             if (frame >= c.kill_from && !kills_done_at && engine.stage_name() == "dng101b1" && engine.membership_safe()) {
                 while (next_kill < 4 && !(c.killed & (1u << next_kill))) ++next_kill;
                 if (next_kill < 4) {
-                    if (next_kill == c.onto_mat) {
-                        const auto* mats = engine.get<MatCtrlManager>();
-                        const auto centre = mats ? mats->mat_centre("matz01") : std::nullopt;
-                        if (!centre || !teleport(engine, next_kill, *centre)) mat_at_kill += "(teleport failed) ";
-                    }
                     kill(engine, next_kill); // one defeat a frame
                     ++next_kill;
                 } else {
@@ -832,7 +837,12 @@ void homeover_probe(int only) {
                 home_at = frame;
             }
             const bool before = engine.pending_stage().has_value();
-            step(engine, pads_at(frame));
+            auto pads = pads_at(frame);
+            if (on_mat) {
+                pads[std::size_t(c.onto_mat)] = PadSample{};
+                pads[std::size_t(c.onto_mat)].connected = true;
+            }
+            step(engine, pads);
             if (!before && engine.pending_stage()) {
                 if (!first_change) first_change = engine.frame();
                 char text[160];
