@@ -875,3 +875,64 @@ below).
   movement (blind to the offers) and a kiting player, not him.
 - T8's timing was not measured again: the 20:00-25:00 stretch keeps 60
   living enemies, as at 20:00 before.
+
+### 11.6 The independent check (05.11, seeds 201-220)
+
+A second build of the branch (`build/chk2`, fc806f3) and the same
+measurement on new seeds, 201-220 (`bot=human` and `bot=kite`, Agumon and
+Veemon, 20 seeds each, headless, nice 19, two at a time;
+`build/chk2_t/runs_m201`, `report_m201.txt`, read by `build/chk2_t/eval.py`).
+Before: the build of 651bbb5 with `forge_sure=0` (the balance round, 11.4)
+on the same seeds, human Agumon only (`runs_b201`).
+
+| Bot, form, seeds 201-220 | Median (range) | Targets |
+| --- | --- | --- |
+| human Agumon | 15:06 (7:27-20:14) | none before 3:00; 3 before 10:00 (7:27, 8:02, 9:54); most in 2 min 8 |
+| human Agumon, before | 16:04 (5:22-17:48) | none before 3:00; 3 before 10:00 (5:22, 5:24, 5:43); most in 2 min 11; first Forge after the third pick in 7 of 20 |
+| human Veemon | 17:26 (13:16-20:07) | none before 3:00 and 10:00; most in 2 min 8 |
+| kite Agumon | 23:05 (18:11-25:01) | 12 reach 22:00, 5 clear; most in 2 min 7 |
+| kite Veemon | 19:52 (13:51-25:01) | 5 reach 22:00, 3 clear; most in 2 min 8 |
+
+Kite minus human: Agumon +8.0, Veemon +2.4 minutes. Veemon / Agumon:
+human 1.15, kite 0.86. First level-up at most 15.1 s, highest hit
+20.8 %, no clamp, no Lua error, at most 0.68 % of the frames without
+control, 5 Forge families for both forms. The human bot's (Agumon) first
+five minutes: 0.11 / 0.14 / 0.17 / 0.22 / 0.22 MaxHP taken (before on the
+same seeds 0.14 / 0.17 / 0.20 / 0.24 / 0.27).
+
+Over 40 seeds (1-20 and 201-220): human Agumon 15:49, Veemon 16:57; kite
+Agumon 22:57 (23 of 40 reach 22:00), Veemon 20:04 (12 of 40); kite minus
+human +7.1 / +3.1; Veemon / Agumon human 1.07, kite 0.87. Human Agumon
+before 10:00: 4 of 60 (seeds 1-20, 101-120, 201-220; before the round
+8 of 60).
+
+- **Confirmed**: no defeat before 3:00 (0 of 40), the human medians within
+  14-18 minutes, the kite Agumon target (20-24 minutes, at least 6 of 20
+  at 22:00), no two-minute window above 9 of 20, the first level-up within
+  18 s, the hits under 35 % without a clamp. The sure first Forge works for
+  both forms out of the weapon table (the newcomer passed it three times
+  in 1 of 40 Agumon runs and 3 of 40 Veemon runs, seeds 1-20 and 201-220).
+- **Not robust: kite Veemon.** On the new seeds it misses its targets
+  narrowly (median 19:52, 5 of 20 at 22:00, +2.4 minutes over the human
+  bot); over 40 seeds it sits on the bounds (20:04, 6 of 20, +3.1).
+  Tortomon is its largest source again (0.34 MaxHP a run-minute of phase
+  3, 0.41 of phase 4; Agumon's kite bot 0.06 / 0.15). A knob test with
+  `family_damage=e_torta:0.07` (`runs_t201`, kite Veemon only) moved it to
+  23:27 (15 of 20 at 22:00) but bunched 10 of 20 defeats in 23:03-25:01:
+  about x 0.085 is the next try, with a full measurement (not taken).
+- **Not robust: the human Agumon tail.** 3 of 20 new seeds end in phase 2
+  (7:27-9:54) with the Forge taken at once (picks 1-2): 1.1-1.8 MaxHP a
+  minute from 7:00, Mummymon and MRβ02 first (phase 2 for the human bot:
+  Mummymon 0.30, MRβ02 0.21 MaxHP a run-minute). The balance round had 3
+  of 20 on these seeds too, but at the phase change (5:22-5:43); the round
+  moved them later, not away. Phase 2's contact is the next lever for the
+  newcomer (10.7, 11.5), not the Forge.
+- **Determinism**: seeds 202 and 210 of `bot=human` replay bit for bit with
+  the build of the fix below, e7750c4 (run hashes 603b808f84f2f79d,
+  a3972a6fe3f52f4e); a drawn hidden run of kite Agumon seed 205 (`build/chk2_t/shots_k20`) has the
+  headless run's minute lines 1-20 and shows "Hold out until 25:00" under
+  the clock at 20:01. ctest `-R overflow` 10 / 10; det.sh `o1aforge_chk2`
+  and `o1aforge_chk2b`: 4004f056 / 396cb219 (both runs). The branch merges
+  into main a475b98 without conflicts.
+- **Fixed in the check**: the pause screen said "Forge N of 5"; it says the
+  form's Forge families now (the weapon table's, as the offers).
