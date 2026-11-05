@@ -7,11 +7,11 @@ relay: checkpoint_ask
 relay: ^checkpoint .*tick=
 relay: state .*purpose=Join .*checkpoint=[1-9]
 b: online-trace: state purpose=1 .*checkpoint=
-b: online-trace: ready .*from-checkpoint
+b: online-trace: ready .*from-checkpoint .*checked=(1[5-9]|[2-9][0-9]|[0-9]{3,})
 a: online-trace: join applied .*slot=1
 !b: online-trace: checkpoint bad
 !relay: checkpoint_bad
 !relay: statehash_mismatch
 !relay: checkpoint_suspect
-relay: ^ready .*checkpoint=True
+relay: ^ready .*checkpoint=True checked=True
 shared: a b >= 3000

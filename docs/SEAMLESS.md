@@ -1146,9 +1146,9 @@ Client to server:
 | 0x06 | SPLIT | inst, visit, fork tick, leaver mask (the side that moves to the child: `SplitResult::child`), kind (exit, in-stage) | after the step of a fork |
 | 0x07 | SNAPSHOT | inst, visit, total, offset, chunk (at most 60 KiB) | after the load step of a NEW: the base group's member in the lowest new slot only |
 | 0x08 | SNAPHASH | inst, visit, canonical hash | after the load step (NEW) or the restore (co-arrival): every member |
-| 0x09 | READY | inst, visit, tick (a multiple of 60), net fingerprint, replay rate, carry | a joiner within ten ticks of the newest tick |
+| 0x09 | READY | inst, visit, tick (a multiple of 60; from a checkpoint its check tick or a later multiple of 60, protocol 48, 6.13.5), net fingerprint, replay rate, carry | a joiner within ten ticks of the newest tick |
 | 0x0A | JOIN_AT | inst, visit, tick J | the solo leader's answer to JOIN_REQ |
-| 0x0B | NETFP | inst, visit, tick (a multiple of 60), net fingerprint after that tick | every member of a field instance |
+| 0x0B | NETFP | inst, visit, tick (a multiple of 60; protocol 48 also the check tick T + 14 of the sender's own checkpoint upload of T, 6.13.5), net fingerprint after that tick | every member of a field instance |
 | 0x0C | STATE | inst, visit, tick, flags (joinable, membership-safe, boss lock), session context hash, reason | on change (the boss lock and the context at once, the rest at most once a second) |
 | 0x0D | INTENT | inst, visit, kind (1 go without, 2 give up), argument | a member's port choice (sealed instances; the server stamps it) |
 | 0x0E | STORY | inst, visit, confirmed revision, phase claim, persistent flags, keys, counter growth per engine line (8.3) | before every BARRIER; once a second when the pending set changed, else every ten seconds while it is not empty; never from a stagIS* stage |
@@ -1885,7 +1885,8 @@ be had, and steps 4-6 (the JOIN, the pads, the music) stay for both paths.
    duration.
 3. Within ten ticks of the newest tick it sends READY with its net fingerprint
    at the last tick that is a multiple of 60 (compared with the members' NETFP
-   of that tick), its carry data and its replay rate.
+   of that tick), its carry data and its replay rate. (A rebuild from a
+   checkpoint names its check tick or a later multiple of 60, 6.13.5.)
 4. The server stamps JOIN(J) (6.4, 6.5). Every machine, the joiner included,
    applies `online_join_player(slot, carry, entrance point)` at the first
    joinable step at or after J: species and weapon packages loaded as for a
@@ -3012,8 +3013,10 @@ restores (6.13.6).
    the tick records after T. About 70-110 KB.
 4. **Joiner.** A fresh engine rebuilds T (6.13.2, steps 1-5), seeks its
    music from the CRI counters, replays the ticks after T (those that passed
-   during the transfer: 20-60 ticks, 10-30 ms) and sends READY with its net
-   fingerprint as today and the flag *from checkpoint* (6.13.4). Its screen
+   during the transfer: 20-60 ticks, 10-30 ms), at least to the checkpoint's
+   *check tick* T + 14, and sends READY with its net fingerprint of the check
+   tick (or of a later multiple of 60 it replayed) and the flag *from
+   checkpoint* (6.13.4; the READY check below, protocol 48). Its screen
    shows the loading screen's "Joining..." line without a countdown; nothing
    else. The stage files are in the file cache: the joiner's own load read
    them a moment before.
@@ -3026,6 +3029,48 @@ restores (6.13.6).
    the joiner's package files into the file cache when EVENT_AHEAD arrives (a
    host-side prefetch, no engine state), so a cold read from the disc never
    lands in the step.
+
+**The READY check (protocol 48).** A rebuild that missed a field must show
+before the JOIN: scenario JS (the tick state leaves the models' HP and the
+system generator out) is caught at READY, the path turns suspect and the
+classic state joins the member, with no resync after the join. The check
+compares the joiner's net fingerprint after replayed steps with an engine of
+the instance at the same tick. The members report NETFP only every 60 ticks,
+so round J's review made READY name the first multiple of 60 after T and the
+relay wait for the members' report of it: up to 59 live ticks, about a second
+(J1 859 ms from the join decision to the JOIN with 49 ticks to wait, J5 526 ms,
+JL 387 ms, about 1.2 s at worst; before that review READY named T - 1 and went
+unchecked, J5 360 ms). From protocol 48 every checkpoint has a fingerprint
+tick of its own: the donor of a checkpoint of T also sends its NETFP of the
+*check tick* T + 14 (`kReadyCheckTicks` 15) when it executes that tick, one
+net fingerprint (0.17-0.2 ms) a quarter second after its upload (on a
+multiple of 60 its ordinary NETFP is that report). The joiner replays at
+least to the check tick, 15 steps from the rebuilt state, and names it in
+READY, or a later multiple of 60 it replayed (the members' NETFP); the relay
+compares the READY with the donor's report of the check tick
+(`StoredCheckpoint.CheckFp`, also for a fresh periodic checkpoint), a READY
+that comes first waits for it (`Instances:ReadyFingerprintWaitMs`, then
+unchecked as before: a donor that forked or went in that step). No other
+NETFP off the 60-tick raster is taken, and the check tick's report votes on
+nothing. The check tick passes on the donor while the joiner loads and
+rebuilds (about 0.3 s from the decision: 12-18 ticks after T), so READY no
+longer waits for live ticks at any visit length and phase, and its check
+covers 15 or more replayed steps every time (before: 1-59, as the phase fell).
+Measured: 17 ("Round J (built)", *READY at the check tick*).
+
+Considered and not taken:
+
+- *Checkpoints on the 60-tick raster* (READY names the multiple of 60 right
+  before T, whose NETFP the members already sent): an asked donor would wait
+  up to 59 ticks for the raster before its upload (the same second, moved to
+  the start), or save a tick state every second (5-7 ms each, a hitch every
+  second); and its check would replay no step (the fingerprint of the applied
+  state only).
+- *The multiple of 60 the joiner crossed during its replay*: a fresh
+  checkpoint crosses one only after up to 59 ticks, so the wait stays.
+- *Accept READY at once and verify at the next NETFP after the JOIN* (the
+  suspicion path): a rebuild that missed a field would join and then resync
+  on the player's screen, what JS showed before round J's review.
 
 | Part | Today (J1 / J30) | Round J (estimate) |
 | --- | --- | --- |
@@ -3319,7 +3364,7 @@ once. No picture is drawn for a re-simulated tick, only for the frontier.
 | picture, overhead labels, PRESENCE, the HUD | the frontier (predicted), with the correction blend below |
 | sound effects: sfp (SNDF) and the ADX effects on the SE streams 2-5 | at once from predicted ticks as preview voices; taken over or faded when confirmed (below) |
 | BGM and ambience (streams 0 and 1), global sound commands (BGMSTOP, ENVSTOP, volumes), movies | confirmed ticks: the rollback depth late (about one round trip plus a tick) |
-| NETFP | computed at every execution of a multiple of 60, sent when that tick is confirmed (the value of its last execution) |
+| NETFP | computed at every execution of a multiple of 60 (and of a donor's check tick, 6.13.5), sent when that tick is confirmed (the value of its last execution) |
 | STATEHASH, the donor's checkpoint | from the saved state of the confirmed tick: restore, encode, restore the frontier (2-4 ms every ten seconds) |
 | port events (achievements, story credits), story lines, Discord, notices, the engine's log lines | kept per tick, replaced by each execution of the tick, delivered once when confirmed |
 | STATE, SPLIT, HEADING, BARRIER and the park, INTENT, go-alone | confirmed |
@@ -3405,7 +3450,8 @@ Proposed numbers; the integration pins them after rounds 60 and 62 merge
 | C to S | 0x15 | STATEHASH | inst, visit, tick, hash (XXH64 of the canonical tick state), load end K u32, flags (1 bytes kept) | every member, once a checkpoint tick is confirmed (round J) |
 | C to S | 0x16 | CHECKPOINT | inst, visit, tick, hash, total, offset, chunk (at most 60 KiB of zstd) | the donor, on CHECKPOINT_ASK |
 | C to S | 0x17 | CHECKPOINT_BAD | inst, visit, tick, reason (version, decode, K, topology, hash), section tag | a joiner or a resyncing member whose rebuild failed |
-| C to S | (READY) | READY | as today, plus flag bit *from checkpoint* | a joiner or a resyncing member after a rebuild from a checkpoint; such a READY never judges (6.13.4) |
+| C to S | (READY) | READY | as today, plus flag bit *from checkpoint*; its tick the checkpoint's check tick or a later multiple of 60 (protocol 48) | a joiner or a resyncing member after a rebuild from a checkpoint; such a READY never judges (6.13.4) |
+| C to S | (NETFP) | NETFP | as today; protocol 48 also for the check tick T + 14 of the sender's own upload of T | the donor, when it executes that tick (6.13.5) |
 | S to C | 0x92 | CHECKPOINT_ASK | inst, visit, tick (0: the next confirmed state-safe tick), flags (1 periodic, 2 diagnosis) | to the donor (round J) |
 | S to C | 0x93 | EVENT_AHEAD | inst, visit, tick, event (the tick record's event layout) | to every member when an event is stamped (round R) |
 
@@ -3426,8 +3472,8 @@ with each round.
 
 #### 6.13.8 What stays
 
-The sealing, the fills, the delay rule and its bounds, NETFP every 60 ticks,
-the barrier and fork rules, RESUME after a reconnect, the whole log on the
+The sealing, the fills, the delay rule and its bounds, NETFP every 60 ticks
+(plus one at a donor's check tick after each upload, 6.13.5), the barrier and fork rules, RESUME after a reconnect, the whole log on the
 relay and the classic catch-up from it (as the fallback, also for a suspect
 checkpoint path), 6.9's rule that a replay from the load judges, the
 solo-led instance with its own clock and delay 0 (it
@@ -8039,7 +8085,8 @@ end (3.7); a tick state writer's error stops the visit's STATEHASH and
 uploads instead of closing every member's game; `ready_sent_` resets with
 every state; READY after a checkpoint names the first multiple of 60 it
 replayed and the relay waits up to `Instances:ReadyFingerprintWaitMs` (2 s)
-for the members' NETFP of it; a joiner without READY falls back to NEW after
+for the members' NETFP of it (protocol 48 names the checkpoint's check tick
+instead, *READY at the check tick* below); a joiner without READY falls back to NEW after
 the catch-up limit plus 30 s; the classic fallback of a planned checkpoint
 join checks the whole visit's catch-up; the rebuilt member never judges
 (6.13.4); a fork drops the parent's state of the leavers' side after the
@@ -11238,9 +11285,9 @@ Client to server:
 | 0x06 | SPLIT | inst u32, visit u32, fork tick u32, leaver mask u8 (the side that moves to the child), kind u8 (0 exit, 1 in-stage) |
 | 0x07 | SNAPSHOT | inst u32, visit u32, total u32 (at most 4 MiB), offset u32, chunk (the rest; chunks in order from 0) |
 | 0x08 | SNAPHASH | inst u32, visit u32, canonical hash u64 |
-| 0x09 | READY | inst u32, visit u32, tick u32 (a multiple of 60), net fingerprint u64, replay rate u32, carry blob (at most 65,533 bytes); also a resync's end (no JOIN follows) |
+| 0x09 | READY | inst u32, visit u32, tick u32 (a multiple of 60; after a rebuild from a checkpoint of T, protocol 48: the check tick T + 14 or a later multiple of 60), net fingerprint u64, replay rate u32, carry blob (at most 65,533 bytes); also a resync's end (no JOIN follows) |
 | 0x0A | JOIN_AT | inst u32, visit u32, tick J u32 |
-| 0x0B | NETFP | inst u32, visit u32, tick u32 (tick % 60 == 0), hash u64 |
+| 0x0B | NETFP | inst u32, visit u32, tick u32 (tick % 60 == 0; protocol 48 also the check tick T + 14 after the sender's CHECKPOINT of T), hash u64 |
 | 0x0C | STATE | inst u32, visit u32, tick u32, flags u8 (1 joinable, 2 membership-safe, 4 boss lock), context hash u64, reason u8 (0 none, 1 entry scene, 2 scene, 3 menu, 4 loading, 5 boss, 6 fork pending, 7 hub) |
 | 0x0D | INTENT | inst u32, visit u32, kind u8 (1 go without, 2 give up), argument i32 (sealed instances only) |
 | 0x0E | STORY | inst u32, visit u32, confirmed revision u32, phase u8 (0 no claim, else 1-7: flags 1-6, 86), flag count u16 + u16 flags (< 1024), key count u8 + u8 keys (< 12), line count u8 (at most 32) + (counter u8 (< 16), line inst u32, line visit u32, growth i32) each (round S2, 8.7) |
