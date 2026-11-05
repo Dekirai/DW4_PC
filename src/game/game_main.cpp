@@ -1146,6 +1146,11 @@ int run(const Options& options, dw4::game::Settings& settings) {
     {
         std::optional<dw4::game::GlRenderer> gl_renderer;
         if (draw) gl_renderer.emplace();
+#ifdef DW4_GHOST_PROBE
+        if (draw && std::getenv("DW4_PROBE_GHOSTS_REPORT"))
+            std::printf("ghost probe: OpenGL %s on %s\n", reinterpret_cast<const char*>(glGetString(GL_VERSION)),
+                        reinterpret_cast<const char*>(glGetString(GL_RENDERER)));
+#endif
         dw4::game::GlRenderer* const renderer = gl_renderer ? &*gl_renderer : nullptr;
         // The window, the renderer, the sound output, the controllers, the
         // F1 menu and the pictures as the host's shared parts see them
@@ -1315,6 +1320,32 @@ int run(const Options& options, dw4::game::Settings& settings) {
         std::vector<dw4::game::online::RemoteSample> present_remote;
         double ghost_cost_max = 0, present_max = 0; // (DW4_TRACE_GHOSTS: the figures' own milliseconds a pass, the longest present)
         int ghost_trace_bucket = -1;
+#ifdef DW4_GHOST_PROBE
+        // Round I1a's ghost measurement (docs/SEAMLESS.md 19.13; the build
+        // option DW4_GHOST_PROBE, never in a player build). Test runs only:
+        // DW4_PROBE_GHOSTS=N stands N figures (forms and weapons in turn, half
+        // of them walking a small circle) around the own player in a hub stage
+        // without an online session; DW4_PROBE_GHOSTS_REPORT=P prints every P
+        // drawn passes the pass time (pass start to after the swap, with a
+        // glFinish first, so the GPU's work counts), the figures' update and
+        // draw time and the pose / traversal split (mean, p50, p99, max).
+        const int probe_ghosts = options.smoke_frames && std::getenv("DW4_PROBE_GHOSTS") ? std::atoi(std::getenv("DW4_PROBE_GHOSTS")) : 0;
+        const int probe_report = std::getenv("DW4_PROBE_GHOSTS_REPORT") ? std::max(1, std::atoi(std::getenv("DW4_PROBE_GHOSTS_REPORT"))) : 0;
+        std::vector<double> probe_pass_ms, probe_figures_ms, probe_pose_ms, probe_traverse_ms, probe_items;
+        // DW4_PROBE_GHOSTS_SPREAD: units between two figures of the spiral (default 6).
+        const float probe_spread = std::getenv("DW4_PROBE_GHOSTS_SPREAD") ? float(std::atof(std::getenv("DW4_PROBE_GHOSTS_SPREAD"))) : 6.0f;
+        double probe_update_ms = 0;
+        int probe_drawn = 0, probe_reused = 0;
+        auto probe_print = [&](const char* what, std::vector<double>& v) {
+            if (v.empty()) return;
+            std::sort(v.begin(), v.end());
+            double sum = 0;
+            for (const double x : v) sum += x;
+            std::printf("  %-10s mean %.3f p50 %.3f p99 %.3f max %.3f%s\n", what, sum / double(v.size()), v[v.size() / 2],
+                        v[std::min(v.size() - 1, v.size() * 99 / 100)], v.back(), std::string_view(what) == "items" ? "" : " ms");
+            v.clear();
+        };
+#endif
         const int trace_labels = options.smoke_frames && std::getenv("DW4_TRACE_LABELS") ? std::atoi(std::getenv("DW4_TRACE_LABELS")) : 0;
         view.trace_labels = trace_labels;
         auto& traced_occlusion = view.traced_occlusion; // the labels the last picture hid (traces)
@@ -2796,6 +2827,40 @@ int run(const Options& options, dw4::game::Settings& settings) {
             // this member's own keeps them). Members elsewhere are preloaded.
             // Presentation only: nothing here reaches the engine.
             const auto ghost_update_start = std::chrono::steady_clock::now();
+#ifdef DW4_GHOST_PROBE
+            if (probe_ghosts > 0 && !online && ghosts_enabled) {
+                ghosts.set_resources(engine.resources());
+                static std::optional<dw4::engine::Vec3f> anchor;
+                std::vector<dw4::game::GhostTarget> targets;
+                const auto own = own_position();
+                if (own && !anchor && engine.presenting() && !engine.loading()) anchor = own;
+                // (Shown whatever hides the tags: a direct start into the lobby runs
+                // its talk until a button ends it; the cost is the same.)
+                if (anchor) {
+                    static const char* const weapons[] = {"", "w_common05", "w_common07", "w_common03"};
+                    const auto forms = dw4::game::forms();
+                    const double t = steady_seconds();
+                    for (int k = 0; k < probe_ghosts; ++k) {
+                        // A spiral from 15 units out, 6 units a figure; every
+                        // second figure walks a circle of 10 units.
+                        const float angle = float(k) * 2.39996f, radius = 15.0f + probe_spread * float(k);
+                        dw4::engine::Vec3f at{anchor->x + radius * std::cos(angle), anchor->y, anchor->z + radius * std::sin(angle)};
+                        float yaw = angle, speed = 0;
+                        if (k % 2 == 1) {
+                            const float phase = float(t * 2.0) + float(k);
+                            at.x += 10.0f * std::cos(phase);
+                            at.z += 10.0f * std::sin(phase);
+                            yaw = phase + 3.14159f;
+                            speed = 20.0f;
+                        }
+                        targets.push_back({std::uint64_t(1000 + k), 0, at, yaw, forms[std::size_t(k) % forms.size()].species, "", true, speed,
+                                           weapons[k % 4]});
+                    }
+                }
+                ghosts.update(std::move(targets), own, steady_seconds());
+                probe_update_ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - ghost_update_start).count();
+            } else
+#endif
             if (online && ghosts_enabled) {
                 ghosts.set_resources(engine.resources());
                 const bool show = online->session().hub() && !dw4::game::OverheadLabels::hidden(engine, false);
@@ -3047,7 +3112,13 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 remote_view.samples = &present_remote;
                 if (ghosts.active() && engine.presenting()) remote_view.own_position = own_position();
                 remote_view.cost_max = &ghost_cost_max;
+#ifdef DW4_GHOST_PROBE
+                if (probe_report) ghost_cost_max = 0; // (this pass's figure draw alone, read after present_scene)
+#endif
                 const auto scene = dw4::game::present_scene(view, engine, accumulator, smooth_blending, report_blend, &remote_view);
+#ifdef DW4_GHOST_PROBE
+                const double probe_draw_ms = probe_report ? ghost_cost_max : 0.0;
+#endif
                 const int width = scene.width, height = scene.height;
                 const float present_alpha = scene.present_alpha;
                 const auto& blend_report = scene.blend_report;
@@ -3812,6 +3883,9 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     }
                 }
                 ++dev_present;
+#ifdef DW4_GHOST_PROBE
+                if (probe_report) glFinish(); // (the GPU's work of this pass counts in the pass time)
+#endif
                 // The sound queue, the swap (the online session notes the present
                 // right after it), the frame time (host_view.hpp).
                 dw4::game::finish_present(view, engine, [&] {
@@ -3819,6 +3893,37 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     if (online) online->session().presented(steady_seconds());
                 });
                 present_max = std::max(present_max, view.last_present_seconds * 1000.0);
+#ifdef DW4_GHOST_PROBE
+                if (probe_report && ghosts.drawn() > 0) {
+                    probe_pass_ms.push_back(std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - pass_start).count());
+                    probe_figures_ms.push_back(probe_update_ms + probe_draw_ms);
+                    const auto costs = ghosts.probe_costs();
+                    probe_pose_ms.push_back(costs.pose_ms);
+                    probe_traverse_ms.push_back(costs.traverse_ms);
+                    probe_items.push_back(double(costs.items));
+                    probe_drawn = int(ghosts.drawn());
+                    probe_reused += costs.reused;
+                    if (int(probe_pass_ms.size()) >= probe_report) {
+                        std::printf("[%d] ghost probe: %d figures drawn, %d poses reused in %zu passes, stage %s\n", frame, probe_drawn, probe_reused,
+                                    probe_pass_ms.size(), engine.stage_name().c_str());
+                        probe_print("pass", probe_pass_ms);
+                        probe_print("figures", probe_figures_ms);
+                        probe_print("pose", probe_pose_ms);
+                        probe_print("traverse", probe_traverse_ms);
+                        probe_print("items", probe_items);
+                        probe_reused = 0;
+                        std::fflush(stdout);
+                    }
+                } else if (probe_report && probe_ghosts == 0 && engine.presenting() && !engine.loading()) {
+                    // (The same pass time without figures: DW4_PROBE_GHOSTS=0.)
+                    probe_pass_ms.push_back(std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - pass_start).count());
+                    if (int(probe_pass_ms.size()) >= probe_report) {
+                        std::printf("[%d] ghost probe: no figures, %zu passes, stage %s\n", frame, probe_pass_ms.size(), engine.stage_name().c_str());
+                        probe_print("pass", probe_pass_ms);
+                        std::fflush(stdout);
+                    }
+                }
+#endif
             }
             // (A run without pictures: the pass's end stands for the present, for the input latency of online test runs.)
             if (!draw && online) online->session().presented(steady_seconds());
