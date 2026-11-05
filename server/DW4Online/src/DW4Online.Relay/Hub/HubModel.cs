@@ -196,7 +196,8 @@ public sealed class JoinState(HubInstance target, int slot, ArrivalGroup from, i
     public bool PlannedCheckpoint { get; set; }
     /// <summary>A READY from a checkpoint whose tick the members have not reported yet: checked when their NETFP comes (the
     /// donor's of the check tick in a protocol 48 room; round J's review: READY of T - 1 met no fingerprint and went
-    /// unchecked).</summary>
+    /// unchecked); also any READY at or after a fork the relay has not confirmed yet (checked once it is settled, TryFork).
+    /// </summary>
     public ReadyMsg? PendingReady { get; set; }
     public long PendingReadyAt { get; set; }
     /// <summary>The members' fingerprint of the pending READY's tick never came in time: it is taken unchecked.</summary>
@@ -215,7 +216,9 @@ public sealed record StoredCheckpoint(uint Tick, ulong Hash, uint LoadEnd, byte[
     /// replayed steps (Tick is the first tick not in the state).</summary>
     public uint CheckTick => Tick + Wire.ReadyCheckTicks - 1;
     /// <summary>Protocol 48: the donor's net fingerprint of <see cref="CheckTick"/> (its NETFP of that tick; null until it
-    /// came).</summary>
+    /// came). After a fork between the checkpoint and its check tick it is the donor's side's (the parent and the child share
+    /// this object): a READY is compared with it only while the donor is in the joiner's target and no fork at or before
+    /// the check tick waits for its confirmation (RoomHub.OnReady).</summary>
     public ulong? CheckFp { get; set; }
 }
 
