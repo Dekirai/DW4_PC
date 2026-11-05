@@ -590,3 +590,53 @@ skill-up panels at least 30 frames apart, no Lua error.
   still the second source of the newcomer's phase 1 contact.
 - **The user's next run** decides: the human bot is a model of his first
   two minutes, not of him.
+
+### 10.8 The independent check (05.11, other seeds)
+
+A second build of the branch (`build/chk`, 2440389 plus a comment) and
+the same measurement on seeds 101-120 (`bot=human` and `bot=kite`, Agumon
+and Veemon, 20 seeds each, headless; `build/chk_t/report_m1.txt`). Seed 1
+of `bot=human` replays the round's run bit for bit (run hash
+dc71c7f11dc9ed55, the same 59707 steps), and a drawn hidden run of seed 109
+ends on the same step as the headless one.
+
+| Bot | Agumon | Veemon |
+| --- | --- | --- |
+| human | median 16:04 (4:40-17:35); none before 3:00, 19 of 20 reach 5:00, 15 reach 10:00 | median 16:09 (12:09-17:44); 20 reach 10:00 |
+| kite | median 18:13 (16:58-20:01), 1 clears | median 16:49 (13:18-18:59), 18 of 20 within 15:00-20:00 |
+
+Veemon / Agumon: human 1.00, kite 0.92. The round's targets hold (no
+defeat before 3:00, the human median above 8:00, the kite bot within
+15:00-20:00 in at least 70 %, the forms within 20 %), but the Agumon
+human runs have a tail the seeds 1-20 did not show: 4:40, 5:32, 5:39,
+7:49, 9:24 (one defeat before 5:00, five before 10:00).
+
+- **The tail is the offers, not the crowd.** The human bot takes the
+  offers as a newcomer (the first line or a random one). Over the 40
+  default Agumon runs (seeds 1-20 and 101-120): when its first Forge (Van
+  Blade) came among its first three picks (28 runs, at about 0:25) no run
+  ended before 12:00; when it came later (12 runs, from pick 4, about
+  1:10-3:20) five of 12 ended before 10:00 (4:40-9:24). Veemon does not
+  care (its 7 late-Forge runs: 12:09-17:21). The dying runs take 0.2-0.35
+  MaxHP a minute of contact in minutes 2-5 against the median's 0.16-0.24,
+  as a steady stream (about 40 hits a minute of about 1 % each), with no
+  heal before Lv 15 or a Train Heal; seed 109's picture at 4:30 (the
+  second surge, 30 living) shows the user's "no gap" with 39 HP left.
+- **The damage knobs do not reach it.** Contact x 0.85 at 5:00 (instead of
+  1.0) or the damage warm-up to 10:00 (instead of 8:00) moved the same
+  seeds by 10-60 s (109: 4:40 / 4:58 / 5:19; 112: 5:32 / 5:47 / 5:53) and
+  left the medians alone (16:34, 16:15). So a newcomer Agumon who does not
+  take a Forge in the first minute meets 5:00 at the edge. Next (a design
+  question, not a number): Agumon's start Art nearer Van Blade, or the
+  first Forge offered surely (the first line of an early offer), or the
+  offer text saying what a Forge does.
+- **The human bot.** It moves 98-99 % of the steps (64-68 % at full
+  stick) and turns the stick smoothly; it stands still about 1 % of the
+  time, a newcomer who stops to look stands more and has the Art's reach
+  of 14 then. It reads the enemies' old positions against its own present
+  one (it flees from where they were relative to where it is). Its offers
+  are blind, a reading player takes a Forge sooner. Before the round it
+  died where the user died (2:09 against 2:00); after it, it is a lower
+  bound for the offers and a fair model of the first minutes' movement.
+- **Checks.** ctest 55 / 55 in `build/chk`; det.sh `o1abal_chk`: 4004f056
+  / 396cb219 (both runs).
