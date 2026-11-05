@@ -76,3 +76,13 @@ as 19.17.4 asks; M2 measured only solo; the alive mask never read; minors.
   the half rate, M5 conditional, 16 KB/s), 19.17.4 (redone), 19.25 (M1-M5).
   Next: ctest, server tests (unit + integration on mysqld 3624, ports
   56800-56849).
+- 17:55: `build/meas2/verify.sh`: server build 0 warnings; unit tests 268 of
+  268; integration tests 97 passed, 3 skipped (the WinHTTP client is not
+  built; one of them uses the certificate store, which this lane must not
+  change) on mysqld 3624 (stopped after); ctest 56 of 56 (`v_ctest.log`).
+  det.sh not run again: src, include and CMakeLists.txt are unchanged since
+  45f5f2a4 (det.sh 4004f056 / 396cb219 twice there, by the builder and the
+  review). Open for later rounds: the gate again after M4 (a), (c), (e) on a
+  quiet machine; the max criterion's reading (the user); STORY merges and
+  mirrors; joins over sockets; a weaker GPU for M5; the probe cases as
+  ctests once M1 and M2 are built.
