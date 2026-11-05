@@ -177,7 +177,9 @@ bool Engine::run_script(std::string_view name) {
             if (found == lua_programs_.end()) {
                 try {
                     const auto bytes = object.memory(3);
-                    found = lua_programs_.emplace(key, read_lua4_chunk(bytes, std::string(name))).first;
+                    // (A rebuilt engine labels it as the donor's state says, Engine::tick_lua.)
+                    const auto& label = lua_program_labels_.try_emplace(key, std::string(name)).first->second;
+                    found = lua_programs_.emplace(key, read_lua4_chunk(bytes, label)).first;
                 } catch (const std::exception& error) {
                     log("script decode failed: " + std::string(name) + ": " + error.what());
                     break;

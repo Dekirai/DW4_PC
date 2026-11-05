@@ -1157,6 +1157,14 @@ private:
     std::set<std::string, std::less<>> route_donor(const std::shared_ptr<const IgbDocument>& document, const std::vector<std::string>& families);
     std::unique_ptr<Lua4Vm> lua_;
     std::map<std::pair<const void*, std::uint32_t>, Lua4Program> lua_programs_;
+    // The label of every chunk compiled in this visit (the cache's key: two
+    // script names may share one chunk object, and the name that ran it first
+    // labels it for the visit, its closures' site and its GC size). Part of
+    // the tick state (Engine::tick_lua): a rebuilt engine compiles a chunk
+    // only when a script runs it, and labels it as the donor did (lane
+    // jready's review: with the running name, a rebuilt joiner's STATEHASH
+    // differed after the first such run).
+    std::map<std::pair<const void*, std::uint32_t>, std::string> lua_program_labels_;
     int script_depth_{};
     dw4::OriginalPads pads_;
     static inline const std::array<PadState, 4> kFifthPads{};
