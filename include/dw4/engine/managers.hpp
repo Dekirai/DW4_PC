@@ -470,6 +470,10 @@ public:
     // Save states: the streams that play on into the next stage, and back.
     std::shared_ptr<const void> persistent() const;
     void restore(Engine& engine, const std::shared_ptr<const void>& state);
+    // Online (round J): the game's SNDF and sfp pool as a restored engine has
+    // them (fresh: the stage snapshot does not keep them), at a live load's
+    // snapshot. The audio's copy (the mirror) keeps what still rings.
+    void fresh_game_driver();
     // `canonical`: the hashes' form (SnapshotForm::canonical) writes 0 for the
     // decoding positions (frames_read: audio only, never read by the game).
     static void serialize_persistent(class StateArchive& archive, std::shared_ptr<const void>& state, bool canonical = false);

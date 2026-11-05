@@ -2663,6 +2663,22 @@ void SoundManager::restore(Engine& engine, const std::shared_ptr<const void>& op
     cri_ = state.cri;
 }
 
+// Online, at a live load's snapshot (Engine::begin_stage_load): a restored
+// engine is a new one with the snapshot's sound state, so its game SNDF and
+// sfp pool start free (save state version 36: "their state is not kept").
+// A member that loaded the visit live had the sounds of the stage it left
+// still in them (a common bank's one-shots, freed entries' flags, the
+// allocation counters since its own last restore), so a co-arrival's or a
+// classic joiner's tick state differed from its members' (round J: their
+// STATEHASH never agreed). Every member now starts the visit with the
+// restored engine's game SNDF and pool; the audio's copy (mirror_) is not
+// touched: what still rings plays out (or ends at its sequence's next use,
+// as before), nothing is cut. Offline never comes here.
+void SoundManager::fresh_game_driver() {
+    driver_ = sndf::Driver{};
+    sfp_ = {};
+}
+
 // The CRI streams' state (the stage snapshot's and the tick state's).
 void serialize_cri(StateArchive& a, CriStreams& cri) {
     a.io(cri.drive.buffer_start_offset);

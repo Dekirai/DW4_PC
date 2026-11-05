@@ -11,6 +11,7 @@
 #include <limits>
 #include <optional>
 #include <map>
+#include <string_view>
 #include <unordered_set>
 #include <utility>
 
@@ -569,11 +570,16 @@ struct Lua4Vm::Impl {
         std::vector<std::uint8_t> table_marks(tables.slots.size()), closure_marks(closures.slots.size());
         std::vector<std::uint32_t> table_work, closure_work;
         // Sharing sets: membership only, so the byte sum does not depend on hashing order.
-        std::unordered_set<const std::string*> strings;
+        // A string counts once per content, as Lua 4's interned TStrings do
+        // (luaS_new): the sum does not depend on which values happen to share
+        // one std::string, which a restored tick state (round J) cannot keep
+        // (values sharing a program's constant or a host's string; a joiner's
+        // collections came at other times than its members').
+        std::unordered_set<std::string_view> strings;
         std::unordered_set<const Lua4Program::Impl*> programs;
         std::size_t live = state_bytes, entries = 0;
         auto text = [&](const std::shared_ptr<const std::string>& value) {
-            if (value && strings.insert(value.get()).second) live += string_bytes(value->size());
+            if (value && strings.insert(std::string_view(*value)).second) live += string_bytes(value->size());
         };
         auto object = [&](Lua4Type type, std::uint64_t handle) {
             const auto at = static_cast<std::uint32_t>(handle);

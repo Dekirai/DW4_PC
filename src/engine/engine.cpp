@@ -826,6 +826,10 @@ void Engine::begin_stage_load(const StageSnapshot* restoring) {
     snapshot.personal = personal_;
     snapshot.serial = ++snapshot_serial_;
     snapshot_ = std::move(snapshot);
+    // Online (round J): from here every member of the visit has the game SNDF
+    // and sfp pool a restored engine has (SoundManager::fresh_game_driver).
+    if (online_.enabled)
+        if (auto* sound = get<SoundManager>()) sound->fresh_game_driver();
 }
 
 void Engine::restore(const StageSnapshot& snapshot) {
