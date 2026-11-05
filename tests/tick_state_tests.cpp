@@ -152,6 +152,13 @@ Engine& start(std::unique_ptr<Engine>& holder, const std::filesystem::path& data
     holder = std::make_unique<Engine>(data);
     Engine& engine = *holder;
     engine.set_card_root(std::filesystem::temp_directory_path() / "dw4_tick_state_tests_cards");
+    // A session's common sound banks come long before any online visit (the
+    // original loads them at boot, 802F902C; the port with the session's first
+    // sound effect), so they stand before the stage's, as a restored engine
+    // has them (SoundManager::restore); a direct start would load them after
+    // the stage's, and a request two banks hold would find another bank than
+    // a classic joiner's. (missing_cues loads them and changes nothing else.)
+    if (auto* sound = engine.get<SoundManager>()) (void)sound->missing_cues(engine, {});
     auto* sys = engine.get<GameSystem>();
     sys->direct_start = true;
     for (int s = 0; s < sc.players; ++s) {
