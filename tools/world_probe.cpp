@@ -10,7 +10,8 @@
 //   dw4_world_probe DATA redirect   a redirect of a parked stage change against a
 //                                   NEXTSTAGE to that stage and point (19.8.3)
 //   dw4_world_probe DATA homeover [CASE]  a stage group left with only defeated players
-//                                   after a HOME (19.6.5)
+//                                   after a HOME, with the alive mask of every stage change, and the
+//                                   original's game over offline (19.6.5)
 #include "dw4/engine/engine.hpp"
 #include "dw4/engine/managers.hpp"
 #include "dw4/engine/online.hpp"
@@ -439,10 +440,22 @@ void settings_probe() {
                                  : "equal",
                     r.second_stage.c_str(), host.second_stage.c_str());
     }
-    // DISSOLVE: the modes set back in the parked stage change (before the
-    // load step) against a Game Start with them: the hub's loaded files.
-    std::printf("dissolve: modes of H while in stag0101, own modes O set while the stage change to stagml11 is parked\n");
-    auto lobby_files = [&](const RoomSettings& start, const std::optional<RoomSettings>& at_park, std::string& light_line) {
+    // DISSOLVE: the own settings set back in the parked stage change (before
+    // the module reload and the load step) against the same departure with
+    // the own settings all along: the module reload's length (park to load
+    // step), the files the stagml11 load reads, the fast loading the load
+    // latched and the settings the engine holds after the load. (Fingerprints
+    // of these runs are not comparable: their stag0101 visits ran on
+    // different settings, so their histories differ.)
+    std::printf("dissolve: settings H while in stag0101, the own settings O set while the stage change to stagml11 is parked\n");
+    struct Lobby {
+        std::uint64_t park{}, load{}, loaded{};
+        std::vector<std::string> files;
+        bool fast_latch{};
+        std::string held;
+    };
+    auto lobby = [&](const RoomSettings& start, const std::optional<RoomSettings>& at_park) {
+        Lobby r;
         std::optional<Engine> holder;
         new_engine(holder);
         auto& engine = *holder;
@@ -457,16 +470,16 @@ void settings_probe() {
         engine.set_online(rules);
         engine.set_split_identity(0);
         engine.request_stage("stag0101");
-        bool posted = false, parked = false;
-        std::uint64_t loaded_at = 0;
-        std::vector<std::string> files;
+        bool posted = false;
+        std::uint64_t serial = 0;
         for (int i = 0; i < 6000; ++i) {
             if (!posted && engine.frame() > 1200 && engine.stage_name() == "stag0101" && engine.membership_safe()) {
                 post_departure(engine, "stagML11", 3);
                 posted = true;
             }
-            if (posted && !parked && engine.pending_stage()) {
-                parked = true;
+            if (posted && !r.park && engine.pending_stage()) {
+                r.park = engine.frame();
+                serial = engine.stage_snapshot() ? engine.stage_snapshot()->serial : 0;
                 BarrierResult b;
                 b.decision = Decision::dissolve;
                 b.own_slot = 0;
@@ -478,46 +491,54 @@ void settings_probe() {
                 }
             }
             step(engine, pads_at(engine.frame()));
-            if (engine.stage_name() == "stagml11" && !engine.loading() && !loaded_at) {
-                loaded_at = engine.frame();
-                files = file_names(engine);
+            if (r.park && !r.load && engine.stage_snapshot() && engine.stage_snapshot()->serial != serial) {
+                r.load = engine.frame();
+                r.fast_latch = engine.fast_loading();
+            }
+            if (r.load && engine.stage_name() == "stagml11" && !engine.loading()) {
+                r.loaded = engine.frame();
+                r.files = file_names(engine);
                 break;
             }
         }
-        light_line = "loaded at " + std::to_string(loaded_at);
+        const auto* s = engine.get<GameSystem>();
+        const auto& c = engine.cheats();
+        char text[160];
+        std::snprintf(text, sizeof text, "diff %d cam %d light %d fast %d rand %u/%d/%d drops %u", s->difficulty, s->camera_mode, s->light_mode,
+                      c.fast_loading ? 1 : 0, c.rand_seed, c.rand_enemies, c.rand_zones, c.drop_seed);
+        r.held = text;
         engine.set_online(OnlineRules{});
-        return files;
+        return r;
     };
-    RoomSettings own = base;
-    RoomSettings host = all;
-    host.fast_loading = false;
-    std::string l1, l2, l3;
-    const auto direct_own = lobby_files(own, std::nullopt, l1);
-    const auto host_kept = lobby_files(host, std::nullopt, l2);
-    const auto set_back = lobby_files(host, own, l3);
-    auto describe = [](const std::vector<std::string>& files) {
-        std::string camera, light;
-        for (const auto& f : files) {
+    auto describe = [](const Lobby& l) {
+        std::string camera;
+        for (const auto& f : l.files)
             if (f.find("aaaCamera") != std::string::npos) camera += f + " ";
-            if (f.find("ACMR") != std::string::npos || f.find("Light") != std::string::npos || f.find("light") != std::string::npos) light += f + " ";
-        }
-        return std::to_string(files.size()) + " files; camera: " + camera;
+        return "module reload " + std::to_string(l.load - l.park) + " steps (park " + std::to_string(l.park) + ", load step " + std::to_string(l.load) +
+               "), load latched fast loading " + (l.fast_latch ? "on" : "off") + ", loaded at " + std::to_string(l.loaded) + ", " +
+               std::to_string(l.files.size()) + " files (camera " + camera + "), holds [" + l.held + "]";
     };
-    std::printf("  own modes all along (%s): %s, %s\n", settings_text(own).c_str(), describe(direct_own).c_str(), l1.c_str());
-    std::printf("  host modes kept (%s): %s, %s; equal to own: %s\n", settings_text(host).c_str(), describe(host_kept).c_str(), l2.c_str(),
-                host_kept == direct_own ? "yes" : "no");
-    std::printf("  host modes, own set back at the park: %s, %s; equal to own: %s\n", describe(set_back).c_str(), l3.c_str(),
-                set_back == direct_own ? "yes" : "no");
-    for (const auto& f : host_kept)
-        if (std::find(direct_own.begin(), direct_own.end(), f) == direct_own.end()) std::printf("    host modes load %s\n", f.c_str());
-    for (const auto& f : direct_own)
-        if (std::find(host_kept.begin(), host_kept.end(), f) == host_kept.end()) std::printf("    own modes load %s\n", f.c_str());
-    if (set_back != direct_own) {
-        for (std::size_t k = 0; k < std::max(set_back.size(), direct_own.size()); ++k) {
-            const std::string a = k < set_back.size() ? set_back[k] : "-";
-            const std::string b = k < direct_own.size() ? direct_own[k] : "-";
-            if (a != b) std::printf("    file %zu: set back %s, own %s\n", k, a.c_str(), b.c_str());
+    RoomSettings all_but_fast = all;
+    all_but_fast.fast_loading = false;
+    const std::pair<RoomSettings, RoomSettings> pairs[] = {{all, base}, {base, all}, {all_but_fast, base}};
+    for (const auto& [host, own] : pairs) {
+        std::printf("  H [%s], O [%s]\n", settings_text(host).c_str(), settings_text(own).c_str());
+        const auto direct_own = lobby(own, std::nullopt);
+        const auto host_kept = lobby(host, std::nullopt);
+        const auto set_back = lobby(host, own);
+        std::printf("    O all along:          %s\n", describe(direct_own).c_str());
+        std::printf("    H kept:               %s\n", describe(host_kept).c_str());
+        std::printf("    H, O set at the park: %s\n", describe(set_back).c_str());
+        const bool same = set_back.load - set_back.park == direct_own.load - direct_own.park && set_back.files == direct_own.files &&
+                          set_back.fast_latch == direct_own.fast_latch && set_back.held == direct_own.held;
+        std::printf("    set back equals O all along (reload length, files, latch, settings): %s\n", same ? "yes" : "no");
+        for (std::size_t k = 0; k < std::max(set_back.files.size(), direct_own.files.size()); ++k) {
+            const std::string a = k < set_back.files.size() ? set_back.files[k] : "-";
+            const std::string b = k < direct_own.files.size() ? direct_own.files[k] : "-";
+            if (a != b) std::printf("      file %zu: set back %s, O all along %s\n", k, a.c_str(), b.c_str());
         }
+        for (const auto& f : host_kept.files)
+            if (std::find(direct_own.files.begin(), direct_own.files.end(), f) == direct_own.files.end()) std::printf("      H loads %s\n", f.c_str());
     }
 }
 
@@ -533,30 +554,53 @@ struct RedirectRun {
     std::vector<std::uint8_t> canonical;
     std::map<std::uint64_t, std::uint64_t> fingerprints;
     std::uint64_t redirect_frame{};
+    std::uint8_t present_at_park{};  // the engine at BARRIER_OK: its present slots
+    std::uint8_t present_after{};    // and after the load step (the DISSOLVE's solo engine)
 };
 
-enum class RedirectAt { none, park, after_first_transition_step, park_stage_only };
+// Where the redirect goes: none (a NEXTSTAGE as it was), at the park (on_barrier_ok,
+// before set_barrier's first step), after the module reload's first held field,
+// before the load step (the last held field: what follows is apply_barrier, the
+// load step's first work, engine.cpp 2062-2066), or the stage alone at the park.
+enum class RedirectAt { none, park, after_first_transition_step, before_load_step, park_stage_only };
+
+struct RedirectSetup {
+    std::uint8_t present = 1; // the stage group's present slots (slot 0 always)
+    int own_slot = 0;         // this engine's slot; the DISSOLVE moves it to slot 0
+};
 
 RedirectRun run_redirect(const std::string& first_target, int first_point, RedirectAt at, const std::string& to, int to_point,
-                         const RoomSettings& settings) {
+                         const RoomSettings& settings, const RedirectSetup& setup = {}, std::uint64_t load_after_park = 21) {
     RedirectRun run;
     std::optional<Engine> holder;
     new_engine(holder);
     auto& engine = *holder;
     auto* sys = engine.get<GameSystem>();
     sys->direct_start = true;
-    sys->players[0].joined = true;
+    const char* species[4] = {"p_agumon", "p_dorumon", "p_agumon", "p_dorumon"};
+    for (int s = 0; s < 4; ++s)
+        if (setup.present & (1u << s)) {
+            sys->players[std::size_t(s)].joined = true;
+            if (s > 0) sys->players[std::size_t(s)].digimon = species[s];
+        }
     set_modes(engine, settings);
     dw4::game::online::apply_room_cheats(settings, engine.cheats());
     OnlineRules rules;
     rules.enabled = true;
-    rules.present = 1;
+    rules.present = setup.present;
     engine.set_online(rules);
-    engine.set_split_identity(0);
+    engine.set_split_identity(setup.own_slot);
+    engine.set_view_slot(setup.own_slot);
     engine.request_stage("stag0101");
     bool posted = false;
-    int transition_steps = 0;
+    std::uint64_t transition_steps = 0;
     std::uint64_t serial = 0;
+    auto redirect = [&](bool with_point, std::uint64_t frame) {
+        engine.request_stage(to);
+        if (with_point)
+            if (auto* points = engine.get<PlayerPointManager>()) points->set_point_no(to_point);
+        run.redirect_frame = frame;
+    };
     for (int i = 0; i < 5200; ++i) {
         const std::uint64_t frame = engine.frame();
         if (!posted && frame > 1200 && engine.stage_name() == "stag0101" && engine.membership_safe()) {
@@ -568,24 +612,19 @@ RedirectRun run_redirect(const std::string& first_target, int first_point, Redir
         // comes before the next step.
         if (posted && !run.park_frame && engine.pending_stage()) {
             run.park_frame = frame;
+            run.present_at_park = engine.online().present;
             BarrierResult b;
             b.decision = Decision::dissolve;
-            b.own_slot = 0;
+            b.own_slot = setup.own_slot;
             b.rules = engine.online();
             engine.set_barrier(b);
-            if (at == RedirectAt::park || at == RedirectAt::park_stage_only) {
-                engine.request_stage(to);
-                if (at == RedirectAt::park)
-                    if (auto* points = engine.get<PlayerPointManager>()) points->set_point_no(to_point);
-                run.redirect_frame = frame;
-            }
+            if (at == RedirectAt::park || at == RedirectAt::park_stage_only) redirect(at == RedirectAt::park, frame);
         }
-        if (run.park_frame && !run.load_frame && at == RedirectAt::after_first_transition_step && transition_steps == 1) {
-            engine.request_stage(to);
-            if (auto* points = engine.get<PlayerPointManager>()) points->set_point_no(to_point);
-            run.redirect_frame = frame;
+        if (run.park_frame && !run.load_frame) {
+            if (at == RedirectAt::after_first_transition_step && transition_steps == 1) redirect(true, frame);
+            if (at == RedirectAt::before_load_step && transition_steps + 1 == load_after_park) redirect(true, frame);
+            ++transition_steps;
         }
-        if (run.park_frame && !run.load_frame) ++transition_steps;
         step(engine, pads_at(frame));
         const auto* snapshot = engine.stage_snapshot();
         if (snapshot && snapshot->serial != serial) {
@@ -596,6 +635,7 @@ RedirectRun run_redirect(const std::string& first_target, int first_point, Redir
                 run.stage = snapshot->stage;
                 run.point_no = snapshot->point_no;
                 run.canonical = engine.snapshot_bytes(SnapshotForm::canonical);
+                run.present_after = engine.online().present;
             }
         }
         if (run.load_frame) run.fingerprints[engine.frame()] = engine.net_fingerprint();
@@ -609,25 +649,7 @@ void redirect_probe() {
     RoomSettings zones = base;
     zones.rand_seed = 4242;
     zones.rand_zones = 1;
-    struct Case {
-        const char* name;
-        std::string first;
-        int first_point;
-        RedirectAt at;
-        RoomSettings settings;
-    };
-    const Case cases[] = {
-        {"NEXTSTAGE stagml11 point 3 (reference)", "stagML11", 3, RedirectAt::none, base},
-        {"NEXTSTAGE stagml02 point 0, redirect at the park", "stagML02", 0, RedirectAt::park, base},
-        {"NEXTSTAGE stag0102 point 0, redirect at the park", "stag0102", 0, RedirectAt::park, base},
-        {"NEXTSTAGE stagml02 point 0, redirect after the first transition step", "stagML02", 0, RedirectAt::after_first_transition_step, base},
-        {"NEXTSTAGE stagml02 point 0, redirect of the stage only", "stagML02", 0, RedirectAt::park_stage_only, base},
-    };
-    const Case zone_cases[] = {
-        {"zone shuffle: NEXTSTAGE stagml11 point 3 (reference)", "stagML11", 3, RedirectAt::none, zones},
-        {"zone shuffle: NEXTSTAGE dng101b1 point 0 (remapped), redirect at the park", "dng101b1", 0, RedirectAt::park, zones},
-    };
-    auto report = [](const RedirectRun& ref, const RedirectRun& r, const char* name) {
+    auto report = [](const RedirectRun& ref, const RedirectRun& r, const std::string& name) {
         std::size_t first_byte = 0;
         const bool same = r.canonical == ref.canonical;
         if (!same) {
@@ -641,24 +663,47 @@ void redirect_probe() {
             ++compared;
             if (!first_diff && it->second != fp) first_diff = frame;
         }
-        std::printf("  %-72s park %llu, load step %llu (+%llu), %s point %d, load snapshot %s", name, static_cast<unsigned long long>(r.park_frame),
-                    static_cast<unsigned long long>(r.load_frame), static_cast<unsigned long long>(r.teardown_fields), r.stage.c_str(), r.point_no,
-                    same ? "equal" : "differs");
+        std::printf("  %-80s park %llu (present %x), redirect %llu, load step %llu (+%llu, present %x), %s point %d, load snapshot %s", name.c_str(),
+                    static_cast<unsigned long long>(r.park_frame), unsigned(r.present_at_park), static_cast<unsigned long long>(r.redirect_frame),
+                    static_cast<unsigned long long>(r.load_frame), static_cast<unsigned long long>(r.teardown_fields), unsigned(r.present_after),
+                    r.stage.c_str(), r.point_no, same ? "equal" : "differs");
         if (!same) std::printf(" (from byte %zu of %zu)", first_byte, r.canonical.size());
         std::printf(", %llu frames compared, %s\n", static_cast<unsigned long long>(compared),
                     first_diff ? ("differ from " + std::to_string(first_diff)).c_str() : "equal");
     };
-    std::printf("redirect probe: stag0101 direct start, departure at frame > 1200; DISSOLVE answered at the park\n");
-    const auto ref = run_redirect(cases[0].first, cases[0].first_point, cases[0].at, "stagml11", 3, base);
-    report(ref, ref, cases[0].name);
-    for (std::size_t k = 1; k < std::size(cases); ++k) {
-        const auto r = run_redirect(cases[k].first, cases[k].first_point, cases[k].at, "stagml11", 3, cases[k].settings);
-        report(ref, r, cases[k].name);
+    struct Group {
+        const char* name;
+        RedirectSetup setup;
+        RoomSettings settings;
+        const char* other; // the departure the redirect replaces
+        int other_point;
+    };
+    // Solo; a parked guest of a stage group of two and of three (own slot 1),
+    // as at a stage group's DISSOLVE that leads home or an instance's end; and
+    // the zone shuffle (its remap happens in NEXTSTAGE).
+    const Group groups[] = {
+        {"solo", {1, 0}, base, "stagML02", 0},
+        {"two present, own slot 1", {0b011, 1}, base, "stagML02", 0},
+        {"three present, own slot 1", {0b111, 1}, base, "stag0102", 0},
+        {"solo, zone shuffle", {1, 0}, zones, "dng101b1", 0},
+    };
+    std::printf("redirect probe: stag0101 direct start, departure at frame > 1200; DISSOLVE (own slot as named) answered at the park;\n"
+                "each redirect to stagml11 point 3 against that group's NEXTSTAGE stagML11 point 3\n");
+    for (const auto& g : groups) {
+        const auto ref = run_redirect("stagML11", 3, RedirectAt::none, "stagml11", 3, g.settings, g.setup);
+        report(ref, ref, std::string(g.name) + ": NEXTSTAGE stagML11 point 3 (reference)");
+        const std::pair<RedirectAt, const char*> places[] = {
+            {RedirectAt::park, "at the park"},
+            {RedirectAt::after_first_transition_step, "after the first transition step"},
+            {RedirectAt::before_load_step, "before the load step (the top of apply_barrier)"},
+            {RedirectAt::park_stage_only, "of the stage only, at the park"},
+        };
+        for (const auto& [where, text] : places) {
+            if (g.settings.rand_zones && where != RedirectAt::park) continue;
+            const auto r = run_redirect(g.other, g.other_point, where, "stagml11", 3, g.settings, g.setup, ref.teardown_fields);
+            report(ref, r, std::string(g.name) + ": NEXTSTAGE " + g.other + " point " + std::to_string(g.other_point) + ", redirect " + text);
+        }
     }
-    const auto zref = run_redirect(zone_cases[0].first, zone_cases[0].first_point, zone_cases[0].at, "stagml11", 3, zones);
-    report(zref, zref, zone_cases[0].name);
-    const auto z = run_redirect(zone_cases[1].first, zone_cases[1].first_point, zone_cases[1].at, "stagml11", 3, zones);
-    report(zref, z, zone_cases[1].name);
 }
 
 // ---------------------------------------------------------------------------
@@ -675,13 +720,33 @@ void kill(Engine& engine, int slot) {
     engine.messenger().send(engine, "PLAYER", std::string_view(digimon), slot, "SQ_DEAD", dead);
 }
 
+// A player's model onto a position, as a script moves it (PLAYER SETMATRIX,
+// model_ctrl.cpp 1146-1153). False: no generated model.
+bool teleport(Engine& engine, int slot, const Vec3f& at) {
+    const auto* models = engine.get<ModelCtrlManager>();
+    const auto* p = models ? models->player(slot) : nullptr;
+    if (!p || !p->generated || !p->node) return false;
+    auto matrix = p->node->matrix;
+    matrix(3, 0) = at.x;
+    matrix(3, 1) = at.y;
+    matrix(3, 2) = at.z;
+    const Messenger::PortOnly port_only(engine.messenger());
+    Packet packet;
+    packet.matrices.push_back(matrix);
+    const auto& digimon = engine.get<GameSystem>()->players[std::size_t(slot)].digimon;
+    engine.messenger().send(engine, "PLAYER", std::string_view(digimon), slot, "SETMATRIX", packet);
+    return true;
+}
+
 struct HomeCase {
     const char* name;
     int players;
-    std::uint8_t killed;     // slots defeated at 1200 (in slot order, a frame apart)
-    std::uint8_t home;       // the slots HOME takes; this copy keeps the others
+    std::uint8_t killed;      // slots defeated from kill_from (in slot order, a frame apart)
+    std::uint8_t home;        // the slots HOME takes; this copy keeps the others
     std::uint64_t home_after; // frames after the last kill
     std::uint64_t kill_from = 1200;
+    bool online = true;       // online rules (else offline: the original's rules)
+    int onto_mat = -1;        // this slot is put onto dng101b1's matz01 (the way back) with its defeat
 };
 
 void homeover_probe(int only) {
@@ -691,20 +756,30 @@ void homeover_probe(int only) {
         {"3 players: 1 and 2 defeated stay, HOME takes living 0", 3, 0b0110, 0b0001, 300},
         {"2 players: HOME takes defeated 1, living 0 stays", 2, 0b0010, 0b0010, 300},
         {"2 players: nobody defeated, HOME takes 0", 2, 0b0000, 0b0001, 300},
-        {"2 players: both defeated, no HOME (the original)", 2, 0b0011, 0b0000, 300},
-        {"1 player defeated, no HOME (the original, solo)", 1, 0b0001, 0b0000, 300},
+        {"2 players: both defeated, no HOME (online rules)", 2, 0b0011, 0b0000, 300},
+        {"1 player defeated, no HOME (online rules)", 1, 0b0001, 0b0000, 300},
         {"2 players: defeat at 1800, HOME 10 frames after", 2, 0b0010, 0b0001, 10, 1800},
         {"2 players: defeat at 1800, HOME 300 frames after", 2, 0b0010, 0b0001, 300, 1800},
         {"2 players: defeat at 2600, HOME 10 frames after", 2, 0b0010, 0b0001, 10, 2600},
+        {"offline: 1 player defeated", 1, 0b0001, 0b0000, 300, 1200, false},
+        {"offline: 2 players, both defeated", 2, 0b0011, 0b0000, 300, 1200, false},
+        {"offline: 1 player defeated on matz01", 1, 0b0001, 0b0000, 300, 1200, false, 0},
+        {"1 player defeated on matz01 (online rules)", 1, 0b0001, 0b0000, 300, 1200, true, 0},
     };
     const char* species[4] = {"p_agumon", "p_dorumon", "p_agumon", "p_dorumon"}; // (three or four players load the q_ packages: these two exist)
-    std::printf("homeover probe: dng101b1 direct start, online rules; HOME emulated in the copy that keeps the other slots\n"
-                "(Engine::online_remove_player per HOME slot: the despawn and membership step the fork's other side gets)\n");
+    std::printf("homeover probe: dng101b1 direct start; HOME emulated in the copy that keeps the other slots\n"
+                "(Engine::online_remove_player per HOME slot: the despawn and membership step the fork's other side gets);\n"
+                "every stage change made pending is listed with the alive and present masks a BARRIER would carry\n"
+                "(GameEngineLink::alive_mask / present_mask, read after the step that made it pending, as Session::park reads them)\n");
     for (int index = 0; index < int(std::size(cases)); ++index) {
         if (only >= 0 && index != only) continue;
         const auto& c = cases[index];
         std::optional<Engine> holder;
         new_engine(holder);
+        dw4::game::online::EngineHooks hooks;
+        hooks.engine = [&]() -> Engine& { return *holder; };
+        hooks.fresh_engine = [&] { new_engine(holder); };
+        dw4::game::online::GameEngineLink link(hooks, RoomSettings{});
         auto& engine = *holder;
         auto* sys = engine.get<GameSystem>();
         sys->direct_start = true;
@@ -712,31 +787,43 @@ void homeover_probe(int only) {
             sys->players[std::size_t(s)].joined = true;
             sys->players[std::size_t(s)].digimon = species[s];
         }
-        OnlineRules rules;
-        rules.enabled = true;
-        rules.present = std::uint8_t((1u << c.players) - 1u);
-        engine.set_online(rules);
+        if (c.online) {
+            OnlineRules rules;
+            rules.enabled = true;
+            rules.present = std::uint8_t((1u << c.players) - 1u);
+            engine.set_online(rules);
+        }
         int keep = 0;
-        for (int s = 0; s < 4; ++s)
-            if ((rules.present & (1u << s)) && !(c.home & (1u << s))) {
+        for (int s = 0; s < c.players; ++s)
+            if (!(c.home & (1u << s))) {
                 keep = s;
                 break;
             }
         engine.set_split_identity(keep);
         engine.set_view_slot(keep);
         engine.request_stage("dng101b1");
-        std::uint64_t kills_done_at = 0, home_at = 0, over_at = 0;
+        std::uint64_t kills_done_at = 0, home_at = 0, first_change = 0;
         int next_kill = 0;
-        std::string over_stage;
+        std::string events, mat_at_kill;
         for (int i = 0; i < 6000; ++i) {
             const std::uint64_t frame = engine.frame();
             if (frame >= c.kill_from && !kills_done_at && engine.stage_name() == "dng101b1" && engine.membership_safe()) {
                 while (next_kill < 4 && !(c.killed & (1u << next_kill))) ++next_kill;
                 if (next_kill < 4) {
+                    if (next_kill == c.onto_mat) {
+                        const auto* mats = engine.get<MatCtrlManager>();
+                        const auto centre = mats ? mats->mat_centre("matz01") : std::nullopt;
+                        if (!centre || !teleport(engine, next_kill, *centre)) mat_at_kill += "(teleport failed) ";
+                    }
                     kill(engine, next_kill); // one defeat a frame
                     ++next_kill;
                 } else {
                     kills_done_at = frame;
+                    if (const auto* mats = engine.get<MatCtrlManager>()) {
+                        char text[64];
+                        std::snprintf(text, sizeof text, "matz01 players %x", unsigned(mats->players_on("matz01")));
+                        mat_at_kill += text;
+                    }
                 }
             }
             if (kills_done_at && !home_at && c.home && frame >= kills_done_at + c.home_after && engine.membership_safe()) {
@@ -746,24 +833,19 @@ void homeover_probe(int only) {
             }
             const bool before = engine.pending_stage().has_value();
             step(engine, pads_at(frame));
-            if (!before && engine.pending_stage() && !over_at) {
-                over_at = engine.frame();
-                over_stage = std::string(*engine.pending_stage());
+            if (!before && engine.pending_stage()) {
+                if (!first_change) first_change = engine.frame();
+                char text[160];
+                std::snprintf(text, sizeof text, "%s[%llu %s point %d alive %x present %x]", events.empty() ? "" : " ",
+                              static_cast<unsigned long long>(engine.frame()), std::string(*engine.pending_stage()).c_str(), link.pending_point(),
+                              unsigned(link.alive_mask()), unsigned(link.present_mask()));
+                events += text;
             }
-            if (over_at && engine.frame() > over_at + 2000) break;
+            if (first_change && engine.frame() > first_change + 2000) break;
         }
-        int alive = 0, generated = 0;
-        if (const auto* models = engine.get<ModelCtrlManager>())
-            for (int s = 0; s < 4; ++s)
-                if (const auto* p = models->player(s); p && p->generated) {
-                    ++generated;
-                    alive += p->hp > 0 ? 1 : 0;
-                }
-        std::printf("  %-56s kills done %llu, HOME %llu, stage change %s at %llu (%s), final stage %s present %x, players generated %d alive %d\n",
-                    c.name, static_cast<unsigned long long>(kills_done_at), static_cast<unsigned long long>(home_at), over_at ? "yes" : "none",
-                    static_cast<unsigned long long>(over_at),
-                    over_at ? ("+" + std::to_string(over_at - (home_at ? home_at : kills_done_at)) + " -> " + over_stage).c_str() : "-",
-                    engine.stage_name().c_str(), unsigned(engine.online().present), generated, alive);
+        std::printf("  %-52s %s, kills done %llu (%s), HOME %llu, stage changes: %s; final stage %s\n", c.name, c.online ? "online rules" : "offline",
+                    static_cast<unsigned long long>(kills_done_at), mat_at_kill.c_str(), static_cast<unsigned long long>(home_at),
+                    events.empty() ? "none" : events.c_str(), engine.stage_name().c_str());
         engine.set_online(OnlineRules{});
     }
 }
@@ -777,7 +859,15 @@ int main(int argc, char** argv) {
     }
     g_data = argv[1];
     const std::string what = argv[2];
-    std::filesystem::create_directories(card_root());
+    // The throwaway memory card folder goes on every way out (a failed probe
+    // left it in the temp folder).
+    struct CardFolder {
+        CardFolder() { std::filesystem::create_directories(card_root()); }
+        ~CardFolder() {
+            std::error_code ec;
+            std::filesystem::remove_all(card_root(), ec);
+        }
+    } cards;
     try {
         if (what == "settings") settings_probe();
         else if (what == "redirect") redirect_probe();
@@ -790,7 +880,5 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "probe failed: %s\n", e.what());
         return 1;
     }
-    std::error_code ec;
-    std::filesystem::remove_all(card_root(), ec);
     return 0;
 }

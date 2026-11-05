@@ -39,3 +39,25 @@ Logs: `build/meas/*.log`.
   twice (`build/det1.log`); ctest 56 of 56 (`build/ctest1.log`); the server
   solution builds (FakeClient with LoadGate.cs). Done; the lanes take M1-M5
   from SEAMLESS.md 19.25.
+
+## Review fixes (2026-11-05, evening)
+
+The review of the measurements (not ok to merge) found: the load gate's
+yaw grew past MaxYaw and the hub dropped about half of the presence (all
+fan-out numbers too low); M3 would count a *Give up* as defeated; the
+TryEnter misses are most likely the harness's timers; the gate's max
+criterion was rewritten by the measuring round; CPU and joins not measured
+as 19.17.4 asks; M2 measured only solo; the alive mask never read; minors.
+
+- 17:25: commit 0b3cdee7: LoadGate yaw in -pi..pi, invalid runs fail
+  (exit 1), joins cell under the base load, wake diagnostics, NETFP only for
+  sealed ticks; LoadGateNet (`loadgate --sockets`: a real RelayHub in a child
+  process on 56810+); RelayHub.SealRoom with SealPasses / SealTryMisses (the
+  pass's time read after the lock is taken), RoomHub.SealLateness; tests.
+- 17:30: `build/meas2/run_gate.sh r1` (in-process, sockets, idle-hub joins;
+  DOTNET_gcServer=1): `build/meas2/loadgate_r1.json`,
+  `loadgate_net_r1.json`, `joins_r1.json`, summary `lg_table2.py`.
+- Next: world_probe (redirect with two / three present and own slot 1,
+  before the load step; homeover with the alive mask of every stage change
+  and offline cases; settings DISSOLVE with fast loading; the card folder
+  removed on failure), `build/meas2/run_probes.sh r1`; then SEAMLESS.md.
