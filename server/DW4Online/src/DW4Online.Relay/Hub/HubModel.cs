@@ -182,6 +182,8 @@ public sealed class JoinState(HubInstance target, int slot, ArrivalGroup from, i
     public long CheckpointWaitUntil { get; set; }
     /// <summary>Round J: the joiner's state came from a checkpoint; the classic path is the fallback.</summary>
     public bool FromCheckpoint { get; set; }
+    /// <summary>The checkpoint the joiner's state came from (protocol 48: its READY is checked at its check tick).</summary>
+    public StoredCheckpoint? Checkpoint { get; set; }
     /// <summary>Round J: the next state is the classic one (a checkpoint failed).</summary>
     public bool Classic { get; set; }
     /// <summary>READY arrived (the joiner caught up).</summary>
@@ -192,8 +194,9 @@ public sealed class JoinState(HubInstance target, int slot, ArrivalGroup from, i
     /// <summary>Round J's review: the ranking took the checkpoint path's short catch-up; a fallback to the classic state
     /// checks the whole visit's catch-up time again.</summary>
     public bool PlannedCheckpoint { get; set; }
-    /// <summary>A READY from a checkpoint whose tick the members have not reported yet: checked when their NETFP comes
-    /// (round J's review: READY of T - 1 met no fingerprint and went unchecked).</summary>
+    /// <summary>A READY from a checkpoint whose tick the members have not reported yet: checked when their NETFP comes (the
+    /// donor's of the check tick in a protocol 48 room; round J's review: READY of T - 1 met no fingerprint and went
+    /// unchecked).</summary>
     public ReadyMsg? PendingReady { get; set; }
     public long PendingReadyAt { get; set; }
     /// <summary>The members' fingerprint of the pending READY's tick never came in time: it is taken unchecked.</summary>
@@ -208,6 +211,12 @@ public sealed record StoredCheckpoint(uint Tick, ulong Hash, uint LoadEnd, byte[
     public bool Agreed { get; set; }
     /// <summary>The member that uploaded it (a fork drops the parent's checkpoints of leaver donors after the fork tick).</summary>
     public HubMember? Donor { get; init; }
+    /// <summary>Protocol 48: the tick a READY from this checkpoint is checked at, after <see cref="Wire.ReadyCheckTicks"/>
+    /// replayed steps (Tick is the first tick not in the state).</summary>
+    public uint CheckTick => Tick + Wire.ReadyCheckTicks - 1;
+    /// <summary>Protocol 48: the donor's net fingerprint of <see cref="CheckTick"/> (its NETFP of that tick; null until it
+    /// came).</summary>
+    public ulong? CheckFp { get; set; }
 }
 
 /// <summary>A donor's checkpoint arriving in chunks.</summary>

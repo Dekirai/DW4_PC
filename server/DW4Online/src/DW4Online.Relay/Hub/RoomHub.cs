@@ -802,6 +802,32 @@ public sealed class RoomHub
             Count("netfp_ahead");
             return;
         }
+        if (Info.Protocol >= Wire.ReadyCheckProtocol)
+        {
+            // Protocol 48: the donor's fingerprint of its checkpoint's check tick (Wire.ReadyCheckTicks after the checkpoint
+            // tick; on a multiple of 60 its ordinary NETFP), which a READY from that checkpoint is checked against.
+            var checkpoints = i.Checkpoints.Where(c => c.Donor == m && c.CheckTick == msg.Tick && c.CheckFp is null).ToList();
+            foreach (var c in checkpoints) c.CheckFp = msg.Hash;
+            if (msg.Tick % 60 != 0)
+            {
+                // (Off the 60-tick raster only that one: nothing else votes on such a tick.)
+                if (checkpoints.Count == 0)
+                {
+                    Count("netfp_offgrid");
+                    return;
+                }
+                Count("check_fingerprints");
+                foreach (var o in i.Observers.ToList())
+                    if (o.Joining is { PendingReady: { } waiting, Checkpoint: { } used } wj && wj.Target == i && waiting.Tick == msg.Tick &&
+                        checkpoints.Contains(used))
+                    {
+                        wj.PendingReady = null;
+                        OnReady(o, waiting, now);
+                        if (i.Ended) return;
+                    }
+                return;
+            }
+        }
         if (!i.Fingerprints.TryGetValue(msg.Tick, out var d)) i.Fingerprints[msg.Tick] = d = [];
         // One report per member and tick: a second one (a forged NETFP for a tick already compared equal) started a vote
         // against its partner whenever it liked.
@@ -1674,6 +1700,7 @@ public sealed class RoomHub
                 j.StateSent = true;
                 j.StateSentAt = now;
                 j.FromCheckpoint = true;
+                j.Checkpoint = cp;
                 Count("checkpoint_joins");
                 SendState(m, t, StatePurpose.Join, j.Slot, cp);
                 return;
@@ -1692,6 +1719,7 @@ public sealed class RoomHub
         j.StateSent = true;
         j.StateSentAt = now;
         j.FromCheckpoint = false;
+        j.Checkpoint = null;
         SendState(m, t, StatePurpose.Join, j.Slot);
     }
 
@@ -1976,11 +2004,20 @@ public sealed class RoomHub
         var fromCheckpoint = (msg.Flags & ReadyMsg.FromCheckpoint) != 0;
         if (msg.Rate > 0 && !fromCheckpoint) m.Rate = Math.Min(msg.Rate, MaxReplayRate); // (a few ticks measure no rate)
         if (msg.Carry.Length > 0) j.Carry = msg.Carry;
-        // A READY from a checkpoint names the first fingerprint tick it replayed (a multiple of 60): when the members have not
-        // reported it yet (a sealed tick reaches them and the joiner at about the same time), the READY waits for their NETFP
-        // (OnNetFp), at most Instances:ReadyFingerprintWaitMs (round J's review: unchecked, a rebuild that missed a field
-        // only showed at the next vote after the JOIN, a resync screen right after joining).
-        if (fromCheckpoint && !j.ReadyWaitExpired && msg.Tick % 60 == 0 && !(target.Fingerprints.TryGetValue(msg.Tick, out var known) && known.Count > 0))
+        // What the READY's fingerprint is compared with: the members' NETFP of its tick (the most common one), else, in a
+        // protocol 48 room, the donor's fingerprint of the checkpoint's check tick (its NETFP Wire.ReadyCheckTicks after the
+        // checkpoint; only while the donor is in this instance: after a fork between the two its side may be the other one).
+        ulong? reference = target.Fingerprints.TryGetValue(msg.Tick, out var fps) && fps.Count > 0
+            ? fps.Values.GroupBy(x => x).OrderByDescending(x => x.Count()).First().Key
+            : null;
+        var checkTick = fromCheckpoint && Info.Protocol >= Wire.ReadyCheckProtocol && j.Checkpoint is { } used && msg.Tick == used.CheckTick &&
+                        used.Donor?.Instance == target;
+        if (reference is null && checkTick && j.Checkpoint!.CheckFp is { } donorFp) reference = donorFp;
+        // A READY from a checkpoint names its check tick or a later multiple of 60 (protocol 48; before, the first multiple of
+        // 60 it replayed): when its fingerprint has not come yet (a sealed tick reaches the members and the joiner at about the
+        // same time), the READY waits for it (OnNetFp), at most Instances:ReadyFingerprintWaitMs (round J's review: unchecked, a
+        // rebuild that missed a field only showed at the next vote after the JOIN, a resync screen right after joining).
+        if (fromCheckpoint && !j.ReadyWaitExpired && reference is null && (msg.Tick % 60 == 0 || checkTick))
         {
             if (j.PendingReady is null)
             {
@@ -1990,9 +2027,10 @@ public sealed class RoomHub
             }
             return;
         }
-        if (target.Fingerprints.TryGetValue(msg.Tick, out var fps) && fps.Count > 0)
+        // (Nothing to compare with: a tick without fingerprints, a donor that left before its check tick.)
+        if (fromCheckpoint && reference is null && !j.ReadyWaitExpired) Count("ready_without_reference");
+        if (reference is { } common)
         {
-            var common = fps.Values.GroupBy(x => x).OrderByDescending(x => x.Count()).First().Key;
             if (common != msg.NetFp)
             {
                 ++j.Attempts;
@@ -2022,7 +2060,8 @@ public sealed class RoomHub
             target.RebuildTick = msg.Tick;
             Count("ready_from_checkpoint");
         }
-        Note("ready", target, ("member", m.Index), ("tick", msg.Tick), ("rate", msg.Rate), ("checkpoint", fromCheckpoint));
+        Note("ready", target, ("member", m.Index), ("tick", msg.Tick), ("rate", msg.Rate), ("checkpoint", fromCheckpoint),
+            ("checked", reference is not null), ("from", fromCheckpoint ? j.Checkpoint?.Tick ?? 0 : 0));
         StampJoin(target, m, now);
     }
 

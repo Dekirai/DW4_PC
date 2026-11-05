@@ -47,9 +47,10 @@ public partial class HubLogicTests
         public long Now { get; private set; } = Stopwatch.Frequency * 1000;
         public Dictionary<string, (HubMember Member, Peer Peer)> M { get; } = [];
 
-        public Harness(InstanceOptions? instances = null, RelayOptions? relay = null, Action<StateJob>? stateRunner = null)
+        public Harness(InstanceOptions? instances = null, RelayOptions? relay = null, Action<StateJob>? stateRunner = null,
+            int protocol = Wire.CheckpointProtocol)
         {
-            Hub = new RoomHub(new RoomInfo("ROOM01", Wire.CheckpointProtocol, 1, 2, 10), relay ?? new RelayOptions(), new SealingOptions(),
+            Hub = new RoomHub(new RoomInfo("ROOM01", protocol, 1, 2, 10), relay ?? new RelayOptions(), new SealingOptions(),
                 instances ?? new InstanceOptions(), NullLogger.Instance, null, stateRunner);
         }
 
@@ -363,9 +364,9 @@ public partial class HubLogicTests
     // ---- Round J: joins from a checkpoint (SEAMLESS.md 6.13.4-6.13.5)
 
     /// <summary>A solo leader in stag0101 that reached its load end (K = 20) and reported its STATEHASH of tick 600.</summary>
-    private static Harness CheckpointTarget(InstanceOptions? options = null)
+    private static Harness CheckpointTarget(InstanceOptions? options = null, int protocol = Wire.CheckpointProtocol)
     {
-        var h = new Harness(options);
+        var h = new Harness(options, protocol: protocol);
         h.Connect("a", 0);
         h.Connect("b", 1);
         h.Barrier("a", "stag0101");
@@ -591,6 +592,100 @@ public partial class HubLogicTests
         late.Hub.Housekeep(late.Now);
         Assert.True(late.P("a").Has(Msg.JoinReq));
         Assert.Equal(1, late.Hub.Counters["ready_unchecked"]);
+    }
+
+    // ---- Protocol 48: the READY check at the checkpoint's check tick (SEAMLESS.md 6.13.5)
+
+    [Fact]
+    public void A_ready_from_a_checkpoint_is_checked_at_its_check_tick_against_the_donors_fingerprint()
+    {
+        // (Before, the READY named the first multiple of 60 after the checkpoint and waited for it: up to a second more.)
+        foreach (var (equal, readyFirst) in new[] { (true, true), (true, false), (false, true), (false, false) })
+        {
+            var h = CheckpointTarget(protocol: Wire.ReadyCheckProtocol);
+            var i = h.I("a");
+            h.Barrier("b", "stag0101");
+            Upload(h, "a", 650, 0xBEEF, [9, 9, 9]);
+            Assert.Equal(650u + Wire.ReadyCheckTicks - 1, i.Checkpoints.Last().CheckTick);
+            var ok = h.Decision("b");
+            var donorFp = equal ? 0x77UL : 0x78UL;
+            if (!readyFirst) h.Send("a", new NetFpMsg(i.Id, i.Visit, 664, donorFp).Frame());
+            var states = h.P("b").Frames.Count(f => f.Type == Msg.StateData);
+            h.Send("b", new ReadyMsg(ok.NewInst, ok.NewVisit, 664, 0x77, 0, [7], ReadyMsg.FromCheckpoint).Frame());
+            if (readyFirst)
+            {
+                // The joiner was quicker than the donor's report: the READY waits for it.
+                Assert.False(h.P("a").Has(Msg.JoinReq));
+                Assert.Equal(1, h.Hub.Counters["ready_deferred"]);
+                h.Send("a", new NetFpMsg(i.Id, i.Visit, 664, donorFp).Frame());
+            }
+            Assert.Equal(1, h.Hub.Counters["check_fingerprints"]);
+            Assert.Equal(donorFp, i.Checkpoints.Last().CheckFp);
+            Assert.False(i.Fingerprints.ContainsKey(664)); // (it votes on nothing)
+            if (equal)
+            {
+                Assert.True(h.P("a").Has(Msg.JoinReq));
+                Assert.False(i.CheckpointSuspect);
+                Assert.Equal(664u, i.RebuildTick);
+            }
+            else
+            {
+                // The rebuild is off: the path is suspect, the joiner gets the classic state instead of joining.
+                Assert.False(h.P("a").Has(Msg.JoinReq));
+                Assert.True(i.CheckpointSuspect);
+                Assert.Equal(1, h.Hub.Counters["ready_mismatch"]);
+                Assert.True(h.P("b").Frames.Count(f => f.Type == Msg.StateData) > states);
+                Assert.Null(StateBlob.Parse(h.P("b").StateBlob()).Checkpoint);
+            }
+        }
+    }
+
+    [Fact]
+    public void Only_the_donors_check_tick_is_taken_off_the_raster_and_a_later_multiple_of_60_is_checked_as_before()
+    {
+        var h = CheckpointTarget(protocol: Wire.ReadyCheckProtocol);
+        var i = h.I("a");
+        h.Barrier("b", "stag0101");
+        Upload(h, "a", 650, 0xBEEF, [9, 9, 9]);
+        var ok = h.Decision("b");
+        // Another tick off the raster: no checkpoint's check tick, ignored.
+        h.Send("a", new NetFpMsg(i.Id, i.Visit, 665, 0x55).Frame());
+        Assert.Equal(1, h.Hub.Counters["netfp_offgrid"]);
+        Assert.False(i.Fingerprints.ContainsKey(665));
+        Assert.Null(i.Checkpoints.Last().CheckFp);
+        // The joiner replayed past a multiple of 60 after the check tick: the members' NETFP of that tick decides.
+        h.Send("a", new NetFpMsg(i.Id, i.Visit, 664, 0x77).Frame());
+        h.Send("a", new NetFpMsg(i.Id, i.Visit, 720, 0x99).Frame());
+        h.Send("b", new ReadyMsg(ok.NewInst, ok.NewVisit, 720, 0x98, 0, [7], ReadyMsg.FromCheckpoint).Frame());
+        Assert.Equal(1, h.Hub.Counters["ready_mismatch"]);
+        Assert.True(i.CheckpointSuspect);
+
+        // The donor's report never comes (it forked or went in that step): the READY is taken unchecked after the wait.
+        var late = CheckpointTarget(protocol: Wire.ReadyCheckProtocol);
+        late.Barrier("b", "stag0101");
+        Upload(late, "a", 650, 0xBEEF, [9, 9, 9]);
+        var lateOk = late.Decision("b");
+        late.Send("b", new ReadyMsg(lateOk.NewInst, lateOk.NewVisit, 664, 0x77, 0, [7], ReadyMsg.FromCheckpoint).Frame());
+        Assert.False(late.P("a").Has(Msg.JoinReq));
+        late.Advance(2100);
+        late.Hub.Housekeep(late.Now);
+        Assert.True(late.P("a").Has(Msg.JoinReq));
+        Assert.Equal(1, late.Hub.Counters["ready_unchecked"]);
+    }
+
+    [Fact]
+    public void In_a_protocol_47_room_a_ready_at_the_check_tick_is_not_awaited()
+    {
+        // (A 47 joiner names a multiple of 60 and a 47 donor sends no check fingerprint: the room keeps 47's rule.)
+        var h = CheckpointTarget();
+        var i = h.I("a");
+        h.Barrier("b", "stag0101");
+        Upload(h, "a", 650, 0xBEEF, [9, 9, 9]);
+        var ok = h.Decision("b");
+        h.Send("b", new ReadyMsg(ok.NewInst, ok.NewVisit, 664, 0x77, 0, [7], ReadyMsg.FromCheckpoint).Frame());
+        Assert.True(h.P("a").Has(Msg.JoinReq));
+        Assert.Null(i.Checkpoints.Last().CheckFp);
+        Assert.False(h.Hub.Counters.ContainsKey("ready_deferred"));
     }
 
     [Fact]

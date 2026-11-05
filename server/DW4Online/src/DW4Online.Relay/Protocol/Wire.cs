@@ -24,6 +24,12 @@ public static class Wire
     /// an older room's members would refuse a codec 2 state. The same protocol as RoomStoryKeeper.QueuedProtocol (round
     /// G-core: STORY_ACK's queued, flag 503 as story): the two rounds ship together as 47.</summary>
     public const int CheckpointProtocol = 47;
+    /// <summary>Protocol 48 (SEAMLESS.md 6.13.5): a READY from a checkpoint names the checkpoint's check tick (the checkpoint
+    /// tick plus <see cref="ReadyCheckTicks"/> - 1) or a later multiple of 60, and the donor of every checkpoint sends its NETFP
+    /// of that check tick; a 47 room's joiner names the next multiple of 60 (up to a second of waiting).</summary>
+    public const int ReadyCheckProtocol = 48;
+    /// <summary>Protocol 48: the replayed steps a READY from a checkpoint is checked after (a quarter second).</summary>
+    public const uint ReadyCheckTicks = 15;
 }
 
 /// <summary>Frame types. Client to server 0x01-0x3F, server to client 0x80-0xBF.</summary>
