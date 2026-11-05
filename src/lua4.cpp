@@ -1354,6 +1354,18 @@ void Lua4Vm::load_state(std::span<const std::uint8_t> bytes, const std::function
     for (auto& g : s.closures.generation) g = r.u32();
     s.closures.free.resize(r.count(closures));
     for (auto& f : s.closures.free) f = r.u32();
+    // The free lists name empty slots of their arrays, each once (round J's
+    // review: Arena::place wrote slots[free.back()] unchecked, and a forged
+    // checkpoint with its own hash wrote past the array).
+    auto check_free = [](const auto& arena, const char* what) {
+        std::vector<std::uint8_t> seen(arena.slots.size());
+        for (const auto f : arena.free) {
+            if (f >= arena.slots.size() || arena.slots[f] || seen[f]) fail(std::string("tick state: a bad Lua ") + what + " free list");
+            seen[f] = 1;
+        }
+    };
+    check_free(s.tables, "table");
+    check_free(s.closures, "closure");
     for (auto* v : {&s.nblocks, &s.threshold, &s.collections, &s.objects_live, &s.entries_live, &s.object_trigger, &s.entry_trigger,
                     &s.work_remaining, &s.instructions, &s.host_calls, &s.depth, &s.stack_last, &s.stack_peak, &s.error_top,
                     &s.callback_top})
