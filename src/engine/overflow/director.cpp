@@ -324,7 +324,8 @@ double OverflowDirector::hp_factor(double minutes) const {
     const auto& t = config_.tuning;
     const double end = double(t.phase_steps) / 3600.0;
     const double warm = std::clamp(double(t.warm_up) + (1.0 - double(t.warm_up)) * (minutes - (end - 1.0)) / 2.0, double(t.warm_up), 1.0);
-    return (1.0 + double(t.hp_per_minute) * minutes) * std::exp(double(t.hp_growth) * minutes) * warm;
+    const double early = std::min(minutes, double(t.hp_late_minutes)), late = std::max(0.0, minutes - double(t.hp_late_minutes));
+    return (1.0 + double(t.hp_per_minute) * minutes) * std::exp(double(t.hp_growth) * early + double(t.hp_growth_late) * late) * warm;
 }
 
 // The time factor of the damage taken, every second.

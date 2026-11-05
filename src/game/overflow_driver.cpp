@@ -84,6 +84,8 @@ public:
         real("damage_growth", config.tuning.damage_growth);
         real("damage_late_minutes", config.tuning.damage_late_minutes);
         real("damage_growth_late", config.tuning.damage_growth_late);
+        real("hp_late_minutes", config.tuning.hp_late_minutes);
+        real("hp_growth_late", config.tuning.hp_growth_late);
         real("hp_growth", config.tuning.hp_growth);
         // (KEY=A,B,C,D,E: the knots at 0:00, 5:00, 10:00, 15:00, 20:00.)
         auto five = [&](std::string_view key, std::array<float, 5>& value) {

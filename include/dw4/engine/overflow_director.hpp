@@ -121,6 +121,10 @@ struct Tuning {
     // HP = HPMAX x (1 + hp_per_minute x minutes), x warm_up in phase 1 (rising to 1 from 4:00 to 6:00)
     float hp_per_minute = 0.10f, warm_up = 0.6f;   // (4.3 had 0.10; the O1a balance pass 0.15)
     float hp_growth = 0.08f;                     // x e^(hp_growth x minutes) on top (the O1a review round: late crowds outlast the Art)
+    // ... and from hp_late_minutes on by hp_growth_late a minute instead
+    // (continuous at the knot).
+    float hp_late_minutes = 1.0e9f;
+    float hp_growth_late = 0.08f;
     // damage taken x (1 + damage_per_minute x minutes) x e^(damage_growth x minutes) x the tier
     float damage_per_minute = 0.0f;              // (4.3 had 0.04, the O1a balance pass 0.14)
     float damage_growth = 0.13f;                 // (the O1a review round 0.18: no wall; the balance round of 05.11, docs/OVERFLOW_DIRECTOR.md 10)
