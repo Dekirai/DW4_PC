@@ -8,7 +8,9 @@ namespace DW4Online.Tests;
 /// <summary>
 /// Friends and blocks (SEAMLESS.md 19.11) on an in-memory store: requests and accepts, crossing requests, the silent
 /// decline that stays "sent" until it expires, cancels, exact names, blocks that are never revealed, every limit of
-/// Friends:* with its default, expiry and the purge, the audit of refusals and the notifier calls. The SQL store behind
+/// Friends:* with its default, requests that wait beyond the incoming cap (and the review's probes that the cap once
+/// answered), expiry and the purge, the audit of refusals (once an hour), the per-account locks and the notifier calls.
+/// The SQL store behind
 /// the same interface is covered by the integration tests (SocialApiTests, FriendPageTests, AccountScrubTests).
 /// </summary>
 public class SocialServiceTests

@@ -63,13 +63,22 @@ down at any time). Keep it short; the design stays in SEAMLESS.md.
 - The fresh XAMPP data directory had crashed Aria system tables
   (`mysql.db`, `mysql.global_priv`): repaired with mysqlcheck and a
   restart (README note); only the restricted-grants test writes there.
-- Review fixes (2026-11-05, f9c1b535 code and tests, then the docs commit):
+- Review fixes (2026-11-05, f9c1b535 code and tests, 5776b626 docs):
   waiting requests instead of `requests_full`; unblock only up to the cap;
   `memberSince` null on hidden player cards; striped per-account locks with
   a 10 s wait (503 `social_busy`); `social_limit` once per account, limit
   and hour; own id for the block form's input; privacy retention lines;
   how round I1 registers its `IWorldNotifier`. Each new test was checked to
   fail with the old behaviour put back (mutations in a scratch copy).
+  Results: unit 290 of 290 (24 `SocialServiceTests`); the social
+  integration classes 24 of 24; the full integration run 103 passed,
+  4 skipped (EndToEnd), 6 failed only with "DW4ONLINE_TEST_PORTS has no
+  free port left" (the relay classes; 30 ports, one hand-out a minute);
+  those three classes alone a minute later 18 of 18. Logs:
+  `build/i2fix/unit.log`, `integration.log`, `integration_relay.log`,
+  `integration_social.log`. No game, relay or client code changed (the
+  branch's diff outside `server/` and `docs/` is empty): no ctest, det.sh
+  or game scenarios.
 - The own mysqld must outlive the shell that starts it: a killed mysqld
   left `mysql.global_priv` broken (README: `--skip-grant-tables` +
   `REPAIR TABLE ... USE_FRM`).
