@@ -100,6 +100,8 @@ public sealed class RoomHub
     public IReadOnlyCollection<HubInstance> Instances => _instances.Values;
     /// <summary>Counters for the tests and the diagnostics.</summary>
     public Dictionary<string, long> Counters { get; } = [];
+    /// <summary>How late this hub's sealing passes come (diagnostics and the load gate, SEAMLESS.md 19.17.4).</summary>
+    public SealLateness SealLateness { get; } = new();
 
     private int Capacity => Math.Clamp(_inst.PlayersPerInstance, 1, Wire.MaxSlots);
     private uint MaxReplayRate => (uint)Math.Max(1, _inst.MaxReplayRate);
@@ -557,6 +559,7 @@ public sealed class RoomHub
     {
         var next = long.MaxValue;
         {
+            if (i.Sealing && Due(i, i.NextSeal) <= now && (i.SealStop is not { } held || i.NextSeal <= held)) SealLateness.Add(now - Due(i, i.NextSeal));
             var batch = new List<byte[]>();
             while (i.Sealing && Due(i, i.NextSeal) <= now)
             {

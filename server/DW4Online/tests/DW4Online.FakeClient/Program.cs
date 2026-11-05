@@ -14,9 +14,13 @@ using DW4Online.FakeClient;
 //   proxy   --listen PORT --target PORT [--one-way MS] [--jitter MS] [--loss P] [--up MS,JITTER,LOSS] [--down MS,JITTER,LOSS]
 //           (--up / --down: an asymmetric link, client to server / server to client; each overrides the symmetric values)
 //   matrix  [--ports 53100-53199] [--clients 3] [--warmup 20] [--seconds 40] [--parallel 3] [--out FILE.json] [--md FILE.md] [--quick]
-//   loadgate [--seconds 30] [--threads 8] [--cells base,fullhub,select,storm] [--out FILE.json]
-//           round I1a's load gate on one in-process hub (SEAMLESS.md 19.17.4, LoadGate.cs; no sockets)
-//   joins   [--minutes 1,10,25] [--out FILE.json]   the lock's holds of one classic join per log length
+//   loadgate [--seconds 30] [--threads 8] [--cells base,fullhub,select,storm,joins] [--out FILE.json]
+//           [--sockets --port 56810]
+//           round I1a's load gate (SEAMLESS.md 19.17.4): on one in-process hub (LoadGate.cs), or with --sockets against a
+//           real relay in a child process on loopback, one port per cell from --port (LoadGateNet.cs; not the joins cell).
+//           Fails (exit 1) when a cell's run is invalid (frames the hub refused or dropped).
+//   loadgate-relay --port P --key HEX   the relay process of loadgate --sockets (commands on stdin)
+//   joins   [--minutes 1,10,25] [--out FILE.json]   the lock's holds of one classic join per log length, on an idle hub
 var args2 = args.Skip(1).ToArray();
 string Opt(string name, string fallback = "")
 {
@@ -152,19 +156,27 @@ switch (args.FirstOrDefault())
         var seconds = double.Parse(Opt("--seconds", "30"), CultureInfo.InvariantCulture);
         var threads = int.Parse(Opt("--threads", "8"), CultureInfo.InvariantCulture);
         var only = Opt("--cells");
+        var sockets = args2.Contains("--sockets");
+        var port = int.Parse(Opt("--port", "56810"), CultureInfo.InvariantCulture);
         var results = new List<Dictionary<string, object>>();
         foreach (var cell in LoadGate.Cells())
         {
             if (only.Length > 0 && !only.Split(',').Contains(cell.Name)) continue;
-            var r = LoadGate.Run(cell, seconds, threads, Console.WriteLine);
+            if (sockets && cell.JoinsPerMinute > 0) continue;
+            var r = sockets ? await LoadGateNet.RunAsync(cell, port++, seconds, threads, Console.WriteLine) : LoadGate.Run(cell, seconds, threads, Console.WriteLine);
             Console.WriteLine(LoadGate.Json(r));
             results.Add(r);
+            if (Opt("--out") is { Length: > 0 } partial) await File.WriteAllTextAsync(partial, LoadGate.Json(results));
             GC.Collect();
             await Task.Delay(1000);
         }
         if (Opt("--out") is { Length: > 0 } outFile) await File.WriteAllTextAsync(outFile, LoadGate.Json(results));
-        return 0;
+        var invalid = results.Where(r => r.TryGetValue("valid", out var v) && v is bool b ? !b : v is System.Text.Json.JsonElement e && e.ValueKind == System.Text.Json.JsonValueKind.False).ToList();
+        foreach (var r in invalid) Console.Error.WriteLine($"INVALID {r["cell"]}: {string.Join("; ", (IEnumerable<string>)r["invalid_reasons"])}");
+        return invalid.Count == 0 ? 0 : 1;
     }
+    case "loadgate-relay":
+        return await LoadGateNet.RelayHostAsync(int.Parse(Opt("--port"), CultureInfo.InvariantCulture), Opt("--key"));
     case "joins":
     {
         // Round I1a's load gate, the joins cell (SEAMLESS.md 19.17.4): the lock's holds of one classic join per log length.
@@ -176,6 +188,6 @@ switch (args.FirstOrDefault())
         return 0;
     }
     default:
-        Console.Error.WriteLine("usage: DW4Online.FakeClient client|proxy|matrix|loadgate|joins ... (see Program.cs)");
+        Console.Error.WriteLine("usage: DW4Online.FakeClient client|proxy|matrix|loadgate|loadgate-relay|joins ... (see Program.cs)");
         return 1;
 }

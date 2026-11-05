@@ -219,33 +219,47 @@ public sealed class RelayHub : BackgroundService
     {
         while (!_stopping)
         {
-            var now = Stopwatch.GetTimestamp();
             var next = long.MaxValue;
-            foreach (var hub in _rooms.Values)
-            {
-                // A room busy under its lock (a burst of frames, a state being sent) is not waited for: the others seal
-                // on time, it seals its due ticks in the next pass a millisecond later (in one batch).
-                if (!Monitor.TryEnter(hub.Sync))
-                {
-                    next = Math.Min(next, now + Stopwatch.Frequency / 1000);
-                    continue;
-                }
-                try
-                {
-                    next = Math.Min(next, hub.Seal(now));
-                }
-                catch (Exception e)
-                {
-                    hub.Fault(e, "sealing");
-                }
-                finally
-                {
-                    Monitor.Exit(hub.Sync);
-                }
-            }
+            foreach (var hub in _rooms.Values) next = Math.Min(next, SealRoom(hub));
             // Nothing sealed: wait for a wake (an instance starts sealing) but look again every 50 ms.
             var limit = Stopwatch.GetTimestamp() + Stopwatch.Frequency / 20;
             _timer.WaitUntil(Math.Min(next, limit));
+        }
+    }
+
+    /// <summary>The sealing thread's passes over a room, and those that found the room's lock taken (SEAMLESS.md 19.17.4:
+    /// with one hub for the world a miss is world-wide seal jitter). Diagnostics and the load gate.</summary>
+    public long SealPasses => Interlocked.Read(ref _sealPasses);
+    public long SealTryMisses => Interlocked.Read(ref _sealTryMisses);
+    private long _sealPasses;
+    private long _sealTryMisses;
+
+    /// <summary>
+    /// One room's step of the sealing thread: seals its due ticks and returns when it needs the next pass. A room busy
+    /// under its lock (a burst of frames, a state being sent) is not waited for: the others seal on time, it seals its due
+    /// ticks in the next pass a millisecond later (in one batch), counted in <see cref="SealTryMisses"/>. The pass's time
+    /// is read once the lock is held, so a later bounded wait for the lock cannot make it stale.
+    /// </summary>
+    public long SealRoom(RoomHub hub)
+    {
+        Interlocked.Increment(ref _sealPasses);
+        if (!Monitor.TryEnter(hub.Sync))
+        {
+            Interlocked.Increment(ref _sealTryMisses);
+            return Stopwatch.GetTimestamp() + Stopwatch.Frequency / 1000;
+        }
+        try
+        {
+            return hub.Seal(Stopwatch.GetTimestamp());
+        }
+        catch (Exception e)
+        {
+            hub.Fault(e, "sealing");
+            return long.MaxValue;
+        }
+        finally
+        {
+            Monitor.Exit(hub.Sync);
         }
     }
 
