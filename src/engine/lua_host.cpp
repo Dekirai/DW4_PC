@@ -42,6 +42,7 @@ std::vector<Lua4Value> string_result(std::string value) { return {Lua4Value::str
 
 void Engine::install_lua() {
     lua_ = std::make_unique<Lua4Vm>();
+    lua_->set_strings_by_content(online_.enabled); // (round J: online only; offline as before)
     // (Online: the own scenes' talk globals belonged to the old VM.)
     talk_globals_ = {};
     talk_globals_side_ = -1;

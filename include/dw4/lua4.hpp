@@ -177,6 +177,12 @@ public:
     // its identity cannot be replaced until the root invocation completes.
     void set_resumable_host_handler(Lua4ResumableHostHandler handler);
     void set_global(std::string name, const Lua4Value& value);
+    // The collector's string count (round J): once per content, as Lua 4's
+    // interned strings (online engines: a restored tick state cannot keep
+    // which values share one std::string), or once per std::string object
+    // (the default, offline as before round J). Not part of the VM's state:
+    // the engine sets it from its online rules.
+    void set_strings_by_content(bool on);
     Lua4Value get_global(std::string_view name) const;
     Lua4Value table_get(const Lua4Value& table, const Lua4Value& key) const;
     // Mark & sweep like Lua 4.0.1 luaC_collectgarbage. Runs on its own at

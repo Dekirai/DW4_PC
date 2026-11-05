@@ -397,6 +397,7 @@ struct Lua4Vm::Impl {
     // L->top inside the running host callback (a nested chunk's closure).
     std::size_t stack_last{}, stack_peak{}, error_top{}, callback_top{};
     bool stopped{}, running{};
+    bool strings_by_content{}; // the collector counts a string once per content (online), else per object
     Lua4Site site;
 
     explicit Impl(Lua4Limits requested) : limits(requested), work_remaining(requested.max_string_work) {
@@ -574,12 +575,18 @@ struct Lua4Vm::Impl {
         // (luaS_new): the sum does not depend on which values happen to share
         // one std::string, which a restored tick state (round J) cannot keep
         // (values sharing a program's constant or a host's string; a joiner's
-        // collections came at other times than its members').
+        // collections came at other times than its members'). Online only
+        // (strings_by_content, set by the engine from its online rules; round
+        // J's review): offline the count stays per std::string object, as
+        // before round J, so offline collections come at the same steps.
         std::unordered_set<std::string_view> strings;
+        std::unordered_set<const std::string*> string_objects;
         std::unordered_set<const Lua4Program::Impl*> programs;
         std::size_t live = state_bytes, entries = 0;
         auto text = [&](const std::shared_ptr<const std::string>& value) {
-            if (value && strings.insert(std::string_view(*value)).second) live += string_bytes(value->size());
+            if (!value) return;
+            if (strings_by_content ? strings.insert(std::string_view(*value)).second : string_objects.insert(value.get()).second)
+                live += string_bytes(value->size());
         };
         auto object = [&](Lua4Type type, std::uint64_t handle) {
             const auto at = static_cast<std::uint32_t>(handle);
@@ -1074,6 +1081,9 @@ void Lua4Vm::set_resumable_host_handler(Lua4ResumableHostHandler handler) {
     if(!impl_ || impl_->running || impl_->stopped || (impl_->pending_execution() && impl_->resumable_host))
         fail("cannot replace the resumable host owner of an inactive/running/stopped or suspended VM");
     impl_->resumable_host=std::move(handler);
+}
+void Lua4Vm::set_strings_by_content(bool on) {
+    if (impl_) impl_->strings_by_content = on;
 }
 void Lua4Vm::set_global(std::string name, const Lua4Value& value) {
     if (!impl_ || impl_->running || impl_->stopped || impl_->pending_execution()) fail("cannot modify an inactive/running/stopped VM or suspended VM");

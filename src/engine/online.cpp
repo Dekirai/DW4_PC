@@ -220,6 +220,9 @@ void Engine::set_online(const OnlineRules& rules) {
     }
     const OnlineRules before = online_;
     online_ = rules;
+    // (Round J's review: the Lua collector counts strings per content online
+    // only; offline it stays as before, the rule "offline bit-identical".)
+    if (lua_) lua_->set_strings_by_content(online_.enabled);
     // (The sound output plays the own windows' sound effects of this
     // machine's member alone, SEAMLESS.md 5.3.)
     if (auto* sound = get<SoundManager>()) sound->set_listener_slot(online_.enabled ? view_slot_ : -1);
