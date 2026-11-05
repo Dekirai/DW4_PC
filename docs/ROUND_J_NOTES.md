@@ -127,3 +127,12 @@ story-point credit).
   SEAMLESS.md 17 "JS and JS2 after the review". Independent check: JS, JS2,
   J1, J5, RGJ1, S3, JR and ui newchars pass, ctest 54/54, det.sh 4004f056 /
   396cb219 twice on a build without DW4_ONLINE_DEV (build/k_*.log).
+- 05.11 evening, lane `jready` (branch `fix-j-ready` from main a475b98a,
+  worktree `DW4_PC-wt/jready`, mysqld 3620, ports 56600-56649): the join
+  latency the last verification found (READY waited for the next multiple of
+  60: J1 859 ms, up to about 1.2 s). Design: READY from a checkpoint names its
+  *check tick* T + 14, whose NETFP the donor sends after every upload
+  (protocol 48, `wire::kReadyCheckTicks`, `Wire.ReadyCheckTicks`); the relay
+  compares it there. Relay c98a553f, client e1aacb45; HubLogicTests 62/62,
+  session tests 233 checks. Baseline J1 on this machine (main):
+  522 ms (`build/scen_base_j1.log`). Next: scenarios, docs.
