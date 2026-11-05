@@ -154,3 +154,15 @@ online_character's guest_records_keep_the_own_story).
   second time on build/rel of 51342d28: 4004f056 / 396cb219 (both runs,
   work/dref/checks/det/det_r69gcore_b). Next: character_test C1-C3, S16,
   S5, S3, S14h, S14a.
+- 05.11 07:45 (third run): character_test C1-C3 on build/dev of 017bd012:
+  C1 and C2 FAIL, C3 passes (build/char_C1C3b.log). Cause: `CharacterSync`
+  put the own story from the room entry into the room OWNER's records too,
+  so his stage change and save room saves that only moved his story on were
+  "unchanged" (C1: no save room upload; C2: no upload after the other PC's
+  save, so no 409). Fix d0dcdb6b: `CharacterSync::Config::guest`
+  (online_run: `!room_owner`); only a guest's records get the own story, the
+  owner's keep the engine's story (his own, the room story); the entry's
+  rewrite of the cache's boxes stays for both. New test
+  `owner_records_keep_the_engine_story` (fails without the fix: no upload).
+  C1-C3 PASS on build/dev of d0dcdb6b (build/char_C1C3c.log: C1 363 s,
+  C2 210 s, C3 11 s).
