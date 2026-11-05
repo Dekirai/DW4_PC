@@ -42,4 +42,20 @@ down at any time). Keep it short; the design stays in SEAMLESS.md.
 
 ## Progress
 
-- (started 2026-11-05)
+- 2026-11-05: parts 1-7 built and committed (4771e74b server and web,
+  b2e889ba unit tests, 88353910 integration tests, then the docs commit).
+- Tests: unit 285 of 285 (19 new `SocialServiceTests`); integration on the
+  own mysqld (XAMPP 10.4.32, port 3623, PID file in
+  `server/DW4Online/.local`): 108 passed, 4 skipped (EndToEnd: WinHTTP
+  client, Python and certificate store not set up), 0 failed. The full
+  suite needs more than the 30 ports of 56760-56789 within a minute
+  (`TestPorts` hands a port out once a minute): the relay classes
+  (`RelayConnectionTests`, `OnlineStoryTests`, `RoomTests`) ran again on
+  their own a minute later, 18 of 18. Logs: `build/i2social/unit.log`,
+  `integration.log`, `integration_relay.log`.
+- The fresh XAMPP data directory had crashed Aria system tables
+  (`mysql.db`, `mysql.global_priv`): repaired with mysqlcheck and a
+  restart (README note); only the restricted-grants test writes there.
+- Open: merge into main and a server release (the user deploys it after a
+  backup; DEPLOY.md 9.1); the views, prefs, whereabouts and the relay's
+  notifier come with round I1.

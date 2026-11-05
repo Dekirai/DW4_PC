@@ -8517,6 +8517,15 @@ merged, protocol 46, migrations up to 0011. Rounds G (8.8), D (9.1), J and R
 mats still follow the original gather rule. Nothing in this section is
 built, run or measured; numbers without a measurement are estimates.
 
+**Status (2026-11-05).** Rounds G-core and J are merged (DW4Online 0.1.5,
+protocol 47). **Round I2-social is built** on branch `feat-i2social` (from
+main a475b98a, not merged, no version bump): migration `0012_friends`, the
+friend service with every limit of 19.11, blocks, `IWorldNotifier` with a
+no-op implementation, the REST endpoints of 19.19 for friends, blocks and
+players, `/account/friends`, the profile buttons and the privacy page; the
+decisions it took where 19.11 left a case open and what it left for round I1
+are under "Round I2-social" in 19.25. Rounds I1a-I6 are not built.
+
 **How it was made.** Three independent drafts (architecture first, player
 first, risk first) read the relay (`RoomHub.cs` with `Decide`, `JoinOrNew`
 and `FanPresence`, `RelayHub.cs`, `HubModel.cs`, `HubOptions.cs`,
@@ -9785,9 +9794,12 @@ any visit length. The user's P3 puts J before round I3.
 
 **Blocks.**
 
-- A block removes the friendship and the requests in both directions, the
-  pair from a common party, and the blocked player from an instance the
-  blocker hosts (19.6.6).
+- A block removes the friendship and the blocker's own request, the pair
+  from a common party, and the blocked player from an instance the blocker
+  hosts (19.6.6). The blocked player's request to the blocker no longer
+  reaches him but stays "sent" for its sender (`delivered = 0`; a vanishing
+  row would reveal the block); an unblock delivers it (round I2-social,
+  19.25).
 - From then on, both ways: no instance in the prompt, the browser or the
   friend list, no join, no travel, no co-arrival, no ghost figure, no invite,
   no request, no whereabouts.
@@ -10041,7 +10053,8 @@ a hundred requests are one toast, not two hundred seconds of them).
 Two migrations, numbers fixed at the integration (0011 is round 59's):
 **00NN `friends`** with round I2's social lane, which runs beside round J
 before round I1 (19.25): `friendships`, `friend_requests`,
-`account_blocks`; and **00NN+1 `world`** with round I1: `online_prefs`,
+`account_blocks` (built as `0012_friends`, with `cancelled_at` and without
+the views, 19.25 "Round I2-social"); and **00NN+1 `world`** with round I1: `online_prefs`,
 `instance_history` and its members, `player_reports` (I1b), the columns
 and the views. Readable in HeidiSQL: names as the UI names things, enums as
 text, no blobs, views with user names.
@@ -10065,6 +10078,7 @@ CREATE TABLE friend_requests (              -- accept deletes the row and writes
   delivered  TINYINT(1) NOT NULL DEFAULT 1, -- 0: the receiver blocks the sender; never shown to the receiver
   created_at DATETIME(3) NOT NULL,          -- pending and declined expire after Friends:RequestDays (30), then purged
   decided_at DATETIME(3) NULL,
+  cancelled_at DATETIME(3) NULL,            -- (built) declined rows only: the sender cancelled it; hidden from him, the decline holds
   PRIMARY KEY (from_account_id, to_account_id),
   KEY ix_friend_requests_to (to_account_id, state, created_at),
   CONSTRAINT fk_fr_from FOREIGN KEY (from_account_id) REFERENCES accounts(id) ON DELETE CASCADE,
@@ -10341,7 +10355,8 @@ the decision stays under the lock).
 | `World:PartyIdleMinutes`, `World:InviteSeconds` | 10, 60 | I4 |
 | `World:StaffTagWhenPlaying` | true | 19.14 |
 | `World:LogBudgetMB` | 512 | all sealed logs together |
-| `Friends:RequestsPerHour` / `PerDay` / `MaxPendingOut` / `MaxPendingIn` / `MaxFriends` / `MaxBlocks` / `RequestDays` | 20 / 100 / 50 / 100 / 200 / 500 / 30 | 19.11 |
+| `Friends:RequestsPerHour` / `PerDay` / `MaxPendingOut` / `MaxPendingIn` / `MaxFriends` / `MaxBlocks` / `RequestDays` | 20 / 100 / 50 / 100 / 200 / 500 / 30 | 19.11 (built in round I2-social) |
+| `RateLimits:SocialPerMinute` / `FriendListSeconds` / `WebSocialPerMinute` | 60 / 2 / 60 | 19.11's other social calls and `GET /friends`; the website's friend and block buttons (built in round I2-social) |
 | `World:JoinsPerMinute` | 6 | travels and prompt joins per account |
 | `Play:RequireWorld` | true | replaces `Play:RequireRoom` for the achievements (19.8.9) |
 | `Reports:PerDay` | 10 | *Report player* per account (I1b) |
@@ -10789,6 +10804,86 @@ of 19.19 (friends, blocks, players); `/account/friends`, the profile
 buttons, the privacy page. Done when `SocialServiceTests`,
 `AccountScrubTests` and the website's page tests pass; its own server
 release.
+
+*Built (2026-11-05, branch `feat-i2social`, notes in
+`docs/ROUND_I2_SOCIAL_NOTES.md`).*
+
+- **Database:** migration `0012_friends` with the three tables of 19.17.1
+  plus `friend_requests.cancelled_at` (below), CHECK constraints for the
+  pairs (`account_lo < account_hi`, no self pairs) and a COMMENT on every
+  table and column for HeidiSQL. **No views:** `CREATE VIEW` is a right the
+  restricted service user of DEPLOY.md 2 does not have before round D's
+  grants (9.1.3), and 19.22 promises that this release needs only the
+  backup; `v_friends`, `v_friend_requests` and `v_blocks` stay with round
+  I1's `world` migration (or round D's grants). DEPLOY.md 9.1 gives the
+  HeidiSQL query that shows the tables with user names. A migration test
+  runs every migration as a user with exactly DEPLOY.md 2's grants.
+- **Scrub:** `AccountRepository.ScrubAsync` deletes the three tables' rows
+  in both columns; `AccountScrubTests` checks every column with a foreign
+  key to `accounts` after a player's and an admin's deletion (only
+  `rooms.host_account_id` and `account_bans.banned_by` may keep the id).
+- **Service** (`SocialService`, `Friends:*` with 19.17.5's defaults): every
+  write runs under one process-wide gate (crossing requests and the caps
+  cannot race); the hourly and daily request counts are kept in memory (a
+  restart starts them afresh); refusals by a limit write an audit row
+  `social_limit` with the limit's name (friend and block changes are not
+  audited); the hourly housekeeping purges expired requests.
+- **Cases 19.11 left open, decided here:**
+  - A block keeps the blocked player's pending request to the blocker and
+    makes it silent (`delivered = 0`): it stays "sent" in his list, so the
+    block is not revealed by a vanishing row; the blocker's own request to
+    him goes.
+  - An unblock delivers the formerly blocked player's still pending
+    requests (he sent them; the blocker may answer them now). A request the
+    blocker had declined stays declined.
+  - The sender's cancel deletes a pending request; a declined one is only
+    hidden from him (`cancelled_at`) and keeps its decline until it
+    expires: sending again shows it as sent again (with the new date) and
+    still delivers nothing. Without this a cancel and a new request would
+    get round the decline.
+  - Crossing requests: a request to a player whose own request to you is
+    open as he sees it (pending, or declined by you and not cancelled by
+    him) makes you friends at once, so a regretted decline is undone by
+    sending a request.
+  - The incoming cap is checked before the block, so a full inbox answers
+    "<name> can't take more friend requests right now." with and without a
+    block; the sender's limits (hourly, daily, outgoing, his 200 friends)
+    come first. A repeat of a request the sender already sees as sent is
+    no new request: it answers "Request sent." and counts for nothing.
+  - Accepting needs both sides below 200 friends ("<name> can't take more
+    friends right now." for the other side).
+- **REST** (19.19): `GET /friends` (friends with `presence: null` until
+  round I1's relay fills it, `requestsIn`, `requestsOut` with `expiresAt`,
+  `blocks`, `limits`; one call per `RateLimits:FriendListSeconds`, 2),
+  `POST /friends/requests` (`{result: sent | friends, message}`), accept,
+  decline, cancel, `DELETE /friends/{username}`, `GET` / `POST` / `DELETE
+  /blocks`, `GET /players/{username}` (name, member since, `hidden`, the
+  character's form, name and level when the profile is visible, and
+  `relation`: self, friends, request_sent, request_received, blocked, none;
+  never the other side's block); `RateLimits:SocialPerMinute` (60) for all
+  but the list. Errors are problem details (`player_not_found`,
+  `own_account`, `you_blocked`, `already_friends`, `friend_limit`,
+  `other_friend_limit`, `outgoing_limit`, `requests_full`, `block_limit`,
+  `request_not_found`, `not_friends`, `not_blocked`, and 429
+  `friend_request_rate` with `retryAfterSeconds`).
+- **Website:** `/account/friends` (add by exact name, requests in with
+  Accept / Decline, sent requests with Cancel, friends with Remove and
+  Block, blocked players with Unblock, block by name), *Friends* in the
+  navigation, the profile's buttons per relation (also on private
+  profiles; signed-out visitors get a login link), the privacy page (what
+  friends see, no search, silent declines, blocks never revealed, what
+  deletion removes, refusals in the security log);
+  `RateLimits:WebSocialPerMinute` (60) for their POSTs.
+- **Left for round I1** (they need its tables or the relay): the online
+  preferences and "Recently played with" on `/account/friends`, the
+  whereabouts and "last online" on profiles (by the `whereabouts`
+  preference), the relay's `IWorldNotifier` and the privacy line about
+  moderators watching instances (there are no instances yet).
+- **Tests:** `SocialServiceTests` (19 unit tests: every rule above and
+  every limit with its default), `SocialApiTests` (6), `AccountScrubTests`
+  (3), `FriendPageTests` (4), `MigratorTests` (0012 and the restricted
+  grants); the server's whole unit and integration suites on a private
+  MariaDB 10.4.32.
 
 **Round I2: friends in the game, blocks everywhere, the shared story
 point** (M, two lanes).
