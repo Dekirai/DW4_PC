@@ -8144,9 +8144,9 @@ Every READY from a checkpoint was checked (`ready ... checked=True`), after
 15 or 16 replayed steps; it waited 5-64 ms for the check tick after the
 rebuild (the joiner's own transition and load and the rebuild take about
 0.3 s, the check tick a quarter second after T). The donor's check NETFP
-costs 0.14-0.2 ms (once 0.44 ms), once per upload. Worst of all checkpoint
-joins 423 ms (JL), median 340 ms (nine joins) (main a475b98 on the same stack: J1 522 ms,
-`build/scen_base_j1.log`). JS: the drift found at the check tick 3,595
+costs 0.14-0.2 ms (once 0.44 ms), once per upload. Worst of the nine joins
+from a checkpoint 423 ms (JL), median 340 ms (main a475b98 on the same
+stack: J1 522 ms, `build/scen_base_j1.log`). JS: the drift found at the check tick 3,595
 (`ready_mismatch`, `checkpoint_suspect` why=ready), the classic state joins
 it (1,230 ms from the decision: the classic catch-up of 3,648 ticks). JB:
 the damaged checkpoint refused, the classic join (1,141 ms). JR: the resync
