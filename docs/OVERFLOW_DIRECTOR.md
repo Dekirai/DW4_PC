@@ -361,3 +361,69 @@ list of small ones; each is answered here, with its test.
 | Recycling and encirclements brought hurt enemies back healed | GENERATE sets the full HP | the new HP keeps the old share (SETHP) | ctest `overflow_spawn` (an encircled enemy at half HP stays at half) |
 | The run loop never called `DiscordPresence::configure` | | as the story loop: every pass with the F1 setting (test runs on) | T3 (the run's activity set as before); by reading (a test run always switches it on) |
 | `game_main.cpp` conflicts with main 9700b11 | | the merge of main 64d0b61 (docs/OVERFLOW_HOST.md 9) | T11, T3, the run's log and summary, P1 / P3 / M1 / S1 (OVERFLOW_HOST.md 9) |
+
+## 10. The balance round of 05.11 (the user's first run)
+
+The user played O1a (05.11, Agumon): "feels quite good already, but I was
+dead after 2 minutes - definitely has potential". Too many enemies (round
+him quickly, no gap to run) and too much damage (a few hits cost a lot).
+The targets (SURVIVAL.md 17.1: a good run lasts 22-25 minutes; the first
+minutes gentle): a newcomer does not die in the first five minutes unless
+he stands in a crowd, normally reaches phase 2 and sees 10:00. Branch
+`fix-o1a-balance` from main b226bc0. This section is the round's progress
+note.
+
+### 10.1 The human bot (`bot=human`)
+
+`src/engine/overflow/human_bot.cpp`: a newcomer as the user played. It sees
+the enemies 15-18 steps late (250-300 ms) and looks again every 6-14 steps
+while it flees, every 20-40 while it roams; its stick turns to the new way
+in about five steps. With an enemy 11-16 units away (as it sees them) it
+flees from the middle of the enemies within 22 (weighted 1/d), its way off
+by up to 30 degrees and one flight in seven by 70 more, at full stick, and
+holds the way 0.4-0.9 s: no search for the gap, so it runs into the next
+group at times. Otherwise it roams to points of the arena (one goal in four
+the middle of a group, to let the Art work) at 0.75-1.0 of the stick,
+stops 0.3-1.2 s now and then when nothing is within 25 units, and bends
+away from the ring's wall. It takes an HP disk 0.75 s after its HP fell
+below a quarter, and the offers as a newcomer (`offers=newcomer`, its
+default: the first line or, as often, a random one). Its draws come from
+its own generator seeded from the run's seed (the spawner's draws are
+untouched): one seed, one run (ctest `overflow_human`).
+
+The run log's minute lines (and the summary's) add the damage taken by
+source in MaxHPs (`contact`: the attacker within 15 units, `shot`: farther,
+`poison`), the mean of the living enemies within 15 and 30 units
+(`near15`, `near30`) and the share of steps without a 90-degree way out
+between the enemies within 20 (`trapped`); the summary adds `taken_by
+PHASE FAMILY` (the damage taken per phase and family) and `gap_refused`.
+`build/t/bal_targets.py DIR [TAG...] [--md] [--fam]` reads them: the death
+times, the round's targets, the per-minute medians over the runs alive
+through the minute, the damage per family and phase a run-minute.
+
+### 10.2 Before (main b226bc0 with the bot)
+
+20 seeds a form for `human` and `kite`, 10 for `stand` and `circle`,
+headless (`build/t/batch.sh`); the kite bot's runs are the review round's
+(the same death times as 6.1, so the bot's helpers changed nothing):
+
+| Bot | Agumon: death times | Veemon |
+| --- | --- | --- |
+| human | median 2:09 (1:20-3:31, one 13:07); 15 of 20 dead before 3:00, 1 reaches 5:00 | median 2:18 (1:16-3:24, one 12:11); 16 before 3:00, 1 reaches 5:00 |
+| kite | median 8:18 (4:20-12:54); 4 reach 10:00 | median 10:32 (8:39-11:52); 11 reach 10:00 |
+| stand | median 3:19 (1:48-13:15) | median 2:26 (1:25-8:55) |
+| circle | median 4:55 (4:27-5:51) | median 5:00 (3:24-6:11) |
+
+The human bot dies where the user died. Its minutes (Agumon; the medians
+over the runs alive through the minute; damage in MaxHPs a minute):
+
+| min | taken | contact | shot | poison | near15 | near30 | trapped | alive | level | runs |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 1 | 0.58 | 0.45 | 0.08 | 0.00 | 0.73 | 3.66 | 0.02 | 17 | 6 | 20 |
+| 2 | 0.62 | 0.56 | 0.06 | 0.00 | 1.08 | 5.57 | 0.04 | 20 | 9 | 16 |
+| 3 | 0.50 | 0.47 | 0.03 | 0.00 | 0.91 | 4.84 | 0.02 | 23 | 11 | 5 |
+
+Veemon: 0.59 / 0.55 / 0.29 taken, 0.52 / 0.49 / 0.28 of it contact. The
+kite bot (Agumon) in the same minutes: 0.34 / 0.22 / 0.26 taken, 0.07 /
+0.06 / 0.08 contact (near15 0.18-0.24), then 0.23 at 4:00-5:00, 0.77 and
+1.39 in the two minutes after 5:00 (shots 0.45 / 0.85, poison 0.14 / 0.31).
