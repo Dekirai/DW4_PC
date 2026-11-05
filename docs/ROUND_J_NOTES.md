@@ -77,3 +77,18 @@ story-point credit).
   sound (presentation only), JS / JB / JL / JF scenarios, the regression
   scenarios, the protocol number (47 at the integration), SEAMLESS.md 6.13
   measured numbers.
+- 2026-11-05 07:45 (third run, after the overnight shutdown): JS's hook
+  also leaves the system generator out (bbf8028; the models' HP of the
+  first minute equal the load end's, so run 4 never parted). JB failed on
+  the classic joiner's STATEHASH, JR (co-arrival) at its load end: a member
+  that loaded the visit live kept the last stage's game SNDF (ringing
+  common sounds, freed sfp entries' flags, the allocation counters), a
+  restored engine starts it free. Fix (c102749): online, a live load's
+  snapshot gives the game SNDF and the sfp pool a restored engine's state
+  (`SoundManager::fresh_game_driver`; the audio's mirror keeps what rings).
+  After a resync from a checkpoint the Lua collector's live bytes drifted
+  (+46: strings counted per std::string object, a restored VM cannot keep
+  which values share one); strings now count once per content, as Lua 4's
+  interned TStrings (c102749). ctest `tick_state`: the straight run loads
+  the common banks first, as a restored engine (bd2b80f; it failed in all
+  four scenarios since bb527a7). Runs (build/jset_run6.log): J1, JB pass.
