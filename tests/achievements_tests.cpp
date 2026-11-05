@@ -395,14 +395,25 @@ void online_rooms() {
         const PortEvent card[] = {{Kind::card, 0, 9, 2, {}}};
         check(!has(owner.observe(step, card, AchievementGate::open, false, 3), "card_rare"), "slot 0's card is not this machine's");
     }
-    // Numemon: the room story's flags count only when one rises here.
+    // Numemon: online only the Numemon freed in this account's own live steps
+    // count (round G-core, docs/SEAMLESS.md 8.8: a mask in the profile); the
+    // room story's flags never do.
     {
         AchievementTracker member;
         auto step = room_step(0, false);
         step.numemon_freed = 10;
         check(!has(member.observe(step, {}, AchievementGate::open, false, 1), "numemon_free"), "flags from the room story");
         const PortEvent freed[] = {{Kind::story_flag, -1, 95, 1, {}}};
-        check(has(member.observe(step, freed, AchievementGate::open, false, 2), "numemon_free"), "the tenth freed here");
+        check(!has(member.observe(step, freed, AchievementGate::open, false, 2), "numemon_free"),
+              "the tenth freed here where the owner freed nine is one");
+        check(member.profile().stat("numemon_freed") == 1 && member.profile().stat("numemon_mask") == (1 << 6), "one Numemon in the mask");
+        // The same Numemon again (another room's story) adds nothing; the other nine freed here complete it.
+        member.observe(step, freed, AchievementGate::open, false, 3);
+        check(member.profile().stat("numemon_freed") == 1, "a Numemon counts once");
+        std::vector<PortEvent> rest;
+        for (int f = 89; f <= 98; ++f)
+            if (f != 95) rest.push_back({Kind::story_flag, -1, f, 1, {}});
+        check(has(member.observe(step, rest, AchievementGate::open, false, 4), "numemon_free"), "all ten freed in own live steps");
         AchievementTracker offline;
         auto local = live_step();
         local.numemon_freed = 10;

@@ -10,8 +10,19 @@ namespace DW4Online.Tests;
 /// </summary>
 public class RoomStoryKeeperTests
 {
+    /// <summary>The census's sets without the key setter stages of round G: the per-visit, spacing and policy tests below
+    /// were written with keys from any stage; the key stages have tests of their own (<see cref="GCoreKeeperTests"/>).</summary>
+    internal static readonly StorySets NoKeyStages = LoadWithoutKeyStages();
+
+    private static StorySets LoadWithoutKeyStages()
+    {
+        var node = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "story", "story_sets.json")))!;
+        node["setters"]!.AsObject().Remove("keys");
+        return StorySets.Parse(node.ToJsonString());
+    }
+
     private static RoomStoryKeeper Keeper(StoryPolicy policy = StoryPolicy.Drop, bool ownerPresent = true, int difficulty = 0, RoomStoryData? story = null) =>
-        new(story ?? new RoomStoryData(), difficulty, policy, ownerPresent);
+        new(story ?? new RoomStoryData(), difficulty, policy, ownerPresent, NoKeyStages);
 
     private static StoryDelta Flags(params int[] flags) => new() { Flags = [.. flags] };
 
@@ -54,7 +65,7 @@ public class RoomStoryKeeperTests
         Assert.Equal([new StoryRefused(StoryKeyKind.Flag, 393, StoryRefusal.NotMember)], t.Refused);
         t = k.Take(Flags(393), null, 0);
         Assert.Equal(StoryRefusal.NotMember, t.Refused.Single().Reason);
-        // Keys come from item pickups anywhere.
+        // Keys come from item pickups anywhere (without the key setter stages of round G; GCoreKeeperTests has those).
         t = k.Take(new StoryDelta { Folder = [4] }, "dng101b1", 0);
         Assert.True(t.Changed && k.Story.Folder[4] == 1 && k.Story.Flags[518 + 4] == 1);
     }
@@ -151,7 +162,7 @@ public class RoomStoryKeeperTests
     public void A_visit_gives_one_phase_step_and_one_key_item_once_it_is_old_enough()
     {
         // (The per-member intervals apart: A_patient_member_... checks those.)
-        var k = new RoomStoryKeeper(new RoomStoryData(), 0, StoryPolicy.Drop, true) { PhaseStepSeconds = 0, KeySeconds = 0 };
+        var k = new RoomStoryKeeper(new RoomStoryData(), 0, StoryPolicy.Drop, true, NoKeyStages) { PhaseStepSeconds = 0, KeySeconds = 0 };
         var young = new StoryVisit(1, 77, 3);
         // Younger than MinVisitSeconds: everything waits (the client sends it again).
         var t = k.Take(new StoryDelta { Phase = 1, Flags = [22], Folder = [0] }, "stagML02", 0, young);
@@ -164,15 +175,15 @@ public class RoomStoryKeeperTests
         Assert.Equal(1, StoryMerge.Phase(k.Story));
         Assert.Equal(1, k.Story.Flags[22]);
         Assert.Equal([1, 0, 0], k.Story.Folder[..3]);
-        Assert.Equal([1, 2], t.Refused.Where(r => r is { Kind: StoryKeyKind.Folder, Reason: StoryRefusal.Wait }).Select(r => r.Index));
-        // A second step in the same visit waits, however long it lasts.
+        Assert.Equal([1, 2], t.Refused.Where(r => r is { Kind: StoryKeyKind.Folder, Reason: StoryRefusal.Queued }).Select(r => r.Index));
+        // A second step in the same visit waits (queued: earned, merged at a later visit), however long it lasts.
         t = k.Take(new StoryDelta { Phase = 2, Folder = [1] }, "stagML02", 0, old with { Seconds = 600 });
-        Assert.Equal(2, t.Refused.Count(r => r.Reason == StoryRefusal.Wait));
+        Assert.Equal(2, t.Refused.Count(r => r.Reason == StoryRefusal.Queued));
         Assert.False(t.Changed);
         // The member's next visit takes the next step and the next key; another member's visit counts on its own.
         t = k.Take(new StoryDelta { Phase = 2, Folder = [1, 2] }, "stagML02", 0, new StoryVisit(1, 78, 11));
         Assert.Equal(2, StoryMerge.Phase(k.Story));
-        Assert.Equal(new StoryRefused(StoryKeyKind.Folder, 2, StoryRefusal.Wait), t.Refused.Single());
+        Assert.Equal(new StoryRefused(StoryKeyKind.Folder, 2, StoryRefusal.Queued), t.Refused.Single());
         Assert.True(k.Take(new StoryDelta { Folder = [2] }, "dng101b1", 0, new StoryVisit(2, 78, 11)).Changed);
         Assert.Equal(1, k.Story.Folder[2]);
     }
@@ -233,7 +244,7 @@ public class RoomStoryKeeperTests
     [Fact]
     public void An_owner_without_a_story_starts_at_zero()
     {
-        var k = new RoomStoryKeeper(new RoomStoryData(), 0, StoryPolicy.Apply, true, started: false);
+        var k = new RoomStoryKeeper(new RoomStoryData(), 0, StoryPolicy.Apply, true, NoKeyStages, started: false);
         var visit = k.Epoch;
         var t = k.Take(new StoryDelta { Phase = 1, Flags = [22], Folder = [0], Counters = [new CounterGrowth(1, 4, 1, 300)] }, "stagML02", visit,
             new StoryVisit(1, 7, 2)); // (a young visit: dropped, not left waiting)
@@ -266,7 +277,7 @@ public class RoomStoryKeeperTests
     [Fact]
     public void Every_story_value_offered_before_the_start_is_dropped_whatever_the_checks_say()
     {
-        var k = new RoomStoryKeeper(new RoomStoryData(), 0, StoryPolicy.Apply, true, started: false);
+        var k = new RoomStoryKeeper(new RoomStoryData(), 0, StoryPolicy.Apply, true, NoKeyStages, started: false);
         var t = k.Take(new StoryDelta { Phase = 2, Flags = [70, 0, 406], Folder = [3, 11], Counters = [new CounterGrowth(7, 4, 1, 100_001), new CounterGrowth(3, 4, 1, 5)] },
             "stagML02", k.Epoch, new StoryVisit(1, 7, 30, 11, 50));
         Assert.Equal(
@@ -302,7 +313,7 @@ public class RoomStoryKeeperTests
     [Fact]
     public void A_guests_progress_from_before_the_start_never_becomes_the_new_owners_story()
     {
-        var k = new RoomStoryKeeper(new RoomStoryData(), 0, StoryPolicy.Drop, ownerPresent: true, started: false);
+        var k = new RoomStoryKeeper(new RoomStoryData(), 0, StoryPolicy.Drop, ownerPresent: true, sets: NoKeyStages, started: false);
         StoryVisit Guest(ulong key, double at, double seconds = 20) => new(1, key, seconds, 11, at);
         StoryVisit Owner(ulong key, double at, double seconds = 20) => new(0, key, seconds, 10, at, Owner: true);
         var lobby = k.Epoch;
@@ -346,7 +357,7 @@ public class RoomStoryKeeperTests
     [Fact]
     public void A_visit_from_before_the_start_counts_once_the_owner_is_in_it()
     {
-        var k = new RoomStoryKeeper(new RoomStoryData(), 0, StoryPolicy.Drop, ownerPresent: true, started: false) { PhaseStepSeconds = 0, KeySeconds = 0 };
+        var k = new RoomStoryKeeper(new RoomStoryData(), 0, StoryPolicy.Drop, ownerPresent: true, sets: NoKeyStages, started: false) { PhaseStepSeconds = 0, KeySeconds = 0 };
         var field = k.Epoch;
         Assert.False(k.Take(Flags(505), "stag0101", field, new StoryVisit(1, 50, 30, 11, 30)).Changed);
         Assert.True(k.OwnerStarted());
@@ -373,7 +384,7 @@ public class RoomStoryKeeperTests
         int[] lobby = [324, 329, 330, 331, 332, 335, 392, 393, 394, 395, 396, 397];
         var t = k.Take(Flags(lobby), "stagml12", 0, Guest(1, 1000));
         Assert.True(t.Changed);
-        Assert.Equal([394, 395, 396, 397], t.Refused.Where(r => r.Reason == StoryRefusal.Wait).Select(r => r.Index));
+        Assert.Equal([394, 395, 396, 397], t.Refused.Where(r => r.Reason == StoryRefusal.Queued).Select(r => r.Index));
         Assert.Equal(8, lobby.Count(f => k.Story.Flags[f] != 0));
         Assert.Equal(4, k.EarnedCount);
         // One more every 30 s, in a later visit and another stage (stag0101 sets none of them).
@@ -395,7 +406,7 @@ public class RoomStoryKeeperTests
         var bs = Keeper(story: phase6);
         Assert.True(bs.Take(Flags(lobby[..8]), "stagml12", 0, Guest(1, 1000)).Changed);
         t = bs.Take(Flags(70, 406), "stagbs06", 0, Guest(2, 1001));
-        Assert.Equal(new StoryRefused(StoryKeyKind.Flag, 70, StoryRefusal.Wait), t.Refused.Single());
+        Assert.Equal(new StoryRefused(StoryKeyKind.Flag, 70, StoryRefusal.Queued), t.Refused.Single());
         Assert.Equal(1, bs.Story.Flags[406]);
     }
 
@@ -436,15 +447,15 @@ public class RoomStoryKeeperTests
         StoryVisit V(int member, ulong key, double at) => new(member, key, 15, 100 + member, at);
         Assert.True(k.Take(new StoryDelta { Phase = 1, Folder = [0] }, "stagML02", 0, V(1, 1, 1000)).Changed);
         var t = k.Take(new StoryDelta { Phase = 2, Folder = [1] }, "stagML02", 0, V(1, 2, 1030));
-        Assert.Equal(2, t.Refused.Count(r => r.Reason == StoryRefusal.Wait));
+        Assert.Equal(2, t.Refused.Count(r => r.Reason == StoryRefusal.Queued));
         t = k.Take(new StoryDelta { Phase = 2, Folder = [1] }, "stagML02", 0, V(1, 3, 1061));
-        Assert.Equal(new StoryRefused(StoryKeyKind.Phase, 2, StoryRefusal.Wait), t.Refused.Single());
+        Assert.Equal(new StoryRefused(StoryKeyKind.Phase, 2, StoryRefusal.Queued), t.Refused.Single());
         Assert.Equal(1, k.Story.Folder[1]);
         Assert.True(k.Take(new StoryDelta { Phase = 2 }, "stagML02", 0, V(2, 4, 1062)).Changed);
-        Assert.Equal(StoryRefusal.Wait, k.Take(new StoryDelta { Phase = 3 }, "stagML02", 0, V(1, 5, 1299)).Refused.Single().Reason);
+        Assert.Equal(StoryRefusal.Queued, k.Take(new StoryDelta { Phase = 3 }, "stagML02", 0, V(1, 5, 1299)).Refused.Single().Reason);
         Assert.True(k.Take(new StoryDelta { Phase = 3 }, "stagML02", 0, V(1, 6, 1300)).Changed);
         // The same account under another member index (it left and joined again) is the same member.
-        Assert.Equal(StoryRefusal.Wait, k.Take(new StoryDelta { Phase = 4 }, "stagML02", 0, new StoryVisit(5, 9, 15, 101, 1301)).Refused.Single().Reason);
+        Assert.Equal(StoryRefusal.Queued, k.Take(new StoryDelta { Phase = 4 }, "stagML02", 0, new StoryVisit(5, 9, 15, 101, 1301)).Refused.Single().Reason);
     }
 
     /// <summary>
@@ -464,7 +475,7 @@ public class RoomStoryKeeperTests
         Assert.Equal(2, StoryMerge.Phase(k.Story));
         // One phase step and one key item per visit hold for the owner too: the second ones are earned ...
         var t = k.Take(new StoryDelta { Phase = 3, Folder = [1] }, "stagML02", 0, Owner(2, 1070));
-        Assert.Equal(2, t.Refused.Count(r => r.Reason == StoryRefusal.Wait));
+        Assert.Equal(2, t.Refused.Count(r => r.Reason == StoryRefusal.Queued));
         Assert.Equal(2, k.EarnedCount);
         // ... and merged in a later visit ten seconds old, whatever its stage (stag0001 sets neither).
         Assert.False(k.MergeEarned(Owner(2, 1080), "stagML02").Changed);
@@ -480,7 +491,7 @@ public class RoomStoryKeeperTests
         // merged once the time has passed, in a later visit.
         Assert.True(k.Take(new StoryDelta { Phase = 4, Folder = [2] }, "stagML02", 0, Guest(10, 1200)).Changed);
         t = k.Take(new StoryDelta { Phase = 5, Folder = [3] }, "stagML02", 0, Guest(11, 1230));
-        Assert.Equal(2, t.Refused.Count(r => r.Reason == StoryRefusal.Wait));
+        Assert.Equal(2, t.Refused.Count(r => r.Reason == StoryRefusal.Queued));
         Assert.False(k.MergeEarned(Guest(12, 1259), "stag0101").Changed);
         Assert.True(k.MergeEarned(Guest(12, 1261), "stag0101").Changed); // the key item, a minute after the last
         Assert.Equal(1, k.Story.Folder[3]);
@@ -491,7 +502,7 @@ public class RoomStoryKeeperTests
         Assert.Equal(0, k.EarnedCount);
         // What the room story got meanwhile (another member's step) is no longer waited for.
         Assert.True(k.Take(new StoryDelta { Phase = 6, Folder = [4] }, "stagML02", 0, Guest(14, 1800)).Changed);
-        Assert.Equal(StoryRefusal.Wait, k.Take(new StoryDelta { Folder = [5] }, "stag0101", 0, Guest(15, 1810)).Refused.Single().Reason);
+        Assert.Equal(StoryRefusal.Queued, k.Take(new StoryDelta { Folder = [5] }, "stag0101", 0, Guest(15, 1810)).Refused.Single().Reason);
         Assert.Equal(1, k.EarnedCount);
         Assert.True(k.Take(new StoryDelta { Folder = [5] }, "stag0101", 0, Owner(16, 1811)).Changed);
         Assert.False(k.MergeEarned(Guest(17, 1900), "stag0101").Changed);
@@ -536,7 +547,7 @@ public class RoomStoryKeeperTests
         Assert.Equal(0, stale.Story.Folder[1]);
         Assert.Equal(0, stale.EarnedCount);
 
-        var notStarted = new RoomStoryKeeper(new RoomStoryData(), 0, StoryPolicy.Apply, ownerPresent: true, started: false);
+        var notStarted = new RoomStoryKeeper(new RoomStoryData(), 0, StoryPolicy.Apply, ownerPresent: true, sets: NoKeyStages, started: false);
         notStarted.Take(new StoryDelta { Folder = [0] }, "stag0101", 0, Guest(1, 100));
         notStarted.Take(new StoryDelta { Folder = [1] }, "stag0101", 0, Guest(1, 100));
         Assert.Equal(0, notStarted.EarnedCount);

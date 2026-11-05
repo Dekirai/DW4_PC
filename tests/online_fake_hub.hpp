@@ -402,6 +402,7 @@ public:
     bool not_started = false; // the owner has no story yet (8.6): refused not_started and recorded in `dropped`
     bool story_lost = false; // STORY frames are counted and then lost (no merge, no answer), as on a dying connection
     int story_wait = 0;      // the next STORY frames are answered "wait" for every key (a visit too young, 8.7)
+    int story_queued = 0;    // the next STORY frames are answered "queued" for every key (earned, merged later; round G-core)
     int stories = 0, story_acks = 0;
     w::BarrierOk with_story(w::BarrierOk ok) const {
         ok.story_revision = room_story.revision;
@@ -419,9 +420,11 @@ public:
         w::StoryAck answer{0, {}, w::StoryAck::answer, {}};
         using K = dw4::engine::StoryRefused::Kind;
         bool changed = false;
-        if (story_wait > 0) {
-            --story_wait;
-            const auto wait = [&](K kind, std::int32_t index) { answer.refused.push_back({kind, index, dw4::engine::StoryRefusal::wait}); };
+        if (story_wait > 0 || story_queued > 0) {
+            const auto reason = story_wait > 0 ? dw4::engine::StoryRefusal::wait : dw4::engine::StoryRefusal::queued;
+            if (story_wait > 0) --story_wait;
+            else --story_queued;
+            const auto wait = [&](K kind, std::int32_t index) { answer.refused.push_back({kind, index, reason}); };
             if (s.delta.phase) wait(K::phase, s.delta.phase);
             for (const auto f : s.delta.flags) wait(K::flag, f);
             for (const auto k : s.delta.folder) wait(K::folder, k);

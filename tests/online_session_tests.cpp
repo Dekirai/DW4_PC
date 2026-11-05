@@ -680,6 +680,16 @@ void room_story() {
           "the confirmed story after WELCOME");
     world.run(3);
     check(b.engine.stage() == "stagis10" && world.hub.stories == 0, "no STORY from the title");
+    // Round G-core: the Game Start's hold (OnlineRun holds the title until the
+    // confirmed story came): no live step, the loading line, and B's title
+    // goes on once it is released.
+    b.session->hold_for_story(true);
+    check(!b.session->step_ready() && b.session->overlay(world.now).loading == "Loading the room story...", "the hold stops the steps");
+    const auto held_tick = b.session->tick();
+    world.run(1);
+    check(b.session->tick() == held_tick && world.hub.stories == 0, "no step and no STORY while held");
+    b.session->hold_for_story(false);
+    check(b.session->step_ready(), "released"); 
     check(world.run_until(10, [&] { return b.engine.stage() == "stagml11" && b.session->mode() == Mode::solo; }), "B in its lobby");
     check(world.run_until(3, [&] { return world.hub.room_story.flags[426] == 1; }), "B's value goes from the lobby");
     b.engine.story.flags[19] = 1;  // a persistent flag (a talk)
@@ -703,6 +713,17 @@ void room_story() {
     const double t_wait = world.now;
     check(world.run_until(8, [&] { return world.hub.room_story.flags[394] == 1; }), "a value the server let wait goes again");
     check(world.now - t_wait < 5.0, "within a few seconds (" + std::to_string(world.now - t_wait) + " s)");
+    // Round G-core: a queued value (earned, the server merges it when due) is
+    // not sent again before the next barrier, and nobody is told.
+    world.hub.story_queued = 1;
+    (void)b.session->take_notices();
+    b.engine.story.flags[396] = 1;
+    check(world.run_until(3, [&] { return world.hub.story_queued == 0; }), "the value goes once and is queued");
+    const auto stories_queued = world.hub.stories;
+    world.run(12);
+    check(world.hub.stories == stories_queued, "a queued value is not sent again (" + std::to_string(world.hub.stories - stories_queued) + ")");
+    check(b.session->take_notices().empty(), "a queued value needs no notice");
+    check(!world.hub.room_story.flags[396], "the fake hub never merged it (the real one does when due)");
     // Both take the gate to stag0101 half a second apart: a co-arrival, the
     // load step merges the room story into both engines.
     const auto ta = a.session->tick(), tb = b.session->tick();

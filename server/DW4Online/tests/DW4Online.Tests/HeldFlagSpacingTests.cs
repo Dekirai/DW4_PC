@@ -19,7 +19,7 @@ public class HeldFlagSpacingTests
         Assert.Equal(8, k.HeldCount);
         var b = k.Take(new StoryDelta { Flags = [.. eight, 394] }, "stagml12", 0, V(1, 7, 10, 5));
         Assert.Equal(8, b.Refused.Count(r => r.Reason == StoryRefusal.Held));
-        Assert.Contains(b.Refused, r => r.Index == 394 && r.Reason == StoryRefusal.Wait);
+        Assert.Contains(b.Refused, r => r.Index == 394 && r.Reason == StoryRefusal.Queued);
         var c = k.Take(new StoryDelta { Flags = [.. eight, 394] }, "stagml12", 0, V(1, 7, 40, 5));
         Assert.All(c.Refused, r => Assert.Equal(StoryRefusal.Held, r.Reason));
         Assert.Equal(9, k.HeldCount);

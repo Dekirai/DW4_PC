@@ -115,6 +115,21 @@ bool Engine::run_script(std::string_view name) {
     // Seamless online co-op: the gate disc's user forks off first; the
     // members who stay do not run its script (online_exits.cpp).
     if (name == "gatedisc.lua" && online_shared() && !gatedisc_fork()) return true;
+    // Online (round G-core, docs/SEAMLESS.md 8.8): the call shop is closed. Its
+    // script runs its own refusal branch (the one for NINZU = 4: two lines and
+    // the talk's close) instead of NEXTSTAGE stagIS13, whose box call would put
+    // that box's own story into the online engine (reset_common, link_common)
+    // and the difficulty, camera and light mode to 0. Offline nothing changes.
+    struct CallShopSide {
+        Engine& engine;
+        bool was;
+        ~CallShopSide() { engine.callshop_closed_ = was; }
+    } callshop_side{*this, callshop_closed_};
+    if (online_.enabled && name == "callshop.lua") {
+        callshop_closed_ = true;
+        ++callshop_refused;
+        log("online: the call shop is closed (its refusal branch runs)");
+    }
     // Online: a member's own scene runs with its own talk globals and leaves
     // the instance's as they were (talk_globals_, docs/SEAMLESS.md 5.3;
     // offline there is no scope and nothing switches).

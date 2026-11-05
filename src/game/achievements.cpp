@@ -3,6 +3,7 @@
 #include "dw4/card_store.hpp"
 
 #include <algorithm>
+#include <bit>
 #include <fstream>
 #include <sstream>
 
@@ -493,6 +494,7 @@ std::vector<AchievementUnlock> AchievementTracker::observe(const AchievementStep
     };
 
     bool numemon_rose = false; // a Numemon freed in this step (flags 89..98)
+    std::int64_t numemon_mask_rose = 0; // which (bit n: flag 89 + n), for the online mask
     for (const auto& e : events) {
         switch (e.kind) {
         case Kind::boss_defeated: {
@@ -532,7 +534,10 @@ std::vector<AchievementUnlock> AchievementTracker::observe(const AchievementStep
         }
         case Kind::story_flag:
             if (local_player && e.extra != 0 && e.value >= 406 && e.value <= 408) story_clear(e.value - 406);
-            if (e.extra != 0 && e.value >= 89 && e.value <= 98) numemon_rose = true;
+            if (e.extra != 0 && e.value >= 89 && e.value <= 98) {
+                numemon_rose = true;
+                numemon_mask_rose |= std::int64_t(1) << (e.value - 89);
+            }
             break;
         case Kind::enemy_defeated:
             if (!local_slot(e.slot)) break;
@@ -610,8 +615,17 @@ std::vector<AchievementUnlock> AchievementTracker::observe(const AchievementStep
     }
     if (local_player) {
         max_stat("best_cards", step.cards);
-        // (Online the flags come with the room story: they count when one rises here.)
-        if (!step.shared_story || numemon_rose) max_stat("numemon_freed", step.numemon_freed);
+        // Online the flags come with the room story: only the Numemon this
+        // account freed in its own live steps count (round G-core, docs/
+        // SEAMLESS.md 8.8: a mask in the profile, as quest_mask; freeing the
+        // tenth where the owner freed nine is one, not Numemon Liberator).
+        if (!step.shared_story) max_stat("numemon_freed", step.numemon_freed);
+        else if (numemon_mask_rose) {
+            const std::int64_t mask = profile_.stat("numemon_mask") | numemon_mask_rose;
+            profile_.stats["numemon_mask"] = mask;
+            dirty_ = true;
+            max_stat("numemon_freed", std::popcount(std::uint64_t(mask)));
+        }
     }
     if (partner_raised && joined >= 2 && local_player) give("raise_ally");
     if (step.online && local_player) give("online_join");

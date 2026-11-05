@@ -115,6 +115,10 @@ public enum StoryRefusal : byte
     /// <summary>The room owner's online story has not started (SEAMLESS.md 8.6): an owner without a story starts at zero, so
     /// what members do before the owner's own game enters a stage is dropped like the owner-away policy drop.</summary>
     NotStarted = 10,
+    /// <summary>Earned (round G, SEAMLESS.md 8.8): the value passed every check and waits only for the one-per-visit rule or a
+    /// guest's spacing; the keeper merges it when it is due (<see cref="RoomStoryKeeper.MergeEarned"/>), so the client does
+    /// not send it again (like Held, without its notice). Protocol 47; the keeper answered Wait before.</summary>
+    Queued = 11,
 }
 
 public enum StoryKeyKind : byte { Phase = 0, Flag = 1, Folder = 2, Counter = 3 }
@@ -334,28 +338,69 @@ public static class StoryMerge
         for (var k = 0; k < sets.Keys; ++k) s.Flags[sets.KeyCopies[difficulty] + k] = s.Folder[k] != 0 ? (byte)1 : (byte)0;
     }
 
-    /// <summary>The working set and the keys from the copies of <paramref name="difficulty"/> (gameStart.lua): a room opens with it.</summary>
+    /// <summary>
+    /// Whether a stored story shows the training was played (round G, SEAMLESS.md 8.8; stories saved before flag 503 was
+    /// story never hold it): 503 itself, phase 3 or later in the working set or any difficulty's copies, COUNTER 7 above 0
+    /// (a training attempt), any key item or key copy, or a training proof flag (<see cref="StorySets.ProvesTraining"/>)
+    /// or one of its copies. An owner in phase 2 who never left the lobby keeps 503 = 0, as he would offline.
+    /// </summary>
+    public static bool PlayedTraining(RoomStoryData s, StorySets? sets = null)
+    {
+        sets ??= StorySets.Default;
+        if (s.Flags[sets.TrainingFlag] != 0) return true;
+        for (var i = 2; i < sets.Phase.Count; ++i)
+        {
+            if (s.Flags[sets.Phase[i]] != 0) return true;
+            for (var d = 0; d < StorySets.Difficulties; ++d)
+                if (s.Flags[sets.PhaseCopies[d][i]] != 0) return true;
+        }
+        if (s.Counters[7] > 0) return true;
+        for (var k = 0; k < sets.Keys; ++k)
+        {
+            if (s.Folder[k] != 0) return true;
+            for (var d = 0; d < StorySets.Difficulties; ++d)
+                if (s.Flags[sets.KeyCopies[d] + k] != 0) return true;
+        }
+        foreach (var f in sets.Persistent)
+        {
+            if (!sets.ProvesTraining(f)) continue;
+            if (s.Flags[f] != 0) return true;
+            foreach (var g in sets.Working)
+                if (f >= g.First && f < g.First + g.Count)
+                    for (var d = 0; d < StorySets.Difficulties; ++d)
+                        if (s.Flags[g.Copies[d] + f - g.First] != 0) return true;
+        }
+        return false;
+    }
+
+    /// <summary>The working set and the keys from the copies of <paramref name="difficulty"/> (gameStart.lua): a room opens with
+    /// it. Flag 503 is set when the stored story shows the training was played (<see cref="PlayedTraining"/>, read before the
+    /// rebase, so a Hard room of an owner who cleared Normal keeps it: 503 has no difficulty copies).</summary>
     public static void Rebase(RoomStoryData s, int difficulty, StorySets? sets = null)
     {
         sets ??= StorySets.Default;
         if (difficulty is < 0 or >= StorySets.Difficulties) return;
+        var trained = PlayedTraining(s, sets);
         for (var i = 0; i < sets.Phase.Count; ++i) s.Flags[sets.Phase[i]] = s.Flags[sets.PhaseCopies[difficulty][i]] != 0 ? (byte)1 : (byte)0;
         foreach (var g in sets.Working)
             for (var j = 0; j < g.Count; ++j)
                 s.Flags[g.First + j] = s.Flags[g.Copies[difficulty] + j] != 0 ? (byte)1 : (byte)0;
         for (var k = 0; k < StorySets.FolderCount; ++k)
             s.Folder[k] = k < sets.Keys && s.Flags[sets.KeyCopies[difficulty] + k] != 0 ? (byte)1 : (byte)0;
+        if (trained) s.Flags[sets.TrainingFlag] = 1;
     }
 
     /// <summary>
     /// A barrier's room story into an engine (8.5, 8.6): the phase up to the room's, persistent flags, keys and counters the
     /// room has; then the dropped values the engine holds go back to the room's. Only keys whose value changes are touched.
-    /// Returns whether a dropped value was removed.
+    /// Returns whether a dropped value was removed. <paramref name="targetStage"/>: the barrier's target stage; one into the
+    /// training field leaves flag 503 alone both ways (round G, 8.8: the retry cleared it on purpose).
     /// </summary>
-    public static bool Apply(StoryValues e, RoomStoryData room, StoryKeys dropped, StorySets? sets = null)
+    public static bool Apply(StoryValues e, RoomStoryData room, StoryKeys dropped, StorySets? sets = null, string? targetStage = null)
     {
         sets ??= StorySets.Default;
         var removed = false;
+        var keep = string.Equals(targetStage, StorySets.TrainingStage, StringComparison.OrdinalIgnoreCase) ? sets.TrainingFlag : -1;
         var df = dropped.Flags.ToHashSet();
         var dk = dropped.Folder.ToHashSet();
         var dc = dropped.Counters.ToHashSet();
@@ -370,9 +415,9 @@ public static class StoryMerge
         if (target != pe)
             for (var i = 1; i <= sets.Phase.Count; ++i) Put(e.Flags, sets.Phase[i - 1], (byte)(i == target ? 1 : 0));
         foreach (var f in sets.Persistent)
-            if (room.Flags[f] != 0 && e.Flags.GetValueOrDefault(f) == 0) Put(e.Flags, f, room.Flags[f]);
+            if (f != keep && room.Flags[f] != 0 && e.Flags.GetValueOrDefault(f) == 0) Put(e.Flags, f, room.Flags[f]);
         foreach (var f in df.Order())
-            if (sets.IsPersistent(f) && room.Flags[f] == 0 && Put(e.Flags, f, (byte)0)) removed = true;
+            if (f != keep && sets.IsPersistent(f) && room.Flags[f] == 0 && Put(e.Flags, f, (byte)0)) removed = true;
         for (var k = 0; k < sets.Keys; ++k)
             if (room.Folder[k] != 0 && e.Folder.GetValueOrDefault(k) == 0) Put(e.Folder, k, room.Folder[k]);
         foreach (var k in dk.Order())

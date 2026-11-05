@@ -10,8 +10,14 @@ must give the same results; a change of the rules changes all three.
   merge    a member's delta into the room story at a difficulty, with the
            growth the room already took per engine line;
   pending  an engine's values against the confirmed story;
-  rebase   the working set and the keys from the copies of a difficulty;
-  apply    a barrier's room story and dropped set into an engine.
+  rebase   the working set and the keys from the copies of a difficulty, and
+           flag 503 when the stored story shows the training was played
+           (round G, docs/SEAMLESS.md 8.8);
+  apply    a barrier's room story and dropped set into an engine (with the
+           barrier's target stage: one into stag0001 leaves 503 alone).
+
+Since round G the census also holds 503 (persistent) and the training proof
+(story_sets.json "training").
 
 Usage: python story_golden.py [--check]   (paths relative to the repository)
 """
@@ -30,6 +36,13 @@ PHASE = SETS["phase"]
 PERSISTENT = set(SETS["persistent"])
 KEYS = SETS["keys"]
 COUNTERS = SETS["counters"]
+TRAINING = SETS["training"]["flag"]
+TRAINING_STAGE = "stag0001"
+# The training proof from the setter table itself (not the census's list): a persistent flag none of whose setter
+# stages is one a story reaches before or with the training.
+BEFORE_TRAINING = set(SETS["training"]["stages"])
+PROOF = sorted(f for f in PERSISTENT if SETS["setters"]["flags"].get(str(f)) and
+               not set(SETS["setters"]["flags"][str(f)]) & BEFORE_TRAINING)
 
 # Refusal reasons and kinds (online_story.hpp StoryRefusal / StoryRefused::Kind).
 NOT_STORY, LIMIT, PHASE_JUMP = 7, 8, 4
@@ -75,8 +88,34 @@ def derive(f, k, d):
         f[SETS["keyCopies"][d] + key] = 1 if k[key] else 0
 
 
+def copies_of(flag: int) -> list[int]:
+    out = []
+    for i, p in enumerate(PHASE):
+        if p == flag:
+            out += [SETS["phaseCopies"][d][i] for d in range(3)]
+    for g in SETS["working"]:
+        if g["first"] <= flag < g["first"] + g["count"]:
+            out += [g["copies"][d] + flag - g["first"] for d in range(3)]
+    return out
+
+
+def played_training(f, k, c) -> bool:
+    if f[TRAINING]:
+        return True
+    for p in PHASE[2:]:
+        if f[p] or any(f[x] for x in copies_of(p)):
+            return True
+    if c[7] > 0:
+        return True
+    for key in range(KEYS):
+        if k[key] or any(f[SETS["keyCopies"][d] + key] for d in range(3)):
+            return True
+    return any(f[x] or any(f[y] for y in copies_of(x)) for x in PROOF)
+
+
 def rebase(r: dict, d: int) -> dict:
     f, k, c = to_arrays(r)
+    trained = played_training(f, k, c)
     for i, p in enumerate(PHASE):
         f[p] = 1 if f[SETS["phaseCopies"][d][i]] else 0
     for g in SETS["working"]:
@@ -84,6 +123,8 @@ def rebase(r: dict, d: int) -> dict:
             f[g["first"] + j] = 1 if f[g["copies"][d] + j] else 0
     for key in range(12):
         k[key] = 1 if key < KEYS and f[SETS["keyCopies"][d] + key] else 0
+    if trained:
+        f[TRAINING] = 1
     return from_arrays(f, k, c, r["revision"])
 
 
@@ -159,8 +200,9 @@ def pending(confirmed: dict, engine: dict) -> dict:
     return out
 
 
-def apply(r: dict, dropped: dict, engine: dict) -> tuple[dict, bool]:
+def apply(r: dict, dropped: dict, engine: dict, target: str = "") -> tuple[dict, bool]:
     f, k, c = to_arrays(r)
+    keep = {TRAINING} if target == TRAINING_STAGE else set()
     flags = dict((a, b) for a, b in engine["flags"])
     folder = dict((a, b) for a, b in engine["folder"])
     counters = dict((a, b) for a, b in engine["counters"])
@@ -186,10 +228,10 @@ def apply(r: dict, dropped: dict, engine: dict) -> tuple[dict, bool]:
     if target != pe:
         for i, p in enumerate(PHASE):
             put(flags, p, 1 if i + 1 == target else 0)
-    for x in sorted(PERSISTENT):
+    for x in sorted(PERSISTENT - keep):
         if f[x] and not flags.get(x, 0):
             put(flags, x, f[x])
-    for x in sorted(set(dropped["flags"])):
+    for x in sorted(set(dropped["flags"]) - keep):
         if x in PERSISTENT and not f[x] and put(flags, x, 0):
             removed = True
     for x in range(KEYS):
@@ -238,6 +280,7 @@ MERGE_CASES = [
      {"flags": [19], "counters": [[7, 4, 2, 2], [7, 4, 2, 1]]}),
     ("a negative growth is refused", 0, room(), [], {"counters": [[7, 1, 1, -3]]}),
     ("an unknown phase index is refused", 0, room(), [], {"phase": 9}),
+    ("the training flag 503 is merged by OR", 0, room([2, 701], revision=5), [], {"flags": [503, 503, 508]}),
 ]
 
 PENDING_CASES = [
@@ -251,6 +294,13 @@ REBASE_CASES = [
     ("hard from its copies", 1, room([3, 702, 19, 706, 8, 742, 518, 532, 404], [0, 11])),
     ("normal from its copies", 0, room([3, 702, 19, 706, 8, 742, 518, 532, 404], [0, 11])),
     ("an empty difficulty clears the working set", 2, room([5, 704, 89, 714, 520, 405], [2])),
+    ("503 from phase 3", 0, room([3, 702])),
+    ("503 from COUNTER 7 (a training attempt)", 0, room([2, 701], counters=[[7, 1]])),
+    ("503 from a key item", 0, room([2, 701, 518], [0])),
+    ("503 from a stag0101 flag (the hint panel 505)", 0, room([2, 701, 505])),
+    ("no 503 from a lobby-only phase 2 (the briefing and the lobby's intro)", 0, room([2, 701, 501, 502, 22])),
+    ("a Hard room of an owner who cleared Normal keeps 503 (no copies of 503)", 1, room([86, 713, 503, 7, 518, 519])),
+    ("503 from another difficulty's phase copy", 2, room([9])),
 ]
 
 APPLY_CASES = [
@@ -262,6 +312,11 @@ APPLY_CASES = [
     ("a dropped value the engine lacks changes nothing", room([3]), keys([395], [6], []), engine([(3, 1), (395, 0)])),
     ("a dropped phase the room has stays", room([4]), keys([4]), engine([(4, 1)])),
     ("only keys whose value changes are touched", room([19, 20, 22]), keys(), engine([(19, 1), (20, 0)])),
+    ("503 reaches the engine at a barrier into stag0101", room([2, 503]), keys(), engine([(2, 1)]), "stag0101"),
+    ("503 is left alone at a barrier into stag0001 (the retry cleared it)", room([2, 503]), keys(), engine([(2, 1), (503, 0)]),
+     "stag0001"),
+    ("a dropped 503 is removed at a barrier into the lobby", room([2]), keys([503]), engine([(2, 1), (503, 1)]), "stagml11"),
+    ("a dropped 503 is left alone at a barrier into stag0001", room([2]), keys([503]), engine([(2, 1), (503, 1)]), "stag0001"),
 ]
 
 
@@ -278,10 +333,14 @@ def build() -> dict:
         out["pending"].append({"name": name, "confirmed": confirmed, "engine": eng, "expect": pending(confirmed, eng)})
     for name, d, r in REBASE_CASES:
         out["rebase"].append({"name": name, "difficulty": d, "room": r, "expect": rebase(r, d)})
-    for name, r, dropped, eng in APPLY_CASES:
-        result, removed = apply(r, dropped, eng)
-        out["apply"].append({"name": name, "room": r, "dropped": dropped, "engine": eng,
-                             "expect": {"engine": result, "removed": removed}})
+    for name, r, dropped, eng, *rest in APPLY_CASES:
+        target = rest[0] if rest else ""
+        result, removed = apply(r, dropped, eng, target)
+        case = {"name": name, "room": r, "dropped": dropped, "engine": eng}
+        if target:
+            case["target"] = target
+        case["expect"] = {"engine": result, "removed": removed}
+        out["apply"].append(case)
     return out
 
 

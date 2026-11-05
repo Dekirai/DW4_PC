@@ -742,6 +742,11 @@ void LoadIntf2Manager::update_ctrl(Engine& engine, PanelRam& ram, SaveCommon& co
                         // reset_common): flags, counters, modes, bit
                         // capsules and the gate stage.
                         if (idx == 0 && (ram.new_game || entry.card)) sys->reset_common(engine);
+                        // Round G-core (docs/SEAMLESS.md 8.8): outside the
+                        // title's mode (the call shop's LOADCTRL2 GENERATE) the
+                        // online host replaces the rebuilt common story with the
+                        // room story in this step, as at the Game Start.
+                        if (idx == 0 && (ram.new_game || entry.card) && !common.title && engine.online().enabled) engine.common_rebuilt = true;
                         if (ram.new_game) {
                             // GAMEDATAINIT, GAMESTART with the partner and a
                             // new UNIQUE, then the record for the windows.

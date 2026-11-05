@@ -1,0 +1,10 @@
+# RG1 = G1 (round G-core, docs/SEAMLESS.md 8.8): the rebase sets 503 for the owner's stored story (COUNTER 7, K0-K2), the
+# guest's Game Start gives it the room story with 503, its lobby gate leads into stag0101.
+o: online: the game starts with the room story .revision 1.
+o: online-script: step .* log: 503 in the owner's lobby
+g: online: the game starts with the room story .revision 1.
+g: online: Playing on .*'s story .Normal..
+g: online-script: step .* log: 503 and the keys from the room story
+g: online-script: step .* log: in stag0101
+!g: online-script: FAIL
+!o: online-script: FAIL

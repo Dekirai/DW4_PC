@@ -139,6 +139,9 @@ const std::vector<std::string_view>& online_presentation_env() {
         "DW4_ONLINE_LOG", "DW4_ONLINE_RELAY_PORT", "DW4_ONLINE_TEST_STALL",
         // the round 62 review's vsync grid of the latency scenarios (a pass ends on a grid of HZ, like a display's vsync)
         "DW4_ONLINE_TEST_PASS_HZ",
+        // round G-core's G7: the room story ignored for N seconds after the first Game Start (DW4_ONLINE_DEV builds only, online_run.cpp:
+        // the Game Start's hold until the confirmed story is the point of the test)
+        "DW4_ONLINE_TEST_STORY_DELAY",
         // round S1 test tools (game_main.cpp)
         "DW4_SNAPSHOT_DUMP", "DW4_PAD_LOG", "DW4_EXTRA_RENDERS", "DW4_EXTRA_WIDEN", "DW4_EXTRA_PREVIOUS",
         "DW4_CAM_CHECK"};
@@ -605,7 +608,9 @@ void Engine::apply_barrier() {
     // step, before the stage's load scripts read the flags and before the
     // snapshot, so a joiner gets the same state. (JOIN and CO_ARRIVE merge it
     // into the member's own fallback load.)
-    if (b.story) story::apply(flags_, sys->flag_folder, counters_, *b.story, b.dropped);
+    // (pending_stage_ holds the barrier's target: a barrier into the training
+    // field leaves flag 503 alone, 8.8.)
+    if (b.story) story::apply(flags_, sys->flag_folder, counters_, *b.story, b.dropped, pending_stage_);
     auto rules = b.rules;
     rules.enabled = true;
     rules.leaving = 0;

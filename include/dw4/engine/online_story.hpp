@@ -29,6 +29,7 @@
 #include <cstdint>
 #include <map>
 #include <span>
+#include <string_view>
 #include <vector>
 
 namespace dw4::engine {
@@ -97,6 +98,8 @@ enum class StoryRefusal : std::uint8_t {
     limit = 8,       // a counter growth beyond the plausible, or a counter line the server never put the member in
     wait = 9,        // not yet: the visit is younger than the server's minimum or gave its phase step / key item (sent again)
     not_started = 10, // the room owner's online story has not started (an owner without one; 8.6): dropped like owner_away
+    queued = 11,     // earned (round G, 8.8): passed every check, waits only for the one-per-visit rule or a guest's
+                     // spacing; the server merges it when due, so it is not sent again (like held, without its notice)
 };
 
 // One refused key of a STORY_ACK.
@@ -171,8 +174,19 @@ MergeResult merge(const RoomStory& room, const StoryDelta& delta, int difficulty
 // flags, key copies 0-10 = keys 0-10.
 void derive_copies(RoomStory& story, int difficulty);
 // The working set and the keys from the copies of `difficulty` (gameStart.lua):
-// the server does it when a room opens with that difficulty.
+// the server does it when a room opens with that difficulty. Round G (8.8):
+// flag 503 ("has been to the training field") is set when the stored story
+// shows the training was played (played_training, read before the rebase).
 void rebase(RoomStory& story, int difficulty);
+// Whether a stored story shows the training was played (8.8, stories saved
+// before 503 was story): phase 3 or later (the working set or any
+// difficulty's copies), COUNTER 7 above 0, any key item (or a key copy), or a
+// persistent flag whose setter stages all lie outside stagml02, stagml11 and
+// stag0001 (the census's training proof, or its copy). 503 itself counts.
+bool played_training(const RoomStory& story);
+// Flag 503: set by stag0001's first.lua, read by the lobby gate; persistent
+// story since round G, left alone by a barrier into stag0001 (the retry).
+std::int32_t training_flag();
 
 // A barrier's room story into an engine (8.5, 8.6): the phase rises to the
 // room's (one-hot), persistent flags and keys the room has are set, counters
@@ -181,13 +195,21 @@ void rebase(RoomStory& story, int difficulty);
 // cleared; a dropped counter takes the room's value). Only keys whose value
 // changes are touched (FLGisOn creates zero entries and the fingerprint hashes
 // every key). Returns whether a dropped value was removed (the notice).
+// `target` is the barrier's target stage (lower case): at a barrier into
+// stag0001 flag 503 is left alone both ways (round G, 8.8: restart.lua cleared
+// it on purpose before *Retry*, so the intro plays again; every member of the
+// group loads the same target, so the rule is the same on every engine).
 bool apply(std::map<std::int32_t, std::uint8_t>& flags, std::map<std::int32_t, std::uint8_t>& folder,
-           std::map<std::int32_t, std::int32_t>& counters, const RoomStory& room, const StoryKeys& dropped);
-inline bool apply(StoryValues& values, const RoomStory& room, const StoryKeys& dropped) {
-    return apply(values.flags, values.folder, values.counters, room, dropped);
+           std::map<std::int32_t, std::int32_t>& counters, const RoomStory& room, const StoryKeys& dropped,
+           std::string_view target = {});
+inline bool apply(StoryValues& values, const RoomStory& room, const StoryKeys& dropped, std::string_view target = {}) {
+    return apply(values.flags, values.folder, values.counters, room, dropped, target);
 }
-// Whether apply would remove a dropped value from these values.
-bool holds_dropped(const StoryValues& values, const RoomStory& room, const StoryKeys& dropped);
+// Whether apply would remove a dropped value from these values (with the same
+// target stage).
+bool holds_dropped(const StoryValues& values, const RoomStory& room, const StoryKeys& dropped, std::string_view target = {});
+// The stage whose barrier leaves flag 503 alone (the training field).
+inline constexpr std::string_view kTrainingStage = "stag0001";
 
 // The story blob of BARRIER_OK / STORY_ACK: flags 1024 B, folder 12 B,
 // counters 16 x i32 LE (1,100 bytes; the revision travels beside it). An

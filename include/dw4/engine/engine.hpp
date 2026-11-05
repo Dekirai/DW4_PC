@@ -482,6 +482,9 @@ public:
     // online_membership.hpp). Nothing below acts while online().enabled is
     // off and the camera mask is 0.
     const OnlineRules& online() const { return online_; }
+    // Round G-core: the call shop's run under the online rules (SYSgetPlayerNinzu
+    // answers 4 for it; docs/SEAMLESS.md 8.8).
+    bool online_callshop_closed() const { return callshop_closed_; }
     // Only between steps, at a tick every member applies. Turning online on
     // fixes the cheats to the room's (online_cheats), switches the console
     // reset off and records the present slots' personal session values.
@@ -741,6 +744,20 @@ public:
     // modes on that step and clears it. Like the two above: not in a snapshot
     // or the fingerprint, read by nothing in the simulation.
     bool title_game_start = false;
+    // Round G-core (docs/SEAMLESS.md 8.8): player 1 made or called a character
+    // while LOADCTRL2 is not in title mode and the online rules are on
+    // (reset_common and link_common put that box's own story into the common
+    // FLAG / FLAGFOLDER / COUNTER and the modes to 0, outside the title's Game
+    // Start). The online host treats it as the title's Game Start: the
+    // confirmed room story and the room's modes replace them in that step.
+    // Only the call shop reaches it, and that is closed online; this is the
+    // net. Never raised offline. Like title_game_start: not in a snapshot or
+    // the fingerprint, read by nothing in the simulation.
+    bool common_rebuilt = false;
+    // Round G-core: the call shop (stagML11's callshop.lua) was refused under
+    // the online rules (its own NINZU = 4 branch ran instead of the call); the
+    // online host shows the hint and clears it. Host field like the above.
+    int callshop_refused = 0;
     // Development measurement (DW4_TRACE_TRAVERSAL_TIME): the traversals'
     // accumulated CPU time in ns and their count: [0] the combined pass
     // (render, the original), [1] traverse_scene (the original), [2] the
@@ -1081,6 +1098,11 @@ private:
     std::string stage_name_;
     std::string stage_folder_;
     std::string pending_stage_;
+    // Round G-core: the call shop's script runs under the online rules (its
+    // run, run_script): SYSgetPlayerNinzu reads 4, so the original refusal
+    // branch runs (its two lines and the talk's close, never NEXTSTAGE
+    // stagIS13). Never set offline.
+    bool callshop_closed_ = false;
     int loader_state_ = -1;
     // The file on its way (802F9E98's pending directory): requested, its
     // reads issued on the simulated drive chunk by chunk as the loading

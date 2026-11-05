@@ -214,12 +214,12 @@ void Session::lose_connection(double now) {
 
 void Session::leave(const std::string& reason) {
     flush_log(now_, true);
-    (void)reason;
     send(w::Type::bye, w::encode(w::Bye{0}));
     if (transport_) transport_->close();
     transport_.reset();
     mode_ = Mode::closed;
-    close_reason_ = "You left the room.";
+    // ("left": the player's own choice; another reason is the client's, e.g. the room story that never came.)
+    close_reason_ = reason.empty() || reason == "left" ? std::string("You left the room.") : reason;
 }
 
 std::size_t Session::read_hello(double now) {
@@ -843,6 +843,8 @@ int Session::steps_allowed(int host_steps, double elapsed) {
 }
 
 bool Session::step_ready() const {
+    // (The Game Start's hold, round G-core: the title waits for the room story.)
+    if (story_hold_) return false;
     switch (mode_) {
     case Mode::solo:
     case Mode::transition: return true;
@@ -1259,7 +1261,10 @@ void Session::on_barrier_ok(const w::BarrierOk& ok, double now) {
             try {
                 const auto room = engine::story::decode_story(ok.story, ok.story_revision);
                 const auto dropped = engine::story::decode_keys(ok.dropped);
-                if (engine::story::holds_dropped(engine_.story_values(), room, dropped))
+                // (The engine's pending stage is the barrier's target: a barrier into the
+                // training field leaves 503 alone, as the load step does, 8.8.)
+                const auto target = engine_.pending_stage();
+                if (engine::story::holds_dropped(engine_.story_values(), room, dropped, target ? std::string_view(*target) : std::string_view()))
                     notice(not_started_dropped_ ? "Story progress was not saved: the room owner had not started its story yet."
                                                 : "Story progress was not saved: the room owner is away.");
                 take_story(room);
@@ -1735,7 +1740,27 @@ void Session::send_story(double now, bool at_barrier) {
 }
 
 void Session::on_story_ack(const w::StoryAck& ack) {
-    if (!ack.story.empty()) take_story(engine::story::decode_story(ack.story, ack.revision));
+    if (!ack.story.empty()) {
+        auto story = engine::story::decode_story(ack.story, ack.revision);
+        // Round G-core (8.8): a guest inside a stage is told once per visit when
+        // the owner's story gains a phase step or a key item its engine lacks;
+        // the engine takes it only at the next barrier (never mid-stage, 8.5).
+        if (!config_.room_owner && confirmed_ && mode_ != Mode::parked && !ui_stage(engine_.stage()) &&
+            moved_on_noticed_ != std::make_pair(inst_, visit_)) {
+            const auto values = engine_.story_values();
+            bool moved = engine::story::phase(story) > std::max(engine::story::phase(*confirmed_), engine::story::phase(values));
+            for (int k = 0; k < engine::story::kKeys && !moved; ++k) {
+                const auto it = values.folder.find(k);
+                moved = story.folder[std::size_t(k)] && !confirmed_->folder[std::size_t(k)] && (it == values.folder.end() || !it->second);
+            }
+            if (moved) {
+                moved_on_noticed_ = std::make_pair(inst_, visit_);
+                const std::string owner = config_.owner_name.empty() ? std::string("The room owner") : config_.owner_name;
+                notice(owner + "'s story moved on. It reaches your game at your next stage change.");
+            }
+        }
+        take_story(story);
+    }
     if (!(ack.flags & w::StoryAck::answer) || story_in_flight_.empty()) return;
     const auto sent = std::move(story_in_flight_.front());
     story_in_flight_.pop_front();
@@ -1749,6 +1774,18 @@ void Session::on_story_ack(const w::StoryAck& ack) {
             if (!held_noticed_) notice("The room owner is away: your story progress is kept until they return.");
             held_noticed_ = true;
             continue; // the server keeps it; the confirmed story brings it once merged
+        }
+        // Round G-core (8.8): earned, the server merges it when due (the one-per-visit rule or a guest's spacing); not
+        // sent again before the next barrier (a resend from another stage would only be refused for the stage), no
+        // notice: the confirmed story brings it.
+        if (x.reason == engine::StoryRefusal::queued) {
+            switch (x.kind) {
+            case engine::StoryRefused::Kind::phase: refused_phase_ = std::max<std::uint8_t>(refused_phase_, std::uint8_t(x.index)); break;
+            case engine::StoryRefused::Kind::flag: refused_flags_.insert(x.index); break;
+            case engine::StoryRefused::Kind::folder: refused_folder_.insert(x.index); break;
+            case engine::StoryRefused::Kind::counter: break;
+            }
+            continue;
         }
         // The owner has no online story yet and its game has not entered a stage: the room starts at zero (8.6), what is
         // done before is dropped like owner_away's drop (the barrier removes it).
@@ -1787,6 +1824,7 @@ void Session::on_story_ack(const w::StoryAck& ack) {
 Overlay Session::overlay(double now) const {
     Overlay o;
     o.loading = loading_;
+    if (o.loading.empty() && story_hold_) o.loading = "Loading the room story...";
     o.boss_choice = boss_choice_;
     o.connection_lost = mode_ == Mode::lost || (resume_after_lost_ && !hello_done_);
     if (o.connection_lost && o.loading.empty() && mode_ == Mode::lost) o.loading = "Connection lost, reconnecting...";

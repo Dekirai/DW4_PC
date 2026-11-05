@@ -76,7 +76,38 @@ bool CardStore::write(int slot, std::span<const std::uint8_t> gci, std::string* 
         std::error_code ec;
         std::filesystem::create_directories(slot_folder(slot), ec);
     }
+    if (story_override_) {
+        const auto bytes = with_story(gci, *story_override_);
+        return write_file_atomic(save_path(slot), bytes, kind_ == Kind::single_file, error, valid_save_gci);
+    }
     return write_file_atomic(save_path(slot), gci, kind_ == Kind::single_file, error, valid_save_gci);
+}
+
+std::vector<std::uint8_t> with_story(std::span<const std::uint8_t> gci, const StoryBytes& story) {
+    std::vector<std::uint8_t> out(gci.begin(), gci.end());
+    if (out.size() < kGciEntrySize + kFileSize) return out;
+    const auto be32 = [](std::span<const std::uint8_t> b, std::size_t at) {
+        return std::uint32_t(b[at]) << 24 | std::uint32_t(b[at + 1]) << 16 | std::uint32_t(b[at + 2]) << 8 | b[at + 3];
+    };
+    for (const auto offset : kCopyOffsets) {
+        const auto at = kGciEntrySize + offset;
+        std::span<std::uint8_t> copy(out.data() + at, kCopySize);
+        if (be32(copy, 4) != kCopyVersion || be32(copy, 0) != checksum(copy)) continue; // a damaged copy stays as it is
+        bool changed = false;
+        for (std::size_t box = 0; box < kRecordsPerCopy; ++box) {
+            const std::size_t record = 8 + box * kRecordStride;
+            if (record + kRecordSize > kCopySize || copy[record] == 0) continue; // ISUSE 0: an empty box
+            auto* bytes = copy.data() + record + kStoryOffset;
+            if (!std::equal(story.begin(), story.end(), bytes)) {
+                std::copy(story.begin(), story.end(), bytes);
+                changed = true;
+            }
+        }
+        if (!changed) continue;
+        const auto sum = checksum(copy);
+        for (int i = 0; i < 4; ++i) copy[std::size_t(i)] = std::uint8_t(sum >> (24 - 8 * i));
+    }
+    return out;
 }
 
 CardUsage CardStore::usage(int slot) const {

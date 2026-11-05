@@ -424,21 +424,25 @@ void GameEngineLink::set_view_slot(int slot) {
 #endif
 }
 
-void GameEngineLink::after_live_step() {
+bool GameEngineLink::after_live_step() {
     auto& engine = e();
-    if (!engine.title_game_start) return;
+    if (!engine.title_game_start && !engine.common_rebuilt) return false;
+    // (No Game Start without the confirmed room story: the host holds, 8.8.)
+    if (!room_story_) return false;
     engine.title_game_start = false;
+    engine.common_rebuilt = false;
     auto* sys = engine.get<engine::GameSystem>();
-    if (!sys) return;
+    if (!sys) return false;
     // (The character select wrote DIFFICULTY before GAMESTART, 0x803687D4;
     // gameStart.lua runs a few steps later, once the card worker is gone.)
-    if (room_story_) engine.apply_room_story(*room_story_);
+    engine.apply_room_story(*room_story_);
     sys->difficulty = std::clamp(settings_.difficulty, 0, 2);
     sys->camera_mode = settings_.camera_mode;
     sys->light_mode = settings_.light_mode;
+    return true;
 }
 
-bool GameEngineLink::game_start() const { return e().title_game_start; }
+bool GameEngineLink::game_start() const { return e().title_game_start || e().common_rebuilt; }
 
 bool GameEngineLink::game_started() const {
     const auto* sys = e().get<engine::GameSystem>();

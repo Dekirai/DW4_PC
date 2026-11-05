@@ -59,17 +59,22 @@ public sealed class RoomHub
 
     /// <summary>The room story of this session (SEAMLESS.md 8.3-8.7), from the owner's story the first connection brought; it
     /// stays with the room when the hub is rebuilt.</summary>
-    public RoomStoryKeeper Story => _session.Story ??= NewKeeper(Info.Story, _inst);
+    public RoomStoryKeeper Story => _session.Story ??= NewKeeper(Info.Story, _inst, Info.Protocol);
 
     /// <summary>A room's story keeper from its start (the owner's story, difficulty, policy and presence), with the options'
-    /// per-visit and per-member rules. Without a start (relay-only tests): an empty, started story.</summary>
-    public static RoomStoryKeeper NewKeeper(RoomStoryInit? init, InstanceOptions inst) => init is { } s
-        ? new RoomStoryKeeper(s.Story, s.Difficulty, s.Policy, s.OwnerPresent, started: s.Started) { MinVisitSeconds = inst.StoryMinVisitSeconds,
-            PhaseStepSeconds = inst.StoryPhaseStepSeconds, KeySeconds = inst.StoryKeySeconds, FlagBurst = inst.StoryFlagBurst,
-            FlagSeconds = inst.StoryFlagSeconds, MaxLinesPerMember = inst.StoryLinesPerMember }
-        : new RoomStoryKeeper(new RoomStoryData(), 0, StoryPolicy.Drop, ownerPresent: true) { MinVisitSeconds = inst.StoryMinVisitSeconds,
-            PhaseStepSeconds = inst.StoryPhaseStepSeconds, KeySeconds = inst.StoryKeySeconds, FlagBurst = inst.StoryFlagBurst,
-            FlagSeconds = inst.StoryFlagSeconds, MaxLinesPerMember = inst.StoryLinesPerMember };
+    /// per-visit and per-member rules. Without a start (relay-only tests): an empty, started story. A room of a protocol
+    /// before 47 answers earned values with Wait, as before round G (its clients do not know Queued).</summary>
+    public static RoomStoryKeeper NewKeeper(RoomStoryInit? init, InstanceOptions inst, int protocol = RoomStoryKeeper.QueuedProtocol)
+    {
+        var answer = protocol > 0 && protocol < RoomStoryKeeper.QueuedProtocol ? StoryRefusal.Wait : StoryRefusal.Queued;
+        return init is { } s
+            ? new RoomStoryKeeper(s.Story, s.Difficulty, s.Policy, s.OwnerPresent, started: s.Started) { MinVisitSeconds = inst.StoryMinVisitSeconds,
+                PhaseStepSeconds = inst.StoryPhaseStepSeconds, KeySeconds = inst.StoryKeySeconds, FlagBurst = inst.StoryFlagBurst,
+                FlagSeconds = inst.StoryFlagSeconds, MaxLinesPerMember = inst.StoryLinesPerMember, EarnedAnswer = answer }
+            : new RoomStoryKeeper(new RoomStoryData(), 0, StoryPolicy.Drop, ownerPresent: true) { MinVisitSeconds = inst.StoryMinVisitSeconds,
+                PhaseStepSeconds = inst.StoryPhaseStepSeconds, KeySeconds = inst.StoryKeySeconds, FlagBurst = inst.StoryFlagBurst,
+                FlagSeconds = inst.StoryFlagSeconds, MaxLinesPerMember = inst.StoryLinesPerMember, EarnedAnswer = answer };
+    }
 
     /// <summary>The views as the last housekeeping pass saw them (the room API's answer while the room is busy).</summary>
     public IReadOnlyList<InstanceView> CachedViews { get; private set; } = [];

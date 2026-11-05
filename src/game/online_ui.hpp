@@ -36,6 +36,7 @@ struct RoomLive {
     bool leave_prompt = false;           // B + X + START asked "Leave room?"
     bool in_game = false;                // the game started (past the title's Game Start / Call Digimon)
     std::string character;               // the online character's save state (CharacterSync::status_text)
+    std::string story;                   // "Story: yours" / "Story: <owner>'s, phase n, k key items" (round G-core)
     struct Member {
         std::uint32_t member = 0;        // room slot 0-9
         std::string name, stage;         // stage empty: hidden (loading, a scene, a menu)
