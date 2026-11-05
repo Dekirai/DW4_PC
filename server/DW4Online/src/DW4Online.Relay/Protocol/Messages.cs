@@ -261,7 +261,8 @@ public sealed record SnapHashMsg(uint Inst, uint Visit, ulong Hash)
     public byte[] Frame() => new WireWriter(Msg.SnapHash).U32(Inst).U32(Visit).U64(Hash).Frame();
 }
 
-/// <summary>READY: a joiner caught up; tick = a multiple of 60 with its net fingerprint, its replay rate and its carry.</summary>
+/// <summary>READY: a joiner caught up; tick = a multiple of 60 (from a checkpoint in a protocol 48 room: its check tick or a
+/// later multiple of 60, <see cref="Wire.ReadyCheckTicks"/>) with its net fingerprint, its replay rate and its carry.</summary>
 public sealed record ReadyMsg(uint Inst, uint Visit, uint Tick, ulong NetFp, uint Rate, byte[] Carry, byte Flags = 0)
 {
     /// <summary>Round J: the engine was rebuilt from a checkpoint (such a READY never judges a vote, SEAMLESS.md 6.13.4).</summary>
@@ -381,7 +382,8 @@ public sealed record JoinAtMsg(uint Inst, uint Visit, uint Tick)
     public byte[] Frame() => new WireWriter(Msg.JoinAt).U32(Inst).U32(Visit).U32(Tick).Frame();
 }
 
-/// <summary>NETFP: the net fingerprint after tick (every 60 ticks, every member).</summary>
+/// <summary>NETFP: the net fingerprint after tick (every 60 ticks, every member; protocol 48: also the check tick of the
+/// member's own checkpoint upload, <see cref="Wire.ReadyCheckTicks"/>).</summary>
 public sealed record NetFpMsg(uint Inst, uint Visit, uint Tick, ulong Hash)
 {
     public static NetFpMsg Parse(ReadOnlySpan<byte> p)

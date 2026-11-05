@@ -6,9 +6,9 @@
 # (why=desync_rebuilt), so b's resync takes the classic way (the snapshot and every tick), its READY judges, and both
 # are equal after (run.py: allow_resync, min_after_resync). a is never resynced.
 b: online-trace: state purpose=1 .*checkpoint=[1-9]
-b: online-trace: ready .*from-checkpoint
+b: online-trace: ready .*from-checkpoint .*checked=(1[5-9]|[2-9][0-9]|[0-9]{3,})
 relay: ^state .*purpose=Join .*checkpoint=[1-9]
-relay: ^ready .*member=1 .*checkpoint=True
+relay: ^ready .*member=1 .*checkpoint=True checked=True
 relay: ^join .*slot=1
 b: online-trace: join applied .*slot=1
 b: online: test desync at tick \d+ \(1500 ticks after the own join at \d+, engine from a checkpoint\)

@@ -1,11 +1,12 @@
 # JS (round J, 6.13.4; since round J's review): both machines' tick state leaves the models' HP and the system
 # generator out; b joins from a checkpoint and keeps the values of its load end (the generator is in the net
-# fingerprint). The relay checks a READY from a checkpoint against the members' NETFP of its tick (the first multiple of
-# 60 it replayed), so the drift is caught there: ready_mismatch (scenario.json: exactly one), the path turns suspect
+# fingerprint). The relay checks a READY from a checkpoint against the donor's NETFP of the checkpoint's check tick
+# (protocol 48: 15 replayed steps after it; before, the first multiple of 60 it replayed, up to a second of waiting), so
+# the drift is caught there: ready_mismatch (scenario.json: exactly one), the path turns suspect
 # (why=ready), b gets the classic state (the snapshot and every tick), its classic READY matches and it joins; equal
 # from the JOIN on, no desync and no resync.
 b: online-trace: state purpose=1 .*checkpoint=[1-9]
-b: online-trace: ready .*from-checkpoint
+b: online-trace: ready .*from-checkpoint .*checked=(1[5-9]|[2-9][0-9]|[0-9]{3,})
 relay: ^state .*purpose=Join .*checkpoint=[1-9]
 relay: ^ready_mismatch .*member=1 .*checkpoint=True
 relay: ^checkpoint_suspect .*why=ready

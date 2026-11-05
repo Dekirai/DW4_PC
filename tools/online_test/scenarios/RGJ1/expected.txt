@@ -13,7 +13,7 @@ relay: checkpoint_ask
 relay: ^checkpoint .*tick=
 relay: state .*purpose=Join .*checkpoint=[1-9]
 b: online-trace: state purpose=1 .*checkpoint=
-b: online-trace: ready .*from-checkpoint
+b: online-trace: ready .*from-checkpoint .*checked=(1[5-9]|[2-9][0-9]|[0-9]{3,})
 a: online-trace: join applied .*slot=1
 !b: the room story did not arrive
 !b: the game starts without a room story
@@ -23,5 +23,5 @@ a: online-trace: join applied .*slot=1
 !relay: checkpoint_suspect
 !b: online-script: FAIL
 !a: online-script: FAIL
-relay: ^ready .*checkpoint=True
+relay: ^ready .*checkpoint=True checked=True
 shared: a b >= 3000

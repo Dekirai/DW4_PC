@@ -33,8 +33,9 @@ canonical snapshot hashes of every NEW (and co-arrival) are equal, the relay log
 was closed or crashed; then the scenario's expected log (in order per source; "!" lines must not appear; "shared: a b >=
 N" asks for N ticks of equal fingerprints with both present in one instance). A scenario with "allow_resync" (S11a, S11b:
 a client's DW4_ONLINE_TEST_DESYNC injects a desync) may differ up to its instance's last resync READY and must then be
-equal for "min_after_resync" ticks; its expected log checks the votes and resyncs. A scenario with "expect_relay"
-({"ready_mismatch": 1}: JS, a READY from a checkpoint the members' fingerprints contradict) needs exactly that count of
+equal for "min_after_resync" ticks (the relay's desync, resync, statehash_mismatch and checkpoint_suspect are allowed
+there); its expected log checks the votes and resyncs. A scenario with "expect_relay" ({"ready_mismatch": 1,
+"checkpoint_suspect": 1}: JS, a READY from a checkpoint the members' fingerprints contradict) needs exactly that count of
 that relay event instead of none. A scenario's "achievements" asks the
 server for each client account's online achievements afterwards (check_achievements). Network traffic stays on loopback. A
 scenario.json with "server": {...} gets its own server with those settings merged over the stack's and its own database
@@ -1094,7 +1095,11 @@ def evaluate_real(sc, src, out, code, diag, timed_out, exits):
     for e in relay:
         kinds[e["ev"]] = kinds.get(e["ev"], 0) + 1
     notes.append("relay: " + ", ".join("%s %d" % kv for kv in sorted(kinds.items())))
-    bad_kinds = ("desync", "snaphash_mismatch", "split_mismatch", "barrier_mismatch", "barrier_split", "resync", "ready_mismatch")
+    # (statehash_mismatch and checkpoint_suspect since lane jready's review: S3 logged both, a rebuilt joiner's STATEHASH
+    # right after its JOIN, and passed; a suspect path makes every later join of the visit a classic one.)
+    bad_kinds = ("desync", "snaphash_mismatch", "split_mismatch", "barrier_mismatch", "barrier_split", "resync", "ready_mismatch",
+                 "statehash_mismatch", "checkpoint_suspect")
+    resync_kinds = ("desync", "resync", "statehash_mismatch", "checkpoint_suspect")  # what an injected desync brings
     # "expect_relay" ({"ready_mismatch": 1}, JS): a scenario that provokes one of these on purpose names it with its exact
     # count; that count is then required (fewer or more is a problem), every other one stays an error.
     expect_relay = sc.get("expect_relay", {})
@@ -1107,7 +1112,7 @@ def evaluate_real(sc, src, out, code, diag, timed_out, exits):
         else:
             notes.append("relay logged %d x %s as the scenario expects" % (count, ev))
     for bad in bad_kinds:
-        if sc.get("allow_resync") and bad in ("desync", "resync"):
+        if sc.get("allow_resync") and bad in resync_kinds and bad not in expect_relay:
             continue  # (the resync scenarios inject them; their expected.txt checks how they end)
         if bad in expect_relay:
             continue  # (checked above)

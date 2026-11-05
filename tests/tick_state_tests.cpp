@@ -126,6 +126,8 @@ struct Scenario {
     // A member joins (online_join_player, slot `players`, p_girumon) at the
     // first joinable tick from this frame (0: none).
     std::uint64_t join_at = 0;
+    // One more rebuild from the first state at or after this frame (0: none).
+    std::uint64_t rebuild_from = 0;
     std::array<PadSample, 4> pads(std::uint64_t frame) const {
         auto out = pads_at(frame);
         if (menu_at && frame + 30 >= menu_at && frame <= menu_at + 1000) {
@@ -185,7 +187,13 @@ struct Straight {
     // comparison) and every step's pads since the load step.
     std::map<std::uint64_t, std::vector<std::uint8_t>> canonical;
     std::vector<std::array<PadSample, 4>> visit_log;
+    // The STATEHASH (canonical hash) at every state-safe frame that is a
+    // multiple of kHashEvery after the load end: a rebuilt engine's own
+    // STATEHASH reports soon after its join are compared with these.
+    std::map<std::uint64_t, std::uint64_t> state_hashes;
 };
+
+constexpr std::uint64_t kHashEvery = 20;
 
 PlayerCarry joiner_carry() {
     PlayerCarry c;
@@ -235,11 +243,21 @@ Straight run_straight(const std::filesystem::path& data, const Scenario& sc) {
         fresh_visit = false;
         if (out.load_end && engine.frame() >= out.load_end + 300 && engine.frame() % 500 == 0 && out.canonical.size() < 6 && engine.state_safe())
             out.canonical[engine.frame()] = engine.save_tick_state(TickForm::canonical);
+        if (out.load_end && engine.frame() > out.load_end && engine.frame() % kHashEvery == 0 && engine.state_safe())
+            out.state_hashes[engine.frame()] = engine.tick_state_hash();
         if (sc.dump_to && engine.frame() >= sc.dump_from && engine.frame() <= sc.dump_to && engine.state_safe())
             out.states[engine.frame()] = engine.save_tick_state();
     }
     engine.set_online(OnlineRules{});
     return out;
+}
+
+bool dense_rebuilds() {
+    static const bool on = [] {
+        const char* text = std::getenv("DW4_TICKSTATE_REBUILDS");
+        return text && std::string(text) == "all";
+    }();
+    return on;
 }
 
 struct Trials {
@@ -260,6 +278,7 @@ void run_trials(const std::filesystem::path& data, const Scenario& sc, const Str
     Engine& engine = start(holder, data, sc);
     std::mt19937 rng(0x5EED);
     std::uint64_t next_trial = 0;
+    bool rebuild_from_taken = false;
     int reported = 0;
     while (engine.frame() < straight.fingerprints.rbegin()->first) {
         if (straight.joined && engine.frame() == straight.joined) engine.online_join_player(sc.players, joiner_carry(), 0);
@@ -299,7 +318,9 @@ void run_trials(const std::filesystem::path& data, const Scenario& sc, const Str
         t.hash_ms += ms_since(t0);
         // States for the rebuild: the first and then every 12th (after a
         // member's window, its copies come back through the journal).
-        if (t.saved == 1 || (t.saved % 12 == 0 && kept.size() < 6)) kept.push_back({frame, bytes});
+        // (DW4_TICKSTATE_REBUILDS=all, diagnosis: every state, each rebuild for kRebuildHashSteps steps.)
+        const bool extra = sc.rebuild_from && frame >= sc.rebuild_from && !std::exchange(rebuild_from_taken, true);
+        if (t.saved == 1 || (t.saved % 12 == 0 && kept.size() < 6) || extra || (dense_rebuilds() && kept.size() < 80)) kept.push_back({frame, bytes});
         // Idempotence: applied into itself, it saves the same bytes.
         t0 = std::chrono::steady_clock::now();
         try {
@@ -383,6 +404,8 @@ void run_trials(const std::filesystem::path& data, const Scenario& sc, const Str
 
 // 6.13.2 steps 1-5: a fresh engine from the visit's load snapshot, its load
 // ticks, the state of T applied, then the true pads.
+constexpr int kRebuildReplaySteps = 20;  // the joiner's catch-up from T (replay mode)
+constexpr int kRebuildHashSteps = 1200; // its STATEHASH compared over two periods
 void run_rebuild(const std::filesystem::path& data, const Scenario& sc, const Straight& straight, std::uint64_t at,
                  const std::vector<std::uint8_t>& bytes, Trials& t) {
     Engine engine(data);
@@ -406,8 +429,16 @@ void run_rebuild(const std::filesystem::path& data, const Scenario& sc, const St
     soft(engine.frame() == at, sc.stage + ": the rebuilt engine is at T");
     const auto again = engine.save_tick_state();
     soft(again == bytes, sc.stage + ": the rebuild saves T's bytes (" + (again == bytes ? std::string() : first_differing_section(bytes, again)) + ")");
-    int steps = 0;
-    while (engine.frame() < straight.fingerprints.rbegin()->first) {
+    // As a joiner: its first steps from T are a catch-up in replay mode, then
+    // it plays live; its STATEHASH reports from its join on are compared with
+    // the members' (6.13.4). Since protocol 48 it joins about 25 ticks after T,
+    // so its first report may come right after the rebuild (S3: c rebuilt at
+    // 1753, its STATEHASH of 1800 differed while every NETFP was equal).
+    engine.set_replay(true);
+    int steps = 0, hashes = 0;
+    bool hash_failed = false;
+    while (engine.frame() < straight.fingerprints.rbegin()->first && !(dense_rebuilds() && steps >= kRebuildHashSteps)) {
+        if (steps == kRebuildReplaySteps) engine.set_replay(false);
         if (straight.joined && engine.frame() == straight.joined) engine.online_join_player(sc.players, joiner_carry(), 0);
         host_step(engine, sc.pads(engine.frame()));
         ++steps;
@@ -417,9 +448,32 @@ void run_rebuild(const std::filesystem::path& data, const Scenario& sc, const St
             engine.set_online(OnlineRules{});
             return;
         }
+        if (const auto h = straight.state_hashes.find(engine.frame());
+            !hash_failed && steps <= kRebuildHashSteps && h != straight.state_hashes.end() && engine.state_safe()) {
+            ++hashes;
+            if (engine.tick_state_hash() != h->second) {
+                hash_failed = true;
+                std::string where;
+                if (const auto kept = straight.states.find(engine.frame()); kept != straight.states.end()) {
+                    const auto mine = engine.save_tick_state();
+                    where = " in " + first_differing_section(kept->second, mine);
+                    // DW4_TICKSTATE_DUMP=DIR: both states for tools/online/tickstate_diff.py.
+                    if (const char* dir = std::getenv("DW4_TICKSTATE_DUMP")) {
+                        const auto base =
+                            std::filesystem::path(dir) / (sc.stage + "_rebuild_" + std::to_string(at) + "_" + std::to_string(engine.frame()));
+                        std::ofstream(base.string() + "_straight.bin", std::ios::binary)
+                            .write(reinterpret_cast<const char*>(kept->second.data()), std::streamsize(kept->second.size()));
+                        std::ofstream(base.string() + "_rebuild.bin", std::ios::binary)
+                            .write(reinterpret_cast<const char*>(mine.data()), std::streamsize(mine.size()));
+                    }
+                }
+                soft(false, sc.stage + ": the rebuild of " + std::to_string(at) + " has another STATEHASH at frame " +
+                                std::to_string(engine.frame()) + " (" + std::to_string(steps) + " steps after T" + where + ")");
+            }
+        }
     }
     ++t.rebuilds;
-    std::cout << "  rebuild of " << at << ": equal for " << steps << " steps\n";
+    std::cout << "  rebuild of " << at << ": equal for " << steps << " steps, " << hashes << " STATEHASH compared\n";
     engine.set_online(OnlineRules{});
 }
 
@@ -514,7 +568,9 @@ int main(int argc, char** argv) {
                 // (stage, players, species, steps, trial spacing, own window at, dump range, join at)
                 set.push_back({"stag0101", 2, {"p_agumon", "p_dorumon"}, 3000, 61, 0, 0, 0, 1200});
                 set.push_back({"dng101b1", 2, {"p_agumon", "p_vmon"}, 4000, 61, 700});
-                set.push_back({"stag0102", 3, {"p_agumon", "p_dorumon", "p_vmon"}, 4000, 61, 1600, 0, 0, 900});
+                // (The rebuild of 3405: Dorumon's hit script runs 15 steps later, a chunk
+                // Girumon's shares and compiled first, at the join; lane jready's review.)
+                set.push_back({"stag0102", 3, {"p_agumon", "p_dorumon", "p_vmon"}, 4000, 61, 1600, 0, 0, 900, 3400});
                 set.push_back({"stagBS02", 4, {"p_agumon", "p_dorumon", "p_vmon", "p_girumon"}, 3000, 61});
                 // Round J's review (STATEHASH runs in every field stage, not only these): a dungeon's boss
                 // floor, a boss stage and a quest's boss floor (its kill writes a context flag).

@@ -31,7 +31,8 @@ namespace {
 
 // The version: the snapshot's (it rises with every simulation change, 6.12)
 // times 1000 plus this layout's own number.
-constexpr std::uint32_t kTickLayout = 1;
+// 2: every compiled chunk's label in the Lua section (lane jready's review).
+constexpr std::uint32_t kTickLayout = 2;
 constexpr std::uint32_t kMagic = 0x54345744; // "DW4T"
 
 // Section tags (fixed order).
@@ -487,8 +488,13 @@ void Engine::tick_engine(TickArchive& a) {
 }
 
 // The Lua VM (Lua4Vm::save_state) and the talk globals (Lua values of the
-// VM): the programs its closures run by (document id, reference) with their
-// labels, made on the reader as the script runs make them.
+// VM): every chunk compiled in this visit by (document id, reference) with
+// its label (Engine::lua_program_labels_; its closures name their programs by
+// that id), made on the reader as its closures or the script runs need them.
+// (Before lane jready's review only the closures' programs: a chunk two script
+// names share, compiled by a rebuilt engine after T under the other name,
+// got another label than the donor's, and its STATEHASH differed until those
+// closures were gone.)
 void Engine::tick_lua(TickArchive& a) {
     struct Program {
         std::uint64_t id{};
@@ -497,20 +503,23 @@ void Engine::tick_lua(TickArchive& a) {
     std::vector<Program> programs;
     std::vector<std::uint8_t> vm;
     if (!a.reading()) {
-        // The programs the closures run (the cache's others are no state).
         if (!lua_) throw TickStateError("lua", "no VM");
-        std::unordered_map<const void*, Program> known;
+        std::unordered_map<const void*, std::uint64_t> known;
         for (const auto& [key, program] : lua_programs_)
-            known[program.identity()] = {(std::uint64_t(a.ids().document(static_cast<const IgbDocument*>(key.first))) << 32) | key.second,
-                                         program.info().label};
-        std::map<std::uint64_t, std::string> used;
+            known[program.identity()] = (std::uint64_t(a.ids().document(static_cast<const IgbDocument*>(key.first))) << 32) | key.second;
         vm = lua_->save_state([&](const void* program) {
             const auto it = known.find(program);
             if (it == known.end()) throw TickStateError("lua", "a closure of a program outside the cache");
-            used[it->second.id] = it->second.label;
-            return it->second.id;
+            return it->second;
         });
-        for (const auto& [id, label] : used) programs.push_back({id, label});
+        std::map<std::uint64_t, std::string> labels;
+        for (const auto& [key, label] : lua_program_labels_) try {
+                labels[(std::uint64_t(a.ids().document(static_cast<const IgbDocument*>(key.first))) << 32) | key.second] = label;
+            } catch (const TickStateError&) {
+                // (A chunk of a document outside the engine's files: no closure
+                // may run it, and no reader could make it.)
+            }
+        for (const auto& [id, label] : labels) programs.push_back({id, label});
     }
     std::uint32_t count = std::uint32_t(programs.size());
     a.io(count);
@@ -522,16 +531,28 @@ void Engine::tick_lua(TickArchive& a) {
         a.io(p.id);
         a.io(p.label);
     }
+    if (a.reading()) {
+        // The donor's labels; a chunk this engine compiled under another label
+        // (or that the state does not know: a trial's wrong steps) is made
+        // again when it is needed.
+        lua_program_labels_.clear();
+        for (const auto& p : programs)
+            lua_program_labels_[std::make_pair(static_cast<const void*>(a.ids().document(std::uint32_t(p.id >> 32))), std::uint32_t(p.id))] =
+                p.label;
+        std::erase_if(lua_programs_, [&](const auto& entry) {
+            const auto it = lua_program_labels_.find(entry.first);
+            return it == lua_program_labels_.end() || it->second != entry.second.info().label;
+        });
+    }
     auto program_of = [&](std::uint64_t id) -> Lua4Program {
         const auto* document = a.ids().document(std::uint32_t(id >> 32));
         const auto key = std::make_pair(static_cast<const void*>(document), std::uint32_t(id));
         auto found = lua_programs_.find(key);
         if (found == lua_programs_.end()) {
-            std::string label;
-            for (const auto& p : programs)
-                if (p.id == id) label = p.label;
+            const auto label = lua_program_labels_.find(key);
+            if (label == lua_program_labels_.end()) throw TickStateError("lua", "a closure of a program the state does not list");
             const ObjectView object(document, std::uint32_t(id));
-            found = lua_programs_.emplace(key, read_lua4_chunk(object.memory(3), label)).first;
+            found = lua_programs_.emplace(key, read_lua4_chunk(object.memory(3), label->second)).first;
         }
         return found->second;
     };

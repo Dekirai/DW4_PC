@@ -1146,9 +1146,9 @@ Client to server:
 | 0x06 | SPLIT | inst, visit, fork tick, leaver mask (the side that moves to the child: `SplitResult::child`), kind (exit, in-stage) | after the step of a fork |
 | 0x07 | SNAPSHOT | inst, visit, total, offset, chunk (at most 60 KiB) | after the load step of a NEW: the base group's member in the lowest new slot only |
 | 0x08 | SNAPHASH | inst, visit, canonical hash | after the load step (NEW) or the restore (co-arrival): every member |
-| 0x09 | READY | inst, visit, tick (a multiple of 60), net fingerprint, replay rate, carry | a joiner within ten ticks of the newest tick |
+| 0x09 | READY | inst, visit, tick (a multiple of 60; from a checkpoint its check tick or a later multiple of 60, protocol 48, 6.13.5), net fingerprint, replay rate, carry | a joiner within ten ticks of the newest tick |
 | 0x0A | JOIN_AT | inst, visit, tick J | the solo leader's answer to JOIN_REQ |
-| 0x0B | NETFP | inst, visit, tick (a multiple of 60), net fingerprint after that tick | every member of a field instance |
+| 0x0B | NETFP | inst, visit, tick (a multiple of 60; protocol 48 also the check tick T + 14 of the sender's own checkpoint upload of T, 6.13.5), net fingerprint after that tick | every member of a field instance |
 | 0x0C | STATE | inst, visit, tick, flags (joinable, membership-safe, boss lock), session context hash, reason | on change (the boss lock and the context at once, the rest at most once a second) |
 | 0x0D | INTENT | inst, visit, kind (1 go without, 2 give up), argument | a member's port choice (sealed instances; the server stamps it) |
 | 0x0E | STORY | inst, visit, confirmed revision, phase claim, persistent flags, keys, counter growth per engine line (8.3) | before every BARRIER; once a second when the pending set changed, else every ten seconds while it is not empty; never from a stagIS* stage |
@@ -1885,7 +1885,8 @@ be had, and steps 4-6 (the JOIN, the pads, the music) stay for both paths.
    duration.
 3. Within ten ticks of the newest tick it sends READY with its net fingerprint
    at the last tick that is a multiple of 60 (compared with the members' NETFP
-   of that tick), its carry data and its replay rate.
+   of that tick), its carry data and its replay rate. (A rebuild from a
+   checkpoint names its check tick or a later multiple of 60, 6.13.5.)
 4. The server stamps JOIN(J) (6.4, 6.5). Every machine, the joiner included,
    applies `online_join_player(slot, carry, entrance point)` at the first
    joinable step at or after J: species and weapon packages loaded as for a
@@ -2841,7 +2842,12 @@ presence byte. Pointers become the ids of the table; a `std::function` is
 written only where its target is known (the exit step's port, as a tag); the
 sharing of `MotionChannels` lists as an index into the RAM's list; a Lua
 closure as (program id, prototype path such as `main/0`), and `Lua4Value`'s
-owner is restamped to the new VM. Sections are (tag u32, length u32, bytes)
+owner is restamped to the new VM. The program list names every chunk the
+visit compiled with its label, not only those a closure runs: two script
+names may share one chunk object, and the name that ran it first labels it
+for the visit (its closures' site, its size in the collector's count); a
+rebuilt engine compiles a chunk when a script runs it and takes the donor's
+label (lane jready's review, tick layout 2). Sections are (tag u32, length u32, bytes)
 in a fixed order, so a mismatch can be located. The *raw* form carries the
 presentation fields a joiner needs for an identical picture (TEXTCTL texts,
 NUMBERCTRL's drawn value); the *canonical* form zeroes them, as the snapshot's
@@ -2893,6 +2899,13 @@ the engine it was taken from. The test (`DW4_TICKSTATE_TEST`, ctest
   states per segment, 10,000 steps each).
 - A failure names the first step and the first differing section and object
   (`tools/online/tickstate_diff.py` on the two states written at that step).
+- As built (ctest `tick_state`), the rebuilds compared only net fingerprints
+  until lane jready's review; a rebuilt joiner's STATEHASH right after its
+  JOIN then differed in S3 while every NETFP agreed (a chunk's label, 6.13.2).
+  Since then each rebuild runs its first 20 steps in replay mode (a joiner's
+  catch-up) and its canonical hash is compared with the straight run's every
+  20 frames for 1,200 steps; `DW4_TICKSTATE_REBUILDS=all` rebuilds from every
+  state (313 rebuilds over the seven scenarios, for diagnosis).
 
 The places where a field is easily missed are known from the inventory and
 get their own cases: the Lua slot layout and GC counters (handle order keys
@@ -3012,8 +3025,10 @@ restores (6.13.6).
    the tick records after T. About 70-110 KB.
 4. **Joiner.** A fresh engine rebuilds T (6.13.2, steps 1-5), seeks its
    music from the CRI counters, replays the ticks after T (those that passed
-   during the transfer: 20-60 ticks, 10-30 ms) and sends READY with its net
-   fingerprint as today and the flag *from checkpoint* (6.13.4). Its screen
+   during the transfer: 20-60 ticks, 10-30 ms), at least to the checkpoint's
+   *check tick* T + 14, and sends READY with its net fingerprint of the check
+   tick (or of a later multiple of 60 it replayed) and the flag *from
+   checkpoint* (6.13.4; the READY check below, protocol 48). Its screen
    shows the loading screen's "Joining..." line without a countdown; nothing
    else. The stage files are in the file cache: the joiner's own load read
    them a moment before.
@@ -3026,6 +3041,61 @@ restores (6.13.6).
    the joiner's package files into the file cache when EVENT_AHEAD arrives (a
    host-side prefetch, no engine state), so a cold read from the disc never
    lands in the step.
+
+**The READY check (protocol 48).** A rebuild that missed a field must show
+before the JOIN: scenario JS (the tick state leaves the models' HP and the
+system generator out) is caught at READY, the path turns suspect and the
+classic state joins the member, with no resync after the join. The check
+compares the joiner's net fingerprint after replayed steps with an engine of
+the instance at the same tick. The members report NETFP only every 60 ticks,
+so round J's review made READY name the first multiple of 60 after T and the
+relay wait for the members' report of it: up to 59 live ticks, about a second
+(J1 859 ms from the join decision to the JOIN with 49 ticks to wait, J5 526 ms,
+JL 387 ms, about 1.2 s at worst; before that review READY named T - 1 and went
+unchecked, J5 360 ms). From protocol 48 every checkpoint has a fingerprint
+tick of its own: the donor of a checkpoint of T also sends its NETFP of the
+*check tick* T + 14 (`kReadyCheckTicks` 15) when it executes that tick, one
+net fingerprint (0.17-0.2 ms) a quarter second after its upload (on a
+multiple of 60 its ordinary NETFP is that report). The joiner replays at
+least to the check tick, 15 steps from the rebuilt state, and names it in
+READY, or a later multiple of 60 it replayed (the members' NETFP); the relay
+compares the READY with the donor's report of the check tick
+(`StoredCheckpoint.CheckFp`, also for a fresh periodic checkpoint and for one
+that newer uploads pushed out of the store while its joiner caught up); a
+READY that comes first waits for it (`Instances:ReadyFingerprintWaitMs`, then
+unchecked as before: a donor that sent no report in a fork's step). A donor
+no longer in the joiner's target at the check tick (it left, or a fork moved
+it to the other side) has no report for it: such a READY is taken unchecked
+at once (`ready_without_reference`, nothing to wait for); a field the rebuild
+missed then shows at the first vote after the JOIN (JS2's path). While a
+fork the relay has not confirmed lies at or before the READY's tick, the
+READY waits as the votes and STATEHASH do: a leaver donor's reports still
+come under the instance's id with its own side's fingerprint, and the joiner
+keeps the side that keeps the id; the fork's confirmation, refusal or
+dismissal checks it again. In a 48 room a READY from a checkpoint with any
+other tick (before the check tick, or off the raster) gets the classic state
+(`ready_offgrid`; the client never sends one). The donor keeps every upload's
+check tick until it executes it (two uploads within 15 ticks each send
+theirs). No other NETFP off the 60-tick raster is taken, and the check tick's
+report votes on nothing. The check tick passes on the donor while the joiner loads and
+rebuilds (about 0.3 s from the decision: 12-18 ticks after T), so READY no
+longer waits for live ticks at any visit length and phase, and its check
+covers 15 or more replayed steps every time (before: 1-59, as the phase fell).
+Measured: 17 ("Round J (built)", *READY at the check tick*).
+
+Considered and not taken:
+
+- *Checkpoints on the 60-tick raster* (READY names the multiple of 60 right
+  before T, whose NETFP the members already sent): an asked donor would wait
+  up to 59 ticks for the raster before its upload (the same second, moved to
+  the start), or save a tick state every second (5-7 ms each, a hitch every
+  second); and its check would replay no step (the fingerprint of the applied
+  state only).
+- *The multiple of 60 the joiner crossed during its replay*: a fresh
+  checkpoint crosses one only after up to 59 ticks, so the wait stays.
+- *Accept READY at once and verify at the next NETFP after the JOIN* (the
+  suspicion path): a rebuild that missed a field would join and then resync
+  on the player's screen, what JS showed before round J's review.
 
 | Part | Today (J1 / J30) | Round J (estimate) |
 | --- | --- | --- |
@@ -3319,7 +3389,7 @@ once. No picture is drawn for a re-simulated tick, only for the frontier.
 | picture, overhead labels, PRESENCE, the HUD | the frontier (predicted), with the correction blend below |
 | sound effects: sfp (SNDF) and the ADX effects on the SE streams 2-5 | at once from predicted ticks as preview voices; taken over or faded when confirmed (below) |
 | BGM and ambience (streams 0 and 1), global sound commands (BGMSTOP, ENVSTOP, volumes), movies | confirmed ticks: the rollback depth late (about one round trip plus a tick) |
-| NETFP | computed at every execution of a multiple of 60, sent when that tick is confirmed (the value of its last execution) |
+| NETFP | computed at every execution of a multiple of 60 (and of a donor's check tick, 6.13.5), sent when that tick is confirmed (the value of its last execution) |
 | STATEHASH, the donor's checkpoint | from the saved state of the confirmed tick: restore, encode, restore the frontier (2-4 ms every ten seconds) |
 | port events (achievements, story credits), story lines, Discord, notices, the engine's log lines | kept per tick, replaced by each execution of the tick, delivered once when confirmed |
 | STATE, SPLIT, HEADING, BARRIER and the park, INTENT, go-alone | confirmed |
@@ -3405,7 +3475,8 @@ Proposed numbers; the integration pins them after rounds 60 and 62 merge
 | C to S | 0x15 | STATEHASH | inst, visit, tick, hash (XXH64 of the canonical tick state), load end K u32, flags (1 bytes kept) | every member, once a checkpoint tick is confirmed (round J) |
 | C to S | 0x16 | CHECKPOINT | inst, visit, tick, hash, total, offset, chunk (at most 60 KiB of zstd) | the donor, on CHECKPOINT_ASK |
 | C to S | 0x17 | CHECKPOINT_BAD | inst, visit, tick, reason (version, decode, K, topology, hash), section tag | a joiner or a resyncing member whose rebuild failed |
-| C to S | (READY) | READY | as today, plus flag bit *from checkpoint* | a joiner or a resyncing member after a rebuild from a checkpoint; such a READY never judges (6.13.4) |
+| C to S | (READY) | READY | as today, plus flag bit *from checkpoint*; its tick the checkpoint's check tick or a later multiple of 60 (protocol 48) | a joiner or a resyncing member after a rebuild from a checkpoint; such a READY never judges (6.13.4) |
+| C to S | (NETFP) | NETFP | as today; protocol 48 also for the check tick T + 14 of the sender's own upload of T | the donor, when it executes that tick (6.13.5) |
 | S to C | 0x92 | CHECKPOINT_ASK | inst, visit, tick (0: the next confirmed state-safe tick), flags (1 periodic, 2 diagnosis) | to the donor (round J) |
 | S to C | 0x93 | EVENT_AHEAD | inst, visit, tick, event (the tick record's event layout) | to every member when an event is stamped (round R) |
 
@@ -3426,8 +3497,8 @@ with each round.
 
 #### 6.13.8 What stays
 
-The sealing, the fills, the delay rule and its bounds, NETFP every 60 ticks,
-the barrier and fork rules, RESUME after a reconnect, the whole log on the
+The sealing, the fills, the delay rule and its bounds, NETFP every 60 ticks
+(plus one at a donor's check tick after each upload, 6.13.5), the barrier and fork rules, RESUME after a reconnect, the whole log on the
 relay and the classic catch-up from it (as the fallback, also for a suspect
 checkpoint path), 6.9's rule that a replay from the load judges, the
 solo-led instance with its own clock and delay 0 (it
@@ -7871,7 +7942,8 @@ the exit port with its demo record, now a named functor), the generator,
 the game system, the messenger, the demo works, the Lua VM
 (`Lua4Vm::save_state`: globals, both arenas with slot layout, generations
 and free lists, the collector's counters; closures by program and prototype
-path, values restamped), the scene nodes (a mask and only the field groups
+path, values restamped; every compiled chunk's label since lane jready's
+review), the scene nodes (a mask and only the field groups
 that differ from a fresh `Node`), the attributes `edit_attribute` handed
 out, and one section per manager (every RAM's mutable fields, the SNDF
 driver with banks and bank slots by name, the CRI streams). TEXTCTL lines
@@ -8039,7 +8111,8 @@ end (3.7); a tick state writer's error stops the visit's STATEHASH and
 uploads instead of closing every member's game; `ready_sent_` resets with
 every state; READY after a checkpoint names the first multiple of 60 it
 replayed and the relay waits up to `Instances:ReadyFingerprintWaitMs` (2 s)
-for the members' NETFP of it; a joiner without READY falls back to NEW after
+for the members' NETFP of it (protocol 48 names the checkpoint's check tick
+instead, *READY at the check tick* below); a joiner without READY falls back to NEW after
 the catch-up limit plus 30 s; the classic fallback of a planned checkpoint
 join checks the whole visit's catch-up; the rebuilt member never judges
 (6.13.4); a fork drops the parent's state of the leavers' side after the
@@ -8063,6 +8136,87 @@ it drift 1,500 ticks after its JOIN (tick 5,160, outside
 `CheckpointSuspectTicks`); the rebuilt member makes no majority, the path
 turns suspect (`desync_rebuilt`), the classic resync's READY at 5,220 judges
 and both are equal for 3,840 ticks after (without the hook JS2 fails).
+
+*READY at the check tick* (lane `jready`, branch `fix-j-ready` from main
+a475b98, 05.11; protocol 48, 6.13.5). The last verification found the price
+of the review's READY check: a joiner from a checkpoint waited for the next
+multiple of 60 after T, up to 59 live ticks (J1 859 ms from the relay's join
+decision to the JOIN with 49 ticks to wait, J5 526 ms, JL 387 ms; at worst,
+59 ticks to wait, an estimated 1.2 s, not measured). Now the donor of a checkpoint of T
+sends its NETFP of the check tick T + 14 as well, the joiner replays at least
+to it and names it in READY (or a later multiple of 60 it replayed), and the
+relay compares it with the donor's report (`StoredCheckpoint.CheckFp`); a
+47 room keeps 47's rule. Client: `wire::kReadyCheckTicks`,
+`Session::check_fp_ticks_` / `ready_check_tick_`, `kOnlineProtocol` 48;
+relay: `Wire.ReadyCheckProtocol` / `ReadyCheckTicks`, `OnNetFp`, `OnReady`;
+the example settings and DEPLOY.md name 48.
+
+Measured on the local stack (hidden clients, mysqld 3620, ports
+56600-56649, `--parallel 1`, the machine busy with another round), the join
+decision to the JOIN from the relay's log: its own stamps, `join_decided` to
+its note `join` (sealed: the JOIN stamped, executed about 11 ticks later;
+solo-led: JOIN_REQ sent, before JOIN_AT's round trip), not the time a player
+sees from his exit to his own figure in the field:
+
+| Scenario | Checkpoint T, READY tick | Rebuild | Decision to JOIN |
+| --- | --- | --- | --- |
+| J1 (three runs) | 3,607, 3,621 / 3,492, 3,506 / 3,585, 3,600 | 137 / 143 / 239 ms | 370 / 318 / 417 ms (worst 417, median 370) |
+| J5 (five minutes) | 17,859, 17,873 | 150 ms | 339 ms |
+| JL (J1 behind 20 ms each way) | 3,590, 3,604 | 138 ms | 423 ms |
+| JS2 | 3,555, 3,569 | 131 ms | 334 ms |
+| RGJ1 | 3,585, 3,600 (the multiple of 60 after the check tick) | 136 ms | 327 ms |
+| S3, first joiner (solo-led) | 1,311, 1,325 | 146 ms | 340 ms |
+| S3, second joiner (sealed) | 1,753, 1,767 | 171 ms | 348 ms (its STATEHASH of 1,800 differed: lane jready's review below) |
+
+Every READY from a checkpoint was checked (`ready ... checked=True`), after
+15 or 16 replayed steps; it waited 5-64 ms for the check tick after the
+rebuild (the joiner's own transition and load and the rebuild take about
+0.3 s, the check tick a quarter second after T). The donor's check NETFP
+costs 0.14-0.2 ms (once 0.44 ms), once per upload. Worst of the nine joins
+from a checkpoint 423 ms (JL), median 340 ms (main a475b98 on the same
+stack: J1 522 ms in one run, `build/scen_base_j1.log`; one baseline run
+against nine joins, so the gain is approximate). JS: the drift found at the check tick 3,595
+(`ready_mismatch`, `checkpoint_suspect` why=ready), the classic state joins
+it (1,230 ms from the decision: the classic catch-up of 3,648 ticks). JB:
+the damaged checkpoint refused, the classic join (1,141 ms). JR: the resync
+from the agreed checkpoint of 1,800 (READY at 2,520), equal after. All nine
+pass (`build/scen_set1.log`, J1 again in `build/scen_j1_rep2.log` and
+`scen_j1_rep3.log`); ctest 56 of 56, DW4Online.Tests 269 of 269 (the three
+new relay tests: two fail against the old `RoomHub.cs`, the 47 room's passes
+with both), session tests 233 checks (new: *checkpoint check tick*),
+`det.sh` 4004f056 / 396cb219 in both runs on a build without
+`DW4_ONLINE_DEV` (`build/det1.log`). Logs in `build/` of the worktree.
+
+*Lane jready's review* (05.11 evening). S3 above passed but its relay logged
+`statehash_mismatch` and `checkpoint_suspect` (why=statehash_rebuilt) at
+1,800: c rebuilt from 1,753 joined at 1,778, and its STATEHASH of 1,800
+differed from a's and b's while every NETFP agreed (equal again from 2,400).
+Before protocol 48 the first compared STATEHASH came at least about 60 ticks
+after T; now it may come 25-60 ticks after it, and a gap of the rebuild
+showed: the tick state listed only the Lua programs closures ran, so a chunk
+two script names share (`hit_p_girumon.lua` and `hit_p_dorumon.lua`), which
+the members compiled under the first name that ran it, the rebuilt engine
+compiled after T under the name that ran it there, another label for its
+closures' site and the collector's count. A suspect path sends every later
+join of the visit the classic way. Found with ctest `tick_state` once its
+rebuilds compare STATEHASH (6.13.3): stag0102's rebuild of 3,405 differed 15
+steps after T in `lua`. Fixed: the tick state carries every compiled chunk's
+label (`Engine::lua_program_labels_`, tick layout 2; 313 rebuilds, 0
+differences; the stag0102 case fails without the fix). run.py now counts
+`statehash_mismatch` and `checkpoint_suspect` as failures (a scenario that
+provokes them names them in `expect_relay`: JS, JS2), so a pass no longer
+hides them. The relay: a READY waits while a fork at or before its tick is
+unconfirmed (a leaver donor's check fingerprint was compared with the
+stayers' side), a 48 room refuses READY ticks the client never sends
+(`ready_offgrid`), and an evicted checkpoint still gets its donor's report;
+the client keeps every open check tick (6.13.5). Tests: the round J relay
+tests run for 47 and 48; new ones for the fork window, a donor that forked
+away, a non-donor's report, off-grid READYs and an evicted checkpoint (three
+fail with the old `RoomHub.cs`); the session test *checkpoint join: READY at
+the check tick* (the fake hub joins from a checkpoint) and two uploads within
+15 ticks in *checkpoint check tick* (fails with one slot). DW4Online 0.1.6
+(protocol 48). Results: section *jready review results* in
+`docs/ROUND_J_NOTES.md`.
 
 ### Round R (proposed r67): rollback for the own player
 
@@ -11370,9 +11524,9 @@ Client to server:
 | 0x06 | SPLIT | inst u32, visit u32, fork tick u32, leaver mask u8 (the side that moves to the child), kind u8 (0 exit, 1 in-stage) |
 | 0x07 | SNAPSHOT | inst u32, visit u32, total u32 (at most 4 MiB), offset u32, chunk (the rest; chunks in order from 0) |
 | 0x08 | SNAPHASH | inst u32, visit u32, canonical hash u64 |
-| 0x09 | READY | inst u32, visit u32, tick u32 (a multiple of 60), net fingerprint u64, replay rate u32, carry blob (at most 65,533 bytes); also a resync's end (no JOIN follows) |
+| 0x09 | READY | inst u32, visit u32, tick u32 (a multiple of 60; after a rebuild from a checkpoint of T, protocol 48: the check tick T + 14 or a later multiple of 60), net fingerprint u64, replay rate u32, carry blob (at most 65,533 bytes); also a resync's end (no JOIN follows) |
 | 0x0A | JOIN_AT | inst u32, visit u32, tick J u32 |
-| 0x0B | NETFP | inst u32, visit u32, tick u32 (tick % 60 == 0), hash u64 |
+| 0x0B | NETFP | inst u32, visit u32, tick u32 (tick % 60 == 0; protocol 48 also the check tick T + 14 after the sender's CHECKPOINT of T), hash u64 |
 | 0x0C | STATE | inst u32, visit u32, tick u32, flags u8 (1 joinable, 2 membership-safe, 4 boss lock), context hash u64, reason u8 (0 none, 1 entry scene, 2 scene, 3 menu, 4 loading, 5 boss, 6 fork pending, 7 hub) |
 | 0x0D | INTENT | inst u32, visit u32, kind u8 (1 go without, 2 give up), argument i32 (sealed instances only) |
 | 0x0E | STORY | inst u32, visit u32, confirmed revision u32, phase u8 (0 no claim, else 1-7: flags 1-6, 86), flag count u16 + u16 flags (< 1024), key count u8 + u8 keys (< 12), line count u8 (at most 32) + (counter u8 (< 16), line inst u32, line visit u32, growth i32) each (round S2, 8.7) |

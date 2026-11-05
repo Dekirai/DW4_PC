@@ -54,6 +54,15 @@ inline constexpr std::size_t kMaxLogPads = 1200;      // LOG: 1..1200 pads
 inline constexpr std::size_t kMaxCarry = 65535 - 2;   // BARRIER / READY carry (it becomes a JOIN event with a u16 length: slot, point, carry)
 inline constexpr std::size_t kMaxStage = 24;          // stage names
 inline constexpr std::uint32_t kNoTick = 0xFFFFFFFFu; // WELCOME without a last tick
+// Protocol 48 (the READY check of a join from a checkpoint, SEAMLESS.md
+// 6.13.5): the donor of a checkpoint of tick T (the first tick not in the
+// state) sends NETFP for its *check tick* T + kReadyCheckTicks - 1 too, a
+// quarter second later; a joiner rebuilt from that checkpoint replays at least
+// to the check tick and its READY names it (or a later multiple of 60), so the
+// relay compares the rebuild with the donor after kReadyCheckTicks replayed
+// steps without waiting for the next multiple of 60 (up to a second before).
+inline constexpr std::uint32_t kReadyCheckTicks = 15;
+inline constexpr std::uint32_t check_tick(std::uint32_t checkpoint_tick) { return checkpoint_tick + kReadyCheckTicks - 1; }
 
 struct WireError : std::runtime_error {
     using std::runtime_error::runtime_error;
@@ -276,7 +285,9 @@ struct SnapHash {      // inst | visit | u64 canonical hash
     std::uint32_t inst{}, visit{};
     std::uint64_t hash{};
 };
-struct Ready {         // inst | visit | u32 tick (a multiple of 60) | u64 net fingerprint | u32 rate | blob carry [| u8 flags]
+// tick: a multiple of 60; from a checkpoint (protocol 48) its check tick or a
+// later multiple of 60 (kReadyCheckTicks).
+struct Ready {         // inst | visit | u32 tick | u64 net fingerprint | u32 rate | blob carry [| u8 flags]
     std::uint32_t inst{}, visit{}, tick{};
     std::uint64_t fingerprint{};
     std::uint32_t rate{};
@@ -316,7 +327,9 @@ struct CheckpointAsk { // inst | visit | u32 tick (0: the next state-safe tick) 
 struct JoinAt {        // inst | visit | u32 tick J
     std::uint32_t inst{}, visit{}, tick{};
 };
-struct NetFp {         // inst | visit | u32 tick (tick % 60 == 0) | u64 hash
+// tick: a multiple of 60; or (protocol 48) the check tick of the member's own
+// checkpoint upload (kReadyCheckTicks).
+struct NetFp {         // inst | visit | u32 tick | u64 hash
     std::uint32_t inst{}, visit{}, tick{};
     std::uint64_t hash{};
 };
