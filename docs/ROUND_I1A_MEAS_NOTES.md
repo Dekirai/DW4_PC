@@ -34,4 +34,6 @@ Logs: `build/meas/*.log`.
   (`lg_table.py`); the experiment without the PING margin
   `loadgate3_nomargin.json` (RoomHub.cs restored afterwards, not committed).
 - 16:50: SEAMLESS.md 19.6.5, 19.8.3, 19.8.7, 19.13, 19.17.4 and 19.25
-  (M1-M5) written. Open: det.sh and ctest on this branch's build.
+  (M1-M5) written.
+- 17:05: `build/rel` with the tests (bld_test.cmd): det.sh 4004f056 / 396cb219
+  twice (`build/det1.log`); ctest running (`build/ctest1.log`).

@@ -9544,7 +9544,7 @@ in the world.
      `begin_stage_load`.
 
   `dw4_world_probe DATA redirect` (headless, online rules, stag0101 direct
-  start, the departure at frame 1202, DISSOLVE answered at the park; the
+  start, the departure posted at frame 1201, DISSOLVE answered at the park; the
   redirect is `request_stage` plus `PlayerPointManager::set_point_no`, which
   is all `redirect_pending_stage` has to do; log `build/meas/redirect1.log`):
 
@@ -9707,7 +9707,7 @@ in the world.
   | H drops only | equal for 4,199 frames (no drop happened; by code the first drop differs) | - |
   | H Very Hard, J Normal | equal (the snapshot's GameSystem) | equal |
   | the same, J's own modes applied after the restore | differ from load + 351 (the first wave: generatorn instead of generatorv) | - |
-  | H camera 1 / light 0, J's own modes applied | equal for 4,199 frames (stag0101 has no camera file; the light packs did not change the load's timing here) | - |
+  | H camera 1 / light 0, J's own modes applied | equal for 4,199 frames (stag0101 has no camera file; in dng101b1 the joiner loaded the other camera file and stayed equal for the 3,000 frames there; the light packs did not change the load's timing here) | - |
 
   And the way back: a host's modes (Very Hard, camera 1, light 0) kept
   into a DISSOLVE load stagML11 with `ls_pack`; the own modes set while the
@@ -9722,8 +9722,12 @@ in the world.
   field is needed for them**: a restore must keep the snapshot's cheats
   (only the forced-off cheats of `online_cheats`), and `start_online` after
   a restore must stop applying the member's own `RoomSettings`; that one
-  line is what breaks a join with other settings today. No setting needs a
-  join filter. The member's own settings come back only at the DISSOLVE,
+  line is what breaks a join with other settings today. The same holds for
+  the session's other restores in an instance (a fallback to the member's
+  own solo load, `session.cpp` 1344-1355 and 1448-1450: that load ran on
+  the host's settings too) and for a guest whose stage group a co-arrival
+  takes as its base (its engine holds the host's). No setting needs a join
+  filter. The member's own settings come back only at the DISSOLVE,
   set in the parked stage change before the load step (19.8.3's load step),
   which equals a Game Start with them. The light mode measured as
   presentation only; it stays a host setting until a round checks that no
