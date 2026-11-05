@@ -27,8 +27,9 @@ down at any time). Keep it short; the design stays in SEAMLESS.md.
 - A block keeps the blocked player's open request to the blocker (it turns
   `delivered = 0`): it stays "sent" in his list, so the block is not
   revealed by a vanishing row. The blocker's own requests to him go.
-- An unblock delivers the formerly blocked player's still pending requests
-  (`delivered = 1`): he sent them, the blocker may answer them now.
+- An unblock makes the formerly blocked player's still pending request a
+  waiting one: delivered at once when the blocker has a place, else in its
+  turn (after the review; it used to be delivered over the cap).
 - Cancelling a declined request hides it from the sender (`cancelled_at`)
   but keeps the decline until it expires; sending again shows it as sent
   again (with a new date) and still delivers nothing. Without this a cancel
@@ -36,9 +37,15 @@ down at any time). Keep it short; the design stays in SEAMLESS.md.
 - A request to a player whose own request to you is open (pending, or
   declined by you and not cancelled by him) makes you friends at once (the
   crossing rule; a decline you regret is undone by sending a request).
-- The incoming cap is checked before the block, so the answer is the same
-  with and without a block. The sender's hourly and daily counts are kept in
-  memory (a restart starts them afresh).
+- (Replaced after the review.) "The incoming cap is checked before the
+  block" held only for a sender's first request: cancel + resend into a full
+  inbox, or a second account right after the sender, showed blocks and
+  declines. Now the incoming cap never answers: a request beyond
+  `MaxPendingIn` answers "Request sent." and waits (`delivered = 0`, sender
+  not blocked) until a place frees, oldest first (SEAMLESS.md 19.11, 19.25;
+  the user may still prefer counting silent and declined rows instead).
+  The sender's hourly and daily counts are kept in memory (a restart starts
+  them afresh).
 
 ## Progress
 
@@ -56,6 +63,17 @@ down at any time). Keep it short; the design stays in SEAMLESS.md.
 - The fresh XAMPP data directory had crashed Aria system tables
   (`mysql.db`, `mysql.global_priv`): repaired with mysqlcheck and a
   restart (README note); only the restricted-grants test writes there.
+- Review fixes (2026-11-05, f9c1b535 code and tests, then the docs commit):
+  waiting requests instead of `requests_full`; unblock only up to the cap;
+  `memberSince` null on hidden player cards; striped per-account locks with
+  a 10 s wait (503 `social_busy`); `social_limit` once per account, limit
+  and hour; own id for the block form's input; privacy retention lines;
+  how round I1 registers its `IWorldNotifier`. Each new test was checked to
+  fail with the old behaviour put back (mutations in a scratch copy).
+- The own mysqld must outlive the shell that starts it: a killed mysqld
+  left `mysql.global_priv` broken (README: `--skip-grant-tables` +
+  `REPAIR TABLE ... USE_FRM`).
 - Open: merge into main and a server release (the user deploys it after a
-  backup; DEPLOY.md 9.1); the views, prefs, whereabouts and the relay's
-  notifier come with round I1.
+  backup; DEPLOY.md 9.1), raising the version (0.1.5's zip exists without
+  0012) and checking the migration number; the views, prefs, whereabouts
+  and the relay's notifier come with round I1.

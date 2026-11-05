@@ -817,7 +817,9 @@ SELECT a.username AS player, b.username AS blocks_player, k.created_at
 
 Look, do not edit: the website and the API keep the rules (a declined request stays "sent" to its sender, a block is
 never revealed), and a hand-made row can break them (a `delivered = 1` request from a blocked player reaches the
-blocker). Deleting a whole row by hand (a friendship, a request, a block) is harmless. A deleted account (`deleted_<id>`)
+blocker). `delivered = 0` on a request from a player who is not blocked means it waits for a place among the
+receiver's 100 open requests; the next answer, cancel or block of that receiver, or the hourly housekeeping, delivers it.
+Deleting a whole row by hand (a friendship, a request, a block) is harmless. A deleted account (`deleted_<id>`)
 has no rows in any of the three tables. The views with user names (`v_friends`, `v_friend_requests`, `v_blocks`) come
 with a later release that also grants `CREATE VIEW`; until then the queries above stand in for them.
 
@@ -835,8 +837,9 @@ with a later release that also grants `CREATE VIEW`; until then the queries abov
 - Friends and blocks (section 9.1, SEAMLESS.md 19.11): the limits per account in `Friends:*` (`RequestsPerHour` 20,
   `RequestsPerDay` 100, `MaxPendingOut` 50, `MaxPendingIn` 100, `MaxFriends` 200, `MaxBlocks` 500, `RequestDays` 30)
   and `RateLimits:SocialPerMinute` (60), `FriendListSeconds` (one `GET /friends` per 2 s), `WebSocialPerMinute` (60)
-  rarely need a change. A request refused by one of them writes an audit row `social_limit` with the limit's name;
-  friend and block changes themselves are not audited (the tables are the record).
+  rarely need a change. A request refused by one of them writes an audit row `social_limit` with the limit's name (at
+  most once per account and limit an hour); friend and block changes themselves are not audited (the tables are the
+  record). `MaxPendingIn` never refuses: requests beyond it wait and are delivered as places free.
 - Logs: `logs\dw4online-yyyyMMdd.log` (UTC, 30 days) when `Logging:File:Directory` is set; errors are ` FAIL ` lines
   (with the exception below them), crashes also appear in the Windows Application event log (source ".NET Runtime").
 - Staff tools without the website: `DW4Online.Server.exe reset-password <user> --settings ...`, the `/api/v1/admin/...`
