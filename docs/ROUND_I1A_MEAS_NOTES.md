@@ -36,4 +36,6 @@ Logs: `build/meas/*.log`.
 - 16:50: SEAMLESS.md 19.6.5, 19.8.3, 19.8.7, 19.13, 19.17.4 and 19.25
   (M1-M5) written.
 - 17:05: `build/rel` with the tests (bld_test.cmd): det.sh 4004f056 / 396cb219
-  twice (`build/det1.log`); ctest running (`build/ctest1.log`).
+  twice (`build/det1.log`); ctest 56 of 56 (`build/ctest1.log`); the server
+  solution builds (FakeClient with LoadGate.cs). Done; the lanes take M1-M5
+  from SEAMLESS.md 19.25.
