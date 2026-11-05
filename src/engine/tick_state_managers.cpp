@@ -305,7 +305,15 @@ void SoundManager::tick_state(TickArchive& a) {
     base_rams(a, rams_);
     for (auto& s : streams_) {
         a.io(s.name);
+        // (Reading: a stream whose file changed since this engine's own load -
+        // an event or boss BGM, another ambience, an ADX effect - gets its
+        // decoder for the new file, from its start; before, the mix played the
+        // old file under the new serial, or nothing, until the game restarted
+        // that channel. Round J's review; the position within a file the
+        // engine kept is still the own load's, presentation only.)
+        const std::string before = s.file;
         a.io(s.file);
+        if (a.reading() && (s.file != before || (!s.file.empty() && !s.decoder))) open_decoder(a.engine(), s, 0);
         a.io(s.serial);
         a.io(s.priority);
         a.io(s.type);

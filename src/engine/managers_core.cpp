@@ -2616,36 +2616,18 @@ void SoundManager::restore(Engine& engine, const std::shared_ptr<const void>& op
     // restored engine loads them now, before the stage load adds the stage's,
     // so a request whose group two banks hold finds the same bank as in the
     // session it came from (round J: a joiner's sound effects and SNDF
-    // state, which the members' STATEHASH compares).
-    load_common_banks(engine);
+    // state, which the members' STATEHASH compares). Online only (round J's
+    // review): an offline save state restores as before round J (Engine::
+    // restore applied the snapshot's online rules before this).
+    if (engine.online().enabled) load_common_banks(engine);
     const auto& state = *static_cast<const SoundState*>(opaque.get());
     for (std::size_t i = 0; i < streams_.size() && i < state.streams.size(); ++i) {
         const auto& s = state.streams[i];
         auto& stream = streams_[i];
         stream = Stream{};
-        if (!s.file.empty()) {
-            unsigned archive = 0, entry = 0;
-            char close = 0;
-            try {
-                const auto& archives = engine.resources().archives();
-                if (std::sscanf(s.file.c_str(), "[%u.%u%c", &archive, &entry, &close) == 3 && archive < archives.size()) {
-                    stream.decoder = std::make_unique<adx::Decoder>(archives[archive].read(entry, 64u * 1024u * 1024u));
-                    std::int16_t scratch[16 * 512];
-                    const std::uint32_t channels = std::max<std::uint32_t>(1, stream.decoder->header().channels);
-                    std::uint64_t left = s.frames_read;
-                    while (left > 0) {
-                        const auto chunk = std::size_t(std::min<std::uint64_t>(left, sizeof scratch / sizeof scratch[0] / channels));
-                        const auto got = stream.decoder->read(scratch, chunk);
-                        if (got == 0) break;
-                        left -= got;
-                    }
-                    stream.file = s.file;
-                    stream.frames_read = s.frames_read - left;
-                }
-            } catch (const std::exception&) {
-                stream.decoder.reset();
-            }
-        }
+        stream.file = s.file;
+        open_decoder(engine, stream, s.frames_read);
+        if (!stream.decoder) stream.file.clear();
         stream.name = s.name;
         stream.serial = s.serial;
         stream.priority = s.priority;
@@ -2661,6 +2643,33 @@ void SoundManager::restore(Engine& engine, const std::shared_ptr<const void>& op
     base_volume_ = state.base_volume;
     random_ = state.random;
     cri_ = state.cri;
+}
+
+void SoundManager::open_decoder(Engine& engine, Stream& stream, std::uint64_t frames) {
+    stream.decoder.reset();
+    stream.frames_read = 0;
+    stream.src = {};
+    if (stream.file.empty()) return;
+    unsigned archive = 0, entry = 0;
+    char close = 0;
+    try {
+        const auto& archives = engine.resources().archives();
+        if (std::sscanf(stream.file.c_str(), "[%u.%u%c", &archive, &entry, &close) != 3 || archive >= archives.size()) return;
+        stream.decoder = std::make_unique<adx::Decoder>(archives[archive].read(entry, 64u * 1024u * 1024u));
+        std::int16_t scratch[16 * 512];
+        const std::uint32_t channels = std::max<std::uint32_t>(1, stream.decoder->header().channels);
+        std::uint64_t left = frames;
+        while (left > 0) {
+            const auto chunk = std::size_t(std::min<std::uint64_t>(left, sizeof scratch / sizeof scratch[0] / channels));
+            const auto got = stream.decoder->read(scratch, chunk);
+            if (got == 0) break;
+            left -= got;
+        }
+        stream.frames_read = frames - left;
+    } catch (const std::exception&) {
+        stream.decoder.reset();
+        stream.frames_read = 0;
+    }
 }
 
 // Online, at a live load's snapshot (Engine::begin_stage_load): a restored

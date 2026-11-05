@@ -647,6 +647,10 @@ private:
     void sndf_effect(Engine& engine, int bank, int preset);
     // 802F5F98: the entry stops (serial, name and fade cleared, ADXT_Stop).
     void stop(int channel);
+    // The audio's decoder of a stream (presentation only): `stream.file`
+    // opened and decoded up to `frames` source frames (a save state's and a
+    // tick state's streams; none for an empty or unreadable file).
+    void open_decoder(Engine& engine, Stream& stream, std::uint64_t frames);
     std::vector<std::unique_ptr<Ram>> rams_;
     std::map<std::string, SoundData, std::less<>> sounds_;
     std::vector<std::string> files_;
