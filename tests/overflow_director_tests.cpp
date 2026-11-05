@@ -554,13 +554,14 @@ void poison(const std::filesystem::path& data) {
 // ---------------------------------------------------------------------------
 // balance (14.3)
 // ---------------------------------------------------------------------------
-// The expected levels at the phases' starts (14.3): the medians of the kite
-// bot's T6 runs (the balance round of 05.11, Agumon and Veemon: 15-16 at
-// 5:00, 23-25 at 10:00, 31-32 at 15:00, 34-35 at 18:00-19:00, so 36 at
-// 20:00; the review round's 15 / 25 / 32 / 40, 4.5's estimate 12 / 22 / 32 /
-// 40). A slow run meets a phase a few levels lower, where a Corrupted
-// enemy's critical hit can pass 35 %: the run's clamp takes it.
-constexpr int kLevelAt[5] = {1, 15, 24, 31, 36};
+// The expected levels at the phases' starts and at the run's end (14.3):
+// the medians of the kite bot's T6 runs (the forge round of 05.11, Agumon
+// and Veemon: 15-16 at 5:00, 23-25 at 10:00, 31 at 15:00, 35 at 20:00 and
+// 38 at the run's end, 25:00; the balance round of 05.11 15 / 24 / 31 and 36
+// at its end, 20:00; the review round's 15 / 25 / 32 / 40, 4.5's estimate 12
+// / 22 / 32 / 40). A slow run meets a phase a few levels lower, where a
+// Corrupted enemy's critical hit can pass 35 %: the run's clamp takes it.
+constexpr int kLevelAt[5] = {1, 15, 24, 31, 38};
 // No wall at a phase change (the review of O1a): see balance().
 constexpr double kWallStep = 3.0, kStartShare = 0.16;
 
@@ -690,7 +691,9 @@ void balance(const std::filesystem::path& data, bool report) {
         for (int phase = 1; phase <= 4; ++phase)
             for (int end = 0; end < 2; ++end) {
                 const int level = kLevelAt[phase - 1 + end];
-                const double minutes = 5.0 * double(phase - 1 + end) - (end ? 0.01 : 0.0);
+                // (Phase 4 ends with the run: 25:00 since the forge round.)
+                const double minutes =
+                    phase == 4 && end ? double(Tuning{}.end_steps) / 3600.0 - 0.01 : 5.0 * double(phase - 1 + end) - (end ? 0.01 : 0.0);
                 set_level(engine, level);
                 rules.damage.taken_factor = run.director->damage_factor(minutes);
                 {
