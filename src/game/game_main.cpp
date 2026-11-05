@@ -927,6 +927,12 @@ int run(const Options& options, dw4::game::Settings& settings) {
             return false;
         }
         *online_card = online->character_card();
+        // (A 409's reload gives a guest's own story anew: the store with it, for this
+        // engine and the fresh ones of joins and resyncs; round G-core's review.)
+        online->card_story_changed = [&engine, online_card, run = online.get()] {
+            *online_card = run->character_card();
+            engine.set_card_store(*online_card);
+        };
         // --online-card FOLDER (development builds, test runs): the card
         // starts with the DW4 save of FOLDER (or of its "Card A") instead of
         // the server's character, a character to call at the title; its

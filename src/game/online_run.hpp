@@ -93,6 +93,9 @@ public:
     // guest's store writes the account's own story into every used box (round
     // G-core: the save room's write never puts the owner's story on the card).
     save::CardStore character_card() const;
+    // Called by pass() when a guest's own story changed since the last
+    // character_card() (a 409's reload): the host gives the engine a new store.
+    std::function<void()> card_story_changed;
     // Connects to the relay (blocking up to five seconds for the connection
     // and up to ten for the relay's answer: a newer connection of the same
     // account replaces one another PC holds in the room when the relay
@@ -192,6 +195,7 @@ private:
     double story_hold_since_ = -1;     // the Game Start waits for the room story since then (-1: no hold)
     double story_ignore_until_ = 0;    // DW4_ONLINE_TEST_STORY_DELAY (dev builds, G7): the story counts from then (set at the first Game Start)
     int callshop_seen_ = 0;            // Engine::callshop_refused already told
+    mutable std::optional<save::StoryBytes> handed_story_; // the own story of the last character_card() (a guest's)
     std::vector<std::string> notices_;
     bool pending_before_ = false; // the last live step had a NEXTSTAGE pending
     bool saved_on_leave_ = false;

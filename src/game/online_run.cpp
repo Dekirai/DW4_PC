@@ -187,6 +187,10 @@ void OnlineRun::pass(double now) {
     session_->poll(now);
     while (auto done = http_->poll()) dispatch(done->first, done->second, now);
     if (character_) character_->tick(now);
+    // A 409's reload gave the guest's own story anew (round G-core's review): the
+    // engine's card store writes the newer one from now on (before, the story
+    // of the room entry until the next entry).
+    if (character_ && card_story_changed && handed_story_ && *handed_story_ != character_->own_story()) card_story_changed();
     // The Game Start's hold (round G-core): the story may have come with this pass.
     if (story_hold_since_ >= 0 && !left_ && !session_->closed()) {
         if (link_.game_start()) begin_game(now);
@@ -339,7 +343,10 @@ save::CardStore OnlineRun::character_card() const {
     auto store = character_->card().store();
     // A guest's card keeps its own story (round G-core, 8.8): the save room writes the engine's records, which hold the
     // owner's story, and the file, its backups and an import of it must not (the owner's engine story is his own).
-    if (!room_.room_owner) store.set_story_override(character_->own_story());
+    if (!room_.room_owner) {
+        store.set_story_override(character_->own_story());
+        handed_story_ = character_->own_story();
+    }
     return store;
 }
 
