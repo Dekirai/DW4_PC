@@ -123,7 +123,7 @@ and user secrets (Development) work as usual.
 | Section | Keys (defaults) |
 | --- | --- |
 | `Database` | `ConnectionString`, `AutoMigrate` (true): run pending migrations at startup, `StartupWaitSeconds` (60): how long the start waits for a database that does not answer yet. |
-| `Service` | `Name`, `Motd` (game menu and home page), `Maintenance` (announced; no new rooms), `RelayHost` (empty = the request's host name) / `RelayPort` (default 0 = the port the relay listens on, `Relay:Port`; set it only when clients reach the relay through another public port), announced to clients; `PathBase` (empty; for example `/dw4online`: website and API below that path, see "Website"), `BehindProxy` (false; true behind a reverse proxy on the same machine: client address and scheme from `X-Forwarded-For` / `X-Forwarded-Proto` of a loopback proxy only). |
+| `Service` | `Name`, `Motd` (game menu and home page), `Maintenance` (announced; no new rooms), `RelayHost` (empty = the request's host name) / `RelayPort` (default 0 = the port the relay listens on, `Relay:Port`; set it only when clients reach the relay through another public port), announced to clients; `PathBase` (empty; for example `/dw4online`: website and API below that path, see "Website"), `BehindProxy` (false; true behind a reverse proxy on the same machine: client address, scheme and stripped path prefix from `X-Forwarded-For` / `X-Forwarded-Proto` / `X-Forwarded-Prefix`, on plain-HTTP connections from this machine only; a forwarded prefix and `PathBase` combine without doubling), `TrustedProxyNetworks` (empty; with `BehindProxy` the CIDR networks of proxies in front of the local one, e.g. Cloudflare's ranges: when the local proxy reports such an address, the `X-Forwarded-For` entry before it is the client's, one hop only; deploy/DEPLOY.md 6.2). |
 | `Accounts` | `Registration` (open / closed), `PasswordIterations` (220000), `MaxFailedLogins` (10, per user name and address), `LockoutMinutes` (15), `MaxFailedLoginsPerAccount` (50), `KnownAddressDays` (30), `GameSessionDays` (30), `WebSessionDays` (14), `SessionTouchMinutes` (5), `MaxSessionsPerAccount` (20). |
 | `OnlineCharacter` | `HistoryRevisions` (20), `ResetHistoryDays` (30: the revisions of a reset character stay that long), `StoryHistoryRevisions` (100: the newest revisions of an account's online story kept in full, online_story_history), `StoryHistoryMinutes` (10: older room revisions are kept as the first of every this many minutes), `StoryHistoryDays` (90: how long those and the session starts, resets and restores stay), `StoryHistorySessions` (20: the newest session starts, resets and restores stay for good), `StoryCounterSaveSeconds` (60: a room story revision that changed only counters is written at most this often per account), `Rules:MaxLevelsPerPlayHour` (120), `Rules:PlayTimeSlackSeconds` (600). |
 | `CloudSave` | `MaxBytes` (1 MiB), `HistoryRevisions` (5). |
@@ -448,7 +448,10 @@ returns only to pages below the prefix); requests without the prefix keep workin
 earlier root address go on working during a move. The browser's same-origin rule knows no paths, though: pages of
 other sites on the same host name (`https://dekirai.crygod.de/...`) can script DW4Online with the visitor's cookie,
 so a script flaw there would be an account takeover here. Give DW4Online its own host name (a subdomain such as
-`dw4.crygod.de`) when other sites share the name (deploy/DEPLOY.md 6.2).
+`dw4.crygod.de`) when other sites share the name (deploy/DEPLOY.md 6.2). Behind a reverse proxy that strips the
+prefix (Traefik's `stripPrefix`), `Service:BehindProxy` takes the prefix from its `X-Forwarded-Prefix` instead, with
+the same result; `PathBase` may stay set (`ReverseProxyTests` covers no proxy, `PathBase` only, a stripping proxy with
+and without `PathBase` and a non-stripping one).
 
 Security: sign-in is a cookie holding an opaque `web` session token (same sessions table as the game: revocable,
 14 days sliding), HttpOnly, SameSite=Lax, Secure and `__Host-` prefixed on https. Every POST carries an anti-forgery

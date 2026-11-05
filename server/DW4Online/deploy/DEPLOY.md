@@ -469,12 +469,14 @@ service and check with `-PinServedBy ... -PinServedPort 8443` that the spare's p
 working because it pins the spare too. Then ship a client update whose pins name the spare as the key in use plus a
 new spare (made with `-SparePfx ... -SpareOnly` on that server), before the next loss can happen.
 
-### 6.2 Later: https://dekirai.crygod.de/dw4online
+### 6.2 The domain: https://dekirai.crygod.de/dw4online
 
-The service already works below a path: `"Service": { "PathBase": "/dw4online" }` puts the website and the API under
+The service works below a path: `"Service": { "PathBase": "/dw4online" }` puts the website and the API under
 `/dw4online` (links, redirects, forms, `Location` headers and the session cookie stay below it; `PathBaseTests` and
-the pinned end-to-end test check it). Requests without the prefix keep working at the root, so clients that still use
-`https://88.198.52.221` (`https://88.198.52.221:8443` in section 4.1) go on working during the move.
+the pinned end-to-end test check it), and behind a reverse proxy that strips the prefix, the proxy's
+`X-Forwarded-Prefix` does the same (case 2; `ReverseProxyTests` and `ProxyHeadersTests` check every combination).
+Requests without the prefix keep working at the root, so clients that still use `https://88.198.52.221`
+(`https://88.198.52.221:8443` in section 4.1) go on working during the move.
 
 **A path keeps the cookie away from other sites, not their scripts.** Browsers isolate by origin (scheme, host name,
 port), never by path: any page of another site on `dekirai.crygod.de` runs in the same origin as
@@ -498,20 +500,169 @@ the IP address names no host and keeps getting the pinned certificate. New clien
 working until they update. (The domain's root then also shows the DW4Online website; if other content should live
 there, see case 2.)
 
-**Case 2: another web server serves dekirai.crygod.de on this machine** (Traefik, IIS, nginx, Caddy). It forwards
-`/dw4online/...` with the prefix kept to `http://127.0.0.1:5280` and sends `X-Forwarded-For` and `X-Forwarded-Proto`;
-DW4Online then listens only there (remove its `Https` endpoint and `Tls:StoreHostName`):
+**Case 2: another web server serves dekirai.crygod.de on this machine** (Traefik, IIS, nginx, Caddy), for example
+the server as it runs now: **Cloudflare -> Traefik (port 443 on this server) -> DW4Online `http://127.0.0.1:5280`**.
+The proxy forwards the site's requests to the loopback endpoint; the game clients keep talking to DW4Online directly at
+`https://88.198.52.221:8443` (section 4.1), so the `Https` endpoint and `Tls:StoreHostName` stay, and the relay keeps
+its own port 52041. `Service:BehindProxy` makes DW4Online read the proxy's headers:
 
-```json
-"Kestrel": { "Endpoints": { "Http": { "Url": "http://127.0.0.1:5280" } } },
-"Service": { "PathBase": "/dw4online", "BehindProxy": true, "RelayHost": "88.198.52.221" }
+| Header | What DW4Online takes from it |
+| --- | --- |
+| `X-Forwarded-Proto` | the scheme the browser used (`https`: Secure cookies, no `Web:RequireHttps` redirect) |
+| `X-Forwarded-Prefix` | the path prefix a proxy stripped (Traefik's `stripPrefix` sends it): links, redirects, forms, `Location` headers and cookie paths get it back |
+| `X-Forwarded-For` | the browser's address (the per-IP rate limits of the login, registration and recovery forms and of the API, the sessions' and the audit log's addresses), see "The client address" below |
+
+They count **only on plain-HTTP connections from this machine** (the proxy's hop to `127.0.0.1:5280`): a direct
+client, such as the game at `https://88.198.52.221:8443` or anyone who sends these headers to port 8443, never names
+an address, a scheme or a prefix; nor does a connection to the HTTPS endpoint from 127.0.0.1 (a proxy that only passes
+TLS through, a TCP router, forwards the client's own bytes). Each header's last value counts (the one the local proxy
+added); a prefix must be a plain path (`/dw4online`: letters, digits and `- _ . ~`), anything else is ignored.
+
+**The path prefix, with or without `stripPrefix`.** Both Traefik variants work, with `Service:PathBase` set or not;
+the prefix never doubles. Keep `"PathBase": "/dw4online"` in both: it is needed without `stripPrefix`, and with it the
+direct addresses `https://88.198.52.221:8443/dw4online/...` work too (the root keeps working in every case).
+
+| Traefik | `Service:PathBase` | DW4Online receives | Links, redirects, cookie path |
+| --- | --- | --- | --- |
+| `stripPrefix` (sends `X-Forwarded-Prefix: /dw4online`) | `/dw4online` or empty | `/account` | `/dw4online/...` (from the header) |
+| without `stripPrefix` | `/dw4online` | `/dw4online/account` | `/dw4online/...` (from `PathBase`) |
+| a proxy that keeps the path and names the prefix as well | `/dw4online` or empty | `/dw4online/account` and the header | `/dw4online/...` (the prefix is cut from the path once) |
+| without `stripPrefix` | empty | `/dw4online/account` | wrong: links at the root (set `PathBase`) |
+
+**The client address behind Cloudflare.** Every browser reaches Traefik from a Cloudflare edge, so with the defaults
+DW4Online sees that edge's address: all web users share a handful of addresses and their per-IP limits (5 logins a
+minute, 3 registrations an hour), and the sessions and the audit log record the edge. Two settings fix it, one in each
+program:
+
+1. Traefik keeps Cloudflare's `X-Forwarded-For` (by default it drops every incoming `X-Forwarded-*` header and sends
+   only the address it saw, the edge's): in Traefik's **static** configuration, on the entry point of port 443
+   (its name in your `traefik.yml`; here `websecure`):
+
+   ```yaml
+   entryPoints:
+     websecure:
+       address: ":443"
+       forwardedHeaders:
+         trustedIPs:   # https://www.cloudflare.com/ips/ (as of 05.11.2026)
+           - "173.245.48.0/20"
+           - "103.21.244.0/22"
+           - "103.22.200.0/22"
+           - "103.31.4.0/22"
+           - "141.101.64.0/18"
+           - "108.162.192.0/18"
+           - "190.93.240.0/20"
+           - "188.114.96.0/20"
+           - "197.234.240.0/22"
+           - "198.41.128.0/17"
+           - "162.158.0.0/15"
+           - "104.16.0.0/13"
+           - "104.24.0.0/14"
+           - "172.64.0.0/13"
+           - "131.0.72.0/22"
+           - "2400:cb00::/32"
+           - "2606:4700::/32"
+           - "2803:f800::/32"
+           - "2405:b500::/32"
+           - "2405:8100::/32"
+           - "2a06:98c0::/29"
+           - "2c0f:f248::/32"
+   ```
+
+   (TOML: `[entryPoints.websecure.forwardedHeaders]` with `trustedIPs = ["173.245.48.0/20", ...]`; command line:
+   `--entryPoints.websecure.forwardedHeaders.trustedIPs=173.245.48.0/20,...`.) Traefik reads its static configuration
+   only at its start: restart Traefik after the change. Cloudflare appends the browser's address to `X-Forwarded-For`,
+   Traefik keeps that and appends the edge's: DW4Online receives `<browser>, <edge>`.
+2. DW4Online trusts the same networks one hop behind Traefik: `TrustedProxyNetworks` in `Service` (below) with the
+   same list. When the last `X-Forwarded-For` entry (the address Traefik saw) lies in one of them, the entry before it
+   (the one that edge appended) is the browser's address. Nothing further left counts: the browser itself wrote it.
+
+How requests are read (Traefik on 127.0.0.1, a browser 203.0.113.9, an edge 172.64.1.1):
+
+| Request | `X-Forwarded-For` at DW4Online | Address |
+| --- | --- | --- |
+| browser -> Cloudflare -> Traefik (both settings) | `203.0.113.9, 172.64.1.1` | 203.0.113.9 |
+| the same, the browser sent `X-Forwarded-For: 192.0.2.1` itself | `192.0.2.1, 203.0.113.9, 172.64.1.1` | 203.0.113.9 (one edge hop only) |
+| browser -> Traefik directly (88.198.52.221:443, not through Cloudflare), any headers | `203.0.113.9` (Traefik does not trust the browser and replaces the header) | 203.0.113.9 |
+| browser -> Cloudflare -> Traefik without step 1 | `172.64.1.1` | 172.64.1.1 (the edge, as before these settings) |
+| anyone -> DW4Online's port 8443 (the game), any headers | (not read) | the connection's own address |
+| a Cloudflare address -> port 8443 directly, any headers | (not read) | that address: an edge counts only behind Traefik |
+
+DW4Online refuses to start when `TrustedProxyNetworks` holds something that is not a network in CIDR form or a network
+wider than /8 (IPv4) or /16 (IPv6), or when it is set without `BehindProxy`. Cloudflare changes its list rarely and
+announces it; compare <https://www.cloudflare.com/ips/> with both lists now and then. A network missing from the lists
+only makes the browsers behind it share their edge's address again (as without the settings); it opens nothing. What
+the lists cannot tell apart: requests that come from Cloudflare's network without passing through this site's
+Cloudflare zone (a Worker of another Cloudflare account that connects to `88.198.52.221:443` with this site's host
+name) could name an address, for the per-IP limits and the recorded addresses only (the per-account login lock, the
+passwords and the sessions are unaffected); Cloudflare's *Authenticated Origin Pulls* with a certificate of your own,
+required by Traefik (`tls.options` with `clientAuth`), would close that as well. Requests through the zone, Workers
+included, get the address Cloudflare saw appended and cannot pick one. (`CF-Connecting-IP`, Cloudflare's own header, is
+not used: it needs the same trust in the edge, and `X-Forwarded-For` works the same with any edge proxy.)
+
+**Traefik's route** (dynamic configuration: the file provider's file, or labels). With `stripPrefix`:
+
+```yaml
+http:
+  routers:
+    dw4online:
+      rule: "Host(`dekirai.crygod.de`) && (Path(`/dw4online`) || PathPrefix(`/dw4online/`))"
+      entryPoints: [websecure]
+      middlewares: [dw4online-strip]
+      service: dw4online
+      tls: {}
+  middlewares:
+    dw4online-strip:
+      stripPrefix:
+        prefixes: ["/dw4online"]
+  services:
+    dw4online:
+      loadBalancer:
+        servers:
+          - url: "http://127.0.0.1:5280"
 ```
 
-`BehindProxy` believes those headers only from a proxy on this machine. Port 443 then belongs to that web server, so
-it must also serve the pinned IP certificate to connections without a name (IIS: an https binding on 88.198.52.221
-port 443 without host name, using the same certificate from `LocalMachine\My`, no export needed; Traefik: TLS
-passthrough for connections without SNI) and forward them to DW4Online as well, or the clients that still pin the IP
-certificate stop working. The relay keeps its own port 52041 in both cases.
+Without `stripPrefix`: the same without the `middlewares` lines (DW4Online then needs `PathBase`). Traefik passes the
+host name on (`passHostHeader`, its default) and sets `X-Forwarded-Proto`; nothing else is needed. (The rule with
+`Path(...) || PathPrefix(.../)` keeps `/dw4onlinex` off the route; a plain ``PathPrefix(`/dw4online`)`` works too.)
+
+**DW4Online's settings** (`config\appsettings.Production.json`; the `Https` endpoint on 8443 and the `Tls` section stay
+for the game clients):
+
+```json
+"Service": {
+  "RelayHost": "88.198.52.221",
+  "PathBase": "/dw4online",
+  "BehindProxy": true,
+  "TrustedProxyNetworks": [
+    "173.245.48.0/20", "103.21.244.0/22", "103.22.200.0/22", "103.31.4.0/22", "141.101.64.0/18", "108.162.192.0/18",
+    "190.93.240.0/20", "188.114.96.0/20", "197.234.240.0/22", "198.41.128.0/17", "162.158.0.0/15", "104.16.0.0/13",
+    "104.24.0.0/14", "172.64.0.0/13", "131.0.72.0/22",
+    "2400:cb00::/32", "2606:4700::/32", "2803:f800::/32", "2405:b500::/32", "2405:8100::/32", "2a06:98c0::/29", "2c0f:f248::/32"
+  ]
+},
+"Web": { "RequireHttps": true }
+```
+
+`Restart-Service DW4Online` (it reads its settings at the start; its log then shows `Behind a proxy: ... 22 trusted
+edge network(s)`). Check: open `https://dekirai.crygod.de/dw4online/` (the links and the login stay below
+`/dw4online`), log in, and look at the newest audit rows in HeidiSQL (database `dw4online`, Query tab):
+
+```sql
+SELECT id, event, INET6_NTOA(ip) AS ip, created_at FROM audit_log ORDER BY id DESC LIMIT 5;
+```
+
+The `login_ok` row must show your own public address (<https://www.cloudflare.com/cdn-cgi/trace> shows it as `ip=`),
+not one of Cloudflare's. A Cloudflare address there means step 1 (Traefik) is missing or Traefik was not restarted.
+
+Other proxies: IIS (ARR), nginx and Caddy forward `X-Forwarded-For` and `X-Forwarded-Proto` the same way; send
+`X-Forwarded-Prefix` only when the proxy strips the prefix, and list in `TrustedProxyNetworks` only the networks of
+proxies in front of that one whose `X-Forwarded-For` it keeps. Should port 443 itself ever have to serve the pinned IP
+certificate to the game (clients of `https://88.198.52.221` without a port), the proxy must pass those connections
+through to DW4Online's HTTPS port (Traefik: a TCP router with TLS passthrough for connections without SNI; IIS: an
+https binding on 88.198.52.221:443 without host name using the same certificate from `LocalMachine\My`, which ARR
+forwards like the website). With TLS passthrough, forwarded headers never count on DW4Online's HTTPS port, so such
+clients cannot name an address, but they all appear as 127.0.0.1 there (one per-IP limit for all of them); the game
+clients of `https://88.198.52.221:8443` are not affected.
 
 ### 6.3 Let's Encrypt certificates with win-acme (the domain)
 
