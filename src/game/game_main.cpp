@@ -2837,6 +2837,10 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     room.relay_port = ready->relay_port;
                     room.settings = ready->joined.settings;
                     room.max_players = ready->joined.max_players;
+                    // (The room's owner as the --online-* way decides it: a guest from the
+                    // room list played as the owner before, and its card took the room story.)
+                    dw4::game::set_room_owner(room, ready->joined, ready->created);
+                    std::cout << "online: " << (room.room_owner ? std::string("the room's owner") : "a guest of " + room.owner_name) << '\n';
                     auto http = std::make_unique<dw4::game::online::HttpWorker>(dw4::game::online::server_endpoint(),
                                                                                  std::string("DW4_PC/") + DW4_PC_VERSION);
                     http->set_token(ready->token);

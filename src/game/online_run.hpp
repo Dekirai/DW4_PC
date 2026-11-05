@@ -64,9 +64,17 @@ struct OnlineRoom {
     // The room's owner (room.owner) and whether this account is it (round
     // G-core, docs/SEAMLESS.md 8.8: a guest plays on the owner's story, its
     // card and uploads keep its own).
+    // (Not the owner by default: both ways into a room set it with
+    // set_room_owner. A guest taken for the owner put the room story into
+    // its card, the leak round G-core closes; the other way round only its
+    // own story would stand on the owner's card.)
     std::string owner_name;
-    bool room_owner = true;
+    bool room_owner = false;
 };
+// The room's owner and whether `room.account` is it (api::owns_room): every
+// way into a room calls this (--online-create / --online-join and the title's
+// online screens, game_main's take_ready).
+void set_room_owner(OnlineRoom& room, const online::api::RoomJoined& joined, bool created);
 std::optional<OnlineRoom> online_enter_room(online::HttpWorker& http, const OnlineOptions& options, std::uint64_t data_hash,
                                             const std::string& client_version, const std::filesystem::path& token_folder, std::string& error);
 

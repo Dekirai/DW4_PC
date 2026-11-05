@@ -122,6 +122,18 @@ void api_calls() {
     check(joined && joined->code == "QX7P" && joined->settings.difficulty == 2 && joined->settings.camera_mode == 1 && joined->ticket == "T1" &&
               joined->member_id == 3 && joined->relay_port == 52041,
           "room answer with the relay ticket (relayTicket)");
+    // Round G-core: who owns the room (both ways into a room decide with owns_room; the title's online screens
+    // once left every guest the owner, and its card got the room story).
+    r.body = R"({"room":{"code":"QX7P","name":"Kim's room","owner":"Kim"},"settings":{"difficulty":0},"relayTicket":"T1"})";
+    const auto owned = api::parse_room(r);
+    check(owned && owned->owner == "Kim", "the room's owner");
+    check(api::owns_room(*owned, "kim", false) && api::owns_room(*owned, "KIM", false), "the owner (any case) owns the room");
+    check(!api::owns_room(*owned, "lee", false) && !api::owns_room(*owned, "kimx", false) && !api::owns_room(*owned, "", false),
+          "a guest does not own it");
+    check(api::owns_room(*owned, "lee", true), "the account that created it does");
+    api::RoomJoined ownerless = *owned;
+    ownerless.owner.clear();
+    check(!api::owns_room(ownerless, "kim", false), "no owner named: a guest");
     r.body = R"({"room":{"code":"QX7P"},"settings":null,"relay":{"port":52041,"ticket":"T2"}})";
     check(api::parse_room(r)->ticket == "T2", "or the ticket in relay");
     r.body = R"({"ticket":"T3"})";

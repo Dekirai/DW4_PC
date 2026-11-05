@@ -24,6 +24,12 @@
 
 namespace dw4::game {
 
+void set_room_owner(OnlineRoom& room, const online::api::RoomJoined& joined, bool created) {
+    room.room_owner = online::api::owns_room(joined, room.account, created);
+    room.owner_name = joined.owner;
+    if (room.owner_name.empty() && room.room_owner) room.owner_name = room.account;
+}
+
 std::optional<OnlineRoom> online_enter_room(online::HttpWorker& http, const OnlineOptions& options, std::uint64_t data_hash,
                                             const std::string& client_version, const std::filesystem::path& token_folder, std::string& error) {
     namespace api = online::api;
@@ -98,16 +104,7 @@ std::optional<OnlineRoom> online_enter_room(online::HttpWorker& http, const Onli
     room.settings = joined->settings;
     room.member_id = joined->member_id;
     room.max_players = joined->max_players;
-    room.owner_name = joined->owner;
-    {
-        // (The account opened the room, or its name is the owner's: the room story is its own.)
-        auto lower = [](std::string s) {
-            for (auto& c : s) c = char(std::tolower(static_cast<unsigned char>(c)));
-            return s;
-        };
-        room.room_owner = !options.create.empty() || (!joined->owner.empty() && lower(joined->owner) == lower(room.account));
-        if (room.owner_name.empty() && room.room_owner) room.owner_name = room.account;
-    }
+    set_room_owner(room, *joined, !options.create.empty());
     if (joined->relay_port) room.relay_port = joined->relay_port;
     room.ticket = joined->ticket;
     if (room.ticket.empty()) {

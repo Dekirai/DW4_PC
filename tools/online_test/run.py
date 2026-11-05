@@ -1451,6 +1451,27 @@ def gci_record(path, box=0):
     raise RuntimeError("no valid data copy in " + path)
 
 
+def guest_card_problems(name, folder, notes):
+    """Round G-core: a guest without an own story (the screens' way into a room, ui/newchars' b) keeps empty story bytes in
+    every used box of its online card cache, the cache's .bak and its backups (the server's record alone does not show it:
+    the server composes the own story into every upload). Before the room-owner fix the screens' way left every guest the
+    owner, and the save room wrote the room story into the guest's card (from there into savedata.dat by F1 > Saves >
+    Import and the cloud backup). Returns the problems."""
+    problems, boxes = [], 0
+    files = [p for p in [os.path.join(folder, "online_card.dat"), os.path.join(folder, "online_card.dat.bak")] if os.path.exists(p)]
+    files += glob.glob(os.path.join(folder, "backups", "*.dat"))
+    if not files:
+        problems.append("%s: no online card file in %s" % (name, folder))
+    for path in files:
+        for copy, box, story in card_boxes_story(path):
+            boxes += 1
+            if any(story):
+                problems.append("%s: %s copy 0x%x box %d holds story bytes (the room story; its own story is empty)" %
+                                (name, os.path.basename(path), copy, box))
+    notes.append("%s: %d used boxes in %d online card files checked for an empty own story" % (name, boxes, len(files)))
+    return problems
+
+
 def check_characters(sc, api, env, out, problems, notes):
     """scenario.json "characters" (SEAMLESS.md 9 and the S2 done-when): per client, its online character as the client
     logged it ("online-character: ..." lines) and as the server holds it. Every client entered without a character (a new
@@ -1520,6 +1541,8 @@ def check_characters(sc, api, env, out, problems, notes):
         story = record[UI_STORY[0]:UI_STORY[1]]
         if want.get("own_story") == "none" and any(story):
             problems.append("%s: the record's story bytes are not empty (a guest's own story must stay untouched)" % name)
+        if want.get("own_story") == "none":
+            problems.extend(guest_card_problems(name, folder, notes))
         if "phase" in want and record[UI_STORY[0] + int(want["phase"])] != 1:
             problems.append("%s: the record's story lacks the phase flag %s" % (name, want["phase"]))
 

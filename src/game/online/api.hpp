@@ -62,6 +62,13 @@ std::optional<ServerStatus> parse_status(const HttpResponse& response);
 std::optional<Login> parse_login(const HttpResponse& response);
 std::optional<RoomJoined> parse_room(const HttpResponse& response);
 std::optional<std::string> parse_ticket(const HttpResponse& response);
+// Whether `account` owns the joined room (round G-core, docs/SEAMLESS.md 8.8):
+// it opened the room, or the room's owner is its name (case-insensitive: the
+// owner rejoining his own room from the list). A guest plays on the owner's
+// story; its card and uploads keep its own. Both ways into a room (the
+// --online-create / --online-join options and the title's online screens)
+// decide with this.
+bool owns_room(const RoomJoined& joined, const std::string& account, bool created);
 // The server's problem text (RFC 7807 "detail" / "title" / "code"), or the
 // transport error, for messages.
 std::string problem_text(const HttpResponse& response);
