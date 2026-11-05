@@ -92,3 +92,21 @@ story-point credit).
   interned TStrings (c102749). ctest `tick_state`: the straight run loads
   the common banks first, as a restored engine (bd2b80f; it failed in all
   four scenarios since bb527a7). Runs (build/jset_run6.log): J1, JB pass.
+- 10:40: regression on the final build: S1, S2, S3, S11a, S17a, S17b, S18b,
+  S19b, L1, L2, M1, M2, J1, JB pass (build/reg_run1.log; S3 failed there and
+  passed after a7392b9, build/jset_run9.log), JL = J1 behind 20 ms each way
+  passes (build/jl_run1.log, JOIN 373 ms after BARRIER_OK). Two more fixes:
+  the session's present mask after a checkpoint rebuild (a7392b9: S3's
+  second joiner missed the first joiner's slot) and the SceneCache's stale
+  edited-attribute keys of released documents (6945f60: S2's visit after
+  the fork, STATEHASH never agreed). ctest 54/54 (build/ctest4.log),
+  DW4Online.Tests 248/248 (build/server_unit1.log), det.sh 4004f056 /
+  396cb219 twice (build/det_j3.log, build/det_j4.log). SEAMLESS.md "Round J
+  (built)" has the numbers.
+- Open (next run): SUBWND window trees in the tick state (JW: M1's join
+  while a's status window is open still replays the visit, 2.3 s; a quick
+  win before that: the donor answers an ask at once when its ticks are
+  unsafe, the relay then skips CheckpointWaitMs), the joiner's music
+  position, STATEHASH cost (7-10 ms every 600 ticks), scenarios J15 / J30 /
+  JF (J15x4 / J30x4 need four game processes: more than this machine's
+  three), the integration with round G-core (both protocol 47).

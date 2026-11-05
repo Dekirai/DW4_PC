@@ -7841,14 +7841,79 @@ apply, hash), 3 ticks replayed, READY at +303 ms, the JOIN stamped at
 fallback) replayed 3,622 ticks in 852 ms.
 
 *Found on the way*: the members' STATEHASH differs where engines of one
-instance really differ outside the fingerprint (the SNDF's bank order of a
-restored engine; fixed); round 63's context gap (3.7).
+instance really differ outside the fingerprint, which NETFP never saw:
+
+- the SNDF's bank order of a restored engine (it loads the session's common
+  banks first, as the session had them; the ctest's straight run, a direct
+  start, now loads them first too);
+- the game SNDF and sfp pool at a visit's start: a restored engine is a new
+  one and starts them free (save state 36: "their state is not kept"), a
+  member that loaded the visit live kept the last stage's ringing common
+  sounds, its freed entries' flags and its allocation counters since its own
+  last restore, so a co-arrival's (JR) and a classic joiner's (JB) STATEHASH
+  never agreed. Online, a live load's snapshot now gives the game SNDF and
+  the pool the restored engine's state (`SoundManager::fresh_game_driver`);
+  the audio's mirror keeps what still rings, so nothing is cut (a leftover
+  ends as before, or when its sequence is used again). Offline unchanged;
+- the Lua collector's live bytes after a rebuild: strings were summed once
+  per `std::string` object, and a restored VM cannot keep which values share
+  one (a program's constant, a host's string), so a resynced member's
+  collections came at other times (JR: +46 bytes after the resync). Strings
+  now count once per content, as Lua 4's interned TStrings do; collections
+  never change script results, only their pacing (`det.sh` unchanged);
+- the session's present mask after a checkpoint rebuild: a JOIN before T is
+  not among the ticks from T (the classic path replays it), so S3's second
+  joiner kept the first joiner's slot out (its script waited for three
+  members for good; that slot's lag mark and name were missing). The
+  session now takes the members from the engine after the apply;
+- the SceneCache's edited-attribute keys (document addresses) outlived a
+  released document: a stage loaded again at a reused address listed a
+  stale edited attribute on one member only (S2's visit after the fork:
+  every STATEHASH differed, now none). The keys go with the document; only
+  the tick state reads them;
+- round 63's context gap (3.7).
+
+*Third run* (05.11, hidden clients on the local stack, mysqld 3560, ports
+56150-56199): J1, J5, JB, JS and JR pass. J5 (b enters a's field five
+minutes after a): BARRIER_OK (JOIN) at 398,085 ms of the relay's clock,
+CHECKPOINT_ASK at +1 ms, the checkpoint stored at +28 ms, STATE_DATA
+(111 KB) at +41 ms, the rebuild 190 ms, 0 ticks replayed, READY at +353 ms,
+the JOIN stamped at +360 ms (this design's classic number: 6.34 s). JR: the
+desync at tick 2,500 resynced from the agreed checkpoint of tick 1,800 (READY
+from the checkpoint at 2,520), no STATEHASH mismatch. JS: the drift found at
+the first fingerprint, `checkpoint_suspect`, the classic resync, equal after.
+JB: the damaged checkpoint refused, the classic join, STATEHASH equal after.
+JL (J1 with every client behind its own proxy, 20 ms each way, `--net
+20,0,0`): BARRIER_OK at 158,301 ms, the checkpoint stored at +59 ms,
+STATE_DATA at +67 ms, the rebuild 129 ms, 4 ticks replayed, READY at
++327 ms, the JOIN at +373 ms (input delay 5 from the round trip).
+
+*Regression* (`build/reg_run1.log`, then `build/jset_run9.log` after the two
+last fixes): S1, S2, S3, S11a, S17a, S17b, S18b, S19b, L1, L2, M1, M2, J1
+and JB pass, every instance's NETFP equal; no `statehash_mismatch` after the
+fixes. Joins from a checkpoint among them: L1 and L2 (rebuild 184 / 182 ms,
+4 / 0 ticks replayed), S17b after the entry scene (242 ms, 8 ticks), S2's
+join into the fork's stag0102 (232 ms, 14 ticks), S3's two joins (135 /
+134 ms, 5 / 10 ticks). M1's join while a's status window is open takes the
+classic path: the donor's ticks are unsafe and no checkpoint was stored
+(a's menu was open since tick ~1,300, before the first periodic one), so the
+ask waits `CheckpointWaitMs` and the visit's 3,052 ticks replay in 1,134 ms
+(2.3 s from BARRIER_OK to the JOIN). S11a's desync comes before the first
+agreed checkpoint and resyncs the classic way. STATEHASH costs 7-10 ms on
+the hidden clients (without the test dumps), the donor's upload 10-19 ms.
+ctest 54 of 54 (`tick_state`: 84 checks, 0 failures), DW4Online.Tests 248 of
+248, `det.sh` 4004f056 / 396cb219 twice (`build/det_j3.log`,
+`build/det_j4.log`).
 
 *Open*: SUBWND window trees (a member's open status window makes its ticks
 unsafe; a join then waits for the donor's next safe tick or takes the newest
-stored checkpoint), the music position of a joiner (its streams continue
-from its own load), STATEHASH's cost (one frame's 5-13 ms every ten
-seconds), the scenarios J15 / J30 / J15x4 / JW / JF / JR / JL.
+stored checkpoint and replays the ticks since: M1's join; until the window
+trees are in the state, a donor whose ticks are unsafe could answer the
+ask at once instead of letting the relay wait a second), the music
+position of a joiner (its streams continue from its own load), STATEHASH's
+cost (see the third run's numbers above), the scenarios J15 / J30 / JF and
+J15x4 / J30x4 (four clients: more than this machine's three game processes
+of a run).
 
 ### Round R (proposed r67): rollback for the own player
 
