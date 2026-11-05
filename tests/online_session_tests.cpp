@@ -1105,12 +1105,17 @@ void checkpoint_check_tick() {
     check(world.run_until(20, [&] { return b.session->mode() == Mode::sealed && a.session->mode() == Mode::sealed; }), "B joins; both sealed");
     world.run(1);
     world.hub.netfps.clear();
-    for (const auto* donor : {"kim", "lee", "kim", "kim"}) {
+    // (The last two asks 0.1 s apart: the second upload comes before the
+    // first one's check tick, and both check NETFPs go out; lane jready's
+    // review: one slot dropped the first.)
+    for (const auto& [donor, wait] : std::initializer_list<std::pair<const char*, double>>{{"kim", 0.77}, {"lee", 0.77}, {"kim", 0.1}, {"kim", 0.77}}) {
         world.hub.ask_checkpoint(donor, world.now);
-        world.run(0.77);
+        world.run(wait);
     }
     world.run(1);
     check(world.hub.uploads.size() == 4, "four uploads (" + std::to_string(world.hub.uploads.size()) + ")");
+    check(world.hub.uploads[3].second > world.hub.uploads[2].second && world.hub.uploads[3].second < w::check_tick(world.hub.uploads[2].second),
+          "the fourth upload before the third one's check tick");
     for (const auto& [donor, tick] : world.hub.uploads) {
         const auto at = w::check_tick(tick);
         int from_donor = 0, from_other = 0;
@@ -1124,6 +1129,56 @@ void checkpoint_check_tick() {
         bool upload = false;
         for (const auto& [donor, tick] : world.hub.uploads) upload = upload || (donor == name && w::check_tick(tick) == n.tick);
         check(upload, name + "'s NETFP of " + std::to_string(n.tick) + " off the raster is the check tick of its own upload");
+    }
+    check(world.hub.netfp_mismatches == 0, "no mismatch");
+}
+
+// Protocol 48, the joiner's side (SEAMLESS.md 6.13.5): a join from a fresh
+// checkpoint of tick T catches up to the live tip within a few ticks, but its
+// READY waits until it replayed the check tick T + kReadyCheckTicks - 1 and
+// names it (or a later multiple of 60), so the relay compares the rebuild with
+// the donor's NETFP of that tick (lane jready's review: only the real-client
+// scenarios covered this side). Three joins, one after the other.
+void checkpoint_join_ready_at_check_tick() {
+    World world;
+    world.hub.checkpoints = true;
+    world.hub.checkpoint_joins = true;
+    auto& a = world.add("kim", 1);
+    a.engine.tick_states = true;
+    a.input = press_in({{"stagis10", 30}, {"stagml11", 40}}, fake::kExitButton);
+    check(world.run_until(10, [&] { return a.engine.stage() == "stag0101" && a.session->mode() == Mode::solo; }), "A reaches stag0101 solo");
+    world.run(3);
+    std::vector<fake::Client*> joiners;
+    for (const auto* name : {"lee", "max", "ned"}) {
+        auto& b = world.add(name, std::uint32_t(2 + joiners.size()));
+        b.engine.tick_states = true;
+        b.input = press_in({{"stagis10", 30}, {"stagml11", 40}}, fake::kExitButton);
+        joiners.push_back(&b);
+        check(world.run_until(20, [&] { return b.session->mode() == Mode::sealed; }), std::string(name) + " joins from a checkpoint");
+        world.run(1.5);
+    }
+    check(world.hub.uploads.size() == 3, "one upload per join (" + std::to_string(world.hub.uploads.size()) + ")");
+    for (std::size_t n = 0; n < joiners.size() && n < world.hub.uploads.size(); ++n) {
+        const auto& b = *joiners[n];
+        const auto t = world.hub.uploads[n].second;
+        const auto at = w::check_tick(t);
+        check(b.engine.tick_state_applies == 1, b.name + " rebuilt from the checkpoint of " + std::to_string(t));
+        const fake::Hub::ReadySeen* ready = nullptr;
+        for (const auto& r : world.hub.readies)
+            if (r.name == b.name) ready = &r;
+        check(ready && ready->from_checkpoint, b.name + "'s READY from the checkpoint");
+        if (!ready) continue;
+        check(ready->tick == at || (ready->tick > at && ready->tick % 60 == 0),
+              b.name + "'s READY names the check tick " + std::to_string(at) + " or a later multiple of 60 (" + std::to_string(ready->tick) + ")");
+        // (In a sealed instance the READY may come before the donor's report:
+        // the relay waits for it, ready_deferred.)
+        int reports = 0, equal = 0;
+        for (const auto& [name, report] : world.hub.netfps)
+            if (name == "kim" && report.tick == ready->tick) {
+                ++reports;
+                equal += report.hash == ready->fingerprint ? 1 : 0;
+            }
+        check(reports == 1 && equal == 1, b.name + "'s READY of " + std::to_string(ready->tick) + " equals the donor's NETFP of that tick");
     }
     check(world.hub.netfp_mismatches == 0, "no mismatch");
 }
@@ -1197,6 +1252,8 @@ int main(int argc, char** argv) {
         ready_after_a_refused_ready();
         std::cout << "checkpoint check tick\n";
         checkpoint_check_tick();
+        std::cout << "checkpoint join: READY at the check tick\n";
+        checkpoint_join_ready_at_check_tick();
         std::cout << "pacing, lag\n";
         pacing_and_lag();
         std::cout << "input delay\n";

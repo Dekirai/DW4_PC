@@ -167,6 +167,22 @@ public:
         ++tick_state_hashes;
         return mix(state_, frame_);
     }
+    int tick_state_applies = 0;
+    std::string apply_tick_state(std::span<const std::uint8_t> bytes) override {
+        if (!tick_states) return "unsupported";
+        try {
+            w::Reader r{bytes};
+            stage_ = r.str8();
+            serial_ = r.u64();
+            state_ = r.u64();
+            frame_ = r.u64();
+            present_ = r.u8();
+        } catch (const w::WireError&) {
+            return "header";
+        }
+        ++tick_state_applies;
+        return "";
+    }
 
     void step(const std::array<dw4::PadSample, 4>& pads) {
         ++frame_;
@@ -404,6 +420,25 @@ public:
     // Protocol 48: the checkpoint uploads that began (member name, tick) and every NETFP (member name, report).
     std::vector<std::pair<std::string, std::uint32_t>> uploads;
     std::vector<std::pair<std::string, w::NetFp>> netfps;
+    // Protocol 48, the joiner's side: with checkpoint_joins a JOIN asks the
+    // target's lowest member for a checkpoint and the joiner's state is that
+    // checkpoint (codec 2: the load ticks [0, K), the tick state of T, the
+    // ticks from T) once its upload is complete; every READY is noted.
+    bool checkpoint_joins = false;
+    struct StoredUpload {
+        std::uint32_t visit{}, tick{}, load_end{}, total{};
+        std::uint64_t hash{};
+        std::vector<std::uint8_t> bytes;
+    };
+    std::map<std::uint32_t, StoredUpload> stored_checkpoints, running_uploads; // instance -> upload
+    std::map<std::uint32_t, std::vector<std::uint32_t>> checkpoint_waiters;     // instance -> joiners
+    struct ReadySeen {
+        std::string name;
+        std::uint32_t tick{};
+        std::uint64_t fingerprint{};
+        bool from_checkpoint{};
+    };
+    std::vector<ReadySeen> readies;
     // CHECKPOINT_ASK to a member (a join's ask: its next state-safe tick).
     void ask_checkpoint(const std::string& name, double now) {
         for (auto& [id, m] : members)
@@ -765,6 +800,15 @@ public:
             m.carry = b.carry;
             m.parked.reset();
             send(m.id, w::Type::barrier_ok, w::encode(with_story(ok)), now);
+            if (checkpoint_joins) {
+                // The state comes with the donor's upload (send_checkpoint_states).
+                running_uploads.erase(target->id);
+                checkpoint_waiters[target->id].push_back(m.id);
+                send(target->slots.begin()->second, w::Type::checkpoint_ask, w::encode(w::CheckpointAsk{target->id, target->visit, 0, 0}), now);
+                log_lines.push_back("join " + m.name + " -> " + target->stage + " slot " + std::to_string(slot) + " from a checkpoint");
+                leave_instance_if_empty(from);
+                return;
+            }
             // The state: snapshot and every tick since; LIVE / SEALED keep coming.
             w::StateData state;
             state.purpose = w::StatePurpose::join;
@@ -840,6 +884,30 @@ public:
         }
         log_lines.push_back("leave " + m.name + " at " + std::to_string(j));
         return j;
+    }
+
+    // The states of the joins that waited for a checkpoint of this instance.
+    void send_checkpoint_states(std::uint32_t inst_id, double now) {
+        auto& inst = instances[inst_id];
+        const auto& cp = stored_checkpoints.at(inst_id);
+        if (cp.visit != inst.visit) return;
+        for (const auto id : std::exchange(checkpoint_waiters[inst_id], {})) {
+            auto& m = members[id];
+            w::StateData state;
+            state.purpose = w::StatePurpose::join;
+            state.slot = std::uint8_t(m.observe_slot);
+            state.snapshot = inst.snapshot;
+            for (std::uint32_t t = 0; t < cp.load_end && inst.log.contains(t); ++t) state.load_ticks.push_back(inst.log.at(t));
+            state.checkpoint_tick = cp.tick;
+            state.checkpoint_hash = cp.hash;
+            state.checkpoint = cp.bytes;
+            state.first = cp.tick;
+            for (std::uint32_t t = cp.tick; inst.log.contains(t); ++t) state.ticks.push_back(inst.log.at(t));
+            for (const auto& c : w::make_chunks(inst.id, inst.visit, w::encode_state_body(state))) send(id, w::Type::state_data, w::encode(c), now);
+            inst.observers.insert(id); // (LIVE from here, after the state, as the relay pumps)
+            log_lines.push_back("checkpoint state for " + m.name + " from tick " + std::to_string(cp.tick) + " with " +
+                                std::to_string(state.ticks.size()) + " ticks");
+        }
     }
 
     // A fingerprint vote the member lost (6.9): RESYNC, then the state with
@@ -1030,7 +1098,9 @@ public:
                 break;
             }
             // Compare with the members' fingerprint of that tick.
-            if (const auto fp = inst.netfp.find(r.tick); fp != inst.netfp.end())
+            const auto fp = inst.netfp.find(r.tick);
+            readies.push_back({m.name, r.tick, r.fingerprint, (r.flags & w::Ready::from_checkpoint) != 0});
+            if (fp != inst.netfp.end())
                 for (const auto& [member, hash] : fp->second) {
                     ++netfp_compared;
                     if (hash != r.fingerprint) ++netfp_mismatches;
@@ -1140,6 +1210,15 @@ public:
         case w::Type::checkpoint: {
             const auto c = w::decode_checkpoint(f.payload);
             if (c.offset == 0) uploads.emplace_back(m.name, c.tick);
+            if (!checkpoint_joins) break;
+            auto& u = running_uploads[c.inst];
+            if (c.offset == 0) u = StoredUpload{c.visit, c.tick, c.load_end, c.total, c.hash, {}};
+            if (u.tick != c.tick || u.bytes.size() != c.offset) break;
+            u.bytes.insert(u.bytes.end(), c.bytes.begin(), c.bytes.end());
+            if (u.bytes.size() < u.total) break;
+            stored_checkpoints[c.inst] = std::move(u);
+            running_uploads.erase(c.inst);
+            send_checkpoint_states(c.inst, now);
             break;
         }
         case w::Type::presence: {
