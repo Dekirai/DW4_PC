@@ -160,6 +160,32 @@ story-point credit).
   48's READY ticks, evicted checkpoints (49f8fea5, DW4Online.Tests 285/285,
   three new tests fail with the old hub). Client: open check ticks as a
   list, fake-hub checkpoint joins, session test (abc9b420, 252 checks).
-  run.py fails on `statehash_mismatch` / `checkpoint_suspect`. Running:
-  scenarios J1 J5 JB JR JS JS2 RGJ1 S3 JL S2 S17b L1 L2 M1
-  (`build/fix_scen_set1.log`), then det.sh.
+  run.py fails on `statehash_mismatch` / `checkpoint_suspect` (b602165d).
+
+## jready review results (05.11, 19:35)
+
+- ctest 56/56 (`build/ctest_fix.log`; `tick_state` 142 checks, session
+  tests 252 checks); DW4Online.Tests 285/285 (`build/server_unit_fix2.log`;
+  against the old `RoomHub.cs` three of the new tests fail,
+  `build/server_unit_counter_fix.log`); `det.sh` 4004f056 / 396cb219 in both
+  runs on the build without `DW4_ONLINE_DEV` (`build/det_fix1.log`).
+- ctest `tick_state` without the engine fix: 1 failure, stag0102's rebuild of
+  3405 at 3420 in `lua` (`build/ts_nofix_all.log`); with it 0. Rebuilds from
+  every state (`DW4_TICKSTATE_REBUILDS=all`): 313 rebuilds, 0 differences
+  (`build/ts_dense2.log`; before the fix 1, `build/ts_dense1.log`).
+- Scenarios with `--parallel 1`, 14 of 14 pass (`build/fix_scen_set1.log`,
+  `.work/run_20261105_181809`): J1, J5, JB, JR, JS, JS2, RGJ1, S3, JL, S2,
+  S17b, L1, L2, M1; no `statehash_mismatch` or `checkpoint_suspect` but JS's
+  and JS2's expected ones. Joins from a checkpoint, the relay's
+  `join_decided` to its `join` note: 11 joins 309-509 ms, median 349 ms
+  (J1 368, J5 309, JL 395, JS2 356, RGJ1 315, S3 359 / 314, L1 336, L2 349,
+  S17b 314, S2 509); every READY checked at the check tick. Classic: JB
+  1,075 ms, JS 1,249 ms (mismatch at the check tick 3,603), M1 1,966 ms (the
+  donor's status window open: no checkpoint in time).
+- J1, S2, S3 again with `DW4_TRACE_TICKSTATE_EVERY=20` (`build/fix_scen_dump.log`,
+  `.work/run_20261105_192009`): 194 canonical states compared between the
+  members within 900 ticks after each JOIN (every 20 ticks) and at the
+  STATEHASH ticks, 0 differ. (In these runs no STATEHASH fell within 60
+  ticks of a join; the offline rebuilds cover that case.)
+- Open: the DW4Online 0.1.6 release (server before client), the classic
+  fallback's time (JS, JB, M1), the donor with unsafe ticks (M1).
