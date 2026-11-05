@@ -199,12 +199,13 @@ public class SocialApiTests
         Assert.Equal((HttpStatusCode.NotFound, "request_not_found"), await Problem(kim.DeleteAsync("/api/v1/friends/requests/Lee")));
         Assert.Equal((HttpStatusCode.NotFound, "player_not_found"), await Problem(kim.GetAsync("/api/v1/players/Nobody")));
 
-        Assert.Equal(HttpStatusCode.OK, (await Request(kim, "Lee")).StatusCode);
-        var full = await max.PostAsJsonAsync("/api/v1/friends/requests", new { username = "Lee" });
-        Assert.Equal(HttpStatusCode.Conflict, full.StatusCode);
-        var problem = await full.Json();
-        Assert.Equal(("requests_full", "Lee can't take more friend requests right now."),
-            (problem.GetProperty("code").GetString(), problem.GetProperty("title").GetString()));
+        // Lee's one place (Friends:MaxPendingIn = 1) is taken: Max's request answers the same bytes and waits.
+        var first = await Request(kim, "Lee");
+        Assert.Equal(HttpStatusCode.OK, first.StatusCode);
+        var waits = await Request(max, "Lee");
+        Assert.Equal((HttpStatusCode.OK, await first.Content.ReadAsStringAsync()), (waits.StatusCode, await waits.Content.ReadAsStringAsync()));
+        Assert.Equal(["Kim"], Names(await Friends(lee), "requestsIn"));
+        Assert.Equal(["Lee"], Names(await Friends(max), "requestsOut"));
 
         Assert.Equal(HttpStatusCode.OK, (await Request(kim, "Max")).StatusCode); // Kim's second request this hour
         await host.RegisterAsync("Zed");
@@ -215,12 +216,17 @@ public class SocialApiTests
         Assert.Equal(3600, tooManyBody.GetProperty("retryAfterSeconds").GetInt32());
 
         Assert.Equal(HttpStatusCode.NoContent, (await kim.PostAsJsonAsync("/api/v1/blocks", new { username = "Zed" })).StatusCode);
-        Assert.Equal((HttpStatusCode.Conflict, "block_limit"), await Problem(kim.PostAsJsonAsync("/api/v1/blocks", new { username = "Lee" })));
+        // Refused three times, logged once (per account and limit an hour: a retrying client cannot grow the log).
+        for (var i = 0; i < 3; ++i)
+            Assert.Equal((HttpStatusCode.Conflict, "block_limit"), await Problem(kim.PostAsJsonAsync("/api/v1/blocks", new { username = "Lee" })));
 
         await using var sql = await host.SqlAsync();
         var limits = (await sql.QueryAsync<string>(
             "SELECT JSON_VALUE(detail, '$.limit') FROM audit_log WHERE event = 'social_limit' ORDER BY id")).ToList();
-        Assert.Equal(["incoming", "requests_per_time", "blocks"], limits);
+        Assert.Equal(["requests_per_time", "blocks"], limits);
+        // Lee answers Kim's request: Max's waiting one takes the place.
+        Assert.Equal(HttpStatusCode.NoContent, (await lee.PostAsync("/api/v1/friends/requests/Kim/decline", null)).StatusCode);
+        Assert.Equal(["Max"], Names(await Friends(lee), "requestsIn"));
         Assert.Equal(1, await sql.ExecuteScalarAsync<int>(
             "SELECT COUNT(*) FROM audit_log WHERE event = 'social_limit' AND account_id = @kimId AND ip IS NOT NULL AND detail LIKE '%blocks%'", new { kimId }));
     }
@@ -256,10 +262,67 @@ public class SocialApiTests
         Assert.Equal("Lee", card.GetProperty("username").GetString());
         Assert.True(card.GetProperty("hidden").GetBoolean());
         Assert.Equal(JsonValueKind.Null, card.GetProperty("character").ValueKind);
+        Assert.Equal(JsonValueKind.Null, card.GetProperty("memberSince").ValueKind); // as the website: nothing but the name
         Assert.Equal("none", card.GetProperty("relation").GetString());
         var own = await (await lee.GetAsync("/api/v1/players/Lee")).Json();
         Assert.False(own.GetProperty("hidden").GetBoolean());
+        Assert.Equal(host.Clock.GetUtcNow().UtcDateTime, own.GetProperty("memberSince").GetDateTime());
         Assert.Equal("self", own.GetProperty("relation").GetString());
-        Assert.False((await (await lee.GetAsync("/api/v1/players/Kim")).Json()).GetProperty("hidden").GetBoolean());
+        var visible = await (await lee.GetAsync("/api/v1/players/Kim")).Json();
+        Assert.False(visible.GetProperty("hidden").GetBoolean());
+        Assert.Equal(JsonValueKind.String, visible.GetProperty("memberSince").ValueKind);
+    }
+
+    /// <summary>
+    /// The SQL behind waiting requests and expiry: a request beyond Friends:MaxPendingIn waits and moves up when a place
+    /// frees; a request sent again over an expired row that the housekeeping has not purged yet (pending or declined)
+    /// is a fresh pending one; the hourly pass delivers what waits for places an expiry freed.
+    /// </summary>
+    [DbFact]
+    public async Task Waiting_requests_and_requests_over_expired_rows_in_sql()
+    {
+        await using var host = await TestHost.StartAsync(new()
+        {
+            ["Friends:MaxPendingIn"] = "1",
+            ["Accounts:GameSessionDays"] = "90", // the sessions outlive the requests
+        });
+        var (kim, lee, max, kimId, leeId, maxId) = await ThreeAsync(host);
+        async Task<(string State, bool Delivered, DateTime Created, DateTime? Decided, DateTime? Cancelled)> RowAsync(long from)
+        {
+            await using var sql = await host.SqlAsync();
+            return await sql.QuerySingleAsync<(string, bool, DateTime, DateTime?, DateTime?)>(
+                "SELECT state, delivered, created_at, decided_at, cancelled_at FROM friend_requests WHERE from_account_id = @from AND to_account_id = @leeId",
+                new { from, leeId });
+        }
+
+        Assert.Equal(HttpStatusCode.OK, (await Request(kim, "Lee")).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await Request(max, "Lee")).StatusCode);
+        Assert.False((await RowAsync(maxId)).Delivered);
+        Assert.Equal(["Kim"], Names(await Friends(lee), "requestsIn"));
+        Assert.Equal(HttpStatusCode.NoContent, (await lee.PostAsync("/api/v1/friends/requests/Kim/decline", null)).StatusCode);
+        Assert.Equal(["Max"], Names(await Friends(lee), "requestsIn"));
+        Assert.Equal("declined", (await RowAsync(kimId)).State);
+
+        // 31 days later, before any purge: both rows are expired but still there. Sending again writes fresh rows.
+        host.Clock.Advance(TimeSpan.FromDays(31));
+        await using (var sql = await host.SqlAsync())
+            Assert.Equal(2, await sql.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM friend_requests"));
+        Assert.Equal(HttpStatusCode.OK, (await Request(kim, "Lee")).StatusCode);
+        var kimRow = await RowAsync(kimId);
+        Assert.Equal(("pending", true, host.Clock.GetUtcNow().UtcDateTime, (DateTime?)null, (DateTime?)null), kimRow);
+        Assert.Equal(["Kim"], Names(await Friends(lee), "requestsIn")); // the expired decline no longer holds
+        host.Clock.Advance(TimeSpan.FromHours(1));
+        Assert.Equal(HttpStatusCode.OK, (await Request(max, "Lee")).StatusCode);
+        var maxRow = await RowAsync(maxId);
+        Assert.Equal(("pending", false, host.Clock.GetUtcNow().UtcDateTime), (maxRow.State, maxRow.Delivered, maxRow.Created)); // waits
+
+        // Kim's request expires 30 days after it was sent, Max's an hour later: the hourly pass purges Kim's and
+        // gives Lee's free place to Max's.
+        host.Clock.Advance(TimeSpan.FromDays(30).Subtract(TimeSpan.FromMinutes(30)));
+        Assert.Empty(Names(await Friends(lee), "requestsIn"));
+        Assert.Equal(1, await host.App.Services.GetRequiredService<SocialService>().PurgeExpiredAsync());
+        Assert.Equal(["Max"], Names(await Friends(lee), "requestsIn"));
+        Assert.True((await RowAsync(maxId)).Delivered);
+        Assert.Equal(HttpStatusCode.OK, (await lee.PostAsync("/api/v1/friends/requests/Max/accept", null)).StatusCode);
     }
 }

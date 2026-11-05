@@ -43,6 +43,8 @@ public class FriendPageTests
         Assert.Contains("Your friends (0 of 200)", friends.Html);
         Assert.Contains("You block nobody.", friends.Html);
         Assert.Contains("there is no search", friends.Html);
+        Assert.Single(System.Text.RegularExpressions.Regex.Matches(friends.Html, "id=\"Username\"")); // the block form has its own id
+        Assert.Contains("id=\"BlockUsername\"", friends.Html);
     }
 
     [DbFact]
@@ -162,12 +164,15 @@ public class FriendPageTests
     {
         await using var host = await TestHost.StartAsync();
         using var web = new WebBrowser(host);
-        var html = WebUtility.HtmlDecode((await web.GetAsync("/privacy")).Html);
+        // Whitespace as a reader sees it (the page's source wraps its lines).
+        var html = System.Text.RegularExpressions.Regex.Replace(WebUtility.HtmlDecode((await web.GetAsync("/privacy")).Html), @"\s+", " ");
         Assert.Contains("Friends and blocks: who your friends are", html);
         Assert.Contains("your friends see your user name in their friend list", html);
         Assert.Contains("There is no search for players", html);
         Assert.Contains("a block is never revealed", html);
-        Assert.Contains("expire 30 days after they were sent", html);
+        Assert.Contains("expires 30 days after it was last sent", html);
+        Assert.Contains("a block until the player who set it lifts it", html);
+        Assert.Contains("kept until it expires even when its sender cancels it", html);
         Assert.Contains("friendships, friend requests and blocks (yours and those about you)", html);
     }
 }

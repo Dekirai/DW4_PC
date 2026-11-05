@@ -79,7 +79,9 @@ public static class ServerApp
         services.AddSingleton<IRoomDirectory, RoomDirectory>();
         services.AddSingleton<IRoomRepository, RoomRepository>();
         services.AddSingleton<ISocialRepository, SocialRepository>();
-        // Round I2-social: nobody listens yet; round I1's relay replaces this with its in-process implementation.
+        // Round I2-social: nobody listens yet. Round I1's relay registers its in-process implementation BEFORE this line
+        // (then this TryAdd adds nothing) or replaces it after it (services.Replace / AddSingleton): a TryAdd after this
+        // line would be silently ignored.
         services.TryAddSingleton<IWorldNotifier>(NullWorldNotifier.Instance);
         services.AddSingleton<MaintenanceRepository>();
         services.AddSingleton(_ => new PasswordHasher(accounts.PasswordIterations));

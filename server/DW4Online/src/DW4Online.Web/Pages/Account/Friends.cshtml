@@ -56,7 +56,8 @@ else
             </tbody>
         </table>
     </div>
-    <p class="muted small">Declining is silent: the sender is not told.</p>
+    <p class="muted small">Declining is silent: the sender is not told. At most @o.Limits.MaxPendingIn requests reach you
+        at a time; further ones wait until you answer some.</p>
 }
 
 <h2>Sent requests</h2>
@@ -155,10 +156,10 @@ else
 }
 <div class="panel">
     <form method="post" asp-page-handler="Block" class="stack">
-        <label>Block a player by user name <input type="text" asp-for="Username" autocomplete="off" required minlength="3" maxlength="20" /></label>
+        <label>Block a player by user name <input type="text" id="BlockUsername" name="Username" autocomplete="off" required minlength="3" maxlength="20" /></label>
         <button type="submit" class="secondary">Block</button>
         <span class="muted small">A blocked player is never told. Blocking ends your friendship and your request to them,
-            and their requests no longer reach you (to them they still look sent). You can block up to
-            @o.Limits.MaxBlocks players.</span>
+            and their requests no longer reach you while you block them (to them they still look sent). You can block up
+            to @o.Limits.MaxBlocks players.</span>
     </form>
 </div>

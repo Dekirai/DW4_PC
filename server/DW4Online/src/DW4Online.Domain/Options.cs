@@ -80,7 +80,11 @@ public sealed class FriendsOptions
     public int RequestsPerDay { get; set; } = 100;
     /// <summary>Open outgoing requests (pending and declined ones look the same to the sender: both "sent").</summary>
     public int MaxPendingOut { get; set; } = 50;
-    /// <summary>Open incoming requests an account can hold; beyond it a request answers "can't take more" (blocked senders' silent rows do not count).</summary>
+    /// <summary>
+    /// Open requests that reach an account at a time; further ones answer "Request sent." like any other and wait
+    /// undelivered until a place frees (oldest first), so the cap never tells a sender anything. Requests from blocked
+    /// senders neither count nor reach the account.
+    /// </summary>
     public int MaxPendingIn { get; set; } = 100;
     public int MaxFriends { get; set; } = 200;
     public int MaxBlocks { get; set; } = 500;

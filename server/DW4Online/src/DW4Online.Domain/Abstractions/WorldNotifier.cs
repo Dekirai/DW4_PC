@@ -4,14 +4,17 @@ namespace DW4Online.Domain.Abstractions;
 /// How the domain services tell the relay about changes that its in-memory world state caches (SEAMLESS.md 19.17.2):
 /// API and relay run in one process, so this is a plain in-process call: no database read under the hub's lock and no
 /// polling. Implementations must return at once (queue the work); they are called after the change is committed.
-/// Round I2-social ships only the interface with <see cref="NullWorldNotifier"/>; round I1's relay implements it.
+/// Round I2-social ships only the interface with <see cref="NullWorldNotifier"/>; round I1's relay implements it and
+/// registers it before ServerApp's <c>TryAddSingleton&lt;IWorldNotifier&gt;(NullWorldNotifier.Instance)</c>, or replaces
+/// that registration after it (a TryAdd after it would be silently ignored).
 /// </summary>
 public interface IWorldNotifier
 {
     /// <summary>
     /// The friendship of <paramref name="a"/> and <paramref name="b"/>, or a request between them that the receiver can
-    /// see, changed (sent, accepted, declined, cancelled, removed): reload the pair. A decline and a silent request (the
-    /// receiver blocks the sender) are never shown to the sender: the relay must not tell him.
+    /// see, changed (delivered, accepted, declined, cancelled, removed): reload the pair. A decline, a silent request
+    /// (the receiver blocks the sender) and the moment a waiting request is delivered are never shown to the sender: the
+    /// relay must not tell him.
     /// </summary>
     void FriendsChanged(long a, long b);
 

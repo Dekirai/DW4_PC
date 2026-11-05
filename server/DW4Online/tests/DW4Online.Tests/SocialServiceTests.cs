@@ -89,12 +89,24 @@ public class SocialServiceTests
         public Task<FriendRequestRow?> GetRequestAsync(long from, long to, CancellationToken ct = default) =>
             Task.FromResult(Requests.GetValueOrDefault((from, to)));
 
-        public Task<bool> PutPendingRequestAsync(long from, long to, bool delivered, DateTime now, CancellationToken ct = default)
+        public Task<bool> PutPendingRequestAsync(long from, long to, DateTime now, CancellationToken ct = default)
         {
             if (!Live(from) || !Live(to)) return Task.FromResult(false);
-            Requests[(from, to)] = new FriendRequestRow { FromAccountId = from, ToAccountId = to, Delivered = delivered, CreatedAt = now };
+            Requests[(from, to)] = new FriendRequestRow { FromAccountId = from, ToAccountId = to, Delivered = false, CreatedAt = now };
             return Task.FromResult(true);
         }
+
+        public Task<IReadOnlyList<long>> DeliverWaitingAsync(long to, DateTime since, int max, CancellationToken ct = default)
+        {
+            var from = Waiting(to, since).OrderBy(r => r.CreatedAt).ThenBy(r => r.FromAccountId).Take(Math.Max(0, max))
+                .Select(r => r.FromAccountId).ToList();
+            foreach (var f in from) Requests[(f, to)] = With(Requests[(f, to)], delivered: true);
+            return Task.FromResult<IReadOnlyList<long>>(from);
+        }
+
+        public Task<IReadOnlyList<long>> ListWaitingReceiversAsync(DateTime since, int maxPendingIn, int limit, CancellationToken ct = default) =>
+            Task.FromResult<IReadOnlyList<long>>(Requests.Values.Select(r => r.ToAccountId).Distinct()
+                .Where(to => Waiting(to, since).Any() && Incoming(to, since).Count() < maxPendingIn).Order().Take(limit).ToList());
 
         public Task<bool> ResendDeclinedRequestAsync(long from, long to, DateTime now, CancellationToken ct = default) =>
             Update(from, to, r => r.State == FriendRequestState.Declined, r => With(r, createdAt: now, cancelledAt: null, clearCancelled: true));
@@ -126,7 +138,14 @@ public class SocialServiceTests
             return Task.FromResult(old.Count);
         }
 
-        public Task<bool> IsBlockedAsync(long blocker, long blocked, CancellationToken ct = default) => Task.FromResult(Blocks.ContainsKey((blocker, blocked)));
+        /// <summary>Called at the start of every block check (the lock tests hold a write there).</summary>
+        public Func<long, long, Task>? Pause { get; set; }
+
+        public async Task<bool> IsBlockedAsync(long blocker, long blocked, CancellationToken ct = default)
+        {
+            if (Pause is { } pause) await pause(blocker, blocked);
+            return Blocks.ContainsKey((blocker, blocked));
+        }
 
         public Task<int> CountBlocksAsync(long accountId, CancellationToken ct = default) => Task.FromResult(Blocks.Keys.Count(k => k.Blocker == accountId));
 
@@ -143,13 +162,12 @@ public class SocialServiceTests
             return Task.FromResult(true);
         }
 
-        public Task<bool> RemoveBlockAsync(long blocker, long blocked, CancellationToken ct = default)
-        {
-            if (!Blocks.Remove((blocker, blocked))) return Task.FromResult(false);
-            if (Requests.TryGetValue((blocked, blocker), out var theirs) && theirs.State == FriendRequestState.Pending)
-                Requests[(blocked, blocker)] = With(theirs, delivered: true);
-            return Task.FromResult(true);
-        }
+        public Task<bool> RemoveBlockAsync(long blocker, long blocked, CancellationToken ct = default) =>
+            Task.FromResult(Blocks.Remove((blocker, blocked)));
+
+        private IEnumerable<FriendRequestRow> Waiting(long to, DateTime since) =>
+            Requests.Values.Where(r => r.ToAccountId == to && r.State == FriendRequestState.Pending && !r.Delivered && r.CreatedAt >= since
+                && !Blocks.ContainsKey((to, r.FromAccountId)));
 
         private IEnumerable<FriendRequestRow> Outgoing(long from, DateTime since) =>
             Requests.Values.Where(r => r.FromAccountId == from && r.CreatedAt >= since && r.CancelledAt is null);
@@ -493,7 +511,7 @@ public class SocialServiceTests
     }
 
     [Fact]
-    public async Task The_incoming_cap_answers_the_same_with_or_without_a_block_and_silent_rows_do_not_count()
+    public async Task At_most_100_requests_reach_an_account_and_further_ones_wait_without_refusing_the_sender()
     {
         var w = new World();
         Assert.Equal(100, w.Options.MaxPendingIn);
@@ -502,27 +520,200 @@ public class SocialServiceTests
         foreach (var b in blocked)
         {
             await w.Service.BlockAsync(lee, $"blocked{blocked.IndexOf(b):D3}", Caller);
-            await w.SendOk(b, "Lee"); // silent: never counts toward Lee's cap
+            await w.SendOk(b, "Lee"); // silent: never counts toward Lee's places, never delivered
         }
         var senders = w.Many(100);
-        for (var i = 0; i < 99; ++i) await w.SendOk(senders[i], "Lee");
-        Assert.Equal(99, (await w.Service.OverviewAsync(lee)).RequestsIn.Count);
-        await w.SendOk(senders[99], "Lee"); // the 100th delivered request still fits
+        for (var i = 0; i < 100; ++i)
+        {
+            await w.SendOk(senders[i], "Lee");
+            w.Clock.Advance(TimeSpan.FromSeconds(1));
+        }
         Assert.Equal(100, (await w.Service.OverviewAsync(lee)).RequestsIn.Count);
 
+        // The 101st answers like any other and waits; so does one from a sender Lee blocks (silent).
         var late = w.Add("Late");
-        var refused = await w.Service.SendRequestAsync(late, "Lee", Caller);
-        Assert.Equal(("requests_full", "Lee can't take more friend requests right now."), (refused.Error!.Code, refused.Error.Message));
-        // A sender Lee blocks gets the very same answer (the cap is checked before the block).
         var silent = w.Add("Silent");
         await w.Service.BlockAsync(lee, "Silent", Caller);
-        var same = await w.Service.SendRequestAsync(silent, "Lee", Caller);
-        Assert.Equal(refused.Error, same.Error);
-        Assert.Contains(w.Audit.Rows, r => r.Event == "social_limit" && r.Account == late && r.Detail.Contains("incoming"));
+        w.Notifier.Calls.Clear();
+        var waiting = await w.SendOk(late, "Lee");
+        Assert.Equal(await w.SendOk(silent, "Lee"), waiting);
+        Assert.Equal((RequestOutcome.Sent, "Request sent."), (waiting.Result, waiting.Message));
+        Assert.Equal(["Lee"], await w.Out(late));
+        Assert.Equal(Relations.RequestSent, await w.Service.RelationAsync(late, lee));
+        Assert.Equal(100, (await w.Service.OverviewAsync(lee)).RequestsIn.Count);
+        Assert.DoesNotContain("Late", await w.In(lee));
+        Assert.Equal("request_not_found", await w.Code(w.Service.AcceptAsync(lee, "Late", Caller))); // not his to answer yet
+        Assert.Empty(w.Notifier.Calls);
+        Assert.DoesNotContain(w.Audit.Rows, r => r.Event == "social_limit"); // no limit refused anything
 
-        // Declining one frees a place.
+        // Declining one frees a place: the oldest waiting request that is not blocked reaches Lee.
         await w.Service.DeclineAsync(lee, P(0));
-        Assert.Equal("ok", await w.Code(w.Service.SendRequestAsync(late, "Lee", Caller)));
+        Assert.Contains("Late", await w.In(lee));
+        Assert.DoesNotContain("Silent", await w.In(lee));
+        Assert.Equal(100, (await w.Service.OverviewAsync(lee)).RequestsIn.Count);
+        Assert.Equal([$"friends {lee} {senders[0]}", $"friends {late} {lee}"], w.Notifier.Calls); // the decline, then the delivery
+    }
+
+    /// <summary>
+    /// The adversarial review's probes (cap 2): a sender who wants to know whether Lee blocks him or declined his
+    /// request (1) cancels and sends again while Lee's inbox is full, and (2) has one more account send right after him.
+    /// Everything he and his other accounts see must be the same with no block, with a block and with a decline.
+    /// </summary>
+    private static async Task<List<string>> ProbeAsync(string variant)
+    {
+        var w = new World(new FriendsOptions { MaxPendingIn = 2 });
+        var lee = w.Add("Lee");
+        var kim = w.Add("Kim");
+        w.Many(2, "sock");
+        w.Many(2, "other");
+        var seen = new List<string>();
+        async Task Send(string from, string to)
+        {
+            var id = (await w.Accounts.FindByUsernameAsync(from))!.Id;
+            var r = await w.Service.SendRequestAsync(id, to, Caller);
+            seen.Add($"{from}: {(r.Ok ? r.Value!.Message : r.Error!.Code)}");
+            w.Clock.Advance(TimeSpan.FromMinutes(1));
+        }
+
+        if (variant == "block") await w.Service.BlockAsync(lee, "Kim", Caller);
+        await Send("Kim", "Lee");
+        if (variant == "decline") Assert.True((await w.Service.DeclineAsync(lee, "Kim")).Ok);
+        await Send("sock000", "Lee");   // probe 2: does Kim's request take one of Lee's two places?
+        await Send("other000", "Lee");
+        await Send("other001", "Lee");
+        seen.Add($"cancel: {(await w.Service.CancelAsync(kim, "Lee")).Error?.Code ?? "ok"}");
+        await Send("Kim", "Lee");       // probe 1: cancel and send again into a full inbox
+        await Send("sock001", "Lee");
+        seen.Add($"Kim sees: {string.Join(",", await w.Out(kim))} {await w.Service.RelationAsync(kim, lee)}");
+        foreach (var sock in new[] { "sock000", "sock001" })
+        {
+            var id = (await w.Accounts.FindByUsernameAsync(sock))!.Id;
+            seen.Add($"{sock} sees: {string.Join(",", await w.Out(id))} {await w.Service.RelationAsync(id, lee)}");
+        }
+        Assert.True((await w.Service.OverviewAsync(lee)).RequestsIn.Count <= 2);
+        return seen;
+    }
+
+    [Fact]
+    public async Task The_incoming_cap_never_tells_a_sender_whether_he_is_blocked_or_declined()
+    {
+        var none = await ProbeAsync("none");
+        Assert.All(none.Where(s => !s.StartsWith("cancel") && !s.Contains(" sees: ")), s => Assert.EndsWith(": Request sent.", s));
+        Assert.Contains("cancel: ok", none);
+        Assert.Contains("Kim sees: Lee request_sent", none);
+        Assert.Equal(none, await ProbeAsync("block"));
+        Assert.Equal(none, await ProbeAsync("decline"));
+    }
+
+    [Fact]
+    public async Task Waiting_requests_move_up_oldest_first_as_places_free_and_the_hourly_pass_catches_expiries()
+    {
+        var w = new World(new FriendsOptions { MaxPendingIn = 2 });
+        var lee = w.Add("Lee");
+        foreach (var name in new[] { "Ann", "Bob", "Cid", "Dan", "Eve", "Fay", "Gus" }) w.Add(name);
+        async Task Send(string from)
+        {
+            await w.SendOk((await w.Accounts.FindByUsernameAsync(from))!.Id, "Lee");
+            w.Clock.Advance(TimeSpan.FromMinutes(1));
+        }
+        async Task<List<string>> InSorted() => (await w.In(lee)).Order().ToList();
+
+        foreach (var name in new[] { "Ann", "Bob", "Cid", "Dan" }) await Send(name);
+        Assert.Equal(["Ann", "Bob"], await InSorted());
+        await w.Service.DeclineAsync(lee, "Ann");             // Cid moves up, not Dan
+        Assert.Equal(["Bob", "Cid"], await InSorted());
+        await w.Service.CancelAsync((await w.Accounts.FindByUsernameAsync("Cid"))!.Id, "Lee");
+        Assert.Equal(["Bob", "Dan"], await InSorted());      // a cancel frees a place too
+        await w.Service.AcceptAsync(lee, "Bob", Caller);       // so does an accept
+        Assert.Equal(["Dan"], await InSorted());
+        await Send("Eve");
+        await Send("Fay");                                    // waits
+        Assert.Equal(["Dan", "Eve"], await InSorted());
+        await w.Service.BlockAsync(lee, "Dan", Caller);        // a block takes Dan's request out of Lee's places
+        Assert.Equal(["Eve", "Fay"], await InSorted());
+
+        // Expiry frees places without an event: the hourly housekeeping delivers what waits.
+        w.Clock.Advance(TimeSpan.FromDays(20));
+        await Send("Gus");                                    // Eve and Fay still hold both places: Gus waits
+        Assert.Equal(["Eve", "Fay"], await InSorted());
+        w.Clock.Advance(TimeSpan.FromDays(10).Add(TimeSpan.FromMinutes(5)));
+        Assert.Empty(await w.In(lee));                        // Eve's and Fay's expired, Gus's still waits
+        Assert.True(await w.Service.PurgeExpiredAsync() >= 2);
+        Assert.Equal(["Gus"], await InSorted());
+    }
+
+    [Fact]
+    public async Task Unblocking_delivers_only_while_the_receiver_has_places()
+    {
+        var w = new World(new FriendsOptions { MaxPendingIn = 2 });
+        var lee = w.Add("Lee");
+        var kim = w.Add("Kim");
+        await w.Service.BlockAsync(lee, "Kim", Caller);
+        await w.SendOk(kim, "Lee");
+        w.Clock.Advance(TimeSpan.FromMinutes(1));
+        await w.SendOk(w.Add("p100"), "Lee");
+        await w.SendOk(w.Add("p101"), "Lee");
+        Assert.Equal(["p100", "p101"], (await w.In(lee)).Order());
+        await w.Service.UnblockAsync(lee, "Kim");
+        Assert.Equal(["p100", "p101"], (await w.In(lee)).Order()); // full: Kim's request waits, Lee never sees more than 2
+        Assert.Equal(["Lee"], await w.Out(kim));
+        await w.Service.DeclineAsync(lee, "p100");
+        Assert.Equal(["Kim", "p101"], (await w.In(lee)).Order());   // the oldest waiting one moves up
+    }
+
+    [Fact]
+    public async Task A_refused_limit_is_logged_once_per_account_and_hour()
+    {
+        var w = new World(new FriendsOptions { MaxBlocks = 1 });
+        var kim = w.Add("Kim");
+        var max = w.Add("Max");
+        w.Many(3);
+        await w.Service.BlockAsync(kim, P(0), Caller);
+        await w.Service.BlockAsync(max, P(0), Caller);
+        for (var i = 0; i < 5; ++i) Assert.Equal("block_limit", await w.Code(w.Service.BlockAsync(kim, P(1), Caller)));
+        Assert.Single(w.Audit.Rows, r => r.Event == "social_limit" && r.Account == kim);
+        Assert.Equal("block_limit", await w.Code(w.Service.BlockAsync(max, P(1), Caller))); // per account
+        Assert.Single(w.Audit.Rows, r => r.Event == "social_limit" && r.Account == max);
+        w.Clock.Advance(TimeSpan.FromMinutes(59));
+        Assert.Equal("block_limit", await w.Code(w.Service.BlockAsync(kim, P(2), Caller)));
+        Assert.Single(w.Audit.Rows, r => r.Event == "social_limit" && r.Account == kim);
+        w.Clock.Advance(TimeSpan.FromMinutes(1));
+        Assert.Equal("block_limit", await w.Code(w.Service.BlockAsync(kim, P(2), Caller)));
+        Assert.Equal(2, w.Audit.Rows.Count(r => r.Event == "social_limit" && r.Account == kim));
+    }
+
+    [Fact]
+    public async Task A_write_waits_only_for_writes_of_the_same_accounts_and_gives_up_as_busy()
+    {
+        var w = new World();
+        var kim = w.Add("Kim");
+        var lee = w.Add("Lee");
+        var max = w.Add("Max");
+        var ann = w.Add("Ann");
+        w.Service.LockWait = TimeSpan.FromMilliseconds(200);
+        var paused = new TaskCompletionSource();
+        var go = new TaskCompletionSource();
+        w.Social.Pause = async (blocker, blocked) =>
+        {
+            if (blocker != kim || blocked != lee) return;
+            paused.TrySetResult();
+            await go.Task;
+        };
+        var first = w.Service.SendRequestAsync(kim, "Lee", Caller); // holds Kim's and Lee's locks
+        await paused.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        // Max -> Ann shares no account with it: it runs on (one process-wide gate would hold it).
+        var other = await w.Service.SendRequestAsync(max, "Ann", Caller).WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.True(other.Ok);
+        // Ann -> Lee needs Lee's lock: after LockWait it answers busy (503) instead of queueing without end.
+        var busy = await w.Service.SendRequestAsync(ann, "Lee", Caller);
+        Assert.Equal(("social_busy", ErrorKind.Unavailable), (busy.Error!.Code, busy.Error.Kind));
+
+        w.Social.Pause = null;
+        go.SetResult();
+        Assert.True((await first.WaitAsync(TimeSpan.FromSeconds(5))).Ok);
+        Assert.True((await w.Service.SendRequestAsync(ann, "Lee", Caller)).Ok); // free again
+        Assert.Equal(["Ann", "Kim"], (await w.In(lee)).Order());
     }
 
     [Fact]

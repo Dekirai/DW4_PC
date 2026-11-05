@@ -78,14 +78,47 @@ public sealed class SocialRepository(Database db) : ISocialRepository
             new { from, to }, cancellationToken: ct));
     }
 
-    public async Task<bool> PutPendingRequestAsync(long from, long to, bool delivered, DateTime now, CancellationToken ct = default)
+    public async Task<bool> PutPendingRequestAsync(long from, long to, DateTime now, CancellationToken ct = default)
     {
         await using var c = await db.OpenAsync(ct);
         return await c.ExecuteAsync(new CommandDefinition(
             "INSERT INTO friend_requests (from_account_id, to_account_id, state, delivered, created_at, decided_at, cancelled_at) " +
-            $"SELECT @a, @b, 'pending', @delivered, @now, NULL, NULL FROM DUAL WHERE {BothLive} " +
-            "ON DUPLICATE KEY UPDATE state = 'pending', delivered = VALUES(delivered), created_at = VALUES(created_at), decided_at = NULL, cancelled_at = NULL",
-            new { a = from, b = to, delivered, now }, cancellationToken: ct)) > 0;
+            $"SELECT @a, @b, 'pending', 0, @now, NULL, NULL FROM DUAL WHERE {BothLive} " +
+            "ON DUPLICATE KEY UPDATE state = 'pending', delivered = 0, created_at = VALUES(created_at), decided_at = NULL, cancelled_at = NULL",
+            new { a = from, b = to, now }, cancellationToken: ct)) > 0;
+    }
+
+    /// <summary>A waiting request: pending, undelivered, live, from a sender the receiver does not block (r is friend_requests).</summary>
+    private const string Waiting =
+        "r.state = 'pending' AND r.delivered = 0 AND r.created_at >= @since " +
+        "AND NOT EXISTS (SELECT 1 FROM account_blocks b WHERE b.account_id = r.to_account_id AND b.blocked_account_id = r.from_account_id)";
+
+    public async Task<IReadOnlyList<long>> DeliverWaitingAsync(long to, DateTime since, int max, CancellationToken ct = default)
+    {
+        if (max <= 0) return [];
+        await using var c = await db.OpenAsync(ct);
+        await using var tx = await c.BeginTransactionAsync(ct);
+        var from = (await c.QueryAsync<long>(new CommandDefinition(
+            $"SELECT r.from_account_id FROM friend_requests r WHERE r.to_account_id = @to AND {Waiting} " +
+            $"ORDER BY r.created_at, r.from_account_id LIMIT {max} FOR UPDATE", new { to, since }, tx, cancellationToken: ct))).AsList();
+        if (from.Count > 0)
+            await c.ExecuteAsync(new CommandDefinition(
+                "UPDATE friend_requests SET delivered = 1 WHERE to_account_id = @to AND from_account_id IN @from AND state = 'pending'",
+                new { to, from }, tx, cancellationToken: ct));
+        await tx.CommitAsync(ct);
+        return from;
+    }
+
+    public async Task<IReadOnlyList<long>> ListWaitingReceiversAsync(DateTime since, int maxPendingIn, int limit, CancellationToken ct = default)
+    {
+        await using var c = await db.OpenAsync(ct);
+        var rows = await c.QueryAsync<long>(new CommandDefinition(
+            $"SELECT r.to_account_id FROM friend_requests r WHERE {Waiting} " +
+            "AND (SELECT COUNT(*) FROM friend_requests d WHERE d.to_account_id = r.to_account_id AND d.state = 'pending' " +
+            "     AND d.delivered = 1 AND d.created_at >= @since) < @maxPendingIn " +
+            $"GROUP BY r.to_account_id ORDER BY r.to_account_id LIMIT {Math.Max(1, limit)}",
+            new { since, maxPendingIn }, cancellationToken: ct));
+        return rows.AsList();
     }
 
     public async Task<bool> ResendDeclinedRequestAsync(long from, long to, DateTime now, CancellationToken ct = default)
@@ -215,15 +248,10 @@ public sealed class SocialRepository(Database db) : ISocialRepository
 
     public async Task<bool> RemoveBlockAsync(long blocker, long blocked, CancellationToken ct = default)
     {
+        // The formerly blocked account's pending request is a waiting one from now on (delivered = 0 without a block):
+        // the service delivers it when the blocker has a place.
         await using var c = await db.OpenAsync(ct);
-        await using var tx = await c.BeginTransactionAsync(ct);
-        var removed = await c.ExecuteAsync(new CommandDefinition(
-            "DELETE FROM account_blocks WHERE account_id = @a AND blocked_account_id = @b", new { a = blocker, b = blocked }, tx, cancellationToken: ct)) > 0;
-        if (removed)
-            await c.ExecuteAsync(new CommandDefinition(
-                "UPDATE friend_requests SET delivered = 1 WHERE from_account_id = @b AND to_account_id = @a AND state = 'pending' AND delivered = 0",
-                new { a = blocker, b = blocked }, tx, cancellationToken: ct));
-        await tx.CommitAsync(ct);
-        return removed;
+        return await c.ExecuteAsync(new CommandDefinition(
+            "DELETE FROM account_blocks WHERE account_id = @a AND blocked_account_id = @b", new { a = blocker, b = blocked }, cancellationToken: ct)) > 0;
     }
 }

@@ -24,7 +24,7 @@ CREATE TABLE friend_requests (
   state           ENUM('pending','declined') NOT NULL DEFAULT 'pending'
                   COMMENT 'declined: still shown as sent to the sender until it expires; never shown to the receiver again',
   delivered       TINYINT(1)      NOT NULL DEFAULT 1
-                  COMMENT '0: the receiver blocks the sender; never shown to the receiver, shown as sent to the sender',
+                  COMMENT '0: not shown to the receiver (he blocks the sender, or it waits for a place among his 100 open requests); shown as sent to the sender',
   created_at      DATETIME(3)     NOT NULL COMMENT 'when it was sent (UTC); it expires Friends:RequestDays later',
   decided_at      DATETIME(3)     NULL     COMMENT 'when the receiver declined it',
   cancelled_at    DATETIME(3)     NULL     COMMENT 'declined rows only: the sender cancelled it (hidden from him, the decline holds until it expires)',

@@ -83,13 +83,14 @@ public static class SocialEndpoints
                     return ApiProblems.Of(StatusCodes.Status404NotFound, "player_not_found", "No player has this exact name.");
                 var own = account.Id == session.AccountId;
                 var staff = session.Role is Roles.Moderator or Roles.Admin;
-                // As the profile page: a private (or banned) profile shows nothing but the name.
+                // As the profile page: a private (or banned) profile shows nothing but the name (not even since when the
+                // account exists), plus the caller's own relation to it.
                 var visible = own || staff || (account.ProfilePublic && account.Status != AccountStatus.Banned);
                 var character = visible ? await characters.GetAsync(account.Id, ctx.RequestAborted) : null;
                 return Results.Ok(new
                 {
                     account.Username,
-                    memberSince = account.CreatedAt,
+                    memberSince = visible ? account.CreatedAt : (DateTime?)null,
                     hidden = !visible,
                     character = character is null ? null : new
                     {

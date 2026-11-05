@@ -129,8 +129,8 @@ public class AccountScrubTests
             (await host.Client(goneToken).PostAsJsonAsync("/api/v1/me/delete", new { currentPassword = "a decent password" })).StatusCode);
         var store = host.App.Services.GetRequiredService<DW4Online.Domain.Abstractions.ISocialRepository>();
         var now = host.Clock.GetUtcNow().UtcDateTime;
-        Assert.False(await store.PutPendingRequestAsync(otherId, goneId, true, now));
-        Assert.False(await store.PutPendingRequestAsync(goneId, otherId, true, now));
+        Assert.False(await store.PutPendingRequestAsync(otherId, goneId, now));
+        Assert.False(await store.PutPendingRequestAsync(goneId, otherId, now));
         Assert.False(await store.AddFriendshipAsync(otherId, goneId, now));
         Assert.False(await store.AddBlockAsync(otherId, goneId, now));
         await using var sql = await host.SqlAsync();

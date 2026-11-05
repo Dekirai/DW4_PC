@@ -12,7 +12,10 @@ public sealed class FriendRequestRow
     public long FromAccountId { get; init; }
     public long ToAccountId { get; init; }
     public string State { get; init; } = FriendRequestState.Pending;
-    /// <summary>False: the receiver blocks the sender; the row is never shown to the receiver.</summary>
+    /// <summary>
+    /// False: not shown to the receiver: he blocks the sender (silent until an unblock), or his open requests were full
+    /// when it came (it waits for a place, oldest first). The sender sees "sent" either way.
+    /// </summary>
     public bool Delivered { get; init; } = true;
     public DateTime CreatedAt { get; init; }
     public DateTime? DecidedAt { get; init; }
@@ -43,8 +46,21 @@ public interface ISocialRepository
     Task<bool> RemoveFriendshipAsync(long a, long b, CancellationToken ct = default);
 
     Task<FriendRequestRow?> GetRequestAsync(long from, long to, CancellationToken ct = default);
-    /// <summary>Writes a new pending request (replacing an expired or cancelled row of the pair); false when either account is deleted.</summary>
-    Task<bool> PutPendingRequestAsync(long from, long to, bool delivered, DateTime now, CancellationToken ct = default);
+    /// <summary>
+    /// Writes a new pending request, not yet delivered (replacing an expired or cancelled row of the pair; the service
+    /// delivers it with <see cref="DeliverWaitingAsync"/>); false when either account is deleted.
+    /// </summary>
+    Task<bool> PutPendingRequestAsync(long from, long to, DateTime now, CancellationToken ct = default);
+    /// <summary>
+    /// Delivers up to <paramref name="max"/> waiting requests to <paramref name="to"/>: pending, undelivered, sent since
+    /// <paramref name="since"/>, from senders <paramref name="to"/> does not block; oldest first. Returns their senders.
+    /// </summary>
+    Task<IReadOnlyList<long>> DeliverWaitingAsync(long to, DateTime since, int max, CancellationToken ct = default);
+    /// <summary>
+    /// Accounts with waiting requests (as <see cref="DeliverWaitingAsync"/> would deliver them) and fewer than
+    /// <paramref name="maxPendingIn"/> delivered ones; at most <paramref name="limit"/>.
+    /// </summary>
+    Task<IReadOnlyList<long>> ListWaitingReceiversAsync(DateTime since, int maxPendingIn, int limit, CancellationToken ct = default);
     /// <summary>A declined request the sender cancelled is shown to him again as sent at <paramref name="now"/> (it stays declined).</summary>
     Task<bool> ResendDeclinedRequestAsync(long from, long to, DateTime now, CancellationToken ct = default);
     Task<bool> DeclineRequestAsync(long from, long to, DateTime now, CancellationToken ct = default);
@@ -70,6 +86,9 @@ public interface ISocialRepository
     /// "sent" to its sender). False when either account is deleted.
     /// </summary>
     Task<bool> AddBlockAsync(long blocker, long blocked, DateTime now, CancellationToken ct = default);
-    /// <summary>Removes the block and delivers the formerly blocked account's pending requests to the blocker; false when there was none.</summary>
+    /// <summary>
+    /// Removes the block; false when there was none. The formerly blocked account's pending request becomes a waiting
+    /// one (the service delivers it when the blocker has a place).
+    /// </summary>
     Task<bool> RemoveBlockAsync(long blocker, long blocked, CancellationToken ct = default);
 }

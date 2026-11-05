@@ -11,7 +11,7 @@ public sealed record RequestEntry(string Username, DateTime SentAt, DateTime Exp
 
 public sealed record BlockEntry(string Username, DateTime Since);
 
-public sealed record FriendLimits(int MaxFriends, int MaxPendingOut, int MaxBlocks, int RequestDays);
+public sealed record FriendLimits(int MaxFriends, int MaxPendingOut, int MaxPendingIn, int MaxBlocks, int RequestDays);
 
 /// <summary>Everything the friends page and GET /friends show of one account.</summary>
 public sealed record FriendsOverview(
@@ -47,8 +47,11 @@ public static class Relations
 /// request from him meanwhile answers "Request sent." and changes nothing; cancelling a declined request hides it from
 /// him but keeps the decline. A block removes the friendship and the blocker's request; the blocked player's request to
 /// the blocker stays "sent" to him but is no longer shown to the blocker (delivered = 0), and his further requests answer
-/// "Request sent." the same way: a block is never revealed. Requests name the exact user name (no search). Every write
-/// runs under one process-wide gate, so crossing requests and the caps cannot race (social writes are rare).
+/// "Request sent." the same way: a block is never revealed. At most <see cref="FriendsOptions.MaxPendingIn"/> requests
+/// reach an account at a time; further ones answer "Request sent." too and wait undelivered until a place frees (oldest
+/// first), so the cap tells a sender nothing about a block or a decline. Requests name the exact user name (no search).
+/// Every write holds the locks of both accounts (striped by id), so crossing requests and the caps cannot race while
+/// writes of other accounts run on.
 /// </summary>
 public sealed class SocialService(
     IAccountRepository accounts,
@@ -58,13 +61,18 @@ public sealed class SocialService(
     FriendsOptions options,
     TimeProvider time)
 {
-    private readonly SemaphoreSlim _gate = new(1, 1);
+    private const int LockStripes = 64;
+    private readonly SemaphoreSlim[] _locks = Enumerable.Range(0, LockStripes).Select(_ => new SemaphoreSlim(1, 1)).ToArray();
     private readonly Dictionary<long, Queue<DateTime>> _sent = [];
+    private readonly Dictionary<(long Account, string Limit), DateTime> _limitLogged = [];
     private readonly Lock _sentGate = new();
 
     public const string RequestSentMessage = "Request sent.";
 
-    public FriendLimits Limits => new(options.MaxFriends, options.MaxPendingOut, options.MaxBlocks, options.RequestDays);
+    /// <summary>How long a write waits for its accounts' locks before it answers <c>social_busy</c> (tests shorten it).</summary>
+    internal TimeSpan LockWait { get; set; } = TimeSpan.FromSeconds(10);
+
+    public FriendLimits Limits => new(options.MaxFriends, options.MaxPendingOut, MaxPendingIn, options.MaxBlocks, options.RequestDays);
 
     public async Task<FriendsOverview> OverviewAsync(long accountId, CancellationToken ct = default)
     {
@@ -86,72 +94,63 @@ public sealed class SocialService(
 
     /// <summary>
     /// Sends a friend request to the account named exactly <paramref name="username"/> (any case). The answer is
-    /// "Request sent." whether the other player blocks the sender or not, and whether he declined an earlier request or
-    /// not; the incoming cap is checked before the block for the same reason.
+    /// "Request sent." whether the other player blocks the sender or not, whether he declined an earlier request or not,
+    /// and whether his open requests are full or not (then it waits): only the sender's own limits refuse a request.
     /// </summary>
     public async Task<Result<RequestOutcome>> SendRequestAsync(long accountId, string? username, CallerInfo caller, CancellationToken ct = default)
     {
         var target = await FindAsync(username, ct);
         if (target is null) return NoSuchPlayer();
         if (target.Id == accountId) return DomainError.Invalid("own_account", "That is your own name.");
-        await _gate.WaitAsync(ct);
-        try
+        using var held = await LockAsync(accountId, target.Id, ct);
+        if (held is null) return Busy();
+        var now = Clock.Now(time);
+        var since = Since(now);
+        if (await social.IsBlockedAsync(accountId, target.Id, ct))
+            return DomainError.Conflict("you_blocked", $"You blocked {target.Username}. Unblock them first.");
+        if (await social.AreFriendsAsync(accountId, target.Id, ct))
+            return DomainError.Conflict("already_friends", $"You are already friends with {target.Username}.");
+
+        // Crossing requests: theirs is open as they see it, so both want it.
+        var theirs = await social.GetRequestAsync(target.Id, accountId, ct);
+        if (theirs is not null && theirs.CreatedAt >= since && SeenAsSentBy(theirs) && !await social.IsBlockedAsync(target.Id, accountId, ct))
+            return await BefriendAsync(accountId, target, caller, now, ct);
+
+        var mine = await social.GetRequestAsync(accountId, target.Id, ct);
+        var mineLive = mine is not null && mine.CreatedAt >= since;
+        if (mineLive && SeenAsSentBy(mine!)) return Sent(); // already sent (pending, silent or declined): nothing changes
+
+        // A new request as the sender sees it: only his own limits can refuse it. The receiver's cap never answers
+        // (a "full" answer would let a sender probe a block or a decline by whether his own row takes a place).
+        if (RetryAfter(accountId, now) is { } retry)
         {
-            var now = Clock.Now(time);
-            var since = Since(now);
-            if (await social.IsBlockedAsync(accountId, target.Id, ct))
-                return DomainError.Conflict("you_blocked", $"You blocked {target.Username}. Unblock them first.");
-            if (await social.AreFriendsAsync(accountId, target.Id, ct))
-                return DomainError.Conflict("already_friends", $"You are already friends with {target.Username}.");
-
-            // Crossing requests: theirs is open as they see it, so both want it.
-            var theirs = await social.GetRequestAsync(target.Id, accountId, ct);
-            if (theirs is not null && theirs.CreatedAt >= since && SeenAsSentBy(theirs) && !await social.IsBlockedAsync(target.Id, accountId, ct))
-                return await BefriendAsync(accountId, target, caller, now, ct);
-
-            var mine = await social.GetRequestAsync(accountId, target.Id, ct);
-            var mineLive = mine is not null && mine.CreatedAt >= since;
-            if (mineLive && SeenAsSentBy(mine!)) return Sent(); // already sent (pending, silent or declined): nothing changes
-
-            // A new request as the sender sees it: his limits, then the receiver's cap (before the block: same answer).
-            if (RetryAfter(accountId, now) is { } retry)
-            {
-                await LimitAsync(accountId, "requests_per_time", caller, now, ct);
-                return DomainError.TooMany("friend_request_rate", "You sent too many friend requests. Try again later.", retry);
-            }
-            if (await social.CountFriendsAsync(accountId, ct) >= options.MaxFriends)
-            {
-                await LimitAsync(accountId, "friends", caller, now, ct);
-                return OwnFriendLimit();
-            }
-            if (await social.CountOutgoingAsync(accountId, since, ct) >= options.MaxPendingOut)
-            {
-                await LimitAsync(accountId, "outgoing", caller, now, ct);
-                return DomainError.Conflict("outgoing_limit",
-                    $"You have {options.MaxPendingOut} open friend requests, the most you can have. Cancel some or wait for answers.");
-            }
-            if (await social.CountIncomingAsync(target.Id, since, ct) >= options.MaxPendingIn)
-            {
-                await LimitAsync(accountId, "incoming", caller, now, ct);
-                return DomainError.Conflict("requests_full", $"{target.Username} can't take more friend requests right now.");
-            }
-            var silent = await social.IsBlockedAsync(target.Id, accountId, ct);
-            CountSent(accountId, now);
-            if (mineLive && mine!.State == FriendRequestState.Declined)
-            {
-                // He cancelled a request the other player had declined: it is "sent" again, the decline still holds.
-                await social.ResendDeclinedRequestAsync(accountId, target.Id, now, ct);
-            }
-            else if (await social.PutPendingRequestAsync(accountId, target.Id, !silent, now, ct) && !silent)
-            {
-                notifier.FriendsChanged(accountId, target.Id);
-            }
-            return Sent();
+            await LimitAsync(accountId, "requests_per_time", caller, now, ct);
+            return DomainError.TooMany("friend_request_rate", "You sent too many friend requests. Try again later.", retry);
         }
-        finally
+        if (await social.CountFriendsAsync(accountId, ct) >= options.MaxFriends)
         {
-            _gate.Release();
+            await LimitAsync(accountId, "friends", caller, now, ct);
+            return OwnFriendLimit();
         }
+        if (await social.CountOutgoingAsync(accountId, since, ct) >= options.MaxPendingOut)
+        {
+            await LimitAsync(accountId, "outgoing", caller, now, ct);
+            return DomainError.Conflict("outgoing_limit",
+                $"You have {options.MaxPendingOut} open friend requests, the most you can have. Cancel some or wait for answers.");
+        }
+        CountSent(accountId, now);
+        if (mineLive && mine!.State == FriendRequestState.Declined)
+        {
+            // He cancelled a request the other player had declined: it is "sent" again, the decline still holds.
+            await social.ResendDeclinedRequestAsync(accountId, target.Id, now, ct);
+        }
+        else if (await social.PutPendingRequestAsync(accountId, target.Id, now, ct))
+        {
+            // It reaches the receiver now unless he blocks the sender (silent until an unblock) or his open
+            // requests are full (it waits; older waiting requests go first).
+            await DeliverAsync(target.Id, since, ct);
+        }
+        return Sent();
     }
 
     /// <summary>Accepts the open request from <paramref name="username"/>: the two become friends.</summary>
@@ -159,18 +158,12 @@ public sealed class SocialService(
     {
         var target = await FindAsync(username, ct);
         if (target is null) return NoSuchPlayer();
-        await _gate.WaitAsync(ct);
-        try
-        {
-            var now = Clock.Now(time);
-            if (!VisibleToReceiver(await social.GetRequestAsync(target.Id, accountId, ct), Since(now)))
-                return NoRequestFrom(target);
-            return await BefriendAsync(accountId, target, caller, now, ct);
-        }
-        finally
-        {
-            _gate.Release();
-        }
+        using var held = await LockAsync(accountId, target.Id, ct);
+        if (held is null) return Busy();
+        var now = Clock.Now(time);
+        if (!VisibleToReceiver(await social.GetRequestAsync(target.Id, accountId, ct), Since(now)))
+            return NoRequestFrom(target);
+        return await BefriendAsync(accountId, target, caller, now, ct);
     }
 
     /// <summary>Declines the open request from <paramref name="username"/>; its sender is not told.</summary>
@@ -178,20 +171,15 @@ public sealed class SocialService(
     {
         var target = await FindAsync(username, ct);
         if (target is null) return NoSuchPlayer();
-        await _gate.WaitAsync(ct);
-        try
-        {
-            var now = Clock.Now(time);
-            if (!VisibleToReceiver(await social.GetRequestAsync(target.Id, accountId, ct), Since(now)))
-                return NoRequestFrom(target);
-            await social.DeclineRequestAsync(target.Id, accountId, now, ct);
-            notifier.FriendsChanged(accountId, target.Id);
-            return target.Username;
-        }
-        finally
-        {
-            _gate.Release();
-        }
+        using var held = await LockAsync(accountId, target.Id, ct);
+        if (held is null) return Busy();
+        var now = Clock.Now(time);
+        if (!VisibleToReceiver(await social.GetRequestAsync(target.Id, accountId, ct), Since(now)))
+            return NoRequestFrom(target);
+        await social.DeclineRequestAsync(target.Id, accountId, now, ct);
+        notifier.FriendsChanged(accountId, target.Id);
+        await DeliverAsync(accountId, Since(now), ct); // its place goes to the oldest waiting request
+        return target.Username;
     }
 
     /// <summary>Cancels the caller's own request to <paramref name="username"/> (a declined one keeps its decline).</summary>
@@ -199,28 +187,26 @@ public sealed class SocialService(
     {
         var target = await FindAsync(username, ct);
         if (target is null) return NoSuchPlayer();
-        await _gate.WaitAsync(ct);
-        try
+        using var held = await LockAsync(accountId, target.Id, ct);
+        if (held is null) return Busy();
+        var now = Clock.Now(time);
+        var mine = await social.GetRequestAsync(accountId, target.Id, ct);
+        if (mine is null || mine.CreatedAt < Since(now) || !SeenAsSentBy(mine))
+            return DomainError.NotFound("request_not_found", $"No open friend request to {target.Username}.");
+        if (mine.State == FriendRequestState.Declined)
         {
-            var now = Clock.Now(time);
-            var mine = await social.GetRequestAsync(accountId, target.Id, ct);
-            if (mine is null || mine.CreatedAt < Since(now) || !SeenAsSentBy(mine))
-                return DomainError.NotFound("request_not_found", $"No open friend request to {target.Username}.");
-            if (mine.State == FriendRequestState.Declined)
-            {
-                await social.CancelDeclinedRequestAsync(accountId, target.Id, now, ct);
-            }
-            else
-            {
-                await social.DeleteRequestAsync(accountId, target.Id, ct);
-                if (mine.Delivered) notifier.FriendsChanged(accountId, target.Id);
-            }
-            return target.Username;
+            await social.CancelDeclinedRequestAsync(accountId, target.Id, now, ct);
         }
-        finally
+        else
         {
-            _gate.Release();
+            await social.DeleteRequestAsync(accountId, target.Id, ct);
+            if (mine.Delivered)
+            {
+                notifier.FriendsChanged(accountId, target.Id);
+                await DeliverAsync(target.Id, Since(now), ct); // its place goes to the oldest waiting request
+            }
         }
+        return target.Username;
     }
 
     /// <summary>Ends a friendship; the other player is not told and sees it in his list.</summary>
@@ -228,18 +214,12 @@ public sealed class SocialService(
     {
         var target = await FindAsync(username, ct);
         if (target is null) return NoSuchPlayer();
-        await _gate.WaitAsync(ct);
-        try
-        {
-            if (!await social.RemoveFriendshipAsync(accountId, target.Id, ct))
-                return DomainError.NotFound("not_friends", $"You are not friends with {target.Username}.");
-            notifier.FriendsChanged(accountId, target.Id);
-            return target.Username;
-        }
-        finally
-        {
-            _gate.Release();
-        }
+        using var held = await LockAsync(accountId, target.Id, ct);
+        if (held is null) return Busy();
+        if (!await social.RemoveFriendshipAsync(accountId, target.Id, ct))
+            return DomainError.NotFound("not_friends", $"You are not friends with {target.Username}.");
+        notifier.FriendsChanged(accountId, target.Id);
+        return target.Username;
     }
 
     /// <summary>Blocks <paramref name="username"/> (repeating it changes nothing); the blocked player is never told.</summary>
@@ -248,43 +228,38 @@ public sealed class SocialService(
         var target = await FindAsync(username, ct);
         if (target is null) return NoSuchPlayer();
         if (target.Id == accountId) return DomainError.Invalid("own_account", "You can't block yourself.");
-        await _gate.WaitAsync(ct);
-        try
+        using var held = await LockAsync(accountId, target.Id, ct);
+        if (held is null) return Busy();
+        var now = Clock.Now(time);
+        if (await social.IsBlockedAsync(accountId, target.Id, ct)) return target.Username;
+        if (await social.CountBlocksAsync(accountId, ct) >= options.MaxBlocks)
         {
-            var now = Clock.Now(time);
-            if (await social.IsBlockedAsync(accountId, target.Id, ct)) return target.Username;
-            if (await social.CountBlocksAsync(accountId, ct) >= options.MaxBlocks)
-            {
-                await LimitAsync(accountId, "blocks", caller, now, ct);
-                return DomainError.Conflict("block_limit", $"You block {options.MaxBlocks} players, the most you can. Unblock one first.");
-            }
-            if (!await social.AddBlockAsync(accountId, target.Id, now, ct)) return NoSuchPlayer();
-            notifier.BlocksChanged(accountId, target.Id);
-            return target.Username;
+            await LimitAsync(accountId, "blocks", caller, now, ct);
+            return DomainError.Conflict("block_limit", $"You block {options.MaxBlocks} players, the most you can. Unblock one first.");
         }
-        finally
-        {
-            _gate.Release();
-        }
+        if (!await social.AddBlockAsync(accountId, target.Id, now, ct)) return NoSuchPlayer();
+        notifier.BlocksChanged(accountId, target.Id);
+        // The blocked player's request no longer takes one of the blocker's places, nor the blocker's own one of his.
+        await DeliverAsync(accountId, Since(now), ct);
+        await DeliverAsync(target.Id, Since(now), ct);
+        return target.Username;
     }
 
-    /// <summary>Lifts a block; the formerly blocked player's pending requests reach the caller now.</summary>
+    /// <summary>
+    /// Lifts a block; the formerly blocked player's pending request reaches the caller now when he has a place (else it
+    /// waits in line with the others, by its date).
+    /// </summary>
     public async Task<Result<string>> UnblockAsync(long accountId, string? username, CancellationToken ct = default)
     {
         var target = await FindAsync(username, ct);
         if (target is null) return NoSuchPlayer();
-        await _gate.WaitAsync(ct);
-        try
-        {
-            if (!await social.RemoveBlockAsync(accountId, target.Id, ct))
-                return DomainError.NotFound("not_blocked", $"You do not block {target.Username}.");
-            notifier.BlocksChanged(accountId, target.Id);
-            return target.Username;
-        }
-        finally
-        {
-            _gate.Release();
-        }
+        using var held = await LockAsync(accountId, target.Id, ct);
+        if (held is null) return Busy();
+        if (!await social.RemoveBlockAsync(accountId, target.Id, ct))
+            return DomainError.NotFound("not_blocked", $"You do not block {target.Username}.");
+        notifier.BlocksChanged(accountId, target.Id);
+        await DeliverAsync(accountId, Since(Clock.Now(time)), ct);
+        return target.Username;
     }
 
     /// <summary>The relation of <paramref name="targetId"/> to <paramref name="viewerId"/> as the viewer may know it (<see cref="Relations"/>).</summary>
@@ -300,8 +275,21 @@ public sealed class SocialService(
         return Relations.None;
     }
 
-    /// <summary>Deletes requests that expired (pending and declined); the hourly housekeeping calls it.</summary>
-    public Task<int> PurgeExpiredAsync(CancellationToken ct = default) => social.PurgeRequestsAsync(Since(Clock.Now(time)), ct);
+    /// <summary>
+    /// The hourly housekeeping: deletes requests that expired (pending and declined; returns their number), then
+    /// delivers waiting requests to accounts that have places again through an expiry or a deleted account (every
+    /// other change delivers at once).
+    /// </summary>
+    public async Task<int> PurgeExpiredAsync(CancellationToken ct = default)
+    {
+        var purged = await social.PurgeRequestsAsync(Since(Clock.Now(time)), ct);
+        foreach (var to in await social.ListWaitingReceiversAsync(Since(Clock.Now(time)), MaxPendingIn, 1000, ct))
+        {
+            using var held = await LockAsync(to, to, ct);
+            if (held is not null) await DeliverAsync(to, Since(Clock.Now(time)), ct);
+        }
+        return purged;
+    }
 
     // ------------------------------------------------------------------------------------------
 
@@ -316,8 +304,70 @@ public sealed class SocialService(
             return DomainError.Conflict("other_friend_limit", $"{target.Username} can't take more friends right now.");
         if (!await social.AddFriendshipAsync(accountId, target.Id, now, ct)) return NoSuchPlayer();
         notifier.FriendsChanged(accountId, target.Id);
+        // The requests between the two are gone: their places go to the oldest waiting requests.
+        await DeliverAsync(accountId, Since(now), ct);
+        await DeliverAsync(target.Id, Since(now), ct);
         return new RequestOutcome(RequestOutcome.Friends, $"You are now friends with {target.Username}.");
     }
+
+    /// <summary>
+    /// Delivers requests that wait for <paramref name="to"/> (sent while his open requests were full, or by a player he
+    /// blocked and no longer blocks), oldest first, while fewer than <see cref="FriendsOptions.MaxPendingIn"/> reach
+    /// him; requests from players he blocks stay silent. The caller holds <paramref name="to"/>'s lock.
+    /// </summary>
+    private async Task DeliverAsync(long to, DateTime since, CancellationToken ct)
+    {
+        var places = MaxPendingIn - await social.CountIncomingAsync(to, since, ct);
+        if (places <= 0) return;
+        foreach (var from in await social.DeliverWaitingAsync(to, since, places, ct))
+            notifier.FriendsChanged(from, to);
+    }
+
+    private int MaxPendingIn => Math.Max(1, options.MaxPendingIn);
+
+    /// <summary>
+    /// The write locks of both accounts: striped by account id and taken in stripe order, so writes of other accounts
+    /// run on and two writes never wait on each other in a circle. Null when they are not free within
+    /// <see cref="LockWait"/> (the caller answers <c>social_busy</c>).
+    /// </summary>
+    private async Task<IDisposable?> LockAsync(long a, long b, CancellationToken ct)
+    {
+        var first = Stripe(a);
+        var second = Stripe(b);
+        if (first > second) (first, second) = (second, first);
+        if (!await _locks[first].WaitAsync(LockWait, ct)) return null;
+        if (second == first) return new Held(_locks[first], null);
+        bool got;
+        try
+        {
+            got = await _locks[second].WaitAsync(LockWait, ct);
+        }
+        catch
+        {
+            _locks[first].Release();
+            throw;
+        }
+        if (got) return new Held(_locks[first], _locks[second]);
+        _locks[first].Release();
+        return null;
+    }
+
+    private static int Stripe(long accountId) => (int)((ulong)accountId % LockStripes);
+
+    private sealed class Held(SemaphoreSlim first, SemaphoreSlim? second) : IDisposable
+    {
+        private int _released;
+
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref _released, 1) != 0) return;
+            second?.Release();
+            first.Release();
+        }
+    }
+
+    private static DomainError Busy() =>
+        new(ErrorKind.Unavailable, "social_busy", "Friends are busy right now. Try again in a moment.");
 
     /// <summary>What the sender sees as "sent": pending (delivered or silent), or declined and not cancelled by him.</summary>
     private static bool SeenAsSentBy(FriendRequestRow row) =>
@@ -377,9 +427,23 @@ public sealed class SocialService(
         if (sent.Count == 0) _sent.Remove(accountId);
     }
 
-    /// <summary>A refusal by a limit goes into the security log (friend and block changes themselves are not audited).</summary>
-    private Task LimitAsync(long accountId, string limit, CallerInfo caller, DateTime now, CancellationToken ct) =>
-        audit.WriteAsync("social_limit", accountId, accountId, caller.Ip, new { limit }, now, ct);
+    /// <summary>
+    /// A refusal by a limit goes into the security log, once per account and limit an hour: a client that keeps trying
+    /// would otherwise grow the log at will (friend and block changes themselves are not audited).
+    /// </summary>
+    private Task LimitAsync(long accountId, string limit, CallerInfo caller, DateTime now, CancellationToken ct)
+    {
+        lock (_sentGate)
+        {
+            if (_limitLogged.TryGetValue((accountId, limit), out var last) && now - last < TimeSpan.FromHours(1))
+                return Task.CompletedTask;
+            _limitLogged[(accountId, limit)] = now;
+            if (_limitLogged.Count > 4096)
+                foreach (var old in _limitLogged.Where(e => now - e.Value >= TimeSpan.FromHours(1)).Select(e => e.Key).ToList())
+                    _limitLogged.Remove(old);
+        }
+        return audit.WriteAsync("social_limit", accountId, accountId, caller.Ip, new { limit }, now, ct);
+    }
 
     private DomainError OwnFriendLimit() =>
         DomainError.Conflict("friend_limit", $"You have {options.MaxFriends} friends, the most you can have. Remove one first.");
