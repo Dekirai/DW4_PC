@@ -108,13 +108,15 @@ after 96-198 s), A(t) halved for two minutes while a Guardian lives.
 
 ## 6. The open points of OVERFLOW_DIRECTOR.md 10.7, 11.5, 11.6
 
-- **Kite Veemon against Tortomon (11.6):** Tortomon x 0.085 is in (from 0.10). Measured with everything else of
-  this round (section 7's table, kite Veemon seeds 201-206); the round's other changes (gear, Resist, Freeze,
-  Bind) changed Veemon's phase 3 more than the factor, so the measurement is of the whole, not of the factor alone.
+- **Kite Veemon against Tortomon (11.6): OPEN.** Tortomon x 0.085 is in (from 0.10), but the full measurement
+  11.6 asks for (seeds 201-220, once with `family_damage=e_torta:0.10`, once with 0.085) was never run; the only
+  kite Veemon numbers are S (201-206). The review's head runs (201-204) still show Tortomon as the largest
+  source in 3 of 4 (section 11), about as in 11.6 at x 0.10.
 - **Human Agumon's phase-2 deaths (Mummymon, MRβ02 from 7:00; target at most 1 of 40 before 10:00):** with the
   gear and the full lists no human Agumon run of this round ended before 10:00 (m1 seeds 1-8, s1 v1-v3 seeds
   1-4, section 7); phase 2's contact knot (1.1 at 5:00) is barely raised, the new contact is after 10:00.
-  Seeds 101-120 were not run again (time).
+  **NOT MEASURED:** the target is over 40 runs (seeds 1-20 and 101-120) and those were never run on the head;
+  4-12 seeds of 1-12 do not answer it. Mummymon is still the largest source in 2 of the review's 4 head runs.
 - **Agumon's crowd answer beyond the Forge (11.5):** its own TECH5, Bomb (6.4: a bomb at the densest group
   within 40 units, a burning area), learned at run level 16 with Blast 661, fires now (k3 seed 1: 498 casts,
   1.64 M damage against Cleaver's 8.1 M and Cutter's 1.72 M), and TECH2 Pwr Up / TECH6 Resist cut what the
@@ -128,10 +130,12 @@ after 96-198 s), A(t) halved for two minutes while a Guardian lives.
 
 Before: main d0e005b0 (OVERFLOW_DIRECTOR.md 11.3 / 11.6: Agumon and Veemon only, no Guardians, no gear, O1a's
 five techniques, the run's end at 25:00). "S": a1fe8f6 (the late contact of section 5); "V": S with contact 1.8
-at 10:00 and Bomb x 0.5 (keys); "F": the shipped state 99057dc (O1a's damage numbers, Bomb x 0.5; measured
-with e11 and the keys that give F's values). A clear counts at its time; seeds 1-n unless noted.
+at 10:00 and Bomb x 0.5 (keys); "F": an approximation of 99057dc (O1a's damage numbers, Bomb x 0.5) measured
+with the e11 binary and keys meant to give F's values, with Mammothmon x 0.25 instead of the shipped 0.15
+(only Guilmon seeds 3-4 ran on f5d6f07); the two gameplay commits after 18:00 (panel gap, Drain cap) are not
+measured. F is NOT a measurement of the shipped binary (review 06.11, section 11). A clear counts at its time; seeds 1-n unless noted.
 
-| Bot, form | Before (main) | S (a1fe8f6) | V | F (shipped) |
+| Bot, form | Before (main) | S (a1fe8f6) | V | F (e11 + keys, an approximation; not the head binary) |
 | --- | --- | --- | --- | --- |
 | human Agumon | 16:33 (1-20), 1 of 40 before 10:00 | 22:06 (12 seeds, 20:26-23:51), 4 clear, 0 before 10:00 | 19:32 (3) | 22:13 (4, 20:36-22:35), 1 clear |
 | human Veemon | 15:09 (1-20) | 10:59 (6, 9:43-18:07), 1 before 10:00 | 11:44 (4) | 15:41 (4, 12:09-24:15) |
@@ -277,3 +281,49 @@ for key in sorted(runs):
 ```
 
 `build/bld.sh DIR ON x [target]` calls `build/bld.cmd` (work/port-research/build_clean.cmd with its own build dir `build/rel`, Ninja, MSVC 18 Insiders, `--parallel 5`, the FETCHCONTENT dirs of the main repo's build/Release/_deps, `-DDW4_TEST_DATA=<game data>`).
+
+## 11. Review 06.11 18:20: the honest state (no long runs possible, PC shuts down 18:30)
+
+The reviewer's own head runs (copy of `build/det/dw4_game_e2.exe` = f964f0fb, headless): human Agumon seeds
+101-104: 21:39 clear, 20:53, 21:31, 23:57 clear (median ~21:35, none before 10:00, 0 Lua errors; taken_by
+e_mummy 1.07 / 0.75 / 1.13 / 0.62 MaxHP, e_mecha2 0.72 / 0.99). Kite Veemon seeds 201-204: 22:38, 15:20,
+21:23, 21:18 (median ~21:20); e_torta phase 3 1.04 / 1.78 / 1.61 / 1.13 MaxHP, phase 4 1.72 / 1.96; Diaboromon
+2.34 MaxHP (201, left at 20:00 with 8511 / 27647 HP), Anomalocarimon 1.67 (202).
+
+**SURVIVAL.md 14.2, target by target (head = f964f0fb; "F" = the section 7 approximation):**
+
+| Target | Agumon | Veemon | Guilmon | Dorumon |
+| --- | --- | --- | --- | --- |
+| human median 14:00-18:00 | MISSED (head 101-104 ~21:35; F 22:13) | F 15:41 (4 seeds, approx.) - not measured on head | F 17:53 (2 seeds) - not measured on head | F 15:08 (2 seeds) - not measured on head |
+| kite median 20:00-24:00 | F 22:21 (2) - not measured on head | head 201-204 ~21:20 (4 seeds); 20 seeds not measured | MISSED (F 16:15 / 16:27) | not measured |
+| kite >= 3 min over human | MISSED (F 22:21 vs 22:13) | not measured | MISSED (F 16:27 vs 17:53) | not measured |
+| not every seed clears | at risk (kite F 2 of 2 clear; human head 2 of 4 clear) | not measured | ok in F (1 of 2) | not measured |
+| forms within 15 % | MISSED (Agumon 22:13 vs Veemon 15:41) | | | |
+| <= 1 of 40 human Agumon before 10:00 | NOT MEASURED (0 of 4-12 seeds; 40 never run) | | | |
+| no defeat before 3:00, no Lua error | ok in every run seen | ok | ok | ok |
+| clamp never (non-Guardian) | `rules_clamps` 0 in every run seen; the summary's `clamps` also counts Guardian clamps (see below) | | | |
+
+So 14.2 is MISSED for Agumon (human median far over 18:00: Bomb x 0.5 was not enough; the newcomer bot reaches
+the finale every run and beats LordKnightmon x 14 in 2 of 4), MISSED for kite Guilmon, and NOT MEASURED for the
+rest on the head binary. 11.6 (Tortomon x 0.085) is OPEN.
+
+**Next measurements (the first thing of the next balance round, `build/f/jobs.sh`, nice 10, 4 at a time):**
+1. Head binary, the four Rookies x human / kite, seeds 1-20 (and 301-320): the table above, filled.
+2. Human Agumon seeds 1-20 and 101-120: the 40-run target.
+3. Kite Veemon seeds 201-220 twice: `family_damage=e_torta:0.10` and `e_torta:0.085`; read the Guardians'
+   taken_by too (Veemon's Guardian HP = HPMAX x 6 x (1 + 0.1 / minute): Diaboromon left alive at 20:00).
+4. Then Agumon's class factor or Bomb further down (or the Guardian / finale HP for the human bot) and measure
+   again.
+
+**Not looked at in a picture (no screenshots taken in this lane):** the boss bar i_bosshp02, TIME UP, the
+AWAKENING line, the build page with Core / Board / Chips. Take hidden screenshots via `commands=` with
+`guardian_first` and short `end_steps`, or add them to lane D's picture set. Process violation reported by the
+lane itself: once 16 game processes ran at the same time (the round's rule is 4).
+
+**Design gaps not named in the report before:** Awakening shows no SQ_TECUP panel (6.5), no x_100charge01
+burst; no camera shake at a Guardian's entry; no Violet Ring return gate; Fang Thrust's pierce / reach 30 and
+Crescent Draw's aim at the densest group are missing. E sends i_bgclear nowhere: per the contract D shows the
+clear banner from `d.cleared` (to check at D's merge).
+
+**T6's command (SURVIVAL.md 14):** with the run's end at 25:00 the run clock alone needs 90000 steps
+(1500 s x 60) plus the start frames, so `--smoke-test 90000` cannot reach TIME UP; this lane uses 100000.
