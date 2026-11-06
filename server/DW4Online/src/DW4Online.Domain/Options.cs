@@ -141,23 +141,25 @@ public sealed class ServiceOptions
     /// A path the whole service (website and API) lives below, for a host shared with other sites, e.g. "/dw4online" for
     /// https://dekirai.crygod.de/dw4online. Requests under it see their links, redirects and cookies below it; requests
     /// without it keep working at the root (so clients of an earlier root address go on working). Empty = the root.
+    /// Behind a proxy that strips the path (Traefik's stripPrefix) it is needed as well: its X-Forwarded-Prefix counts only
+    /// when it names this path.
     /// </summary>
     public string PathBase { get; set; } = "";
     /// <summary>
     /// Behind a reverse proxy on the same machine (Traefik, IIS, nginx, Caddy forwarding to http://127.0.0.1:5280): take
-    /// the client address, the scheme and the stripped path prefix from X-Forwarded-For / X-Forwarded-Proto /
-    /// X-Forwarded-Prefix, but only on plain-HTTP connections from this machine (never from a direct client, never on the
-    /// HTTPS endpoint). Off when Kestrel faces the internet itself (a client could fake its address otherwise). Kestrel's
-    /// HTTPS endpoint keeps serving direct clients (the game) either way. DEPLOY.md section 6.2; DW4Online.Server.ProxyHeaders.
+    /// the client address (the last X-Forwarded-For entry) and the scheme (X-Forwarded-Proto), and a stripping proxy's
+    /// X-Forwarded-Prefix when it is <see cref="PathBase"/>, but only on plain-HTTP connections from this machine (never
+    /// from a direct client, never on the HTTPS endpoint). Off when Kestrel faces the internet itself (a client could fake
+    /// its address otherwise). Kestrel's HTTPS endpoint keeps serving direct clients (the game) either way. DEPLOY.md
+    /// section 6.2; DW4Online.Server.ProxyHeaders.
     /// </summary>
     public bool BehindProxy { get; set; }
     /// <summary>
-    /// With <see cref="BehindProxy"/>: the networks (CIDR) of the proxies in front of the local one, for example
-    /// Cloudflare's published ranges (https://www.cloudflare.com/ips/). When the local proxy reports an address of these
-    /// networks as its client, the X-Forwarded-For entry before it (the one that edge appended) is the client's address.
-    /// One edge hop only, and only behind the local proxy: an address of these networks connecting to the service directly
-    /// is not trusted. Empty (the default): the address the local proxy saw counts. The local proxy must keep the edge's
-    /// X-Forwarded-For (Traefik: entryPoints.&lt;name&gt;.forwardedHeaders.trustedIPs with the same networks).
+    /// With <see cref="BehindProxy"/>: Cloudflare's networks (CIDR, its published ranges, https://www.cloudflare.com/ips/).
+    /// When the local proxy saw an address of these networks (the last X-Forwarded-For entry), the client's address is
+    /// the one in Cloudflare's CF-Connecting-IP header (one public address; else the edge's stays). Only behind the local
+    /// proxy: an address of these networks connecting to the service directly is not trusted. The local proxy keeps its
+    /// default (Traefik needs no forwardedHeaders.trustedIPs). Empty (the default): the address the local proxy saw counts.
     /// </summary>
     public string[] TrustedProxyNetworks { get; set; } = [];
 

@@ -114,8 +114,22 @@
     from other servers (no external fonts or scripts).</p>
 
 <h2>Who receives data</h2>
-<p>Nobody. Data is not sold or shared. The hosting provider of the server processes it only on the operator's behalf.
-    Your user name and, when your profile is public, your online character and achievements are visible to everyone on
+@if (Model.Processors.Count == 0)
+{
+    <p>Nobody. Data is not sold or shared. The hosting provider of the server processes it only on the operator's behalf.</p>
+}
+else
+{
+    <p>Data is not sold. The hosting provider of the server and these service providers process it only on the
+        operator's behalf:</p>
+    <ul>
+        @foreach (var processor in Model.Processors)
+        {
+            <li>@processor</li>
+        }
+    </ul>
+}
+<p>Your user name and, when your profile is public, your online character and achievements are visible to everyone on
     this website; room names and the host's user name are visible in the room list while a room is open, together with
     the stages its members play in and how many play together there (the members' names in that list only to the members
     of the same room).</p>
@@ -146,4 +160,4 @@
     your user name lose its hash and their IP address too). Database backups roll over
     within about two months.</p>
 
-<p class="muted small">Last updated: 5 November 2026.</p>
+<p class="muted small">Last updated: 6 November 2026.</p>

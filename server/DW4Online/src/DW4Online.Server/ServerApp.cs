@@ -137,7 +137,8 @@ public static class ServerApp
         // every link, redirect and cookie (ProxyHeaders, DEPLOY.md section 6.2).
         if (proxy.BehindProxy)
             app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Proxy").LogInformation(
-                "Behind a proxy: X-Forwarded-For, -Proto and -Prefix from plain-HTTP connections of this machine, {Count} trusted edge network(s)",
+                "Behind a proxy: X-Forwarded-For, -Proto and -Prefix (= Service:PathBase) from plain-HTTP connections of this machine, " +
+                "CF-Connecting-IP from {Count} trusted edge network(s)",
                 proxy.Edges.Count);
         app.Use((context, next) =>
         {

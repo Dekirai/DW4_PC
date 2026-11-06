@@ -16,6 +16,13 @@ public sealed class WebOptions
     public string OperatorName { get; set; } = "";
     public string OperatorAddress { get; set; } = "";
     public string OperatorContact { get; set; } = "";
+    /// <summary>
+    /// Service providers beside the server's hosting provider that process the website's data on the operator's behalf,
+    /// one text each, shown on the privacy page under "Who receives data" (GDPR Art. 13(1)(e) and (f): who, what for, what
+    /// they see, where). For example the content delivery network in front of the website (DEPLOY.md section 6.2, case 2:
+    /// Cloudflare). Empty: the page names the hosting provider only.
+    /// </summary>
+    public string[] Processors { get; set; } = [];
     /// <summary>Display names of the partner forms by model (p_agumon = Agumon); overrides the built-in list.</summary>
     public Dictionary<string, string> DigimonNames { get; set; } = new(StringComparer.Ordinal);
 }

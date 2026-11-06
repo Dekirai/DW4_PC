@@ -113,6 +113,9 @@ public static class WebSetup
             {
                 if (options.RequireHttps && !ctx.Request.IsHttps)
                 {
+                    // (no-store: a cache in front, such as a CDN for a static-looking path, must not keep a redirect built
+                    // from this request's host and path base.)
+                    ctx.Response.Headers.CacheControl = "no-store";
                     if (HttpMethods.IsGet(ctx.Request.Method) || HttpMethods.IsHead(ctx.Request.Method))
                     {
                         ctx.Response.Redirect("https://" + ctx.Request.Host.Host + ctx.Request.PathBase + ctx.Request.Path + ctx.Request.QueryString);
