@@ -67,6 +67,6 @@ lanes *relay world* and *story* (with round 72's additions), the wire of 19.18 a
 - Load gate: `DOTNET_gcServer=1 tests/DW4Online.FakeClient/bin/Release/net10.0/DW4Online.FakeClient.exe loadgate
   --seconds 30 --out <json>` and the same with `--sockets --port 57100` (`--cells joins` for one cell). Runs of this
   lane: `build/i1arelay/gate/` (loadgate49_r1, joins49_r2, loadgate_net49_r1, loadgate_net49_storm_r2).
-- Last results: unit 448/448 (`build/i1arelay/unit_r2.log`); integration see the final report.
+- Last results: unit 449/449 (`build/i1arelay/unit_r3.log`); integration 115 passed, 4 skipped (`build/i1arelay/integration_r2.log`).
 - No client code changed (the branch's diff outside `server/` and `docs/` is empty): no ctest, det.sh or game
   scenarios are needed for this lane.

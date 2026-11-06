@@ -197,6 +197,7 @@ public sealed partial class RoomHub
         _instances.Clear();
         _holds.Clear();
         _worlds.Clear();
+        _byArea.Clear();
         Note("stopped", null, ("at", now));
     }
 

@@ -660,6 +660,32 @@ public partial class HubLogicTests
     }
 
     [Fact]
+    public void A_fresh_arrivals_candidates_are_the_running_instances_of_its_area_only()
+    {
+        var h = new Harness();
+        h.Connect("a", 0);
+        h.Connect("b", 1);
+        h.Connect("c", 2);
+        h.Barrier("a", "stag0101");
+        h.Snapshot("a");
+        h.Log("a", 0, 60);
+        h.Joinable("a");
+        h.Barrier("b", "stag0201");
+        h.Snapshot("b");
+        h.Log("b", 0, 60);
+        h.Joinable("b");
+        var wa = W(h, "a");
+        // a goes home alone: his instance ends and goes with its last seat (out of the area's index too).
+        h.Barrier("a", "stagML11");
+        Assert.Null(h.Hub.WorldInstance(wa.Wid));
+        // c at Death Valley's stag0101: b's instance (Dry Land) is no candidate, a's is gone: an own instance.
+        h.Barrier("c", "stag0101");
+        var ok = h.Decision("c");
+        Assert.Equal((BarrierDecision.New, ArrivalKind.NewInstance, h.Mem("c").Id), (ok.Decision, ok.World.Arrival, ok.World.HostMember));
+        Assert.NotEqual(W(h, "b").Wid, ok.World.Wid);
+    }
+
+    [Fact]
     public void A_barrier_whose_plan_is_new_instance_never_joins_automatically()
     {
         var h = new Harness();

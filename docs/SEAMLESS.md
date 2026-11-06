@@ -13114,6 +13114,9 @@ the remembered visibility off the lock). Decisions the design left open:
   dungeon floors' load-time COUNTER 2 would otherwise hide every instance
   whose players are in a dungeon); with a stage group there, 3.7's rule of
   that group.
+- **The index of round 72** is the instances by area; the data hash is
+  checked in the area's list (the relay admits few data hashes at once,
+  `World:DataHashes`), so a fresh arrival reads its area's instances only.
 - **A fresh arrival's notice** (the loading screen's): when no candidate is
   taken and an instance of the area had a stage group at the stage that
   was refused for its context, its seats or a too long catch-up, NEW comes

@@ -29,6 +29,8 @@ public sealed partial class RoomHub
     private readonly AreaTable _areas = AreaTable.Default;
     private readonly Dictionary<long, HubMember> _byAccount = [];
     private readonly Dictionary<uint, WorldInstance> _worlds = [];
+    /// <summary>The instances by area (round 72: a fresh arrival's candidates are its area's instances only).</summary>
+    private readonly Dictionary<string, List<WorldInstance>> _byArea = new(StringComparer.Ordinal);
     private readonly Dictionary<(long Account, int Box), StoryKeeper> _keepers = [];
     private readonly Dictionary<long, (WorldPlayContext Context, long At)> _recentContexts = [];
     private uint _nextMemberId = 1;
@@ -261,6 +263,11 @@ public sealed partial class RoomHub
         if (w.Unlisted) Count("instances_unlisted");
         w.Visited.Add(stage);
         _worlds[w.Wid] = w;
+        if (w.Area is { } area)
+        {
+            if (!_byArea.TryGetValue(area, out var list)) _byArea[area] = list = [];
+            list.Add(w);
+        }
         Count("instances");
         Note("instance_start", null, ("wid", w.Wid), ("host", host.AccountId), ("member", host.Id), ("area", w.Area ?? ""), ("stage", w.FirstStage),
             ("visibility", Visibilities.Text(w.Visibility)), ("unlisted", w.Unlisted));
@@ -308,6 +315,7 @@ public sealed partial class RoomHub
     private void RemoveWorld(WorldInstance w, long now)
     {
         if (!_worlds.Remove(w.Wid)) return;
+        if (w.Area is { } area && _byArea.TryGetValue(area, out var list)) list.Remove(w);
         if (w.Keeper.Held) w.Keeper.Release(merge: false);
         foreach (var g in w.Groups) g.World = null;
         w.Groups.Clear();
@@ -706,9 +714,10 @@ public sealed partial class RoomHub
         var size = members.Count;
         var data = members[0].DataHash;
         var slowest = members.Select(x => x.Rate == 0 ? (double)_inst.DefaultReplayRate : x.Rate).DefaultIfEmpty(_inst.DefaultReplayRate).Min();
-        foreach (var w in _worlds.Values)
+        if (!_byArea.TryGetValue(area, out var inArea)) return rows;
+        foreach (var w in inArea)
         {
-            if (w.Ending || w.Unlisted || w.Area != area || w.DataHash != data) continue;
+            if (w.Ending || w.Unlisted || w.DataHash != data) continue;
             if (!members.All(x => Matching.Visible(w, x, now))) continue;
             var atStage = w.Groups.Where(x => !x.Ended && x.Logged && !x.Departing && !x.LogFull && x.Barrier is null && SameStage(x.Stage, g.Stage)).ToList();
             if (w.FreeSeats < size)
