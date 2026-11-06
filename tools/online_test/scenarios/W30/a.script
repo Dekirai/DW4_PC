@@ -8,4 +8,4 @@ explore matz01 yes until stage=dng205b1,control
 log a in dng205b1
 wander 0 0 30 until present=2,sealed>=600 or frames>=20000
 log b joined a in the ruins
-wander 0 0 30 until sealed>=2400
+wander 0 0 30 until sealed>=2400 or present=1,frames>=600

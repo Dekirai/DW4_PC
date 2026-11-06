@@ -13,5 +13,5 @@ explore matz00 yes until stage=dng101b1,control
 log a in dng101b1
 wander 0 0 30 until present=2,sealed>=600
 log a joined b in the cave
-wander 0 0 30 until sealed>=7200
+wander 0 0 30 until sealed>=7200 or present=1,frames>=600
 log a hosted four
