@@ -12106,9 +12106,11 @@ here).*
   character select driven into stagML11 for boxes 0, 2 and 3 from three
   start offsets, one after the attract demo, the difficulty dialog
   answered by a test run and by the player, the exit mats of stag0101 and
-  dng101b2, the disk panel's cursor on the gate disk); offline: `det.sh`
-  4004f056 / 396cb219 twice, r25c 10 of 10 with 1,748,011 frames, the
-  save state suite 17 of 17 (on the last code commit).
+  dng101b2, the disk panel's cursor on the gate disk; achievements and
+  online_achievements: *Connected* only as a guest, no room check in the
+  world, the session's facts); offline: `det.sh` 4004f056 / 396cb219
+  twice, r25c 10 of 10 with 1,748,011 frames, the save state suite 17 of
+  17 (on the last code commit).
 - **Not built in this lane** (the integration's or later rounds'): the W
   scenarios with real clients (the harness lane, after the merge); the
   half-rate ghost animation (M5: the fallback only, built only if a weaker
