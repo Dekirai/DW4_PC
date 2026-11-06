@@ -10,7 +10,7 @@
   "db_checks": [
     {
       "name": "not ended",
-      "sql": "SELECT COUNT(*), SUM(end_reason = 'host_lost') FROM instance_history",
+      "sql": "SELECT COUNT(*), SUM(COALESCE(end_reason, '') = 'host_lost') FROM instance_history",
       "expect": "^1\t0$"
     }
   ],
