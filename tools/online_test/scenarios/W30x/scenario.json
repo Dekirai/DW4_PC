@@ -8,6 +8,9 @@
   "min_shared_ticks": 0,
   "dir": "W30",
   "counter_proof": true,
+  "expect_fail": [
+    "^b: online-script: FAIL \\(line 12\\) key:9=0 \\(frame \\d+, stage stag0201"
+  ],
   "clients": [
     {
       "name": "a",

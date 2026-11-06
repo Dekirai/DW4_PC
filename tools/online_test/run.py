@@ -25,9 +25,12 @@ account and password),
 "api_checks" ([{"at": S | "after", "as": ..., "method", "path", "status", "expect": REGEX}]), a client's "crash"
 ({"at": S, "restart": N, "script": FILE}: its process is killed at start + S and started again N seconds later with that
 script), "allow_close" (the world's CLOSEs of a server restart or an ended instance are expected), "counter_proof" (the
-scenario must FAIL: a client hook switches the checked behaviour off; its expected problems are listed as notes) and
-"requires" ([CAPABILITY ...]: the scenario runs only with --capabilities naming them, e.g. fake_world_clients for the
-fake presence senders; else it is reported as SKIP with the reason), "fake_presence" ({"count": N, "stage": S}: N fake
+scenario must FAIL: a client hook switches the checked behaviour off) with "expect_fail" ([REGEX ...]: the problem of the
+check that must catch it; the counter-proof passes only when one of them failed and nothing else broke: no exception,
+server start, timeout, crashed client, CLOSE, nor any problem besides the failing client's consequences of its failed
+check; its problems are then listed as notes) and "requires" ([CAPABILITY ...]: the scenario runs only with
+--capabilities naming them, e.g. fake_world_clients for the fake presence senders; else it is reported as SKIP with the
+reason, and a run with a SKIP exits with 3 unless --allow-skip), "fake_presence" ({"count": N, "stage": S}: N fake
 world clients that go from the title to the hub stage S and send PRESENCE there, W19), "fake_guests" ({"count": N,
 "after": "CLIENT: REGEX", "stage": S}: N fake world clients that go home and then to S once CLIENT's log shows REGEX, W29;
 FakeClient's client mode after the relay lane: world tickets, protocol 49; their accounts are {id:fp1}, {id:fg1}, ...),
@@ -1953,6 +1956,52 @@ def check_characters(sc, api, env, out, problems, notes):
             problems.append("%s: the record's story lacks the phase flag %s" % (name, want["phase"]))
 
 
+# Problems that never belong to a counter-proof's expected failure: the run itself broke (a timeout, a crashed or refused
+# client, a closed connection, the client's own error line, a fake client or a db check that could not run).
+INFRA_PROBLEM = re.compile(r"did not finish within|exited with|: online-trace: close|: error:|inputs stopped arriving|^fake_guests:|"
+                           r"^fake |^db: .* failed \(|was not refused|ran its script|^scenario\.json:|^expected\.txt:")
+
+
+def counter_proof_verdict(sc, problems, notes, broke=False):
+    """A counter-proof (W1x, W30x: scenario.json "counter_proof" with "expect_fail": [REGEX ...]) proves that a check
+    catches the switched-off behaviour: it passes only when a problem matches one of expect_fail and every other problem
+    is a consequence of that failed check for the same client (its "must not" FAIL line, its unfinished script, its later
+    expected lines). An exception or a server that did not start (broke), a timeout, a crash, a CLOSE, a problem of
+    another client, or no problem at all fail it. Returns (problems, notes) as the scenario's verdict."""
+    patterns = [re.compile(p) for p in sc.get("expect_fail", [])]
+    if not patterns:
+        return ["scenario.json: a counter-proof needs expect_fail (the problem of the check that must catch the switched-off "
+                "behaviour)"] + problems, notes
+    if broke:
+        return ["the counter-proof's run broke, no verdict: " + p for p in problems], notes
+    expected = [p for p in problems if any(rx.search(p) for rx in patterns)]
+    if not expected:
+        if not problems:
+            return ["the counter-proof passed: the checks do not catch the switched-off behaviour"], notes
+        return ["the counter-proof failed, but not in its expected check (/%s/): %s" % ("/ or /".join(sc["expect_fail"]), p)
+                for p in problems], notes
+    failing = {re.split(r"[: ]", p, maxsplit=1)[0] for p in expected}
+
+    def consequence(p):
+        return any(p.startswith(n + " logged what it must not (online-script: FAIL)") or p == n + ": the script did not finish"
+                   or re.match(re.escape(n) + r": expected /.*/ \(in order\) not found$", p) for n in failing)
+
+    other = [p for p in problems if p not in expected and (INFRA_PROBLEM.search(p) or not consequence(p))]
+    if other:
+        return ["the counter-proof's run broke besides its expected check: " + p for p in other], \
+            notes + ["(the expected check failed: %s)" % p for p in expected]
+    return [], notes + ["counter-proof failed as it must: " + p for p in problems]
+
+
+def run_summary(total, failed, skipped, allow_skip=False):
+    """The last line of a scenario run and its exit code: 1 when a scenario failed, 3 when one was skipped (a missing
+    capability: it proves nothing) unless --allow-skip, else 0."""
+    line = "%d of %d scenarios passed, %d skipped, %d failed" % (total - failed - skipped, total, skipped, failed)
+    if skipped and not allow_skip:
+        line += " (a skipped scenario is no pass: --allow-skip accepts them)"
+    return line, (1 if failed else 3 if skipped and not allow_skip else 0)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("scenarios", nargs="*")
@@ -1984,6 +2033,8 @@ def main():
     ap.add_argument("--capabilities", default="",
                     help="game scenarios: what this build offers beyond the client and relay, comma-separated (fake_world_clients, old_client)")
     ap.add_argument("--old-game-exe", default="", help="W22: a client of the release before the world (protocol 48), for {old_exe}")
+    ap.add_argument("--allow-skip", action="store_true",
+                    help="a scenario skipped for a missing capability (requires) does not fail the run (exit 0 instead of 3)")
     ap.add_argument("--compat-scripts", action="store_true",
                     help="game scenarios: drop the key:N and difficulty conditions of round G-core (a counter-proof client before it)")
     a = ap.parse_args()
@@ -2070,6 +2121,7 @@ def main():
             return 2
     stack = Stack(a)
     failed = 0
+    skipped = set()  # (scenarios skipped for a missing capability: no pass, counted apart)
     # A scenario that takes pictures ("shots": P1, P2) keeps the run folder: the pictures are what a person looks at.
     pictures = any(s.get("shots") or any(c.get("shots") for c in s.get("clients", [])) for s in real)
     try:
@@ -2087,10 +2139,12 @@ def main():
                 missing = [r for r in sc.get("requires", []) if r not in {x.strip() for x in a.capabilities.split(",") if x.strip()}]
                 if missing:
                     with lock:
+                        skipped.add(sc["name"])
                         results[sc["name"]] = ([], ["SKIP: needs " + ", ".join(missing)])
                         print("SKIP %-5s %s (needs %s)" % (sc["name"], sc["desc"], ", ".join(missing)), flush=True)
                     return
                 own = None
+                broke = False
                 try:
                     # Every game scenario gets a fresh server process with its own database (19.24's harness lane): in the
                     # world every scenario on one server would see the others (Public by default, the automatic join,
@@ -2100,14 +2154,14 @@ def main():
                         own = start_server(stack, own_db, sc.get("server"), sc["name"])
                     problems, notes = run_real(stack, sc, Api(own[0], own[3]), own[1], own[2], own[4], lock, own_db)
                 except Exception as e:  # a broken scenario is a failure, the others go on
-                    problems, notes = ["%s: %s" % (type(e).__name__, e)], []
+                    problems, notes, broke = ["%s: %s" % (type(e).__name__, e)], [], True
                 finally:
                     if own:
                         stop_server(stack, own[0])  # (its processes go with it: a long run keeps only the running scenarios')
                 if sc.get("counter_proof"):
-                    # A counter-proof (W1x, W30x): a client hook switches the checked behaviour off, so the checks must fail.
-                    problems, notes = (["the counter-proof passed: the checks do not catch the switched-off behaviour"] if not problems
-                                       else []), notes + ["counter-proof failed as it must: " + p for p in problems]
+                    # A counter-proof (W1x, W30x): a client hook switches the checked behaviour off, so exactly the check of
+                    # expect_fail must fail; anything else that went wrong fails the counter-proof.
+                    problems, notes = counter_proof_verdict(sc, problems, notes, broke)
                 with lock:
                     results[sc["name"]] = (problems, notes)
                     print("%s %-5s %s (%.0f s)" % ("PASS" if not problems else "FAIL", sc["name"], sc["desc"], time.time() - t), flush=True)
@@ -2163,8 +2217,9 @@ def main():
             shutil.rmtree(stack.dir, ignore_errors=True)
         else:
             print("run folder: " + stack.dir)
-    print("%d of %d scenarios passed" % (len(wanted) - failed, len(wanted)))
-    return 1 if failed else 0
+    line, code = run_summary(len(wanted), failed, len(skipped), a.allow_skip)
+    print(line)
+    return code
 
 
 if __name__ == "__main__":

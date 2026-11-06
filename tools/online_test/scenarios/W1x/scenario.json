@@ -8,6 +8,11 @@
   "min_shared_ticks": 0,
   "dir": "W1",
   "counter_proof": true,
+  "expect_fail": [
+    "^b: online-script: FAIL \\(line 16\\) key:4=1 \\(frame \\d+, stage stagml11",
+    "^b: online-script: FAIL \\(line 10\\) key:4=0 \\(frame \\d+, stage stag0101",
+    "^b: \\S+ copy 0x[0-9a-f]+ box \\d+ does not hold its own story$"
+  ],
   "own_story": [
     "b"
   ],
