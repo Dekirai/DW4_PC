@@ -1,6 +1,7 @@
 # W32, b (k10): at the gate to Dry Land while a plays the Fortress: no row for a's instance (its area is Death Valley), a NEW.
 campaign until stage=stagml11,control
 idle until epoch>=@260
+explore mate00 until onme:mate00
 gate mate00 1 until stage=stag0201,control
 log b in stag0201
 idle until frames>=600 fail present>=2

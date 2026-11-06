@@ -2,6 +2,7 @@
 # and dng205b1; after b's first arrival by the return mat it walks on to dng205b2.
 campaign until stage=stagml11,control
 idle until epoch>=@360
+explore mate00 until onme:mate00
 gate mate00 1 until stage=stag0201,control
 log a hosts Dry Land
 explore matz00 yes until stage=stag0202,control

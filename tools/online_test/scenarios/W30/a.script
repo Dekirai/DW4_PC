@@ -1,6 +1,7 @@
 # W30, host a (k10): hosts Dry Land and walks to dng205b1 (stag0201 matz00, stag0202 matz01).
 campaign until stage=stagml11,control
 idle until epoch>=@80
+explore mate00 until onme:mate00
 gate mate00 1 until stage=stag0201,control
 log a hosts Dry Land
 explore matz00 yes until stage=stag0202,control

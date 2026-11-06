@@ -4,6 +4,7 @@
 # dng205b2 the next arrival there joins a without leaving a's story.
 campaign until stage=stagml11,control
 idle until epoch>=@40
+explore mate00 until onme:mate00
 gate mate00 1 until stage=stag0201,control
 explore matz00 yes until stage=stag0202,control
 explore matz01 yes until stage=dng205b1,control
