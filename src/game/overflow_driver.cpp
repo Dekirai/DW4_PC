@@ -376,6 +376,9 @@ private:
             std::ofstream out(path, std::ios::binary);
             out << summary;
             if (timing_) out << timing_text();
+            // The meta state the run used (13.5) and what it earned.
+            out << "meta_used" << (meta_used().empty() ? std::string(" none") : meta_used()) << '\n';
+            out << "meta_bits " << reward_.sim_bits << " sim_bits " << meta().profile().sim_bits << " new_records " << reward_.new_records.size() << '\n';
         }
         if (const auto path = option(request_, "log"); !path.empty()) {
             std::ofstream out(path, std::ios::binary);
@@ -403,10 +406,19 @@ private:
         report.bits = run_bits(run);
         reward_ = meta().record_run(report);
         if (test_ || timing_)
-            std::printf("overflow: meta %s bits %lld -> Sim Bits +%lld (balance %lld), %zu new records%s%s\n", report.outcome.c_str(),
+            std::printf("overflow: meta %s bits %lld -> Sim Bits +%lld (balance %lld), %zu new records%s%s; used%s\n", report.outcome.c_str(),
                         (long long)report.bits, (long long)reward_.sim_bits, (long long)meta().profile().sim_bits, reward_.new_records.size(),
-                        meta().path().empty() ? "" : ", written to ", meta().path().empty() ? "" : meta().path().string().c_str());
+                        meta().path().empty() ? "" : ", written to ", meta().path().empty() ? "" : meta().path().string().c_str(),
+                        meta_used().empty() ? " none" : meta_used().c_str());
         if (!meta().last_error().empty()) std::fprintf(stderr, "overflow: the meta file was not written: %s\n", meta().last_error().c_str());
+    }
+
+    // " armor=K chip=K plug_lab=... gear_open=..." (the request's meta options).
+    std::string meta_used() const {
+        std::string text;
+        for (const char* key : {"armor", "chip", "plug_lab", "gear_open"})
+            if (const auto value = option(request_, key); !value.empty()) text += std::string(" ") + key + "=" + value;
+        return text;
     }
 
     // The meta's lines under the results (9.6: the Sim Bits and the new Data
