@@ -1,14 +1,14 @@
-# P3: a member leaving the lobby over a mat (SEAMLESS.md 12, the round 60 review). Members a=0, b=1. a's DW4_TRACE_GHOSTS
+# P3: a member leaving the lobby over a mat (SEAMLESS.md 12, the round 60 review). Members a=1, b=2 (the world's member ids). a's DW4_TRACE_GHOSTS
 # lines (every 10 frames) list the figures it shows; b hides at the departure (or barrier) until its next stage load.
 a: online-script: step .* log: in the lobby
-a: ghost member=1 form=\d+ segment=0 .*clip=run
+a: ghost member=2 form=\d+ segment=0 .*clip=run
 a: online-script: step .* log: b to the mat
-a: ghost member=1 form=\d+ segment=0 .*leaving
+a: ghost member=2 form=\d+ segment=0 .*leaving
 a: online-script: step .* log: done
 b: online-script: step .* log: to the mat
 b: online-trace: presence hidden until the next stage load
 b: online-script: step .* log: b in stagml12
 # b's figure never shows again in a's lobby: any later segment of b would be a figure after its leave (b does not warp
 # or come back in this scenario).
-!a: ghost member=1 form=\d+ segment=[1-9]
+!a: ghost member=2 form=\d+ segment=[1-9]
 !a: ghosts shown [2-9]

@@ -8,10 +8,10 @@
 b: online-trace: state purpose=1 .*checkpoint=[1-9]
 b: online-trace: ready .*from-checkpoint .*checked=(1[5-9]|[2-9][0-9]|[0-9]{3,})
 relay: ^state .*purpose=Join .*checkpoint=[1-9]
-relay: ^ready_mismatch .*member=1 .*checkpoint=True
+relay: ^ready_mismatch .*member=2 .*checkpoint=True
 relay: ^checkpoint_suspect .*why=ready
 relay: ^state .*purpose=Join .*checkpoint=0( |$)
-relay: ^ready .*member=1 .*checkpoint=False
+relay: ^ready .*member=2 .*checkpoint=False
 relay: ^join .*slot=1
 b: online-trace: state purpose=1 .*ticks=[1-9]
 b: online-trace: ready .*rate=\d+ replayed=
