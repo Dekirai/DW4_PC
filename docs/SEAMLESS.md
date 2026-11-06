@@ -11382,7 +11382,7 @@ the decision stays under the lock).
   The selection off the lock: 26-28 selections in a 30 s window, nothing of
   it under the lock but the swap.
 
-  Over sockets (the real relay):
+  Over sockets (the real relay), before (e) below:
 
   | Cell | Relay CPU | Clients' CPU | Sealing passes | TryEnter misses | Sealing lateness: share over 1 / 2 / 5 ms | Frames to the clients |
   | --- | --- | --- | --- | --- | --- | --- |
@@ -11400,18 +11400,51 @@ the decision stays under the lock).
   with no drop. Not found what stalled (the relay's housekeeping and
   sealing passes of those runs show nothing near it).
 
+  **M4 (e), the connection path** (19.31): the frames a received frame,
+  a sealing pass or the housekeeping produces are written by that thread
+  right after the lock (non-blocking sends), not each by the thread pool's
+  writer, and the reader reads into a buffer. Measured A/B in one session
+  (`DW4_LOADGATE_DIRECT_SENDS=0` is the old writer; `net49_direct_r1/_r2`,
+  `net49_pooled_r1/_r2`, `net49_e_r1`, `net49_e_pooled_r1`), relay cores:
+
+  | Cell | Old writer (3 runs) | Direct sends (3-4 runs) |
+  | --- | --- | --- |
+  | base | 0.52 / 0.54 / 0.64 | **0.41 / 0.45 / 0.46 / 0.48** |
+  | fullhub | 0.52 / 0.63 / 0.67 | **0.41 / 0.53 / 0.55** |
+  | storm | 0.52 / 0.59 / 0.62 | **0.41 / 0.46 / 0.46 / 0.46** |
+  | select | 0.20 | 0.17 / 0.18 |
+  | sealonly | 0.34 | 0.29 / 0.32 |
+
+  About a fifth less of the relay's CPU at the same frames; every frame
+  but the state transfers' and a few after reconnects went the direct way
+  (19,803 of 19,803 a second in *base*, 53 of 19,961 pooled in *storm*).
+  The clients' process took about as much more (0.50-0.88 cores against
+  0.33-0.49): on loopback the TCP work of a delivery is charged to either
+  side, so part of the saving may be that accounting and not the relay's
+  own work; on a real network the receiving side is another machine. The
+  sealing lateness is unchanged (over 2 ms 0.13-0.40 % of the passes,
+  0.18-0.59 % with the old writer;
+  `TryEnter` misses 0.2-1.3 %). The final run with both changes
+  (`net49_e_r1.json`, all seven cells): relay 0.45 / 0.55 / 0.18 / 0.46 /
+  0.32 cores in *base*, *fullhub*, *select*, *storm*, *sealonly* and 0.41
+  / 0.46 in *base-wait* and *storm-wait* (*base* and *storm* again), every
+  cell valid.
+
   **Verdict at protocol 49:** the holds pass in every cell (p99 at most
-  20.4 µs, p99.99 0.42-1.63 ms, decision 42), the sealing lateness over
-  sockets passes (over 2 ms: 0.07-0.38 % of the passes, so p99 under
-  2 ms), *storm*, *select* and *sealonly* pass the CPU. The relay's CPU in
-  *base* (0.48 and 0.66 cores in two runs) and *fullhub* (0.52) is at the
-  half core, down from 0.72-0.85 and 4.01: the selection's fan-out took
-  the frames to the clients from 43,128 to 19,768 a second in *base* and
-  from 398,612 to 42,712 in *fullhub*. What is left of (e) is the
-  connection path per frame (one socket write per frame, two reads per
-  frame; about 17-23 µs of CPU per frame in and out at 28,000 frames a
-  second in *base*), not touched in I1a. The lock is busy 0.8-1.9 %:
-  phase 1 stays; phase 2 would not change the CPU.
+  20.4 µs, p99.99 0.42-1.63 ms, decision 42); the sealing lateness over
+  sockets passes (over 2 ms: 0.07-0.40 % of the passes, so p99 under
+  2 ms); the relay's CPU passes in *base* (0.41-0.48 cores), *select*,
+  *storm* (under half a core, a full core allowed) and *sealonly*.
+  *fullhub* (all 200 members in one hub stage) is at the half core:
+  0.41-0.55 in three runs, down from 4.01 (r71): the selection's fan-out
+  took its frames to the clients from 398,612 to 42,712 a second (and
+  *base*'s from 43,128 to 19,768). The lock is busy 0.8-1.9 %: **phase 1
+  stays**; phase 2 (a lock per cell) would not change the CPU. What is
+  left for the CPU is the send per frame itself (about 10 µs of the
+  relay's CPU per frame in *fullhub*, the loopback's TCP work included);
+  fewer, larger writes need frames for one receiver to wait for each other
+  (a presence flush every few milliseconds), a design change not made in
+  I1a.
 - **Phase 2** (only if the gate fails; one lane): a lock and an inbox per
   stage cell, a registry lock taken briefly; lock order cell, then
   registry, never two cells; a barrier that moves members posts
@@ -13176,6 +13209,16 @@ the remembered visibility off the lock). Decisions the design left open:
 - **The PING margin** (M4 (a)) is cached per stream for 300 pads and
   recomputed by a linear selection instead of a sort; the pings are spread
   over the housekeeping passes (each member's own second).
+- **The connection path** (M4 (e)): a connection's frames sit in one
+  ordered queue that one thread at a time writes (a write token). A frame
+  produced by a received frame, a sealing pass or the housekeeping is
+  written by that thread right after it released the hub's lock (the
+  `Outbox` scope, a non-blocking send); a full socket buffer, a state
+  transfer and the connection's end hand the queue to the asynchronous
+  writer on the thread pool, which before took every frame
+  (`Relay:DirectSends`, default on; off is the old path). The reader reads
+  the socket into a 16 KB buffer, one read per arrival instead of one per
+  header and one per payload.
 - **The admission** of the relay lane's branch, until web's `WorldService`
   sets its own (`IWorldRelay.SetAdmission`): the account active, its role,
   its friends and blocks from the repositories; the story from

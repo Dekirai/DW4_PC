@@ -28,7 +28,9 @@ lanes *relay world* and *story* (with round 72's additions), the wire of 19.18 a
   Replacing / Replace, SetDifficulty / RebasedCopy); the owner key and *owner* refusals (reason 12); STORY_ACK to
   the members playing on a keeper; round 59's not_started / epochs / OwnerSeen / dropped sets retired.
 - M4: the PING margin cached per stream with a linear selection, pings spread over the passes, presence selection
-  off the lock, fan-out by selection with tiers, presence frames built once per relation.
+  off the lock, fan-out by selection with tiers, presence frames built once per relation; (e) the connection path:
+  frames written by the hot path's thread right after the lock (non-blocking, `Relay:DirectSends`, `Outbox`), buffered
+  reads (`ConnectionWriteTests`).
 - Stub copies of web-owned files (the integration takes the web lane's): `Domain/Abstractions/WorldRelay.cs`,
   `Domain/Abstractions/World.cs`, `Domain/World/OnlinePrefs.cs`, `Domain/World/AreaTable.cs`.
 - Client lane 13:30 (contract "relay 13:45"): story mode *replace* for arrivals from home into another's instance, a fresh
@@ -43,9 +45,9 @@ lanes *relay world* and *story* (with round 72's additions), the wire of 19.18 a
 
 ## Left (see also the final report)
 
-- M4 (e): the connection path's CPU per frame (one socket write per frame, two reads per frame) is not cut; the relay's CPU
-  over sockets is at the half core in *base* (0.48 / 0.66) and *fullhub* (0.52), passing elsewhere (SEAMLESS.md 19.17.4,
-  "Measured again at protocol 49").
+- The gate's CPU in *fullhub* (all 200 in one hub stage) is at the half core (0.41-0.55 in three runs, from 4.01); every
+  other cell passes (SEAMLESS.md 19.17.4, "Measured again at protocol 49" and "M4 (e)"). Fewer, larger writes would need
+  a presence flush interval (a design change).
 - Not built in I1a by design: OPTIONS / PLAN / CHOICE (I1b), go along (I1b), the mirror (I2), FRIENDS_STATE (I2),
   spectators and GOTO (I3), parties (I4), seats (I5).
 - At the integration: take the web lane's versions of the four stub files; `RelayGateway.cs` conflicts with web's
@@ -66,7 +68,8 @@ lanes *relay world* and *story* (with round 72's additions), the wire of 19.18 a
   DW4ONLINE_TEST_PORTS=57000-57199 dotnet test server/DW4Online/tests/DW4Online.Integration.Tests`.
 - Load gate: `DOTNET_gcServer=1 tests/DW4Online.FakeClient/bin/Release/net10.0/DW4Online.FakeClient.exe loadgate
   --seconds 30 --out <json>` and the same with `--sockets --port 57100` (`--cells joins` for one cell). Runs of this
-  lane: `build/i1arelay/gate/` (loadgate49_r1, joins49_r2, loadgate_net49_r1, loadgate_net49_storm_r2).
-- Last results: unit 449/449 (`build/i1arelay/unit_r3.log`); integration 115 passed, 4 skipped (`build/i1arelay/integration_r2.log`).
+  lane: `build/i1arelay/gate/` (loadgate49_r1, joins49_r2, loadgate_net49_r1, loadgate_net49_storm_r2, net49_direct_r1/_r2,
+  net49_pooled_r1/_r2, net49_e_r1, net49_e_pooled_r1; `DW4_LOADGATE_DIRECT_SENDS=0` runs the old writer).
+- Last results: unit 449/449 (`build/i1arelay/unit_r5.log`); integration 119 passed, 4 skipped (`build/i1arelay/integration_r4.log`).
 - No client code changed (the branch's diff outside `server/` and `docs/` is empty): no ctest, det.sh or game
   scenarios are needed for this lane.
