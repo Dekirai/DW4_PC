@@ -179,16 +179,16 @@ public partial class HubLogicTests
     }
 
     private static Harness SealedPair(out uint inst, RelayOptions? relay = null, InstanceOptions? instances = null,
-        int protocol = Wire.CheckpointProtocol)
+        int protocol = Wire.CheckpointProtocol, string stage = "stag0201")
     {
         var h = new Harness(instances, relay, protocol: protocol);
         h.Connect("a", 0);
         h.Connect("b", 1);
-        h.Send("a", new HeadingMsg(h.Inst("a"), "stag0201", 0, 5).Frame());
-        h.Send("b", new HeadingMsg(h.Inst("b"), "stag0201", 0, 5).Frame());
-        h.Barrier("a", "stag0201");
+        h.Send("a", new HeadingMsg(h.Inst("a"), stage, 0, 5).Frame());
+        h.Send("b", new HeadingMsg(h.Inst("b"), stage, 0, 5).Frame());
+        h.Barrier("a", stage);
         Assert.Equal(WaitReason.CoArrival, h.P("a").Last(Msg.BarrierWait, BarrierWaitMsg.Parse).Reason);
-        h.Barrier("b", "stag0201");
+        h.Barrier("b", stage);
         var okA = h.Decision("a");
         var okB = h.Decision("b");
         Assert.Equal((BarrierDecision.New, InstanceMode.Sealed), (okA.Decision, okA.Mode));

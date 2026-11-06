@@ -1004,7 +1004,8 @@ public sealed partial class RoomHub
             var stage = i?.Stage ?? m.LoneStage ?? "";
             DetachLocked(m, now, leaveNow: true);
             var lone = new HubInstance(0) { Stage = stage, Visit = msg.Visit, ContextHash = msg.ContextHash, Ended = true, Detached = i?.Detached == true };
-            var g = new ArrivalGroup { From = lone, BarrierTick = msg.Tick, Stage = msg.Stage, Point = msg.Point, Context = msg.ContextHash, ParkedAt = now, Alive = msg.AliveMask };
+            var g = new ArrivalGroup { From = lone, BarrierTick = msg.Tick, Stage = msg.Stage, Point = msg.Point, Context = msg.ContextHash, ParkedAt = now, Alive = msg.AliveMask,
+                PlanNew = msg.PlanId == BarrierMsg.PlanNewInstance };
             g.Members.Add(new Arrival(m, slot, msg.Carry));
             m.Arrival = g;
             Note("barrier_alone", null, ("member", m.Index), ("to", msg.Stage));
@@ -1048,7 +1049,8 @@ public sealed partial class RoomHub
         }
         if (i.Log.Count > b.Tick + 1 && b.Tick + 1 >= i.Log.PrefixCount) i.Log.TruncateTo(b.Tick + 1);
         foreach (var k in i.Ahead.Keys.Where(k => k > b.Tick).ToList()) i.Ahead.Remove(k);
-        var g = new ArrivalGroup { From = i, BarrierTick = b.Tick, Stage = b.Stage, Point = b.Point, Context = b.Context, ParkedAt = now, Alive = b.Alive };
+        var g = new ArrivalGroup { From = i, BarrierTick = b.Tick, Stage = b.Stage, Point = b.Point, Context = b.Context, ParkedAt = now, Alive = b.Alive,
+            PlanNew = b.Messages.Values.Any(x => x.PlanId == BarrierMsg.PlanNewInstance) };
         foreach (var (slot, (member, carry)) in reporters)
         {
             g.Members.Add(new Arrival(member, slot, carry));
@@ -1145,7 +1147,10 @@ public sealed partial class RoomHub
     {
         var w = WorldOfGroup(g);
         g.World = w;
-        if (g.From.Detached || w is { Ending: true } || (w is not null && !_worlds.ContainsKey(w.Wid)))
+        // (A stage group of an instance whose members hold no seat in it any more, removed ones: their engines hold the host's
+        // story, so they go home like a detached group, 19.6.6.)
+        var seatless = w is null && g.From.World is not null;
+        if (g.From.Detached || seatless || w is { Ending: true } || (w is not null && !_worlds.ContainsKey(w.Wid)))
         {
             Dissolve(g, now, redirectHome: true);
             return;
@@ -1160,7 +1165,7 @@ public sealed partial class RoomHub
         // ones it waits for still fit): inside an instance only its own groups; from home only fresh bases this group may see
         // (19.7.6: "visible to them"), never a group of a running instance (that one is a candidate instead).
         var holder = _holds.FirstOrDefault(h => h.Hold == HoldKind.CoArrival && h != g && SameStage(h.Stage, g.Stage) && h.Context == g.Context &&
-                                                h.World == w && (w is not null || MaySeeBase(h, g)) &&
+                                                h.World == w && (w is not null || (!g.PlanNew && MaySeeBase(h, g))) &&
                                                 h.Size + g.Members.Count + OutstandingSize(h, g) <= Capacity);
         if (holder is not null)
         {
@@ -1198,7 +1203,8 @@ public sealed partial class RoomHub
             Note("hold_co_arrival", g.From, ("awaiting", awaited.Select(x => x.Index).ToArray()));
             return;
         }
-        if (w is null) FreshJoinOrNew(g, now);
+        if (w is null && g.PlanNew) New(g, now, BarrierNotice.None, []);
+        else if (w is null) FreshJoinOrNew(g, now);
         else JoinOrNew(g, now);
     }
 
@@ -1426,7 +1432,10 @@ public sealed partial class RoomHub
             }
             var own = OwnKeeper(m);
             if (!_worlds.Values.Any(x => x.Keeper == own && !x.Ending)) own.SetDifficulty(m.Settings.Difficulty);
-            var mode = fromField && !isHost ? StoryMode.Replace : StoryMode.Merge;
+            // Merge only where the engine holds the own story for sure: the host's, and a move between hub stages. A member
+            // coming from a field, or from the title or a fresh session (the local way home after a lost instance, 19.6.10),
+            // gets its own story as a replace.
+            var mode = isHost || (g.From.Stage.Length > 0 && !fromField) ? StoryMode.Merge : StoryMode.Replace;
             var hub = NewInstance(InstanceMode.Hub, redirect.Length > 0 ? redirect : g.Stage, 1, g.Context, now);
             var map = new sbyte[Wire.MaxSlots];
             Array.Fill(map, (sbyte)-1);
@@ -1438,7 +1447,8 @@ public sealed partial class RoomHub
             m.Peer?.Send(new BarrierOkMsg(g.From.Id, g.From.Visit, BarrierDecision.Dissolve, hub.Id, hub.Visit, g.Stage, g.Point, 0, map,
                 InstanceMode.Hub, 0, [], own.Story.Revision, own.Story.ToBlob()) { World = world }.Frame());
             Note("dissolve", hub, ("member", m.Id), ("account", m.AccountId), ("from", g.From.Id), ("mode", mode.ToString()), ("wid", w?.Wid ?? 0));
-            if (redirect.Length > 0) Note("redirect", hub, ("wid", w?.Wid ?? 0), ("account", m.AccountId), ("member", m.Id), ("stage", redirect), ("point", redirectPoint));
+            if (redirect.Length > 0)
+                Note("redirect", hub, ("wid", w?.Wid ?? 0), ("account", m.AccountId), ("member", m.Id), ("stage", redirect.ToLowerInvariant()), ("point", redirectPoint));
             if (w is not null) FreeSeat(w, m, w.Ending ? "ended" : "home", now);
         }
         EndIfEmpty(g.From, now);
@@ -1596,7 +1606,11 @@ public sealed partial class RoomHub
         var others = map.Where(kv => kv.Key != m).OrderBy(kv => kv.Value).Select(kv => new CoArrival((byte)kv.Value, kv.Key.Id, [])).ToList();
         var w = inst.World!;
         m.Peer?.Send(new BarrierOkMsg(from.Id, from.Visit, BarrierDecision.CoArrive, inst.Id, inst.Visit, inst.Stage, point, (byte)slot, none,
-            inst.Mode, (byte)delay, others, w.Keeper.Story.Revision, w.Keeper.Story.ToBlob()) { World = WorldPart(w, arrival, StoryMode.Merge) }.Frame());
+            inst.Mode, (byte)delay, others, w.Keeper.Story.Revision, w.Keeper.Story.ToBlob())
+            {
+                // (Arrivals from home into an instance they do not host: the host's story replaces their engines' (client 13:30).)
+                World = WorldPart(w, arrival, arrival is ArrivalKind.Starting or ArrivalKind.GuestNew or ArrivalKind.AutoJoin ? StoryMode.Replace : StoryMode.Merge),
+            }.Frame());
         Note("co_arrive", inst, ("member", m.Index), ("slot", slot));
     }
 
@@ -1738,7 +1752,7 @@ public sealed partial class RoomHub
             if (!w.Seats.ContainsKey(m)) TakeSeat(w, m, now, "join");
             m.Peer?.Send(new BarrierOkMsg(g.From.Id, g.From.Visit, BarrierDecision.Join, target.Id, target.Visit, g.Stage, g.Point, (byte)slot, none,
                 target.Mode, (byte)DelayController.FromRoundTrips(m.Rtt.All, _sealing.MaxDelayTicks), [], w.Keeper.Story.Revision, w.Keeper.Story.ToBlob())
-                { World = WorldPart(w, fresh ? g.Arrival : ArrivalKind.None, StoryMode.Merge) }.Frame());
+                { World = WorldPart(w, fresh ? g.Arrival : ArrivalKind.None, fresh ? StoryMode.Replace : StoryMode.Merge) }.Frame());
             Note("join_decided", target, ("member", m.Id), ("slot", slot), ("wid", w.Wid));
             SendInfo(m, now);
             DeliverState(m, now);
@@ -2303,19 +2317,21 @@ public sealed partial class RoomHub
         if (j.Target.SoloJoin?.Joiner == m) j.Target.SoloJoin = null;
         m.Joining = null;
         m.JoinedVia = null;
+        // A fresh arrival's JOIN replaced its engine's story with the host's, its fallback load included (client 13:30): the
+        // fallback is a new stage group of the target's instance (a guest's NEW), never an own instance on that story; an
+        // instance that ends sends it home at once.
         var target = j.Target.World;
         WorldInstance w;
-        ArrivalKind arrival;
-        if (j.Fresh || target is null || m.World != target)
+        var arrival = ArrivalKind.None;
+        if (target is not null && _worlds.ContainsKey(target.Wid))
         {
-            if (target is not null && target.Seats.ContainsKey(m)) FreeSeat(target, m, "left", now);
-            w = CreateWorld(m, j.From.Stage, j.From.Context, now);
-            arrival = ArrivalKind.NewInstance;
+            w = target;
+            if (!w.Seats.ContainsKey(m) && !w.Ending) TakeSeat(w, m, now, "new_group");
         }
         else
         {
-            w = target;
-            arrival = ArrivalKind.None;
+            w = CreateWorld(m, j.From.Stage, j.From.Context, now);
+            arrival = ArrivalKind.NewInstance;
         }
         var inst = NewInstance(InstanceMode.SoloLed, j.From.Stage, 1, j.From.Context, now);
         Place(m, inst, 0, now);

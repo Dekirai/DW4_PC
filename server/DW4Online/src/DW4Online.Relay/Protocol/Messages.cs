@@ -198,6 +198,8 @@ public sealed record BarrierMsg(uint Inst, uint Visit, uint Tick, string Stage, 
 {
     /// <summary>A carry becomes a JOIN event (slot, point, carry) whose length is a u16: at most 65,533 bytes.</summary>
     public const int MaxCarry = ushort.MaxValue - 2;
+    /// <summary>Plan id 0xFFFF on a barrier from home: the choice *New instance* (DW4_ONLINE_AUTOCHOICE=new in development builds).</summary>
+    public const ushort PlanNewInstance = 0xFFFF;
 
     public static BarrierMsg Parse(ReadOnlySpan<byte> p)
     {

@@ -149,6 +149,13 @@ public static class LoadGate
         return why;
     }
 
+    /// <summary>The fields the groups of three of a joins cell play at (distinct, so a joiner's first row is its target).</summary>
+    private static readonly string[] JoinStages =
+    [
+        "stag0000", "stag0001", "stag0101", "stag0102", "stag0103", "stag0104", "staggf01", "staggf02", "staggf03", "staggf04",
+        "stag0201", "stag0202", "stag0203", "stag0204", "stag0205", "stag0301", "stag0302", "stag0303", "stag0304",
+    ];
+
     /// <summary>The joins of a joins cell (one row each).</summary>
     private sealed record JoinRow(int Member, uint Target, string Outcome, double BarrierToStateMs, double BarrierToJoinMs);
 
@@ -228,7 +235,9 @@ public static class LoadGate
             var size = g < cell.GroupsOfThree ? 3 : 4;
             var group = members.GetRange(at, size);
             at += size;
-            var stage = $"stagT{g:D3}";
+            // (A group of three plays at a field of the area table, one per stage: a joiner from home finds it by the world's
+            // matching, the first row by decision 40's order. The others play at stages outside the table: no matching.)
+            var stage = g < cell.GroupsOfThree ? JoinStages[g % JoinStages.Length] : $"stagT{g:D3}";
             foreach (var m in group) Send(m, new HeadingMsg(m.Hub.Instance!.Id, stage, 0, Context).Frame());
             foreach (var m in group)
             {

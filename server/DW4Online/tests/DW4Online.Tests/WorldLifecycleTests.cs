@@ -586,6 +586,157 @@ public partial class HubLogicTests
         Assert.Equal((w.Wid, false, 2), (ctx.Wid, ctx.IsHost, ctx.Players));
         Assert.True(h.Hub.PlayContext(h.Mem("a").AccountId, h.Now)!.IsHost);
     }
+
+    [Fact]
+    public void A_barrier_is_decided_without_a_lost_host_and_his_resent_barrier_joins_his_own_instance_there()
+    {
+        var h = SealedPair(out _, relay: new RelayOptions { LagLeaveSeconds = 600 });
+        var w = W(h, "a");
+        h.Seal(300);
+        // Both reach the barrier for stag0102; a's connection goes before its report: b's barrier is decided without a.
+        h.Barrier("b", "stag0102");
+        h.Hub.Disconnect(h.Mem("a"), h.P("a"), h.Now);
+        Assert.True(w.HostAway);
+        var okB = h.Decision("b");
+        Assert.Equal((BarrierDecision.New, ArrivalKind.None, w.Wid), (okB.Decision, okB.World.Arrival, okB.World.Wid));
+        h.Snapshot("b");
+        h.Log("b", 0, 60);
+        h.Joinable("b");
+        // a back within its grace, still parked at that barrier: its BARRIER again joins its own instance's stage group there.
+        h.Advance(20_000);
+        var a2 = h.Connect("a", 0);
+        Assert.Equal(w.Wid, a2.Last(Msg.Welcome, WelcomeMsg.Parse).Wid);
+        Assert.False(w.HostAway);
+        h.Send("a", new BarrierMsg(9999, 1, 0, "stag0102", 0, 1, 1, 5, [(byte)'a']).Frame());
+        var okA = h.Decision("a");
+        Assert.Equal((BarrierDecision.Join, ArrivalKind.None, w.Wid), (okA.Decision, okA.World.Arrival, okA.World.Wid));
+        Assert.Same(w, W(h, "a"));
+    }
+
+    [Fact]
+    public void A_guest_that_continues_alone_after_a_reconnect_is_filed_at_its_stage_and_its_next_barrier_stays_inside()
+    {
+        var h = SealedPair(out _);
+        var w = W(h, "a");
+        h.Seal(300);
+        // b's connection goes; past the reconnect window its slot leaves; it reconnects (not resumable) and names its stage.
+        h.Hub.Disconnect(h.Mem("b"), h.P("b"), h.Now);
+        h.Seal(11_000);
+        h.Hub.Housekeep(h.Now);
+        var b2 = h.Connect("b", 1);
+        var welcome = b2.Last(Msg.Welcome, WelcomeMsg.Parse);
+        Assert.Equal((0, w.Wid), (welcome.Flags & WelcomeMsg.Resumable, welcome.Wid));
+        h.Send("b", new ResumeMsg(9, 1, 1, 500, "stag0201").Frame());
+        Assert.Equal("stag0201", h.Mem("b").LoneStage);
+        Assert.Equal(1, h.Hub.Counters["resume_filed_alone"]);
+        // Its next barrier (alone) is decided inside a's instance: a new stage group of it, not a new instance.
+        h.Send("b", new BarrierMsg(9, 1, 0, "stag0202", 0, 1, 1, 5, [(byte)'b']).Frame());
+        var ok = h.Decision("b");
+        Assert.Equal((BarrierDecision.New, ArrivalKind.None, w.Wid), (ok.Decision, ok.World.Arrival, ok.World.Wid));
+    }
+
+    [Fact]
+    public void A_fresh_join_replaces_the_story_and_its_fallback_is_a_stage_group_of_the_chosen_instance()
+    {
+        var h = new Harness();
+        h.Connect("a", 0);
+        h.Connect("b", 1);
+        h.Barrier("a", "stag0101");
+        h.Snapshot("a");
+        h.Joinable("a");
+        h.Log("a", 0, 200);
+        h.Barrier("b", "stag0101");
+        var join = h.Decision("b");
+        var w = W(h, "a");
+        Assert.Equal((BarrierDecision.Join, ArrivalKind.AutoJoin, StoryMode.Replace, h.Mem("a").Id),
+            (join.Decision, join.World.Arrival, join.World.StoryMode, join.World.OwnerMember));
+        // a walks on before b's READY: b's engine holds a's story now, so its fallback is a new stage group of a's instance.
+        h.Barrier("a", "stag0102", tick: 199);
+        var fallback = h.Decision("b");
+        Assert.Equal((BarrierDecision.New, ArrivalKind.None, w.Wid, StoryMode.Merge, h.Mem("a").Id),
+            (fallback.Decision, fallback.World.Arrival, fallback.World.Wid, fallback.World.StoryMode, fallback.World.OwnerMember));
+        Assert.Same(w, W(h, "b"));
+        Assert.Equal(2, w.Seats.Count);
+    }
+
+    [Fact]
+    public void A_barrier_whose_plan_is_new_instance_never_joins_automatically()
+    {
+        var h = new Harness();
+        h.Connect("a", 0);
+        h.Connect("b", 1);
+        h.Barrier("a", "stag0101");
+        h.Snapshot("a");
+        h.Log("a", 0, 60);
+        h.Joinable("a");
+        // (DW4_ONLINE_AUTOCHOICE=new: plan id 0xFFFF.)
+        var i = h.Mem("b").Instance!;
+        h.Send("b", new BarrierMsg(i.Id, i.Visit, 0, "stag0101", 0, i.PresentMask, i.PresentMask, 5, [(byte)'b'], 0, BarrierMsg.PlanNewInstance).Frame());
+        var ok = h.Decision("b");
+        Assert.Equal((BarrierDecision.New, ArrivalKind.NewInstance, h.Mem("b").Id, StoryMode.Merge),
+            (ok.Decision, ok.World.Arrival, ok.World.HostMember, ok.World.StoryMode));
+        Assert.NotSame(W(h, "a"), W(h, "b"));
+    }
+
+    [Fact]
+    public async Task The_history_queue_writes_an_instances_rows_in_order_with_its_id()
+    {
+        var repo = new FakeHistory();
+        var audits = new List<string>();
+        var queue = new WorldHistoryQueue(repo, new FakeAudit(audits), null);
+        var h = new Harness();
+        h.Hub.History = queue.Enqueue;
+        h.Hub.Audit = queue.Audit;
+        h.Connect("a", 0);
+        h.Connect("b", 1);
+        h.Barrier("a", "stag0101");
+        h.Snapshot("a");
+        h.Log("a", 0, 60);
+        h.Joinable("a");
+        h.Barrier("b", "stag0101");
+        var w = W(h, "a");
+        h.Barrier("a", "stagML11");
+        Assert.True(await queue.DrainAsync(TimeSpan.FromSeconds(5)));
+        Assert.Equal(77L, w.HistoryId);
+        Assert.Equal(["start", "joined host", "joined guest", "end host_left", "left ended"], repo.Calls);
+        Assert.Equal(0, queue.Failed);
+        await queue.DisposeAsync();
+    }
+
+    private sealed class FakeHistory : DW4Online.Domain.Abstractions.IInstanceHistoryRepository
+    {
+        public List<string> Calls { get; } = [];
+        public Task<long> StartAsync(DW4Online.Domain.Abstractions.InstanceHistoryStart s, CancellationToken ct)
+        {
+            Calls.Add("start");
+            return Task.FromResult(77L);
+        }
+        public Task EndAsync(long id, string endReason, int peakPlayers, DateTime endedAt, CancellationToken ct)
+        {
+            Calls.Add("end " + endReason);
+            return Task.CompletedTask;
+        }
+        public Task MemberJoinedAsync(long id, long accountId, int box, string role, DateTime joinedAt, CancellationToken ct)
+        {
+            Calls.Add("joined " + role);
+            return Task.CompletedTask;
+        }
+        public Task MemberLeftAsync(long id, long accountId, DateTime joinedAt, string leaveReason, DateTime leftAt, bool sharedStory, CancellationToken ct)
+        {
+            Calls.Add("left " + leaveReason);
+            return Task.CompletedTask;
+        }
+        public Task<int> CloseOpenAsync(DateTime now, CancellationToken ct) => Task.FromResult(0);
+    }
+
+    private sealed class FakeAudit(List<string> rows) : DW4Online.Domain.Abstractions.IAuditLog
+    {
+        public Task WriteAsync(string evt, long? accountId, long? actorId, byte[]? ip, object? detail, DateTime now, CancellationToken ct = default)
+        {
+            lock (rows) rows.Add(evt);
+            return Task.CompletedTask;
+        }
+    }
 }
 
 /// <summary>The area names of AreaTable (shortcuts for the tests).</summary>

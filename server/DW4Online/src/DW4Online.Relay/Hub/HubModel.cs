@@ -283,6 +283,8 @@ public sealed class ArrivalGroup
     /// <summary>The members' instance (null: an arrival from home, a fresh arrival of 19.7.1).</summary>
     public DW4Online.Relay.World.WorldInstance? World { get; set; }
     public bool Fresh => World is null;
+    /// <summary>The client chose *New instance* (BARRIER plan id 0xFFFF: DW4_ONLINE_AUTOCHOICE=new, client 13:30): no automatic join.</summary>
+    public bool PlanNew { get; init; }
     /// <summary>The kind of arrival this decision is for its members (BARRIER_OK's arrival byte).</summary>
     public ArrivalKind Arrival { get; set; }
     /// <summary>The arriving members with their slot in the arriving engine and their carry.</summary>

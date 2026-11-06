@@ -8801,7 +8801,7 @@ the I1a measurements together, with one server release, DW4Online 0.1.6
 2026-11-05, one instance per area with a go-along prompt at dungeon
 entries, is decision 38 (section 18); 19.30 designs it, and the parts of
 this section it changes point there. The user's answers of 2026-11-06 to
-its questions 39-41 are decisions 39-41 (19.1).
+its questions 39-41 are decisions 39-41 (19.1). **Round I1a's relay lane** (relay world and story, branch `feat-i1a-relay`, 2026-11-06) is built: what it decided is in 19.31.
 
 **How it was made.** Three independent drafts (architecture first, player
 first, risk first) read the relay (`RoomHub.cs` with `Decide`, `JoinOrNew`
@@ -11342,6 +11342,76 @@ the decision stays under the lock).
 
   The protocol 48 path is not measurable at the gate's scale: the numbers
   and the provisional verdict above hold for protocol 48 as well.
+
+  **Measured again at protocol 49 (round I1a, relay lane), after M4 (a),
+  (c) and (d).** The world relay of 19.31 with the PING margin cached per
+  stream, the pings spread, the selection off the lock (swapped in at the
+  housekeeping), the fan-out by the selection with its tiers and the
+  presence frames built once per relation. The harnesses speak protocol 49
+  (WORLD tickets, member ids, the five hub stages stagML11-14 and stagML02
+  for the lobby; *select* now runs the real selection, `SelectionRunner` on
+  the thread pool as the relay does). The joins cell's groups of three play
+  at fields of the area table (one each), so a joiner from home is matched
+  by the world's rules and takes the first row (decision 40); its first run
+  had them at stages outside the table and every join became an own
+  instance (void for the joins, `loadgate49_r1.json`). Worktree
+  `i1a-relay`: `build/i1arelay/gate/loadgate49_r1.json` (+ `.log`),
+  `joins49_r2.json`, `loadgate_net49_r1.json`, `loadgate_net49_storm_r2.json`;
+  other lanes' builds and tests ran beside every run.
+
+  In-process (holds of `hub.Sync`; ms unless marked):
+
+  | Cell | Acquisitions | Hold p50 / p99 / p99.9 / p99.99 / max | Sealing lateness p50 / p99 / max | TryEnter misses | CPU | Fan-out, per lobby receiver |
+  | --- | --- | --- | --- | --- | --- | --- |
+  | base | 8,486/s | 0.2 µs / 16.7 µs / 0.07 / **1.02** / 10.1 | 0.66 / 5.24 / 14.3 | 156/s of 396 | 0.07 | 19,797/s, 20.3 KB/s |
+  | fullhub | 2,034/s | 5.2 µs / 16.8 µs / 0.22 / **1.14** / 14.4 | - | - | 0.03 | 42,715/s, **15.0 KB/s** (was 398,538/s, 141 KB/s) |
+  | select | 2,034/s | 6.5 µs / 20.3 µs / 0.30 / **1.63** / 61.9 | - | - | 0.04 | 40,539/s, 14.7 KB/s |
+  | storm | 8,381/s | 0.3 µs / 20.4 µs / 0.08 / **0.54** / 3.5 | 0.76 / 5.61 / 15.2 | 125/s of 287 | 0.07 | 14,074/s, 14.1 KB/s |
+  | sealonly | 7,516/s | 0.2 µs / 14.2 µs / 0.06 / **0.42** / 9.2 | 0.38 / 4.23 / 9.2 | 53/s of 273 | 0.05 | 7,403/s |
+  | base, the sealer waits | 8,466/s | 0.3 µs / 17.6 µs / 0.08 / **1.18** / 17.0 | 0.24 / **0.63** / 10.0 | 0 | 0.04 | 19,808/s |
+  | storm, the sealer waits | 8,453/s | 0.2 µs / 17.0 µs / 0.08 / **0.83** / 34.9 | 0.24 / **0.68** / 27.5 | 0 | 0.05 | 14,069/s |
+  | joins (60 s) | 8,113/s | 0.1 µs / 12.7 µs / 0.12 / **0.73** / 67.3 | 0.37 / 3.66 / 67.3 | 93/s of 499 | 0.05 | 21,193/s, 20.5 KB/s |
+
+  The joins: all ten joined, the joiner's BARRIER to its state 15.1-15.6
+  ms, to the JOIN stamped 15.2-21.5 ms; the joiner's BARRIER (the world's
+  candidates included) held the lock 0.27 ms p50 (7.5 ms max), READY 0.05
+  ms p50 (6.1 max). The housekeeping holds 0.16-0.31 ms p50 and 0.8-2.4 ms
+  p99 in six of the nine runs (r71: 7.5-21 ms p99 in every cell with
+  sealed groups: the margin's sort is gone); *base* and *joins* had single
+  passes of 4-10 ms without a GC (not found; at most one in 30 passes).
+  The selection off the lock: 26-28 selections in a 30 s window, nothing of
+  it under the lock but the swap.
+
+  Over sockets (the real relay):
+
+  | Cell | Relay CPU | Clients' CPU | Sealing passes | TryEnter misses | Sealing lateness: share over 1 / 2 / 5 ms | Frames to the clients |
+  | --- | --- | --- | --- | --- | --- | --- |
+  | base | **0.48** (again: **0.66**) cores | 0.39 | 1,103/s | 0.8 % | 1.5 / 0.38 / 0.14 % | 19,768/s, 1.2 MB/s |
+  | fullhub | **0.52** (r71: 4.01) | 0.29 | - | - | - | 42,712/s, 3.0 MB/s |
+  | select | 0.22 | 0.14 | - | - | - | 8,406/s |
+  | storm | 0.70 (again: 0.69, 0.52) | 0.43 | 1,121/s | 0.7 % | 1.4 / 0.30 / 0.13 % | 19,122/s; 200 reconnects, 119 RESUMEs |
+  | sealonly | 0.40 | 0.26 | 1,123/s | 0.2 % | 0.4 / 0.07 / 0.01 % | 7,403/s |
+
+  The first *storm* run over sockets is invalid: one stall of the relay
+  process of 1.34 s (its sealing lateness max; every other run's max is
+  7.6-72 ms) let a second of PRESENCE2 queue in the sockets, and the
+  token bucket dropped 665 of 17,993 (3.7 %) when they came in at once;
+  the *storm* run of *storm-wait* and a third run (`_storm_r2`) are valid
+  with no drop. Not found what stalled (the relay's housekeeping and
+  sealing passes of those runs show nothing near it).
+
+  **Verdict at protocol 49:** the holds pass in every cell (p99 at most
+  20.4 µs, p99.99 0.42-1.63 ms, decision 42), the sealing lateness over
+  sockets passes (over 2 ms: 0.07-0.38 % of the passes, so p99 under
+  2 ms), *storm*, *select* and *sealonly* pass the CPU. The relay's CPU in
+  *base* (0.48 and 0.66 cores in two runs) and *fullhub* (0.52) is at the
+  half core, down from 0.72-0.85 and 4.01: the selection's fan-out took
+  the frames to the clients from 43,128 to 19,768 a second in *base* and
+  from 398,612 to 42,712 in *fullhub*. What is left of (e) is the
+  connection path per frame (one socket write per frame, two reads per
+  frame; about 17-23 µs of CPU per frame in and out at 28,000 frames a
+  second in *base*), not touched in I1a. The lock is busy 0.8-1.9 %:
+  phase 1 stays; phase 2 would not change the CPU.
 - **Phase 2** (only if the gate fails; one lane): a lock and an inbox per
   stage cell, a registry lock taken briefly; lock order cell, then
   registry, never two cells; a barrier that moves members posts
@@ -12972,6 +13042,156 @@ next to him.
   GO with STATE's *no living member* (19.30.5-19.30.7) in I1b; the joiners'
   mirror base in I2; *Go to <member>*, the spawn next to the entrant and
   *Join at <host>* in I3 (19.25); the scenarios W30-W33 and W16c (19.24).
+
+### 19.31 Round I1a, the relay lane: what was built and decided
+
+Branch `feat-i1a-relay` from main d0e005b0 (lanes *relay world* and *story* of
+19.25, with round 72's additions); progress notes in
+`docs/ROUND_I1A_RELAY_NOTES.md`. The lanes ran in parallel and agreed the
+wire and the server interfaces in a contract file outside the repo
+(`DW4_PC-wt/i1a-contract.md`); the relay's entries are copied here.
+
+**Protocol 49** (`Wire.WorldProtocol`; the relay answers `ERR protocol` to
+any other number). The layouts are the client lane's proposal, confirmed
+with these additions (golden vectors in `WireGoldenTests.World_messages_equal_the_clients`):
+
+- WELCOME: member u32, + wid u32 (0: none, or an instance that is ending),
+  + box u8; flags + 8 world, 16 seat held, 32 staff.
+- BARRIER: + travel token u32, plan id u16, and the member's **own**
+  settings (11 bytes: difficulty, camera, light, fast loading, randomizer
+  seed u32, drops, enemies, zones). There is no settings message: the
+  relay keeps each member's newest own settings from its barriers; a NEW
+  from home makes them its instance's for the instance's life, a DISSOLVE
+  rebases the member's own story on its own difficulty. Plan id 0xFFFF on
+  a barrier from home is the choice *New instance*
+  (`DW4_ONLINE_AUTOCHOICE=new` in development builds): an own instance,
+  no automatic join, no co-arrival with another's base.
+- BARRIER_OK: co-arrival members u32; the dropped blob is gone; the world
+  part after the notice names: wid, host member, visibility, arrival (0 a
+  move inside or a DISSOLVE, 1 a new instance this member hosts, 2 round
+  I1a's automatic join, 3 a co-arrival with or a join of a starting
+  instance, 4 a guest's NEW), settings and their hash (the instance's; at a
+  DISSOLVE the member's own), the story owner key (member u32, box u8), the
+  story mode (0 merge, 1 replace) and a redirect (stage, point; DISSOLVE
+  only).
+- JOIN_REQ + kind (1 join, 2 home: `slot` holds the HOME mask, SEALED(J)
+  carries HOME and LEAD_FROM(J + 1); 3 go, I1b). INTENT kind 3 *leave*
+  (kind 4 accepted, ignored until I1b). STATE flag 16 accepted. STORY and
+  STORY_ACK + the owner key; refusal reason **12** *owner* (11 is round G's
+  *queued*). RESUME + the stage the engine is on. PRESENCE and PRESENCE2 to
+  clients: member u32 and a relation byte (1 friend, 2 party, 4 staff, 8
+  same instance). Tick event HOME 6 (mask, reason: 1 leave, 2 ended, 3
+  removed, 4 staff), split by side at a fork; GO 7 reserved. CLOSE reason
+  9 *account* (locked, banned, deleted, or the re-check refused).
+  INSTANCE_OP 0x1B, INSTANCE_INFO 0x95, WORLD_NOTICE 0x96, MEMBER_INFO 0x97;
+  ROOM and ROSTER are never sent.
+
+**The world hub** (`RoomHub`, not renamed; the world parts in
+`Relay/World/`): `WorldHub.cs` (admission, member ids, keepers, instances,
+seats, matching, END and HOME, the grace, notices and info, staff, the
+snapshot and the play context, presence), `WorldInstance.cs`
+(`WorldInstance`, `WorldHubOptions`, `HubAdmit`, `Seat`), `Matching.cs`
+(Visible(), the gate rule, the order and the preselection),
+`Presence.cs` (the selection), `WorldHistoryQueue.cs` (history, audit and
+the remembered visibility off the lock). Decisions the design left open:
+
+- **Members** keep their id while they are known (connected, or within
+  `World:MemberTimeoutSeconds` after their connection went; a host in his
+  grace until the grace's end plus the margin); a later admission of the
+  same account gets a new id.
+- **One world session** (19.17.3): a handshake whose admission says
+  `NewSession` (web's flag: the ticket came from `POST /world/enter`)
+  replaces a known member: CLOSE 4, a hosted instance ends (host_left), the
+  seat goes; the member id stays. Without the flag it is a reconnect.
+- **The live re-check** (19.14): `IWorldNotifier.AccountChanged`,
+  `PrefsChanged`, `FriendsChanged` (the other side only with `otherSees`)
+  and `BlocksChanged` (both sides) run the admission again off the lock with
+  the member's last ticket nonce (web answers the same nonce again while it
+  is the newest); a refusal closes the member (CLOSE 9) and it leaves the
+  world.
+- **The context of an instance** for an arrival without a stage group of it
+  at the arrival stage is the context of the instance's first barrier (the
+  dungeon floors' load-time COUNTER 2 would otherwise hide every instance
+  whose players are in a dungeon); with a stage group there, 3.7's rule of
+  that group.
+- **A fresh arrival's notice** (the loading screen's): when no candidate is
+  taken and an instance of the area had a stage group at the stage that
+  was refused for its context, its seats or a too long catch-up, NEW comes
+  with `OtherContext`, `Full` or `TooLongToCatchUp` as in rooms.
+- **A fresh arrival's join that fails before its BARRIER_OK** (the hold
+  runs out, *Go alone* at a boss lock) becomes an instance of its own on
+  its own story, never a second stage group of the chosen instance
+  (19.7.7). **After its BARRIER_OK JOIN** (the target left, READY failed
+  twice) the engine holds the host's story already (the JOIN's mode is
+  *replace*, see below), so the fallback is a new stage group of the
+  chosen instance with its seat (story mode merge), as for a member
+  inside an instance; an ending instance's sends it home at once.
+- **A starting instance** stops starting at its first joinable STATE, not
+  only at the housekeeping.
+- **The story mode** of BARRIER_OK (client lane 13:30): *replace* for
+  every arrival from home into an instance the member does not host (the
+  automatic join, the co-arrival with or join of a starting instance, the
+  guest's NEW: the engine drops its own story for the host's); *merge* for
+  a member's own new instance and for every decision inside an instance.
+  At a DISSOLVE *merge* only where the engine holds the own story for
+  sure: the host's, and a move between hub stages (a replace there would
+  drop the own values the keeper still waits with); *replace* for a
+  member from a field that is not the host, and for one from the title or
+  a fresh session (the local way home after a lost instance, 19.6.10).
+- **The end** (19.6.5): WELCOME and INSTANCE_INFO name no instance that is
+  ending; seats free at each member's DISSOLVE (or when it leaves the
+  world), and the instance goes when the last seat frees. A stage group
+  whose leader never answers JOIN_REQ home (`Instances:JoinRequestTries`)
+  is detached: nobody's instance, its next barrier a DISSOLVE home with the
+  redirect; so is the next barrier of a stage group whose members hold no
+  seat in its instance any more (removed ones). The redirect's log line
+  names the stage in lower case (web's `redirect` event).
+- **The grace** starts at the close or at `World:HostSilenceSeconds` without
+  INPUT or PONG while the host's slot fills; the host's stream fills with
+  neutral pads (`SlotStream.NeutralFill`), `lagOut` and the reconnect LEAVE
+  do not apply to him, his RESUME window is `World:HostMaxResumeTicks`
+  (4,200), the keeper holds (`StoryKeeper.Hold`), guests get WORLD_NOTICE 6
+  every `World:HostAwayNoticeSeconds` (5); back: notice 7 and the held
+  values merge; not back: END host_lost.
+- **M3**: a DISSOLVE of the host with his slot's bit clear in the barrier's
+  alive mask ends his instance as host_defeated unless the member's give-up
+  INTENT was stamped in that visit (then host_left).
+- **Staff**: the ticket role from the database at the admission, re-checked
+  live; staff see every visibility but blocks and bars count for a staff
+  member who plays (the override comes with I3's *Join as moderator*);
+  a staff member taking a seat in another's instance writes `staff_join`.
+- **Presence**: the selection runs once a second off the lock (the
+  thread pool in the relay) and is swapped in at the next housekeeping; a
+  receiver's figures in a hub stage: friends first, then the nearest, at
+  most `World:HubFigures`, no blocked pair, a chosen figure kept up to 20 %
+  beyond the last candidate's distance; the nearest `World:NearFigures`
+  (10) get every PRESENCE2, the others every second; a presence budget per
+  receiver (`World:PresenceBytesPerSecond`); MEMBER_INFO before a member's
+  first mention. In a field presence goes only to the own instance's
+  members of other stage groups at that stage. One frame per sender message
+  and relation value is built, not one per receiver.
+- **The PING margin** (M4 (a)) is cached per stream for 300 pads and
+  recomputed by a linear selection instead of a sort; the pings are spread
+  over the housekeeping passes (each member's own second).
+- **The admission** of the relay lane's branch, until web's `WorldService`
+  sets its own (`IWorldRelay.SetAdmission`): the account active, its role,
+  its friends and blocks from the repositories; the story from
+  `OnlineStoryService` (both always).
+- **The membership log** is `world_<run>.jsonl` with `wid` on every line and
+  the events `instance_start`, `instance_end`, `instance_join`,
+  `instance_leave`, `redirect`, `area_escape` (web's names).
+
+**Story lane.** `StoryKeeper` (Domain/Story) per (account, box), made at
+the admission from the stored story and kept in the hub's registry while
+the account is in the world, an instance runs on it or for
+`World:KeeperIdleMinutes` after; the owner's values are not spaced, a
+guest's follow round 59's rules; the earned queue is per keeper (a value
+earned on a host's story merges into it in the guest's later visit,
+whatever the stage); `Hold` / `Release` for the grace; `Replacing` and
+`Replace` for `StoryReplaced`; `SetDifficulty` follows the owner's own
+difficulty while nothing plays on the story. `RoomStoryKeeper` stays in the
+tree unused (the web lane's files still name its `StoryPolicy`); the
+cleanup release deletes it with the rooms.
 
 ## 20. Risks
 
