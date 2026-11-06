@@ -449,6 +449,33 @@ public sealed partial class RoomHub
         Note("home_req", g, ("mask", p.Mask), ("reason", p.Reason.ToString()));
     }
 
+    /// <summary>
+    /// A stage group whose last member but one left turns solo-led at <paramref name="lead"/> and seals no tick from there: a HOME
+    /// stamped at or after it (the END's HOME stamped World:EndNoticeTicks ahead before the lost or leaving host's LEAVE took an
+    /// earlier tick, or a guest's leave before another member's LEAVE) would never reach the remaining member, who then played on
+    /// in an ended instance (W7b, W12). It waits again as the group's pending HOME for the slots still present, due when its stamp
+    /// would have been sealed, and goes to the solo leader as JOIN_REQ home (<see cref="TrySoloHome"/>).
+    /// </summary>
+    private void RefileHomesAfterLead(HubInstance g, uint lead, long now)
+    {
+        foreach (var (t, list) in g.PendingEvents.Where(kv => kv.Key >= lead).ToList())
+        {
+            foreach (var e in list.Where(e => e.Type == Ev.Home).ToList())
+            {
+                list.Remove(e);
+                g.HomeStamped = (byte)(g.HomeStamped & ~e.HomeMask);
+                var mask = (byte)(e.HomeMask & g.PresentMask);
+                if (mask == 0) continue;
+                var reason = e.Payload.Length > 1 ? (HomeReason)e.Payload[1] : HomeReason.Ended;
+                var notBefore = now + (long)((t - lead) * Wire.TickSeconds * Freq);
+                g.PendingHome = g.PendingHome is { } p ? ((byte)(p.Mask | mask), p.Reason, Math.Min(p.NotBefore, notBefore)) : (mask, reason, notBefore);
+                Count("home_refiled");
+                Note("home_refiled", g, ("mask", mask), ("reason", reason.ToString()), ("tick", t), ("lead", lead), ("wid", g.World?.Wid ?? 0));
+            }
+            if (list.Count == 0) g.PendingEvents.Remove(t);
+        }
+    }
+
     /// <summary>A sealed stage group that starts sealing stamps the HOME that waited for it.</summary>
     private void StampPendingHome(HubInstance g, long now)
     {

@@ -509,6 +509,10 @@ public sealed partial class RoomHub
                     i.LeadFrom = null;
                     i.LastLogAt = now;
                     Array.Clear(i.Streams);
+                    // A HOME stamped beyond the lead tick would never be sealed now (an END's HOME stamped World:EndNoticeTicks
+                    // ahead, then the lost or leaving host's LEAVE at an earlier tick): it goes to the remaining member through
+                    // JOIN_REQ home instead (W7b).
+                    RefileHomesAfterLead(i, i.NextSeal, now);
                     if (i.StreamEnd >= i.NextSeal)
                     {
                         i.Mode = InstanceMode.SoloLed;
