@@ -3264,8 +3264,11 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 last_room_live = room_live;
                 bool online_tab_now = false;
                 // (Round I1a, 19.5.4: the F1 menu opens on the Online tab while
-                // a world session runs: its Instance page, the status line's View.)
-                if (show_menu && !menu_shown_before && online) {
+                // a world session runs: its Instance page, the status line's View.
+                // menu_tab is a one-shot request the tab bar consumes, so it is
+                // empty at every opening by the player, whatever tab he chose
+                // last; a tab a UI script or DW4_MENU_TAB named is kept.)
+                if (show_menu && !menu_shown_before && online && (menu_tab.empty() || menu_tab == "Online")) {
                     menu_tab = "Online";
                     // (From the status window's line, "View: change": the
                     // Instance page with the visibility focused.)
@@ -3876,7 +3879,9 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 }
                 if (online_ui.leave_instance_requested) {
                     online_ui.leave_instance_requested = false;
-                    if (online && online->session().leave_instance()) std::cout << "online: leave instance at frame " << frame << '\n';
+                    if (online && online->session().leave_instance())
+                        std::cout << "online: leave instance at frame " << frame
+                                  << (online->session().leave_pending() ? " (kept until the INTENT can go)" : "") << '\n';
                 }
                 if (online_ui.close_requested) {
                     // ("Play" on the playing screen, here or in F1 Online.)
