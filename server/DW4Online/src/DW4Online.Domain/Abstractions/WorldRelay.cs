@@ -55,6 +55,11 @@ public sealed record WorldAdmission(long AccountId, string Role, string Nonce);
 /// </summary>
 public sealed record WorldAdmitted(long AccountId, string Username, string Role, int Box, OnlinePrefs Prefs)
 {
+    /// <summary>
+    /// True when the ticket came from POST /world/enter (Play): the relay replaces a member the account still has (CLOSE
+    /// replaced, a hosted instance ends, 19.17.3); false for /world/ticket (a reconnect).
+    /// </summary>
+    public bool NewSession { get; init; }
     public IReadOnlyList<long> Friends { get; init; } = [];
     /// <summary>Accounts this account blocks.</summary>
     public IReadOnlyList<long> Blocks { get; init; } = [];
@@ -111,6 +116,16 @@ public sealed record WorldMemberRow(long AccountId, uint MemberId, string Name, 
 /// listed at home (its lobby) with <paramref name="Spectating"/> set, never in the watched instance (19.14).
 /// </summary>
 public sealed record WorldOnlineRow(long AccountId, uint MemberId, string Name, string Stage, uint Wid, bool Staff, bool Spectating = false);
+
+/// <summary>
+/// Optional on the relay's <see cref="IWorldRelay"/>: where the relay sends a host's visibility choice (19.6.2, Q9: the
+/// host's last choice becomes his online_prefs.default_visibility). <see cref="Services.WorldService"/> sets it in its
+/// constructor; the relay calls it off its lock (account, visibility) and never waits for it.
+/// </summary>
+public interface IWorldVisibilitySink
+{
+    Func<long, string, Task>? RememberVisibility { get; set; }
+}
 
 /// <summary>The world relay while no relay is wired in (the relay switched off, or the server lanes before the relay's): nobody is online.</summary>
 public sealed class NullWorldRelay : IWorldRelay

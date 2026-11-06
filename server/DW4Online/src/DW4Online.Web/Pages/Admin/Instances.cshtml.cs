@@ -41,7 +41,7 @@ public sealed class InstancesModel(WorldService world, TimeProvider time) : Page
         if (Wid is >= 1 and <= uint.MaxValue)
         {
             var result = await world.RemoveMemberAsync(HttpContext.WebSession()!.AccountId, (uint)Wid, Username, HttpContext.Caller().Ip, ct);
-            if (result.Ok) Message = $"{Username} was removed from instance {Wid} and goes home.";
+            if (result.Ok) Message = $"{result.Value} was removed from instance {Wid} and goes home.";
             else Error = result.Error!.Message;
         }
         else Error = "No such instance (it may have ended).";

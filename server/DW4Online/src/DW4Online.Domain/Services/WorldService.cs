@@ -5,8 +5,11 @@ using DW4Online.Domain.World;
 
 namespace DW4Online.Domain.Services;
 
-/// <summary>What POST /world/enter and /world/ticket hand out (19.17.3): the one-time relay ticket and the account's world data.</summary>
-public sealed record WorldEntry(string Ticket, string Role, int Box, OnlinePrefs Prefs, int Protocol);
+/// <summary>
+/// What POST /world/enter and /world/ticket hand out (19.17.3): the one-time relay ticket, the ticket's role (member or
+/// staff), the account's role (player, moderator, admin), the bound box, the preferences and the world's protocol.
+/// </summary>
+public sealed record WorldEntry(string Ticket, string Role, int Box, OnlinePrefs Prefs, int Protocol, string AccountRole = Roles.Player);
 
 /// <summary>The world's counts for the home page, GET /world and the admin index (no names).</summary>
 public sealed record WorldCounts(int PlayersOnline, int Instances, IReadOnlyList<AreaCount> Areas);
@@ -46,8 +49,9 @@ public sealed class WorldService
     private readonly TimeProvider _time;
     private readonly Story.OnlineStoryService? _stories;
     private readonly HashSet<ulong> _dataHashes;
-    // The newest ticket's nonce per account (one world session per account, 19.17.3): an older ticket is refused.
-    private readonly ConcurrentDictionary<long, string> _nonces = new();
+    // The newest ticket's nonce per account (one world session per account, 19.17.3): an older ticket is refused. NewSession:
+    // the ticket came from /world/enter (Play), not from /world/ticket (a reconnect).
+    private readonly ConcurrentDictionary<long, (string Nonce, bool NewSession)> _nonces = new();
 
     public WorldService(IWorldRelay relay, IWorldNotifier notifier, IWorldRepository world, IInstanceHistoryRepository history, IAccountRepository accounts,
         ISocialRepository social, IAuditLog audit, VersionGate versions, WorldWebOptions options, ServiceOptions service, TimeProvider time,
@@ -67,6 +71,7 @@ public sealed class WorldService
         _stories = stories;
         _dataHashes = options.DataHashes.Select(h => WorldWebOptions.ParseHash(h, "World:DataHashes")).ToHashSet();
         _relay.SetAdmission(AdmitAsync);
+        if (_relay is IWorldVisibilitySink sink) sink.RememberVisibility = (account, visibility) => RememberVisibilityAsync(account, visibility);
     }
 
     /// <summary>The story box a world session plays (one box until round D's boxes; 19.17.3).</summary>
@@ -90,7 +95,7 @@ public sealed class WorldService
     public async Task<Result<WorldEntry>> EnterAsync(AuthenticatedSession session, int? protocol, ulong? dataHash, string? clientVersion,
         CancellationToken ct = default)
     {
-        var entry = await TicketAsync(session, protocol, dataHash, clientVersion, ct);
+        var entry = await IssueAsync(session, protocol, dataHash, clientVersion, newSession: true, ct);
         if (!entry.Ok || _stories is null) return entry;
         try
         {
@@ -104,13 +109,20 @@ public sealed class WorldService
     }
 
     /// <summary>POST /world/ticket: the same checks and a new one-time ticket (a reconnect); the old ticket stops counting.</summary>
-    public async Task<Result<WorldEntry>> TicketAsync(AuthenticatedSession session, int? protocol, ulong? dataHash, string? clientVersion,
-        CancellationToken ct = default)
+    public Task<Result<WorldEntry>> TicketAsync(AuthenticatedSession session, int? protocol, ulong? dataHash, string? clientVersion,
+        CancellationToken ct = default) => IssueAsync(session, protocol, dataHash, clientVersion, newSession: false, ct);
+
+    /// <summary>
+    /// The checks of /world/enter and /world/ticket. The version gate applies when the client names its protocol or version
+    /// (as the login does; the relay's handshake refuses any protocol but the world's anyway); the game data when a hash is given.
+    /// </summary>
+    private async Task<Result<WorldEntry>> IssueAsync(AuthenticatedSession session, int? protocol, ulong? dataHash, string? clientVersion,
+        bool newSession, CancellationToken ct)
     {
-        if (_versions.Check(protocol, clientVersion) is { } outdated) return outdated;
+        if ((protocol is not null || clientVersion is not null) && _versions.Check(protocol, clientVersion) is { } outdated) return outdated;
         if (_service.Maintenance) return new DomainError(ErrorKind.Unavailable, "maintenance", "The server is in maintenance: the world is closed for now.");
         if (!_relay.Available) return new DomainError(ErrorKind.Unavailable, "relay_unavailable", "The relay is switched off on this server.");
-        if (_dataHashes.Count > 0 && (dataHash is not { } hash || !_dataHashes.Contains(hash)))
+        if (_dataHashes.Count > 0 && dataHash is { } hash && !_dataHashes.Contains(hash))
             return DomainError.Conflict("unsupported_data", "Your game data is not supported on this server.");
         var account = await _accounts.GetAsync(session.AccountId, ct);
         if (account is null || account.Status != AccountStatus.Active)
@@ -126,8 +138,8 @@ public sealed class WorldService
         {
             return new DomainError(ErrorKind.Unavailable, "relay_ticket_failed", "The relay could not issue a ticket. Try again.");
         }
-        _nonces[session.AccountId] = ticket.Nonce;
-        return new WorldEntry(ticket.Ticket, role, BoundBox, prefs, _versions.MinimumProtocol);
+        _nonces[session.AccountId] = (ticket.Nonce, newSession);
+        return new WorldEntry(ticket.Ticket, role, BoundBox, prefs, _versions.MinimumProtocol, account.Role);
     }
 
     /// <summary>POST /world/leave: ends the account's world session (the relay closes its connection); its tickets stop counting.</summary>
@@ -139,20 +151,21 @@ public sealed class WorldService
     }
 
     /// <summary>
-    /// The relay's check of a redeemed world ticket (signature, expiry and single use already checked): the newest ticket
-    /// issued to the account in this process, the account active, its role re-read (a demotion counts at once, 19.14), its
-    /// preferences, friends and blocks loaded here, outside the hub's lock. Null refuses it (a hanging database too, after
-    /// <see cref="AdmissionTimeout"/>).
+    /// The relay's check of a redeemed world ticket (signature, expiry and single use already checked by the relay): the
+    /// newest ticket issued to the account in this process, the account active, its role re-read (a demotion counts at once,
+    /// 19.14), its preferences, friends and blocks loaded here, outside the hub's lock. The same (account, nonce) answers
+    /// the same way again while it is the account's newest: the relay calls it again to re-check a member after
+    /// <see cref="IWorldNotifier.AccountChanged"/> and the other notifier calls. Null refuses it (also a hanging database,
+    /// after <see cref="AdmissionTimeout"/>).
     /// </summary>
     public async ValueTask<WorldAdmitted?> AdmitAsync(WorldAdmission ticket)
     {
-        if (!_nonces.TryGetValue(ticket.AccountId, out var nonce) || !string.Equals(nonce, ticket.Nonce, StringComparison.Ordinal)) return null;
+        if (!_nonces.TryGetValue(ticket.AccountId, out var issued) || !string.Equals(issued.Nonce, ticket.Nonce, StringComparison.Ordinal)) return null;
         using var timeout = new CancellationTokenSource(AdmissionTimeout);
         try
         {
             var account = await _accounts.GetAsync(ticket.AccountId, timeout.Token);
             if (account is null || account.Status != AccountStatus.Active) return null;
-            if (!_nonces.TryRemove(new KeyValuePair<long, string>(ticket.AccountId, ticket.Nonce))) return null; // one admission per ticket
             var prefs = await _world.GetPrefsAsync(account.Id, timeout.Token);
             var friends = await _social.ListFriendsAsync(account.Id, timeout.Token);
             var blocks = await _social.ListBlocksAsync(account.Id, timeout.Token);
@@ -160,6 +173,7 @@ public sealed class WorldService
             await TouchLastSeenSafeAsync([account.Id], timeout.Token);
             return new WorldAdmitted(account.Id, account.Username, WorldRoles.Of(account.Role), BoundBox, prefs)
             {
+                NewSession = issued.NewSession,
                 Friends = friends.Select(f => f.AccountId).ToList(),
                 Blocks = blocks.Select(b => b.AccountId).ToList(),
                 BlockedBy = blockedBy,
@@ -301,11 +315,7 @@ public sealed class WorldService
     /// admin pages): its tickets stop counting and the relay re-checks it at once (a ban or a deletion closes its
     /// connection and, for a host, ends his instance; 19.14).
     /// </summary>
-    public void AccountChanged(long accountId)
-    {
-        _nonces.TryRemove(accountId, out _);
-        _notifier.AccountChanged(accountId);
-    }
+    public void AccountChanged(long accountId) => _notifier.AccountChanged(accountId);
 
     /// <summary>The account's online story of a box was reset or restored (19.8.1): the relay's keeper reloads it, a hosted instance ends.</summary>
     public void StoryReplaced(long accountId, int box = 1) => _notifier.StoryReplaced(accountId, box);
@@ -326,7 +336,7 @@ public sealed class WorldService
     }
 
     /// <summary>Staff removes a member (it goes home; round I1b adds the 10-minute bar): audit row staff_remove.</summary>
-    public async Task<Result<bool>> RemoveMemberAsync(long actorId, uint wid, string? username, byte[]? ip, CancellationToken ct = default)
+    public async Task<Result<string>> RemoveMemberAsync(long actorId, uint wid, string? username, byte[]? ip, CancellationToken ct = default)
     {
         var row = _relay.Snapshot().Instances.FirstOrDefault(i => i.Wid == wid);
         if (row is null) return InstanceNotFound();
@@ -335,7 +345,7 @@ public sealed class WorldService
             return DomainError.NotFound("member_not_found", "No such player in this instance.");
         await _audit.WriteAsync("staff_remove", member.AccountId, actorId, ip,
             new { wid, historyId = row.HistoryId, host = row.HostName, member = member.Name, role = member.Role }, Clock.Now(_time), ct);
-        return true;
+        return member.Name;
     }
 
     private static object AuditDetail(WorldInstanceRow row) => new

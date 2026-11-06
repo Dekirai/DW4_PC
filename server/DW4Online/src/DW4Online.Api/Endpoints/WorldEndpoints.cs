@@ -10,8 +10,11 @@ using Microsoft.AspNetCore.Routing;
 
 namespace DW4Online.Api.Endpoints;
 
-/// <summary>The body of POST /world/enter and /world/ticket: the client's protocol, game data hash and version.</summary>
-public sealed record WorldEnterRequest(int? Protocol, ulong? DataHash, string? ClientVersion);
+/// <summary>
+/// The body of POST /world/enter and /world/ticket: the box to play (1 until round D), the client's protocol, game data hash and
+/// version (each optional; given, the version gate and World:DataHashes check them).
+/// </summary>
+public sealed record WorldEnterRequest(int? Box, int? Protocol, ulong? DataHash, string? ClientVersion);
 
 /// <summary>
 /// The world (SEAMLESS.md 19.19, round I1a): POST /world/enter (the world session's one-time relay ticket, the relay
@@ -23,15 +26,18 @@ public static class WorldEndpoints
 {
     public static void Map(RouteGroupBuilder v1)
     {
-        // Public: players online and instances per area, no names.
+        // Public: players online and instances per area, no names. ("players" and the "areas" map as the client lane's
+        // contract entry of 2026-11-06 12:40 has them; "areaList" adds the names and the players per area.)
         v1.MapGet("/world", (WorldService world) =>
         {
             var counts = world.Counts();
             return Results.Ok(new
             {
+                players = counts.PlayersOnline,
                 playersOnline = counts.PlayersOnline,
                 instances = counts.Instances,
-                areas = counts.Areas.Select(a => new { area = a.Area, name = a.Name, instances = a.Instances, players = a.Players }),
+                areas = counts.Areas.ToDictionary(a => a.Area, a => a.Instances),
+                areaList = counts.Areas.Select(a => new { area = a.Area, name = a.Name, instances = a.Instances, players = a.Players }),
             });
         }).AllowAnonymous();
 
@@ -110,12 +116,15 @@ public static class WorldEndpoints
         var settings = e.Prefs.HostSettings(0);
         return new
         {
+            relayTicket = e.Ticket,
             ticket = e.Ticket,
             relay,
             protocol = e.Protocol,
-            role = e.Role,
+            role = e.AccountRole,
+            relayRole = e.Role,
             box = e.Box,
-            seat = (object?)null, // round I5
+            heldSeat = (object?)null, // round I5
+            seat = (object?)null,
             prefs = new
             {
                 defaultVisibility = e.Prefs.DefaultVisibility,
