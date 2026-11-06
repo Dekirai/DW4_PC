@@ -33,7 +33,8 @@ lanes *relay world* and *story* (with round 72's additions), the wire of 19.18 a
   presence frames flushed every 16 ms with the receiver's others (`Relay:PresenceFlushMs`), buffered reads
   (`ConnectionWriteTests`).
 - Stub copies of web-owned files (the integration takes the web lane's): `Domain/Abstractions/WorldRelay.cs`,
-  `Domain/Abstractions/World.cs`, `Domain/World/OnlinePrefs.cs`, `Domain/World/AreaTable.cs`.
+  `Domain/Abstractions/World.cs`, `Domain/World/OnlinePrefs.cs`, `Domain/World/AreaTable.cs`; `Domain/World/WorldProtocol.cs`
+  is web's file verbatim (feat-i1a-web a3ead6bd), and `Wire.WorldProtocol` is its `WorldProtocol.Version` (web 12:50).
 - Client lane 13:30 (contract "relay 13:45"): story mode *replace* for arrivals from home into another's instance, a fresh
   joiner's fallback after its JOIN as a new stage group of the target instance, the DISSOLVE's modes, plan id 0xFFFF =
   *New instance*, seatless groups home with the redirect, the redirect's stage in lower case.
@@ -55,8 +56,8 @@ lanes *relay world* and *story* (with round 72's additions), the wire of 19.18 a
   `WorldService.RememberVisibilityAsync` (through IWorldVisibilitySink, already in the contract) and its
   IInstanceHistoryRepository registration (the history queue picks it up from DI); the relay lane's integration tests need
   web's TestHost with `fakeWorld: false`; web's four skipped relay tests in OnlineStoryTests are replaced by
-  `WorldRelayTests` and the story unit tests; the integration test that `Wire.WorldProtocol` equals
-  `WorldProtocol.Version`; tests/winhttp_client and tests/e2e/relay_spike_test.py are still room-based.
+  `WorldRelayTests` and the story unit tests; tests/winhttp_client and tests/e2e/relay_spike_test.py are still
+  room-based.
 
 ## How to run the tests
 
@@ -71,6 +72,6 @@ lanes *relay world* and *story* (with round 72's additions), the wire of 19.18 a
   lane: `build/i1arelay/gate/` (loadgate49_r1, joins49_r2, loadgate_net49_r1, loadgate_net49_storm_r2, net49_direct_r1/_r2,
   net49_pooled_r1/_r2, net49_e_r1, net49_e_pooled_r1, net49_flush_r1/_r2, net49_noflush_r1;
   `DW4_LOADGATE_DIRECT_SENDS=0` runs the old writer, `DW4_LOADGATE_PRESENCE_FLUSH_MS=0` no presence flush).
-- Last results: unit 449/449 (`build/i1arelay/unit_r6.log`); integration 120 passed, 4 skipped (`build/i1arelay/integration_r5.log`).
+- Last results: unit 449/449 (`build/i1arelay/unit_r7.log`); integration 120 passed, 4 skipped (`build/i1arelay/integration_r6.log`).
 - No client code changed (the branch's diff outside `server/` and `docs/` is empty): no ctest, det.sh or game
   scenarios are needed for this lane.

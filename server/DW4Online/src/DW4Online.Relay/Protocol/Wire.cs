@@ -31,9 +31,9 @@ public static class Wire
     /// <summary>Protocol 48: the replayed steps a READY from a checkpoint is checked after (a quarter second).</summary>
     public const uint ReadyCheckTicks = 15;
     /// <summary>Round I1 (SEAMLESS.md 19.18): the world without rooms. The relay speaks only this protocol (the floor in code,
-    /// 19.17.3: a handshake with any other protocol is answered ERR protocol, whatever Play:MinimumProtocol says). The web
-    /// lane's DW4Online.Domain.World.WorldProtocol.Version is the same number (the integration pins them equal).</summary>
-    public const int WorldProtocol = 49;
+    /// 19.17.3: a handshake with any other protocol is answered ERR protocol, whatever Play:MinimumProtocol says): the web
+    /// lane's DW4Online.Domain.World.WorldProtocol.Version, one constant for the version gate and the relay.</summary>
+    public const int WorldProtocol = DW4Online.Domain.World.WorldProtocol.Version;
     /// <summary>The 11-byte settings block of BARRIER, BARRIER_OK and INSTANCE_INFO (protocol 49).</summary>
     public const int SettingsBytes = 11;
     /// <summary>The handshake's ticket channel of the world (one fixed channel, 19.14).</summary>
