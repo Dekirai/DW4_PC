@@ -47,6 +47,8 @@ inline constexpr UiColor red{1, 0.35f, 0.3f, 1};
 inline constexpr UiColor window_top{0.07f, 0.16f, 0.42f, 0.88f};
 inline constexpr UiColor window_bottom{0.02f, 0.05f, 0.2f, 0.88f};
 inline constexpr UiColor window_frame{0.62f, 0.78f, 1, 1};
+inline constexpr UiColor window_line{0.35f, 0.88f, 1, 1};   // the talk window's cyan edge lines
+inline constexpr UiColor window_line2{0.18f, 0.45f, 0.9f, 0.9f};
 inline constexpr UiColor cursor{0.3f, 0.55f, 1, 0.55f};
 } // namespace ui_colors
 
@@ -71,6 +73,12 @@ public:
     // A window: body, frame and (optional) a name tab at its top left.
     void window(float x, float y, float w, float h, float open = 1.0f);
     void name_tab(float x, float y, std::string_view name);
+    // The talk window's look (the game's talk window): the full width of the
+    // layer between y and y + h, cyan edge lines top and bottom, a slanted
+    // name tab above its left end.
+    void talk_frame(float y, float h, std::string_view name, float open = 1.0f);
+    // A convex polygon (layer units, top left origin, y down).
+    void polygon(const std::vector<std::pair<float, float>>& points, UiColor color);
     // The selection bar of a list row.
     void cursor_bar(float x, float y, float w, float h);
     // A bar: a dark track and the filled part.

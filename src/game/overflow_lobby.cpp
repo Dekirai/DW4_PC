@@ -280,18 +280,16 @@ namespace {
 constexpr float kSize = 18.0f; // the talk window's line height
 
 void talk_window(SimUi& ui, const std::string& page, bool prompt, std::uint64_t frame, float open, const engine::Attribute* face) {
-    // The talk window at the bottom: the name tab, the face frame, three lines.
-    ui.window(40, 340, 560, 112, open);
+    // The talk window's look at the bottom: the name tab, the face in its
+    // cyan frame, three lines, the prompt.
+    ui.talk_frame(332, 124, text(Text::npc_name), open);
     if (open < 1.0f) return;
-    ui.name_tab(52, 316, text(Text::npc_name));
-    // The face frame (the face icon n_gekoaic is O1b's open point: a frame
-    // with Gekomon's colours stands for it).
-    ui.rect(56, 356, 72, 72, ui_colors::window_frame);
-    ui.gradient(58, 358, 68, 68, UiColor{0.2f, 0.55f, 0.35f, 1}, UiColor{0.08f, 0.3f, 0.2f, 1});
-    if (face) ui.image(60, 360, 64, 64, face);
-    else ui.text(64, 383, "Geko", ui_colors::yellow, 16.0f, 2, 56);
-    ui.text(144, 356, page, ui_colors::white, kSize);
-    if (prompt) ui.prompt(578, 432, frame);
+    ui.rect(46, 346, 76, 76, ui_colors::window_line);
+    ui.gradient(48, 348, 72, 72, UiColor{0.2f, 0.55f, 0.35f, 1}, UiColor{0.08f, 0.3f, 0.2f, 1});
+    if (face) ui.image(52, 352, 64, 64, face);
+    else ui.text(52, 375, "Geko", ui_colors::yellow, 16.0f, 2, 64);
+    ui.text(140, 352, page, ui_colors::white, 19.0f);
+    if (prompt) ui.prompt(320, 440, frame);
 }
 
 void list_window(SimUi& ui, float x, float y, float w, const std::vector<std::string>& lines, int cursor, std::string_view title = {}) {

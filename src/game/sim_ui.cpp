@@ -168,6 +168,38 @@ void SimUi::name_tab(float x, float y, std::string_view name) {
     text(x + 14, y + 4, name, ui_colors::yellow, 18.0f);
 }
 
+void SimUi::polygon(const std::vector<std::pair<float, float>>& points, UiColor color) {
+    if (points.size() < 3) return;
+    auto g = std::make_shared<GeometryData>();
+    for (const auto& [px, py] : points) {
+        g->positions.push_back(layer(px, py));
+        g->colors.push_back(pack(color));
+    }
+    for (std::uint32_t i = 1; i + 1 < std::uint32_t(points.size()); ++i) g->indices.insert(g->indices.end(), {0, i, i + 1});
+    finish_geometry(*g);
+    pieces_.push_back({std::move(g), ui_colors::white, false});
+}
+
+void SimUi::talk_frame(float y, float h, std::string_view name, float open) {
+    const float shown = std::clamp(open, 0.0f, 1.0f);
+    if (shown <= 0.0f) return;
+    const float mid = y + h * 0.5f, half = h * 0.5f * shown;
+    y = mid - half;
+    h = half * 2.0f;
+    // The body across the layer, darker at the bottom, then the edge lines.
+    gradient(0, y, 640, h, UiColor{0.05f, 0.11f, 0.32f, 0.86f}, UiColor{0.02f, 0.05f, 0.18f, 0.9f});
+    rect(0, y, 640, 2, ui_colors::window_line);
+    rect(0, y + 4, 640, 1, ui_colors::window_line2);
+    rect(0, y + h - 5, 640, 1, ui_colors::window_line2);
+    rect(0, y + h - 2, 640, 2, ui_colors::window_line);
+    if (shown < 1.0f || name.empty()) return;
+    // The name tab: a slanted plate on the top line, cyan edged.
+    const float w = text_width(name, 18.0f) + 36.0f, top = y - 26.0f, x = 30.0f;
+    polygon({{x, top}, {x + w, top}, {x + w + 14, y}, {x - 6, y}}, ui_colors::window_line);
+    polygon({{x + 2, top + 2}, {x + w - 1, top + 2}, {x + w + 10, y}, {x - 2, y}}, UiColor{0.04f, 0.1f, 0.3f, 0.95f});
+    text(x + 16, top + 4, name, ui_colors::yellow, 18.0f);
+}
+
 void SimUi::cursor_bar(float x, float y, float w, float h) {
     gradient(x, y, w, h, UiColor{0.35f, 0.6f, 1, 0.55f}, UiColor{0.15f, 0.35f, 0.9f, 0.45f});
 }
