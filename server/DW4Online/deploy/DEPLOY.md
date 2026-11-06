@@ -829,8 +829,9 @@ re-encodes the text and silently turns every non-ASCII character into `?` (the r
    the code refuses anything below 49 whatever the file says); the room story settings work with
    their defaults (section 10). A release that raises the protocol goes on the server first and the game client after
    it: an older relay (0.1.5, minimum 47) admits a 48 client but checks its READY at the check tick only when the
-   donor's report happens to be there already; the new relay with `Play:MinimumProtocol` 48 asks older clients to
-   update.
+   donor's report happens to be there already; a relay with `Play:MinimumProtocol` 48 asks older clients to update.
+   Release 0.1.7 (the world, protocol 49) is different: its relay speaks only 49, so a 48 client cannot play until the
+   players have the new game client (section 9.2: the server first, the client release right after it).
 
 Rollback: stop the service, swap `app` and `app.previous` back; if the update applied a migration (or one failed half
 way), restore the backup from step 2 into `dw4online` first (the old build refuses a database that is newer than
@@ -1090,7 +1091,9 @@ A deleted account (`deleted_<id>`) has no `online_prefs` and no member rows; ins
   back (*Put back*) when misuse or an error damaged it; resetting the online character empties the story.
 - `Play:MinimumProtocol` and `Play:CurrentProtocol` follow the game client (45 since round S2, 46 since round 63: a
   member's own menus, 47 since round G-core: flag 503 as story and the reason queued, 48 since the READY check of a join
-  from a checkpoint at its check tick, SEAMLESS.md 6.13.5): older clients are asked to update.
+  from a checkpoint at its check tick, SEAMLESS.md 6.13.5, 49 since release 0.1.7: the online world, section 9.2): older
+  clients are asked to update. From 49 on the code refuses anything below 49 whatever the file says (`/api/v1/status`
+  announces the effective minimum); keep both at 49 (the production example's values) until a release names a higher one.
 - Friends and blocks (section 9.1, SEAMLESS.md 19.11): the limits per account in `Friends:*` (`RequestsPerHour` 20,
   `RequestsPerDay` 100, `MaxPendingOut` 50, `MaxPendingIn` 100, `MaxFriends` 200, `MaxBlocks` 500, `RequestDays` 30)
   and `RateLimits:SocialPerMinute` (60), `FriendListSeconds` (one `GET /friends` per 2 s), `WebSocialPerMinute` (60)
