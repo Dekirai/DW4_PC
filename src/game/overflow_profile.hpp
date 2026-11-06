@@ -187,6 +187,16 @@ struct RunReward {
     std::vector<std::string> new_records; // keys, in record_table order
 };
 
+// The run's bits of a defeat (4.7: 5 % of the defeats leave bits worth the
+// original's band for player 1's level, 10-55 up to level 18 ... 566-1160,
+// x (100 + BITRITSU) / 100). Until the run drops g_000bit itself (O2) the
+// driver credits them at the defeat, with its own generator (`random`, a
+// splitmix64 state seeded from the run's seed), so the run's engine and the
+// director's draws stay as they are.
+inline constexpr int kDefeatBitsPercent = 5;
+int defeat_bits(int level, int bit_rate, std::uint64_t& random);
+std::uint64_t bits_seed(std::uint32_t run_seed);
+
 // The tier's Sim Bits factor (4.3: 1, 1.5, 2).
 double tier_factor(int tier);
 // Sim Bits of a run (4.9): its bits x the tier's factor, +500 x the factor

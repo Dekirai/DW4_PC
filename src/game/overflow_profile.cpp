@@ -558,6 +558,31 @@ std::string form_unlock_text(std::string_view model) {
 // ---------------------------------------------------------------------------
 // A run's end
 // ---------------------------------------------------------------------------
+int defeat_bits(int level, int bit_rate, std::uint64_t& random) {
+    auto next = [&random] {
+        // splitmix64 (the randomizer's and the director's pattern)
+        std::uint64_t z = (random += 0x9E3779B97F4A7C15ull);
+        z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ull;
+        z = (z ^ (z >> 27)) * 0x94D049BB133111EBull;
+        return z ^ (z >> 31);
+    };
+    if (int(next() % 100) >= kDefeatBitsPercent) return 0;
+    // The original's bands (items.cpp, 803B13F8): up to level, low, high.
+    static constexpr int kBands[][3] = {{18, 10, 55},   {38, 55, 100},  {59, 87, 195},  {93, 162, 350},
+                                        {107, 232, 520}, {143, 340, 700}, {202, 446, 860}, {9999, 566, 1160}};
+    int lo = 566, hi = 1160;
+    for (const auto& band : kBands)
+        if (level <= band[0]) {
+            lo = band[1];
+            hi = band[2];
+            break;
+        }
+    const int amount = lo + int(next() % std::uint64_t(hi - lo));
+    return std::max(0, amount * (std::max(-100, bit_rate) + 100) / 100);
+}
+
+std::uint64_t bits_seed(std::uint32_t run_seed) { return 0xB17B175EED000000ull ^ (std::uint64_t(run_seed) * 0x9E3779B97F4A7C15ull); }
+
 double tier_factor(int tier) { return tier >= 2 ? 2.0 : tier == 1 ? 1.5 : 1.0; }
 
 std::int64_t run_sim_bits(const RunReport& report) {

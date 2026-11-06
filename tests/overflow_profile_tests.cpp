@@ -317,6 +317,37 @@ void plug_lab() {
     check(std::string(ov::buy_result_text(ov::BuyResult::not_enough)) == "Not enough Sim Bits.", "texts");
 }
 
+void defeat_bits() {
+    // 4.7: 5 % of the defeats, the original's band for the level, x (100 + BITRITSU) / 100.
+    std::uint64_t random = ov::bits_seed(1);
+    int drops = 0, low = 1 << 30, high = 0;
+    long long sum = 0;
+    for (int i = 0; i < 20000; ++i) {
+        const int bits = ov::defeat_bits(10, 0, random);
+        if (!bits) continue;
+        ++drops;
+        sum += bits;
+        low = std::min(low, bits);
+        high = std::max(high, bits);
+    }
+    check(drops > 800 && drops < 1200, "about 5 % of the defeats leave bits (" + std::to_string(drops) + ")");
+    check(low >= 10 && high < 55, "level 10: the band 10-55");
+    std::uint64_t a = ov::bits_seed(7), b = ov::bits_seed(7);
+    for (int i = 0; i < 500; ++i) check(ov::defeat_bits(40, 10, a) == ov::defeat_bits(40, 10, b), "deterministic");
+    check(ov::bits_seed(1) != ov::bits_seed(2), "seeds differ");
+    // The band at level 60 and the BIT Board's +10 %.
+    std::uint64_t c = ov::bits_seed(3);
+    int seen = 0;
+    for (int i = 0; i < 5000 && seen < 50; ++i) {
+        const int bits = ov::defeat_bits(60, 10, c);
+        if (!bits) continue;
+        ++seen;
+        check(bits >= 162 * 110 / 100 && bits < 350 * 110 / 100, "level 60, BITRITSU 10");
+    }
+    check(seen == 50, "drops at level 60");
+    (void)sum;
+}
+
 void records_and_bits() {
     // Sim Bits (4.9): bits x the tier's factor, +500 x the factor on a clear.
     ov::RunReport r;
@@ -486,6 +517,7 @@ int main() {
         damaged_text();
         store();
         plug_lab();
+        defeat_bits();
         records_and_bits();
         loadouts();
         forms();
