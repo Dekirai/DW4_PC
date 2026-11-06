@@ -119,3 +119,26 @@ The only change outside a run engine is `Engine::route_donor`'s new defaulted pa
 After e10 only run-engine values changed (Tuning, tables.inc, the balance test), so det.sh and r25c stand.
 T3 / T4 / T5 / T8 / T11 (lane A's host scripts) were not run again in this lane: it changed no host code
 except the F1 dev start's form list (`draw_dev_start`) and the driver's request keys.
+
+## 8. Left (not done in this lane)
+
+- **More seeds.** 14.2 asks 20 seeds a form and bot; this round's final measurement (section 7) has 3-12. Next:
+  the four Rookies x human / kite on seeds 1-20 and 301-320, human Agumon on 101-120 (11.6's 40-run tail),
+  kite Veemon on 201-220 (11.6's Tortomon comparison) with `build/f/jobs.sh` (about 2.5 minutes per four runs).
+- **Traits** (5.2) and Fire's splash / Bolt's jump / Ice's slow (6.4) are not built (round O3; Agumon's crowd
+  answer here is its Bomb, section 6).
+- **Guilmon's and Dorumon's Arts** use their own SQ_ATCK1 boxes and Blade Arc's Forge rules (a strike on the next
+  target, +20 %, the mirrored return line, +30 % size). Not built: Crescent Draw's aim at the densest group and
+  its wider arc and crit, Fang Thrust's pierce and reach 30 (6.3).
+- **Guardians:** no camera shake at the entry; the Violet Ring's return gate after the clear (the results come
+  after 4 s); the elite fallback is coded (`elite=`) but no Guardian needs it on the Violet Ring. The boss bar
+  (i_bosshp02) is sent but not looked at in a picture (lane D's screenshot set should show it).
+- **Awakening:** the signature takes the socket and its model comes in hand by the ladder's own model change;
+  the x_100charge01 burst on every hit (6.5) is not built.
+- **Gear:** the Drain Ram's run cap (2 % of MaxHP a second, 4.8) is not built (DW4's HPDRAIN as it is); the
+  chips' power-up panel (SQ_TECUP) comes at most every 30 steps but is not counted in the rules' panel gap.
+  The ?????? offer, the other cores, boards and chips are O2's.
+- **Lane A's host tests** T3 / T4 / T5 / T8 / T11 were not run again (no host code changed but the dev start's
+  form list and the driver's request keys).
+- **The user's run** decides the finale's HP (x 14) and the late contact (section 5): the bots model a newcomer
+  and a kiting player, not him.
