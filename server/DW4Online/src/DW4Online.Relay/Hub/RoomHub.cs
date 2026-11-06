@@ -3,6 +3,7 @@ using System.Numerics;
 using DW4Online.Domain.Rooms;
 using DW4Online.Domain.Story;
 using DW4Online.Relay.Protocol;
+using DW4Online.Relay.World;
 using Microsoft.Extensions.Logging;
 
 namespace DW4Online.Relay.Hub;
@@ -14,11 +15,13 @@ public interface IMembershipLog
 }
 
 /// <summary>
-/// The relay side of one room (SEAMLESS.md 3, 6): its members' connections, the instances (solo-led and sealed lockstep
-/// groups), server-paced sealing, events, barrier decisions, forks, the snapshot and log store and state delivery. The
-/// server never simulates. Every public method runs under <c>lock (hub.Sync)</c>; sending only queues frames.
+/// The relay side of the world (SEAMLESS.md 3, 6, 19): its members' connections, the stage groups (solo-led and sealed
+/// lockstep groups; "instances" in sections 3 and 6), server-paced sealing, events, barrier decisions, forks, the snapshot and
+/// log store and state delivery, and the user's instances (World/WorldHub.cs). One hub for the whole server, generalized from
+/// round S1's room hub and not renamed (19.17.4). The server never simulates. Every public method runs under
+/// <c>lock (hub.Sync)</c>; sending only queues frames.
 /// </summary>
-public sealed class RoomHub
+public sealed partial class RoomHub
 {
     private static readonly double Freq = Stopwatch.Frequency;
     private readonly RelayOptions _relay;
@@ -31,50 +34,28 @@ public sealed class RoomHub
     private readonly Dictionary<int, HubMember> _members = [];
     private readonly Dictionary<uint, HubInstance> _instances = [];
     private readonly List<ArrivalGroup> _holds = [];
-    private readonly RoomSessionState _session;
+    private uint _nextInstance = 1;
     private uint _pingNonce;
     private long _lastPing;
-    private long _lastRoster;
 
-    /// <param name="stateRunner">Builds state transfers outside the room lock (the relay: on the thread pool, then
+    /// <param name="stateRunner">Builds state transfers outside the hub lock (the relay: on the thread pool, then
     /// <see cref="FinishState"/> under the lock); null builds them at once (the tests).</param>
-    /// <param name="session">What the room keeps while its hub is rebuilt (the relay drops an empty hub while the room stays
-    /// open): its story keeper and the next instance id. Null: a room of its own (the tests).</param>
     public RoomHub(RoomInfo info, RelayOptions relay, SealingOptions sealing, InstanceOptions instances, ILogger log, IMembershipLog? mlog = null,
-        Action<StateJob>? stateRunner = null, RoomSessionState? session = null)
+        Action<StateJob>? stateRunner = null, WorldHubOptions? world = null)
     {
         Info = info;
-        _session = session ?? new RoomSessionState();
         _relay = relay;
         _sealing = sealing;
         _inst = instances;
         _log = log;
         _mlog = mlog;
         _stateRunner = stateRunner;
+        _world = world ?? new WorldHubOptions();
     }
 
-    /// <summary>Saves a new revision of the room story as the owner's online story (the account, a copy, whether only counters
-    /// changed); set by the relay.</summary>
+    /// <summary>Saves a keeper's new revision as its owner's online story (the account, a copy, whether only counters changed); set by
+    /// the relay (it only queues: the hub lock is held).</summary>
     public Action<long, RoomStoryData, bool>? StorySaver { get; set; }
-
-    /// <summary>The room story of this session (SEAMLESS.md 8.3-8.7), from the owner's story the first connection brought; it
-    /// stays with the room when the hub is rebuilt.</summary>
-    public RoomStoryKeeper Story => _session.Story ??= NewKeeper(Info.Story, _inst, Info.Protocol);
-
-    /// <summary>A room's story keeper from its start (the owner's story, difficulty, policy and presence), with the options'
-    /// per-visit and per-member rules. Without a start (relay-only tests): an empty, started story. A room of a protocol
-    /// before 47 answers earned values with Wait, as before round G (its clients do not know Queued).</summary>
-    public static RoomStoryKeeper NewKeeper(RoomStoryInit? init, InstanceOptions inst, int protocol = RoomStoryKeeper.QueuedProtocol)
-    {
-        var answer = protocol > 0 && protocol < RoomStoryKeeper.QueuedProtocol ? StoryRefusal.Wait : StoryRefusal.Queued;
-        return init is { } s
-            ? new RoomStoryKeeper(s.Story, s.Difficulty, s.Policy, s.OwnerPresent, started: s.Started) { MinVisitSeconds = inst.StoryMinVisitSeconds,
-                PhaseStepSeconds = inst.StoryPhaseStepSeconds, KeySeconds = inst.StoryKeySeconds, FlagBurst = inst.StoryFlagBurst,
-                FlagSeconds = inst.StoryFlagSeconds, MaxLinesPerMember = inst.StoryLinesPerMember, EarnedAnswer = answer }
-            : new RoomStoryKeeper(new RoomStoryData(), 0, StoryPolicy.Drop, ownerPresent: true) { MinVisitSeconds = inst.StoryMinVisitSeconds,
-                PhaseStepSeconds = inst.StoryPhaseStepSeconds, KeySeconds = inst.StoryKeySeconds, FlagBurst = inst.StoryFlagBurst,
-                FlagSeconds = inst.StoryFlagSeconds, MaxLinesPerMember = inst.StoryLinesPerMember, EarnedAnswer = answer };
-    }
 
     /// <summary>The views as the last housekeeping pass saw them (the room API's answer while the room is busy).</summary>
     public IReadOnlyList<InstanceView> CachedViews { get; private set; } = [];
@@ -129,49 +110,6 @@ public sealed class RoomHub
 
     // Connections -------------------------------------------------------------------------------------------------------
 
-    /// <summary>A member's relay connection completed its handshake.</summary>
-    public HubMember Connect(int index, long accountId, string name, bool owner, IHubPeer peer, long now)
-    {
-        if (!_members.TryGetValue(index, out var m) || m.AccountId != accountId)
-        {
-            if (m is not null) RemoveMemberLocked(m, CloseReason.Replaced, "Another account took this place in the room.", now);
-            m = new HubMember(index, accountId, name, owner);
-            _members[index] = m;
-            foreach (var other in _members.Values)
-                if (other != m) other.Peer?.Send(new RoomMsg(RoomNotice.MemberJoined, (byte)m.Index, (ulong)m.AccountId, m.Name, Flags(m)).Frame());
-        }
-        m.Owner = owner;
-        if (m.Peer is { } old && old != peer) old.Close(CloseReason.Replaced, "A newer connection of this account replaced this one.");
-        var resumable = m.Instance is { Ended: false } i && m.DisconnectedAt != 0 && m.Joining is null && m.Arrival is null && i.Barrier is null &&
-                        m.Slot >= 0 && i.Slots[m.Slot] == m && i.Mode != InstanceMode.Hub;
-        m.Peer = peer;
-        m.DisconnectedAt = 0;
-        m.LastHeard = now;
-        m.ResumeAllowed = resumable;
-        if (!resumable)
-        {
-            MarkLone(m);
-            DetachLocked(m, now, leaveNow: true);
-            var hub = NewInstance(InstanceMode.Hub, "", 1, 0, now);
-            Place(m, hub, 0, now);
-        }
-        var inst = m.Instance!;
-        peer.Send(new WelcomeMsg((byte)m.Index, inst.Id, inst.Visit, (byte)m.Slot, inst.Mode, inst.Stage,
-            resumable && m.Cursor > 0 ? m.Cursor - 1 : WelcomeMsg.NoTick, (byte)(inst.Streams[m.Slot]?.Delay.Current ?? 0),
-            (ushort)_inst.MaxCatchUpSeconds, (byte)((resumable ? WelcomeMsg.Resumable : 0) | WelcomeMsg.PresenceV2 | (Info.Protocol >= Wire.CheckpointProtocol ? WelcomeMsg.Checkpoints : 0))).Frame());
-        // The confirmed room story to start from (the title applies it at game start; SEAMLESS.md 8.5).
-        peer.Send(new StoryAckMsg(Story.Story.Revision, Story.Story.ToBlob(), 0, []).Frame());
-        foreach (var other in _members.Values)
-        {
-            peer.Send(new RoomMsg(RoomNotice.MemberJoined, (byte)other.Index, (ulong)other.AccountId, other.Name, Flags(other)).Frame());
-            if (other != m) other.Peer?.Send(new RoomMsg(RoomNotice.Connected, (byte)m.Index, (ulong)m.AccountId, m.Name, Flags(m)).Frame());
-        }
-        Note("connect", inst, ("member", m.Index), ("resumed", resumable));
-        return m;
-    }
-
-    private static byte Flags(HubMember m) => m.Owner ? RoomMsg.Owner : (byte)0;
-
     /// <summary>
     /// The server is about to lose the member's place (a reconnect without resuming, a lost connection in a lobby or at a
     /// barrier): its client plays on in its stage alone, or goes on as NEW into its barrier's target. Its STORY counts
@@ -195,65 +133,71 @@ public sealed class RoomHub
         }
     }
 
-    /// <summary>A member's connection closed (its slot stays filled for Relay:ReconnectSeconds in a logged instance).</summary>
+    /// <summary>
+    /// A member's connection closed (its slot stays filled for Relay:ReconnectSeconds in a logged stage group; a host's for his
+    /// grace, 19.6.7). BYE (graceful) is quitting: the member leaves the world (a hosted instance ends, host_left).
+    /// </summary>
     public void Disconnect(HubMember m, IHubPeer peer, long now, bool graceful = false)
     {
         if (m.Peer != peer) return;
         m.Peer = null;
         m.DisconnectedAt = now;
-        foreach (var other in _members.Values)
-            other.Peer?.Send(new RoomMsg(RoomNotice.Disconnected, (byte)m.Index, (ulong)m.AccountId, m.Name, Flags(m)).Frame());
-        Note("disconnect", m.Instance, ("member", m.Index), ("graceful", graceful));
-        if (graceful || m.Joining is not null || m.Arrival is not null || m.Instance is null || m.Instance.Mode == InstanceMode.Hub || m.Instance.Barrier is not null)
+        Note("disconnect", m.Instance, ("member", m.Id), ("account", m.AccountId), ("graceful", graceful), ("wid", m.World?.Wid ?? 0));
+        if (graceful)
         {
-            // (A lobby or a parked barrier: the client plays on there alone, its STORY after the reconnect counts there.)
-            if (!graceful) MarkLone(m);
+            LeaveWorld(m, "left", now);
+            return;
+        }
+        if (m.World is { } w)
+        {
+            MarkInfoDirty(w);
+            if (w.Host == m) StartGrace(w, now, "closed");
+        }
+        if (m.Joining is not null || m.Arrival is not null || m.Instance is null || m.Instance.Mode == InstanceMode.Hub || m.Instance.Barrier is not null)
+        {
+            // (A lobby or a parked barrier: the client plays on there alone, its STORY after the reconnect counts there. A host at
+            // a barrier: the barrier is decided without him, he keeps his seat and his grace; back in time, his parked barrier is
+            // decided again inside his instance, 19.6.7.)
+            MarkLone(m);
             DetachLocked(m, now, leaveNow: true);
         }
         else if (m.Instance is { Mode: InstanceMode.Sealed, Sealing: false, Barrier: null, Ended: false } waiting)
             TryStartSealing(waiting, now); // (its hash is not awaited from a gone member; the reconnect window runs from tick 0)
     }
 
-    /// <summary>The member left the room (leave, kick, timeout, a staff lock): its connection closes, its slot leaves at once.</summary>
+    /// <summary>The member left (a staff lock, a deletion): its connection closes, it leaves the world at once.</summary>
     public void RemoveMember(long accountId, CloseReason reason, string text, long now)
     {
-        if (_members.Values.FirstOrDefault(x => x.AccountId == accountId) is { } m) RemoveMemberLocked(m, reason, text, now);
-    }
-
-    private void RemoveMemberLocked(HubMember m, CloseReason reason, string text, long now)
-    {
+        if (!_byAccount.TryGetValue(accountId, out var m)) return;
         m.Peer?.Close(reason, text);
         m.Peer = null;
-        DetachLocked(m, now, leaveNow: true);
-        _members.Remove(m.Index);
-        foreach (var other in _members.Values)
-            other.Peer?.Send(new RoomMsg(RoomNotice.MemberLeft, (byte)m.Index, (ulong)m.AccountId, m.Name, Flags(m)).Frame());
-        Note("member_left", null, ("member", m.Index), ("reason", reason.ToString()));
+        LeaveWorld(m, "left", now);
     }
 
-    /// <summary>The room closed: every connection gets CLOSE, every instance ends.</summary>
+    /// <summary>The server stops: every instance ends (server_stop), every connection gets CLOSE; nothing of the world survives the
+    /// process (a client in a field takes the home departure itself, 19.6.10).</summary>
     public void CloseAll(CloseReason reason, string text)
     {
+        var now = Stopwatch.GetTimestamp();
+        foreach (var w in _worlds.Values.ToList())
+            if (!w.Ending)
+            {
+                w.Ending = true;
+                w.EndReason = EndReason.ServerStop;
+                History?.Invoke(new HistoryEnd(w, EndReasons.Text(EndReason.ServerStop), w.PeakPlayers, UtcNow));
+                foreach (var (m, seat) in w.Seats) History?.Invoke(new HistoryLeft(w, m.AccountId, seat.SinceUtc, "ended", UtcNow));
+            }
         foreach (var m in _members.Values.ToList())
         {
             m.Peer?.Close(reason, text);
             m.Peer = null;
         }
         _members.Clear();
+        _byAccount.Clear();
         _instances.Clear();
         _holds.Clear();
-    }
-
-    /// <summary>Owner present / away (the story follows the owner, SEAMLESS.md 8.6).</summary>
-    public void OwnerPresence(bool present)
-    {
-        var owner = _members.Values.FirstOrDefault(m => m.Owner);
-        foreach (var m in _members.Values)
-            m.Peer?.Send(new RoomMsg(present ? RoomNotice.OwnerPresent : RoomNotice.OwnerAway, (byte)(owner?.Index ?? 0xFF),
-                (ulong)(owner?.AccountId ?? 0), owner?.Name ?? "", RoomMsg.Owner).Frame());
-        Note("owner", null, ("present", present), ("held", Story.HeldCount));
-        // The hold policy merges what was kept when the owner returns.
-        if (Story.SetOwnerPresent(present)) StoryChanged(null);
+        _worlds.Clear();
+        Note("stopped", null, ("at", now));
     }
 
     /// <summary>
@@ -345,6 +289,7 @@ public sealed class RoomHub
             case Msg.StateHash: OnStateHash(m, StateHashMsg.Parse(p), now); break;
             case Msg.Checkpoint: OnCheckpoint(m, CheckpointMsg.Parse(p), now); break;
             case Msg.CheckpointBad: OnCheckpointBad(m, CheckpointBadMsg.Parse(p), now); break;
+            case Msg.InstanceOp: OnInstanceOp(m, InstanceOpMsg.Parse(p), now); break;
             case Msg.Bye: ByeMsg.Parse(p); break; // the connection layer closes it gracefully
             default: throw new ProtocolException("unknown frame type " + Msg.Name(type));
         }
@@ -360,6 +305,7 @@ public sealed class RoomHub
 
     private void OnInput(HubMember m, InputMsg msg, long now)
     {
+        Heard(m, now);
         if (Mine(m, msg.Inst, msg.Visit) is not { Mode: InstanceMode.Sealed } i || i.Streams[m.Slot] is not { } s) return;
         for (var k = 0; k < msg.Pads.Length; ++k)
         {
@@ -498,36 +444,23 @@ public sealed class RoomHub
         FanPresence(m, msg.Presence, msg, now);
     }
 
-    /// <summary>
-    /// A member's presence to the room members in the same stage outside its sealed instance (name tags, and in a hub
-    /// stage ghost figures): PRESENCE2 to those that send it, PRESENCE to the others. A member that just left a stage
-    /// (another stage, or hidden while it loads) is also sent to those still in the stage it left, so its tag and figure
-    /// go at once instead of after the two seconds a stale one stays.
-    /// </summary>
-    private void FanPresence(HubMember m, PresenceMsg msg, Presence2Msg? msg2, long now)
-    {
-        var left = m.Presence?.Stage;
-        if (string.IsNullOrEmpty(left) || string.Equals(left, msg.Stage, StringComparison.OrdinalIgnoreCase)) left = null;
-        m.Presence = msg;
-        m.Presence2 = msg2;
-        m.PresenceAt = now;
-        byte[]? v1 = null, v2 = null;
-        foreach (var o in _members.Values)
-        {
-            if (o == m || o.Peer is null || o.Presence is null) continue;
-            if (!string.Equals(o.Presence.Stage, msg.Stage, StringComparison.OrdinalIgnoreCase) &&
-                (left is null || !string.Equals(o.Presence.Stage, left, StringComparison.OrdinalIgnoreCase))) continue;
-            if (o.Instance is not null && m.Instance is not null && o.Instance == m.Instance && o.Instance.Mode != InstanceMode.Hub) continue;
-            if (msg2 is not null && o.PresenceV2) o.Peer.Send(v2 ??= new Presence2OutMsg((byte)m.Index, msg2).Frame());
-            else o.Peer.Send(v1 ??= new PresenceOutMsg((byte)m.Index, msg).Frame());
-        }
-    }
+    /// <summary>A member's presence (19.13): server-wide in the hub stages by the selection, in a field to the own instance's members
+    /// (World/WorldHub.cs, FanWorldPresence).</summary>
+    private void FanPresence(HubMember m, PresenceMsg msg, Presence2Msg? msg2, long now) => FanWorldPresence(m, msg, msg2, now);
 
     private void OnPong(HubMember m, PongMsg msg, long now)
     {
         if (msg.Nonce != m.PingNonce || m.PingSentAt == 0) return;
         m.Rtt.Add(Ms(now - m.PingSentAt));
         m.PingSentAt = 0;
+        Heard(m, now);
+    }
+
+    /// <summary>INPUT or PONG from the member: a host silent in his grace (an open connection, 19.6.7) is back.</summary>
+    private void Heard(HubMember m, long now)
+    {
+        m.LastInputOrPong = now;
+        if (m.World is { HostAway: true } w && w.Host == m && m.Connected) HostBack(w, now);
     }
 
     // Sealing ------------------------------------------------------------------------------------------------------------
@@ -727,6 +660,26 @@ public sealed class RoomHub
     private void OnIntent(HubMember m, IntentMsg msg, long now)
     {
         if (Mine(m, msg.Inst, msg.Visit) is not { } i) return;
+        if (msg.Kind == IntentKind.GoAlong)
+        {
+            // Round I1b's go along; the I1a relay makes no offers.
+            Count("intent_ignored");
+            return;
+        }
+        if (msg.Kind == IntentKind.Leave)
+        {
+            // *Leave instance* (19.6.4): HOME for the own slot (sealed: stamped; solo-led: JOIN_REQ kind home). A host's leave ends
+            // his instance (19.6.5: on purpose, host_left).
+            if (m.World is not { } w || i.Mode == InstanceMode.Hub)
+            {
+                Count("intent_ignored");
+                return;
+            }
+            Note("leave_intent", i, ("member", m.Id), ("wid", w.Wid));
+            if (w.Host == m) EndWorld(w, EndReason.HostLeft, now);
+            else SendHome(i, (byte)(1 << m.Slot), HomeReason.Leave, now, 0);
+            return;
+        }
         if (i.Mode != InstanceMode.Sealed || !i.Sealing)
         {
             Count("intent_ignored");
@@ -740,6 +693,8 @@ public sealed class RoomHub
         }
         var j = StampTick(i);
         i.AddEvent(j, TickEvent.Intent(m.Slot, msg.Kind, msg.Argument));
+        // M3: a give-up copy's game over (a barrier with alive mask 0) is on purpose, not "defeated".
+        if (msg.Kind == IntentKind.GiveUp) m.GaveUp = true;
         Note("intent", i, ("slot", m.Slot), ("kind", msg.Kind.ToString()), ("tick", j));
     }
 
@@ -789,6 +744,7 @@ public sealed class RoomHub
         i.S0 = now + FromMs(Math.Min(rtt, 500)) + 2 * TickTs - (long)(i.NextSeal * Wire.TickSeconds * Freq);
         i.Sealing = true;
         Note("sealing", i, ("from", i.NextSeal));
+        StampPendingHome(i, now);
         _sealer?.Invoke();
     }
 
@@ -1000,6 +956,14 @@ public sealed class RoomHub
 
     private void OnBarrier(HubMember m, BarrierMsg msg, long now)
     {
+        // Protocol 49: the member's own settings (its Game Start difficulty, its Online > Settings): a NEW from home makes them its
+        // instance's, a DISSOLVE rebases its own story on that difficulty.
+        if (msg.Settings is { } own) m.Settings = own;
+        OnBarrierWorld(m, msg, now);
+    }
+
+    private void OnBarrierWorld(HubMember m, BarrierMsg msg, long now)
+    {
         var abandons = m.Arrival is not null || (m.Joining is { } joining && (joining.Target.Id != msg.Inst || joining.Target.Visit != msg.Visit));
         var known = m.Instance is { Ended: false } own && own.Visit == msg.Visit && (own.Id == msg.Inst || m.PreviousInstanceId == msg.Inst) && m.Slot >= 0;
         if (abandons || (m.Joining is null && !known))
@@ -1035,10 +999,10 @@ public sealed class RoomHub
             // leaves whatever instance the server still had it in (a slot left filled there made a zombie instance that
             // joiners were sent to). Its engine's slot: the BARRIER's only present slot, else the server's.
             var slot = BitOperations.PopCount(msg.PresentMask) == 1 ? BitOperations.TrailingZeroCount(msg.PresentMask) : Math.Max(0, m.Slot);
-            var stage = i?.Stage ?? "";
+            var stage = i?.Stage ?? m.LoneStage ?? "";
             DetachLocked(m, now, leaveNow: true);
-            var lone = new HubInstance(0) { Stage = stage, Visit = msg.Visit, ContextHash = msg.ContextHash, Ended = true };
-            var g = new ArrivalGroup { From = lone, BarrierTick = msg.Tick, Stage = msg.Stage, Point = msg.Point, Context = msg.ContextHash, ParkedAt = now };
+            var lone = new HubInstance(0) { Stage = stage, Visit = msg.Visit, ContextHash = msg.ContextHash, Ended = true, Detached = i?.Detached == true };
+            var g = new ArrivalGroup { From = lone, BarrierTick = msg.Tick, Stage = msg.Stage, Point = msg.Point, Context = msg.ContextHash, ParkedAt = now, Alive = msg.AliveMask };
             g.Members.Add(new Arrival(m, slot, msg.Carry));
             m.Arrival = g;
             Note("barrier_alone", null, ("member", m.Index), ("to", msg.Stage));
@@ -1082,7 +1046,7 @@ public sealed class RoomHub
         }
         if (i.Log.Count > b.Tick + 1 && b.Tick + 1 >= i.Log.PrefixCount) i.Log.TruncateTo(b.Tick + 1);
         foreach (var k in i.Ahead.Keys.Where(k => k > b.Tick).ToList()) i.Ahead.Remove(k);
-        var g = new ArrivalGroup { From = i, BarrierTick = b.Tick, Stage = b.Stage, Point = b.Point, Context = b.Context, ParkedAt = now };
+        var g = new ArrivalGroup { From = i, BarrierTick = b.Tick, Stage = b.Stage, Point = b.Point, Context = b.Context, ParkedAt = now, Alive = b.Alive };
         foreach (var (slot, (member, carry)) in reporters)
         {
             g.Members.Add(new Arrival(member, slot, carry));
@@ -1150,7 +1114,7 @@ public sealed class RoomHub
         ++i.Desyncs;
         Count("barrier_split");
         var lone = new HubInstance(0) { Stage = i.Stage, Visit = i.Visit, ContextHash = b.Context, Ended = true };
-        var g = new ArrivalGroup { From = lone, BarrierTick = b.Tick, Stage = b.Stage, Point = b.Point, Context = b.Context, ParkedAt = now };
+        var g = new ArrivalGroup { From = lone, BarrierTick = b.Tick, Stage = b.Stage, Point = b.Point, Context = b.Context, ParkedAt = now, Alive = b.Alive };
         i.Barrier = null;
         i.SealStop = null;
         // The stall moves the schedule: the next tick is due now, as if the stalled time had not been.
@@ -1169,17 +1133,32 @@ public sealed class RoomHub
         if (g.Members.Count > 0) Decide(g, now);
     }
 
-    /// <summary>The decision of SEAMLESS.md 3.4: DISSOLVE, co-arrival, JOIN (with holds), NEW.</summary>
+    /// <summary>
+    /// The decision of SEAMLESS.md 3.4 in the world (19.6.3, 19.7, 19.30.3): into a hub stage a DISSOLVE (home); an instance that
+    /// ended (or a stage group nobody's any more) a DISSOLVE redirected home; an arrival from home the world's matching (a
+    /// co-arrival, a starting instance, round I1a's automatic join of the first candidate, a guest's NEW, or a new instance);
+    /// inside an instance 3.4 among the instance's own stage groups (co-arrival, JOIN with holds, a new stage group of it).
+    /// </summary>
     private void Decide(ArrivalGroup g, long now)
     {
-        if (StageNames.IsHub(g.Stage))
+        var w = WorldOfGroup(g);
+        g.World = w;
+        if (g.From.Detached || w is { Ending: true } || (w is not null && !_worlds.ContainsKey(w.Wid)))
         {
-            Dissolve(g, now);
+            Dissolve(g, now, redirectHome: true);
             return;
         }
+        if (StageNames.IsHub(g.Stage))
+        {
+            Dissolve(g, now, redirectHome: false);
+            return;
+        }
+        if (w is not null) ArrivedInside(w, g);
         // A base that holds for announced groups takes this one as a co-arrival (one it does not wait for only where the
-        // ones it waits for still fit).
+        // ones it waits for still fit): inside an instance only its own groups; from home only fresh bases this group may see
+        // (19.7.6: "visible to them"), never a group of a running instance (that one is a candidate instead).
         var holder = _holds.FirstOrDefault(h => h.Hold == HoldKind.CoArrival && h != g && SameStage(h.Stage, g.Stage) && h.Context == g.Context &&
+                                                h.World == w && (w is not null || MaySeeBase(h, g)) &&
                                                 h.Size + g.Members.Count + OutstandingSize(h, g) <= Capacity);
         if (holder is not null)
         {
@@ -1196,6 +1175,7 @@ public sealed class RoomHub
         var announced = _members.Values.Where(x => g.Members.All(a => a.Member != x) && x.Heading is { } h && SameStage(h.Stage, g.Stage) &&
                                                    Ms(now - h.At) <= _inst.HeadingValidMs && x.Arrival is null && x.Joining is null &&
                                                    h.Context == g.Context && x.Instance is not null && x.Connected &&
+                                                   (w is not null ? x.World == w : x.World is null && MaySeeHost(g.Members[0].Member, g, x)) &&
                                                    !_holds.Any(o => o.Hold == HoldKind.CoArrival && o.Awaited.Contains(x))).ToList();
         var awaited = new List<HubMember>();
         var room = Capacity - g.Members.Count;
@@ -1216,7 +1196,22 @@ public sealed class RoomHub
             Note("hold_co_arrival", g.From, ("awaiting", awaited.Select(x => x.Index).ToArray()));
             return;
         }
-        JoinOrNew(g, now);
+        if (w is null) FreshJoinOrNew(g, now);
+        else JoinOrNew(g, now);
+    }
+
+    /// <summary>A fresh member <paramref name="x"/> may see the instance <paramref name="host"/> would make with this base group: no
+    /// block with any of them, and the host's default visibility lets it see it (19.7.6).</summary>
+    private static bool MaySeeHost(HubMember host, ArrivalGroup g, HubMember x)
+    {
+        if (g.Members.Any(a => Matching.Blocked(a.Member, x))) return false;
+        if (host.DataHash != x.DataHash) return false;
+        return host.DefaultVisibility switch
+        {
+            Visibility.Public => true,
+            Visibility.Friends => x.Staff || x.Friends.Contains(host.AccountId),
+            _ => x.Staff,
+        };
     }
 
     private static bool SameStage(string a, string b) => string.Equals(a, b, StringComparison.OrdinalIgnoreCase);
@@ -1229,8 +1224,9 @@ public sealed class RoomHub
     private void JoinOrNew(ArrivalGroup g, long now)
     {
         var size = g.Members.Count;
+        // (19.6.3: only stage groups of the arriving group's instance are candidates; a member never lands in another instance's.)
         var candidates = _instances.Values.Where(x => !x.Ended && x.Logged && !x.Departing && !x.LogFull && x.Barrier is null && x != g.From &&
-                                                      SameStage(x.Stage, g.Stage)).ToList();
+                                                      SameStage(x.Stage, g.Stage) && x.World is not null && x.World == g.World).ToList();
         if (candidates.Count == 0)
         {
             New(g, now, BarrierNotice.None, []);
@@ -1250,7 +1246,13 @@ public sealed class RoomHub
             New(g, now, notice, names);
             return;
         }
-        var target = ranked[0].Inst;
+        JoinTarget(g, ranked[0].Inst, now);
+    }
+
+    /// <summary>A JOIN of <paramref name="target"/> with 3.4's holds: a boss lock waits for the choice, a target not joinable yet holds
+    /// up to Instances:JoinHoldSeconds.</summary>
+    private void JoinTarget(ArrivalGroup g, HubInstance target, long now)
+    {
         g.Target = target;
         if (target.BossLock)
         {
@@ -1331,16 +1333,18 @@ public sealed class RoomHub
                         {
                             _holds.Remove(g);
                             g.Hold = HoldKind.None;
-                            JoinOrNew(g, now);
+                            if (g.Fresh) FreshJoinOrNew(g, now);
+                            else JoinOrNew(g, now);
                         }
                     }
                     break;
                 case HoldKind.Join:
-                    if (g.Target is null || g.Target.Ended || g.Target.Barrier is not null || g.Target.FreeSlots < g.Members.Count)
+                    if (g.Target is null || g.Target.Ended || g.Target.Barrier is not null || g.Target.FreeSlots < g.Members.Count ||
+                        g.Target.World is null || g.Target.World.Ending)
                     {
                         _holds.Remove(g);
                         g.Hold = HoldKind.None;
-                        JoinOrNew(g, now);
+                        Redecide(g, now);
                     }
                     else if (!HubRules.ContextMatches(g.Target, g.Context))
                     {
@@ -1349,7 +1353,7 @@ public sealed class RoomHub
                         _holds.Remove(g);
                         g.Hold = HoldKind.None;
                         Count("hold_context_changed");
-                        JoinOrNew(g, now);
+                        Redecide(g, now);
                     }
                     else if (g.Target.Joinable && g.Target.Snapshot.Complete && !g.Target.BossLock)
                     {
@@ -1366,38 +1370,74 @@ public sealed class RoomHub
                             Ms(g.HoldUntil - now) / 1000.0, 0, now);
                     break;
                 case HoldKind.Boss:
-                    if (g.Target is null || g.Target.Ended || g.Target.Barrier is not null || g.Target.FreeSlots < g.Members.Count)
+                    if (g.Target is null || g.Target.Ended || g.Target.Barrier is not null || g.Target.FreeSlots < g.Members.Count ||
+                        g.Target.World is null || g.Target.World.Ending)
                     {
                         _holds.Remove(g);
                         g.Hold = HoldKind.None;
-                        JoinOrNew(g, now);
+                        Redecide(g, now);
                     }
                     else if (!g.Target.BossLock && g.Choice == BarrierChoiceMsg.Wait)
                     {
                         _holds.Remove(g);
                         g.Hold = HoldKind.None;
-                        JoinOrNew(g, now);
+                        Redecide(g, now);
                     }
                     break;
             }
         }
     }
 
-    private void Dissolve(ArrivalGroup g, long now)
+    /// <summary>The way home a DISSOLVE takes when its instance ended, or for a guest whose barrier leads into the briefing room
+    /// (19.8.3): the lobby's point next to the gate.</summary>
+    public const string HomeStage = "stagML11";
+    public const byte HomePoint = 3;
+
+    /// <summary>
+    /// DISSOLVE (3.4, 19.8.3): every member home, each on its own story. BARRIER_OK carries the member's own keeper's newest revision
+    /// rebased on its own difficulty and its own settings; the story mode is *replace* for a member whose engine held another's story
+    /// (it comes from a field and is not the host), *merge* for the host and for moves between hub stages. A guest whose barrier leads
+    /// into stagML02 (the host's briefing room; round I1: every guest counts as not in step) and every member of an instance that
+    /// ended get a redirect to stagML11 point 3. The host's DISSOLVE ends his instance: on purpose (host_left), or defeated
+    /// (host_defeated, M3: his slot not alive in the barrier, outside a give-up copy), at once before round I3.
+    /// </summary>
+    private void Dissolve(ArrivalGroup g, long now, bool redirectHome)
     {
+        var fromField = g.From.Stage.Length > 0 && !StageNames.IsHub(g.From.Stage);
         foreach (var a in g.Members)
         {
             var m = a.Member;
             m.Arrival = null;
-            var hub = NewInstance(InstanceMode.Hub, g.Stage, 1, g.Context, now);
+            var w = m.World;
+            var isHost = w is not null && w.Host == m;
+            var redirect = "";
+            byte redirectPoint = 0;
+            if (redirectHome && !SameStage(g.Stage, HomeStage) || (w is not null && !isHost && SameStage(g.Stage, "stagML02")))
+            {
+                redirect = HomeStage;
+                redirectPoint = HomePoint;
+            }
+            if (isHost)
+            {
+                var defeated = ((g.Alive >> a.Slot) & 1) == 0 && !m.GaveUp;
+                EndWorld(w!, defeated ? EndReason.HostDefeated : EndReason.HostLeft, now);
+            }
+            var own = OwnKeeper(m);
+            if (!_worlds.Values.Any(x => x.Keeper == own && !x.Ending)) own.SetDifficulty(m.Settings.Difficulty);
+            var mode = fromField && !isHost ? StoryMode.Replace : StoryMode.Merge;
+            var hub = NewInstance(InstanceMode.Hub, redirect.Length > 0 ? redirect : g.Stage, 1, g.Context, now);
             var map = new sbyte[Wire.MaxSlots];
             Array.Fill(map, (sbyte)-1);
             map[a.Slot] = 0;
             DetachFromOld(g.From, m);
             Place(m, hub, 0, now);
+            var world = new BarrierWorld(0, 0, Visibility.Public, ArrivalKind.None, m.Settings, m.Settings.Hash(Wire.WorldProtocol, m.DataHash), m.Id,
+                (byte)m.Box, mode, redirect, redirectPoint);
             m.Peer?.Send(new BarrierOkMsg(g.From.Id, g.From.Visit, BarrierDecision.Dissolve, hub.Id, hub.Visit, g.Stage, g.Point, 0, map,
-                InstanceMode.Hub, 0, [], Story.Story.Revision, Story.Story.ToBlob()).Frame());
-            Note("dissolve", hub, ("member", m.Index), ("from", g.From.Id));
+                InstanceMode.Hub, 0, [], own.Story.Revision, own.Story.ToBlob()) { World = world }.Frame());
+            Note("dissolve", hub, ("member", m.Id), ("account", m.AccountId), ("from", g.From.Id), ("mode", mode.ToString()), ("wid", w?.Wid ?? 0));
+            if (redirect.Length > 0) Note("redirect", hub, ("wid", w?.Wid ?? 0), ("account", m.AccountId), ("member", m.Id), ("stage", redirect), ("point", redirectPoint));
+            if (w is not null) FreeSeat(w, m, w.Ending ? "ended" : "home", now);
         }
         EndIfEmpty(g.From, now);
     }
@@ -1428,6 +1468,23 @@ public sealed class RoomHub
     private void New(ArrivalGroup g, long now, BarrierNotice notice, IReadOnlyList<string> noticeNames)
     {
         _holds.Remove(g);
+        // A fresh arrival whose automatic join did not work out (the hold ran out, Go alone at a boss lock) plays its own instance:
+        // never a second stage group next to the chosen instance's (19.7.7).
+        if (g.Arrival is ArrivalKind.AutoJoin or ArrivalKind.Starting && g.World is { } chosen)
+        {
+            foreach (var x in g.Members.Select(a => a.Member).Concat(g.CoArrivals.SelectMany(c => c.Members).Select(a => a.Member)))
+                if (chosen.Seats.ContainsKey(x)) FreeSeat(chosen, x, "left", now);
+            g.World = null;
+            g.Arrival = ArrivalKind.None;
+        }
+        if (g.World is null)
+        {
+            g.World = CreateWorld(g.Members[0].Member, g.Stage, g.Context, now);
+            g.Arrival = ArrivalKind.NewInstance;
+            foreach (var a in g.Members) TakeSeat(g.World, a.Member, now, "new_group");
+            foreach (var c in g.CoArrivals.SelectMany(c => c.Members)) TakeSeat(g.World, c.Member, now, "coarrival");
+        }
+        var w = g.World;
         var reuse = !g.From.Ended && g.From.Id != 0 && g.From.Members.All(x => g.Members.Any(a => a.Member == x));
         // The visit the members parked in (BARRIER_OK names it; a reused instance's visit counts on below).
         var (fromId, fromVisit) = (g.From.Id, g.From.Visit);
@@ -1456,6 +1513,10 @@ public sealed class RoomHub
         inst.ArrivalContext = g.Context;
         inst.EntryContext = null;
         inst.Mode = everyone.Count >= 2 ? InstanceMode.Sealed : InstanceMode.SoloLed;
+        if (inst.World is { } previous && previous != w) previous.Groups.Remove(inst);
+        inst.World = w;
+        w.Groups.Add(inst);
+        w.Visited.Add(g.Stage);
         Array.Clear(inst.Slots);
         Array.Clear(inst.Reserved);
         foreach (var (member, slot) in map)
@@ -1473,13 +1534,14 @@ public sealed class RoomHub
 
         // The base engine spawns the co-arrivals (and followers) in its load step with their carries.
         var coList = new List<CoArrival>();
-        foreach (var c in coMembers) coList.Add(new CoArrival((byte)map[c.Member], (byte)c.Member.Index, c.Carry));
-        foreach (var f in followers) coList.Add(new CoArrival((byte)map[f], (byte)f.Index, f.Joining!.Carry.Length > 0 ? f.Joining.Carry : FindCarry(f)));
+        foreach (var c in coMembers) coList.Add(new CoArrival((byte)map[c.Member], c.Member.Id, c.Carry));
+        foreach (var f in followers) coList.Add(new CoArrival((byte)map[f], f.Id, f.Joining!.Carry.Length > 0 ? f.Joining.Carry : FindCarry(f)));
 
-        // Every member of the group gets the same story bytes (their engines apply them in the same load step).
-        var story = Story.Story;
+        // Every member of the group gets the same story bytes (their engines apply them in the same load step): the host's (the
+        // instance's) confirmed story; a guest's NEW replaces the engines' own stories with it (19.30.4), every other NEW merges it.
+        var story = w.Keeper.Story;
         var storyBlob = story.ToBlob();
-        var dropped = Story.Dropped.ToBlob();
+        var mode = g.Arrival == ArrivalKind.GuestNew ? StoryMode.Replace : StoryMode.Merge;
         foreach (var a in g.Members)
         {
             var m = a.Member;
@@ -1487,16 +1549,19 @@ public sealed class RoomHub
             var slotMap = new sbyte[Wire.MaxSlots];
             Array.Fill(slotMap, (sbyte)-1);
             foreach (var b in g.Members) slotMap[b.Slot] = (sbyte)map[b.Member];
+            var arrival = g.Arrival == ArrivalKind.NewInstance && m != w.Host ? ArrivalKind.Starting : g.Arrival;
             m.Peer?.Send(new BarrierOkMsg(fromId, fromVisit, BarrierDecision.New, inst.Id, inst.Visit, g.Stage, g.Point, (byte)map[m], slotMap,
-                inst.Mode, (byte)(inst.Mode == InstanceMode.Sealed ? delays[m] : 0), coList, story.Revision, storyBlob, notice, noticeNames).Frame());
+                inst.Mode, (byte)(inst.Mode == InstanceMode.Sealed ? delays[m] : 0), coList, story.Revision, storyBlob, notice, noticeNames)
+                { World = WorldPart(w, arrival, mode) }.Frame());
         }
+        var coArrival = g.Arrival is ArrivalKind.NewInstance or ArrivalKind.Starting ? ArrivalKind.Starting : g.Arrival;
         foreach (var c in g.CoArrivals)
         {
             foreach (var a in c.Members)
             {
                 a.Member.Arrival = null;
                 inst.CoArrivalPending.Add(a.Member);
-                CoArriveMessage(c.From, a.Member, inst, map[a.Member], delays[a.Member], g.Point, map);
+                CoArriveMessage(c.From, a.Member, inst, map[a.Member], delays[a.Member], g.Point, map, coArrival);
             }
             EndIfEmpty(c.From, now);
         }
@@ -1505,26 +1570,31 @@ public sealed class RoomHub
             var j = f.Joining!;
             f.Joining = null;
             inst.CoArrivalPending.Add(f);
-            CoArriveMessage(j.Target, f, inst, map[f], delays[f], j.From.Point, map);
+            CoArriveMessage(j.Target, f, inst, map[f], delays[f], j.From.Point, map, ArrivalKind.None);
         }
         foreach (var o in oldObservers.Except(followers)) FallbackNew(o, now);
         if (!reuse) EndIfEmpty(g.From, now);
+        // A stage group of an instance that ends goes home as soon as it can take HOME (19.6.5).
+        if (w.Ending) SendHome(inst, inst.PresentMask, HomeReason.Ended, now, 0);
+        foreach (var x in map.Keys) SendInfo(x, now);
         Note("new", inst, ("members", map.ToDictionary(kv => kv.Value.ToString(), kv => (object?)kv.Key.Index)), ("mode", inst.Mode.ToString()),
             ("co_arrivals", coList.Count), ("notice", notice.ToString()));
     }
 
     private static byte[] FindCarry(HubMember m) => m.Joining?.Carry ?? [];
 
-    private void CoArriveMessage(HubInstance from, HubMember m, HubInstance inst, int slot, int delay, byte point, Dictionary<HubMember, int> map)
+    private void CoArriveMessage(HubInstance from, HubMember m, HubInstance inst, int slot, int delay, byte point, Dictionary<HubMember, int> map,
+        ArrivalKind arrival)
     {
         var none = new sbyte[Wire.MaxSlots];
         Array.Fill(none, (sbyte)-1);
         m.Cursor = 0;
         // The other members of the new visit by slot, without carries (the co-arrival's engine comes from the base's
         // snapshot): its client knows their names (before, it showed "A player left" for its partners).
-        var others = map.Where(kv => kv.Key != m).OrderBy(kv => kv.Value).Select(kv => new CoArrival((byte)kv.Value, (byte)kv.Key.Index, [])).ToList();
+        var others = map.Where(kv => kv.Key != m).OrderBy(kv => kv.Value).Select(kv => new CoArrival((byte)kv.Value, kv.Key.Id, [])).ToList();
+        var w = inst.World!;
         m.Peer?.Send(new BarrierOkMsg(from.Id, from.Visit, BarrierDecision.CoArrive, inst.Id, inst.Visit, inst.Stage, point, (byte)slot, none,
-            inst.Mode, (byte)delay, others, Story.Story.Revision, Story.Story.ToBlob()).Frame());
+            inst.Mode, (byte)delay, others, w.Keeper.Story.Revision, w.Keeper.Story.ToBlob()) { World = WorldPart(w, arrival, StoryMode.Merge) }.Frame());
         Note("co_arrive", inst, ("member", m.Index), ("slot", slot));
     }
 
@@ -1570,8 +1640,10 @@ public sealed class RoomHub
         i.SoloJoin = null;
         i.LastLogAt = now;
         i.VisitStartedAt = now;
-        i.StoryEpoch = Story.Epoch;
-        i.OwnerSeen = false;
+        i.PendingHome = null;
+        i.AskedHome = null;
+        i.HomeStamped = 0;
+        i.HomeTries = 0;
         i.LogOwner = null;
         i.LogFull = false;
         i.Voted.Clear();
@@ -1585,12 +1657,12 @@ public sealed class RoomHub
     private HubInstance NewInstance(InstanceMode mode, string stage, uint visit, ulong context, long now)
     {
         // (The ids go on across a rebuilt hub: an engine line of the old one never meets a new instance's.)
-        var id = _session.NextInstance;
+        var id = _nextInstance;
         while (_instances.ContainsKey(id) || id == 0) id = id >= 999_999_999 ? 1 : id + 1;
-        _session.NextInstance = id >= 999_999_999 ? 1 : id + 1;
+        _nextInstance = id >= 999_999_999 ? 1 : id + 1;
         var i = new HubInstance(id)
         {
-            Mode = mode, Stage = stage, Visit = visit, ContextHash = context, ArrivalContext = context, CreatedAt = now, LastLogAt = now, VisitStartedAt = now, StoryEpoch = Story.Epoch,
+            Mode = mode, Stage = stage, Visit = visit, ContextHash = context, ArrivalContext = context, CreatedAt = now, LastLogAt = now, VisitStartedAt = now,
         };
         _instances[id] = i;
         return i;
@@ -1603,22 +1675,14 @@ public sealed class RoomHub
         if (m.Instance != i) m.InstanceSince = now;
         m.Instance = i;
         m.Slot = slot;
-        // (A member that plays on alone in its last visit, a reconnect without resuming placed in an instance without a
-        // stage, keeps that visit's epoch: no barrier has cleaned its engine since. Before round 59's verification it took
-        // the current epoch, and what was dropped in that visit counted again from the same engine.)
-        if (!string.IsNullOrEmpty(i.Stage) || m.LoneStage is null)
-        {
-            m.VisitEpoch = i.StoryEpoch;
-            m.VisitOwnerSeen = i.OwnerSeen;
-        }
         if (!string.IsNullOrEmpty(i.Stage))
         {
             m.LoneStage = null;
             m.LoneKey = 0;
+            m.GaveUp = false;
             // The engine line this visit's counters grow in: besides its own instance 0 lines the only kind of line the
             // member may report (8.7).
             AllowLine(m, i.Id, i.Visit);
-            OwnerEnters(m, i, visitBegins: i.VisitStartedAt == now);
         }
         m.Cursor = 0;
         m.Heading = null;
@@ -1632,6 +1696,7 @@ public sealed class RoomHub
         if (i.Ended) return;
         i.Ended = true;
         _instances.Remove(i.Id);
+        i.World?.Groups.Remove(i);
         foreach (var o in i.Observers.ToList()) FallbackNew(o, now);
         i.Observers.Clear();
         _holds.RemoveAll(h => h.Target == i && h.Members.Count == 0);
@@ -1639,7 +1704,7 @@ public sealed class RoomHub
         {
             _holds.Remove(h);
             h.Hold = HoldKind.None;
-            JoinOrNew(h, now);
+            Redecide(h, now);
         }
         Note("end", i);
     }
@@ -1662,13 +1727,18 @@ public sealed class RoomHub
             m.Instance = null;
             m.Slot = -1;
             m.Arrival = null;
-            m.Joining = new JoinState(target, slot, g, a.Slot) { Carry = a.Carry, PlannedCheckpoint = CheckpointPathOpen(target) };
+            var fresh = g.Arrival is ArrivalKind.AutoJoin or ArrivalKind.Starting;
+            m.Joining = new JoinState(target, slot, g, a.Slot) { Carry = a.Carry, PlannedCheckpoint = CheckpointPathOpen(target), Fresh = fresh };
             target.Observers.Add(m);
             var none = new sbyte[Wire.MaxSlots];
             Array.Fill(none, (sbyte)-1);
+            var w = target.World!;
+            if (!w.Seats.ContainsKey(m)) TakeSeat(w, m, now, "join");
             m.Peer?.Send(new BarrierOkMsg(g.From.Id, g.From.Visit, BarrierDecision.Join, target.Id, target.Visit, g.Stage, g.Point, (byte)slot, none,
-                target.Mode, (byte)DelayController.FromRoundTrips(m.Rtt.All, _sealing.MaxDelayTicks), [], Story.Story.Revision, Story.Story.ToBlob()).Frame());
-            Note("join_decided", target, ("member", m.Index), ("slot", slot));
+                target.Mode, (byte)DelayController.FromRoundTrips(m.Rtt.All, _sealing.MaxDelayTicks), [], w.Keeper.Story.Revision, w.Keeper.Story.ToBlob())
+                { World = WorldPart(w, fresh ? g.Arrival : ArrivalKind.None, StoryMode.Merge) }.Frame());
+            Note("join_decided", target, ("member", m.Id), ("slot", slot), ("wid", w.Wid));
+            SendInfo(m, now);
             DeliverState(m, now);
         }
         EndIfEmpty(g.From, now);
@@ -2137,42 +2207,41 @@ public sealed class RoomHub
         m.Cursor = cursor;
         m.InstanceSince = Stopwatch.GetTimestamp();
         m.JoinedVia = j;
+        m.GaveUp = false;
         if (m.PreferredSlot < 0) m.PreferredSlot = j.Slot;
-        // The joined visit's epoch (the joiner's engine is that visit's snapshot and ticks), and the owner's arrival (8.6).
-        m.VisitEpoch = target.StoryEpoch;
-        m.VisitOwnerSeen = target.OwnerSeen;
         // The joined visit's engine line, as Place gives it (8.7): the joiner's counters grow in it like its partners'
         // (a line keeps the largest growth reported, so the same line from two members does not count twice).
         if (!string.IsNullOrEmpty(target.Stage)) AllowLine(m, target.Id, target.Visit);
-        OwnerEnters(m, target, visitBegins: false);
-    }
-
-    /// <summary>
-    /// The room owner entered a visit of a stage outside the title (Place, a join; SEAMLESS.md 8.6). A room whose owner had
-    /// no online story starts now (at zero). The owner's first visit begins with the start when it begins at this barrier:
-    /// it gets the start's epoch (every engine of it starts from this barrier's load step, cleaned of the dropped values).
-    /// A visit the owner is in counts from then on (OwnerSeen) even if it began before the start; what it offered before
-    /// stays dropped.
-    /// </summary>
-    private void OwnerEnters(HubMember m, HubInstance i, bool visitBegins)
-    {
-        if (!m.Owner || string.IsNullOrEmpty(i.Stage) || i.Stage.StartsWith("stagis", StringComparison.OrdinalIgnoreCase)) return;
-        if (Story.OwnerStarted())
-        {
-            Note("story_started", i, ("member", m.Index));
-            if (visitBegins) i.StoryEpoch = Story.Epoch;
-        }
-        i.OwnerSeen = true;
-        foreach (var x in i.Members)
-        {
-            x.VisitEpoch = i.StoryEpoch;
-            x.VisitOwnerSeen = true;
-        }
+        if (target.World is { } w) MarkInfoDirty(w);
     }
 
     private void OnJoinAt(HubMember m, JoinAtMsg msg, long now)
     {
         if (Mine(m, msg.Inst, msg.Visit) is not { Mode: InstanceMode.SoloLed } i || i.Leader != m) return;
+        if (i.AskedHome is { } home && i.SoloJoin is null && i.AskedJoin is null)
+        {
+            // JOIN_REQ kind home (19.6.5): from J the stage group is sealed with its leader alone; SEALED(J) carries HOME and
+            // LEAD_FROM(J + 1), so the leader leads alone again after its departure.
+            i.AskedHome = null;
+            var hc = CurrentTick(i, now);
+            var hj = Math.Max(msg.Tick, i.Log.Count);
+            var hr = Math.Max(now + (long)((double)Math.Max(0, (long)hj - hc) * Wire.TickSeconds * Freq) - FromMs(m.Rtt.Median / 2), now + TickTs);
+            i.S0 = hr - (long)(hj * Wire.TickSeconds * Freq);
+            i.NextSeal = hj;
+            i.SealedFrom = hj;
+            i.LogOwner = m;
+            i.Mode = InstanceMode.Sealed;
+            i.Streams[m.Slot] = NewStream(m, m.Slot, hj, DelayController.FromRoundTrips(m.Rtt.All, _sealing.MaxDelayTicks));
+            m.Cursor = hj;
+            i.AddEvent(hj, TickEvent.Home(home.Mask, home.Reason));
+            i.HomeStamped |= home.Mask;
+            ScheduleLeadFrom(i, hj + 1);
+            Count("home_stamped");
+            Note("home", i, ("mask", home.Mask), ("reason", home.Reason.ToString()), ("tick", hj), ("wid", i.World?.Wid ?? 0), ("solo_leader", m.Id));
+            i.Sealing = true;
+            _sealer?.Invoke();
+            return;
+        }
         if ((i.SoloJoin ?? i.AskedJoin) is not { } p)
         {
             Count("join_at_ignored"); // never asked
@@ -2214,10 +2283,15 @@ public sealed class RoomHub
             Note("join", i, ("member", p.Joiner.Index), ("slot", p.Slot), ("tick", at), ("solo_leader", m.Index));
         }
         i.Sealing = true;
+        StampPendingHome(i, now);
         _sealer?.Invoke();
     }
 
-    /// <summary>A joiner whose target went away (or whose READY failed twice) restores its own load snapshot and enters as NEW.</summary>
+    /// <summary>
+    /// A joiner whose target went away (or whose READY failed twice) restores its own load snapshot and enters as NEW: a fresh
+    /// arrival's automatic join (19.7.1) becomes an own instance on its own story (its seat in the target's goes); a member inside
+    /// an instance a new stage group of it (an instance that ends sends it home at once).
+    /// </summary>
     private void FallbackNew(HubMember m, long now, BarrierNotice notice = BarrierNotice.None, JoinState? joined = null)
     {
         // (joined: a joiner the server made a member already, whose engine never got its JOIN: a gap before J.)
@@ -2227,18 +2301,36 @@ public sealed class RoomHub
         if (j.Target.SoloJoin?.Joiner == m) j.Target.SoloJoin = null;
         m.Joining = null;
         m.JoinedVia = null;
+        var target = j.Target.World;
+        WorldInstance w;
+        ArrivalKind arrival;
+        if (j.Fresh || target is null || m.World != target)
+        {
+            if (target is not null && target.Seats.ContainsKey(m)) FreeSeat(target, m, "left", now);
+            w = CreateWorld(m, j.From.Stage, j.From.Context, now);
+            arrival = ArrivalKind.NewInstance;
+        }
+        else
+        {
+            w = target;
+            arrival = ArrivalKind.None;
+        }
         var inst = NewInstance(InstanceMode.SoloLed, j.From.Stage, 1, j.From.Context, now);
         Place(m, inst, 0, now);
+        inst.World = w;
+        w.Groups.Add(inst);
+        w.Visited.Add(inst.Stage);
         inst.Snapshot.Uploader = m;
         var map = new sbyte[Wire.MaxSlots];
         Array.Fill(map, (sbyte)-1);
         map[j.OldSlot] = 0;
         m.Peer?.Send(new BarrierOkMsg(j.Target.Id, j.Target.Visit, BarrierDecision.New, inst.Id, inst.Visit, inst.Stage, j.From.Point, 0, map,
-            InstanceMode.SoloLed, 0, [], Story.Story.Revision, Story.Story.ToBlob(),
-            notice == BarrierNotice.None ? BarrierNotice.HoldExpired : notice, []).Frame());
-        Note("fallback_new", inst, ("member", m.Index), ("from", j.Target.Id));
+            InstanceMode.SoloLed, 0, [], w.Keeper.Story.Revision, w.Keeper.Story.ToBlob(),
+            notice == BarrierNotice.None ? BarrierNotice.HoldExpired : notice, []) { World = WorldPart(w, arrival, StoryMode.Merge) }.Frame());
+        Note("fallback_new", inst, ("member", m.Index), ("from", j.Target.Id), ("wid", w.Wid));
+        if (w.Ending) SendHome(inst, inst.PresentMask, HomeReason.Ended, now, 0);
+        SendInfo(m, now);
     }
-
     // Fork -----------------------------------------------------------------------------------------------------------------
 
     private void OnSplit(HubMember m, SplitMsg msg, long now)
@@ -2358,8 +2450,8 @@ public sealed class RoomHub
         child.AgreedLoadEnd = i.AgreedLoadEnd;
         child.CheckpointSuspect = i.CheckpointSuspect;
         child.VisitStartedAt = i.VisitStartedAt;
-        child.StoryEpoch = i.StoryEpoch;
-        child.OwnerSeen = i.OwnerSeen;
+        child.World = i.World;
+        i.World?.Groups.Add(child);
         child.Parent = i.Id;
         child.ForkTick = f;
         child.Departing = kind == SplitKind.Exit;
@@ -2387,7 +2479,8 @@ public sealed class RoomHub
             AllowLine(m, child.Id, child.Visit); // (the parent's line is the member's already: it counts up to the fork)
             m.Peer?.Send(new ReassignMsg(i.Id, i.Visit, child.Id, from, childMode, child.Departing ? ReassignMsg.Departing : (byte)0).Frame());
         }
-        // Pending events: JOIN stays with the instance id; LEAVE, INTENT and DELAY follow their slot.
+        // Pending events: JOIN stays with the instance id; LEAVE, INTENT and DELAY follow their slot; HOME's mask is split by side
+        // (19.18: "GO and HOME follow their slots as LEAVE, INTENT and DELAY do").
         foreach (var (t, list) in i.PendingEvents.ToList())
         {
             var moving = list.Where(e => e.Type != Ev.Join && e.Type != Ev.LeadFrom && e.Slot >= 0 && (leavers & (1 << e.Slot)) != 0).ToList();
@@ -2396,7 +2489,21 @@ public sealed class RoomHub
                 list.Remove(e);
                 child.AddEvent(Math.Max(t, from), e);
             }
+            foreach (var e in list.Where(e => e.Type == Ev.Home && (e.HomeMask & leavers) != 0).ToList())
+            {
+                var stay = (byte)(e.HomeMask & ~leavers & Wire.SlotMask);
+                child.AddEvent(Math.Max(t, from), e.WithHomeMask(leavers));
+                if (stay != 0) list[list.IndexOf(e)] = e.WithHomeMask(stay);
+                else list.Remove(e);
+            }
             if (list.Count == 0) i.PendingEvents.Remove(t);
+        }
+        child.HomeStamped = (byte)(i.HomeStamped & leavers);
+        i.HomeStamped = (byte)(i.HomeStamped & ~leavers);
+        if (i.PendingHome is { } ph && (ph.Mask & leavers) != 0)
+        {
+            child.PendingHome = ((byte)(ph.Mask & leavers), ph.Reason, ph.NotBefore);
+            i.PendingHome = (ph.Mask & ~leavers) != 0 ? ((byte)(ph.Mask & ~leavers), ph.Reason, ph.NotBefore) : null;
         }
         // A barrier that waits while the fork is confirmed (a member that took the exit reached its stage change before
         // every SPLIT came, about two seconds after the fork tick): its reports go with their side. A side with reports
@@ -2438,11 +2545,18 @@ public sealed class RoomHub
         CheckBarrier(i, now);
     }
 
-    // Room story (SEAMLESS.md 8.3-8.6) ---------------------------------------------------------------------------------------
+    // Stories (SEAMLESS.md 8.3-8.7, 19.8) --------------------------------------------------------------------------------------
 
+    /// <summary>
+    /// A member's pending set (19.8.4): to the keeper of its current story owner (its instance host's, or its own at home). The
+    /// owner key must be that owner's (member, box), else every value is refused with *owner* (not sent again): a STORY aimed at
+    /// another story (a removed guest's modified client, a stale key after a barrier) never reaches the wrong keeper. The host's own
+    /// values follow the owner rules (not spaced), a guest's the guest rules (round 59's spacing, the earned queue).
+    /// </summary>
     private void OnStory(HubMember m, StoryMsg msg, long now)
     {
-        var keeper = Story;
+        var keeper = OwnerKeeper(m);
+        var (owner, box) = OwnerKey(keeper);
         Count("story");
         // A burst, then Instances:StoryMessagesPerMinute (the client sends again what the rate refused).
         var burst = Math.Max(1, _inst.StoryBurst);
@@ -2452,108 +2566,100 @@ public sealed class RoomHub
         StoryTake take;
         HubInstance? at = null;
         var rated = m.StoryTokens < 1;
-        if (rated)
+        var wrongOwner = msg.OwnerMember != owner || msg.OwnerBox != box;
+        if (rated || wrongOwner)
         {
-            Count("story_rate");
+            Count(wrongOwner ? "story_owner" : "story_rate");
+            var why = wrongOwner ? StoryRefusal.Owner : StoryRefusal.Rate;
             var refused = new List<StoryRefused>();
             var d = msg.Delta;
-            if (d.Phase != 0) refused.Add(new StoryRefused(StoryKeyKind.Phase, d.Phase, StoryRefusal.Rate));
-            refused.AddRange(d.Flags.Select(f => new StoryRefused(StoryKeyKind.Flag, f, StoryRefusal.Rate)));
-            refused.AddRange(d.Folder.Select(k => new StoryRefused(StoryKeyKind.Folder, k, StoryRefusal.Rate)));
-            refused.AddRange(d.Counters.Select(g => new StoryRefused(StoryKeyKind.Counter, g.Counter, StoryRefusal.Rate)));
+            if (d.Phase != 0) refused.Add(new StoryRefused(StoryKeyKind.Phase, d.Phase, why));
+            refused.AddRange(d.Flags.Select(f => new StoryRefused(StoryKeyKind.Flag, f, why)));
+            refused.AddRange(d.Folder.Select(k => new StoryRefused(StoryKeyKind.Folder, k, why)));
+            refused.AddRange(d.Counters.Select(g => new StoryRefused(StoryKeyKind.Counter, g.Counter, why)));
             take = new StoryTake(refused, false);
+            if (wrongOwner) Note("story_owner", m.Instance, ("member", m.Id), ("key", msg.OwnerMember), ("owner", owner));
         }
         else
         {
             m.StoryTokens -= 1;
-            // Where the member plays now decides (its stage, the epoch its visit began in, the visit); the frame's ids may
-            // be the ones before a fork. A parked or catching-up member sends none (the client sends STORY before BARRIER).
-            var (stage, epoch, visit, inst) = StoryOrigin(m, now);
+            // Where the member plays now decides (its stage, the visit); the frame's ids may be the ones before a fork. A parked or
+            // catching-up member sends none (the client sends STORY before BARRIER).
+            var (stage, visit, inst) = StoryOrigin(m, keeper, now);
             at = inst;
             var (delta, lines) = OwnLines(m, msg.Delta);
             // The lines nobody can report any more go (8.7: they never come again).
-            if (keeper.LineCount > LinePruneAt) PruneStoryLines();
-            take = keeper.Take(delta, stage, epoch, visit);
+            if (keeper.LineCount > LinePruneAt) PruneStoryLines(keeper);
+            take = keeper.Take(delta, stage, visit);
             if (lines.Count > 0) take = take with { Refused = [.. take.Refused, .. lines] };
         }
         if (take.Refused.Count > 0) Count("story_refused", take.Refused.Count);
-        NotePolicy(m, take, at);
-        // (A STORY refused for the rate changed nothing: its answer carries no story, 21 bytes of request were 1,120 of answer.)
-        m.Peer?.Send(new StoryAckMsg(keeper.Story.Revision, rated ? [] : keeper.Story.ToBlob(), StoryAckMsg.Answer, take.Refused).Frame());
-        if (take.Changed) StoryChanged(m);
+        NoteHeld(m, take, at);
+        // (A STORY refused for the rate or the owner changed nothing: its answer carries no story.)
+        m.Peer?.Send(StoryAck(keeper, StoryAckMsg.Answer, take.Refused, withStory: !(rated || wrongOwner)));
+        if (take.Changed) StoryChanged(keeper, m);
     }
 
-    /// <summary>The membership log names what the owner-away policy took (the scenarios of SEAMLESS.md 16 check it).</summary>
-    private void NotePolicy(HubMember m, StoryTake take, HubInstance? at)
+    /// <summary>The membership log names what the host's grace held (the scenarios check it).</summary>
+    private void NoteHeld(HubMember m, StoryTake take, HubInstance? at)
     {
-        foreach (var (why, ev) in new[] { (StoryRefusal.OwnerAway, "story_dropped"), (StoryRefusal.NotStarted, "story_dropped"),
-                     (StoryRefusal.Held, "story_held") })
-        {
-            var keys = take.Refused.Where(r => r.Reason == why).Select(r => r.Kind.ToString().ToLowerInvariant() + ":" + r.Index).ToList();
-            if (keys.Count == 0) continue;
-            if (why == StoryRefusal.NotStarted) Note(ev, at, ("member", m.Index), ("keys", string.Join(",", keys)), ("reason", "not_started"));
-            else Note(ev, at, ("member", m.Index), ("keys", string.Join(",", keys)));
-        }
+        var keys = take.Refused.Where(r => r.Reason == StoryRefusal.Held).Select(r => r.Kind.ToString().ToLowerInvariant() + ":" + r.Index).ToList();
+        if (keys.Count > 0) Note("story_held", at, ("member", m.Id), ("keys", string.Join(",", keys)));
     }
 
     /// <summary>
-    /// The earned story values that are due (SEAMLESS.md 8.7): a phase step or key item that waited only for the
-    /// one-per-visit rule or a guest's spacing is merged in its member's later visit, whatever stage the member plays in
-    /// then (the stage that set it may be long left, where a resend would be refused for the stage); every member gets the
-    /// new revision. Rooms of protocol 47 and later (round G-core) answer such a value queued: the client sends it no more
-    /// until its next barrier, where it goes out again with the pending set (an older room answers wait and the client keeps
-    /// sending it meanwhile).
+    /// The earned story values that are due (SEAMLESS.md 8.7, "across owners" in the world, 19.8.4): every keeper merges what was
+    /// earned on it in its member's later visit, whatever stage the member plays in then; the keeper's members get the revision.
     /// </summary>
     private void MergeEarned(long now)
     {
-        if (_session.Story is not { EarnedCount: > 0 } keeper) return;
-        var changed = false;
-        foreach (var m in _members.Values.OrderBy(x => x.Index).ToList())
+        foreach (var keeper in _keepers.Values.Where(k => k.EarnedCount > 0).ToList())
         {
-            if (!keeper.HasEarned(m.Index, m.AccountId)) continue;
-            var (stage, _, visit, inst) = StoryOrigin(m, now);
-            if (visit is not { } v) continue;
-            var take = keeper.MergeEarned(v, stage);
-            NotePolicy(m, take, inst);
-            if (!take.Changed) continue;
-            changed = true;
-            Count("story_earned");
-            Note("story_earned", inst, ("member", m.Index), ("phase", StoryMerge.Phase(keeper.Story)));
+            var changed = false;
+            foreach (var account in keeper.EarnedAccounts.ToList())
+            {
+                if (!_byAccount.TryGetValue(account, out var m)) continue;
+                var (stage, visit, inst) = StoryOrigin(m, keeper, now);
+                if (visit is not { } v) continue;
+                var take = keeper.MergeEarned(v, stage);
+                NoteHeld(m, take, inst);
+                if (!take.Changed) continue;
+                changed = true;
+                Count("story_earned");
+                Note("story_earned", inst, ("member", m.Id), ("phase", StoryMerge.Phase(keeper.Story)), ("owner", keeper.Account));
+            }
+            if (changed) StoryChanged(keeper, null);
         }
-        if (changed) StoryChanged(null);
     }
 
     /// <summary>
-    /// Where a member's STORY comes from (SEAMLESS.md 8.7): its instance's stage, visit and age while the server has it in
-    /// one; while its client plays alone where the server has no instance with a stage for it, the stage it plays in: the
-    /// target of a barrier it went on from after the five seconds (its arrival is still parked here), or the stage it was
-    /// taken out of its group in (lag, resync limits) or reconnected in without resuming. A member alone counts from the
-    /// epoch of its last instance visit (its engine was cleaned at that barrier, not at the one it went on from).
+    /// Where a member's STORY comes from (SEAMLESS.md 8.7): its stage group's stage, visit and age while the server has it in
+    /// one; while its client plays alone where the server has no stage group for it, the stage it plays in. <paramref name="keeper"/>
+    /// decides whether the member is the story's owner (its own values are not spaced).
     /// </summary>
-    private (string? Stage, long Epoch, StoryVisit? Visit, HubInstance? Inst) StoryOrigin(HubMember m, long now)
+    private (string? Stage, StoryVisit? Visit, HubInstance? Inst) StoryOrigin(HubMember m, StoryKeeper keeper, long now)
     {
-        if (m.Joining is not null) return (null, 0, null, null);
+        if (m.Joining is not null) return (null, null, null);
         var at = Ms(now) / 1000.0;
+        var owner = m.AccountId == keeper.Account;
         if (m.Instance is { Ended: false } i && m.Slot >= 0 && m.Arrival is null && !string.IsNullOrEmpty(i.Stage))
         {
             var since = Math.Max(m.InstanceSince, i.VisitStartedAt);
-            return (i.Stage, i.StoryEpoch, new StoryVisit(m.Index, (ulong)i.Id << 32 | i.Visit, Ms(now - since) / 1000.0, m.AccountId, at, m.Owner,
-                i.OwnerSeen), i);
+            return (i.Stage, new StoryVisit(m.Index, (ulong)i.Id << 32 | i.Visit, Ms(now - since) / 1000.0, m.AccountId, at, owner, true), i);
         }
         if (m.Arrival is { } a)
-            return (a.Stage, m.VisitEpoch, new StoryVisit(m.Index, 1UL << 63 | (ulong)a.ParkedAt, Ms(now - a.ParkedAt) / 1000.0, m.AccountId, at, m.Owner,
-                m.VisitOwnerSeen), null);
+            return (a.Stage, new StoryVisit(m.Index, 1UL << 63 | (ulong)a.ParkedAt, Ms(now - a.ParkedAt) / 1000.0, m.AccountId, at, owner, true), null);
         if (m.LoneStage is { } lone)
-            return (lone, m.VisitEpoch, new StoryVisit(m.Index, m.LoneKey != 0 ? m.LoneKey : 1UL << 63 | (ulong)m.LoneSince,
-                Ms(now - m.LoneSince) / 1000.0, m.AccountId, at, m.Owner, m.VisitOwnerSeen), null);
-        return (null, 0, null, null);
+            return (lone, new StoryVisit(m.Index, m.LoneKey != 0 ? m.LoneKey : 1UL << 63 | (ulong)m.LoneSince,
+                Ms(now - m.LoneSince) / 1000.0, m.AccountId, at, owner, true), null);
+        return (null, null, null);
     }
 
-    /// <summary>The keeper prunes its lines once it remembers more than this many (a few per member are normal).</summary>
+    /// <summary>A keeper prunes its lines once it remembers more than this many (a few per member are normal).</summary>
     private const int LinePruneAt = 64;
 
     /// <summary>Forgets the counter lines no member can report any more (its own lines, its instance 0 lines).</summary>
-    private void PruneStoryLines()
+    private void PruneStoryLines(StoryKeeper keeper)
     {
         var reportable = new HashSet<(uint, uint)>();
         foreach (var m in _members.Values)
@@ -2561,7 +2667,7 @@ public sealed class RoomHub
             reportable.UnionWith(m.StoryLines);
             foreach (var v in m.LoneLineVisits) reportable.Add((0x8000_0000u | (uint)m.Index, v));
         }
-        var removed = Story.PruneLines(k => reportable.Contains((k.Inst, k.Visit)));
+        var removed = keeper.PruneLines(k => reportable.Contains((k.Inst, k.Visit)));
         if (removed > 0) Count("story_lines_pruned", removed);
     }
 
@@ -2598,43 +2704,46 @@ public sealed class RoomHub
         return (new StoryDelta { Phase = delta.Phase, Flags = delta.Flags, Folder = delta.Folder, Counters = own }, refused);
     }
 
-    /// <summary>A new revision: every other member's confirmed story follows (STORY_ACK), the owner's online story is saved.</summary>
-    private void StoryChanged(HubMember? sender)
+    /// <summary>A keeper's new revision: every member whose story owner it is follows (STORY_ACK), its owner's online story is saved.</summary>
+    private void StoryChanged(StoryKeeper keeper, HubMember? sender)
     {
-        var story = Story.Story;
-        var frame = new StoryAckMsg(story.Revision, story.ToBlob(), 0, []).Frame();
+        var story = keeper.Story;
+        var frame = StoryAck(keeper, 0, []);
         foreach (var other in _members.Values)
-            if (other != sender) other.Peer?.Send(frame);
-        Note("story", null, ("revision", story.Revision), ("phase", StoryMerge.Phase(story)));
+            if (other != sender && OwnerKeeper(other) == keeper) other.Peer?.Send(frame);
+        Note("story", null, ("account", keeper.Account), ("box", keeper.Box), ("revision", story.Revision), ("phase", StoryMerge.Phase(story)));
         // (Only counters changed since the last save: the saver writes such revisions at most once a minute, SEAMLESS.md 8.7.)
-        var countersOnly = _session.Saved is { } before && before.Flags.AsSpan().SequenceEqual(story.Flags) && before.Folder.AsSpan().SequenceEqual(story.Folder);
-        _session.Saved = story.Clone();
-        if (Info.Story is { OwnerAccountId: > 0 } s) StorySaver?.Invoke(s.OwnerAccountId, story.Clone(), countersOnly);
+        var countersOnly = keeper.Saved is { } before && before.Flags.AsSpan().SequenceEqual(story.Flags) && before.Folder.AsSpan().SequenceEqual(story.Folder);
+        keeper.Saved = story.Clone();
+        if (keeper.Account > 0) StorySaver?.Invoke(keeper.Account, story.Clone(), countersOnly);
     }
 
-    /// <summary>The room story as the room API shows it.</summary>
-    public RoomStoryState StoryState()
+    /// <summary>STORY_ACK of a keeper's story with its owner key.</summary>
+    private byte[] StoryAck(StoryKeeper k, byte flags, IReadOnlyList<StoryRefused> refused, bool withStory = true)
     {
-        var k = Story;
+        var (owner, box) = OwnerKey(k);
+        return new StoryAckMsg(k.Story.Revision, withStory ? k.Story.ToBlob() : [], flags, refused, owner, box).Frame();
+    }
+
+    /// <summary>A keeper's story as the API and the tests see it.</summary>
+    public RoomStoryState? StoryState(long accountId, int box = 1)
+    {
+        if (!_keepers.TryGetValue((accountId, box), out var k)) return null;
         var s = k.Story;
-        var dropped = k.Dropped;
         return new RoomStoryState(s.Revision, StoryMerge.Phase(s), Enumerable.Range(0, StorySets.FlagCount).Where(f => s.Flags[f] != 0).ToList(),
-            Enumerable.Range(0, StorySets.FolderCount).Where(f => s.Folder[f] != 0).ToList(), [.. s.Counters], k.Policy.ToString().ToLowerInvariant(),
-            k.OwnerPresent, dropped.Flags, dropped.Folder, dropped.Counters, k.HeldCount)
+            Enumerable.Range(0, StorySets.FolderCount).Where(f => s.Folder[f] != 0).ToList(), [.. s.Counters], "world", !k.Held, [], [], [], k.HeldCount)
         {
-            Started = k.Started,
             Difficulty = k.Difficulty,
         };
     }
 
     /// <summary>
-    /// The most players the account's instance had in the last <paramref name="seconds"/> (its instance now, and every
-    /// size the housekeeping saw it in since): the achievements' "players" cannot claim more (a guest alone in its lobby
-    /// reported four). Null when the account is no member of this room's relay.
+    /// The most players the account's instance had in the last <paramref name="seconds"/> (its stage group now, and every size the
+    /// housekeeping saw it in since): the achievements' "players" cannot claim more. Null when the account is not in the world.
     /// </summary>
     public int? RecentInstancePlayers(long accountId, long now, double seconds = 60)
     {
-        if (_members.Values.FirstOrDefault(x => x.AccountId == accountId) is not { } m) return null;
+        if (!_byAccount.TryGetValue(accountId, out var m)) return null;
         var most = m.Instance is { Ended: false } i ? Math.Max(1, i.Slots.Count(x => x is not null)) : 1;
         for (var n = most + 1; n < m.SeenInSize.Length; ++n)
             if (m.SeenInSize[n] != 0 && Ms(now - m.SeenInSize[n]) <= seconds * 1000) most = n;
@@ -2647,15 +2756,30 @@ public sealed class RoomHub
     {
         if (!m.ResumeAllowed || Mine(m, msg.Inst, msg.Visit) is not { } i || m.Slot != msg.Slot)
         {
+            // Not resumable (19.15): a member that still has its seat and whose engine plays on in a field of its instance is filed
+            // there as continuing alone (no stage group until its next barrier, which is decided inside its instance; its
+            // whereabouts are that stage).
+            if (m.World is { Ending: false } w && m.Instance is null or { Mode: InstanceMode.Hub } && msg.Stage.Length > 0 && !StageNames.IsHub(msg.Stage))
+            {
+                m.LoneStage = msg.Stage;
+                m.LoneSince = now;
+                m.LoneKey = 0;
+                Count("resume_filed_alone");
+                Note("resume_alone", null, ("member", m.Id), ("wid", w.Wid), ("stage", msg.Stage));
+                MarkInfoDirty(w);
+                return;
+            }
             Count("resume_refused");
             return;
         }
         m.ResumeAllowed = false; // once per connection
         if (i.Mode == InstanceMode.Sealed)
         {
-            // Only the ticks lost with the old connection come again (a reconnect's gap); the cursor never moves forward.
+            // Only the ticks lost with the old connection come again (a reconnect's gap); the cursor never moves forward. A host's
+            // window covers his grace (19.6.7: World:HostMaxResumeTicks).
+            var max = m.World?.Host == m ? Math.Max(_inst.MaxResumeTicks, _world.HostMaxResumeTicks) : _inst.MaxResumeTicks;
             var from = Math.Min(msg.LastTick + 1, i.StreamEnd);
-            if (from < m.Cursor && m.Cursor - from > (uint)Math.Max(0, _inst.MaxResumeTicks))
+            if (from < m.Cursor && m.Cursor - from > (uint)Math.Max(0, max))
             {
                 Count("resume_refused");
                 return;
@@ -2663,6 +2787,7 @@ public sealed class RoomHub
             if (from < m.Cursor) m.Cursor = from;
             Pump(i, m, bulk: true);
         }
+        if (m.World is { HostAway: true } hw && hw.Host == m) HostBack(hw, now);
         Note("resume", i, ("member", m.Index), ("last", msg.LastTick));
     }
 
@@ -2707,19 +2832,24 @@ public sealed class RoomHub
 
     // Housekeeping ---------------------------------------------------------------------------------------------------------
 
-    /// <summary>Pings, holds, lag and reconnect limits, the earned story values, the roster (the relay calls it a few times per second).</summary>
+    /// <summary>Pings, holds, lag and reconnect limits, the earned story values, the world's part (the relay calls it a few times
+    /// per second).</summary>
     public void Housekeep(long now)
     {
-        if (Ms(now - _lastPing) >= 1000)
         {
+            // One PING a second per member, spread over the passes (a member's own second; M4: the whole world's pings in one pass
+            // held the lock for milliseconds), with the low margin cached per stream (DelayController.PingMargin).
             _lastPing = now;
             foreach (var m in _members.Values)
             {
                 if (m.Peer is null) continue;
+                if (m.NextPingAt == 0) m.NextPingAt = now + FromMs(250.0 * (m.Id % 4));
+                if (now < m.NextPingAt) continue;
+                m.NextPingAt = now + FromMs(1000);
                 m.PingNonce = ++_pingNonce;
                 m.PingSentAt = now;
                 var st = m.Instance is { } i && m.Slot >= 0 ? i.Streams[m.Slot] : null;
-                var margin = st?.Delay.LowMargin() is { } low ? (short)Math.Clamp(low, short.MinValue, short.MaxValue) : (short)0;
+                var margin = st?.Delay.PingMargin() is { } low ? (short)Math.Clamp(low, short.MinValue, short.MaxValue) : (short)0;
                 var d = st?.Delay.Current ?? DelayController.FromRoundTrips(m.Rtt.All, _sealing.MaxDelayTicks);
                 m.Peer.Send(new PingMsg(m.PingNonce, (ulong)(now * 1000.0 / Freq), margin, (byte)d).Frame());
                 // What the member's network indicator and online.log show (round 62; older clients skip the frame).
@@ -2766,14 +2896,13 @@ public sealed class RoomHub
             foreach (var x in i.Slots)
                 if (x is not null && n < x.SeenInSize.Length) x.SeenInSize[n] = now;
         }
-        if (Ms(now - _lastRoster) >= 1000)
+        try
         {
-            _lastRoster = now;
-            var entries = _members.Values.OrderBy(m => m.Index).Select(m => new RosterEntry((byte)m.Index,
-                m.Presence?.Stage ?? m.Instance?.Stage ?? "", m.Instance?.Id ?? m.Joining?.Target.Id ?? 0, m.Presence?.Level ?? 0, m.Presence?.Hp ?? 0,
-                m.Presence?.HpMax ?? 0, (byte)((m.Connected ? RosterEntry.Connected : 0) | (m.Lagging ? RosterEntry.Lagging : 0) | (m.Owner ? RosterEntry.Owner : 0)))).ToList();
-            var frame = new RosterMsg(entries).Frame();
-            foreach (var m in _members.Values) m.Peer?.Send(frame);
+            HousekeepWorld(now);
+        }
+        catch (Exception e)
+        {
+            Fault(e, "the world's housekeeping");
         }
     }
 
@@ -2905,11 +3034,17 @@ public sealed class RoomHub
                 if (lagging != m.Lagging)
                 {
                     m.Lagging = lagging;
-                    foreach (var o in _members.Values)
-                        o.Peer?.Send(new RoomMsg(lagging ? RoomNotice.Lagging : RoomNotice.LagOk, (byte)m.Index, (ulong)m.AccountId, m.Name, Flags(m)).Frame());
+                    if (m.World is { } lw)
+                    {
+                        foreach (var o in lw.Members)
+                            if (o != m) o.Peer?.Send(Notice(o, lagging ? WorldNoticeKind.Lagging : WorldNoticeKind.LagOver, m, 0, ""));
+                        MarkInfoDirty(lw);
+                    }
                 }
-                var gone = !m.Connected && Ms(now - m.DisconnectedAt) >= _relay.ReconnectSeconds * 1000.0;
-                var lagOut = lagging && !everyoneLags && !m.Resyncing && Ms(now - st.FillStreakSince) >= _relay.LagLeaveSeconds * 1000.0;
+                // The host in his grace (19.6.7): his slot fills with neutral pads until the grace's end, no lagOut, no reconnect LEAVE.
+                var inGrace = m.World is { HostAway: true } hw && hw.Host == m;
+                var gone = !inGrace && !m.Connected && Ms(now - m.DisconnectedAt) >= _relay.ReconnectSeconds * 1000.0;
+                var lagOut = !inGrace && lagging && !everyoneLags && !m.Resyncing && Ms(now - st.FillStreakSince) >= _relay.LagLeaveSeconds * 1000.0;
                 if (gone || lagOut)
                 {
                     Note(gone ? "reconnect_timeout" : "lag_leave", i, ("member", m.Index));
@@ -2921,7 +3056,7 @@ public sealed class RoomHub
         else if (i.Mode == InstanceMode.SoloLed)
         {
             foreach (var (s, m) in i.Seats.ToList())
-                if (!m.Connected && Ms(now - m.DisconnectedAt) >= _relay.ReconnectSeconds * 1000.0)
+                if (!m.Connected && Ms(now - m.DisconnectedAt) >= _relay.ReconnectSeconds * 1000.0 && !(m.World is { HostAway: true } sw && sw.Host == m))
                 {
                     Note("reconnect_timeout", i, ("member", m.Index));
                     i.Slots[s] = null;

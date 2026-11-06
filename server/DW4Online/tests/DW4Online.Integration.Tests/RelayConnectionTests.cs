@@ -37,7 +37,7 @@ public class RelayConnectionTests
                 for (var attempt = 0; attempt < 30 && !line.StartsWith("OK ", StringComparison.Ordinal); ++attempt)
                 {
                     if (attempt > 0) await Task.Delay(100);
-                    line = await HandshakeAndDropAsync(port, tickets.Issue("LEAK01", 7, RelayRoles.Member));
+                    line = await HandshakeAndDropAsync(port, tickets.Issue(Wire.WorldChannel, 7, RelayRoles.Member));
                 }
                 Assert.True(line.StartsWith("OK ", StringComparison.Ordinal), $"connection {k + 1} was refused ({line})");
             }
@@ -55,7 +55,7 @@ public class RelayConnectionTests
         using var client = new TcpClient();
         await client.ConnectAsync(IPAddress.Loopback, port);
         var stream = client.GetStream();
-        var hello = string.Create(CultureInfo.InvariantCulture, $"{Wire.Magic} {ticket} 44 1 {0x1234UL:x16}\n");
+        var hello = string.Create(CultureInfo.InvariantCulture, $"{Wire.Magic} {ticket} 49 1 {0x1234UL:x16}\n");
         await stream.WriteAsync(Encoding.ASCII.GetBytes(hello));
         var line = new StringBuilder();
         var one = new byte[1];
@@ -93,7 +93,7 @@ public class RelayConnectionTests
         var hub = new RelayHub(relay, new SealingOptions(), new InstanceOptions(), tickets, NullLoggerFactory.Instance);
         var stalled = new TaskCompletionSource();
         var beats = 0;
-        hub.Heartbeat = async (_, _) =>
+        hub.Heartbeat = async _ =>
         {
             Interlocked.Increment(ref beats);
             await stalled.Task;
@@ -106,7 +106,7 @@ public class RelayConnectionTests
             using var client = new TcpClient();
             await client.ConnectAsync(IPAddress.Loopback, port);
             var stream = client.GetStream();
-            var hello = string.Create(CultureInfo.InvariantCulture, $"{Wire.Magic} {tickets.Issue("BEAT01", 7, RelayRoles.Member)} 44 1 {0x1234UL:x16}\n");
+            var hello = string.Create(CultureInfo.InvariantCulture, $"{Wire.Magic} {tickets.Issue(Wire.WorldChannel, 7, RelayRoles.Member)} 49 1 {0x1234UL:x16}\n");
             await stream.WriteAsync(Encoding.ASCII.GetBytes(hello));
             var one = new byte[1];
             while (await stream.ReadAsync(one) == 1 && one[0] != '\n')

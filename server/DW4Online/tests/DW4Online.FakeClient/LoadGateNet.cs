@@ -8,6 +8,7 @@ using System.Text.Json;
 using DW4Online.Relay;
 using DW4Online.Relay.Hub;
 using DW4Online.Relay.Protocol;
+using DW4Online.Relay.World;
 using Microsoft.Extensions.Logging.Abstractions;
 
 namespace DW4Online.FakeClient;
@@ -43,8 +44,7 @@ public static class LoadGateNet
             Enabled = true, ListenAddress = "127.0.0.1", Port = port, MaxConnectionsPerIp = 1024, IdleTimeoutSeconds = 120, LagLeaveSeconds = 600,
         };
         var relay = new RelayHub(options, new SealingOptions(), new InstanceOptions(), tickets, NullLoggerFactory.Instance);
-        relay.Admission = a => ValueTask.FromResult<HubAdmitted?>(new HubAdmitted((int)a.AccountId, "m" + a.AccountId, a.AccountId == 0,
-            new RoomInfo(Room, LoadGate.Protocol, 1, 2, 250)));
+        relay.Admission = a => ValueTask.FromResult<HubAdmit?>(new HubAdmit(a.AccountId, "m" + a.AccountId));
         using var stop = new CancellationTokenSource();
         await relay.StartAsync(stop.Token);
         Console.WriteLine($"LISTENING {await relay.Started}");
@@ -58,7 +58,7 @@ public static class LoadGateNet
                 if (browse > 0 && Stopwatch.GetTimestamp() >= next)
                 {
                     next += (long)(Freq / browse);
-                    _ = relay.Views(Room);
+                    _ = relay.Views();
                 }
                 Thread.Sleep(1);
             }
@@ -72,7 +72,7 @@ public static class LoadGateNet
         while (Console.ReadLine() is { } line)
         {
             var parts = line.Split(' ');
-            var hub = relay.Room(Room);
+            var hub = relay.World;
             switch (parts[0])
             {
                 case "browse":

@@ -6,6 +6,7 @@ using System.Text;
 using System.Text.Json;
 using DW4Online.Relay.Hub;
 using DW4Online.Relay.Protocol;
+using DW4Online.Relay.World;
 
 namespace DW4Online.FakeClient;
 

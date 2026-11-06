@@ -61,6 +61,9 @@ public sealed class SlotStream
 
     /// <summary>Late pads for ticks before <paramref name="tick"/> do not feed the delay rule.</summary>
     public void GraceThrough(uint tick) => GraceUntil = Math.Max(GraceUntil, tick);
+    /// <summary>The host's grace (SEAMLESS.md 19.6.7): a missing pad is filled with neutral pads from the first missing tick on (his
+    /// Digimon stands still), not "the last pad, then neutral" as for a guest.</summary>
+    public bool NeutralFill { get; set; }
     public DelayController Delay { get; }
 
     public long Sealed { get; private set; }
@@ -164,7 +167,7 @@ public sealed class SlotStream
         ++FillStreak;
         ++Filled;
         filled = true;
-        return Sealing(++_repeats <= RepeatFills ? _lastReal : Pad.Neutral);
+        return Sealing(++_repeats <= RepeatFills && !NeutralFill ? _lastReal : Pad.Neutral);
     }
 
     private void SetSource(Pad pad, uint tick)
@@ -299,10 +302,56 @@ public sealed class DelayController(int initial)
     public double? Quantile(double share)
     {
         if (_count < Block) return null;
-        var copy = new double[_count];
+        var copy = _scratch ??= new double[FallWindow];
         for (var k = 0; k < _count; ++k) copy[k] = _margin[(_pos - _count + k + FallWindow) % FallWindow];
-        Array.Sort(copy);
-        return copy[Math.Clamp((int)Math.Floor(_count * share), 0, _count - 1)];
+        // The k-th smallest by selection (the same value a sort gives, in linear time: SEAMLESS.md 19.17.4's ping pass sorted the
+        // whole fall window for every sealed member once a second).
+        return Select(copy, _count, Math.Clamp((int)Math.Floor(_count * share), 0, _count - 1));
+    }
+
+    private double[]? _scratch;
+
+    /// <summary>The <paramref name="k"/>-th smallest of the first <paramref name="n"/> values (Hoare's selection; reorders them).</summary>
+    public static double Select(double[] a, int n, int k)
+    {
+        int lo = 0, hi = n - 1;
+        while (lo < hi)
+        {
+            var pivot = a[lo + (hi - lo) / 2];
+            int i = lo, j = hi;
+            while (i <= j)
+            {
+                while (a[i] < pivot) ++i;
+                while (a[j] > pivot) --j;
+                if (i > j) break;
+                (a[i], a[j]) = (a[j], a[i]);
+                ++i;
+                --j;
+            }
+            if (k <= j) hi = j;
+            else if (k >= i) lo = i;
+            else return a[k];
+        }
+        return a[k];
+    }
+
+    private double? _pingMargin;
+    private long _pingMarginAt = long.MinValue;
+
+    /// <summary>Pads a PING's margin may be old (five seconds): it is a display value of the client's network line, not a rule.</summary>
+    public const int PingMarginRecords = 300;
+
+    /// <summary>
+    /// The low margin PING and NETSTAT report (M4 (a), SEAMLESS.md 19.17.4): <see cref="LowMargin"/>, cached per stream for
+    /// <see cref="PingMarginRecords"/> pads and dropped at every change of d, so the housekeeping's ping pass computes it at most
+    /// once in five seconds per stream (it held the hub lock 7.5-21 ms once a second with 120 sealed members).
+    /// </summary>
+    public double? PingMargin()
+    {
+        if (_pingMarginAt != long.MinValue && _records - _pingMarginAt < PingMarginRecords) return _pingMargin;
+        _pingMargin = LowMargin();
+        _pingMarginAt = _records;
+        return _pingMargin;
     }
 
     /// <summary>The newest <paramref name="n"/> margins (ms), sorted; fewer while the window holds fewer.</summary>
@@ -412,6 +461,7 @@ public sealed class DelayController(int initial)
         _count = 0;
         _pos = 0;
         _sinceChange = 0;
+        _pingMarginAt = long.MinValue;
     }
 
     /// <summary>

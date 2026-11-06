@@ -53,6 +53,8 @@ public static class RelayRoles
 {
     /// <summary>A room member's ticket (DW4R2: one connection per member and room).</summary>
     public const string Member = "member";
+    /// <summary>Round I1 (SEAMLESS.md 19.14): a moderator's or admin's world ticket (from the database at POST /world/enter).</summary>
+    public const string Staff = "staff";
 }
 
 /// <summary>What a valid ticket says. <paramref name="Nonce"/> names this ticket (the room service keeps the live one per player).</summary>
@@ -94,7 +96,7 @@ public sealed partial class RelayTickets
     public IssuedTicket Create(string room, long account, string role)
     {
         if (!IsChannel(room)) throw new ArgumentException("Channels are a room code (4-8 of A-Z 0-9) with an optional '-<instance>' (1-9 digits).", nameof(room));
-        if (role is not RelayRoles.Member) throw new ArgumentException("Unknown role.", nameof(role));
+        if (role is not (RelayRoles.Member or RelayRoles.Staff)) throw new ArgumentException("Unknown role.", nameof(role));
         var expires = _time.GetUtcNow().Add(_lifetime).ToUnixTimeSeconds();
         var nonce = Convert.ToHexString(RandomNumberGenerator.GetBytes(12));
         var body = Encoding.ASCII.GetBytes(FormattableString.Invariant($"{room}|{account}|{role}|{expires}|{nonce}"));

@@ -1178,20 +1178,22 @@ public partial class HubLogicTests
     }
 
     [Fact]
-    public void Room_changes_reach_every_member()
+    public void World_members_are_not_announced_to_everyone_and_a_staff_lock_closes_the_member()
     {
+        // The world (19.4): no room roster, no ROOM notices; a member hears of another only through its own instance, a figure or
+        // a friend (MEMBER_INFO before the first mention). A staff lock (RemoveMember) closes the connection; pings go on.
         var h = new Harness();
         var a = h.Connect("a", 0);
         var b = h.Connect("b", 1);
-        Assert.Contains(a.All(Msg.Room, RoomMsg.Parse), r => r.Kind == RoomNotice.Connected && r.Member == 1);
-        Assert.Equal(2, b.All(Msg.Room, RoomMsg.Parse).Count(r => r.Kind == RoomNotice.MemberJoined));
-        h.Hub.RemoveMember(101, CloseReason.Kicked, "bye", h.Now);
-        Assert.Equal(CloseReason.Kicked, b.Closed);
-        Assert.Contains(a.All(Msg.Room, RoomMsg.Parse), r => r.Kind == RoomNotice.MemberLeft && r.Member == 1);
+        Assert.False(a.Has(Msg.Room) || a.Has(Msg.Roster) || a.Has(Msg.MemberInfo));
+        Assert.Equal(InstanceInfoMsg.Home.Frame()[Wire.HeaderBytes..], a.Frames.Last(f => f.Type == Msg.InstanceInfo).Payload);
+        h.Hub.RemoveMember(h.Mem("b").AccountId, CloseReason.Account, "bye", h.Now);
+        Assert.Equal(CloseReason.Account, b.Closed);
+        Assert.Null(h.Hub.MemberOf(h.Mem("b").AccountId));
         h.Advance(1100);
         h.Hub.Housekeep(h.Now);
         Assert.True(a.Has(Msg.Ping));
-        Assert.Single(a.Last(Msg.Roster, RosterMsg.Parse).Entries);
+        Assert.False(a.Has(Msg.Roster));
     }
 
     // Round S1 review ---------------------------------------------------------------------------------------------------
@@ -1219,7 +1221,7 @@ public partial class HubLogicTests
         // The member drops without BYE: past the reconnect window the housekeeping ends its instance and keeps going.
         h.Hub.Disconnect(h.Mem("a"), h.P("a"), h.Now);
         var pings = b.All(Msg.Ping, PingMsg.Parse).Count;
-        h.Advance(11_000);
+        h.Advance(61_000); // (a hosts its instance: its grace of 60 s, 19.6.7)
         h.Hub.Housekeep(h.Now);
         h.Advance(1_100);
         h.Hub.Housekeep(h.Now);
@@ -1326,7 +1328,7 @@ public partial class HubLogicTests
         h.Hub.Disconnect(h.Mem("b"), h.P("b"), h.Now);
         h.Seal(500);
         var b2 = h.Connect("b", 1);
-        Assert.Equal(WelcomeMsg.Resumable | WelcomeMsg.PresenceV2 | WelcomeMsg.Checkpoints, b2.Last(Msg.Welcome, WelcomeMsg.Parse).Flags);
+        Assert.Equal(WelcomeMsg.Resumable | WelcomeMsg.PresenceV2 | WelcomeMsg.Checkpoints | WelcomeMsg.World, b2.Last(Msg.Welcome, WelcomeMsg.Parse).Flags);
         h.Send("b", new ResumeMsg(inst, i.Visit, 1, 0).Frame()); // the whole log: refused
         Assert.Equal(2, h.Hub.Counters["resume_refused"]);
         h.Send("b", new ResumeMsg(inst, i.Visit, 1, i.NextSeal - 30).Frame()); // once per connection
