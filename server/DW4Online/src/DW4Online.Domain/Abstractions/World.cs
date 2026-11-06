@@ -26,9 +26,6 @@ public interface IInstanceHistoryRepository
 
     /// <summary>At the service start: instances a previous process left open end with 'server_stop' (their members 'ended'); returns how many.</summary>
     Task<int> CloseOpenAsync(DateTime now, CancellationToken ct = default);
-
-    /// <summary>Deletes ended instances started before <paramref name="cut"/> with their members; returns how many.</summary>
-    Task<int> PruneAsync(DateTime cut, CancellationToken ct = default);
 }
 
 /// <summary>An instance of an account's history as the website shows it (players only; spectator rows for staff pages).</summary>
@@ -62,6 +59,10 @@ public sealed class PlayedWithRow
 /// <summary>The world's account-side store: online_prefs, accounts.last_seen_at and the history queries of the website.</summary>
 public interface IWorldRepository
 {
+    /// <summary>Deletes ended instances started before <paramref name="cut"/> with their members; returns how many (the
+    /// 90-day prune is web's housekeeping, not part of the relay's history interface above).</summary>
+    Task<int> PruneHistoryAsync(DateTime cut, CancellationToken ct = default);
+
     /// <summary>The account's preferences; <see cref="OnlinePrefs.Default"/> when it has no row.</summary>
     Task<OnlinePrefs> GetPrefsAsync(long accountId, CancellationToken ct = default);
 

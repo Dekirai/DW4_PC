@@ -233,7 +233,7 @@ public sealed class WorldRepository(Database db) : IWorldRepository, IInstanceHi
         return closed;
     }
 
-    public async Task<int> PruneAsync(DateTime cut, CancellationToken ct = default)
+    public async Task<int> PruneHistoryAsync(DateTime cut, CancellationToken ct = default)
     {
         await using var c = await db.OpenAsync(ct);
         return await c.ExecuteAsync(new CommandDefinition(

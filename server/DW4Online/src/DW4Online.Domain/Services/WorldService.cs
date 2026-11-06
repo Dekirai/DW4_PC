@@ -393,7 +393,7 @@ public sealed class WorldService
 
     /// <summary>Deletes ended instances older than World:HistoryDays with their members.</summary>
     public Task<int> PruneHistoryAsync(CancellationToken ct = default) =>
-        _history.PruneAsync(Clock.Now(_time).AddDays(-Math.Max(1, _options.HistoryDays)), ct);
+        _world.PruneHistoryAsync(Clock.Now(_time).AddDays(-Math.Max(1, _options.HistoryDays)), ct);
 
     private async Task TouchLastSeenSafeAsync(IReadOnlyCollection<long> accounts, CancellationToken ct)
     {
