@@ -348,6 +348,13 @@ public sealed class WorldService
         return member.Name;
     }
 
+    /// <summary>
+    /// The staff rows of the audit log (19.19's GET /admin/audit, the website's audit list): a moderator sees his own, an
+    /// admin all; optionally one event (an unknown event shows nothing).
+    /// </summary>
+    public Task<IReadOnlyList<StaffAuditRow>> StaffAuditAsync(AuthenticatedSession viewer, string? auditEvent, int limit = 200, CancellationToken ct = default) =>
+        _world.ListStaffAuditAsync(viewer.Role == Roles.Admin ? null : viewer.AccountId, string.IsNullOrEmpty(auditEvent) ? null : auditEvent, limit, ct);
+
     private static object AuditDetail(WorldInstanceRow row) => new
     {
         wid = row.Wid,

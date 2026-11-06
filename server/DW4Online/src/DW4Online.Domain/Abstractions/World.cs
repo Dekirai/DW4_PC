@@ -90,6 +90,9 @@ public interface IWorldRepository
 
     /// <summary>The whereabouts preference (the default when no row) and last_seen_at of the given accounts.</summary>
     Task<IReadOnlyList<PresencePrefsRow>> ListPresencePrefsAsync(IReadOnlyCollection<long> accountIds, CancellationToken ct = default);
+
+    /// <summary>The staff rows of the audit log, newest first: of one staff member (<paramref name="actorId"/>) or of all; one event or all.</summary>
+    Task<IReadOnlyList<StaffAuditRow>> ListStaffAuditAsync(long? actorId, string? auditEvent, int limit, CancellationToken ct = default);
 }
 
 /// <summary>Whether and when friends may see an account's whereabouts (online_prefs.whereabouts, accounts.last_seen_at).</summary>
@@ -98,4 +101,23 @@ public sealed class PresencePrefsRow
     public long AccountId { get; init; }
     public string Whereabouts { get; init; } = OnlinePrefs.WhereaboutsFriends;
     public DateTime? LastSeenAt { get; init; }
+}
+
+/// <summary>A staff row of the audit log (19.14, 19.19's GET /admin/audit): who did what to whom, with both names.</summary>
+public sealed class StaffAuditRow
+{
+    public long Id { get; init; }
+    public DateTime At { get; init; }
+    public string Event { get; init; } = "";
+    public string? Staff { get; init; }
+    public string? Player { get; init; }
+    public string? Detail { get; init; }
+
+    /// <summary>The audit events of staff actions and looks (the view v_staff_audit holds the same list).</summary>
+    public static readonly string[] Events =
+    [
+        "staff_join", "staff_join_override", "staff_spectate_start", "staff_spectate_end", "staff_end_instance", "staff_remove",
+        "instance_visibility", "instance_remove", "report_handled", "room_close_admin", "admin_role", "admin_status",
+        "admin_password_reset", "admin_unlock_revoke", "character_restore", "story_restore",
+    ];
 }

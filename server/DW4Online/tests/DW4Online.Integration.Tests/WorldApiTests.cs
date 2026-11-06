@@ -334,6 +334,24 @@ public class WorldApiTests
         Assert.Equal([lee, kim], rows.Select(r => r.Account));
         Assert.Contains("\"historyId\":55", rows[1].Detail);
         Assert.Equal(2, await c.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM v_staff_audit WHERE staff = 'Moddy'"));
+
+        // The audit list (19.19): a moderator his own rows, an admin everybody's; one event.
+        await host.RegisterAsync("Chief");
+        await c.ExecuteAsync("UPDATE accounts SET role = 'admin' WHERE username = 'Chief'");
+        var chief = host.Client((await host.LoginAsync("Chief")).Token);
+        await c.ExecuteAsync("INSERT INTO audit_log (at, account_id, actor_id, event) SELECT UTC_TIMESTAMP(3), @kim, id, 'staff_join' FROM accounts WHERE username = 'Chief'", new { kim });
+        var mine = (await (await mod.GetAsync("/api/v1/admin/audit")).Json()).GetProperty("rows");
+        Assert.Equal(2, mine.GetArrayLength());
+        Assert.All(mine.EnumerateArray(), r => Assert.Equal("Moddy", r.GetProperty("staff").GetString()));
+        Assert.Equal(3, (await (await chief.GetAsync("/api/v1/admin/audit")).Json()).GetProperty("rows").GetArrayLength());
+        var joins = (await (await chief.GetAsync("/api/v1/admin/audit?event=staff_join")).Json()).GetProperty("rows");
+        Assert.Equal(("staff_join", "Chief", "Kim"), (joins[0].GetProperty("event").GetString(), joins[0].GetProperty("staff").GetString(), joins[0].GetProperty("player").GetString()));
+        Assert.Equal(HttpStatusCode.Forbidden, (await player.GetAsync("/api/v1/admin/audit")).StatusCode);
+        using var web = new WebBrowser(host);
+        await web.LoginAsync("Chief");
+        var page = await web.GetAsync("/admin/audit?Event=staff_end_instance");
+        Assert.Contains("staff_end_instance", page.Html);
+        Assert.Contains("Moddy", page.Html);
     }
 
     /// <summary>

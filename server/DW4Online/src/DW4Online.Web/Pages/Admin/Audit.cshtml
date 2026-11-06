@@ -1,0 +1,44 @@
+@page "/admin/audit"
+@model DW4Online.Web.Pages.Admin.AuditModel
+@{
+    ViewData["Title"] = "Audit";
+}
+<h1>Staff audit</h1>
+<p class="muted">@(Model.All ? "What every moderator and admin did and looked at" : "What you did and looked at as staff"), newest
+    first (the last 200 rows; the log keeps 180 days).</p>
+<form method="get" class="stack">
+    <label>Event
+        <select name="Event">
+            <option value="" selected="@(string.IsNullOrEmpty(Model.Event))">all</option>
+            @foreach (var e in DW4Online.Domain.Abstractions.StaffAuditRow.Events)
+            {
+                <option value="@e" selected="@(Model.Event == e)">@e</option>
+            }
+        </select>
+    </label>
+    <button type="submit" class="secondary">Show</button>
+</form>
+@if (Model.Rows.Count == 0)
+{
+    <p class="muted">Nothing yet.</p>
+}
+else
+{
+    <div class="table-wrap">
+        <table>
+            <thead><tr><th>When</th><th>Event</th><th>Staff</th><th>Player</th><th>Detail</th></tr></thead>
+            <tbody>
+            @foreach (var r in Model.Rows)
+            {
+                <tr>
+                    <td>@Format.Date(r.At)</td>
+                    <td>@r.Event</td>
+                    <td>@(r.Staff ?? "-")</td>
+                    <td>@(r.Player is null ? "-" : r.Player)</td>
+                    <td class="small"><code>@(r.Detail ?? "")</code></td>
+                </tr>
+            }
+            </tbody>
+        </table>
+    </div>
+}

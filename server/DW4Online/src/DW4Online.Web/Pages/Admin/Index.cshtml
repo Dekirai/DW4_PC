@@ -40,4 +40,5 @@
 <h2>World</h2>
 <p>@Model.Counts.PlayersOnline players online, @Model.Counts.Instances instances
     (@string.Join(", ", Model.Counts.Areas.Select(a => $"{a.Name} {a.Instances}"))).
-    <a href="~/admin/instances">Every instance</a>, Private ones included, with End and Remove.</p>
+    <a href="~/admin/instances">Every instance</a>, Private ones included, with End and Remove;
+    <a href="~/admin/audit">the staff audit list</a>.</p>

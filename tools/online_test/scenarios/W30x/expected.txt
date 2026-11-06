@@ -1,0 +1,2 @@
+# W30x, the counter-proof of W30: it runs W30's scripts and W30's expected.txt (scenario.json "dir": "W30") with the replace
+# at the guest's NEW switched off (DW4_ONLINE_TEST_NO_REPLACE=1 for b); those checks must fail (counter_proof).

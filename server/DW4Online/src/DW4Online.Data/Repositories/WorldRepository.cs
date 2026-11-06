@@ -99,6 +99,18 @@ public sealed class WorldRepository(Database db) : IWorldRepository, IInstanceHi
             "SELECT last_seen_at FROM accounts WHERE id = @accountId", new { accountId }, cancellationToken: ct));
     }
 
+    public async Task<IReadOnlyList<StaffAuditRow>> ListStaffAuditAsync(long? actorId, string? auditEvent, int limit, CancellationToken ct = default)
+    {
+        var events = auditEvent is null ? StaffAuditRow.Events : StaffAuditRow.Events.Where(e => e == auditEvent).ToArray();
+        if (events.Length == 0) return [];
+        await using var c = await db.OpenAsync(ct);
+        return (await c.QueryAsync<StaffAuditRow>(new CommandDefinition(
+            "SELECT CAST(l.id AS SIGNED) AS id, l.at, l.event, s.username AS staff, p.username AS player, l.detail FROM audit_log l " +
+            "LEFT JOIN accounts s ON s.id = l.actor_id LEFT JOIN accounts p ON p.id = l.account_id " +
+            "WHERE l.event IN @events AND (@actor IS NULL OR l.actor_id = @actor) ORDER BY l.id DESC LIMIT @limit",
+            new { events, actor = actorId, limit = Math.Clamp(limit, 1, 1000) }, cancellationToken: ct))).ToList();
+    }
+
     public async Task<IReadOnlyList<PresencePrefsRow>> ListPresencePrefsAsync(IReadOnlyCollection<long> accountIds, CancellationToken ct = default)
     {
         if (accountIds.Count == 0) return [];

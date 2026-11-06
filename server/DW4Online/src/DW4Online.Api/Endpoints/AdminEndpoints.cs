@@ -77,6 +77,10 @@ public static class AdminEndpoints
                 : ApiProblems.Ok(await world.RemoveMemberAsync(ctx.Session().AccountId, (uint)wid, r.Username, ctx.IpBytes(), ctx.RequestAborted),
                     _ => Results.NoContent()));
 
+        // The staff rows of the audit log: a moderator his own, an admin all (19.19).
+        admin.MapGet("/audit", async (string? @event, WorldService world, HttpContext ctx) =>
+            Results.Ok(new { rows = await world.StaffAuditAsync(ctx.Session(), @event, 200, ctx.RequestAborted) }));
+
         // A demotion counts in the world at once (the relay re-reads the role, 19.14).
         admin.MapPost("/accounts/{username}/role", async (string username, RoleRequest r, AccountService accounts, WorldService world, HttpContext ctx) =>
         {
