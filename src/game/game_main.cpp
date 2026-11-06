@@ -2825,7 +2825,10 @@ int run(const Options& options, dw4::game::Settings& settings) {
                                 title_driver.presses());
                     std::fflush(stdout);
                     if (title_driver.phase() == Phase::done) {
-                        if (lobby) lobby->refresh_world();
+                        if (lobby) {
+                            lobby->refresh_world();
+                            lobby->refresh_friends();
+                        }
                         welcome_at = steady_seconds() + 1.5;
                     } else if (title_driver.phase() == Phase::gave_up) {
                         const auto* title = engine.get<dw4::engine::Title2Manager>();
@@ -2836,10 +2839,9 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 }
                 if (welcome_at >= 0 && steady_seconds() >= welcome_at) {
                     welcome_at = -1;
-                    std::string text = "Welcome back, " + online->room().account + ".";
-                    if (lobby && lobby->world_counts())
-                        text += " " + std::to_string(lobby->world_counts()->players) + (lobby->world_counts()->players == 1 ? " player" : " players") +
-                                " online.";
+                    const std::string text = dw4::game::online::api::welcome_text(
+                        online->room().account, lobby && lobby->world_counts() ? std::optional<int>(lobby->world_counts()->players) : std::nullopt,
+                        lobby ? lobby->friends_online() : std::nullopt);
                     std::cout << "online: " << text << '\n';
                     toasts.push_back({"Online", text, std::chrono::steady_clock::now() + std::chrono::seconds(6)});
                 }

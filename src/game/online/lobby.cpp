@@ -375,6 +375,10 @@ void OnlineLobby::handle(const Pending& pending, const HttpResponse& response) {
         }
         return;
     }
+    case Call::friends:
+        // (Background: a refusal or an older server without friends leaves the count unknown.)
+        if (const auto online = api::parse_friends_online(response)) friends_online_ = online;
+        return;
     case Call::prefs:
         if (handle_common(response, true)) return;
         if (const auto prefs = api::parse_online_prefs(response)) prefs_ = prefs;
@@ -588,6 +592,11 @@ void OnlineLobby::reset_character(const std::string& current_password) {
 void OnlineLobby::refresh_account() {
     if (!logged_in()) return;
     if (!in_flight(Call::me)) send(Call::me, api::me_request());
+}
+
+void OnlineLobby::refresh_friends() {
+    if (!logged_in() || in_flight(Call::friends)) return;
+    send(Call::friends, api::friends_request());
 }
 
 void OnlineLobby::refresh_world() {

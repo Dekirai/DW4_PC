@@ -81,6 +81,11 @@ HttpRequest world_counts_request() {
     r.authorized = false;
     return r;
 }
+HttpRequest friends_request() {
+    HttpRequest r;
+    r.path = "/friends";
+    return r;
+}
 HttpRequest online_prefs_request() {
     HttpRequest r;
     r.path = "/me/online-prefs";
@@ -144,6 +149,30 @@ std::optional<WorldCounts> parse_world_counts(const HttpResponse& response) {
     c.players = int((*v)["players"].i64().value_or((*v)["playersOnline"].i64().value_or(0)));
     c.instances = int((*v)["instances"].i64().value_or(0));
     return c;
+}
+
+std::optional<int> parse_friends_online(const HttpResponse& response) {
+    const auto v = body_of(response);
+    if (!v) return std::nullopt;
+    const auto& friends = (*v)["friends"];
+    if (friends.kind != json::Value::Kind::array) return std::nullopt;
+    int online = 0;
+    for (const auto& f : friends.items)
+        if (f["presence"]["online"].flag().value_or(false)) ++online;
+    return online;
+}
+
+std::string welcome_text(const std::string& name, std::optional<int> players, std::optional<int> friends_online) {
+    std::string text = "Welcome back, " + name + ".";
+    if (players) {
+        text += " " + std::to_string(*players) + (*players == 1 ? " player" : " players") + " online";
+        if (friends_online && *friends_online > 0)
+            text += ", " + std::to_string(*friends_online) + (*friends_online == 1 ? " friend" : " friends");
+        text += ".";
+    } else if (friends_online && *friends_online > 0) {
+        text += " " + std::to_string(*friends_online) + (*friends_online == 1 ? " friend" : " friends") + " online.";
+    }
+    return text;
 }
 
 std::optional<OnlinePrefs> parse_online_prefs(const HttpResponse& response) {

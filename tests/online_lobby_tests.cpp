@@ -225,6 +225,8 @@ struct Harness {
         if (r.path == "/world" && r.method == "GET") return answer(200, R"({"players":41,"playersOnline":41,"instances":12,"areas":{}})");
         if (token != good_token) return problem(401, "unauthorized", "Not logged in.");
         // Round I1a: the world (19.19 and the round's contract).
+        if (r.path == "/friends" && r.method == "GET")
+            return answer(200, R"({"friends":[{"username":"lee","presence":{"online":true}},{"username":"rin","presence":null}],"requestsIn":[]})");
         if (r.path == "/me/online-prefs" && r.method == "GET") return answer(200, prefs_json);
         if (r.path == "/me/online-prefs" && r.method == "PUT") {
             prefs_json = r.body;
@@ -362,6 +364,11 @@ void accounts(const std::filesystem::path& root) {
               "the world's counts load on the home screen");
         check(h.lobby->prefs() && h.lobby->prefs()->default_visibility == "public", "the online preferences after the login");
         check(h.lobby->play_label() == "Play: Veemon Lv 12 (Box 1)", "the Play button names the character: " + h.lobby->play_label());
+        // The lobby's welcome after Play's drive (19.5.1) counts the friends online.
+        check(!h.lobby->friends_online(), "no friend count before it is asked");
+        h.lobby->refresh_friends();
+        h.pass();
+        check(h.queue->sent_path("GET", "/friends") && h.lobby->friends_online() == 1, "GET /friends: one friend online");
     }
     {
         // A second start: the remembered login comes back without a password.

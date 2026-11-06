@@ -144,6 +144,21 @@ void api_calls() {
     check(!api::parse_world_entry(r), "no ticket: no entry");
     r.body = R"({"players":41,"playersOnline":41,"instances":12,"areas":{"death_valley":3}})";
     check(api::parse_world_counts(r)->players == 41 && api::parse_world_counts(r)->instances == 12, "world counts");
+    // The lobby's welcome after Play (19.5.1): GET /friends (web's I1a answer with the friends' presence).
+    r.body = R"({"friends":[{"username":"kim","since":"2026-11-01T10:00:00Z","presence":{"online":true,"status":"In the lobby","area":null,)"
+             R"("stage":"stagml11","lastSeenAt":null}},{"username":"lee","since":"2026-11-02T10:00:00Z","presence":null},)"
+             R"({"username":"rin","since":"2026-11-03T10:00:00Z","presence":{"online":false,"status":"Offline","lastSeenAt":"2026-11-05T10:00:00Z"}},)"
+             R"({"username":"ann","since":"2026-11-03T10:00:00Z","presence":{"online":true,"status":"Playing"}}],"requestsIn":[],"requestsOut":[]})";
+    check(api::parse_friends_online(r) == 2, "friends online: two of four (one shows nothing, one offline)");
+    check(api::friends_request().path == "/friends" && api::friends_request().method == "GET", "GET /friends");
+    r.body = R"({"error":"x"})";
+    check(!api::parse_friends_online(r), "no friend list: unknown");
+    check(api::welcome_text("Kim", 14, 2) == "Welcome back, Kim. 14 players online, 2 friends.", "the welcome with friends (19.5.1)");
+    check(api::welcome_text("Kim", 1, 1) == "Welcome back, Kim. 1 player online, 1 friend.", "one player, one friend");
+    check(api::welcome_text("Kim", 14, 0) == "Welcome back, Kim. 14 players online." &&
+              api::welcome_text("Kim", 14, std::nullopt) == "Welcome back, Kim. 14 players online.",
+          "no friends online: the players only");
+    check(api::welcome_text("Kim", std::nullopt, std::nullopt) == "Welcome back, Kim.", "no counts: the name only");
     r.body = R"({"defaultVisibility":"friends","cameraMode":0,"lightMode":1,"fastLoading":false,"randomizer":{"enabled":false,"seed":0},"lastBox":1})";
     check(api::parse_online_prefs(r)->default_visibility == "friends" && api::parse_online_prefs(r)->settings.rand_seed == 0, "prefs answer");
     r.body = R"({"ticket":"T3"})";

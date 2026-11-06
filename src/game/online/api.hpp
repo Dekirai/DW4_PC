@@ -70,6 +70,9 @@ HttpRequest world_enter_request(int box, int protocol, std::uint64_t data_hash, 
 HttpRequest world_ticket_request(int protocol, std::uint64_t data_hash, const std::string& client_version);
 HttpRequest world_leave_request();
 HttpRequest world_counts_request();
+// GET /friends (round I2-social; the friends' presence since I1a's web lane): the lobby's welcome counts
+// the friends online.
+HttpRequest friends_request();
 HttpRequest online_prefs_request();
 HttpRequest put_online_prefs_request(const OnlinePrefs& prefs);
 
@@ -78,6 +81,11 @@ std::optional<Login> parse_login(const HttpResponse& response);
 std::optional<WorldEntry> parse_world_entry(const HttpResponse& response);
 std::optional<std::string> parse_ticket(const HttpResponse& response);
 std::optional<WorldCounts> parse_world_counts(const HttpResponse& response);
+// The friends whose presence says online (a friend who shows nothing has presence null).
+std::optional<int> parse_friends_online(const HttpResponse& response);
+// The lobby's welcome after Play (19.5.1): "Welcome back, Kim. 14 players online, 2 friends."; the
+// players' part only with GET /world's count, the friends' only with one or more online.
+std::string welcome_text(const std::string& name, std::optional<int> players, std::optional<int> friends_online);
 std::optional<OnlinePrefs> parse_online_prefs(const HttpResponse& response);
 // The server's problem text (RFC 7807 "detail" / "title" / "code"), or the
 // transport error, for messages.

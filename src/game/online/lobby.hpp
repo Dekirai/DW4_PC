@@ -147,6 +147,8 @@ public:
     // GET /world: "Online now: <n> players, <m> instances" (nothing yet: none).
     const std::optional<api::WorldCounts>& world_counts() const { return counts_; }
     std::uint64_t counts_serial() const { return counts_serial_; } // counts the answers that arrived
+    // GET /friends: the friends online (the lobby's welcome, 19.5.1); none until an answer came.
+    const std::optional<int>& friends_online() const { return friends_online_; }
     // The online preferences (GET /me/online-prefs; Online > Settings).
     const std::optional<api::OnlinePrefs>& prefs() const { return prefs_; }
     // The world session runs (Play started it).
@@ -182,6 +184,7 @@ public:
 
     // The world (round I1a).
     void refresh_world();
+    void refresh_friends();
     void refresh_prefs();
     // Play: POST /world/enter for the box (after "the offline game ends?").
     void play();
@@ -203,7 +206,7 @@ public:
 private:
     enum class Call {
         status, me, character, login, register_account, recover, logout, logout_all, change_password, reset_character, world, prefs, put_prefs,
-        enter, leave
+        enter, leave, friends
     };
     struct Pending {
         std::uint64_t id = 0;
@@ -242,6 +245,7 @@ private:
     std::string recovery_code_, recover_name_;
 
     std::optional<api::WorldCounts> counts_;
+    std::optional<int> friends_online_;
     std::uint64_t counts_serial_ = 0;
     double counts_at_ = -1e9;
     std::optional<api::OnlinePrefs> prefs_;
