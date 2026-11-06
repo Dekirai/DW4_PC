@@ -275,6 +275,26 @@ bool OverflowRules::show_panel(Engine& engine, int slot, const std::string& digi
     return true;
 }
 
+int OverflowRules::drain(Engine& engine, int slot, int heal) {
+    if (heal <= 0 || damage.drain_cap <= 0.0f || slot < 0 || slot > 3) return heal;
+    auto* sys = engine.get<GameSystem>();
+    if (!sys) return heal;
+    const int max_hp = sys->players[std::size_t(slot)].max_hp;
+    if (max_hp <= 0) return heal;
+    const auto s = std::size_t(slot);
+    const auto second = std::int64_t(engine.frame()) / 60;
+    if (drain_second[s] != second) {
+        drain_second[s] = second;
+        drain_second_hp[s] = 0;
+    }
+    const int cap = std::max(1, int(std::lround(double(max_hp) * double(damage.drain_cap))));
+    const int out = std::clamp(cap - drain_second_hp[s], 0, heal);
+    drain_second_hp[s] += out;
+    tally.drain_given += out;
+    tally.drain_capped += heal - out;
+    return out;
+}
+
 int OverflowRules::technique_level(int lock) const { return run_technique_level(lock, levels.tech_lock_num, levels.tech_lock_den); }
 
 // ---------------------------------------------------------------------------

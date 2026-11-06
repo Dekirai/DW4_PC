@@ -666,7 +666,12 @@ std::vector<Lua4Value> Engine::lua_call(const Lua4HostCall& call) {
         // HPDRAIN / MPDRAIN of the weapon chips return a share of weapon damage.
         if (bullet_kind / 10000 != 4 && result.damage > 0) {
             auto* sys = get<GameSystem>();
-            if (slot->stats.hp_drain) sys->change_hp(*this, context->shooter, result.damage * slot->stats.hp_drain / 100);
+            if (slot->stats.hp_drain) {
+                int heal = result.damage * slot->stats.hp_drain / 100;
+                // Data Overflow (4.8): the run caps the Drain Ram at 2 % of MaxHP a second.
+                if (overflow_run_) heal = overflow_->drain(*this, context->shooter, heal);
+                sys->change_hp(*this, context->shooter, heal);
+            }
             if (slot->stats.mp_drain) sys->change_mp(*this, context->shooter, result.damage * slot->stats.mp_drain / 100);
         }
         return number(result.damage);

@@ -206,6 +206,7 @@ public:
         std::map<std::string, float, std::less<>> family_factor; // a family's own damage factor (14.3; the director's table)
         float hit_clamp = 0.35f;                    // a non-Guardian hit takes at most this share of MaxHP
         float guardian_clamp = 0.0f;                // ... and a Guardian's this share (0: none; the director: 0.30)
+        float drain_cap = 0.02f;                    // HPDRAIN (the Drain Ram) returns at most this share of MaxHP a second (4.8; 0: DW4's)
         // A hit from an attacker within near_distance (its body, a swing:
         // the player could have walked away) and one from farther (a shot)
         // weigh their own factors; the poison a hit leaves goes with it
@@ -294,6 +295,9 @@ public:
     // the train offers, the chips' ¶ Data power-ups; round O1b lane E).
     // false: inside the gap, left out (tally.panels_skipped).
     bool show_panel(Engine& engine, int slot, const std::string& digimon);
+    // HPDRAIN's heal of a weapon hit under the run's cap (damage.drain_cap of
+    // the slot's MaxHP a second, 60 steps; SURVIVAL.md 4.8): the HP to give.
+    int drain(Engine& engine, int slot, int heal);
 
     // ---- H5 (forwarded to the director).
     void enemy_defeated(Engine& engine, int killer, int record, std::string_view family, int index);
@@ -313,6 +317,7 @@ public:
         double highest_hit_share{};        // of MaxHP, non-Guardians
         int panels{};                      // SQ_TECUP panels shown
         int panels_skipped{};              // panels the 30-frame gap or "nothing visible" left out
+        std::int64_t drain_given{}, drain_capped{}; // HPDRAIN HP given / left out by the run's cap
         // Damage dealt by source: a port hitbox tag (> 0) or -(bullet kind)
         // of every other player hit (techniques: -(4xxxx)).
         std::map<std::int32_t, std::int64_t> dealt_by;
@@ -322,6 +327,9 @@ public:
 
     // The frame the last SQ_TECUP panel showed (-1 none).
     std::int64_t last_panel_frame = -1;
+    // The Drain Ram's cap per slot: the second (engine frame / 60) and the HP given in it.
+    std::array<std::int64_t, 4> drain_second{-1, -1, -1, -1};
+    std::array<int, 4> drain_second_hp{};
     // The last damage-taken rule's result (taken()): the player hit handler
     // reports it with the hit (HitTaken).
     struct LastTaken {

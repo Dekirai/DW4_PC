@@ -795,6 +795,18 @@ void gear(const std::filesystem::path& data) {
     check(first && !second, "a second SQ_TECUP inside the panel gap is left out");
     check(rules.tally.panels == shown + 1 && rules.tally.panels_skipped == skipped + 1, "the panel gap's tally counts both");
     check(rules.last_panel_frame == std::int64_t(engine.frame()), "the panel gap starts at the shown panel");
+    // The Drain Ram's run cap (4.8): HPDRAIN gives at most 2 % of MaxHP a second.
+    rules.drain_second = {-1, -1, -1, -1};
+    const int drain_cap = std::max(1, int(std::lround(double(player.max_hp) * double(rules.damage.drain_cap))));
+    check(rules.damage.drain_cap > 0.019f && rules.damage.drain_cap < 0.021f, "the Drain Ram's cap is 2 % of MaxHP a second");
+    const int small = rules.drain(engine, 0, 1);
+    const int big = rules.drain(engine, 0, drain_cap * 3);
+    const int after_cap = rules.drain(engine, 0, 5);
+    check(small == 1 && big == drain_cap - 1 && after_cap == 0,
+          "HPDRAIN stops at the second's cap (" + std::to_string(small) + ", " + std::to_string(big) + ", " + std::to_string(after_cap) + " of " + std::to_string(drain_cap) + ")");
+    rules.drain_second[0] = -1; // (a new second)
+    check(rules.drain(engine, 0, drain_cap) == drain_cap, "a new second gives the cap again");
+    std::cout << "  gear: Drain Ram cap " << drain_cap << " HP a second (MaxHP " << player.max_hp << ")\n";
 }
 
 // Round O1b lane E: the Guardians' plan (4.4), the gear table (7, the keys of
