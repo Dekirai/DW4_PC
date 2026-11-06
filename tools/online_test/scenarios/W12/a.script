@@ -1,9 +1,10 @@
 # W12, host a (k10, Hard: seed_difficulty 1; camera mode 1 and the randomizer in its online preferences).
+# (It waits near the entrance: on Hard among the shuffled enemies the host fell at the west slope in the trial merge.)
 campaign until stage=stagml11,control
 idle until epoch>=@80
 explore mate00 yes until stage=stag0101,control
 log a hosts
-wander -150 -60 20 until present=2,sealed>=1200
+wander 460 170 15 until present=2,sealed>=1200
 log b joined
-wander -150 -60 20 until present=1 or sealed>=9000
+wander 460 170 15 until present=1 or sealed>=9000
 idle until frames>=60
