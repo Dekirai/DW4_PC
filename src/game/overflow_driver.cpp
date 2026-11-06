@@ -58,12 +58,16 @@ std::string option(const RunRequest& request, std::string_view key, std::string 
 
 // The meta's options in the director's RunConfig (lane E's fields of round
 // O1b: the loadout, the Plug Lab's UPCNT points by UPCNT index, the gear the
-// records opened). A build without a field copies nothing for it.
+// records opened). A build without a field copies nothing for it; an
+// absent option keeps what the config has (lane E's test key loadout=).
 template <typename Config>
 void copy_meta(Config& config, const RunRequest& request) {
-    if constexpr (requires { config.plug_lab; }) config.plug_lab = parse_plug_lab(option(request, "plug_lab"));
-    if constexpr (requires { config.loadout_armor; }) config.loadout_armor = option(request, "armor");
-    if constexpr (requires { config.loadout_chip; }) config.loadout_chip = option(request, "chip");
+    if constexpr (requires { config.plug_lab; })
+        if (const auto text = option(request, "plug_lab"); !text.empty()) config.plug_lab = parse_plug_lab(text);
+    if constexpr (requires { config.loadout_armor; })
+        if (const auto armor = option(request, "armor"); !armor.empty()) config.loadout_armor = armor;
+    if constexpr (requires { config.loadout_chip; })
+        if (const auto chip = option(request, "chip"); !chip.empty()) config.loadout_chip = chip;
     if constexpr (requires { config.gear_open; }) {
         const std::string text = option(request, "gear_open");
         for (std::size_t begin = 0; begin < text.size();) {

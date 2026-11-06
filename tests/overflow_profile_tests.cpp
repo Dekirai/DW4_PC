@@ -7,15 +7,19 @@
 #include "../src/game/overflow_profile.hpp"
 #include "../src/game/overflow_run.hpp"
 
+#include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <map>
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 namespace {
 namespace ov = dw4::game::overflow;
@@ -509,6 +513,76 @@ void request_and_path() {
     check(day > 20200101 && day < 21000101, "today");
 }
 
+// Lane D's LobbyMeta as overflow_lobby.hpp has it (feat-o1b-screens), for
+// fill_lobby_meta.
+struct FormRecord {
+    int runs = 0;
+    double best_seconds = 0;
+    int best_level = 0;
+    int clears = 0;
+};
+struct LobbyMeta {
+    bool seen_intro = false;
+    int sim_bits = 0;
+    int earned_total = 0;
+    std::map<std::string, FormRecord, std::less<>> forms;
+    std::map<std::string, std::array<int, 7>, std::less<>> plugs;
+    std::vector<std::string> armors{"", "brave_core", "armor_board", "fire_board", "ice_board", "bolt_board", "dark_board"};
+    std::vector<std::string> chips{"", "wisdom_chip", "spirit_chip", "speed_chip", "pwr_medal"};
+    std::vector<std::string> records;
+    std::vector<std::string> locked_forms;
+};
+
+void lobby() {
+    ov::OverflowProfile p;
+    LobbyMeta fresh;
+    ov::fill_lobby_meta(p, fresh);
+    const LobbyMeta stand_in;
+    check(fresh.armors == stand_in.armors && fresh.chips == stand_in.chips, "a new profile: D's stand-in lists");
+    check(fresh.locked_forms.size() == 12 && fresh.records.empty() && fresh.forms.empty() && fresh.plugs.empty(), "a new profile: 12 locked faces");
+    p.seen_intro = true;
+    p.sim_bits = 3000;
+    p.earned_total = 7000;
+    p.plugs["p_vmon"] = {1, 2, 3, 4, 5, 6, 7}; // by UPCNT index: MHP 1, MMP 2, STR 3, DEF 4, WIS 5, SPI 6, SPD 7
+    p.forms["p_vmon"].runs = 4;
+    p.forms["p_vmon"].best_seconds = 700;
+    p.forms["p_vmon"].clears = {1, 1, 0};
+    p.records["gate_keeper"] = 1;
+    p.records["shogun_data"] = 1;
+    LobbyMeta meta;
+    ov::fill_lobby_meta(p, meta);
+    check(meta.seen_intro && meta.sim_bits == 3000 && meta.earned_total == 7000, "the head");
+    check(meta.plugs.at("p_vmon") == std::array<int, 7>{3, 4, 1, 2, 5, 6, 7}, "the Plug Lab rows: Strength, Def., MaxHP, MaxMP, Wisdom, Spirit, Speed");
+    check(meta.forms.at("p_vmon").runs == 4 && meta.forms.at("p_vmon").clears == 2 && meta.forms.at("p_vmon").best_seconds == 700, "a form");
+    check(meta.records == std::vector<std::string>{"gate_keeper", "shogun_data"}, "done records");
+    check(std::find(meta.armors.begin(), meta.armors.end(), "cipher_core") != meta.armors.end() &&
+              std::find(meta.armors.begin(), meta.armors.end(), "resist_board") != meta.armors.end() &&
+              std::find(meta.chips.begin(), meta.chips.end(), "resist_rom_dark") != meta.chips.end() && meta.chips[0].empty(),
+          "the records' gear in the lists");
+    check(std::find(meta.locked_forms.begin(), meta.locked_forms.end(), "p_weregaru") == meta.locked_forms.end() &&
+              std::find(meta.locked_forms.begin(), meta.locked_forms.end(), "p_hekabut") != meta.locked_forms.end(),
+          "Veemon's 10:00 opens WereGarurumon");
+    // The process-wide store: the screen's buy row and a started run (memory only).
+    ov::meta().open({});
+    auto profile = ov::meta().profile();
+    profile.sim_bits = 1000;
+    ov::meta().replace(profile);
+    check(ov::buy_plug_row("p_agumon", 0) == ov::BuyResult::bought && ov::meta().profile().plug_steps("p_agumon", 2) == 1, "row 0 is Strength");
+    check(ov::buy_plug_row("p_agumon", 2) == ov::BuyResult::bought && ov::meta().profile().plug_steps("p_agumon", 0) == 1, "row 2 is MaxHP");
+    check(ov::buy_plug_row("p_agumon", 7) == ov::BuyResult::bad_stat, "no row 7");
+    ov::RunRequest start;
+    start.form = "p_girumon";
+    start.options["armor"] = "fire_board";
+    start.options["chip"] = "pwr_medal";
+    start.options["tier"] = "normal";
+    ov::remember_start(start);
+    check(ov::meta().profile().loadout("p_girumon") == ov::Loadout{"fire_board", "pwr_medal"} && ov::meta().profile().last_form == "p_girumon",
+          "a started run keeps its loadout and choice");
+    start.options["chip"] = "drain_ram";
+    ov::remember_start(start);
+    check(ov::meta().profile().loadout("p_girumon").chip == "pwr_medal", "an unopened chip is not kept");
+}
+
 } // namespace
 
 int main() {
@@ -522,6 +596,7 @@ int main() {
         loadouts();
         forms();
         request_and_path();
+        lobby();
     } catch (const std::exception& error) {
         std::cerr << "overflow_profile_tests failed: " << error.what() << '\n';
         return 1;

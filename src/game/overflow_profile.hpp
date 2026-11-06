@@ -23,6 +23,7 @@
 // the profile and call the store's writes, the run driver turns a run into
 // RunConfig values (apply_meta) and records its end (record_run).
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <filesystem>
@@ -284,6 +285,55 @@ private:
 // The process-wide store (game_main opens it; the lobby screens and the run
 // driver use it).
 MetaStore& meta();
+
+// ---------------------------------------------------------------------------
+// The lobby screens' side (lane D, overflow_lobby.hpp)
+// ---------------------------------------------------------------------------
+// D's LobbyMeta from a profile. A template, so this header needs nothing of
+// D's: it fills D's field names (seen_intro, sim_bits, earned_total, forms
+// {runs, best_seconds, best_level, clears}, plugs (the Plug Lab rows'
+// steps in kPlugLabStats order: Strength, Def., MaxHP, MaxMP, Wisdom,
+// Spirit, Speed), armors / chips ("" first, then the opened keys), records
+// (done keys), locked_forms). Call it after every change of the store.
+template <typename LobbyMeta>
+void fill_lobby_meta(const OverflowProfile& profile, LobbyMeta& meta, std::uint32_t story_forms = 0) {
+    constexpr std::int64_t kIntMax = 2'147'483'647;
+    meta.seen_intro = profile.seen_intro;
+    meta.sim_bits = int(std::min(profile.sim_bits, kIntMax));
+    meta.earned_total = int(std::min(profile.earned_total, kIntMax));
+    meta.forms.clear();
+    for (const auto& [model, stats] : profile.forms) {
+        auto& form = meta.forms[model];
+        form.runs = stats.runs;
+        form.best_seconds = stats.best_seconds;
+        form.best_level = stats.best_level;
+        form.clears = stats.clears[0] + stats.clears[1] + stats.clears[2];
+    }
+    meta.plugs.clear();
+    for (const auto& entry : profile.plugs) {
+        std::array<int, 7> row{};
+        for (std::size_t i = 0; i < 7; ++i) row[i] = profile.plug_steps(entry.first, kPlugLabStats[i]);
+        meta.plugs[entry.first] = row;
+    }
+    meta.armors.assign(1, std::string());
+    meta.chips.assign(1, std::string());
+    for (auto& key : opened_gear(profile)) {
+        if (gear_is_chip(key)) meta.chips.push_back(key);
+        else meta.armors.push_back(key);
+    }
+    meta.records.clear();
+    for (const auto& record : record_table())
+        if (profile.record(record.key)) meta.records.push_back(record.key);
+    meta.locked_forms.clear();
+    for (const char* model : overflow_forms())
+        if (!form_unlocked(profile, model, story_forms)) meta.locked_forms.push_back(model);
+}
+// The Plug Lab screen's row (0-6, kPlugLabStats order) bought for a form.
+BuyResult buy_plug_row(std::string_view model, int row);
+// A run the character select starts (its request's form, tier, armor= and
+// chip=): the loadout and the last choice are kept for the next select (8.5:
+// written after a loadout change).
+void remember_start(const RunRequest& request);
 // The file a program uses: DW4_OVERFLOW_PROFILE when set; none in test runs
 // (`test_run`); else <program folder>/saves/overflow.dat.
 std::filesystem::path profile_path(const std::filesystem::path& program_folder, bool test_run);

@@ -772,6 +772,21 @@ MetaStore& meta() {
     return store;
 }
 
+BuyResult buy_plug_row(std::string_view model, int row) {
+    if (row < 0 || row >= int(kPlugLabStats.size())) return BuyResult::bad_stat;
+    return meta().buy_plug(model, kPlugLabStats[std::size_t(row)]);
+}
+
+void remember_start(const RunRequest& request) {
+    auto option = [&](std::string_view key) {
+        const auto found = request.options.find(key);
+        return found == request.options.end() ? std::string() : found->second;
+    };
+    const std::string tier = option("tier");
+    meta().set_last(request.form, tier.empty() ? "normal" : tier);
+    meta().set_loadout(request.form, {option("armor"), option("chip")});
+}
+
 std::filesystem::path profile_path(const std::filesystem::path& program_folder, bool test_run) {
     if (const char* file = std::getenv("DW4_OVERFLOW_PROFILE"); file && *file) return std::filesystem::path(file);
     if (test_run) return {};
