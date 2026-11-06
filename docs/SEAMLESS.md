@@ -8655,13 +8655,12 @@ round I3 the instance ends at once). 33 was not asked; the design keeps
     (question 32's free travel among them) and replaces only design
     defaults (19.1, 19.30.10).
 
-Relayed with round 72, not confirmed by the user: the round's orchestrator
-passed on, the same day, that the load gate's "max at most 5 ms" may be
-read at p99.99 (19.17.4, M4 in 19.25) and that round I2-social's two
-changed rules of 19.11 are approved (19.25). Nothing in the repository
-records the user's own words for either, and neither belongs to decision
-38, so both stay open until he confirms them (question 42): the gate's
-criterion stays "max at most 5 ms", and the two rules stay as built.
+Confirmed by the user on 2026-11-05 (question 42), in his own words
+"Freundesanfragen ist okay so und lasttest auch" ("the friend requests are
+fine as they are, and the load test too"), answering the two questions put
+to him that evening: the load gate's "max at most 5 ms" is read at p99.99
+(19.17.4, M4 in 19.25), and round I2-social's two changed rules of 19.11
+stand (19.25). Neither belongs to decision 38.
 
 ### Questions of round 72 (2026-11-05)
 
@@ -8712,16 +8711,12 @@ home) would end instances on an ordinary story path (19.30.2).
     (b) The round 67 prompt again, only at the stage he walks to and only
     while nobody else is in his instance. (c) As (b), but only for his
     party's and his friends' instances.
-42. **Two answers relayed by the round 72 workflow** (19.17.4, 19.25). Did
-    the user confirm (1) that the load gate's "max at most 5 ms" may be
-    read at p99.99 (single pauses of a busy machine are the only holds over
-    5 ms) and (2) round I2-social's two changed block rules of 19.11 (a
-    blocked player's request stays "sent" without reaching the blocker; a
-    full inbox never answers a sender differently)? They stand in the
-    design as relayed, not confirmed. Recommended: yes to both. Default
-    until he answers: (1) the max stays the criterion; (2) the rules stay
-    as built (merged in integration r71; the design's earlier rules
-    revealed blocks).
+42. **Answered 2026-11-05: yes to both** (see above). (1) The load gate's
+    "max at most 5 ms" is read at p99.99 (single pauses of a busy machine
+    are the only holds over 5 ms); (2) round I2-social's two changed block
+    rules of 19.11 stand (a blocked player's request stays "sent" without
+    reaching the blocker; a full inbox never answers a sender
+    differently).
 
 ## 19. Instances without rooms, friends and the instance browser (round 67 design)
 
@@ -11220,13 +11215,11 @@ the decision stays under the lock).
   the relay lane measures and cuts the connection path's CPU per frame
   before the world opens (coalescing alone did not). Then the gate runs
   again with `loadgate --sockets` and in-process, all cells, on a quiet
-  machine, criteria unchanged; it decides phase 1 or 2. Whether the max
-  may be read at p99.99 when a busy machine's single pauses are the only
-  holds over 5 ms is the user's call. It was relayed as yes in round 72
-  but is not confirmed by him (section 18, question 42), so the hold
-  criterion stays "max at most 5 ms" until he confirms; read at p99.99 it
-  would be "p99 at most 0.5 ms and p99.99 at most 5 ms", which every
-  in-process cell above meets (p99.99 1.9-3.2 ms). The relay's CPU over
+  machine, criteria unchanged; it decides phase 1 or 2. The user
+  decided on 2026-11-05 (section 18, question 42) that the max is read at
+  p99.99 when a busy machine's single pauses are the only holds over 5 ms:
+  the hold criterion is "p99 at most 0.5 ms and p99.99 at most 5 ms", which
+  every in-process cell above meets (p99.99 1.9-3.2 ms). The relay's CPU over
   sockets is open either way (e). Not
   measured: STORY merges and mirrors at barriers (the keepers per account
   and the mirror come with I1a's story lane), joins over sockets (the
@@ -11811,7 +11804,7 @@ The design changes the results force, for the lanes:
 | M1 | A restore keeps the host's modes (the snapshot's GameSystem) but `GameEngineLink::start_online` puts the joiner's own randomizer and fast loading over the snapshot's cheats: with other settings a classic join differs from the next stage load (randomizer) or the next stage change (fast loading), a checkpoint join is refused; drops alone were not exercised (no drop in the 4,199 frames; by code the first drop differs) (19.8.7) | after every restore the snapshot's cheats stay (only `online_cheats`' forced-offs); no settings in BARRIER_OK or STATE_DATA and no join filter are needed; the own modes and cheats come back in the parked DISSOLVE before the module reload: the load then reads the files and latches the fast loading of a Game Start with them (the reload's length and the load's duration follow the departing visit) | client |
 | M2 | A redirect at BARRIER_OK, in the module reload's held fields or before the load step (the top of `apply_barrier`) equals a NEXTSTAGE to that stage and point (load snapshot and about 3,977 frames of net fingerprints), solo and for a parked guest of a stage group of two or three with own slot 1; without the point it differs (19.8.3) | `redirect_pending_stage` = `request_stage` + `PlayerPointManager::set_point_no`, called from `on_barrier_ok` or the top of `apply_barrier`, never later; it asserts a DISSOLVE decision and a pending stage, not a solo engine | client |
 | M3 | Only defeated players after a HOME reach the original game over (one update after the HOME, NEXTSTAGE stagml11 374-402 frames later, as offline: 383); every such barrier, and the exit prompt's (stag0101 point 2) when HOME left a defeated member alone on an exit mat, has alive mask 0; that prompt is HOME's doing (offline, two defeats on the same mat run the game over) (19.6.5) | the relay reads "defeated" from the barrier's alive mask 0, not from the target stagML11, except in a give-up copy (INTENT *give_up* and its fork: on purpose, answers 24 and 37); such a barrier of an ended instance is redirected home | relay |
-| M4 | Phase 1 (one lock) passes the holds' p99 (12-23 µs) and, over sockets with `TryEnter` as built, the sealing lateness p99 (under 2 ms; misses 0.5-1.1 %); it fails the max of 5 ms in every cell with sealed groups (the ping pass sorts 1,800 margins per sealed member, 7.5-21 ms once a second; GC and the busy machine) and the relay's CPU over sockets (base 0.72-0.85 cores, select 0.66, a full hub 4) from the connection path, one write and two reads per frame; the in-process TryEnter misses (15-35 %) were the harness's coincident timer wakes; the lock is busy 1.1-1.8 %, so phase 2 fixes none of it (19.17.4) | phase 1 kept provisionally; the gate's criteria unchanged; the PING margin incremental or cached; `TryEnter` stays (`SealRoom` counts misses, reads its time with the lock held; `SealLateness`); the presence selection computed off the lock; the fan-out by selection; the relay lane cuts the CPU per frame (coalesced writes alone did nothing measurable); then the gate again, both harnesses, on a quiet machine; reading the max at p99.99 is a question for the user, relayed as yes in round 72 but not confirmed (question 42): until he confirms, the max stays the criterion (at p99.99 the in-process holds would pass, 1.9-3.2 ms); the CPU over sockets stays open | relay |
+| M4 | Phase 1 (one lock) passes the holds' p99 (12-23 µs) and, over sockets with `TryEnter` as built, the sealing lateness p99 (under 2 ms; misses 0.5-1.1 %); it fails the max of 5 ms in every cell with sealed groups (the ping pass sorts 1,800 margins per sealed member, 7.5-21 ms once a second; GC and the busy machine) and the relay's CPU over sockets (base 0.72-0.85 cores, select 0.66, a full hub 4) from the connection path, one write and two reads per frame; the in-process TryEnter misses (15-35 %) were the harness's coincident timer wakes; the lock is busy 1.1-1.8 %, so phase 2 fixes none of it (19.17.4) | phase 1 kept provisionally; the gate's criteria unchanged except the hold max, read at p99.99 (question 42); the PING margin incremental or cached; `TryEnter` stays (`SealRoom` counts misses, reads its time with the lock held; `SealLateness`); the presence selection computed off the lock; the fan-out by selection; the relay lane cuts the CPU per frame (coalesced writes alone did nothing measurable); then the gate again, both harnesses, on a quiet machine; the max is read at p99.99 (the user's answer to question 42, 2026-11-05; the in-process holds pass, 1.9-3.2 ms); the CPU over sockets stays open | relay |
 | M5 | 30 ghost figures cost 0.40-0.45 ms a pass at 144 Hz (CPU 0.25-0.30 ms) on the RTX 5070 Ti with a hidden window; the half rate as measured skipped only the pose of the farther 20 and saved 0.03-0.04 ms (19.13) | 30 at full rate by default; the half rate and the distance cap with its F1 setting stay designed as the fallback, built only if a weaker GPU (the iGPU, a visible window) measures over the 1.5 ms budget | client |
 
 | Lane | Scope |
@@ -11847,7 +11840,7 @@ it I1's joins take the classic path, refused beyond 30 s and shown so in
 the lists); I2-social merged (its tables and the notifier's interface); the
 answers to questions 32 and 36 (the defaults otherwise; 32 (b) adds a lane
 with round S3's script classes, 32 (c) rewrites the exit port; 32 and 36
-are answered, section 18). The answers to round 72's questions 39-42
+are answered, section 18). The answers to round 72's questions 39-41 (42 is answered)
 change I1b and I3 more than I1a (the defaults otherwise): 39 (b) makes
 staggf01-04 dungeon stages in `areas.json` (data only); 40 (b) changes
 I1b's order and preselection, 40 (c) also I3's row action; 41 (b) or (c)
@@ -11911,9 +11904,9 @@ release.
   are not audited); the hourly housekeeping purges expired requests and
   delivers waiting ones to accounts whose places an expiry or a deleted
   account freed.
-- **Two rules of 19.11 changed** (built and merged; relayed in round 72
-  as approved by the user, not yet confirmed by him: question 42; both
-  serve "a block is never revealed", 19.16):
+- **Two rules of 19.11 changed** (built and merged; confirmed by the user
+  on 2026-11-05, question 42; both serve "a block is never revealed",
+  19.16):
   - A block keeps the blocked player's pending request to the blocker and
     makes it silent (`delivered = 0`): it stays "sent" in his list, so the
     block is not revealed by a vanishing row; the blocker's own request to
