@@ -1,18 +1,21 @@
 #pragma once
 
-// The DW4Online REST calls the S1 client needs (docs/SEAMLESS.md 6.2, 10):
-// status, login, rooms create / join, a relay ticket for a reconnect, leave.
-// Request builders and answer parsers are separate from the transport, so
-// they are tested without a server.
+// The DW4Online REST calls of the world session (docs/SEAMLESS.md 6.2, 10;
+// round I1a, 19.19 and the round's contract): status, login, the world's
+// entry, a relay ticket for a reconnect, leave, the world's counts and the
+// online preferences. Request builders and answer parsers are separate from
+// the transport, so they are tested without a server.
 //
 //   GET  /status                       -> client.currentProtocol, client.minimumProtocol, maintenance, relay.port
 //   POST /auth/login                   {username, password, deviceName, clientVersion, protocol} -> token, account
-//   POST /rooms                        {name, password?, maxPlayers, protocol, dataHash, clientVersion, settings}
-//   POST /rooms/{code}/join            {password?, protocol, dataHash, clientVersion}
-//        both -> room.code, settings, you, and the room-scoped relay ticket: "ticket" at the top level
-//                (round 52 relay lane), else relay.ticket
-//   POST /rooms/{code}/ticket          -> ticket (a new one, for a reconnect)
-//   POST /rooms/{code}/leave           -> 204
+//   POST /world/enter                  {box, protocol, dataHash, clientVersion}
+//        -> relayTicket (or ticket), relay {host, port}, protocol, role, relayRole, box, prefs, settings
+//   POST /world/ticket                 the same body and answer (a reconnect)
+//   POST /world/leave                  -> 204
+//   GET  /world                        -> players (playersOnline), instances, areas
+//   GET  /me/online-prefs              -> defaultVisibility, invites, whereabouts, friendToasts, cameraMode, lightMode,
+//                                         fastLoading, randomizer {enabled, seed, drops, enemies, zones}, lastBox
+//   PUT  /me/online-prefs              any subset of the same -> the stored object
 #include "http.hpp"
 #include "room_settings.hpp"
 
@@ -34,41 +37,48 @@ struct Login {
     std::string token;
     std::string account; // the server's spelling of the account name
 };
-struct RoomJoined {
-    std::string code;
-    std::string name;
-    RoomSettings settings;
-    std::string ticket;  // empty: ask POST /rooms/{code}/ticket
-    std::uint32_t member_id = 0;
-    int relay_port = 0;  // 0: from GET /status
-    int max_players = 0; // room.maxPlayers (the Discord party size)
-    std::string owner;   // room.owner
+// The online preferences (19.17.1's online_prefs): the default visibility of
+// a new instance (Q9: the last choice) and the host settings of 19.8.7
+// (camera, light, fast loading, randomizer; the difficulty is the box's,
+// chosen at the Game Start).
+struct OnlinePrefs {
+    std::string default_visibility = "public"; // public | friends | private
+    RoomSettings settings;                    // difficulty unused
+    int last_box = 1;
 };
-struct CreateRoom {
-    std::string name, password;
-    int max_players = 4;
-    RoomSettings settings;
+// POST /world/enter (and /world/ticket).
+struct WorldEntry {
+    std::string ticket;
+    std::string relay_host;  // empty: the server's host
+    int relay_port = 0;      // 0: from GET /status
+    int protocol = 0;
+    std::string role = "player", relay_role = "member";
+    int box = 1;
+    OnlinePrefs prefs;
 };
+// GET /world (public): the home screen's line.
+struct WorldCounts {
+    int players = 0, instances = 0;
+};
+// "Public" / "Friends" / "Private" and back (0-2, the wire's Visibility).
+int visibility_index(const std::string& name);
+const char* visibility_key(int index);
 
 HttpRequest status_request();
 HttpRequest login_request(const std::string& user, const std::string& password, const std::string& client_version, int protocol);
-HttpRequest create_room_request(const CreateRoom& room, int protocol, std::uint64_t data_hash, const std::string& client_version);
-HttpRequest join_room_request(const std::string& code, const std::string& password, int protocol, std::uint64_t data_hash,
-                              const std::string& client_version);
-HttpRequest ticket_request(const std::string& code);
-HttpRequest leave_request(const std::string& code);
+HttpRequest world_enter_request(int box, int protocol, std::uint64_t data_hash, const std::string& client_version);
+HttpRequest world_ticket_request(int protocol, std::uint64_t data_hash, const std::string& client_version);
+HttpRequest world_leave_request();
+HttpRequest world_counts_request();
+HttpRequest online_prefs_request();
+HttpRequest put_online_prefs_request(const OnlinePrefs& prefs);
 
 std::optional<ServerStatus> parse_status(const HttpResponse& response);
 std::optional<Login> parse_login(const HttpResponse& response);
-std::optional<RoomJoined> parse_room(const HttpResponse& response);
+std::optional<WorldEntry> parse_world_entry(const HttpResponse& response);
 std::optional<std::string> parse_ticket(const HttpResponse& response);
-// Whether `account` owns the joined room (round G-core, docs/SEAMLESS.md 8.8):
-// it opened the room, or the room's owner is its name (case-insensitive: the
-// owner rejoining his own room from the list). A guest plays on the owner's
-// story; its card and uploads keep its own. Both ways into a room (the
-// --online-create / --online-join options and the title's online screens)
-// decide with this.
-bool owns_room(const RoomJoined& joined, const std::string& account, bool created);
+std::optional<WorldCounts> parse_world_counts(const HttpResponse& response);
+std::optional<OnlinePrefs> parse_online_prefs(const HttpResponse& response);
 // The server's problem text (RFC 7807 "detail" / "title" / "code"), or the
 // transport error, for messages.
 std::string problem_text(const HttpResponse& response);

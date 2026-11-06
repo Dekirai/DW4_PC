@@ -21,9 +21,9 @@ Own stack: mysqld 3633 (not needed by the client lane so far), test ports
 
 ## Progress
 
-- 12:40 contract: protocol 49 wire layout and the client's REST shapes
+- 12:35 contract: protocol 49 wire layout and the client's REST shapes
   proposed in `i1a-contract.md`.
-- 13:50 engine paths (all behind the online rules): `story::replace`,
+- 12:50 engine paths (all behind the online rules): `story::replace`,
   `BarrierResult::story_mode` (merge / replace) applied at the top of
   `apply_barrier`, `Engine::redirect_pending_stage` (M2: the stage and the
   generate point, only for a parked DISSOLVE), `ForkKind::home` (exactly the
@@ -33,7 +33,7 @@ Own stack: mysqld 3633 (not needed by the client lane so far), test ports
   measured (M6): the replace at a guest's NEW gives the host's story and
   settings completely; only the departing lobby's history differs.
 
-- 15:40 protocol 49 on the wire (`kOnlineProtocol` 49; the relay
+- 13:10 protocol 49 on the wire (`kOnlineProtocol` 49; the relay
   confirmed the 12:40 layout and its golden vectors are in
   `online_wire_tests` too: settings, STORY, STORY_ACK, BARRIER, WELCOME,
   BARRIER_OK, INSTANCE_INFO, WORLD_NOTICE, MEMBER_INFO, INSTANCE_OP,
@@ -52,13 +52,25 @@ Own stack: mysqld 3633 (not needed by the client lane so far), test ports
   (world_session over the fake hub), online_wire (world_messages); ctest
   56/56.
 
+- 13:15 offline proof on the DEV=OFF build of 74e1772a (`build/off/dw4_i1aclient_a.exe`, copied to
+  `work/campaign/bin/dw4_i1aclient_a.exe`): det.sh 4004f056 / 396cb219 both runs (`work/dref/checks/det/det_i1aclient_a`);
+  r25c 10/10 reached, 1,748,011 frames, every save the same story (`build/off/r25c_a.log`, run seg_r25c_i1aclient_a);
+  the save state suite 17/17 identical (`build/st/st_a.log`, own copy of work/dref/checks/st with B= this build dir).
+- 13:50 the app on the world: `--online-play [BOX]` (replaces --online-create / --online-join; --online-camera / -light / -fast
+  override the prefs for a test run), `online_enter_world` (status, login, POST /world/enter), reconnect tickets from
+  POST /world/ticket, leave POST /world/leave; the lobby's home screen (Play: <form> Lv <n> (Box 1), Settings, Account, Log out,
+  Online now), Online > Settings (PUT /me/online-prefs), the playing screen = the F1 Online tab's Instance page (host,
+  visibility with the host's A, members, Leave instance with its question), the F1 menu opens on Online while the world runs,
+  the line under the own status window ("Instance: Public   View: change" / "Instance: Kim's (Public)"), Discord's party
+  = the instance's x/4, ghost figures 30 / 32 weapons, `DW4_ONLINE_AUTOCHOICE` (dev: new = BARRIER plan 0xFFFF), the toasts'
+  stage names from presence_data. UI script commands: play, settings, wait-instance, visibility, leave-instance.
+  ctest 56/56.
+
 ## Left (in order)
 
 1. (done) ctest for the engine paths.
 2. (done) Wire protocol 49.
 3. (done) Session.
-4. App: home screen, Online > Settings, F1 Online tab *Instance* page, the
-   status window line, toasts, ghost figures 30, Discord, `--online-play`,
-   `DW4_ONLINE_AUTOCHOICE`, `areas.json` format 2 reader, the original
-   difficulty dialog online.
-5. det.sh twice, r25c, the save state suite on the DEV=OFF build.
+4. (done) App.
+5. det.sh again at the end (the app commits change no engine code but the env list).
+6. SEAMLESS.md: 19.21 / 19.25 built notes; the contract decisions.

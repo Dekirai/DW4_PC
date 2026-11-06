@@ -191,9 +191,9 @@ void figures(const std::string& data) {
     check(ghosts.active() && ghosts.describe()[0].find("leaving") != std::string::npos, "a member that left fades out");
     for (int k = 0; k < 5; ++k) ghosts.update({}, std::nullopt, clock.now += 0.1);
     check(!ghosts.active(), "and is gone");
-    // The cap: the nearest nine of twelve.
+    // The cap: the nearest thirty of thirty-five (round I1a, 19.13).
     std::vector<GhostTarget> crowd;
-    for (int k = 0; k < 12; ++k) {
+    for (int k = 0; k < 35; ++k) {
         GhostTarget t;
         t.key = std::uint64_t(10 + k);
         t.species = 0;
@@ -202,8 +202,9 @@ void figures(const std::string& data) {
     }
     ghosts.update(crowd, Vec3f{0, 0, 0}, clock.now += 0.1);
     lines = ghosts.describe();
-    check(lines.size() == GhostFigures::kMaxFigures, "at most nine figures");
-    for (const auto& line : lines) check(line.find("member=19") == std::string::npos && line.find("member=21") == std::string::npos, "the nearest ones");
+    check(GhostFigures::kMaxFigures == 30 && lines.size() == GhostFigures::kMaxFigures, "at most thirty figures");
+    for (const auto& line : lines)
+        check(line.find("member=40") == std::string::npos && line.find("member=44") == std::string::npos, "the nearest ones");
     ghosts.clear();
     check(!ghosts.active(), "clear drops every figure at once");
 }

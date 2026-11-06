@@ -145,6 +145,9 @@ const std::vector<std::string_view>& online_presentation_env() {
         // round G-core's G7: the room story ignored for N seconds after the first Game Start (DW4_ONLINE_DEV builds only, online_run.cpp:
         // the Game Start's hold until the confirmed story is the point of the test)
         "DW4_ONLINE_TEST_STORY_DELAY",
+        // round I1a: the automatic choice of the scenarios (DW4_ONLINE_DEV builds only, online_run.cpp: first = the
+        // relay's automatic join, new = a new instance; the relay decides, the simulation is the same)
+        "DW4_ONLINE_AUTOCHOICE",
         // round S1 test tools (game_main.cpp)
         "DW4_SNAPSHOT_DUMP", "DW4_PAD_LOG", "DW4_EXTRA_RENDERS", "DW4_EXTRA_WIDEN", "DW4_EXTRA_PREVIOUS",
         "DW4_CAM_CHECK",

@@ -36,26 +36,62 @@ HttpRequest login_request(const std::string& user, const std::string& password, 
     return r;
 }
 
-HttpRequest create_room_request(const CreateRoom& room, int protocol, std::uint64_t data_hash, const std::string& client_version) {
-    std::string body = "{\"name\":" + json::quote(room.name);
-    if (!room.password.empty()) body += ",\"password\":" + json::quote(room.password);
-    body += ",\"maxPlayers\":" + std::to_string(room.max_players) + ",\"protocol\":" + std::to_string(protocol) +
-            ",\"dataHash\":" + std::to_string(data_hash) + ",\"clientVersion\":" + json::quote(client_version) +
-            ",\"settings\":" + settings_json(room.settings) + "}";
-    return post("/rooms", std::move(body));
+int visibility_index(const std::string& name) {
+    if (name == "friends") return 1;
+    if (name == "private") return 2;
+    return 0;
 }
+const char* visibility_key(int index) { return index == 1 ? "friends" : index == 2 ? "private" : "public"; }
 
-HttpRequest join_room_request(const std::string& code, const std::string& password, int protocol, std::uint64_t data_hash,
-                              const std::string& client_version) {
+namespace {
+std::string entry_body(int box, int protocol, std::uint64_t data_hash, const std::string& client_version) {
     std::string body = "{";
-    if (!password.empty()) body += "\"password\":" + json::quote(password) + ",";
-    body += "\"protocol\":" + std::to_string(protocol) + ",\"dataHash\":" + std::to_string(data_hash) +
-            ",\"clientVersion\":" + json::quote(client_version) + "}";
-    return post("/rooms/" + code + "/join", std::move(body));
+    if (box > 0) body += "\"box\":" + std::to_string(box) + ",";
+    return body + "\"protocol\":" + std::to_string(protocol) + ",\"dataHash\":" + std::to_string(data_hash) +
+           ",\"clientVersion\":" + json::quote(client_version) + "}";
 }
+// The settings of the online preferences (no difficulty: the box's).
+std::string prefs_settings_json(const RoomSettings& s) {
+    const bool on = s.rand_seed != 0;
+    return "\"cameraMode\":" + std::to_string(s.camera_mode) + ",\"lightMode\":" + std::to_string(s.light_mode) +
+           ",\"fastLoading\":" + (s.fast_loading ? "true" : "false") + ",\"randomizer\":{\"enabled\":" + (on ? "true" : "false") +
+           ",\"seed\":" + std::to_string(s.rand_seed) + ",\"drops\":" + (s.rand_drops ? "true" : "false") +
+           ",\"enemies\":" + std::to_string(s.rand_enemies) + ",\"zones\":" + std::to_string(s.rand_zones) + "}";
+}
+OnlinePrefs prefs_of(const json::Value& prefs, const json::Value& settings) {
+    OnlinePrefs p;
+    if (const auto v = prefs["defaultVisibility"].str()) p.default_visibility = visibility_key(visibility_index(*v));
+    if (const auto s = settings_from_json(settings)) p.settings = *s;
+    p.settings.difficulty = 0;
+    if (const auto box = prefs["lastBox"].i64(); box && *box >= 1 && *box <= 4) p.last_box = int(*box);
+    return p;
+}
+} // namespace
 
-HttpRequest ticket_request(const std::string& code) { return post("/rooms/" + code + "/ticket", ""); }
-HttpRequest leave_request(const std::string& code) { return post("/rooms/" + code + "/leave", ""); }
+HttpRequest world_enter_request(int box, int protocol, std::uint64_t data_hash, const std::string& client_version) {
+    return post("/world/enter", entry_body(box, protocol, data_hash, client_version));
+}
+HttpRequest world_ticket_request(int protocol, std::uint64_t data_hash, const std::string& client_version) {
+    return post("/world/ticket", entry_body(0, protocol, data_hash, client_version));
+}
+HttpRequest world_leave_request() { return post("/world/leave", ""); }
+HttpRequest world_counts_request() {
+    HttpRequest r;
+    r.path = "/world";
+    r.authorized = false;
+    return r;
+}
+HttpRequest online_prefs_request() {
+    HttpRequest r;
+    r.path = "/me/online-prefs";
+    return r;
+}
+HttpRequest put_online_prefs_request(const OnlinePrefs& p) {
+    auto r = post("/me/online-prefs", "{\"defaultVisibility\":" + json::quote(visibility_key(visibility_index(p.default_visibility))) + "," +
+                                          prefs_settings_json(p.settings) + "}");
+    r.method = "PUT";
+    return r;
+}
 
 std::optional<ServerStatus> parse_status(const HttpResponse& response) {
     const auto v = body_of(response);
@@ -85,32 +121,35 @@ std::optional<Login> parse_login(const HttpResponse& response) {
     return l;
 }
 
-std::optional<RoomJoined> parse_room(const HttpResponse& response) {
+std::optional<WorldEntry> parse_world_entry(const HttpResponse& response) {
     const auto v = body_of(response);
     if (!v) return std::nullopt;
-    RoomJoined r;
-    const auto& room = (*v)["room"];
-    const auto code = room["code"].str();
-    if (!code) return std::nullopt;
-    r.code = *code;
-    r.name = room["name"].str().value_or("");
-    r.max_players = int(room["maxPlayers"].i64().value_or(0));
-    r.owner = room["owner"].str().value_or("");
-    const auto settings = settings_from_json((*v)["settings"]);
-    if (!settings) return std::nullopt;
-    r.settings = *settings;
-    r.ticket = (*v)["relayTicket"].str().value_or((*v)["ticket"].str().value_or((*v)["relay"]["ticket"].str().value_or("")));
-    r.member_id = std::uint32_t((*v)["you"]["accountId"].u64().value_or(0));
-    if (const auto port = (*v)["relay"]["port"].i64(); port && *port > 0 && *port < 65536) r.relay_port = int(*port);
-    return r;
+    WorldEntry e;
+    e.ticket = (*v)["relayTicket"].str().value_or((*v)["ticket"].str().value_or(""));
+    if (e.ticket.empty()) return std::nullopt;
+    e.relay_host = (*v)["relay"]["host"].str().value_or("");
+    if (const auto port = (*v)["relay"]["port"].i64(); port && *port > 0 && *port < 65536) e.relay_port = int(*port);
+    e.protocol = int((*v)["protocol"].i64().value_or(0));
+    e.role = (*v)["role"].str().value_or("player");
+    e.relay_role = (*v)["relayRole"].str().value_or("member");
+    if (const auto box = (*v)["box"].i64(); box && *box >= 1 && *box <= 4) e.box = int(*box);
+    e.prefs = prefs_of((*v)["prefs"], (*v)["settings"]);
+    return e;
 }
 
-bool owns_room(const RoomJoined& joined, const std::string& account, bool created) {
-    if (created) return true;
-    if (joined.owner.empty() || joined.owner.size() != account.size()) return false;
-    for (std::size_t i = 0; i < account.size(); ++i)
-        if (std::tolower(static_cast<unsigned char>(joined.owner[i])) != std::tolower(static_cast<unsigned char>(account[i]))) return false;
-    return true;
+std::optional<WorldCounts> parse_world_counts(const HttpResponse& response) {
+    const auto v = body_of(response);
+    if (!v) return std::nullopt;
+    WorldCounts c;
+    c.players = int((*v)["players"].i64().value_or((*v)["playersOnline"].i64().value_or(0)));
+    c.instances = int((*v)["instances"].i64().value_or(0));
+    return c;
+}
+
+std::optional<OnlinePrefs> parse_online_prefs(const HttpResponse& response) {
+    const auto v = body_of(response);
+    if (!v) return std::nullopt;
+    return prefs_of(*v, *v);
 }
 
 std::optional<std::string> parse_ticket(const HttpResponse& response) {

@@ -281,23 +281,23 @@ void account(online::OnlineLobby& lobby) {
         } else {
             wrapped("No online character yet: your first online game starts a new one at level 1 (your local save stays as it is).");
         }
-        label_cell("Room difficulty");
-        ImGui::Text("up to %s", kDifficulties[lobby.max_difficulty()]);
+        label_cell("Difficulty");
+        ImGui::Text("up to %s (chosen at the Game Start)", kDifficulties[lobby.max_difficulty()]);
     } else {
         ImGui::TextDisabled("Loading...");
     }
     ImGui::Spacing();
     if (button("Change password", !lobby.busy())) lobby.go(Screen::change_password);
     ImGui::SameLine();
-    if (button("Reset online character", !lobby.busy() && !lobby.in_room() && lobby.character() && lobby.character()->exists))
+    if (button("Reset online character", !lobby.busy() && !lobby.in_world() && lobby.character() && lobby.character()->exists))
         lobby.go(Screen::reset_character);
     ImGui::SameLine();
-    if (button("Log out", !lobby.busy() && !lobby.in_room())) lobby.logout();
+    if (button("Log out", !lobby.busy() && !lobby.in_world())) lobby.logout();
     ImGui::SameLine();
-    if (button("Log out everywhere", !lobby.busy() && !lobby.in_room())) lobby.logout_everywhere();
+    if (button("Log out everywhere", !lobby.busy() && !lobby.in_world())) lobby.logout_everywhere();
     ImGui::SameLine();
     if (button("Back", !lobby.busy(), true)) lobby.back();
-    if (lobby.in_room()) wrapped_disabled("Leave the room to log out.");
+    if (lobby.in_world()) wrapped_disabled("Go offline to log out.");
 }
 
 void change_password(online::OnlineLobby& lobby, OnlineUiState& s) {
@@ -338,119 +338,64 @@ void reset_character(online::OnlineLobby& lobby, OnlineUiState& s) {
     if (button("Back", !lobby.busy())) lobby.back();
 }
 
-void rooms(online::OnlineLobby& lobby, OnlineUiState& s, int protocol, std::uint64_t data_hash) {
+void home(online::OnlineLobby& lobby) {
     ImGui::AlignTextToFramePadding();
     ImGui::Text("Logged in as %s", lobby.account().c_str());
+    ImGui::SeparatorText("Online");
+    const bool can = lobby.can_play() && !lobby.busy();
+    if (button(lobby.play_label().c_str(), can, true)) lobby.play();
+    if (button("Settings", !lobby.busy())) lobby.go(Screen::settings);
     ImGui::SameLine();
     if (button("Account", !lobby.busy())) lobby.go(Screen::account);
-    ImGui::SeparatorText("Rooms");
-    const auto& list = lobby.rooms();
-    const online::api::RoomListing* chosen = nullptr;
-    if (!lobby.rooms_loaded()) {
-        ImGui::TextDisabled("Loading the room list...");
-    } else if (list.empty()) {
-        wrapped_disabled("No open rooms right now. Create one and tell your friends its name.");
-    } else if (ImGui::BeginTable("rooms", 4, ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_SizingStretchProp |
-                                                 ImGuiTableFlags_ScrollY,
-                                 ImVec2(0, std::min(12.0f, float(list.size()) + 1.5f) * ImGui::GetFrameHeightWithSpacing()))) {
-        ImGui::TableSetupScrollFreeze(0, 1);
-        ImGui::TableSetupColumn("Room", ImGuiTableColumnFlags_WidthStretch, 3.0f);
-        ImGui::TableSetupColumn("Owner", ImGuiTableColumnFlags_WidthStretch, 1.6f);
-        ImGui::TableSetupColumn("Players", ImGuiTableColumnFlags_WidthStretch, 0.9f);
-        ImGui::TableSetupColumn("Game", ImGuiTableColumnFlags_WidthStretch, 1.6f);
-        ImGui::TableHeadersRow();
-        for (const auto& r : list) {
-            const bool compatible = r.compatible(protocol, data_hash);
-            const bool mine = lower(r.owner) == lower(lobby.account());
-            ImGui::TableNextRow();
-            ImGui::TableNextColumn();
-            ImGui::PushID(r.code.c_str());
-            if (!compatible) ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
-            const std::string label = std::string(r.has_password ? "[locked] " : "") + r.name + (mine ? "  (yours)" : "");
-            if (ImGui::Selectable(label.c_str(), s.selected == r.code, ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowDoubleClick)) {
-                s.selected = r.code;
-                if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) && compatible && !lobby.busy()) lobby.join_room(r.code);
-            }
-            if (ImGui::IsItemHovered() && !compatible)
-                ImGui::SetTooltip("Another game version or other game data (version %s): this room cannot be joined.", r.client_version.c_str());
-            ImGui::TableNextColumn();
-            ImGui::Text("%s%s", r.owner.c_str(), r.owner_present ? "" : " (away)");
-            ImGui::TableNextColumn();
-            ImGui::Text("%d / %d", r.players, r.max_players);
-            ImGui::TableNextColumn();
-            if (!compatible) ImGui::TextUnformatted("other version");
-            else {
-                std::string game = r.difficulty ? kDifficulties[std::clamp(*r.difficulty, 0, 2)] : "Normal";
-                if (r.randomizer) game += ", randomizer";
-                if (r.story_frozen) game += ", owner away";
-                ImGui::TextUnformatted(game.c_str());
-            }
-            if (!compatible) ImGui::PopStyleColor();
-            ImGui::PopID();
-            if (s.selected == r.code) chosen = &r;
-        }
-        ImGui::EndTable();
-    }
+    ImGui::SameLine();
+    if (button("Log out", !lobby.busy())) lobby.logout();
     ImGui::Spacing();
-    const bool can = lobby.can_play() && !lobby.busy();
-    const bool chosen_ok = chosen && chosen->compatible(protocol, data_hash);
-    const bool chosen_mine = chosen && lower(chosen->owner) == lower(lobby.account());
-    if (button(chosen_mine ? "Rejoin" : "Join", can && chosen_ok, chosen_ok)) lobby.join_room(chosen->code);
-    ImGui::SameLine();
-    if (button("Create room", can, !chosen_ok)) {
-        if (!s.room_name[0]) copy(s.room_name, lobby.account() + "'s room");
-        s.room_difficulty = std::min(s.room_difficulty, lobby.max_difficulty());
-        lobby.go(Screen::create_room);
-    }
-    ImGui::SameLine();
-    if (button("Refresh", !lobby.busy())) lobby.refresh_rooms();
-    if (chosen_mine) {
-        ImGui::SameLine();
-        if (button("Close room", !lobby.busy())) lobby.close_room(chosen->code);
-    }
-    if (chosen && !chosen->compatible(protocol, data_hash))
-        wrapped_disabled("That room plays another version of the game or other game data and cannot be joined.");
-    else if (chosen && chosen->has_password && !chosen_mine)
-        wrapped_disabled("That room has a password: its owner can tell you.");
+    if (const auto& counts = lobby.world_counts())
+        ImGui::TextDisabled("Online now: %d %s, %d %s", counts->players, counts->players == 1 ? "player" : "players", counts->instances,
+                            counts->instances == 1 ? "instance" : "instances");
+    wrapped_disabled("Play takes you to your own lobby with your online character and your own story. Leaving home for a field puts "
+                     "you into an instance of that area: a running one you may join, or a new one you host.");
 }
 
-void create_room(online::OnlineLobby& lobby, OnlineUiState& s) {
-    ImGui::SeparatorText("Create a room");
-    bool submit = field("Room name", "##room_name", s.room_name);
-    submit |= field("Password", "##room_password", s.room_password, ImGuiInputTextFlags_Password);
-    label_cell("");
-    ImGui::TextDisabled("(optional: only players who know it can join)");
-    label_cell("Players");
-    ImGui::SetNextItemWidth(-1);
-    ImGui::SliderInt("##room_players", &s.room_players, 2, 10, "up to %d");
-    label_cell("Difficulty");
-    ImGui::SetNextItemWidth(-1);
-    const int unlocked = lobby.max_difficulty();
-    s.room_difficulty = std::clamp(s.room_difficulty, 0, unlocked);
-    if (ImGui::BeginCombo("##room_difficulty", kDifficulties[s.room_difficulty])) {
-        for (int d = 0; d < 3; ++d) {
-            const std::string name = std::string(kDifficulties[d]) + (d > unlocked ? "  (locked)" : "");
-            if (ImGui::Selectable(name.c_str(), s.room_difficulty == d, d > unlocked ? ImGuiSelectableFlags_Disabled : 0)) s.room_difficulty = d;
+const char* kVisibilities[] = {"Public", "Friends", "Private"};
+
+void settings_screen(online::OnlineLobby& lobby, OnlineUiState& s) {
+    ImGui::SeparatorText("Online settings");
+    if (!s.settings_filled) {
+        if (const auto& prefs = lobby.prefs()) {
+            s.set_visibility = online::api::visibility_index(prefs->default_visibility);
+            s.set_camera = prefs->settings.camera_mode;
+            s.set_light = prefs->settings.light_mode;
+            s.set_fast = prefs->settings.fast_loading;
+            s.rand_seed = int(prefs->settings.rand_seed);
+            s.rand_enemies = prefs->settings.rand_enemies;
+            s.rand_zones = prefs->settings.rand_zones ? 1 : 0;
+            s.rand_drops = prefs->settings.rand_drops;
+            s.settings_filled = true;
+        } else {
+            ImGui::TextDisabled("Loading...");
         }
-        ImGui::EndCombo();
     }
+    label_cell("New instance");
+    ImGui::SetNextItemWidth(-1);
+    ImGui::Combo("##set_visibility", &s.set_visibility, kVisibilities, 3);
     label_cell("Camera");
     ImGui::SetNextItemWidth(-1);
-    if (ImGui::BeginCombo("##room_camera", camera_mode_name(s.room_camera))) {
+    if (ImGui::BeginCombo("##set_camera", camera_mode_name(s.set_camera))) {
         for (int m = 0; m < 2; ++m)
-            if (ImGui::Selectable(camera_mode_name(m), s.room_camera == m)) s.room_camera = m;
+            if (ImGui::Selectable(camera_mode_name(m), s.set_camera == m)) s.set_camera = m;
         ImGui::EndCombo();
     }
     label_cell("Light");
     ImGui::SetNextItemWidth(-1);
-    if (ImGui::BeginCombo("##room_light", light_mode_name(s.room_light))) {
+    if (ImGui::BeginCombo("##set_light", light_mode_name(s.set_light))) {
         for (int m = 0; m < 2; ++m)
-            if (ImGui::Selectable(light_mode_name(m), s.room_light == m)) s.room_light = m;
+            if (ImGui::Selectable(light_mode_name(m), s.set_light == m)) s.set_light = m;
         ImGui::EndCombo();
     }
     label_cell("");
-    ImGui::Checkbox("Fast loading", &s.room_fast);
-    if (ImGui::TreeNode("Randomizer (the same for everyone in the room)")) {
+    ImGui::Checkbox("Fast loading", &s.set_fast);
+    if (ImGui::TreeNode("Randomizer (in the instances you host)")) {
         label_cell("Seed (0: off)");
         ImGui::SetNextItemWidth(-1);
         ImGui::InputInt("##rand_seed", &s.rand_seed);
@@ -465,43 +410,27 @@ void create_room(online::OnlineLobby& lobby, OnlineUiState& s) {
         ImGui::Checkbox("Item drops", &s.rand_drops);
         ImGui::TreePop();
     }
-    if (unlocked < 2)
-        wrapped_disabled(unlocked == 0 ? "Hard and Very Hard open once your online character has cleared the story on Normal."
-                                       : "Very Hard opens once your online character has cleared the story on Hard.");
-    wrapped_disabled("Online there are no cheats and no rebalancing; everyone's story progress counts for the room owner's story.");
+    wrapped_disabled("Your settings count at home and in every instance you host; as a guest you play with the host's. The difficulty "
+                     "is your character's: you choose it at the Game Start. Online there are no cheats and no rebalancing.");
     ImGui::Spacing();
-    if (button("Create", !lobby.busy(), true) || (submit && !lobby.busy())) {
-        online::CreateForm form;
-        form.name = s.room_name;
-        form.password = s.room_password;
-        form.max_players = s.room_players;
-        form.settings.difficulty = s.room_difficulty;
-        form.settings.camera_mode = s.room_camera;
-        form.settings.light_mode = s.room_light;
-        form.settings.fast_loading = s.room_fast;
-        form.settings.rand_seed = std::uint32_t(s.rand_seed);
-        form.settings.rand_enemies = s.rand_enemies;
-        form.settings.rand_zones = s.rand_zones ? engine::randomizer::kZoneRuleCurrent : 0;
-        form.settings.rand_drops = s.rand_drops;
-        lobby.create_room(form);
+    if (button("Save", !lobby.busy() && s.settings_filled, true)) {
+        online::api::OnlinePrefs prefs;
+        prefs.default_visibility = online::api::visibility_key(s.set_visibility);
+        prefs.settings.camera_mode = s.set_camera;
+        prefs.settings.light_mode = s.set_light;
+        prefs.settings.fast_loading = s.set_fast;
+        prefs.settings.rand_seed = std::uint32_t(s.rand_seed);
+        prefs.settings.rand_enemies = s.rand_enemies;
+        prefs.settings.rand_zones = s.rand_zones ? engine::randomizer::kZoneRuleCurrent : 0;
+        prefs.settings.rand_drops = s.rand_drops;
+        lobby.save_settings(prefs);
+        s.settings_filled = false;
     }
     ImGui::SameLine();
-    if (button("Back", !lobby.busy())) lobby.back();
-}
-
-void join_room(online::OnlineLobby& lobby, OnlineUiState& s) {
-    ImGui::SeparatorText("Join a room");
-    if (const auto& target = lobby.join_target())
-        wrapped(("\"" + target->name + "\" (owner " + target->owner + ") has a password.").c_str());
-    const bool submit = secret("Password", "##join_password", s.join_password);
-    ImGui::Spacing();
-    if (button("Join", !lobby.busy(), true) || (submit && !lobby.busy())) {
-        const auto code = lobby.join_target() ? lobby.join_target()->code : s.selected;
-        lobby.join_room(code, std::string(s.join_password));
-        wipe(s.join_password);
+    if (button("Back", !lobby.busy())) {
+        s.settings_filled = false;
+        lobby.back();
     }
-    ImGui::SameLine();
-    if (button("Back", !lobby.busy())) lobby.back();
 }
 
 void confirm(online::OnlineLobby& lobby) {
@@ -509,7 +438,7 @@ void confirm(online::OnlineLobby& lobby) {
     wrapped("The game you are playing now ends: progress since your last save is lost.");
     ImGui::Spacing();
     wrapped_disabled("Online you play your online character, saved on the server in the save room, at every stage change and when "
-                     "you leave the room. Your local save stays as it is.");
+                     "you go offline. Your local save stays as it is.");
     ImGui::Spacing();
     if (button("Start online", !lobby.busy(), true)) lobby.confirm_start();
     ImGui::SameLine();
@@ -522,166 +451,97 @@ void starting(online::OnlineLobby& lobby) {
     if (button("Back", !lobby.busy())) lobby.back();
 }
 
-void in_room(online::OnlineLobby& lobby, OnlineUiState& s, const RoomLive* live) {
-    const auto& view = lobby.room();
-    const std::string name = view ? view->room.name : live && !live->name.empty() ? live->name : lobby.room_name();
-    ImGui::TextColored(kAccent, "%s", name.c_str());
-    ImGui::SameLine();
-    ImGui::TextDisabled("(room %s)", lobby.room_code().c_str());
-    if (view) {
-        // (The server's Rooms:StoryWhileOwnerAway decides what the owner's absence means.)
-        const char* away = view->room.story_policy == "hold"    ? " (away: story progress is kept until they return)"
-                           : view->room.story_policy == "apply" ? " (away)"
-                                                                : " (away: story progress is not saved)";
-        ImGui::TextDisabled("Owner %s%s - %s", view->room.owner.c_str(), view->room.owner_present ? "" : away, settings_line(view->settings).c_str());
-    }
-    if (live && live->active)
-        ImGui::TextDisabled("You: player %d in instance %u (%s), input delay %d", live->own_slot + 1, live->inst, live->mode.c_str(), live->delay);
-
-    // Members: the room's list (REST, every three seconds) with each one's
-    // area, level and connection from the relay's roster (once a second).
-    ImGui::SeparatorText("Members");
-    struct Row {
-        int slot = 0;
-        std::string name, stage;
-        bool owner = false, you = false, connected = false, lagging = false, live = false, hub = false;
-        int level = 0, hp = 0, max_hp = 0;
-        std::uint32_t inst = 0;
-    };
-    std::vector<Row> rows;
-    if (view)
-        for (const auto& m : view->members) {
-            Row r;
-            r.slot = m.slot;
-            r.name = m.name;
-            r.owner = m.owner;
-            r.you = m.account_id == view->you.account_id;
-            r.connected = m.instance.has_value();
-            rows.push_back(r);
+// The playing screen: the F1 Online tab's *Instance* page (19.5.4): the own
+// instance's host, visibility (the host cycles it), members and *Leave
+// instance*; at home the own lobby. Then the character and *Go offline*.
+void playing(online::OnlineLobby& lobby, OnlineUiState& s, const RoomLive* live) {
+    ImGui::SeparatorText("Instance");
+    if (!live || !live->active) {
+        ImGui::TextDisabled("Entering the server...");
+    } else if (live->wid == 0) {
+        wrapped("You're at home: your own lobby, your own story.");
+        wrapped_disabled("Leave your lobby for a field to join a running instance of that area, or to start one you host.");
+    } else {
+        label_cell("Host");
+        if (live->is_host) ImGui::TextColored(kAccent, "you");
+        else ImGui::TextUnformatted(live->host_name.c_str());
+        label_cell("Visibility");
+        const int vis = std::clamp(live->visibility, 0, 2);
+        if (live->is_host) {
+            if (button((std::string(kVisibilities[vis]) + "##visibility").c_str(), !lobby.busy())) s.visibility_requested = (vis + 1) % 3;
+            ImGui::SameLine();
+            ImGui::TextDisabled("A: change");
+        } else {
+            ImGui::TextUnformatted(kVisibilities[vis]);
         }
-    if (live)
-        for (const auto& m : live->members) {
-            auto found = std::find_if(rows.begin(), rows.end(), [&](const Row& r) { return r.slot == int(m.member); });
-            if (found == rows.end()) {
-                Row r;
-                r.slot = int(m.member);
-                r.name = m.name;
-                r.owner = m.owner;
-                rows.push_back(r);
-                found = rows.end() - 1;
-            }
-            found->stage = m.stage;
-            found->level = m.level;
-            found->hp = m.hp;
-            found->max_hp = m.max_hp;
-            found->connected = m.connected;
-            found->lagging = m.lagging;
-            found->inst = m.inst;
-            found->live = true;
-            found->you = found->you || m.member == live->member;
-        }
-    std::sort(rows.begin(), rows.end(), [](const Row& a, const Row& b) { return a.slot < b.slot; });
-    // A member that shows no stage (presence hidden): the stage of its
-    // instance from the room state, and whether that is the title's hub.
-    const auto instance_of = [&](std::uint32_t id) -> const online::api::InstanceInfo* {
-        if (view)
-            for (const auto& i : view->instances)
-                if (i.id == id) return &i;
-        return nullptr;
-    };
-    for (auto& r : rows) {
-        if (!r.inst && view)
-            for (const auto& m : view->members)
-                if (m.slot == r.slot && m.instance) r.inst = *m.instance;
-        if (const auto* i = instance_of(r.inst)) {
-            r.hub = i->mode == "hub";
-            if (r.stage.empty() && !i->stage.empty() && r.hub) r.stage = i->stage;
-        }
-    }
-    const bool owner = lobby.room_owner();
-    if (rows.empty()) {
-        ImGui::TextDisabled("Loading...");
-    } else if (ImGui::BeginTable("members", owner ? 5 : 4, ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp)) {
-        ImGui::TableSetupColumn("Player", ImGuiTableColumnFlags_WidthStretch, 2.0f);
-        ImGui::TableSetupColumn("Area", ImGuiTableColumnFlags_WidthStretch, 3.0f);
-        ImGui::TableSetupColumn("Lv", ImGuiTableColumnFlags_WidthStretch, 0.45f);
-        ImGui::TableSetupColumn("Status", ImGuiTableColumnFlags_WidthStretch, 1.1f);
-        if (owner) ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed, ImGui::CalcTextSize("Kick").x + ImGui::GetStyle().FramePadding.x * 4);
-        ImGui::TableHeadersRow();
-        for (const auto& r : rows) {
-            ImGui::TableNextRow();
-            ImGui::TableNextColumn();
-            // (Long names and areas wrap inside their columns.)
-            const std::string tags = r.you && r.owner ? " (you, owner)" : r.you ? " (you)" : r.owner ? " (owner)" : "";
-            if (r.you) wrapped_colored(kAccent, r.name + tags);
-            else wrapped((r.name + tags).c_str());
-            ImGui::TableNextColumn();
-            if (r.live || r.hub) wrapped(area_line(r.stage, r.hub).c_str());
-            else ImGui::TextDisabled("-");
-            ImGui::TableNextColumn();
-            if (r.live && r.level > 0) ImGui::Text("%d", r.level);
-            else ImGui::TextDisabled("-");
-            ImGui::TableNextColumn();
-            if (!r.connected) ImGui::TextColored(kWarn, "disconnected");
-            else if (r.lagging) ImGui::TextColored(kWarn, "lagging");
-            else if (r.live && r.max_hp > 0 && r.hp == 0 && !r.stage.empty()) ImGui::TextColored(kError, "defeated");
-            else ImGui::TextColored(kGood, "online");
-            if (owner) {
+        if (ImGui::BeginTable("members", 4, ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp)) {
+            ImGui::TableSetupColumn("Player", ImGuiTableColumnFlags_WidthStretch, 2.0f);
+            ImGui::TableSetupColumn("Stage", ImGuiTableColumnFlags_WidthStretch, 3.0f);
+            ImGui::TableSetupColumn("Lv", ImGuiTableColumnFlags_WidthStretch, 0.45f);
+            ImGui::TableSetupColumn("Status", ImGuiTableColumnFlags_WidthStretch, 1.1f);
+            ImGui::TableHeadersRow();
+            for (const auto& m : live->members) {
+                ImGui::TableNextRow();
                 ImGui::TableNextColumn();
-                if (!r.you) {
-                    ImGui::PushID(r.slot);
-                    if (ImGui::SmallButton("Kick")) lobby.kick(r.name);
-                    ImGui::PopID();
-                }
+                const bool you = m.member == live->member;
+                const std::string tags = you && m.owner ? " (you, host)" : you ? " (you)" : m.owner ? " (host)" : "";
+                if (you) wrapped_colored(kAccent, m.name + tags);
+                else wrapped((m.name + tags).c_str());
+                ImGui::TableNextColumn();
+                wrapped(area_line(m.stage).c_str());
+                ImGui::TableNextColumn();
+                if (m.level > 0) ImGui::Text("%d", m.level);
+                else ImGui::TextDisabled("-");
+                ImGui::TableNextColumn();
+                if (!m.connected) ImGui::TextColored(kWarn, "reconnecting");
+                else if (m.lagging) ImGui::TextColored(kWarn, "lagging");
+                else ImGui::TextColored(kGood, "online");
             }
+            ImGui::EndTable();
         }
-        ImGui::EndTable();
-    }
-
-    // Instances: who plays together where (the relay's groups).
-    if (view && !view->instances.empty()) {
-        ImGui::SeparatorText("Where everyone plays");
-        for (const auto& i : view->instances) {
-            std::string names;
-            for (const auto& m : i.members) names += (names.empty() ? "" : ", ") + m.name;
-            const std::string mode = i.mode == "sealed" ? "together" : "on their own";
-            ImGui::BulletText("%s: %s (%s%s%s)", area_line(i.stage, i.mode == "hub").c_str(), names.c_str(), mode.c_str(),
-                              i.boss_lock ? ", boss fight" : "", i.departing ? ", leaving" : "");
+        if (!s.leave_instance_asked) {
+            if (button("Leave instance", !lobby.busy())) s.leave_instance_asked = true;
+        } else {
+            wrapped(live->is_host ? "End the instance for everyone?" : ("Leave " + live->host_name + "'s instance? You return to your lobby.").c_str());
+            if (button("Yes", !lobby.busy(), true)) {
+                s.leave_instance_requested = true;
+                s.leave_instance_asked = false;
+            }
+            ImGui::SameLine();
+            if (button("No", !lobby.busy())) s.leave_instance_asked = false;
         }
     }
-    ImGui::Spacing();
-    // The online character this machine plays (round S2's character lane
-    // brings the server's; a new one starts at the title's Game Start). Once
-    // the game runs, how it is saved (the lobby's account view was read
-    // before the room and does not follow the saves).
+    ImGui::SeparatorText("You");
     if (live && live->active) {
         if (live->in_game) {
             if (!live->character.empty()) wrapped_disabled(live->character.c_str());
             if (!live->story.empty()) wrapped_disabled(live->story.c_str());
         } else if (const auto& c = lobby.character(); c && c->exists)
             wrapped_disabled(("You play " + (c->name.empty() ? std::string("your online character") : c->name) + " (" + c->digimon + ", level " +
-                              std::to_string(c->level) + "): Play, then START and Game Start at the title, and load it from the card. "
+                              std::to_string(c->level) + "): START and Game Start at the title, and load it from the card. "
                               "A character made with Create Digimon is not saved online.")
                                  .c_str());
         else
-            wrapped_disabled("Your online character starts new: Play, then START and Game Start at the title (your save on this PC is not "
-                             "used).");
+            wrapped_disabled("Your online character starts new: START and Game Start at the title (your save on this PC is not used).");
     }
-    if (live && live->leave_prompt) wrapped_colored(kAccent, "Leave room? (you held B + X + START)");
+    if (const auto& counts = lobby.world_counts())
+        ImGui::TextDisabled("Online now: %d %s, %d %s", counts->players, counts->players == 1 ? "player" : "players", counts->instances,
+                            counts->instances == 1 ? "instance" : "instances");
+    if (live && live->leave_prompt) wrapped_colored(kAccent, "Go offline? (you held B + X + START)");
     if (!s.leave_asked && !(live && live->leave_prompt)) {
         if (live && live->active) {
             if (button("Play", true, true)) s.close_requested = true;
             ImGui::SameLine();
         }
-        if (button("Leave room", !lobby.busy())) s.leave_asked = true;
+        if (button("Go offline", !lobby.busy())) s.leave_asked = true;
     } else {
-        wrapped("Leave the room? The online game ends and you return to the title; your online character is saved first.");
+        wrapped("Go offline? The online game ends and you return to the title; your online character is saved first.");
         // (When the question opens the controller's focus goes to its buttons, asked in its first two frames since a
         // window's first frame measures itself hidden: it stood in the members table's header, round 59 review.)
         s.leave_prompt_frames = s.leave_prompt_frame == ImGui::GetFrameCount() - 1 ? s.leave_prompt_frames + 1 : 0;
         s.leave_prompt_frame = ImGui::GetFrameCount();
         if (s.leave_prompt_frames < 2) ImGui::SetKeyboardFocusHere();
-        if (button("Leave", !lobby.busy(), true)) {
+        if (button("Go offline", !lobby.busy(), true)) {
             lobby.request_leave();
             s.leave_asked = false;
         }
@@ -811,16 +671,13 @@ bool set_ui_field(OnlineUiState& s, const std::string& f, const std::string& val
     else if (f == "password.current") copy(s.pw_current, value);
     else if (f == "password.next") copy(s.pw_next, value);
     else if (f == "password.again") copy(s.pw_again, value);
-    else if (f == "create.name") copy(s.room_name, value);
-    else if (f == "create.password") copy(s.room_password, value);
-    else if (f == "create.players") return number(s.room_players, 2, 10);
-    else if (f == "create.difficulty") return number(s.room_difficulty, 0, 2);
-    else if (f == "create.camera") return number(s.room_camera, 0, 1);
-    else if (f == "create.light") return number(s.room_light, 0, 1);
-    else if (f == "create.fast") return flag(s.room_fast);
-    else if (f == "join.password") copy(s.join_password, value);
-    else if (f == "select") s.selected = value;
+    else if (f == "settings.visibility") return number(s.set_visibility, 0, 2) && (s.settings_filled = true);
+    else if (f == "settings.camera") return number(s.set_camera, 0, 1) && (s.settings_filled = true);
+    else if (f == "settings.light") return number(s.set_light, 0, 1) && (s.settings_filled = true);
+    else if (f == "settings.fast") return flag(s.set_fast) && (s.settings_filled = true);
+    else if (f == "settings.seed") return number(s.rand_seed, 0, 2147483647) && (s.settings_filled = true);
     else if (f == "leave.asked") return flag(s.leave_asked);
+    else if (f == "leave_instance.asked") return flag(s.leave_instance_asked);
     else return false;
     return true;
 }
@@ -847,7 +704,10 @@ void draw_online_screens(online::OnlineLobby& lobby, OnlineUiState& state, const
     if (lobby.screen() != state.last_screen) {
         state.last_screen = lobby.screen();
         state.focus_pending = true;
-        if (lobby.screen() != Screen::in_room) state.leave_asked = false;
+        if (lobby.screen() != Screen::playing) {
+            state.leave_asked = false;
+            state.leave_instance_asked = false;
+        }
         state.keyboard.open = false;
         state.keyboard.target = nullptr;
     }
@@ -863,9 +723,9 @@ void draw_online_screens(online::OnlineLobby& lobby, OnlineUiState& state, const
     banner(lobby);
     using online::Gate;
     const Gate gate = lobby.gate();
-    // A closed gate shows only its banner (and what to do), except inside a
-    // room, which runs on whatever the REST side says.
-    if (!lobby.in_room() && gate != Gate::open) {
+    // A closed gate shows only its banner (and what to do), except while the
+    // world session runs, whatever the REST side says.
+    if (!lobby.in_world() && gate != Gate::open) {
         if (gate == Gate::unknown) ImGui::TextDisabled("Connecting to the server...");
         else if (gate == Gate::outdated)
             wrapped_disabled("Install the newest version of DW4_PC to play online (your saves and settings stay). Offline play is not "
@@ -876,8 +736,8 @@ void draw_online_screens(online::OnlineLobby& lobby, OnlineUiState& state, const
             wrapped_disabled("Online play needs the DW4Online server. Offline play is not affected.");
         return;
     }
-    // (The in-room view also while the server cannot be reached: the room runs on.)
-    const Screen screen = lobby.in_room() && !lobby.logged_in() ? Screen::in_room : lobby.screen();
+    // (The playing screen also while the server cannot be reached: the session runs on.)
+    const Screen screen = lobby.in_world() && !lobby.logged_in() ? Screen::playing : lobby.screen();
     switch (screen) {
     case Screen::welcome: welcome(lobby); break;
     case Screen::login: login(lobby, state); break;
@@ -888,12 +748,11 @@ void draw_online_screens(online::OnlineLobby& lobby, OnlineUiState& state, const
     case Screen::account: account(lobby); break;
     case Screen::change_password: change_password(lobby, state); break;
     case Screen::reset_character: reset_character(lobby, state); break;
-    case Screen::rooms: rooms(lobby, state, lobby.protocol(), lobby.data_hash()); break;
-    case Screen::create_room: create_room(lobby, state); break;
-    case Screen::join_room: join_room(lobby, state); break;
+    case Screen::home: home(lobby); break;
+    case Screen::settings: settings_screen(lobby, state); break;
     case Screen::confirm: confirm(lobby); break;
     case Screen::starting: starting(lobby); break;
-    case Screen::in_room: in_room(lobby, state, live); break;
+    case Screen::playing: playing(lobby, state, live); break;
     }
     ImGui::Spacing();
     footer(lobby);
@@ -914,10 +773,11 @@ void draw_title_online(online::OnlineLobby& lobby, OnlineUiState& state, TitleOn
     // (Not while a text field, a list or the on-screen keyboard takes it.)
     const bool back = !state.keyboard.open && !io.WantTextInput && !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId) &&
                       (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false) || ImGui::IsKeyPressed(ImGuiKey_Escape, false));
-    const bool first = (lobby.gate() != online::Gate::open && !lobby.in_room()) || !lobby.can_back();
+    const bool first = (lobby.gate() != online::Gate::open && !lobby.in_world()) || !lobby.can_back();
     if (back && !lobby.busy()) {
         const auto screen = lobby.screen();
         if (state.leave_asked) state.leave_asked = false;
+        else if (state.leave_instance_asked) state.leave_instance_asked = false;
         else if (screen == Screen::registered || screen == Screen::recovered) {} // the code is confirmed with "I saved it"
         else if (screen == Screen::confirm) lobby.cancel_start();
         else if (!first) lobby.back();
@@ -981,7 +841,7 @@ void draw_title_online(online::OnlineLobby& lobby, OnlineUiState& state, TitleOn
     }
     // The heading in the title menu's manner.
     ImGui::PushFont(heading, title);
-    const char* name = lobby.in_room() ? "Online Room" : "Online";
+    const char* name = "Online";
     ImGui::SetCursorPosX((ImGui::GetWindowSize().x - ImGui::CalcTextSize(name).x) * 0.5f);
     ImGui::TextUnformatted(name);
     ImGui::PopFont();
@@ -991,7 +851,7 @@ void draw_title_online(online::OnlineLobby& lobby, OnlineUiState& state, TitleOn
     ImGui::Separator();
     // What the buttons do (controller first).
     const bool code = lobby.screen() == Screen::registered || lobby.screen() == Screen::recovered;
-    const char* back_text = code ? "" : first ? (lobby.in_room() ? "     B  Close" : "     B  Title menu") : "     B  Back";
+    const char* back_text = code ? "" : first ? (lobby.in_world() ? "     B  Close" : "     B  Title menu") : "     B  Back";
     ImGui::TextDisabled("A  Select%s     (keyboard: arrows, Enter, Esc; or the mouse)", back_text);
     ImGui::End();
 

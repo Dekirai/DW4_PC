@@ -23,28 +23,35 @@ struct ImFont;
 
 namespace dw4::game {
 
-// The running room as this machine's session sees it (the relay's ROSTER
-// and the own instance), filled by the host every frame.
+// The running world session as this machine's session sees it (the relay's
+// INSTANCE_INFO and the own stage group), filled by the host every frame.
 struct RoomLive {
-    bool active = false;                 // a room session runs
-    std::string code, name;              // the room
-    std::uint32_t member = 0xFFFFFFFFu;  // the own room slot (0-9)
+    bool active = false;                 // the world session runs
+    std::string code, name;              // (unused since round I1a)
+    std::uint32_t member = 0xFFFFFFFFu;  // the own member id
     int own_slot = 0;                    // the engine slot in the own instance
     std::uint32_t inst = 0;
     std::string mode;                    // solo, sealed, parked, ...
     int delay = 0;
-    bool leave_prompt = false;           // B + X + START asked "Leave room?"
+    bool leave_prompt = false;           // B + X + START asked "Go offline?"
     bool in_game = false;                // the game started (past the title's Game Start / Call Digimon)
     std::string character;               // the online character's save state (CharacterSync::status_text)
-    std::string story;                   // "Story: yours" / "Story: <owner>'s, phase n, k key items" (round G-core)
+    std::string story;                   // "Story: yours" / "Story: <host>'s, ..." (round G-core)
+    // Round I1a (19.5.4): the own instance (wid 0: home), its host, its
+    // visibility (0 Public, 1 Friends, 2 Private), whether this member hosts it.
+    std::uint32_t wid = 0, host = 0;
+    std::string host_name;
+    int visibility = 0;
+    bool is_host = false;
+    std::string area;                    // the instance's area key (death_valley, ...)
     struct Member {
-        std::uint32_t member = 0;        // room slot 0-9
+        std::uint32_t member = 0;        // the member id
         std::string name, stage;         // stage empty: hidden (loading, a scene, a menu)
         std::uint32_t inst = 0;
         int level = 0, hp = 0, max_hp = 0;
-        bool connected = false, lagging = false, owner = false;
+        bool connected = false, lagging = false, owner = false; // owner: the instance's host
     };
-    std::vector<Member> members;         // the last ROSTER
+    std::vector<Member> members;         // the instance's players (INSTANCE_INFO)
 };
 
 // The form fields and the selection (kept across frames; the test-run script
@@ -57,20 +64,25 @@ struct OnlineUiState {
     char rec_name[32]{}, rec_code[96]{}, rec_password[160]{}, rec_again[160]{};
     char pw_current[160]{}, pw_next[160]{}, pw_again[160]{};
     char reset_password[160]{};
-    char room_name[48]{}, room_password[80]{};
-    int room_players = 4, room_difficulty = 0, room_camera = 0, room_light = 1;
-    bool room_fast = false;
+    // Online > Settings (round I1a): the online preferences' form, filled
+    // from the server's when the screen opens.
+    int set_visibility = 0, set_camera = 0, set_light = 1;
+    bool set_fast = false;
     int rand_seed = 0, rand_enemies = 0, rand_zones = 0;
     bool rand_drops = false;
-    char join_password[80]{};
-    std::string selected;                // the selected room's code
-    bool leave_asked = false;            // "Leave room?" in the room view
-    int leave_prompt_frame = -10;        // the last frame the room view showed "Leave room?" (its buttons take the focus when it opens)
+    bool settings_filled = false;
+    bool leave_asked = false;            // "Go offline?" on the playing screen
+    int leave_prompt_frame = -10;        // the last frame the playing screen showed "Go offline?" (its buttons take the focus when it opens)
     int leave_prompt_frames = 0;         // the frames in a row it has shown it
+    // The Instance page (19.5.4): "Leave instance?" asked; out: the host's
+    // visibility choice and the confirmed leave, which the host sends.
+    bool leave_instance_asked = false;
+    int visibility_requested = -1;
+    bool leave_instance_requested = false;
     online::Screen last_screen = online::Screen::welcome;
     bool focus_pending = false;          // put the controller's focus on the new screen's first item
-    bool close_requested = false;        // out: "Play" in the room view (the host closes the screens)
-    bool stay_requested = false;         // out: "Stay" answered B + X + START's "Leave room?" (the host closes that prompt)
+    bool close_requested = false;        // out: "Play" on the playing screen (the host closes the screens)
+    bool stay_requested = false;         // out: "Stay" answered B + X + START's "Go offline?" (the host closes that prompt)
     // The on-screen keyboard: a text field the controller activated.
     struct Keyboard {
         bool open = false;
@@ -83,7 +95,7 @@ struct OnlineUiState {
     } keyboard;
 };
 
-// Sets a form field by its script name ("login.name", "create.players", ...);
+// Sets a form field by its script name ("login.name", "settings.camera", ...);
 // false for an unknown field or value.
 bool set_ui_field(OnlineUiState& state, const std::string& field, const std::string& value);
 
@@ -97,7 +109,7 @@ const char* camera_mode_name(int mode);
 const char* light_mode_name(int mode);
 
 // The screens of the lobby (the body of the F1 Online tab and of the title's
-// online screens). `live`: the running room (nullptr when none).
+// online screens). `live`: the running world session (nullptr when none).
 void draw_online_screens(online::OnlineLobby& lobby, OnlineUiState& state, const RoomLive* live);
 
 // The online screens over the title (the title menu's third entry opens

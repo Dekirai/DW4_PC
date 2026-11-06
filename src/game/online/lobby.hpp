@@ -1,22 +1,23 @@
 #pragma once
 
-// The account and room lobby behind the title's Online panel and the F1
-// Online tab (docs/SEAMLESS.md 10): the version gate, log in (remember me),
-// register with the one-time recovery code, recover, log out (here and
-// everywhere), change the password, the account with the online
-// character's summary, the room list, create (name, optional password, 2-10
-// players, difficulty up to what the account unlocked, camera mode, light
-// mode, randomizer, fast loading), join (password prompt), the confirmation
-// that ends an offline game, and the room as its members see it (REST state
-// every three seconds while shown; kick for the owner). It never blocks: every
-// request goes through an HttpQueue (the WinHTTP worker in the game, a fake in
-// the tests) and comes back in update().
+// The account lobby and the home screen behind the title's Online panel and
+// the F1 Online tab (docs/SEAMLESS.md 10; round I1a, 19.5.1: no rooms): the
+// version gate, log in (remember me), register with the one-time recovery
+// code, recover, log out (here and everywhere), change the password, the
+// account with the online character's summary, the home screen (Play, the
+// world's counts), Online > Settings (the online preferences: the new
+// instance's visibility, camera and light mode, fast loading, randomizer),
+// the confirmation that ends an offline game, and the screen while the world
+// session runs. It never blocks: every request goes through an HttpQueue
+// (the WinHTTP worker in the game, a fake in the tests) and comes back in
+// update().
 //
-// The lobby only prepares a room: once the server answered a create or join,
-// take_ready() hands the host the joined room (ticket, settings, token); the
-// host starts the online session (online_run.hpp) and tells the lobby how it
-// went (session_started / session_failed / session_ended). Leaving goes the
-// other way: request_leave() is taken by the host, which ends the session.
+// The lobby only prepares the world session: once the server answered Play
+// (POST /world/enter), take_ready() hands the host the entry (ticket,
+// settings, token); the host starts the online session (online_run.hpp) and
+// tells the lobby how it went (session_started / session_failed /
+// session_ended). Leaving goes the other way: request_leave() is taken by
+// the host, which ends the session.
 //
 // No ImGui here (src/game/online_ui.cpp draws it); the screen is part of the
 // model so the UI, the tests and the test-run script (online_ui_script.hpp)
@@ -59,12 +60,11 @@ enum class Screen {
     account,
     change_password,
     reset_character,  // the online character's reset (password, a warning)
-    rooms,            // the room list (logged in)
-    create_room,
-    join_room,        // the password prompt
+    home,             // logged in: Play, Settings, Account, Log out, the world's counts
+    settings,         // Online > Settings (the online preferences)
     confirm,          // "the offline game ends"
     starting,         // the request and the session start
-    in_room,
+    playing,          // the world session runs (the F1 Online tab's Instance page)
 };
 const char* screen_name(Screen screen);
 std::optional<Screen> screen_from_name(const std::string& name);
@@ -93,23 +93,15 @@ struct LobbyConfig {
     std::string server_key;              // host:port (the token's entropy)
     bool not_set_up = false;             // the endpoint is pinned but has no pin
     std::string refusal;                 // the CPU gate or the environment check (empty: fine)
-    double rooms_interval = 10.0;        // the room list refreshes while shown
-    double room_interval = 3.0;          // the room state refreshes while shown
+    double world_interval = 10.0;        // the world's counts refresh while the home screen shows
+    int box = 1;                         // the box Play starts (1 until round D)
 };
 
 // What the host needs to start the session (OnlineRoom in online_run.hpp).
-struct LobbyRoom {
-    api::RoomJoined joined;
+struct LobbyWorld {
+    api::WorldEntry entry;
     std::string account, token;
     int relay_port = 52041;
-    bool created = false;                // this member opened the room
-};
-
-// The room create form's values (also the test script's).
-struct CreateForm {
-    std::string name, password;
-    int max_players = 4;
-    RoomSettings settings;
 };
 
 class OnlineLobby {
@@ -128,8 +120,8 @@ public:
     Screen screen() const { return screen_; }
     void go(Screen screen);
     void back();
-    // back() leads somewhere: this is not the first screen (the room list
-    // logged in, the welcome logged out, the room inside one).
+    // back() leads somewhere: this is not the first screen (the home screen
+    // logged in, the welcome logged out, the playing screen in the world).
     bool can_back() const;
 
     // Facts for the screens.
@@ -144,7 +136,7 @@ public:
     const std::string& token() const { return token_; }
     const std::optional<api::AccountInfo>& account_info() const { return info_; }
     const std::optional<api::CharacterInfo>& character() const { return character_; }
-    int max_difficulty() const;          // what a created room may use
+    int max_difficulty() const;          // what the character select offers (the box's clears)
     bool remembered() const { return remembered_; }
     bool busy() const;
     const std::string& busy_text() const { return busy_text_; }
@@ -152,16 +144,16 @@ public:
     const std::string& info() const { return info_text_; }
     const std::string& recovery_code() const { return recovery_code_; }
     const std::string& recover_name() const { return recover_name_; }
-    const std::vector<api::RoomListing>& rooms() const { return rooms_; }
-    bool rooms_loaded() const { return rooms_loaded_; }
-    std::uint64_t rooms_serial() const { return rooms_serial_; } // counts the room lists that arrived
-    const std::optional<api::RoomListing>& join_target() const { return join_target_; }
-    const std::optional<api::RoomView>& room() const { return room_view_; }
-    const std::string& room_code() const { return room_code_; }
-    const std::string& room_name() const { return room_name_; }
-    bool in_room() const { return !room_code_.empty(); }
-    bool room_owner() const;
-    // Create and join: the server is open, the account logged in, this PC may play online.
+    // GET /world: "Online now: <n> players, <m> instances" (nothing yet: none).
+    const std::optional<api::WorldCounts>& world_counts() const { return counts_; }
+    std::uint64_t counts_serial() const { return counts_serial_; } // counts the answers that arrived
+    // The online preferences (GET /me/online-prefs; Online > Settings).
+    const std::optional<api::OnlinePrefs>& prefs() const { return prefs_; }
+    // The world session runs (Play started it).
+    bool in_world() const { return playing_; }
+    // "Play: <form> Lv <n> (Box <b>)" (19.5.6), "Play: new character (Box 1)".
+    std::string play_label() const;
+    // Play: the server is open, the account logged in, this PC may play online.
     bool can_play() const { return gate_ == Gate::open && logged_in() && config_.refusal.empty(); }
     const std::string& refusal() const { return config_.refusal; }
     int protocol() const { return config_.protocol; }
@@ -170,7 +162,7 @@ public:
     bool remembers_login() const { return remembers_login_; }
 
     // The host says whether an offline game would end (an engine past the
-    // title): then create and join ask first.
+    // title): then Play asks first.
     void set_offline_game(bool running) { offline_game_ = running; }
 
     // Account actions (a check that fails locally sets error() and sends
@@ -183,38 +175,35 @@ public:
     void logout();
     void logout_everywhere();
     void change_password(const std::string& current, const std::string& next, const std::string& again);
-    // Ends the online character (and empties its online story; the server
-    // closes a room the account owns): the next online game starts a new one.
-    // Not inside a room.
+    // Ends the online character (and empties its online story): the next
+    // online game starts a new one. Not while the world session runs.
     void reset_character(const std::string& current_password);
     void refresh_account();
 
-    // Rooms.
-    void refresh_rooms();
-    void create_room(const CreateForm& form);
-    // Join by code or name; a room with a password asks for it first
-    // (screen join_room) unless one is given.
-    void join_room(const std::string& code_or_name, const std::optional<std::string>& password = std::nullopt);
+    // The world (round I1a).
+    void refresh_world();
+    void refresh_prefs();
+    // Play: POST /world/enter for the box (after "the offline game ends?").
+    void play();
+    // Online > Settings: PUT /me/online-prefs (they count from the next Play).
+    void save_settings(const api::OnlinePrefs& prefs);
     void confirm_start();                // the "end the offline game" question: yes
     void cancel_start();
-    void kick(const std::string& user);
-    void close_room(const std::string& code);
-    void refresh_room();
 
     // The host's side of the session.
-    std::optional<LobbyRoom> take_ready();
+    std::optional<LobbyWorld> take_ready();
     void session_started();
     void session_failed(const std::string& error);
     void session_ended(const std::string& reason);
-    // A room the command line entered (--online-login): the lobby shows it.
-    void adopt_room(const std::string& account, const std::string& token, const std::string& code, const std::string& name);
+    // A world session the command line started (--online-play): the lobby shows it.
+    void adopt_world(const std::string& account, const std::string& token);
     void request_leave() { leave_requested_ = true; }
     bool take_leave_request() { return std::exchange(leave_requested_, false); }
 
 private:
     enum class Call {
-        status, me, character, login, register_account, recover, logout, logout_all, change_password, reset_character, rooms, create, join, ticket,
-        room_state, kick, close, leave
+        status, me, character, login, register_account, recover, logout, logout_all, change_password, reset_character, world, prefs, put_prefs,
+        enter, leave
     };
     struct Pending {
         std::uint64_t id = 0;
@@ -229,9 +218,9 @@ private:
     bool handle_common(const HttpResponse& response, bool authorized);
     void become_logged_in(const std::string& account, const std::string& token, bool remember);
     void become_logged_out(const std::string& why);
-    void start_request();                // the create or join after the confirmation
-    void finish_join(const api::RoomJoined& joined);
+    void start_request();                // Play's request after the confirmation
     void set_screen(Screen screen);
+    Screen root() const;
 
     std::unique_ptr<HttpQueue> http_;
     LobbyConfig config_;
@@ -252,24 +241,16 @@ private:
     std::optional<api::CharacterInfo> character_;
     std::string recovery_code_, recover_name_;
 
-    std::vector<api::RoomListing> rooms_;
-    bool rooms_loaded_ = false;
-    std::uint64_t rooms_serial_ = 0;
-    double rooms_at_ = -1e9;
-    std::optional<api::RoomListing> join_target_;
+    std::optional<api::WorldCounts> counts_;
+    std::uint64_t counts_serial_ = 0;
+    double counts_at_ = -1e9;
+    std::optional<api::OnlinePrefs> prefs_;
 
-    // A create or join on its way (the confirmation, then the request).
-    struct Start {
-        bool create = false;
-        CreateForm form;
-        std::string code, password;
-    };
-    std::optional<Start> start_;
+    // Play on its way (the confirmation, then the request).
+    bool start_ = false;
     bool offline_game_ = false;
-    std::optional<LobbyRoom> ready_;
-    std::string room_code_, room_name_;
-    std::optional<api::RoomView> room_view_;
-    double room_at_ = -1e9;
+    std::optional<LobbyWorld> ready_;
+    bool playing_ = false;
     bool leave_requested_ = false;
 };
 

@@ -53,38 +53,40 @@ namespace dw4::game {
 // world relay speaks only 49 (its floor is this number, 19.17.3).
 inline constexpr std::uint32_t kOnlineProtocol = 49;
 
+// The command line's world session (round I1a, docs/SEAMLESS.md 19.21):
+// --online-login NAME --online-play [BOX] logs in from the test profile and
+// presses Play; --online-camera / --online-light / --online-fast override the
+// online preferences' settings for this run (test runs).
 struct OnlineOptions {
-    std::string user, create, join;
-    int max_players = 4;
-    online::RoomSettings settings;
-    bool wanted() const { return !user.empty() && (!create.empty() || !join.empty()); }
+    std::string user;
+    bool play = false;
+    int box = 1;
+    std::optional<int> camera, light;
+    bool fast = false;
+    bool wanted() const { return !user.empty() && play; }
 };
 
-// The blocking part before the game loop: gates, status, login, room,
-// ticket. Nothing on failure (error says why, for the player).
+// The world session the game plays (the name stays from the rooms): the
+// server, the login, the relay ticket of POST /world/enter, the own settings
+// (the online preferences; the difficulty is chosen at the Game Start), the
+// bound box. Every member's card keeps the own story (round G-core's net,
+// 19.8.9): an engine in an instance holds the host's.
 struct OnlineRoom {
     online::ServerEndpoint endpoint;
-    std::string account, token, code, room_name, ticket;
+    std::string account, token, ticket;
     std::uint32_t member_id = 0;
     int relay_port = 52041;
     online::RoomSettings settings;
-    int max_players = 0; // the room's size (the Discord party)
-    // The room's owner (room.owner) and whether this account is it (round
-    // G-core, docs/SEAMLESS.md 8.8: a guest plays on the owner's story, its
-    // card and uploads keep its own).
-    // (Not the owner by default: both ways into a room set it with
-    // set_room_owner. A guest taken for the owner put the room story into
-    // its card, the leak round G-core closes; the other way round only its
-    // own story would stand on the owner's card.)
-    std::string owner_name;
-    bool room_owner = false;
+    int box = 1;
+    std::string role = "player";
+    std::string default_visibility = "public";
 };
-// The room's owner and whether `room.account` is it (api::owns_room): every
-// way into a room calls this (--online-create / --online-join and the title's
-// online screens, game_main's take_ready).
-void set_room_owner(OnlineRoom& room, const online::api::RoomJoined& joined, bool created);
-std::optional<OnlineRoom> online_enter_room(online::HttpWorker& http, const OnlineOptions& options, std::uint64_t data_hash,
-                                            const std::string& client_version, const std::filesystem::path& token_folder, std::string& error);
+// The blocking part before the game loop: gates, status, login, POST
+// /world/enter. Nothing on failure (error says why, for the player).
+std::optional<OnlineRoom> online_enter_world(online::HttpWorker& http, const OnlineOptions& options, std::uint64_t data_hash,
+                                             const std::string& client_version, const std::filesystem::path& token_folder, std::string& error);
+// The room of a lobby's Play (the title's online screens).
+OnlineRoom world_from_entry(const online::api::WorldEntry& entry, const std::string& account, const std::string& token, int relay_port);
 
 class OnlineRun {
 public:
@@ -123,11 +125,10 @@ public:
     // until it comes; after 15 s without it the room is left ("The room story
     // did not arrive. Join the room again.").
     void after_live_step(double now);
-    // Messages for the player (toasts): the guest's story at its Game Start, the
-    // closed call shop.
+    // Messages for the player (toasts): the closed call shop.
     std::vector<std::string> take_notices();
-    // "Story: yours" / "Story: <owner>'s, phase n, k key items" for the F1 Online
-    // tab and the room view.
+    // "Story: yours" / "Story: <host>'s, phase n, k key items" for the F1
+    // Online tab (the visit's story owner, 19.8.4).
     std::string story_line() const;
     // The Game Start waits for the room story.
     bool story_held() const { return story_hold_since_ >= 0; }
@@ -185,6 +186,7 @@ private:
 
     std::unique_ptr<online::HttpWorker> http_;
     OnlineRoom room_;
+    std::uint64_t data_hash_ = 0;
     std::function<engine::Engine&()> engine_;
     online::GameEngineLink link_;
     std::unique_ptr<online::Session> session_;
