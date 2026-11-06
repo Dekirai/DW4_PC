@@ -13,7 +13,7 @@ namespace DW4Online.Domain.World;
 /// <param name="RandomizerModes">Bit 0 drops shuffled, bits 1-2 enemies (0 off, 1 every enemy on its own, 2 one family per
 /// wave), bits 3-4 the zone shuffle (0 off, 1, 2); the values of <see cref="RoomSettings"/>.</param>
 public sealed record OnlinePrefs(
-    string DefaultVisibility = Visibilities.Public,
+    string DefaultVisibility = VisibilityNames.Public,
     string Invites = OnlinePrefs.InvitesAnyone,
     string Whereabouts = OnlinePrefs.WhereaboutsFriends,
     bool FriendToasts = true,
@@ -45,7 +45,7 @@ public sealed record OnlinePrefs(
 
     /// <summary>Whether every value is in its range (the table's CHECK constraints).</summary>
     public bool IsValid =>
-        Visibilities.IsValid(DefaultVisibility) && Invites is InvitesAnyone or InvitesFriends &&
+        VisibilityNames.IsValid(DefaultVisibility) && Invites is InvitesAnyone or InvitesFriends &&
         Whereabouts is WhereaboutsFriends or WhereaboutsNobody && CameraMode is 0 or 1 && LightMode is 0 or 1 &&
         RandomizerSeed is null or >= 1 && RandomizerModes <= 31 && RandomizerEnemies <= 2 && RandomizerZones <= 2 &&
         LastBox is >= 1 and <= 4;
@@ -86,7 +86,7 @@ public sealed record OnlinePrefs(
             switch (field.Name)
             {
                 case "defaultVisibility":
-                    if (v.ValueKind != JsonValueKind.String || !Visibilities.IsValid(v.GetString())) return Bad("defaultVisibility is public, friends or private.");
+                    if (v.ValueKind != JsonValueKind.String || !VisibilityNames.IsValid(v.GetString())) return Bad("defaultVisibility is public, friends or private.");
                     p = p with { DefaultVisibility = v.GetString()! };
                     break;
                 case "invites":

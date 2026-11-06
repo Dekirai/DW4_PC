@@ -31,10 +31,16 @@ public static class AreaKinds
 /// </summary>
 public sealed class AreaTable
 {
+    /// <summary>The area keys of the file's area column (the relay's matching and its tests name them).</summary>
+    public const string DeathValley = "death_valley";
+    public const string DryLand = "dry_land";
+    public const string VenomJungle = "venom_jungle";
+    public const string MachinePit = "machine_pit";
+
     /// <summary>The four areas in the game's order with their names (the loading cards' regions).</summary>
     public static readonly IReadOnlyList<(string Key, string Name)> Areas =
     [
-        ("death_valley", "Death Valley"), ("dry_land", "Dry Land"), ("venom_jungle", "Venom Jungle"), ("machine_pit", "Machine Pit"),
+        (DeathValley, "Death Valley"), (DryLand, "Dry Land"), (VenomJungle, "Venom Jungle"), (MachinePit, "Machine Pit"),
     ];
 
     private static readonly Lazy<AreaTable> Embedded = new(() =>
@@ -46,10 +52,11 @@ public sealed class AreaTable
 
     private readonly Dictionary<string, AreaStage> _stages;
 
-    private AreaTable(IReadOnlyList<AreaStage> stages)
+    /// <summary>A table of these rows (tests; the relay's own tables). <see cref="Default"/> is the embedded file's.</summary>
+    public AreaTable(IEnumerable<AreaStage> stages)
     {
-        All = stages;
-        _stages = stages.ToDictionary(s => s.Stage, StringComparer.OrdinalIgnoreCase);
+        All = stages.ToList();
+        _stages = All.ToDictionary(s => s.Stage, StringComparer.OrdinalIgnoreCase);
     }
 
     /// <summary>The table embedded from data/online/areas.json.</summary>

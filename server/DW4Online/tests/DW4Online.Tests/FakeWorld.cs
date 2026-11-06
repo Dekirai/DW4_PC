@@ -84,7 +84,7 @@ public sealed class FakeWorldRelay : IWorldRelay, IWorldNotifier
     // --- Building snapshots ------------------------------------------------------------------------------------------------
 
     /// <summary>An instance row with its host first; members as (account, name, stage).</summary>
-    public static WorldInstanceRow Instance(uint wid, long host, string hostName, string area, string stage, string visibility = Visibilities.Public,
+    public static WorldInstanceRow Instance(uint wid, long host, string hostName, string area, string stage, string visibility = VisibilityNames.Public,
         IEnumerable<(long Account, string Name, string Stage)>? guests = null, DateTime? started = null, IEnumerable<(long Account, string Name)>? spectators = null,
         long? historyId = null, bool randomizer = false, int difficulty = 0)
     {

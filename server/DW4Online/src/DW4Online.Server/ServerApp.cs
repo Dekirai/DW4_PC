@@ -20,7 +20,11 @@ namespace DW4Online.Server;
 /// <summary>The composition root: one process with the API, the website and the relay (groundwork option A).</summary>
 public static class ServerApp
 {
-    public static WebApplication Build(string[] args, bool windowsService = false, string? settingsFile = null, Action<WebApplicationBuilder>? configure = null)
+    /// <param name="configure">Runs before the composition root's registrations (settings, a clock: TryAdd lines then add nothing).</param>
+    /// <param name="overrideServices">Runs after them, right before the build (tests: a stand-in that replaces a registration
+    /// whatever way it was made, such as the world relay's AddSingleton).</param>
+    public static WebApplication Build(string[] args, bool windowsService = false, string? settingsFile = null, Action<WebApplicationBuilder>? configure = null,
+        Action<IServiceCollection>? overrideServices = null)
     {
         var builder = WebApplication.CreateBuilder(new WebApplicationOptions
         {
@@ -52,9 +56,10 @@ public static class ServerApp
         var play = Bind<PlayOptions>(config, "Play");
         // The room era's name, read for one release (SEAMLESS.md 19.17.5).
         if (config["Play:RequireWorld"] is null && play.RequireRoom is { } requireRoom) play.RequireWorld = requireRoom;
-        var world = Bind<WorldWebOptions>(config, "World");
-        if (world.RankedDataHashes.Count == 0 && config.GetSection("Rooms:RankedDataHashes").Get<List<string>>() is { Count: > 0 } ranked)
-            world.RankedDataHashes = ranked;
+        // (web's keys of the section World; the relay binds its own class to the same section, 19.17.5)
+        var worldWeb = Bind<WorldWebOptions>(config, "World");
+        if (worldWeb.RankedDataHashes.Count == 0 && config.GetSection("Rooms:RankedDataHashes").Get<List<string>>() is { Count: > 0 } ranked)
+            worldWeb.RankedDataHashes = ranked;
         var friends = Bind<FriendsOptions>(config, "Friends");
         var service = Bind<ServiceOptions>(config, "Service");
         var proxy = ProxyHeaders.From(service); // (checks Service:PathBase and Service:TrustedProxyNetworks)
@@ -72,7 +77,7 @@ public static class ServerApp
         services.TryAddSingleton(TimeProvider.System); // tests register a controllable clock first
         services.AddSingleton(accounts).AddSingleton(character).AddSingleton(cloud).AddSingleton(play)
             .AddSingleton(service).AddSingleton(limits).AddSingleton(relay).AddSingleton(rooms).AddSingleton(database)
-            .AddSingleton(sealing).AddSingleton(instances).AddSingleton(friends).AddSingleton(world);
+            .AddSingleton(sealing).AddSingleton(instances).AddSingleton(friends);
         services.AddSingleton(_ => new Database(database.ConnectionString));
         services.AddSingleton<IAccountRepository, AccountRepository>();
         services.AddSingleton<ISessionRepository, SessionRepository>();
@@ -90,6 +95,7 @@ public static class ServerApp
         // Round I1a: the world relay as the domain sees it (SEAMLESS.md 19.17). The relay lane registers its implementation
         // (admission, the browser snapshot, the play context, End and Remove) BEFORE this line; until then nobody is online.
         services.TryAddSingleton<IWorldRelay>(NullWorldRelay.Instance);
+        services.AddSingleton(worldWeb);
         services.AddSingleton<WorldRepository>();
         services.AddSingleton<IWorldRepository>(sp => sp.GetRequiredService<WorldRepository>());
         services.AddSingleton<IInstanceHistoryRepository>(sp => sp.GetRequiredService<WorldRepository>());
@@ -151,6 +157,7 @@ public static class ServerApp
             .AddPolicyScheme(DefaultScheme, "API token or website session", o => o.ForwardDefaultSelector = ctx =>
                 WebSetup.IsWebPath(ctx.Request.Path) ? WebSessionHandler.SchemeName : TokenAuthenticationHandler.SchemeName);
 
+        overrideServices?.Invoke(builder.Services);
         var app = builder.Build();
         // The forwarded headers of a proxy on this machine (Service:BehindProxy, Service:TrustedProxyNetworks) and
         // Service:PathBase, before everything else: the client address the rate limits see, the scheme, the path base of

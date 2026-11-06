@@ -259,7 +259,7 @@ public sealed class WorldService
                 result[id] = new FriendPresence(true, AreaTable.Default.IsHub(here.Stage) ? "In the lobby" : "Online", null, null, null);
                 continue;
             }
-            result[id] = instance.Visibility == Visibilities.Private
+            result[id] = instance.Visibility == VisibilityNames.Private
                 ? new FriendPresence(true, "Playing", null, null, null)
                 : new FriendPresence(true, $"Playing in {AreaTable.AreaName(instance.Area)}", instance.Area, AreaTable.Default.DisplayName(here.Stage), null);
         }
@@ -297,7 +297,7 @@ public sealed class WorldService
     /// </summary>
     public async Task RememberVisibilityAsync(long accountId, string visibility, CancellationToken ct = default)
     {
-        if (!Visibilities.IsValid(visibility)) return;
+        if (!VisibilityNames.IsValid(visibility)) return;
         try
         {
             await _world.SaveVisibilityAsync(accountId, visibility, Clock.Now(_time), ct);

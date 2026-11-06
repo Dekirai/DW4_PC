@@ -12,7 +12,7 @@ public static class WorldProtocol
 }
 
 /// <summary>The visibility of an instance (19.6.2): who may see and join it.</summary>
-public static class Visibilities
+public static class VisibilityNames
 {
     public const string Public = "public";
     public const string Friends = "friends";

@@ -72,6 +72,18 @@ public class AreaTableTests
         Assert.Equal(["death_valley", "dry_land", "venom_jungle", "machine_pit"], AreaTable.Areas.Select(a => a.Key));
     }
 
+    [Fact]
+    public void The_area_keys_are_constants_and_a_table_takes_its_own_rows()
+    {
+        // (The relay's matching and its WorldLifecycleTests name the areas by these constants.)
+        Assert.Equal([AreaTable.DeathValley, AreaTable.DryLand, AreaTable.VenomJungle, AreaTable.MachinePit], AreaTable.Areas.Select(a => a.Key));
+        Assert.All(AreaTable.Areas, a => Assert.NotEmpty(Table.Stages(a.Key)));
+        var own = new AreaTable([new AreaStage("stag0101", "Death Valley: Goblin Pass", AreaTable.DeathValley, AreaKinds.Field, null, true)]);
+        Assert.Equal(AreaTable.DeathValley, own.AreaOf("STAG0101"));
+        Assert.True(own.IsGate("stag0101") && !own.IsHub("stag0101") && own.IsHub("stag0201"));
+        Assert.Single(own.All);
+    }
+
     private static (string? Area, string Kind, string? Dungeon) Kind(string stage)
     {
         var s = Table.Find(stage)!;

@@ -14,7 +14,7 @@ public sealed class WorldRepository(Database db) : IWorldRepository, IInstanceHi
 
     private sealed class PrefsRow
     {
-        public string DefaultVisibility { get; init; } = Visibilities.Public;
+        public string DefaultVisibility { get; init; } = VisibilityNames.Public;
         public string Invites { get; init; } = OnlinePrefs.InvitesAnyone;
         public string Whereabouts { get; init; } = OnlinePrefs.WhereaboutsFriends;
         public bool FriendToasts { get; init; } = true;
@@ -71,7 +71,7 @@ public sealed class WorldRepository(Database db) : IWorldRepository, IInstanceHi
 
     public async Task<bool> SaveVisibilityAsync(long accountId, string visibility, DateTime now, CancellationToken ct = default)
     {
-        if (!Visibilities.IsValid(visibility)) throw new ArgumentException("Unknown visibility.", nameof(visibility));
+        if (!VisibilityNames.IsValid(visibility)) throw new ArgumentException("Unknown visibility.", nameof(visibility));
         await using var c = await db.OpenAsync(ct);
         return await c.ExecuteAsync(new CommandDefinition(
             "INSERT INTO online_prefs (account_id, default_visibility, updated_at) SELECT @accountId, @visibility, @now FROM accounts " +
@@ -165,7 +165,7 @@ public sealed class WorldRepository(Database db) : IWorldRepository, IInstanceHi
 
     public async Task<long> StartAsync(InstanceHistoryStart s, CancellationToken ct = default)
     {
-        if (!Visibilities.IsValid(s.Visibility)) throw new ArgumentException("Unknown visibility.", nameof(s));
+        if (!VisibilityNames.IsValid(s.Visibility)) throw new ArgumentException("Unknown visibility.", nameof(s));
         await using var c = await db.OpenAsync(ct);
         return await c.ExecuteScalarAsync<long>(new CommandDefinition(
             "INSERT INTO instance_history (host_account_id, host_box, first_stage, visibility, difficulty, story_phase, settings, started_at) " +

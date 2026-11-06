@@ -1,3 +1,4 @@
+using System.Reflection;
 using System.Text.Json;
 using DW4Online.Domain;
 using DW4Online.Domain.Abstractions;
@@ -56,7 +57,7 @@ public class WorldDomainTests
     [Fact]
     public void Visible_follows_the_matrix_of_19_7_2()
     {
-        string[] vis = [Visibilities.Public, Visibilities.Friends, Visibilities.Private];
+        string[] vis = [VisibilityNames.Public, VisibilityNames.Friends, VisibilityNames.Private];
         (string Who, WorldViewer Viewer, bool[] Sees)[] cases =
         [
             ("stranger", Viewer(1), [true, false, false]),
@@ -114,5 +115,18 @@ public class WorldDomainTests
         Assert.Null(AchievementRules.CheckEvent("solo_veryhard", Check(false, true, 1)));
         Assert.NotNull(AchievementRules.CheckEvent("solo_veryhard", Check(true, true, 2)));
         Assert.Equal(("invalid_players", "The instance's player count is outside 1..4."), RankedRules.Check(new PlayContext { InstancePlayers = 5 }));
+    }
+
+    [Fact]
+    public void The_relays_world_protocol_is_the_floor_in_code()
+    {
+        // One constant per side (lane contract, web 12:50): the relay's handshake floor (Wire.WorldProtocol, the relay lane's)
+        // must be the version gate's (WorldProtocol.Version). A relay without that constant predates the world: its newest
+        // protocol is below the floor, so the version gate refuses every client it could serve.
+        var field = typeof(DW4Online.Relay.Protocol.Wire).GetField("WorldProtocol", BindingFlags.Public | BindingFlags.Static);
+        if (field is not null)
+            Assert.Equal(WorldProtocol.Version, Convert.ToInt32(field.GetValue(null)));
+        else
+            Assert.True(DW4Online.Relay.Protocol.Wire.ReadyCheckProtocol < WorldProtocol.Version);
     }
 }

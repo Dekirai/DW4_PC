@@ -9,6 +9,7 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using MySqlConnector;
 
 namespace DW4Online.Integration.Tests;
@@ -91,8 +92,8 @@ public sealed class TestHost : IAsyncDisposable
     public DW4Online.Tests.FakeWorldRelay? World => App.Services.GetService<DW4Online.Tests.FakeWorldRelay>();
 
     /// <param name="fakeWorld">
-    /// Registers a <see cref="DW4Online.Tests.FakeWorldRelay"/> as the world relay and the notifier (before ServerApp's
-    /// TryAdd registrations); false leaves the server's own (the relay lane's world relay, or the null ones).
+    /// Registers a <see cref="DW4Online.Tests.FakeWorldRelay"/> as the world relay and the notifier (after ServerApp's
+    /// registrations, replacing them); false leaves the server's own (the relay lane's world relay, or the null ones).
     /// </param>
     public static async Task<TestHost> StartAsync(Dictionary<string, string?>? overrides = null, string? settingsFile = null, bool fakeWorld = true)
     {
@@ -105,12 +106,16 @@ public sealed class TestHost : IAsyncDisposable
             builder.Configuration.AddInMemoryCollection(settings);
             builder.Services.AddSingleton<TimeProvider>(clock);
             builder.Services.AddSingleton<IStartupFilter, TestClientAddress>();
-            if (fakeWorld)
-            {
-                builder.Services.AddSingleton<DW4Online.Tests.FakeWorldRelay>();
-                builder.Services.AddSingleton<DW4Online.Domain.Abstractions.IWorldRelay>(sp => sp.GetRequiredService<DW4Online.Tests.FakeWorldRelay>());
-                builder.Services.AddSingleton<DW4Online.Domain.Abstractions.IWorldNotifier>(sp => sp.GetRequiredService<DW4Online.Tests.FakeWorldRelay>());
-            }
+        }, overrideServices: services =>
+        {
+            if (!fakeWorld) return;
+            // After the composition root's registrations: the stand-in replaces the relay's own (registered with AddSingleton
+            // before the TryAdd lines) as well as the null objects.
+            services.RemoveAll<DW4Online.Domain.Abstractions.IWorldRelay>();
+            services.RemoveAll<DW4Online.Domain.Abstractions.IWorldNotifier>();
+            services.AddSingleton<DW4Online.Tests.FakeWorldRelay>();
+            services.AddSingleton<DW4Online.Domain.Abstractions.IWorldRelay>(sp => sp.GetRequiredService<DW4Online.Tests.FakeWorldRelay>());
+            services.AddSingleton<DW4Online.Domain.Abstractions.IWorldNotifier>(sp => sp.GetRequiredService<DW4Online.Tests.FakeWorldRelay>());
         });
         await ServerApp.MigrateIfEnabledAsync(app);
         await app.StartAsync();

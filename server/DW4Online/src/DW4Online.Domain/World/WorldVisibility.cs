@@ -30,8 +30,8 @@ public static class WorldVisibility
         if (viewer.Blocks.Contains(instance.HostAccountId) || instance.Members.Any(m => viewer.Blocks.Contains(m.AccountId))) return false;
         return instance.Visibility switch
         {
-            Visibilities.Public => true,
-            Visibilities.Friends => viewer.Friends.Contains(instance.HostAccountId),
+            VisibilityNames.Public => true,
+            VisibilityNames.Friends => viewer.Friends.Contains(instance.HostAccountId),
             _ => false,
         };
     }
