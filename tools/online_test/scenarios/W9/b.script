@@ -1,0 +1,13 @@
+# W9, guest b (k2, own phase 2): through stag0101 matz01, staggf01-03 to staggf03's math00 into stagML02, a home stage
+# its own story is not at: the DISSOLVE redirects it to stagML11 point 3 on its own story (19.8.3).
+campaign until stage=stagml11,control
+idle until epoch>=@100
+explore mate00 yes until stage=stag0101,control
+log b joined a
+explore matz01 yes until stage=staggf01,control
+explore matz01 yes until stage=staggf02,control
+explore matz01 yes until stage=staggf03,control
+explore math00 yes until stage=stagml11,control fail stage=stagml02
+log b redirected to the lobby
+idle until frames>=120 fail key:4=1
+log own story

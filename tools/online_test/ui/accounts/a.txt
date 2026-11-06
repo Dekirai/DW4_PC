@@ -17,7 +17,7 @@ expect-screen registered
 wait 10
 shot registered
 ack
-expect-screen rooms
+expect-screen home
 expect-logged-in
 refresh
 wait 10
@@ -43,12 +43,12 @@ expect-error User name or password is wrong.
 wait 10
 shot login_error
 login $UI_A_NAME $UI_A_PASSWORD remember
-expect-screen rooms
+expect-screen home
 screen recover
 wait 10
 shot recover
 back
-expect-screen rooms
+expect-screen home
 # B on the first screen: back to the title menu (the cursor stays on Online); Online again opens the room list.
 key pad-b
 sleep 1
@@ -59,7 +59,7 @@ wait 10
 shot title_logged_in
 pad A
 wait-screens
-expect-screen rooms
+expect-screen home
 wait 10
 shot rooms_again
 end

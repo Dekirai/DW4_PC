@@ -1,0 +1,10 @@
+# W7e, guest b (k10): on matz02 with a; when a drops at the barrier b goes on into stag0102 at once.
+campaign until stage=stagml11,control
+idle until epoch>=@100
+explore mate00 yes until stage=stag0101,control
+log b joined a
+route {route:stag0101_west}
+mat matz02 yes 2 until stage=stag0102,control
+log b in stag0102
+wander 330 140 15 until present=2,sealed>=900 fail stage=stagml11
+log a is back with b

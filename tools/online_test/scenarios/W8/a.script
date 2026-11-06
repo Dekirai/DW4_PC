@@ -1,0 +1,14 @@
+# W8, host a (k10): stays in stag0101 while b goes into dng101b1 alone, then follows and joins b's stage group there.
+campaign until stage=stagml11,control
+idle until epoch>=@80
+explore mate00 yes until stage=stag0101,control
+log a hosts
+wander -150 -60 20 until present=2,sealed>=600
+log b joined
+wander -150 -60 20 until present=1,frames>=60
+log b left for the cave
+wander -150 -60 20 until frames>=1800
+explore matz00 yes until stage=dng101b1,control
+log a in dng101b1
+wander 0 0 30 until present=2,sealed>=600
+log a joined b in the cave

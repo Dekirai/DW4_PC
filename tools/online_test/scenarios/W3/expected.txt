@@ -1,0 +1,6 @@
+# W3 (19.24): NEW with the remembered visibility; the end is the host's home departure (host_left).
+a: online-script: step .* log: a hosts
+a: online-script: step .* log: a home
+relay: instance_start .*visibility=friends
+relay: instance_end .*reason=host_left
+!a: online-script: FAIL

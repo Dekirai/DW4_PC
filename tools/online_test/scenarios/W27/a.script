@@ -1,0 +1,16 @@
+# W27, host a (k2): hosts in stag0101 with b; once b went into dng101b1 (another stage group), a walks into the enemies
+# alone and falls (it waits near the entrance: a k2 character dies among the enemies, and a dead member goes along
+# with the leaver by the side rule): its stage group's game over is the host's (before round I3 the instance ends, host_defeated); a gives
+# up and goes home.
+campaign until stage=stagml11,control
+idle until epoch>=@80
+explore mate00 yes until stage=stag0101,control
+log a hosts
+wander 460 170 15 until present=2,sealed>=600
+log b joined
+wander 460 170 15 until present=1,frames>=60
+log b left for the cave
+die until dead
+log a defeated
+giveup until stage=stagml11,control
+log a home after the game over

@@ -1,0 +1,8 @@
+# W8 (19.24, 19.6.3): inside the instance, no prompt.
+b: online-script: step .* log: b on a's story in the cave
+a: online-script: step .* log: a joined b in the cave
+relay: instance_join .*how=new_group
+relay: instance_join .*how=join
+!relay: instance_start .*stage=dng101b1
+!a: online-script: FAIL
+!b: online-script: FAIL

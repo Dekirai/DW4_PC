@@ -1,0 +1,12 @@
+# W6, host a (k5: its Gate Disk works in the disk step, a k10's does not): in stag0101 with b, then b goes into dng101b1 (another stage group); a takes its gate disc.
+campaign until stage=stagml11,control
+idle until epoch>=@80
+explore mate00 yes until stage=stag0101,control
+log a hosts
+wander -150 -60 20 until present=2,sealed>=600
+log b joined
+wander -150 -60 20 until present=1,frames>=60
+log b went into the cave
+idle until epoch>=@260
+disk 8 until stage=stagml11,control
+log a home

@@ -1,10 +1,11 @@
 // dw4online_client: an end-to-end test tool for the DW4Online API over WinHTTP (the HTTP stack the game client will
 // use; nothing here is part of the game yet). It logs in, uploads and downloads the cloud save, writes and reads the
-// online character, opens a room and checks the DW4R2 relay handshake with the room ticket, unlocks an achievement in the room,
-// leaves and logs out. Every step prints one line; the exit code is 0 only when every step passed.
+// online character, enters the online world (POST /world/enter, SEAMLESS.md 19.19) and checks the DW4R2 relay handshake
+// with the world ticket (protocol 49), unlocks an achievement while it is in the world, leaves the world and logs out.
+// Every step prints one line; the exit code is 0 only when every step passed.
 //
 //   dw4online_client --base http://127.0.0.1:5280 --user NAME --password PW --save savedata.dat --record record.bin
-//                    [--stage stagD101] [--achievement online_join] [--protocol 43] [--data-hash 1] [--pin BASE64[,BASE64]]
+//                    [--stage stagD101] [--achievement first_defeat] [--protocol 49] [--data-hash 1] [--pin BASE64[,BASE64]]
 //
 // --base may carry a path (https://example.org/dw4online): every API path goes below it.
 // --pin: the server's certificate is self-signed (https://88.198.52.221): instead of the Windows root store, the
@@ -42,8 +43,9 @@ struct Options {
     std::wstring base = L"http://127.0.0.1:5280";
     std::string user, password, save_path, record_path;
     std::string stage = "stagD101";
-    std::string achievement = "online_join";
-    int protocol = 43;
+    // (online_join is "joined someone else's instance" since the world, 19.8.9: a client at home gets none.)
+    std::string achievement = "first_defeat";
+    int protocol = 49;
     unsigned long long data_hash = 1;
     std::string client_version = "0.48.0";
     std::string pin; // base64 SHA-256 SPKI of a pinned (self-signed) server certificate
@@ -316,44 +318,60 @@ private:
     std::string token_;
 };
 
-// The DW4R2 relay handshake of a room member: "DW4R2 <ticket> <protocol> <dataHash> <settingsHash>\n" ->
-// "OK <member> <serverTimeMs>\n", then the first frame (type u8, length u32 LE) must be WELCOME (0x80).
-std::string relay_handshake(const std::string& host, int port, const std::string& ticket, int protocol, unsigned long long data_hash,
-                            const std::string& settings_hash) {
+// The DW4R2 relay handshake of a world member (protocol 49, SEAMLESS.md 19.18): "DW4R2 <ticket> <protocol> <dataHash>
+// 0000000000000000\n" -> "OK <member> <serverTimeMs>\n", then the first frame (type u8, length u32 LE) must be WELCOME
+// (0x80). The connection stays open (the caller closes it): the server counts a member as in the world while it is
+// connected (and for a minute after), which the achievement check asks for.
+struct RelayConnection {
+    SOCKET socket = INVALID_SOCKET;
+    bool started = false;
+    std::string answer;
+    RelayConnection() = default;
+    RelayConnection(const RelayConnection&) = delete;
+    RelayConnection& operator=(const RelayConnection&) = delete;
+    ~RelayConnection() {
+        if (socket != INVALID_SOCKET) closesocket(socket);
+        if (started) WSACleanup();
+    }
+};
+
+void relay_handshake(RelayConnection& c, const std::string& host, int port, const std::string& ticket, int protocol,
+                     unsigned long long data_hash) {
     WSADATA wsa;
-    if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0) return "WSAStartup failed";
-    std::string result;
+    if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0) {
+        c.answer = "WSAStartup failed";
+        return;
+    }
+    c.started = true;
     addrinfo hints{};
     hints.ai_family = AF_UNSPEC;
     hints.ai_socktype = SOCK_STREAM;
     addrinfo* found = nullptr;
     if (getaddrinfo(host.c_str(), std::to_string(port).c_str(), &hints, &found) == 0 && found) {
-        SOCKET s = socket(found->ai_family, found->ai_socktype, found->ai_protocol);
+        c.socket = socket(found->ai_family, found->ai_socktype, found->ai_protocol);
         DWORD timeout = 10000;
-        setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&timeout), sizeof timeout);
-        if (s != INVALID_SOCKET && connect(s, found->ai_addr, int(found->ai_addrlen)) == 0) {
-            const std::string line = "DW4R2 " + ticket + " " + std::to_string(protocol) + " " + std::to_string(data_hash) + " " + settings_hash + "\n";
-            send(s, line.data(), int(line.size()), 0);
-            char c = 0;
-            while (recv(s, &c, 1, 0) == 1 && c != '\n') result += c;
+        if (c.socket != INVALID_SOCKET)
+            setsockopt(c.socket, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&timeout), sizeof timeout);
+        if (c.socket != INVALID_SOCKET && connect(c.socket, found->ai_addr, int(found->ai_addrlen)) == 0) {
+            const std::string line = "DW4R2 " + ticket + " " + std::to_string(protocol) + " " + std::to_string(data_hash) + " 0000000000000000\n";
+            send(c.socket, line.data(), int(line.size()), 0);
+            char ch = 0;
+            while (recv(c.socket, &ch, 1, 0) == 1 && ch != '\n') c.answer += ch;
             unsigned char header[5]{};
             int got = 0;
-            while (result.rfind("OK ", 0) == 0 && got < 5) {
-                const int n = recv(s, reinterpret_cast<char*>(header) + got, 5 - got, 0);
+            while (c.answer.rfind("OK ", 0) == 0 && got < 5) {
+                const int n = recv(c.socket, reinterpret_cast<char*>(header) + got, 5 - got, 0);
                 if (n <= 0) break;
                 got += n;
             }
-            if (result.rfind("OK ", 0) == 0) result += got == 5 && header[0] == 0x80 ? " WELCOME" : " no WELCOME";
+            if (c.answer.rfind("OK ", 0) == 0) c.answer += got == 5 && header[0] == 0x80 ? " WELCOME" : " no WELCOME";
         } else {
-            result = "connect failed";
+            c.answer = "connect failed";
         }
-        if (s != INVALID_SOCKET) closesocket(s);
         freeaddrinfo(found);
     } else {
-        result = "getaddrinfo failed";
+        c.answer = "getaddrinfo failed";
     }
-    WSACleanup();
-    return result;
 }
 
 bool parse_args(int argc, char** argv, Options& o) {
@@ -440,35 +458,34 @@ int main(int argc, char** argv) {
     step(r.status == 200 && json_string(r.body, "record") == record64, "online character read",
          json_string(r.body, "digimon").value_or("?") + " level " + std::to_string(json_number(r.body, "level").value_or(0)));
 
-    // A room and the relay handshake with the member's room ticket.
-    r = api.json(L"POST", "/api/v1/rooms",
-                 "{\"name\":\"WinHTTP room\",\"maxPlayers\":4,\"protocol\":" + std::to_string(o.protocol) + ",\"dataHash\":" +
-                     std::to_string(o.data_hash) + ",\"clientVersion\":\"" + o.client_version + "\"}");
-    const size_t room_at = r.body.find("\"room\"");
-    const auto code = room_at == std::string::npos ? std::nullopt : json_string(r.body, "code", room_at);
-    step(r.status == 201 && code.has_value(), "room create", code.value_or(r.body));
-    if (!code) return finish();
+    // The online world (round I1): POST /world/enter gives the relay ticket; the relay handshake with it.
+    r = api.json(L"POST", "/api/v1/world/enter",
+                 "{\"box\":1,\"protocol\":" + std::to_string(o.protocol) + ",\"dataHash\":" + std::to_string(o.data_hash) +
+                     ",\"clientVersion\":\"" + o.client_version + "\"}");
     const auto ticket = json_string(r.body, "relayTicket");
-    const auto settings_hash = json_string(r.body, "settingsHash");
     const size_t relay_at = r.body.find("\"relay\"");
     const auto relay_host = relay_at == std::string::npos ? std::nullopt : json_string(r.body, "host", relay_at);
     const auto relay_port = relay_at == std::string::npos ? std::nullopt : json_number(r.body, "port", relay_at);
-    step(ticket.has_value() && settings_hash.has_value(), "room ticket", settings_hash.value_or(r.body));
-    if (ticket && settings_hash && relay_host && relay_port) {
-        const std::string answer = relay_handshake(*relay_host, int(*relay_port), *ticket, o.protocol, o.data_hash, *settings_hash);
-        step(answer.rfind("OK 0 ", 0) == 0 && answer.find(" WELCOME") != std::string::npos, "relay handshake",
-             answer.substr(0, 4) + answer.substr(answer.rfind(' ')));
+    step(r.status == 200 && ticket.has_value(), "world enter", ticket ? "relay ticket" : r.body);
+    if (!ticket) return finish();
+    RelayConnection relay;
+    if (relay_host && relay_port) {
+        relay_handshake(relay, *relay_host, int(*relay_port), *ticket, o.protocol, o.data_hash);
+        step(relay.answer.rfind("OK ", 0) == 0 && relay.answer.find(" WELCOME") != std::string::npos, "relay handshake",
+             relay.answer.substr(0, 3) + relay.answer.substr(relay.answer.rfind(' ')));
     } else {
-        step(false, "relay handshake", "no ticket or relay address");
+        step(false, "relay handshake", "no relay address");
     }
 
-    // An achievement in the room (online play only).
+    // An achievement while in the world (online play only: the relay's play context, Play:RequireWorld).
     r = api.json(L"POST", "/api/v1/achievements/unlock",
-                 "{\"code\":\"" + escape_json(o.achievement) + "\"," + context + ",\"roomCode\":\"" + *code + "\",\"players\":1}}");
+                 "{\"code\":\"" + escape_json(o.achievement) + "\"," + context + ",\"players\":1}}");
     step(r.status == 200 && json_true(r.body, "newlyUnlocked"), "achievement unlock", json_string(r.body, "ruleset").value_or(r.body));
 
-    r = api.json(L"POST", "/api/v1/rooms/" + *code + "/leave");
-    step(r.status == 204, "room leave", std::to_string(r.status));
+    r = api.json(L"POST", "/api/v1/world/leave");
+    step(r.status == 204, "world leave", std::to_string(r.status));
+    r = api.json(L"GET", "/api/v1/rooms");
+    step(r.status == 410, "rooms retired", std::to_string(r.status));
     r = api.json(L"POST", "/api/v1/auth/logout");
     step(r.status == 204, "logout", std::to_string(r.status));
     r = api.json(L"GET", "/api/v1/me");

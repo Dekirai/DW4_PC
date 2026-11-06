@@ -20,7 +20,11 @@ namespace DW4Online.Server;
 /// <summary>The composition root: one process with the API, the website and the relay (groundwork option A).</summary>
 public static class ServerApp
 {
-    public static WebApplication Build(string[] args, bool windowsService = false, string? settingsFile = null, Action<WebApplicationBuilder>? configure = null)
+    /// <param name="configure">Runs before the composition root's registrations (settings, a clock: TryAdd lines then add nothing).</param>
+    /// <param name="overrideServices">Runs after them, right before the build (tests: a stand-in that replaces a registration
+    /// whatever way it was made, such as the world relay's AddSingleton).</param>
+    public static WebApplication Build(string[] args, bool windowsService = false, string? settingsFile = null, Action<WebApplicationBuilder>? configure = null,
+        Action<IServiceCollection>? overrideServices = null)
     {
         var builder = WebApplication.CreateBuilder(new WebApplicationOptions
         {
@@ -50,6 +54,12 @@ public static class ServerApp
         var character = Bind<OnlineCharacterOptions>(config, "OnlineCharacter");
         var cloud = Bind<CloudSaveOptions>(config, "CloudSave");
         var play = Bind<PlayOptions>(config, "Play");
+        // The room era's name, read for one release (SEAMLESS.md 19.17.5).
+        if (config["Play:RequireWorld"] is null && play.RequireRoom is { } requireRoom) play.RequireWorld = requireRoom;
+        // (web's keys of the section World; the relay binds its own class to the same section, 19.17.5)
+        var worldWeb = Bind<WorldWebOptions>(config, "World");
+        if (worldWeb.RankedDataHashes.Count == 0 && config.GetSection("Rooms:RankedDataHashes").Get<List<string>>() is { Count: > 0 } ranked)
+            worldWeb.RankedDataHashes = ranked;
         var friends = Bind<FriendsOptions>(config, "Friends");
         var service = Bind<ServiceOptions>(config, "Service");
         var proxy = ProxyHeaders.From(service); // (checks Service:PathBase and Service:TrustedProxyNetworks)
@@ -76,13 +86,19 @@ public static class ServerApp
         services.AddSingleton<IOnlineStoryRepository, OnlineStoryRepository>();
         services.AddSingleton<ICloudSaveRepository, CloudSaveRepository>();
         services.AddSingleton<IAchievementRepository, AchievementRepository>();
-        services.AddSingleton<IRoomDirectory, RoomDirectory>();
         services.AddSingleton<IRoomRepository, RoomRepository>();
         services.AddSingleton<ISocialRepository, SocialRepository>();
         // Round I2-social: nobody listens yet. Round I1's relay registers its in-process implementation BEFORE this line
         // (then this TryAdd adds nothing) or replaces it after it (services.Replace / AddSingleton): a TryAdd after this
         // line would be silently ignored.
         services.TryAddSingleton<IWorldNotifier>(NullWorldNotifier.Instance);
+        // Round I1a: the world relay as the domain sees it (SEAMLESS.md 19.17). The relay lane registers its implementation
+        // (admission, the browser snapshot, the play context, End and Remove) BEFORE this line; until then nobody is online.
+        services.TryAddSingleton<IWorldRelay>(NullWorldRelay.Instance);
+        services.AddSingleton(worldWeb);
+        services.AddSingleton<WorldRepository>();
+        services.AddSingleton<IWorldRepository>(sp => sp.GetRequiredService<WorldRepository>());
+        services.AddSingleton<IInstanceHistoryRepository>(sp => sp.GetRequiredService<WorldRepository>());
         services.AddSingleton<MaintenanceRepository>();
         services.AddSingleton(_ => new PasswordHasher(accounts.PasswordIterations));
         services.AddSingleton<DW4Online.Domain.Accounts.LoginThrottle>();
@@ -109,7 +125,17 @@ public static class ServerApp
         services.AddSingleton<RelayGateway>();
         services.AddSingleton<IRelayGateway>(sp => sp.GetRequiredService<RelayGateway>());
         services.AddSingleton<RoomService>();
-        services.AddHostedService<RoomSweeper>();
+        services.AddSingleton(sp =>
+        {
+            var service = ActivatorUtilities.CreateInstance<WorldService>(sp);
+            var log = sp.GetRequiredService<ILogger<WorldService>>();
+            service.WriteFailed = (what, e) => log.LogWarning(e, "World: {What} failed", what);
+            return service;
+        });
+        services.AddHostedService<WorldHousekeeping>();
+        // The test stack's ordered stop (tools/online_test: the restart scenarios): only with Testing:StopFile set.
+        if (config["Testing:StopFile"] is { Length: > 0 } stopFile)
+            services.AddHostedService(sp => ActivatorUtilities.CreateInstance<StopFileWatcher>(sp, stopFile));
 
         builder.WebHost.ConfigureKestrel(kestrel =>
         {
@@ -131,6 +157,7 @@ public static class ServerApp
             .AddPolicyScheme(DefaultScheme, "API token or website session", o => o.ForwardDefaultSelector = ctx =>
                 WebSetup.IsWebPath(ctx.Request.Path) ? WebSessionHandler.SchemeName : TokenAuthenticationHandler.SchemeName);
 
+        overrideServices?.Invoke(builder.Services);
         var app = builder.Build();
         // The forwarded headers of a proxy on this machine (Service:BehindProxy, Service:TrustedProxyNetworks) and
         // Service:PathBase, before everything else: the client address the rate limits see, the scheme, the path base of
@@ -145,6 +172,10 @@ public static class ServerApp
             proxy.Apply(context);
             return next(context);
         });
+        // The room era's settings (SEAMLESS.md 19.17.5): ignored since the world, with one warning; removed in the cleanup.
+        if (config.GetSection("Rooms").GetChildren().Any(c => c.Key is not ("PlayersPerInstance" or "RankedDataHashes")))
+            app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("World").LogWarning(
+                "The section Rooms of the settings is no longer used (rooms gave way to the online world); remove it (DEPLOY.md section 9.2)");
         app.UseDw4Web(app.Services.GetRequiredService<WebOptions>(), app.Environment.IsDevelopment());
         app.UseDw4Api();
         app.MapDw4Api();

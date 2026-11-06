@@ -1,8 +1,8 @@
 # RG7 = G7 (round G-core, docs/SEAMLESS.md 8.8): no Game Start without the confirmed room story.
-o: online: the game starts with the room story .revision 1.
+o: online: the game starts with the (?:room|own) story .revision 1.
 g: online: the Game Start waits for the room story
 g: online: the room story came [0-9]+ ms after the Game Start
-g: online: the game starts with the room story .revision 1.
+g: online: the game starts with the (?:room|own) story .revision 1.
 g: online-script: step .* log: the room story after the hold
 !g: online-script: FAIL
 !o: online-script: FAIL

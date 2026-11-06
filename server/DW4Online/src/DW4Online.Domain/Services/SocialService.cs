@@ -4,7 +4,12 @@ using DW4Online.Domain.Accounts;
 namespace DW4Online.Domain.Services;
 
 /// <summary>A friend in the list (presence comes from the relay from round I1 on).</summary>
-public sealed record FriendEntry(string Username, DateTime Since);
+public sealed record FriendEntry(string Username, DateTime Since)
+{
+    /// <summary>The friend's account (the world service reads its whereabouts); never sent to clients.</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public long AccountId { get; init; }
+}
 
 /// <summary>A friend request as one side sees it: incoming requests are pending; outgoing ones are all "sent".</summary>
 public sealed record RequestEntry(string Username, DateTime SentAt, DateTime ExpiresAt);
@@ -81,7 +86,7 @@ public sealed class SocialService(
         var incoming = await social.ListIncomingAsync(accountId, since, ct);
         var outgoing = await social.ListOutgoingAsync(accountId, since, ct);
         return new FriendsOverview(
-            friends.OrderBy(f => f.Username, StringComparer.OrdinalIgnoreCase).Select(f => new FriendEntry(f.Username, f.At)).ToList(),
+            friends.OrderBy(f => f.Username, StringComparer.OrdinalIgnoreCase).Select(f => new FriendEntry(f.Username, f.At) { AccountId = f.AccountId }).ToList(),
             incoming.OrderByDescending(r => r.At).Select(Entry).ToList(),
             outgoing.OrderByDescending(r => r.At).Select(Entry).ToList(),
             await BlocksAsync(accountId, ct),

@@ -27,22 +27,21 @@ public static class AdminEndpoints
                 temporary => Results.Ok(new { temporaryPassword = temporary })))
             .RequireAuthorization(Policies.Admin);
 
-        // A locked or banned account also leaves its room at once.
-        admin.MapPost("/accounts/{username}/status", async (string username, StatusRequest r, AccountService accounts, RoomService rooms, HttpContext ctx) =>
+        // A locked or banned account also leaves the world at once (the relay re-checks it: IWorldNotifier.AccountChanged).
+        admin.MapPost("/accounts/{username}/status", async (string username, StatusRequest r, AccountService accounts, WorldService world, HttpContext ctx) =>
         {
             var result = await accounts.AdminSetStatusAsync(ctx.Session(), username, r.Status ?? "", r.Reason, ctx.Caller(), ctx.RequestAborted);
-            if (result.Ok && result.Value!.Status != Domain.Abstractions.AccountStatus.Active)
-                await rooms.RemoveAccountAsync(result.Value.Id, ctx.RequestAborted);
+            if (result.Ok) world.AccountChanged(result.Value!.Id);
             return ApiProblems.Ok(result);
         });
 
-        // GDPR erasure on request (admins only): the account leaves its room, then everything personal is deleted.
-        admin.MapDelete("/accounts/{username}", async (string username, AccountService accounts, RoomService rooms, HttpContext ctx) =>
+        // GDPR erasure on request (admins only): the account leaves the world, then everything personal is deleted.
+        admin.MapDelete("/accounts/{username}", async (string username, AccountService accounts, WorldService world, HttpContext ctx) =>
         {
             if (await accounts.FindAccountAsync(username, ctx.RequestAborted) is not { } account) return NoAccount();
-            await rooms.RemoveAccountAsync(account.Id, ctx.RequestAborted);
+            world.AccountChanged(account.Id);
             var deleted = await accounts.AdminDeleteAccountAsync(ctx.Session(), username, ctx.RequestAborted);
-            if (deleted.Ok) await rooms.RemoveAccountAsync(account.Id, CancellationToken.None); // (a room opened meanwhile closes)
+            if (deleted.Ok) world.AccountChanged(account.Id); // (a world session that started meanwhile ends)
             return ApiProblems.Ok(deleted, _ => Results.NoContent());
         }).RequireAuthorization(Policies.Admin);
 
@@ -63,12 +62,32 @@ public static class AdminEndpoints
                 ctx.IpBytes(), ctx.RequestAborted), _ => Results.NoContent());
         });
 
-        admin.MapPost("/rooms/{code}/close", async (string code, RoomService rooms, HttpContext ctx) =>
-            ApiProblems.Ok(await rooms.CloseAsync(ctx.Session().AccountId, true, code, ctx.IpBytes(), ctx.RequestAborted), _ => Results.NoContent()));
+        // The world's instances (SEAMLESS.md 19.19): every one, Private included, with members and spectators; End and
+        // Remove are audited (staff_end_instance, staff_remove). The id is the relay's run-local wid.
+        admin.MapGet("/instances", (WorldService world) => Results.Ok(new { instances = world.AdminInstances().Select(WorldEndpoints.AdminRow) }));
 
-        admin.MapPost("/accounts/{username}/role", async (string username, RoleRequest r, AccountService accounts, HttpContext ctx) =>
-            ApiProblems.Ok(await accounts.AdminSetRoleAsync(ctx.Session(), username, r.Role ?? "", ctx.Caller(), ctx.RequestAborted)))
-            .RequireAuthorization(Policies.Admin);
+        admin.MapPost("/instances/{wid:long}/end", async (long wid, WorldService world, HttpContext ctx) =>
+            wid is < 1 or > uint.MaxValue
+                ? ApiProblems.Of(StatusCodes.Status404NotFound, "instance_not_found", "No such instance (it may have ended).")
+                : ApiProblems.Ok(await world.EndInstanceAsync(ctx.Session().AccountId, (uint)wid, ctx.IpBytes(), ctx.RequestAborted), _ => Results.NoContent()));
+
+        admin.MapPost("/instances/{wid:long}/remove", async (long wid, UsernameRequest r, WorldService world, HttpContext ctx) =>
+            wid is < 1 or > uint.MaxValue
+                ? ApiProblems.Of(StatusCodes.Status404NotFound, "instance_not_found", "No such instance (it may have ended).")
+                : ApiProblems.Ok(await world.RemoveMemberAsync(ctx.Session().AccountId, (uint)wid, r.Username, ctx.IpBytes(), ctx.RequestAborted),
+                    _ => Results.NoContent()));
+
+        // The staff rows of the audit log: a moderator his own, an admin all (19.19).
+        admin.MapGet("/audit", async (string? @event, WorldService world, HttpContext ctx) =>
+            Results.Ok(new { rows = await world.StaffAuditAsync(ctx.Session(), @event, 200, ctx.RequestAborted) }));
+
+        // A demotion counts in the world at once (the relay re-reads the role, 19.14).
+        admin.MapPost("/accounts/{username}/role", async (string username, RoleRequest r, AccountService accounts, WorldService world, HttpContext ctx) =>
+        {
+            var result = await accounts.AdminSetRoleAsync(ctx.Session(), username, r.Role ?? "", ctx.Caller(), ctx.RequestAborted);
+            if (result.Ok) world.AccountChanged(result.Value!.Id);
+            return ApiProblems.Ok(result);
+        }).RequireAuthorization(Policies.Admin);
 
         admin.MapGet("/accounts/{username}/online-character/history", async (string username, AccountService accounts,
             OnlineCharacterService characters, HttpContext ctx) =>
@@ -85,19 +104,21 @@ public static class AdminEndpoints
         });
 
         admin.MapPost("/accounts/{username}/online-character/reset", async (string username, AccountService accounts,
-            OnlineCharacterService characters, RoomService rooms, HttpContext ctx) =>
+            OnlineCharacterService characters, WorldService world, HttpContext ctx) =>
         {
             if (await accounts.FindAccountAsync(username, ctx.RequestAborted) is not { } account) return NoAccount();
             if (!await characters.HasResetWorkAsync(account.Id, ctx.RequestAborted))
                 return ApiProblems.Of(StatusCodes.Status404NotFound, "no_online_character", "There is no online character and no online story.");
-            await rooms.CloseOwnedAsync(account.Id, ctx.RequestAborted); // (its hub holds the story the reset empties)
-            return await characters.ResetAsync(account.Id, ctx.Session().AccountId, ctx.IpBytes(), ctx.RequestAborted)
+            var reset = await characters.ResetAsync(account.Id, ctx.Session().AccountId, ctx.IpBytes(), ctx.RequestAborted);
+            // The relay's keeper reloads the emptied story and a hosted instance ends (19.8.1).
+            if (reset) world.StoryReplaced(account.Id);
+            return reset
                 ? Results.NoContent()
                 : ApiProblems.Of(StatusCodes.Status404NotFound, "no_online_character", "There is no online character and no online story.");
         });
 
         // The account's online story: its kept revisions (each with its phase, key items and flag count), and putting one
-        // back as the next revision (damage from a forged or faulty merge; the account's own room closes first).
+        // back as the next revision (damage from a forged or faulty merge; the relay's keeper reloads it, a hosted instance ends).
         admin.MapGet("/accounts/{username}/online-story/history", async (string username, AccountService accounts,
             OnlineCharacterService characters, HttpContext ctx) =>
             await accounts.FindAccountAsync(username, ctx.RequestAborted) is { } account
@@ -105,15 +126,15 @@ public static class AdminEndpoints
                 : NoAccount());
 
         admin.MapPost("/accounts/{username}/online-story/restore/{revision:long}", async (string username, long revision,
-            AccountService accounts, OnlineCharacterService characters, RoomService rooms, HttpContext ctx) =>
+            AccountService accounts, OnlineCharacterService characters, WorldService world, HttpContext ctx) =>
         {
             if (await accounts.FindAccountAsync(username, ctx.RequestAborted) is not { } account) return NoAccount();
-            // The revision first: a wrong number closed the owner's room for nothing (round 59 review).
+            // The revision first: a wrong number ended the owner's instance for nothing (round 59 review).
             if (!await characters.HasStoryRevisionAsync(account.Id, revision, ctx.RequestAborted))
                 return ApiProblems.Of(StatusCodes.Status404NotFound, "revision_not_found", "No such kept revision of the online story.");
-            await rooms.CloseOwnedAsync(account.Id, ctx.RequestAborted);
-            return ApiProblems.Ok(await characters.RestoreStoryAsync(account.Id, revision, ctx.Session().AccountId, ctx.IpBytes(), ctx.RequestAborted),
-                rev => Results.Ok(new { revision = rev }));
+            var restored = await characters.RestoreStoryAsync(account.Id, revision, ctx.Session().AccountId, ctx.IpBytes(), ctx.RequestAborted);
+            if (restored.Ok) world.StoryReplaced(account.Id);
+            return ApiProblems.Ok(restored, rev => Results.Ok(new { revision = rev }));
         });
     }
 

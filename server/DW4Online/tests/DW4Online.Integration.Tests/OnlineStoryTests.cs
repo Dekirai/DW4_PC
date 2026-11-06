@@ -21,7 +21,11 @@ namespace DW4Online.Integration.Tests;
 /// </summary>
 public class OnlineStoryTests
 {
-    private static object Upload(SaveRecord record, long playSeconds) => new { record = Convert.ToBase64String(RecordCodec.Encode(record)), playSeconds };
+    private static object Upload(SaveRecord record, long playSeconds) =>
+        new { record = Convert.ToBase64String(RecordCodec.Encode(record)), playSeconds, context = new { protocol = TestHost.Protocol } };
+
+    /// <summary>The world's Play (round I1): the world session keeps the story it starts from (reason session).</summary>
+    private static object Enter() => new { box = 1, protocol = TestHost.Protocol, dataHash = 1234567890123UL, clientVersion = "0.60.0" };
 
     private static object NewRoom() =>
         new { name = "Story night", maxPlayers = 4, protocol = 41, dataHash = 1234567890123UL, clientVersion = "0.48.0", settings = new { difficulty = 0 } };
@@ -73,7 +77,7 @@ public class OnlineStoryTests
         Assert.Equal(1, await sql.ExecuteScalarAsync<int>("SELECT clears FROM online_characters WHERE account_id = @id", new { id }));
     }
 
-    [DbFact]
+    [DbFact(Skip = "Round I1a: rooms are retired (410); the relay lane ports these relay story tests to the world (lane contract).")]
     public async Task A_guests_story_flag_reaches_the_owners_online_story_through_the_relay()
     {
         // (A visit counts after one second here: the per-visit rules of SEAMLESS.md 8.7 with a short minimum.)
@@ -142,7 +146,7 @@ public class OnlineStoryTests
     /// and a guest's STORY afterwards made a new online_story row for the erased account. Now the owner's rooms close
     /// with the deletion (the guests get CLOSE, the room list drops it), and a save still on its way writes nothing.
     /// </summary>
-    [DbFact]
+    [DbFact(Skip = "Round I1a: rooms are retired (410); the relay lane ports these relay story tests to the world (lane contract).")]
     public async Task Deleting_a_room_owner_closes_its_room_and_no_story_is_saved_for_it()
     {
         await using var host = await TestHost.StartAsync(RelaySettings.On());
@@ -192,8 +196,7 @@ public class OnlineStoryTests
             .AdminSetRoleAsync(null, "StoryStaff", "admin", new DW4Online.Domain.Services.CallerInfo(null, "tests"))).Ok);
         var client = host.Client(token);
         Assert.Equal(HttpStatusCode.Created, (await client.PutJson("/api/v1/online-character", Upload(Samples.Fresh("Kev"), 600), create: true)).StatusCode);
-        var created = await (await client.PostAsJsonAsync("/api/v1/rooms", NewRoom())).Json();
-        var code = created.GetProperty("room").GetProperty("code").GetString()!;
+        Assert.Equal(HttpStatusCode.OK, (await client.PostAsJsonAsync("/api/v1/world/enter", Enter())).StatusCode);
         var stories = host.App.Services.GetRequiredService<OnlineStoryService>();
         for (uint r = 1; r <= 3; ++r)
         {
@@ -203,10 +206,11 @@ public class OnlineStoryTests
             s.Folder[0] = 1;
             Assert.True(await stories.SaveAsync(id, s));
         }
-        // The reset closes the account's own room; the record's story is empty, the story's revision 4 is empty, 3 is kept.
+        // The reset tells the relay (its keeper reloads, a hosted instance ends: StoryReplaced); the record's story is empty,
+        // the story's revision 4 is empty, 3 is kept.
         Assert.Equal(HttpStatusCode.NoContent,
             (await client.PostAsJsonAsync("/api/v1/online-character/reset", new { currentPassword = "a decent password" })).StatusCode);
-        Assert.Equal("room_not_found", await (await client.GetAsync($"/api/v1/rooms/{code}")).ProblemCode());
+        Assert.Contains($"story {id}/1", host.World!.Notes);
         Assert.Equal(HttpStatusCode.Created, (await client.PutJson("/api/v1/online-character", Upload(Samples.Fresh("Ann"), 60), create: true)).StatusCode);
         var record = Convert.FromBase64String((await (await client.GetAsync("/api/v1/online-character")).Json()).GetProperty("record").GetString()!);
         Assert.Equal(0, record[792 + 3]);
@@ -243,7 +247,7 @@ public class OnlineStoryTests
     /// the owner's lobby starts it, a value the guest's old visit offers only after the start is dropped as well, the
     /// guest's next barrier removes them all, and a value set anew afterwards becomes the owner's revision 1.
     /// </summary>
-    [DbFact]
+    [DbFact(Skip = "Round I1a: rooms are retired (410); the relay lane ports these relay story tests to the world (lane contract).")]
     public async Task A_new_owners_room_starts_at_zero_through_the_relay()
     {
         await using var host = await TestHost.StartAsync(RelaySettings.On(new() { ["Instances:StoryMinVisitSeconds"] = "1" }));
@@ -317,8 +321,8 @@ public class OnlineStoryTests
         honest.Flags[1] = 1;
         honest.Flags[505] = 1;
         Assert.True(await stories.SaveAsync(id, honest));
-        Assert.Equal(HttpStatusCode.Created, (await host.Client(token).PostAsJsonAsync("/api/v1/rooms", NewRoom())).StatusCode);
-        // A session start of the same revision (rooms opened one after another without play) is kept once.
+        Assert.Equal(HttpStatusCode.OK, (await host.Client(token).PostAsJsonAsync("/api/v1/world/enter", Enter())).StatusCode);
+        // A session start of the same revision (Play pressed again and again without play) is kept once.
         await stories.KeepSessionStartAsync(id);
         await stories.KeepSessionStartAsync(id);
         await using (var check = await host.SqlAsync())
@@ -360,9 +364,10 @@ public class OnlineStoryTests
         Assert.All(reasons.Skip(2), r => Assert.Equal("room", r.Reason));
     }
 
-    /// <summary>Round 59 review: a staff restore of a revision that is not kept closed the owner's room before it failed.</summary>
+    /// <summary>Round 59 review: a staff restore of a revision that is not kept closed the owner's room before it failed; in the
+    /// world it must not end the owner's instance (no StoryReplaced) until a kept revision is put back.</summary>
     [DbFact]
-    public async Task A_restore_of_a_revision_that_is_not_kept_leaves_the_owners_room_open()
+    public async Task A_restore_of_a_revision_that_is_not_kept_leaves_the_owners_instance_running()
     {
         await using var host = await TestHost.StartAsync();
         var (adminToken, _, _) = await host.RegisterAsync("RestoreStaff");
@@ -373,12 +378,12 @@ public class OnlineStoryTests
         s.Flags[505] = 1;
         Assert.True(await host.App.Services.GetRequiredService<OnlineStoryService>().SaveAsync(id, s));
         var owner = host.Client(token);
-        var code = (await (await owner.PostAsJsonAsync("/api/v1/rooms", NewRoom())).Json()).GetProperty("room").GetProperty("code").GetString()!;
+        Assert.Equal(HttpStatusCode.OK, (await owner.PostAsJsonAsync("/api/v1/world/enter", Enter())).StatusCode); // keeps revision 1 (session)
         var admin = host.Client(adminToken);
         Assert.Equal("revision_not_found", await (await admin.PostAsync("/api/v1/admin/accounts/RestoreHost/online-story/restore/999999", null)).ProblemCode());
-        Assert.Equal(HttpStatusCode.OK, (await owner.GetAsync($"/api/v1/rooms/{code}")).StatusCode);
+        Assert.DoesNotContain($"story {id}/1", host.World!.Notes);
         Assert.Equal(HttpStatusCode.OK, (await admin.PostAsync("/api/v1/admin/accounts/RestoreHost/online-story/restore/1", null)).StatusCode);
-        Assert.Equal("room_not_found", await (await owner.GetAsync($"/api/v1/rooms/{code}")).ProblemCode());
+        Assert.Contains($"story {id}/1", host.World.Notes);
     }
 
     /// <summary>
@@ -386,7 +391,7 @@ public class OnlineStoryTests
     /// board's first place with one request, and mp_fullhouse / mp_couch alone in its lobby. A story clear in a room now
     /// needs the room's story to hold that difficulty's clear flag, and the players claim is capped by the relay's instance.
     /// </summary>
-    [DbFact]
+    [DbFact(Skip = "Round I1a: rooms are retired (410); the relay lane ports these relay story tests to the world (lane contract).")]
     public async Task A_story_clear_in_a_room_needs_the_rooms_story_and_players_count_as_the_relay_saw_them()
     {
         await using var host = await TestHost.StartAsync(RelaySettings.On(new() { ["Play:ClearStoryWaitSeconds"] = "1" }));

@@ -9,20 +9,16 @@ namespace DW4Online.Integration.Tests;
 /// <summary>The website: forms with anti-forgery tokens, cookie sessions, account settings, profiles, admin pages.</summary>
 public class WebTests
 {
-    private static async Task<string> RoomAsync(HttpClient client)
+    /// <summary>An online character and the unlock "online_join", reported as a guest of someone's instance (the stand-in relay's context).</summary>
+    private static async Task CharacterAndUnlockAsync(TestHost host, string token)
     {
-        var created = await client.PostAsJsonAsync("/api/v1/rooms",
-            new { name = "Web room", maxPlayers = 4, protocol = 41, dataHash = 5UL, clientVersion = "0.48.0" });
-        Assert.Equal(HttpStatusCode.Created, created.StatusCode);
-        return (await created.Json()).GetProperty("room").GetProperty("code").GetString()!;
-    }
-
-    private static async Task CharacterAndUnlockAsync(HttpClient client)
-    {
+        var client = host.Client(token);
+        var id = (await (await client.GetAsync("/api/v1/me")).Json()).GetProperty("id").GetInt64();
+        var context = new { protocol = TestHost.Protocol, players = 1 };
         var record = Convert.ToBase64String(RecordCodec.Encode(Samples.Fresh()));
-        Assert.Equal(HttpStatusCode.Created, (await client.PutJson("/api/v1/online-character", new { record, playSeconds = 3725 }, create: true)).StatusCode);
-        var room = await RoomAsync(client);
-        var unlock = await client.PostAsJsonAsync("/api/v1/achievements/unlock", new { code = "online_join", context = new { roomCode = room, players = 1 } });
+        Assert.Equal(HttpStatusCode.Created, (await client.PutJson("/api/v1/online-character", new { record, playSeconds = 3725, context }, create: true)).StatusCode);
+        host.InWorld(id, wid: 9, host: false, players: 2);
+        var unlock = await client.PostAsJsonAsync("/api/v1/achievements/unlock", new { code = "online_join", context });
         Assert.Equal(HttpStatusCode.OK, unlock.StatusCode);
     }
 
@@ -124,7 +120,7 @@ public class WebTests
         // Deletion: confirmation, password, then everything personal goes.
         Assert.Equal(HttpStatusCode.Redirect, (await web.LoginAsync("Settler", "recovered password")).Status);
         var token = (await host.LoginAsync("Settler", "recovered password")).Token;
-        await CharacterAndUnlockAsync(host.Client(token));
+        await CharacterAndUnlockAsync(host, token);
         Assert.Contains("Tick the box", (await web.PostAsync("/account?handler=Delete", new() { ["CurrentPassword"] = "recovered password" }, "/account")).Html);
         Assert.Contains("The current password is wrong.", (await web.PostAsync("/account?handler=Delete", new() { ["CurrentPassword"] = "nope",
             ["ConfirmDelete"] = "true" }, "/account")).Html);
@@ -149,11 +145,11 @@ public class WebTests
     }
 
     [DbFact]
-    public async Task Profile_achievements_and_rooms_pages()
+    public async Task Profile_achievements_and_instances_pages()
     {
         await using var host = await TestHost.StartAsync();
-        var (token, _, _) = await host.RegisterAsync("Showcase");
-        await CharacterAndUnlockAsync(host.Client(token));
+        var (token, _, showcase) = await host.RegisterAsync("Showcase");
+        await CharacterAndUnlockAsync(host, token);
         using var web = new WebBrowser(host);
 
         var profile = await web.GetAsync("/u/showcase");
@@ -171,12 +167,24 @@ public class WebTests
         Assert.Contains("100 %", achievements.Html);
         Assert.Contains("Hidden achievement", achievements.Html);
 
-        var rooms = await web.GetAsync("/rooms");
-        Assert.Contains("Web room", rooms.Html);
-        Assert.Contains("Showcase", rooms.Html);
+        // /rooms gave way to /instances (round I1): signed out only the counts per area, no names.
+        host.World!.Set([FakeWorldRelay.Instance(9, showcase, "Showcase", "dry_land", "stag0201")]);
+        var moved = await web.GetAsync("/rooms");
+        Assert.Equal(HttpStatusCode.MovedPermanently, moved.Status);
+        Assert.EndsWith("/instances", moved.Location);
+        var counts = await web.GetAsync("/instances");
+        Assert.Contains("Dry Land", counts.Html);
+        Assert.Contains("1 instances, 1 players", counts.Html);
+        Assert.DoesNotContain("Showcase", counts.Html);
+        Assert.DoesNotContain("Mummy Desert", counts.Html);
+        await web.RegisterAsync("Viewer");
+        var listed = await web.GetAsync("/instances");
+        Assert.Contains("/u/Showcase", listed.Html);
+        Assert.Contains("Dry Land: Mummy Desert", listed.Html);
 
         var home = await web.GetAsync("/");
         Assert.Contains("players online", home.Html);
+        Assert.Contains("href=\"/instances\">instances", home.Html);
         Assert.Contains("Privacy", home.Html);
         Assert.Contains("GDPR", (await web.GetAsync("/privacy")).Html);
     }
@@ -185,8 +193,8 @@ public class WebTests
     public async Task Admin_pages_moderate_accounts_and_unlocks()
     {
         await using var host = await TestHost.StartAsync();
-        var (playerToken, _, _) = await host.RegisterAsync("Player1");
-        await CharacterAndUnlockAsync(host.Client(playerToken));
+        var (playerToken, _, playerId) = await host.RegisterAsync("Player1");
+        await CharacterAndUnlockAsync(host, playerToken);
         using var boss = new WebBrowser(host);
         await boss.RegisterAsync("Boss");
         using var anonymous = new WebBrowser(host);
@@ -199,7 +207,7 @@ public class WebTests
 
         var search = await boss.GetAsync("/admin?q=play");
         Assert.Contains("/admin/account/Player1", search.Html);
-        Assert.Contains("Web room", search.Html);
+        Assert.Contains("0 players online, 0 instances", search.Html);
 
         // Flagged unlocks disappear from the public profile and the rarity.
         var page = "/admin/account/Player1";
@@ -228,13 +236,25 @@ public class WebTests
         Assert.Contains("temporary password", (await player.GetAsync("/account")).Html);
         Assert.Equal("/account", (await player.GetAsync("/achievements")).Location);
 
-        // Revoke, close the room, delete the account.
+        // Locking and unlocking told the relay (it re-checks the member, 19.14).
+        Assert.Equal(2, host.World!.Notes.Count(n => n == $"account {playerId}"));
+
+        // Revoke, end an instance (Private ones are listed for staff), remove a member, delete the account.
         Assert.Contains("online_join was removed", (await boss.PostAsync(page + "?handler=Revoke", new() { ["Code"] = "online_join", ["Ruleset"] = "standard" }, page)).Html);
-        Assert.DoesNotContain("Web room", (await anonymous.GetAsync("/rooms")).Html); // locking took Player1 out: the room closed empty
-        var (roomyToken, _, _) = await host.RegisterAsync("Roomy");
-        var code = await RoomAsync(host.Client(roomyToken));
-        Assert.Contains($"Room {code} was closed.", (await boss.PostAsync("/admin?handler=CloseRoom", new() { ["Code"] = code! }, "/admin")).Html);
-        Assert.DoesNotContain("Web room", (await anonymous.GetAsync("/rooms")).Html);
+        var (_, _, roomyId) = await host.RegisterAsync("Roomy");
+        host.World.Set([FakeWorldRelay.Instance(9, roomyId, "Roomy", "venom_jungle", "dng307b1", "private", [(playerId, "Player1", "dng307b1")])]);
+        var instances = await boss.GetAsync("/admin/instances");
+        Assert.Contains("#9", instances.Html);
+        Assert.Contains("private", instances.Html);
+        Assert.Contains("Venom Jungle: Geko Path", instances.Html);
+        Assert.Contains("Player1 was removed from instance 9",
+            (await boss.PostAsync("/admin/instances?handler=Remove", new() { ["Wid"] = "9", ["Username"] = "player1" }, "/admin/instances")).Html);
+        Assert.Contains("Instance 9 was ended", (await boss.PostAsync("/admin/instances?handler=End", new() { ["Wid"] = "9" }, "/admin/instances")).Html);
+        Assert.Contains("No such instance", (await boss.PostAsync("/admin/instances?handler=End", new() { ["Wid"] = "10" }, "/admin/instances")).Html);
+        Assert.Single(host.World.Ended);
+        Assert.Equal((9u, playerId), (host.World.Removed.Single().Wid, host.World.Removed.Single().Account));
+        await using (var sql = await host.SqlAsync())
+            Assert.Equal(2, await sql.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM audit_log WHERE event IN ('staff_end_instance', 'staff_remove')"));
         var gone = await boss.PostAsync(page + "?handler=Delete", new() { ["ConfirmDelete"] = "true" }, page);
         Assert.Equal(HttpStatusCode.Redirect, gone.Status);
         await using (var sql = await host.SqlAsync())
@@ -278,7 +298,7 @@ public class WebTests
         await using var host = await TestHost.StartAsync();
         var (token, _, id) = await host.RegisterAsync("ApiGdpr");
         var client = host.Client(token);
-        await CharacterAndUnlockAsync(client);
+        await CharacterAndUnlockAsync(host, token);
         var hidden = await client.PutAsJsonAsync("/api/v1/me/profile", new { @public = false });
         Assert.False((await hidden.Json()).GetProperty("profilePublic").GetBoolean());
         using (var web = new WebBrowser(host))
@@ -289,9 +309,8 @@ public class WebTests
         Assert.Equal(HttpStatusCode.Unauthorized, (await client.GetAsync("/api/v1/me")).StatusCode);
         await using var sql = await host.SqlAsync();
         Assert.Equal($"deleted_{id}", await sql.ExecuteScalarAsync<string>("SELECT username FROM accounts WHERE id = @id", new { id }));
-        Assert.Equal(0, await sql.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM room_members WHERE account_id = @id", new { id }));
         Assert.Equal(1, await sql.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM audit_log WHERE event = 'account_delete' AND account_id = @id AND ip IS NULL", new { id }));
-        // The room the account owned stays as a closed record.
-        Assert.Equal("closed", await sql.ExecuteScalarAsync<string>("SELECT status FROM rooms WHERE host_account_id = @id", new { id }));
+        // The relay heard of the deletion before and after the scrub.
+        Assert.Equal(2, host.World!.Notes.Count(n => n == $"account {id}"));
     }
 }

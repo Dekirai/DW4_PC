@@ -2,7 +2,7 @@
 # buttons hidden (offline the tab is unchanged: det.sh and the offline screenshot).
 open
 login $UI_A_NAME $UI_A_PASSWORD
-create $UI_ROOM max=4
+play
 wait-session
 sleep 30
 wait 10

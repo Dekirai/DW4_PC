@@ -1,0 +1,8 @@
+# W4bx, b (k5, a stranger): takes the gate 6 s after a.
+campaign until stage=stagml11,control
+idle until epoch>=@106
+explore mate00 yes until stage=stag0101,control
+log b in stag0101
+follow 40 until present=2,sealed>=4000 fail stagechange
+log together
+idle until frames>=60

@@ -92,13 +92,55 @@ public sealed class FriendsOptions
     public int RequestDays { get; set; } = 30;
 }
 
+/// <summary>
+/// The world's service-side settings (section "World", SEAMLESS.md 19.17.5): the game data the server admits and ranks,
+/// and how long the instance history is kept. The relay binds its own keys of the same section (WorldHubOptions).
+/// </summary>
+public sealed class WorldWebOptions
+{
+    /// <summary>
+    /// Game data hashes (decimal or 0x-hex) the server admits; empty = any. /world/enter refuses others with 409
+    /// unsupported_data, and the relay's handshake with ERR data (19.17.3).
+    /// </summary>
+    public List<string> DataHashes { get; set; } = [];
+    /// <summary>
+    /// Game data hashes that count as unmodified: an instance with one is ranked for achievements (19.8.9). Empty: every
+    /// data hash is ranked. Rooms:RankedDataHashes is read as it for one release (ServerApp).
+    /// </summary>
+    public List<string> RankedDataHashes { get; set; } = [];
+    /// <summary>Days an instance_history row (with its members) is kept after its start; the hourly housekeeping deletes older ended rows.</summary>
+    public int HistoryDays { get; set; } = 90;
+    /// <summary>How far back "Recently played with" looks (days, at most <see cref="HistoryDays"/>).</summary>
+    public int RecentlyPlayedDays { get; set; } = 30;
+
+    /// <summary>Parses a data hash list entry; throws with the setting's name for a value that is not a number.</summary>
+    public static ulong ParseHash(string text, string setting)
+    {
+        text = text.Trim();
+        var ok = text.StartsWith("0x", StringComparison.OrdinalIgnoreCase)
+            ? ulong.TryParse(text.AsSpan(2), System.Globalization.NumberStyles.AllowHexSpecifier, System.Globalization.CultureInfo.InvariantCulture, out var value)
+            : ulong.TryParse(text, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out value);
+        return ok ? value : throw new InvalidOperationException($"{setting} holds '{text}', which is not a number.");
+    }
+}
+
 /// <summary>What counts as online play (section "Play").</summary>
 public sealed class PlayOptions
 {
-    /// <summary>Achievement unlocks and stats need a room the account is a member of (rooms written by the room service).</summary>
-    public bool RequireRoom { get; set; } = true;
-    /// <summary>Oldest netplay protocol (kProtocol, src/game/netplay.cpp) the server accepts; 0 accepts any.</summary>
+    /// <summary>
+    /// Achievement unlocks, stats and state achievements need the account in the world within the last minute (the relay's
+    /// play context, SEAMLESS.md 19.8.9). Off: reports from outside the world count too (development).
+    /// </summary>
+    public bool RequireWorld { get; set; } = true;
+    /// <summary>The room era's name of <see cref="RequireWorld"/>: read as it for one release when RequireWorld is not set (ServerApp).</summary>
+    public bool? RequireRoom { get; set; }
+    /// <summary>
+    /// Oldest netplay protocol (kProtocol, src/game/netplay.cpp) the server accepts; 0 accepts any. The world's protocol
+    /// (<see cref="World.WorldProtocol.Version"/>) is a floor in code above it: <see cref="EffectiveMinimumProtocol"/>.
+    /// </summary>
     public int MinimumProtocol { get; set; }
+    /// <summary>max(<see cref="MinimumProtocol"/>, the world's protocol): the version gate, the status and the relay refuse below it (19.17.3).</summary>
+    public int EffectiveMinimumProtocol => Math.Max(MinimumProtocol, World.WorldProtocol.Version);
     /// <summary>The protocol of the current release, announced by the status endpoint.</summary>
     public int CurrentProtocol { get; set; }
     /// <summary>Oldest client version accepted ("0.48.0"); empty accepts any.</summary>

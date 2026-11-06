@@ -22,6 +22,9 @@
     <Content Include="..\..\..\..\data\online\story_golden.json" Link="story\story_golden.json" CopyToOutputDirectory="PreserveNewest" />
     <!-- The game client's achievement catalogue (src/game/achievements.cpp, docs/SEAMLESS.md 11). -->
     <Content Include="..\..\..\..\data\online\achievements.json" Link="data\achievements.json" CopyToOutputDirectory="PreserveNewest" />
+    <!-- The graph of all stage scripts (tools/export_stage_graph.py) and the area table (AreaTableTests, SEAMLESS.md 19.24). -->
+    <Content Include="..\..\..\..\data\online\stage_graph.json" Link="data\stage_graph.json" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="..\..\..\..\data\online\areas.json" Link="data\areas.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
   <ItemGroup>
     <Using Include="Xunit" />

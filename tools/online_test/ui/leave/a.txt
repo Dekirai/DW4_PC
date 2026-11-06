@@ -3,7 +3,7 @@
 # (The pad hold comes from hold.script; the log must show the prompt and its closing by Stay: scenario.json log_expect.)
 open
 login $UI_A_NAME $UI_A_PASSWORD
-create $UI_ROOM max=4
+play
 wait-session
 sleep 45
 wait 10

@@ -38,8 +38,10 @@ public class MigratorTests
             Assert.Equal(72, await c.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM achievements WHERE active = 1"));
             Assert.Equal(0, await c.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM achievements WHERE active = 1 AND code IN ('speed_6h', 'online_ten')"));
             Assert.Equal(12, await c.ExecuteScalarAsync<int>("SELECT goal FROM achievements WHERE code = 'lowlevel_apocalymon'"));
-            Assert.Equal(21, await c.ExecuteScalarAsync<int>( // (0008: online_story, 0010: online_story_history, 0012: the friend tables)
-                "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE()"));
+            Assert.Equal(24, await c.ExecuteScalarAsync<int>( // (0008: online_story, 0010: online_story_history, 0012: the friend tables, 0013: the world's three)
+                "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE() AND table_type = 'BASE TABLE'"));
+            Assert.Equal(5, await c.ExecuteScalarAsync<int>( // 0013's views with user names
+                "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE() AND table_type = 'VIEW'"));
 
             // What the log shows: the plan, each migration with its time, the total.
             var all = Migrator.LoadEmbedded();
@@ -414,12 +416,13 @@ public class MigratorTests
     }
 
     /// <summary>
-    /// Every migration runs as the restricted service user of DEPLOY.md section 2 (SELECT, INSERT, UPDATE, DELETE, CREATE,
-    /// ALTER, INDEX, REFERENCES on the database, nothing else): 0012 needs no new grant (no CREATE VIEW, no DROP), so its
-    /// release needs only the backup (SEAMLESS.md 19.22 step 7).
+    /// The restricted service user of DEPLOY.md section 2 (SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, INDEX, REFERENCES
+    /// on the database) runs every migration up to 0012; 0013 (world) brings views and needs CREATE VIEW (DEPLOY.md 9.2,
+    /// SEAMLESS.md 19.22 step 7). Without it the migrator refuses before it changes anything (the database stays empty here,
+    /// not half way), with the GRANT line in the message; with it everything applies and the service user can read the views.
     /// </summary>
     [DbFact]
-    public async Task Migrations_need_only_the_restricted_service_users_grants()
+    public async Task Migrations_need_the_restricted_service_users_grants_plus_create_view()
     {
         var name = await TestDb.CreateAsync();
         var user = "dw4it_" + Guid.NewGuid().ToString("N")[..8];
@@ -434,16 +437,136 @@ public class MigratorTests
             }
             var restricted = new MySqlConnectionStringBuilder(TestDb.ConnectionString(name)) { UserID = user, Password = password }.ConnectionString;
             await using var db = new Database(restricted);
-            Assert.Equal(From(1), await new Migrator(db).MigrateAsync());
+            var refused = await Assert.ThrowsAsync<MigrationException>(() => new Migrator(db).MigrateAsync());
+            Assert.Contains("Migration 0013 (world) needs the right CREATE VIEW", refused.Message);
+            Assert.Contains("Nothing was changed (the database stays at schema 0)", refused.Message);
+            Assert.Contains($"GRANT CREATE VIEW ON `{name}`.* TO '{user}'@", refused.Message);
+            await using (var check = new MySqlConnection(TestDb.ConnectionString(name)))
+                Assert.Equal(0, await check.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE()"));
+
+            foreach (var host in new[] { "127.0.0.1", "localhost" })
+                await admin.ExecuteAsync($"GRANT CREATE VIEW ON `{name}`.* TO '{user}'@'{host}'");
+            // Database rights count from a connection's next USE: a new pool, as the operator's next 'migrate' process has.
+            await using var granted = new Database(restricted);
+            Assert.Equal(From(1), await new Migrator(granted).MigrateAsync());
             await using var c = new MySqlConnection(restricted);
             Assert.Equal(0, await c.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM account_blocks"));
-            Assert.Equal(0, await c.ExecuteScalarAsync<int>(
+            Assert.Equal(5, await c.ExecuteScalarAsync<int>(
                 "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE() AND table_type = 'VIEW'"));
+            foreach (var view in new[] { "v_friends", "v_friend_requests", "v_blocks", "v_instance_history", "v_staff_audit" })
+                Assert.Equal(0, await c.ExecuteScalarAsync<int>($"SELECT COUNT(*) FROM {view}"));
         }
         finally
         {
             foreach (var host in new[] { "127.0.0.1", "localhost" })
                 await admin.ExecuteAsync($"DROP USER IF EXISTS '{user}'@'{host}'");
+            await TestDb.DropAsync(name);
+        }
+    }
+
+    /// <summary>
+    /// Migration 0013 (world, round I1a) on a database at schema 12 with accounts and rooms: the newest room settings of
+    /// each host fill his online_prefs (camera, light, fast loading, randomizer seed and modes; question 36 (b): no story
+    /// is copied), the new tables and columns carry a comment on every column and no binary column, the constraints hold,
+    /// the story history takes the reason 'mirror', and the views show user names, areas, durations and players only.
+    /// </summary>
+    [DbFact]
+    public async Task Migration_13_adds_the_world_tables_prefs_from_rooms_and_the_views()
+    {
+        var name = await TestDb.CreateAsync();
+        try
+        {
+            await using var c = new MySqlConnection(TestDb.ConnectionString(name));
+            await c.OpenAsync();
+            await ApplyUpToAsync(c, 12);
+            await c.ExecuteAsync("INSERT INTO accounts (username, username_norm, password_hash, status, created_at) VALUES " +
+                "('Kim', 'kim', 'x', 'active', UTC_TIMESTAMP(3)), ('Lee', 'lee', 'x', 'active', UTC_TIMESTAMP(3)), " +
+                "('Max', 'max', 'x', 'active', UTC_TIMESTAMP(3)), ('deleted_4', 'deleted_4', '!', 'deleted', UTC_TIMESTAMP(3)), " +
+                "('Ann', 'ann', 'x', 'active', UTC_TIMESTAMP(3))");
+            var ids = (await c.QueryAsync<long>("SELECT CAST(id AS SIGNED) FROM accounts ORDER BY id")).ToList();
+            var (kim, lee, max, gone, ann) = (ids[0], ids[1], ids[2], ids[3], ids[4]);
+            const string room = "INSERT INTO rooms (public_code, name, host_account_id, max_players, protocol, data_hash, client_version, settings, " +
+                                "status, created_at, closed_at, close_reason) VALUES (@code, 'r', @host, 4, 48, 1, 'v', @settings, 'closed', UTC_TIMESTAMP(3), UTC_TIMESTAMP(3), 'empty')";
+            // Kim: an old room with defaults, then the newest one with every host setting changed.
+            await c.ExecuteAsync(room, new { code = "AAAAA1", host = kim, settings = "{\"difficulty\":0,\"cameraMode\":0,\"lightMode\":1}" });
+            await c.ExecuteAsync(room, new
+            {
+                code = "AAAAA2", host = kim,
+                settings = "{\"difficulty\":1,\"cameraMode\":1,\"lightMode\":0,\"fastLoading\":true," +
+                           "\"randomizer\":{\"enabled\":true,\"seed\":77,\"drops\":true,\"enemies\":2,\"zones\":1}}",
+            });
+            // Lee: a randomizer that is switched off (its seed stays out), Max: a room without settings, the deleted host none.
+            await c.ExecuteAsync(room, new { code = "AAAAA3", host = lee, settings = "{\"cameraMode\":1,\"randomizer\":{\"enabled\":false,\"seed\":5}}" });
+            await c.ExecuteAsync(room, new { code = "AAAAA4", host = max, settings = (string?)null });
+            await c.ExecuteAsync(room, new { code = "AAAAA5", host = gone, settings = "{\"cameraMode\":1}" });
+            await c.ExecuteAsync("INSERT INTO room_members (room_id, account_id, slot, joined_at) SELECT id, @ann, 1, UTC_TIMESTAMP(3) FROM rooms", new { ann });
+            await using var db = new Database(TestDb.ConnectionString(name));
+            Assert.Equal(new[] { 13 }, await new Migrator(db).MigrateAsync());
+
+            var prefs = (await c.QueryAsync<(long Account, int Camera, int Light, bool Fast, long? Seed, int Modes, string Visibility, int Box)>(
+                "SELECT CAST(account_id AS SIGNED), camera_mode, light_mode, fast_loading, CAST(randomizer_seed AS SIGNED), randomizer_modes, " +
+                "default_visibility, last_box FROM online_prefs ORDER BY account_id")).ToList();
+            Assert.Equal(2, prefs.Count);
+            Assert.Equal((kim, 1, 0, true, (long?)77, 1 | 2 << 1 | 1 << 3, "public", 1), prefs[0]);
+            Assert.Equal((lee, 1, 1, false, (long?)null, 0, "public", 1), prefs[1]);
+            // Question 36 (b): a guest-only account gets no story and no history row from the migration.
+            Assert.Equal(0, await c.ExecuteScalarAsync<int>("SELECT (SELECT COUNT(*) FROM online_story) + (SELECT COUNT(*) FROM online_story_history)"));
+
+            string[] tables = ["online_prefs", "instance_history", "instance_history_members"];
+            var columns = (await c.QueryAsync<(string Table, string Column, string Type, string Comment)>(
+                "SELECT table_name, column_name, column_type, column_comment FROM information_schema.columns " +
+                "WHERE table_schema = DATABASE() AND (table_name IN @tables OR (table_name, column_name) IN " +
+                "(('accounts', 'last_seen_at'), ('achievement_unlocks', 'instance_id'), ('speedrun_times', 'instance_id'), ('online_story_history', 'reason'))) " +
+                "ORDER BY table_name, ordinal_position", new { tables })).ToList();
+            Assert.Equal(12 + 12 + 8 + 4, columns.Count);
+            Assert.All(columns, col => Assert.DoesNotMatch("blob|binary", col.Type));
+            Assert.All(columns, col => Assert.False(string.IsNullOrWhiteSpace(col.Comment), $"{col.Table}.{col.Column} has no comment"));
+            Assert.Equal("enum('room','reset','admin_restore','session','mirror')", columns.Single(col => col.Column == "reason").Type);
+            Assert.Equal(3, await c.ExecuteScalarAsync<int>(
+                "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name IN @tables AND table_comment <> ''", new { tables }));
+
+            // The constraints.
+            await Assert.ThrowsAsync<MySqlException>(() => c.ExecuteAsync(
+                "INSERT INTO online_prefs (account_id, camera_mode, updated_at) VALUES (@max, 2, UTC_TIMESTAMP(3))", new { max }));
+            await Assert.ThrowsAsync<MySqlException>(() => c.ExecuteAsync(
+                "INSERT INTO online_prefs (account_id, randomizer_modes, updated_at) VALUES (@max, 6, UTC_TIMESTAMP(3))", new { max })); // enemies 3
+            await Assert.ThrowsAsync<MySqlException>(() => c.ExecuteAsync(
+                "INSERT INTO online_prefs (account_id, randomizer_seed, updated_at) VALUES (@max, 0, UTC_TIMESTAMP(3))", new { max }));
+            await c.ExecuteAsync("INSERT INTO online_story_history (account_id, revision, flags, folder, counters, reason, saved_at) " +
+                                 "VALUES (@kim, 1, '', REPEAT(CHAR(0), 12), REPEAT(CHAR(0), 64), 'mirror', UTC_TIMESTAMP(3))", new { kim });
+
+            const string instance = "INSERT INTO instance_history (host_account_id, host_box, first_stage, visibility, difficulty, story_phase, settings, " +
+                                    "started_at, ended_at, end_reason, peak_players) VALUES (@host, 1, @stage, 'public', 1, 4, 'DW4R2-settings/1', " +
+                                    "'2026-11-06 10:00:00', '2026-11-06 10:42:00', 'host_left', 3)";
+            await c.ExecuteAsync(instance, new { host = kim, stage = "stag0201" });
+            var wid = await c.ExecuteScalarAsync<long>("SELECT CAST(MAX(id) AS SIGNED) FROM instance_history");
+            const string member = "INSERT INTO instance_history_members (instance_id, account_id, box, role, joined_at, left_at, leave_reason) " +
+                                  "VALUES (@wid, @account, 1, @role, '2026-11-06 10:00:00', '2026-11-06 10:42:00', 'ended')";
+            await c.ExecuteAsync(member, new { wid, account = kim, role = "host" });
+            await c.ExecuteAsync(member, new { wid, account = lee, role = "guest" });
+            await c.ExecuteAsync(member, new { wid, account = max, role = "spectator" });
+            await Assert.ThrowsAsync<MySqlException>(() => c.ExecuteAsync(member, new { wid, account = 999999L, role = "guest" }));
+            await Assert.ThrowsAsync<MySqlException>(() => c.ExecuteAsync(member, new { wid, account = ann, role = "owner" }));
+            await Assert.ThrowsAsync<MySqlException>(() => c.ExecuteAsync(
+                "INSERT INTO instance_history (host_account_id, host_box, first_stage, visibility, difficulty, story_phase, settings, started_at) " +
+                "VALUES (@kim, 1, 'stag0101', 'public', 3, 0, 's', UTC_TIMESTAMP(3))", new { kim }));                       // difficulty 0..2
+
+            // The views: names, the area, minutes, players without the spectator.
+            var history = await c.QuerySingleAsync<(string Host, string Area, string Difficulty, long Minutes, string Players)>(
+                "SELECT host, area, difficulty, minutes, players FROM v_instance_history");
+            Assert.Equal(("Kim", "Dry Land", "Hard", 42L, "Kim, Lee"), history);
+            await c.ExecuteAsync("INSERT INTO friendships (account_lo, account_hi, created_at) VALUES (@kim, @lee, UTC_TIMESTAMP(3))", new { kim, lee });
+            Assert.Equal(("Kim", "Lee"), await c.QuerySingleAsync<(string, string)>("SELECT player, friend FROM v_friends"));
+            await c.ExecuteAsync("INSERT INTO audit_log (at, account_id, actor_id, event) VALUES (UTC_TIMESTAMP(3), @kim, @max, 'staff_end_instance'), " +
+                                 "(UTC_TIMESTAMP(3), @kim, @kim, 'login_ok')", new { kim, max });
+            Assert.Equal(("staff_end_instance", "Max", "Kim"), await c.QuerySingleAsync<(string, string, string)>("SELECT event, staff, player FROM v_staff_audit"));
+
+            // Pruning an instance takes its members along.
+            await c.ExecuteAsync("DELETE FROM instance_history WHERE id = @wid", new { wid });
+            Assert.Equal(0, await c.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM instance_history_members"));
+        }
+        finally
+        {
             await TestDb.DropAsync(name);
         }
     }

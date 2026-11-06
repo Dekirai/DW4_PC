@@ -1,0 +1,11 @@
+# W29 (19.24, 19.8.9): online_host with three guests (b and two fake guests: a guest's NEW at stag0101), online_join for the
+# guest b. Lone Tamer and the clear as host need a story clear in the run (no r25c card stands before a boss); the
+# integration tests cover them (AchievementTests, the world's play context).
+a: online-script: step .* log: a joined b in the cave
+a: online-script: step .* log: a hosted four
+b: online-script: step .* log: a is here
+relay: instance_start .*stage=stag0101
+relay: instance_join .*how=join
+relay: instance_join .*how=new_group
+!a: online-script: FAIL
+!b: online-script: FAIL

@@ -1,0 +1,36 @@
+{
+  "desc": "counter-proof of W4b: with World:StartingSeconds 0 b's arrival is no co-arrival but I1a's automatic join of the first row",
+  "world": true,
+  "autochoice": "first",
+  "seed_story": true,
+  "frames": 60000,
+  "timeout": 1000,
+  "min_shared_ticks": 0,
+  "db_checks": [
+    {
+      "name": "one instance",
+      "sql": "SELECT COUNT(*) FROM instance_history",
+      "expect": "^1$"
+    }
+  ],
+  "server": {
+    "World": {
+      "StartingSeconds": 0
+    }
+  },
+  "clients": [
+    {
+      "name": "a",
+      "script": "a.script",
+      "card": "k5",
+      "start": 0
+    },
+    {
+      "name": "b",
+      "script": "b.script",
+      "card": "k5",
+      "start": 3,
+      "seed_story": true
+    }
+  ]
+}

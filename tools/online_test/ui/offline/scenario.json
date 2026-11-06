@@ -1,5 +1,5 @@
 {
-  "desc": "an offline game in the lobby: F1 Online asks before it ends the game; cancel keeps it",
+  "desc": "an offline game in the lobby: F1 Online's Play on the world's home screen asks before it ends the game; cancel keeps it",
   "timeout": 180,
   "clients": [{"name": "a", "script": "a.txt", "registered": true, "args": ["--stage", "stagml11"]}]
 }

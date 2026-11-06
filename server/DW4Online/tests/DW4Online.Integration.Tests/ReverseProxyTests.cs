@@ -159,7 +159,7 @@ public partial class ReverseProxyTests
         AllBelow(account, at);
         Assert.Contains($"action=\"{at}/account?handler=Password\"", account.Html);
         Assert.Contains($"action=\"{at}/logout\"", account.Html);
-        foreach (var page in new[] { "/account/friends", "/achievements", "/rooms", "/privacy", "/u/Proxy" + (int)way })
+        foreach (var page in new[] { "/account/friends", "/achievements", "/instances", "/privacy", "/u/Proxy" + (int)way })
             AllBelow(await web.GetAsync(page), at);
 
         // The session's address is the browser's, through the proxy and its edge too.

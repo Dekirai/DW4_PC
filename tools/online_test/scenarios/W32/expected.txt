@@ -1,0 +1,10 @@
+# W32 (19.24, decision 39): the Fortress is Death Valley's: a's instance follows it through staggf01-04 without an
+# area_escape; b at the gate to Dry Land gets an instance of its own (its area is not a's).
+a: online-script: step .* log: a hosts
+a: online-script: step .* log: a deep in the Fortress
+b: online-script: step .* log: b alone in Dry Land
+relay: instance_start .*area=death_valley.*stage=stag0101
+relay: instance_start .*area=dry_land.*stage=stag0201
+!relay: area_escape
+!a: online-script: FAIL
+!b: online-script: FAIL

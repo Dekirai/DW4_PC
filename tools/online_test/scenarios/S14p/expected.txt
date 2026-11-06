@@ -1,23 +1,10 @@
-# S14p (owner present): both start their games with the room story (revision 1, the owner's card: 505 = 0 in both
-# lobbies although the guest's card has it); the guest's stag0101 value 505 is its whole pending set and becomes
-# revision 2 at once (no drop or hold: the owner is in the room); the owner's machine holds it as its confirmed story
-# while its lobby engine keeps 505 = 0, and has 505 = 1 after its barrier into stagml12. run.py "story_saved" checks
-# the owner's online_story row (at most ten seconds after the guest set the flag).
-o: online: the game starts with the room story .revision 1.
-g: online: the game starts with the room story .revision 1.
-g: online-script: step .* log: 505 not in the lobby
+# S14p in the world (19.24 "S14p as the host's story"): a guest's new story value in the host's instance reaches the
+# host's online_story within ten seconds (scenario.json "story_saved").
+o: online-script: step .* log: o hosts
+g: online-script: step .* log: 505 not in the host's story
 g: online-script: step .* log: 505 set
-g: online-trace: story .*rev=1 phase=0 flags=1 keys=0 counters=0
-relay: ^story .*revision=2
-g: online-trace: story_ack rev=2 refused=0
+o: online-script: step .* log: 505 in the field
 g: online-script: step .* log: 505 kept
-o: online-script: step .* log: 505 in the room story
-o: online-script: step .* log: 505 not mid-stage
-o: online-script: step .* log: in stagml12
-o: online-script: step .* log: 505 after the barrier
-!relay: ^story_dropped
-!relay: ^story_held
-!g: Story progress was not saved
-!o: Story progress was not saved
+relay: instance_join .*role=guest
 !o: online-script: FAIL
 !g: online-script: FAIL

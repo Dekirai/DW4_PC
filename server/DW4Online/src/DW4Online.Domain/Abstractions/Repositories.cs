@@ -127,7 +127,8 @@ public interface IAchievementRepository
     /// <summary>True when the unlock is new (repeated reports are harmless).</summary>
     Task<bool> TryUnlockAsync(UnlockWrite unlock, CancellationToken ct = default);
     /// <summary>Keeps the best (lowest) in-game time per board and ruleset; true when this one is the new best.</summary>
-    Task<bool> SubmitTimeAsync(long accountId, string board, string ruleset, long igtMs, long? roomId, DateTime now, CancellationToken ct = default);
+    Task<bool> SubmitTimeAsync(long accountId, string board, string ruleset, long igtMs, long? roomId, DateTime now, CancellationToken ct = default,
+        long? instanceId = null);
     Task<IReadOnlyDictionary<string, long>> GetStatsAsync(long accountId, CancellationToken ct = default);
     /// <summary>The time of the account's last stats batch, else the account's creation (null: no such account).</summary>
     Task<DateTime?> GetLastStatsAtAsync(long accountId, CancellationToken ct = default);
@@ -140,8 +141,3 @@ public interface IAchievementRepository
     Task<bool> RevokeUnlockAsync(long accountId, int achievementId, string ruleset, CancellationToken ct = default);
 }
 
-public interface IRoomDirectory
-{
-    /// <summary>The account's live membership in the open or playing room with this public code, or null.</summary>
-    Task<RoomMembership?> FindMembershipAsync(string roomCode, long accountId, CancellationToken ct = default);
-}

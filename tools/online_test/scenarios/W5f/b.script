@@ -1,0 +1,8 @@
+# W5f, b (k5, not a friend of a): at the gate while a's friends instance runs: no row for it, a NEW of its own.
+campaign until stage=stagml11,control
+idle until epoch>=@100
+explore mate00 yes until stage=stag0101,control
+log b in stag0101
+idle until frames>=600 fail present>=2
+log b alone
+disk 8 until stage=stagml11,control

@@ -1,0 +1,39 @@
+{
+  "desc": "a protocol 48 client sees \"Update required\" with a server still on Play:MinimumProtocol 48 (updated without 19.22 step 7); /api/v1/rooms answers 410",
+  "world": true,
+  "autochoice": "first",
+  "seed_story": false,
+  "frames": 1200,
+  "timeout": 300,
+  "min_shared_ticks": 0,
+  "requires": [
+    "old_client"
+  ],
+  "server": {
+    "Play": {
+      "MinimumProtocol": 48,
+      "CurrentProtocol": 49
+    }
+  },
+  "api_checks": [
+    {
+      "at": "after",
+      "as": "admin",
+      "path": "/api/v1/rooms",
+      "status": 410
+    }
+  ],
+  "clients": [
+    {
+      "name": "a",
+      "script": "a.script",
+      "exe": "{old_exe}",
+      "start": 0,
+      "play_args": [
+        "--online-create",
+        "W22"
+      ],
+      "refused": true
+    }
+  ]
+}

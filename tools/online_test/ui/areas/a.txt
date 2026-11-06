@@ -1,22 +1,20 @@
-# The owner looks at the room while b plays: b's area, level and connection; then kicks b.
+# The world (round I1a): a at home looks at its Online tab while b plays its saved character in b's own lobby (no
+# instance joins them: both are at home; the Instance page says so); then a leaves the world. (Before the world a kicked
+# b out of its room; removing a member is round I1b's.)
 wait-title
 to-menu
 pad DOWN DOWN A
 wait-screens
 login $UI_A_NAME $UI_A_PASSWORD
-create $UI_ROOM max=4
+play
 wait-session
 key pad-b
 sleep 1
 menu online
-wait-members 2 180
+wait-instance home
 sleep 100
 wait 10
-shot room_areas
-kick $UI_B_NAME
-sleep 4
-wait 10
-shot after_kick
+shot home_view
 leave
 wait-left
 end

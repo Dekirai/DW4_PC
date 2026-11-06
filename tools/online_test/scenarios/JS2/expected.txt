@@ -8,7 +8,7 @@
 b: online-trace: state purpose=1 .*checkpoint=[1-9]
 b: online-trace: ready .*from-checkpoint .*checked=(1[5-9]|[2-9][0-9]|[0-9]{3,})
 relay: ^state .*purpose=Join .*checkpoint=[1-9]
-relay: ^ready .*member=1 .*checkpoint=True checked=True
+relay: ^ready .*member=2 .*checkpoint=True checked=True
 relay: ^join .*slot=1
 b: online-trace: join applied .*slot=1
 b: online: test desync at tick \d+ \(1500 ticks after the own join at \d+, engine from a checkpoint\)
@@ -17,7 +17,7 @@ relay: ^checkpoint_suspect .*why=desync_rebuilt
 relay: ^resync .*slot=1 .*checkpoint=0( |$)
 b: online-trace: resync inst
 b: online-trace: resynced inst
-relay: ^resync_ready .*member=1 .*checkpoint=False
+relay: ^resync_ready .*member=2 .*checkpoint=False
 !relay: ready_mismatch
 !relay: checkpoint_bad
 !relay: statehash_mismatch

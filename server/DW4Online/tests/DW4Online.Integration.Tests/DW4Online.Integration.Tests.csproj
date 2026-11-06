@@ -22,6 +22,8 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="..\DW4Online.Tests\Samples.cs" Link="Samples.cs" />
+    <!-- The stand-in world relay (IWorldRelay, IWorldNotifier) the test host registers. -->
+    <Compile Include="..\DW4Online.Tests\FakeWorld.cs" Link="FakeWorld.cs" />
     <!-- The fake Service Control Manager: ServiceHostTests runs the real host under it. -->
     <Compile Include="..\DW4Online.Tests\FakeScm.cs" Link="FakeScm.cs" />
   </ItemGroup>

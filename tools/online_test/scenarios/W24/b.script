@@ -1,0 +1,9 @@
+# W24, guest b (k2): goes home on its own story after the restart.
+campaign until stage=stagml11,control
+idle until epoch>=@100
+explore mate00 yes until stage=stag0101,control
+log b joined a
+follow 40 until stage=stagml11,control fail epoch>=@330
+log b home
+idle until frames>=120 fail key:4=1
+log own story

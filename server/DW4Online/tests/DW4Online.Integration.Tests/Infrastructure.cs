@@ -9,6 +9,7 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using MySqlConnector;
 
 namespace DW4Online.Integration.Tests;
@@ -87,7 +88,14 @@ public sealed class TestHost : IAsyncDisposable
     public string Database { get; }
     public ManualClock Clock { get; }
 
-    public static async Task<TestHost> StartAsync(Dictionary<string, string?>? overrides = null, string? settingsFile = null)
+    /// <summary>The stand-in world relay (snapshot, play contexts, admission, notifier calls); null with <c>fakeWorld: false</c>.</summary>
+    public DW4Online.Tests.FakeWorldRelay? World => App.Services.GetService<DW4Online.Tests.FakeWorldRelay>();
+
+    /// <param name="fakeWorld">
+    /// Registers a <see cref="DW4Online.Tests.FakeWorldRelay"/> as the world relay and the notifier (after ServerApp's
+    /// registrations, replacing them); false leaves the server's own (the relay lane's world relay, or the null ones).
+    /// </param>
+    public static async Task<TestHost> StartAsync(Dictionary<string, string?>? overrides = null, string? settingsFile = null, bool fakeWorld = true)
     {
         var database = await TestDb.CreateAsync();
         var clock = new ManualClock();
@@ -98,6 +106,16 @@ public sealed class TestHost : IAsyncDisposable
             builder.Configuration.AddInMemoryCollection(settings);
             builder.Services.AddSingleton<TimeProvider>(clock);
             builder.Services.AddSingleton<IStartupFilter, TestClientAddress>();
+        }, overrideServices: services =>
+        {
+            if (!fakeWorld) return;
+            // After the composition root's registrations: the stand-in replaces the relay's own (registered with AddSingleton
+            // before the TryAdd lines) as well as the null objects.
+            services.RemoveAll<DW4Online.Domain.Abstractions.IWorldRelay>();
+            services.RemoveAll<DW4Online.Domain.Abstractions.IWorldNotifier>();
+            services.AddSingleton<DW4Online.Tests.FakeWorldRelay>();
+            services.AddSingleton<DW4Online.Domain.Abstractions.IWorldRelay>(sp => sp.GetRequiredService<DW4Online.Tests.FakeWorldRelay>());
+            services.AddSingleton<DW4Online.Domain.Abstractions.IWorldNotifier>(sp => sp.GetRequiredService<DW4Online.Tests.FakeWorldRelay>());
         });
         await ServerApp.MigrateIfEnabledAsync(app);
         await app.StartAsync();
@@ -121,6 +139,7 @@ public sealed class TestHost : IAsyncDisposable
             ["RateLimits:StaffPerMinute"] = "100000",
             ["RateLimits:RoomCreatesPerMinute"] = "100000",
             ["RateLimits:RoomJoinsPerMinute"] = "100000",
+            ["RateLimits:WorldEntersPerMinute"] = "100000",
             ["RateLimits:WebLoginPerMinute"] = "100000",
             ["RateLimits:WebRegisterPerHour"] = "100000",
             ["RateLimits:WebAccountChangesPerMinute"] = "100000",
@@ -131,7 +150,7 @@ public sealed class TestHost : IAsyncDisposable
             ["Rooms:PasswordIterations"] = "1000",
             ["Web:DataProtectionKeysDirectory"] = "memory",
             ["Relay:Enabled"] = "false",
-            ["Play:RequireRoom"] = "true",
+            ["Play:RequireWorld"] = "true",
             ["Logging:LogLevel:Default"] = "Warning",
         };
         if (overrides is not null)
@@ -173,7 +192,7 @@ public sealed class TestHost : IAsyncDisposable
         return (body.GetProperty("token").GetString()!, body.GetProperty("account").GetProperty("id").GetInt64());
     }
 
-    /// <summary>A durable room row with members, as the room service writes it.</summary>
+    /// <summary>A durable room row with members, as the room service of the room era wrote it (read-only since round I1).</summary>
     public async Task<string> CreateRoomAsync(long host, IEnumerable<long> guests, bool ranked = true, bool randomizer = false)
     {
         var code = Guid.NewGuid().ToString("N")[..6].ToUpperInvariant();
@@ -189,6 +208,18 @@ public sealed class TestHost : IAsyncDisposable
                 new { id, member, slot = slot++, now });
         return code;
     }
+
+    /// <summary>
+    /// Puts the account in the world for the achievements (19.8.9): at home (wid 0), or in instance <paramref name="wid"/>
+    /// as host or guest with <paramref name="players"/> players of the last minute.
+    /// </summary>
+    public void InWorld(long account, uint wid = 0, bool host = true, int players = 1, bool randomizer = false, ulong dataHash = 1,
+        long? historyId = null) =>
+        World!.SetPlayContext(account, new DW4Online.Domain.Abstractions.WorldPlayContext(wid, historyId ?? (wid == 0 ? null : wid), host, players,
+            randomizer, dataHash, 0));
+
+    /// <summary>A protocol the version gate takes (the world's floor).</summary>
+    public const int Protocol = DW4Online.Domain.World.WorldProtocol.Version;
 
     public async ValueTask DisposeAsync()
     {

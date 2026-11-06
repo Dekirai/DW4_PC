@@ -1,0 +1,40 @@
+{
+  "desc": "playing staff (I1a part): a moderator d joins a's Private instance as a guest with the Staff tag; audit row staff_join",
+  "world": true,
+  "autochoice": "first",
+  "seed_story": true,
+  "frames": 60000,
+  "timeout": 1000,
+  "min_shared_ticks": 0,
+  "db_checks": [
+    {
+      "name": "audit staff_join",
+      "sql": "SELECT COUNT(*) FROM audit_log WHERE event = 'staff_join'",
+      "expect": "^[1-9]"
+    },
+    {
+      "name": "member role",
+      "sql": "SELECT role FROM instance_history_members WHERE account_id = {id:d}",
+      "expect": "staff"
+    }
+  ],
+  "clients": [
+    {
+      "name": "a",
+      "script": "a.script",
+      "card": "k5",
+      "start": 0,
+      "prefs": {
+        "defaultVisibility": "private"
+      }
+    },
+    {
+      "name": "d",
+      "script": "d.script",
+      "card": "k5",
+      "start": 3,
+      "role": "moderator",
+      "seed_story": true
+    }
+  ]
+}

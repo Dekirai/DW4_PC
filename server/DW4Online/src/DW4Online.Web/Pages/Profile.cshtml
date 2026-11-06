@@ -52,6 +52,23 @@
         </div>
         break;
 }
+@if (Model.Presence is { } where)
+{
+    <p class="muted">
+        @if (where.Online)
+        {
+            <span class="badge ok">@where.Status</span>
+            @if (where.Stage is not null)
+            {
+                <span>@where.Stage</span>
+            }
+        }
+        else
+        {
+            @(where.LastSeenAt is { } seen ? $"Last online {Format.Ago(seen, Model.Now)}" : "Offline")
+        }
+    </p>
+}
 @if (Model.Hidden)
 {
     <div class="notice">This profile is private.</div>

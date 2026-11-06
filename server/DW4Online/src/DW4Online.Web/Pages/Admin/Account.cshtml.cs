@@ -13,7 +13,7 @@ namespace DW4Online.Web.Pages.Admin;
 /// accounts. Every action is written to the audit log by the services.
 /// </summary>
 public sealed class AccountModel(AccountService accounts, OnlineCharacterService characters, AchievementService achievements,
-    RoomService rooms, WebOptions web) : PageModel
+    WorldService world, WebOptions web) : PageModel
 {
     [BindProperty] public string? Status { get; set; }
     [BindProperty] public string? Reason { get; set; }
@@ -28,6 +28,8 @@ public sealed class AccountModel(AccountService accounts, OnlineCharacterService
     public CharacterView? Character { get; private set; }
     public IReadOnlyList<(AchievementView Achievement, UnlockView Unlock)> Unlocks { get; private set; } = [];
     public IReadOnlyList<StoryHistoryEntry> Story { get; private set; } = [];
+    /// <summary>The account's instances (hosted, joined, played as staff or watched), newest first (19.20).</summary>
+    public IReadOnlyList<InstanceHistoryEntry> Instances { get; private set; } = [];
     public bool IsAdmin { get; private set; }
     public string? Message { get; private set; }
     public string? Error { get; private set; }
@@ -39,7 +41,7 @@ public sealed class AccountModel(AccountService accounts, OnlineCharacterService
     public async Task<IActionResult> OnPostStatusAsync(string name, CancellationToken ct)
     {
         var result = await accounts.AdminSetStatusAsync(HttpContext.WebSession()!, name, Status ?? "", Reason, HttpContext.Caller(), ct);
-        if (result.Ok && result.Value!.Status != AccountStatus.Active) await rooms.RemoveAccountAsync(result.Value.Id, ct);
+        if (result.Ok) world.AccountChanged(result.Value!.Id);
         return await ShowAsync(name, ct, result.Ok ? $"The account is now {result.Value!.Status}." : null, result.Error?.Message);
     }
 
@@ -69,15 +71,16 @@ public sealed class AccountModel(AccountService accounts, OnlineCharacterService
         if (await accounts.FindAccountAsync(name, ct) is not { } target) return NotFound();
         if (!await characters.HasStoryRevisionAsync(target.Id, StoryRevision, ct))
             return await ShowAsync(name, ct, error: "No such kept revision of the online story.");
-        // The account's own room closes first: its hub holds the story and would save it again.
-        await rooms.CloseOwnedAsync(target.Id, ct);
         var result = await characters.RestoreStoryAsync(target.Id, StoryRevision, HttpContext.WebSession()!.AccountId, HttpContext.Caller().Ip, ct);
+        // The relay's keeper reloads the restored story and the account's hosted instance ends (19.8.1).
+        if (result.Ok) world.StoryReplaced(target.Id);
         return await ShowAsync(name, ct, result.Ok ? $"Story revision {StoryRevision} is back as revision {result.Value}." : null, result.Error?.Message);
     }
 
     public async Task<IActionResult> OnPostRoleAsync(string name, CancellationToken ct)
     {
         var result = await accounts.AdminSetRoleAsync(HttpContext.WebSession()!, name, Role ?? "", HttpContext.Caller(), ct);
+        if (result.Ok) world.AccountChanged(result.Value!.Id); // a demotion counts in the world at once (19.14)
         return await ShowAsync(name, ct, result.Ok ? $"The role is now {result.Value!.Role}." : null, result.Error?.Message);
     }
 
@@ -89,10 +92,10 @@ public sealed class AccountModel(AccountService accounts, OnlineCharacterService
         if (await accounts.FindAccountAsync(name, ct) is not { } target) return NotFound();
         if (target.Role == Roles.Admin || target.Id == actor.AccountId)
             return await ShowAsync(name, ct, error: "Admin accounts cannot be deleted here.");
-        await rooms.RemoveAccountAsync(target.Id, ct);
+        world.AccountChanged(target.Id);
         var result = await accounts.AdminDeleteAccountAsync(actor, name, ct);
         if (!result.Ok) return await ShowAsync(name, ct, error: result.Error!.Message);
-        await rooms.RemoveAccountAsync(target.Id, CancellationToken.None); // (a room opened meanwhile closes)
+        world.AccountChanged(target.Id); // (a world session that started meanwhile ends)
         return Redirect("~/admin?q=deleted_" + target.Id);
     }
 
@@ -105,6 +108,7 @@ public sealed class AccountModel(AccountService accounts, OnlineCharacterService
         IsAdmin = HttpContext.WebSession()!.Role == Roles.Admin;
         Character = await characters.GetAsync(target.Id, ct);
         Story = await characters.StoryHistoryAsync(target.Id, ct);
+        Instances = await world.HistoryAsync(target.Id, 50, withSpectating: true, ct);
         Unlocks = (await achievements.ListAsync(target.Id, ct))
             .SelectMany(a => a.Unlocks.Select(u => (a, u)))
             .OrderByDescending(x => x.u.UnlockedAt)

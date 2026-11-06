@@ -10980,7 +10980,11 @@ release).
   `staff_join`, `staff_join_override`, `staff_spectate_start`,
   `staff_spectate_end`, `staff_end_instance`, `staff_remove`,
   `report_handled`. Friend and block changes are not audited (the tables
-  are the record; refusals by the limits are logged).
+  are the record; refusals by the limits are logged). The details name
+  other accounts by id (`hostId`, `memberIds`), never by name: an
+  account's deletion renames its row, so no deleted player's name stays
+  in other accounts' audit rows; the staff audit list shows the current
+  names (`accounts`: "host Kim; members Kim, Lee"; I1a review).
 - `rooms` and `room_members` lose their writer and stay read-only for one
   release; a cleanup migration drops them (19.22).
 - Live state stays in the relay's memory: instances, stage groups, seats,
@@ -11057,8 +11061,8 @@ the decision stays under the lock).
   `ERR protocol` below that constant, the same one the handshake checks,
   so the floor never falls behind the protocol (a floor of 47 would admit
   today's room clients, which speak 48). DEPLOY.md's step still raises the configured
-  value (19.22 step 7), and W22 runs against the production example
-  configuration.
+  value (19.22 step 7; the production example says 49), and W22 runs
+  against a server that kept 48 (an update without that step).
 - **The data hash.** Today the room join compares the client's data hash
   with the room creator's (`RoomService`, `room.DataHash != dataHash`), and
   "ranked" means that hash is in `Rooms:RankedDataHashes`. In the world: `World:DataHashes` (a
@@ -11834,7 +11838,7 @@ means round I1a):
 | W19 | I1 / I2 | 35 fake presence senders plus friend f plus blocked x in stagML11: the real client draws 30, with f (I2) and never x; frame time at 144 Hz recorded |
 | W20 | I4 | a party of three takes the gate within 3 s: one instance, the leader hosts, the entry scene together; a fourth member at home follows by travel next to the leader; W20b: a member reaches the barrier 1 s before the leader: the leader's group is the base, every engine has the leader's story (the member's own phase differs in the seed) |
 | W21 | I5 | b's client is killed in a's instance and restarted: *Play* returns it next to a ("Returning to Kim's instance..."); a seat expired: home |
-| W22 | I1 | a protocol 48 client (the release before the world) sees "Update required" with the server on the production example configuration (`Play:MinimumProtocol` 48); `/api/v1/rooms` answers 410 |
+| W22 | I1 | a protocol 48 client (the release before the world) sees "Update required" with a server still on `Play:MinimumProtocol` 48 (updated without 19.22 step 7; the production example says 49); `/api/v1/rooms` answers 410 |
 | W23 | I5 | the host crashes and restarts within 50 s: his slot is rejoined from a checkpoint, he stays host, the guests never left |
 | W24 | I1 | an ordered server restart with a guest b and the host a in a field: both home on their own stories, `online_card.dat` and the server revisions untouched by the foreign story |
 | W25 | I1 | the same with the server process killed (no CLOSE): the clients reconnect to the new process, find no instance and take the home departure themselves |
@@ -11980,6 +11984,149 @@ automatic join, I1b's prompt) and I1b's preselection (19.7.3) and leaves
 I3's row action as designed (*A* the
 walk-in, *Y: Join at <host>* the travel); 42 reads the load gate's max
 at p99.99. Round I3 depends on the answers to 35 and 37 as well.
+
+*Built: the lanes "server and web" and "harness" (2026-11-06, branch
+`feat-i1a-web`, notes in `docs/ROUND_I1A_WEB_NOTES.md`; the decisions the
+lanes shared are in the round's contract file and repeated here).*
+
+- **Migration `0013_world`** as 19.17.1 (without `player_reports`, I1b's)
+  with CHECK constraints (camera / light 0-1, the randomizer seed
+  1..4294967295 or NULL, `randomizer_modes` bit 0 drops, bits 1-2 enemies,
+  bits 3-4 zones, boxes 1-4, difficulty 0-2, `peak_players` 1-4), foreign
+  keys (`instance_history.host_account_id` without cascade: a hosted row
+  keeps the anonymous id; members cascade with their instance and their
+  account) and a COMMENT on every new table and column. The data step fills
+  each room host's `online_prefs` from his newest room settings; nothing of
+  a room's story is copied (question 36 (b)). The views `v_friends`,
+  `v_friend_requests`, `v_blocks`, `v_instance_history` (area names by the
+  first stage, minutes, players without spectators) and `v_staff_audit` are
+  `SQL SECURITY INVOKER`. **The grant:** the views need `CREATE VIEW`, which
+  DEPLOY.md 2's service user lacks; the migrator now reads a migration's
+  `-- Requires:` line and refuses before it changes anything when the user
+  lacks the right (a test runs every migration as that user, first without,
+  then with the grant); DEPLOY.md 9.2 has the two GRANT lines for HeidiSQL.
+- **`IWorldRelay`** (Domain, implemented by the relay lane's `WorldGateway`):
+  admission, tickets, the browser snapshot (instances with members and
+  spectators, and every connected member with its stage and wid), the play
+  context (at home: wid 0, the own story, one player), leave, End, Remove;
+  `NullWorldRelay` until the relay registers its own. `IWorldVisibilitySink`
+  carries the host's visibility choice back to `online_prefs` (Q9).
+- **`WorldService`:** `/world/enter` and `/world/ticket` issue the ticket
+  (role `staff` for moderators and admins); the admission answers the same
+  newest nonce again (the relay's live re-check after `AccountChanged`) and
+  says whether the ticket came from *enter* (`NewSession`: the relay
+  replaces an older session); counts, `Visible()` for the lists (19.7.2:
+  Friends = a friend of the host), friends' whereabouts by their preference
+  (a Private instance shows only "Playing", a spectator "In the lobby"),
+  "Recently played with" (players only, 30 days), the history's start-up
+  close (`server_stop`) and the 90-day prune, `last_seen_at` once a minute.
+  `AccountChanged` is called before and after a deletion and after a lock,
+  ban or role change; `StoryReplaced` after a reset or restore is committed.
+- **The protocol floor:** `WorldProtocol.Version` 49 (Domain);
+  `VersionGate` uses max(`Play:MinimumProtocol`, 49) and therefore refuses a
+  missing protocol on reports; `/world/enter` checks the gate only when the
+  client names its protocol or version (the relay refuses anything but 49
+  at the handshake). `/status` announces the effective minimum.
+- **REST:** the client lane's names are answered as a superset
+  (`relayTicket` and `ticket`, `role` the account's and `relayRole` member or
+  staff, `heldSeat` and `seat`, `/world`'s `players` and an `areas` map);
+  `/admin/instances` with End and Remove (audited `staff_end_instance`,
+  `staff_remove`); 410 `rooms_retired` for every method below `/rooms`.
+- **Achievements** read the relay's play context (`Play:RequireWorld`,
+  `Play:RequireRoom` read as it for one release): ranked by
+  `World:RankedDataHashes` (`Rooms:RankedDataHashes` read as it), the
+  ruleset from the instance's settings, the players from the relay, a clear
+  only when the reporter's own story holds its flag; `online_join` is a
+  guest's, `online_host` a host's with three players; new unlocks and times
+  record the history id.
+- **Website:** `/instances` (counts per area signed out, the visible rows
+  signed in, the visibility for staff), `/rooms` redirects; the friends page
+  shows where friends are, the online preferences and "Recently played
+  with"; profiles show friends where the player is; `/admin/instances` with
+  End and Remove; the admin account page lists the account's instances; the
+  privacy page covers instances, whereabouts and staff looks.
+- **Areas:** `data/online/areas.json` format `dw4-areas/2` from
+  `presence_data.cpp`'s table with the four explicit columns (the C++
+  presence test checks the columns and the file byte for byte);
+  `DW4Online.Domain.World.AreaTable` reads it for the website and the relay.
+  `data/online/stage_graph.json` (`tools/export_stage_graph.py`): 425
+  literal ways out of the scripts and the 29 Security Gates on 27 stages;
+  `AreaTableTests` pin the four scopes on it, with stag0205's plateau
+  reaching only the Fortress (variable targets such as the river stag0103
+  or the tower tops' boss stages are outside the literal graph).
+- **Harness:** a fresh server per game scenario, `--online-play`,
+  `DW4_ONLINE_AUTOCHOICE`, the world log read per wid, link cuts in the
+  impairment proxy (closing and half-open), ordered and killed server
+  restarts on the same ports, client crashes, prefs, roles, timed API steps
+  and checks, database checks, counter-proofs and `requires`. The W
+  scenarios of I1a's Done-when are written (W1x and W30x are the
+  counter-proofs with `DW4_ONLINE_TEST_NO_REPLACE`); they need the client
+  and relay lanes merged to run. S14, S14a, S14h and S14zb retired, S14z is
+  "a new account's home starts at zero"; the UI scenario *rooms* became
+  *home*.
+- **The trial merge (second session).** The three lanes' branches were
+  merged without a ref in the web lane's build folder (`git merge-tree`)
+  and built: the server with every unit and integration test, the
+  development game client, and the W scenarios ran there with real
+  clients. What it changed on web's side: the domain's visibility names
+  are `VisibilityNames` (the relay's protocol has its own `Visibilities`),
+  web's World options bind as `worldWeb` (the relay's `WorldHubOptions`
+  is `world`), `AreaTable` has the area keys as constants and a public
+  constructor (the relay's stub had them), and `ServerApp.Build` takes
+  `overrideServices`, so the tests' stand-in world relay replaces the
+  relay's own registration. The relay's integration tests need
+  `fakeWorld: false` and tickets through `WorldService` (its admission
+  knows only the nonces it issued, 19.17.3). A reflection test pins
+  `Wire.WorldProtocol` to `WorldProtocol.Version`. The release is
+  DW4Online 0.1.7 (protocol 49, migration 0013).
+- **Harness additions.** Fake world clients (FakeClient's client mode
+  after the relay lane: world tickets, protocol 49): W19's 35 presence
+  senders and W29's two fake guests, which arrive at stag0101 while the
+  host's instance has nobody there, so they become a new stage group of
+  it (a guest's NEW) and never share a stage group with a game client.
+  W22 runs a protocol 48 client (the release before the world) that is
+  turned away with "Update required". The `--fake` scenarios run in the
+  world (a fresh server each, world tickets). The scenarios learned from
+  the trial runs: r25c has no card k4 (k5 instead), an own-story check
+  needs the client's card uploaded as its online character (else the
+  client's own story is the missing character's, zeros), field exits go
+  by the explore bot, the client counts a fading ghost figure a moment
+  longer (W19 fails only at 35), the client locks online play with
+  `DW4_DIFFICULTY` (W12 uses `--online-difficulty`), and the relay names
+  the join of a starting instance `join` in its log (W4b reads the
+  client's arrival toast). The end-to-end tools (`tests/winhttp_client`,
+  `tests/e2e/relay_spike_test.py`) speak the world.
+- **Found for the client lane** (contract): its online achievements still
+  poll `/rooms/world` (410), so `online_host` and the host's story
+  challenges are never reported, and `online_join` is reported at home,
+  where the server refuses it (19.8.9: someone else's instance); A1 and
+  W29 expect the world's rules.
+- **The W scenarios with real clients (trial merge 2: client 8cd90c31,
+  relay 1470a267).** Passing: W1, W1x, W3, W4, W4b, W4bx, W5, W5f, W7,
+  W7c, W8, W11, W12, W18, W19, W22, W25, W26, W28, W30, W30x, S14z, A1 and
+  the regression scenarios run so far (J1, M1, P1, S1, S2, S14p as the
+  host's story, S17a). Found for the other lanes (contract): the client
+  stays in the field after CLOSE 8 *server stopping* (W24); the relay
+  stamps HOME for a lost or leaving host's stage group at a sealed tick
+  after the host's leave, so the guest leading alone never goes home
+  (W7b); a host resuming after 45 s is closed for too many frames per
+  second (W7d). The explore bot sets the limits of the rest: W9 and W32
+  (characters fall in the Fortress), W30b (Dry Land, `requires:
+  dry_land_walk`). RG1, RG2 and RG10 retired (the room story at home).
+- **The web lane's review fixes.** A member's leave closes the account's
+  newest open history row of the instance that started at most a second
+  after the leave's join key (the relay's seat time is a separate
+  sub-millisecond clock reading, never the stored `joined_at`: every
+  leave was lost before); times are cut to milliseconds. A friend whose
+  whereabouts preference is *nobody* shows "Online" / "Offline" only
+  (19.11), not nothing. The admission answers a database error with a
+  refusal (ERR ticket) instead of an exception, and writes last seen
+  apart from it. Staff audit details name accounts by id (`hostId`,
+  `memberIds`), the audit list shows the current names. The harness
+  counts a skipped scenario apart and exits 3 for it unless
+  `--allow-skip`, and a counter-proof passes only when its `expect_fail`
+  check failed and nothing else broke (`test_run_verdicts.py`). The
+  production example says `Play:MinimumProtocol` 49.
 
 **Round I1b: the prompt, go along, removal and *Report player*** (proposed
 r69; M, two lanes; round 72 adds the third lane *go along*, M-L).

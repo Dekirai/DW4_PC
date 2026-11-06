@@ -1,0 +1,12 @@
+# W30, host a (k10): hosts Dry Land and goes on to stag0202, so its instance has nobody at the gate stage stag0201 when b
+# arrives. (The trial merge's explore bot fell on the way on to dng205b1 and b's k7 character in stag0201's fights: the
+# scenario keeps the area join and the way home, without the walk into the ruins.)
+campaign until stage=stagml11,control
+idle until epoch>=@80
+explore mate00 until onme:mate00
+gate mate00 1 until stage=stag0201,control
+log a hosts Dry Land
+explore matz00 yes until stage=stag0202,control
+log a in stag0202
+idle until epoch>=@400
+log a done

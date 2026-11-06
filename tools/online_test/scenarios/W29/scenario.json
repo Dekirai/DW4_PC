@@ -1,0 +1,65 @@
+{
+  "desc": "achievements in the world: online_host with three guests (two fake guests by a guest's NEW at stag0101), online_join for the guest",
+  "world": true,
+  "autochoice": "first",
+  "seed_story": true,
+  "frames": 60000,
+  "timeout": 1000,
+  "min_shared_ticks": 0,
+  "requires": [
+    "fake_world_clients"
+  ],
+  "fake_guests": {
+    "count": 2,
+    "after": "a: log: a joined b in the cave",
+    "stage": "stag0101"
+  },
+  "achievements": {
+    "a": {
+      "unlocked": [
+        "online_host"
+      ],
+      "locked": [
+        "online_join"
+      ]
+    },
+    "b": {
+      "unlocked": [
+        "online_join"
+      ],
+      "locked": [
+        "online_host"
+      ]
+    }
+  },
+  "clients": [
+    {
+      "name": "a",
+      "script": "a.script",
+      "card": "k10",
+      "start": 0
+    },
+    {
+      "name": "b",
+      "script": "b.script",
+      "card": "k10",
+      "start": 3,
+      "seed_story": true
+    }
+  ],
+  "db_checks": [
+    {
+      "name": "four players in a's instance (a, b, two fakes)",
+      "sql": "SELECT COUNT(DISTINCT m.account_id) FROM instance_history_members m JOIN instance_history h ON h.id = m.instance_id WHERE h.host_account_id = {id:a}",
+      "expect": "^4$"
+    },
+    {
+      "name": "the fakes are guests of a's instance",
+      "sql": "SELECT COUNT(*) FROM instance_history_members m JOIN instance_history h ON h.id = m.instance_id WHERE h.host_account_id = {id:a} AND m.account_id IN ({id:fg1}, {id:fg2}) AND m.role = 'guest'",
+      "expect": "^2$"
+    }
+  ],
+  "env": {
+    "DW4_ACHIEVEMENTS": "1"
+  }
+}

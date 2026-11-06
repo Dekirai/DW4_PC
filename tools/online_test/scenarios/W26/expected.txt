@@ -1,0 +1,4 @@
+# W26 (19.24).
+b: online-script: step .* log: b home on its own story
+a: online-script: step .* log: a played on
+!b: online-script: FAIL

@@ -1,0 +1,6 @@
+# W7c (19.24, 19.6.7): a half-open cut: the proxy holds a's packets for 20 s without closing; the grace starts within 5 s, no lagOut, a resumes
+a: online-script: step .* log: a played on as host
+!relay: (lag_out|lagout|member_lagout)
+shared: a b >= 3000
+!a: online-script: FAIL
+!b: online-script: FAIL

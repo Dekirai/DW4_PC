@@ -1,0 +1,35 @@
+{
+  "desc": "a Friends: b (no friend) gets no row and a NEW",
+  "world": true,
+  "autochoice": "first",
+  "seed_story": true,
+  "frames": 60000,
+  "timeout": 1000,
+  "min_shared_ticks": 0,
+  "api_checks": [],
+  "db_checks": [
+    {
+      "name": "two instances",
+      "sql": "SELECT COUNT(*) FROM instance_history",
+      "expect": "^2$"
+    }
+  ],
+  "clients": [
+    {
+      "name": "a",
+      "script": "a.script",
+      "card": "k5",
+      "start": 0,
+      "prefs": {
+        "defaultVisibility": "friends"
+      }
+    },
+    {
+      "name": "b",
+      "script": "b.script",
+      "card": "k5",
+      "start": 3,
+      "seed_story": true
+    }
+  ]
+}

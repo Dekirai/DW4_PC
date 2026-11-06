@@ -100,12 +100,31 @@ else
 {
     <div class="table-wrap">
         <table>
-            <thead><tr><th>Name</th><th>Friends since</th><th></th></tr></thead>
+            <thead><tr><th>Name</th><th>Where</th><th>Friends since</th><th></th></tr></thead>
             <tbody>
             @foreach (var f in o.Friends)
             {
+                var where = Model.Presence.GetValueOrDefault(f.AccountId);
                 <tr>
                     <td><a href="~/u/@f.Username">@f.Username</a></td>
+                    <td>
+                        @if (where is null)
+                        {
+                            <span class="muted">-</span>
+                        }
+                        else if (where.Online)
+                        {
+                            <span class="badge ok">@where.Status</span>
+                            @if (where.Stage is not null)
+                            {
+                                <span class="muted small">@where.Stage</span>
+                            }
+                        }
+                        else
+                        {
+                            <span class="muted">@(where.LastSeenAt is { } seen ? $"last online {Format.Ago(seen, Model.Now)}" : "offline")</span>
+                        }
+                    </td>
                     <td>@Format.Day(f.Since)</td>
                     <td>
                         <form method="post" asp-page-handler="Remove" class="inline">
@@ -125,6 +144,73 @@ else
     </div>
     <p class="muted small">Removing a friend is not announced; they see it in their own list.</p>
 }
+
+<h2>Recently played with</h2>
+@if (Model.PlayedWith.Count == 0)
+{
+    <p class="muted">Nobody yet: players you share an instance with show here for 30 days.</p>
+}
+else
+{
+    <div class="table-wrap">
+        <table>
+            <thead><tr><th>Name</th><th>Last played</th><th class="num">Instances</th><th></th></tr></thead>
+            <tbody>
+            @foreach (var p in Model.PlayedWith)
+            {
+                <tr>
+                    <td><a href="~/u/@p.Username">@p.Username</a></td>
+                    <td>@Format.Ago(p.LastPlayedAt, Model.Now)</td>
+                    <td class="num">@p.Times</td>
+                    <td>
+                        @if (!o.Friends.Any(f => f.AccountId == p.AccountId))
+                        {
+                            <form method="post" asp-page-handler="Add" class="inline">
+                                <input type="hidden" name="Username" value="@p.Username" />
+                                <button type="submit" class="link">Add friend</button>
+                            </form>
+                            @:&middot;
+                        }
+                        <form method="post" asp-page-handler="Block" class="inline">
+                            <input type="hidden" name="Username" value="@p.Username" />
+                            <button type="submit" class="link">Block</button>
+                        </form>
+                    </td>
+                </tr>
+            }
+            </tbody>
+        </table>
+    </div>
+}
+
+<h2>Online preferences</h2>
+<div class="panel">
+    <form method="post" asp-page-handler="Prefs" class="stack">
+        <label>Your instances start as
+            <select name="DefaultVisibility">
+                <option value="public" selected="@(Model.Prefs.DefaultVisibility == "public")">Public: anyone may join</option>
+                <option value="friends" selected="@(Model.Prefs.DefaultVisibility == "friends")">Friends: only your friends may join</option>
+                <option value="private" selected="@(Model.Prefs.DefaultVisibility == "private")">Private: nobody joins</option>
+            </select>
+        </label>
+        <label>Party invites from
+            <select name="Invites">
+                <option value="anyone" selected="@(Model.Prefs.Invites == "anyone")">anyone</option>
+                <option value="friends" selected="@(Model.Prefs.Invites == "friends")">friends only</option>
+            </select>
+        </label>
+        <label>Where you play and when you were last online is shown to
+            <select name="Whereabouts">
+                <option value="friends" selected="@(Model.Prefs.Whereabouts == "friends")">your friends</option>
+                <option value="nobody" selected="@(Model.Prefs.Whereabouts == "nobody")">nobody</option>
+            </select>
+        </label>
+        <label><input type="checkbox" name="FriendToasts" value="true" checked="@Model.Prefs.FriendToasts" /> Show a note in the game when a friend comes online</label>
+        <button type="submit">Save preferences</button>
+        <span class="muted small">The game changes the visibility of an instance you host at any time (Online menu); the last
+            choice is kept for the next one.</span>
+    </form>
+</div>
 
 <h2>Blocked players</h2>
 @if (o.Blocks.Count == 0)

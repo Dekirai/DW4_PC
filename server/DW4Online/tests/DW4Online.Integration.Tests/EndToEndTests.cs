@@ -173,8 +173,9 @@ public sealed class RealHost : IAsyncDisposable
 
 /// <summary>
 /// End to end on loopback against real Kestrel and the real relay: website registration, then the C++ WinHTTP client
-/// (login, cloud save up and down, online character, room, stage and relay handshake, achievement), then the profile
-/// page; and the groundwork spike's Python test against the room service and relay.
+/// (login, cloud save up and down, online character, the world's entry and relay handshake at protocol 49, an achievement
+/// while in the world, the 410 of the retired rooms), then the profile page; and the groundwork spike's Python test
+/// against the world (two strangers' co-arrival, the sealed stream, the host's leave ending the instance).
 /// </summary>
 public class EndToEndTests(Xunit.Abstractions.ITestOutputHelper log)
 {
@@ -205,7 +206,7 @@ public class EndToEndTests(Xunit.Abstractions.ITestOutputHelper log)
             Assert.Contains("Agumon", profile.Html);
             Assert.Contains("E2E", profile.Html);
             Assert.Contains("1 h 00 min", profile.Html);
-            Assert.Contains("Connected", profile.Html);
+            Assert.Contains("Ouch", profile.Html); // (first_defeat: online_join is a guest's since the world, 19.8.9)
             Assert.Contains("1 of 72 unlocked", profile.Html);
             var account = await web.GetAsync("/account");
             Assert.Contains("from dw4online_client", account.Html);

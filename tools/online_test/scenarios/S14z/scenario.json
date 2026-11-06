@@ -1,11 +1,19 @@
 {
-  "desc": "a room whose owner has no online story starts at zero (the user's decision of 31.10, SEAMLESS.md 8.6): the guest plays its lobby while the owner sits at the title; what it does is dropped (not_started), the next barrier removes it with the notice; the owner's new game starts from the empty room story, and only its own progress begins the owner's online story",
-  "seed_story": false,
+  "desc": "a new account's home starts at zero (S14z of the world, SEAMLESS.md 19.24, question 36 (b)): a new account (no online story, no character) plays its lobby on its own empty story while another player's instance runs; its first own progress starts its online story at revision 1, nothing of the other's story reaches it",
+  "world": true,
+  "autochoice": "first",
+  "seed_story": true,
+  "card": "k5",
   "frames": 24000,
   "timeout": 900,
   "min_shared_ticks": 0,
+  "own_story": ["n"],
+  "db_checks": [
+    {"name": "the new account's own story started from zero", "sql": "SELECT revision FROM online_story WHERE account_id = {id:n}", "expect": "^[1-9][0-9]*$"},
+    {"name": "no story history row copied from another account", "sql": "SELECT COUNT(*) FROM online_story_history WHERE account_id = {id:n} AND reason NOT IN ('room', 'session')", "expect": "^0$"}
+  ],
   "clients": [
     {"name": "o", "script": "o.script", "start": 0},
-    {"name": "g", "script": "g.script", "start": 3}
+    {"name": "n", "script": "n.script", "start": 3, "card": null}
   ]
 }

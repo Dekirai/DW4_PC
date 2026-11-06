@@ -17,7 +17,7 @@ public sealed class IndexModel(
     AccountService accounts,
     OnlineCharacterService characters,
     CloudSaveService cloud,
-    RoomService rooms,
+    WorldService world,
     WebOptions web) : PageModel
 {
     [BindProperty] public string? CurrentPassword { get; set; }
@@ -116,11 +116,11 @@ public sealed class IndexModel(
         if (session.Role == Roles.Admin) return await ShowAsync(ct, error: "Admins cannot delete their own account; remove the admin role first.");
         if (await accounts.ConfirmPasswordAsync(session.AccountId, CurrentPassword, HttpContext.Caller(), ct) is { Ok: false } wrong)
             return await ShowAsync(ct, error: wrong.Error!.Message);
-        await rooms.RemoveAccountAsync(session.AccountId, ct);
+        world.AccountChanged(session.AccountId);
         var result = await accounts.DeleteAccountAsync(session, CurrentPassword, HttpContext.Caller(), ct);
         if (!result.Ok) return await ShowAsync(ct, error: result.Error!.Message);
-        // Again after the scrub: a room another session of the account opened meanwhile closes.
-        await rooms.RemoveAccountAsync(session.AccountId, CancellationToken.None);
+        // Again after the scrub: a world session another session of the account started meanwhile ends.
+        world.AccountChanged(session.AccountId);
         WebSessions.SignOut(HttpContext);
         return Redirect("~/?deleted=1");
     }

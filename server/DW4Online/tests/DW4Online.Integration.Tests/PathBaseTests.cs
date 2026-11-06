@@ -56,7 +56,7 @@ public partial class PathBaseTests
         Assert.Contains(web.SetCookieLines, l => l.StartsWith("dw4_antiforgery=", StringComparison.Ordinal) &&
             l.Contains("path=/dw4online", StringComparison.OrdinalIgnoreCase));
 
-        foreach (var page in new[] { "/account", "/achievements", "/rooms", "/privacy", "/u/PathUser", "/recover" })
+        foreach (var page in new[] { "/account", "/achievements", "/instances", "/privacy", "/u/PathUser", "/recover" })
             AllBelowBase(await web.GetAsync(page));
         var account = await web.GetAsync("/account");
         Assert.Contains("Account: PathUser", account.Html);

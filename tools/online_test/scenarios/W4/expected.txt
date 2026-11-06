@@ -1,0 +1,8 @@
+# W4 (19.24, 19.7.6): two strangers take the gate 2 s apart with nothing running: co-arrival without a prompt, a hosts
+a: online-script: step .* log: together
+b: online-script: step .* log: together
+relay: instance_start .*stage=stag0101
+relay: instance_join .*how=coarrival
+shared: a b >= 3000
+!a: online-script: FAIL
+!b: online-script: FAIL

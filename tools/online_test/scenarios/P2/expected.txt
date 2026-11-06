@@ -1,20 +1,20 @@
-# P2: ghost figures with an older client (SEAMLESS.md 12.1, "Versions fail safe"). Members a=0 (PRESENCE2) and b=1
+# P2: ghost figures with an older client (SEAMLESS.md 12.1, "Versions fail safe"). Members a=1 (PRESENCE2) and b=2 (the world's member ids)
 # (DW4_ONLINE_TEST_PRESENCE1: PRESENCE only, as a client before round 60 or one of an older hub). Each sees the other's
 # figure: a's from b's PRESENCE (no clip, no weapon: run and wait by the speed of its packets), b's from the PRESENCE the
 # hub makes of a's PRESENCE2.
 a: online-script: step .* log: in the lobby
 a: online-script: step .* log: sees b
-a: ghost member=1 form=\d+ segment=\d+ at=.*clip=wait
+a: ghost member=2 form=\d+ segment=\d+ at=.*clip=wait
 a: online-script: step .* log: b walks
-a: ghost member=1 .*clip=run
+a: ghost member=2 .*clip=run
 a: online-script: step .* log: b back
-a: ghost member=1 .*clip=wait
+a: ghost member=2 .*clip=wait
 b: online-script: step .* log: sees a
-b: ghost member=0 form=\d+ segment=\d+ at=.*clip=wait
+b: ghost member=1 form=\d+ segment=\d+ at=.*clip=wait
 b: online-script: step .* log: in front of a
 b: online-script: step .* log: walked
 # PRESENCE carries no weapon: neither figure holds one.
-!a: ghost member=1 .* weapon=
-!b: ghost member=0 .* weapon=
+!a: ghost member=2 .* weapon=
+!b: ghost member=1 .* weapon=
 !a: ghosts shown [2-9]
 !b: ghosts shown [2-9]

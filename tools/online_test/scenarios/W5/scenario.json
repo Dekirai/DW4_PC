@@ -1,0 +1,57 @@
+{
+  "desc": "a Private: b (no friend) gets no row and a NEW; a moderator c sees a's row marked Private",
+  "world": true,
+  "autochoice": "first",
+  "seed_story": true,
+  "frames": 60000,
+  "timeout": 1000,
+  "min_shared_ticks": 0,
+  "api_checks": [
+    {
+      "at": 140,
+      "as": "c",
+      "path": "/api/v1/instances",
+      "status": 200,
+      "expect": "\"visibility\": \"private\""
+    },
+    {
+      "at": 140,
+      "as": "b",
+      "path": "/api/v1/instances?area=death_valley",
+      "status": 200,
+      "expect": "^((?!private).)*$"
+    }
+  ],
+  "db_checks": [
+    {
+      "name": "two instances",
+      "sql": "SELECT COUNT(*) FROM instance_history",
+      "expect": "^2$"
+    }
+  ],
+  "clients": [
+    {
+      "name": "a",
+      "script": "a.script",
+      "card": "k5",
+      "start": 0,
+      "prefs": {
+        "defaultVisibility": "private"
+      }
+    },
+    {
+      "name": "b",
+      "script": "b.script",
+      "card": "k5",
+      "start": 3,
+      "seed_story": true
+    },
+    {
+      "name": "c",
+      "script": "c.script",
+      "card": "k5",
+      "start": 6,
+      "role": "moderator"
+    }
+  ]
+}

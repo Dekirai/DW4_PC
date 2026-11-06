@@ -1,0 +1,27 @@
+{
+  "desc": "nothing running: no prompt, a NEW with the remembered visibility (Friends)",
+  "world": true,
+  "autochoice": "first",
+  "seed_story": true,
+  "frames": 60000,
+  "timeout": 1000,
+  "min_shared_ticks": 0,
+  "db_checks": [
+    {
+      "name": "the instance with its visibility and end",
+      "sql": "SELECT visibility, end_reason FROM instance_history",
+      "expect": "^friends\thost_left$"
+    }
+  ],
+  "clients": [
+    {
+      "name": "a",
+      "script": "a.script",
+      "card": "k5",
+      "start": 0,
+      "prefs": {
+        "defaultVisibility": "friends"
+      }
+    }
+  ]
+}

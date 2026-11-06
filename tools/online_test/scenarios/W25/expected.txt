@@ -1,0 +1,6 @@
+# W25 (19.24, 19.6.10): the clients reconnect to the new process, find no instance and take the home departure.
+a: online-script: step .* log: a home
+b: online-script: step .* log: b home
+b: online-script: step .* log: own story
+!a: online-script: FAIL
+!b: online-script: FAIL

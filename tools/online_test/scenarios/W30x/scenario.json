@@ -1,0 +1,32 @@
+{
+  "desc": "counter-proof of W30: the replace at the guest's NEW switched off: b has its own phase in stag0201, W30 must fail",
+  "world": true,
+  "autochoice": "first",
+  "seed_story": true,
+  "frames": 60000,
+  "timeout": 1400,
+  "min_shared_ticks": 0,
+  "dir": "W30",
+  "counter_proof": true,
+  "expect_fail": [
+    "^b: online-script: FAIL \\(line 12\\) key:9=0 \\(frame \\d+, stage stag0201"
+  ],
+  "clients": [
+    {
+      "name": "a",
+      "script": "a.script",
+      "card": "k10",
+      "start": 0
+    },
+    {
+      "name": "b",
+      "script": "b.script",
+      "card": "k7",
+      "start": 3,
+      "seed_story": true,
+      "env": {
+        "DW4_ONLINE_TEST_NO_REPLACE": "1"
+      }
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+# W6, guest b (k9, level 19: k2, p4 and k5 characters fall on stag0101's rock slope on the way to matz00; its own story has key item 9, a's k5 has not): joins a, goes into dng101b1 alone; a's gate disc ends the instance: the notice, then b's home
+# departure about 3 s later; b is in its lobby on its own story within 5 s of the end.
+campaign until stage=stagml11,control
+idle until epoch>=@100
+explore mate00 yes until stage=stag0101,control
+log b joined a
+follow 40 until sealed>=900
+explore matz00 yes until stage=dng101b1,control
+log b in dng101b1
+wander 0 0 30 until stage=stagml11,control fail epoch>=@330
+log b home after the end
+idle until frames>=120 fail key:9=0
+log own story

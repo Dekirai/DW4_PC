@@ -1,0 +1,66 @@
+@page "/admin/instances"
+@model DW4Online.Web.Pages.Admin.InstancesModel
+@{
+    ViewData["Title"] = "Instances";
+}
+<h1>Instances</h1>
+<p class="muted">Every instance of the world, Private ones included. <em>End</em> ends it for everyone (its guests go home,
+    the host too); <em>Remove</em> sends one member home. Both are written to the audit log with your name.</p>
+@if (Model.Message is not null)
+{
+    <div class="notice ok">@Model.Message</div>
+}
+@if (Model.Error is not null)
+{
+    <div class="notice error">@Model.Error</div>
+}
+@if (Model.Rows.Count == 0)
+{
+    <p class="muted">No instance is running.</p>
+}
+@foreach (var i in Model.Rows)
+{
+    <div class="panel">
+        <h2>#@i.Wid <a href="~/admin/account/@i.HostName">@i.HostName</a>
+            <span class="muted small">@StageNames.Area(i.Area): @StageNames.Of(i.HostStage)</span>
+            <span class="badge @(i.Visibility == "public" ? "" : "warn")">@i.Visibility</span>
+            @if (i.HostAway)
+            {
+                <span class="badge bad">host away</span>
+            }
+            @if (i.Ending)
+            {
+                <span class="badge bad">ending</span>
+            }
+        </h2>
+        <p class="muted small">Started @Format.Ago(i.StartedAtUtc, Model.Now)@(i.HistoryId is { } h ? $", history #{h}" : "").
+            @i.Settings</p>
+        <div class="table-wrap">
+            <table>
+                <thead><tr><th>Player</th><th>Role</th><th>Where</th><th>Connection</th><th></th></tr></thead>
+                <tbody>
+                @foreach (var m in i.Members.Concat(i.Spectators))
+                {
+                    <tr>
+                        <td><a href="~/admin/account/@m.Name">@m.Name</a></td>
+                        <td>@m.Role</td>
+                        <td>@StageNames.Of(m.Stage)</td>
+                        <td>@(m.Connected ? (m.Lagging ? "lagging" : "ok") : "away")</td>
+                        <td>
+                            <form method="post" asp-page-handler="Remove" class="inline">
+                                <input type="hidden" name="Wid" value="@i.Wid" />
+                                <input type="hidden" name="Username" value="@m.Name" />
+                                <button type="submit" class="link">Remove</button>
+                            </form>
+                        </td>
+                    </tr>
+                }
+                </tbody>
+            </table>
+        </div>
+        <form method="post" asp-page-handler="End" class="inline">
+            <input type="hidden" name="Wid" value="@i.Wid" />
+            <button type="submit" class="secondary">End instance</button>
+        </form>
+    </div>
+}

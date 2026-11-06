@@ -10,8 +10,9 @@ namespace DW4Online.Integration.Tests;
 
 public class OnlineCharacterTests
 {
+    /// <summary>An upload with the game's context (at least the protocol: the version gate's floor in code refuses none, 19.17.3).</summary>
     private static object Upload(SaveRecord record, long playSeconds, object? context = null) =>
-        new { record = Convert.ToBase64String(RecordCodec.Encode(record)), playSeconds, context };
+        new { record = Convert.ToBase64String(RecordCodec.Encode(record)), playSeconds, context = context ?? new { protocol = TestHost.Protocol } };
 
     [DbFact]
     public async Task First_saves_of_many_accounts_at_once_never_conflict()
@@ -66,12 +67,12 @@ public class OnlineCharacterTests
         character.BaseLevel[0] = 12;
         character.Hp = character.MaxHp = 300;
         host.Clock.Advance(TimeSpan.FromHours(1));
-        var room = await host.CreateRoomAsync(id, []);
+        host.InWorld(id);
         var stale = await client.PutJson("/api/v1/online-character", Upload(character, 3000), ifMatch: "\"7\"");
         Assert.Equal(HttpStatusCode.Conflict, stale.StatusCode);
         Assert.Equal(1, (await stale.Json()).GetProperty("currentRevision").GetInt32());
 
-        var updated = await client.PutJson("/api/v1/online-character", Upload(character, 3000, new { roomCode = room, players = 1 }), ifMatch: "\"1\"");
+        var updated = await client.PutJson("/api/v1/online-character", Upload(character, 3000, new { protocol = TestHost.Protocol, players = 1 }), ifMatch: "\"1\"");
         Assert.Equal(HttpStatusCode.OK, updated.StatusCode);
         var result = await updated.Json();
         Assert.Equal(2, result.GetProperty("revision").GetInt32());
@@ -116,12 +117,12 @@ public class OnlineCharacterTests
         Assert.Contains("level_range", issues);
         Assert.Contains("bits_range", issues);
 
-        var notBase64 = await client.PutJson("/api/v1/online-character", new { record = "%%%", playSeconds = 1 }, create: true);
+        var notBase64 = await client.PutJson("/api/v1/online-character", new { record = "%%%", playSeconds = 1, context = new { protocol = TestHost.Protocol } }, create: true);
         Assert.Equal("invalid_record", await notBase64.ProblemCode());
-        var shortRecord = await client.PutJson("/api/v1/online-character", new { record = Convert.ToBase64String(new byte[100]), playSeconds = 1 }, create: true);
+        var shortRecord = await client.PutJson("/api/v1/online-character", new { record = Convert.ToBase64String(new byte[100]), playSeconds = 1, context = new { protocol = TestHost.Protocol } }, create: true);
         Assert.Equal("invalid_record", await shortRecord.ProblemCode());
 
-        var cheats = await client.PutJson("/api/v1/online-character", Upload(Samples.Fresh(), 60, new { cheats = true }), create: true);
+        var cheats = await client.PutJson("/api/v1/online-character", Upload(Samples.Fresh(), 60, new { protocol = TestHost.Protocol, cheats = true }), create: true);
         Assert.Equal("unranked_cheats", await cheats.ProblemCode());
 
         Assert.Equal(HttpStatusCode.Created, (await client.PutJson("/api/v1/online-character", Upload(Samples.Fresh(), 60), create: true)).StatusCode);
@@ -142,8 +143,8 @@ public class OnlineCharacterTests
         maxed.Level = 400;
         maxed.BaseLevel[0] = 400;
         maxed.Hp = maxed.MaxHp = 9000;
-        var room = await host.CreateRoomAsync(id, []);
-        var created = await client.PutJson("/api/v1/online-character", Upload(maxed, 120, new { roomCode = room, players = 1 }), create: true);
+        host.InWorld(id);
+        var created = await client.PutJson("/api/v1/online-character", Upload(maxed, 120, new { protocol = TestHost.Protocol, players = 1 }), create: true);
         Assert.Equal(HttpStatusCode.Created, created.StatusCode);
         Assert.Contains("level_rate", (await created.Json()).GetProperty("warnings").EnumerateArray().Select(w => w.GetProperty("code").GetString()));
         await using var c = await host.SqlAsync();
@@ -369,15 +370,15 @@ public class OnlineCharacterTests
         var warnings = body.GetProperty("warnings").EnumerateArray().Select(w => w.GetProperty("code").GetString()).ToList();
         Assert.Contains("play_time_too_fast", warnings); // 400 h on an account a few seconds old
         Assert.Contains("level_rate", warnings);
-        Assert.Empty(body.GetProperty("unlocked").EnumerateArray()); // no room: nothing counts
+        Assert.Empty(body.GetProperty("unlocked").EnumerateArray()); // not in the world: nothing counts
         await using var c = await host.SqlAsync();
         Assert.True(await c.ExecuteScalarAsync<bool>("SELECT flagged FROM online_characters WHERE account_id = @id", new { id }));
         Assert.Equal(0, await c.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM achievement_unlocks WHERE account_id = @id", new { id }));
 
-        // In a room the state unlocks come, flagged (hidden from rankings until reviewed).
-        var room = await host.CreateRoomAsync(id, []);
+        // In the world the state unlocks come, flagged (hidden from rankings until reviewed).
+        host.InWorld(id);
         maxed.Bits = 9_999_998;
-        var update = await client.PutJson("/api/v1/online-character", Upload(maxed, 400L * 3600 + 60, new { roomCode = room, players = 1 }), ifMatch: "1");
+        var update = await client.PutJson("/api/v1/online-character", Upload(maxed, 400L * 3600 + 60, new { protocol = TestHost.Protocol, players = 1 }), ifMatch: "1");
         Assert.Equal(HttpStatusCode.OK, update.StatusCode);
         Assert.NotEmpty((await update.Json()).GetProperty("unlocked").EnumerateArray());
         Assert.Equal(0, await c.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM achievement_unlocks WHERE account_id = @id AND flagged = 0", new { id }));
@@ -400,33 +401,33 @@ public class OnlineCharacterTests
         Assert.True(await c.ExecuteScalarAsync<bool>("SELECT online_reset_at IS NOT NULL FROM accounts WHERE id = @id2", new { id2 }));
     }
 
-    /// <summary>State unlocks go to the room's ruleset: a randomizer room's into the randomizer list.</summary>
+    /// <summary>State unlocks go to the instance's ruleset: a randomizer instance's into the randomizer list.</summary>
     [DbFact]
-    public async Task State_unlocks_take_the_rooms_ruleset()
+    public async Task State_unlocks_take_the_instances_ruleset()
     {
         await using var host = await TestHost.StartAsync();
         var (token, _, id) = await host.RegisterAsync("Shuffler");
         var client = host.Client(token);
         host.Clock.Advance(TimeSpan.FromHours(2));
-        var room = await host.CreateRoomAsync(id, [], randomizer: true);
+        host.InWorld(id, wid: 4, host: false, players: 2, randomizer: true);
         var character = Samples.Fresh();
         character.Level = 12;
         character.BaseLevel[0] = 12;
         character.Hp = character.MaxHp = 300;
-        // The client even claims a standard run: the room decides.
-        var created = await client.PutJson("/api/v1/online-character", Upload(character, 3600, new { roomCode = room, players = 1, randomizer = false }), create: true);
+        // The client even claims a standard run: the instance decides.
+        var created = await client.PutJson("/api/v1/online-character", Upload(character, 3600, new { protocol = TestHost.Protocol, players = 1, randomizer = false }), create: true);
         Assert.Equal(HttpStatusCode.Created, created.StatusCode);
         Assert.Contains("lv_10", (await created.Json()).GetProperty("unlocked").EnumerateArray().Select(e => e.GetString()));
         await using var c = await host.SqlAsync();
         Assert.Equal(["randomizer"], (await c.QueryAsync<string>(
             "SELECT u.ruleset FROM achievement_unlocks u JOIN achievements a ON a.id = u.achievement_id WHERE u.account_id = @id AND a.code = 'lv_10'", new { id })).ToList());
-        // A room the account is not in counts for nothing.
-        var (otherToken, _, otherId) = await host.RegisterAsync("Outsider");
-        var foreignRoom = await host.CreateRoomAsync(otherId, []);
-        var outside = await client.PutJson("/api/v1/online-character", Upload(character, 3700, new { roomCode = foreignRoom, players = 1 }), ifMatch: "1");
+        // Out of the world (the relay saw nothing of the account for a minute) nothing counts; the upload is still saved.
+        host.World!.SetPlayContext(id, null);
+        character.Level = 22;
+        character.BaseLevel[0] = 22;
+        var outside = await client.PutJson("/api/v1/online-character", Upload(character, 3700, new { protocol = TestHost.Protocol, players = 1 }), ifMatch: "1");
         Assert.Equal(HttpStatusCode.OK, outside.StatusCode);
         Assert.Empty((await outside.Json()).GetProperty("unlocked").EnumerateArray());
-        _ = otherToken;
     }
 
     /// <summary>

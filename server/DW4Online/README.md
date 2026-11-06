@@ -1,7 +1,7 @@
 # DW4Online
 
 The online backend of the Digimon World 4 PC port: accounts, the online character, the private cloud backup of the
-local save, achievements, rooms, the DW4R2 relay with its lockstep instances and the website, in **one** ASP.NET Core process
+local save, achievements, the online world (instances instead of rooms since round I1), the DW4R2 relay with its lockstep instances and the website, in **one** ASP.NET Core process
 (API, website and relay share memory) backed by MariaDB. It runs as a Windows service on the user's Windows Server;
 players never forward ports.
 
@@ -17,7 +17,7 @@ separate work (see "Open ends"); `tests/winhttp_client` shows the client side of
 | `src/DW4Online.Data` | MariaDB through MySqlConnector + Dapper: repositories and the startup migrator. The SQL migrations are embedded. |
 | `src/DW4Online.Api` | The JSON API `/api/v1`: endpoints, bearer-token authentication, rate limits, problem details. |
 | `src/DW4Online.Relay` | The DW4R2 relay (port 52041, SEAMLESS.md 6): `Protocol` (frames and messages), `Hub` (one connection per member and room, instances as solo-led and sealed lockstep groups, server-paced sealing on a dedicated high-resolution timer thread, barrier decisions, forks, the tick log, state delivery, the presence fan-out: PRESENCE and since round 60 PRESENCE2 for the ghost figures of the lobby, with its bounds and token bucket, SEAMLESS.md 12.1), HMAC room tickets. |
-| `src/DW4Online.Web` | The Razor Pages website (English, server-rendered, no scripts): home, register, login, recovery, account settings, profiles, achievements, rooms, admin, privacy. |
+| `src/DW4Online.Web` | The Razor Pages website (English, server-rendered, no scripts): home, register, login, recovery, account settings, friends (with the online preferences and "Recently played with"), profiles, achievements, instances, admin (accounts, instances), privacy. |
 | `src/DW4Online.Server` | The executable: composition root, configuration, Windows-service mode, CLI tools, TLS certificate selector, file log. |
 | `sql/` | Numbered migrations `NNNN_description.sql` (0001 schema, 0002 achievement definitions, 0003-0012 see "Database"). |
 | `tests/DW4Online.Tests` | Unit tests (no database). |
@@ -127,7 +127,8 @@ and user secrets (Development) work as usual.
 | `Accounts` | `Registration` (open / closed), `PasswordIterations` (220000), `MaxFailedLogins` (10, per user name and address), `LockoutMinutes` (15), `MaxFailedLoginsPerAccount` (50), `KnownAddressDays` (30), `GameSessionDays` (30), `WebSessionDays` (14), `SessionTouchMinutes` (5), `MaxSessionsPerAccount` (20). |
 | `OnlineCharacter` | `HistoryRevisions` (20), `ResetHistoryDays` (30: the revisions of a reset character stay that long), `StoryHistoryRevisions` (100: the newest revisions of an account's online story kept in full, online_story_history), `StoryHistoryMinutes` (10: older room revisions are kept as the first of every this many minutes), `StoryHistoryDays` (90: how long those and the session starts, resets and restores stay), `StoryHistorySessions` (20: the newest session starts, resets and restores stay for good), `StoryCounterSaveSeconds` (60: a room story revision that changed only counters is written at most this often per account), `Rules:MaxLevelsPerPlayHour` (120), `Rules:PlayTimeSlackSeconds` (600). |
 | `CloudSave` | `MaxBytes` (1 MiB), `HistoryRevisions` (5). |
-| `Play` | `RequireRoom` (true), `MinimumProtocol` / `CurrentProtocol` (netplay `kProtocol`), `MinimumClientVersion` / `CurrentClientVersion`, `SpeedrunFloorSeconds` (per board `story_normal` / `story_hard` / `story_veryhard`, 2700 each: see "Speedrun floor"), `ClearStoryWaitSeconds` (30: a story clear reported in a room counts when the room's story holds that difficulty's clear flag; the server waits this long for it). |
+| `World` | (round I1, SEAMLESS.md 19.17.5) `DataHashes` (empty = any game data; a list admits only those: `/world/enter` 409 `unsupported_data`, the relay `ERR data`), `RankedDataHashes` (empty = every data hash counts for achievements; `Rooms:RankedDataHashes` is read as it for one release), `HistoryDays` (90: `instance_history`), `RecentlyPlayedDays` (30); the relay's own keys of the same section (members, instances, the host's grace, presence) are the relay's (`WorldHubOptions`). |
+| `Play` | `RequireWorld` (true: unlocks, stats and state achievements need the account in the world within the last minute, the relay's play context; `RequireRoom` is read as it for one release), `MinimumProtocol` / `CurrentProtocol` (netplay `kProtocol`; the code refuses below the world's protocol 49 whatever `MinimumProtocol` says, and `/status` announces the effective minimum), `MinimumClientVersion` / `CurrentClientVersion`, `SpeedrunFloorSeconds` (per board `story_normal` / `story_hard` / `story_veryhard`, 2700 each: see "Speedrun floor"), `ClearStoryWaitSeconds` (30: a story clear reported in a room counts when the room's story holds that difficulty's clear flag; the server waits this long for it). |
 | `RateLimits` | `GlobalPerMinute` 300 (per IP), `LoginPerMinute` 5 (per IP, login + recovery), `RegisterPerHour` 3 (per IP), `CharacterWritesPerMinute` 12, `CloudWritesPerHour` 6, `AchievementsPerMinute` 60, `AccountChangesPerMinute` 10, `StaffPerMinute` 60, `RoomCreatesPerMinute` 5, `RoomJoinsPerMinute` 20, `StageChangesPerMinute` 30 (stage enter + leave) (per account); `WebLoginPerMinute` 5 (website login + recovery), `WebRegisterPerHour` 3 (per IP, POSTs only), `WebAccountChangesPerMinute` 10 (per account, the account page's POSTs); `SocialPerMinute` 60 (per account: friend requests and answers, blocks, player cards), `FriendListSeconds` 2 (one `GET /friends` per account per this many seconds; 0 = no limit), `WebSocialPerMinute` 60 (per account, the friend and block buttons of the website, POSTs only). |
 | `Friends` | `RequestsPerHour` (20) and `RequestsPerDay` (100) per sender (counted in memory), `MaxPendingOut` (50: open requests a player sees as sent), `MaxPendingIn` (100: open requests that reach a player at a time; further ones wait their turn), `MaxFriends` (200), `MaxBlocks` (500), `RequestDays` (30: pending and declined requests expire, then the hourly housekeeping deletes them). See "Friends and blocks". |
 | `Rooms` | `MaxRooms` (200), `PlayersPerInstance` (4), `HeartbeatSeconds` (10), `MemberTimeoutSeconds` (35), `RoomsPerOwner` (1), `PasswordIterations` (20000, room passwords live in memory only), `SettingsMaxBytes` (4096), `RankedDataHashes` (empty = every data hash is ranked; decimal or 0x-hex). |
@@ -202,8 +203,13 @@ merge, the reset that goes with an online character's reset, or a staff restore;
 `OnlineCharacter:StoryHistoryRevisions` per account, removed with the account); 0011 the history's reason `session` (the
 story a room session started from, kept when its owner opens a room; the history is kept by time and session since,
 see `OnlineCharacter:StoryHistory*`); 0012 `friendships`, `friend_requests` and `account_blocks` (round I2-social,
-SEAMLESS.md 19.11; plain columns with a comment on each for HeidiSQL, no views: `CREATE VIEW` is not among the service
-user's rights of DEPLOY.md 2, the views come with a later migration; DEPLOY.md 9.1 has the queries with user names).
+SEAMLESS.md 19.11; plain columns with a comment on each for HeidiSQL); 0013 `world` (round I1, SEAMLESS.md 19.17.1):
+`online_prefs` (the visibility a player's instances start with, invites, whereabouts, toasts and the host settings; the
+room hosts' newest room settings carried over), `instance_history` + `instance_history_members` (written by the relay's
+queue, 90 days), `accounts.last_seen_at`, `instance_id` on `achievement_unlocks` and `speedrun_times`, the story history
+reason `mirror`, and the views `v_friends`, `v_friend_requests`, `v_blocks`, `v_instance_history`, `v_staff_audit`. The
+views need `CREATE VIEW` (DEPLOY.md 9.2): a migration's `-- Requires:` line names such rights, and the migrator refuses
+before it changes anything when the database user lacks one. `rooms` and `room_members` are read-only since 0013.
 
 ## API (`/api/v1`, JSON, errors as problem details)
 
@@ -242,14 +248,21 @@ Authenticated calls send `Authorization: Bearer dw4_<43 characters>`.
 | `GET /rooms/{code}/story` | token | Members: the room story the relay keeps (SEAMLESS.md 8): `{revision, phase (0-7), flags, folder, counters (16), policy, ownerPresent, droppedFlags, droppedFolder, droppedCounters, held, started, difficulty}` (`started` false: the owner has no online story yet and its game has not entered a stage; the room starts at zero and drops what members do until then, SEAMLESS.md 8.6). 404 `not_in_room`, 404 `no_story` before the room's first relay connection. |
 | `POST /rooms/{code}/heartbeat` | token | Every `heartbeatSeconds` (10) while the relay connection is down (a live relay connection counts as the heartbeat); silent members leave after 35 s. Answers the room state; 404 `not_in_room` means join again. |
 | `POST /rooms/{code}/leave`, `POST /rooms/{code}/kick` `{username}`, `DELETE /rooms/{code}` | token | Leave; the owner (present) kicks a guest (no re-join); the owner closes the room for everyone. |
-| `GET /friends` | token | `{friends: [{username, since, presence}], requestsIn: [{username, sentAt, expiresAt}], requestsOut: [...], blocks: [{username, since}], limits: {maxFriends, maxPendingOut, maxPendingIn, maxBlocks, requestDays}}`; `presence` is null until the world relay (round I1). One call per `RateLimits:FriendListSeconds` (2). |
+| `GET /friends` | token | `{friends: [{username, since, presence}], requestsIn: [{username, sentAt, expiresAt}], requestsOut: [...], blocks: [{username, since}], limits: {maxFriends, maxPendingOut, maxPendingIn, maxBlocks, requestDays}}`; `presence` is `{online, status ("In the lobby", "Playing in Dry Land", "Playing" in a Private instance, "Offline"), area, stage, lastSeenAt}`, or null when the friend's whereabouts preference is "nobody". One call per `RateLimits:FriendListSeconds` (2). |
 | `POST /friends/requests` | token | `{username}` (the exact user name, any case) -> `{result: "sent" or "friends", message}`; "friends" when the other player's request to the caller was open. 404 `player_not_found`, 422 `own_account`, 409 `you_blocked` / `already_friends` / `friend_limit` / `other_friend_limit` / `outgoing_limit`, 429 `friend_request_rate` with `retryAfterSeconds`. A request to a player who blocks the caller, whose open requests are full (it waits) or a repeat answers exactly like any other. Every write here may answer 503 `social_busy` when it waited 10 s for the accounts' lock. |
 | `POST /friends/requests/{username}/accept`, `.../decline`, `DELETE /friends/requests/{username}` | token | Accept (-> `{result: "friends", message}`), decline (204, silent for the sender), cancel the caller's own request (204). 404 `request_not_found`. |
 | `DELETE /friends/{username}` | token | End a friendship (204; 404 `not_friends`). |
 | `GET /blocks`, `POST /blocks` `{username}`, `DELETE /blocks/{username}` | token | The caller's blocks; block (204, repeating changes nothing, 409 `block_limit`); unblock (204, 404 `not_blocked`). |
 | `GET /players/{username}` | token | The public card: `{username, memberSince, hidden, character: {digimon, playerName, level} or null, relation}`; `relation` is `self`, `friends`, `request_sent`, `request_received`, `blocked` (the caller blocks him) or `none` (never the other side's block). A private or banned profile is `hidden` with `memberSince` and `character` null (nothing but the name and the relation), as on the website. |
-| `GET /admin/accounts?query=`, `POST /admin/accounts/{user}/reset-password` (admin), `.../status`, `.../role` (admin), `.../online-character/history`, `.../online-character/restore/{rev}`, `.../online-character/reset` | staff | Moderation; every action is audited. A locked or banned account leaves its room. `status` is active, locked or banned (deleting is `DELETE /admin/accounts/{user}`, admins only); a temporary password only from an admin (whoever knows it owns the account). |
-| `POST /admin/accounts/{user}/achievements/{code}/flag` `{ruleset?, flagged}`, `DELETE /admin/accounts/{user}/achievements/{code}?ruleset=`, `POST /admin/rooms/{code}/close`, `DELETE /admin/accounts/{user}` (admin) | staff | Flag / unflag or revoke an unlock, close a room, erase an account on request. |
+| `POST /world/enter`, `POST /world/ticket` | token | `{box?, protocol?, dataHash?, clientVersion?}` -> `{relayTicket (= ticket), relay: {host, port, protocol}, protocol (49), role (the account's), relayRole (member / staff), box (1), heldSeat (null until round I5), prefs: {defaultVisibility, invites, whereabouts, friendToasts}, settings: {cameraMode, lightMode, fastLoading, randomizer: {enabled, seed, drops, enemies, zones}}}`: the world session's one-time relay ticket (SEAMLESS.md 19.17.3; the newest per account counts; `/world/enter` also keeps the story the session starts from). 426 `client_outdated` (a protocol below 49 when one is given), 503 `maintenance` / `relay_unavailable`, 403 `account_inactive`, 409 `unsupported_data`. |
+| `POST /world/leave` | token | 204: the relay closes the account's world connection. |
+| `GET /world` | - | `{players, playersOnline, instances, areas: {death_valley: n, ...}, areaList: [{area, name, instances, players}]}`, no names. |
+| `GET /instances?area=` | token | The instances the caller may see (Visible(), SEAMLESS.md 19.7.2: Public, Friends for the host's friends, never Private; a block either way hides; staff see all with the visibility): `{instances: [{wid, host, area, areaName, stage, stageName, players, maxPlayers, visibility, difficulty, randomizer, storyLabel, ageSeconds, yours}]}`. |
+| `GET /me/online-prefs`, `PUT /me/online-prefs` | token | `{defaultVisibility, invites, whereabouts, friendToasts, cameraMode, lightMode, fastLoading, randomizer: {enabled, seed, drops, enemies, zones}, lastBox}`; PUT takes any subset (422 `invalid_prefs`). |
+| `/rooms` and everything below it | - | 410 `rooms_retired` (round I1: rooms gave way to the world; for one release). |
+| `GET /admin/instances`, `POST /admin/instances/{wid}/end`, `POST /admin/instances/{wid}/remove` `{username}` | staff | Every instance with members and spectators; End (the instance ends, audited `staff_end_instance`) and Remove (the member goes home, `staff_remove`). |
+| `GET /admin/accounts?query=`, `POST /admin/accounts/{user}/reset-password` (admin), `.../status`, `.../role` (admin), `.../online-character/history`, `.../online-character/restore/{rev}`, `.../online-character/reset` | staff | Moderation; every action is audited. A locked, banned or demoted account is re-checked by the relay at once (`IWorldNotifier.AccountChanged`). `status` is active, locked or banned (deleting is `DELETE /admin/accounts/{user}`, admins only); a temporary password only from an admin (whoever knows it owns the account). |
+| `POST /admin/accounts/{user}/achievements/{code}/flag` `{ruleset?, flagged}`, `DELETE /admin/accounts/{user}/achievements/{code}?ruleset=`, `DELETE /admin/accounts/{user}` (admin) | staff | Flag / unflag or revoke an unlock, erase an account on request. |
 | `GET /health` (no prefix) | - | `{status, schema}` or 503 when the database is unreachable. |
 
 The room state (create, join, heartbeat, `GET` for members) is `{room, settings, settingsHash, members: [{accountId,
@@ -331,7 +344,10 @@ and stats must carry `protocol` / `clientVersion` (426 `client_outdated` otherwi
   `IWorldNotifier` (`FriendsChanged`, `BlocksChanged`, ...) tells the relay in-process; `FriendsChanged` names who may
   learn of a change (a decline and a delivered waiting request are the receiver's alone); until round I1 nobody listens
   (`NullWorldNotifier`).
-- **Rooms**: a name (1-32 characters), an optional password (4-64, PBKDF2 in memory only, never stored), 2..10
+- **The world** (round I1, SEAMLESS.md 19): rooms are gone; `/world/enter` hands out the world session's relay ticket,
+  the relay groups players into instances per area (`IWorldRelay`, implemented by the relay; `WorldService` is the
+  service side: admission, counts, `Visible()` for the lists, whereabouts, the play context, End and Remove).
+- **Rooms** (until round I1, read-only since migration 0013): a name (1-32 characters), an optional password (4-64, PBKDF2 in memory only, never stored), 2..10
   players, the netplay protocol and data hash of the host (only compatible clients join). The owner is the host: the
   room's story is the owner's online save. When the owner leaves (or times out), the room **keeps running with the
   story frozen** (`storyFrozen`, `rooms.story_frozen_at`) until the owner returns; the last member leaving closes it
@@ -343,7 +359,8 @@ and stats must carry `protocol` / `clientVersion` (426 `client_outdated` otherwi
   and fast loading. A room's randomizer setting puts every unlock in it into the randomizer ruleset; unknown data hashes
   (with `Rooms:RankedDataHashes` set) make a room unranked.
 - **Account deletion** (GDPR erasure, by the user with the password or by an admin on request): sessions, online
-  character and its history, cloud save and history, unlocks, stats, best times, room memberships, bans and e-mail
+  character and its history, cloud save and history, unlocks, stats, best times, room memberships, online preferences,
+  instance memberships, bans and e-mail
   tokens are deleted, the account row stays as `deleted_<id>` (no e-mail, no usable password, status `deleted`) so
   rooms and audit rows keep a valid reference, and the account's audit rows lose their IP addresses (so do the failed
   logins whose name tag is the account's name, see the next point).
@@ -361,8 +378,10 @@ and stats must carry `protocol` / `clientVersion` (426 `client_outdated` otherwi
   `active = 0`; ids and codes are never reused). The client exports its table as `data/online/achievements.json`;
   `AchievementRulesTests` compare 0009 with that file and the rules with 0009, the client's ctest compares the file
   with its table, so a change on one side fails both until the other follows. Only online play counts, so unlocks
-  and stats need a room the account is a member of (`Play:RequireRoom`); a report with cheats, rebalanced rates or a
-  save-state load is refused (`unranked_*`), and so is an unranked room. Randomizer runs are their own ruleset (a second
+  and stats need the account in the world within the last minute (the relay's play context, `Play:RequireWorld`); a
+  report with cheats, rebalanced rates or a save-state load is refused (`unranked_*`), and so is unranked game data
+  (`World:RankedDataHashes`). Since round I1 the instance decides: its randomizer the ruleset, the relay's count its
+  players, the host gets the story challenges, a guest `online_join`, a clear needs the reporter's own story to hold it. Randomizer runs are their own ruleset (a second
   unlock row). `event` achievements come from the game (some checked against the goal or the room: speed limits on
   in-game time without loading, low-level limits, player counts capped by the room's members: `context.players` is the
   reporter's stage instance, `context.roomPlayers` the room's members for Room Host and Raid Night; the story challenges

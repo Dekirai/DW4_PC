@@ -1,0 +1,11 @@
+# W29, guest b (k10): joins a in stag0101 (I1a's automatic join), goes into dng101b1 first and plays there with a.
+campaign until stage=stagml11,control
+idle until epoch>=@100
+explore mate00 yes until stage=stag0101,control
+log b joined a
+follow 40 until sealed>=900
+explore matz00 yes until stage=dng101b1,control
+log b in dng101b1
+fight until present=2,sealed>=600 or frames>=9000
+log a is here
+fight until sealed>=7200 or frames>=12000

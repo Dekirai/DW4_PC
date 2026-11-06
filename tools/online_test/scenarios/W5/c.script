@@ -1,0 +1,3 @@
+# W5, c (a moderator): stays in its lobby; the API lists a's Private instance to it, marked Private.
+campaign until stage=stagml11,control
+idle until frames>=6000

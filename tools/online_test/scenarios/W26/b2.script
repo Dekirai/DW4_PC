@@ -1,0 +1,4 @@
+# W26, guest b after its restart: Play puts it in its lobby on its own story (before round I5's seat).
+campaign until stage=stagml11,control
+idle until frames>=120 fail key:4=1
+log b home on its own story

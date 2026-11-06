@@ -1,0 +1,35 @@
+{
+  "desc": "the automatic join (I1a): b joins a's running instance at the gate and plays a's story; home on its own story",
+  "world": true,
+  "autochoice": "first",
+  "seed_story": true,
+  "frames": 60000,
+  "timeout": 1000,
+  "min_shared_ticks": 0,
+  "own_story": [
+    "b"
+  ],
+  "db_checks": [
+    {
+      "name": "one instance, two members",
+      "sql": "SELECT COUNT(DISTINCT instance_id), COUNT(DISTINCT account_id) FROM instance_history_members",
+      "expect": "^1\t2$"
+    }
+  ],
+  "clients": [
+    {
+      "name": "a",
+      "script": "a.script",
+      "card": "k5",
+      "start": 0
+    },
+    {
+      "name": "b",
+      "script": "b.script",
+      "card": "k2",
+      "start": 3,
+      "seed_story": true,
+      "upload_card": true
+    }
+  ]
+}

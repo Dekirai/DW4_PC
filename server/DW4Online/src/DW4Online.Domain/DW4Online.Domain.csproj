@@ -9,5 +9,7 @@
   <ItemGroup>
     <!-- The story sets of the census (SEAMLESS.md 8.2), shared with the game client: data/online/story_sets.json. -->
     <EmbeddedResource Include="..\..\..\..\data\online\story_sets.json" LogicalName="DW4Online.Domain.Story.story_sets.json" />
+    <!-- The game client's stage table (src/game/presence_data.cpp, format dw4-areas/2, SEAMLESS.md 19.30.2): World.AreaTable. -->
+    <EmbeddedResource Include="..\..\..\..\data\online\areas.json" LogicalName="DW4Online.Domain.areas.json" />
   </ItemGroup>
 </Project>

@@ -1,6 +1,0 @@
-# RG10 = G10 / G11 (round G-core), room owner o (k2: phase 2, K0-K2): plays into its lobby and waits there while the
-# guest, far ahead in its own story, plays on o's.
-campaign until stage=stagml11
-talk until control,frames>=60
-log in the lobby
-idle until frames>=15000

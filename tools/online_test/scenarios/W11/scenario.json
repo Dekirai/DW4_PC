@@ -1,0 +1,32 @@
+{
+  "desc": "a lone host moving inside his area: into dng101b1 where c's Public instance plays: no prompt, a's instance goes on, a sees none of c's (decision 41)",
+  "world": true,
+  "autochoice": "first",
+  "seed_story": true,
+  "frames": 60000,
+  "timeout": 1000,
+  "min_shared_ticks": 0,
+  "db_checks": [
+    {
+      "name": "two instances, one member each",
+      "sql": "SELECT COUNT(*) FROM instance_history_members GROUP BY instance_id",
+      "expect": "^1\n1$"
+    }
+  ],
+  "clients": [
+    {
+      "name": "c",
+      "script": "c.script",
+      "card": "k5",
+      "start": 0
+    },
+    {
+      "name": "a",
+      "script": "a.script",
+      "card": "k5",
+      "start": 3,
+      "seed_story": true,
+      "autochoice": "new"
+    }
+  ]
+}

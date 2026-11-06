@@ -12,11 +12,12 @@ namespace DW4Online.Web.Pages;
 /// A player's profile: the online character summary and the achievements with unlock dates and progress. Private
 /// profiles show only to their owner and staff; flagged unlocks (under review) only to them as well. A signed-in visitor
 /// gets the friend and block buttons for his relation to the player (SEAMLESS.md 19.20), on private profiles too; they
-/// never show whether the player blocks the visitor.
+/// never show whether the player blocks the visitor. Round I1a: a friend sees where the player is and when he was last
+/// online, as the player's whereabouts preference allows (19.20); nobody else does.
 /// </summary>
 [EnableRateLimiting(WebPolicies.SocialLimit)]
 public sealed class ProfileModel(AccountService accounts, OnlineCharacterService characters, AchievementService achievements,
-    SocialService social, WebOptions web) : PageModel
+    SocialService social, WorldService world, WebOptions web, TimeProvider time) : PageModel
 {
     public AccountView Account { get; private set; } = null!;
     /// <summary>The visitor's relation to the player (<see cref="Relations"/>); null when nobody is signed in.</summary>
@@ -24,6 +25,9 @@ public sealed class ProfileModel(AccountService accounts, OnlineCharacterService
     public string? Message { get; private set; }
     public string? Error { get; private set; }
     public bool Hidden { get; private set; }
+    /// <summary>Where the player is (friends only, by his whereabouts preference); null otherwise.</summary>
+    public FriendPresence? Presence { get; private set; }
+    public DateTime Now { get; private set; }
     public bool IsOwner { get; private set; }
     public bool IsStaff { get; private set; }
     public CharacterView? Character { get; private set; }
@@ -80,6 +84,8 @@ public sealed class ProfileModel(AccountService accounts, OnlineCharacterService
         IsStaff = viewer.IsStaff();
         Account = account;
         Relation = viewer is null ? null : await social.RelationAsync(viewer.AccountId, account.Id, ct);
+        Now = time.GetUtcNow().UtcDateTime;
+        if (Relation == Relations.Friends) Presence = (await world.PresenceAsync([account.Id], ct)).GetValueOrDefault(account.Id);
         var visible = IsOwner || IsStaff || (account.ProfilePublic && account.Status != AccountStatus.Banned);
         if (!visible)
         {

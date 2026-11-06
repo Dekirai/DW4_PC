@@ -1,10 +1,12 @@
 """Loopback test of DW4Online (the groundwork spike's test, moved to the real service and to DW4R2).
 
-Register, login, rate limit, rooms, room tickets and the DW4R2 relay, written from SEAMLESS.md's wire layout on its own
-(standard library only, no code shared with the server): two members connect, enter one stage together (HEADING,
-BARRIER, a co-arrival), the base uploads its snapshot, the co-arrival restores it from STATE_DATA, both send their
-canonical hash and pads, and both receive the same SEALED ticks with both pads. Run against a server with a fresh
-database, Relay:Enabled and RateLimits:LoginPerMinute 5:
+Register, login, rate limit, the online world's entry (POST /world/enter, SEAMLESS.md 19.19), world tickets and the DW4R2
+relay at protocol 49 (19.18), written from SEAMLESS.md's wire layout on its own (standard library only, no code shared
+with the server): two strangers enter the world, take the same gate together (HEADING, BARRIER from home, a
+co-arrival: the first hosts a new instance, the second arrives with it as a guest), the base uploads its snapshot, the
+co-arrival restores it from STATE_DATA, both send their canonical hash and pads, and both receive the same SEALED ticks
+with both pads; the host leaves the world and the instance ends for the guest (WORLD_NOTICE ended, host_left); the
+retired room API answers 410. Run against a server with a fresh database, Relay:Enabled and RateLimits:LoginPerMinute 5:
 
     python relay_spike_test.py --base http://127.0.0.1:5280
 
@@ -23,7 +25,11 @@ FAILURES = []
 
 # DW4R2 frame types (SEAMLESS.md appendix)
 INPUT, HEADING, BARRIER, SNAPSHOT, SNAPHASH, PONG, BYE = 0x01, 0x03, 0x04, 0x07, 0x08, 0x12, 0x13
-WELCOME, SEALED, BARRIER_OK, BARRIER_WAIT, STATE_DATA, ROOM, PING = 0x80, 0x81, 0x84, 0x85, 0x86, 0x8A, 0x8B
+WELCOME, SEALED, BARRIER_OK, BARRIER_WAIT, STATE_DATA, PING = 0x80, 0x81, 0x84, 0x85, 0x86, 0x8B
+INSTANCE_INFO, WORLD_NOTICE = 0x95, 0x96
+PROTOCOL = 49  # the world's (SEAMLESS.md 19.18)
+# The settings block of protocol 49 (11 bytes): difficulty, camera, light, fast loading, rand seed u32, drops, enemies, zones.
+OWN_SETTINGS = bytes([0, 0, 1, 0]) + struct.pack("<I", 0) + bytes([0, 0, 0])
 
 
 def check(ok, name, detail=""):
@@ -78,10 +84,11 @@ def string(s):
 
 
 class Member:
-    def __init__(self, address, ticket, protocol, data_hash, settings_hash):
+    def __init__(self, address, ticket, protocol, data_hash):
         self.s = socket.create_connection(address, timeout=10)
         self.s.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-        self.s.sendall(("DW4R2 %s %d %d %s\n" % (ticket, protocol, data_hash, settings_hash)).encode())
+        # (Protocol 49: the settings hash field is sent as 0 and ignored.)
+        self.s.sendall(("DW4R2 %s %d %d 0000000000000000\n" % (ticket, protocol, data_hash)).encode())
         self.ok = read_line(self.s)
         self.inst = self.visit = 0
         self.slot = 0
@@ -107,8 +114,14 @@ class Member:
 
 
 def parse_welcome(p):
-    member, inst, visit, slot, mode = struct.unpack_from("<BIIBB", p, 0)
-    return member, inst, visit, slot, mode
+    """WELCOME (protocol 49): member u32 | inst u32 | visit u32 | slot u8 | mode u8 | stage str | last tick u32 | delay u8 |
+    max catch-up u16 | flags u8 | wid u32 | box u8."""
+    member, inst, visit, slot, mode = struct.unpack_from("<IIIBB", p, 0)
+    pos = 14
+    stage = p[pos + 1:pos + 1 + p[pos]].decode()
+    pos += 1 + p[pos] + 4 + 1 + 2
+    flags, wid, box = p[pos], struct.unpack_from("<I", p, pos + 1)[0], p[pos + 5]
+    return {"member": member, "inst": inst, "visit": visit, "slot": slot, "mode": mode, "stage": stage, "flags": flags, "wid": wid, "box": box}
 
 
 def parse_barrier_ok(p):
@@ -176,34 +189,31 @@ def main():
     check(call(base, "GET", "/api/v1/me", token=host["token"])[1]["username"] == host_user, "me")
     check(call(base, "GET", "/api/v1/me", token="nope")[0] == 401, "bad token refused")
 
-    room_body = {"name": "Spike room", "password": "dw4dw4", "maxPlayers": 4, "protocol": 43, "dataHash": 1234, "clientVersion": "0.52.0",
-                 "settings": {"difficulty": 0, "cameraMode": 0, "lightMode": 1}}
-    s, room = call(base, "POST", "/api/v1/rooms", room_body, host["token"])
-    check(s == 201 and room.get("relayTicket"), "create room with a relay ticket", s)
-    code = room["room"]["code"]
-    settings_hash = room["settingsHash"]
-    listed = call(base, "GET", "/api/v1/rooms?protocol=43&dataHash=1234")[1]
-    check(any(r["code"] == code for r in listed), "listed for the same protocol")
-    check(call(base, "GET", "/api/v1/rooms?protocol=40&dataHash=1234")[1] == [], "not listed for another protocol")
-    join = {"password": "x", "protocol": 43, "dataHash": 1234, "clientVersion": "0.52.0"}
-    wrong = call(base, "POST", "/api/v1/rooms/%s/join" % code, join, guest["token"])
-    check(wrong[0] == 403 and wrong[1]["code"] == "wrong_room_password", "wrong room password refused", wrong[0])
-    join["password"] = "dw4dw4"
-    s, joined = call(base, "POST", "/api/v1/rooms/%s/join" % code, join, guest["token"])
-    check(s == 200 and joined["settingsHash"] == settings_hash, "join", s)
+    # The world: no rooms (410), a ticket per member from POST /world/enter.
+    s, gone = call(base, "GET", "/api/v1/rooms")
+    check(s == 410 and gone["code"] == "rooms_retired", "rooms are retired", s)
+    enter = {"box": 1, "protocol": PROTOCOL, "dataHash": 1234, "clientVersion": "0.52.0"}
+    old = call(base, "POST", "/api/v1/world/enter", dict(enter, protocol=48), host["token"])
+    check(old[0] == 426 and old[1]["code"] == "client_outdated", "protocol 48 refused (the floor in code is 49)", old[0])
+    s, entered_a = call(base, "POST", "/api/v1/world/enter", enter, host["token"])
+    check(s == 200 and entered_a.get("relayTicket") and entered_a.get("relay", {}).get("protocol") == "DW4R2", "host enters the world", s)
+    s, entered_b = call(base, "POST", "/api/v1/world/enter", enter, guest["token"])
+    check(s == 200 and entered_b.get("relayTicket"), "guest enters the world", s)
 
-    address = (relay["host"], relay["port"])
-    a = Member(address, room["relayTicket"], 43, 1234, settings_hash)
-    check(a.ok.startswith("OK 0 "), "relay handshake owner", a.ok)
-    b = Member(address, joined["relayTicket"], 43, 1234, settings_hash)
-    check(b.ok.startswith("OK 1 "), "relay handshake guest", b.ok)
-    replay = Member(address, joined["relayTicket"], 43, 1234, settings_hash)
+    address = (entered_a["relay"]["host"], entered_a["relay"]["port"])
+    a = Member(address, entered_a["relayTicket"], PROTOCOL, 1234)
+    check(a.ok.startswith("OK "), "relay handshake host", a.ok)
+    b = Member(address, entered_b["relayTicket"], PROTOCOL, 1234)
+    check(b.ok.startswith("OK ") and b.ok.split()[1] != a.ok.split()[1], "relay handshake guest (another member id)", b.ok)
+    replay = Member(address, entered_b["relayTicket"], PROTOCOL, 1234)
     check(replay.ok == "ERR ticket", "a used ticket is refused", replay.ok)
     replay.s.close()
     for m in (a, b):
         kind, p = m.next(WELCOME)
-        member, m.inst, m.visit, m.slot, mode = parse_welcome(p)
-        check(mode == 0, "welcome: a solo hub instance", "member %d instance %d" % (member, m.inst))
+        w = parse_welcome(p)
+        m.inst, m.visit, m.slot = w["inst"], w["visit"], w["slot"]
+        check(w["mode"] == 0 and w["wid"] == 0 and w["flags"] & 8 and w["box"] == 1, "welcome: at home in the world (hub, no instance, box 1)",
+              "member %d stage %r" % (w["member"], w["stage"]))
 
     # Both confirm the same exit (HEADING with the context hash), then park at their barriers: a co-arrival.
     context = 0xC0FFEE
@@ -215,8 +225,9 @@ def main():
     time.sleep(0.3)
     def barrier(m):
         carry = m.ok.encode()
+        # (Protocol 49 appends the travel token u32, the plan id u16 and the member's own settings.)
         m.send(BARRIER, struct.pack("<III", m.inst, m.visit, 0) + string("stag0101") + bytes([0, 1, 1]) + struct.pack("<Q", context)
-               + struct.pack("<I", len(carry)) + carry)
+               + struct.pack("<I", len(carry)) + carry + struct.pack("<IH", 0, 0) + OWN_SETTINGS)
 
     barrier(a)
     kind, p = a.next(BARRIER_WAIT)
@@ -224,8 +235,8 @@ def main():
     barrier(b)
     oa = parse_barrier_ok(a.next(BARRIER_OK)[1])
     ob = parse_barrier_ok(b.next(BARRIER_OK)[1])
-    check(oa["decision"] == 1 and oa["mode"] == 2 and oa["co_arrivals"] == 1, "owner: NEW, sealed, one co-arrival", oa)
-    check(ob["decision"] == 4 and ob["inst"] == oa["inst"] and ob["slot"] == 1, "guest: CO_ARRIVE into the owner's instance", ob)
+    check(oa["decision"] == 1 and oa["mode"] == 2 and oa["co_arrivals"] == 1, "host: NEW (a new instance), sealed, one co-arrival", oa)
+    check(ob["decision"] == 4 and ob["inst"] == oa["inst"] and ob["slot"] == 1, "guest: CO_ARRIVE into the host's stage group", ob)
     for m, o in ((a, oa), (b, ob)):
         m.inst, m.visit, m.slot, m.delay = o["inst"], o["visit"], o["slot"], max(1, o["delay"])
 
@@ -266,10 +277,25 @@ def main():
         lat.append((time.perf_counter() - t) * 1000)
     print("relay ping round trip ms: once per second (waited %.0f ms for the last)" % lat[-1], flush=True)
 
-    # The owner leaves the room: it keeps running with the story frozen; the owner's relay connection closes.
-    check(call(base, "POST", "/api/v1/rooms/%s/leave" % code, None, host["token"])[0] == 204, "owner leaves")
-    s, beat = call(base, "POST", "/api/v1/rooms/%s/heartbeat" % code, None, guest["token"])
-    check(s == 200 and beat["room"]["storyFrozen"], "room keeps running with the story frozen")
+    # The world's counts (the browser snapshot is rebuilt every 250 ms).
+    counts = None
+    for _ in range(20):
+        counts = call(base, "GET", "/api/v1/world")[1]
+        if counts and counts.get("playersOnline") == 2 and counts.get("instances") == 1:
+            break
+        time.sleep(0.25)
+    check(counts and counts.get("playersOnline") == 2 and counts.get("instances") == 1 and counts["areas"].get("death_valley") == 1,
+          "the world counts two players and one instance in Death Valley", counts)
+
+    # The host leaves the world: the relay closes its connection and the instance ends for the guest (WORLD_NOTICE ended,
+    # argument 1 host_left; the guest then goes home by the HOME event).
+    check(call(base, "POST", "/api/v1/world/leave", None, host["token"])[0] == 204, "host leaves the world")
+    kind, p = b.next(WORLD_NOTICE)
+    while p[0] != 8:
+        kind, p = b.next(WORLD_NOTICE)
+    n = p[5]
+    argument = struct.unpack_from("<I", p, 6 + n)[0]
+    check(p[0] == 8 and argument == 1, "the guest hears that the instance ended (host_left)", "kind %d argument %d" % (p[0], argument))
     for m in (a, b):
         try:
             m.send(BYE, bytes([0]))

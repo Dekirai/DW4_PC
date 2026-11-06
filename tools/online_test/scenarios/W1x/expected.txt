@@ -1,0 +1,2 @@
+# W1x, the counter-proof of W1: it runs W1's scripts and W1's expected.txt (scenario.json "dir": "W1") with the replace
+# switched off (DW4_ONLINE_TEST_NO_REPLACE=1 for b); those checks must fail (counter_proof).

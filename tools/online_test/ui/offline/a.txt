@@ -1,18 +1,16 @@
-# A game runs (the lobby): creating a room asks first.
+# A game runs (the lobby): Play on the world's home screen asks first; Cancel keeps the game and the home screen.
 wait-stage stagml11
 sleep 2
 menu online
 login $UI_A_NAME $UI_A_PASSWORD
-expect-screen rooms
-screen create
-fill create.name $UI_ROOM
+expect-screen home
 wait 10
-shot create_form
-create $UI_ROOM
+shot home
+play
 expect-screen confirm
 wait 10
 shot confirm
 cancel
-expect-screen create
+expect-screen home
 expect-logged-in
 end

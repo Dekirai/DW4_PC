@@ -1,18 +1,9 @@
-# S14z (start at zero): the guest's lobby progress is dropped while the owner sits at the title (relay story_dropped
-# with reason not_started; the guest is told), the barrier into stagml02 removes it from the guest's engine with the
-# notice; the owner's game starts with the empty room story (revision 0), its lobby starts the story (story_started),
-# and the first revision comes after that.
-g: online: the game starts with the room story .revision 0.
-relay: ^story_dropped .*reason=not_started
-g: online: The room owner has not started its story yet
-g: online-script: step .* log: guest in the lobby
-g: online: Story progress was not saved: the room owner had not started its story yet.
-g: online-script: step .* log: 501 removed
-o: online: the game starts with the room story .revision 0.
-relay: ^story_started
-relay: ^story .*revision=1
-o: online-script: step .* log: owner in the lobby
-!relay: ^story_held
-!o: Story progress was not saved
+# S14z (world, 19.24: "S14z becomes a new account's home starts at zero"): the new account's lobby runs its own empty
+# story, never o's; its own progress starts its online story (the db checks); o's instance never sees it.
+o: online-script: step .* log: o hosts
+n: online-script: step .* log: n in its lobby
+n: online-script: step .* log: own empty story
+n: online-script: step .* log: n in stagml02
+!relay: instance_join .*how=join
+!n: online-script: FAIL
 !o: online-script: FAIL
-!g: online-script: FAIL

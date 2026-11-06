@@ -6,15 +6,19 @@ namespace DW4Online.Domain.Achievements;
 /// </summary>
 public sealed class PlayContext
 {
-    /// <summary>The room's public code; null when the client played without a room.</summary>
+    /// <summary>The room era's public code (protocol 48 and older); ignored since the world (round I1).</summary>
     public string? RoomCode { get; set; }
-    /// <summary>Players in the stage instance (1-4) or the room (up to 10), as the client sees it.</summary>
+    /// <summary>Players in the reporter's stage group (1-4), as the client sees it.</summary>
     public int? Players { get; set; }
-    /// <summary>
-    /// The room's members (1-10) as the client sees it (SEAMLESS.md 11: Players is the reporter's stage instance; the
-    /// room-wide goals Room Host and Raid Night read this). Older clients leave it out: Players stands in.
-    /// </summary>
+    /// <summary>The room era's member count; ignored since the world (the relay counts the instance's players).</summary>
     public int? RoomPlayers { get; set; }
+    /// <summary>
+    /// The instance as the client knows it (the run-local wid, 0 at home), its players (1-4) and whether the reporter hosts
+    /// it (SEAMLESS.md 19.8.9). Informational: the server takes all three from the relay's play context, never from here.
+    /// </summary>
+    public uint? InstanceId { get; set; }
+    public int? InstancePlayers { get; set; }
+    public bool? IsHost { get; set; }
     /// <summary>The host's randomizer setting: randomizer runs are their own ruleset.</summary>
     public bool Randomizer { get; set; }
     public bool Cheats { get; set; }
@@ -48,6 +52,7 @@ public static class RankedRules
         if (context.SaveStateLoaded) return ("unranked_save_state", "A save state was loaded in this stage: nothing counts for the online account.");
         if (context.Players is < 1 or > 10) return ("invalid_players", "The player count is outside 1..10.");
         if (context.RoomPlayers is < 1 or > 10) return ("invalid_players", "The room's player count is outside 1..10.");
+        if (context.InstancePlayers is < 1 or > 4) return ("invalid_players", "The instance's player count is outside 1..4.");
         if (context.Difficulty is < 0 or > 2) return ("invalid_difficulty", "The difficulty is outside 0..2.");
         return null;
     }

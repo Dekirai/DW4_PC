@@ -139,6 +139,7 @@ public sealed class AccountRepository(Database db) : IAccountRepository
         [
             "sessions", "email_tokens", "online_character_history", "online_characters", "online_story", "online_story_history", "cloud_save_history", "cloud_saves",
             "achievement_unlocks", "player_stats", "speedrun_times", "room_members", "account_bans",
+            "online_prefs", "instance_history_members",
         ];
         await using var c = await db.OpenAsync(ct);
         await using var tx = await c.BeginTransactionAsync(ct);
@@ -163,7 +164,7 @@ public sealed class AccountRepository(Database db) : IAccountRepository
         await c.ExecuteAsync(new CommandDefinition(
             "UPDATE accounts SET username = @name, username_norm = @name, email = NULL, email_norm = NULL, email_verified_at = NULL, " +
             "password_hash = '!', must_change_password = 0, recovery_code_hash = NULL, status = 'deleted', failed_logins = 0, " +
-            "locked_until = NULL, profile_public = 0, last_login_at = NULL WHERE id = @id",
+            "locked_until = NULL, profile_public = 0, last_login_at = NULL, last_seen_at = NULL WHERE id = @id",
             new { id, name = anonymousName }, tx, cancellationToken: ct));
         await tx.CommitAsync(ct);
     }

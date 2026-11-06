@@ -1,17 +1,13 @@
-# S14p, room owner o (k2 without flag 505, stag0101's matb01 hint panel; the room story starts from that card:
-# seed_story): plays into its lobby (a solo hub instance) and stays there while the guest plays stag0101. When the
-# guest's panel sets 505, the server merges it at once (the owner is in the room) and sends the new revision to every
-# other member: o's confirmed room story has 505, its engine not (the story never changes mid-stage, SEAMLESS.md 8.5).
-# The next barrier of o's instance (the lobby's matz00 into stagml12) brings it.
-campaign until stage=stagml11
-talk until control,frames>=60
-log in the lobby
-idle until roomflag:505=1 fail flag:505=1
-log 505 in the room story
-idle until frames>=180 fail flag:505=1
-log 505 not mid-stage
-mat matz00 yes until stage=stagml12,control
-log in stagml12
-idle until frames>=60 fail flag:505=0
-log 505 after the barrier
+# S14p in the world, host o (k2 without flag 505: the instance's story starts from that card, seed_story): hosts stag0101
+# and stays near the entrance while g plays; g's 505 is the instance's (the host's) story: in o's engine at the same
+# step (one stage group) and in o's online_story within ten seconds (story_saved).
+campaign until stage=stagml11,control
+idle until epoch>=@60
+explore mate00 yes until stage=stag0101,control
+log o hosts
+wander 460 170 15 until present=2,sealed>=300
+log g joined
+wander 460 170 15 until flag:505=1 or frames>=9000
+log 505 in the field
+wander 460 170 15 until present=1,frames>=60 or frames>=6000
 idle until frames>=60

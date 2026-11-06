@@ -1,0 +1,27 @@
+{
+  "desc": "the visited rule (I1a part): b, its return mat set to dng205b2 by its own earlier trip, arrives there while a's Dry Land instance never was: a NEW of its own; later it joins a there (needs a character that survives the explore bot's walk through Dry Land to dng205b2: in the trial merge every k10 / k7 character fell on stag0201-0202, so it runs only with --capabilities dry_land_walk)",
+  "world": true,
+  "autochoice": "first",
+  "seed_story": true,
+  "frames": 60000,
+  "timeout": 1500,
+  "min_shared_ticks": 0,
+  "clients": [
+    {
+      "name": "a",
+      "script": "a.script",
+      "card": "k10",
+      "start": 0
+    },
+    {
+      "name": "b",
+      "script": "b.script",
+      "card": "k10",
+      "start": 3,
+      "seed_story": true
+    }
+  ],
+  "requires": [
+    "dry_land_walk"
+  ]
+}

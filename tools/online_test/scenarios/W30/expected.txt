@@ -1,0 +1,12 @@
+# W30 (19.24, 19.30.4): the area join (a guest's NEW at the gate stage of a running instance of the area).
+a: online-script: step .* log: a in stag0202
+b: online-script: step .* log: own story at home
+b: online: You joined .*'s instance\. .* is in Dry Land
+b: online-script: step .* log: b plays a's story
+b: online-script: step .* log: own story again
+relay: instance_start .*stage=stag0201
+relay: instance_join .*how=new_group
+relay: instance_join .*role=guest.*how=new_group|instance_join .*how=new_group.*role=guest
+!relay: instance_start .*stage=stag0202
+!a: online-script: FAIL
+!b: online-script: FAIL

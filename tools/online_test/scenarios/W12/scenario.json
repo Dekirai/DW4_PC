@@ -1,0 +1,50 @@
+{
+  "desc": "settings: a hosts Hard with the randomizer and camera mode 1; b (Normal, 0, none) plays Hard in the instance and Normal at home (the difficulty is the Game Start dialog's: --online-difficulty in the test runs: the client locks online play with DW4_DIFFICULTY)",
+  "world": true,
+  "autochoice": "first",
+  "seed_story": true,
+  "frames": 60000,
+  "timeout": 1000,
+  "min_shared_ticks": 0,
+  "seed_difficulty": 1,
+  "db_checks": [
+    {
+      "name": "the instance's settings",
+      "sql": "SELECT difficulty, settings FROM instance_history",
+      "expect": "^1\t.*camera=1;.*rand=4242,1,1,0"
+    }
+  ],
+  "clients": [
+    {
+      "name": "a",
+      "script": "a.script",
+      "card": "k10",
+      "start": 0,
+      "prefs": {
+        "cameraMode": 1,
+        "randomizer": {
+          "enabled": true,
+          "seed": 4242,
+          "drops": true,
+          "enemies": 1,
+          "zones": 0
+        }
+      },
+      "args": [
+        "--online-difficulty",
+        "1"
+      ]
+    },
+    {
+      "name": "b",
+      "script": "b.script",
+      "card": "k5",
+      "start": 3,
+      "seed_story": true,
+      "args": [
+        "--online-difficulty",
+        "0"
+      ]
+    }
+  ]
+}
