@@ -80,7 +80,10 @@ public sealed class WorldService
     /// <summary>How long the relay's ticket check waits for the database before it refuses (the client asks for a new ticket).</summary>
     public TimeSpan AdmissionTimeout { get; init; } = TimeSpan.FromSeconds(5);
 
-    /// <summary>Called when a background write failed (what, error): keeping a session start, a visibility, last seen.</summary>
+    /// <summary>
+    /// Called when a background write or the admission's database work failed (what, error): keeping a session start, a
+    /// visibility, last seen, a world admission refused for a database error.
+    /// </summary>
     public Action<string, Exception>? WriteFailed { get; set; }
 
     public bool RelayAvailable => _relay.Available;
@@ -155,13 +158,16 @@ public sealed class WorldService
     /// newest ticket issued to the account in this process, the account active, its role re-read (a demotion counts at once,
     /// 19.14), its preferences, friends and blocks loaded here, outside the hub's lock. The same (account, nonce) answers
     /// the same way again while it is the account's newest: the relay calls it again to re-check a member after
-    /// <see cref="IWorldNotifier.AccountChanged"/> and the other notifier calls. Null refuses it (also a hanging database,
-    /// after <see cref="AdmissionTimeout"/>).
+    /// <see cref="IWorldNotifier.AccountChanged"/> and the other notifier calls. Null refuses it (the relay answers ERR
+    /// ticket): also a hanging database after <see cref="AdmissionTimeout"/> and any database error (reported to
+    /// <see cref="WriteFailed"/>); it never throws into the relay's connection handling. Last seen is written apart from
+    /// it (a lock wait on accounts never refuses a valid ticket).
     /// </summary>
     public async ValueTask<WorldAdmitted?> AdmitAsync(WorldAdmission ticket)
     {
         if (!_nonces.TryGetValue(ticket.AccountId, out var issued) || !string.Equals(issued.Nonce, ticket.Nonce, StringComparison.Ordinal)) return null;
         using var timeout = new CancellationTokenSource(AdmissionTimeout);
+        WorldAdmitted admitted;
         try
         {
             var account = await _accounts.GetAsync(ticket.AccountId, timeout.Token);
@@ -170,8 +176,7 @@ public sealed class WorldService
             var friends = await _social.ListFriendsAsync(account.Id, timeout.Token);
             var blocks = await _social.ListBlocksAsync(account.Id, timeout.Token);
             var blockedBy = await _world.ListBlockedByAsync(account.Id, timeout.Token);
-            await TouchLastSeenSafeAsync([account.Id], timeout.Token);
-            return new WorldAdmitted(account.Id, account.Username, WorldRoles.Of(account.Role), BoundBox, prefs)
+            admitted = new WorldAdmitted(account.Id, account.Username, WorldRoles.Of(account.Role), BoundBox, prefs)
             {
                 NewSession = issued.NewSession,
                 Friends = friends.Select(f => f.AccountId).ToList(),
@@ -181,8 +186,15 @@ public sealed class WorldService
         }
         catch (OperationCanceledException)
         {
+            return null;  // (the database did not answer within AdmissionTimeout: the client asks for a new ticket)
+        }
+        catch (Exception e)
+        {
+            WriteFailed?.Invoke($"the world admission of account {ticket.AccountId}", e);
             return null;
         }
+        TouchLastSeenInBackground(admitted.AccountId);
+        return admitted;
     }
 
     // --- What the website and the API show --------------------------------------------------------------------------------
@@ -230,8 +242,9 @@ public sealed class WorldService
 
     /// <summary>
     /// Where friends are (GET /friends' presence, the friends page, profiles), as each one's whereabouts preference allows
-    /// (19.20): "nobody" shows nothing (null); online: "In the lobby" (at home, at the title, or watching as staff, 19.14),
-    /// "Playing" in a Private instance, else "Playing in &lt;area&gt;" with the stage; offline: the last time online.
+    /// (19.11, 19.20): "nobody" shows only "Online" while online and "Offline" without the last time otherwise; online:
+    /// "In the lobby" (at home, at the title, or watching as staff, 19.14), "Playing" in a Private instance, else "Playing
+    /// in &lt;area&gt;" with the stage; offline: the last time online. Null only for an account without a row (deleted).
     /// The caller has checked that the viewer is their friend.
     /// </summary>
     public async Task<IReadOnlyDictionary<long, FriendPresence?>> PresenceAsync(IReadOnlyCollection<long> friendIds, CancellationToken ct = default)
@@ -244,9 +257,17 @@ public sealed class WorldService
         var instances = snapshot.Instances.ToDictionary(i => i.Wid);
         foreach (var id in friendIds)
         {
-            if (!prefs.TryGetValue(id, out var p) || p.Whereabouts == OnlinePrefs.WhereaboutsNobody)
+            if (!prefs.TryGetValue(id, out var p))
             {
                 result[id] = null;
+                continue;
+            }
+            if (p.Whereabouts == OnlinePrefs.WhereaboutsNobody)
+            {
+                // (19.11: only "Online"; no place, no instance, no last time online.)
+                result[id] = online.ContainsKey(id)
+                    ? new FriendPresence(true, "Online", null, null, null)
+                    : new FriendPresence(false, "Offline", null, null, null);
                 continue;
             }
             if (!online.TryGetValue(id, out var here))
@@ -312,8 +333,10 @@ public sealed class WorldService
 
     /// <summary>
     /// The account's role or status changed, or it was deleted (AccountEndpoints, AdminEndpoints, the website's account and
-    /// admin pages): its tickets stop counting and the relay re-checks it at once (a ban or a deletion closes its
-    /// connection and, for a host, ends his instance; 19.14).
+    /// admin pages): the relay re-checks it at once through <see cref="AdmitAsync"/>. Its newest ticket stays valid on
+    /// purpose (contract web 14:25: the live re-check needs it): the re-check reads the account's status and role anew and
+    /// refuses a locked, banned or deleted account (the relay closes its connection and, for a host, ends his instance;
+    /// 19.14), while a role change only changes the role.
     /// </summary>
     public void AccountChanged(long accountId) => _notifier.AccountChanged(accountId);
 
@@ -394,6 +417,23 @@ public sealed class WorldService
     /// <summary>Deletes ended instances older than World:HistoryDays with their members.</summary>
     public Task<int> PruneHistoryAsync(CancellationToken ct = default) =>
         _world.PruneHistoryAsync(Clock.Now(_time).AddDays(-Math.Max(1, _options.HistoryDays)), ct);
+
+    /// <summary>Last seen of an admitted member, off the admission (its own task, no timeout of the admission's; never throws).</summary>
+    private void TouchLastSeenInBackground(long accountId)
+    {
+        var now = Clock.Now(_time);
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await _world.TouchLastSeenAsync([accountId], now, CancellationToken.None);
+            }
+            catch (Exception e)
+            {
+                WriteFailed?.Invoke("updating last seen", e);
+            }
+        });
+    }
 
     private async Task TouchLastSeenSafeAsync(IReadOnlyCollection<long> accounts, CancellationToken ct)
     {

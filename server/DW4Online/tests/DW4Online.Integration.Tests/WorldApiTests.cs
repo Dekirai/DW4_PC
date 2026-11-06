@@ -88,10 +88,68 @@ public class WorldApiTests
         Assert.Contains(leaver, host.World.Left);
         Assert.Null(await host.World.AdmitAsync(leaving));
 
-        // Entering kept the story the session starts from (none yet: nothing to keep) and wrote last seen.
+        // Entering kept the story the session starts from (none yet: nothing to keep) and wrote last seen (apart from the
+        // admission: wait for it).
         await using var c = await host.SqlAsync();
         Assert.Equal(0, await c.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM online_story_history WHERE account_id = @id", new { id }));
-        Assert.NotNull(await c.ExecuteScalarAsync<DateTime?>("SELECT last_seen_at FROM accounts WHERE id = @id", new { id }));
+        Assert.NotNull(await Eventually(() => c.ExecuteScalarAsync<DateTime?>("SELECT last_seen_at FROM accounts WHERE id = @id", new { id })));
+    }
+
+    /// <summary>
+    /// The admission never throws into the relay (review of I1a): a database error refuses the ticket (null, the relay's
+    /// ERR ticket) and is reported; a lock wait on the account's row (last seen) never refuses a valid ticket, last seen
+    /// is written once the lock is gone.
+    /// </summary>
+    [DbFact]
+    public async Task Admission_refuses_on_database_errors_and_never_waits_for_last_seen()
+    {
+        await using var host = await TestHost.StartAsync();
+        var (token, _, id) = await host.RegisterAsync("Fragile");
+        var service = host.App.Services.GetRequiredService<WorldService>();
+        var failures = new System.Collections.Concurrent.ConcurrentQueue<string>();
+        var previous = service.WriteFailed;
+        service.WriteFailed = (what, e) => { failures.Enqueue($"{what}: {e.GetType().Name}"); previous?.Invoke(what, e); };
+        try
+        {
+            var ticket = (await (await host.Client(token).PostAsJsonAsync("/api/v1/world/enter", Enter())).Json()).GetProperty("relayTicket").GetString()!;
+
+            // Another transaction holds the account's row: the admission answers at once, last seen follows the commit.
+            await using (var locker = await host.SqlAsync())
+            {
+                await using var tx = await locker.BeginTransactionAsync();
+                await locker.ExecuteAsync("SELECT id FROM accounts WHERE id = @id FOR UPDATE", new { id }, tx);
+                var watch = System.Diagnostics.Stopwatch.StartNew();
+                var admitted = await host.World!.AdmitAsync(ticket);
+                Assert.NotNull(admitted);
+                Assert.True(watch.Elapsed < service.AdmissionTimeout, $"the admission took {watch.Elapsed}");
+                await using (var peek = await host.SqlAsync())
+                    Assert.Null(await peek.ExecuteScalarAsync<DateTime?>("SELECT last_seen_at FROM accounts WHERE id = @id", new { id }));
+                await tx.CommitAsync();
+            }
+            await using var c = await host.SqlAsync();
+            Assert.NotNull(await Eventually(() => c.ExecuteScalarAsync<DateTime?>("SELECT last_seen_at FROM accounts WHERE id = @id", new { id })));
+
+            // A database error (a table gone): refused and reported, never thrown.
+            await c.ExecuteAsync("RENAME TABLE online_prefs TO online_prefs_gone");
+            Assert.Null(await host.World!.AdmitAsync(ticket));
+            Assert.Contains(failures, f => f.StartsWith($"the world admission of account {id}: ", StringComparison.Ordinal));
+            await c.ExecuteAsync("RENAME TABLE online_prefs_gone TO online_prefs");
+            Assert.NotNull(await host.World.AdmitAsync(ticket));
+        }
+        finally
+        {
+            service.WriteFailed = previous;
+        }
+    }
+
+    /// <summary>Polls a value until it is not null (background writes), at most 5 s.</summary>
+    private static async Task<T?> Eventually<T>(Func<Task<T?>> read) where T : struct
+    {
+        for (var i = 0; ; i++)
+        {
+            if (await read() is { } value || i >= 50) return await read();
+            await Task.Delay(100);
+        }
     }
 
     [DbFact]
@@ -356,15 +414,15 @@ public class WorldApiTests
 
     /// <summary>
     /// Friends' whereabouts (19.20): online in a public instance with its area, "Playing" in a Private one, "In the lobby"
-    /// at home, the last time online when offline; nothing for a friend whose whereabouts preference is "nobody"; strangers
-    /// never see it on profiles.
+    /// at home, the last time online when offline; only "Online" / "Offline" (no place, no last time) for a friend whose
+    /// whereabouts preference is "nobody" (19.11); strangers never see it on profiles.
     /// </summary>
     [DbFact]
     public async Task Friends_see_whereabouts_by_preference_and_played_with()
     {
         await using var host = await TestHost.StartAsync();
         var (meToken, _, me) = await host.RegisterAsync("Viewer");
-        var names = new[] { "Roamer", "Hider", "Secret", "Homey", "Sleeper" };
+        var names = new[] { "Roamer", "Hider", "Secret", "Homey", "Sleeper", "Shy" };
         var ids = new Dictionary<string, long>();
         foreach (var name in names)
         {
@@ -374,9 +432,10 @@ public class WorldApiTests
             Assert.Equal(HttpStatusCode.OK, (await host.Client(token).PostAsync("/api/v1/friends/requests/Viewer/accept", null)).StatusCode);
         }
         var (_, _, stranger) = await host.RegisterAsync("Stranger");
-        Assert.Equal(HttpStatusCode.OK, (await host.Client((await host.LoginAsync("Hider")).Token).PutJson("/api/v1/me/online-prefs", new { whereabouts = "nobody" })).StatusCode);
+        foreach (var hidden in new[] { "Hider", "Shy" })
+            Assert.Equal(HttpStatusCode.OK, (await host.Client((await host.LoginAsync(hidden)).Token).PutJson("/api/v1/me/online-prefs", new { whereabouts = "nobody" })).StatusCode);
         var store = host.App.Services.GetRequiredService<IWorldRepository>();
-        await store.TouchLastSeenAsync([ids["Sleeper"]], host.Clock.GetUtcNow().UtcDateTime.AddHours(-3));
+        await store.TouchLastSeenAsync([ids["Sleeper"], ids["Shy"]], host.Clock.GetUtcNow().UtcDateTime.AddHours(-3));
         host.World!.Set([
                 FakeWorldRelay.Instance(1, ids["Roamer"], "Roamer", "dry_land", "dng205b2"),
                 FakeWorldRelay.Instance(2, ids["Hider"], "Hider", "dry_land", "stag0201"),
@@ -388,7 +447,14 @@ public class WorldApiTests
             .ToDictionary(f => f.GetProperty("username").GetString()!, f => f.GetProperty("presence"));
         Assert.Equal("Playing in Dry Land", friends["Roamer"].GetProperty("status").GetString());
         Assert.Equal("Dry Land: Ancient Ruins", friends["Roamer"].GetProperty("stage").GetString());
-        Assert.Equal(System.Text.Json.JsonValueKind.Null, friends["Hider"].ValueKind);
+        // "nobody": online only "Online" (Hider plays in a public Dry Land instance), offline "Offline" without the last time.
+        Assert.True(friends["Hider"].GetProperty("online").GetBoolean());
+        Assert.Equal("Online", friends["Hider"].GetProperty("status").GetString());
+        Assert.Equal(System.Text.Json.JsonValueKind.Null, friends["Hider"].GetProperty("area").ValueKind);
+        Assert.Equal(System.Text.Json.JsonValueKind.Null, friends["Hider"].GetProperty("stage").ValueKind);
+        Assert.False(friends["Shy"].GetProperty("online").GetBoolean());
+        Assert.Equal("Offline", friends["Shy"].GetProperty("status").GetString());
+        Assert.Equal(System.Text.Json.JsonValueKind.Null, friends["Shy"].GetProperty("lastSeenAt").ValueKind);
         Assert.Equal("Playing", friends["Secret"].GetProperty("status").GetString());
         Assert.Equal(System.Text.Json.JsonValueKind.Null, friends["Secret"].GetProperty("area").ValueKind);
         Assert.Equal("In the lobby", friends["Homey"].GetProperty("status").GetString());
@@ -400,6 +466,7 @@ public class WorldApiTests
         var page = await web.GetAsync("/account/friends");
         Assert.Contains("Playing in Dry Land", page.Html);
         Assert.Contains("last online 3 h ago", page.Html);
+        Assert.Single(System.Text.RegularExpressions.Regex.Matches(page.Html, "last online 3 h ago"));   // Sleeper's, never Shy's
         Assert.Contains("Online preferences", page.Html);
         Assert.Contains("Playing in Dry Land", (await web.GetAsync("/u/Roamer")).Html);
         using var outsider = new WebBrowser(host);
