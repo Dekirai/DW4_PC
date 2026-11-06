@@ -18,7 +18,7 @@ The lane contract (outside the repo): `DW4_PC-wt/o1b-contract.md`, entries "E co
 | Full technique lists | `abilities.cpp` kTechniques | every TECH1-6 of the four Rookies: + Ice 5, Dark 15, Venom 20 and Bomb 35 (at the densest group within 40), Resist 75 and Pwr Up 80 (buffs, with an enemy within 30, 15 s), Freeze 70, Pwr Dwn 85 (8 s) and Bind 95 (10 s) (pulses with three enemies within 30). Train Force shows now (the forms have force techniques) |
 | Awakening | `equip_ladder` | with the last family forged and the class skill at the signature's SKILLPOINT (2500) the form's signature (weapon rows 250-265, its SOUBI bit) takes the socket and stays; "AWAKENING: <name>", plLVUP01, `awakened()` |
 | Gear | `src/engine/overflow/gear.cpp` | Brave Core (armor1 0-2: alpha, beta at Lv 22, gamma at Lv 37, then +30/+60/+120/+240), one Board (Armor 21, Fire 9, Ice 12, Bolt 15, Dark 18: alpha, then +30 ... +480 value), chips in the weapon pocket (POWERPOCKET) and the core pocket (MAINPOCKET, open from the core's beta): Wisdom 0 / Spirit 15 / Speed 30 Chip, the form's PWR Medal (45 / 60 / 75 / 90), Drain Ram 105 (opened by `gear_open`); chips step to beta / gamma by offers (the Ram beta..epsilon); ¶ Data (Corrupted: UP 20, Guardians: UP 100) powers the pocket chips up at NEXTX / 20, weapon pocket first; the loadout (`RunConfig::loadout_armor / loadout_chip`) at the start; offers Core / Board / Chip at 30 % weight (`OfferState::gear`, filled by `gear_offers`); the build page shows core, board, chips and ¶ Data |
-| Balance | `tables.inc`, `guardians.cpp` | Tortomon x 0.085 (OVERFLOW_DIRECTOR.md 11.6's next try); the Guardians' damage factors (Mammothmon 0.25, Diaboromon 0.45, LordKnightmon 0.4, the others 1) and HP (HPMAX x 6, the finale x 8, times the time's linear part 1 + 0.10 a minute only) |
+| Balance | `tables.inc`, `guardians.cpp`, `abilities.cpp` | Tortomon x 0.085 (OVERFLOW_DIRECTOR.md 11.6's next try); the Guardians' damage factors (Mammothmon 0.15, Diaboromon 0.45, LordKnightmon 0.4, the others 1) and HP (HPMAX x 6, the finale x 14, times the time's linear part 1 + 0.10 a minute only); Bomb x 0.5 (sections 5 and 7) |
 | Tests | `tests/overflow_director_tests.cpp`, CMake | ctest `overflow_guardians` (plans, pairs, forced, gear keys, gear offers' weight, priority); `overflow_balance` covers the four Rookies (two hits early, no one-hit enemy) |
 | Probe | `tools/overflow_probe.cpp` | `names TABLE COLUMNS...` (the gear rows) |
 
@@ -68,7 +68,7 @@ the summary lines `end`, `run_seconds`, `level`, `highest_hit_share`, `first_lev
 | det.sh `o1b_content_1` | dff074d3 (e8) | 4004f056 / 396cb219 in both runs |
 | r25c `o1b_content_r25c` (`segments.sh r25c 4`) | a1ac5dd (e10) | 10 / 10 segments, 1,748,011 frames, every save "same story" (wall 340 s) |
 | ctest (full) | 90c0090 | 58 / 58 |
-| ctest `-R overflow` | a1fe8f6 (final defaults) | 12 / 12 (overflow_guardians, overflow_gear new; overflow_balance with the four Rookies) |
+| ctest `-R overflow` | f5d6f07 (the shipped state) | 12 / 12 (overflow_guardians, overflow_gear new; overflow_balance with the four Rookies) |
 
 The only change outside a run engine is `Engine::route_donor`'s new defaulted parameter `scripts_only`
 (false everywhere but in `load_overflow_donors`): the story's randomizer takes the same path as before.
@@ -95,12 +95,16 @@ Freeze / Bind pulses) halved the damage a run takes: the human bot took 0.44-0.6
 newcomer who walks into the crowd pays for it, a kiting player does not (v3: human 16:38, kite 23:08, +6.5
 minutes).
 
-**The answer (a1fe8f6):** contact 0.7 / 1.1 / 2.4 / 3.6 / 3.8 at 0:00-20:00 (was 0.7 / 1.0 / 1.3 / 2.2 / 2.4),
-the damage growth 0.12 a minute from 12:00 (was 0.09); Rare x 0.055 (was 0.061: 17.4 % at phase 4's start
-for Veemon), Megadramon x 0.041 (was 0.045: a Corrupted one 36.5 % for Guilmon at 25:00). `overflow_balance`
-now equips the Brave Core a run carries at the measured level (alpha, beta from Lv 22, gamma from Lv 37; every
-bot takes it among its first gear offers): without it the test's gear-free Rookie meets phase 4 at 16-23 %.
-LordKnightmon x 14 HP (x 8: 17 of 20 kite runs cleared, its fall after 96-198 s).
+**The answer tried first (a1fe8f6, "S"):** contact 0.7 / 1.1 / 2.4 / 3.6 / 3.8 at 0:00-20:00, the damage growth
+0.12 a minute from 12:00, Rare x 0.055, Megadramon x 0.041, `overflow_balance` with the Brave Core by level.
+Its final measurement (section 7) ended the human runs of Veemon, Guilmon and Dorumon at 9-12 minutes while
+Agumon's lasted 22 minutes: reverted (99057dc).
+
+**The shipped state (99057dc, f5d6f07):** O1a's damage numbers (contact 0.7 / 1.0 / 1.3 / 2.2 / 2.4, growth
+0.13 / 0.09, the O1a family factors, the gear-free balance test), Bomb x 0.5 on all its ranks (its burning
+area strikes a whole group, as Impact's rings do: Agumon's lead came from it), Mammothmon x 0.15 (1.2-1.6
+MaxHP of kite Guilmon's phase 2 at x 0.25), LordKnightmon x 14 HP (x 8: 17 of 20 kite runs cleared, its fall
+after 96-198 s), A(t) halved for two minutes while a Guardian lives.
 
 ## 6. The open points of OVERFLOW_DIRECTOR.md 10.7, 11.5, 11.6
 

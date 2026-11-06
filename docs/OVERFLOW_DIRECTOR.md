@@ -944,5 +944,6 @@ measurements before and after and what is left: docs/ROUND_O1B_E_NOTES.md.
 In short: the Guardians of phases 1-3 and LordKnightmon's finale under the
 quest timer (`guardians.cpp`; the timer's 0:00 is `Outcome::time_up`),
 Guilmon and Dorumon, every TECH1-6 of the four Rookies, Awakening, the gear
-of 7 (`gear.cpp`), Tortomon x 0.085. The open points of 10.7, 11.5 and 11.6
+of 7 (`gear.cpp`), Tortomon x 0.085, Bomb x 0.5, Mammothmon x 0.15, LordKnightmon x 14 HP;
+O1a's damage numbers stand (a stronger late contact was measured and reverted). The open points of 10.7, 11.5 and 11.6
 are answered in the notes' sections 5 and 6.
