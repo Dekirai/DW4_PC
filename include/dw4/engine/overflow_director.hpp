@@ -182,7 +182,9 @@ struct Tuning {
     // defeat clears the run, the timer's 0:00 (end_steps) is TIME UP.
     // guardians=false: O1a's run (the clear at end_steps, no Guardian).
     bool guardians = true;
-    float guardian_hp = 6.0f, finale_hp = 8.0f;  // x the row's HPMAX x hp_factor (4.4: x 6, the finale x 8)
+    // x the row's HPMAX x (1 + 0.10 a minute) (4.4: x 6, the finale x 8; round O1b: the finale x 14,
+    // with x 8 the kite bot cleared 11 of 12 runs, LordKnightmon falling after 96-198 s)
+    float guardian_hp = 6.0f, finale_hp = 14.0f;
     float elite_hp = 12.0f;                      // the elite fallback (4.4)
     float guardian_distance = 40.0f;             // it enters this far in front of the player
     int guardian_half_steps = 120 * 60;          // A(t) halves while a Guardian lives, at most this long
