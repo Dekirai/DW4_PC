@@ -81,6 +81,7 @@ struct LobbyMeta {
     std::map<std::string, std::array<int, 7>, std::less<>> plugs; // Plug Lab steps per form (Strength .. Speed)
     std::vector<std::string> armors{"", "brave_core", "armor_board", "fire_board", "ice_board", "bolt_board", "dark_board"};
     std::vector<std::string> chips{"", "wisdom_chip", "spirit_chip", "speed_chip", "pwr_medal"};
+    std::map<std::string, std::pair<std::string, std::string>, std::less<>> loadouts; // per form: {armour, chip} last chosen (8.3)
     std::vector<std::string> records; // done records (keys)
     std::vector<std::string> locked_forms; // forms not open (none of the four Rookies)
 };
@@ -143,6 +144,7 @@ public:
 
 private:
     void to_choice();
+    void load_loadout(const LobbyMeta& meta); // the form's last loadout (meta.loadouts) into the cursors
     LobbyScreen screen_ = LobbyScreen::none;
     std::vector<std::string> pages_;
     int page_ = 0, cursor_ = 0;

@@ -134,6 +134,20 @@ void LobbyMenu::to_choice() {
     cursor_ = 0;
 }
 
+void LobbyMenu::load_loadout(const LobbyMeta& meta) {
+    const auto found = meta.loadouts.find(kSelectForms[std::size_t(face_)]);
+    if (found == meta.loadouts.end()) {
+        armor_ = chip_ = 0;
+        return;
+    }
+    auto index = [](const std::vector<std::string>& keys, const std::string& key) {
+        const auto at = std::find(keys.begin(), keys.end(), key);
+        return at == keys.end() ? 0 : int(at - keys.begin());
+    };
+    armor_ = index(meta.armors, found->second.first);
+    chip_ = index(meta.chips, found->second.second);
+}
+
 void LobbyMenu::close() {
     screen_ = LobbyScreen::none;
     pages_.clear();
@@ -171,6 +185,7 @@ LobbyAction LobbyMenu::input(const MenuKeys& keys, const LobbyMeta& meta) {
                 screen_ = LobbyScreen::select;
                 line_ = 0;
                 confirming_ = false;
+                load_loadout(meta);
                 break;
             case 1:
                 screen_ = LobbyScreen::plug_lab;
@@ -220,7 +235,10 @@ LobbyAction LobbyMenu::input(const MenuKeys& keys, const LobbyMeta& meta) {
         if (keys.down) line_ = wrap(line_ + 1, 5);
         const int dx = (keys.right ? 1 : 0) - (keys.left ? 1 : 0);
         if (dx != 0) {
-            if (line_ == 0) face_ = wrap(face_ + dx, faces);
+            if (line_ == 0) {
+                face_ = wrap(face_ + dx, faces);
+                load_loadout(meta);
+            }
             else if (line_ == 1) armor_ = wrap(armor_ + dx, int(meta.armors.size()));
             else if (line_ == 2) chip_ = wrap(chip_ + dx, int(meta.chips.size()));
         }

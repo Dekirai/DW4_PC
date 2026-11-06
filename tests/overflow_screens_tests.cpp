@@ -205,6 +205,19 @@ void test_menu() {
     CHECK(start.request.options.at("chip") == "spirit_chip");
     CHECK(start.request.options.at("tier") == "normal");
     CHECK(!menu.is_open());
+    // The select starts with the form's last loadout (8.3).
+    meta.loadouts["p_vmon"] = {"ice_board", "speed_chip"};
+    menu.open(false, meta, std::nullopt);
+    menu.input(a, meta);
+    CHECK(menu.face() == 2); // (the face stays: Guilmon, no loadout kept)
+    CHECK(menu.armor() == 0 && menu.chip() == 0);
+    ov::MenuKeys back_left;
+    back_left.left = true;
+    menu.input(back_left, meta);
+    CHECK(menu.face() == 1);
+    CHECK(meta.armors[std::size_t(menu.armor())] == "ice_board" && meta.chips[std::size_t(menu.chip())] == "speed_chip");
+    menu.close();
+    meta.loadouts.clear();
     // Later talks: the choice list at once; Never mind closes after its page.
     menu.open(false, meta, std::nullopt);
     CHECK(menu.screen() == ov::LobbyScreen::choice);
