@@ -407,7 +407,7 @@ private:
         if (test_ || timing_)
             std::printf("overflow: meta %s bits %lld -> Sim Bits +%lld (balance %lld), %zu new records%s%s; used%s\n", report.outcome.c_str(),
                         (long long)report.bits, (long long)reward_.sim_bits, (long long)meta().profile().sim_bits, reward_.new_records.size(),
-                        meta().path().empty() ? "" : ", written to ", meta().path().empty() ? "" : meta().path().string().c_str(),
+                        meta().path().empty() ? "" : meta().last_error().empty() ? ", written to " : ", NOT written to ", meta().path().empty() ? "" : meta().path().string().c_str(),
                         meta_used().empty() ? " none" : meta_used().c_str());
         if (!meta().last_error().empty()) std::fprintf(stderr, "overflow: the meta file was not written: %s\n", meta().last_error().c_str());
     }

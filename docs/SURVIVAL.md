@@ -1063,12 +1063,22 @@ docs/ROUND_O1B_F_NOTES.md): a loadout names lane E's gear keys (`-` for
 none); a record keeps its date (yyyymmdd); `last` is the select's last form
 and tier; the totals are `runs, defeats, casts, crates, seconds, clears,
 awakenings, guardians, defeat_<Guardian family>, tech_fire / ice / bolt /
-dark`. A later version's lines and form keys are kept and written back, so
-an older program never drops them. Every line ends with a line end and
-`end` closes the file; a file that does not (cut, damaged, empty) is never
-trusted over the `.bak`: the load takes the file, else the `.bak`, else
-what the cut file still holds, else a new profile, and keeps a damaged file
-as `overflow.dat.damaged`. Until the run drops g_000bit (4.7, O2) the run
+dark`. What an older program keeps of a later version's file: whole lines
+of a kind it does not know, a later key on a `form` line, and (when the
+header's version is higher than its own) a known line in a shape it cannot
+read, each written back as it was; it drops a later key on a `plug` line,
+at most 512 unknown lines are kept, and it writes its own version in the
+header. Every line ends with a line end and `end` closes the file; a file
+that does not (cut, empty, garbage) or that has a line its own version
+cannot read (a bad value, a wrong shape: a bit flip, an editor) is damaged
+and never trusted over the `.bak`, and never becomes the `.bak`: the load
+takes the file, else the `.bak`, else what the damaged file still holds,
+else a new profile, and keeps a damaged file as `overflow.dat.damaged`. A
+file (or the `.bak` of a damaged file) that is there but cannot be read
+(another program or a second instance has it open) is tried again; then
+the session is read only: it never writes (the results and the state
+message say "Not saved"), so the file and its `.bak` are never replaced by
+a new profile. Until the run drops g_000bit (4.7, O2) the run
 driver credits each defeat's bits itself (5 %, the original's band x
 BITRITSU, its own seeded generator), so the run's engine is not touched.
 
