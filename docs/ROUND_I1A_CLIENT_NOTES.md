@@ -75,6 +75,9 @@ Own stack: mysqld 3633 (not needed by the client lane so far), test ports
   (`work/dref/checks/det/det_i1aclient_b`); r25c and the save state suite on build b running (`build/off/r25c_b.log`,
   `build/st/st_b.log`).
 
+- 13:45 `DW4_ONLINE_TEST_NO_REPLACE=1` (dev builds): the counter-proof of W1 / W30 the harness asked for (contract 13:45):
+  a replace-mode BARRIER_OK brings no story at all.
+
 ## Left (in order)
 
 1. (done) ctest for the engine paths.

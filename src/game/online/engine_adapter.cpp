@@ -388,6 +388,19 @@ void GameEngineLink::set_barrier(const wire::BarrierOk& ok) {
         }
     }
     result.story_mode = ok.story_mode == wire::StoryMode::replace ? engine::StoryMode::replace : engine::StoryMode::merge;
+#ifdef DW4_ONLINE_DEV
+    // DW4_ONLINE_TEST_NO_REPLACE=1 (development builds, the counter-proof of
+    // W1 and W30, 19.24): the replace switched off; a barrier whose story
+    // would replace the engine's brings no story at all.
+    static const bool no_replace = [] {
+        const char* text = std::getenv("DW4_ONLINE_TEST_NO_REPLACE");
+        return text && *text && *text != '0';
+    }();
+    if (no_replace && result.story_mode == engine::StoryMode::replace) {
+        result.story.reset();
+        result.story_mode = engine::StoryMode::merge;
+    }
+#endif
     result.rules = e().online();
     result.rules.enabled = true;
     result.rules.present = ok.present();

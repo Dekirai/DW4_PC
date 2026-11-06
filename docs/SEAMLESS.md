@@ -12029,7 +12029,10 @@ here).*
 - **App:** `--online-play [BOX]` (replaces `--online-create` /
   `--online-join`; `--online-camera`, `--online-light`, `--online-fast`
   override the online preferences for a test run), `DW4_ONLINE_AUTOCHOICE`
-  (development builds: `new` sends BARRIER plan id 0xFFFF from home), Play
+  (development builds: `new` sends BARRIER plan id 0xFFFF from home),
+  `--online-difficulty N` and the counter-proof hook
+  `DW4_ONLINE_TEST_NO_REPLACE=1` (development builds: no story from a
+  replace-mode BARRIER_OK, so W1 and W30 fail with it), Play
   through `POST /world/enter`, reconnects through `POST /world/ticket`,
   *Go offline* through `POST /world/leave`; the title's home screen (*Play:
   <form> Lv <n> (Box 1)*, *Settings*, *Account*, *Log out*, "Online now: n
