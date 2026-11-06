@@ -1212,6 +1212,11 @@ public:
     }
     bool menu_open() const { return !rams_.empty() && rams_.front()->state == 2; }
     int cursor() const { return rams_.empty() ? 0 : rams_.front()->cursor; }
+    // (Read only, for the online Play's title driver: "press start" waits in
+    // state 1 sub 2 step 1 detail 0.)
+    int sub() const { return rams_.empty() ? 0 : rams_.front()->sub; }
+    int step() const { return rams_.empty() ? 0 : rams_.front()->step; }
+    int detail() const { return rams_.empty() ? 0 : rams_.front()->detail; }
 
 private:
     struct Option {
@@ -1250,6 +1255,10 @@ public:
     void resume();                        // 803631A8: back to the parked message
     bool busy() const { return prompt_; } // 8036316C
     int answer() const { return cursor_; }
+    // (Read only, for the online Play's title driver: the prompt's form, 0
+    // question / 1 next, and its step; 1 waits for input.)
+    int prompt_mode() const { return mode_; }
+    int prompt_step() const { return step_; }
     void update(Engine& engine, int player);
 
 private:

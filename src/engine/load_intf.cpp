@@ -287,6 +287,34 @@ bool LoadIntf2Manager::command(Engine& engine, Ram& base, std::string_view comma
     return false;
 }
 
+std::optional<LoadIntf2Manager::PanelView> LoadIntf2Manager::panel(int index) const {
+    for (const auto& ram : rams_) {
+        if (ram->index != index || !ram->created) continue;
+        PanelView v;
+        v.state = ram->state;
+        v.sub = ram->sub;
+        v.detail = ram->detail;
+        v.detail2 = ram->detail2;
+        v.cursor = ram->cursor;
+        v.message_prompt = ram->message.busy();
+        v.message_mode = ram->message.prompt_mode();
+        v.message_step = ram->message.prompt_step();
+        v.slot_phase = ram->slots.phase();
+        v.slot_step = ram->slots.step();
+        v.slot_cursor = ram->slots.cursor();
+        v.slot_selected = ram->slots.selected();
+        v.box_step = ram->boxes.step();
+        v.box_cursor = ram->boxes.cursor();
+        v.diff_phase = ram->difficulty.phase();
+        v.diff_step = ram->difficulty.step();
+        v.diff_cursor = ram->difficulty.selection();
+        v.diff_count = ram->difficulty.count();
+        v.diff_done = ram->difficulty.done();
+        return v;
+    }
+    return std::nullopt;
+}
+
 void LoadIntf2Manager::update(Engine& engine) {
     auto* ctrl = engine.get<LoadCtrl2Manager>();
     if (!ctrl || !ctrl->common().active) return;

@@ -70,7 +70,7 @@ add_library(dw4_online STATIC
   src/game/online/pacing.cpp src/game/online/net_stats.cpp src/game/online/net_log.cpp src/game/online/host_priority.cpp src/game/online/server_config.cpp src/game/online/http.cpp src/game/online/token_store.cpp
   src/game/online/json.cpp src/game/online/room_settings.cpp src/game/online/api.cpp src/game/online/transport.cpp
   src/game/online/session.cpp src/game/online/presence.cpp src/game/online/engine_adapter.cpp src/game/online/lobby_api.cpp
-  src/game/online/lobby.cpp src/game/online/achievement_api.cpp)
+  src/game/online/lobby.cpp src/game/online/achievement_api.cpp src/game/online/title_driver.cpp)
 target_include_directories(dw4_online PUBLIC src/game)
 target_link_libraries(dw4_online PUBLIC dw4_engine)
 if(DW4_ONLINE_DEV)
@@ -263,6 +263,11 @@ if(BUILD_TESTING)
   add_executable(dw4_online_character_tests tests/online_character_tests.cpp)
   target_link_libraries(dw4_online_character_tests PRIVATE dw4_online)
   add_test(NAME online_character COMMAND dw4_online_character_tests)
+  # Round I1a's Play (docs/SEAMLESS.md 19.5.1): the title driver's decisions, and with the game data the real
+  # title and character select driven into the lobby.
+  add_executable(dw4_online_title_tests tests/online_title_tests.cpp)
+  target_link_libraries(dw4_online_title_tests PRIVATE dw4_online)
+  add_test(NAME online_title COMMAND dw4_online_title_tests "${DW4_TEST_DATA}")
   # (The server pins this build carries, for the endpoint check.)
   target_compile_definitions(dw4_online_api_tests PRIVATE "DW4_EXPECTED_PINS=\"${DW4_PINS_JOINED}\"")
 endif()
