@@ -27,11 +27,17 @@ account and password),
 script), "allow_close" (the world's CLOSEs of a server restart or an ended instance are expected), "counter_proof" (the
 scenario must FAIL: a client hook switches the checked behaviour off; its expected problems are listed as notes) and
 "requires" ([CAPABILITY ...]: the scenario runs only with --capabilities naming them, e.g. fake_world_clients for the
-fake presence senders; else it is reported as SKIP with the reason).
+fake presence senders; else it is reported as SKIP with the reason), "fake_presence" ({"count": N, "stage": S}: N fake
+world clients that go from the title to the hub stage S and send PRESENCE there, W19), "fake_guests" ({"count": N,
+"after": "CLIENT: REGEX", "stage": S}: N fake world clients that go home and then to S once CLIENT's log shows REGEX, W29;
+FakeClient's client mode after the relay lane: world tickets, protocol 49; their accounts are {id:fp1}, {id:fg1}, ...),
+"frame_times" (notes each client's pictures per second and longest passes), a client's "play_args" (instead of
+--online-play: W22's protocol 48 client opens a room the old way) and "refused": true (the client must be turned away
+at its start: its error exit is expected, running its script is a problem).
 
     python run.py [SCENARIO ...] --game-exe EXE --data DATA [--cards DIR] [--parallel N] [--list] [--keep]
                                                            the scenarios with hidden game clients (scenarios/<id>)
-    python run.py --fake [SCENARIO ...] [--impair OW,JITTER,LOSS]
+    python run.py --fake [SCENARIO ...] [--impair OW,JITTER,LOSS]   (the world: a fresh server each, world tickets)
                                                            the same ideas with fake DW4R2 clients (tests/DW4Online.FakeClient)
     python run.py matrix [--seconds 40] [--warmup 20]      the loss and jitter matrix (in-process hub, SEAMLESS.md 6.4)
     python run.py G1 --game-exe EXE --data DATA [--offset 8] [--frames 22000] [--sealed-ticks 3000]
