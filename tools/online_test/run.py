@@ -837,6 +837,14 @@ def game_scenarios():
     return [dict(json.load(open(os.path.join(SCENARIO_DIR, n, "scenario.json"), encoding="utf-8")), name=n) for n in names]
 
 
+def is_seeded(sc, c):
+    """Whether a client other than the first gets its own online story from its card: on request ("seed_story": true), and
+    in a scenario with "seed_story" every client that has a card unless it says "seed_story": false (the world)."""
+    if "seed_story" in c:
+        return bool(c["seed_story"])
+    return bool(sc.get("seed_story")) and bool(c.get("card", sc.get("card")))
+
+
 def start_fake_world_client(stack, api, relay_port, pin, out, tag, name, script, duration, seed, lock):
     """A fake DW4R2 client in the world (tests/DW4Online.FakeClient's client mode after the relay lane: POST /world/ticket,
     protocol 49, PRESENCE every 200 ms, its script's exits as BARRIERs): a new account, its process and its account id. The
@@ -1046,9 +1054,11 @@ def run_real(stack, sc, api, relay_port, pin, diag, lock, connection):
         with lock:
             seed_story(stack, connection, accounts[clients[0]["name"]], owner_card, int(sc.get("seed_difficulty", 0)),
                        bool(sc.get("seed_503")), sc.get("seed_story") == "full")
-        # A guest's own online story (round G-core: G2, G3, G10 seed the guest's from its card too).
+        # The other clients' own online stories. Round G-core seeded a guest's only on request (G2, G3, G10); in the world
+        # every lobby plays its own story (no room story carries a guest any more), so every client with a card starts
+        # from its card's story unless it says "seed_story": false (a client without a card stays a new account, S14z).
         for c in clients[1:]:
-            if c.get("seed_story"):
+            if is_seeded(sc, c):
                 guest_card = saved_card(c)
                 if not guest_card:
                     raise RuntimeError("seed_story of %s needs a card" % c["name"])
@@ -1073,7 +1083,7 @@ def run_real(stack, sc, api, relay_port, pin, diag, lock, connection):
             if s not in (200, 201):
                 raise RuntimeError("upload_card %s: %s %s" % (c["name"], s, body))
     for c in clients:
-        if c.get("seed_story") or (c is clients[0] and sc.get("seed_story")):
+        if is_seeded(sc, c) or (c is clients[0] and sc.get("seed_story")):
             with lock:
                 seeded[c["name"]] = stored_story(stack, connection, accounts[c["name"]])[0]
     story_saved, stop_watch = {}, threading.Event()
