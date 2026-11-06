@@ -21,7 +21,7 @@
     {
       "name": "a",
       "script": "a.script",
-      "card": "k4",
+      "card": "k5",
       "start": 0,
       "cut": {
         "at": 200,

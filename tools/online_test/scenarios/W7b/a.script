@@ -1,4 +1,4 @@
-# W7b, host a (k4): hosts in stag0101 with b; its link is cut (the proxy cuts a for 70 s: the instance ends at 60 s (host_lost), b goes home, a goes home after its reconnect).
+# W7b, host a (k5): hosts in stag0101 with b; its link is cut (the proxy cuts a for 70 s: the instance ends at 60 s (host_lost), b goes home, a goes home after its reconnect).
 campaign until stage=stagml11,control
 idle until epoch>=@80
 explore mate00 yes until stage=stag0101,control

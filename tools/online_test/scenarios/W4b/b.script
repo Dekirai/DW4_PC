@@ -1,4 +1,4 @@
-# W4b, b (k4, a stranger): takes the gate 6 s after a.
+# W4b, b (k5, a stranger): takes the gate 6 s after a.
 campaign until stage=stagml11,control
 idle until epoch>=@106
 explore mate00 yes until stage=stag0101,control

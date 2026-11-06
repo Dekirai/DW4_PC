@@ -1,5 +1,5 @@
 {
-  "desc": "achievements in the world: online_host with three guests (two fake), online_join for the guest, a clear as the host",
+  "desc": "achievements in the world: online_host with three guests (two fake guests by a guest's NEW at stag0101), online_join for the guest",
   "world": true,
   "autochoice": "first",
   "seed_story": true,
@@ -10,8 +10,9 @@
     "fake_world_clients"
   ],
   "fake_guests": {
-    "host": "a",
-    "count": 2
+    "count": 2,
+    "after": "a: log: a joined b in the cave",
+    "stage": "stag0101"
   },
   "achievements": {
     "a": [
@@ -34,6 +35,18 @@
       "card": "k10",
       "start": 3,
       "seed_story": true
+    }
+  ],
+  "db_checks": [
+    {
+      "name": "four players in a's instance (a, b, two fakes)",
+      "sql": "SELECT COUNT(DISTINCT m.account_id) FROM instance_history_members m JOIN instance_history h ON h.id = m.instance_id WHERE h.host_account_id = {id:a}",
+      "expect": "^4$"
+    },
+    {
+      "name": "the fakes are guests of a's instance",
+      "sql": "SELECT COUNT(*) FROM instance_history_members m JOIN instance_history h ON h.id = m.instance_id WHERE h.host_account_id = {id:a} AND m.account_id IN ({id:fg1}, {id:fg2}) AND m.role = 'guest'",
+      "expect": "^2$"
     }
   ]
 }

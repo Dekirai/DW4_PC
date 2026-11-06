@@ -1,4 +1,4 @@
-# W26, host a (k4): plays on in stag0101 while b crashes and comes back.
+# W26, host a (k5): plays on in stag0101 while b crashes and comes back.
 campaign until stage=stagml11,control
 idle until epoch>=@80
 explore mate00 yes until stage=stag0101,control

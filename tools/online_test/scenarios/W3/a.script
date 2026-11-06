@@ -1,4 +1,4 @@
-# W3, a (k4) alone: nothing runs, so its arrival is a NEW with its remembered visibility (Friends, its online
+# W3, a (k5) alone: nothing runs, so its arrival is a NEW with its remembered visibility (Friends, its online
 # preferences), no prompt; it plays a while and goes home by the gate disc.
 campaign until stage=stagml11,control
 idle until epoch>=@60

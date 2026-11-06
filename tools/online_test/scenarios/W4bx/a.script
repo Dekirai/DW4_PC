@@ -1,4 +1,4 @@
-# W4bx, a (k4): takes the gate at @100 with nothing running.
+# W4bx, a (k5): takes the gate at @100 with nothing running.
 campaign until stage=stagml11,control
 idle until epoch>=@100
 explore mate00 yes until stage=stag0101,control

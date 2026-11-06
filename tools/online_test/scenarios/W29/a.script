@@ -1,8 +1,17 @@
-# W29, host a (k10): hosts with three players (b and two fake guests): online_host counts.
+# W29, host a (k10): hosts b in stag0101, follows b into dng101b1; then two fake guests take the gate to stag0101,
+# where nobody of a's instance is (a guest's NEW: a new stage group of a's instance): four players, online_host counts.
 campaign until stage=stagml11,control
 idle until epoch>=@80
 explore mate00 yes until stage=stag0101,control
 log a hosts
-wander -150 -60 20 until present>=2,sealed>=1200
-log guests here
-wander -150 -60 20 until sealed>=3000
+wander -150 -60 20 until present=2,sealed>=600
+log b joined
+wander -150 -60 20 until present=1,frames>=60
+log b left for the cave
+wander -150 -60 20 until frames>=600
+mat matz00 yes until stage=dng101b1,control
+log a in dng101b1
+wander 0 0 30 until present=2,sealed>=600
+log a joined b in the cave
+wander 0 0 30 until sealed>=7200
+log a hosted four

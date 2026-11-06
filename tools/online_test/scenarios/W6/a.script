@@ -1,4 +1,4 @@
-# W6, host a (k4): in stag0101 with b, then b goes into dng101b1 (another stage group); a takes its gate disc.
+# W6, host a (k5): in stag0101 with b, then b goes into dng101b1 (another stage group); a takes its gate disc.
 campaign until stage=stagml11,control
 idle until epoch>=@80
 explore mate00 yes until stage=stag0101,control

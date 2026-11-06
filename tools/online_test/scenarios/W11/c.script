@@ -1,4 +1,4 @@
-# W11, c (k4): hosts a Private instance (so a's arrival makes its own) and plays in dng101b1.
+# W11, c (k5): hosts a Private instance (so a's arrival makes its own) and plays in dng101b1.
 campaign until stage=stagml11,control
 idle until epoch>=@60
 explore mate00 yes until stage=stag0101,control

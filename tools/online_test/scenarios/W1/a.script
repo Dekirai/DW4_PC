@@ -1,4 +1,4 @@
-# W1, host a (k4): hosts a Public instance in stag0101 and plays there while b joins and leaves.
+# W1, host a (k5): hosts a Public instance in stag0101 and plays there while b joins and leaves.
 campaign until stage=stagml11,control
 idle until epoch>=@80
 explore mate00 yes until stage=stag0101,control

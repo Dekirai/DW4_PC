@@ -22,7 +22,7 @@
     {
       "name": "a",
       "script": "a.script",
-      "card": "k4",
+      "card": "k5",
       "start": 0,
       "prefs": {
         "defaultVisibility": "private"
@@ -31,7 +31,7 @@
     {
       "name": "d",
       "script": "d.script",
-      "card": "k4",
+      "card": "k5",
       "start": 3,
       "role": "moderator",
       "seed_story": true

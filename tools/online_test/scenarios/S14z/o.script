@@ -1,4 +1,4 @@
-# S14z (world), o (k4): hosts an instance in stag0101 while the new account plays its own lobby.
+# S14z (world), o (k5): hosts an instance in stag0101 while the new account plays its own lobby.
 campaign until stage=stagml11,control
 idle until epoch>=@60
 explore mate00 yes until stage=stag0101,control

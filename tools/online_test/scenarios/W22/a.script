@@ -1,2 +1,2 @@
-# W22, a: a client of the release before the world (protocol 48): its login is answered "Update required".
+# W22, a: a client of the release before the world (protocol 48, --online-create): turned away at its start.
 idle until frames>=1200

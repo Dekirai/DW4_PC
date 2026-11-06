@@ -1,4 +1,4 @@
-# W24, host a (k4): in stag0101 with b when the server restarts in order.
+# W24, host a (k5): in stag0101 with b when the server restarts in order.
 campaign until stage=stagml11,control
 idle until epoch>=@80
 explore mate00 yes until stage=stag0101,control

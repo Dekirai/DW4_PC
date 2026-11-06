@@ -3,8 +3,8 @@
   "world": true,
   "autochoice": "first",
   "seed_story": false,
-  "frames": 60000,
-  "timeout": 1000,
+  "frames": 1200,
+  "timeout": 300,
   "min_shared_ticks": 0,
   "requires": [
     "old_client"
@@ -28,7 +28,12 @@
       "name": "a",
       "script": "a.script",
       "exe": "{old_exe}",
-      "start": 0
+      "start": 0,
+      "play_args": [
+        "--online-create",
+        "W22"
+      ],
+      "refused": true
     }
   ]
 }

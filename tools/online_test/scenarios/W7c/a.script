@@ -1,4 +1,4 @@
-# W7c, host a (k4): hosts in stag0101 with b; its link is cut (a half-open cut: the proxy holds a's packets for 20 s without closing; the grace starts within 5 s, no lagOut, a resumes).
+# W7c, host a (k5): hosts in stag0101 with b; its link is cut (a half-open cut: the proxy holds a's packets for 20 s without closing; the grace starts within 5 s, no lagOut, a resumes).
 campaign until stage=stagml11,control
 idle until epoch>=@80
 explore mate00 yes until stage=stag0101,control

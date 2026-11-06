@@ -1,4 +1,4 @@
-# W7, host a (k4): hosts in stag0101 with b; its link is cut (the proxy cuts a for 20 s: b sees the countdown, a's Digimon stands, a resumes, fingerprints equal).
+# W7, host a (k5): hosts in stag0101 with b; its link is cut (the proxy cuts a for 20 s: b sees the countdown, a's Digimon stands, a resumes, fingerprints equal).
 campaign until stage=stagml11,control
 idle until epoch>=@80
 explore mate00 yes until stage=stag0101,control

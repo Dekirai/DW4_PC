@@ -1,4 +1,4 @@
-# W5f, a (k4): hosts a Friends instance in stag0101.
+# W5f, a (k5): hosts a Friends instance in stag0101.
 campaign until stage=stagml11,control
 idle until epoch>=@80
 explore mate00 yes until stage=stag0101,control

@@ -98,6 +98,7 @@ BELOW_NORMAL = 0x00004000
 NO_WINDOW = 0x08000000
 NEW_GROUP = 0x00000200  # CREATE_NEW_PROCESS_GROUP: the server's own group (the harness never shares its console signals)
 PROTOCOL, DATA_HASH = 43, 1
+WORLD_PROTOCOL = 49  # the world's protocol (SEAMLESS.md 19.18): the fake world clients and the --fake scenarios speak it
 
 # The stand-in engine's timing for every client of a scenario (simulation: all must agree).
 ENTRY, DEPART = 120, 120
@@ -372,8 +373,9 @@ def start_server(stack, connection, extra=None, name=""):
         "Accounts": {"PasswordIterations": 1000},
         "RateLimits": {k: 100000 for k in ("GlobalPerMinute", "LoginPerMinute", "RegisterPerHour", "RoomCreatesPerMinute", "RoomJoinsPerMinute",
                                            "StageChangesPerMinute", "WorldEntersPerMinute", "SocialPerMinute")},
+        # (Every client of the stack connects from 127.0.0.1: W19's 35 fake presence senders and the game clients.)
         "Relay": {"Enabled": True, "ListenAddress": "127.0.0.1", "Port": relay, "TicketKey": base64.b64encode(secrets.token_bytes(32)).decode(),
-                  "DiagnosticsDirectory": diag},
+                  "DiagnosticsDirectory": diag, "MaxConnectionsPerIp": 128},
         "Web": {"DataProtectionKeysDirectory": "memory"},
         "Logging": {"File": {"Directory": os.path.join(folder, "server-log")}},
         # The ordered stop of restart_server (a process without a console gets no Ctrl+C): the service stops once this exists.
@@ -422,6 +424,10 @@ def restart_server(stack, base, kill=False, down=0.0):
 
 
 def run_scenario(stack, sc, api, relay_port, pin, diag):
+    """A --fake scenario in the world: its own server (a fresh process and database, as every game scenario), one account
+    per fake client, each enters the world with a ticket of POST /world/ticket (FakeClient's client mode, protocol 49) at
+    the title (stage "") and plays its script's exits; the relay's matching makes the instances (a NEW, a co-arrival, the
+    automatic join of I1a)."""
     tag = sc["name"].lower() + secrets.token_hex(2)
     names = [c["name"] for c in sc["clients"]]
     tokens = {}
@@ -430,13 +436,6 @@ def run_scenario(stack, sc, api, relay_port, pin, diag):
         if s != 201:
             raise RuntimeError("register %s: %s %s" % (n, s, body))
         tokens[n] = body["token"]
-    s, room = api.call("POST", "/api/v1/rooms", {"name": sc["name"], "maxPlayers": 10, "protocol": PROTOCOL, "dataHash": DATA_HASH,
-                                                 "clientVersion": "0.52.0"}, tokens[names[0]])
-    code, settings_hash = room["room"]["code"], room["settingsHash"]
-    for n in names[1:]:
-        s, _ = api.call("POST", "/api/v1/rooms/%s/join" % code, {"protocol": PROTOCOL, "dataHash": DATA_HASH, "clientVersion": "0.52.0"}, tokens[n])
-        if s != 200:
-            raise RuntimeError("join %s: %s" % (n, s))
     out = os.path.join(stack.dir, sc["name"])
     os.makedirs(out, exist_ok=True)
     procs, t0 = [], time.time()
@@ -455,14 +454,14 @@ def run_scenario(stack, sc, api, relay_port, pin, diag):
         with open(script, "w") as f:
             json.dump([{**a, "at": a["at"] - c["start"]} for a in c["script"]], f)
         argv = ["dotnet", dll("tests/DW4Online.FakeClient", "DW4Online.FakeClient.dll"), "client", "--port", str(port), "--api", api.base,
-                "--token", tokens[c["name"]], "--room", code, "--pin", pin, "--protocol", str(PROTOCOL), "--data-hash", str(DATA_HASH),
-                "--settings-hash", settings_hash, "--name", c["name"], "--quest", str(c["quest"]), "--seed", str(k + 1), "--script", script,
+                "--token", tokens[c["name"]], "--pin", pin, "--protocol", str(WORLD_PROTOCOL), "--data-hash", str(DATA_HASH),
+                "--name", c["name"], "--quest", str(c["quest"]), "--seed", str(k + 1), "--script", script,
                 "--duration", str(sc["duration"] - c["start"]), "--replay-rate", str(c["rate"]), "--entry-ticks", str(sc["entry"]),
                 "--depart-ticks", str(sc["depart"]), "--log", os.path.join(out, c["name"] + ".jsonl"), "--stats", os.path.join(out, c["name"] + ".stats.json")]
         procs.append((c["name"], stack.spawn(argv, os.path.join(out, c["name"] + ".out"))))
     for name, p in procs:
         p.wait(sc["duration"] + 60)
-    return evaluate(sc, out, code, diag)
+    return evaluate(sc, out, None, diag)
 
 
 def load_world_log(diag):
@@ -571,8 +570,12 @@ def evaluate(sc, out, code, diag):
                 problems.append("fingerprints compared only up to tick %d (< %d)" % (longest, check[1]))
             else:
                 notes.append("fingerprints identical up to tick %d" % longest)
-    relay_log = load_jsonl(os.path.join(diag, "room_%s.jsonl" % code))
+    relay_log = load_world_log(diag)
     notes.append("relay: %d membership events (%s)" % (len(relay_log), ", ".join(sorted({e["ev"] for e in relay_log}))))
+    notes.extend(world_notes(relay_log))
+    for bad in ("desync", "snaphash_mismatch", "split_mismatch", "barrier_mismatch", "barrier_split"):
+        if any(e.get("ev") == bad for e in relay_log):
+            problems.append("relay logged %s" % bad)
     for n, st in stats.items():
         if st.get("CloseReason") and not str(st["CloseReason"]).startswith("Left"):
             problems.append("%s was closed: %s" % (n, st["CloseReason"]))
@@ -800,6 +803,40 @@ def game_scenarios():
     return [dict(json.load(open(os.path.join(SCENARIO_DIR, n, "scenario.json"), encoding="utf-8")), name=n) for n in names]
 
 
+def start_fake_world_client(stack, api, relay_port, pin, out, tag, name, script, duration, seed, lock):
+    """A fake DW4R2 client in the world (tests/DW4Online.FakeClient's client mode after the relay lane: POST /world/ticket,
+    protocol 49, PRESENCE every 200 ms, its script's exits as BARRIERs): a new account, its process and its account id. The
+    fake's engine is the stand-in (FakeEngine), never a real game: it must never share a stage group with a game client
+    (the fingerprints would differ), so W29's fake guests arrive where nobody of the host's instance is (a guest's NEW)."""
+    with lock:
+        s, body = api.call("POST", "/api/v1/auth/register", {"username": tag + name, "password": "online test fake " + secrets.token_hex(4)})
+    if s != 201:
+        raise RuntimeError("register %s: %s %s" % (name, s, body))
+    path = os.path.join(out, name + ".script.json")
+    with open(path, "w") as f:
+        json.dump(script, f)
+    argv = ["dotnet", dll("tests/DW4Online.FakeClient", "DW4Online.FakeClient.dll"), "client", "--port", str(relay_port), "--api", api.base,
+            "--token", body["token"], "--pin", pin, "--protocol", str(WORLD_PROTOCOL), "--name", name, "--seed", str(seed), "--script", path,
+            "--duration", str(duration), "--log", os.path.join(out, name + ".jsonl"), "--stats", os.path.join(out, name + ".stats.json")]
+    return stack.spawn(argv, os.path.join(out, name + ".out")), body["account"]["id"]
+
+
+def fake_world_notes(out, names):
+    """What the fake world clients did: their decisions (from their own logs) and how they ended."""
+    notes, problems = [], []
+    for n in names:
+        log = load_jsonl(os.path.join(out, n + ".jsonl"))
+        decisions = ["%s %s" % (e.get("decision"), e.get("to") or e.get("stage")) for e in log if e.get("ev") == "decision"]
+        welcome = any(e.get("ev") == "welcome" for e in log)
+        st = os.path.join(out, n + ".stats.json")
+        close = json.load(open(st)).get("CloseReason") if os.path.exists(st) else None
+        notes.append("fake %s: %s%s%s" % (n, "welcome" if welcome else "no welcome", (", " + "; ".join(decisions)) if decisions else "",
+                                          (", closed: %s" % close) if close else ""))
+        if not welcome:
+            problems.append("fake %s never got a WELCOME (see %s.out)" % (n, n))
+    return notes, problems
+
+
 def run_real(stack, sc, api, relay_port, pin, diag, lock, connection):
     """One game scenario: hidden game clients with scripts that enter the world (--online-play) on the scenario's own
     server (main gives every scenario a fresh one)."""
@@ -1018,7 +1055,8 @@ def run_real(stack, sc, api, relay_port, pin, diag, lock, connection):
     for c in clients:
         while time.time() - t0 < c.get("start", 0):
             time.sleep(0.05)
-        procs.append((c["name"], start(c, ["--online-play"] + ([str(c["box"])] if c.get("box") else []))))
+        # (A client's "play_args" replace --online-play: W22's protocol 48 client knows only --online-create / --online-join.)
+        procs.append((c["name"], start(c, c.get("play_args") or (["--online-play"] + ([str(c["box"])] if c.get("box") else [])))))
         if c.get("crash"):
             def crash(c=c, index=len(procs) - 1):
                 while time.time() - t0 < float(c["crash"]["at"]):
@@ -1029,8 +1067,45 @@ def run_real(stack, sc, api, relay_port, pin, diag, lock, connection):
                 os.replace(os.path.join(out, c["name"] + ".log"), os.path.join(out, c["name"] + ".crashed.log"))
                 procs[index] = (c["name"], start(again, ["--online-play"]))
             threading.Thread(target=crash, daemon=True).start()
-    code = None
+    # The fake world clients (requires fake_world_clients): "fake_presence" ({"count": N, "stage": S}: N presence senders
+    # that go from the title to the hub stage S at once and stay there, W19) and "fake_guests" ({"count": N, "after":
+    # "CLIENT: REGEX", "stage": S}: N fakes that go home and then take the way to S once CLIENT's log shows REGEX; W29's
+    # two guests of a's instance, a guest's NEW where nobody of it is). Their accounts are {id:fp1}, {id:fg1}, ...
+    fakes, fake_names = [], []
+    fake_problems = []
     limit = sc.get("timeout", 1200)
+    if sc.get("fake_presence"):
+        spec = sc["fake_presence"]
+        for k in range(int(spec.get("count", 1))):
+            name = "fp%d" % (k + 1)
+            p, accounts[name] = start_fake_world_client(stack, api, relay_port, pin, out, tag, name,
+                                                        [{"at": 1.0 + 0.05 * k, "do": "exit", "stage": spec.get("stage", "stagML11")}], limit, 100 + k, lock)
+            fakes.append(p)
+            fake_names.append(name)
+    if sc.get("fake_guests"):
+        spec = sc["fake_guests"]
+        source, _, pattern = spec["after"].partition(":")
+        rx = re.compile(pattern.strip())
+
+        def guests():
+            log_path = os.path.join(out, source.strip() + ".log")
+            while time.time() - t0 < limit:
+                text = open(log_path, encoding="utf-8", errors="replace").read() if os.path.exists(log_path) else ""
+                if rx.search(text):
+                    break
+                time.sleep(0.5)
+            else:
+                fake_problems.append("fake_guests: %s never logged /%s/" % (source.strip(), pattern.strip()))
+                return
+            for k in range(int(spec.get("count", 1))):
+                name = "fg%d" % (k + 1)
+                script = [{"at": 1.0, "do": "exit", "stage": "stagML11"}, {"at": 4.0 + 0.2 * k, "do": "exit", "stage": spec.get("stage", "stag0101")}]
+                p, accounts[name] = start_fake_world_client(stack, api, relay_port, pin, out, tag, name, script, max(10, limit - (time.time() - t0)),
+                                                            200 + k, lock)
+                fakes.append(p)
+                fake_names.append(name)
+        threading.Thread(target=guests, daemon=True).start()
+    code = None
     if any(c.get("crash") for c in clients):
         # (The crashed client's second process replaces the first in procs: wait for the crash and restart to pass.)
         time.sleep(max(0.0, max(float(c["crash"]["at"]) + float(c["crash"].get("restart", 5)) + 2 for c in clients if c.get("crash"))
@@ -1046,10 +1121,17 @@ def run_real(stack, sc, api, relay_port, pin, diag, lock, connection):
     for name, p in procs:
         if p.poll() is None:
             p.terminate()
+    for p in list(fakes):
+        if p.poll() is None:
+            p.terminate()
     stop_watch.set()
     problems, notes = evaluate_real(sc, src, out, code, diag, timed_out, exits)
-    problems += timed_problems
+    problems += timed_problems + fake_problems
     notes += timed_notes
+    if fake_names:
+        fn, fp = fake_world_notes(out, fake_names)
+        notes += fn
+        problems += fp
     for check in sc.get("api_checks", []):
         if check.get("at") == "after":
             api_check(check, problems, notes)
@@ -1208,10 +1290,20 @@ def evaluate_real(sc, src, out, code, diag, timed_out, exits):
         logs[n], fps[n], snaps[n] = parse_client_log(os.path.join(out, n + ".log"))
     for n in timed_out:
         problems.append("%s did not finish within %s s" % (n, sc.get("timeout", 1200)))
+    # A client with "refused": true must be turned away at its start (W22: the server refuses its protocol): its error
+    # exit is the expected outcome (expected.txt names the text), never a problem; running its script would be one.
+    refused = {c["name"] for c in sc["clients"] if c.get("refused")}
+    for n in refused:
+        if exits.get(n) in (0, None):
+            problems.append("%s was not refused (exit %s)" % (n, exits.get(n)))
+        if any(l.startswith("online-script: done") for l in logs[n]):
+            problems.append("%s ran its script: the server let it in" % n)
     for n, code_ in exits.items():
-        if code_ not in (0, None):
+        if code_ not in (0, None) and n not in refused:
             problems.append("%s exited with %s" % (n, code_))
     for n in names:
+        if n in refused:
+            continue
         if not any(l.startswith("online-script: done") for l in logs[n]):
             problems.append("%s: the script did not finish" % n)
         for l in logs[n]:
@@ -1927,7 +2019,13 @@ def main():
             wanted = wanted + real
         for sc in wanted[:len(wanted) - len(real)]:
             t = time.time()
-            problems, notes = run_scenario(stack, sc, api, relay, pin, diag)
+            # (The world: a fresh server per scenario, as for the game scenarios.)
+            try:
+                own_db = create_database(stack)
+                own = start_server(stack, own_db, None, sc["name"])
+                problems, notes = run_scenario(stack, sc, Api(own[0], own[3]), own[1], own[2], own[4])
+            except Exception as e:
+                problems, notes = ["%s: %s" % (type(e).__name__, e)], []
             print("%s %-5s %s (%.0f s)" % ("PASS" if not problems else "FAIL", sc["name"], sc["desc"], time.time() - t), flush=True)
             for n in notes:
                 print("       " + n, flush=True)
