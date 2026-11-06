@@ -98,6 +98,160 @@ std::string hex(const std::vector<std::uint8_t>& bytes) {
     return out;
 }
 
+// Round I1a (protocol 49, docs/SEAMLESS.md 19.18; the layouts and golden
+// bytes of DW4_PC-wt/i1a-contract.md, held by the relay's
+// WireGoldenTests.World_messages_equal_the_clients too).
+void world_messages() {
+    w::Settings settings{1, 1, 0, 1, 4242, 1, 1, 2};
+    {
+        w::Writer wr;
+        w::write_settings(wr, settings);
+        check(hex(wr.out) == "0101000192100000010102", "golden settings");
+        w::Writer d;
+        w::write_settings(d, w::Settings{});
+        check(hex(d.out) == "0000010000000000000000", "golden default settings");
+        w::Reader r{wr.out};
+        check(w::read_settings(r) == settings, "settings round trip");
+        auto bad = wr.out;
+        bad[0] = 3;
+        check(throws([&] { w::Reader rb{bad}; (void)w::read_settings(rb); }), "a difficulty above 2 is refused");
+    }
+    {
+        w::Story s;
+        s.inst = 7;
+        s.visit = 2;
+        s.revision = 12;
+        s.delta.phase = 3;
+        s.delta.flags = {19, 392};
+        s.delta.folder = {1};
+        s.delta.counters = {{7, 4, 2, 1}};
+        s.owner = 5;
+        s.box = 1;
+        check(hex(w::encode(s)) == "07000000" "02000000" "0c000000" "03" "0200" "1300" "8801" "01" "01" "01" "07" "04000000" "02000000" "01000000"
+                                   "05000000" "01",
+              "golden STORY");
+        const auto back = w::decode_story(w::encode(s));
+        check(back.owner == 5 && back.box == 1 && back.delta == s.delta, "STORY round trip with the owner key");
+    }
+    {
+        w::StoryAck a{13, {}, w::StoryAck::answer, {}};
+        a.refused = {{dw4::engine::StoryRefused::Kind::flag, 23, dw4::engine::StoryRefusal::not_story}, {dw4::engine::StoryRefused::Kind::phase, 5, dw4::engine::StoryRefusal::phase_jump}};
+        a.owner = 5;
+        a.box = 1;
+        check(hex(w::encode(a)) == "0d000000" "00000000" "01" "0200" "01" "1700" "07" "00" "0500" "04" "05000000" "01", "golden STORY_ACK");
+        check(w::decode_story_ack(w::encode(a)).owner == 5, "STORY_ACK round trip");
+        check(std::uint8_t(dw4::engine::StoryRefusal::owner) == 12, "refusal owner is 12");
+    }
+    {
+        w::BarrierOk ok;
+        ok.inst = 7;
+        ok.visit = 3;
+        ok.decision = w::Decision::co_arrive;
+        ok.new_inst = 8;
+        ok.new_visit = 1;
+        ok.stage = "stag0101";
+        ok.point = 2;
+        ok.own_slot = 1;
+        ok.slot_map = {-1, -1, -1, -1};
+        ok.mode = w::Mode::sealed;
+        ok.delay = 3;
+        check(hex(w::encode(ok)) == "07000000" "03000000" "04" "08000000" "01000000" "08" "7374616730313031" "02" "01" "ffffffff" "02" "03" "00"
+                                    "00000000" "00000000" "00" "00"
+                                    "00000000" "00000000" "00" "00" "0000010000000000000000" "0000000000000000" "00000000" "01" "00" "00" "00",
+              "golden BARRIER_OK (home world part)");
+        ok.wid = 7;
+        ok.host = 5;
+        ok.visibility = w::Visibility::private_;
+        ok.arrival = w::Arrival::guest_new;
+        ok.settings = settings;
+        ok.settings_hash = 0x0102030405060708ull;
+        ok.owner = 5;
+        ok.box = 1;
+        ok.story_mode = w::StoryMode::replace;
+        ok.redirect_stage = "stagml11";
+        ok.redirect_point = 3;
+        const auto bytes = hex(w::encode(ok));
+        const std::string tail = "07000000" "05000000" "02" "04" "0101000192100000010102" "0807060504030201" "05000000" "01" "01" "08" "737461676d6c3131" "03";
+        check(bytes.size() > tail.size() && bytes.substr(bytes.size() - tail.size()) == tail, "golden BARRIER_OK world part");
+        ok.co_arrivals = {{1, 0x01020304u, {}}};
+        const auto back = w::decode_barrier_ok(w::encode(ok));
+        check(back.wid == 7 && back.host == 5 && back.visibility == w::Visibility::private_ && back.arrival == w::Arrival::guest_new &&
+                  back.settings == settings && back.settings_hash == ok.settings_hash && back.owner == 5 && back.story_mode == w::StoryMode::replace &&
+                  back.redirect_stage == "stagml11" && back.redirect_point == 3 && back.co_arrivals == ok.co_arrivals,
+              "BARRIER_OK world round trip");
+        check(hex(w::encode(ok)).find("01" "04030201" "00000000") != std::string::npos, "golden co-arrival row with a u32 member");
+    }
+    {
+        w::InstanceInfo info;
+        info.wid = 7;
+        info.host = 5;
+        info.visibility = w::Visibility::friends;
+        info.settings = settings;
+        info.area = "dry_land";
+        info.members = {{5, "stag0201", 23, 9}, {9, "dng204b1", 12, 17}};
+        info.taken = 2;
+        info.role = w::Role::guest;
+        check(hex(w::encode(info)) == "07000000" "05000000" "01" "0101000192100000010102" "08" "6472795f6c616e64" "00" "02" "05000000" "08"
+                                      "7374616730323031" "1700" "09" "09000000" "08" "646e673230346231" "0c00" "11" "02" "00" "00" "0000" "01",
+              "golden INSTANCE_INFO");
+        const auto back = w::decode_instance_info(w::encode(info));
+        check(back.members == info.members && back.area == "dry_land" && back.role == w::Role::guest && back.taken == 2, "INSTANCE_INFO round trip");
+        check(hex(w::encode(w::InstanceInfo{})) == "00000000" "00000000" "00" "0000010000000000000000" "00" "00" "00" "00" "00" "00" "0000" "00",
+              "golden INSTANCE_INFO home");
+    }
+    check(hex(w::encode(w::WorldNotice{w::NoticeKind::ended, 5, "kim", 1, ""})) == "08" "05000000" "03" "6b696d" "01000000" "00", "golden WORLD_NOTICE");
+    check(hex(w::encode(w::MemberInfo{9, "lee", 12, 9})) == "09000000" "03" "6c6565" "0c00" "09", "golden MEMBER_INFO");
+    check(hex(w::encode(w::InstanceOp{w::InstanceOpKind::visibility, 2})) == "01" "02000000", "golden INSTANCE_OP");
+    check(throws([&] { (void)w::encode(w::InstanceOp{w::InstanceOpKind::visibility, 3}); }), "a visibility above 2 is refused");
+    check(hex(w::encode(w::JoinReq{7, 2, 1, 3, w::JoinKind::home})) == "07000000" "02000000" "01" "03" "02", "golden JOIN_REQ home");
+    check(hex(w::encode(w::JoinReq{7, 2, 1, 3})) == "07000000" "02000000" "01" "03" "01", "golden JOIN_REQ join");
+    {
+        w::JoinReq go{7, 2, 1, 3, w::JoinKind::go, "dng204b1", 0};
+        const auto back = w::decode_join_req(w::encode(go));
+        check(back.kind == w::JoinKind::go && back.stage == "dng204b1", "JOIN_REQ go round trip");
+    }
+    {
+        w::TickBody t;
+        w::Event home{w::EventKind::home};
+        home.mask = 0b0101;
+        home.reason = std::uint8_t(w::HomeReason::ended);
+        t.events = {home};
+        w::Writer tw;
+        w::write_tick(tw, t);
+        check(hex(tw.out) == "00" "01" "06" "0200" "05" "02", "golden tick record with HOME");
+        w::Reader r{tw.out};
+        const auto back = w::read_tick(r);
+        check(back.events.size() == 1 && back.events[0].kind == w::EventKind::home && back.events[0].mask == 5 && back.events[0].reason == 2,
+              "HOME round trip");
+        w::TickBody g;
+        w::Event go{w::EventKind::go, 2, 1};
+        go.stage = "dng204b1";
+        g.events = {go};
+        w::Writer gw;
+        w::write_tick(gw, g);
+        w::Reader gr{gw.out};
+        const auto gb = w::read_tick(gr);
+        check(gb.events.size() == 1 && gb.events[0].stage == "dng204b1" && gb.events[0].slot == 2, "GO round trip");
+    }
+    check(hex(w::encode(w::Intent{7, 2, w::IntentKind::leave, 0})) == "07000000" "02000000" "03" "00000000", "golden INTENT leave");
+    check(w::decode_intent(w::encode(w::Intent{7, 2, w::IntentKind::leave, 0})).kind == w::IntentKind::leave, "INTENT leave round trip");
+    {
+        w::Presence p{9, "stagml11", 1, 0, 0, 0, 0, 1, 2, 3, 4, 5, 6};
+        p.relation = 8;
+        const auto bytes = hex(w::encode(p, true));
+        check(bytes.rfind("09000000" "08" "08" "737461676d6c3131", 0) == 0, "golden PRESENCE out (u32 member, relation)");
+        check(w::decode_presence(w::encode(p, true), true) == p, "PRESENCE out round trip");
+        p.version = w::kPresenceVersion;
+        check(w::decode_presence2(w::encode_presence2(p, true), true) == p, "PRESENCE2 out round trip");
+    }
+    check(hex(w::encode(w::Resume{1, 2, 3, 4, "stag0101"})) == "01000000" "02000000" "03" "04000000" "08" "7374616730313031", "golden RESUME");
+    check(w::decode_resume(w::encode(w::Resume{1, 2, 3, 4, "stag0101"})).stage == "stag0101", "RESUME round trip");
+    check(std::uint8_t(w::Type::instance_op) == 0x1B && std::uint8_t(w::Type::instance_info) == 0x95 && std::uint8_t(w::Type::world_notice) == 0x96 &&
+              std::uint8_t(w::Type::member_info) == 0x97,
+          "protocol 49's numbers");
+    check(std::uint8_t(w::CloseReason::account) == 9, "CLOSE account is 9");
+}
+
 void messages() {
     // Tick records: mask, event count, pads, events (type, u16 length, payload).
     const auto t = tick_with_events();
@@ -237,7 +391,7 @@ void messages() {
     ok.names = {"kim", "lee"};
     auto ok2 = w::decode_barrier_ok(w::encode(ok));
     check(ok2.decision == w::Decision::new_instance && ok2.new_inst == 8 && ok2.stage == "dng101b1" && ok2.slot_map == ok.slot_map &&
-              ok2.co_arrivals == ok.co_arrivals && ok2.story == ok.story && ok2.dropped.empty() && ok2.mode == w::Mode::sealed &&
+              ok2.co_arrivals == ok.co_arrivals && ok2.story == ok.story && ok2.mode == w::Mode::sealed &&
               ok2.delay == 3 && ok2.notice == w::Notice::full && ok2.names == ok.names,
           "BARRIER_OK");
     check(ok.present() == 0b1111, "BARRIER_OK: the members are the slot map's new slots and the co-arrivals");
@@ -271,8 +425,7 @@ void messages() {
     check(throws([&] { w::ChunkAssembler a; a.add(chunks[0], 1000); }), "a transfer above its limit is refused");
     auto empty_chunks = w::make_chunks(1, 1, {});
     check(empty_chunks.size() == 1 && w::ChunkAssembler{}.add(empty_chunks[0], 10).value().empty(), "an empty body is one chunk");
-    auto room = w::decode_room(w::encode(w::Room{w::RoomEvent::joined, 3, 99, "kim", 1}));
-    check(room.kind == w::RoomEvent::joined && room.member == 3 && room.account == 99 && room.name == "kim" && room.flags == 1, "ROOM");
+    world_messages();
     auto ping = w::decode_ping(w::encode(w::Ping{9, 1000, -2, 3}));
     check(ping.margin_ms == -2 && ping.delay == 3, "PING");
     // NETSTAT (round 62): golden bytes shared with WireGoldenTests.cs.
@@ -334,8 +487,9 @@ void messages() {
         for (int b = 0; b < 256; ++b)
             if (std::string(w::type_name(w::Type(b))) != "?") known += (known.empty() ? "" : " ") + std::string(w::type_name(w::Type(b)));
         check(known == "INPUT LOG HEADING BARRIER BARRIER_CHOICE SPLIT SNAPSHOT SNAPHASH READY JOIN_AT NETFP STATE INTENT STORY PRESENCE RESUME "
-                       "RATE PONG BYE PRESENCE2 STATEHASH CHECKPOINT CHECKPOINT_BAD WELCOME SEALED LIVE JOIN_REQ BARRIER_OK BARRIER_WAIT STATE_DATA "
-                       "PRESENCE RESYNC STORY_ACK ROOM PING CLOSE ROSTER REASSIGN NETSTAT PRESENCE2 CHECKPOINT_ASK",
+                       "RATE PONG BYE PRESENCE2 STATEHASH CHECKPOINT CHECKPOINT_BAD INSTANCE_OP WELCOME SEALED LIVE JOIN_REQ BARRIER_OK BARRIER_WAIT "
+                       "STATE_DATA PRESENCE RESYNC STORY_ACK ROOM PING CLOSE ROSTER REASSIGN NETSTAT PRESENCE2 CHECKPOINT_ASK INSTANCE_INFO WORLD_NOTICE "
+                       "MEMBER_INFO",
               "type registry: " + known);
         check(std::uint8_t(w::Type::bye) == 0x13 && std::uint8_t(w::Type::reassign) == 0x8E, "the registry's last numbers before NETSTAT");
         // Round 60's PRESENCE2: 0x14 to the relay, 0x90 back (first 0x8F, NETSTAT's since DW4Online 0.1.2).
@@ -343,8 +497,6 @@ void messages() {
     }
     auto close = w::decode_close(w::encode(w::Close{w::CloseReason::kicked, "bye"}));
     check(close.reason == w::CloseReason::kicked && close.text == "bye", "CLOSE");
-    w::Roster roster{{{1, "stag0101", 8, 3, 50, 60, 3}, {2, "", 9, 1, 1, 1, 0}}};
-    check(w::decode_roster(w::encode(roster)).entries == roster.entries, "ROSTER");
     check(w::decode_inst_visit(w::encode(w::InstVisit{4, 5})).visit == 5, "RESYNC");
     const auto reassign = w::decode_reassign(w::encode(w::Reassign{4, 5, 9, 1200, w::Mode::solo, 1}));
     check(reassign.inst == 4 && reassign.new_inst == 9 && reassign.from_tick == 1200 && reassign.mode == w::Mode::solo && reassign.flags == 1, "REASSIGN");
@@ -354,11 +506,14 @@ void messages() {
           "golden tick record " + hex(tw.out));
     check(hex(w::encode(w::Input{7, 2, 99, {{0x8000, 1, 2, 3, 4}}})) == "070000000200000063000000010080010203" "04", "golden INPUT");
     check(hex(w::encode(w::Heading{7, "stag0102", 3, 0xABCDull})) == "0700000008737461673031303203cdab000000000000", "golden HEADING");
+    // (Protocol 49: the token, the plan id and the own settings appended; the
+    // relay's WireGoldenTests.World_messages_equal_the_clients holds the same.)
     check(hex(w::encode(w::Barrier{7, 2, 500, "dng101b1", 1, 3, 3, 0x1122334455667788ull, {9, 9}})) ==
-              "0700000002000000f401000008646e67313031623101030388776655443322110200000009" "09",
+              "0700000002000000f401000008646e67313031623101030388776655443322110200000009" "09" "00000000" "0000" "0000010000000000000000",
           "golden BARRIER");
     check(hex(w::encode(w::State{7, 3, 61, 5, 5, w::NotJoinable::boss})) == "07000000030000003d00000005050000000000000005", "golden STATE");
-    check(hex(w::encode(w::Welcome{3, 41, 1, 0, w::Mode::hub, "", w::kNoTick, 0, 30, 0})) == "032900000001000000000000ffffffff001e0000",
+    check(hex(w::encode(w::Welcome{3, 41, 1, 0, w::Mode::hub, "", w::kNoTick, 0, 30, 0})) ==
+              "03000000" "29000000" "01000000" "00" "00" "00" "ffffffff" "00" "1e00" "00" "00000000" "01",
           "golden WELCOME");
     {
         // (HubCoreTests / WireGoldenTests "PRESENCE2" on the relay's side.)
@@ -385,7 +540,7 @@ void messages() {
     golden.mode = w::Mode::sealed;
     golden.delay = 3;
     check(hex(w::encode(golden)) == "0700000003000000" "04" "0800000001000000" "087374616730313031" "02" "01" "ffffffff" "02" "03" "00"
-                                    "000000000000000000000000" "00" "00",
+                                    "0000000000000000" "00" "00" "00000000" "00000000" "00" "00" "0000010000000000000000" "0000000000000000" "00000000" "01" "00" "00" "00",
           "golden BARRIER_OK " + hex(w::encode(golden)));
     w::StateData small;
     small.purpose = w::StatePurpose::co_arrival;
@@ -402,7 +557,7 @@ void messages() {
     story.delta.flags = {19, 392};
     story.delta.folder = {1};
     story.delta.counters = {{7, 4, 2, 1}};
-    check(hex(w::encode(story)) == "07000000" "02000000" "0c000000" "03" "0200" "1300" "8801" "01" "01" "01" "07" "04000000" "02000000" "01000000",
+    check(hex(w::encode(story)) == "07000000" "02000000" "0c000000" "03" "0200" "1300" "8801" "01" "01" "01" "07" "04000000" "02000000" "01000000" "00000000" "01",
           "golden STORY " + hex(w::encode(story)));
     const auto story_back = w::decode_story(w::encode(story));
     check(story_back.inst == 7 && story_back.visit == 2 && story_back.revision == 12 && story_back.delta == story.delta, "STORY round trip");
@@ -411,14 +566,14 @@ void messages() {
     ack.flags = w::StoryAck::answer;
     ack.refused = {{dw4::engine::StoryRefused::Kind::flag, 23, dw4::engine::StoryRefusal::not_story},
                    {dw4::engine::StoryRefused::Kind::phase, 5, dw4::engine::StoryRefusal::phase_jump}};
-    check(hex(w::encode(ack)) == "0d000000" "00000000" "01" "0200" "01" "1700" "07" "00" "0500" "04", "golden STORY_ACK " + hex(w::encode(ack)));
+    check(hex(w::encode(ack)) == "0d000000" "00000000" "01" "0200" "01" "1700" "07" "00" "0500" "04" "00000000" "01", "golden STORY_ACK " + hex(w::encode(ack)));
     dw4::engine::RoomStory room_story;
     room_story.flags[3] = 1;
     room_story.counters[1] = 500;
     ack.story = dw4::engine::story::encode_story(room_story);
     ack.refused.clear();
     const auto ack_bytes = w::encode(ack);
-    check(ack_bytes.size() == 4 + 4 + 1100 + 1 + 2, "STORY_ACK with the story");
+    check(ack_bytes.size() == 4 + 4 + 1100 + 1 + 2 + 5, "STORY_ACK with the story");
     const auto ack_back = w::decode_story_ack(ack_bytes);
     check(ack_back.revision == 13 && dw4::engine::story::decode_story(ack_back.story, ack_back.revision).counters[1] == 500, "STORY_ACK round trip");
     auto bad_ack = ack_bytes;

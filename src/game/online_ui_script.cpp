@@ -42,11 +42,6 @@ std::string option(const std::vector<std::string>& words, std::size_t from, cons
     return fallback;
 }
 
-const online::api::RoomListing* find_room(const online::OnlineLobby& lobby, const std::string& name) {
-    for (const auto& r : lobby.rooms())
-        if (r.name == name || r.code == name) return &r;
-    return nullptr;
-}
 
 } // namespace
 
@@ -286,57 +281,38 @@ bool OnlineUiScript::run(const Line& line, UiScriptHost& host) {
     if (c == "reset-character") return once([&] { lobby.reset_character(arg(1)); });
     if (c == "refresh") {
         if (!sent_) {
-            serial_ = lobby.rooms_serial();
-            lobby.refresh_rooms();
+            serial_ = lobby.counts_serial();
+            lobby.refresh_world();
             sent_ = true;
             return false;
         }
         timed(w.size(), 30);
-        return lobby.rooms_serial() != serial_;
+        return lobby.counts_serial() != serial_;
     }
-    if (c == "wait-room") {
-        timed(2, 60);
-        if (find_room(lobby, arg(1))) return true;
-        if (host.now - refreshed_at_ > 1.0) {
-            lobby.refresh_rooms();
-            refreshed_at_ = host.now;
-        }
-        return false;
-    }
-    if (c == "select") {
-        const auto* room = find_room(lobby, arg(1));
-        if (!room) fail("no room " + arg(1) + " in the list");
-        host.state.selected = room->code;
-        return true;
-    }
-    if (c == "create") {
+    if (c == "play") {
         if (!sent_) {
-            online::CreateForm form;
-            form.name = arg(1);
-            form.password = expand(option(w, 2, "password"));
-            form.max_players = std::atoi(option(w, 2, "max", "4").c_str());
-            form.settings.difficulty = std::atoi(option(w, 2, "difficulty", "0").c_str());
-            form.settings.camera_mode = std::atoi(option(w, 2, "camera", "0").c_str());
-            form.settings.light_mode = std::atoi(option(w, 2, "light", "1").c_str());
-            form.settings.fast_loading = !option(w, 2, "fast").empty();
-            form.settings.rand_seed = std::uint32_t(std::strtoul(option(w, 2, "seed", "0").c_str(), nullptr, 10));
-            form.settings.rand_enemies = std::atoi(option(w, 2, "enemies", "0").c_str());
-            form.settings.rand_zones = std::atoi(option(w, 2, "zones", "0").c_str());
-            form.settings.rand_drops = !option(w, 2, "drops").empty();
-            lobby.create_room(form);
+            lobby.play();
             sent_ = true;
             return false;
         }
         return !lobby.busy() && lobby.screen() != online::Screen::starting;
     }
-    if (c == "join") {
+    if (c == "settings") {
         if (!sent_) {
-            const auto password = option(w, 2, "password");
-            lobby.join_room(arg(1), password.empty() ? std::nullopt : std::optional<std::string>(expand(password)));
+            online::api::OnlinePrefs prefs = lobby.prefs().value_or(online::api::OnlinePrefs{});
+            prefs.default_visibility = online::api::visibility_key(std::atoi(option(w, 1, "visibility", "0").c_str()));
+            prefs.settings.camera_mode = std::atoi(option(w, 1, "camera", "0").c_str());
+            prefs.settings.light_mode = std::atoi(option(w, 1, "light", "1").c_str());
+            prefs.settings.fast_loading = !option(w, 1, "fast").empty();
+            prefs.settings.rand_seed = std::uint32_t(std::strtoul(option(w, 1, "seed", "0").c_str(), nullptr, 10));
+            prefs.settings.rand_enemies = std::atoi(option(w, 1, "enemies", "0").c_str());
+            prefs.settings.rand_zones = std::atoi(option(w, 1, "zones", "0").c_str());
+            prefs.settings.rand_drops = !option(w, 1, "drops").empty();
+            lobby.save_settings(prefs);
             sent_ = true;
             return false;
         }
-        return !lobby.busy() && lobby.screen() != online::Screen::starting;
+        return !lobby.busy();
     }
     if (c == "confirm" || c == "cancel") {
         if (!sent_) {
@@ -349,29 +325,40 @@ bool OnlineUiScript::run(const Line& line, UiScriptHost& host) {
     }
     if (c == "wait-session") {
         timed(1, 60);
-        return host.online_active && lobby.screen() == online::Screen::in_room;
+        return host.online_active && lobby.screen() == online::Screen::playing;
+    }
+    if (c == "wait-instance") {
+        const bool home = arg(1) == "home";
+        timed(home ? 2 : 1, 60);
+        return host.live && (home ? host.live->wid == 0 : host.live->wid != 0);
     }
     if (c == "wait-members") {
         timed(2, 60);
-        if (!lobby.room()) return false;
-        // N: at least N members; <=N: at most N (the others left).
-        const int members = int(lobby.room()->members.size());
+        if (!host.live || host.live->wid == 0) return false;
+        // N: at least N players; <=N: at most N (the others left).
+        const int members = int(host.live->members.size());
         const auto& want = arg(1);
         return want.starts_with("<=") ? members <= std::atoi(want.c_str() + 2) : members >= std::atoi(want.c_str());
+    }
+    if (c == "visibility") {
+        host.state.visibility_requested = std::clamp(std::atoi(arg(1).c_str()), 0, 2);
+        return true;
+    }
+    if (c == "leave-instance") {
+        host.state.leave_instance_requested = true;
+        return true;
     }
     if (c == "wait-stage") {
         timed(2, 120);
         return lower(host.stage) == lower(arg(1));
     }
-    if (c == "kick") return once([&] { lobby.kick(arg(1)); });
-    if (c == "close") return once([&] { lobby.close_room(arg(1)); });
     if (c == "leave") {
         lobby.request_leave();
         return true;
     }
     if (c == "wait-left") {
         timed(1, 60);
-        return !host.online_active && !lobby.in_room();
+        return !host.online_active && !lobby.in_world();
     }
     if (c == "expect-screen") {
         if (lobby.screen() != online::screen_from_name(arg(1))) fail("expected screen " + arg(1));

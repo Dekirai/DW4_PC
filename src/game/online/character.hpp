@@ -50,6 +50,7 @@
 #include "http.hpp"
 
 #include "dw4/card_store.hpp"
+#include "dw4/engine/online_story.hpp"
 #include "dw4/save_data.hpp"
 
 #include <array>
@@ -70,6 +71,10 @@ std::string base64_encode(std::span<const std::uint8_t> bytes);
 std::optional<std::vector<std::uint8_t>> base64_decode(std::string_view text);
 
 using CharacterRecord = std::array<std::uint8_t, save::kRecordSize>;
+
+// A confirmed story as a record's story bytes (the server's
+// StoryRecord.Compose: BASE_FLAG, BASE_FLAGFOLDER, BASE_COUNTER big endian).
+save::StoryBytes record_story_bytes(const engine::RoomStory& story);
 
 namespace character_api {
 
@@ -235,6 +240,12 @@ public:
     // online card store writes them (save::CardStore::set_story_override).
     const save::StoryBytes& own_story() const { return own_story_; }
     void put_own_story(CharacterRecord& record) const;
+    // Round I1a's review: the own story moves on at home and as a host; the
+    // session's own confirmed story (STORY_ACK with the own owner key) keeps
+    // these bytes current, so the card cache, its backups and the uploads
+    // carry the newest own story (before: the story of the session's entry,
+    // and a save that only moved the own story on was "unchanged").
+    void set_own_story(const save::StoryBytes& story) { own_story_ = story; }
 
     // An answer of the HTTP worker; false when the id is not this sync's.
     bool on_response(std::uint64_t id, const HttpResponse& response);
@@ -246,6 +257,7 @@ public:
     // The uploads stopped for this room session (409 or a refused account).
     bool blocked() const { return blocked_ || auth_blocked_; }
     int revision() const { return revision_; }
+    int box() const { return box_; } // the online character's box in the card cache (0-3)
     std::uint32_t unique() const { return unique_; }
     std::int64_t play_seconds() const;
     std::uint64_t uploads() const { return uploads_; }

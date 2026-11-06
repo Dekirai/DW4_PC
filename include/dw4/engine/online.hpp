@@ -61,7 +61,16 @@ struct PersonalSession {
 //              they keep the instance, the others become a new joinable one;
 //   give_up  - a defeated member gives up; the only fork that makes a side
 //              of defeated members on purpose; the others keep the instance.
-enum class ForkKind : std::uint8_t { exit = 0, in_stage = 1, give_up = 2 };
+//   home     - round I1a (docs/SEAMLESS.md 19.6.5): HOME, a server decision
+//              about accounts: exactly the mask leaves, defeated or not (no
+//              side rule); like give_up applied before a step, so its
+//              recorded side is one frame later than an exit's.
+enum class ForkKind : std::uint8_t { exit = 0, in_stage = 1, give_up = 2, home = 3 };
+
+// How a barrier's story reaches the engine (round I1a, 19.8.3 / 19.30.4):
+// merge (rounds S2-G: the story's values added to the engine's) or replace
+// (the return home and a guest's NEW: the story subset becomes the story's).
+enum class StoryMode : std::uint8_t { merge = 0, replace = 1 };
 
 // A fork in a replayed history (STATE_DATA): at the step of `frame` (the
 // engine's frame() after that step), take the side named by `leavers` when

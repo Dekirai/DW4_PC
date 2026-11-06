@@ -9,6 +9,8 @@
 //                                   and what a host's other settings do to a joiner (19.8.7)
 //   dw4_world_probe DATA redirect   a redirect of a parked stage change against a
 //                                   NEXTSTAGE to that stage and point (19.8.3)
+//   dw4_world_probe DATA guestnew   a guest's NEW (the replace with the host's story and settings)
+//                                   against a Game Start with them (19.30.4)
 //   dw4_world_probe DATA homeover [CASE]  a stage group left with only defeated players
 //                                   after a HOME, with the alive mask of every stage change, and the
 //                                   original's game over offline (19.6.5)
@@ -29,6 +31,7 @@
 #include <functional>
 #include <map>
 #include <optional>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -860,11 +863,321 @@ void homeover_probe(int only) {
     }
 }
 
+// ---------------------------------------------------------------------------
+// guestnew (19.30.4, round 72's first task)
+// ---------------------------------------------------------------------------
+// A guest's NEW: an engine on its own story S_g and settings O leaves the
+// lobby (stagML11 direct start, neutral pads, the gate departure to stag0201
+// point 0 posted at the first presenting frame from kPostFrame) and is
+// answered NEW at its park with the host's story S_h (story mode replace) and
+// the host's settings H (modes and cheats set at the park, the place where
+// M1 sets the own ones back at a DISSOLVE). The reference is a Game Start
+// with S_h and H that goes the same way (its own NEW merges S_h, as the
+// host's own barrier does). Compared: the load snapshot (canonical) and the
+// net fingerprints for kCompareFrames after the load step; solo and as the
+// base of a co-arrival of two (the co-arrival's carry spawned at the load
+// step). A difference is broken down by the snapshot's flags and counters.
+RoomStory make_story(int phase_index, int difficulty, std::initializer_list<int> flags, std::initializer_list<int> keys, int counter7) {
+    RoomStory s;
+    const auto phases = story::phase_flags();
+    if (phase_index >= 1 && phase_index <= int(phases.size())) s.flags[std::size_t(phases[std::size_t(phase_index - 1)])] = 1;
+    for (const int f : flags) s.flags[std::size_t(f)] = 1;
+    for (const int k : keys) s.folder[std::size_t(k)] = 1;
+    s.counters[7] = counter7;
+    story::derive_copies(s, difficulty);
+    return s;
+}
+
+struct GuestRun {
+    std::uint64_t post_frame{}, park_frame{}, load_frame{};
+    std::string stage;
+    std::vector<std::uint8_t> canonical;
+    std::map<std::uint64_t, std::uint64_t> fingerprints;
+    std::uint8_t present_after{};
+    std::string held;
+    RoomStory story_at_park;                    // the engine's story values at its park (the reference: what the host's
+                                                // STORY at the barrier gives his keeper)
+    std::map<std::int32_t, std::uint8_t> flags_at_load; // FLAG right after the load step
+};
+
+constexpr std::uint64_t kPostFrame = 1500;
+constexpr std::uint64_t kCompareFrames = 3000;
+
+std::string held_settings(Engine& engine) {
+    const auto* s = engine.get<GameSystem>();
+    const auto& c = engine.cheats();
+    char text[160];
+    std::snprintf(text, sizeof text, "diff %d cam %d light %d fast %d rand %u/%d/%d drops %u", s->difficulty, s->camera_mode, s->light_mode,
+                  c.fast_loading ? 1 : 0, c.rand_seed, c.rand_enemies, c.rand_zones, c.drop_seed);
+    return text;
+}
+
+RoomStory story_of(Engine& engine) {
+    RoomStory s;
+    for (const auto& [f, v] : engine.flags())
+        if (f >= 0 && f < story::kFlags) s.flags[std::size_t(f)] = v;
+    if (const auto* sys = engine.get<GameSystem>())
+        for (const auto& [k, v] : sys->flag_folder)
+            if (k >= 0 && k < story::kFolder) s.folder[std::size_t(k)] = v;
+    for (const auto& [c, v] : engine.counters())
+        if (c >= 0 && c < story::kCounters) s.counters[std::size_t(c)] = v;
+    return s;
+}
+
+// `align`: FLAG set to these right after the load step (the stage's scripts
+// run after it), so the compared fingerprints show whatever else differs.
+GuestRun run_guest_new(const RoomStory& own_story, const RoomSettings& own, const std::optional<std::pair<RoomStory, RoomSettings>>& host,
+                       bool co_arrival, bool replace = true, const std::map<std::int32_t, std::uint8_t>* align = nullptr) {
+    GuestRun run;
+    std::optional<Engine> holder;
+    new_engine(holder);
+    auto& engine = *holder;
+    auto* sys = engine.get<GameSystem>();
+    sys->direct_start = true;
+    sys->players[0].joined = true;
+    // The Game Start (GameEngineLink::after_live_step): the modes, the story.
+    set_modes(engine, own);
+    dw4::game::online::apply_room_cheats(own, engine.cheats());
+    OnlineRules rules;
+    rules.enabled = true;
+    rules.present = 1;
+    engine.set_online(rules);
+    engine.set_split_identity(0);
+    engine.set_view_slot(0);
+    engine.apply_room_story(own_story);
+    engine.request_stage("stagml11");
+    std::uint64_t serial = 0;
+    PadSample neutral;
+    neutral.connected = true;
+    std::array<PadSample, 4> idle{};
+    idle[0] = neutral;
+    for (int i = 0; i < 12000; ++i) {
+        const std::uint64_t frame = engine.frame();
+        if (std::getenv("DW4_PROBE_DEBUG") && frame % 500 == 0)
+            std::printf("    [%llu] stage %s presenting %d loading %d pending %d active %d pads %d demo %zu safe %d\n",
+                        static_cast<unsigned long long>(frame), engine.stage_name().c_str(), engine.presenting() ? 1 : 0, engine.loading() ? 1 : 0,
+                        engine.pending_stage() ? 1 : 0, engine.stage_active() ? 1 : 0, engine.pad_input_enabled() ? 1 : 0,
+                        engine.demo().running_unscoped(), engine.membership_safe() ? 1 : 0);
+        // (The lobby always runs a demo, so it is never membership-safe: the
+        // gate's own departure runs inside its menu's demo too.)
+        if (!run.post_frame && frame >= kPostFrame && engine.stage_name() == "stagml11" && engine.presenting() && !engine.loading()) {
+            post_departure(engine, "stag0201", 0);
+            run.post_frame = frame;
+        }
+        if (run.post_frame && !run.park_frame && engine.pending_stage()) {
+            run.park_frame = frame;
+            run.story_at_park = story_of(engine);
+            serial = engine.stage_snapshot() ? engine.stage_snapshot()->serial : 0;
+            BarrierResult b;
+            b.decision = Decision::new_instance;
+            b.slot_map = {0, -1, -1, -1};
+            b.own_slot = 0;
+            if (co_arrival) {
+                PlayerCarry carry = engine.carry_player(0);
+                carry.slot.digimon = "p_dorumon";
+                carry.slot.unique = 0x4242;
+                carry.slot.name = u"Lee";
+                carry.chip = {};
+                b.co_arrivals.emplace_back(1, std::move(carry));
+            }
+            b.rules = engine.online();
+            if (host) {
+                // The guest's NEW: the host's story replaces the own; the host's modes and cheats now.
+                b.story = host->first;
+                b.story_mode = replace ? StoryMode::replace : StoryMode::merge;
+                set_modes(engine, host->second);
+                dw4::game::online::apply_room_cheats(host->second, engine.cheats());
+            } else {
+                // The reference (the host's own NEW): his confirmed story merged.
+                b.story = own_story;
+            }
+            engine.set_barrier(b);
+        }
+        const bool after_load = run.load_frame != 0;
+        step(engine, after_load ? pads_at(frame) : idle);
+        const auto* snapshot = engine.stage_snapshot();
+        if (run.park_frame && !run.load_frame && snapshot && snapshot->serial != serial) {
+            run.load_frame = engine.frame();
+            run.stage = snapshot->stage;
+            run.canonical = engine.snapshot_bytes(SnapshotForm::canonical);
+            run.present_after = engine.online().present;
+            run.held = held_settings(engine);
+            run.flags_at_load = engine.flags();
+            if (align) engine.flags() = *align;
+        }
+        if (run.load_frame) {
+            run.fingerprints[engine.frame() - run.load_frame] = engine.net_fingerprint();
+            if (engine.frame() - run.load_frame >= kCompareFrames) break;
+        }
+    }
+    engine.set_online(OnlineRules{});
+    return run;
+}
+
+void report_guest(const GuestRun& ref, const GuestRun& r, const std::string& name) {
+    std::size_t first_byte = 0;
+    const bool same = r.canonical == ref.canonical;
+    if (!same) {
+        const std::size_t n = std::min(r.canonical.size(), ref.canonical.size());
+        while (first_byte < n && r.canonical[first_byte] == ref.canonical[first_byte]) ++first_byte;
+    }
+    std::uint64_t compared = 0, first_diff = 0;
+    for (const auto& [k, fp] : r.fingerprints) {
+        const auto it = ref.fingerprints.find(k);
+        if (it == ref.fingerprints.end()) continue;
+        ++compared;
+        if (!first_diff && it->second != fp) first_diff = k + 1;
+    }
+    std::printf("  %-66s post %llu park %llu load step %llu (ref %llu/%llu/%llu), %s, present %x, holds [%s]; load snapshot %s", name.c_str(),
+                static_cast<unsigned long long>(r.post_frame), static_cast<unsigned long long>(r.park_frame),
+                static_cast<unsigned long long>(r.load_frame), static_cast<unsigned long long>(ref.post_frame),
+                static_cast<unsigned long long>(ref.park_frame), static_cast<unsigned long long>(ref.load_frame), r.stage.c_str(),
+                unsigned(r.present_after), r.held.c_str(), same ? "equal" : "differs");
+    if (!same) std::printf(" (from byte %zu of %zu / ref %zu)", first_byte, r.canonical.size(), ref.canonical.size());
+    std::printf(", %llu frames compared, %s\n", static_cast<unsigned long long>(compared),
+                first_diff ? ("differ from load + " + std::to_string(first_diff - 1)).c_str() : "equal");
+    if (same || r.canonical.empty() || ref.canonical.empty()) return;
+    // The break-down: the flags and counters of both snapshots.
+    try {
+        const auto a = decode_snapshot(r.canonical);
+        const auto b = decode_snapshot(ref.canonical);
+        auto show = [](const auto& ma, const auto& mb, const char* what) {
+            std::set<std::int32_t> keys;
+            for (const auto& [k, v] : ma) keys.insert(k);
+            for (const auto& [k, v] : mb) keys.insert(k);
+            int shown = 0;
+            for (const auto k : keys) {
+                const auto ia = ma.find(k);
+                const auto ib = mb.find(k);
+                const bool ha = ia != ma.end(), hb = ib != mb.end();
+                if (ha == hb && (!ha || ia->second == ib->second)) continue;
+                if (shown++ < 40)
+                    std::printf("      %s %d: guest %s, reference %s%s\n", what, k, ha ? std::to_string(int(ia->second)).c_str() : "-",
+                                hb ? std::to_string(int(ib->second)).c_str() : "-", story::in_replaced_subset(k) ? " (story subset)" : "");
+            }
+            if (shown > 40) std::printf("      ... %d %s differ in all\n", shown, what);
+            return shown;
+        };
+        const int flags = show(a.flags, b.flags, "flag");
+        const int counters = show(a.counters, b.counters, "counter");
+        std::printf("    frames %llu / %llu, time %lld / %lld, %d flags and %d counters differ\n", static_cast<unsigned long long>(a.frame),
+                    static_cast<unsigned long long>(b.frame), static_cast<long long>(a.time), static_cast<long long>(b.time), flags, counters);
+        // Which other fields differ: the reference's fields put into the
+        // guest's snapshot one after another until the bytes are equal.
+        auto guest = a;
+        const auto target = encode_snapshot(b, SnapshotForm::canonical);
+        std::string fields;
+        const std::pair<const char*, std::function<void()>> swaps[] = {
+            {"flags", [&] { guest.flags = b.flags; }},
+            {"counters", [&] { guest.counters = b.counters; }},
+            {"pad_input_enabled", [&] { guest.pad_input_enabled = b.pad_input_enabled; }},
+            {"cheats", [&] { guest.cheats = b.cheats; }},
+            {"random", [&] { guest.random = b.random; }},
+            {"point_no", [&] { guest.point_no = b.point_no; }},
+            {"loader_teardown", [&] { guest.loader_teardown = b.loader_teardown; }},
+            {"loader_common", [&] { guest.loader_common = b.loader_common; }},
+            {"stage_active", [&] { guest.stage_active = b.stage_active; }},
+            {"system (GameSystem)", [&] { guest.system = b.system; }},
+            {"sound", [&] { guest.sound = b.sound; }},
+            {"online", [&] { guest.online = b.online; }},
+            {"personal", [&] { guest.personal = b.personal; }},
+        };
+        auto before = encode_snapshot(guest, SnapshotForm::canonical);
+        for (const auto& [field, swap] : swaps) {
+            if (before == target) break;
+            swap();
+            auto after = encode_snapshot(guest, SnapshotForm::canonical);
+            if (after != before) fields += std::string(fields.empty() ? "" : ", ") + field;
+            before = std::move(after);
+        }
+        std::printf("    snapshot fields that differ: %s%s\n", fields.empty() ? "none" : fields.c_str(),
+                    before == target ? "" : " (and more: still not equal after every swap)");
+        if (std::string(fields).find("system") != std::string::npos) {
+            const auto* ga = static_cast<const GameSystem*>(a.system.get());
+            const auto* gb = static_cast<const GameSystem*>(b.system.get());
+            if (ga && gb) {
+                std::printf("      GameSystem: difficulty %d/%d camera %d/%d light %d/%d gate %s/%s %d/%d folder %zu/%zu\n", ga->difficulty, gb->difficulty,
+                            ga->camera_mode, gb->camera_mode, ga->light_mode, gb->light_mode, ga->gate_stage_name.value_or("-").c_str(),
+                            gb->gate_stage_name.value_or("-").c_str(), ga->gate_stage_no, gb->gate_stage_no, ga->flag_folder.size(),
+                            gb->flag_folder.size());
+                for (const auto& [k, v] : ga->flag_folder)
+                    if (!gb->flag_folder.contains(k) || gb->flag_folder.at(k) != v) std::printf("      folder %d: guest %d, reference %s\n", k, int(v),
+                                                                                                 gb->flag_folder.contains(k) ? std::to_string(int(gb->flag_folder.at(k))).c_str() : "-");
+                for (const auto& [k, v] : gb->flag_folder)
+                    if (!ga->flag_folder.contains(k)) std::printf("      folder %d: guest -, reference %d\n", k, int(v));
+            }
+        }
+    } catch (const std::exception& e) {
+        std::printf("    (snapshot decode failed: %s)\n", e.what());
+    }
+}
+
+void guestnew_probe() {
+    // The host: Hard, chapter 4 (flag 4: Dry Land's gate open), the training
+    // (503), two bosses and a world event, keys 0-2, COUNTER 7 = 5. The
+    // guest: Normal, chapter 2, the training only, COUNTER 7 = 1.
+    const RoomStory host_story = make_story(4, 1, {503, 67, 68, 19, 20}, {0, 1, 2}, 5);
+    const RoomStory guest_story = make_story(2, 0, {503}, {}, 1);
+    RoomSettings base;
+    RoomSettings host_hard = base;
+    host_hard.difficulty = 1;
+    RoomSettings host_rand = host_hard;
+    host_rand.rand_seed = 4242;
+    host_rand.rand_enemies = 1;
+    host_rand.rand_drops = true;
+    RoomSettings host_fast = host_rand;
+    host_fast.fast_loading = true;
+    RoomSettings host_modes = host_rand;
+    host_modes.camera_mode = 1;
+    host_modes.light_mode = 0;
+    std::printf("guestnew probe: lobby stagml11 direct start on the guest's own story and settings, gate departure to stag0201 point 0 at the\n"
+                "first presenting frame from %llu, NEW answered at the park with the host's story (replace) and settings; reference: a\n"
+                "Game Start with the host's story and settings the same way; %llu frames compared after the load step\n",
+                static_cast<unsigned long long>(kPostFrame), static_cast<unsigned long long>(kCompareFrames));
+    struct Case {
+        const char* name;
+        RoomSettings own, host;
+        bool co_arrival;
+        bool replace = true;
+    };
+    const Case cases[] = {
+        {"solo: other story, same settings (default)", base, base, false},
+        {"solo: other story, host Hard", base, host_hard, false},
+        {"solo: other story, host Hard + randomizer", base, host_rand, false},
+        {"solo: other story, host Hard + randomizer + camera 1 + light 0", base, host_modes, false},
+        {"solo: other story, host Hard + randomizer + fast loading", base, host_fast, false},
+        {"solo: guest Hard + randomizer, host default (the other way)", host_rand, base, false},
+        {"co-arrival of two: other story, host Hard + randomizer", base, host_rand, true},
+        {"co-arrival of two: other story, same settings", base, base, true},
+        {"counter-proof: no replace (merge), host Hard + randomizer", base, host_rand, false, false},
+    };
+    for (const auto& c : cases) {
+        const auto ref = run_guest_new(host_story, c.host, std::nullopt, c.co_arrival);
+        // The host's confirmed story at the barrier: his engine's story at its
+        // park (his STORY goes before his BARRIER and is merged first).
+        const auto host_now = ref.story_at_park;
+        const auto guest = run_guest_new(guest_story, c.own, std::make_pair(host_now, c.host), c.co_arrival, c.replace);
+        report_guest(ref, guest, c.name);
+        // The same with FLAG aligned to the reference's right after the load
+        // step: what differs besides the flag table.
+        const auto aligned = run_guest_new(guest_story, c.own, std::make_pair(host_now, c.host), c.co_arrival, c.replace, &ref.flags_at_load);
+        std::uint64_t compared = 0, first_diff = 0;
+        for (const auto& [k, fp] : aligned.fingerprints) {
+            const auto it = ref.fingerprints.find(k);
+            if (it == ref.fingerprints.end() || k == 0) continue;
+            ++compared;
+            if (!first_diff && it->second != fp) first_diff = k + 1;
+        }
+        std::printf("    FLAG aligned after the load step: %llu frames compared, %s\n", static_cast<unsigned long long>(compared),
+                    first_diff ? ("differ from load + " + std::to_string(first_diff - 1)).c_str() : "equal");
+    }
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
     if (argc < 3) {
-        std::fprintf(stderr, "usage: dw4_world_probe DATA settings|redirect|homeover\n");
+        std::fprintf(stderr, "usage: dw4_world_probe DATA settings|redirect|homeover|guestnew\n");
         return 2;
     }
     g_data = argv[1];
@@ -882,6 +1195,7 @@ int main(int argc, char** argv) {
         if (what == "settings") settings_probe();
         else if (what == "redirect") redirect_probe();
         else if (what == "homeover") homeover_probe(argc > 3 ? std::atoi(argv[3]) : -1);
+        else if (what == "guestnew") guestnew_probe();
         else {
             std::fprintf(stderr, "unknown probe %s\n", what.c_str());
             return 2;

@@ -9148,7 +9148,12 @@ home (DISSOLVE, 3.4); it is the only way out of an area.
     engine online (the virtual card, the online rules, the replay rate
     calibration) and drives the title's Game Start and box choice behind one
     loading screen ("Entering the server..."); the own story comes before
-    the Game Start (round 59's `await_hello`, round G's hold).
+    the Game Start (round 59's `await_hello`, round G's hold). Built in
+    I1a's client lane (19.25): a box with clears gets the original
+    difficulty dialog at this Game Start too (19.8.7); it lifts the
+    loading screen for the player while it is open. A new account (no
+    online character on the card) stops at Create Digimon, the original
+    new-character flow.
   - **Choose character**: the same start with the original character select
     and the four online boxes; the original difficulty dialog comes back
     online, limited by the box's own clears (19.8.7); an empty box starts
@@ -11942,6 +11947,7 @@ The design changes the results force, for the lanes:
 | M3 | Only defeated players after a HOME reach the original game over (one update after the HOME, NEXTSTAGE stagml11 374-402 frames later, as offline: 383); every such barrier, and the exit prompt's (stag0101 point 2) when HOME left a defeated member alone on an exit mat, has alive mask 0; that prompt is HOME's doing (offline, two defeats on the same mat run the game over) (19.6.5) | the relay reads "defeated" from the barrier's alive mask 0, not from the target stagML11, except in a give-up copy (INTENT *give_up* and its fork: on purpose, answers 24 and 37); such a barrier of an ended instance is redirected home | relay |
 | M4 | Phase 1 (one lock) passes the holds' p99 (12-23 µs) and, over sockets with `TryEnter` as built, the sealing lateness p99 (under 2 ms; misses 0.5-1.1 %); it fails the max of 5 ms in every cell with sealed groups (the ping pass sorts 1,800 margins per sealed member, 7.5-21 ms once a second; GC and the busy machine) and the relay's CPU over sockets (base 0.72-0.85 cores, select 0.66, a full hub 4) from the connection path, one write and two reads per frame; the in-process TryEnter misses (15-35 %) were the harness's coincident timer wakes; the lock is busy 1.1-1.8 %, so phase 2 fixes none of it (19.17.4) | phase 1 kept provisionally; the gate's criteria unchanged except the hold max, read at p99.99 (question 42); the PING margin incremental or cached; `TryEnter` stays (`SealRoom` counts misses, reads its time with the lock held; `SealLateness`); the presence selection computed off the lock; the fan-out by selection; the relay lane cuts the CPU per frame (coalesced writes alone did nothing measurable); then the gate again, both harnesses, on a quiet machine; the max is read at p99.99 (the user's answer to question 42, 2026-11-05; the in-process holds pass, 1.9-3.2 ms); the CPU over sockets stays open | relay |
 | M5 | 30 ghost figures cost 0.40-0.45 ms a pass at 144 Hz (CPU 0.25-0.30 ms) on the RTX 5070 Ti with a hidden window; the half rate as measured skipped only the pose of the farther 20 and saved 0.03-0.04 ms (19.13) | 30 at full rate by default; the half rate and the distance cap with its F1 setting stay designed as the fallback, built only if a weaker GPU (the iGPU, a visible window) measures over the 1.5 ms budget | client |
+| M6 (round 72's first task, measured by the I1a client lane, 19.30.4) | A guest's NEW with the replace (the host's story, story mode *replace* at the top of `apply_barrier`; the host's modes and cheats at the park) against a Game Start with the host's story and settings the same way (lobby, gate to stag0201): the load snapshot equal in the GameSystem, the cheats, the point, the rules and the loader's fields, solo and as a co-arrival's base, for every settings pair tried; it differs only in the departing lobby's history (zero entries of story flags, the lobby-only flags 931 / 932, the generator and the sound state), so the net fingerprints differ from the load step; without the replace (merge) story values differ | none: 19.30.4 stands as written; the new stage group's snapshot is everyone's base, so the lobby history meets no other engine | client |
 
 | Lane | Scope |
 | --- | --- |
@@ -12127,6 +12133,183 @@ lanes shared are in the round's contract file and repeated here).*
   `--allow-skip`, and a counter-proof passes only when its `expect_fail`
   check failed and nothing else broke (`test_run_verdicts.py`). The
   production example says `Play:MinimumProtocol` 49.
+
+*Built, lane client (2026-11-06, branch `feat-i1a-client` from main
+d0e005b0; progress note `docs/ROUND_I1A_CLIENT_NOTES.md`; the wire and
+REST decisions shared with the relay and web lanes are in the round's
+contract file `DW4_PC-wt/i1a-contract.md`, the client's entries copied
+here).*
+
+- **First task (round 72):** the guest's NEW measured against a Game
+  Start with the host's story and settings (M6 above, 19.30.4).
+- **Engine** (every path behind the online rules): `story::replace` and
+  `BarrierResult::story_mode` (merge / replace at the top of
+  `apply_barrier`), `Engine::redirect_pending_stage` (the stage and the
+  generate point; only for a parked DISSOLVE), `ForkKind::home` (exactly
+  the mask, no side rule, the give-up's frame), `Engine::online_home(mask)`
+  (the home departure: gatedisc.lua's records without SYSsetGateStage),
+  `Engine::online_depart_home()` (19.6.10, a solo engine).
+- **Protocol 49** (`kOnlineProtocol`): the layout of the contract (member
+  ids u32; the 11-byte settings block; BARRIER + travel token, plan id and
+  the own settings; BARRIER_OK + wid, host, visibility, arrival (0 none, 1
+  new instance, 2 automatic join, 3 co-arrival or starting, 4 guest's
+  NEW), settings and their hash, owner key, story mode, redirect stage and
+  point, without the dropped blob; JOIN_REQ + kind (1 join, 2 home: `slot`
+  holds the mask, 3 go); tick events HOME 6 (mask, reason) and GO 7 (I1b,
+  decoded only); INTENT 3 *leave*, 4 *go along*; STORY and STORY_ACK + the
+  owner key, refusal 12 *owner*; PRESENCE / PRESENCE2 to clients + member
+  u32 and relation flags; RESUME + the stage; WELCOME + wid and box, flags
+  8 world, 16 seat held, 32 staff; INSTANCE_OP 0x1B; INSTANCE_INFO 0x95,
+  WORLD_NOTICE 0x96, MEMBER_INFO 0x97; CLOSE 9 *account*; ROOM and ROSTER
+  retired), the relay's golden vectors in `online_wire_tests`.
+- **Session:** two confirmed stories (the own, applied at every Game
+  Start; the visit owner's, the pending set's base) and the owner key in
+  STORY; the world part of BARRIER_OK with the arrival toasts of 19.5.6 once
+  INSTANCE_INFO names the host's stage; WORLD_NOTICE in 19.5.6's words;
+  MEMBER_INFO names; HOME applied like an INTENT (pending ones follow their
+  slots at a fork); JOIN_REQ *home* answered like a join; *Leave instance*
+  (INTENT 3) and the host's visibility (INSTANCE_OP 1); the local way home
+  after a WELCOME without the own instance ("The server restarted. Back on
+  your own story." when the member id changed, else "The instance has
+  ended."); RESUME with the stage after every reconnect in a field.
+- **Settings (M1):** `GameEngineLink::start_online` applies the own cheats
+  only to the session's own engine, never after a restore (the snapshot's
+  stay); BARRIER_OK sets the host's modes and cheats for an arrival from
+  home into an instance (the replace), the own at a DISSOLVE, both before
+  the module reload; the original difficulty dialog runs online and its
+  choice is the own settings' difficulty (every BARRIER carries it).
+- **App:** `--online-play [BOX]` (replaces `--online-create` /
+  `--online-join`; `--online-camera`, `--online-light`, `--online-fast`
+  override the online preferences for a test run), `DW4_ONLINE_AUTOCHOICE`
+  (development builds: `new` sends BARRIER plan id 0xFFFF from home),
+  `--online-difficulty N` and the counter-proof hook
+  `DW4_ONLINE_TEST_NO_REPLACE=1` (development builds: no story from a
+  replace-mode BARRIER_OK, so W1 and W30 fail with it), Play
+  through `POST /world/enter`, reconnects through `POST /world/ticket`,
+  *Go offline* through `POST /world/leave`; the title's home screen (*Play:
+  <form> Lv <n> (Box 1)*, *Settings*, *Account*, *Log out*, "Online now: n
+  players, m instances") and Online > Settings (`PUT /me/online-prefs`) in
+  place of the room screens; the playing screen is the F1 Online tab's
+  *Instance* page (host, visibility cycled by the host, members with stage,
+  level and connection, *Leave instance* with 19.5.6's questions), and the
+  F1 menu opens on that tab while the world runs; the line under the own
+  status window; the host's extra line "Your guests will return to their
+  lobbies." at the exit port's prompt into a hub stage (a stage group of
+  two or more), at the original prompt of a stage group of one (its window
+  `i_zzstchgwb` is up and the own player stands on an exit mat whose
+  script names only hub stages, `chunk_leads_home`: a scan of every stage
+  of `areas.json` found 29 such mats, all on dungeons' last floors, the
+  boss stages, the quest dungeons and stag0401's `mats00`) and while the
+  gate disk is under the own disk panel's cursor (the disk has no prompt:
+  it takes him home at once; `PanelManager::disk_under_cursor`, read
+  only); name tags coloured by relation (party green, friend blue, staff
+  gold); Discord's party as the instance's x/4; 30 ghost figures with 32
+  weapon packages at full rate (M5; the half rate not built); the toasts'
+  stage names from the area table (`presence_data`, whose format 2 columns
+  the web lane writes; no separate reader).
+- **Play straight into the own lobby (19.5.1):** the world session starts
+  at the title as before, and the title driver
+  (`src/game/online/title_driver.hpp`) plays the title's own Game Start
+  and the box's Call Digimon behind one loading screen ("Entering the
+  server...", black, the title muted): START at "press start", Game Start,
+  Call Digimon, card slot A (the online character's virtual card), the
+  character's box (the card cache's), START. It reads the screens from the
+  engine before every step (TITLE2's state, LOADCTRL2's, the own
+  LOADINTF2 panel with its slot, box and difficulty helpers and its
+  message prompt; read-only getters, nothing of the engine changes) and
+  presses only when the screen that takes the button waits for it, with
+  the cursor where it should be: one step down, at least one up, the same
+  press again only after half a second without a change (a press the F1
+  menu swallowed). So it takes as long as the title takes on that PC and
+  never lands a press on another screen. Hand-overs (the loading screen
+  lifts): the original difficulty dialog is the player's while it is open
+  (19.8.7; the drive goes on after it; `--online-difficulty` answers it in
+  test runs); a card without the online character stops at Create Digimon
+  (the original new-character flow); a card message; no lobby after 90 s
+  of steps (at the press-start screen the old toast "Press START to play
+  your online character." comes back). At the lobby, 1.5 s after GET
+  /world and GET /friends were asked again: "Welcome back, Kim. 14 players
+  online, 2 friends." (the friends online from the web lane's I1a
+  presence in GET /friends; the players' part only with a count, the
+  friends' only with one or more online). The drive never runs with an
+  online test script or an input script (their campaign bot drives the
+  title as before, the W scenarios and the UI runs with `--input`);
+  `DW4_TEST_TITLE_DRIVE=BOX` (development test runs, offline, on the
+  forbidden list online) drives a run's own title through the app's input
+  path (k2's card from stagIS10 into stagML11 in 1,564 steps, 7 presses).
+- **Online achievements in the world (19.8.9; the web lane's trial-merge
+  finding):** no GET /rooms poll any more (the world server answers 410);
+  the story's owner is the own at home and the host in an instance, the
+  players are the instance's (`OnlineAchievements::set_world_facts`), and
+  *Connected* (`online_join`) is given only as a guest in someone else's
+  instance (`AchievementStep::joined_other`; lockstep sessions as before).
+- **Tests:** ctest 57/57 (online: the replace, the redirect, the settings
+  at a restore, at a guest's NEW and at DISSOLVE, HOME without data and on
+  real engines with an observer finding the side again, the local way
+  home; online_session: `world_session` over the fake hub; online_wire:
+  `world_messages`; online_api and online_lobby: the world's REST, the
+  home screen, GET /friends and the welcome; online_title: the driver's
+  decisions and press rhythm, and with the game data the real title and
+  character select driven into stagML11 for boxes 0, 2 and 3 from three
+  start offsets, one after the attract demo, the difficulty dialog
+  answered by a test run and by the player, the exit mats of stag0101 and
+  dng101b2, the disk panel's cursor on the gate disk; achievements and
+  online_achievements: *Connected* only as a guest, no room check in the
+  world, the session's facts); offline: `det.sh` 4004f056 / 396cb219
+  twice, r25c 10 of 10 with 1,748,011 frames, the save state suite 17 of
+  17 (on the last code commit).
+- **The lane review's fixes** (contract entry "client 15:15"; no wire or
+  REST change):
+  - *The story owner key after a reconnect.* A restarted relay numbers its
+    members from 1 again, so a guest may get its host's former id, and a
+    STORY with the old key would then name the guest's own story (the
+    relay would write the host's values into it). A WELCOME with another
+    member id than before, or without the engine's instance, re-keys an
+    engine on its own story (at home, the host) to (new id, box) and drops
+    the key of another's story: no STORY until the next BARRIER_OK names an
+    owner (the local way home's DISSOLVE with the replace). Nothing goes
+    between a reconnect's OK line and its WELCOME. 19.6.10 holds as
+    written: what the field made on the host's story after the last
+    STORY_ACK is lost for the host.
+  - *The client's 5 s barrier fallback* (3.4) keeps the world: a field
+    target is a NEW inside the instance (wid, host, owner key and the
+    host's confirmed story stay; no replace, no settings); a hub target
+    from another's story or from an instance is a local DISSOLVE (the own
+    settings, the own confirmed story as the replace; without an own
+    confirmed story it keeps waiting): a hub stage never loads on another's
+    story (19.8.9).
+  - *WORLD_NOTICE ended* (19.6.10's third trigger) takes an engine that
+    plays apart from its instance (a non-resumable reconnect whose WELCOME
+    still named the wid: no stage group, so no HOME) home by itself.
+  - *Leave instance* is kept while the INTENT cannot go (a barrier, a
+    load, a catch-up, a reconnect, an engine apart from its instance, whose
+    INTENT the relay ignores) and sent in the instance's next stage; the
+    toast "You leave the instance as soon as this stage allows it."
+  - *Texts:* the host's countdown is a running line (overlay status, from
+    WORLD_NOTICE host_away's seconds), not a toast per notice; <stage> in
+    the toasts is the area table's place only; the co-arrival toast is
+    19.5.6's exactly; the rooms' words left the player's screens (welcome:
+    "up to four players share an instance", the reset warning, "Your own
+    story did not arrive. Press Play again.", Discord "Online", the online
+    character's notices); the F1 menu opens on Online whenever the world
+    runs, from the status window's line with the visibility focused; the
+    line reads the own slot's status window.
+  - *The own story of the card:* the card, its backups and every upload
+    carry the session's own confirmed story (STORY_ACK with the own key,
+    `record_story_bytes` as the server's `StoryRecord.Compose`), so a save
+    that only moved the own story on goes up.
+  - `--online-difficulty` is parsed only by development builds.
+  - Tests: online_session `restart_story_key` (the new id the host's former
+    one, and another), `restart_at_home`, `fallback_in_world` (between
+    fields, the way home), `leave_and_end_in_world` (a kept leave at a
+    barrier and apart from the instance, the host's countdown, the end);
+    online_character `own_story_follows_the_session`. Each new session test
+    fails with its fix taken back (counter-proofs, `build/sess_cp*.log`).
+- **Not built in this lane** (the integration's or later rounds'): the W
+  scenarios with real clients (the harness lane, after the merge); the
+  half-rate ghost animation (M5: the fallback only, built only if a weaker
+  GPU measures over the budget); *Choose character* with the original
+  character select and the four online boxes (round D's boxes).
 
 **Round I1b: the prompt, go along, removal and *Report player*** (proposed
 r69; M, two lanes; round 72 adds the third lane *go along*, M-L).
@@ -12712,6 +12895,75 @@ Game Start with the host's story and settings straight into stag0201
 (`dw4_world_probe`: the load snapshot's canonical hash and the net
 fingerprints for 3,000 frames), solo and as the base of a co-arrival of
 two.
+
+**Measured (round I1a, client lane, 2026-11-06; M6).** `dw4_world_probe
+DATA guestnew` (`tools/world_probe.cpp`, headless, online rules): the
+guest's engine starts on its own story S_g (chapter 2, Normal, 503 only,
+COUNTER 7 = 1) and its own settings O with the Game Start's application
+(`apply_room_story`, the modes, the cheats), stands in the lobby (stagML11
+direct start, neutral pads) and leaves at frame 1500 by the gate's
+departure to stag0201 point 0 (the probe posts SETGENERATEPOS and
+NEXTSTAGE; the lobby always runs a demo, so it is never membership-safe,
+and the gate's own departure runs inside its menu's demo as well). At the
+park it is answered NEW with the host's story and story mode *replace*
+(`BarrierResult::story_mode`, `story::replace` at the top of
+`apply_barrier`) and the host's modes and cheats set at the park (the
+place where M1 sets the own ones back at a DISSOLVE). The reference is a
+Game Start with the host's story S_h (chapter 4, Hard, 503, bosses 67-68,
+world events 19-20, keys 0-2, COUNTER 7 = 5) and settings H that goes the
+same way; its own NEW merges its confirmed story as the host's barrier
+does, and the host story the guest gets is the reference's story at its
+park (what the host's STORY before his BARRIER gives his keeper: his lobby
+set flag 501, the lobby's intro). 3,000 frames after the load step with
+the walk-and-attack pads of the other probes. Logs (worktree
+`i1a-client`) `build/meas/guestnew_r4.log`, the first runs
+`guestnew_r2.log` (the host story without the reference's lobby flag) and
+`guestnew_r3.log`.
+
+| Case (O / H) | Load step | Settings held after the load | Load snapshot (canonical) |
+| --- | --- | --- | --- |
+| solo, defaults / defaults | 1511 / 1511 | H | differs in FLAG, the generator state and the sound state only |
+| solo, defaults / Hard | 1511 / 1511 | H (diff 1) | the same three |
+| solo, defaults / Hard + randomizer 4242 (enemies 1, drops) | 1511 / 1511 | H | the same three |
+| solo, defaults / that + camera 1 + light 0 | 1511 / 1511 | H | the same three |
+| solo, defaults / Hard + randomizer + fast loading | 1502 / 1502 | H (fast on) | the same three |
+| solo, Hard + randomizer / defaults (the other way) | 1511 / 1511 | H (defaults) | the same three |
+| co-arrival of two, defaults / Hard + randomizer | 1511 / 1511 | H | the same three, and the co-arrival's personal values (its carry, taken from each engine's own lobby) |
+| co-arrival of two, defaults / defaults | 1511 / 1511 | H | the same three |
+| counter-proof: merge instead of replace, defaults / Hard + randomizer | 1511 / 1511 | H | FLAG differs in story values: 10, 74, 75, 530-532, 741, 742 (the reference 1, the guest none: the host's difficulty copies and working set) and 701 (the guest's own Normal copy, 1) |
+
+The fields were found by putting the reference's fields into the guest's
+decoded snapshot one after another until the bytes were equal: after
+FLAG, the generator state (`random`) and the sound manager's persistent
+state they are, in every case. So the GameSystem (difficulty, camera and
+light mode, the keys in FLAGFOLDER, the players), the cheats (randomizer,
+fast loading), the generate point, the online rules and the loader's
+fields are byte-equal to a Game Start with the host's story and settings,
+solo and as a co-arrival's base. The FLAG differences with the replace
+are only (a) zero entries of story flags (absent in one engine, 0 in the
+other: 5, 6, 82, 86, 701) that only one of the two lobby runs read or
+cleared (FLGisOn creates zero entries; a script reads 0 either way), and
+(b) flags 931 / 932, which stagML11's start and Digi-Elf scripts write by
+the story and difficulty the lobby ran on; they are read only in
+stagML11-13 and written again at the next lobby load. The generator and
+the sound state are the departing lobby's history (what its own story's
+scripts drew and played), as is the frame count; they are no story value
+and no setting. The net fingerprints therefore differ from the load step
+on (also with FLAG made equal after the load step: the generator and the
+sound state are in the net fingerprint).
+
+**What it means (M6):** the replace at a guest's NEW gives the host's story
+and settings completely; what it cannot give is the guest's own departure
+history (its lobby's random draws, music, lobby flags), and nothing needs
+it: the guest's NEW starts a new stage group whose load snapshot every
+co-arrival and later joiner restores, so no other engine ever compares
+with the guest's history. The design of 19.30.4 stands as written (the
+modes and cheats at BARRIER_OK before the module reload, the story subset
+at the top of `apply_barrier`); a bit-equal reference would need the same
+lobby history, i.e. the host's own departure, which a guest by definition
+did not make. The module reload's length did not depend on the stories
+or the modes here (1511 in every case without fast loading, 1502 with
+it: the host's fast loading set at the park counted for the reload).
 
 #### 19.30.5 The go-along offer
 

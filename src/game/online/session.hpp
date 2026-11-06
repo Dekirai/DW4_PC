@@ -1,7 +1,9 @@
 #pragma once
 
-// The DW4R2 client (docs/SEAMLESS.md 3.4, 6.3-6.10): one session per room,
-// over one relay connection, across all of the member's instances.
+// The DW4R2 client (docs/SEAMLESS.md 3.4, 6.3-6.10; round I1a's world, 19):
+// one world session per account, over one relay connection, across all of the
+// member's stage groups (the wire's "instances", `inst`) at home and in the
+// instances (the user's instances, `wid`) it joins.
 //
 //   solo        a one-member instance: the member steps on its own clock with
 //               input delay 0 and streams the pads it applied (LOG, every
@@ -69,10 +71,17 @@ struct SessionConfig {
     double story_check_interval = 1.0;  // the pending set is looked at once a second (sent when it changed)
     double story_interval = 10.0;       // and sent again every ten seconds while it is not empty (8.3)
     double story_retry_interval = 3.0;  // after a wait / not_member answer: sent again this soon (8.7)
-    // Round G-core (8.8): this member owns the room (its engine story is its own) and the owner's name for the
-    // guest's notices ("<owner>'s story moved on").
-    bool room_owner = true;
-    std::string owner_name;
+    // Round I1a (19.8.7, 19.18): the member's own settings (its Game Start's
+    // difficulty, its Online > Settings cheats), sent with every BARRIER; the
+    // bound box (the own story owner key is (member id, box)).
+    wire::Settings own_settings;
+    std::uint8_t box = 1;
+    // DW4_ONLINE_AUTOCHOICE=new (development builds, 19.24): a BARRIER that
+    // leaves a hub stage asks for a new instance (plan id 0xFFFF).
+    bool plan_new_instance = false;
+    // A stage folder as the player reads it ("Dry Land: Mummy Desert"; the
+    // game's area table). Unset: the folder.
+    std::function<std::string(std::string_view)> stage_name;
     // Round J (6.13): a checkpoint's compression (the app's zstd); unset:
     // the bytes go raw. A payload starts with its codec byte (0 raw, 1 this).
     std::function<std::vector<std::uint8_t>(std::span<const std::uint8_t>)> compress, decompress;
@@ -124,6 +133,9 @@ struct Overlay {
     bool slow_uplink = false;   // the server fills this member's pads
     std::array<bool, 4> lagging{};
     bool boss_choice = false;   // "Wait for <names>" / "Go alone" on the loading screen
+    // A running line while the game plays on (19.5.5: "Kim lost the
+    // connection. Waiting for Kim... 52 s", counting down).
+    std::string status;
 };
 
 class Session {
@@ -174,10 +186,30 @@ public:
     // The hub takes PRESENCE2 (its WELCOME said so): this member sends it.
     bool presence_v2() const { return presence_v2_; }
     std::string member_name(std::uint32_t member) const;
-    // The relay's ROSTER (once per second): every room member's stage (empty:
-    // hidden), instance, level, HP and flags (1 connected, 2 lagging, 4
-    // owner), for the room view's areas (docs/SEAMLESS.md 10, 12).
-    const std::vector<wire::RosterEntry>& roster() const { return roster_; }
+    // The relation flags of a member's last PRESENCE / MEMBER_INFO (wire::
+    // MemberInfo: 1 friend, 2 party, 4 staff tag, 8 in the own instance).
+    std::uint8_t member_flags(std::uint32_t member) const;
+    // Round I1a: the own instance as the relay last described it
+    // (INSTANCE_INFO; wid 0 = home), and the instance this engine is in
+    // (BARRIER_OK's wid; 0 = home).
+    const std::optional<wire::InstanceInfo>& instance() const { return instance_; }
+    std::uint32_t wid() const { return wid_; }
+    bool in_instance() const { return wid_ != 0; }
+    bool is_host() const { return wid_ != 0 && host_ == member_id_; }
+    std::uint32_t host() const { return host_; }
+    // The instance's members for the Discord party and the F1 page: the
+    // players of INSTANCE_INFO (1 at home).
+    int instance_players() const;
+    // The relay no longer knows this engine's instance (19.6.10): the engine
+    // takes the home departure itself at the next membership-safe step.
+    bool going_home() const { return instance_gone_; }
+    // The story owner key of the current visit (19.8.4: the host's in an
+    // instance, the own at home; {0xFFFFFFFF, 0} while the engine holds a
+    // story whose owner key is no longer known, after a server restart or a
+    // lost instance, until the DISSOLVE's replace) and whether the engine
+    // holds the member's own story.
+    std::pair<std::uint32_t, std::uint8_t> visit_owner() const { return visit_owner_; }
+    bool holds_own_story() const { return visit_owner_ == std::make_pair(member_id_, own_box_); }
 
     // Facts.
     Mode mode() const { return mode_; }
@@ -185,7 +217,8 @@ public:
     bool closed() const { return mode_ == Mode::closed; }
     std::string close_reason() const { return close_reason_; }
     // The relay closed the session because a newer connection of the same
-    // account took its place (another PC entered the room).
+    // account took its place (another PC pressed Play), or the account may
+    // not play (locked, banned, deleted): no reconnect either way.
     bool replaced() const { return close_code_ == wireCloseReplaced; }
     // Blocks until the relay answered the HELLO (true), refused it or the
     // connection was lost (false, closed() tells), or `timeout` seconds passed
@@ -205,10 +238,14 @@ public:
     int delay() const { return delay_; }
     bool hub() const { return hub_; }
     std::uint32_t measured_rate() const { return config_.rate; }
-    // The confirmed room story (SEAMLESS.md 8.3): the last one the server sent
-    // (STORY_ACK after WELCOME and on every revision, BARRIER_OK). Nothing
-    // until the server sent one. The title applies it at game_started (8.5).
-    const std::optional<engine::RoomStory>& confirmed_story() const { return confirmed_; }
+    // The member's own confirmed story (19.8.4: the keeper with the own owner
+    // key; STORY_ACK after WELCOME and on every revision, a DISSOLVE's
+    // replace). Nothing until the server sent one. The title applies it at
+    // game_started (8.5): a Game Start is always at home.
+    const std::optional<engine::RoomStory>& confirmed_story() const { return own_confirmed_; }
+    // The confirmed story of the current visit's owner (the host's in an
+    // instance, the own at home): the pending set's base.
+    const std::optional<engine::RoomStory>& visit_story() const { return confirmed_; }
     // The Game Start's hold (round G-core, 8.8): no live step while set (the
     // title is a solo instance: as a loading hitch), the loading line "Loading
     // the room story..." meanwhile. The host sets it when a Game Start finds no
@@ -221,6 +258,17 @@ public:
     // The member's own choices.
     void choose_boss(wire::Choice choice);
     void send_intent(wire::IntentKind kind, int argument);
+    // Round I1a: *Leave instance* (INTENT 3: the relay stamps HOME for the own
+    // slot; for the host it ends the instance) and the host's visibility
+    // (INSTANCE_OP 1). False outside an instance. While the INTENT cannot go
+    // (a barrier, a load, a catch-up, an engine playing on apart from its
+    // instance after a reconnect, whose INTENT the relay would ignore) the
+    // wish is kept and sent once it can, with a notice.
+    bool leave_instance();
+    bool leave_pending() const { return leave_wanted_; }
+    bool set_visibility(wire::Visibility visibility);
+    // The own settings change (the Game Start's difficulty, Online > Settings).
+    void set_own_settings(const wire::Settings& settings) { config_.own_settings = settings; }
     void send_heading(const std::string& stage, int point);
     void set_rate(std::uint32_t steps_per_second);
     void leave(const std::string& reason = "left");
@@ -232,10 +280,25 @@ private:
     };
     void send(wire::Type type, const std::vector<std::uint8_t>& payload);
     void handle(const wire::Frame& frame, double now);
-    // Frames that only feed the indicator, the name tags or the room list
-    // (NETSTAT, PRESENCE, PRESENCE2, ROSTER, ROOM): one that does not decode is skipped.
+    // Frames that only feed the indicator, the name tags or the menus
+    // (NETSTAT, PRESENCE, PRESENCE2, INSTANCE_INFO, WORLD_NOTICE, MEMBER_INFO):
+    // one that does not decode is skipped (19.18).
     static bool informational(wire::Type type) noexcept;
     void on_welcome(const wire::Welcome& welcome, double now);
+    // Round I1a's review: the engine holds a story whose owner key is no longer
+    // valid (another's, after a server restart or a lost instance): no STORY
+    // goes for it (the relay may have given that key's id to this member) until
+    // a BARRIER_OK names the next visit's owner (the DISSOLVE's replace).
+    void forget_foreign_visit();
+    // The client's own answer to a barrier the relay left unanswered (3.4;
+    // round I1a's review: inside the world it keeps what the engine holds).
+    void barrier_fallback(double now);
+    // A kept *Leave instance* wish goes out once the INTENT can (leave_instance).
+    void send_pending_leave();
+    void on_world_notice(const wire::WorldNotice& notice);
+    // The toast of an arrival into an instance (19.5.6), once BARRIER_OK and
+    // the instance's INSTANCE_INFO are both there.
+    void arrival_toast();
     // The new instance of a BARRIER_OK: ids, slot, members, mode, delay, the
     // snapshot's uploader, the notice.
     void take_decision(const wire::BarrierOk& ok);
@@ -273,7 +336,8 @@ private:
     void transmit(wire::Presence p, double now);
     void track_figure(double now);
     void on_story_ack(const wire::StoryAck& ack);
-    void take_story(const engine::RoomStory& story);
+    // A confirmed story of `owner` (STORY_ACK, BARRIER_OK): the own and / or the visit's.
+    void take_story(const engine::RoomStory& story, std::pair<std::uint32_t, std::uint8_t> owner);
     void open_line();
     void trace(const char* format, ...) const;
     // The input delay changes (traced with its source: welcome, ping, join_req, barrier_ok, delay_event).
@@ -285,6 +349,8 @@ private:
     // One line of saves/online.log (when set).
     void log(const char* format, ...) const;
     std::string slot_name(int slot) const;
+    std::string host_name() const;
+    std::string stage_title(std::string_view stage) const { return config_.stage_name ? config_.stage_name(stage) : std::string(stage); }
     // Round J (6.13.4-6.13.5).
     void checkpoint_tick(double now);
     void upload_checkpoint();
@@ -306,10 +372,9 @@ private:
     std::uint32_t member_id_ = 0;
     // The HELLO answer line out of the received bytes; returns how many of them it used.
     std::size_t read_hello(double now);
-    // The story progress the relay refused because the room owner had not started its story (8.6): the barrier's
-    // removal notice names it.
-    bool not_started_dropped_ = false;
-    bool not_started_noticed_ = false;
+    // The own story owner key as of the last WELCOME (a reconnect's WELCOME with
+    // another member id: the relay restarted and numbers its members anew).
+    std::pair<std::uint32_t, std::uint8_t> own_key_{0, 1};
 
     // The instance.
     std::uint32_t inst_ = 0, visit_ = 0;
@@ -322,7 +387,7 @@ private:
     std::uint32_t tick_ = 0;            // the next tick of this visit to execute
     bool hub_ = true;
     static constexpr std::uint32_t kNoMember = 0xFFFFFFFFu;
-    std::array<std::uint32_t, 4> slot_members_{kNoMember, kNoMember, kNoMember, kNoMember}; // room member index per slot
+    std::array<std::uint32_t, 4> slot_members_{kNoMember, kNoMember, kNoMember, kNoMember}; // member id per slot
     std::map<std::uint32_t, wire::TickBody> ticks_; // sealed / live ticks not executed yet
     std::deque<PendingEvent> events_;
     std::array<PadSample, 4> last_pads_{};
@@ -345,6 +410,7 @@ private:
     std::optional<wire::BarrierOk> decision_;
     double parked_at_ = 0;
     std::uint8_t group_at_barrier_ = 1;
+    std::string barrier_stage_;          // the BARRIER's target stage
     std::vector<std::uint8_t> own_carry_;
     std::string loading_;
     bool boss_choice_ = false;
@@ -394,13 +460,23 @@ private:
     static constexpr double kStepSlack = 0.05, kStepStale = 0.1;
     double step_at_ = -100;
 
-    // Pacing and lag (ROOM / ROSTER lagging flags by room member).
+    // Pacing and lag (INSTANCE_INFO's and WORLD_NOTICE's lagging members).
     PaceController pace_;
     std::set<std::uint32_t> lagging_members_;
-    std::set<std::uint32_t> known_members_;
-    std::set<std::uint32_t> disconnected_members_;      // ROOM disconnected, not connected again yet
-    std::map<std::uint32_t, std::uint32_t> roster_inst_; // ROSTER: room member -> its instance (or join target)
-    std::vector<wire::RosterEntry> roster_;              // the last ROSTER as it came
+    // Round I1a: the world (19.18). The instance this engine is in (BARRIER_OK),
+    // its host, how this member came into it (the toast waits for
+    // INSTANCE_INFO), the relay's description of it, the members' flags.
+    std::uint32_t wid_ = 0, host_ = 0;
+    std::optional<wire::Arrival> arrival_pending_;
+    wire::Visibility arrival_visibility_{};
+    std::optional<wire::InstanceInfo> instance_;
+    std::map<std::uint32_t, std::uint8_t> member_flags_;
+    bool instance_gone_ = false;      // the local way home is due (19.6.10)
+    bool leave_wanted_ = false;       // a *Leave instance* waiting until the INTENT can go
+    std::string gone_notice_;         // its text once the departure ran
+    std::string host_away_name_;      // WORLD_NOTICE host_away: the running line's host and its end (-1: none)
+    double host_away_until_ = -1;
+    std::uint8_t own_box_ = 1;
     bool hello_seen_ = false;
     double welcome_at_ = -100; // the first WELCOME (the members named right after it are no news)
     double last_tick_at_ = 0;
@@ -420,7 +496,12 @@ private:
         std::map<std::int32_t, std::int32_t> base, taken;
         std::optional<std::map<std::int32_t, std::int32_t>> final_growth;
     };
+    // Two confirmed stories (19.8.4): the own (owner = this member) and the
+    // current visit's owner's (`confirmed_`, the pending set's base; the own
+    // at home). visit_owner_ is that owner's key.
+    std::optional<engine::RoomStory> own_confirmed_;
     std::optional<engine::RoomStory> confirmed_;
+    std::pair<std::uint32_t, std::uint8_t> visit_owner_{0, 1};
     std::vector<CounterLine> lines_;
     std::deque<wire::Story> story_in_flight_;
     std::set<std::int32_t> refused_flags_, refused_folder_; // not sent again before the next barrier
@@ -432,9 +513,8 @@ private:
     double story_retry_at_ = 0;
     // Round G-core: the Game Start waits for the confirmed story (hold_for_story).
     bool story_hold_ = false;
-    // Round G-core: "<owner>'s story moved on" once per visit (inst, visit) of a guest.
+    // Round G-core: "<host>'s story moved on" once per visit (inst, visit) of a guest.
     std::optional<std::pair<std::uint32_t, std::uint32_t>> moved_on_noticed_;
-    bool held_noticed_ = false;
 
     std::map<std::uint32_t, RemoteMember> remote_;
     PresenceTracks tracks_;

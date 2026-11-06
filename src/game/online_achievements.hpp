@@ -45,7 +45,7 @@ struct OnlineAchievementConfig {
     std::string client_version;
     std::filesystem::path profile_file; // the account's cache (saves/online/<account>/achievements.dat); empty: memory only
     double stats_interval = 60.0;       // seconds between counter batches
-    double room_interval = 30.0;        // seconds between room checks
+    double room_interval = 30.0;        // seconds between room checks (0: none; the world has no room, set_world_facts)
     int max_in_flight = 4;              // unlock reports waiting for an answer at once
 };
 
@@ -56,6 +56,13 @@ public:
     // The facts the host puts into the step (AchievementStep.story_owner, hosting, online_players).
     bool owner() const { return owner_; }
     int room_members() const { return room_members_; }
+    // Round I1a (19.8.9): the world's facts from the session (the story's
+    // owner: at home the own, in an instance the host; the instance's
+    // players) instead of GET /rooms, which the world server answers 410.
+    void set_world_facts(bool owner, int players) {
+        owner_ = owner;
+        room_members_ = players < 1 ? 1 : players;
+    }
     // The ranked context of a report now (the room, the instance's and the room's players, the room's
     // randomizer, the difficulty of the last step): also the context of an online character upload.
     online::achievements::ReportContext report_context() const;

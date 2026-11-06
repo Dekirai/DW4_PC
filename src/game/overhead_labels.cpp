@@ -420,6 +420,7 @@ void OverheadLabels::capture(std::vector<OverheadLabel> local, int local_players
         label.max_hp = remote.max_hp;
         label.mp = remote.mp;
         label.max_mp = remote.max_mp;
+        label.relation = remote.relation;
         current_.push_back(std::move(label));
     }
 }

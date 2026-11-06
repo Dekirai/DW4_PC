@@ -79,8 +79,10 @@ float ghost_camera_alpha(const engine::Vec3f& eye, const engine::Vec3f& centre, 
 
 class GhostFigures {
 public:
-    static constexpr std::size_t kMaxFigures = 9;
-    static constexpr std::size_t kMaxWeapons = 16;    // weapon packages kept (a room member holds one at a time)
+    // Round I1a (docs/SEAMLESS.md 19.13, M5): every player in the same lobby
+    // stage server-wide, at most 30 (the relay's selection), all at full rate.
+    static constexpr std::size_t kMaxFigures = 30;
+    static constexpr std::size_t kMaxWeapons = 32;    // weapon packages kept (a figure holds one at a time)
     static constexpr double kFadeSeconds = 0.35;      // fade in / out
     static constexpr double kCameraFadeSeconds = 0.2; // the camera fade eases this fast
     static constexpr float kWalkSpeed = 15.0f;        // units per second: above it a figure without a clip runs

@@ -584,17 +584,30 @@ void story_at_the_barrier() {
         dw4::game::online::GameEngineLink link(hooks, {});
         link.start_online(0, 0b0001);
         check(story::pending(room, link.story_values()).flags == std::vector<std::int32_t>{392, 393}, "the link's story values");
+        // Round I1a (19.8.3): the return home replaces the story subset with
+        // the own story (protocol 49 carries no dropped set): the phase, the
+        // persistent flags, the keys and COUNTER 1 and 7 become the story's;
+        // temporaries and session counters stay.
         w::BarrierOk ok;
         ok.decision = w::Decision::dissolve;
         ok.slot_map = {0, -1, -1, -1};
         ok.mode = w::Mode::hub;
         ok.story_revision = room.revision;
         ok.story = story::encode_story(room);
-        ok.dropped = story::encode_keys(dropped);
+        ok.story_mode = w::StoryMode::replace;
         engine.request_stage("stagml11");
         link.set_barrier(ok);
         for (int i = 0; i < 40 && engine.barrier_set(); ++i) engine.step(pads);
-        verify(engine, "link");
+        {
+            auto* sys = engine.get<GameSystem>();
+            auto& f = engine.flags();
+            check(!engine.barrier_set(), "link: the barrier applied");
+            check(f.at(2) == 0 && f.at(3) == 1 && !f.count(4), "link: the phase is the story's, one-hot");
+            check(f.at(19) == 1 && f.at(392) == 0 && f.at(393) == 0 && f.at(23) == 1,
+                  "link: the story's persistent flags, the engine's own beyond it cleared, temporaries stay");
+            check(sys->flag_folder.at(1) == 1 && sys->flag_folder.at(5) == 0, "link: the keys are the story's");
+            check(engine.counters().at(1) == 500 && engine.counters().at(7) == 1 && engine.counters().at(2) == 4, "link: COUNTER 1 and 7 the story's, 2 stays");
+        }
         // A damaged story blob: nothing merges (the next barrier brings it).
         ok.story.pop_back();
         engine.flags()[22] = 0;
@@ -606,6 +619,186 @@ void story_at_the_barrier() {
         for (int i = 0; i < 40 && engine.barrier_set(); ++i) engine.step(pads);
         check(!engine.barrier_set() && engine.flags().at(22) == 0, "a damaged story blob merges nothing");
         engine.set_online(OnlineRules{});
+    }
+}
+
+// Round I1a (docs/SEAMLESS.md 19.8.3, 19.8.7, 19.30.4, 19.6.5; without game
+// data): the redirect only for a parked DISSOLVE, with the generate point;
+// a guest's NEW takes the host's story (replace) and settings; a DISSOLVE
+// sets the own settings back; a restore keeps the snapshot's cheats (M1);
+// HOME forks exactly its mask (no side rule) and the local way home is only
+// for a solo engine.
+void world_paths_without_data() {
+    namespace w = dw4::game::online::wire;
+    namespace o = dw4::game::online;
+    std::array<PadSample, 4> pads{};
+    {
+        Engine engine{dw4::MountedResources{}};
+        OnlineRules rules;
+        rules.enabled = true;
+        rules.present = 1;
+        engine.set_online(rules);
+        check(!engine.redirect_pending_stage("stagml11", 3), "no redirect without a pending stage");
+        engine.request_stage("stagxx01");
+        check(!engine.redirect_pending_stage("stagml11", 3), "no redirect without a barrier");
+        BarrierResult b;
+        b.decision = Decision::new_instance;
+        b.rules.enabled = true;
+        engine.set_barrier(b);
+        check(!engine.redirect_pending_stage("stagml11", 3), "no redirect of a NEW");
+        b.decision = Decision::dissolve;
+        engine.set_barrier(b);
+        check(engine.redirect_pending_stage("stagML11", 3), "a parked DISSOLVE is redirected");
+        check(engine.pending_stage() && *engine.pending_stage() == "stagml11" && engine.get<PlayerPointManager>()->point_no() == 3,
+              "the redirect replaced the stage and the generate point");
+        for (int i = 0; i < 40 && engine.barrier_set(); ++i) engine.step(pads);
+        check(!engine.barrier_set() && engine.stage_snapshot() && engine.stage_snapshot()->stage == "stagml11" &&
+                  engine.stage_snapshot()->point_no == 3,
+              "the load went to the redirect's stage and point");
+        engine.set_online(OnlineRules{});
+    }
+    {
+        // A guest's NEW through the link: the host's story replaces the own
+        // subset, the host's modes and cheats are set at BARRIER_OK; the own
+        // settings come back at the DISSOLVE.
+        Engine engine{dw4::MountedResources{}};
+        auto* sys = engine.get<GameSystem>();
+        sys->players[0] = sample_player("p_agumon", 5);
+        engine.flags()[2] = 1;  // the own chapter 2
+        engine.flags()[24] = 1; // a temporary of the lobby
+        o::EngineHooks hooks;
+        hooks.engine = [&]() -> Engine& { return engine; };
+        o::RoomSettings own;
+        own.camera_mode = 0;
+        own.light_mode = 1;
+        own.fast_loading = true;
+        o::GameEngineLink link(hooks, own);
+        link.start_online(0, 0b0001);
+        check(engine.cheats().fast_loading, "the own cheats at the session's start");
+        RoomStory host;
+        host.flags[4] = 1;
+        host.flags[19] = 1;
+        host.folder[2] = 1;
+        host.counters[7] = 5;
+        host.revision = 9;
+        o::RoomSettings hs;
+        hs.difficulty = 2;
+        hs.camera_mode = 1;
+        hs.light_mode = 0;
+        hs.rand_seed = 4242;
+        hs.rand_enemies = 1;
+        w::BarrierOk ok;
+        ok.decision = w::Decision::new_instance;
+        ok.slot_map = {0, -1, -1, -1};
+        ok.mode = w::Mode::solo;
+        ok.wid = 7;
+        ok.host = 5;
+        ok.arrival = w::Arrival::guest_new;
+        ok.owner = 5;
+        ok.story_mode = w::StoryMode::replace;
+        ok.story_revision = host.revision;
+        ok.story = story::encode_story(host);
+        ok.settings = o::to_wire(hs);
+        engine.request_stage("stag0201");
+        link.set_barrier(ok);
+        check(sys->difficulty == 2 && sys->camera_mode == 1 && sys->light_mode == 0 && engine.cheats().rand_seed == 4242 && !engine.cheats().fast_loading,
+              "the host's modes and cheats at BARRIER_OK, before the module reload");
+        for (int i = 0; i < 40 && engine.barrier_set(); ++i) engine.step(pads);
+        check(!engine.barrier_set() && engine.flags().at(4) == 1 && engine.flags().at(2) == 0 && engine.flags().at(19) == 1 &&
+                  sys->flag_folder.at(2) == 1 && engine.counters().at(7) == 5 && engine.flags().at(24) == 1,
+              "the host's story replaced the own subset (the lobby's temporary stays)");
+        // Back home: the own story (replace) and the own settings.
+        RoomStory mine;
+        mine.flags[2] = 1;
+        mine.revision = 4;
+        w::BarrierOk home;
+        home.decision = w::Decision::dissolve;
+        home.slot_map = {0, -1, -1, -1};
+        home.mode = w::Mode::hub;
+        home.story_mode = w::StoryMode::replace;
+        home.story_revision = mine.revision;
+        home.story = story::encode_story(mine);
+        engine.request_stage("stagml02");
+        link.set_barrier(home);
+        check(sys->difficulty == 0 && sys->camera_mode == 0 && sys->light_mode == 1 && engine.cheats().fast_loading && engine.cheats().rand_seed == 0,
+              "the own modes and cheats back at the DISSOLVE (before the module reload)");
+        check(engine.redirect_pending_stage("stagml11", 3), "a not-in-step guest's barrier into stagML02 is redirected home");
+        for (int i = 0; i < 40 && engine.barrier_set(); ++i) engine.step(pads);
+        check(engine.flags().at(2) == 1 && engine.flags().at(4) == 0 && sys->flag_folder.at(2) == 0 && engine.counters().at(7) == 0 &&
+                  engine.stage_snapshot()->stage == "stagml11",
+              "home on the own story, in the lobby");
+        engine.set_online(OnlineRules{});
+    }
+    {
+        // M1: a restore keeps the snapshot's cheats; the member's own settings
+        // no longer go over them.
+        std::vector<std::uint8_t> bytes;
+        {
+            Engine host{dw4::MountedResources{}};
+            OnlineRules rules;
+            rules.enabled = true;
+            rules.present = 1;
+            host.set_online(rules);
+            host.cheats().rand_seed = 777;
+            host.cheats().rand_enemies = 2;
+            host.cheats().fast_loading = false;
+            host.request_stage("stagxx01");
+            for (int i = 0; i < 40 && !host.stage_snapshot(); ++i) host.step(pads);
+            bytes = host.snapshot_bytes(SnapshotForm::raw);
+            host.set_online(OnlineRules{});
+        }
+        std::optional<Engine> holder;
+        o::EngineHooks hooks;
+        hooks.engine = [&]() -> Engine& { return *holder; };
+        hooks.fresh_engine = [&] {
+            holder.reset();
+            holder.emplace(dw4::MountedResources{});
+        };
+        o::RoomSettings own;
+        own.fast_loading = true;
+        own.rand_seed = 1;
+        own.rand_drops = true;
+        o::GameEngineLink link(hooks, own);
+        check(!bytes.empty() && link.restore(bytes), "the snapshot restores");
+        check(holder->cheats().rand_seed == 777 && holder->cheats().rand_enemies == 2 && !holder->cheats().fast_loading && holder->cheats().drop_seed == 0,
+              "a restore keeps the snapshot's cheats (M1)");
+        link.start_online(1, 0b0011);
+        check(holder->cheats().rand_seed == 777 && !holder->cheats().fast_loading, "also after the session's start_online");
+        holder->set_online(OnlineRules{});
+    }
+    {
+        // HOME forks exactly its mask: the defeated or living alike (no side
+        // rule), at the give-up's frame.
+        for (int identity = 0; identity < 2; ++identity) {
+            Engine engine{dw4::MountedResources{}};
+            auto* sys = engine.get<GameSystem>();
+            sys->players[0] = sample_player("p_agumon", 5);
+            sys->players[1] = sample_player("p_dorumon", 5);
+            OnlineRules rules;
+            rules.enabled = true;
+            rules.present = 0b0011;
+            engine.set_online(rules);
+            engine.set_split_identity(identity);
+            check(!engine.online_depart_home(), "no local way home for a group");
+            const auto frame = engine.frame();
+            const bool departs = engine.online_home(0b0010);
+            check(departs == (identity == 1), "HOME(slot 1): only slot 1's copy departs");
+            check(engine.online().present == (identity == 1 ? 0b0010 : 0b0001), "each copy keeps its side");
+            const auto split = engine.take_split();
+            check(split && split->child == 0b0010 && split->frame == frame && split->local_leaves == (identity == 1),
+                  "the fork is reported (the leavers are the child)");
+            engine.set_online(OnlineRules{});
+        }
+        Engine engine{dw4::MountedResources{}};
+        OnlineRules rules;
+        rules.enabled = true;
+        rules.present = 0b0011;
+        engine.set_online(rules);
+        engine.set_split_identity(0);
+        check(!engine.online_home(0b0100), "HOME for an absent slot does nothing");
+        check(engine.online().present == 0b0011 && !engine.take_split(), "no fork for an absent slot");
+        engine.set_online(OnlineRules{});
+        check(!engine.online_home(0b0001), "nothing offline");
     }
 }
 
@@ -1286,7 +1479,92 @@ void own_gifts(const std::filesystem::path& data) {
           "own gifts: the partner's folder takes one, the other gift finds it full (36, nothing lost)");
 }
 
+// Round I1a (19.6.5, 19.6.10) with the game data: HOME for slot 1 of a
+// stage group of two in stag0101 at frame 1300, on the stayer's copy, the
+// leaver's copy and an observer that replays with the recorded fork side:
+// the stayer and the observer stay equal, the leaver takes the home
+// departure to stagML11 point 3; a solo engine's local way home goes the
+// same way.
+struct HomeRun {
+    std::map<std::uint64_t, std::uint64_t> fingerprints;
+    std::optional<SplitResult> split;
+    std::string pending;
+    int point = -1;
+    std::uint8_t present_after{};
+    bool departed = false;
+};
+
+HomeRun run_home(const std::filesystem::path& data, int identity, std::uint8_t present, std::uint8_t mask, const std::vector<ForkSide>& sides,
+                 bool local = false) {
+    HomeRun r;
+    Engine engine(data);
+    engine.set_card_root(std::filesystem::temp_directory_path() / "dw4_online_tests_cards");
+    auto* sys = engine.get<GameSystem>();
+    sys->direct_start = true;
+    const char* species[2] = {"p_agumon", "p_dorumon"};
+    for (int s = 0; s < 2; ++s)
+        if (present & (1u << s)) {
+            sys->players[std::size_t(s)].joined = true;
+            sys->players[std::size_t(s)].digimon = species[s];
+        }
+    OnlineRules rules;
+    rules.enabled = true;
+    rules.present = present;
+    engine.set_online(rules);
+    engine.set_split_identity(identity);
+    engine.set_view_slot(std::max(identity, 0));
+    if (!sides.empty()) engine.set_fork_sides(sides);
+    engine.request_stage("stag0101");
+    bool homed = false;
+    for (int i = 0; i < 3200; ++i) {
+        if (!homed && engine.frame() >= 1300 && engine.membership_safe()) {
+            homed = true;
+            r.departed = local ? engine.online_depart_home() : engine.online_home(mask);
+            r.split = engine.take_split();
+        }
+        host_step(engine, pads_at(engine.frame()), nullptr);
+        if (homed && !r.split)
+            if (auto split = engine.take_split()) r.split = split;
+        r.fingerprints[engine.frame()] = engine.net_fingerprint();
+        if (homed && engine.pending_stage() && r.pending.empty()) {
+            r.pending = std::string(*engine.pending_stage());
+            r.point = engine.get<PlayerPointManager>()->point_no();
+            break;
+        }
+    }
+    r.present_after = engine.online().present;
+    engine.set_online(OnlineRules{});
+    return r;
+}
+
+void home_with_data(const std::filesystem::path& data) {
+    const auto stayer = run_home(data, 0, 0b0011, 0b0010, {});
+    check(!stayer.departed && stayer.split && stayer.split->child == 0b0010 && !stayer.split->local_leaves && stayer.present_after == 0b0001 &&
+              stayer.pending.empty(),
+          "HOME(slot 1): the stayer's copy keeps slot 0 and plays on");
+    const auto leaver = run_home(data, 1, 0b0011, 0b0010, {});
+    check(leaver.departed && leaver.split && leaver.split->local_leaves && leaver.pending == "stagml11" && leaver.point == 3,
+          "HOME(slot 1): the leaver's copy takes the home departure to stagML11 point 3 (" + leaver.pending + " " + std::to_string(leaver.point) + ")");
+    // An observer (no own slot) finds the recorded side again (ForkKind::home: the give-up's frame).
+    const auto observer = run_home(data, -1, 0b0011, 0b0010, {ForkSide{stayer.split->frame + 1, 0b0010, false}});
+    std::size_t compared = 0, differ = 0;
+    for (const auto& [frame, fp] : stayer.fingerprints)
+        if (const auto it = observer.fingerprints.find(frame); it != observer.fingerprints.end()) {
+            ++compared;
+            if (it->second != fp) ++differ;
+        }
+    check(compared > 1500 && differ == 0, "the observer replays the stayer's side (" + std::to_string(compared) + " frames, " +
+                                              std::to_string(differ) + " differ)");
+    const auto all = run_home(data, 0, 0b0011, 0b0011, {});
+    check(all.departed && !all.split && all.pending == "stagml11" && all.point == 3, "HOME for every present slot: the group move, no fork");
+    const auto solo = run_home(data, 0, 0b0001, 0, {}, true);
+    check(solo.departed && solo.pending == "stagml11" && solo.point == 3, "the local way home of a solo engine (19.6.10)");
+    std::cout << "  home: stayer and observer equal over " << compared << " frames; the leaver departs to " << leaver.pending << " point "
+              << leaver.point << '\n';
+}
+
 void data_scenarios(const std::filesystem::path& data) {
+    home_with_data(data);
     // 1. dng101b1: Agumon alone, a Dorumon joins mid-stage (another species:
     // its package loads now), a Veemon joins as the third, the Dorumon leaves
     // through a fork (this copy stays), the Veemon leaves.
@@ -1603,8 +1881,16 @@ void title_application_at_every_game_start() {
     engine.title_game_start = true;
     check(link.game_start(), "the host sees the Game Start");
     link.after_live_step();
-    check(!engine.title_game_start && sys->difficulty == 2 && sys->camera_mode == 1 && sys->light_mode == 0 && engine.flags().at(19) == 1,
-          "the room's story and modes at the Game Start");
+    // Round I1a (19.8.7): the original difficulty dialog's choice stays (0
+    // here) and becomes the own settings' difficulty; the camera and light
+    // mode are the own Online > Settings.
+    check(!engine.title_game_start && sys->difficulty == 0 && link.settings().difficulty == 0 && sys->camera_mode == 1 && sys->light_mode == 0 &&
+              engine.flags().at(19) == 1,
+          "the own story and modes at the Game Start, the dialog's difficulty");
+    sys->difficulty = 1;
+    engine.title_game_start = true;
+    link.after_live_step();
+    check(sys->difficulty == 1 && link.settings().difficulty == 1, "a Hard Game Start makes the own difficulty Hard");
     // "Continue? No": the title again; its character select writes its own
     // difficulty and the record's story (game_started stays set).
     sys->difficulty = 0;
@@ -1613,7 +1899,8 @@ void title_application_at_every_game_start() {
     check(sys->difficulty == 0, "nothing between two Game Starts");
     engine.title_game_start = true;
     link.after_live_step();
-    check(sys->difficulty == 2 && engine.flags().at(19) == 1, "the session's second Game Start gets them again");
+    check(sys->difficulty == 0 && link.settings().difficulty == 0 && sys->camera_mode == 1 && engine.flags().at(19) == 1,
+          "the session's next Game Start gets the story and modes again, with that dialog's difficulty");
 }
 
 int main(int argc, char** argv) {
@@ -1632,6 +1919,7 @@ int main(int argc, char** argv) {
         barrier_without_data();
         dissolve_through_the_link();
         story_at_the_barrier();
+        world_paths_without_data();
         title_application_at_every_game_start();
         leaving_redirect();
         scoped_commands();

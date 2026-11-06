@@ -360,9 +360,27 @@ void retries_and_pending() {
 
 } // namespace
 
+// Round I1a (19.8.9): the world has no room to ask (GET /rooms answers
+// 410): no room check at all, the session's facts instead.
+void world_facts() {
+    OnlineAchievementConfig config;
+    config.room_code = "world";
+    config.room_interval = 0;
+    Harness h(config);
+    h.sync->pass(0);
+    h.sync->pass(100);
+    check(h.take("/rooms/world").empty(), "the world: no room check");
+    check(!h.sync->owner() && h.sync->room_members() == 1, "before the session's facts: the hint");
+    h.sync->set_world_facts(true, 3);
+    check(h.sync->owner() && h.sync->room_members() == 3 && h.sync->report_context().room_players == 3, "the host of three");
+    h.sync->set_world_facts(false, 0);
+    check(!h.sync->owner() && h.sync->room_members() == 1, "a guest; at least one player");
+}
+
 int main() {
     try {
         requests_and_parsers();
+        world_facts();
         events_only_for_this_slot();
         owner_and_evidence();
         counters_batches();

@@ -1,6 +1,7 @@
 #include "online_run.hpp"
 
 #include "online/host_priority.hpp"
+#include "presence_data.hpp"
 
 #include "online/room_settings.hpp"
 #include "online/token_store.hpp"
@@ -24,14 +25,22 @@
 
 namespace dw4::game {
 
-void set_room_owner(OnlineRoom& room, const online::api::RoomJoined& joined, bool created) {
-    room.room_owner = online::api::owns_room(joined, room.account, created);
-    room.owner_name = joined.owner;
-    if (room.owner_name.empty() && room.room_owner) room.owner_name = room.account;
+OnlineRoom world_from_entry(const online::api::WorldEntry& entry, const std::string& account, const std::string& token, int relay_port) {
+    OnlineRoom room;
+    room.account = account;
+    room.token = token;
+    room.ticket = entry.ticket;
+    room.relay_port = entry.relay_port ? entry.relay_port : relay_port;
+    room.settings = entry.prefs.settings;
+    room.settings.difficulty = 0; // (the Game Start's dialog chooses it)
+    room.box = entry.box;
+    room.role = entry.role;
+    room.default_visibility = entry.prefs.default_visibility;
+    return room;
 }
 
-std::optional<OnlineRoom> online_enter_room(online::HttpWorker& http, const OnlineOptions& options, std::uint64_t data_hash,
-                                            const std::string& client_version, const std::filesystem::path& token_folder, std::string& error) {
+std::optional<OnlineRoom> online_enter_world(online::HttpWorker& http, const OnlineOptions& options, std::uint64_t data_hash,
+                                             const std::string& client_version, const std::filesystem::path& token_folder, std::string& error) {
     namespace api = online::api;
     OnlineRoom room;
     room.endpoint = http.endpoint();
@@ -50,15 +59,14 @@ std::optional<OnlineRoom> online_enter_room(online::HttpWorker& http, const Onli
         error = "Update required: the server needs a newer version of the game.";
         return std::nullopt;
     }
-    room.relay_port = status->relay_port;
     // The remembered token first, else a password login.
-    room.account = options.user;
-    if (const auto token = online::load_token(token_folder, server, options.user)) {
-        http.set_token(*token);
+    std::string account = options.user, token;
+    if (const auto remembered = online::load_token(token_folder, server, options.user)) {
+        http.set_token(*remembered);
         online::HttpRequest me;
         me.path = "/me";
         const auto answer = http.wait(http.submit(me));
-        if (answer.ok()) room.token = *token;
+        if (answer.ok()) token = *remembered;
         // Only a refused token is forgotten; a network error keeps it for the next start.
         else if (answer.status == 401 || answer.status == 403) online::forget_token(token_folder, options.user);
         else {
@@ -66,10 +74,9 @@ std::optional<OnlineRoom> online_enter_room(online::HttpWorker& http, const Onli
             return std::nullopt;
         }
     }
-    if (room.token.empty()) {
+    if (token.empty()) {
         const char* password = std::getenv("DW4_ONLINE_PASSWORD");
         if (!password || !*password) {
-            // (Round S1 has no login screen yet: the password comes from the environment in every build.)
             error = "No remembered login for " + options.user + " (set DW4_ONLINE_PASSWORD to log in).";
             return std::nullopt;
         }
@@ -79,57 +86,54 @@ std::optional<OnlineRoom> online_enter_room(online::HttpWorker& http, const Onli
             error = "Login failed: " + api::problem_text(response);
             return std::nullopt;
         }
-        room.token = login->token;
-        if (!login->account.empty()) room.account = login->account;
-        http.set_token(room.token);
-        if (!online::save_token(token_folder, server, options.user, room.token)) std::cout << "online: the login could not be remembered\n";
+        token = login->token;
+        if (!login->account.empty()) account = login->account;
+        http.set_token(token);
+        if (!online::save_token(token_folder, server, options.user, token)) std::cout << "online: the login could not be remembered\n";
     }
-    online::HttpResponse response;
-    if (!options.create.empty()) {
-        api::CreateRoom create;
-        create.name = options.create;
-        create.max_players = options.max_players;
-        create.settings = options.settings;
-        response = http.wait(http.submit(api::create_room_request(create, int(kOnlineProtocol), data_hash, client_version)));
-    } else {
-        response = http.wait(http.submit(api::join_room_request(options.join, "", int(kOnlineProtocol), data_hash, client_version)));
-    }
-    const auto joined = api::parse_room(response);
-    if (!joined) {
-        error = (options.create.empty() ? "Joining the room failed: " : "Opening the room failed: ") + api::problem_text(response);
+    // Play (19.5.1): the world session's ticket, the own settings, the box.
+    const auto response = http.wait(http.submit(api::world_enter_request(options.box, int(kOnlineProtocol), data_hash, client_version)));
+    const auto entry = api::parse_world_entry(response);
+    if (!entry) {
+        error = "Entering the server failed: " + api::problem_text(response);
         return std::nullopt;
     }
-    room.code = joined->code;
-    room.room_name = joined->name;
-    room.settings = joined->settings;
-    room.member_id = joined->member_id;
-    room.max_players = joined->max_players;
-    set_room_owner(room, *joined, !options.create.empty());
-    if (joined->relay_port) room.relay_port = joined->relay_port;
-    room.ticket = joined->ticket;
-    if (room.ticket.empty()) {
-        const auto ticket_response = http.wait(http.submit(api::ticket_request(room.code)));
-        const auto ticket = api::parse_ticket(ticket_response);
-        if (!ticket) {
-            error = "No relay ticket: " + api::problem_text(ticket_response);
-            return std::nullopt;
-        }
-        room.ticket = *ticket;
-    }
+    room = world_from_entry(*entry, account, token, status->relay_port);
+    room.endpoint = http.endpoint();
+    if (options.camera) room.settings.camera_mode = *options.camera;
+    if (options.light) room.settings.light_mode = *options.light;
+    if (options.fast) room.settings.fast_loading = true;
+#ifdef DW4_ONLINE_DEV
+    room.difficulty = options.difficulty; // (W12's test runs; a release build ignores --online-difficulty)
+#endif
     return room;
 }
 
 OnlineRun::OnlineRun(std::unique_ptr<online::HttpWorker> http, OnlineRoom room, online::EngineHooks hooks, std::uint64_t data_hash,
                      std::uint32_t rate)
-    : http_(std::move(http)), room_(std::move(room)), engine_(hooks.engine), link_(std::move(hooks), room_.settings) {
+    : http_(std::move(http)), room_(std::move(room)), data_hash_(data_hash), engine_(hooks.engine), link_(std::move(hooks), room_.settings) {
     online::SessionConfig config;
     config.ticket = room_.ticket;
     config.protocol = kOnlineProtocol;
     config.data_hash = data_hash;
-    config.settings_hash = online::settings_hash(room_.settings, kOnlineProtocol, data_hash);
+    config.settings_hash = 0; // (protocol 49: the hello's settings hash is sent as 0, 19.17.3)
     config.own_name = room_.account;
-    config.room_owner = room_.room_owner;
-    config.owner_name = room_.owner_name;
+    config.box = std::uint8_t(std::clamp(room_.box, 1, 4));
+    // The toasts' stage names (19.5.6: "Kim is in Ancient Ruins B2": the
+    // place, without its region).
+    config.stage_name = [](std::string_view stage) {
+        if (const auto* area = find_area(stage)) return std::string(area->place);
+        return std::string(stage);
+    };
+#ifdef DW4_ONLINE_DEV
+    if (room_.difficulty) link_.force_difficulty(room_.difficulty);
+    // DW4_ONLINE_AUTOCHOICE=first|new (development builds, 19.24): I1a has no
+    // prompt, so "first" is the relay's automatic join; "new" asks for a new
+    // instance at every departure from home.
+    if (const char* choice = std::getenv("DW4_ONLINE_AUTOCHOICE"); choice && std::string(choice) == "new") config.plan_new_instance = true;
+#endif
+    // Round I1a: the own settings go with every BARRIER (19.8.7).
+    config.own_settings = online::to_wire(room_.settings);
     config.rate = rate;
     // Round J: checkpoints travel zstd-compressed (level 3; docs/SEAMLESS.md 6.13.2).
     config.compress = [](std::span<const std::uint8_t> raw) {
@@ -186,24 +190,35 @@ bool OnlineRun::connect(double now, std::string& error) {
 void OnlineRun::pass(double now) {
     session_->poll(now);
     while (auto done = http_->poll()) dispatch(done->first, done->second, now);
-    if (character_) character_->tick(now);
-    // A 409's reload gave the guest's own story anew (round G-core's review): the
-    // engine's card store writes the newer one from now on (before, the story
-    // of the room entry until the next entry).
+    if (character_) {
+        // Round I1a's review: the own story moves on at home and as a host; its
+        // confirmed revision (STORY_ACK with the own key) is what the card, its
+        // backups and the uploads carry from now on (before: the story of the
+        // session's entry, while the records got it put in at every save).
+        if (const auto& own = session_->confirmed_story(); own && own_story_fed_ != own->revision) {
+            own_story_fed_ = own->revision;
+            character_->set_own_story(online::record_story_bytes(*own));
+        }
+        character_->tick(now);
+    }
+    // The own story changed (the session's own STORY_ACK above, a 409's reload,
+    // round G-core's review): the engine's card store writes the newer one from
+    // now on.
     if (character_ && card_story_changed && handed_story_ && *handed_story_ != character_->own_story()) card_story_changed();
     // The Game Start's hold (round G-core): the story may have come with this pass.
     if (story_hold_since_ >= 0 && !left_ && !session_->closed()) {
         if (link_.game_start()) begin_game(now);
         if (story_hold_since_ >= 0 && now - story_hold_since_ > 15.0) {
-            std::cout << "online: the room story did not arrive within 15 s; leaving the room\n";
-            log_.line("the room story did not arrive within 15 s after the Game Start: leaving the room");
-            leave(8.0, "The room story did not arrive. Join the room again.");
+            std::cout << "online: the own story did not arrive within 15 s; going offline\n";
+            log_.line("the own story did not arrive within 15 s after the Game Start: going offline");
+            leave(8.0, "Your own story did not arrive. Press Play again.");
             return;
         }
     }
     if (left_ || session_->closed() || !session_->wants_transport()) return;
     // Reconnect: a new one-time ticket, then the relay again (6.10).
-    if (ticket_request_ == 0 && now >= next_reconnect_) ticket_request_ = http_->submit(online::api::ticket_request(room_.code));
+    if (ticket_request_ == 0 && now >= next_reconnect_)
+        ticket_request_ = http_->submit(online::api::world_ticket_request(int(kOnlineProtocol), data_hash_, client_version_));
 }
 
 void OnlineRun::open_log(const std::filesystem::path& path, const std::string& client_version) {
@@ -216,11 +231,12 @@ void OnlineRun::open_log(const std::filesystem::path& path, const std::string& c
         std::cout << "online: the online log " << path.string() << " cannot be written\n";
         return;
     }
-    log_.line("---- online session: game %s, protocol %u, server %s:%d (%s), relay port %d, account %s, room '%s' (max %d players, "
-              "difficulty %d)",
+    client_version_ = client_version;
+    log_.line("---- online session: game %s, protocol %u, server %s:%d (%s), relay port %d, account %s, world session (box %d, camera %d, "
+              "light %d, fast loading %d, randomizer %u)",
               client_version.c_str(), unsigned(kOnlineProtocol), room_.endpoint.host.c_str(), room_.endpoint.port,
-              room_.endpoint.development ? "development" : "release", room_.relay_port, room_.account.c_str(), room_.room_name.c_str(),
-              room_.max_players, room_.settings.difficulty);
+              room_.endpoint.development ? "development" : "release", room_.relay_port, room_.account.c_str(), room_.box,
+              room_.settings.camera_mode, room_.settings.light_mode, room_.settings.fast_loading ? 1 : 0, room_.settings.rand_seed);
     session_->set_log(&log_);
     status_request_ = http_->submit(online::api::status_request());
     // (A game in the background, such as the second of two on one PC, keeps its pace: online/host_priority.hpp.)
@@ -301,12 +317,12 @@ void OnlineRun::dispatch(std::uint64_t id, const online::HttpResponse& response,
 // ---------------------------------------------------------------------------
 online::character_api::Context OnlineRun::character_context() const {
     online::character_api::Context c;
-    c.room_code = room_.code;
+    c.room_code = session_->wid() ? "wid-" + std::to_string(session_->wid()) : std::string();
     // (The same numbers as the online achievements' reports: the own stage
     // instance, and the room from the relay's ROSTER or else the presence.)
     c.players = std::clamp(std::popcount(unsigned(session_->present())), 1, 4);
-    c.room_players = std::clamp(std::max(int(session_->roster().size()), int(session_->remote().size()) + 1), 1, 10);
-    c.randomizer = room_.settings.randomizer();
+    c.room_players = std::clamp(std::max(session_->instance_players(), int(session_->remote().size()) + 1), 1, 10);
+    c.randomizer = link_.settings().randomizer();
     // The engine's real cheat flags, not a constant (SEAMLESS.md 9.1.10;
     // online they stay off, Engine::step).
     if (engine_) {
@@ -314,7 +330,7 @@ online::character_api::Context OnlineRun::character_context() const {
         c.cheats = cheats.god || cheats.infinite_mp || cheats.one_hit;
         c.rebalanced = cheats.exp_rate != 100 || cheats.damage_dealt != 100 || cheats.damage_taken != 100;
     }
-    c.difficulty = room_.settings.difficulty;
+    c.difficulty = link_.settings().difficulty;
     c.protocol = int(kOnlineProtocol);
     c.client_version = client_version_;
     return c;
@@ -327,7 +343,10 @@ bool OnlineRun::load_character(const std::filesystem::path& online_folder, const
     config.context = character_context();
     config.submit = [http = http_.get()](online::HttpRequest request) { return http->submit(std::move(request)); };
     config.trace = std::getenv("DW4_ONLINE_TRACE") != nullptr;
-    config.guest = !room_.room_owner;
+    // (Round I1a: every member's records carry the own story; an engine in an
+    // instance holds the host's, round G-core's net, 19.8.9. The own story is
+    // the session's own confirmed one, pass() keeps it current.)
+    config.guest = true;
     character_ = std::make_unique<online::CharacterSync>(std::move(config));
     const auto response = http_->wait(http_->submit(online::character_api::get_request()));
     if (!character_->enter(response, error)) {
@@ -341,12 +360,11 @@ bool OnlineRun::load_character(const std::filesystem::path& online_folder, const
 save::CardStore OnlineRun::character_card() const {
     if (!character_) return save::CardStore{};
     auto store = character_->card().store();
-    // A guest's card keeps its own story (round G-core, 8.8): the save room writes the engine's records, which hold the
-    // owner's story, and the file, its backups and an import of it must not (the owner's engine story is his own).
-    if (!room_.room_owner) {
-        store.set_story_override(character_->own_story());
-        handed_story_ = character_->own_story();
-    }
+    // The card keeps the own story (round G-core, 8.8; round I1a, 19.8.9): the save room writes the engine's records,
+    // which hold the host's story in an instance, and the file, its backups and an import of it must not. (The own
+    // story follows the session's own confirmed story: pass() hands a new store to the engine when it moved on.)
+    store.set_story_override(character_->own_story());
+    handed_story_ = character_->own_story();
     return store;
 }
 
@@ -388,14 +406,11 @@ void OnlineRun::begin_game(double now) {
         std::cout << "online: a character call outside the title: the room story replaced the common story again (revision " << story->revision << ")\n";
         return;
     }
-    std::cout << "online: the game starts with the room story (revision " << story->revision << ")\n";
+    std::cout << "online: the game starts with the own story (revision " << story->revision << ", difficulty " << link_.settings().difficulty
+              << ")\n";
+    // (Round I1a: the Game Start's difficulty is the own settings' from here; every BARRIER carries it.)
+    session_->set_own_settings(online::to_wire(link_.settings()));
     if (character_) character_->game_started();
-    if (!room_.room_owner) {
-        static constexpr const char* kDifficulty[] = {"Normal", "Hard", "Very Hard"};
-        const auto owner = room_.owner_name.empty() ? std::string("the room owner") : room_.owner_name;
-        notices_.push_back("Playing on " + owner + "'s story (" + kDifficulty[std::clamp(room_.settings.difficulty, 0, 2)] + ").");
-        notices_.push_back("Your level, items and Digimon stay yours. The story stays in " + owner + "'s save.");
-    }
 }
 
 std::vector<std::string> OnlineRun::take_notices() {
@@ -405,14 +420,14 @@ std::vector<std::string> OnlineRun::take_notices() {
 }
 
 std::string OnlineRun::story_line() const {
-    if (room_.room_owner) return "Story: yours";
-    const auto owner = room_.owner_name.empty() ? std::string("the room owner") : room_.owner_name;
-    const auto& story = session_->confirmed_story();
-    if (!story) return "Story: " + owner + "'s (loading)";
+    if (!session_->in_instance() || session_->is_host()) return "Story: yours";
+    const auto host = session_->member_name(session_->host());
+    const auto& story = session_->visit_story();
+    if (!story) return "Story: " + host + "'s (loading)";
     const int phase = engine::story::phase(*story);
     int keys = 0;
     for (int k = 0; k < engine::story::kKeys; ++k) keys += story->folder[std::size_t(k)] ? 1 : 0;
-    return "Story: " + owner + "'s, " + (phase >= engine::story::kPhases ? std::string("game cleared") : "phase " + std::to_string(phase)) +
+    return "Story: " + host + "'s, " + (phase >= engine::story::kPhases ? std::string("game cleared") : "phase " + std::to_string(phase)) +
            ", " + std::to_string(keys) + (keys == 1 ? " key item" : " key items");
 }
 
@@ -495,14 +510,14 @@ void OnlineRun::leave(double save_seconds, const std::string& reason) {
         // (The latency of the pads that waited for the network: solo ticks run in the step of their sample.)
         const auto& t = session_->stats().total();
         const auto& n = session_->stats().delayed_total();
-        log_.line("leaving the room: %llu own pads ran (%llu with others), %llu not sealed as sent, latency with others avg %.0f ms p95 %.0f ms "
+        log_.line("going offline: %llu own pads ran (%llu with others), %llu not sealed as sent, latency with others avg %.0f ms p95 %.0f ms "
                   "max %.0f ms, input delay %d, reconnects %d, resyncs %d",
                   static_cast<unsigned long long>(t.samples), static_cast<unsigned long long>(n.samples), static_cast<unsigned long long>(t.dropped),
                   n.exec_avg() * 1000.0, n.exec_quantile(0.95) * 1000.0, n.exec_max * 1000.0, session_->delay(), session_->net().reconnects,
                   session_->net().resyncs);
     }
     session_->leave(reason.empty() ? std::string("left") : reason);
-    http_->wait(http_->submit(online::api::leave_request(room_.code)));
+    http_->wait(http_->submit(online::api::world_leave_request()));
 }
 
 } // namespace dw4::game

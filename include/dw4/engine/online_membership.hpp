@@ -52,6 +52,11 @@ struct BarrierResult {
     int own_slot = 0;
     std::optional<RoomStory> story;
     StoryKeys dropped;
+    // Round I1a (docs/SEAMLESS.md 19.8.3, 19.30.4): merge (the rounds before)
+    // or replace (the return home with the own story, a guest's NEW with the
+    // host's): the story subset becomes `story` (story::replace), before the
+    // 503 rule and the snapshot. `dropped` is not used with replace.
+    StoryMode story_mode = StoryMode::merge;
     OnlineRules rules;
 };
 

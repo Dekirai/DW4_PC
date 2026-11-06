@@ -94,18 +94,29 @@ void api_calls() {
     check(login.method == "POST" && login.path == "/auth/login" && !login.authorized, "login request");
     const auto body = json::parse(login.body);
     check(body && (*body)["username"].str() == "kim" && (*body)["password"].str() == "p\"w" && (*body)["protocol"].i64() == 44, "login body");
-    api::CreateRoom room;
-    room.name = "Kim's room";
-    room.max_players = 6;
-    room.settings.camera_mode = 1;
-    const auto create = api::create_room_request(room, 44, 18446744073709551615ull, "0.52.0");
-    const auto cbody = json::parse(create.body);
-    check(cbody && (*cbody)["maxPlayers"].i64() == 6 && (*cbody)["dataHash"].u64() == 18446744073709551615ull &&
-              (*cbody)["settings"]["cameraMode"].i64() == 1 && (*cbody)["password"].is_null(),
-          "create body");
-    const auto join = api::join_room_request("ABCD", "secret", 44, 7, "0.52.0");
-    check(join.path == "/rooms/ABCD/join" && json::parse(join.body).value()["password"].str() == "secret", "join body");
-    check(api::ticket_request("ABCD").path == "/rooms/ABCD/ticket" && api::leave_request("ABCD").path == "/rooms/ABCD/leave", "paths");
+    // Round I1a (19.19 and the round's contract): Play, the reconnect's ticket, leave, the counts, the prefs.
+    const auto enter = api::world_enter_request(1, 49, 18446744073709551615ull, "0.52.0");
+    const auto ebody = json::parse(enter.body);
+    check(enter.method == "POST" && enter.path == "/world/enter" && enter.authorized && ebody && (*ebody)["box"].i64() == 1 &&
+              (*ebody)["protocol"].i64() == 49 && (*ebody)["dataHash"].u64() == 18446744073709551615ull && (*ebody)["clientVersion"].str() == "0.52.0",
+          "world enter request");
+    const auto ticket = api::world_ticket_request(49, 7, "0.52.0");
+    check(ticket.path == "/world/ticket" && json::parse(ticket.body).value()["box"].is_null(), "world ticket request");
+    check(api::world_leave_request().path == "/world/leave" && api::world_counts_request().path == "/world" && !api::world_counts_request().authorized,
+          "world paths");
+    api::OnlinePrefs prefs;
+    prefs.default_visibility = "friends";
+    prefs.settings.camera_mode = 1;
+    prefs.settings.fast_loading = true;
+    prefs.settings.rand_seed = 4242;
+    prefs.settings.rand_enemies = 2;
+    const auto put = api::put_online_prefs_request(prefs);
+    const auto pbody = json::parse(put.body);
+    check(put.method == "PUT" && put.path == "/me/online-prefs" && pbody && (*pbody)["defaultVisibility"].str() == "friends" &&
+              (*pbody)["cameraMode"].i64() == 1 && (*pbody)["fastLoading"].flag() == true && (*pbody)["randomizer"]["seed"].u64() == 4242 &&
+              (*pbody)["randomizer"]["enemies"].i64() == 2 && (*pbody)["difficulty"].is_null(),
+          "prefs body (no difficulty: the box's)");
+    check(api::online_prefs_request().path == "/me/online-prefs" && api::online_prefs_request().method == "GET", "prefs request");
 
     HttpResponse r;
     r.status = 200;
@@ -115,34 +126,49 @@ void api_calls() {
     r.body = R"({"token":"abc.def","expiresAt":"2026-12-01T00:00:00Z","account":{"username":"kim","id":3}})";
     const auto l = api::parse_login(r);
     check(l && l->token == "abc.def" && l->account == "kim", "login answer");
-    r.body = R"({"room":{"code":"QX7P","name":"Kim's room"},"settings":{"difficulty":2,"cameraMode":1},"members":[],"instances":[],)"
-             R"("you":{"accountId":3,"username":"kim","slot":0},"heartbeatSeconds":10,"relay":{"host":"88.198.52.221","port":52041,"protocol":"DW4R2"},)"
-             R"("settingsHash":"54c0f0b064c906ba","relayTicket":"T1"})";
-    const auto joined = api::parse_room(r);
-    check(joined && joined->code == "QX7P" && joined->settings.difficulty == 2 && joined->settings.camera_mode == 1 && joined->ticket == "T1" &&
-              joined->member_id == 3 && joined->relay_port == 52041,
-          "room answer with the relay ticket (relayTicket)");
-    // Round G-core: who owns the room (both ways into a room decide with owns_room; the title's online screens
-    // once left every guest the owner, and its card got the room story).
-    r.body = R"({"room":{"code":"QX7P","name":"Kim's room","owner":"Kim"},"settings":{"difficulty":0},"relayTicket":"T1"})";
-    const auto owned = api::parse_room(r);
-    check(owned && owned->owner == "Kim", "the room's owner");
-    check(api::owns_room(*owned, "kim", false) && api::owns_room(*owned, "KIM", false), "the owner (any case) owns the room");
-    check(!api::owns_room(*owned, "lee", false) && !api::owns_room(*owned, "kimx", false) && !api::owns_room(*owned, "", false),
-          "a guest does not own it");
-    check(api::owns_room(*owned, "lee", true), "the account that created it does");
-    api::RoomJoined ownerless = *owned;
-    ownerless.owner.clear();
-    check(!api::owns_room(ownerless, "kim", false), "no owner named: a guest");
-    r.body = R"({"room":{"code":"QX7P"},"settings":null,"relay":{"port":52041,"ticket":"T2"}})";
-    check(api::parse_room(r)->ticket == "T2", "or the ticket in relay");
+    // POST /world/enter's answer (web's superset: relayTicket and ticket, role, relayRole, box, prefs, settings).
+    r.body = R"({"relayTicket":"T1","ticket":"T1","relay":{"host":"127.0.0.1","port":57401,"protocol":"DW4R2"},"protocol":49,"role":"moderator",)"
+             R"("relayRole":"staff","box":1,"heldSeat":null,"seat":null,"prefs":{"defaultVisibility":"private","invites":"anyone",)"
+             R"("whereabouts":"friends","friendToasts":true},"settings":{"cameraMode":1,"lightMode":0,"fastLoading":true,)"
+             R"("randomizer":{"enabled":true,"seed":4242,"drops":true,"enemies":1,"zones":1}}})";
+    const auto entry = api::parse_world_entry(r);
+    check(entry && entry->ticket == "T1" && entry->relay_port == 57401 && entry->relay_host == "127.0.0.1" && entry->protocol == 49 &&
+              entry->role == "moderator" && entry->relay_role == "staff" && entry->box == 1 && entry->prefs.default_visibility == "private" &&
+              entry->prefs.settings.camera_mode == 1 && entry->prefs.settings.light_mode == 0 && entry->prefs.settings.fast_loading &&
+              entry->prefs.settings.rand_seed == 4242 && entry->prefs.settings.rand_drops && entry->prefs.settings.rand_zones == 1 &&
+              entry->prefs.settings.difficulty == 0,
+          "world entry answer");
+    r.body = R"({"ticket":"T2"})";
+    check(api::parse_world_entry(r)->ticket == "T2" && api::parse_world_entry(r)->prefs.settings.light_mode == 1, "a bare ticket: the defaults");
+    r.body = R"({"relay":{"port":52041}})";
+    check(!api::parse_world_entry(r), "no ticket: no entry");
+    r.body = R"({"players":41,"playersOnline":41,"instances":12,"areas":{"death_valley":3}})";
+    check(api::parse_world_counts(r)->players == 41 && api::parse_world_counts(r)->instances == 12, "world counts");
+    // The lobby's welcome after Play (19.5.1): GET /friends (web's I1a answer with the friends' presence).
+    r.body = R"({"friends":[{"username":"kim","since":"2026-11-01T10:00:00Z","presence":{"online":true,"status":"In the lobby","area":null,)"
+             R"("stage":"stagml11","lastSeenAt":null}},{"username":"lee","since":"2026-11-02T10:00:00Z","presence":null},)"
+             R"({"username":"rin","since":"2026-11-03T10:00:00Z","presence":{"online":false,"status":"Offline","lastSeenAt":"2026-11-05T10:00:00Z"}},)"
+             R"({"username":"ann","since":"2026-11-03T10:00:00Z","presence":{"online":true,"status":"Playing"}}],"requestsIn":[],"requestsOut":[]})";
+    check(api::parse_friends_online(r) == 2, "friends online: two of four (one shows nothing, one offline)");
+    check(api::friends_request().path == "/friends" && api::friends_request().method == "GET", "GET /friends");
+    r.body = R"({"error":"x"})";
+    check(!api::parse_friends_online(r), "no friend list: unknown");
+    check(api::welcome_text("Kim", 14, 2) == "Welcome back, Kim. 14 players online, 2 friends.", "the welcome with friends (19.5.1)");
+    check(api::welcome_text("Kim", 1, 1) == "Welcome back, Kim. 1 player online, 1 friend.", "one player, one friend");
+    check(api::welcome_text("Kim", 14, 0) == "Welcome back, Kim. 14 players online." &&
+              api::welcome_text("Kim", 14, std::nullopt) == "Welcome back, Kim. 14 players online.",
+          "no friends online: the players only");
+    check(api::welcome_text("Kim", std::nullopt, std::nullopt) == "Welcome back, Kim.", "no counts: the name only");
+    r.body = R"({"defaultVisibility":"friends","cameraMode":0,"lightMode":1,"fastLoading":false,"randomizer":{"enabled":false,"seed":0},"lastBox":1})";
+    check(api::parse_online_prefs(r)->default_visibility == "friends" && api::parse_online_prefs(r)->settings.rand_seed == 0, "prefs answer");
     r.body = R"({"ticket":"T3"})";
     check(api::parse_ticket(r) == "T3", "ticket answer");
-    r.body = R"({"room":{"code":"QX7P"},"relayTicket":"T4"})";
-    check(api::parse_ticket(r) == "T4", "a fresh ticket from POST /rooms/{code}/ticket (relayTicket)");
-    r.status = 409;
-    r.body = R"({"type":"about:blank","title":"Conflict","status":409,"detail":"The room is full.","code":"room_full"})";
-    check(!api::parse_room(r) && api::problem_text(r) == "The room is full.", "problem details");
+    r.body = R"({"relayTicket":"T4","ticket":"T4"})";
+    check(api::parse_ticket(r) == "T4", "a fresh ticket from POST /world/ticket (relayTicket)");
+    check(api::visibility_index("private") == 2 && std::string(api::visibility_key(1)) == "friends" && api::visibility_index("x") == 0, "visibility names");
+    r.status = 403;
+    r.body = R"({"type":"about:blank","title":"Forbidden","status":403,"detail":"The account can't play online.","code":"account_inactive"})";
+    check(!api::parse_world_entry(r) && api::problem_text(r) == "The account can't play online.", "problem details");
     HttpResponse none;
     none.error = "WinHTTP error 12029";
     check(api::problem_text(none) == "WinHTTP error 12029", "transport errors");

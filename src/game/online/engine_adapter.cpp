@@ -276,6 +276,7 @@ bool GameEngineLink::restore(std::span<const std::uint8_t> bytes) {
     hooks_.fresh_engine();
     auto& engine = e();
     engine.restore(snapshot);
+    restored_ = true;
     // The restored load step's picture traversal (it advances simulation
     // clocks), as the members' live load step had it and as every replayed
     // step has it (replay_step; a save state's load_step_drawn).
@@ -296,9 +297,13 @@ void GameEngineLink::set_replay(bool on) {
 void GameEngineLink::start_online(int own_slot, std::uint8_t present) {
     own_slot_ = own_slot;
     auto& engine = e();
-    // The room's cheats after every construction and restore (6.12): the
-    // same on every machine, the settings hash makes sure of it.
-    apply_room_cheats(settings_, engine.cheats());
+    // Round I1a (19.8.7, M1): the own cheats at the session's own start
+    // only; after every restore the snapshot's cheats stay (they are the
+    // stage group's, i.e. the host's; the online rules force the cheats and
+    // the rebalancing off at every step). Before, the member's own room
+    // settings went over the snapshot's here, which broke a join with other
+    // settings.
+    if (!restored_) apply_room_cheats(settings_, engine.cheats());
 #ifdef DW4_ONLINE_ENGINE_API
     // The engine's online rules keep the console reset off (7.4); a restore
     // keeps the snapshot's members (present 0).
@@ -371,22 +376,51 @@ void GameEngineLink::set_barrier(const wire::BarrierOk& ok) {
                 break;
             }
     }
-    // The room story and the dropped set (SEAMLESS.md 8.5, 8.6): every member
-    // of the group gets the same bytes, so a damaged blob fails alike on every
-    // member (no merge this time) instead of ending the game.
+    // The story (SEAMLESS.md 8.5; round I1a, 19.8.3 / 19.30.4: merged, or in
+    // place of the engine's story subset at the return home and a guest's
+    // NEW): every member of the group gets the same bytes, so a damaged blob
+    // fails alike on every member (no story this time) instead of ending the game.
     if (!ok.story.empty()) {
         try {
             result.story = engine::story::decode_story(ok.story, ok.story_revision);
-            result.dropped = engine::story::decode_keys(ok.dropped);
         } catch (const std::exception&) {
             result.story.reset();
-            result.dropped = {};
         }
     }
+    result.story_mode = ok.story_mode == wire::StoryMode::replace ? engine::StoryMode::replace : engine::StoryMode::merge;
+#ifdef DW4_ONLINE_DEV
+    // DW4_ONLINE_TEST_NO_REPLACE=1 (development builds, the counter-proof of
+    // W1 and W30, 19.24): the replace switched off; a barrier whose story
+    // would replace the engine's brings no story at all.
+    static const bool no_replace = [] {
+        const char* text = std::getenv("DW4_ONLINE_TEST_NO_REPLACE");
+        return text && *text && *text != '0';
+    }();
+    if (no_replace && result.story_mode == engine::StoryMode::replace) {
+        result.story.reset();
+        result.story_mode = engine::StoryMode::merge;
+    }
+#endif
     result.rules = e().online();
     result.rules.enabled = true;
     result.rules.present = ok.present();
-    e().set_barrier(result);
+    // The settings before the module reload (19.8.7, M1; 19.30.4): a DISSOLVE
+    // sets the own back (the load then reads the files and latches the fast
+    // loading of a Game Start with them); an arrival from home into an
+    // instance takes the host's with the replace (a guest's NEW, and the own
+    // load a join keeps as its fallback).
+    auto& engine = e();
+    if (ok.decision == wire::Decision::dissolve) {
+        apply_room_modes(settings_, engine);
+        apply_room_cheats(settings_, engine.cheats());
+    } else if (ok.story_mode == wire::StoryMode::replace && ok.wid != 0) {
+        const auto host = from_wire(ok.settings);
+        apply_room_modes(host, engine);
+        apply_room_cheats(host, engine.cheats());
+    }
+    engine.set_barrier(result);
+    // 19.8.3 (M2): a DISSOLVE's target redirected (the stage and the generate point).
+    if (ok.decision == wire::Decision::dissolve && !ok.redirect_stage.empty()) engine.redirect_pending_stage(ok.redirect_stage, ok.redirect_point);
     own_slot_ = ok.own_slot;
 #else
     own_slot_ = ok.own_slot;
@@ -428,11 +462,17 @@ void GameEngineLink::remove_player(int slot) {
 
 void GameEngineLink::intent(int slot, wire::IntentKind kind, int argument) {
 #ifdef DW4_ONLINE_ENGINE_API
+    // (Leave and go along never reach an engine as an INTENT: the relay stamps HOME / GO.)
+    if (kind != wire::IntentKind::give_up && kind != wire::IntentKind::go_without) return;
     e().online_intent(slot, kind == wire::IntentKind::give_up ? engine::IntentKind::give_up : engine::IntentKind::go_without, argument);
 #else
     (void)slot, (void)kind, (void)argument;
 #endif
 }
+
+void GameEngineLink::home(std::uint8_t mask) { e().online_home(mask); }
+
+bool GameEngineLink::depart_home() { return e().online_depart_home(); }
 
 void GameEngineLink::set_view_slot(int slot) {
 #ifdef DW4_ONLINE_ENGINE_API
@@ -454,7 +494,11 @@ bool GameEngineLink::after_live_step() {
     // (The character select wrote DIFFICULTY before GAMESTART, 0x803687D4;
     // gameStart.lua runs a few steps later, once the card worker is gone.)
     engine.apply_room_story(*room_story_);
-    sys->difficulty = std::clamp(settings_.difficulty, 0, 2);
+    // Round I1a (19.8.7): the original difficulty dialog's choice stays and
+    // is the own difficulty from here; the camera and light mode are the own
+    // Online > Settings.
+    if (forced_difficulty_) sys->difficulty = std::clamp(*forced_difficulty_, 0, 2);
+    settings_.difficulty = std::clamp(sys->difficulty, 0, 2);
     sys->camera_mode = settings_.camera_mode;
     sys->light_mode = settings_.light_mode;
     return true;

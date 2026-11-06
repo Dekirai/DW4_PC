@@ -96,7 +96,7 @@ const std::vector<std::string_view>& online_forbidden_env() {
         "DW4_CARD_B",
         // the cameras-exits test switches (game_main.cpp: rules, forks and intents of offline test runs)
         "DW4_CAMERAS", "DW4_CAM_LOCAL", "DW4_LEASH_OFF", "DW4_ONLINE", "DW4_TEST_RULES", "DW4_TEST_GATEDISC",
-        "DW4_TEST_GIVEUP",
+        "DW4_TEST_GIVEUP", "DW4_TEST_TITLE_DRIVE",
         // state tests, the randomizer's save bond of test runs and the direct netplay menus (the client lane's list)
         "DW4_STATE_FILE", "DW4_STATE_TEST", "DW4_RANDOMIZER_BIND", "DW4_MENU_HOST", "DW4_MENU_IMPORT", "DW4_MENU_JOIN",
         // the cloud backup panel's test login and action (F1 Saves, outside rooms only)
@@ -145,6 +145,12 @@ const std::vector<std::string_view>& online_presentation_env() {
         // round G-core's G7: the room story ignored for N seconds after the first Game Start (DW4_ONLINE_DEV builds only, online_run.cpp:
         // the Game Start's hold until the confirmed story is the point of the test)
         "DW4_ONLINE_TEST_STORY_DELAY",
+        // round I1a: the automatic choice of the scenarios (DW4_ONLINE_DEV builds only, online_run.cpp: first = the
+        // relay's automatic join, new = a new instance; the relay decides, the simulation is the same)
+        "DW4_ONLINE_AUTOCHOICE",
+        // round I1a's counter-proof of W1 and W30: the replace switched off (DW4_ONLINE_DEV builds only, engine_adapter.cpp:
+        // it is the point of the test)
+        "DW4_ONLINE_TEST_NO_REPLACE",
         // round S1 test tools (game_main.cpp)
         "DW4_SNAPSHOT_DUMP", "DW4_PAD_LOG", "DW4_EXTRA_RENDERS", "DW4_EXTRA_WIDEN", "DW4_EXTRA_PREVIOUS",
         "DW4_CAM_CHECK",
@@ -558,10 +564,12 @@ bool Engine::online_split(std::uint8_t mask, ForkKind kind) {
     if (const auto* models = get<ModelCtrlManager>())
         for (int s = 0; s < 4; ++s)
             if (const auto* player = models->player(s); player && player->generated && player->hp > 0) alive |= bit(s);
-    // 6.7, the side rule: the dead travel with the living.
+    // 6.7, the side rule: the dead travel with the living (not for HOME,
+    // a server decision about accounts: exactly the mask leaves, 19.6.5).
     if (kind == ForkKind::give_up) {
         leavers &= std::uint8_t(~alive);
         stayers = present & std::uint8_t(~leavers);
+    } else if (kind == ForkKind::home) {
     } else if (!(stayers & alive)) {
         leavers |= stayers;
         stayers = 0;
@@ -580,10 +588,10 @@ bool Engine::online_split(std::uint8_t mask, ForkKind kind) {
     // The recorded side: named by the continuing side or by the side that
     // leaves the instance id (the relay's fork lists).
     const std::uint8_t child = kept == leavers ? stayers : leavers;
-    // ForkSide::frame is the frame after the fork tick's step; a give-up
-    // forks between two steps (online_intent before the step), one frame
-    // earlier than a fork inside the step.
-    const std::uint64_t at = kind == ForkKind::give_up ? frame_ + 1 : frame_;
+    // ForkSide::frame is the frame after the fork tick's step; a give-up and
+    // a HOME fork between two steps (online_intent / online_home before the
+    // step), one frame earlier than a fork inside the step.
+    const std::uint64_t at = kind == ForkKind::give_up || kind == ForkKind::home ? frame_ + 1 : frame_;
     for (const auto& side : fork_sides_)
         if (side.frame == at && (side.leavers == leavers || side.leavers == child)) {
             take = side.leavers == leavers ? side.take_leavers : !side.take_leavers;
@@ -604,6 +612,17 @@ bool Engine::online_split(std::uint8_t mask, ForkKind kind) {
 
 void Engine::set_barrier(const BarrierResult& barrier) { barrier_ = std::make_unique<BarrierResult>(barrier); }
 
+bool Engine::redirect_pending_stage(std::string stage, int point) {
+    // (M2, measured r71: anywhere from BARRIER_OK to the top of apply_barrier
+    // this equals a NEXTSTAGE to that stage and point, bit for bit, solo and
+    // for a parked guest of a group; the point is part of it. The target is
+    // taken as named: the zone remap belongs to NEXTSTAGE.)
+    if (!online_.enabled || pending_stage_.empty() || !barrier_ || barrier_->decision != Decision::dissolve || stage.empty()) return false;
+    request_stage(std::move(stage));
+    if (auto* points = get<PlayerPointManager>()) points->set_point_no(point);
+    return true;
+}
+
 void Engine::apply_barrier() {
     if (!barrier_) return;
     const BarrierResult b = std::move(*barrier_);
@@ -618,7 +637,13 @@ void Engine::apply_barrier() {
     // into the member's own fallback load.)
     // (pending_stage_ holds the barrier's target: a barrier into the training
     // field leaves flag 503 alone, 8.8.)
-    if (b.story) story::apply(flags_, sys->flag_folder, counters_, *b.story, b.dropped, pending_stage_);
+    // Round I1a (19.8.3, 19.30.4): the return home and a guest's NEW replace
+    // the story subset instead (the own story, the host's), here at the top,
+    // before the stage's scripts and the snapshot read it.
+    if (b.story) {
+        if (b.story_mode == StoryMode::replace) story::replace(flags_, sys->flag_folder, counters_, *b.story);
+        else story::apply(flags_, sys->flag_folder, counters_, *b.story, b.dropped, pending_stage_);
+    }
     auto rules = b.rules;
     rules.enabled = true;
     rules.leaving = 0;

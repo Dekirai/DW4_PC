@@ -222,7 +222,27 @@ struct Harness {
         if (r.path == "/auth/register") return answer(201, R"({"account":{"id":5,"username":"kim"},"recoveryCode":"RC-1234","token":")" + good_token + "\"}");
         if (r.path == "/auth/recover") return answer(200, R"({"recoveryCode":"RC-NEW"})");
         if (r.path == "/rooms" && r.method == "GET") return answer(200, rooms_json());
+        if (r.path == "/world" && r.method == "GET") return answer(200, R"({"players":41,"playersOnline":41,"instances":12,"areas":{}})");
         if (token != good_token) return problem(401, "unauthorized", "Not logged in.");
+        // Round I1a: the world (19.19 and the round's contract).
+        if (r.path == "/friends" && r.method == "GET")
+            return answer(200, R"({"friends":[{"username":"lee","presence":{"online":true}},{"username":"rin","presence":null}],"requestsIn":[]})");
+        if (r.path == "/me/online-prefs" && r.method == "GET") return answer(200, prefs_json);
+        if (r.path == "/me/online-prefs" && r.method == "PUT") {
+            prefs_json = r.body;
+            return answer(200, prefs_json);
+        }
+        if (r.path == "/world/enter") {
+            ++enters;
+            if (refuse_enter) return problem(403, "account_inactive", "The account can't play online.");
+            return answer(200, R"({"relayTicket":"WT-1","ticket":"WT-1","relay":{"host":"127.0.0.1","port":54211,"protocol":"DW4R2"},"protocol":49,)"
+                               R"("role":"player","relayRole":"member","box":1,"heldSeat":null,"prefs":{"defaultVisibility":"friends"},)"
+                               R"("settings":{"cameraMode":1,"lightMode":0,"fastLoading":true,"randomizer":{"enabled":false,"seed":0}}})");
+        }
+        if (r.path == "/world/leave") {
+            ++leaves;
+            return answer(204);
+        }
         if (r.path == "/me") return answer(200, R"({"id":5,"username":"kim","email":"","role":"player","status":"active","mustChangePassword":false})");
         if (r.path == "/online-character") {
             if (!character) return problem(404, "no_online_character", "There is no online character yet.");
@@ -254,6 +274,9 @@ struct Harness {
         if (r.method == "DELETE") return answer(204);
         return problem(404, "not_found", "No such thing.");
     }
+    std::string prefs_json = R"({"defaultVisibility":"public","cameraMode":0,"lightMode":1,"fastLoading":false,"randomizer":{"enabled":false},"lastBox":1})";
+    int enters = 0, leaves = 0;
+    bool refuse_enter = false;
 };
 
 void gates(const std::filesystem::path& root) {
@@ -331,21 +354,28 @@ void accounts(const std::filesystem::path& root) {
         check(!h.lobby->logged_in() && h.lobby->error() == "Wrong user name or password." && h.lobby->screen() == Screen::login, "wrong password");
         h.lobby->login("Kim", "correct horse", true);
         h.pass();
-        check(h.lobby->logged_in() && h.lobby->account() == "kim" && h.lobby->screen() == Screen::rooms, "logged in, the server's spelling");
+        check(h.lobby->logged_in() && h.lobby->account() == "kim" && h.lobby->screen() == Screen::home, "logged in, the server's spelling");
         check(h.lobby->remembered() && std::filesystem::exists(folder / "account.txt") && load_token(folder, "127.0.0.1:54200", "kim"),
               "remember me keeps the token (DPAPI)");
         check(h.queue->sent_path("GET", "/me") && h.queue->sent_path("GET", "/online-character") && h.queue->token == "TOKEN-KIM",
               "account and character after the login");
         check(h.lobby->character() && h.lobby->character()->level == 12 && h.lobby->max_difficulty() == 0, "character summary, Normal only");
-        check(h.lobby->rooms_loaded() && h.lobby->rooms().size() == 3, "the room list loads on the rooms screen");
-        check(h.lobby->rooms()[2].code == "OLD999", "incompatible rooms last");
+        check(h.lobby->world_counts() && h.lobby->world_counts()->players == 41 && h.lobby->world_counts()->instances == 12,
+              "the world's counts load on the home screen");
+        check(h.lobby->prefs() && h.lobby->prefs()->default_visibility == "public", "the online preferences after the login");
+        check(h.lobby->play_label() == "Play: Veemon Lv 12 (Box 1)", "the Play button names the character: " + h.lobby->play_label());
+        // The lobby's welcome after Play's drive (19.5.1) counts the friends online.
+        check(!h.lobby->friends_online(), "no friend count before it is asked");
+        h.lobby->refresh_friends();
+        h.pass();
+        check(h.queue->sent_path("GET", "/friends") && h.lobby->friends_online() == 1, "GET /friends: one friend online");
     }
     {
         // A second start: the remembered login comes back without a password.
         Harness h(folder);
         h.lobby->open();
         h.pass();
-        check(h.lobby->logged_in() && h.lobby->account() == "kim" && h.lobby->screen() == Screen::rooms, "remembered login");
+        check(h.lobby->logged_in() && h.lobby->account() == "kim" && h.lobby->screen() == Screen::home, "remembered login");
         h.lobby->go(Screen::account);
         h.lobby->logout();
         h.pass();
@@ -396,7 +426,7 @@ void accounts(const std::filesystem::path& root) {
               "registered: the recovery code is shown");
         h.lobby->acknowledge_code();
         h.pass();
-        check(h.lobby->screen() == Screen::rooms && h.lobby->recovery_code().empty(), "I saved it");
+        check(h.lobby->screen() == Screen::home && h.lobby->recovery_code().empty(), "I saved it");
         h.lobby->go(Screen::account);
         h.lobby->go(Screen::change_password);
         h.lobby->change_password("old", "new password 1", "new password 2");
@@ -418,7 +448,7 @@ void accounts(const std::filesystem::path& root) {
         check(h.lobby->character() && !h.lobby->character()->exists, "reset: the account has no online character now");
         check(std::string(screen_name(Screen::reset_character)) == "reset" && screen_from_name("reset") == Screen::reset_character, "reset: its name");
         h.lobby->back();
-        check(h.lobby->screen() == Screen::rooms, "back to the rooms");
+        check(h.lobby->screen() == Screen::home, "back to the home screen");
     }
     {
         Harness h(root / "rec");
@@ -448,128 +478,89 @@ void accounts(const std::filesystem::path& root) {
     }
 }
 
-void rooms(const std::filesystem::path& root) {
-    Harness h(root / "rooms");
+// Round I1a (19.5.1): the home screen. Play enters the world (POST
+// /world/enter) and hands the host the entry; an offline game asks first;
+// Online > Settings saves the preferences; the playing screen; a failed
+// start leaves the world; the command line's session is adopted.
+void world(const std::filesystem::path& root) {
+    Harness h(root / "world");
     h.lobby->open();
     h.pass();
     h.lobby->login("kim", "correct horse", false);
     h.pass();
-    // Join: the locked room asks for its password.
-    h.lobby->join_room("ABCD12");
-    check(h.lobby->screen() == Screen::join_room && h.lobby->join_target() && h.lobby->join_target()->name == "Kim's room", "password prompt");
-    h.lobby->join_room("ABCD12", std::string("wrong"));
-    h.pass();
-    check(h.lobby->screen() == Screen::join_room && h.lobby->error() == "The room password is wrong.", "a wrong password stays on the prompt");
-    h.lobby->join_room("ABCD12", std::string("secret"));
-    check(h.lobby->screen() == Screen::starting && h.lobby->busy_text() == "Joining the room...", "joining");
+    check(h.lobby->screen() == Screen::home && h.lobby->can_play(), "the home screen");
+    h.lobby->play();
+    check(h.lobby->screen() == Screen::starting && h.lobby->busy_text() == "Entering the server...", "entering");
     h.pass();
     auto ready = h.lobby->take_ready();
-    check(ready && ready->joined.code == "ABCD12" && ready->joined.ticket == "TICKET-1" && ready->token == "TOKEN-KIM" && ready->account == "kim" &&
-              ready->relay_port == 54210 && !ready->created && ready->joined.max_players == 4 && ready->joined.settings.camera_mode == 1,
-          "the ready room");
+    check(ready && ready->entry.ticket == "WT-1" && ready->token == "TOKEN-KIM" && ready->account == "kim" && ready->relay_port == 54211 &&
+              ready->entry.prefs.settings.camera_mode == 1 && ready->entry.prefs.settings.fast_loading && ready->entry.box == 1,
+          "the ready world entry");
+    {
+        const auto& body = std::find_if(h.queue->sent.rbegin(), h.queue->sent.rend(), [](const auto& s) { return s.first.path == "/world/enter"; })->first.body;
+        check(body.find(R"("protocol":44)") != std::string::npos && body.find(R"("dataHash":777)") != std::string::npos &&
+                  body.find(R"("box":1)") != std::string::npos,
+              "enter body: " + body);
+    }
     check(!h.lobby->take_ready(), "taken once");
     h.lobby->session_started();
     h.pass();
-    check(h.lobby->screen() == Screen::in_room && h.lobby->in_room() && h.lobby->room() && h.lobby->room()->instances.size() == 1,
-          "in the room, its state loaded");
-    check(!h.lobby->room_owner(), "a guest");
-    const auto sent = h.queue->sent.size();
-    h.lobby->kick("lee");
-    h.pass();
-    check(h.queue->sent.size() == sent && !h.queue->sent_path("POST", "/rooms/ABCD12/kick"), "a guest cannot kick");
-    // The state refreshes every three seconds while shown.
-    const auto before = h.queue->sent.size();
-    for (int i = 0; i < 40; ++i) {
-        h.now += 0.1;
-        h.lobby->update(h.now, true);
-    }
-    check(h.queue->sent.size() > before, "the room state refreshes");
-    h.lobby->join_room("OPEN01");
-    check(h.lobby->error() == "Leave the room you are in first.", "one room at a time");
+    check(h.lobby->screen() == Screen::playing && h.lobby->in_world() && !h.lobby->can_back(), "playing");
+    h.lobby->play();
+    check(h.enters == 1, "one world session at a time");
+    h.lobby->logout();
+    check(h.lobby->logged_in(), "no logout while playing");
     h.lobby->request_leave();
     check(h.lobby->take_leave_request() && !h.lobby->take_leave_request(), "leave request taken once");
-    h.lobby->session_ended("You left the room.");
+    h.lobby->session_ended("You went offline.");
     h.pass();
-    check(h.lobby->screen() == Screen::rooms && !h.lobby->in_room() && h.lobby->info() == "You left the room.", "back to the rooms");
-
-    // An offline game in progress: create and join ask first.
+    check(h.lobby->screen() == Screen::home && !h.lobby->in_world() && h.lobby->info() == "You went offline.", "back to the home screen");
+    // An offline game in progress: Play asks first.
     h.lobby->set_offline_game(true);
-    h.lobby->join_room("OPEN01");
+    h.lobby->play();
     check(h.lobby->screen() == Screen::confirm, "the offline game question");
     h.lobby->cancel_start();
-    check(h.lobby->screen() == Screen::rooms && !h.lobby->busy(), "cancelled");
-    h.lobby->join_room("OLD999");
-    check(h.lobby->error().find("another version") != std::string::npos, "an incompatible room");
-
-    // Create: the difficulty is bounded by the character's clears.
-    CreateForm form;
-    form.name = "My room";
-    form.max_players = 10;
-    form.settings.difficulty = 1;
-    h.lobby->create_room(form);
-    check(h.lobby->error().find("not unlocked") != std::string::npos, "Hard is locked without a Normal clear");
-    form.settings.difficulty = 0;
-    form.password = "abc";
-    h.lobby->create_room(form);
-    check(h.lobby->error().find("4 to 64") != std::string::npos, "room password length");
-    form.password = "";
-    form.max_players = 11;
-    h.lobby->create_room(form);
-    check(h.lobby->error().find("2 to 10") != std::string::npos, "room size");
-    form.max_players = 10;
-    h.lobby->create_room(form);
-    check(h.lobby->screen() == Screen::confirm, "create asks too");
+    check(h.lobby->screen() == Screen::home && !h.lobby->busy() && h.enters == 1, "cancelled");
+    h.lobby->play();
     h.lobby->confirm_start();
     h.pass();
-    ready = h.lobby->take_ready();
-    check(ready && ready->created && ready->joined.code == "NEW001" && ready->joined.max_players == 10, "the created room");
-    check(h.queue->sent_path("POST", "/rooms"), "create sent");
-    {
-        const auto& body = std::find_if(h.queue->sent.rbegin(), h.queue->sent.rend(), [](const auto& s) { return s.first.path == "/rooms" && s.first.method == "POST"; })->first.body;
-        check(body.find(R"("maxPlayers":10)") != std::string::npos && body.find(R"("protocol":44)") != std::string::npos &&
-                  body.find(R"("dataHash":777)") != std::string::npos && body.find(R"("name":"My room")") != std::string::npos,
-              "create body: " + body);
-    }
+    check(h.lobby->take_ready() && h.enters == 2, "confirmed");
     h.lobby->session_failed("The relay does not answer.");
     h.pass();
-    check(h.lobby->screen() == Screen::rooms && h.lobby->error() == "The relay does not answer." && h.queue->sent_path("POST", "/rooms/NEW001/leave"),
-          "a failed start leaves the room");
-
-    // The owner: kick, and a 401 inside the room keeps the room screen.
-    h.clears = 1;
-    h.lobby->refresh_account();
-    h.pass();
-    check(h.lobby->max_difficulty() == 1, "the character's clear unlocks Hard");
+    check(h.lobby->screen() == Screen::home && h.lobby->error() == "The relay does not answer." && h.leaves == 1, "a failed start leaves the world");
+    // A refused entry stays home with the reason.
     h.lobby->set_offline_game(false);
-    h.lobby->create_room(form);
+    h.refuse_enter = true;
+    h.lobby->play();
     h.pass();
-    check(h.lobby->take_ready().has_value(), "created without the question");
-    h.lobby->session_started();
+    check(h.lobby->screen() == Screen::home && !h.lobby->take_ready() && h.lobby->error() == "Your account can't play online right now.",
+          "a refused entry");
+    h.refuse_enter = false;
+    // Online > Settings.
+    h.lobby->go(Screen::settings);
+    api::OnlinePrefs prefs;
+    prefs.default_visibility = "private";
+    prefs.settings.camera_mode = 1;
+    prefs.settings.light_mode = 0;
+    prefs.settings.rand_seed = 99;
+    prefs.settings.rand_enemies = 1;
+    h.lobby->save_settings(prefs);
     h.pass();
-    check(h.lobby->room_owner(), "the owner");
-    h.lobby->kick("lee");
+    check(h.queue->sent_path("PUT", "/me/online-prefs") && h.lobby->prefs() && h.lobby->prefs()->default_visibility == "private" &&
+              h.lobby->prefs()->settings.rand_seed == 99 && h.lobby->screen() == Screen::home && h.lobby->info().find("Settings saved") != std::string::npos,
+          "the settings saved");
+    prefs.settings.camera_mode = 3;
+    h.lobby->save_settings(prefs);
+    check(h.lobby->error() == "A setting is out of range.", "a setting out of range");
+    // The command line's session shows in the lobby too.
+    h.lobby->adopt_world("kim", "TOKEN-KIM");
     h.pass();
-    check(h.queue->sent_path("POST", "/rooms/NEW001/kick") && h.lobby->info() == "Removed from the room.", "kick");
-    h.lobby->session_ended("The room was closed.");
-    h.pass();
-    h.lobby->close_room("ABCD12");
-    h.pass();
-    check(h.queue->sent_path("DELETE", "/rooms/ABCD12") && h.lobby->info() == "Your room is closed.", "close a room");
-    h.good_token = "OTHER";
-    h.lobby->refresh_account();
-    h.pass();
-    check(!h.lobby->logged_in() && h.lobby->screen() == Screen::welcome && h.lobby->info().find("ended") != std::string::npos,
-          "a 401 ends the login");
-    // The command line's room shows in the lobby too.
-    h.good_token = "TOKEN-KIM";
-    h.lobby->adopt_room("kim", "TOKEN-KIM", "ABCD12", "Kim's room");
-    h.pass();
-    check(h.lobby->in_room() && h.lobby->screen() == Screen::in_room && h.lobby->room() && h.lobby->room()->room.code == "ABCD12", "adopted room");
-    check(tidy_reason("You were removed from the room (You were removed from the room.).") == "You were removed from the room." &&
-              tidy_reason("You were removed from the room (spam).") == "You were removed from the room (spam)." &&
-              tidy_reason("You left the room.") == "You left the room.",
+    check(h.lobby->in_world() && h.lobby->screen() == Screen::playing, "adopted world session");
+    check(tidy_reason("Signed in on another PC (Signed in on another PC.).") == "Signed in on another PC." &&
+              tidy_reason("You were removed (spam).") == "You were removed (spam)." && tidy_reason("You went offline.") == "You went offline.",
           "close reasons");
-    check(screen_from_name("rooms") == Screen::rooms && std::string(screen_name(Screen::in_room)) == "room" && !screen_from_name("nope"),
+    check(screen_from_name("home") == Screen::home && std::string(screen_name(Screen::playing)) == "playing" &&
+              screen_from_name("settings") == Screen::settings && !screen_from_name("rooms"),
           "screen names");
 }
 
@@ -580,7 +571,7 @@ int main() {
     std::filesystem::remove_all(root);
     int failed = 0;
     for (const auto& [name, test] : std::initializer_list<std::pair<const char*, std::function<void()>>>{
-             {"api calls", api_calls}, {"gates", [&] { gates(root); }}, {"accounts", [&] { accounts(root); }}, {"rooms", [&] { rooms(root); }}}) {
+             {"api calls", api_calls}, {"gates", [&] { gates(root); }}, {"accounts", [&] { accounts(root); }}, {"world", [&] { world(root); }}}) {
         try {
             test();
             std::cout << "ok   " << name << '\n';

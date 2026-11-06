@@ -122,7 +122,12 @@ void draw_overhead_labels(ImDrawList* list, const std::vector<OverheadLabel>& la
             list->AddRectFilled(ImVec2(tx, top), ImVec2(tx + stripe, low), ImGui::ColorConvertFloat4ToU32(c), 1.0f);
             tx += mark;
         }
-        const ImU32 name_fill = label.own ? colour(1.0f, 0.92f, 0.55f, alpha) : colour(1, 1, 1, alpha);
+        // (Round I1a, 19.5.2: party green, friend blue, staff gold.)
+        const ImU32 name_fill = label.own                ? colour(1.0f, 0.92f, 0.55f, alpha)
+                                : (label.relation & 2) ? colour(0.45f, 0.95f, 0.45f, alpha)
+                                : (label.relation & 1) ? colour(0.55f, 0.78f, 1.0f, alpha)
+                                : (label.relation & 4) ? colour(1.0f, 0.80f, 0.20f, alpha)
+                                                       : colour(1, 1, 1, alpha);
         outlined_text(list, font, text_size, ImVec2(tx, y), name_fill, alpha, label.name.c_str());
         outlined_text(list, font, small_size, ImVec2(tx + name_size.x, y + name_size.y - level_size.y), colour(0.8f, 0.9f, 1.0f, alpha), alpha,
                       level);

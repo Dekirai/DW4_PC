@@ -42,6 +42,29 @@ bool is_hub_stage(std::string_view stage) {
     return s == "stagml02" || s == "stagml11" || s == "stagml12" || s == "stagml13" || s == "stagml14";
 }
 
+bool chunk_leads_home(std::string_view chunk) {
+    const auto lower = [](char c) { return char(c >= 'A' && c <= 'Z' ? c + 32 : c); };
+    const auto alnum = [](char c) { return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z'); };
+    const auto digit = [](char c) { return c >= '0' && c <= '9'; };
+    int stages = 0;
+    for (std::size_t i = 0; i + 3 <= chunk.size(); ++i) {
+        if (i > 0 && alnum(chunk[i - 1])) continue;
+        std::string token;
+        if (i + 8 <= chunk.size() && lower(chunk[i]) == 's' && lower(chunk[i + 1]) == 't' && lower(chunk[i + 2]) == 'a' && lower(chunk[i + 3]) == 'g' &&
+            alnum(chunk[i + 4]) && alnum(chunk[i + 5]) && digit(chunk[i + 6]) && digit(chunk[i + 7]) && (i + 8 == chunk.size() || !alnum(chunk[i + 8]))) {
+            token = std::string(chunk.substr(i, 8));
+        } else if (lower(chunk[i]) == 'd' && lower(chunk[i + 1]) == 'n' && lower(chunk[i + 2]) == 'g') {
+            std::size_t end = i + 3;
+            while (end < chunk.size() && alnum(chunk[end])) ++end;
+            if (end - i >= 6 && end - i <= 9 && (digit(chunk[i + 3]) || lower(chunk[i + 3]) == 'q')) token = std::string(chunk.substr(i, end - i));
+        }
+        if (token.empty()) continue;
+        ++stages;
+        if (!is_hub_stage(token)) return false;
+    }
+    return stages > 0;
+}
+
 namespace {
 // The UI stages (stagIS*: title, character select, save room, call shop,
 // staff roll): the character select loads a record with its own story before
@@ -150,18 +173,34 @@ void Session::report_window(double now, bool force) {
 
 std::string Session::member_name(std::uint32_t member) const {
     if (const auto it = names_.find(member); it != names_.end() && !it->second.empty()) return it->second;
-    return member != kNoMember ? "Player " + std::to_string(member + 1) : std::string("A player");
+    return member != kNoMember ? "Player " + std::to_string(member) : std::string("A player");
+}
+
+std::string Session::host_name() const { return host_ ? member_name(host_) : std::string("The host"); }
+
+std::uint8_t Session::member_flags(std::uint32_t member) const {
+    const auto it = member_flags_.find(member);
+    return it == member_flags_.end() ? std::uint8_t(0) : it->second;
+}
+
+int Session::instance_players() const {
+    if (!instance_ || instance_->wid == 0) return 1;
+    return std::max<int>(1, int(instance_->members.size()));
 }
 
 std::uint32_t Session::roster_member_for(int slot) const {
-    // A JOIN names no member: the roster's one member of this instance that
-    // no slot holds yet (the joiner catches up on it).
+    // A JOIN names no member: the one member of the own instance in this
+    // stage group (INSTANCE_INFO's flag 16) that no slot holds yet (the
+    // joiner catches up on it).
     (void)slot;
+    if (!instance_) return kNoMember;
     std::uint32_t found = kNoMember;
-    for (const auto& [member, inst] : roster_inst_) {
-        if (inst != inst_ || member == member_id_ || std::find(slot_members_.begin(), slot_members_.end(), member) != slot_members_.end()) continue;
+    for (const auto& m : instance_->members) {
+        if (!(m.flags & w::InstanceMember::same_group) || m.member == member_id_ ||
+            std::find(slot_members_.begin(), slot_members_.end(), m.member) != slot_members_.end())
+            continue;
         if (found != kNoMember) return kNoMember; // more than one: unknown
-        found = member;
+        found = m.member;
     }
     return found;
 }
@@ -218,8 +257,8 @@ void Session::leave(const std::string& reason) {
     if (transport_) transport_->close();
     transport_.reset();
     mode_ = Mode::closed;
-    // ("left": the player's own choice; another reason is the client's, e.g. the room story that never came.)
-    close_reason_ = reason.empty() || reason == "left" ? std::string("You left the room.") : reason;
+    // ("left": the player's own choice; another reason is the client's, e.g. the own story that never came.)
+    close_reason_ = reason.empty() || reason == "left" ? std::string("You went offline.") : reason;
 }
 
 std::size_t Session::read_hello(double now) {
@@ -327,20 +366,9 @@ void Session::poll(double now) {
     // group keeps waiting. A held barrier (BARRIER_WAIT: the server holds it
     // for a co-arrival, a join or a boss choice) is an answer: the five
     // seconds count from the server's last word, and a boss choice waits.
-    if (mode_ == Mode::parked && members(group_at_barrier_) == 1 && !boss_choice_ && now - parked_at_ > config_.barrier_timeout) {
-        w::BarrierOk ok;
-        ok.inst = inst_;
-        ok.visit = visit_;
-        ok.decision = w::Decision::new_instance;
-        ok.new_inst = 0; // not registered: never offered to joiners
-        ok.new_visit = visit_ + 1;
-        ok.own_slot = 0;
-        ok.slot_map = {-1, -1, -1, -1};
-        ok.slot_map[std::size_t(slot_)] = 0;
-        ok.mode = w::Mode::solo;
-        notice("The server did not answer; you continue on your own.");
-        on_barrier_ok(ok, now);
-    }
+    if (mode_ == Mode::parked && members(group_at_barrier_) == 1 && !boss_choice_ && now - parked_at_ > config_.barrier_timeout)
+        barrier_fallback(now);
+    if (leave_wanted_) send_pending_leave();
     if (mode_ == Mode::solo || mode_ == Mode::sealed) {
         flush_log(now, false);
         if (state_pending_) report_state(now, false);
@@ -494,7 +522,8 @@ void Session::track_figure(double now) {
 }
 
 bool Session::informational(w::Type type) noexcept {
-    return type == w::Type::netstat || type == w::Type::presence_of || type == w::Type::presence2_of || type == w::Type::roster ||
+    return type == w::Type::netstat || type == w::Type::presence_of || type == w::Type::presence2_of || type == w::Type::instance_info ||
+           type == w::Type::world_notice || type == w::Type::member_info ||
            type == w::Type::room;
 }
 
@@ -510,6 +539,9 @@ void Session::handle(const w::Frame& frame, double now) {
     }
     case w::Type::join_req: {
         const auto m = w::decode_join_req(p);
+        // (Kind 2 home: the same JOIN_AT; SEALED(J) brings HOME, 19.6.5. Kind 3
+        // go is round I1b's.)
+        if (m.kind == w::JoinKind::go) break;
         if (mode_ != Mode::solo || m.inst != inst_ || m.visit != visit_ || hub_ || join_at_) break;
         // 1 -> 2 (6.4): J = the current tick + d (the server suggests d);
         // delayed sampling at once, the last pad repeated for the ticks
@@ -585,6 +617,7 @@ void Session::handle(const w::Frame& frame, double now) {
     case w::Type::presence2_of: {
         auto m = frame.type == w::Type::presence2_of ? w::decode_presence2(p, true) : w::decode_presence(p, true);
         if (m.member == member_id_) break;
+        member_flags_[m.member] = m.relation;
         auto& r = remote_[m.member];
         r.name = member_name(m.member);
         tracks_.add(m, r.name, now);
@@ -592,51 +625,21 @@ void Session::handle(const w::Frame& frame, double now) {
         r.received_at = now;
         break;
     }
-    case w::Type::room: {
-        const auto m = w::decode_room(p);
-        const bool own = m.member == member_id_;
-        if (!m.name.empty()) names_[m.member] = m.name;
-        switch (m.kind) {
-        case w::RoomEvent::joined:
-            // (Right after WELCOME the server names every member already in
-            // the room: they are no news, only members that come later are.)
-            if (!own && known_members_.insert(m.member).second && hello_seen_ && now_ - welcome_at_ > 1.0)
-                notice(member_name(m.member) + " joined the room");
-            break;
-        case w::RoomEvent::left:
-            if (!own) notice(member_name(m.member) + " left the room");
-            known_members_.erase(m.member);
-            remote_.erase(m.member);
-            tracks_.forget(m.member);
-            lagging_members_.erase(m.member);
-            break;
-        case w::RoomEvent::owner_present: notice("The room owner is back"); break;
-        case w::RoomEvent::owner_away: notice("The room owner is away"); break;
-        case w::RoomEvent::lagging: lagging_members_.insert(m.member); break;
-        case w::RoomEvent::lag_over: lagging_members_.erase(m.member); break;
-        case w::RoomEvent::connected:
-            // (Also sent at a member's first connection: "back" only after a loss.)
-            if (!own && disconnected_members_.erase(m.member)) notice(member_name(m.member) + " is back");
-            break;
-        case w::RoomEvent::disconnected:
-            if (!own) {
-                disconnected_members_.insert(m.member);
-                notice(member_name(m.member) + " lost the connection");
-            }
-            break;
-        }
+    case w::Type::instance_info: {
+        auto m = w::decode_instance_info(p);
+        lagging_members_.clear();
+        for (const auto& x : m.members)
+            if (x.flags & w::InstanceMember::lagging) lagging_members_.insert(x.member);
+        if (m.wid != 0 && m.host) host_ = m.host;
+        instance_ = std::move(m);
+        arrival_toast();
         break;
     }
-    case w::Type::roster: {
-        // Once per second: who lags (the name tags' connection icon).
-        const auto m = w::decode_roster(p);
-        lagging_members_.clear();
-        roster_inst_.clear();
-        roster_ = m.entries;
-        for (const auto& e : m.entries) {
-            if (e.flags & 2) lagging_members_.insert(e.member);
-            roster_inst_[e.member] = e.inst;
-        }
+    case w::Type::world_notice: on_world_notice(w::decode_world_notice(p)); break;
+    case w::Type::member_info: {
+        const auto m = w::decode_member_info(p);
+        if (!m.name.empty()) names_[m.member] = m.name;
+        member_flags_[m.member] = m.flags;
         break;
     }
     case w::Type::ping: {
@@ -704,9 +707,12 @@ void Session::handle(const w::Frame& frame, double now) {
         transport_.reset();
         mode_ = Mode::closed;
         close_code_ = std::uint8_t(m.reason);
-        close_reason_ = m.reason == w::CloseReason::kicked      ? "You were removed from the room" + (m.text.empty() ? std::string(".") : " (" + m.text + ").")
-                        : m.reason == w::CloseReason::room_closed ? "The room was closed" + (m.text.empty() ? std::string(".") : " (" + m.text + ").")
-                                                                  : "The relay closed the connection" + (m.text.empty() ? std::string(".") : " (" + m.text + ").");
+        close_reason_ = m.reason == w::CloseReason::replaced  ? std::string("Signed in on another PC.")
+                        : m.reason == w::CloseReason::account ? "Your account can't play online right now" + (m.text.empty() ? std::string(".") : " (" + m.text + ").")
+                        : m.reason == w::CloseReason::stopping ? std::string("The server is restarting. Try again in a moment.")
+                                                               : "The relay closed the connection" + (m.text.empty() ? std::string(".") : " (" + m.text + ").");
+        // (CLOSE replaced and account turn the reconnect off: closed() stays.)
+        if (m.reason == w::CloseReason::account) close_code_ = wireCloseReplaced;
         break;
     }
     case w::Type::story_ack: on_story_ack(w::decode_story_ack(p)); break;
@@ -747,21 +753,75 @@ void Session::on_welcome(const w::Welcome& m, double now) {
     if (presence1) presence_v2_ = false;
 #endif
     presence_sent_.reset();
+    const auto old_own = own_key_;
+    own_box_ = m.box ? m.box : config_.box;
+    own_key_ = std::make_pair(member_id_, own_box_);
     if (!config_.own_name.empty()) names_[member_id_] = config_.own_name;
     if (resume_after_lost_) {
         resume_after_lost_ = false;
-        if ((m.flags & w::Welcome::resumable) && m.inst == inst_ && m.visit == visit_ && m.slot == slot_) {
+        // Round I1a (19.6.10): the relay no longer has this engine's
+        // instance (a server restart, an end missed while away): the engine
+        // takes the home departure itself, once it plays on alone.
+        const bool lost_instance = wid_ != 0 && m.wid != wid_;
+        const bool restarted = old_own.first != 0 && old_own.first != m.member;
+        // The visit's story owner key (round I1a's review). A restarted relay
+        // numbers its members from 1 again, so the old key may now be this
+        // member's own (a guest that got its host's former id) or nobody's;
+        // a lost instance's host keeper is gone. An engine on its own story
+        // (at home, the host) keeps it under the new key; an engine on
+        // another's story sends no STORY until the DISSOLVE's replace gives
+        // it its own (19.6.10: what the field made after the last STORY_ACK
+        // is lost for the host).
+        if (restarted || lost_instance) {
+            if (visit_owner_ == old_own) {
+                visit_owner_ = own_key_;
+                if (own_confirmed_) confirmed_ = own_confirmed_;
+            } else {
+                forget_foreign_visit();
+            }
+            log("reconnected as member %u (was %u)%s: the story key %s", unsigned(m.member), unsigned(old_own.first),
+                lost_instance ? ", the instance is gone" : "", holds_own_story() ? "follows the new id" : "of another's story is dropped");
+        }
+        if ((m.flags & w::Welcome::resumable) && m.inst == inst_ && m.visit == visit_ && m.slot == slot_ && !lost_instance) {
             // Still in the instance: only the missing ticks come (6.10).
-            send(w::Type::resume, w::encode(w::Resume{inst_, visit_, std::uint8_t(slot_), tick_ ? tick_ - 1 : 0}));
+            send(w::Type::resume, w::encode(w::Resume{inst_, visit_, std::uint8_t(slot_), tick_ ? tick_ - 1 : 0, engine_.stage()}));
             if (mode_ == Mode::lost) mode_ = mode_before_lost_;
             last_tick_at_ = now;
             flush_log(now, true);
             return;
         }
+        // (The relay files a member that continues alone in a field of its
+        // instance at its stage, 19.15: RESUME tells it the stage.)
+        if (!lost_instance && wid_ != 0 && !is_hub_stage(engine_.stage()))
+            send(w::Type::resume, w::encode(w::Resume{inst_, visit_, std::uint8_t(slot_), tick_ ? tick_ - 1 : 0, engine_.stage()}));
+        if (lost_instance) {
+            instance_gone_ = true;
+            gone_notice_ = restarted ? "The server restarted. Back on your own story." : "The instance has ended.";
+            log("the relay no longer knows instance %u (%s): taking the home departure", wid_, restarted ? "server restart" : "ended");
+            const std::uint8_t others = std::uint8_t(present_ & ~(1u << slot_));
+            for (int s = 0; s < 4; ++s)
+                if (others & (1u << s)) {
+                    engine_.mark_leaving(s);
+                    slot_members_[std::size_t(s)] = kNoMember;
+                }
+            alone_pending_ = others;
+            present_ = std::uint8_t(1u << slot_);
+            wid_ = 0;
+            host_ = 0;
+            inst_ = m.inst;
+            visit_ = m.visit;
+            mode_of_instance_ = w::Mode::hub;
+            hub_ = true;
+            ticks_.clear();
+            events_.clear();
+            if (mode_ == Mode::lost || mode_ == Mode::sealed || mode_ == Mode::observing) mode_ = Mode::solo;
+            return;
+        }
         // Removed meanwhile: this engine plays on alone until its next
         // barrier, where the server takes it as a lone arrival (round S4
         // uploads its state).
-        notice("You were removed from the group; you continue on your own.");
+        if (wid_ != 0) notice("Reconnected. You're playing apart from " + host_name() + " until the next stage.");
+        else if (!hub_) notice("You were removed from the group; you continue on your own.");
         inst_ = m.inst;
         visit_ = m.visit;
         slot_members_ = {member_id_, kNoMember, kNoMember, kNoMember};
@@ -773,7 +833,8 @@ void Session::on_welcome(const w::Welcome& m, double now) {
         return;
     }
     if (mode_ != Mode::connecting) return;
-    // A fresh member: the server's solo hub instance (the title).
+    // A fresh member: the server's solo hub instance (the title), on its own story.
+    visit_owner_ = own_key_;
     trace("welcome member=%u inst=%u visit=%u slot=%u mode=%u", unsigned(m.member), m.inst, m.visit, unsigned(m.slot), unsigned(m.mode));
     log("relay welcome: member %u, instance %u, input delay %u", unsigned(m.member), m.inst, unsigned(m.delay));
     inst_ = m.inst;
@@ -802,6 +863,26 @@ void Session::take_decision(const w::BarrierOk& ok) {
     slot_ = ok.own_slot;
     present_ = ok.present();
     mode_of_instance_ = ok.mode;
+    // Round I1a: the instance this visit belongs to (0: home) and how this
+    // member came into it (the toast waits for its INSTANCE_INFO).
+    const bool was_in = wid_ != 0;
+    if (ok.wid != wid_) host_away_until_ = -1;
+    wid_ = ok.wid;
+    host_ = ok.wid ? ok.host : 0;
+    if (ok.decision == w::Decision::dissolve || ok.wid == 0) {
+        // (A way home that went straight from the barrier: the engine was
+        // parked when the instance turned out gone, so the local departure
+        // never ran; its notice comes with the DISSOLVE.)
+        if (instance_gone_ && ok.decision == w::Decision::dissolve && !gone_notice_.empty()) notice(std::exchange(gone_notice_, {}));
+        instance_gone_ = false;
+        leave_wanted_ = false;
+        arrival_pending_.reset();
+        if (was_in && ok.decision == w::Decision::dissolve) notice("Back on your own story.");
+    } else if (ok.arrival != w::Arrival::none) {
+        arrival_pending_ = ok.arrival;
+        arrival_visibility_ = ok.visibility;
+        if (instance_ && instance_->wid == ok.wid) arrival_toast();
+    }
     if (ok.delay >= 1) set_delay(std::min<int>(ok.delay, 15), "barrier_ok");
     previous_inst_.reset();
     // Who sits where in the new instance (names): the own slot, the
@@ -831,6 +912,137 @@ void Session::take_decision(const w::BarrierOk& ok) {
         default: break;
         }
     }
+}
+
+// ---- the world (round I1a, 19.5.6)
+namespace {
+const char* visibility_name(w::Visibility v) {
+    switch (v) {
+    case w::Visibility::friends: return "Friends";
+    case w::Visibility::private_: return "Private";
+    default: return "Public";
+    }
+}
+} // namespace
+
+void Session::arrival_toast() {
+    if (!arrival_pending_ || !instance_ || instance_->wid != wid_ || wid_ == 0) return;
+    const auto arrival = *arrival_pending_;
+    arrival_pending_.reset();
+    const std::string host = host_name();
+    std::string host_stage;
+    for (const auto& m : instance_->members)
+        if (m.member == host_) host_stage = m.stage;
+    const std::string where = host_stage.empty() ? std::string() : " " + host + " is in " + stage_title(host_stage) + ".";
+    switch (arrival) {
+    case w::Arrival::new_instance: notice(std::string("New instance (") + visibility_name(arrival_visibility_) + "). View: Online menu"); break;
+    case w::Arrival::auto_join: notice("You joined " + host + "'s instance." + where + " Leave: Online menu"); break;
+    case w::Arrival::co_arrival: notice("You arrived together with " + host + ": you're a guest in " + host + "'s story."); break;
+    case w::Arrival::guest_new: notice("You joined " + host + "'s instance." + where + " Leave: Online menu"); break;
+    default: return;
+    }
+    // (The co-arrival's toast names the guest's story already.)
+    if (arrival != w::Arrival::new_instance && arrival != w::Arrival::co_arrival)
+        notice("You're a guest in " + host + "'s story" + (instance_->story_label.empty() ? std::string() : " (" + instance_->story_label + ")") +
+               ". Your level, items and Digimon stay yours.");
+}
+
+void Session::on_world_notice(const w::WorldNotice& m) {
+    if (!m.name.empty()) names_[m.member] = m.name;
+    const std::string name = m.name.empty() ? member_name(m.member) : m.name;
+    switch (m.kind) {
+    case w::NoticeKind::joined:
+        if (m.member != member_id_) notice(name + " joined.");
+        break;
+    case w::NoticeKind::left:
+        if (m.member != member_id_) notice(name + " left.");
+        remote_.erase(m.member);
+        tracks_.forget(m.member);
+        lagging_members_.erase(m.member);
+        break;
+    case w::NoticeKind::went_to:
+        if (m.member != member_id_ && !m.text.empty()) notice(name + " went to " + stage_title(m.text) + ".");
+        break;
+    case w::NoticeKind::visibility:
+        notice(name + " made the instance " + visibility_name(w::Visibility(std::min<std::uint32_t>(m.argument, 2))) + ".");
+        break;
+    case w::NoticeKind::removed: notice("You were removed from " + host_name() + "'s instance."); break;
+    case w::NoticeKind::host_away:
+        // (A running line with its countdown, overlay().status; the relay
+        // repeats the notice every few seconds with the seconds left.)
+        host_away_name_ = name;
+        host_away_until_ = now_ + double(m.argument);
+        break;
+    case w::NoticeKind::host_back:
+        host_away_until_ = -1;
+        notice(name + " is back.");
+        break;
+    case w::NoticeKind::ended:
+        host_away_until_ = -1;
+        // 19.6.10: an engine playing on apart from its instance after a
+        // reconnect (no stage group of the instance holds it, so no HOME
+        // comes for it) takes the home departure itself; its next barrier
+        // is the relay's DISSOLVE with the own story.
+        if (wid_ != 0 && mode_of_instance_ == w::Mode::hub && !is_hub_stage(engine_.stage()) && !instance_gone_) {
+            instance_gone_ = true;
+            gone_notice_.clear();
+            if (!holds_own_story()) forget_foreign_visit();
+            log("instance %u ended while this engine plays apart from it: taking the home departure", wid_);
+        }
+        switch (w::EndReason(m.argument)) {
+        case w::EndReason::host_left: notice(name + " left. The instance ends."); break;
+        case w::EndReason::host_defeated: notice(name + " was defeated. The instance ends."); break;
+        case w::EndReason::host_lost: notice(name + " did not come back. The instance ends."); break;
+        case w::EndReason::staff: notice("A moderator ended this instance."); break;
+        case w::EndReason::server_stop: notice("The server restarted. Back on your own story."); break;
+        default: notice("The instance has ended."); break;
+        }
+        break;
+    case w::NoticeKind::lagging: lagging_members_.insert(m.member); break;
+    case w::NoticeKind::lag_over: lagging_members_.erase(m.member); break;
+    case w::NoticeKind::shared_progress: notice("Shared story progress saved to your story."); break;
+    case w::NoticeKind::restart_in: notice("Server restart in " + std::to_string(m.argument) + " s."); break;
+    default: break; // kinds of later rounds (friends, party, go along)
+    }
+}
+
+bool Session::leave_instance() {
+    if (wid_ == 0) return false;
+    leave_wanted_ = true;
+    send_pending_leave();
+    // (Not sent yet: a barrier, a load, a catch-up, a reconnect, or an engine
+    // playing on apart from its instance, whose INTENT the relay files under
+    // its home instance and ignores; its next stage is decided inside the
+    // instance, and the wish goes then.)
+    if (leave_wanted_) notice("You leave the instance as soon as this stage allows it.");
+    return true;
+}
+
+void Session::send_pending_leave() {
+    if (wid_ == 0) {
+        leave_wanted_ = false;
+        return;
+    }
+    if ((mode_ != Mode::solo && mode_ != Mode::sealed) || mode_of_instance_ == w::Mode::hub || !connected() || resume_after_lost_) return;
+    send(w::Type::intent, w::encode(w::Intent{inst_, visit_, w::IntentKind::leave, 0}));
+    trace("leave instance wid=%u inst=%u visit=%u", wid_, inst_, visit_);
+    log("leave instance %u (INTENT leave)", wid_);
+    leave_wanted_ = false;
+}
+
+void Session::forget_foreign_visit() {
+    visit_owner_ = std::make_pair(kNoMember, std::uint8_t(0));
+    confirmed_.reset();
+    lines_.clear();
+    story_last_ = {};
+    story_retry_at_ = 0;
+    moved_on_noticed_.reset();
+}
+
+bool Session::set_visibility(w::Visibility visibility) {
+    if (wid_ == 0 || !connected()) return false;
+    send(w::Type::instance_op, w::encode(w::InstanceOp{w::InstanceOpKind::visibility, std::uint32_t(visibility)}));
+    return true;
 }
 
 // ---- steps
@@ -893,7 +1105,7 @@ bool Session::apply_events(bool replaying) {
             go_alone();
             return true;
         }
-        if (e.kind == w::EventKind::join || e.kind == w::EventKind::leave || e.kind == w::EventKind::intent) {
+        if (e.kind == w::EventKind::join || e.kind == w::EventKind::leave || e.kind == w::EventKind::intent || e.kind == w::EventKind::home) {
             w::NotJoinable reason{};
             held = held || !(e.kind == w::EventKind::join ? engine_.joinable(reason) : engine_.membership_safe());
             if (held) {
@@ -939,6 +1151,17 @@ bool Session::apply_events(bool replaying) {
             slot_members_[std::size_t(slot)] = kNoMember;
             break;
         case w::EventKind::intent: engine_.intent(slot, w::IntentKind(e.intent_kind), e.argument); break;
+        case w::EventKind::home: {
+            // 19.6.5: exactly the mask takes the home departure (a fork of
+            // ForkKind::home for part of the present slots; after_step reports it).
+            const bool own = (e.mask & (1u << slot_)) != 0;
+            trace("home applied inst=%u visit=%u tick=%u mask=%x reason=%u%s", inst_, visit_, tick_, unsigned(e.mask), unsigned(e.reason),
+                  replaying ? " (replay)" : "");
+            engine_.home(e.mask);
+            if (!replaying && own) log("home: this member takes the home departure at tick %u (reason %u)", tick_, unsigned(e.reason));
+            break;
+        }
+        case w::EventKind::go: break; // round I1b
         // LEAD_FROM and DELAY are for the member that plays now: never from a
         // replayed history or while observing (a joiner before its JOIN). A
         // resync replays the member's own instance: a LEAD_FROM there that
@@ -1032,6 +1255,15 @@ std::array<PadSample, 4> Session::before_step(const PadSample& local, double now
                 if (alone_pending_ & (1u << s)) engine_.remove_player(s);
             trace("alone inst=%u tick=%u removed=%x", inst_, tick_, unsigned(alone_pending_));
             alone_pending_ = 0;
+        }
+        // 19.6.10: the local way home of an engine whose instance is gone,
+        // at the first membership-safe step once it is alone.
+        if (instance_gone_ && !alone_pending_ && engine_.membership_safe() && !engine_.pending_stage()) {
+            if (is_hub_stage(engine_.stage()) || engine_.depart_home()) {
+                trace("local way home inst=%u tick=%u stage=%s", inst_, tick_, engine_.stage().c_str());
+                instance_gone_ = false;
+                if (!gone_notice_.empty()) notice(std::exchange(gone_notice_, {}));
+            }
         }
         apply_events(false);
         w::WirePad pad = own;
@@ -1187,7 +1419,10 @@ void Session::after_step(double now) {
               split->local_leaves ? 1 : 0, unsigned(present_));
         for (int s = 0; s < 4; ++s)
             if (!(present_ & (1u << s))) slot_members_[std::size_t(s)] = kNoMember;
+        for (auto& e : events_)
+            if (e.event.kind == w::EventKind::home) e.event.mask &= side;
         std::erase_if(events_, [&](const PendingEvent& e) {
+            if (e.event.kind == w::EventKind::home) return e.event.mask == 0;
             return e.event.kind != w::EventKind::lead_from && e.event.kind != w::EventKind::join && !(side & (1u << e.event.slot));
         });
         // (A side with one member left keeps executing sealed ticks until the
@@ -1296,11 +1531,15 @@ void Session::park(double now) {
     b.visit = visit_;
     b.tick = barrier_tick_;
     b.stage = *engine_.pending_stage();
+    barrier_stage_ = b.stage;
     b.point = std::uint8_t(std::clamp(engine_.pending_point(), 0, 255));
     b.alive = engine_.alive_mask();
     b.present = present_;
     b.context = engine_.session_context_hash();
     b.carry = own_carry_;
+    b.own = config_.own_settings;
+    // DW4_ONLINE_AUTOCHOICE=new (development builds): a departure from home asks for a new instance.
+    if (config_.plan_new_instance && is_hub_stage(engine_.stage()) && !is_hub_stage(b.stage)) b.plan = w::Barrier::plan_new_instance;
     send(w::Type::barrier, w::encode(b));
     ticks_.clear(); // ticks sealed after B are discarded
     events_.clear();
@@ -1315,23 +1554,75 @@ void Session::park(double now) {
     mode_ = Mode::parked;
 }
 
+void Session::barrier_fallback(double now) {
+    // A solo group parked without an answer goes on as NEW (3.4), unregistered
+    // (inst 0: never offered to joiners). Round I1a's review: in the world the
+    // answer keeps what the engine holds.
+    //  - Into a field from an instance: a NEW inside that instance (its wid,
+    //    host and the visit's owner and confirmed story stay; no arrival).
+    //  - Into a field on a story whose owner key is gone (a lost instance): no
+    //    owner either (no STORY until the way home's replace).
+    //  - Into a hub stage from another's story or from an instance: the
+    //    DISSOLVE the relay would answer (19.8.3; 19.8.9: a hub stage always
+    //    runs on the own story and settings), here: the own settings back and,
+    //    on another's story, the own confirmed story in place of the engine's.
+    //    Without an own confirmed story yet it keeps waiting: the lobby never
+    //    loads on another's story.
+    const bool to_hub = is_hub_stage(barrier_stage_);
+    const bool foreign = !holds_own_story();
+    if (to_hub && foreign && !own_confirmed_) return;
+    w::BarrierOk ok;
+    ok.inst = inst_;
+    ok.visit = visit_;
+    ok.decision = w::Decision::new_instance;
+    ok.new_inst = 0;
+    ok.new_visit = visit_ + 1;
+    ok.stage = barrier_stage_;
+    ok.own_slot = 0;
+    ok.slot_map = {-1, -1, -1, -1};
+    ok.slot_map[std::size_t(slot_)] = 0;
+    ok.mode = w::Mode::solo;
+    if (to_hub && (foreign || wid_ != 0)) {
+        ok.decision = w::Decision::dissolve;
+        ok.mode = w::Mode::hub;
+        ok.owner = member_id_;
+        ok.box = own_box_;
+        if (foreign) {
+            ok.story_mode = w::StoryMode::replace;
+            ok.story = engine::story::encode_story(*own_confirmed_);
+            ok.story_revision = own_confirmed_->revision;
+        }
+    } else if (foreign || wid_ != 0) {
+        ok.owner = visit_owner_.first;
+        ok.box = visit_owner_.second;
+        if (wid_ != 0) {
+            ok.wid = wid_;
+            ok.host = host_;
+            if (instance_ && instance_->wid == wid_) ok.visibility = instance_->visibility;
+        }
+    }
+    log("the relay did not answer the barrier into %s within %.0f s: %s", barrier_stage_.c_str(), config_.barrier_timeout,
+        ok.decision == w::Decision::dissolve ? "home on the own story and settings" : wid_ != 0 ? "a NEW inside the instance" : "a NEW");
+    notice("The server did not answer; you continue on your own.");
+    on_barrier_ok(ok, now);
+}
+
 void Session::on_barrier_ok(const w::BarrierOk& ok, double now) {
     if (mode_ == Mode::parked) {
         if (ok.inst != inst_ || ok.visit != visit_) return;
         decision_ = ok;
-        // The room story the load step merges, and the values it removes
-        // from this engine because the server dropped them (8.6).
+        // The visit's story owner (19.8.4: the host in an instance, this
+        // member at home) and its confirmed story, which the load step merges
+        // or (the return home, a guest's NEW) puts in place of the engine's.
+        const std::pair<std::uint32_t, std::uint8_t> owner = ok.owner ? std::make_pair(ok.owner, ok.box) : std::make_pair(member_id_, own_box_);
+        if (owner != visit_owner_) {
+            confirmed_.reset();
+            moved_on_noticed_.reset();
+        }
+        visit_owner_ = owner;
         if (!ok.story.empty()) {
             try {
-                const auto room = engine::story::decode_story(ok.story, ok.story_revision);
-                const auto dropped = engine::story::decode_keys(ok.dropped);
-                // (The engine's pending stage is the barrier's target: a barrier into the
-                // training field leaves 503 alone, as the load step does, 8.8.)
-                const auto target = engine_.pending_stage();
-                if (engine::story::holds_dropped(engine_.story_values(), room, dropped, target ? std::string_view(*target) : std::string_view()))
-                    notice(not_started_dropped_ ? "Story progress was not saved: the room owner had not started its story yet."
-                                                : "Story progress was not saved: the room owner is away.");
-                take_story(room);
+                take_story(engine::story::decode_story(ok.story, ok.story_revision), owner);
             } catch (const std::exception&) {
             }
         }
@@ -1738,11 +2029,12 @@ void Session::become_member(double now) {
     // off the raster: a report the relay never completes, 5-10 ms in the
     // moment of the join).
     next_statehash_ = (tick_ / config_.checkpoint_period + 1) * config_.checkpoint_period;
-    // Who is there: the roster's members of this instance (a JOIN names no
-    // member), else the slots' known names.
+    // Who is there: the own instance's members in this stage group
+    // (INSTANCE_INFO; a JOIN names no member), else the slots' known names.
     std::vector<std::string> names;
-    for (const auto& [member, inst] : roster_inst_)
-        if (inst == inst_ && member != member_id_) names.push_back(member_name(member));
+    if (instance_)
+        for (const auto& m : instance_->members)
+            if ((m.flags & w::InstanceMember::same_group) && m.member != member_id_) names.push_back(member_name(m.member));
     if (names.empty()) {
         const int other = lowest(std::uint8_t(present_ & ~(1u << slot_)));
         if (other >= 0 && slot_members_[std::size_t(other)] != kNoMember) names.push_back(slot_name(other));
@@ -1783,9 +2075,10 @@ bool Session::take_engine_replaced() {
 std::vector<std::string> Session::take_notices() { return std::exchange(notices_, {}); }
 
 // ---- room story (SEAMLESS.md 8.3)
-void Session::take_story(const engine::RoomStory& story) {
-    if (confirmed_ && story.revision < confirmed_->revision) return; // an older one overtaken in flight
-    confirmed_ = story;
+void Session::take_story(const engine::RoomStory& story, std::pair<std::uint32_t, std::uint8_t> owner) {
+    // (An older one overtaken in flight is dropped.)
+    if (owner == std::make_pair(member_id_, own_box_) && !(own_confirmed_ && story.revision < own_confirmed_->revision)) own_confirmed_ = story;
+    if (owner == visit_owner_ && !(confirmed_ && story.revision < confirmed_->revision)) confirmed_ = story;
 }
 
 void Session::open_line() {
@@ -1801,7 +2094,9 @@ void Session::open_line() {
 }
 
 void Session::send_story(double now, bool at_barrier) {
-    if (!confirmed_ || !hello_done_ || !transport_) return;
+    // (Not between a reconnect's OK line and its WELCOME: the visit's owner key
+    // is checked there, round I1a's review.)
+    if (!confirmed_ || !hello_done_ || !transport_ || resume_after_lost_) return;
     if (ui_stage(engine_.stage())) return;
     const auto values = engine_.story_values();
     auto delta = engine::story::pending(*confirmed_, values);
@@ -1837,7 +2132,7 @@ void Session::send_story(double now, bool at_barrier) {
     const bool retry_due = story_retry_at_ > 0 && now >= story_retry_at_;
     if (!at_barrier && !retry_due && delta == story_last_ && now - story_sent_at_ < config_.story_interval) return;
     story_retry_at_ = 0;
-    w::Story m{inst_, visit_, confirmed_->revision, std::move(delta)};
+    w::Story m{inst_, visit_, confirmed_->revision, std::move(delta), visit_owner_.first, visit_owner_.second};
     send(w::Type::story, w::encode(m));
     trace("story inst=%u visit=%u rev=%u phase=%u flags=%zu keys=%zu counters=%zu%s", inst_, visit_, m.revision, unsigned(m.delta.phase),
           m.delta.flags.size(), m.delta.folder.size(), m.delta.counters.size(), at_barrier ? " barrier" : "");
@@ -1848,12 +2143,16 @@ void Session::send_story(double now, bool at_barrier) {
 }
 
 void Session::on_story_ack(const w::StoryAck& ack) {
+    // (A STORY_ACK without an owner key is the own: the session's first one,
+    // before the member id is known, has the own too.)
+    const auto owner = ack.owner ? std::make_pair(ack.owner, ack.box) : std::make_pair(member_id_, own_box_);
+    if (visit_owner_.first == 0) visit_owner_ = std::make_pair(member_id_, own_box_);
     if (!ack.story.empty()) {
         auto story = engine::story::decode_story(ack.story, ack.revision);
         // Round G-core (8.8): a guest inside a stage is told once per visit when
-        // the owner's story gains a phase step or a key item its engine lacks;
+        // the host's story gains a phase step or a key item its engine lacks;
         // the engine takes it only at the next barrier (never mid-stage, 8.5).
-        if (!config_.room_owner && confirmed_ && mode_ != Mode::parked && !ui_stage(engine_.stage()) &&
+        if (owner == visit_owner_ && owner.first != member_id_ && confirmed_ && mode_ != Mode::parked && !ui_stage(engine_.stage()) &&
             moved_on_noticed_ != std::make_pair(inst_, visit_)) {
             const auto values = engine_.story_values();
             bool moved = engine::story::phase(story) > std::max(engine::story::phase(*confirmed_), engine::story::phase(values));
@@ -1863,11 +2162,10 @@ void Session::on_story_ack(const w::StoryAck& ack) {
             }
             if (moved) {
                 moved_on_noticed_ = std::make_pair(inst_, visit_);
-                const std::string owner = config_.owner_name.empty() ? std::string("The room owner") : config_.owner_name;
-                notice(owner + "'s story moved on. It reaches your game at your next stage change.");
+                notice(member_name(owner.first) + "'s story moved on. It reaches your game at your next stage change.");
             }
         }
-        take_story(story);
+        take_story(story, owner);
     }
     if (!(ack.flags & w::StoryAck::answer) || story_in_flight_.empty()) return;
     const auto sent = std::move(story_in_flight_.front());
@@ -1878,11 +2176,7 @@ void Session::on_story_ack(const w::StoryAck& ack) {
             if (x.kind == engine::StoryRefused::Kind::counter) again.insert(x.index);
             continue;
         }
-        if (x.reason == engine::StoryRefusal::held) {
-            if (!held_noticed_) notice("The room owner is away: your story progress is kept until they return.");
-            held_noticed_ = true;
-            continue; // the server keeps it; the confirmed story brings it once merged
-        }
+        if (x.reason == engine::StoryRefusal::held) continue; // the host's grace: kept, the confirmed story brings it once merged
         // Round G-core (8.8): earned, the server merges it when due (the one-per-visit rule or a guest's spacing); not
         // sent again before the next barrier (a resend from another stage would only be refused for the stage), no
         // notice: the confirmed story brings it.
@@ -1894,16 +2188,6 @@ void Session::on_story_ack(const w::StoryAck& ack) {
             case engine::StoryRefused::Kind::counter: break;
             }
             continue;
-        }
-        // The owner has no online story yet and its game has not entered a stage: the room starts at zero (8.6), what is
-        // done before is dropped like owner_away's drop (the barrier removes it).
-        if (x.reason == engine::StoryRefusal::not_started) {
-            not_started_dropped_ = true;
-            if (!not_started_noticed_)
-                notice("The room owner has not started its story yet: story progress made before that is not saved.");
-            not_started_noticed_ = true;
-        } else if (x.reason == engine::StoryRefusal::owner_away) {
-            not_started_dropped_ = false;
         }
         if (x.reason == engine::StoryRefusal::wait || x.reason == engine::StoryRefusal::not_member) {
             // Not yet (the visit is too young or already gave its step; the
@@ -1932,7 +2216,7 @@ void Session::on_story_ack(const w::StoryAck& ack) {
 Overlay Session::overlay(double now) const {
     Overlay o;
     o.loading = loading_;
-    if (o.loading.empty() && story_hold_) o.loading = "Loading the room story...";
+    if (o.loading.empty() && story_hold_) o.loading = "Loading your story...";
     o.boss_choice = boss_choice_;
     o.connection_lost = mode_ == Mode::lost || (resume_after_lost_ && !hello_done_);
     if (o.connection_lost && o.loading.empty() && mode_ == Mode::lost) o.loading = "Connection lost, reconnecting...";
@@ -1943,6 +2227,10 @@ Overlay Session::overlay(double now) const {
         o.lagging[std::size_t(s)] = (present_ & (1u << s)) && slot_members_[std::size_t(s)] != kNoMember &&
                                     lagging_members_.contains(slot_members_[std::size_t(s)]);
     o.slow_uplink = lagging_members_.contains(member_id_);
+    if (host_away_until_ >= 0 && wid_ != 0) {
+        const int left = int(std::ceil(std::max(0.0, host_away_until_ - now)));
+        o.status = host_away_name_ + " lost the connection. Waiting for " + host_away_name_ + "... " + std::to_string(left) + " s";
+    }
     return o;
 }
 

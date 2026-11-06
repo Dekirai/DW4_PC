@@ -100,6 +100,7 @@ enum class StoryRefusal : std::uint8_t {
     not_started = 10, // the room owner's online story has not started (an owner without one; 8.6): dropped like owner_away
     queued = 11,     // earned (round G, 8.8): passed every check, waits only for the one-per-visit rule or a guest's
                      // spacing; the server merges it when due, so it is not sent again (like held, without its notice)
+    owner = 12,      // protocol 49 (round I1a, 19.8.4): the STORY's owner key was not the sender's current story owner (not sent again)
 };
 
 // One refused key of a STORY_ACK.
@@ -205,6 +206,18 @@ bool apply(std::map<std::int32_t, std::uint8_t>& flags, std::map<std::int32_t, s
 inline bool apply(StoryValues& values, const RoomStory& room, const StoryKeys& dropped, std::string_view target = {}) {
     return apply(values.flags, values.folder, values.counters, room, dropped, target);
 }
+// Round I1a (docs/SEAMLESS.md 19.8.3, 19.30.4): the story subset of an
+// engine replaced with `story` (the return home: the own story; a guest's
+// NEW: the host's). The phase flags, every persistent flag (503 included),
+// every difficulty's copies of the phase, the working set and the keys,
+// keys 0-10 and the additive counters take the story's values; everything
+// else (the session context, the personal values, temporary flags) stays.
+// Only keys whose value changes are touched (an absent key reads 0).
+void replace(std::map<std::int32_t, std::uint8_t>& flags, std::map<std::int32_t, std::uint8_t>& folder,
+             std::map<std::int32_t, std::int32_t>& counters, const RoomStory& story);
+inline void replace(StoryValues& values, const RoomStory& story) { replace(values.flags, values.folder, values.counters, story); }
+// Whether a flag belongs to the subset replace writes.
+bool in_replaced_subset(std::int32_t flag);
 // Whether apply would remove a dropped value from these values (with the same
 // target stage).
 bool holds_dropped(const StoryValues& values, const RoomStory& room, const StoryKeys& dropped, std::string_view target = {});

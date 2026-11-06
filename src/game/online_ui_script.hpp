@@ -1,6 +1,6 @@
 #pragma once
 
-// The account and room screens in a test run (--online-ui FILE, development
+// The account screens and the home screen in a test run (--online-ui FILE, development
 // builds against a loopback server only): a script presses the game's pad
 // (the title menu's third entry opens the screens as a player does), drives
 // the lobby through the same calls the screens make, opens the F1 Online tab,
@@ -27,29 +27,31 @@
 //   panel open|close           the online screens over the title, opened without the menu
 //   open                       the lobby without a panel (version gate, remembered login)
 //   menu online|cheats|close   the F1 menu on its Online (or Cheats) tab
-//   screen NAME                go to a screen (welcome login register account password rooms create join ...)
+//   screen NAME                go to a screen (welcome login register account password home settings playing ...)
 //   back                       the Back button
 //   view                       the controller's View / Back button (opens / closes the F1 menu)
 //   key NAME...                keys for the menus' navigation: up down left right enter space escape tab,
 //                              pad-up pad-down pad-left pad-right pad-a pad-b pad-x pad-y pad-start (the
 //                              controller's, also without one; one frame each, in order)
-//   fill FIELD VALUE...        a form field (online_ui.hpp set_ui_field: login.name, create.players, ...)
+//   fill FIELD VALUE...        a form field (online_ui.hpp set_ui_field: login.name, settings.camera, ...)
 //   login NAME PASSWORD [remember]
 //   register NAME PASSWORD [EMAIL]
 //   ack                        "I saved it" (the recovery code)
 //   recover NAME CODE PASSWORD
 //   logout | logout-all
 //   password CURRENT NEW
-//   refresh                    the room list
-//   wait-room NAME [SECONDS]   until the room list shows that room (refreshing; 60 s)
-//   create NAME [password=P] [max=N] [difficulty=N] [camera=N] [light=N] [fast] [seed=N] [enemies=N] [zones=N] [drops]
-//   join NAME|CODE [password=P]
+//   refresh                    the world's counts (GET /world)
+//   play                       Play on the home screen (POST /world/enter; round I1a)
+//   settings [visibility=N] [camera=N] [light=N] [fast] [seed=N] [enemies=N] [zones=N] [drops]
+//                              Online > Settings saved (PUT /me/online-prefs)
 //   confirm | cancel           the "end the offline game" question
-//   select NAME|CODE           a room of the list (the Join button's room)
-//   wait-session [SECONDS]     until the room's session runs (60 s)
-//   wait-members N [SECONDS]   until the room view lists N members or more (60 s; <=N: N or fewer)
+//   wait-session [SECONDS]     until the world session runs (60 s)
+//   wait-instance [SECONDS]    until the session is in an instance (60 s; "home": until it is home)
+//   wait-members N [SECONDS]   until the own instance lists N players or more (60 s; <=N: N or fewer)
 //   wait-stage STAGE [SECONDS] until the engine is in that stage (120 s)
-//   kick NAME | leave | close CODE
+//   visibility N               the host's visibility choice (0 Public, 1 Friends, 2 Private; INSTANCE_OP)
+//   leave-instance             *Leave instance* (INTENT leave)
+//   leave                      Go offline
 //   wait-left [SECONDS]        until the session ended (60 s)
 //   expect-screen NAME | expect-gate NAME | expect-error TEXT | expect-info TEXT | expect-logged-in | expect-logged-out
 //   shot NAME                  a screenshot NAME.bmp beside --screenshot's file
@@ -70,7 +72,8 @@ struct UiScriptHost {
     TitleOnline& screens;      // the online screens over the title
     bool& show_menu;
     std::string& menu_tab;     // the F1 tab to select
-    bool online_active = false; // a room session runs
+    bool online_active = false; // the world session runs
+    const RoomLive* live = nullptr; // the session's facts (the own instance; null: none)
     bool title_shown = false;   // the title presents (press start or the menu)
     bool menu_open = false;     // the title menu shows (state 2)
     bool menu_waiting = false;  // the title menu waits for input
@@ -110,7 +113,7 @@ private:
     double deadline_ = -1;         // seconds (a wait-* command)
     bool sent_ = false;            // the current line's request went out
     double refreshed_at_ = -1;
-    std::uint64_t serial_ = 0;     // the room list a refresh waits to replace
+    std::uint64_t serial_ = 0;     // the world counts a refresh waits to replace
     std::size_t key_at_ = 1;       // the next word of a key or pad command
     double next_press_ = -1;       // seconds: the next pad press
 };

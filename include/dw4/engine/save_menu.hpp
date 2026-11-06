@@ -133,6 +133,12 @@ public:
     bool cancelled() const { return cancelled_; } // +54
     bool skipped() const { return skipped_; }     // +55
     void unselect() { selected_ = false; }        // +53
+    // (Read only, for the online Play's title driver: phase 1 step 0 waits
+    // for input at `cursor()`.)
+    int phase() const { return phase_; }
+    int step() const { return step_; }
+    int cursor() const { return cursor_; }
+    bool selected() const { return selected_; }
 
 private:
     void refresh(Engine& engine, int player, const CardIo& io);     // 8035988C
@@ -152,6 +158,7 @@ public:
     void reset() { step_ = 0; }       // 80353A68
     int cursor() const { return cursor_; } // +20
     bool cancelled() const { return cancelled_; } // +73
+    int step() const { return step_; } // (read only: select() step 0 waits for input)
     struct Context {
         Engine& engine;
         CommonModelControl& models;
@@ -221,6 +228,12 @@ public:
                 bool input);          // 8035616C
     int selection() const { return cursor_; }   // +16
     bool cancelled() const { return cancelled_; } // +37
+    // (Read only, for the online Play's title driver: phase 1 step 0 waits
+    // for input; `count()` rows.)
+    int phase() const { return phase_; }
+    int step() const { return step_; }
+    int count() const { return count_; }
+    bool done() const { return done_; }
 
 private:
     int kind_{}, player_{}, count_ = 2, cursor_{}, phase_{}, step_{};
@@ -248,6 +261,7 @@ public:
     bool command(Engine& engine, Ram& ram, std::string_view command, Packet& packet) override;
     void update(Engine& engine) override;
     SaveCommon& common() { return common_; }
+    const SaveCommon& common() const { return common_; }
     int state() const { return rams_.empty() ? -1 : rams_.front()->state; }
 
 private:
@@ -273,6 +287,20 @@ public:
     void clear_stage(Engine& engine) override { (void)engine; rams_.clear(); }
     bool command(Engine& engine, Ram& ram, std::string_view command, Packet& packet) override;
     void update(Engine& engine) override;
+    // Read only (the online Play's title driver, game/online/title_driver.hpp):
+    // a panel's screen, its cursor and the waits of its helpers; none before
+    // the panel's GENERATE.
+    struct PanelView {
+        int state{}, sub{}, detail{}, detail2{}, cursor{};
+        bool message_prompt{};
+        int message_mode{}, message_step{};
+        int slot_phase{}, slot_step{}, slot_cursor{};
+        bool slot_selected{};
+        int box_step{}, box_cursor{};
+        int diff_phase{}, diff_step{}, diff_cursor{}, diff_count{};
+        bool diff_done = true;
+    };
+    std::optional<PanelView> panel(int index) const;
 
 private:
     struct PanelRam : Ram {
@@ -333,6 +361,20 @@ public:
     void clear_stage(Engine& engine) override { (void)engine; rams_.clear(); }
     bool command(Engine& engine, Ram& ram, std::string_view command, Packet& packet) override;
     void update(Engine& engine) override;
+    // Read only (the online Play's title driver, game/online/title_driver.hpp):
+    // a panel's screen, its cursor and the waits of its helpers; none before
+    // the panel's GENERATE.
+    struct PanelView {
+        int state{}, sub{}, detail{}, detail2{}, cursor{};
+        bool message_prompt{};
+        int message_mode{}, message_step{};
+        int slot_phase{}, slot_step{}, slot_cursor{};
+        bool slot_selected{};
+        int box_step{}, box_cursor{};
+        int diff_phase{}, diff_step{}, diff_cursor{}, diff_count{};
+        bool diff_done = true;
+    };
+    std::optional<PanelView> panel(int index) const;
 
 private:
     struct PanelRam : Ram {

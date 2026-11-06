@@ -111,6 +111,11 @@ struct AchievementStep {
     // ("was there"), never from the room story an engine received.
     bool shared_story = false;
     bool story_owner = true;
+    // Round I1a (19.8.9): "Connected" (online_join) is joining someone
+    // else's instance, so the world's client sets it only while it is a guest
+    // there (never at home, where the server refuses it); a lockstep session
+    // and the rooms count any session as before.
+    bool joined_other = true;
 };
 
 // Why nothing counts right now (open: everything counts).

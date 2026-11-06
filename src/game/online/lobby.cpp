@@ -49,7 +49,7 @@ void remove_account(const std::filesystem::path& folder) {
     std::filesystem::remove(folder / kAccountFile, error);
 }
 
-bool is_root(Screen screen) { return screen == Screen::welcome || screen == Screen::rooms || screen == Screen::in_room; }
+bool is_root(Screen screen) { return screen == Screen::welcome || screen == Screen::home || screen == Screen::playing; }
 
 std::string lower(std::string text) {
     for (auto& c : text)
@@ -64,9 +64,8 @@ struct ScreenName {
 constexpr ScreenName kScreens[] = {
     {Screen::welcome, "welcome"},   {Screen::login, "login"},       {Screen::register_account, "register"},
     {Screen::registered, "registered"}, {Screen::recover, "recover"}, {Screen::recovered, "recovered"},
-    {Screen::account, "account"},   {Screen::change_password, "password"}, {Screen::reset_character, "reset"}, {Screen::rooms, "rooms"},
-    {Screen::create_room, "create"}, {Screen::join_room, "join"},   {Screen::confirm, "confirm"},
-    {Screen::starting, "starting"}, {Screen::in_room, "room"},
+    {Screen::account, "account"},   {Screen::change_password, "password"}, {Screen::reset_character, "reset"}, {Screen::home, "home"},
+    {Screen::settings, "settings"}, {Screen::confirm, "confirm"},   {Screen::starting, "starting"}, {Screen::playing, "playing"},
 };
 
 } // namespace
@@ -147,30 +146,29 @@ void OnlineLobby::go(Screen screen) {
     info_text_.clear();
 }
 
+Screen OnlineLobby::root() const { return in_world() ? Screen::playing : logged_in() ? Screen::home : Screen::welcome; }
+
 void OnlineLobby::back() {
     error_.clear();
     info_text_.clear();
-    if (screen_ == Screen::confirm || screen_ == Screen::join_room) start_.reset();
+    if (screen_ == Screen::confirm) start_ = false;
     while (!history_.empty()) {
         const Screen previous = history_.back();
         history_.pop_back();
         // (Screens that no longer fit: the account ones after a logout, the
-        // room list once inside a room.)
+        // home screen once the world session runs.)
         const bool fits = logged_in() ? previous != Screen::welcome && previous != Screen::login && previous != Screen::register_account
                                       : previous == Screen::welcome || previous == Screen::login || previous == Screen::register_account ||
                                             previous == Screen::recover;
-        if (fits && !(in_room() && previous == Screen::rooms)) {
+        if (fits && !(in_world() && previous == Screen::home)) {
             set_screen(previous);
             return;
         }
     }
-    set_screen(in_room() ? Screen::in_room : logged_in() ? Screen::rooms : Screen::welcome);
+    set_screen(root());
 }
 
-bool OnlineLobby::can_back() const {
-    const Screen root = in_room() ? Screen::in_room : logged_in() ? Screen::rooms : Screen::welcome;
-    return screen_ != root && screen_ != Screen::starting;
-}
+bool OnlineLobby::can_back() const { return screen_ != root() && screen_ != Screen::starting; }
 
 void OnlineLobby::open() {
     opened_ = true;
@@ -208,9 +206,14 @@ bool OnlineLobby::newer_version() const {
 
 int OnlineLobby::max_difficulty() const { return character_ ? api::unlocked_difficulty(*character_) : 0; }
 
-bool OnlineLobby::room_owner() const {
-    if (room_view_) return room_view_->you.owner;
-    return false;
+std::string OnlineLobby::play_label() const {
+    const std::string box = " (Box " + std::to_string(config_.box) + ")";
+    if (!character_) return "Play" + box;
+    if (!character_->exists) return "Play: new character" + box;
+    std::string form = character_->digimon;
+    if (form.rfind("p_", 0) == 0) form = form.substr(2);
+    if (!form.empty() && form[0] >= 'a' && form[0] <= 'z') form[0] = char(form[0] - 'a' + 'A');
+    return "Play: " + (form.empty() ? std::string("your character") : form) + " Lv " + std::to_string(character_->level) + box;
 }
 
 void OnlineLobby::update(double now, bool shown) {
@@ -224,9 +227,7 @@ void OnlineLobby::update(double now, bool shown) {
     }
     if (!busy()) busy_text_.clear();
     if (!shown || gate_ != Gate::open) return;
-    if (screen_ == Screen::rooms && !in_flight(Call::rooms) && now - rooms_at_ >= config_.rooms_interval) refresh_rooms();
-    if (screen_ == Screen::in_room && in_room() && logged_in() && !in_flight(Call::room_state) && now - room_at_ >= config_.room_interval)
-        refresh_room();
+    if ((screen_ == Screen::home || screen_ == Screen::playing) && !in_flight(Call::world) && now - counts_at_ >= config_.world_interval) refresh_world();
 }
 
 bool OnlineLobby::handle_common(const HttpResponse& response, bool authorized) {
@@ -284,12 +285,13 @@ void OnlineLobby::handle(const Pending& pending, const HttpResponse& response) {
         if (const auto info = api::parse_account(response)) {
             info_ = info;
             account_ = info->name;
-            if (screen_ == Screen::welcome) set_screen(Screen::rooms);
+            if (screen_ == Screen::welcome) set_screen(Screen::home);
             if (info->must_change_password) {
                 set_screen(Screen::change_password);
                 error_ = "Change the temporary password first.";
             }
             if (!in_flight(Call::character)) send(Call::character, api::character_request());
+            refresh_prefs();
             return;
         }
         if (response.status == 401 || response.status == 403) {
@@ -312,7 +314,7 @@ void OnlineLobby::handle(const Pending& pending, const HttpResponse& response) {
             return;
         }
         become_logged_in(login->account.empty() ? login_name_ : login->account, login->token, remember_wanted_);
-        set_screen(Screen::rooms);
+        set_screen(Screen::home);
         return;
     }
     case Call::register_account: {
@@ -365,84 +367,53 @@ void OnlineLobby::handle(const Pending& pending, const HttpResponse& response) {
         character_.reset();
         if (!in_flight(Call::character)) send(Call::character, api::character_request());
         return;
-    case Call::rooms: {
-        rooms_at_ = now_;
-        const auto rooms = api::parse_rooms(response);
-        if (!rooms) {
-            if (screen_ == Screen::rooms && error_.empty()) error_ = "The room list could not be loaded: " + problem();
-            return;
+    case Call::world: {
+        counts_at_ = now_;
+        if (const auto counts = api::parse_world_counts(response)) {
+            counts_ = counts;
+            ++counts_serial_;
         }
-        rooms_ = *rooms;
-        // This game's rooms first (in the server's order: newest first).
-        std::stable_partition(rooms_.begin(), rooms_.end(),
-                              [&](const api::RoomListing& r) { return r.compatible(config_.protocol, config_.data_hash); });
-        rooms_loaded_ = true;
-        ++rooms_serial_;
         return;
     }
-    case Call::create:
-    case Call::join: {
+    case Call::friends:
+        // (Background: a refusal or an older server without friends leaves the count unknown.)
+        if (const auto online = api::parse_friends_online(response)) friends_online_ = online;
+        return;
+    case Call::prefs:
+        if (handle_common(response, true)) return;
+        if (const auto prefs = api::parse_online_prefs(response)) prefs_ = prefs;
+        return;
+    case Call::put_prefs: {
+        if (handle_common(response, true)) return;
+        const auto prefs = api::parse_online_prefs(response);
+        if (!response.ok()) {
+            error_ = problem();
+            return;
+        }
+        if (prefs) prefs_ = prefs;
+        set_screen(root());
+        history_.clear();
+        info_text_ = "Settings saved. They count from your next Play.";
+        return;
+    }
+    case Call::enter: {
         if (handle_common(response, true)) {
-            start_.reset();
+            start_ = false;
             return;
         }
-        const auto joined = api::parse_room(response);
-        if (!joined) {
+        const auto entry = api::parse_world_entry(response);
+        start_ = false;
+        if (!entry) {
             const auto p = api::problem_of(response);
-            if (p.code == "wrong_room_password" && start_ && !start_->create) {
-                set_screen(Screen::join_room);
-                error_ = p.text;
-                return;
-            }
-            start_.reset();
-            set_screen(Screen::rooms);
-            error_ = p.code == "room_owned" ? p.text + " (your room is in the list: Rejoin or Close it)" : p.text;
-            refresh_rooms();
+            set_screen(Screen::home);
+            error_ = p.code == "account_inactive" ? "Your account can't play online right now." : p.text;
             return;
         }
-        if (joined->ticket.empty()) {
-            // (An older server: the ticket comes from its own call.)
-            room_code_ = joined->code;
-            room_name_ = joined->name;
-            ready_ = LobbyRoom{*joined, account_, token_, joined->relay_port ? joined->relay_port : status_.relay_port, pending.call == Call::create};
-            send(Call::ticket, api::ticket_request(joined->code), "Starting the online game...");
-            return;
-        }
-        finish_join(*joined);
-        ready_->created = pending.call == Call::create;
+        ready_ = LobbyWorld{*entry, account_, token_, entry->relay_port ? entry->relay_port : status_.relay_port};
+        prefs_ = entry->prefs;
+        busy_text_ = "Entering the server...";
         return;
     }
-    case Call::ticket: {
-        const auto ticket = api::parse_ticket(response);
-        if (!ticket || !ready_) {
-            ready_.reset();
-            room_code_.clear();
-            set_screen(Screen::rooms);
-            error_ = "No relay ticket: " + problem();
-            return;
-        }
-        ready_->joined.ticket = *ticket;
-        busy_text_ = "Starting the online game...";
-        return;
-    }
-    case Call::room_state: {
-        room_at_ = now_;
-        if (handle_common(response, true)) return;
-        if (auto view = api::parse_room_view(response)) room_view_ = std::move(view);
-        return;
-    }
-    case Call::kick:
-        if (handle_common(response, true)) return;
-        if (!response.ok()) error_ = problem();
-        else info_text_ = "Removed from the room.";
-        refresh_room();
-        return;
-    case Call::close:
-        if (handle_common(response, true)) return;
-        if (!response.ok()) error_ = problem();
-        else info_text_ = "Your room is closed.";
-        refresh_rooms();
-        return;
     case Call::leave: return;
     }
 }
@@ -477,9 +448,10 @@ void OnlineLobby::become_logged_out(const std::string& why) {
     remembers_login_ = !read_account(config_.folder).empty();
     info_.reset();
     character_.reset();
-    start_.reset();
+    prefs_.reset();
+    start_ = false;
     ready_.reset();
-    if (!in_room()) {
+    if (!in_world()) {
         set_screen(Screen::welcome);
         info_text_ = why;
     } else {
@@ -542,8 +514,8 @@ void OnlineLobby::acknowledge_code() {
     error_.clear();
     info_text_.clear();
     if (screen_ == Screen::registered) {
-        set_screen(logged_in() ? Screen::rooms : Screen::welcome);
-        if (logged_in()) refresh_rooms();
+        set_screen(logged_in() ? Screen::home : Screen::welcome);
+        if (logged_in()) refresh_world();
     } else if (screen_ == Screen::recovered) {
         set_screen(Screen::welcome);
         history_.push_back(Screen::welcome);
@@ -576,12 +548,12 @@ void OnlineLobby::recover(const std::string& user, const std::string& code, cons
 }
 
 void OnlineLobby::logout() {
-    if (busy() || !logged_in() || in_room()) return;
+    if (busy() || !logged_in() || in_world()) return;
     send(Call::logout, api::logout_request(), "Logging out...");
 }
 
 void OnlineLobby::logout_everywhere() {
-    if (busy() || !logged_in() || in_room()) return;
+    if (busy() || !logged_in() || in_world()) return;
     send(Call::logout_all, api::logout_all_request(), "Logging out everywhere...");
 }
 
@@ -606,8 +578,8 @@ void OnlineLobby::change_password(const std::string& current, const std::string&
 void OnlineLobby::reset_character(const std::string& current_password) {
     error_.clear();
     if (busy() || !logged_in()) return;
-    if (in_room()) {
-        error_ = "Leave the room first.";
+    if (in_world()) {
+        error_ = "Go offline first.";
         return;
     }
     if (current_password.empty()) {
@@ -622,91 +594,45 @@ void OnlineLobby::refresh_account() {
     if (!in_flight(Call::me)) send(Call::me, api::me_request());
 }
 
-void OnlineLobby::refresh_rooms() {
-    if (gate_ != Gate::open || in_flight(Call::rooms)) return;
-    rooms_at_ = now_;
-    send(Call::rooms, api::rooms_request());
+void OnlineLobby::refresh_friends() {
+    if (!logged_in() || in_flight(Call::friends)) return;
+    send(Call::friends, api::friends_request());
 }
 
-void OnlineLobby::create_room(const CreateForm& form) {
+void OnlineLobby::refresh_world() {
+    if (gate_ != Gate::open || in_flight(Call::world)) return;
+    counts_at_ = now_;
+    send(Call::world, api::world_counts_request());
+}
+
+void OnlineLobby::refresh_prefs() {
+    if (!logged_in() || in_flight(Call::prefs)) return;
+    send(Call::prefs, api::online_prefs_request());
+}
+
+void OnlineLobby::play() {
     error_.clear();
     if (busy()) return;
     if (!can_play()) {
         error_ = !config_.refusal.empty() ? config_.refusal : gate_ != Gate::open ? gate_text() : "Log in first.";
         return;
     }
-    if (in_room()) {
-        error_ = "Leave the room you are in first.";
-        return;
-    }
-    if (auto problem = api::check_room_name(form.name); !problem.empty()) {
-        error_ = problem;
-        return;
-    }
-    if (auto problem = api::check_room_password(form.password); !problem.empty()) {
-        error_ = problem;
-        return;
-    }
-    if (form.max_players < 2 || form.max_players > 10) {
-        error_ = "A room has 2 to 10 players.";
-        return;
-    }
-    if (form.settings.difficulty < 0 || form.settings.difficulty > max_difficulty()) {
-        error_ = "Your online character has not unlocked that difficulty yet.";
-        return;
-    }
-    start_ = Start{true, form, {}, {}};
+    if (in_world()) return;
+    start_ = true;
     if (offline_game_) go(Screen::confirm);
     else start_request();
 }
 
-void OnlineLobby::join_room(const std::string& code_or_name, const std::optional<std::string>& password) {
+void OnlineLobby::save_settings(const api::OnlinePrefs& prefs) {
     error_.clear();
-    if (busy()) return;
-    if (!can_play()) {
-        error_ = !config_.refusal.empty() ? config_.refusal : gate_ != Gate::open ? gate_text() : "Log in first.";
+    if (busy() || !logged_in()) return;
+    const auto& s = prefs.settings;
+    if (s.camera_mode < 0 || s.camera_mode > 1 || s.light_mode < 0 || s.light_mode > 1 || s.rand_enemies < 0 || s.rand_enemies > 2 ||
+        s.rand_zones < 0 || s.rand_zones > 2) {
+        error_ = "A setting is out of range.";
         return;
     }
-    if (in_room()) {
-        error_ = "Leave the room you are in first.";
-        return;
-    }
-    std::optional<api::RoomListing> target;
-    for (const auto& r : rooms_)
-        if (r.code == code_or_name || r.name == code_or_name) {
-            target = r;
-            break;
-        }
-    if (target && !target->compatible(config_.protocol, config_.data_hash)) {
-        error_ = "This room plays another version of the game or other game data.";
-        return;
-    }
-    if (target && target->players >= target->max_players && target->max_players > 0 && lower(target->owner) != lower(account_)) {
-        error_ = "The room is full.";
-        return;
-    }
-    const std::string code = target ? target->code : code_or_name;
-    if (target && target->has_password && !password) {
-        join_target_ = target;
-        start_ = Start{false, {}, code, {}};
-        go(Screen::join_room);
-        return;
-    }
-    if (password) {
-        if (auto problem = api::check_room_password(*password); !problem.empty() || (target && target->has_password && password->empty())) {
-            error_ = problem.empty() ? "Enter the room's password." : problem;
-            if (screen_ != Screen::join_room) {
-                join_target_ = target;
-                go(Screen::join_room);
-                error_ = problem.empty() ? "Enter the room's password." : problem;
-            }
-            return;
-        }
-    }
-    join_target_ = target;
-    start_ = Start{false, {}, code, password.value_or("")};
-    if (offline_game_) go(Screen::confirm);
-    else start_request();
+    send(Call::put_prefs, api::put_online_prefs_request(prefs), "Saving the settings...");
 }
 
 void OnlineLobby::confirm_start() {
@@ -715,7 +641,7 @@ void OnlineLobby::confirm_start() {
 }
 
 void OnlineLobby::cancel_start() {
-    start_.reset();
+    start_ = false;
     back();
 }
 
@@ -724,98 +650,55 @@ void OnlineLobby::start_request() {
     set_screen(Screen::starting);
     error_.clear();
     info_text_.clear();
-    if (start_->create) {
-        api::CreateRoom create;
-        create.name = start_->form.name;
-        create.password = start_->form.password;
-        create.max_players = start_->form.max_players;
-        create.settings = start_->form.settings;
-        send(Call::create, api::create_room_request(create, config_.protocol, config_.data_hash, config_.client_version), "Opening the room...");
-    } else {
-        send(Call::join, api::join_room_request(start_->code, start_->password, config_.protocol, config_.data_hash, config_.client_version),
-             "Joining the room...");
-    }
+    send(Call::enter, api::world_enter_request(config_.box, config_.protocol, config_.data_hash, config_.client_version), "Entering the server...");
 }
 
-void OnlineLobby::finish_join(const api::RoomJoined& joined) {
-    room_code_ = joined.code;
-    room_name_ = joined.name;
-    ready_ = LobbyRoom{joined, account_, token_, joined.relay_port ? joined.relay_port : status_.relay_port, false};
-    busy_text_ = "Starting the online game...";
-}
-
-std::optional<LobbyRoom> OnlineLobby::take_ready() {
-    if (!ready_ || ready_->joined.ticket.empty() || in_flight(Call::ticket)) return std::nullopt;
-    auto room = std::move(ready_);
+std::optional<LobbyWorld> OnlineLobby::take_ready() {
+    if (!ready_ || ready_->entry.ticket.empty()) return std::nullopt;
+    auto world = std::move(ready_);
     ready_.reset();
-    start_.reset();
-    return room;
+    start_ = false;
+    return world;
 }
 
 void OnlineLobby::session_started() {
     busy_text_.clear();
-    room_view_.reset();
-    room_at_ = -1e9;
-    set_screen(Screen::in_room);
+    playing_ = true;
+    set_screen(Screen::playing);
     error_.clear();
     info_text_.clear();
-    refresh_room();
+    refresh_world();
 }
 
 void OnlineLobby::session_failed(const std::string& error) {
-    // The server keeps the membership until it hears of the leave.
-    if (!room_code_.empty() && logged_in()) send(Call::leave, api::leave_request(room_code_));
-    room_code_.clear();
-    room_name_.clear();
-    room_view_.reset();
+    // The server keeps the world session until it hears of the leave.
+    if (logged_in()) send(Call::leave, api::world_leave_request());
+    playing_ = false;
     ready_.reset();
-    start_.reset();
-    set_screen(logged_in() ? Screen::rooms : Screen::welcome);
+    start_ = false;
+    set_screen(logged_in() ? Screen::home : Screen::welcome);
     error_ = error;
-    refresh_rooms();
+    refresh_world();
 }
 
 void OnlineLobby::session_ended(const std::string& reason) {
-    room_code_.clear();
-    room_name_.clear();
-    room_view_.reset();
+    playing_ = false;
     leave_requested_ = false;
-    set_screen(logged_in() ? Screen::rooms : Screen::welcome);
+    set_screen(logged_in() ? Screen::home : Screen::welcome);
     error_.clear();
     info_text_ = tidy_reason(reason);
-    refresh_rooms();
+    refresh_world();
     // (The online character changed while playing.)
     if (logged_in() && !in_flight(Call::character)) send(Call::character, api::character_request());
 }
 
-void OnlineLobby::adopt_room(const std::string& account, const std::string& token, const std::string& code, const std::string& name) {
+void OnlineLobby::adopt_world(const std::string& account, const std::string& token) {
     if (token_.empty()) {
         account_ = account;
         token_ = token;
         http_->set_token(token_);
     }
-    room_code_ = code;
-    room_name_ = name;
     session_started();
-}
-
-void OnlineLobby::refresh_room() {
-    if (!in_room() || !logged_in() || in_flight(Call::room_state)) return;
-    room_at_ = now_;
-    send(Call::room_state, api::room_state_request(room_code_));
-}
-
-void OnlineLobby::kick(const std::string& user) {
-    error_.clear();
-    if (busy() || !in_room() || !room_owner()) return;
-    if (lower(user) == lower(account_)) return;
-    send(Call::kick, api::kick_request(room_code_, user), "Removing " + user + "...");
-}
-
-void OnlineLobby::close_room(const std::string& code) {
-    error_.clear();
-    if (busy() || !logged_in() || code == room_code_) return;
-    send(Call::close, api::close_room_request(code), "Closing the room...");
 }
 
 } // namespace dw4::game::online

@@ -283,6 +283,7 @@ std::vector<std::uint8_t> encode_barrier(const BarrierResult& barrier) {
         a.io(b.story->counters);
         a.io(b.story->revision);
     }
+    a.io(b.story_mode);
     a.io(b.dropped.flags);
     a.io(b.dropped.folder);
     a.io(b.dropped.counters);
@@ -317,6 +318,8 @@ BarrierResult decode_barrier(std::span<const std::uint8_t> bytes) {
         a.io(b.story->counters);
         a.io(b.story->revision);
     }
+    a.io(b.story_mode);
+    if (std::uint8_t(b.story_mode) > std::uint8_t(StoryMode::replace)) throw std::runtime_error("barrier holds an unknown story mode");
     a.io(b.dropped.flags);
     a.io(b.dropped.folder);
     a.io(b.dropped.counters);

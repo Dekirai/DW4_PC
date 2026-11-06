@@ -348,6 +348,18 @@ std::vector<std::string> CharacterSync::take_notices() {
 
 std::int64_t CharacterSync::play_seconds() const { return std::int64_t(std::floor(base_play_ + session_play_)); }
 
+save::StoryBytes record_story_bytes(const engine::RoomStory& story) {
+    save::StoryBytes out{};
+    std::copy(story.flags.begin(), story.flags.end(), out.begin());
+    std::copy(story.folder.begin(), story.folder.end(), out.begin() + std::ptrdiff_t(story.flags.size()));
+    std::size_t at = story.flags.size() + story.folder.size();
+    for (const auto c : story.counters) {
+        const auto u = std::uint32_t(c);
+        for (int b = 3; b >= 0; --b) out[at++] = std::uint8_t(u >> (8 * b));
+    }
+    return out;
+}
+
 void CharacterSync::put_own_story(CharacterRecord& record) const {
     std::copy(own_story_.begin(), own_story_.end(), record.begin() + std::ptrdiff_t(save::kStoryOffset));
 }
@@ -457,7 +469,7 @@ void CharacterSync::card_written(int box) {
         // (Called from this box later, it is still another character, even with the online character's UNIQUE.)
         foreign_boxes_.insert(box);
         notice("Box " + std::to_string(box + 1) + " holds another character than your online character, so it was not uploaded. " +
-               std::string(box == box_ ? "Your online character was in that box: leave the room and enter it again to have it on the card. "
+               std::string(box == box_ ? "Your online character was in that box: go offline and press Play again to have it on the card. "
                                        : "") +
                "Reset the online character (Online > Account) to start a new one.");
         skip_told_ = true;
@@ -508,10 +520,10 @@ void CharacterSync::game_started() {
 void CharacterSync::replaced() {
     if (!entered_ || auth_blocked_) return;
     auth_blocked_ = true;
-    last_problem_ = "this account entered the room on another PC";
+    last_problem_ = "this account went online on another PC";
     trace("replaced by another connection of the account: saves stay pending in the card cache");
-    notice("This account entered the room on another PC, so this PC stopped saving the online character. Its progress since the last "
-           "save stays on this PC and goes up at its next room entry if the character was not saved elsewhere meanwhile.");
+    notice("This account went online on another PC, so this PC stopped saving the online character. Its progress since the last "
+           "save stays on this PC and goes up the next time you play online here if the character was not saved elsewhere meanwhile.");
 }
 
 void CharacterSync::skipped(Why why) {
@@ -673,7 +685,7 @@ bool CharacterSync::on_response(std::uint64_t id, const HttpResponse& response) 
         trace("conflict " + code + " current " + std::to_string(api::current_revision(response).value_or(-1)) + ": reloading");
         notice("Your online character was saved on another PC meanwhile (or reset). This PC's progress was NOT uploaded" +
                (kept ? " (kept in " + kept->generic_string() + ")" : std::string()) +
-               "; the card now holds the server's character. Leave the room and call the character again to go on with it.");
+               "; the card now holds the server's character. Go offline and press Play again to go on with it.");
         reload();
         return true;
     }
@@ -695,7 +707,7 @@ bool CharacterSync::on_response(std::uint64_t id, const HttpResponse& response) 
         auth_blocked_ = true;
         waiting_.reset();
         last_problem_ = text;
-        notice("The online character cannot be uploaded now (" + text + "). It is kept on this PC and goes up when you enter a room "
+        notice("The online character cannot be uploaded now (" + text + "). It is kept on this PC and goes up when you play online "
                "again.");
         trace("refused (" + std::to_string(response.status) + " " + code + "): saves stay pending in the card cache");
         return true;
@@ -730,7 +742,7 @@ std::string CharacterSync::status_text() const {
     if (foreign_ || skip_told_)
         return "Online character: not saving (this game is another character; load your online character at the title, or reset it in "
                "Online > Account to start a new one)";
-    if (auth_blocked_) return "Online character: kept on this PC, uploaded at the next room entry (" + last_problem_ + ")";
+    if (auth_blocked_) return "Online character: kept on this PC, uploaded when you play online again (" + last_problem_ + ")";
     if (in_flight_ || waiting_) return "Online character: saving...";
     if (revision_ == 0) return "Online character: none yet (a new game makes it)";
     return "Online character: saved (revision " + std::to_string(revision_) + ")";
