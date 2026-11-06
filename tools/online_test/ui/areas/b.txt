@@ -2,8 +2,7 @@
 # online character its game made (the account screen's Reset online character).
 open
 login $UI_B_NAME $UI_B_PASSWORD
-wait-room $UI_ROOM
-join $UI_ROOM
+play
 wait-session
 sleep 30
 menu online

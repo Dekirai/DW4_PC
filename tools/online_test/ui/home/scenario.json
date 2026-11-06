@@ -1,0 +1,8 @@
+{
+  "desc": "the world's home screen (round I1a, was rooms): a logs in, sets Online > Settings (Friends, camera 1) and plays; b logs in and plays; both at home in the world; a leaves",
+  "timeout": 420,
+  "clients": [
+    {"name": "a", "script": "a.txt", "registered": true},
+    {"name": "b", "script": "b.txt", "registered": true, "start": 25}
+  ]
+}

@@ -6,9 +6,8 @@ screen register
 register $UI_B_NAME $UI_B_PASSWORD
 expect-screen registered
 ack
-expect-screen rooms
-wait-room $UI_ROOM
-join $UI_ROOM
+expect-screen home
+play
 wait-session
 wait-stage stagis12 1200
 wait-stage stagml12 300

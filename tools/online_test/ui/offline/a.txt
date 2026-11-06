@@ -3,12 +3,12 @@ wait-stage stagml11
 sleep 2
 menu online
 login $UI_A_NAME $UI_A_PASSWORD
-expect-screen rooms
+expect-screen home
 screen create
 fill create.name $UI_ROOM
 wait 10
 shot create_form
-create $UI_ROOM
+play
 expect-screen confirm
 wait 10
 shot confirm

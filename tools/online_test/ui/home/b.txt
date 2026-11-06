@@ -1,0 +1,21 @@
+# The second player: the home screen and Play; both are in the world at home (no rooms to find or join any more).
+wait-title
+to-menu
+pad DOWN DOWN A
+wait-screens
+screen login
+login $UI_B_NAME $UI_B_PASSWORD
+expect-screen home
+wait 10
+shot home_guest
+play
+wait-session
+sleep 2
+expect-screens closed
+menu online
+wait-instance home
+sleep 3
+wait 10
+shot online_menu_guest
+sleep 40
+end

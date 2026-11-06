@@ -8,8 +8,8 @@ screen register
 register $UI_A_NAME $UI_A_PASSWORD
 expect-screen registered
 ack
-expect-screen rooms
-create $UI_ROOM max=4
+expect-screen home
+play
 wait-session
 wait-stage stagis12 1200
 wait-stage stagml12 300

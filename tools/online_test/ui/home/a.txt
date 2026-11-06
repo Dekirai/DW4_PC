@@ -1,0 +1,37 @@
+# The world's home screen (round I1a; was the room scenario): log in, the home screen, Online > Settings (the default
+# visibility Friends, camera mode 1), Play: the world session; the online title; leaving the world.
+wait-title
+to-menu
+pad DOWN DOWN A
+wait-screens
+screen login
+fill login.name $UI_A_NAME
+wait 10
+shot login
+login $UI_A_NAME $UI_A_PASSWORD
+expect-screen home
+wait 10
+shot home
+screen settings
+settings visibility=1 camera=1 light=1
+wait 10
+shot settings
+play
+wait-session
+sleep 2
+expect-screens closed
+sleep 4
+wait 10
+shot online_title
+menu online
+wait-instance home
+sleep 3
+wait 10
+shot online_menu_home
+sleep 40
+leave
+wait-left
+sleep 2
+wait 10
+shot after_leave
+end
