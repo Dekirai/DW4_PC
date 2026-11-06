@@ -126,7 +126,9 @@ public:
         // otherwise; the human bot as a newcomer: the first line or a random one).
         config.offers = option(request_, "offers", test_ ? (request_.bot == "human" ? "newcomer" : "priority") : "");
         if (config.offers == "player") config.offers.clear();
-        config.results_hold = test_ ? 60 : 0;
+        // (results_hold=STEPS, test runs with pictures: the results stay that long;
+        // their lines appear one per 8 steps.)
+        config.results_hold = test_ ? std::max(1, std::atoi(option(request_, "results_hold", "60").c_str())) : 0;
         // Development switches of the balance passes (initial values of SURVIVAL.md otherwise).
         auto real = [&](std::string_view key, float& value) {
             if (const auto text = option(request_, key); !text.empty()) value = std::strtof(text.c_str(), nullptr);
