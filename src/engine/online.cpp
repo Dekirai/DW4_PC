@@ -128,6 +128,9 @@ const std::vector<std::string_view>& online_presentation_env() {
         "DW4_ONLINE_TRACE", "DW4_ONLINE_SCRIPT_EVERY",
         // the online account's achievement profile of a test run (online_achievements.hpp, round S2)
         "DW4_ONLINE_PROFILE",
+        // Data Overflow's meta file of a test run (src/game/overflow_profile.hpp, round O1b lane F; the mode is
+        // offline only and the file never reaches an engine)
+        "DW4_OVERFLOW_PROFILE",
         // the resync scenarios' injected desync (DW4_ONLINE_DEV builds only, game_main.cpp: it is the point of the test)
         "DW4_ONLINE_TEST_DESYNC",
         // round J's damaged checkpoint and the tick state that misses a field (DW4_ONLINE_DEV builds only, session.cpp,
