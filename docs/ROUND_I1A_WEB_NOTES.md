@@ -56,7 +56,19 @@ Findings for the other lanes (in the contract): the client's online achievements
 client lane in f00afc22; the online card keeps the own story of the entry (minor, contract web 15:40); the relay's newer
 FakeHistory needed IInstanceHistoryRepository without PruneAsync (web moved it, 7c12ffca).
 
-## Test results (2026-11-06)
+## Test results, session 2 (2026-11-06 afternoon)
+
+- This branch: DW4Online.Tests 422 of 422; DW4Online.Integration.Tests 127 passed, 8 skipped, 0 failed
+  (`build/i1aweb/it_all4.log`; skipped as below: the EndToEnd tools need the world relay, which only the merge has).
+- Trial merge 1 (`build/i1aweb/trial`): unit 429/429 (`trial_unit.log`), integration 129 passed / 4 skipped
+  (`trial_it2.log`, WinHTTP / Python not set up there yet).
+- Trial merge 2 (`build/i1aweb/trial2`, client 8cd90c31, relay 1470a267): unit 448/448; integration 136 passed, 1 skipped
+  (the certificate-store test), 0 failed, with the WinHTTP client and DW4ONLINE_PYTHON: both ported end-to-end tests pass
+  against the real world relay (`trial2_it.log`).
+- Game scenarios with real clients: see "Scenario results" below.
+- No game code changed in this session (det.sh / ctest of session 1 stand).
+
+## Test results, session 1 (2026-11-06)
 
 - Server unit tests: 420 of 420 (`build/i1aweb/unit3.log`; new: `AreaTableTests` 4, `WorldDomainTests` 6).
 - Server integration tests (own mysqld 3632, ports 57200-57399): 127 passed, 8 skipped, 0 failed
