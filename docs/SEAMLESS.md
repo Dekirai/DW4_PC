@@ -11215,7 +11215,7 @@ the decision stays under the lock).
   the relay lane measures and cuts the connection path's CPU per frame
   before the world opens (coalescing alone did not). Then the gate runs
   again with `loadgate --sockets` and in-process, all cells, on a quiet
-  machine, criteria unchanged; it decides phase 1 or 2. The user
+  machine, criteria as below; it decides phase 1 or 2. The user
   decided on 2026-11-05 (section 18, question 42) that the max is read at
   p99.99 when a busy machine's single pauses are the only holds over 5 ms:
   the hold criterion is "p99 at most 0.5 ms and p99.99 at most 5 ms", which
