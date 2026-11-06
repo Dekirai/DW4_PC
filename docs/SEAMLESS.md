@@ -13235,7 +13235,10 @@ the remembered visibility off the lock). Decisions the design left open:
   INTENT while the group gathers at a barrier, a solo leader's JOIN_REQ
   home or a sealed group's HOME waiting for its sealing) drops the group's
   unstamped HOME; the housekeeping asks it again, once in each later stage
-  group of the instance the member plays in (`home_asked_again`).
+  group of the instance the member plays in (`home_asked_again`). A slot
+  whose HOME is stamped, pending or asked of its solo leader is never asked
+  again in that stage group (the client's kept *Leave instance* beside
+  it gives one HOME).
 - **INSTANCE_OP** is throttled per member (3 at once, then one a second;
   more are dropped and counted, `instance_op_throttled`; INSTANCE_INFO
   shows the state that holds). A visibility change's audit row

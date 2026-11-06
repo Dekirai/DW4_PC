@@ -248,6 +248,33 @@ public partial class HubLogicTests
     }
 
     [Fact]
+    public void A_second_leave_while_the_solo_leaders_home_is_asked_adds_no_second_home()
+    {
+        // b plays alone in a's instance (a guest's NEW); its Leave instance asks its own engine for HOME (JOIN_REQ kind home).
+        var h = new Harness();
+        Admit(h, "a", Player(100, "a") with { Story = StoryAt(2) });
+        Admit(h, "b", Player(101, "b"));
+        h.Barrier("a", "stag0101");
+        h.Snapshot("a");
+        h.Barrier("a", "stag0102");
+        h.Snapshot("a");
+        h.Barrier("b", "stag0101");
+        h.Snapshot("b");
+        var g = h.I("b");
+        Assert.Equal(InstanceMode.SoloLed, g.Mode);
+        h.Send("b", new IntentMsg(g.Id, g.Visit, IntentKind.Leave, 0).Frame());
+        Assert.NotNull(g.AskedHome);
+        // The client's kept *Leave instance* comes again (client 15:15) before the leader's JOIN_AT: no second HOME is queued.
+        h.Send("b", new IntentMsg(g.Id, g.Visit, IntentKind.Leave, 0).Frame());
+        Assert.Null(g.PendingHome);
+        h.Log("b", 0, 30);
+        h.Send("b", new JoinAtMsg(g.Id, g.Visit, 40).Frame());
+        Assert.Equal(1, g.PendingEvents.Values.SelectMany(l => l).Count(e => e.Type == Ev.Home));
+        h.Hub.Housekeep(h.Now);
+        Assert.Single(h.P("b").All(Msg.JoinReq, JoinReqMsg.Parse), r => r.Kind == JoinReqKind.Home);
+    }
+
+    [Fact]
     public void An_arrival_within_the_starting_window_joins_the_starting_instance_with_the_hosts_story()
     {
         // W4b's rule (19.7.6): b 6 s after a, a's instance still starting (not joinable yet): b joins it (arrival 3, replace).

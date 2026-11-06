@@ -409,7 +409,9 @@ public sealed partial class RoomHub
     /// </summary>
     private void SendHome(HubInstance g, byte mask, HomeReason reason, long now, uint ahead)
     {
-        mask = (byte)(mask & g.PresentMask & ~g.HomeStamped);
+        // (Never a slot whose HOME is stamped or asked of the solo leader already: a second ask, the client's kept *Leave instance*
+        // beside the relay's RetryHome, would stamp a second HOME.)
+        mask = (byte)(mask & g.PresentMask & ~g.HomeStamped & ~(g.AskedHome?.Mask ?? 0));
         if (mask == 0 || g.Ended || g.Barrier is not null) return;
         if (g.Mode == InstanceMode.Sealed && g.Sealing)
         {
@@ -430,6 +432,14 @@ public sealed partial class RoomHub
     {
         if (g.PendingHome is not { } p || g.Mode != InstanceMode.SoloLed || g.Barrier is not null || now < p.NotBefore) return;
         if (g.SoloJoin is not null || g.AskedJoin is not null || g.AskedHome is not null) return;
+        // (Slots stamped meanwhile, a JOIN_AT home before the group led alone again, are not asked twice.)
+        var open = (byte)(p.Mask & g.PresentMask & ~g.HomeStamped);
+        if (open == 0)
+        {
+            g.PendingHome = null;
+            return;
+        }
+        p = (open, p.Reason, p.NotBefore);
         if (g.Leader is not { Connected: true } leader) return;
         var ld = DelayController.FromRoundTrips(leader.Rtt.All, _sealing.MaxDelayTicks);
         g.AskedHome = (p.Mask, p.Reason, now);

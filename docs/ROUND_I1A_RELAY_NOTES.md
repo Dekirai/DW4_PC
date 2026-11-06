@@ -45,10 +45,41 @@ lanes *relay world* and *story* (with round 72's additions), the wire of 19.18 a
   adapted lockstep tests), integration (WorldRelayTests over loopback with the real server and MariaDB, the adapted
   LoadGateTests and RelayConnectionTests; RoomTests / RoomPageTests removed as the web lane did).
 
+## Review fixes (the lane's review, 2026-11-06; SEAMLESS.md 19.31, contract "relay 15:50")
+
+Every finding checked; each fix has a unit test that fails without it (checked by mutation runs: each rule taken out,
+its test run, 18 mutations, all caught), `WorldReviewTests.cs`:
+
+- Story owner key: a STORY_ACK names the keeper as its receiver knows it (the instance's host id, also after the host left
+  the world; the own keeper by the own id); a keeper without an owner key sends no story; a reconnect into an ending
+  instance gets only its own story. (`No_story_ack_carries_another_story_with_owner_zero_after_the_host_left_the_world`)
+- WELCOME is resumable only with its live instance (never wid 0: ending instance, removed seat, detached group).
+  (`A_welcome_without_the_members_instance_is_never_resumable_...`, plus the Resumable check in
+  `A_reconnect_after_the_instance_ended_gets_a_welcome_without_it`)
+- Plan 0xFFFF (*New instance*) holds through a co-arrival hold and a redecision (checked in FreshJoinOrNew).
+- INSTANCE_OP: 3 at once, then 1/s per member (`instance_op_throttled`); the visibility's audit row and the remembered
+  default written once settled (2 s) or at the end; one row for a burst.
+- Live re-check: handle and number per re-check (an older admission's or an overtaken result is dropped); a refusal of a
+  nonce that is no longer the newest the gateway issued is asked again with the newest (a lock still closes); integration
+  test `A_recheck_with_an_older_ticket_closes_nobody_but_a_lock_still_closes_the_member`.
+- M3 into a field: the host's barrier with no living present slot into a field ends host_defeated with a DISSOLVE
+  redirected to stagML11 point 3.
+- A guest's HOME owed until its DISSOLVE (`HubMember.HomeWish`): a leave or removal a barrier overtook is asked again once
+  in each later stage group of the instance (`home_asked_again`); no slot is asked twice (stamped or asked of the solo
+  leader: the client's kept *Leave instance*, client 15:15).
+- Coverage tests: the starting window (arrival 3, replace), the co-arrival base's visibility and blocks, the data hash
+  filter, the host's grace greying his instance, the presence budget, the staff tag in MEMBER_INFO and INSTANCE_INFO.
+- Documented, not changed: ERR ticket for every admission refusal and no WORLD_NOTICE 12 / server_stop notice (contract
+  corrected), StoryReplaced always END staff (no actor in the notifier), "Arriving now" no row of its own in I1a.
+
 ## Left (see also the final report)
 
-- The gate ran on the busy machine (the other lanes beside it), not the quiet one 19.17.4 asks for; a quiet rerun can
-  confirm the numbers (`loadgate` in-process and `--sockets`).
+- The gate ran on the busy machine (the other lanes beside it), not the quiet one 19.17.4 asks for; a quiet rerun (both
+  harnesses, the storm several times with a GC trace) is open before the deploy, and so is the cause of the first socket
+  storm run's 1.34 s relay stall (not seen in the eleven later storm runs over sockets: max 12.0-35.9 ms). The review
+  fixes touch no hot path (story changes, INSTANCE_OP, a per-pass check of owed HOMEs), so no gate rerun was made for them.
+- Integration hint (web): `WorldService.AdmitAsync` answers null also after its `AdmissionTimeout` (a hanging database);
+  the relay reads a null for the newest nonce as a refusal (CLOSE 9).
 - Not built in I1a by design: OPTIONS / PLAN / CHOICE (I1b), go along (I1b), the mirror (I2), FRIENDS_STATE (I2),
   spectators and GOTO (I3), parties (I4), seats (I5).
 - At the integration: take the web lane's versions of the four stub files; `RelayGateway.cs` conflicts with web's
@@ -72,7 +103,7 @@ lanes *relay world* and *story* (with round 72's additions), the wire of 19.18 a
   lane: `build/i1arelay/gate/` (loadgate49_r1, joins49_r2, loadgate_net49_r1, loadgate_net49_storm_r2, net49_direct_r1/_r2,
   net49_pooled_r1/_r2, net49_e_r1, net49_e_pooled_r1, net49_flush_r1/_r2, net49_noflush_r1;
   `DW4_LOADGATE_DIRECT_SENDS=0` runs the old writer, `DW4_LOADGATE_PRESENCE_FLUSH_MS=0` no presence flush).
-- Last results: unit 452/452 (`build/i1arelay/unit_r9.log`); integration 120 passed, 4 skipped (`build/i1arelay/integration_r7.log`);
-  loss matrix quick: `build/i1arelay/gate/matrix_*_r1.md`.
+- Last results: unit 466/466 (`build/i1arelay/unit_r11.log`); integration 121 passed, 4 skipped
+  (`build/i1arelay/integration_r9.log`); loss matrix quick: `build/i1arelay/gate/matrix_*_r1.md`.
 - No client code changed (the branch's diff outside `server/` and `docs/` is empty): no ctest, det.sh or game
   scenarios are needed for this lane.
