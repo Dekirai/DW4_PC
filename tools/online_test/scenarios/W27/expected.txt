@@ -1,5 +1,8 @@
-# W27 (19.24, 19.6.5, M3).
+# W27 (19.24, 19.6.5): the host's game over (its stage group all defeated) before round I3: the instance ends
+# (host_defeated, "<host> was defeated. The instance ends."), the guest in its other stage group goes home.
 a: online-script: step .* log: a defeated
+b: online-script: step .* log: b in the cave
+b: online: .*defeated.*The instance ends
 b: online-script: step .* log: b home
 relay: instance_end .*reason=host_defeated
 !b: online-script: FAIL

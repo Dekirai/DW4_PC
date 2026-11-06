@@ -1,7 +1,11 @@
-# W27, guest b (k5): plays in a's instance; a's defeat ends it ("... was defeated. The instance ends."): home.
+# W27, guest b (k5): joins a, goes into dng101b1 (a stage group of its own in a's instance); a's game over ends the
+# instance: b goes home on its own story.
 campaign until stage=stagml11,control
 idle until epoch>=@100
 explore mate00 yes until stage=stag0101,control
 log b joined a
-wander -100 -60 30 until stage=stagml11,control fail epoch>=@500
+follow 40 until sealed>=600
+explore matz00 yes until stage=dng101b1,control
+log b in the cave
+wander 0 0 30 until stage=stagml11,control fail epoch>=@700
 log b home
