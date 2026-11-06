@@ -344,6 +344,12 @@ void test_actor(const dw4::MountedResources& resources) {
     const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(60);
     while (!actor.ready() && !actor.failed() && std::chrono::steady_clock::now() < until) std::this_thread::sleep_for(std::chrono::milliseconds(50));
     CHECK(actor.ready());
+    // The talk window's face icon: n_gekoaic's picture from the same member.
+    if (const auto document = actor.document()) {
+        const auto face = ov::model_texture(*document, "n_gekoaic");
+        CHECK(face && face->texture && face->image);
+        CHECK(!ov::model_texture(*document, "no_such_set"));
+    }
     std::printf("actor n_gekoa: %s\n", actor.ready() ? "loaded" : "not loaded");
 }
 

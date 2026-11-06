@@ -252,6 +252,16 @@ void SimUi::text(float x, float y, std::string_view utf8, UiColor color, float s
     }
 }
 
+void SimUi::image(float x, float y, float w, float h, const engine::Attribute* texture) {
+    if (!texture) return;
+    auto g = std::make_shared<GeometryData>();
+    g->positions = {layer(x, y), layer(x + w, y), layer(x + w, y + h), layer(x, y + h)};
+    g->texcoords = {0, 1, 1, 1, 1, 0, 0, 0};
+    g->indices = {0, 1, 2, 0, 2, 3};
+    finish_geometry(*g);
+    pieces_.push_back({std::move(g), ui_colors::white, true, texture});
+}
+
 void SimUi::prompt(float x, float y, std::uint64_t frame) {
     if ((frame / 20) % 2) return;
     auto g = std::make_shared<GeometryData>();
@@ -298,7 +308,10 @@ void SimUi::finish(std::vector<DrawItem>& items, float alpha) {
         DrawItem item;
         item.geometry = piece.geometry.get();
         item.state = base;
-        if (piece.textured && font_ && font_->binding) {
+        if (piece.textured && piece.texture) {
+            item.state.texture = piece.texture;
+            item.state.texture_enabled = true;
+        } else if (piece.textured && font_ && font_->binding) {
             item.state.texture = font_->binding.get();
             item.state.texture_enabled = true;
             item.state.color = {piece.color.r, piece.color.g, piece.color.b, piece.color.a};

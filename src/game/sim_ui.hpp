@@ -82,6 +82,9 @@ public:
     float text_width(std::string_view utf8, float size = 18.0f);
     // The text with `|` breaks at spaces so no line is wider than `width`.
     std::string wrap(std::string_view utf8, float size, float width);
+    // A picture: `texture` (a texture bind attribute that outlives the
+    // frame) on a quad, the image upright.
+    void image(float x, float y, float w, float h, const engine::Attribute* texture);
     // The ▼ prompt of a talk page (a small triangle, blinking).
     void prompt(float x, float y, std::uint64_t frame);
     void finish(std::vector<engine::DrawItem>& items, float alpha = 1.0f);
@@ -93,6 +96,7 @@ private:
         std::shared_ptr<engine::GeometryData> geometry;
         UiColor color;
         bool textured{};
+        const engine::Attribute* texture{}; // an image's own (image()); else the font's
     };
     bool load_font();
     engine::RenderState flat_state() const;

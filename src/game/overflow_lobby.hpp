@@ -155,7 +155,11 @@ private:
 };
 
 // The screens of a LobbyMenu into SimUi.
-void draw_lobby_menu(SimUi& ui, const LobbyMenu& menu, const LobbyMeta& meta, std::uint64_t frame);
+// `face`: the talk window's face icon (n_gekoaic's texture), or none.
+void draw_lobby_menu(SimUi& ui, const LobbyMenu& menu, const LobbyMeta& meta, std::uint64_t frame, const engine::Attribute* face = nullptr);
+// The texture bind of a 2D model's attribute set (n_gekoaic's igAttrSet in
+// stag0302: the face icon's picture), as a texture attribute for SimUi.
+std::unique_ptr<engine::Attribute> model_texture(const IgbDocument& document, std::string_view attr_set);
 
 // The lobby side as the story loop uses it.
 class OverflowLobby {
@@ -192,6 +196,8 @@ public:
 private:
     PresentationActor actor_;
     SimUi ui_;
+    std::unique_ptr<engine::Attribute> face_;
+    bool face_tried_ = false;
     std::unique_ptr<MountedResources> resources_;
     LobbyMenu menu_;
     LobbyMeta meta_;

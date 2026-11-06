@@ -279,7 +279,7 @@ LobbyAction LobbyMenu::input(const MenuKeys& keys, const LobbyMeta& meta) {
 namespace {
 constexpr float kSize = 18.0f; // the talk window's line height
 
-void talk_window(SimUi& ui, const std::string& page, bool prompt, std::uint64_t frame, float open) {
+void talk_window(SimUi& ui, const std::string& page, bool prompt, std::uint64_t frame, float open, const engine::Attribute* face) {
     // The talk window at the bottom: the name tab, the face frame, three lines.
     ui.window(40, 340, 560, 112, open);
     if (open < 1.0f) return;
@@ -288,7 +288,8 @@ void talk_window(SimUi& ui, const std::string& page, bool prompt, std::uint64_t 
     // with Gekomon's colours stands for it).
     ui.rect(56, 356, 72, 72, ui_colors::window_frame);
     ui.gradient(58, 358, 68, 68, UiColor{0.2f, 0.55f, 0.35f, 1}, UiColor{0.08f, 0.3f, 0.2f, 1});
-    ui.text(64, 383, "Geko", ui_colors::yellow, 16.0f, 2, 56);
+    if (face) ui.image(60, 360, 64, 64, face);
+    else ui.text(64, 383, "Geko", ui_colors::yellow, 16.0f, 2, 56);
     ui.text(144, 356, page, ui_colors::white, kSize);
     if (prompt) ui.prompt(578, 432, frame);
 }
@@ -422,16 +423,36 @@ void draw_records(SimUi& ui, const LobbyMenu& menu, const LobbyMeta& meta) {
 }
 } // namespace
 
-void draw_lobby_menu(SimUi& ui, const LobbyMenu& menu, const LobbyMeta& meta, std::uint64_t frame) {
+std::unique_ptr<engine::Attribute> model_texture(const IgbDocument& document, std::string_view attr_set) {
+    for (const auto& object : document.objects) {
+        if (document.metadata.object_types[object.type_index].name != "igAttrSet") continue;
+        engine::ObjectView set(&document, object.reference_index);
+        if (set.name() != attr_set) continue;
+        for (const auto& attr : set.list(8)) {
+            if (!attr || attr.type() != "igTextureBindAttr") continue;
+            auto bind = std::make_unique<engine::Attribute>();
+            bind->kind = engine::AttrKind::texture_bind;
+            bind->object = attr;
+            bind->texture = attr.ref(4);
+            if (!bind->texture) continue;
+            bind->image = bind->texture.ref(12);
+            bind->sampler = engine::texture_sampler(bind->texture);
+            return bind;
+        }
+    }
+    return nullptr;
+}
+
+void draw_lobby_menu(SimUi& ui, const LobbyMenu& menu, const LobbyMeta& meta, std::uint64_t frame, const engine::Attribute* face) {
     const float open = std::min(1.0f, float(menu.opened_frames() + 1) / 8.0f);
     switch (menu.screen()) {
     case LobbyScreen::none: break;
     case LobbyScreen::talk:
     case LobbyScreen::help:
-        if (!menu.pages().empty()) talk_window(ui, menu.pages()[std::size_t(menu.page())], true, frame, open);
+        if (!menu.pages().empty()) talk_window(ui, menu.pages()[std::size_t(menu.page())], true, frame, open, face);
         break;
     case LobbyScreen::choice: {
-        talk_window(ui, menu.pages().empty() ? std::string() : menu.pages().front(), false, frame, 1.0f);
+        talk_window(ui, menu.pages().empty() ? std::string() : menu.pages().front(), false, frame, 1.0f, face);
         const std::vector<std::string> choices{std::string(text(Text::choice_enter)), std::string(text(Text::choice_plug_lab)),
                                                std::string(text(Text::choice_records)), std::string(text(Text::choice_help)),
                                                std::string(text(Text::choice_leave))};
@@ -542,7 +563,12 @@ void OverflowLobby::present(std::vector<engine::DrawItem>& items, engine::Shadow
     actor_.draw(items, shadow, camera, own, now);
     if (menu_.is_open() && ui_.ready()) {
         ui_.begin();
-        draw_lobby_menu(ui_, menu_, meta_, frame);
+        // The face icon's picture from the NPC's own package (once loaded).
+        if (!face_tried_ && actor_.ready()) {
+            face_tried_ = true;
+            if (const auto document = actor_.document()) face_ = model_texture(*document, "n_gekoaic");
+        }
+        draw_lobby_menu(ui_, menu_, meta_, frame, face_.get());
         ui_.finish(items);
     }
 }

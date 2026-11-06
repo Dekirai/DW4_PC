@@ -59,6 +59,9 @@ public:
     bool visible() const { return visible_; }
     engine::Vec3f position() const { return position_; }
     float yaw() const { return yaw_; }
+    // The parsed package once ready (other pieces of the same member: the
+    // face icon's texture).
+    std::shared_ptr<const IgbDocument> document() const;
     // The clip the actor plays now ("" none yet).
     const std::string& clip() const { return motion_.clip; }
 

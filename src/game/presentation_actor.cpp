@@ -161,6 +161,8 @@ std::string PresentationActor::sequence_clip(const std::string& sequence) {
     return clip;
 }
 
+std::shared_ptr<const IgbDocument> PresentationActor::document() const { return model_ ? model_->document : nullptr; }
+
 void PresentationActor::set_place(Vec3f position, float yaw) {
     position_ = position;
     yaw_ = yaw;
