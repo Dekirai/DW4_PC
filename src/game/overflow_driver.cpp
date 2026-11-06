@@ -57,13 +57,13 @@ std::string option(const RunRequest& request, std::string_view key, std::string 
 }
 
 // The meta's options in the director's RunConfig (lane E's fields of round
-// O1b: the loadout, the Plug Lab's UPCNT points by UPCNT index, the gear the
-// records opened). A build without a field copies nothing for it; an
-// absent option keeps what the config has (lane E's test key loadout=).
+// O1b: the loadout and the gear the records opened). A build without a
+// field copies nothing for it; an absent option keeps what the config has
+// (lane E's test key loadout=). The Plug Lab's points are the host's
+// (give_plug_lab): RunConfig::plug_lab stays at zeros, so they are given
+// once whatever the director does with that field.
 template <typename Config>
 void copy_meta(Config& config, const RunRequest& request) {
-    if constexpr (requires { config.plug_lab; })
-        if (const auto text = option(request, "plug_lab"); !text.empty()) config.plug_lab = parse_plug_lab(text);
     if constexpr (requires { config.loadout_armor; })
         if (const auto armor = option(request, "armor"); !armor.empty()) config.loadout_armor = armor;
     if constexpr (requires { config.loadout_chip; })
@@ -77,13 +77,6 @@ void copy_meta(Config& config, const RunRequest& request) {
         }
     }
 }
-// Whether the host gives the run player its Plug Lab points (no director
-// field for them in this build).
-template <typename Config>
-constexpr bool host_plug_lab() {
-    return !requires(Config config) { config.plug_lab; };
-}
-
 // The run's end for the meta file, from the director's getters (those lane
 // E adds are read when this build has them).
 template <typename Director>
@@ -298,7 +291,7 @@ public:
             std::sort(slowest_.begin(), slowest_.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
             if (slowest_.size() > 5) slowest_.pop_back();
         }
-        if constexpr (host_plug_lab<ov::RunConfig>()) give_plug_lab(run);
+        give_plug_lab(run);
         count_bits(run);
         // The results open: the meta file learns the run (8.5).
         if (director_->screen() == ov::Screen::results) record_meta(run);
@@ -454,7 +447,7 @@ public:
 
 private:
     // The Plug Lab's points (8.2) on the run player once the run has started
-    // (a build whose director does not take RunConfig::plug_lab): UPCNT,
+    // (the host owns them; RunConfig::plug_lab stays at zeros): UPCNT,
     // RECALCPLAYER, full HP and MP, the species' store.
     void give_plug_lab(engine::Engine& run) {
         if (plug_given_ || director_->run_steps() == 0) return;
