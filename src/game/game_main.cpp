@@ -1457,6 +1457,9 @@ int run(const Options& options, dw4::game::Settings& settings) {
                               : name == "records" ? LS::records : name == "help" ? LS::help : LS::talk;
             overflow_lobby.open_test_screen(chosen);
         }
+        // (DW4_OVERFLOW_SEEN=1, test runs: the first meeting counts as done; the
+        // meta file of lane F remembers it in play.)
+        if (std::getenv("DW4_OVERFLOW_SEEN") && options.smoke_frames != 0) overflow_lobby.meta().seen_intro = true;
         bool overflow_resources_set = false;
         // The select's Yes (SURVIVAL.md 9.2): the switch fades the story out
         // and the run starts with the chosen form and loadout. Test runs add
