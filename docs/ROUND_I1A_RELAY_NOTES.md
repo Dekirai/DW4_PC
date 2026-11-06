@@ -72,6 +72,7 @@ lanes *relay world* and *story* (with round 72's additions), the wire of 19.18 a
   lane: `build/i1arelay/gate/` (loadgate49_r1, joins49_r2, loadgate_net49_r1, loadgate_net49_storm_r2, net49_direct_r1/_r2,
   net49_pooled_r1/_r2, net49_e_r1, net49_e_pooled_r1, net49_flush_r1/_r2, net49_noflush_r1;
   `DW4_LOADGATE_DIRECT_SENDS=0` runs the old writer, `DW4_LOADGATE_PRESENCE_FLUSH_MS=0` no presence flush).
-- Last results: unit 450/450 (`build/i1arelay/unit_r8.log`); integration 120 passed, 4 skipped (`build/i1arelay/integration_r6.log`).
+- Last results: unit 452/452 (`build/i1arelay/unit_r9.log`); integration 120 passed, 4 skipped (`build/i1arelay/integration_r7.log`);
+  loss matrix quick: `build/i1arelay/gate/matrix_*_r1.md`.
 - No client code changed (the branch's diff outside `server/` and `docs/` is empty): no ctest, det.sh or game
   scenarios are needed for this lane.

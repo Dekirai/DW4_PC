@@ -11428,7 +11428,13 @@ the decision stays under the lock).
   (`net49_e_r1.json`, all seven cells): relay 0.45 / 0.55 / 0.18 / 0.46 /
   0.32 cores in *base*, *fullhub*, *select*, *storm*, *sealonly* and 0.41
   / 0.46 in *base-wait* and *storm-wait* (*base* and *storm* again), every
-  cell valid.
+  cell valid. The loss matrix's quick cells (`matrix --quick`: three fake
+  clients through the impairment proxies, 20 s warm-up, 40 s; its tickets
+  now name the world channel) are main's: 10 ms clean 0 % fills, d 3; 30 /
+  10 ms with 1 % loss 5.9-10.0 % fills, d 10-12, 28-56 hitches a minute
+  with direct sends, 6.2-11.0 %, d 10-11 with the old writer, and
+  6.5-7.8 %, d 10-12 at main d0e005b0 (`matrix_direct_r1`,
+  `matrix_pooled_r1`, `matrix_main_r1`).
 
   **The presence flush** (19.31, `Relay:PresenceFlushMs` 16): presence
   frames wait up to 16 ms for the receiver's other frames and go out with

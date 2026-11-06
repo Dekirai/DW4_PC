@@ -86,9 +86,15 @@ public static class LossMatrix
         var tickets = new RelayTickets(key, TimeSpan.FromSeconds(60), TimeProvider.System);
         // The delay may follow the network beyond the default bound (Sealing:MaxDelayTicks 10) and nobody is taken out for
         // lag, so every cell measures the transport; the final d says what the delay rule needed.
-        var relay = new RelayOptions { Enabled = true, ListenAddress = "127.0.0.1", Port = hubPort, IdleTimeoutSeconds = 120, LagLeaveSeconds = 600 };
+        var relay = new RelayOptions
+        {
+            Enabled = true, ListenAddress = "127.0.0.1", Port = hubPort, IdleTimeoutSeconds = 120, LagLeaveSeconds = 600,
+            // (As the load gate: DW4_LOADGATE_DIRECT_SENDS=0 the old writer, DW4_LOADGATE_PRESENCE_FLUSH_MS the presence flush.)
+            DirectSends = Environment.GetEnvironmentVariable("DW4_LOADGATE_DIRECT_SENDS") != "0",
+            PresenceFlushMs = int.TryParse(Environment.GetEnvironmentVariable("DW4_LOADGATE_PRESENCE_FLUSH_MS"), out var flush) ? flush : 16,
+        };
         var hub = new RelayHub(relay, new SealingOptions { MaxDelayTicks = MaxDelay }, new InstanceOptions(), tickets, NullLoggerFactory.Instance);
-        const string room = "MATRIX";
+        const string room = Wire.WorldChannel; // (the world channel: the relay admits no other ticket)
         hub.Admission = a => ValueTask.FromResult<HubAdmit?>(new HubAdmit(a.AccountId, "m" + a.AccountId));
         using var stop = CancellationTokenSource.CreateLinkedTokenSource(ct);
         var proxies = new List<ImpairmentProxy>();
