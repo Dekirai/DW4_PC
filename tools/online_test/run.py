@@ -1136,7 +1136,13 @@ def run_real(stack, sc, api, relay_port, pin, diag, lock, connection):
             def crash(c=c, index=len(procs) - 1):
                 while time.time() - t0 < float(c["crash"]["at"]):
                     time.sleep(0.05)
-                procs[index][1].kill()
+                crashed = procs[index][1]
+                crashed.kill()
+                crashed.wait(30)
+                # (Its log file is still open in the stack: close it, or Windows refuses the rename.)
+                for p_, f_ in stack.procs:
+                    if p_ is crashed:
+                        f_.close()
                 time.sleep(float(c["crash"].get("restart", 5)))
                 again = dict(c, script=c["crash"].get("script", c["script"]), name=c["name"])
                 os.replace(os.path.join(out, c["name"] + ".log"), os.path.join(out, c["name"] + ".crashed.log"))
