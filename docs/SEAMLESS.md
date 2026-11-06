@@ -12111,6 +12111,53 @@ here).*
   world, the session's facts); offline: `det.sh` 4004f056 / 396cb219
   twice, r25c 10 of 10 with 1,748,011 frames, the save state suite 17 of
   17 (on the last code commit).
+- **The lane review's fixes** (contract entry "client 15:15"; no wire or
+  REST change):
+  - *The story owner key after a reconnect.* A restarted relay numbers its
+    members from 1 again, so a guest may get its host's former id, and a
+    STORY with the old key would then name the guest's own story (the
+    relay would write the host's values into it). A WELCOME with another
+    member id than before, or without the engine's instance, re-keys an
+    engine on its own story (at home, the host) to (new id, box) and drops
+    the key of another's story: no STORY until the next BARRIER_OK names an
+    owner (the local way home's DISSOLVE with the replace). Nothing goes
+    between a reconnect's OK line and its WELCOME. 19.6.10 holds as
+    written: what the field made on the host's story after the last
+    STORY_ACK is lost for the host.
+  - *The client's 5 s barrier fallback* (3.4) keeps the world: a field
+    target is a NEW inside the instance (wid, host, owner key and the
+    host's confirmed story stay; no replace, no settings); a hub target
+    from another's story or from an instance is a local DISSOLVE (the own
+    settings, the own confirmed story as the replace; without an own
+    confirmed story it keeps waiting): a hub stage never loads on another's
+    story (19.8.9).
+  - *WORLD_NOTICE ended* (19.6.10's third trigger) takes an engine that
+    plays apart from its instance (a non-resumable reconnect whose WELCOME
+    still named the wid: no stage group, so no HOME) home by itself.
+  - *Leave instance* is kept while the INTENT cannot go (a barrier, a
+    load, a catch-up, a reconnect, an engine apart from its instance, whose
+    INTENT the relay ignores) and sent in the instance's next stage; the
+    toast "You leave the instance as soon as this stage allows it."
+  - *Texts:* the host's countdown is a running line (overlay status, from
+    WORLD_NOTICE host_away's seconds), not a toast per notice; <stage> in
+    the toasts is the area table's place only; the co-arrival toast is
+    19.5.6's exactly; the rooms' words left the player's screens (welcome:
+    "up to four players share an instance", the reset warning, "Your own
+    story did not arrive. Press Play again.", Discord "Online", the online
+    character's notices); the F1 menu opens on Online whenever the world
+    runs, from the status window's line with the visibility focused; the
+    line reads the own slot's status window.
+  - *The own story of the card:* the card, its backups and every upload
+    carry the session's own confirmed story (STORY_ACK with the own key,
+    `record_story_bytes` as the server's `StoryRecord.Compose`), so a save
+    that only moved the own story on goes up.
+  - `--online-difficulty` is parsed only by development builds.
+  - Tests: online_session `restart_story_key` (the new id the host's former
+    one, and another), `restart_at_home`, `fallback_in_world` (between
+    fields, the way home), `leave_and_end_in_world` (a kept leave at a
+    barrier and apart from the instance, the host's countdown, the end);
+    online_character `own_story_follows_the_session`. Each new session test
+    fails with its fix taken back (counter-proofs, `build/sess_cp*.log`).
 - **Not built in this lane** (the integration's or later rounds'): the W
   scenarios with real clients (the harness lane, after the merge); the
   half-rate ghost animation (M5: the fallback only, built only if a weaker
