@@ -12060,6 +12060,43 @@ lanes shared are in the round's contract file and repeated here).*
   and relay lanes merged to run. S14, S14a, S14h and S14zb retired, S14z is
   "a new account's home starts at zero"; the UI scenario *rooms* became
   *home*.
+- **The trial merge (second session).** The three lanes' branches were
+  merged without a ref in the web lane's build folder (`git merge-tree`)
+  and built: the server with every unit and integration test, the
+  development game client, and the W scenarios ran there with real
+  clients. What it changed on web's side: the domain's visibility names
+  are `VisibilityNames` (the relay's protocol has its own `Visibilities`),
+  web's World options bind as `worldWeb` (the relay's `WorldHubOptions`
+  is `world`), `AreaTable` has the area keys as constants and a public
+  constructor (the relay's stub had them), and `ServerApp.Build` takes
+  `overrideServices`, so the tests' stand-in world relay replaces the
+  relay's own registration. The relay's integration tests need
+  `fakeWorld: false` and tickets through `WorldService` (its admission
+  knows only the nonces it issued, 19.17.3). A reflection test pins
+  `Wire.WorldProtocol` to `WorldProtocol.Version`. The release is
+  DW4Online 0.1.7 (protocol 49, migration 0013).
+- **Harness additions.** Fake world clients (FakeClient's client mode
+  after the relay lane: world tickets, protocol 49): W19's 35 presence
+  senders and W29's two fake guests, which arrive at stag0101 while the
+  host's instance has nobody there, so they become a new stage group of
+  it (a guest's NEW) and never share a stage group with a game client.
+  W22 runs a protocol 48 client (the release before the world) that is
+  turned away with "Update required". The `--fake` scenarios run in the
+  world (a fresh server each, world tickets). The scenarios learned from
+  the trial runs: r25c has no card k4 (k5 instead), an own-story check
+  needs the client's card uploaded as its online character (else the
+  client's own story is the missing character's, zeros), field exits go
+  by the explore bot, the client counts a fading ghost figure a moment
+  longer (W19 fails only at 35), the client locks online play with
+  `DW4_DIFFICULTY` (W12 uses `--online-difficulty`), and the relay names
+  the join of a starting instance `join` in its log (W4b reads the
+  client's arrival toast). The end-to-end tools (`tests/winhttp_client`,
+  `tests/e2e/relay_spike_test.py`) speak the world.
+- **Found for the client lane** (contract): its online achievements still
+  poll `/rooms/world` (410), so `online_host` and the host's story
+  challenges are never reported, and `online_join` is reported at home,
+  where the server refuses it (19.8.9: someone else's instance); A1 and
+  W29 expect the world's rules.
 
 **Round I1b: the prompt, go along, removal and *Report player*** (proposed
 r69; M, two lanes; round 72 adds the third lane *go along*, M-L).
