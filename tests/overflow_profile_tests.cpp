@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
@@ -253,6 +254,23 @@ void store() {
         ov::MetaStore again;
         again.open(file);
         check(again.profile() == s.profile(), "every write reads back");
+    }
+    // T8: a write (a Plug Lab purchase in the lobby, the results' write) is
+    // synchronous: temporary file, flush, read back, rename, the .bak. Its
+    // time is printed; it must stay far below a second.
+    {
+        const auto original = s.profile();
+        auto timed = original;
+        timed.sim_bits += 100'000;
+        s.replace(timed);
+        const auto start = std::chrono::steady_clock::now();
+        int writes = 0;
+        for (int stat : {4, 5, 6, 4, 5, 6, 4, 5, 6, 4})
+            if (s.buy_plug("p_vmon", stat) == ov::BuyResult::bought) ++writes;
+        const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count() / std::max(1, writes);
+        std::cout << "overflow_profile_tests: T8 a write takes " << ms << " ms (" << writes << " purchases)\n";
+        check(writes == 10 && ms < 250, "T8: a purchase's write stays far below a second");
+        s.replace(original);
     }
     const std::string latest = read(file);
 
