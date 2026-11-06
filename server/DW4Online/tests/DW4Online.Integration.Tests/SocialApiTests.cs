@@ -61,7 +61,8 @@ public class SocialApiTests
         Assert.Equal("You are now friends with Kim.", (await accepted.Json()).GetProperty("message").GetString());
         var leeView = await Friends(lee);
         Assert.Equal(["Kim"], Names(leeView, "friends"));
-        Assert.Equal(JsonValueKind.Null, leeView.GetProperty("friends")[0].GetProperty("presence").ValueKind); // round I1 fills it
+        // Round I1 fills it: Kim is offline (never in the world) and shows his whereabouts to friends by default.
+        Assert.False(leeView.GetProperty("friends")[0].GetProperty("presence").GetProperty("online").GetBoolean());
         Assert.Empty(Names(leeView, "requestsIn"));
         Assert.Equal("friends", await RelationAsync(kim, "Lee"));
         await using (var sql = await host.SqlAsync())
