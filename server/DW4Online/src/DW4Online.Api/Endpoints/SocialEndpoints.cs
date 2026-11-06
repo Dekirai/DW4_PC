@@ -22,13 +22,22 @@ public static class SocialEndpoints
     {
         var friends = v1.MapGroup("/friends").RequireAuthorization(Policies.Player).RequirePasswordCurrent();
 
-        // Friends (presence: null until round I1's relay fills it), requests in and out, blocks, the limits.
-        friends.MapGet("", async (SocialService social, HttpContext ctx) =>
+        // Friends with where they are (round I1a: by each friend's whereabouts preference; null when he shows nothing),
+        // requests in and out, blocks, the limits.
+        friends.MapGet("", async (SocialService social, WorldService world, HttpContext ctx) =>
         {
             var o = await social.OverviewAsync(ctx.Session().AccountId, ctx.RequestAborted);
+            var where = await world.PresenceAsync(o.Friends.Select(f => f.AccountId).ToList(), ctx.RequestAborted);
             return Results.Ok(new
             {
-                friends = o.Friends.Select(f => new { f.Username, f.Since, presence = (object?)null }),
+                friends = o.Friends.Select(f => new
+                {
+                    f.Username,
+                    f.Since,
+                    presence = where.GetValueOrDefault(f.AccountId) is { } p
+                        ? new { online = p.Online, status = p.Status, area = p.Area, stage = p.Stage, lastSeenAt = p.LastSeenAt }
+                        : null,
+                }),
                 requestsIn = o.RequestsIn,
                 requestsOut = o.RequestsOut,
                 blocks = o.Blocks,

@@ -92,13 +92,27 @@
                     sender cancels it, so that the decline holds</td>
             </tr>
             <tr>
-                <td>Rooms: room name, who was a member and when; while a room is open, in which stages its members play
-                    and how many play together (relay state, not stored)</td>
-                <td>Running rooms and checking that achievements happened in online play (Art. 6(1)(b))</td>
-                <td>The room record stays; your membership rows go with your account</td>
+                <td>Online preferences: the visibility your instances start with, who may invite you, who sees where you
+                    play, friend notes in the game, the settings your instances start with; when you were last online</td>
+                <td>Playing online as you set it up (Art. 6(1)(b))</td>
+                <td>Until you change them or delete the account</td>
             </tr>
             <tr>
-                <td>Technical log files of the service (errors, room and relay events)</td>
+                <td>Instances: who hosted an instance, who played in it (or watched it as staff) and when, its area,
+                    visibility, difficulty and settings, and why it ended; while you are online, where you play
+                    (relay state, not stored)</td>
+                <td>Running the online world, "Recently played with", moderation and checking that achievements happened
+                    in online play (Art. 6(1)(b), (f))</td>
+                <td>90 days; your membership rows go with your account at once (an instance you hosted stays without
+                    your name)</td>
+            </tr>
+            <tr>
+                <td>Rooms (before the online world): room name, who was a member and when</td>
+                <td>The record of earlier achievements (Art. 6(1)(b))</td>
+                <td>The room record stays until a later update removes rooms; your membership rows go with your account</td>
+            </tr>
+            <tr>
+                <td>Technical log files of the service (errors, instance and relay events)</td>
                 <td>Keeping the service running (Art. 6(1)(f))</td>
                 <td>30 days</td>
             </tr>
@@ -130,9 +144,18 @@ else
     </ul>
 }
 <p>Your user name and, when your profile is public, your online character and achievements are visible to everyone on
-    this website; room names and the host's user name are visible in the room list while a room is open, together with
-    the stages its members play in and how many play together there (the members' names in that list only to the members
-    of the same room).</p>
+    this website. Signed-out visitors see only how many instances run in each area and how many play in them, never a
+    name. Signed-in players see the instances they may join: the host's user name, where the host is, how many play
+    in it, its difficulty and settings. Private instances are listed to nobody, Friends-only ones only to the host's
+    friends, and nothing at all is shown between two players when either blocks the other. In the game, players of the
+    same instance see each other's user names, and players nearby see your figure in the lobby.</p>
+<p>Where you play: your friends see whether you are online, where you play (only "Playing" in a Private instance) and
+    when you were last online, unless you set "who sees where you play" to nobody in your online preferences. Nobody
+    else sees it. "Recently played with" shows you the players you shared an instance with in the last 30 days, and
+    shows you to them.</p>
+<p>Moderators may join or watch any instance to moderate it, Private ones included; every look and every action
+    (ending an instance, removing a player) is logged with their name. A moderator who plays with you carries a Staff
+    tag.</p>
 <p>Friends: your friends see your user name in their friend list with the date you became friends; a player you send
     a friend request sees your user name with it once it reaches him (at most 100 requests reach a player at a time,
     further ones wait their turn) until he answers or it expires. Nobody else sees who your friends are.
@@ -154,8 +177,8 @@ else
 <h2>Deleting your data</h2>
 <p>You can delete your account at any time in your <a href="~/account">account settings</a>, or ask the operator to do
     it. Deleting removes your online character, your online story and its revisions, cloud save, achievements,
-    statistics, best times, friendships, friend requests and blocks (yours and those about you), sessions and e-mail
-    address at once, and closes a room you own. The account row stays only as an anonymous placeholder ("deleted_" and a number), and the
+    statistics, best times, friendships, friend requests and blocks (yours and those about you), your online preferences,
+    your instance memberships, sessions and e-mail address at once, and ends an instance you host. The account row stays only as an anonymous placeholder ("deleted_" and a number), and the
     security log keeps its entries without your IP address until they expire after 180 days (failed logins typed with
     your user name lose its hash and their IP address too). Database backups roll over
     within about two months.</p>
