@@ -140,5 +140,10 @@ public:
 // Hub and UI stages (2): stagML02, stagML11-14 and every stagIS*. Solo
 // instances, never joined, not logged.
 bool is_hub_stage(std::string_view stage);
+// Round I1a (19.5.4): the stage names a script chunk mentions (the Lua
+// string constants "stagML11", "stag0102", "dng101b1", ...): true when it
+// names at least one and every one is a hub stage, i.e. an exit mat's
+// funcStageChange leads home whichever of its calls runs.
+bool chunk_leads_home(std::string_view chunk);
 
 } // namespace dw4::game::online

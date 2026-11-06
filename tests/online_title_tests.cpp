@@ -12,9 +12,12 @@
 #include "dw4/pad.hpp"
 #include "dw4/save_data.hpp"
 #include "online/character.hpp"
+#include "online/engine_link.hpp"
 #include "online/title_driver.hpp"
 
 #include <algorithm>
+#include <cctype>
+#include <cstdlib>
 #include <chrono>
 #include <filesystem>
 #include <functional>
@@ -189,6 +192,20 @@ void rhythm() {
     check(none.phase() == TitleDriver::Phase::handed_over, "no online character: handed over at Create Digimon");
 }
 
+// The host's extra exit line (19.5.4) for a stage group of one: an exit
+// mat's script leads home when every stage it names is a hub stage.
+void exit_scripts() {
+    using namespace std::string_literals;
+    check(chunk_leads_home("\x1b\0\0\0funcStageChange\0\x09\0\0\0stagML11\0"s), "a mat naming stagML11 leads home");
+    check(chunk_leads_home("x stagml02 y STAGML11"s), "two hub stages lead home");
+    check(!chunk_leads_home("funcStageChange stag0102"s), "a field does not");
+    check(!chunk_leads_home("stagML11 dng101b1"s), "a hub and a dungeon: not only home");
+    check(!chunk_leads_home("stagML11 dngq3b1e"s), "a hub and a quest dungeon: not only home");
+    check(!chunk_leads_home("funcStageChange stageNo"s), "no stage named: no line");
+    check(!chunk_leads_home("xstagML11"s) && !chunk_leads_home("stagML112"s), "only whole names count");
+    check(chunk_leads_home("stagIS12"s), "a UI stage is a hub stage too");
+}
+
 // ---------------------------------------------------------------------------
 // With the game data.
 CharacterRecord record_for(std::uint32_t unique, const char* name, bool cleared) {
@@ -291,7 +308,98 @@ Drive drive(const std::filesystem::path& data, int box, int idle, std::optional<
     return out;
 }
 
+// The exit mats (funcStageChange) of a field and of a dungeon's last floor:
+// stag0101's lead to dng101b1, stagGF01 and stag0102 (none home), dng101b2's
+// matz02 leads home (a scan of every stage of areas.json found 29 such mats,
+// all on dungeons' last floors, boss stages, quest dungeons and stag0401's
+// mats00; TITLE_TESTS_SCAN=stage,... repeats it).
+std::pair<int, std::string> exit_mats(const std::filesystem::path& data, const char* stage, int& away) {
+    dw4::engine::Engine engine(data);
+    engine.request_stage(stage);
+    for (int i = 0; i < 600 && !(engine.presenting() && !engine.loading()); ++i) engine.step({});
+    int home = 0;
+    away = 0;
+    std::string names;
+    engine.for_each_script([&](std::string_view name, std::string_view chunk) {
+        if (chunk.find("funcStageChange") == std::string_view::npos || name.rfind("mat", 0) != 0) return;
+        const bool leads = chunk_leads_home(chunk);
+        (leads ? home : away) += 1;
+        names += " " + std::string(name) + (leads ? " (home)" : "");
+    });
+    std::cout << "  " << stage << " exit mats:" << names << '\n';
+    return {home, names};
+}
+
+// The gate disk under the disk panel's cursor (the host's line, 19.5.4):
+// stag0101 with a healing disk and a gate disk, L opens the disk panel on
+// the first, down moves to the gate disk; the getter follows, and nothing
+// while the panel is closed.
+void gate_disk_cursor(const std::filesystem::path& data) {
+    dw4::engine::Engine engine(data);
+    engine.set_card_root(std::filesystem::temp_directory_path() / "dw4_title_tests_cards");
+    auto* sys = engine.get<dw4::engine::GameSystem>();
+    sys->direct_start = true;
+    sys->players[0].joined = true;
+    sys->players[0].digimon = "p_agumon";
+    sys->players[0].disk_count(0) = 2;
+    sys->players[0].disk_count(8) = 1;
+    engine.request_stage("stag0101");
+    std::optional<int> first, after_down;
+    bool closed_none = true;
+    int control_at = -1;
+    for (int i = 0; i < 3000; ++i) {
+        std::array<dw4::PadSample, 4> pads{};
+        pads[0].connected = true;
+        const auto* models = engine.get<dw4::engine::ModelCtrlManager>();
+        const auto* player = models ? models->player(0) : nullptr;
+        if (control_at < 0 && player && player->control_enabled && engine.presenting() && !engine.loading()) control_at = i;
+        const auto* panels = engine.get<dw4::engine::PanelManager>();
+        const auto under = panels ? panels->disk_under_cursor(0) : std::nullopt;
+        const int t = control_at < 0 ? -1 : i - control_at; // (steps since the player took control)
+        if (t < 60 && under) closed_none = false;
+        if (t >= 60 && t < 260) pads[0].buttons = button::l;
+        if (t >= 160 && t < 163) pads[0].buttons |= button::down;
+        if (t == 155) first = under;
+        if (t == 250) after_down = under;
+        if (t > 300) break;
+        engine.step(pads);
+        if (!engine.held()) engine.traverse_scene();
+    }
+    std::cout << "  gate disk: under the cursor " << (first ? std::to_string(*first) : "-") << ", after down "
+              << (after_down ? std::to_string(*after_down) : "-") << '\n';
+    check(closed_none && first == 0 && after_down == 8, "the disk panel's cursor: the healing disk, then the gate disk (8)");
+}
+
+void scan_exits(const std::filesystem::path& data, const std::string& list) {
+    std::size_t at = 0;
+    while (at < list.size()) {
+        const auto comma = list.find(',', at);
+        const std::string stage = list.substr(at, comma == std::string::npos ? std::string::npos : comma - at);
+        at = comma == std::string::npos ? list.size() : comma + 1;
+        dw4::engine::Engine engine(data);
+        engine.request_stage(stage);
+        for (int i = 0; i < 600 && !(engine.presenting() && !engine.loading()); ++i) engine.step({});
+        engine.for_each_script([&](std::string_view name, std::string_view chunk) {
+            if (chunk.find("funcStageChange") == std::string_view::npos || name.rfind("mat", 0) != 0) return;
+            if (chunk_leads_home(chunk)) std::cout << "HOME " << stage << " " << name << std::endl;
+        });
+    }
+}
+
 void with_data(const std::filesystem::path& data) {
+    if (const char* scan = std::getenv("TITLE_TESTS_SCAN")) {
+        scan_exits(data, scan);
+        return;
+    }
+    {
+        int away = 0;
+        const auto field = exit_mats(data, "stag0101", away);
+        check(field.first == 0 && away == 3, "stag0101's three exit mats lead elsewhere");
+        const auto floor = exit_mats(data, "dng101b2", away);
+        check(floor.first >= 1 && floor.second.find("matz02.lua (home)") != std::string::npos && away >= 1,
+              "dng101b2: matz02 leads home, another mat elsewhere");
+    }
+    gate_disk_cursor(data);
     // Box 0 and box 3 (the grid's far corner), at once and after the title
     // idled for a while (the press-start prompt's own timing, the attract
     // demo's way back).
@@ -331,6 +439,7 @@ int main(int argc, char** argv) {
     try {
         decisions();
         rhythm();
+        exit_scripts();
         if (argc > 1 && argv[1][0] && std::filesystem::exists(argv[1])) with_data(argv[1]);
         else std::cout << "  (no game data: the title drives skipped)\n";
     } catch (const std::exception& e) {

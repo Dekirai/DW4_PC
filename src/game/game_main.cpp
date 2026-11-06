@@ -61,6 +61,7 @@
 #include <fstream>
 #include <sstream>
 #include <iostream>
+#include <map>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -1494,6 +1495,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
         // script (its campaign bot drives the title as before).
         dw4::game::online::TitleDriver title_driver;
         double welcome_at = -1; // the drive reached the lobby: "Welcome back, ..." then (GET /world asked first)
+        std::map<std::string, bool> exit_mats_home; // "stage/mat": the exit mat's script names only hub stages (the host's exit line)
         auto start_title_drive = [&] {
             if (!online || online_script.active()) return;
             dw4::game::online::TitleDriver::Config config;
@@ -3907,13 +3909,45 @@ int run(const Options& options, dw4::game::Settings& settings) {
                         ImGui::End();
                     }
                 }
-                // The host's exit prompt into a hub stage (19.5.4): one more line
-                // while guests play in his instance (the exit port's prompt of a
-                // stage group of two or more names its destination).
+                // The host's exit prompt into a hub stage and his gate disk
+                // (19.5.4): one more line while guests play in his instance. The
+                // exit port's prompt (a stage group of two or more) names its
+                // destination; a stage group of one runs the original prompt,
+                // whose window (i_zzstchgwb) is up while the own player stands on
+                // an exit mat whose script names only hub stages; the gate disk
+                // (no prompt: it takes him home at once) while it is under the
+                // own disk panel's cursor.
                 if (online && online->session().is_host() && online->session().instance_players() > 1) {
+                    const int own = engine.view_slot();
                     const auto& prompt = engine.exit_prompt();
-                    if (prompt.active && prompt.owner == engine.view_slot() && prompt.asking == prompt.owner &&
-                        dw4::game::online::is_hub_stage(prompt.stage)) {
+                    bool home_line = prompt.active && prompt.owner == own && prompt.asking == prompt.owner &&
+                                     dw4::game::online::is_hub_stage(prompt.stage);
+                    if (!home_line && !prompt.active) {
+                        auto* models = engine.get<dw4::engine::ModelCtrlManager>();
+                        auto* mats = engine.get<dw4::engine::MatCtrlManager>();
+                        bool window = false;
+                        for (int i = 0; models && i < 4 && !window; ++i)
+                            if (const auto* ram = models->find("i_zzstchgwb", i); ram && ram->node) window = true;
+                        if (window && mats)
+                            for (const auto& mat : mats->mat_boxes()) {
+                                if (!(mats->players_on(mat.name) & (1u << own))) continue;
+                                const std::string key = engine.stage_name() + "/" + mat.name;
+                                auto known = exit_mats_home.find(key);
+                                if (known == exit_mats_home.end()) {
+                                    bool home = false;
+                                    engine.for_each_script([&](std::string_view name, std::string_view chunk) {
+                                        if (name == mat.name + ".lua" && chunk.find("funcStageChange") != std::string_view::npos &&
+                                            dw4::game::online::chunk_leads_home(chunk))
+                                            home = true;
+                                    });
+                                    known = exit_mats_home.emplace(key, home).first;
+                                }
+                                if (known->second) home_line = true;
+                            }
+                    }
+                    if (!home_line)
+                        if (const auto* panels = engine.get<dw4::engine::PanelManager>()) home_line = panels->disk_under_cursor(own) == 8;
+                    if (home_line) {
                         const ImVec2 display = ImGui::GetIO().DisplaySize;
                         ImGui::SetNextWindowPos(ImVec2(display.x * 0.5f, display.y - 96), ImGuiCond_Always, ImVec2(0.5f, 1));
                         ImGui::SetNextWindowBgAlpha(0.6f);

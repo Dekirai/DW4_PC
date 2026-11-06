@@ -300,6 +300,16 @@ void PanelManager::display(Engine& engine, PanelRam& ram, List& list) {
 
 // 80349474 / 80349B0C: use the selected technique or disk. Returns the
 // cooldown: > 0 used, 0 refused (CURSOR_NG), < 0 used and the panel closes.
+std::optional<int> PanelManager::disk_under_cursor(int slot) const {
+    for (const auto& ram : rams_) {
+        if (ram->index != slot || !ram->running || ram->kind != 1) continue;
+        const auto& list = ram->lists[1];
+        const int at = list.cursor + list.scroll;
+        if (at >= 0 && at < list.count && std::size_t(at) < list.rows.size()) return list.rows[std::size_t(at)];
+    }
+    return std::nullopt;
+}
+
 std::int64_t PanelManager::select(Engine& engine, PanelRam& ram, List& list) {
     auto* sys = engine.get<GameSystem>();
     auto* db = engine.get<DatabaseManager>();

@@ -2077,6 +2077,10 @@ public:
     void clear_stage(Engine& engine) override;
     bool command(Engine& engine, Ram& ram, std::string_view command, Packet& packet) override;
     void update(Engine& engine) override;
+    // (Read only, presentation: the conItem row under the cursor of `slot`'s
+    // open disk panel, 8 the gate disk; none while it is closed or shows
+    // another list.)
+    std::optional<int> disk_under_cursor(int slot) const;
 
 private:
     struct List {

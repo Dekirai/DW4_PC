@@ -42,6 +42,29 @@ bool is_hub_stage(std::string_view stage) {
     return s == "stagml02" || s == "stagml11" || s == "stagml12" || s == "stagml13" || s == "stagml14";
 }
 
+bool chunk_leads_home(std::string_view chunk) {
+    const auto lower = [](char c) { return char(c >= 'A' && c <= 'Z' ? c + 32 : c); };
+    const auto alnum = [](char c) { return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z'); };
+    const auto digit = [](char c) { return c >= '0' && c <= '9'; };
+    int stages = 0;
+    for (std::size_t i = 0; i + 3 <= chunk.size(); ++i) {
+        if (i > 0 && alnum(chunk[i - 1])) continue;
+        std::string token;
+        if (i + 8 <= chunk.size() && lower(chunk[i]) == 's' && lower(chunk[i + 1]) == 't' && lower(chunk[i + 2]) == 'a' && lower(chunk[i + 3]) == 'g' &&
+            alnum(chunk[i + 4]) && alnum(chunk[i + 5]) && digit(chunk[i + 6]) && digit(chunk[i + 7]) && (i + 8 == chunk.size() || !alnum(chunk[i + 8]))) {
+            token = std::string(chunk.substr(i, 8));
+        } else if (lower(chunk[i]) == 'd' && lower(chunk[i + 1]) == 'n' && lower(chunk[i + 2]) == 'g') {
+            std::size_t end = i + 3;
+            while (end < chunk.size() && alnum(chunk[end])) ++end;
+            if (end - i >= 6 && end - i <= 9 && (digit(chunk[i + 3]) || lower(chunk[i + 3]) == 'q')) token = std::string(chunk.substr(i, end - i));
+        }
+        if (token.empty()) continue;
+        ++stages;
+        if (!is_hub_stage(token)) return false;
+    }
+    return stages > 0;
+}
+
 namespace {
 // The UI stages (stagIS*: title, character select, save room, call shop,
 // staff roll): the character select loads a record with its own story before
