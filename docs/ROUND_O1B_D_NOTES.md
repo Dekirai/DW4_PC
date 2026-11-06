@@ -12,6 +12,7 @@ lanes E (content) and F (meta): `DW4_PC-wt/o1b-contract.md`, the entries
 | H0: the `talk_box` port event | `include/dw4/engine/port_events.hpp` (a new kind at the end, `x/y/z` on every event), `src/engine/model_ctrl.cpp` (where the main lobby's A pushes the talk hitbox, only while port events are collected; reads the node matrix, writes nothing) | built; T1 and T2 unchanged |
 | Presentation actor core (13.6) | `src/game/presentation_actor.*`: any model of a stage package's main member (or a `_common` package) read on a worker thread from a copy of the resources, its own scene cache, clips by sequence name (SQ_WAIT, SQ_TALK), fade 0.35 s, camera fade, shadow proxy, turning to a point; the ghost figures' technique (`ghost_matrix`, `ghost_insert_points`, `ghost_camera_alpha` shared) | built; n_gekoa from stag0302 |
 | SimUi (9.1, 13.6) | `src/game/sim_ui.*`: 2D items of the 640 x 480 layer (orthographic, so the renderer keeps them 4:3 in widescreen), windows in the game's window colours (quads: the 13.6 fallback), the game font (bectext.igb NORMAL, the engine's own `layout_text`), pictures (`image`), cursor bars, bars, the talk prompt, word wrap | built |
+| Talk window look | `SimUi::talk_frame`: full width at the bottom with the game's cyan edge lines, a slanted name tab, the face in a cyan frame, the prompt at the bottom centre (as the game's own talk window, see `npc_4700`) | built (7b2660f9) |
 | Face icon | `model_texture` (overflow_lobby.cpp): the texture bind of n_gekoaic's igAttrSet in stag0302's main member (the document the NPC actor loaded), drawn upright in the talk window's face frame | built (9c762731) |
 | Texts (9.7) | `src/game/overflow_text.inc` + `overflow_text.hpp/.cpp`: every string of the screens, the dialog of 3.4 word for word | built; T9 |
 | NPC rules (3.2) | `overflow_lobby.cpp` `npc_state`, `gate_open` (mate00.lua's branches: flag 409 or 2 / 4 / 5 / 6 / 86; with flag 501), offline only, 2-4 players: the crowd line, test runs hidden unless `DW4_OVERFLOW=1` (talk) / `show` (drawn, no talk), settings.ini `[overflow] npc` and F1 > Gameplay > "Show the simulator NPC" | built, unit tested |
@@ -25,7 +26,7 @@ lanes E (content) and F (meta): `DW4_PC-wt/o1b-contract.md`, the entries
 
 | Test | Result |
 | --- | --- |
-| ctest | 57 / 57 (a57d98ac, 9c762731); commits d1089944-91945f51 failed `online` / `online_env` (the new DW4_OVERFLOW* variables were on neither list; fixed in 8c919404) |
+| ctest | 57 / 57 (a57d98ac, 9c762731, 7b2660f9); commits d1089944-91945f51 failed `online` / `online_env` (the new DW4_OVERFLOW* variables were on neither list; fixed in 8c919404) |
 | T9 | 128 strings, 0 missing glyphs (the font has 484 characters, no '/') |
 | T1 det.sh | 4004f056 / 396cb219 both runs (d1089944, 0e38a86c, 9c762731) |
 | T4-like | the lobby's select, a kite run of 900 steps and back, `DW4_STATE_TEST=4600` and `=5000` (the input log spans the dialog's neutral pads and the run): "identical after loading" (800 and 400 frames) |
@@ -40,7 +41,7 @@ lanes E (content) and F (meta): `DW4_PC-wt/o1b-contract.md`, the entries
 `build/shots/` (`.bmp` full, `.png` half): `npc_4700` (the NPC by the gate),
 `walk_7650` (a real talk via H0), `talk_4700`, `choice_4250`, `help_4700`,
 `select_4700`, `e2e_4310` (Enter the simulator?), `plug_lab_4700`,
-(`talk_4250`, `choice_4250` and `help_4250` with the face icon),
+(`talk_4250`, `choice_4250`, `help_4250`, `walk_7650` and `e2e_4600` with the face icon and the talk window look of 7b2660f9),
 `records_4700`, `e2e_4600` (Welcome back), `run_hud_overflow_2400` (HUD with
 the build row), `run_menus_overflow_300`, `run_levelup_overflow_1100`
 (level-up and the finale timer), `run_menus_overflow_630` (pause),
