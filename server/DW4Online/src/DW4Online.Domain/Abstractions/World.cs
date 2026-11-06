@@ -1,0 +1,101 @@
+using DW4Online.Domain.World;
+
+namespace DW4Online.Domain.Abstractions;
+
+/// <summary>The start of an instance as instance_history records it (19.17.1).</summary>
+public sealed record InstanceHistoryStart(long HostAccountId, int HostBox, string FirstStage, string Visibility, int Difficulty, int StoryPhase,
+    string Settings, DateTime StartedAt);
+
+/// <summary>
+/// instance_history and instance_history_members, the write side (19.17.1): the relay's history queue calls it off its
+/// lock (round I1's relay lane); the service closes rows a previous process left open at its start and prunes old ones.
+/// </summary>
+public interface IInstanceHistoryRepository
+{
+    /// <summary>Writes a new instance row; returns its history id.</summary>
+    Task<long> StartAsync(InstanceHistoryStart start, CancellationToken ct = default);
+
+    /// <summary>Ends an instance (<see cref="InstanceEndReasons"/>) with its peak player count (1..4); open member rows end with it ('ended').</summary>
+    Task EndAsync(long id, string endReason, int peakPlayers, DateTime endedAt, CancellationToken ct = default);
+
+    /// <summary>A member entered (<see cref="InstanceRoles"/>); a member that comes back gets a new row.</summary>
+    Task MemberJoinedAsync(long id, long accountId, int box, string role, DateTime joinedAt, CancellationToken ct = default);
+
+    /// <summary>The member row of that join ends (<see cref="InstanceLeaveReasons"/>).</summary>
+    Task MemberLeftAsync(long id, long accountId, DateTime joinedAt, string leaveReason, DateTime leftAt, bool sharedStory, CancellationToken ct = default);
+
+    /// <summary>At the service start: instances a previous process left open end with 'server_stop' (their members 'ended'); returns how many.</summary>
+    Task<int> CloseOpenAsync(DateTime now, CancellationToken ct = default);
+
+    /// <summary>Deletes ended instances started before <paramref name="cut"/> with their members; returns how many.</summary>
+    Task<int> PruneAsync(DateTime cut, CancellationToken ct = default);
+}
+
+/// <summary>An instance of an account's history as the website shows it (players only; spectator rows for staff pages).</summary>
+public sealed class InstanceHistoryEntry
+{
+    public long Id { get; init; }
+    public string HostName { get; init; } = "";
+    public string FirstStage { get; init; } = "";
+    public string Visibility { get; init; } = "";
+    public int Difficulty { get; init; }
+    public DateTime StartedAt { get; init; }
+    public DateTime? EndedAt { get; init; }
+    public string? EndReason { get; init; }
+    public int PeakPlayers { get; init; }
+    /// <summary>The account's role in it (host, guest, staff, spectator).</summary>
+    public string Role { get; init; } = "";
+    public DateTime JoinedAt { get; init; }
+    public DateTime? LeftAt { get; init; }
+    public string? LeaveReason { get; init; }
+}
+
+/// <summary>A player the account shared an instance with ("Recently played with", 19.26): the newest time they did.</summary>
+public sealed class PlayedWithRow
+{
+    public long AccountId { get; init; }
+    public string Username { get; init; } = "";
+    public DateTime LastPlayedAt { get; init; }
+    public int Times { get; init; }
+}
+
+/// <summary>The world's account-side store: online_prefs, accounts.last_seen_at and the history queries of the website.</summary>
+public interface IWorldRepository
+{
+    /// <summary>The account's preferences; <see cref="OnlinePrefs.Default"/> when it has no row.</summary>
+    Task<OnlinePrefs> GetPrefsAsync(long accountId, CancellationToken ct = default);
+
+    /// <summary>Writes the preferences (an insert or an update); false when the account is deleted.</summary>
+    Task<bool> SavePrefsAsync(long accountId, OnlinePrefs prefs, DateTime now, CancellationToken ct = default);
+
+    /// <summary>Sets only default_visibility (the host's last choice, Q9); false when the account is deleted.</summary>
+    Task<bool> SaveVisibilityAsync(long accountId, string visibility, DateTime now, CancellationToken ct = default);
+
+    /// <summary>Moves accounts.last_seen_at forward to <paramref name="at"/> for the given accounts.</summary>
+    Task TouchLastSeenAsync(IReadOnlyCollection<long> accountIds, DateTime at, CancellationToken ct = default);
+
+    Task<DateTime?> GetLastSeenAsync(long accountId, CancellationToken ct = default);
+
+    /// <summary>Accounts that block <paramref name="accountId"/> (the relay's social cache; never shown to him).</summary>
+    Task<IReadOnlyList<long>> ListBlockedByAsync(long accountId, CancellationToken ct = default);
+
+    /// <summary>The account's newest instances (as host, guest, staff or spectator), newest first.</summary>
+    Task<IReadOnlyList<InstanceHistoryEntry>> ListHistoryAsync(long accountId, int limit, bool withSpectating, CancellationToken ct = default);
+
+    /// <summary>
+    /// Players who shared an instance with the account as players (spectators on either side never count) since
+    /// <paramref name="since"/>, newest first; deleted accounts are left out.
+    /// </summary>
+    Task<IReadOnlyList<PlayedWithRow>> ListPlayedWithAsync(long accountId, DateTime since, int limit, CancellationToken ct = default);
+
+    /// <summary>The whereabouts preference (the default when no row) and last_seen_at of the given accounts.</summary>
+    Task<IReadOnlyList<PresencePrefsRow>> ListPresencePrefsAsync(IReadOnlyCollection<long> accountIds, CancellationToken ct = default);
+}
+
+/// <summary>Whether and when friends may see an account's whereabouts (online_prefs.whereabouts, accounts.last_seen_at).</summary>
+public sealed class PresencePrefsRow
+{
+    public long AccountId { get; init; }
+    public string Whereabouts { get; init; } = OnlinePrefs.WhereaboutsFriends;
+    public DateTime? LastSeenAt { get; init; }
+}

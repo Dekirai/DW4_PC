@@ -1,0 +1,64 @@
+@page "/instances"
+@model InstancesModel
+@{
+    ViewData["Title"] = "Instances";
+}
+<h1>Instances</h1>
+<p class="muted">Who plays where right now. Your lobby is always your own; when you take the gate to an area where an
+    instance you may join is running, the game puts you into it (up to four players), on its host's story. Private
+    instances are never listed; Friends-only ones only to the host's friends.</p>
+
+<p>@Model.Counts.PlayersOnline players online, @Model.Counts.Instances instances.</p>
+
+@foreach (var area in Model.Counts.Areas)
+{
+    <h2>@area.Name <span class="muted small">@area.Instances instances, @area.Players players</span></h2>
+    if (Model.Rows is null)
+    {
+        continue;
+    }
+    var rows = Model.Rows.TryGetValue(area.Area, out var list) ? list : [];
+    if (rows.Count == 0)
+    {
+        <p class="muted">No instance here that you can join.</p>
+        continue;
+    }
+    <div class="table-wrap">
+        <table>
+            <thead><tr><th>Host</th><th>Where</th><th class="num">Players</th><th>Story</th><th>Settings</th><th>Running</th></tr></thead>
+            <tbody>
+            @foreach (var i in rows)
+            {
+                <tr>
+                    <td>
+                        <a href="~/u/@i.Host">@i.Host</a>
+                        @if (i.Yours)
+                        {
+                            <span class="badge ok">yours</span>
+                        }
+                        @if (Model.Staff && i.Visibility is not null && i.Visibility != "public")
+                        {
+                            <span class="badge warn">@i.Visibility</span>
+                        }
+                    </td>
+                    <td>@i.StageName</td>
+                    <td class="num">@i.Players / @i.MaxPlayers</td>
+                    <td>@(string.IsNullOrEmpty(i.StoryLabel) ? "-" : i.StoryLabel)</td>
+                    <td>
+                        @InstancesModel.Difficulty(i.Difficulty)
+                        @if (i.Randomizer)
+                        {
+                            <span class="badge">randomizer</span>
+                        }
+                    </td>
+                    <td>@InstancesModel.Age(i.AgeSeconds)</td>
+                </tr>
+            }
+            </tbody>
+        </table>
+    </div>
+}
+@if (Model.Rows is null)
+{
+    <p class="muted"><a href="~/login">Log in</a> to see the instances you can join.</p>
+}

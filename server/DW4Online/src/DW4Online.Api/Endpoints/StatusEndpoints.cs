@@ -1,6 +1,6 @@
 using System.Reflection;
 using DW4Online.Domain;
-using DW4Online.Domain.Rooms;
+using DW4Online.Domain.Abstractions;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
@@ -14,7 +14,8 @@ public static class StatusEndpoints
 
     public static void Map(RouteGroupBuilder v1)
     {
-        v1.MapGet("/status", (ServiceOptions service, PlayOptions play, AccountOptions accounts, IRelayGateway relay, HttpContext ctx, TimeProvider time) => Results.Ok(new
+        // The minimum protocol announced is the one the version gate applies: max(Play:MinimumProtocol, the world's protocol).
+        v1.MapGet("/status", (ServiceOptions service, PlayOptions play, AccountOptions accounts, IWorldRelay relay, HttpContext ctx, TimeProvider time) => Results.Ok(new
         {
             service = service.Name,
             version = Version,
@@ -27,10 +28,10 @@ public static class StatusEndpoints
             {
                 minimumVersion = play.MinimumClientVersion,
                 currentVersion = play.CurrentClientVersion,
-                minimumProtocol = play.MinimumProtocol,
-                currentProtocol = play.CurrentProtocol,
+                minimumProtocol = play.EffectiveMinimumProtocol,
+                currentProtocol = Math.Max(play.CurrentProtocol, play.EffectiveMinimumProtocol),
             },
-            relay = RoomEndpoints.Relay(ctx, service, relay),
+            relay = WorldEndpoints.Relay(ctx, service, relay),
         })).AllowAnonymous();
     }
 }

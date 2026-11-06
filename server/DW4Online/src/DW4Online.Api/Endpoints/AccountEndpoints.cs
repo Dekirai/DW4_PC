@@ -29,17 +29,17 @@ public static class AccountEndpoints
             .RequireRateLimiting(RateLimitPolicies.AccountChange);
 
         // Deletes the account and everything personal tied to it (GDPR erasure); needs the current password.
-        me.MapPost("/delete", async (PasswordConfirmation r, AccountService accounts, RoomService rooms, HttpContext ctx) =>
+        me.MapPost("/delete", async (PasswordConfirmation r, AccountService accounts, WorldService world, HttpContext ctx) =>
         {
             var session = ctx.Session();
             if (session.Role == Domain.Abstractions.Roles.Admin)
                 return ApiProblems.Of(StatusCodes.Status403Forbidden, "admin_account", "Admins cannot delete their own account; remove the admin role first.");
             if (await accounts.ConfirmPasswordAsync(session.AccountId, r.CurrentPassword, ctx.Caller(), ctx.RequestAborted) is { Ok: false } wrong)
                 return ApiProblems.From(wrong.Error!);
-            await rooms.RemoveAccountAsync(session.AccountId, ctx.RequestAborted);
+            world.AccountChanged(session.AccountId);
             var deleted = await accounts.DeleteAccountAsync(session, r.CurrentPassword, ctx.Caller(), ctx.RequestAborted);
-            // Again after the scrub: a room another session of the account opened meanwhile closes (its sessions end there).
-            if (deleted.Ok) await rooms.RemoveAccountAsync(session.AccountId, CancellationToken.None);
+            // Again after the scrub: a world session another session of the account started meanwhile ends (its sessions end there).
+            if (deleted.Ok) world.AccountChanged(session.AccountId);
             return ApiProblems.Ok(deleted, _ => Results.NoContent());
         }).RequireRateLimiting(RateLimitPolicies.AccountChange);
 

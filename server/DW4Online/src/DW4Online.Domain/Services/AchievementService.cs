@@ -2,6 +2,7 @@ using System.Text.Json;
 using DW4Online.Domain.Abstractions;
 using DW4Online.Domain.Achievements;
 using DW4Online.Domain.Save;
+using DW4Online.Domain.World;
 
 namespace DW4Online.Domain.Services;
 
@@ -19,18 +20,24 @@ public sealed record StatsResult(IReadOnlyDictionary<string, long> Totals, IRead
 /// <summary>
 /// Achievements count only online, only in ranked sessions (no cheats, no rebalancing, no save-state load in the
 /// stage); randomizer runs are their own ruleset. Event unlocks come from the game, stat and state unlocks are
-/// decided here from counters and from the server's decode of the online character.
+/// decided here from counters and from the server's decode of the online character. Online play is proven by the world
+/// relay's play context (SEAMLESS.md 19.8.9: in the world within the last minute, the instance, its players, whether the
+/// account hosts it, its settings and data hash), never by the client's report.
 /// </summary>
 public sealed class AchievementService(
     IAchievementRepository repository,
-    IRoomDirectory rooms,
     IAuditLog audit,
     VersionGate versions,
     PlayOptions play,
     TimeProvider time,
-    DW4Online.Domain.Rooms.IRelayGateway? relay = null)
+    IWorldRelay? world = null,
+    WorldWebOptions? worldOptions = null,
+    DW4Online.Domain.Story.OnlineStoryService? stories = null)
 {
-    /// <summary>The story clears and the difficulty whose clear flag (406 + difficulty) they need in the room's story.</summary>
+    private readonly HashSet<ulong> _rankedHashes =
+        (worldOptions?.RankedDataHashes ?? []).Select(h => WorldWebOptions.ParseHash(h, "World:RankedDataHashes")).ToHashSet();
+
+    /// <summary>The story clears and the difficulty whose clear flag (406 + difficulty) they need in the reporter's own story.</summary>
     private static readonly Dictionary<string, int> ClearDifficulty = new(StringComparer.Ordinal)
     {
         ["clear_normal"] = 0,
@@ -78,40 +85,40 @@ public sealed class AchievementService(
             return DomainError.Invalid("server_tracked", "The server unlocks this achievement itself.");
         var session = await CheckSessionAsync(accountId, context, ct);
         if (!session.Ok) return session.Error!;
-        var (room, players, roomPlayers) = session.Value;
+        var (place, players, instancePlayers) = session.Value;
 
-        var check = new AchievementCheck(definition.Goal ?? 0, evidence, players, room is not null, room?.IsHost == true, play.StoryFloorMs,
-            roomPlayers);
+        var check = new AchievementCheck(definition.Goal ?? 0, evidence, players, place is { Wid: > 0 }, place?.IsHost ?? true, play.StoryFloorMs,
+            instancePlayers);
         if (AchievementRules.CheckEvent(definition.Code, check) is { } reason)
             return DomainError.Invalid("requirement_not_met", reason);
-        // A story clear in a room needs the room's story to hold it (the server keeps it since round 56): one request
-        // claimed a clear and the speedrun board's first place.
-        if (room is not null && ClearDifficulty.TryGetValue(definition.Code, out var cleared) &&
-            !await RoomStoryHoldsClearAsync(context!.RoomCode!, cleared, ct))
-            return DomainError.Invalid("requirement_not_met", "The room's story has no clear on this difficulty.");
+        // A story clear needs the reporter's own story to hold it (the server keeps it): one request claimed a clear and
+        // the speedrun board's first place. A guest's clear counts when it was mirrored into his own story (19.8.6).
+        if (place is not null && ClearDifficulty.TryGetValue(definition.Code, out var cleared) &&
+            !await OwnStoryHoldsClearAsync(accountId, cleared, ct))
+            return DomainError.Invalid("requirement_not_met", "Your online story has no clear on this difficulty.");
 
         var now = Clock.Now(time);
-        var ruleset = RulesetOf(room, context);
+        var ruleset = RulesetOf(place, context);
         var evidenceJson = evidence is null ? null : JsonSerializer.Serialize(evidence, Json);
         // A story clear faster than the board's floor is impossible: no best time, and a new unlock waits for review.
         var hasBoard = AchievementRules.SpeedrunBoards.TryGetValue(definition.Code, out var board);
         var igt = evidence?.IgtMs ?? 0;
         var tooFast = hasBoard && igt > 0 && igt < play.SpeedrunFloorMs(board!);
-        var added = await repository.TryUnlockAsync(new UnlockWrite(accountId, definition.Id, ruleset, now, room?.RoomId, players,
-            Truncate(context?.ClientVersion, 32), tooFast, evidenceJson), ct);
+        var added = await repository.TryUnlockAsync(new UnlockWrite(accountId, definition.Id, ruleset, now, null, players,
+            Truncate(context?.ClientVersion, 32), tooFast, evidenceJson, place?.HistoryId), ct);
         var best = false;
         if (tooFast)
             await audit.WriteAsync("speedrun_implausible", accountId, null, null,
                 new { code = definition.Code, board, ruleset, igtMs = igt, floorMs = play.SpeedrunFloorMs(board!), flagged = added }, now, ct);
         else if (hasBoard && igt > 0)
-            best = await repository.SubmitTimeAsync(accountId, board!, ruleset, igt, room?.RoomId, now, ct);
+            best = await repository.SubmitTimeAsync(accountId, board!, ruleset, igt, null, now, ct, place?.HistoryId);
         return new UnlockResult(definition.Code, ruleset, added, best, tooFast);
     }
 
     /// <summary>
     /// Counter deltas from the game, bounded per counter by a token bucket: <see cref="AchievementRules.StatKeys"/> per
     /// minute of real time, at most <see cref="StatBudgets.WindowMinutes"/> minutes saved up. Batches of one account are
-    /// checked one at a time. Stat achievements unlock here, in the room's ruleset.
+    /// checked one at a time. Stat achievements unlock here, in the instance's ruleset.
     /// </summary>
     public async Task<Result<StatsResult>> AddStatsAsync(long accountId, IReadOnlyDictionary<string, long>? deltas, PlayContext? context, byte[]? ip, CancellationToken ct = default)
     {
@@ -149,13 +156,13 @@ public sealed class AchievementService(
             var totals = await repository.AddStatsAsync(accountId, deltas.Where(d => d.Value > 0).ToDictionary(), now, ct);
             foreach (var (key, value) in deltas) account.Spend(key, value);
             var unlocked = new List<string>();
-            var room = session.Value.Room;
-            var ruleset = RulesetOf(room, context);
+            var place = session.Value.Place;
+            var ruleset = RulesetOf(place, context);
             foreach (var d in (await DefinitionsAsync(ct)).Where(d => d.Kind == AchievementKinds.Stat && d.StatKey is not null))
             {
                 if (totals.TryGetValue(d.StatKey!, out var total) && total >= (d.Goal ?? long.MaxValue) &&
-                    await repository.TryUnlockAsync(new UnlockWrite(accountId, d.Id, ruleset, now, room?.RoomId, session.Value.Players,
-                        Truncate(context?.ClientVersion, 32), false, null), ct))
+                    await repository.TryUnlockAsync(new UnlockWrite(accountId, d.Id, ruleset, now, null, session.Value.Players,
+                        Truncate(context?.ClientVersion, 32), false, null, place?.HistoryId), ct))
                     unlocked.Add(d.Code);
             }
             return new StatsResult(totals, unlocked);
@@ -168,22 +175,23 @@ public sealed class AchievementService(
 
     /// <summary>
     /// State achievements from the server's decode of an accepted online character upload. Like event unlocks and stats
-    /// they need online play: a ranked room the account is a member of (unless Play:RequireRoom is off), and they go to
-    /// that room's ruleset. An upload outside a room unlocks nothing (the character is still saved).
+    /// they need online play: the account in the world within the last minute with ranked game data (unless
+    /// Play:RequireWorld is off), and they go to its instance's ruleset. An upload from outside the world unlocks nothing
+    /// (the character is still saved).
     /// </summary>
     public async Task<IReadOnlyList<string>> EvaluateStateAsync(long accountId, SaveRecord record, bool flagged, PlayContext? context, CancellationToken ct = default)
     {
         var session = await CheckSessionAsync(accountId, context, ct);
         if (!session.Ok) return [];
-        var (room, players, _) = session.Value;
-        var ruleset = RulesetOf(room, context);
+        var (place, players, _) = session.Value;
+        var ruleset = RulesetOf(place, context);
         var now = Clock.Now(time);
         var unlocked = new List<string>();
         foreach (var d in (await DefinitionsAsync(ct)).Where(d => d.Kind == AchievementKinds.State))
         {
             if (AchievementRules.StateHolds(d.Code, record, d.Goal) &&
-                await repository.TryUnlockAsync(new UnlockWrite(accountId, d.Id, ruleset, now, room?.RoomId, players,
-                    Truncate(context?.ClientVersion, 32), flagged, null), ct))
+                await repository.TryUnlockAsync(new UnlockWrite(accountId, d.Id, ruleset, now, null, players,
+                    Truncate(context?.ClientVersion, 32), flagged, null, place?.HistoryId), ct))
                 unlocked.Add(d.Code);
         }
         return unlocked;
@@ -232,59 +240,54 @@ public sealed class AchievementService(
     private static DomainError UnknownUnlock() => DomainError.NotFound("unlock_not_found", "The account has no such unlock.");
 
     /// <summary>
-    /// Ranked rules, version gate and the room check shared by unlocks and stats; the instance's and the room's player counts
-    /// as the client reported them, at most the room's real member count.
+    /// Ranked rules, version gate and the world check shared by unlocks, stats and uploads (19.8.9): the relay's play
+    /// context (in the world within the last minute) with ranked game data, else, with Play:RequireWorld on, a refusal.
+    /// The player counts: the reporter's stage group as the client reported it, at most the instance's players of the last
+    /// minute as the relay saw them; the instance's players as the relay counts them (a client reporting one player in an
+    /// instance of two got Lone Tamer).
     /// </summary>
-    private async Task<Result<(RoomMembership? Room, int? Players, int? RoomPlayers)>> CheckSessionAsync(long accountId, PlayContext? context, CancellationToken ct)
+    private Result<(WorldPlayContext? Place, int? Players, int? InstancePlayers)> CheckSession(long accountId, PlayContext? context)
     {
         if (RankedRules.Check(context) is { } unranked) return DomainError.Invalid(unranked.Code, unranked.Message);
         if (versions.Check(context) is { } outdated) return outdated;
-        RoomMembership? room = null;
-        if (!string.IsNullOrEmpty(context?.RoomCode))
+        var place = world?.PlayContext(accountId);
+        if (place is null)
         {
-            room = await rooms.FindMembershipAsync(context.RoomCode, accountId, ct);
-            if (room is null) return DomainError.Forbidden("not_in_room", "You are not in this room.");
-            if (!room.Ranked) return DomainError.Invalid("unranked_room", "This room is not ranked.");
+            if (play.RequireWorld) return DomainError.Forbidden("world_required", "Achievements count only while you play online.");
+            return (null, context?.Players, context?.InstancePlayers ?? context?.RoomPlayers);
         }
-        else if (play.RequireRoom)
-        {
-            return DomainError.Forbidden("room_required", "Achievements count only in online rooms.");
-        }
-        int? players = context?.Players;
-        int? roomPlayers = context?.RoomPlayers;
-        if (room is not null && players is not null) players = Math.Min(players.Value, room.Members);
-        // The instance's players as the relay saw them in the last minute (a guest alone in its lobby reported four).
-        if (room is not null && players is not null && relay?.RecentInstancePlayers(Rooms.RoomCodes.Normalize(context!.RoomCode!), accountId) is { } seen)
-            players = Math.Min(players.Value, seen);
-        // The room's members as the server counts them (a client reporting one player in a room of two got Lone Tamer).
-        if (room is not null) roomPlayers = room.Members;
-        return (room, players, roomPlayers);
+        if (_rankedHashes.Count > 0 && !_rankedHashes.Contains(place.DataHash))
+            return DomainError.Invalid("unranked_data", "This game data is not ranked on this server: nothing counts for the online account.");
+        int? players = context?.Players is { } reported ? Math.Min(reported, Math.Max(1, place.Players)) : null;
+        return (place, players, Math.Max(1, place.Players));
     }
 
+    private Task<Result<(WorldPlayContext? Place, int? Players, int? InstancePlayers)>> CheckSessionAsync(long accountId, PlayContext? context,
+        CancellationToken ct) => Task.FromResult(CheckSession(accountId, context));
+
     /// <summary>
-    /// Whether the room's story (the relay's keeper) is at <paramref name="difficulty"/> and holds its clear flag, waiting up
-    /// to PlayOptions.ClearStoryWaitSeconds for it (the clear's STORY may come after the report). Without a relay (switched
-    /// off) there is no room story to ask: true.
+    /// Whether the account's own online story holds the clear flag of <paramref name="difficulty"/> (406 + difficulty),
+    /// waiting up to PlayOptions.ClearStoryWaitSeconds for it (the clear's STORY may come after the report; the relay
+    /// queues it into the story service, whose load sees the queued revision). Without the story service: true.
     /// </summary>
-    private async Task<bool> RoomStoryHoldsClearAsync(string roomCode, int difficulty, CancellationToken ct)
+    private async Task<bool> OwnStoryHoldsClearAsync(long accountId, int difficulty, CancellationToken ct)
     {
-        if (relay is not { Available: true }) return true;
-        var code = Rooms.RoomCodes.Normalize(roomCode);
+        if (stories is null || world is not { Available: true }) return true;
         // (Real time, not the service's clock: the relay's STORY comes in real time.)
         var waited = System.Diagnostics.Stopwatch.StartNew();
+        var flag = DW4Online.Domain.Story.RoomStoryKeeper.FirstClearFlag + difficulty;
         while (true)
         {
-            if (relay.Story(code) is { } story && story.Difficulty == difficulty &&
-                story.Flags.Contains(DW4Online.Domain.Story.RoomStoryKeeper.FirstClearFlag + difficulty))
-                return true;
+            var story = await stories.LoadAsync(accountId, ct);
+            if (flag < story.Flags.Length && story.Flags[flag] != 0) return true;
             if (waited.Elapsed.TotalSeconds >= Math.Max(0, play.ClearStoryWaitSeconds)) return false;
             await Task.Delay(250, ct);
         }
     }
 
-    /// <summary>The room's randomizer setting decides (a client cannot report a randomizer room as standard).</summary>
-    private static string RulesetOf(RoomMembership? room, PlayContext? context) =>
-        room?.Randomizer == true ? Rulesets.Randomizer : Rulesets.Of(context);
+    /// <summary>The instance's randomizer setting decides (a client cannot report a randomizer instance as standard).</summary>
+    private static string RulesetOf(WorldPlayContext? place, PlayContext? context) =>
+        place is not null ? (place.Randomizer ? Rulesets.Randomizer : Rulesets.Standard) : Rulesets.Of(context);
 
     private static string? Truncate(string? s, int max) => s is null ? null : s.Length <= max ? s : s[..max];
 }

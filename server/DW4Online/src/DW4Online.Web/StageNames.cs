@@ -1,38 +1,21 @@
-using System.Text.Json;
+using DW4Online.Domain.World;
 
 namespace DW4Online.Web;
 
 /// <summary>
-/// Readable names of the game's stage folders ("stag0101" -> "Death Valley: Goblin Pass") for the room page. The table is
-/// the game client's (src/game/presence_data.cpp, exported as data/online/areas.json and embedded here; the client's
-/// presence test compares the file with its table). Unknown folders keep their folder name.
+/// Readable names of the game's stage folders ("stag0101" -> "Death Valley: Goblin Pass") and areas for the website: the
+/// game client's table (src/game/presence_data.cpp, exported as data/online/areas.json, read by
+/// <see cref="AreaTable"/>; the client's presence test compares the file with its table). Unknown folders keep their name.
 /// </summary>
 public static class StageNames
 {
-    private static readonly Lazy<IReadOnlyDictionary<string, string>> Names = new(Load);
+    public static string Of(string? stage) => AreaTable.Default.DisplayName(stage);
 
-    public static string Of(string? stage)
-    {
-        if (string.IsNullOrEmpty(stage)) return "Title screen";
-        return Names.Value.TryGetValue(stage.ToLowerInvariant(), out var name) ? name : stage;
-    }
+    /// <summary>Hub and UI stages (lobby, briefing room, Digi-Lab, menus): always home, on the player's own story (19.4).</summary>
+    public static bool IsHub(string? stage) => AreaTable.Default.IsHub(stage);
 
-    /// <summary>Hub and UI stages (lobby, briefing room, Digi-Lab, menus) are solo in a room (SEAMLESS.md 3.3).</summary>
-    public static bool IsHub(string? stage) =>
-        string.IsNullOrEmpty(stage) || stage.StartsWith("stagml", StringComparison.OrdinalIgnoreCase) ||
-        stage.StartsWith("stagis", StringComparison.OrdinalIgnoreCase);
+    /// <summary>"Dry Land" for "dry_land".</summary>
+    public static string Area(string? area) => AreaTable.AreaName(area);
 
-    public static int Count => Names.Value.Count;
-
-    private static IReadOnlyDictionary<string, string> Load()
-    {
-        using var stream = typeof(StageNames).Assembly.GetManifestResourceStream("DW4Online.Web.areas.json");
-        if (stream is null) return new Dictionary<string, string>();
-        using var doc = JsonDocument.Parse(stream);
-        var names = new Dictionary<string, string>(StringComparer.Ordinal);
-        foreach (var area in doc.RootElement.GetProperty("areas").EnumerateArray())
-            if (area.GetProperty("stage").GetString() is { } stage && area.GetProperty("name").GetString() is { } name)
-                names[stage.ToLowerInvariant()] = name;
-        return names;
-    }
+    public static int Count => AreaTable.Default.All.Count;
 }

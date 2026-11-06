@@ -6,11 +6,12 @@ using Microsoft.AspNetCore.Mvc.RazorPages;
 namespace DW4Online.Web.Pages;
 
 public sealed class IndexModel(ServiceOptions service, AccountOptions accountOptions, AccountService accounts, AchievementService achievements,
-    RoomService rooms) : PageModel
+    WorldService world) : PageModel
 {
     public ServiceOptions Service => service;
     public int PlayersOnline { get; private set; }
-    public int OpenRooms { get; private set; }
+    public int Instances { get; private set; }
+    public IReadOnlyList<AreaCount> Areas { get; private set; } = [];
     public long Accounts { get; private set; }
     public int AchievementCount { get; private set; }
     public bool RegistrationOpen => string.Equals(accountOptions.Registration, "open", StringComparison.OrdinalIgnoreCase);
@@ -18,7 +19,8 @@ public sealed class IndexModel(ServiceOptions service, AccountOptions accountOpt
 
     public async Task OnGetAsync(CancellationToken ct)
     {
-        (OpenRooms, PlayersOnline) = await rooms.CountsAsync(ct);
+        var counts = world.Counts();
+        (PlayersOnline, Instances, Areas) = (counts.PlayersOnline, counts.Instances, counts.Areas);
         Accounts = await accounts.CountActiveAsync(ct);
         AchievementCount = (await achievements.DefinitionsAsync(ct)).Count;
     }

@@ -15,12 +15,19 @@
 namespace dw4::game {
 
 // One stage folder: its Discord large image key (an area group), the region
-// and the place its loading card names.
+// and the place its loading card names, and the online world's columns
+// (docs/SEAMLESS.md 19.30.2), each explicit, none derived from the others:
+// stagBS01-03's dungeon keys and the Fortress's area follow from no image
+// key or stage name.
 struct AreaInfo {
-    const char* folder; // stage folder, lower case ("dng101b1")
-    const char* key;    // art asset key of its area group ("area_death_valley_dungeons")
-    const char* region; // "Death Valley"
-    const char* place;  // "Humid Cave"
+    const char* folder;  // stage folder, lower case ("dng101b1")
+    const char* key;     // art asset key of its area group ("area_death_valley_dungeons")
+    const char* region;  // "Death Valley"
+    const char* place;   // "Humid Cave"
+    const char* area;    // the world's area: "death_valley", "dry_land", "venom_jungle", "machine_pit"; nullptr for hub and UI stages
+    const char* kind;    // "hub" (stagIS*, stagML*), "field", "dungeon" or "boss"
+    const char* dungeon; // dungeon and boss stages: the dungeon they belong to ("dng205", stagBS01 "dng103", BS04-06 "zone_x", "dngq1"); else nullptr
+    bool gate;           // an arrival stage of the lobby gate after the training (stag0101, 0201, 0301, 0401)
 };
 
 // An area group's art: the key, a title and the loading card the suggested
@@ -37,9 +44,11 @@ std::span<const AreaImage> area_images();
 const AreaInfo* find_area(std::string_view stage);
 // "Death Valley: Humid Cave" ("Practice Stage" when region and place agree).
 std::string area_display_name(const AreaInfo& area);
-// The table as data/online/areas.json holds it (stage folder and display
-// name per line, LF): the DW4Online website names the stages of its room
-// page with it (docs/SEAMLESS.md 14); the presence test compares the file.
+// The table as data/online/areas.json holds it (format dw4-areas/2: stage
+// folder, display name, area, kind, dungeon and gate per line, LF): the
+// DW4Online server reads it (DW4Online.Domain.World.AreaTable: the website's
+// stage and area names, the relay's areas, docs/SEAMLESS.md 19.30.2); the
+// presence test compares the file.
 std::string area_names_json();
 // The title, logo, character select and save screens (stagIS*).
 bool is_menu_stage(std::string_view stage);

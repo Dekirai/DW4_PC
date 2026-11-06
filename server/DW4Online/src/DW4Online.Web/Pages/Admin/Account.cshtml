@@ -107,8 +107,9 @@
 }
 
 <h2>Online story</h2>
-<p class="muted small">The story the account's rooms play (every member's progress counts for the room owner). Each saved
-    revision is kept (the newest first); putting one back closes the account's own room and writes it as the next revision.</p>
+<p class="muted small">The account's own story: its lobby always plays it, and so do the instances it hosts (its guests'
+    progress counts for it under the guest rules). Each saved revision is kept (the newest first); putting one back writes it
+    as the next revision, reloads it in the relay and ends the instance the account hosts.</p>
 @if (Model.Story.Count == 0)
 {
     <p class="muted">No story yet.</p>
@@ -123,7 +124,7 @@ else
             {
                 <tr>
                     <td>@s.Revision</td>
-                    <td>@(s.Reason switch { "room" => "room", "reset" => "character reset", _ => "restored by staff" })</td>
+                    <td>@(s.Reason switch { "room" => "played", "reset" => "character reset", "session" => "session start", "mirror" => "shared progress", _ => "restored by staff" })</td>
                     <td>@Format.Date(s.SavedAt)</td>
                     <td>@s.Phase</td>
                     <td>@(s.Keys.Count == 0 ? "-" : string.Join(", ", s.Keys))</td>
@@ -137,6 +138,37 @@ else
                             </form>
                         }
                     </td>
+                </tr>
+            }
+            </tbody>
+        </table>
+    </div>
+}
+
+<h2>Instances (@Model.Instances.Count)</h2>
+<p class="muted small">The instances the account hosted, joined, played in as staff or watched (the last 50; the history keeps
+    90 days). Watching rows are shown to staff only.</p>
+@if (Model.Instances.Count == 0)
+{
+    <p class="muted">No instances yet.</p>
+}
+else
+{
+    <div class="table-wrap">
+        <table>
+            <thead><tr><th>Instance</th><th>Role</th><th>Host</th><th>Area</th><th>Visibility</th><th>Joined</th><th>Left</th><th>Ended</th></tr></thead>
+            <tbody>
+            @foreach (var h in Model.Instances)
+            {
+                <tr>
+                    <td>#@h.Id</td>
+                    <td>@h.Role</td>
+                    <td><a href="~/admin/account/@h.HostName">@h.HostName</a></td>
+                    <td>@StageNames.Of(h.FirstStage)</td>
+                    <td>@h.Visibility</td>
+                    <td>@Format.Date(h.JoinedAt)</td>
+                    <td>@(h.LeftAt is null ? "inside" : $"{Format.Date(h.LeftAt)} ({h.LeaveReason})")</td>
+                    <td>@(h.EndedAt is null ? "running" : $"{Format.Date(h.EndedAt)} ({h.EndReason}, {h.PeakPlayers} at most)")</td>
                 </tr>
             }
             </tbody>

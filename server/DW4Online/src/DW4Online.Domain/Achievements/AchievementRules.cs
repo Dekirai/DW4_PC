@@ -92,8 +92,8 @@ public static class AchievementRules
     };
 
     /// <summary>
-    /// The story challenges (SEAMLESS.md 11): online the story is the room owner's, so only the owner's machine reports
-    /// them, computed from the owner's online character; a guest gets the plain clear.
+    /// The story challenges (SEAMLESS.md 11, 19.8.9): in an instance the story is its host's, so only the host's machine
+    /// reports them, computed from the host's online character; a guest gets the plain clear.
     /// </summary>
     public static readonly IReadOnlySet<string> OwnerOnlyCodes = new HashSet<string>(StringComparer.Ordinal)
     {
@@ -107,13 +107,13 @@ public static class AchievementRules
         ["speed_fast"] = c => Owner(c) ?? SpeedLimit(c),
         ["deathless_clear"] = Owner,
         ["rookie_clear"] = Owner,
-        ["solo_veryhard"] = c => Owner(c) ?? ((c.RoomPlayers ?? c.Players) == 1 ? null : "Lone Tamer needs a run with one player."),
+        ["solo_veryhard"] = c => Owner(c) ?? ((c.InstancePlayers ?? c.Players) == 1 ? null : "Lone Tamer needs a run with one player."),
         ["lowlevel_apocalymon"] = c => c.Evidence?.Level is { } l && l >= 1 && l <= c.Goal ? null : "The level is missing or above the limit.",
         ["mp_couch"] = c => c.Players >= 2 ? null : "Needs at least two players.",
         ["mp_fullhouse"] = c => c.Players >= 4 ? null : "Needs four players.",
-        ["online_join"] = c => c.InRoom ? null : "Needs an online room.",
-        ["online_host"] = c => c.InRoom && c.IsHost && (c.RoomPlayers ?? c.Players) >= 3 ? null : "Needs a hosted room with at least three players.",
-        ["online_raid"] = c => c.InRoom && (c.RoomPlayers ?? c.Players) >= 2 ? null : "Needs at least two online players in the room.",
+        ["online_join"] = c => c.InInstance && !c.IsHost ? null : "Needs someone else's instance.",
+        ["online_host"] = c => c.InInstance && c.IsHost && (c.InstancePlayers ?? c.Players) >= 3 ? null : "Needs a hosted instance with at least three players.",
+        ["online_raid"] = c => c.InInstance && (c.InstancePlayers ?? c.Players) >= 2 ? null : "Needs at least two online players in the instance.",
     };
 
     public static IReadOnlyCollection<string> StateCodes => StateRules.Keys;
@@ -127,9 +127,9 @@ public static class AchievementRules
     public static string? CheckEvent(string code, AchievementCheck check) =>
         EventRequirements.TryGetValue(code, out var rule) ? rule(check) : null;
 
-    /// <summary>A story challenge in a room: the room owner's only.</summary>
+    /// <summary>A story challenge in an instance: its host's only.</summary>
     private static string? Owner(AchievementCheck c) =>
-        c.InRoom && !c.IsHost ? "Story challenges count only for the room owner (the story is the owner's)." : null;
+        c.InInstance && !c.IsHost ? "Story challenges count only for the instance's host (the story is the host's)." : null;
 
     /// <summary>Speed goals: the in-game time is given, at most the goal and not below the story's floor.</summary>
     private static string? SpeedLimit(AchievementCheck c) => c.Evidence?.IgtMs switch
@@ -161,8 +161,9 @@ public static class AchievementRules
 
 /// <summary>
 /// The facts an event requirement is checked against. <paramref name="Players"/>: the players of the reporter's stage
-/// instance; <paramref name="RoomPlayers"/>: the room's members (both capped at the room's real member count).
+/// group as reported; <paramref name="InInstance"/>: the reporter plays in an instance (at home: false, and the host of his
+/// own story); <paramref name="InstancePlayers"/>: the instance's players of the last minute as the relay counts them.
 /// <paramref name="StoryFloorMs"/>: the least in-game time of a story clear on any board (speed goals below it are impossible).
 /// </summary>
-public sealed record AchievementCheck(long Goal, UnlockEvidence? Evidence, int? Players, bool InRoom, bool IsHost, long StoryFloorMs = 0,
-    int? RoomPlayers = null);
+public sealed record AchievementCheck(long Goal, UnlockEvidence? Evidence, int? Players, bool InInstance, bool IsHost, long StoryFloorMs = 0,
+    int? InstancePlayers = null);

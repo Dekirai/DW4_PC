@@ -64,9 +64,9 @@ public static class OnlineCharacterEndpoints
             Results.Ok(await characters.HistoryAsync(ctx.Session().AccountId, ctx.RequestAborted)));
 
         // Ends the current online character and empties the account's online story (also an account that has a story but no
-        // character, an owner whose guests played); the next upload with If-None-Match: * starts a new one. The account's own
-        // room closes (its hub holds the old story).
-        group.MapPost("/reset", async (PasswordConfirmation r, OnlineCharacterService characters, AccountService accounts, RoomService rooms,
+        // character, a host whose guests played); the next upload with If-None-Match: * starts a new one. The relay's keeper
+        // reloads the emptied story and the account's hosted instance ends (19.8.1).
+        group.MapPost("/reset", async (PasswordConfirmation r, OnlineCharacterService characters, AccountService accounts, WorldService world,
             HttpContext ctx) =>
         {
             var session = ctx.Session();
@@ -74,8 +74,9 @@ public static class OnlineCharacterEndpoints
                 return ApiProblems.From(wrong.Error!);
             if (!await characters.HasResetWorkAsync(session.AccountId, ctx.RequestAborted))
                 return ApiProblems.Of(StatusCodes.Status404NotFound, "no_online_character", "There is no online character and no online story.");
-            await rooms.CloseOwnedAsync(session.AccountId, ctx.RequestAborted);
-            return await characters.ResetAsync(session.AccountId, session.AccountId, ctx.IpBytes(), ctx.RequestAborted)
+            var reset = await characters.ResetAsync(session.AccountId, session.AccountId, ctx.IpBytes(), ctx.RequestAborted);
+            if (reset) world.StoryReplaced(session.AccountId);
+            return reset
                 ? Results.NoContent()
                 : ApiProblems.Of(StatusCodes.Status404NotFound, "no_online_character", "There is no online character and no online story.");
         }).RequireRateLimiting(RateLimitPolicies.AccountChange);

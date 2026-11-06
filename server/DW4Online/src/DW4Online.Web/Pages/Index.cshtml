@@ -8,7 +8,7 @@
 
 @if (Model.Service.Maintenance)
 {
-    <div class="notice warn">The server is in maintenance. Rooms cannot be opened right now.</div>
+    <div class="notice warn">The server is in maintenance. The online world is closed right now.</div>
 }
 @if (!string.IsNullOrWhiteSpace(Model.Service.Motd))
 {
@@ -17,16 +17,17 @@
 
 <div class="grid">
     <div class="panel"><div class="stat">@Model.PlayersOnline</div><div class="muted">players online</div></div>
-    <div class="panel"><div class="stat">@Model.OpenRooms</div><div class="muted">open rooms</div></div>
+    <div class="panel"><div class="stat">@Model.Instances</div><div class="muted"><a href="~/instances">instances</a></div></div>
     <div class="panel"><div class="stat">@Format.Number(Model.Accounts)</div><div class="muted">accounts</div></div>
     <div class="panel"><div class="stat">@Model.AchievementCount</div><div class="muted">achievements</div></div>
 </div>
 
 <h2>How it works</h2>
 <div class="panel">
-    <p>Create an account here or in the game, then log in from the game's online menu. Online play uses its own
-        online character, which starts from zero and is separate from your local save. Rooms hold up to ten players;
-        everyone in the same stage plays together (up to four per stage) with shared enemies and drops.</p>
+    <p>Create an account here or in the game, then log in from the game's online menu and press Play. Online play uses
+        its own online character, which starts from zero and is separate from your local save. The lobby is always your
+        own; when you take the gate to an area where someone else already plays, you join their instance (up to four
+        players, shared enemies and drops) and play their story there. Your own story moves only where you earn it.</p>
     <p>Achievements count only in online play without cheats, rebalanced rates or save states. You can also keep one
         private cloud backup of your local save.</p>
     @if (Model.SignedIn)

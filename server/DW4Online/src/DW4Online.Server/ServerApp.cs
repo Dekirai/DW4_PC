@@ -50,6 +50,11 @@ public static class ServerApp
         var character = Bind<OnlineCharacterOptions>(config, "OnlineCharacter");
         var cloud = Bind<CloudSaveOptions>(config, "CloudSave");
         var play = Bind<PlayOptions>(config, "Play");
+        // The room era's name, read for one release (SEAMLESS.md 19.17.5).
+        if (config["Play:RequireWorld"] is null && play.RequireRoom is { } requireRoom) play.RequireWorld = requireRoom;
+        var world = Bind<WorldWebOptions>(config, "World");
+        if (world.RankedDataHashes.Count == 0 && config.GetSection("Rooms:RankedDataHashes").Get<List<string>>() is { Count: > 0 } ranked)
+            world.RankedDataHashes = ranked;
         var friends = Bind<FriendsOptions>(config, "Friends");
         var service = Bind<ServiceOptions>(config, "Service");
         var proxy = ProxyHeaders.From(service); // (checks Service:PathBase and Service:TrustedProxyNetworks)
@@ -67,7 +72,7 @@ public static class ServerApp
         services.TryAddSingleton(TimeProvider.System); // tests register a controllable clock first
         services.AddSingleton(accounts).AddSingleton(character).AddSingleton(cloud).AddSingleton(play)
             .AddSingleton(service).AddSingleton(limits).AddSingleton(relay).AddSingleton(rooms).AddSingleton(database)
-            .AddSingleton(sealing).AddSingleton(instances).AddSingleton(friends);
+            .AddSingleton(sealing).AddSingleton(instances).AddSingleton(friends).AddSingleton(world);
         services.AddSingleton(_ => new Database(database.ConnectionString));
         services.AddSingleton<IAccountRepository, AccountRepository>();
         services.AddSingleton<ISessionRepository, SessionRepository>();
@@ -76,13 +81,18 @@ public static class ServerApp
         services.AddSingleton<IOnlineStoryRepository, OnlineStoryRepository>();
         services.AddSingleton<ICloudSaveRepository, CloudSaveRepository>();
         services.AddSingleton<IAchievementRepository, AchievementRepository>();
-        services.AddSingleton<IRoomDirectory, RoomDirectory>();
         services.AddSingleton<IRoomRepository, RoomRepository>();
         services.AddSingleton<ISocialRepository, SocialRepository>();
         // Round I2-social: nobody listens yet. Round I1's relay registers its in-process implementation BEFORE this line
         // (then this TryAdd adds nothing) or replaces it after it (services.Replace / AddSingleton): a TryAdd after this
         // line would be silently ignored.
         services.TryAddSingleton<IWorldNotifier>(NullWorldNotifier.Instance);
+        // Round I1a: the world relay as the domain sees it (SEAMLESS.md 19.17). The relay lane registers its implementation
+        // (admission, the browser snapshot, the play context, End and Remove) BEFORE this line; until then nobody is online.
+        services.TryAddSingleton<IWorldRelay>(NullWorldRelay.Instance);
+        services.AddSingleton<WorldRepository>();
+        services.AddSingleton<IWorldRepository>(sp => sp.GetRequiredService<WorldRepository>());
+        services.AddSingleton<IInstanceHistoryRepository>(sp => sp.GetRequiredService<WorldRepository>());
         services.AddSingleton<MaintenanceRepository>();
         services.AddSingleton(_ => new PasswordHasher(accounts.PasswordIterations));
         services.AddSingleton<DW4Online.Domain.Accounts.LoginThrottle>();
@@ -109,7 +119,14 @@ public static class ServerApp
         services.AddSingleton<RelayGateway>();
         services.AddSingleton<IRelayGateway>(sp => sp.GetRequiredService<RelayGateway>());
         services.AddSingleton<RoomService>();
-        services.AddHostedService<RoomSweeper>();
+        services.AddSingleton(sp =>
+        {
+            var service = ActivatorUtilities.CreateInstance<WorldService>(sp);
+            var log = sp.GetRequiredService<ILogger<WorldService>>();
+            service.WriteFailed = (what, e) => log.LogWarning(e, "World: {What} failed", what);
+            return service;
+        });
+        services.AddHostedService<WorldHousekeeping>();
 
         builder.WebHost.ConfigureKestrel(kestrel =>
         {

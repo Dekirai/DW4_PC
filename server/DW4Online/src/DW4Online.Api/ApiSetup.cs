@@ -26,6 +26,7 @@ public sealed class RateLimitOptions
     public int StaffPerMinute { get; set; } = 60;            // per account
     public int RoomCreatesPerMinute { get; set; } = 5;       // per account
     public int RoomJoinsPerMinute { get; set; } = 20;        // per account: room passwords cannot be brute-forced
+    public int WorldEntersPerMinute { get; set; } = 20;      // per account: POST /world/enter and /world/ticket (as the room join was)
     public int StageChangesPerMinute { get; set; } = 30;     // per account: entering and leaving stage instances (relay tickets)
     public int SocialPerMinute { get; set; } = 60;           // per account: friend requests and answers, blocks, player cards
     public int FriendListSeconds { get; set; } = 2;          // per account: one GET /friends per this many seconds (0 = no limit)
@@ -43,6 +44,7 @@ public static class RateLimitPolicies
     public const string Staff = "staff";
     public const string RoomCreate = "room-create";
     public const string RoomJoin = "room-join";
+    public const string WorldEnter = "world-enter";
     public const string RoomStage = "room-stage";
     public const string Social = "social";
     public const string FriendList = "friend-list";
@@ -74,6 +76,7 @@ public static class ApiSetup
             o.AddPolicy(RateLimitPolicies.Staff, ctx => Window(AccountKey(ctx), limits.StaffPerMinute, TimeSpan.FromMinutes(1)));
             o.AddPolicy(RateLimitPolicies.RoomCreate, ctx => Window(AccountKey(ctx), limits.RoomCreatesPerMinute, TimeSpan.FromMinutes(1)));
             o.AddPolicy(RateLimitPolicies.RoomJoin, ctx => Window(AccountKey(ctx), limits.RoomJoinsPerMinute, TimeSpan.FromMinutes(1)));
+            o.AddPolicy(RateLimitPolicies.WorldEnter, ctx => Window(AccountKey(ctx), limits.WorldEntersPerMinute, TimeSpan.FromMinutes(1)));
             o.AddPolicy(RateLimitPolicies.RoomStage, ctx => Window(AccountKey(ctx), limits.StageChangesPerMinute, TimeSpan.FromMinutes(1)));
             o.AddPolicy(RateLimitPolicies.Social, ctx => Window(AccountKey(ctx), limits.SocialPerMinute, TimeSpan.FromMinutes(1)));
             o.AddPolicy(RateLimitPolicies.FriendList, ctx => limits.FriendListSeconds <= 0
@@ -120,6 +123,7 @@ public static class ApiSetup
         CloudSaveEndpoints.Map(v1);
         AchievementEndpoints.Map(v1);
         RoomEndpoints.Map(v1);
+        WorldEndpoints.Map(v1);
         SocialEndpoints.Map(v1);
         AdminEndpoints.Map(v1);
         return routes;

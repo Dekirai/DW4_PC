@@ -108,8 +108,10 @@ public static class StoryWriteReasons
     public const string Room = "room";
     public const string Reset = "reset";
     public const string AdminRestore = "admin_restore";
-    /// <summary>The story a room session started from (its owner opened a room), kept beside the room's revisions.</summary>
+    /// <summary>The story a session started from (its owner opened a room; since round I1 a world entry), kept beside the revisions.</summary>
     public const string Session = "session";
+    /// <summary>Progress mirrored from the host's story at the same story point (round I2, SEAMLESS.md 19.8.6).</summary>
+    public const string Mirror = "mirror";
 }
 
 /// <summary>
@@ -221,6 +223,7 @@ public sealed class AchievementUnlock
     public bool Flagged { get; init; }
 }
 
+/// <summary>An unlock to write; <paramref name="RoomId"/> for the room era's rows, <paramref name="InstanceId"/> the instance's history id (round I1).</summary>
 public sealed record UnlockWrite(
     long AccountId,
     int AchievementId,
@@ -230,20 +233,8 @@ public sealed record UnlockWrite(
     int? Players,
     string? ClientVersion,
     bool Flagged,
-    string? EvidenceJson);
+    string? EvidenceJson,
+    long? InstanceId = null);
 
 /// <summary>How many players hold each achievement; players = accounts with an online character or an unlock.</summary>
 public sealed record AchievementRarity(IReadOnlyDictionary<int, long> Holders, long Players);
-
-/// <summary>A room membership as the durable rooms / room_members tables record it.</summary>
-public sealed class RoomMembership
-{
-    public long RoomId { get; init; }
-    public string Code { get; init; } = "";
-    public bool Ranked { get; init; }
-    /// <summary>The host's randomizer room setting: unlocks go to the randomizer ruleset whatever the client says.</summary>
-    public bool Randomizer { get; init; }
-    public bool IsHost { get; init; }
-    public int Members { get; init; }
-    public string Status { get; init; } = "";
-}

@@ -8,8 +8,29 @@ using MySqlConnector;
 
 namespace DW4Online.Data.Migrations;
 
-/// <summary>One numbered SQL migration (sql/NNNN_description.sql, embedded in the assembly).</summary>
-public sealed record Migration(int Version, string Description, string Sql, byte[] Checksum);
+/// <summary>
+/// One numbered SQL migration (sql/NNNN_description.sql, embedded in the assembly). A line "-- Requires: CREATE VIEW, ..."
+/// names database rights beyond the restricted service user's (DEPLOY.md section 2) that the migration needs: the migrator
+/// checks them before it starts the migration and refuses without changing anything (<see cref="Requires"/>).
+/// </summary>
+public sealed record Migration(int Version, string Description, string Sql, byte[] Checksum)
+{
+    /// <summary>The rights of the migration's "-- Requires:" lines, upper case ("CREATE VIEW").</summary>
+    public IReadOnlyList<string> Requires { get; } = ParseRequires(Sql);
+
+    private static List<string> ParseRequires(string sql)
+    {
+        var rights = new List<string>();
+        foreach (var line in sql.Split('\n'))
+        {
+            var t = line.Trim();
+            if (!t.StartsWith("-- Requires:", StringComparison.OrdinalIgnoreCase)) continue;
+            foreach (var right in t["-- Requires:".Length..].Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                if (!rights.Contains(right.ToUpperInvariant())) rights.Add(right.ToUpperInvariant());
+        }
+        return rights;
+    }
+}
 
 /// <summary>The migrator refused or failed; the message names the state of the database and the way out.</summary>
 public sealed class MigrationException : Exception
@@ -116,6 +137,10 @@ public sealed partial class Migrator(Database database, Action<string>? log = nu
 
             var pending = migrations.Where(m => !applied.ContainsKey(m.Version)).ToList();
             if (pending.Count == 0) return [];
+            // Rights beyond the service user's (a migration's "-- Requires:" lines): checked before anything changes, so a
+            // missing grant refuses the update with the database untouched instead of failing half way.
+            if (pending.Any(m => m.Requires.Count > 0) && await MissingRightsAsync(c, pending) is { } missing)
+                throw new MigrationException(missing);
             var current = applied.Count == 0 ? 0 : applied.Keys.Max();
             log?.Invoke($"Migrating database '{database.DatabaseName}' from schema {current} to {newest} ({pending.Count} migration(s)) ...");
             var total = Stopwatch.StartNew();
@@ -270,6 +295,34 @@ public sealed partial class Migrator(Database database, Action<string>? log = nu
         foreach (var table in tables)
             if (await c.ExecuteScalarAsync<long>($"SELECT EXISTS (SELECT 1 FROM `{table.Replace("`", "``")}`)") == 1) withRows.Add(table);
         return (tables.Count, withRows);
+    }
+
+    /// <summary>
+    /// The refusal when the connected user lacks a right a pending migration requires (null when it has them all): the
+    /// user's global and database rights from information_schema (root's ALL PRIVILEGES lists each right).
+    /// </summary>
+    private async Task<string?> MissingRightsAsync(MySqlConnection c, IReadOnlyList<Migration> pending)
+    {
+        var user = await c.ExecuteScalarAsync<string>("SELECT CURRENT_USER()") ?? "";
+        var at = user.LastIndexOf('@');
+        var grantee = at < 0 ? $"'{user}'" : $"'{user[..at]}'@'{user[(at + 1)..]}'";
+        var held = (await c.QueryAsync<string>(
+                "SELECT PRIVILEGE_TYPE FROM information_schema.USER_PRIVILEGES WHERE GRANTEE = @grantee " +
+                "UNION SELECT PRIVILEGE_TYPE FROM information_schema.SCHEMA_PRIVILEGES WHERE GRANTEE = @grantee AND DATABASE() LIKE TABLE_SCHEMA",
+                new { grantee }))
+            .Select(p => p.ToUpperInvariant()).ToHashSet();
+        foreach (var m in pending)
+        {
+            var lacking = m.Requires.Where(r => !held.Contains(r)).ToList();
+            if (lacking.Count == 0) continue;
+            var rights = string.Join(", ", lacking);
+            return $"Migration {m.Version:D4} ({m.Description}) needs the right {rights} on database '{database.DatabaseName}', which the " +
+                   $"user {user} does not have. Nothing was changed (the database stays at schema " +
+                   $"{pending[0].Version - 1}). Grant it as root (for example in HeidiSQL's query tab: GRANT {rights} ON " +
+                   $"`{database.DatabaseName}`.* TO {grantee};), then run 'DW4Online.Server.exe migrate --settings <settings file>' " +
+                   "again (deploy/DEPLOY.md, section 9.2).";
+        }
+        return null;
     }
 
     private static string Seconds(TimeSpan t) => t.TotalSeconds.ToString("0.00", CultureInfo.InvariantCulture);

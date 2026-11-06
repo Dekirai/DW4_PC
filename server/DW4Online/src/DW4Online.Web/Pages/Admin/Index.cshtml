@@ -4,14 +4,6 @@
     ViewData["Title"] = "Admin";
 }
 <h1>Admin</h1>
-@if (Model.Message is not null)
-{
-    <div class="notice ok">@Model.Message</div>
-}
-@if (Model.Error is not null)
-{
-    <div class="notice error">@Model.Error</div>
-}
 
 <h2>Accounts</h2>
 <form method="get" class="stack">
@@ -45,34 +37,7 @@
     </table>
 </div>
 
-<h2>Open rooms</h2>
-@if (Model.Rooms.Count == 0)
-{
-    <p class="muted">No rooms are open.</p>
-}
-else
-{
-    <div class="table-wrap">
-        <table>
-            <thead><tr><th>Room</th><th>Code</th><th>Owner</th><th class="num">Players</th><th>Opened</th><th></th></tr></thead>
-            <tbody>
-            @foreach (var r in Model.Rooms)
-            {
-                <tr>
-                    <td>@r.Name</td>
-                    <td><code>@r.Code</code></td>
-                    <td>@r.Owner@(r.StoryFrozen ? " (away)" : "")</td>
-                    <td class="num">@r.Players / @r.MaxPlayers</td>
-                    <td>@Format.Ago(r.CreatedAt, Model.Now)</td>
-                    <td>
-                        <form method="post" asp-page-handler="CloseRoom" class="inline">
-                            <input type="hidden" name="Code" value="@r.Code" />
-                            <button type="submit" class="link">Close</button>
-                        </form>
-                    </td>
-                </tr>
-            }
-            </tbody>
-        </table>
-    </div>
-}
+<h2>World</h2>
+<p>@Model.Counts.PlayersOnline players online, @Model.Counts.Instances instances
+    (@string.Join(", ", Model.Counts.Areas.Select(a => $"{a.Name} {a.Instances}"))).
+    <a href="~/admin/instances">Every instance</a>, Private ones included, with End and Remove.</p>
