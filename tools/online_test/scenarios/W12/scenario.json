@@ -1,5 +1,5 @@
 {
-  "desc": "settings: a hosts Hard with the randomizer and camera mode 1; b (Normal, 0, none) plays Hard in the instance and Normal at home",
+  "desc": "settings: a hosts Hard with the randomizer and camera mode 1; b (Normal, 0, none) plays Hard in the instance and Normal at home (the difficulty is the Game Start dialog's: DW4_DIFFICULTY in the test runs)",
   "world": true,
   "autochoice": "first",
   "seed_story": true,
@@ -29,6 +29,9 @@
           "enemies": 1,
           "zones": 0
         }
+      },
+      "env": {
+        "DW4_DIFFICULTY": "1"
       }
     },
     {
@@ -36,7 +39,10 @@
       "script": "b.script",
       "card": "k10",
       "start": 3,
-      "seed_story": true
+      "seed_story": true,
+      "env": {
+        "DW4_DIFFICULTY": "0"
+      }
     }
   ]
 }
