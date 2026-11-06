@@ -78,13 +78,18 @@ Own stack: mysqld 3633 (not needed by the client lane so far), test ports
 - 13:45 `DW4_ONLINE_TEST_NO_REPLACE=1` (dev builds): the counter-proof of W1 / W30 the harness asked for (contract 13:45):
   a replace-mode BARRIER_OK brings no story at all.
 
+- 13:55 final offline proof: build b (735926bc): r25c 10/10 reached, 1,748,011 frames (`build/off/r25c_b.log`, run
+  seg_r25c_i1aclient_b), the save state suite 17/17 identical (`build/st/st_b.log`); build c (2ff5b91b, the last code
+  commit; after b only a DEV-only hook and the env name list changed): det.sh 4004f056 / 396cb219 both runs
+  (`work/dref/checks/det/det_i1aclient_c`). ctest 56/56 (`build/ctest_rel6.log`). The DEV=ON build compiles (`build/dev`).
+
 ## Left (in order)
 
 1. (done) ctest for the engine paths.
 2. (done) Wire protocol 49.
 3. (done) Session.
 4. (done) App.
-5. det.sh again at the end (the app commits change no engine code but the env list).
+5. (done) det.sh again at the end.
 6. (done) SEAMLESS.md 19.25 built notes; the contract decisions (contract file 13:30 entry).
 7. Not built (left, see SEAMLESS.md 19.25 "Built, lane client"): Play driving the title's Game Start / Call Digimon
    behind one loading screen (19.5.1; Play starts at the title as the rooms did).
