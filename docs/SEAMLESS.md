@@ -8826,9 +8826,11 @@ what was taken. A review against the code (`RoomHub.cs`, `RelayHub.cs`,
 - **Go along.** When a member goes from a field into a dungeon, every
   member in a field gets "Kim went into Ancient Ruins B1. Go along?  View:
   answer" (20 s on screen; nothing pauses, no game button is taken); *Go
-  along* takes him into that floor at its entrance (next to Kim from round
-  I3), inside the instance on the host's story; members already in a
-  dungeon are never asked (decision 38, 19.30.5-19.30.7).
+  along* waits while he plays on until Kim's floor is joinable, then takes
+  him into that floor at its entrance (next to Kim from round I3) within
+  about two seconds, inside the instance on the host's story; members
+  already in a dungeon are never asked, and a member walking in and out
+  makes one notice (decision 38, 19.30.5-19.30.7).
 - **Story only in the field.** In an instance every engine holds the host's
   story; at home every engine holds its player's own: the return home
   replaces the engine's story with the own (a new engine path). Guests'
@@ -8946,7 +8948,7 @@ section 18):
 | The prompt's order is the user's (party, friends, ping, free seats); *Same story point* is a badge and the last tie-breaker | 19.7.3 |
 | B in the loading-screen form takes a player who left home back to where he left (a redirect); *Continue alone* went with round 72 (no lone host is prompted) | 19.7.5 |
 | A join from the prompt enters at the stage's entrance point (the player walked in), or as a guest in a new stage group at that stage (round 72); a join by travel (browser, friend list, party, seat, *Go to host*) appears next to its target | 19.7.7, 19.9, 19.30.4 |
-| A travel from home or into another instance never falls back to a new instance: when it fails the player is in his lobby; a travel inside the own instance (*Go along*, *Go to <member>*) falls back to a new stage group of it (round 72) | 19.9.2, 19.9.6 |
+| A travel from home or into another instance never falls back to a new instance: when it fails the player is in his lobby; a travel inside the own instance (*Go along*, *Go to <member>*) becomes a new stage group of it at the target only when nobody of the instance is there any more (round 72) | 19.9.2, 19.9.6 |
 | The host may remove a guest; the removed player cannot see or join that instance for 10 minutes (question 34) | 19.6.6 |
 | The host's settings apply in his instance: his box's difficulty, randomizer, camera and light mode, fast loading | 19.8.7 |
 | Quest instances can be joined by travel to help; the quest's end and reward only for players who took it (question 35) | 19.8.8 |
@@ -9674,7 +9676,9 @@ group at the target stage, with 19.26 idea 17's area rows as a proposal):
 a player who takes the gate to Dry Land while Kim's instance is in Ancient
 Ruins B2 gets Kim's row ("Ancient Ruins B2") and enters as a guest where
 he walked in (19.30.3, 19.30.4); from round I3 the row's *Y: Join at Kim*
-travels next to Kim (19.9, question 40).
+travels next to Kim (19.9). Question 40 asks whether such rows should
+rank after those with players at the arrival stage and never be
+preselected over *New instance*.
 
 #### 19.7.3 Order and preselection (Q13)
 
@@ -11313,7 +11317,7 @@ golden vectors on both sides (`online_wire_tests.cpp`,
 
 | Type | Message | Fields | When |
 | --- | --- | --- | --- |
-| 0x91 | OPTIONS | plan id or (inst, visit), stage, remembered visibility, preselected row, rows: wid, host member and name, relation flags (party, friend host, friends inside), the host's stage (round 72), players, players at the arrival stage (round 72), seats (taken, held, reserved), story label, same story point, difficulty, settings flags (randomizer, other settings), state (joinable, boss fight, loading, host away, full, arriving now, other quest, not here yet), visibility (staff only), worst round trip ms | the answer to PLAN; at a held barrier; again on change, at most once a second |
+| 0x91 | OPTIONS | plan id or (inst, visit), stage, remembered visibility, preselected row, rows: wid, host member and name, relation flags (party, friend host, friends inside), the host's stage (round 72), players, players at the arrival stage (round 72), seats (taken, held, reserved), story label, same story point, difficulty, settings flags (randomizer, other settings), state (joinable, boss fight, loading, host away, full, arriving now, other quest, story not here yet), visibility (staff only), worst round trip ms | the answer to PLAN; at a held barrier; again on change, at most once a second |
 | 0x94 | INSTANCE_LIST | page, total, rows as OPTIONS plus area, stage and age | the answer to BROWSE |
 | 0x95 | INSTANCE_INFO | wid, host member, visibility, settings, story label, members (member, slot, stage, level, flags connected / lagging / staff), seats, grace seconds left, own role (host, guest, staff, spectator) | on change (the Online menu, the status line, the lag icons) |
 | 0x96 | WORLD_NOTICE | kind, member, name, argument | joined, left, went to a stage, visibility changed, removed, host away (seconds), host back, ended (reason), lagging, lag over, shared progress saved, friend online / offline / request / accepted, invite, party joined / left / leader / heading, go refused (round 72: the reason, offer closed or the member moved) |
@@ -11843,10 +11847,13 @@ it I1's joins take the classic path, refused beyond 30 s and shown so in
 the lists); I2-social merged (its tables and the notifier's interface); the
 answers to questions 32 and 36 (the defaults otherwise; 32 (b) adds a lane
 with round S3's script classes, 32 (c) rewrites the exit port; 32 and 36
-are answered, section 18) and to questions 39 and 40 of round 72 (the
-defaults otherwise; 39 (b) adds a relay check of the Fortress stages, 40
-(b) only changes I3's prompt rows). Round I3 depends on the answers to 35
-and 37 as well.
+are answered, section 18). The answers to round 72's questions 39-42
+change I1b and I3 more than I1a (the defaults otherwise): 39 (b) makes
+staggf01-04 dungeon stages in `areas.json` (data only); 40 (b) changes
+I1b's order and preselection, 40 (c) also I3's row action; 41 (b) or (c)
+brings round 67's lone-host prompt with *Continue alone* back into I1b's
+prompt lane; 42 decides the load gate's criterion. Round I3 depends on
+the answers to 35 and 37 as well.
 
 **Round I1b: the prompt, go along, removal and *Report player*** (proposed
 r69; M, two lanes; round 72 adds the third lane *go along*, M-L).
@@ -12312,11 +12319,13 @@ and the exit port (`src/engine/online_exits.cpp`).
   lies there), and a member's barriers are decided among its own
   instance's stage groups anyway (19.6.3). The table keeps stag0205 in Dry
   Land and the Fortress in Death Valley.
-- **The Fortress is Death Valley's** (question 39's default): a host who
-  walks from Goblin Pass into the Fortress and on to the plateau keeps his
-  instance. By the region names he "left Death Valley", but he went
-  nowhere a Death Valley player cannot walk to, and ending the instance
-  there would send his guests home while he walks on.
+- **The Fortress is Death Valley's** (decided and reported, section 18):
+  a host who walks from Goblin Pass into the Fortress and on to the
+  plateau keeps his instance. By the region names he "left Death Valley",
+  but he went nowhere a Death Valley player cannot walk to, and ending the
+  instance there would send his guests home while he walks on. Its stages
+  are fields for the go-along offer (kind `field`; question 39 asks
+  whether they should count as a dungeon).
 - **The end** stays 19.6.5 word for word. The scope is closed under
   walking, so the host leaves it only by going home: an exit into a hub
   stage (fact 2's exits among them), the gate disc, *Give up*, *Leave
