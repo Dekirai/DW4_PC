@@ -100,6 +100,7 @@ enum class StoryRefusal : std::uint8_t {
     not_started = 10, // the room owner's online story has not started (an owner without one; 8.6): dropped like owner_away
     queued = 11,     // earned (round G, 8.8): passed every check, waits only for the one-per-visit rule or a guest's
                      // spacing; the server merges it when due, so it is not sent again (like held, without its notice)
+    owner = 12,      // protocol 49 (round I1a, 19.8.4): the STORY's owner key was not the sender's current story owner (not sent again)
 };
 
 // One refused key of a STORY_ACK.

@@ -33,6 +33,10 @@ const char* type_name(Type type) noexcept {
     case Type::checkpoint: return "CHECKPOINT";
     case Type::checkpoint_bad: return "CHECKPOINT_BAD";
     case Type::checkpoint_ask: return "CHECKPOINT_ASK";
+    case Type::instance_op: return "INSTANCE_OP";
+    case Type::instance_info: return "INSTANCE_INFO";
+    case Type::world_notice: return "WORLD_NOTICE";
+    case Type::member_info: return "MEMBER_INFO";
     case Type::welcome: return "WELCOME";
     case Type::sealed: return "SEALED";
     case Type::live: return "LIVE";
@@ -260,6 +264,32 @@ std::vector<WirePad> read_pads(Reader& r, std::size_t count, std::size_t max) {
 }
 } // namespace
 
+// ---- the settings block (protocol 49)
+void write_settings(Writer& w, const Settings& s) {
+    w.u8(s.difficulty);
+    w.u8(s.camera);
+    w.u8(s.light);
+    w.u8(s.fast);
+    w.u32(s.seed);
+    w.u8(s.drops);
+    w.u8(s.enemies);
+    w.u8(s.zones);
+}
+Settings read_settings(Reader& r) {
+    Settings s;
+    s.difficulty = r.u8();
+    s.camera = r.u8();
+    s.light = r.u8();
+    s.fast = r.u8();
+    s.seed = r.u32();
+    s.drops = r.u8();
+    s.enemies = r.u8();
+    s.zones = r.u8();
+    if (s.difficulty > 2 || s.camera > 1 || s.light > 1 || s.fast > 1 || s.drops > 1 || s.enemies > 2 || s.zones > 2)
+        throw WireError("settings out of range");
+    return s;
+}
+
 // ---- tick records
 void write_tick(Writer& w, const TickBody& tick) {
     check_mask(tick.present);
@@ -286,6 +316,16 @@ void write_tick(Writer& w, const TickBody& tick) {
         case EventKind::delay:
             p.u8(e.slot);
             p.u8(e.delay);
+            break;
+        case EventKind::home:
+            check_mask(e.mask);
+            p.u8(e.mask);
+            p.u8(e.reason);
+            break;
+        case EventKind::go:
+            p.u8(e.slot);
+            p.u8(e.point);
+            put_stage(p, e.stage, false);
             break;
         default: throw WireError("unknown event kind");
         }
@@ -327,6 +367,16 @@ TickBody read_tick(Reader& r) {
         case EventKind::delay:
             e.slot = p.u8();
             e.delay = p.u8();
+            break;
+        case EventKind::home:
+            e.mask = p.u8();
+            check_mask(e.mask);
+            e.reason = p.u8();
+            break;
+        case EventKind::go:
+            e.slot = p.u8();
+            e.point = p.u8();
+            e.stage = stage_of(p, false);
             break;
         default: continue; // an event type of a newer server: skipped
         }
@@ -424,6 +474,9 @@ std::vector<std::uint8_t> encode(const Barrier& m) {
     w.u8(m.present);
     w.u64(m.context);
     w.blob(m.carry);
+    w.u32(m.token);
+    w.u16(m.plan);
+    write_settings(w, m.own);
     return std::move(w.out);
 }
 Barrier decode_barrier(std::span<const std::uint8_t> b) {
@@ -440,6 +493,9 @@ Barrier decode_barrier(std::span<const std::uint8_t> b) {
     check_mask(m.present);
     m.context = r.u64();
     m.carry = r.blob(kMaxCarry);
+    m.token = r.u32();
+    m.plan = r.u16();
+    m.own = read_settings(r);
     r.end();
     return m;
 }
@@ -721,6 +777,8 @@ std::vector<std::uint8_t> encode(const Story& m) {
         w.u32(g.visit);
         w.i32(g.growth);
     }
+    w.u32(m.owner);
+    w.u8(m.box);
     return std::move(w.out);
 }
 Story decode_story(std::span<const std::uint8_t> b) {
@@ -756,6 +814,8 @@ Story decode_story(std::span<const std::uint8_t> b) {
         g.growth = r.i32();
         d.counters.push_back(g);
     }
+    m.owner = r.u32();
+    m.box = r.u8();
     r.end();
     return m;
 }
@@ -772,6 +832,8 @@ std::vector<std::uint8_t> encode(const StoryAck& m) {
         w.u16(std::uint16_t(x.index));
         w.u8(std::uint8_t(x.reason));
     }
+    w.u32(m.owner);
+    w.u8(m.box);
     return std::move(w.out);
 }
 StoryAck decode_story_ack(std::span<const std::uint8_t> b) {
@@ -791,6 +853,8 @@ StoryAck decode_story_ack(std::span<const std::uint8_t> b) {
         x.reason = engine::StoryRefusal(r.u8());
         m.refused.push_back(x);
     }
+    m.owner = r.u32();
+    m.box = r.u8();
     r.end();
     return m;
 }
@@ -809,7 +873,7 @@ Intent decode_intent(std::span<const std::uint8_t> b) {
     m.inst = r.u32();
     m.visit = r.u32();
     const auto kind = r.u8();
-    if (kind != 1 && kind != 2) throw WireError("unknown intent");
+    if (kind < 1 || kind > 4) throw WireError("unknown intent");
     m.kind = IntentKind(kind);
     m.argument = r.i32();
     r.end();
@@ -861,14 +925,20 @@ void check_name(const std::string& name, std::size_t limit, const char* what) {
 
 std::vector<std::uint8_t> encode(const Presence& m, bool with_member) {
     Writer w;
-    if (with_member) w.u8(m.member);
+    if (with_member) {
+        w.u32(m.member);
+        w.u8(m.relation);
+    }
     write_presence(w, m);
     return std::move(w.out);
 }
 Presence decode_presence(std::span<const std::uint8_t> b, bool with_member) {
     Reader r{b};
     Presence m;
-    if (with_member) m.member = r.u8();
+    if (with_member) {
+        m.member = r.u32();
+        m.relation = r.u8();
+    }
     read_presence(r, m);
     r.end();
     check_presence(m);
@@ -879,7 +949,10 @@ std::vector<std::uint8_t> encode_presence2(const Presence& m, bool with_member) 
     check_name(m.clip, kMaxClip, "clip");
     check_name(m.weapon, kMaxWeapon, "weapon");
     Writer w;
-    if (with_member) w.u8(m.member);
+    if (with_member) {
+        w.u32(m.member);
+        w.u8(m.relation);
+    }
     w.u8(kPresenceVersion);
     write_presence(w, m);
     w.str8(m.clip);
@@ -892,7 +965,10 @@ std::vector<std::uint8_t> encode_presence2(const Presence& m, bool with_member) 
 Presence decode_presence2(std::span<const std::uint8_t> b, bool with_member) {
     Reader r{b};
     Presence m;
-    if (with_member) m.member = r.u8();
+    if (with_member) {
+        m.member = r.u32();
+        m.relation = r.u8();
+    }
     m.version = r.u8();
     if (m.version == 0) throw WireError("presence version 0");
     read_presence(r, m);
@@ -915,6 +991,7 @@ std::vector<std::uint8_t> encode(const Resume& m) {
     w.u32(m.visit);
     w.u8(m.slot);
     w.u32(m.last_tick);
+    put_stage(w, m.stage, true);
     return std::move(w.out);
 }
 Resume decode_resume(std::span<const std::uint8_t> b) {
@@ -924,6 +1001,7 @@ Resume decode_resume(std::span<const std::uint8_t> b) {
     m.visit = r.u32();
     m.slot = r.u8();
     m.last_tick = r.u32();
+    m.stage = stage_of(r, true);
     r.end();
     return m;
 }
@@ -971,7 +1049,7 @@ Bye decode_bye(std::span<const std::uint8_t> b) {
 // ---- server -> client
 std::vector<std::uint8_t> encode(const Welcome& m) {
     Writer w;
-    w.u8(m.member);
+    w.u32(m.member);
     w.u32(m.inst);
     w.u32(m.visit);
     w.u8(m.slot);
@@ -981,12 +1059,14 @@ std::vector<std::uint8_t> encode(const Welcome& m) {
     w.u8(m.delay);
     w.u16(m.max_catch_up);
     w.u8(m.flags);
+    w.u32(m.wid);
+    w.u8(m.box);
     return std::move(w.out);
 }
 Welcome decode_welcome(std::span<const std::uint8_t> b) {
     Reader r{b};
     Welcome m;
-    m.member = r.u8();
+    m.member = r.u32();
     m.inst = r.u32();
     m.visit = r.u32();
     m.slot = r.u8();
@@ -996,6 +1076,8 @@ Welcome decode_welcome(std::span<const std::uint8_t> b) {
     m.delay = r.u8();
     m.max_catch_up = r.u16();
     m.flags = r.u8();
+    m.wid = r.u32();
+    m.box = r.u8();
     r.end();
     if (m.slot > 3 || std::uint8_t(m.mode) > 2) throw WireError("bad welcome");
     return m;
@@ -1030,6 +1112,11 @@ std::vector<std::uint8_t> encode(const JoinReq& m) {
     w.u32(m.visit);
     w.u8(m.slot);
     w.u8(m.delay);
+    w.u8(std::uint8_t(m.kind));
+    if (m.kind == JoinKind::go) {
+        put_stage(w, m.stage, false);
+        w.u8(m.point);
+    }
     return std::move(w.out);
 }
 JoinReq decode_join_req(std::span<const std::uint8_t> b) {
@@ -1039,6 +1126,13 @@ JoinReq decode_join_req(std::span<const std::uint8_t> b) {
     m.visit = r.u32();
     m.slot = r.u8();
     m.delay = r.u8();
+    const auto kind = r.u8();
+    if (kind < 1 || kind > 3) throw WireError("unknown join_req kind");
+    m.kind = JoinKind(kind);
+    if (m.kind == JoinKind::go) {
+        m.stage = stage_of(r, false);
+        m.point = r.u8();
+    }
     r.end();
     return m;
 }
@@ -1060,16 +1154,26 @@ std::vector<std::uint8_t> encode(const BarrierOk& m) {
     w.u8(std::uint8_t(m.co_arrivals.size()));
     for (const auto& c : m.co_arrivals) {
         w.u8(c.slot);
-        w.u8(c.member);
+        w.u32(c.member);
         w.blob(c.carry);
     }
     w.u32(m.story_revision);
     w.blob(m.story);
-    w.blob(m.dropped);
     w.u8(std::uint8_t(m.notice));
     if (m.names.size() > 255) throw WireError("too many names");
     w.u8(std::uint8_t(m.names.size()));
     for (const auto& n : m.names) w.str8(n);
+    w.u32(m.wid);
+    w.u32(m.host);
+    w.u8(std::uint8_t(m.visibility));
+    w.u8(std::uint8_t(m.arrival));
+    write_settings(w, m.settings);
+    w.u64(m.settings_hash);
+    w.u32(m.owner);
+    w.u8(m.box);
+    w.u8(std::uint8_t(m.story_mode));
+    put_stage(w, m.redirect_stage, true);
+    w.u8(m.redirect_point);
     return std::move(w.out);
 }
 BarrierOk decode_barrier_ok(std::span<const std::uint8_t> b) {
@@ -1099,16 +1203,32 @@ BarrierOk decode_barrier_ok(std::span<const std::uint8_t> b) {
         CoArrival c;
         c.slot = r.u8();
         if (c.slot > 3) throw WireError("co-arrival slot above 3");
-        c.member = r.u8();
+        c.member = r.u32();
         c.carry = r.blob(kMaxCarry);
         m.co_arrivals.push_back(std::move(c));
     }
     m.story_revision = r.u32();
     m.story = r.blob(1u << 16);
-    m.dropped = r.blob(1u << 16);
     m.notice = Notice(r.u8());
     const int names = r.u8();
     for (int i = 0; i < names; ++i) m.names.push_back(r.str8(64));
+    m.wid = r.u32();
+    m.host = r.u32();
+    const auto visibility = r.u8();
+    if (visibility > 2) throw WireError("unknown visibility");
+    m.visibility = Visibility(visibility);
+    const auto arrival = r.u8();
+    if (arrival > 4) throw WireError("unknown arrival");
+    m.arrival = Arrival(arrival);
+    m.settings = read_settings(r);
+    m.settings_hash = r.u64();
+    m.owner = r.u32();
+    m.box = r.u8();
+    const auto mode = r.u8();
+    if (mode > 1) throw WireError("unknown story mode");
+    m.story_mode = StoryMode(mode);
+    m.redirect_stage = stage_of(r, true);
+    m.redirect_point = r.u8();
     r.end();
     return m;
 }
@@ -1204,23 +1324,116 @@ StateData decode_state_body(std::span<const std::uint8_t> b) {
     return m;
 }
 
-std::vector<std::uint8_t> encode(const Room& m) {
+// ---- protocol 49 (round I1a)
+std::vector<std::uint8_t> encode(const InstanceInfo& m) {
+    if (m.members.size() > 255) throw WireError("too many instance members");
+    Writer w;
+    w.u32(m.wid);
+    w.u32(m.host);
+    w.u8(std::uint8_t(m.visibility));
+    write_settings(w, m.settings);
+    w.str8(m.area);
+    w.str8(m.story_label);
+    w.u8(std::uint8_t(m.members.size()));
+    for (const auto& x : m.members) {
+        w.u32(x.member);
+        put_stage(w, x.stage, true);
+        w.u16(x.level);
+        w.u8(x.flags);
+    }
+    w.u8(m.taken);
+    w.u8(m.held);
+    w.u8(m.reserved);
+    w.u16(m.grace);
+    w.u8(std::uint8_t(m.role));
+    return std::move(w.out);
+}
+InstanceInfo decode_instance_info(std::span<const std::uint8_t> b) {
+    Reader r{b};
+    InstanceInfo m;
+    m.wid = r.u32();
+    m.host = r.u32();
+    const auto visibility = r.u8();
+    if (visibility > 2) throw WireError("unknown visibility");
+    m.visibility = Visibility(visibility);
+    m.settings = read_settings(r);
+    m.area = r.str8(32);
+    m.story_label = r.str8(64);
+    const int n = r.u8();
+    for (int i = 0; i < n; ++i) {
+        InstanceMember x;
+        x.member = r.u32();
+        x.stage = stage_of(r, true);
+        x.level = r.u16();
+        x.flags = r.u8();
+        m.members.push_back(std::move(x));
+    }
+    m.taken = r.u8();
+    m.held = r.u8();
+    m.reserved = r.u8();
+    m.grace = r.u16();
+    const auto role = r.u8();
+    if (role > 3) throw WireError("unknown role");
+    m.role = Role(role);
+    r.end();
+    return m;
+}
+
+std::vector<std::uint8_t> encode(const WorldNotice& m) {
     Writer w;
     w.u8(std::uint8_t(m.kind));
-    w.u8(m.member);
-    w.u64(m.account);
-    w.str8(m.name);
+    w.u32(m.member);
+    w.str8(m.name.size() > 64 ? m.name.substr(0, 64) : m.name);
+    w.u32(m.argument);
+    w.str8(m.text.size() > 200 ? m.text.substr(0, 200) : m.text);
+    return std::move(w.out);
+}
+WorldNotice decode_world_notice(std::span<const std::uint8_t> b) {
+    Reader r{b};
+    WorldNotice m;
+    m.kind = NoticeKind(r.u8());
+    m.member = r.u32();
+    m.name = r.str8(64);
+    m.argument = r.u32();
+    m.text = r.str8();
+    r.end();
+    return m;
+}
+
+std::vector<std::uint8_t> encode(const MemberInfo& m) {
+    Writer w;
+    w.u32(m.member);
+    w.str8(m.name.size() > 64 ? m.name.substr(0, 64) : m.name);
+    w.u16(m.level);
     w.u8(m.flags);
     return std::move(w.out);
 }
-Room decode_room(std::span<const std::uint8_t> b) {
+MemberInfo decode_member_info(std::span<const std::uint8_t> b) {
     Reader r{b};
-    Room m;
-    m.kind = RoomEvent(r.u8());
-    m.member = r.u8();
-    m.account = r.u64();
+    MemberInfo m;
+    m.member = r.u32();
     m.name = r.str8(64);
+    m.level = r.u16();
     m.flags = r.u8();
+    r.end();
+    return m;
+}
+
+std::vector<std::uint8_t> encode(const InstanceOp& m) {
+    if (m.op == InstanceOpKind::visibility && m.argument > 2) throw WireError("visibility above 2");
+    Writer w;
+    w.u8(std::uint8_t(m.op));
+    w.u32(m.argument);
+    return std::move(w.out);
+}
+InstanceOp decode_instance_op(std::span<const std::uint8_t> b) {
+    Reader r{b};
+    InstanceOp m;
+    const auto op = r.u8();
+    if (op < 1 || op > 3) throw WireError("unknown instance op");
+    m.op = InstanceOpKind(op);
+    m.argument = r.u32();
+    if (m.op == InstanceOpKind::visibility && m.argument > 2) throw WireError("visibility above 2");
     r.end();
     return m;
 }
@@ -1282,40 +1495,6 @@ Close decode_close(std::span<const std::uint8_t> b) {
     Close m;
     m.reason = CloseReason(r.u8());
     m.text = r.str8();
-    r.end();
-    return m;
-}
-
-std::vector<std::uint8_t> encode(const Roster& m) {
-    if (m.entries.size() > 255) throw WireError("too many roster entries");
-    Writer w;
-    w.u8(std::uint8_t(m.entries.size()));
-    for (const auto& e : m.entries) {
-        w.u8(e.member);
-        put_stage(w, e.stage, true);
-        w.u32(e.inst);
-        w.u16(e.level);
-        w.u16(e.hp);
-        w.u16(e.max_hp);
-        w.u8(e.flags);
-    }
-    return std::move(w.out);
-}
-Roster decode_roster(std::span<const std::uint8_t> b) {
-    Reader r{b};
-    Roster m;
-    const int n = r.u8();
-    for (int i = 0; i < n; ++i) {
-        RosterEntry e;
-        e.member = r.u8();
-        e.stage = stage_of(r, true);
-        e.inst = r.u32();
-        e.level = r.u16();
-        e.hp = r.u16();
-        e.max_hp = r.u16();
-        e.flags = r.u8();
-        m.entries.push_back(std::move(e));
-    }
     r.end();
     return m;
 }

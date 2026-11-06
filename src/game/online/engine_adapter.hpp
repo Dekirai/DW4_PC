@@ -83,18 +83,25 @@ public:
     void remove_player(int slot) override;
     void mark_leaving(int slot) override;
     void intent(int slot, wire::IntentKind kind, int argument) override;
+    void home(std::uint8_t mask) override;
+    bool depart_home() override;
     void set_view_slot(int slot) override;
 
+    // The member's own settings (round I1a, 19.8.7): its Game Start's
+    // difficulty and its Online > Settings. Applied at the session's own
+    // start and set back at every DISSOLVE; a restore keeps the snapshot's.
     const RoomSettings& settings() const { return settings_; }
+    void set_settings(const RoomSettings& settings) { settings_ = settings; }
     // After every live step: once the title starts a game (GameSystem::
     // game_started, set by TITLE2 GAMESTART right after the title wrote its
     // own camera and light mode and the character select its difficulty),
-    // the room's difficulty, camera mode and light mode replace them and the
-    // room story (set_room_story) replaces the character's FLAG, FLAGFOLDER
-    // and COUNTER, before gameStart.lua runs (a later step) and before the
-    // first stage loads, so every instance of the room uses the same
-    // difficulty and camera data (3.1, 8.5). The title is the member's own
-    // solo instance, so each machine does it in its own line.
+    // the own Online > Settings' camera and light mode replace the title's,
+    // the difficulty the original dialog chose stays (round I1a, 19.8.7: it
+    // becomes the own settings' difficulty) and the own story
+    // (set_room_story) replaces the character's FLAG, FLAGFOLDER and COUNTER,
+    // before gameStart.lua runs (a later step) and before the first stage
+    // loads (8.5). The title is the member's own solo instance, so each
+    // machine does it in its own line.
     // The trigger is the title's GAMESTART (Engine::title_game_start), not
     // game_started's rising edge: that flag stays set after "Continue? No"
     // took the player back to the title, and the title's option menu sets it
@@ -134,6 +141,7 @@ private:
     engine::Engine& e() const { return hooks_.engine(); }
     EngineHooks hooks_;
     RoomSettings settings_;
+    bool restored_ = false; // the engine came from a restore since its construction: the snapshot's cheats stay (M1)
     std::optional<engine::RoomStory> room_story_;
     bool replay_ = false;
     int own_slot_ = 0;

@@ -47,7 +47,11 @@ namespace dw4::game {
 // T + 14 after an upload of T, wire::kReadyCheckTicks; a 47 joiner names the
 // next multiple of 60 and a 47 donor never sends that NETFP, docs/SEAMLESS.md
 // 6.13.5).
-inline constexpr std::uint32_t kOnlineProtocol = 48;
+// 49 round I1a: the world without rooms (docs/SEAMLESS.md 19.18: member ids
+// as u32, the settings block, BARRIER_OK's world part, HOME, INSTANCE_INFO,
+// WORLD_NOTICE, MEMBER_INFO, INSTANCE_OP; ROOM and ROSTER retired). The
+// world relay speaks only 49 (its floor is this number, 19.17.3).
+inline constexpr std::uint32_t kOnlineProtocol = 49;
 
 struct OnlineOptions {
     std::string user, create, join;

@@ -69,6 +69,7 @@ public:
     bool replay_ = false;
     dw4::engine::StoryValues story; // FLAG / FLAGFOLDER / COUNTER (tests set values as a script would)
     int story_merges = 0;
+    int story_replaces = 0; // round I1a: barriers whose story replaced the subset
     int restores = 0, replayed = 0;
     std::uint64_t audio_steps = 0;
 
@@ -186,6 +187,12 @@ public:
 
     void step(const std::array<dw4::PadSample, 4>& pads) {
         ++frame_;
+        if (home_at_ && frame_ >= home_at_ && !pending_) {
+            home_at_ = 0;
+            pending_ = "stagml11";
+            transition_left_ = transition_steps;
+            return;
+        }
         if (pending_) {
             if (--transition_left_ > 0) return;
             // The load step: the barrier's membership, the new stage, the snapshot.
@@ -196,10 +203,16 @@ public:
             prompt_owner_ = -1;
             leaving_ = 0;
             if (barrier_) {
-                // The room story first (8.5, 8.6), as Engine::apply_barrier.
+                // The story first (8.5; round I1a: merged, or replaced at the
+                // return home and a guest's NEW), as Engine::apply_barrier.
                 if (!barrier_->story.empty()) {
-                    dw4::engine::story::apply(story, dw4::engine::story::decode_story(barrier_->story, barrier_->story_revision),
-                                              dw4::engine::story::decode_keys(barrier_->dropped));
+                    const auto room = dw4::engine::story::decode_story(barrier_->story, barrier_->story_revision);
+                    if (barrier_->story_mode == w::StoryMode::replace) {
+                        dw4::engine::story::replace(story, room);
+                        ++story_replaces;
+                    } else {
+                        dw4::engine::story::apply(story, room, {});
+                    }
                     ++story_merges;
                 }
                 present_ = barrier_->present();
@@ -287,7 +300,44 @@ public:
     void start_online(int slot, std::uint8_t) override { identity_ = slot; }
     void set_split_identity(int slot) override { identity_ = slot; }
     void set_fork_sides(std::span<const w::Fork>) override {}
-    void set_barrier(const w::BarrierOk& ok) override { barrier_ = ok; }
+    void set_barrier(const w::BarrierOk& ok) override {
+        barrier_ = ok;
+        // Round I1a (19.8.3, M2): a DISSOLVE redirected: the pending stage replaced.
+        if (ok.decision == w::Decision::dissolve && !ok.redirect_stage.empty() && pending_) {
+            pending_ = ok.redirect_stage;
+            redirected_point = ok.redirect_point;
+        }
+        if (ok.decision == w::Decision::dissolve) own_settings_set_back = true;
+        if (ok.story_mode == w::StoryMode::replace && ok.wid != 0 && ok.decision != w::Decision::dissolve) host_settings = ok.settings;
+    }
+    // Round I1a (19.6.5, 19.6.10): HOME for a mask (a fork of exactly the
+    // mask, the leavers' copy departs for the lobby) and the local way home.
+    void home(std::uint8_t mask) override {
+        mask &= present_;
+        if (!mask) return;
+        state_ = mix(state_, 0x8000 + mask);
+        if (mask != present_) {
+            SplitInfo split{mask, false, (mask & (1u << identity_)) != 0};
+            present_ = split.local_leaves ? mask : std::uint8_t(present_ & ~mask);
+            split_ = split;
+            if (!split.local_leaves) return;
+        }
+        // (The departure's records take a while, as the real one's fade:
+        // the NEXTSTAGE comes 30 frames later.)
+        home_at_ = frame_ + 30;
+        ++homes; // (this copy departs)
+    }
+    bool depart_home() override {
+        if (std::popcount(unsigned(present_)) != 1 || !membership_safe() || home_at_) return false;
+        ++homes;
+        home_at_ = frame_ + 30;
+        return true;
+    }
+    std::uint64_t home_at_ = 0;
+    int homes = 0;
+    std::optional<int> redirected_point;
+    bool own_settings_set_back = false;
+    std::optional<w::Settings> host_settings;
     bool join_player(int slot, std::span<const std::uint8_t> carry, int point) override {
         if (carry.empty()) return false; // (a carry the engine cannot read)
         present_ |= std::uint8_t(1u << slot);
@@ -471,18 +521,28 @@ public:
     int story_wait = 0;      // the next STORY frames are answered "wait" for every key (a visit too young, 8.7)
     int story_queued = 0;    // the next STORY frames are answered "queued" for every key (earned, merged later; round G-core)
     int stories = 0, story_acks = 0;
-    w::BarrierOk with_story(w::BarrierOk ok) const {
+    // Round I1a: every BARRIER_OK passes shape_ok (a test makes it a world
+    // decision: wid, host, arrival, owner, story mode, settings, redirect).
+    std::function<void(std::uint32_t member, w::BarrierOk&)> shape_ok;
+    w::BarrierOk with_story(w::BarrierOk ok, std::uint32_t member) const {
         ok.story_revision = room_story.revision;
         ok.story = dw4::engine::story::encode_story(room_story);
-        ok.dropped = dw4::engine::story::encode_keys(dropped);
+        if (shape_ok) shape_ok(member, ok);
         return ok;
     }
     void broadcast_story(double now) {
         w::StoryAck ack{room_story.revision, dw4::engine::story::encode_story(room_story), 0, {}};
         for (auto& [id, _] : members) send(id, w::Type::story_ack, w::encode(ack), now);
     }
+    // Round I1a: the last STORY's owner key, the INTENT leaves, the wid the
+    // next WELCOME of a member names (0: the relay knows none).
+    std::uint32_t last_story_owner = 0;
+    int leave_intents = 0;
+    std::map<std::uint32_t, std::uint32_t> welcome_wid;
+    std::set<std::uint32_t> wid_forgotten; // members whose next WELCOME is not resumable (the relay restarted)
     void on_story(Member& m, const w::Story& s, double now) {
         ++stories;
+        last_story_owner = s.owner;
         if (story_lost) return;
         w::StoryAck answer{0, {}, w::StoryAck::answer, {}};
         using K = dw4::engine::StoryRefused::Kind;
@@ -575,15 +635,17 @@ public:
             m.slot = 0;
         }
         const auto& inst = instances[m.inst];
-        w::Welcome welcome{std::uint8_t(m.id), inst.id, inst.visit, std::uint8_t(m.slot), inst.mode(), inst.stage, w::kNoTick, 0, 30,
-                           std::uint8_t((resumable ? w::Welcome::resumable : 0) | (presence_v2 ? w::Welcome::presence_v2 : 0) |
+        w::Welcome welcome{m.id, inst.id, inst.visit, std::uint8_t(m.slot), inst.mode(), inst.stage, w::kNoTick, 0, 30,
+                           std::uint8_t((resumable && !wid_forgotten.contains(m.id) ? w::Welcome::resumable : 0) | (presence_v2 ? w::Welcome::presence_v2 : 0) |
                                         (checkpoints ? w::Welcome::checkpoints : 0))};
+        welcome.wid = welcome_wid.contains(m.id) ? welcome_wid.at(m.id) : 0;
         send(m.id, w::Type::welcome, w::encode(welcome), now);
         send(m.id, w::Type::story_ack, w::encode(w::StoryAck{room_story.revision, dw4::engine::story::encode_story(room_story), 0, {}}), now);
+        // Protocol 49: the names come with MEMBER_INFO (19.18).
         for (auto& [id, other] : members)
             if (id != c.member) {
-                send(id, w::Type::room, w::encode(w::Room{w::RoomEvent::joined, std::uint8_t(c.member), c.member, m.name, 0}), now);
-                send(c.member, w::Type::room, w::encode(w::Room{w::RoomEvent::joined, std::uint8_t(id), id, other.name, 0}), now);
+                send(id, w::Type::member_info, w::encode(w::MemberInfo{c.member, m.name, 1, w::MemberInfo::own_instance}), now);
+                send(c.member, w::Type::member_info, w::encode(w::MemberInfo{id, other.name, 1, w::MemberInfo::own_instance}), now);
             }
     }
 
@@ -651,7 +713,7 @@ public:
         if (m.lagging == on) return;
         m.lagging = on;
         for (auto& [id, other] : members)
-            send(id, w::Type::room, w::encode(w::Room{on ? w::RoomEvent::lagging : w::RoomEvent::lag_over, std::uint8_t(member), member, m.name, 0}), now);
+            send(id, w::Type::world_notice, w::encode(w::WorldNotice{on ? w::NoticeKind::lagging : w::NoticeKind::lag_over, member, m.name, 0, {}}), now);
     }
 
     void seal(Instance& inst, double now) {
@@ -731,7 +793,7 @@ public:
             m.inst = hub.id;
             m.slot = 0;
             m.parked.reset();
-            send(m.id, w::Type::barrier_ok, w::encode(with_story(ok)), now);
+            send(m.id, w::Type::barrier_ok, w::encode(with_story(ok, m.id)), now);
             log_lines.push_back("dissolve " + m.name + " " + b.stage);
             leave_instance_if_empty(from);
             return;
@@ -762,7 +824,7 @@ public:
             base_ok.slot_map[std::size_t(base.slot)] = 0;
             base_ok.mode = w::Mode::sealed;
             base_ok.delay = std::uint8_t(suggested_delay);
-            base_ok.co_arrivals = {{1, std::uint8_t(late.id), late.parked->carry}};
+            base_ok.co_arrivals = {{1, late.id, late.parked->carry}};
             w::BarrierOk late_ok = base_ok;
             late_ok.inst = late.parked->inst;
             late_ok.visit = late.parked->visit;
@@ -776,8 +838,8 @@ public:
             base.parked.reset();
             late.parked.reset();
             pending_co_arrival[inst.id] = late.id;
-            send(base.id, w::Type::barrier_ok, w::encode(with_story(base_ok)), now);
-            send(late.id, w::Type::barrier_ok, w::encode(with_story(late_ok)), now);
+            send(base.id, w::Type::barrier_ok, w::encode(with_story(base_ok, base.id)), now);
+            send(late.id, w::Type::barrier_ok, w::encode(with_story(late_ok, late.id)), now);
             log_lines.push_back("co-arrival " + base.name + " + " + late.name + " in " + b.stage);
             leave_instance_if_empty(from);
             leave_instance_if_empty(late_from);
@@ -799,7 +861,7 @@ public:
             m.observe_slot = slot;
             m.carry = b.carry;
             m.parked.reset();
-            send(m.id, w::Type::barrier_ok, w::encode(with_story(ok)), now);
+            send(m.id, w::Type::barrier_ok, w::encode(with_story(ok, m.id)), now);
             if (checkpoint_joins) {
                 // The state comes with the donor's upload (send_checkpoint_states).
                 running_uploads.erase(target->id);
@@ -860,7 +922,7 @@ public:
         m.inst = inst.id;
         m.slot = 0;
         m.parked.reset();
-        send(m.id, w::Type::barrier_ok, w::encode(with_story(ok)), now);
+        send(m.id, w::Type::barrier_ok, w::encode(with_story(ok, m.id)), now);
         log_lines.push_back("new " + m.name + " " + b.stage);
         if (!reuse) leave_instance_if_empty(from);
     }
@@ -1206,6 +1268,9 @@ public:
             break;
         }
         case w::Type::story: on_story(m, w::decode_story(f.payload), now); break;
+        case w::Type::intent:
+            if (w::decode_intent(f.payload).kind == w::IntentKind::leave) ++leave_intents;
+            break;
         case w::Type::statehash: statehashes.emplace_back(m.name, w::decode_statehash(f.payload)); break;
         case w::Type::checkpoint: {
             const auto c = w::decode_checkpoint(f.payload);

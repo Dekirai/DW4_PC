@@ -114,6 +114,12 @@ public:
     // take the leader's pad meanwhile.
     virtual void mark_leaving(int slot) = 0;
     virtual void intent(int slot, wire::IntentKind kind, int argument) = 0;
+    // Round I1a (docs/SEAMLESS.md 19.6.5, 19.6.10): HOME for a slot mask (the
+    // home departure; a fork of ForkKind::home for part of the present
+    // slots) and the local way home of a solo engine whose instance is gone.
+    // The defaults: an engine without them (test fakes) does nothing.
+    virtual void home(std::uint8_t mask) { (void)mask; }
+    virtual bool depart_home() { return false; }
     // Presentation only: whose camera the picture uses (a defeated member
     // watches the nearest living member).
     virtual void set_view_slot(int slot) = 0;

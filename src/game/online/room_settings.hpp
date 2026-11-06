@@ -17,6 +17,7 @@
 // with decimal numbers, DROPS and fast 0 or 1, and rand=0,0,0,0 while the
 // randomizer is not active.
 #include "dw4/engine/engine.hpp"
+#include "wire.hpp"
 
 #include <cstdint>
 #include <optional>
@@ -49,5 +50,11 @@ std::uint64_t settings_hash(const RoomSettings& settings, std::uint32_t protocol
 // randomizer and fast loading (set after every online engine construction
 // and restore).
 void apply_room_cheats(const RoomSettings& settings, engine::Cheats& cheats);
+// Round I1a (docs/SEAMLESS.md 19.8.7): the settings block of protocol 49 and
+// back (out-of-range values clamped), and the modes (difficulty, camera,
+// light) into the engine's GameSystem.
+wire::Settings to_wire(const RoomSettings& settings);
+RoomSettings from_wire(const wire::Settings& settings);
+void apply_room_modes(const RoomSettings& settings, engine::Engine& engine);
 
 } // namespace dw4::game::online

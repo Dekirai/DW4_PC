@@ -1366,13 +1366,14 @@ int run(const Options& options, dw4::game::Settings& settings) {
         };
         const std::int64_t session_started = unix_now();
         std::optional<dw4::game::discord::Activity> traced_activity;
-        // An online room's party (docs/SEAMLESS.md 13): the room's size, an id
-        // that names no room; Discord shows "(n of max)" after the state.
+        // An online instance's party (docs/SEAMLESS.md 13, 19.4: the party's
+        // size from round I4, until then the instance's x/4): an id that names
+        // no instance; Discord shows "(n of 4)" after the state. At home: none.
         auto room_party = [&](dw4::game::discord::Activity& activity) {
-            if (!online) return;
-            activity.party_id = dw4::game::discord::party_id(online->room().code);
-            activity.party_size = std::max(1, int(online->session().roster().size()));
-            activity.party_max = std::max(activity.party_size, online->room().max_players);
+            if (!online || !online->session().in_instance()) return;
+            activity.party_id = dw4::game::discord::party_id("wid-" + std::to_string(online->session().wid()) + "-" + std::to_string(online->session().host()));
+            activity.party_size = std::clamp(online->session().instance_players(), 1, 4);
+            activity.party_max = 4;
         };
         auto presence_activity = [&] {
             dw4::game::discord::Activity activity;
@@ -3154,9 +3155,12 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     room_live.in_game = online->link().game_started();
                     if (auto* character = online->character()) room_live.character = character->status_text();
                     room_live.story = online->story_line();
-                    for (const auto& e : session.roster())
-                        room_live.members.push_back({e.member, session.member_name(e.member), e.stage, e.inst, e.level, e.hp, e.max_hp,
-                                                     (e.flags & 1) != 0, (e.flags & 2) != 0, (e.flags & 4) != 0});
+                    if (const auto& info = session.instance(); info && info->wid != 0)
+                        for (const auto& e : info->members)
+                            room_live.members.push_back({e.member, session.member_name(e.member), e.stage, 0, e.level, 0, 0,
+                                                         (e.flags & dw4::game::online::wire::InstanceMember::connected) != 0,
+                                                         (e.flags & dw4::game::online::wire::InstanceMember::lagging) != 0,
+                                                         (e.flags & dw4::game::online::wire::InstanceMember::host) != 0});
                 }
                 bool online_tab_now = false;
                 // Overhead name tags over the picture, under the menus.

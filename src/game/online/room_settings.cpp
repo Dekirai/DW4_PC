@@ -1,8 +1,10 @@
 #include "room_settings.hpp"
 
 #include "json.hpp"
+#include "dw4/engine/managers.hpp"
 #include "wire.hpp"
 
+#include <algorithm>
 #include <span>
 
 namespace dw4::game::online {
@@ -60,6 +62,40 @@ std::string settings_hash_text(const RoomSettings& s, std::uint32_t protocol, st
 std::uint64_t settings_hash(const RoomSettings& s, std::uint32_t protocol, std::uint64_t data_hash) {
     const auto text = settings_hash_text(s, protocol, data_hash);
     return wire::fnv1a64(std::span(reinterpret_cast<const std::uint8_t*>(text.data()), text.size()));
+}
+
+wire::Settings to_wire(const RoomSettings& s) {
+    wire::Settings w;
+    w.difficulty = std::uint8_t(std::clamp(s.difficulty, 0, 2));
+    w.camera = std::uint8_t(std::clamp(s.camera_mode, 0, 1));
+    w.light = std::uint8_t(std::clamp(s.light_mode, 0, 1));
+    w.fast = s.fast_loading ? 1 : 0;
+    w.seed = s.rand_seed;
+    w.drops = s.rand_drops ? 1 : 0;
+    w.enemies = std::uint8_t(std::clamp(s.rand_enemies, 0, 2));
+    w.zones = std::uint8_t(std::clamp(s.rand_zones, 0, 2));
+    return w;
+}
+
+RoomSettings from_wire(const wire::Settings& w) {
+    RoomSettings s;
+    s.difficulty = std::clamp(int(w.difficulty), 0, 2);
+    s.camera_mode = std::clamp(int(w.camera), 0, 1);
+    s.light_mode = std::clamp(int(w.light), 0, 1);
+    s.fast_loading = w.fast != 0;
+    s.rand_seed = w.seed;
+    s.rand_drops = w.drops != 0;
+    s.rand_enemies = std::clamp(int(w.enemies), 0, 2);
+    s.rand_zones = std::clamp(int(w.zones), 0, 2);
+    return s;
+}
+
+void apply_room_modes(const RoomSettings& s, engine::Engine& engine) {
+    if (auto* sys = engine.get<engine::GameSystem>()) {
+        sys->difficulty = std::clamp(s.difficulty, 0, 2);
+        sys->camera_mode = s.camera_mode;
+        sys->light_mode = s.light_mode;
+    }
 }
 
 void apply_room_cheats(const RoomSettings& s, engine::Cheats& cheats) {

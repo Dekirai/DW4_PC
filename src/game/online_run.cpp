@@ -128,8 +128,8 @@ OnlineRun::OnlineRun(std::unique_ptr<online::HttpWorker> http, OnlineRoom room, 
     config.data_hash = data_hash;
     config.settings_hash = online::settings_hash(room_.settings, kOnlineProtocol, data_hash);
     config.own_name = room_.account;
-    config.room_owner = room_.room_owner;
-    config.owner_name = room_.owner_name;
+    // Round I1a: the own settings go with every BARRIER (19.8.7).
+    config.own_settings = online::to_wire(room_.settings);
     config.rate = rate;
     // Round J: checkpoints travel zstd-compressed (level 3; docs/SEAMLESS.md 6.13.2).
     config.compress = [](std::span<const std::uint8_t> raw) {
@@ -305,7 +305,7 @@ online::character_api::Context OnlineRun::character_context() const {
     // (The same numbers as the online achievements' reports: the own stage
     // instance, and the room from the relay's ROSTER or else the presence.)
     c.players = std::clamp(std::popcount(unsigned(session_->present())), 1, 4);
-    c.room_players = std::clamp(std::max(int(session_->roster().size()), int(session_->remote().size()) + 1), 1, 10);
+    c.room_players = std::clamp(std::max(session_->instance_players(), int(session_->remote().size()) + 1), 1, 10);
     c.randomizer = room_.settings.randomizer();
     // The engine's real cheat flags, not a constant (SEAMLESS.md 9.1.10;
     // online they stay off, Engine::step).

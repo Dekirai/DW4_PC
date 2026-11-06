@@ -684,7 +684,7 @@ void room_story() {
     // confirmed story came): no live step, the loading line, and B's title
     // goes on once it is released.
     b.session->hold_for_story(true);
-    check(!b.session->step_ready() && b.session->overlay(world.now).loading == "Loading the room story...", "the hold stops the steps");
+    check(!b.session->step_ready() && b.session->overlay(world.now).loading == "Loading your story...", "the hold stops the steps");
     const auto held_tick = b.session->tick();
     world.run(1);
     check(b.session->tick() == held_tick && world.hub.stories == 0, "no step and no STORY while held");
@@ -738,33 +738,13 @@ void room_story() {
     check(world.run_until(4, [&] { return world.hub.room_story.counters[7] == 1; }), "the counter's growth reaches the room story");
     world.run(3);
     check(world.hub.room_story.counters[7] == 1 && world.hub.story_lines.size() == 1, "one engine line, counted once");
-    // The owner leaves; B makes a new flag: refused and dropped.
-    world.hub.owner_away = true;
-    b.engine.story.flags[393] = 1;
-    check(world.run_until(3, [&] { return std::count(world.hub.dropped.flags.begin(), world.hub.dropped.flags.end(), 393) == 1; }),
-          "the flag is refused and recorded as dropped");
-    check(!b.session->confirmed_story()->flags[393], "not in the confirmed story");
-    const auto stories_dropped = world.hub.stories;
-    world.run(5);
-    check(world.hub.stories == stories_dropped, "a refused value is not sent again before the barrier");
+    // (Round I1a, 19.8.5: the owner-away policy and its dropped sets are
+    // retired; the host is in his instance or in his grace.)
     (void)a.session->take_notices();
     (void)b.session->take_notices();
-    const auto ta2 = a.session->tick();
-    a.input = [ta2](const fake::Client& c) -> std::uint32_t { return c.engine.stage() == "stag0101" && c.session->tick() == ta2 + 60 ? fake::kExitButton : 0u; };
-    b.input = nullptr;
-    check(world.run_until(20, [&] { return a.engine.stage() == "stag0102" && b.engine.stage() == "stag0102" && a.session->mode() == Mode::sealed &&
-                                           b.session->mode() == Mode::sealed; }),
-          "both in stag0102");
-    check(b.engine.story.flags.at(393) == 0, "the barrier removed the dropped flag from B's engine");
-    check(b.engine.story.flags.at(19) == 1 && b.engine.story.counters.at(7) == 1, "the confirmed values stay");
-    bool told_b = false, told_a = false;
-    for (const auto& n : b.session->take_notices()) told_b |= n.find("Story progress was not saved") != std::string::npos;
-    for (const auto& n : a.session->take_notices()) told_a |= n.find("Story progress was not saved") != std::string::npos;
-    check(told_b && !told_a, "only B is told");
-    // The owner is back. B's STORY with new growth is lost with its dying
-    // connection (never answered): after the reconnect the pending set goes
-    // again at once, not ten seconds after the lost one.
-    world.hub.owner_away = false;
+    // B's STORY with new growth is lost with its dying connection (never
+    // answered): after the reconnect the pending set goes again at once, not
+    // ten seconds after the lost one.
     world.hub.story_lost = true;
     const auto lost_before = world.hub.stories;
     b.engine.story.counters[7] = 3;
@@ -779,18 +759,6 @@ void room_story() {
     check(world.now - t1 < 4.0, "soon after the reconnect (" + std::to_string(world.now - t1) + " s)");
     world.run(12);
     check(world.hub.room_story.counters[7] == 3, "counted once");
-    // A room whose owner has no story yet (8.6, the user's decision of
-    // 31.10): what B makes is refused not_started and dropped, and B is told
-    // why (once).
-    world.hub.not_started = true;
-    (void)b.session->take_notices();
-    b.engine.story.flags[395] = 1;
-    check(world.run_until(3, [&] { return std::count(world.hub.dropped.flags.begin(), world.hub.dropped.flags.end(), 395) == 1; }),
-          "the flag is refused and recorded as dropped (not started)");
-    bool told_not_started = false;
-    for (const auto& n : b.session->take_notices()) told_not_started |= n.find("has not started its story yet") != std::string::npos;
-    check(told_not_started, "B is told that the owner's story has not started");
-    world.hub.not_started = false;
 }
 
 // Two co-arrived members; returns once both play sealed.
@@ -949,28 +917,32 @@ void pacing_and_lag() {
     b.input = press_in({{"stagis10", 20}, {"stagml11", 120}}, fake::kExitButton);
     check(world.run_until(20, [&] { return a.session->mode() == Mode::sealed && b.session->mode() == Mode::sealed; }), "sealed");
     world.run(30);
-    // The room view's roster: the relay's ROSTER as it came (areas, levels, flags).
+    // Round I1a: the own instance as the relay describes it (INSTANCE_INFO).
     {
-        w::Roster roster;
-        roster.entries.push_back({1, "stag0101", 7, 12, 300, 320, 1 | 4});
-        roster.entries.push_back({2, "", 7, 9, 0, 250, 1 | 2});
-        world.hub.send(1, w::Type::roster, w::encode(roster), world.now);
+        w::InstanceInfo info;
+        info.wid = 7;
+        info.host = 1;
+        info.area = "death_valley";
+        info.members = {{1, "stag0101", 12, 1 | 8 | 16}, {2, "stag0101", 9, 1 | 2 | 16}};
+        info.taken = 2;
+        info.role = w::Role::host;
+        world.hub.send(1, w::Type::instance_info, w::encode(info), world.now);
         world.run(0.5);
-        const auto& seen = a.session->roster();
-        check(seen.size() == 2 && seen[0].stage == "stag0101" && seen[0].level == 12 && seen[0].flags == 5 && seen[1].stage.empty() &&
-                  seen[1].max_hp == 250,
-              "the roster reaches the room view");
+        const auto& seen = a.session->instance();
+        check(seen && seen->wid == 7 && seen->members.size() == 2 && seen->members[0].level == 12 && seen->members[1].flags == 19 &&
+                  a.session->instance_players() == 2,
+              "INSTANCE_INFO reaches the Online menu");
     }
     {
         // An informational frame that does not decode (round 62 review: round 60's PRESENCE2 to clients on 0x8F, the
         // number NETSTAT holds since 0.1.2) is skipped; the session stays connected and sealed.
         std::vector<std::uint8_t> other(40, 0x55);
         world.hub.send(1, w::Type::netstat, other, world.now);
-        world.hub.send(1, w::Type::roster, {0x07}, world.now);
+        world.hub.send(1, w::Type::instance_info, {0x07}, world.now);
         world.hub.send(1, w::Type::presence2_of, {0x02, 0x00}, world.now);
         world.run(0.5);
         check(a.session->mode() == Mode::sealed && a.session->net().reconnects == 0 && a.session->net().skipped_frames == 3,
-              "undecodable NETSTAT / ROSTER / PRESENCE2 frames are skipped, not a lost connection");
+              "undecodable NETSTAT / INSTANCE_INFO / PRESENCE2 frames are skipped, not a lost connection");
         world.hub.send(1, w::Type::netstat, w::encode(w::NetStat{30, 4, 3, 12, 900, 2, 1, w::NetStat::in_stream}), world.now);
         world.run(0.5);
         const auto& net = a.session->net();
@@ -998,6 +970,115 @@ void pacing_and_lag() {
     check(a.session->overlay(world.now).lagging[1], "A sees B lagging (ROOM lagging after 30 filled pads)");
     check(b.session->overlay(world.now).slow_uplink, "B sees its own pads filled");
 }
+// Round I1a (docs/SEAMLESS.md 19): the world session over the fake hub. A
+// leaves home and hosts a new instance (the toast once INSTANCE_INFO came);
+// B arrives from home and is joined automatically (I1a's first row): its own
+// load takes the host's story (replace) and settings, its toasts name the
+// host; its STORY carries the host's owner key; *Leave instance* sends INTENT
+// 3; the relay's HOME for B's slot forks B off and takes it home (a DISSOLVE
+// with the own story replaced, the own settings back, the redirect's point);
+// A's instance is forgotten by the relay (a WELCOME without it): A takes the
+// home departure itself.
+bool has_notice(std::vector<std::string> notices, const std::string& part) {
+    for (const auto& n : notices)
+        if (n.find(part) != std::string::npos) return true;
+    return false;
+}
+
+void world_session() {
+    World world;
+    world.hub.co_arrival_hold = 3.0;
+    world.hub.suggested_delay = 6;
+    w::Settings host_settings{1, 1, 0, 0, 4242, 1, 1, 0};
+    world.hub.shape_ok = [&](std::uint32_t member, w::BarrierOk& ok) {
+        if (ok.decision == w::Decision::dissolve) {
+            ok.owner = member;
+            ok.story_mode = w::StoryMode::replace;
+            if (member == 2) {
+                ok.redirect_stage = "stagml11";
+                ok.redirect_point = 3;
+            }
+            return;
+        }
+        ok.wid = 7;
+        ok.host = 1;
+        ok.owner = 1;
+        ok.settings = host_settings;
+        ok.arrival = member == 1 ? w::Arrival::new_instance : w::Arrival::auto_join;
+        if (member != 1) ok.story_mode = w::StoryMode::replace;
+    };
+    auto& a = world.add("kim", 1);
+    a.input = press_in({{"stagis10", 20}, {"stagml11", 100}}, fake::kExitButton);
+    check(world.run_until(20, [&] { return a.engine.stage() == "stag0101" && a.session->mode() == Mode::solo; }), "A leaves home");
+    check(a.session->in_instance() && a.session->wid() == 7 && a.session->is_host(), "A hosts instance 7");
+    w::InstanceInfo info;
+    info.wid = 7;
+    info.host = 1;
+    info.area = "death_valley";
+    info.members = {{1, "stag0101", 5, 1 | 8 | 16}};
+    info.taken = 1;
+    world.hub.send(1, w::Type::instance_info, w::encode(info), world.now);
+    world.run(0.3);
+    check(has_notice(a.session->take_notices(), "New instance (Public). View: Online menu"), "A's toast: a new instance");
+    auto& b = world.add("lee", 2);
+    b.input = press_in({{"stagis10", 20}, {"stagml11", 100}}, fake::kExitButton);
+    check(world.run_until(30, [&] { return a.session->mode() == Mode::sealed && b.session->mode() == Mode::sealed; }), "B joined A");
+    check(b.session->wid() == 7 && b.session->host() == 1 && !b.session->is_host() && b.engine.story_replaces >= 1 && b.engine.host_settings &&
+              *b.engine.host_settings == host_settings,
+          "B's own load took the host's story (replace) and settings");
+    info.members = {{1, "stag0101", 5, 1 | 8 | 16}, {2, "stag0101", 3, 1 | 16}};
+    info.taken = 2;
+    info.role = w::Role::guest;
+    world.hub.send(2, w::Type::member_info, w::encode(w::MemberInfo{1, "kim", 5, w::MemberInfo::own_instance}), world.now);
+    world.hub.send(2, w::Type::instance_info, w::encode(info), world.now);
+    world.run(0.3);
+    const auto b_notices = b.session->take_notices();
+    check(has_notice(b_notices, "You joined kim's instance. kim is in stag0101. Leave: Online menu") &&
+              has_notice(b_notices, "You're a guest in kim's story. Your level, items and Digimon stay yours."),
+          "B's toasts name the host and where he is");
+    // B's STORY goes to the host's keeper (the host's owner key).
+    const auto stories = world.hub.stories;
+    b.engine.story.flags[19] = 1;
+    check(world.run_until(5, [&] { return world.hub.stories > stories; }) && world.hub.last_story_owner == 1, "B's STORY carries the host's key");
+    // *Leave instance*: INTENT 3.
+    check(b.session->leave_instance(), "B may leave");
+    world.run(0.3);
+    check(world.hub.leave_intents == 1, "the relay got INTENT leave");
+    // The relay's HOME for B's slot (19.6.5): B forks off, goes home on its own
+    // story and settings; A plays on alone in the instance.
+    {
+        auto& inst = world.hub.instances[a.session->inst()];
+        w::Event home{w::EventKind::home};
+        home.mask = std::uint8_t(1u << b.session->own_slot());
+        home.reason = std::uint8_t(w::HomeReason::leave);
+        inst.events[inst.next_seal + 12].push_back(home);
+    }
+    check(world.run_until(20, [&] { return b.engine.stage() == "stagml11" && b.session->mode() == Mode::solo && b.session->wid() == 0; }),
+          "B is home");
+    check(b.engine.homes == 1 && b.engine.own_settings_set_back && b.engine.redirected_point == 3 && b.engine.story_replaces >= 2,
+          "the home departure, the own settings back, the redirect, the own story replaced");
+    {
+        const auto home_notices = b.session->take_notices();
+        std::string all;
+        for (const auto& n : home_notices) all += " [" + n + "]";
+        check(has_notice(home_notices, "Back on your own story."), "B's toast at home:" + all);
+    }
+    check(a.engine.stage() == "stag0101" && a.session->present() == std::uint8_t(1u << a.session->own_slot()) && a.session->in_instance(),
+          "A plays on alone in its instance");
+    // The relay forgets A's instance (it restarted or ended it while A was
+    // away): the WELCOME of A's reconnect names none, A goes home by itself.
+    world.hub.wid_forgotten.insert(1);
+    world.hub.drop(1);
+    world.run(1.0);
+    check(a.session->wants_transport(), "A reconnects");
+    a.session->attach(world.hub.connect(1, "kim"), world.now, "t-kim-2");
+    check(world.run_until(20, [&] { return a.engine.stage() == "stagml11" && a.session->mode() == Mode::solo && !a.session->going_home(); }),
+          "A took the home departure itself");
+    check(a.engine.homes == 1 && !a.session->in_instance(), "one local departure, home");
+    const auto a_notices = a.session->take_notices();
+    check(has_notice(a_notices, "The instance has ended."), "A is told the instance ended");
+}
+
 // The input delay a member needs so that its pads reach the server before
 // their tick is sealed: two members co-arrive, then 20 s sealed play; late
 // pads counted from the second second on. Returns the late fraction.
@@ -1246,6 +1327,8 @@ int main(int argc, char** argv) {
         taken_out_continues_alone();
         std::cout << "room story\n";
         room_story();
+        std::cout << "world session\n";
+        world_session();
         std::cout << "checkpoint reports\n";
         checkpoint_reports();
         std::cout << "READY after a refused READY\n";

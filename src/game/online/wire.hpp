@@ -5,12 +5,15 @@
 // client, the C# relay hub (server/DW4Online/src/DW4Online.Relay/Protocol),
 // the C# fake clients and the Python test client share).
 //
-// One TCP connection per client and room. The client sends one line
+// One TCP connection per client and world session (protocol 49, round I1a,
+// docs/SEAMLESS.md 19.18; the layouts agreed in DW4_PC-wt/i1a-contract.md).
+// The client sends one line
 //   DW4R2 <ticket> <protocol> <dataHash> <settingsHash>\n
-// (protocol and dataHash in decimal, settingsHash as 16 hex digits) and the
-// relay answers
+// (protocol and dataHash in decimal, settingsHash as 16 hex digits, sent as
+// 0 and ignored since protocol 49) and the relay answers
 //   OK <member> <serverTimeMs>\n   or   ERR <code>\n
-// (member = the room slot 0-9; codes protocol, ticket, data, settings, full).
+// (member = the member id, a u32 for the server run; codes protocol, ticket,
+// data, full, busy, banned).
 // Then frames follow in both directions: type u8 | length u32 LE | payload,
 // at most 1 MiB; WELCOME is the server's first frame.
 //
@@ -26,10 +29,14 @@
 // and an event is u8 type | u16 payload length | payload:
 //   JOIN 1      u8 slot | u8 entrance point | carry (the rest)
 //   LEAVE 2     u8 slot
-//   INTENT 3    u8 slot | u8 kind (1 go without, 2 give up) | i32 argument
+//   INTENT 3    u8 slot | u8 kind (1 go without, 2 give up, 3 leave, 4 go
+//               along: I1b) | i32 argument
 //   LEAD_FROM 4 u32 tick (the record is the last sealed tick; the remaining
 //               member leads alone from that tick)
 //   DELAY 5     u8 slot | u8 delay
+//   HOME 6      u8 slot mask | u8 reason (1 leave, 2 ended, 3 removed, 4
+//               staff): exactly these slots take the home departure (19.6.5)
+//   GO 7        u8 slot | u8 point | str stage (round I1b; decoded, not applied)
 // Unknown event types are skipped (a newer server).
 #include "dw4/engine/online_story.hpp"
 #include "pad_wire.hpp"
@@ -101,6 +108,8 @@ enum class Type : std::uint8_t {
     statehash = 0x15,
     checkpoint = 0x16,
     checkpoint_bad = 0x17,
+    // protocol 49 (round I1a, 19.18): the host's or staff's instance change
+    instance_op = 0x1B,
     // server -> client (0x80-0xBF)
     welcome = 0x80,
     sealed = 0x81,
@@ -112,14 +121,18 @@ enum class Type : std::uint8_t {
     presence_of = 0x87,
     resync = 0x88,
     story_ack = 0x89,
-    room = 0x8A,
+    room = 0x8A,   // retired with protocol 49 (never sent to it; the number stays reserved)
     ping = 0x8B,
     close = 0x8C,
-    roster = 0x8D,
+    roster = 0x8D, // retired with protocol 49 (as ROOM)
     reassign = 0x8E,
     netstat = 0x8F, // round 62: the member's link (older clients skip it)
     presence2_of = 0x90, // round 60: PRESENCE2 to a member that sends it (12.1)
     checkpoint_ask = 0x92, // round J: upload the tick state at the next state-safe tick
+    // protocol 49 (round I1a, 19.18)
+    instance_info = 0x95,
+    world_notice = 0x96,
+    member_info = 0x97,
 };
 const char* type_name(Type type) noexcept;
 
@@ -199,8 +212,17 @@ private:
 
 // ---- enumerations
 enum class Mode : std::uint8_t { hub = 0, solo = 1, sealed = 2 }; // WELCOME, BARRIER_OK, REASSIGN
-enum class EventKind : std::uint8_t { join = 1, leave = 2, intent = 3, lead_from = 4, delay = 5 };
-enum class IntentKind : std::uint8_t { go_without = 1, give_up = 2 };
+enum class EventKind : std::uint8_t { join = 1, leave = 2, intent = 3, lead_from = 4, delay = 5, home = 6, go = 7 };
+enum class IntentKind : std::uint8_t { go_without = 1, give_up = 2, leave = 3, go_along = 4 };
+// HOME's reason (19.6.5).
+enum class HomeReason : std::uint8_t { leave = 1, ended = 2, removed = 3, staff = 4 };
+// JOIN_REQ's kind (protocol 49): a JOIN, a HOME (`slot` holds the mask) or a GO (I1b).
+enum class JoinKind : std::uint8_t { join = 1, home = 2, go = 3 };
+// BARRIER_OK's arrival (protocol 49): how this barrier put the member into an
+// instance (the toasts of 19.5.6).
+enum class Arrival : std::uint8_t { none = 0, new_instance = 1, auto_join = 2, co_arrival = 3, guest_new = 4 };
+enum class StoryMode : std::uint8_t { merge = 0, replace = 1 };
+enum class Visibility : std::uint8_t { public_ = 0, friends = 1, private_ = 2 };
 enum class SplitKind : std::uint8_t { exit = 0, in_stage = 1 };
 enum class Choice : std::uint8_t { wait = 0, alone = 1 };
 // STATE reasons (why an instance is not joinable).
@@ -210,11 +232,10 @@ enum class WaitReason : std::uint8_t { co_arrival = 1, not_joinable = 2, boss_lo
 // Why a barrier ended in NEW next to an instance of the same stage.
 enum class Notice : std::uint8_t { none = 0, other_context = 1, full = 2, too_long = 3, hold_expired = 4, went_alone = 5, join_failed = 6 };
 enum class StatePurpose : std::uint8_t { join = 1, co_arrival = 2, resync = 3, resume = 4 };
-enum class RoomEvent : std::uint8_t {
-    joined = 1, left = 2, owner_present = 3, owner_away = 4, lagging = 5, lag_over = 6, connected = 7, disconnected = 8
-};
+// 2 kicked and 3 room closed are the rooms' (retired with protocol 49); 9
+// account: the account was locked, banned or deleted (no reconnect).
 enum class CloseReason : std::uint8_t {
-    left = 1, kicked = 2, room_closed = 3, replaced = 4, protocol = 5, abuse = 6, timeout = 7, stopping = 8
+    left = 1, kicked = 2, room_closed = 3, replaced = 4, protocol = 5, abuse = 6, timeout = 7, stopping = 8, account = 9
 };
 namespace state_flag {
 // load_ended (protocol 47, round J's review): the visit reached its load end K;
@@ -223,16 +244,33 @@ namespace state_flag {
 inline constexpr std::uint8_t joinable = 1, membership_safe = 2, boss_lock = 4, load_ended = 8;
 }
 
+// The settings block of protocol 49 (11 bytes: BARRIER's own, BARRIER_OK's
+// and INSTANCE_INFO's): difficulty u8 (0-2) | camera u8 (0-1) | light u8
+// (0-1) | fast loading u8 (0/1) | randomizer seed u32 | drops u8 (0/1) |
+// enemies u8 (0-2) | zones u8 (0-2). The values of room_settings.hpp's
+// RoomSettings (to_wire / from_wire there).
+struct Settings {
+    std::uint8_t difficulty{}, camera{}, light = 1, fast{};
+    std::uint32_t seed{};
+    std::uint8_t drops{}, enemies{}, zones{};
+    bool operator==(const Settings&) const = default;
+};
+void write_settings(Writer& w, const Settings& s);
+Settings read_settings(Reader& r);
+
 // ---- tick records and events
 struct Event {
     EventKind kind{};
-    std::uint8_t slot{};
-    std::uint8_t point{};               // JOIN: the entrance point
+    std::uint8_t slot{};                // (GO: the going slot)
+    std::uint8_t point{};               // JOIN: the entrance point; GO: the point
     std::vector<std::uint8_t> carry;    // JOIN: the joiner's carry (engine bytes)
     std::uint8_t intent_kind{};         // INTENT
     std::int32_t argument{};            // INTENT
     std::uint32_t tick{};               // LEAD_FROM
     std::uint8_t delay{};               // DELAY
+    std::uint8_t mask{};                // HOME: the slots that go home
+    std::uint8_t reason{};              // HOME: HomeReason
+    std::string stage;                  // GO: the target stage
     bool operator==(const Event&) const = default;
 };
 struct TickBody {
@@ -259,13 +297,20 @@ struct Heading {       // inst | str stage | u8 point | u64 session context hash
     std::uint8_t point{};
     std::uint64_t context{};
 };
-struct Barrier {       // inst | visit | u32 barrier tick | str stage | u8 point | u8 alive | u8 present | u64 context | blob own carry
+// Protocol 49 appends u32 travel token (0 in I1a) | u16 plan id (0 in I1a;
+// 0xFFFF: DW4_ONLINE_AUTOCHOICE=new, development builds) | the member's own
+// settings (its Game Start's difficulty, its Online > Settings cheats).
+struct Barrier {       // inst | visit | u32 barrier tick | str stage | u8 point | u8 alive | u8 present | u64 context | blob own carry | ...
     std::uint32_t inst{}, visit{}, tick{};
     std::string stage;
     std::uint8_t point{};
     std::uint8_t alive{}, present{};
     std::uint64_t context{};
     std::vector<std::uint8_t> carry;
+    std::uint32_t token{};
+    std::uint16_t plan{};
+    Settings own;
+    static constexpr std::uint16_t plan_new_instance = 0xFFFF;
 };
 struct BarrierChoice { // inst | u8 choice
     std::uint32_t inst{};
@@ -339,7 +384,7 @@ struct State {         // inst | visit | u32 tick | u8 flags | u64 context | u8 
     std::uint64_t context{};
     NotJoinable reason{};
 };
-struct Intent {        // inst | visit | u8 kind | i32 argument (sealed instances only)
+struct Intent {        // inst | visit | u8 kind | i32 argument (kind 3 leave: solo-led and sealed; the others sealed only)
     std::uint32_t inst{}, visit{};
     IntentKind kind{};
     std::int32_t argument{};
@@ -366,8 +411,10 @@ struct Intent {        // inst | visit | u8 kind | i32 argument (sealed instance
 // others. A later version keeps this layout and appends, within 256 bytes in
 // all: a reader takes what it knows (a version 1 hub forwards only the
 // version 1 part it checked, written at version 1; a larger one it drops).
+// Protocol 49: to clients `member` is a u32 followed by u8 relation flags
+// (1 friend, 2 party, 4 staff tag, 8 a member of the receiver's instance).
 struct Presence {
-    std::uint8_t member{};
+    std::uint32_t member{};
     std::string stage;
     std::uint32_t inst{};
     float x{}, y{}, z{}, yaw{};
@@ -380,6 +427,7 @@ struct Presence {
     std::uint8_t warp{};
     std::uint32_t sent_ms{};
     std::string weapon;
+    std::uint8_t relation{}; // (server -> client, protocol 49: the relation flags)
     static constexpr std::uint8_t loop = 1;
     static constexpr std::uint8_t busy = 2;
     static constexpr std::uint8_t known_flags = loop | busy;
@@ -396,9 +444,13 @@ inline constexpr std::size_t kMaxWeapon = 24;
 // (u8 counter | u32 line inst | u32 line visit | i32 growth): the cumulative
 // growth of an additive counter in an engine line (instance and visit the
 // growth was made in; a fork's child counts from its fork under its own id).
+// Protocol 49 appends the owner key: u32 owner member | u8 owner box (the
+// story owner of the member's current visit, 19.8.4).
 struct Story {
     std::uint32_t inst{}, visit{}, revision{};
     engine::StoryDelta delta;
+    std::uint32_t owner{};
+    std::uint8_t box = 1;
 };
 inline constexpr std::size_t kMaxStoryLines = 32;
 // STORY_ACK: u32 revision | blob story (1,100 bytes, story::encode_story; empty
@@ -407,17 +459,23 @@ inline constexpr std::size_t kMaxStoryLines = 32;
 // (engine::StoryRefused). The server sends it after WELCOME (the confirmed
 // story to start from), to every connected member whenever the room story's
 // revision rises, and to a STORY's sender with what it refused.
+// Protocol 49 appends the owner key of the keeper this revision belongs to
+// (u32 member | u8 box); refusal 12 = owner (the STORY's key was not the
+// sender's current story owner).
 struct StoryAck {
     std::uint32_t revision{};
     std::vector<std::uint8_t> story;
     std::uint8_t flags{};
     std::vector<engine::StoryRefused> refused;
+    std::uint32_t owner{};
+    std::uint8_t box = 1;
     static constexpr std::uint8_t answer = 1;
 };
-struct Resume {        // inst | visit | u8 slot | u32 last executed tick
+struct Resume {        // inst | visit | u8 slot | u32 last executed tick | str stage (protocol 49: the engine's stage)
     std::uint32_t inst{}, visit{};
     std::uint8_t slot{};
     std::uint32_t last_tick{};
+    std::string stage;
 };
 struct Pong {          // u32 nonce | u64 client time ms
     std::uint32_t nonce{};
@@ -428,12 +486,14 @@ struct Bye {           // u8 reason
 };
 
 // ---- server -> client
-// WELCOME: u8 member | inst | visit | u8 slot | u8 mode | str stage |
+// WELCOME: u32 member | inst | visit | u8 slot | u8 mode | str stage |
 // u32 last tick (kNoTick: none) | u8 delay | u16 max catch-up seconds |
 // u8 flags (1 resumable: the member still holds that slot; send RESUME;
-// 2 presence_v2: the hub takes PRESENCE2, round 60).
+// 2 presence_v2: the hub takes PRESENCE2, round 60; 4 checkpoints; 8 world;
+// 16 seat held; 32 staff) | u32 wid (the instance the relay has the member
+// in, 0: none) | u8 box (the bound box).
 struct Welcome {
-    std::uint8_t member{};
+    std::uint32_t member{};
     std::uint32_t inst{}, visit{};
     std::uint8_t slot{};
     Mode mode{};
@@ -445,29 +505,40 @@ struct Welcome {
     static constexpr std::uint8_t resumable = 1;
     static constexpr std::uint8_t presence_v2 = 2;
     static constexpr std::uint8_t checkpoints = 4; // round J: the hub takes STATEHASH / CHECKPOINT / CHECKPOINT_BAD
+    static constexpr std::uint8_t world = 8, seat_held = 16, staff = 32;
+    std::uint32_t wid{};
+    std::uint8_t box = 1;
 };
 struct Ticks {         // SEALED / LIVE: inst | visit | u32 first tick | u16 count | tick records
     std::uint32_t inst{}, visit{}, first{};
     std::vector<TickBody> ticks;
 };
-struct JoinReq {       // inst | visit | u8 slot | u8 the leader's delay
+// Protocol 49: + u8 kind (1 join, 2 home: `slot` holds the HOME mask, the
+// leader answers JOIN_AT and SEALED(J) carries HOME; 3 go: + str stage | u8 point).
+struct JoinReq {       // inst | visit | u8 slot | u8 the leader's delay | u8 kind [| str stage | u8 point]
     std::uint32_t inst{}, visit{};
     std::uint8_t slot{};
     std::uint8_t delay{};
+    JoinKind kind = JoinKind::join;
+    std::string stage;
+    std::uint8_t point{};
 };
-struct CoArrival {     // u8 slot | u8 member | blob carry
+struct CoArrival {     // u8 slot | u32 member | blob carry
     std::uint8_t slot{};
-    std::uint8_t member{};
+    std::uint32_t member{};
     std::vector<std::uint8_t> carry;
     bool operator==(const CoArrival&) const = default;
 };
 // BARRIER_OK: old inst | old visit | u8 decision | new inst | new visit |
 // str stage | u8 point | u8 own slot | 4 x i8 slot map (old slot -> new slot
 // or -1) | u8 mode | u8 delay | u8 n + n co-arrivals | u32 story revision |
-// blob story (the room story, 1,100 bytes as in STORY_ACK, the same bytes for
-// every member of the group; empty: none) | blob dropped (the room's dropped
-// set, engine::story::encode_keys: u16 n + n x u16 flags | u8 n + n x u8 keys
-// | u8 n + n x u8 counters; empty: none) | u8 notice | u8 n + n str names.
+// blob story (1,100 bytes as in STORY_ACK, the same bytes for every member of
+// the group; empty: none) | u8 notice | u8 n + n str names | u32 wid (0: home)
+// | u32 host member | u8 visibility | u8 arrival | settings (the instance's;
+// at a DISSOLVE the member's own) | u64 settings hash | u32 owner member | u8
+// owner box (the story owner of the visit that starts) | u8 story mode (0
+// merge, 1 replace) | str redirect stage (empty: none; DISSOLVE only) | u8
+// redirect point. (Protocol 49; the dropped blob of 48 is gone.)
 struct BarrierOk {
     std::uint32_t inst{}, visit{};
     Decision decision{};
@@ -480,9 +551,19 @@ struct BarrierOk {
     std::uint8_t delay{};
     std::vector<CoArrival> co_arrivals;
     std::uint32_t story_revision{};
-    std::vector<std::uint8_t> story, dropped;
+    std::vector<std::uint8_t> story;
     Notice notice{};
     std::vector<std::string> names;
+    std::uint32_t wid{}, host{};
+    Visibility visibility{};
+    Arrival arrival{};
+    Settings settings;
+    std::uint64_t settings_hash{};
+    std::uint32_t owner{};
+    std::uint8_t box = 1;
+    StoryMode story_mode{};
+    std::string redirect_stage;
+    std::uint8_t redirect_point{};
     // The instance's members after the decision (NEW: the slot map's new
     // slots and the co-arrivals; DISSOLVE: slot 0).
     std::uint8_t present() const;
@@ -523,12 +604,60 @@ struct StateData {
     std::uint32_t first{};
     std::vector<TickBody> ticks;
 };
-struct Room {          // u8 notice | u8 member | u64 account | str name | u8 flags (1 owner)
-    RoomEvent kind{};
-    std::uint8_t member{};
-    std::uint64_t account{};
-    std::string name;
+// ---- protocol 49 (round I1a, 19.18)
+// INSTANCE_INFO: u32 wid (0: the member is home; the rest empty) | u32 host |
+// u8 visibility | settings | str area | str story label | u8 n + n x (u32
+// member | str stage | u16 level | u8 flags: 1 connected, 2 lagging, 4 staff,
+// 8 host, 16 in the receiver's stage group) | u8 seats taken | u8 held | u8
+// reserved | u16 grace seconds left | u8 own role (0 host, 1 guest, 2 staff
+// playing, 3 spectator).
+struct InstanceMember {
+    std::uint32_t member{};
+    std::string stage;
+    std::uint16_t level{};
     std::uint8_t flags{};
+    static constexpr std::uint8_t connected = 1, lagging = 2, staff = 4, host = 8, same_group = 16;
+    bool operator==(const InstanceMember&) const = default;
+};
+enum class Role : std::uint8_t { host = 0, guest = 1, staff = 2, spectator = 3 };
+struct InstanceInfo {
+    std::uint32_t wid{}, host{};
+    Visibility visibility{};
+    Settings settings;
+    std::string area, story_label;
+    std::vector<InstanceMember> members;
+    std::uint8_t taken{}, held{}, reserved{};
+    std::uint16_t grace{};
+    Role role{};
+};
+// WORLD_NOTICE: u8 kind | u32 member | str name | u32 argument | str text.
+enum class NoticeKind : std::uint8_t {
+    joined = 1, left = 2, went_to = 3, visibility = 4, removed = 5, host_away = 6, host_back = 7, ended = 8,
+    lagging = 9, lag_over = 10, shared_progress = 11, restart_in = 12, go_refused = 13
+};
+// WORLD_NOTICE ended's argument (19.6.5's reasons).
+enum class EndReason : std::uint8_t { host_left = 1, host_defeated = 2, host_lost = 3, staff = 4, empty = 5, server_stop = 6 };
+struct WorldNotice {
+    NoticeKind kind{};
+    std::uint32_t member{};
+    std::string name;
+    std::uint32_t argument{};
+    std::string text;
+};
+// MEMBER_INFO: u32 member | str name | u16 level | u8 flags (1 friend, 2
+// party, 4 staff tag, 8 in the receiver's instance).
+struct MemberInfo {
+    std::uint32_t member{};
+    std::string name;
+    std::uint16_t level{};
+    std::uint8_t flags{};
+    static constexpr std::uint8_t friend_ = 1, party = 2, staff = 4, own_instance = 8;
+};
+// INSTANCE_OP (client): u8 op (1 visibility, 2 remove member: I1b, 3 end) | u32 argument.
+enum class InstanceOpKind : std::uint8_t { visibility = 1, remove = 2, end = 3 };
+struct InstanceOp {
+    InstanceOpKind op{};
+    std::uint32_t argument{};
 };
 struct Ping {          // u32 nonce | u64 server time ms | i16 arrival margin ms (p0.1) | u8 suggested delay
     std::uint32_t nonce{};
@@ -547,17 +676,6 @@ struct NetStat {       // u16 rtt ms | u16 spread ms | u8 delay | i16 margin ms 
 struct Close {         // u8 reason | str text
     CloseReason reason{};
     std::string text;
-};
-struct RosterEntry {   // u8 member | str stage | inst | u16 level | u16 hp | u16 max hp | u8 flags (1 connected, 2 lagging, 4 owner)
-    std::uint8_t member{};
-    std::string stage;
-    std::uint32_t inst{};
-    std::uint16_t level{}, hp{}, max_hp{};
-    std::uint8_t flags{};
-    bool operator==(const RosterEntry&) const = default;
-};
-struct Roster {        // u8 n + n entries (once per second)
-    std::vector<RosterEntry> entries;
 };
 struct InstVisit {     // RESYNC: inst | visit
     std::uint32_t inst{}, visit{};
@@ -605,11 +723,13 @@ std::vector<std::uint8_t> encode(const JoinReq&);
 std::vector<std::uint8_t> encode(const BarrierOk&);
 std::vector<std::uint8_t> encode(const BarrierWait&);
 std::vector<std::uint8_t> encode_state_body(const StateData&);
-std::vector<std::uint8_t> encode(const Room&);
+std::vector<std::uint8_t> encode(const InstanceInfo&);
+std::vector<std::uint8_t> encode(const WorldNotice&);
+std::vector<std::uint8_t> encode(const MemberInfo&);
+std::vector<std::uint8_t> encode(const InstanceOp&);
 std::vector<std::uint8_t> encode(const Ping&);
 std::vector<std::uint8_t> encode(const NetStat&);
 std::vector<std::uint8_t> encode(const Close&);
-std::vector<std::uint8_t> encode(const Roster&);
 std::vector<std::uint8_t> encode(const InstVisit&);
 std::vector<std::uint8_t> encode(const Reassign&);
 
@@ -647,11 +767,13 @@ BarrierOk decode_barrier_ok(std::span<const std::uint8_t>);
 BarrierWait decode_barrier_wait(std::span<const std::uint8_t>);
 // The assembled chunks' blob (inst and visit come from the chunks).
 StateData decode_state_body(std::span<const std::uint8_t>);
-Room decode_room(std::span<const std::uint8_t>);
+InstanceInfo decode_instance_info(std::span<const std::uint8_t>);
+WorldNotice decode_world_notice(std::span<const std::uint8_t>);
+MemberInfo decode_member_info(std::span<const std::uint8_t>);
+InstanceOp decode_instance_op(std::span<const std::uint8_t>);
 Ping decode_ping(std::span<const std::uint8_t>);
 NetStat decode_netstat(std::span<const std::uint8_t>);
 Close decode_close(std::span<const std::uint8_t>);
-Roster decode_roster(std::span<const std::uint8_t>);
 InstVisit decode_inst_visit(std::span<const std::uint8_t>);
 Reassign decode_reassign(std::span<const std::uint8_t>);
 
