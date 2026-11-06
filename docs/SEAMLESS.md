@@ -1195,8 +1195,8 @@ entered in the registry checks of both sides
 number given twice does not compile on either side (the name switches). Since the review the client skips (and logs once) a NETSTAT,
 PRESENCE, PRESENCE2, ROSTER or ROOM frame that does not decode: they only feed the
 indicator, the name tags and figures and the room list.
-Round 67's design (19.18) takes client 0x18-0x1D and server 0x91 and
-0x94-0x9A after round J's numbers (6.13.7), retires ROOM (0x8A) and ROSTER
+Round 67's design (19.18) takes client 0x18-0x1E and server 0x91 and
+0x94-0x9B (round 72: 0x1E REPORT, 0x9B OFFER) after round J's numbers (6.13.7), retires ROOM (0x8A) and ROSTER
 (0x8D) for good and pins its numbers at round I1's integration.
 
 Events inside a tick record: JOIN (slot, entrance point, carry), LEAVE (slot),
@@ -8655,27 +8655,73 @@ round I3 the instance ends at once). 33 was not asked; the design keeps
     (question 32's free travel among them) and replaces only design
     defaults (19.1, 19.30.10).
 
-Answers relayed with round 72 (by its orchestrator, the same day): the load
-gate's "max at most 5 ms" may be read at p99.99 (19.17.4, M4 in 19.25);
-round I2-social's two changed rules of 19.11 are approved (19.25).
+Relayed with round 72, not confirmed by the user: the round's orchestrator
+passed on, the same day, that the load gate's "max at most 5 ms" may be
+read at p99.99 (19.17.4, M4 in 19.25) and that round I2-social's two
+changed rules of 19.11 are approved (19.25). Nothing in the repository
+records the user's own words for either, and neither belongs to decision
+38, so both stay open until he confirms them (question 42): the gate's
+criterion stays "max at most 5 ms", and the two rules stay as built.
 
 ### Questions of round 72 (2026-11-05)
 
-39. **The Fortress** (19.30.2). The gate fields staggf01-04 are reached on
-    foot only from Death Valley (stag0101 with the Gob Gate switch or
-    Leomon's flag) and lead on to a walled plateau of Dry Land's Power
-    Plant (stag0205), which has no way to the rest of Dry Land. (a) They
-    count as Death Valley: a host who walks from Goblin Pass through the
-    Fortress to the plateau keeps his instance (default). (b) Walking into
-    the Fortress counts as leaving Death Valley: the instance ends for
-    everyone, as if the host had gone home.
-40. **Joining an area instance whose players are elsewhere** (19.30.3). Lee
-    takes the gate to Dry Land while Kim's instance plays in Ancient Ruins
-    B2. (a) Lee enters where he walked in (Mummy Desert) as a guest in
-    Kim's story and meets the others on foot or with the next go-along
-    prompt; from round I3 the row also offers *Join at Kim* (default). (b)
-    Lee always appears next to Kim; this needs round I3's travel, so before
-    I3 he enters as in (a).
+**Decided in round 72 and reported, not asked** (the first draft's
+question 39): the Fortress ends no instance. The gate fields staggf01-04
+are reached on foot only from Death Valley (stag0101 with the Gob Gate
+switch or Leomon's flag) and lead on to a walled plateau of Dry Land's
+Power Plant (stag0205), which has no way to the rest of Dry Land; they
+count as Death Valley, so a host who walks from Goblin Pass through the
+Fortress to the plateau keeps his instance. The other reading (walking
+into the Fortress ends the instance for everyone, as if the host had gone
+home) would end instances on an ordinary story path (19.30.2).
+
+39. **The Fortress and go along** (19.30.2, 19.30.5). (a) The Fortress
+    counts as fields: walking into it from Goblin Pass makes no go-along
+    offer, and members in it get the offers of others (default,
+    recommended: the game calls staggf01-04 "gate fields", and their
+    loading cards are not among Death Valley's dungeons). (b) It counts as
+    a dungeon (dungeon key `fortress`): "Kim went into the Fortress. Go
+    along?", and members inside it are never offered.
+40. **Instances whose players are elsewhere in the area** (19.30.3,
+    19.7.3). Lee takes the gate to Dry Land (Mummy Desert) while Kim's
+    instance plays in Ancient Ruins B2. (a) Kim's row is listed in the
+    user's Q13 order (party, friends, ping, free seats; players at Lee's
+    arrival stage, "Here", only a later tie-breaker) and may be preselected
+    (answer 30); Lee enters where he walked in, as a guest in Kim's story,
+    and meets the others on foot or with the next go-along offer; from
+    round I3 the row also offers *Y: Join at Kim* (default: answers 30 and
+    Q13 unchanged). (b) As (a), but rows with players at the arrival stage
+    come right after party and friends, and a row with nobody of its
+    instance at the arrival stage is never preselected unless it is the
+    party's or a friend's: *New instance* is then preselected
+    (recommended: with rows for the whole area the Q13 order preselects a
+    stranger's instance somewhere else in the area at almost every gate on
+    a busy server, and a quick A makes Lee a guest in a stranger's story
+    without meeting anyone). (c) As (b), and from round I3 A on such a row
+    travels next to the host instead of entering where Lee walked in.
+41. **A host alone in his instance** (19.30.3). Until round 72 a host alone
+    in his instance who walked onto a stage where another instance open to
+    him played was asked whether to join it (*Join* ended his own
+    instance, *Continue alone* kept it), after the wish of 2026-11-04 "when
+    you enter a field or dungeon, you get a prompt whether you want to
+    join". With instances per area he moves inside his own instance, and
+    the design dropped that prompt: two solo players in the same dungeon
+    never meet. (a) No prompt inside the area; others are met at the gate,
+    in the browser and through the friend list (default, recommended: on a
+    busy server nearly every stage change of a solo player would ask him).
+    (b) The round 67 prompt again, only at the stage he walks to and only
+    while nobody else is in his instance. (c) As (b), but only for his
+    party's and his friends' instances.
+42. **Two answers relayed by the round 72 workflow** (19.17.4, 19.25). Did
+    the user confirm (1) that the load gate's "max at most 5 ms" may be
+    read at p99.99 (single pauses of a busy machine are the only holds over
+    5 ms) and (2) round I2-social's two changed block rules of 19.11 (a
+    blocked player's request stays "sent" without reaching the blocker; a
+    full inbox never answers a sender differently)? They stand in the
+    design as relayed, not confirmed. Recommended: yes to both. Default
+    until he answers: (1) the max stays the criterion; (2) the rules stay
+    as built (merged in integration r71; the design's earlier rules
+    revealed blocks).
 
 ## 19. Instances without rooms, friends and the instance browser (round 67 design)
 
@@ -8814,8 +8860,8 @@ what was taken. A review against the code (`RoomHub.cs`, `RelayHub.cs`,
 - **Server.** One relay hub for the whole server (today's `RoomHub`,
   generalized and not renamed in round I1, one lock until the load gate says
   otherwise); story keepers per (account, box); friends, blocks, preferences
-  and the instance history in new tables; the protocol rises (47, or the
-  next free number at the integration); old clients see "Update required".
+  and the instance history in new tables; the protocol rises (49, or the
+  next free number at the integration; round J's READY check took 48); old clients see "Update required".
 - **Online off** changes nothing: every new engine path hangs off
   `Engine::online()`.
 - **Plan.** Rounds I1-I6 interleaved with G, J, D and R (19.25): the
@@ -8870,13 +8916,19 @@ program UI.
 with a name, an optional password, up to ten players and a room list";
 "story progress by any player counts for the room's story" becomes "... for
 the host's story", 19.8); question 4 of 2026-10-29 (warp to a friend:
-walking only) for the browser, the friend list, parties and reconnects;
+walking only) for the browser, the friend list, parties and reconnects,
+and inside the instance for *Go along* (decision 38) and *Go to <member>*
+(round 72: to any member, not only to the host);
 question 8 (play alone in a room: no switch), whose switch a Private
 instance now is; question 2 (owner away: drop), which the host's grace
 replaces (19.8.5); 8.6 and round 59's owner-at-zero machinery (19.8.10);
 answer 10 (b)'s board rule, which has no case once every board is at home
-(19.8.9). Decision 38 (round 72) replaces none of the user's answers 18-37,
-only the design defaults marked "round 72" below (19.30.10).
+(19.8.9). Decision 38 (round 72) replaces none of the user's answers
+18-37 but rereads one: answer 21's "asked only when a foreign instance
+already runs" now means one in the arrival's area, not at its stage, so on
+a busy server nearly every gate departure gets the prompt (19.30.10, the
+risk in 19.27). Otherwise it replaces only the design defaults marked
+"round 72" below (19.30.10).
 
 **Defaults this design chooses** (those with a question number are open,
 section 18):
@@ -8886,10 +8938,10 @@ section 18):
 | Guests travel freely inside the instance as room members do today; any member's progress counts for the host's story (question 32) | 19.6.3 |
 | The prompt appears only when a running instance open to the player exists in the target's area (round 72; before: at the target stage); otherwise a new instance with the remembered visibility and a toast | 19.7.1, 19.30.3 |
 | The prompt is for arrivals from home only (round 72: a host alone in his instance moves inside his area and is never prompted); a group already in an instance never gets it and never merges with another instance | 19.7.1, 19.30.3 |
-| An instance's area is the one its host entered from home; the Fortress belongs to Death Valley (question 39); boss stages count as dungeon stages | 19.30.2 |
-| An arrival that chooses an instance with no stage group at its stage enters it there as a guest (a new stage group, the host's story by the replace), only at a gate stage or a stage the instance has visited; else the row reads *Not here yet* (question 40) | 19.30.3, 19.30.4 |
-| The go-along notice: 20 s on screen, answered through View (the F1 menu's *Instance* page), the offer open there while its entrants are in that dungeon; no offer for moves inside a dungeon, from a dungeon, or for arrivals from home | 19.30.5, 19.30.6 |
-| *Go along* departs straight to the target inside the instance (GO, the exit port's departure and side rule), the seat kept, its fallback a new stage group of the instance; it spawns at the floor's entrance until round I3, then next to the first entrant | 19.30.7, 19.9.6 |
+| An instance's area is the one its host entered from home; the Fortress belongs to Death Valley and ends no instance (reported; question 39 asks whether it counts as a dungeon for go along); boss stages count as dungeon stages | 19.30.2 |
+| An arrival that chooses an instance with no stage group at its stage enters it there as a guest (a new stage group, the host's story by the replace), only at a gate stage whose lobby gate the host's story has opened or a stage the instance has visited; else the row reads *Story not here yet* (question 40) | 19.30.3, 19.30.4 |
+| The go-along notice: 20 s on screen (as the party's *Follow*), answered through View (the F1 menu's *Instance* page), the offer open there while its entrants are in that dungeon; no offer for moves inside a dungeon, from a dungeon, or for arrivals from home; a re-entry into the same dungeon within 120 s reopens the offer silently; no notice for an entrant the receiver blocked, none after he closed the offer with B, none for members who were in a dungeon when it opened | 19.30.5, 19.30.6 |
+| *Go along* waits in the field until the entrants' floor is joinable, then departs straight to it inside the instance (GO, the exit port's departure and side rule), the seat kept; a new stage group of the instance at the target only when nobody of it is there any more; it spawns at the floor's entrance until round I3, then next to the first entrant | 19.30.7, 19.9.6 |
 | Automatic co-arrival only with a group that starts a new instance, up to `World:StartingSeconds` (10) after its NEW; the arriving group of a running instance is a prompt row instead | 19.7.6 |
 | The prompt's order is the user's (party, friends, ping, free seats); *Same story point* is a badge and the last tie-breaker | 19.7.3 |
 | B in the loading-screen form takes a player who left home back to where he left (a redirect); *Continue alone* went with round 72 (no lone host is prompted) | 19.7.5 |
@@ -8952,7 +9004,7 @@ stays `inst`.
 | area | Death Valley, Dry Land, Venom Jungle or Machine Pit: the stages reachable on foot from the area's lobby gate stage without a hub stage, i.e. its fields, dungeons and boss stages (Death Valley also the Fortress and stag0205's plateau); an instance's area is the one its host entered from home (19.30.2) |
 | dungeon stage | a stage of kind `dungeon` or `boss` in `data/online/areas.json` (19.30.2); every other stage outside the hub is a *field* here |
 | gate stage | the lobby gate's arrival stage of an area after the training: stag0101, stag0201, stag0301, stag0401 (19.30.3) |
-| visited | the stages where an instance has had a stage group; an arrival may enter an instance as a guest only at a gate stage or a visited stage (19.30.3) |
+| visited | the stages where an instance has had a stage group; an arrival may enter an instance as a guest only at a gate stage whose lobby gate the host's story has opened or at a visited stage (19.30.3) |
 | go-along offer | the relay's offer, when members go from a field into a dungeon, to the members in fields to follow them; one per instance and dungeon (19.30.5) |
 | GO | a stamped tick event: one slot takes the exit port's departure to a stage and point of its own instance (*Go along*, *Go to <member>*, 19.30.7) |
 | stage group | today's instance (`HubInstance`): one stage, slots 0-3, solo-led or sealed; it now belongs to one instance |
@@ -8997,18 +9049,23 @@ home (DISSOLVE, 3.4); it is the only way out of an area.
    travel departs toward home and falls back home, never to a solo copy of
    the target stage. (Round 72:) An arrival from home enters an instance
    only at the stage it walked to, and as a guest without a stage group
-   there only at a gate stage or a stage the instance has visited
-   (19.30.3); a departure straight to another stage of the own instance
-   (GO: *Go along*, *Go to <member>*) goes only where a stage group of the
-   instance is, so where the instance's story has been, and falls back to
-   a new stage group of the instance there, never home and never to a new
-   instance (19.9.6, 19.30.7).
+   there only at a gate stage whose lobby gate the host's story has opened
+   (so the host could take that gate himself) or at a stage the instance
+   has visited (19.30.3); a departure straight to another stage of the own
+   instance (GO: *Go along*, *Go to <member>*) goes only where a stage
+   group of the instance is, so where the instance's story has been, and
+   becomes a new stage group of the instance there only when nobody of the
+   instance is there any more: never home, never a new instance, never a
+   second stage group next to a living one (19.9.6, 19.30.7).
 7. A member is in at most one instance and one world session.
 8. Nothing of this runs offline: every engine path hangs off the online
    rules.
 9. An instance stays in its area (round 72): every stage its members reach
    without passing a hub stage lies in the scope of the area its host
-   entered (19.30.2), so its host leaves the area only by going home.
+   entered (19.30.2), so its host leaves the area only by going home. The
+   relay counts a barrier that would break it (`area_escape`, 19.30.2),
+   and the test of every area's scope runs on a graph of all stage
+   scripts (19.24).
 
 **What replaces the room's jobs.**
 
@@ -10675,7 +10732,7 @@ a hundred requests are one toast, not two hundred seconds of them).
 | A modified host client writes into guests' stories through the mirror | the mirror copies only what the guest's own STORY of the same visit also reported (19.8.6) |
 | A removed guest's modified client keeps sending STORY | its owner switches at the removal, its stage group is detached (19.6.6) |
 | Cheated characters among strangers | the Cheats tab fix before round I1 (19.25); round D's server character later; *Report player* from round I1b |
-| Old clients | the protocol at `/status`, the relay's `ERR protocol` with a floor of 47 in code, 410 on `/rooms*` (19.18) |
+| Old clients | the protocol at `/status`, the relay's `ERR protocol` with a floor in code equal to round I1's protocol (49 or the next free), 410 on `/rooms*` (19.18) |
 | Free text | none anywhere; quick chat (I6) uses fixed phrases; reports pick a reason from a fixed list |
 
 ### 19.17 Server
@@ -10880,9 +10937,12 @@ the decision stays under the lock).
   value (46 in `deploy/appsettings.Production.example.json`; `VersionGate`
   compares against it), so a forgotten edit would let a 46 client past the
   version gate to a generic 410 on `/rooms`. The world therefore refuses
-  below 47 whatever the configuration: `VersionGate` uses
-  `max(Play:MinimumProtocol, 47)` and the relay answers `ERR protocol`
-  below 47 by a constant. DEPLOY.md's step still raises the configured
+  below round I1's protocol (49, or the next free number at I1's
+  integration, 19.18) whatever the configuration: `VersionGate` uses
+  `max(Play:MinimumProtocol, Wire.WorldProtocol)` and the relay answers
+  `ERR protocol` below that constant, the same one the handshake checks,
+  so the floor never falls behind the protocol (a floor of 47 would admit
+  today's room clients, which speak 48). DEPLOY.md's step still raises the configured
   value (19.22 step 7), and W22 runs against the production example
   configuration.
 - **The data hash.** Today the room join compares the client's data hash
@@ -11126,10 +11186,12 @@ the decision stays under the lock).
   again with `loadgate --sockets` and in-process, all cells, on a quiet
   machine, criteria unchanged; it decides phase 1 or 2. Whether the max
   may be read at p99.99 when a busy machine's single pauses are the only
-  holds over 5 ms was the user's call: yes (relayed in round 72, section
-  18), so the hold criterion reads "p99 at most 0.5 ms and p99.99 at most
-  5 ms", which every in-process cell above meets (p99.99 1.9-3.2 ms);
-  the relay's CPU over sockets is still open (e). Not
+  holds over 5 ms is the user's call. It was relayed as yes in round 72
+  but is not confirmed by him (section 18, question 42), so the hold
+  criterion stays "max at most 5 ms" until he confirms; read at p99.99 it
+  would be "p99 at most 0.5 ms and p99.99 at most 5 ms", which every
+  in-process cell above meets (p99.99 1.9-3.2 ms). The relay's CPU over
+  sockets is open either way (e). Not
   measured: STORY merges and mirrors at barriers (the keepers per account
   and the mirror come with I1a's story lane), joins over sockets (the
   in-process joins cell only), an incremental margin and the selection off
@@ -11180,7 +11242,7 @@ the decision stays under the lock).
 `StoryWhileOwnerAway`) is ignored with one log warning and removed in the
 cleanup; `Rooms:RankedDataHashes` is read as `World:RankedDataHashes` for
 one release, `Play:RequireRoom` as `Play:RequireWorld`. `Play:MinimumProtocol`
-stays, with the floor of 47 in code (19.17.3).
+stays, with the floor in code (I1's protocol, 19.17.3).
 
 **Log memory.** A sealed visit's log costs about 1.6 KB per second (four
 6-byte pads plus events per tick at 59.94 Hz), about 5.8 MB per hour;
@@ -11192,8 +11254,10 @@ joins from checkpoints only. Hub stage groups log nothing.
 
 ### 19.18 Protocol
 
-The protocol rises to **47**, or to the next free number when round I1 is
-integrated (rounds G and J raise it too); written 47 below. Message numbers
+The protocol rises to the next free number when round I1 is integrated:
+at least **49**, since round J's READY check took 48 (`kOnlineProtocol` in
+`online_run.hpp`, `Wire.ReadyCheckProtocol`); written 49 below. The floor
+in code (19.17.3) is that number itself, one constant per side. Message numbers
 follow the registry of 6.3 after round J (J holds client 0x15-0x17 and server
 0x92-0x93, 6.13.7; server 0x91 is free) and are pinned at the integration;
 golden vectors on both sides (`online_wire_tests.cpp`,
@@ -11268,7 +11332,8 @@ golden vectors on both sides (`online_wire_tests.cpp`,
   OFFER (an offer it cannot read is one it never answers);
   an undecodable OPTIONS means "nothing to choose" (NEW).
 
-**Old clients.** The server's minimum protocol is 47, as a floor in code
+**Old clients.** The server's minimum protocol is round I1's (49), as a
+floor in code
 whatever `Play:MinimumProtocol` says (19.17.3): the version gate shows
 "Update required" before any call, the relay answers `ERR protocol`,
 `/rooms*` answers 410 `rooms_retired`. Rooms and the world cannot run side
@@ -11398,8 +11463,8 @@ Everything runs online only.
    stays possible only at the title (stagIS*).
 7. **The user's steps** (DEPLOY.md gets them, with the HeidiSQL guide for the
    new tables and views): a database backup in HeidiSQL; in the server's
-   `appsettings.Production.json` `Play:MinimumProtocol` set to 47 (the code
-   refuses below 47 anyway, 19.17.3) and `Play:RequireRoom` renamed
+   `appsettings.Production.json` `Play:MinimumProtocol` set to 49 (I1's
+   protocol; the code refuses below it anyway, 19.17.3) and `Play:RequireRoom` renamed
    `Play:RequireWorld`; the server release (it migrates at the start); the
    client release, both together. Rooms are gone after the update. Round
    I2's social migration (`friends`) comes earlier with its own release and
@@ -11490,7 +11555,8 @@ with 1,748,011 frames, the save state suite 17 of 17.
   host ending at once, the defeated host's return hold (I3).
 - `AccountScrubTests` (19.17.1), `WorldServiceTests` (counts, the play
   context for achievements, `StoryReplaced` with a live keeper),
-  `ProtocolFloorTests` (46 refused with `Play:MinimumProtocol` 46).
+  `ProtocolFloorTests` (46, 47 and 48 refused with `Play:MinimumProtocol`
+  46).
 - `WireGoldenTests` with every new and changed message and the registry.
 - `WorldLoadTests`: the load gate of 19.17.4 with all its cells.
 
@@ -11652,7 +11718,7 @@ The design changes the results force, for the lanes:
 | M1 | A restore keeps the host's modes (the snapshot's GameSystem) but `GameEngineLink::start_online` puts the joiner's own randomizer and fast loading over the snapshot's cheats: with other settings a classic join differs from the next stage load (randomizer) or the next stage change (fast loading), a checkpoint join is refused; drops alone were not exercised (no drop in the 4,199 frames; by code the first drop differs) (19.8.7) | after every restore the snapshot's cheats stay (only `online_cheats`' forced-offs); no settings in BARRIER_OK or STATE_DATA and no join filter are needed; the own modes and cheats come back in the parked DISSOLVE before the module reload: the load then reads the files and latches the fast loading of a Game Start with them (the reload's length and the load's duration follow the departing visit) | client |
 | M2 | A redirect at BARRIER_OK, in the module reload's held fields or before the load step (the top of `apply_barrier`) equals a NEXTSTAGE to that stage and point (load snapshot and about 3,977 frames of net fingerprints), solo and for a parked guest of a stage group of two or three with own slot 1; without the point it differs (19.8.3) | `redirect_pending_stage` = `request_stage` + `PlayerPointManager::set_point_no`, called from `on_barrier_ok` or the top of `apply_barrier`, never later; it asserts a DISSOLVE decision and a pending stage, not a solo engine | client |
 | M3 | Only defeated players after a HOME reach the original game over (one update after the HOME, NEXTSTAGE stagml11 374-402 frames later, as offline: 383); every such barrier, and the exit prompt's (stag0101 point 2) when HOME left a defeated member alone on an exit mat, has alive mask 0; that prompt is HOME's doing (offline, two defeats on the same mat run the game over) (19.6.5) | the relay reads "defeated" from the barrier's alive mask 0, not from the target stagML11, except in a give-up copy (INTENT *give_up* and its fork: on purpose, answers 24 and 37); such a barrier of an ended instance is redirected home | relay |
-| M4 | Phase 1 (one lock) passes the holds' p99 (12-23 µs) and, over sockets with `TryEnter` as built, the sealing lateness p99 (under 2 ms; misses 0.5-1.1 %); it fails the max of 5 ms in every cell with sealed groups (the ping pass sorts 1,800 margins per sealed member, 7.5-21 ms once a second; GC and the busy machine) and the relay's CPU over sockets (base 0.72-0.85 cores, select 0.66, a full hub 4) from the connection path, one write and two reads per frame; the in-process TryEnter misses (15-35 %) were the harness's coincident timer wakes; the lock is busy 1.1-1.8 %, so phase 2 fixes none of it (19.17.4) | phase 1 kept provisionally; the gate's criteria unchanged; the PING margin incremental or cached; `TryEnter` stays (`SealRoom` counts misses, reads its time with the lock held; `SealLateness`); the presence selection computed off the lock; the fan-out by selection; the relay lane cuts the CPU per frame (coalesced writes alone did nothing measurable); then the gate again, both harnesses, on a quiet machine; reading the max at p99.99 was a question for the user, answered yes (relayed in round 72): the in-process holds pass at p99.99 (1.9-3.2 ms), the CPU over sockets stays open | relay |
+| M4 | Phase 1 (one lock) passes the holds' p99 (12-23 µs) and, over sockets with `TryEnter` as built, the sealing lateness p99 (under 2 ms; misses 0.5-1.1 %); it fails the max of 5 ms in every cell with sealed groups (the ping pass sorts 1,800 margins per sealed member, 7.5-21 ms once a second; GC and the busy machine) and the relay's CPU over sockets (base 0.72-0.85 cores, select 0.66, a full hub 4) from the connection path, one write and two reads per frame; the in-process TryEnter misses (15-35 %) were the harness's coincident timer wakes; the lock is busy 1.1-1.8 %, so phase 2 fixes none of it (19.17.4) | phase 1 kept provisionally; the gate's criteria unchanged; the PING margin incremental or cached; `TryEnter` stays (`SealRoom` counts misses, reads its time with the lock held; `SealLateness`); the presence selection computed off the lock; the fan-out by selection; the relay lane cuts the CPU per frame (coalesced writes alone did nothing measurable); then the gate again, both harnesses, on a quiet machine; reading the max at p99.99 is a question for the user, relayed as yes in round 72 but not confirmed (question 42): until he confirms, the max stays the criterion (at p99.99 the in-process holds would pass, 1.9-3.2 ms); the CPU over sockets stays open | relay |
 | M5 | 30 ghost figures cost 0.40-0.45 ms a pass at 144 Hz (CPU 0.25-0.30 ms) on the RTX 5070 Ti with a hidden window; the half rate as measured skipped only the pose of the farther 20 and saved 0.03-0.04 ms (19.13) | 30 at full rate by default; the half rate and the distance cap with its F1 setting stay designed as the fallback, built only if a weaker GPU (the iGPU, a visible window) measures over the 1.5 ms budget | client |
 
 | Lane | Scope |
@@ -11705,7 +11771,7 @@ W10-W10c, W11b, W30b, W31 and W31b-W31f pass, plus the I1a scenarios
 again, the regression, ctest, the server's tests and online off; a
 DW4Online release with the migration and the new protocol exists.
 The user's steps (19.22 step 7): a fresh backup in HeidiSQL,
-`Play:MinimumProtocol` 47, the server release, the client release,
+`Play:MinimumProtocol` 49 (I1's protocol), the server release, the client release,
 together.
 
 Depends on: I1a merged; the answer to question 34 (the default otherwise).
@@ -11747,8 +11813,9 @@ release.
   are not audited); the hourly housekeeping purges expired requests and
   delivers waiting ones to accounts whose places an expiry or a deleted
   account freed.
-- **Two rules of 19.11 changed** (approved by the user, relayed in round
-  72, section 18; both serve "a block is never revealed", 19.16):
+- **Two rules of 19.11 changed** (built and merged; relayed in round 72
+  as approved by the user, not yet confirmed by him: question 42; both
+  serve "a block is never revealed", 19.16):
   - A block keeps the blocked player's pending request to the blocker and
     makes it silent (`delivered = 0`): it stays "sent" in his list, so the
     block is not revealed by a vanishing row; the blocker's own request to
@@ -11974,7 +12041,7 @@ Applied with this design (short notes that point here): 0, 1.1, 1.2, 2,
 entries of 19.27. When round I1 merges, the round rewrites them in full:
 the room items of 1.1 become the decisions of 19.1; the terms of 19.3 enter
 2; 3.1-3.4 read world, instance and stage group; 6.2 the world tickets and
-the per-stage-group settings hash; 6.3 the protocol 47 tables; 6.10 the
+the per-stage-group settings hash; 6.3 the protocol 49 tables; 6.10 the
 reconnect inside the instance; 6.11 the instance host; 8.3-8.8 the story per
 instance host and the replace at DISSOLVE (8.6 removed); 9.1.1 the binding
 per world session; 10 the home screen; 11 the instance context; 12.1 the
@@ -12003,7 +12070,7 @@ this section). Fixed in place unless marked otherwise.
 | 7 | Account deletion bypasses `ON DELETE CASCADE`; the cleanup would break it | 19.17.1: scrub statements per table, `room_members` out with the DROP; `AccountScrubTests` |
 | 8 | Story reset and restore with live keepers | 19.8.1: `StoryReplaced`; W28 |
 | 9 | The mirror carries unspaced owner deltas into foreign accounts; its order at a hub barrier | 19.8.6: only what the guest's own STORY reported; 19.8.3: STORY, merge, mirror, then the payload; W16, W16b |
-| 10 | The old-client gate depends on the configuration | 19.17.3, 19.18: a floor of 47 in code, the DEPLOY.md step; W22 on the production example |
+| 10 | The old-client gate depends on the configuration | 19.17.3, 19.18: a floor in code (47 at the review; since round 72's review I1's own protocol, 49 or the next free, because round J's READY check took 48), the DEPLOY.md step; W22 on the production example |
 | 11 | The world's data hash is undefined | 19.17.3: `World:DataHashes`, a matching filter, "ranked" per instance |
 | 12 | A host lost at a barrier makes the guests wait | 19.6.7: decided without him, he resumes into it; W7e |
 | 13 | P7 only half met for a guest beyond 10 s | 19.15: filed at its stage, documented apart until I5, rejoined from a checkpoint in I5 |
