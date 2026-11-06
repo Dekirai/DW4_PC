@@ -1,5 +1,5 @@
 {
-  "desc": "a lone host moving inside his area: into dng101b1 where c's instance plays: no prompt, a's instance goes on, a sees none of c's",
+  "desc": "a lone host moving inside his area: into dng101b1 where c's Public instance plays: no prompt, a's instance goes on, a sees none of c's (decision 41)",
   "world": true,
   "autochoice": "first",
   "seed_story": true,
@@ -18,17 +18,15 @@
       "name": "c",
       "script": "c.script",
       "card": "k5",
-      "start": 0,
-      "prefs": {
-        "defaultVisibility": "private"
-      }
+      "start": 0
     },
     {
       "name": "a",
       "script": "a.script",
       "card": "k5",
       "start": 3,
-      "seed_story": true
+      "seed_story": true,
+      "autochoice": "new"
     }
   ]
 }

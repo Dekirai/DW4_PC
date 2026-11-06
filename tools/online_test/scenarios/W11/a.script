@@ -1,5 +1,6 @@
 # W11, a (k5): alone in its own instance, takes stag0101's matz00 into dng101b1 where c's instance has a stage group:
-# no prompt, a new stage group of a's own instance; a sees none of c's members (decision 41).
+# no prompt, a new stage group of a's own instance; a sees none of c's members (decision 41). a enters with
+# DW4_ONLINE_AUTOCHOICE=new (its arrival is a New instance, not the automatic join of c's Public instance).
 campaign until stage=stagml11,control
 idle until epoch>=@100
 explore mate00 yes until stage=stag0101,control
