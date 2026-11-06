@@ -162,6 +162,10 @@ public static class ServerApp
             proxy.Apply(context);
             return next(context);
         });
+        // The room era's settings (SEAMLESS.md 19.17.5): ignored since the world, with one warning; removed in the cleanup.
+        if (config.GetSection("Rooms").GetChildren().Any(c => c.Key is not ("PlayersPerInstance" or "RankedDataHashes")))
+            app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("World").LogWarning(
+                "The section Rooms of the settings is no longer used (rooms gave way to the online world); remove it (DEPLOY.md section 9.2)");
         app.UseDw4Web(app.Services.GetRequiredService<WebOptions>(), app.Environment.IsDevelopment());
         app.UseDw4Api();
         app.MapDw4Api();

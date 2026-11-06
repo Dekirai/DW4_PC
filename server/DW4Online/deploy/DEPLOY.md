@@ -825,7 +825,8 @@ re-encodes the text and silently turns every non-ASCII character into `?` (the r
    same path, so nothing else changes. Settings that a release asks for go into `config\appsettings.Production.json`
    before the start: an update from release 0.1.0 (its example file had 43) sets `Play:MinimumProtocol` and
    `Play:CurrentProtocol` to the game client's protocol (45 since round S2, 46 since round 63, 47 since round G-core,
-   48 since release 0.1.6: the READY check at the check tick of round J's joins); the room story settings work with
+   48 since release 0.1.6: the READY check at the check tick of round J's joins, 49 since the online world, section 9.2:
+   the code refuses anything below 49 whatever the file says); the room story settings work with
    their defaults (section 10). A release that raises the protocol goes on the server first and the game client after
    it: an older relay (0.1.5, minimum 47) admits a 48 client but checks its READY at the check tick only when the
    donor's report happens to be there already; the new relay with `Play:MinimumProtocol` 48 asks older clients to
@@ -995,9 +996,92 @@ Deleting a whole row by hand (a friendship, a request, a block) is harmless. A d
 has no rows in any of the three tables. The views with user names (`v_friends`, `v_friend_requests`, `v_blocks`) come
 with a later release that also grants `CREATE VIEW`; until then the queries above stand in for them.
 
+### 9.2 Migration 0013 `world` (round I1): the rooms give way to the online world
+
+The release with migration 0013 replaces rooms by the online world (SEAMLESS.md 19): the game's *Play* enters the
+world, a player's lobby is always his own, and taking the gate to an area where a visible instance runs puts him into
+it. Rooms are gone after this update: `/api/v1/rooms` answers 410, the website's *Rooms* page became *Instances*, and
+the server refuses game clients older than protocol **49** (the client release of the same round). Server and client
+are released together; install the server first, then publish the client.
+
+What the migration does (it runs at the start, or with `migrate` in the console, section 8):
+
+| Object | What |
+| --- | --- |
+| `online_prefs` (new table) | per player: the visibility his instances start with, invites, whereabouts, friend toasts, and the host settings (camera, light, fast loading, randomizer seed and modes, last box); a player without a row has the defaults |
+| `instance_history`, `instance_history_members` (new tables) | every instance (host, first stage, visibility, difficulty, settings, start, end and why) and who was in it when; kept 90 days (`World:HistoryDays`) |
+| `accounts.last_seen_at`, `achievement_unlocks.instance_id`, `speedrun_times.instance_id` (new columns) | "last online" for friends; the instance an unlock or a best time came from (older rows keep `room_id`) |
+| `online_story_history.reason` | gains the value `mirror` (shared progress, a later round) |
+| data | each room host's newest room settings become his `online_prefs` (camera, light, fast loading, randomizer); nothing of a room's story is copied to its guests (a player who was only a guest starts the world with an empty story, as decided) |
+| views `v_friends`, `v_friend_requests`, `v_blocks`, `v_instance_history`, `v_staff_audit` | read-only tables with user names for HeidiSQL |
+| `rooms`, `room_members` | stay as they are, read-only; a later release drops them |
+
+**The one new right.** The views need the right `CREATE VIEW`. Root has it (section 2.1: nothing to do). The service
+user of section 2 does not: give it **before** the update, as root, in HeidiSQL (connect as root, select the database
+`dw4online`, open a *Query* tab, paste, press F9):
+
+```sql
+GRANT CREATE VIEW ON dw4online.* TO 'dw4online'@'localhost';
+GRANT CREATE VIEW ON dw4online.* TO 'dw4online'@'127.0.0.1';
+SHOW GRANTS FOR 'dw4online'@'localhost';   -- the second line now ends with ", CREATE VIEW ON `dw4online`.* TO ..."
+```
+
+Without it the migrator stops before it changes anything: `migrate` prints `FAIL: Migration 0013 (world) needs the
+right CREATE VIEW on database 'dw4online', which the user ... does not have. Nothing was changed (the database stays at
+schema 12). Grant it as root ...`; the service log shows the same as a ` FAIL ` line. Run the two `GRANT` lines and
+`migrate` again (no backup restore is needed: nothing was changed). The backup user of section 2 already has
+`SHOW VIEW`, so the nightly dump keeps the views. The views run with the rights of whoever reads them (`SQL SECURITY
+INVOKER`), so a restored backup works on a server without the `dw4online` user too.
+
+**The settings.** In `config\appsettings.Production.json`, before the start:
+
+1. `Play:MinimumProtocol` to **49** and `Play:CurrentProtocol` to **49**. (The server refuses anything below 49 anyway,
+   whatever the file says: the floor is in the code. Set it so the file says what happens.)
+2. `Play:RequireRoom` renamed to `Play:RequireWorld` (same value, `true`). The old name is still read for this release.
+3. The `Rooms` section can go (its `StoryWhileOwnerAway` is no longer used; the service writes one warning line if it is
+   still there). `Rooms:RankedDataHashes`, if you set it, becomes `World:RankedDataHashes` (the old place is still read
+   for this release).
+4. Optional, with their defaults: `World:DataHashes` (empty: any game data may play; a list of hashes admits only
+   those), `World:RankedDataHashes` (empty: every game data counts for achievements), `World:HistoryDays` (90).
+
+**The update** is section 8 with these steps in this order: (1) the backup in HeidiSQL or `backup-db.ps1` (section 7;
+the migration's way back), (2) the `GRANT CREATE VIEW` lines above (only with the service user of section 2), (3) the
+settings above, (4) the server release (`migrate`, `Start-Service`), (5) the client release for the players. Rooms
+that were open close at the start (`server_restart`). The way back is section 8's rollback with the backup of step 1
+(the old release refuses schema 13).
+
+The check in HeidiSQL after the update (as root or `dw4backup`, database `dw4online`, a *Query* tab, F9):
+
+```sql
+-- 1. The migration is applied: the top row is 13 "world".
+SELECT version, description, applied_at FROM schema_version ORDER BY version DESC LIMIT 3;
+
+-- 2. The room hosts' settings arrived (one row per host who ever opened a room with settings).
+SELECT a.username, p.default_visibility, p.camera_mode, p.light_mode, p.fast_loading, p.randomizer_seed, p.randomizer_modes
+  FROM online_prefs p JOIN accounts a ON a.id = p.account_id ORDER BY a.username;
+
+-- 3. Later: who played where (the views show user names; open one in the tree and use its Data tab, or query it).
+SELECT * FROM v_instance_history ORDER BY started_at DESC LIMIT 50;   -- host, area, players, minutes, end_reason
+SELECT * FROM v_staff_audit ORDER BY at DESC LIMIT 50;               -- what moderators did and looked at
+SELECT * FROM v_friends ORDER BY friends_since DESC;
+SELECT * FROM v_friend_requests ORDER BY created_at DESC;
+SELECT * FROM v_blocks ORDER BY created_at DESC;
+```
+
+Look, do not edit: the relay writes `instance_history` and its members through a queue while instances run, and the
+website shows them. Editing `online_prefs` by hand is harmless (the next login reads it); keep `randomizer_seed` empty
+or between 1 and 4294967295 and `randomizer_modes` as the table comment says (the table refuses other values).
+A deleted account (`deleted_<id>`) has no `online_prefs` and no member rows; instances it hosted keep their row.
+
 ## 10. Operating notes
 
-- The room story while the owner is away (`Rooms:StoryWhileOwnerAway` in `appsettings.Production.json`, SEAMLESS.md
+- The online world (section 9.2, SEAMLESS.md 19): `World:DataHashes` (empty: any game data plays), `World:RankedDataHashes`
+  (empty: every game data counts for achievements), `World:HistoryDays` (90: how long `instance_history` keeps an
+  instance); the relay's own `World:*` keys (members, instances, the host's grace, the presence budget) have the defaults of
+  SEAMLESS.md 19.17.5. Achievements count only while the player is in the world (`Play:RequireWorld`, true). Staff see
+  every instance on the website's *Admin > Instances* page and can end one or send a player home there; both are audited
+  (`v_staff_audit`). The hourly housekeeping deletes instances older than `World:HistoryDays`.
+- Until release 0.1.6 (rooms): the room story while the owner is away (`Rooms:StoryWhileOwnerAway` in `appsettings.Production.json`, SEAMLESS.md
   8.6): `drop` (the default: progress the guests make while the room's owner is away is not saved and leaves their
   games at the next stage change, with a notice), `hold` (kept on the server and merged when the owner returns) or
   `apply` (saved at once). The story's plausibility per visit (`Instances:StoryMinVisitSeconds`, 10;
