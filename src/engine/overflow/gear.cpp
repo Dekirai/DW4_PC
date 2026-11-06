@@ -15,8 +15,8 @@
 //     power up with ¶ Data at a twentieth of DW4's NEXTX (alpha to
 //     alpha+240, beta+..., 7.5) and step to beta and gamma by offers; the
 //     Drain Ram steps beta..epsilon by offers only (DW4: "Cannot power-up").
-// The Drain Ram's HPDRAIN is DW4's (lua_host.cpp; the run caps it at 2 % of
-// MaxHP a second as 4.8 asks only once O2 measures it: docs/ROUND_O1B_E_NOTES.md).
+// The Drain Ram's HPDRAIN is DW4's (lua_host.cpp); the run caps it at 2 % of
+// MaxHP a second (4.8: OverflowRules::drain, damage.drain_cap).
 #include "dw4/engine/overflow_director.hpp"
 
 #include "director_util.hpp"

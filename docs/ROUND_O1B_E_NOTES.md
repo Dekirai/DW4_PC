@@ -175,13 +175,33 @@ HP for Guilmon's Fang Thrust (one big target), then the kite bot's clear rate ag
   (i_bosshp02) is sent but not looked at in a picture (lane D's screenshot set should show it).
 - **Awakening:** the signature takes the socket and its model comes in hand by the ladder's own model change;
   the x_100charge01 burst on every hit (6.5) is not built.
-- **Gear:** the Drain Ram's run cap (2 % of MaxHP a second, 4.8) is not built (DW4's HPDRAIN as it is); the
-  chips' power-up panel (SQ_TECUP) comes at most every 30 steps but is not counted in the rules' panel gap.
-  The ?????? offer, the other cores, boards and chips are O2's.
+- **Gear:** the ?????? offer, the other cores, boards and chips are O2's. (Done after 18:00, section 10: the
+  Drain Ram's run cap and the chips' SQ_TECUP in the rules' panel gap.)
 - **Lane A's host tests** T3 / T4 / T5 / T8 / T11 were not run again (no host code changed but the dev start's
   form list and the driver's request keys).
 - **The user's run** decides the finale's HP (x 14) and the late contact (section 5): the bots model a newcomer
   and a kiting player, not him.
+
+## 10. After 18:00 (06.11, second agent): two gear points, no long runs
+
+- **Panel gap for every SQ_TECUP** (44754d47): `OverflowRules::show_panel(engine, slot, digimon)` is the one
+  place that posts i_getitempnl01 SQ_TECUP in a run; the skill ups (`skill_up`), the train offers
+  (`OverflowDirector::take`) and the chips' ¶ Data power-ups (`power_up_chips`) all go through it, so a chip
+  step inside the 30-step gap shows no second panel (`tally.panels_skipped`). The chip's notice line stays.
+- **The Drain Ram's run cap** (f964f0fb, SURVIVAL.md 4.8): `OverflowRules::drain(engine, slot, heal)` gives
+  HPDRAIN's heal of a weapon hit only up to `damage.drain_cap` (0.02) of the slot's MaxHP per second
+  (engine frame / 60; `tally.drain_given` / `drain_capped`). The hook in `lua_host.cpp` BLTgetDamageValue runs
+  only with `overflow_run_`; the story's HPDRAIN is unchanged (the same `change_hp` call).
+- Tests: `overflow_gear` checks both (15 checks: a second panel in the same frame is left out, the tally counts
+  both; HPDRAIN 1 + (3 x cap) + 5 in one second gives 1, cap - 1, 0; a new second gives the cap again).
+- Checks on f964f0fb: build ok, `ctest -R overflow` 12/12, det.sh (`o1b_content_e2`) 4004f056 / 396cb219 in
+  both runs. r25c and the full ctest were not run again (no long runs after 18:00): the only story-side line is
+  the `overflow_run_` branch in BLTgetDamageValue, and det.sh is equal.
+- Still open from section 8: the 20-seed measurements, the form balance (human Agumon 22:13 > 14-18 min),
+  Guilmon's Fang Thrust pierce / reach and Crescent Draw's aim, traits (O3), the Guardians' camera shake and
+  the Violet Ring's return gate, Awakening's x_100charge01 burst, lane A's host tests T3 / T4 / T5 / T8 / T11.
+  The Drain Ram cap changes no bot measurement of section 7 (no bot run starts with or takes the Drain Ram
+  before Blossom Data opens it), so the tables stand.
 
 ## 9. Appendix: the measurement scripts (build/ is not in git)
 
