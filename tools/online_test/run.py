@@ -948,7 +948,7 @@ def run_real(stack, sc, api, relay_port, pin, diag, lock, connection):
     https_port = api.base.rsplit(":", 1)[1]
 
     def expand(text):
-        for n, i in accounts.items():
+        for n, i in list(accounts.items()):
             text = text.replace("{id:%s}" % n, str(i)).replace("{user:%s}" % n, tag + n).replace("{pw:%s}" % n, passwords.get(n, ""))
         return text.replace("{tag}", tag)
 
@@ -1238,7 +1238,7 @@ def run_real(stack, sc, api, relay_port, pin, diag, lock, connection):
     # The scenario's database afterwards (the world's tables: instance_history's end reason, its members, prefs, ...).
     for check in sc.get("db_checks", []):
         sql = check["sql"].replace("{tag}", tag)
-        for n, i in accounts.items():
+        for n, i in list(accounts.items()):
             sql = sql.replace("{id:%s}" % n, str(i))
         if re.search(r"\{id:\w+\}", sql):
             problems.append("db: %s names an account the run never made (%s)" % (check.get("name", sql[:60]), sql[:120]))
