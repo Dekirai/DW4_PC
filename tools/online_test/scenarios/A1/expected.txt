@@ -1,20 +1,21 @@
-# A1: S5's run (both fall in one sealed instance, the game over dissolves the group into two lobbies) with achievements
-# on (DW4_ACHIEVEMENTS=1). Each machine's online tracker counts only its own slot: online_join in the lobby (a solo hub
-# instance: players 1), first_defeat when its own player falls in the sealed field (players 2), never the other's
-# death; the server confirms each new unlock ("Online achievement: <title>"); the last counter batch goes out when the
-# game ends. run.py then logs in as each account and checks what the server holds (scenario.json "achievements").
-a: online achievement online_join \(event\)
-a: online: Online achievement: Connected
-b: online achievement online_join \(event\)
-b: online: Online achievement: Connected
+# A1 in the world (19.8.9): S5's run (both fall in one sealed instance, the game over takes both home) with achievements
+# on (DW4_ACHIEVEMENTS=1). a takes the gate first and hosts the instance, b arrives together with it (a co-arrival) and
+# is a guest. Each machine's online tracker counts only its own slot: online_join is "joined someone else's instance",
+# so only b reports it, inside a's instance (a's lobby and a's own instance give none); first_defeat when its own player
+# falls in the sealed field (players 2), never the other's death; the server confirms each new unlock ("Online
+# achievement: <title>"); the last counter batch goes out when the game ends. run.py then logs in as each account and
+# checks what the server holds (scenario.json "achievements").
 a: (?i)decision 1 .*stage=stag0101
 b: (?i)decision 4 .*stage=stag0101
+b: online achievement online_join \(event\)
+b: online: Online achievement: Connected
 a: online achievement first_defeat \(event\)
 a: online: Online achievement: Ouch
 b: online achievement first_defeat \(event\)
 b: online: Online achievement: Ouch
 a: (?i)decision 3 .*stage=stagml11
 b: (?i)decision 3 .*stage=stagml11
+!a: online achievement online_join
 !a: Online (achievement \S+|counters) refused
 !b: Online (achievement \S+|counters) refused
 !a: online-trace: split
