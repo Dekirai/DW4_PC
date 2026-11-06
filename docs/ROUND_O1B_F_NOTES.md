@@ -19,32 +19,35 @@ the repo); the parts that concern this lane are repeated here.
 | Plug Lab: 7 stats per form, 10 steps of +5 UPCNT, step n costs 100 x n, no refund; rows in the screen's order Strength, Def., MaxHP, MaxMP, Wisdom, Spirit, Speed; points by UPCNT index for the run | `plug_lab_rows`, `buy_plug`, `buy_plug_row`, `plug_lab_points` |
 | Loadout: lane E's gear keys; the start set and what records opened; the slots; a core-pocket chip (Resist ROMs, Defence ROM) only with a Core (8.3) | `start_gear`, `record_gear`, `opened_gear`, `gear_open`, `loadout_allowed` |
 | Data Records: all 23 of 8.4 with title, condition and what they open, checked from the profile's totals and bests (so a record a later version adds is met by an old file's numbers), dated | `record_table`, `check_records`, `add_run` |
-| Form unlocks of 5.3 (used from O3; the story's forms as a read-only bitmask, 17.1 answer 7) and their texts | `form_unlocked`, `form_unlock_text` |
+| Form unlocks of 5.3 (used from O3; the story's forms as a read-only bitmask, 17.1 answer 7: player 1's BASE_ISUSE of the story engine) and their texts | `form_unlocked`, `form_unlock_text`, `story_forms` |
 | Sim Bits of 4.9: the run's bits x the tier (1, 1.5, 2), +500 x the tier on a clear | `run_sim_bits`, `tier_factor` |
 | The run's bits (4.7): the run drops no g_000bit yet, so the driver credits 5 % of the defeats with the original's band for the level x (100 + BITRITSU) / 100, from its own splitmix64 (seeded from the run seed). The run engine and the director's draws are untouched | `defeat_bits`, `bits_seed`; `DirectorDriver::count_bits / run_bits` |
 | The run driver: `apply_meta` puts the form's loadout, Plug Lab points and opened gear into the request (a request's own options win); `copy_meta` hands the loadout and gear to lane E's RunConfig fields where the build has them (requires-guards; checked against E's headers of 5b3fa033); the Plug Lab's UPCNT is the host's alone (`give_plug_lab`, once the run started; RunConfig::plug_lab stays at zeros, so the points are given exactly once); the run is recorded when the results open (or when the window closes: Retire); the O1a overlay shows "Sim Bits +N" and "NEW! <record>"; the HUD shows Bits | `src/game/overflow_driver.cpp` |
-| Lane D's LobbyMeta from the profile (a template on D's field names), the select's start (`remember_start`), the Plug Lab row purchase | `fill_lobby_meta`, `remember_start`, `buy_plug_row` |
-| T7 (profile) | `tests/overflow_profile_tests.cpp`, ctest `overflow_profile` (778 checks) |
+| Lane D's LobbyMeta from the profile (a template on D's field names), the select's start (`remember_start`), the Plug Lab row purchase, and the merge's glue on D's OverflowLobby / LobbyAction (compiled against D's headers of d1089944) | `fill_lobby_meta`, `remember_start`, `buy_plug_row`, `connect_lobby`, `lobby_action`, `refresh_lobby` |
+| T7 (profile) | `tests/overflow_profile_tests.cpp`, ctest `overflow_profile` (787 checks) |
 
 ## 2. Checks (06.11)
 
 | Test | Result |
 | --- | --- |
-| T7 `overflow_profile` | 778 checks pass: the 8.5 example, round trip, later versions, damaged text, the store's writes and every corruption case (cut, garbage, empty, missing with `.bak`, both damaged, both unreadable, a failed write), migration from no file (nothing written until the first write), Plug Lab, bits, Sim Bits, records, loadouts, form unlocks, the request's options, the path rule, LobbyMeta |
+| T7 `overflow_profile` | 787 checks pass: the 8.5 example, round trip, later versions, damaged text, the store's writes and every corruption case (cut, garbage, empty, missing with `.bak`, both damaged, both unreadable, a failed write), migration from no file (nothing written until the first write), Plug Lab, bits, Sim Bits, records, loadouts, form unlocks, the request's options, the path rule, LobbyMeta, the story's forms, the lobby glue |
+| ctest (all) | 57 of 57 (with `online` / `online_env`: DW4_OVERFLOW_PROFILE is on the presentation list) |
 | T1 det.sh (`det_o1bmeta`) | 4004f056 / 396cb219 (both runs) |
 | T3 / T5 (`build/t3/t3meta.sh`, in the worktree's build folder) | the det script with a run at story frame 3000 (Agumon, kite bot, 1,800 steps) and without: 20 fingerprint lines equal (4004f056), the card folders equal (empty), the achievement profiles equal (unlock times aside), only the run writes the `DW4_OVERFLOW_PROFILE` file |
 | a hidden run with a profile (`plug p_agumon mhp 10 str 4`, 18,000 steps) | the Plug Lab points reach the player (the first minute's highest hit 1/60 of MaxHP instead of 1/48); 817 defeats, 1,125 bits, Sim Bits 100 -> 1,225, the `.bak` written, the best line and totals right |
 | the same run without a profile | nothing written (a test run keeps it in memory) |
+| T2 r25c (`EXE=<copy> NAME=seg_r25c_o1bmeta work/campaign/segments.sh r25c 4`, without the NPC) | 10 / 10 segments reached, 1,748,011 frames, every save "same story" |
+| T6 (`--overflow-run form=p_agumon field=stagbs02 tier=normal seed=1 bot=kite offers=priority --smoke-test 90000`, twice) | the same run hash twice (770c6e5ef2d0a29c; defeated at 22:01, Lv 36, 13,690 Sim Bits, 5 records); with a profile (plugs str 6 def 4 mhp 8, Brave Core + Wisdom Chip) twice: the same hash twice (3bd37754fb5c94f3), the summary's `meta_used` line |
 
 ## 3. Left / open
 
-- **Merge glue (at F's merge, after D):** in game_main, D's `OverflowLobby`:
-  `lobby.on_intro_seen = [] { meta().mark_intro_seen(); };`,
-  `fill_lobby_meta(meta().profile(), lobby.meta())` at start and after every
-  meta change and run, `LobbyAction::buy_plug` -> `buy_plug_row(form, stat)`,
-  `LobbyAction::start_run` -> `remember_start(request)` before the switch.
-  D's results screen shows `meta().last_reward()` (Sim Bits, NEW! records)
-  as O1a's overlay does here; D's HUD reads `run_bits(run)`.
+- **Merge glue (at F's merge, after D), three calls in game_main** where
+  D's `OverflowLobby` lives: `connect_lobby(lobby, story_forms(engine))`
+  once; `lobby_action(lobby, action, story_forms(engine))` for every
+  LobbyAction (for start_run before the StorySwitch's request);
+  `refresh_lobby(lobby, story_forms(engine))` after a run came back. D's
+  results screen shows `meta().last_reward()` (Sim Bits, NEW! records) as
+  O1a's overlay does here; D's HUD reads `run_bits(run)`.
 - **E:** must not apply `RunConfig::plug_lab` (F's host side does; F leaves
   it at zeros). The Adept records need a `tech_defeats()` getter (4 ints),
   Crate Breaker a `crates()` getter (O2): the driver reads them once they
@@ -55,9 +58,8 @@ the repo); the parts that concern this lane are repeated here.
 - Endless (O4) is in the format (`best_endless`, `RunReport::endless`), not
   played yet. The ?????? offer, Extensions and Hard / Very Hard are opened by
   records but not built (O2-O4).
-- r25c (T2) was not run in this lane: lane F changes nothing in the story
-  engine (only the host opens a file); det.sh and the T3 story lines are
-  unchanged.
+- T2's second part (r25c with `DW4_OVERFLOW=show`, the NPC drawn) and T9 are
+  lane D's; T10 is untouched by this lane (no engine code).
 
 ## 4. How to run the tests
 
