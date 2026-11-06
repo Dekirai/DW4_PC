@@ -10957,6 +10957,40 @@ the decision stays under the lock).
   and the mirror come with I1a's story lane), joins over sockets (the
   in-process joins cell only), an incremental margin and the selection off
   the lock (only after (a) and (c) are built), TLS (the relay has none).
+
+  **Measured again at protocol 48 (integration r71's fix stage).** The runs
+  above built their rooms at protocol 47 (`Wire.CheckpointProtocol`), so
+  after the integration with round J they never ran protocol 48's
+  check-fingerprint pass: `RoomHub.OnNetFp` scans the instance's stored
+  checkpoints and its joiners' checkpoints (LINQ, under the hub's lock) for
+  every NETFP. The harness now takes the newest protocol
+  (`LoadGate.Protocol` = `Wire.ReadyCheckProtocol`, 48; `--protocol 47`
+  repeats the first runs, the relay child gets it too), and its idle-hub
+  join from a checkpoint names the check tick, checked against the donor's
+  NETFP of it. Both protocols in one session, the same cells and rates
+  (worktree `int71`: `build/fix/gate/loadgate48_r1.json`,
+  `loadgate47_r1.json`, `loadgate_net48_r1.json`, `loadgate_net47_r1.json`,
+  `joins48_r1.json`, `joins47_r1.json`, `gate_r1.log`; summary
+  `gate_cmp.py`), every run valid:
+  - the NETFP hold (3,600 a cell, 120 sealed members once a second): p50
+    1.4-2.3 µs at 48 against 1.2-1.3 µs at 47, p99 7.8-8.4 µs against
+    3.9-4.8 µs, max 0.02-0.17 ms in both; about 0.1 ms of lock time a
+    second more, 0.01 % of the lock;
+  - everything else within the runs' spread: all holds p99 15.1-22.9 µs
+    (47: 15.1-20.7), p99.99 1.9-2.9 ms (47: 1.9-3.2), max 7.8-27.7 ms
+    (47: 7.3-20.9; single pauses, as above); the sealing lateness p99
+    4.2-6.2 ms in-process with `TryEnter` (47: 4.1-5.0; the harness's
+    timers, item 2) and 0.52-0.63 ms with the wait in both; over sockets
+    the relay's CPU 0.82 / 0.76 / 4.22 / 0.97 / 0.44 cores in *base*,
+    *select*, *fullhub*, *storm*, *sealonly* (47: 0.94 / 1.06 / 4.21 /
+    0.80 / 0.40), `TryEnter` misses 0.4-1.7 % and the lateness over 2 ms
+    0.36-0.61 % in both;
+  - the idle-hub joins at 48: every join joined; from a checkpoint the
+    donor's check NETFP 0.01-0.05 ms, READY under 0.01 ms, `FinishState`
+    0.14-0.81 ms; the classic join after 25 minutes refused as before.
+
+  The protocol 48 path is not measurable at the gate's scale: the numbers
+  and the provisional verdict above hold for protocol 48 as well.
 - **Phase 2** (only if the gate fails; one lane): a lock and an inbox per
   stage cell, a registry lock taken briefly; lock order cell, then
   registry, never two cells; a barrier that moves members posts
