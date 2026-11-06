@@ -142,3 +142,31 @@ except the F1 dev start's form list (`draw_dev_start`) and the driver's request 
   form list and the driver's request keys).
 - **The user's run** decides the finale's HP (x 14) and the late contact (section 5): the bots model a newcomer
   and a kiting player, not him.
+
+## 7. The final measurements (build/f/runs_f1, headless, nice 10, four at a time)
+
+Before: main d0e005b0 (OVERFLOW_DIRECTOR.md 11.3 / 11.6: Agumon and Veemon only, no Guardians, no gear, O1a's
+five techniques, the run's end at 25:00). "S": a1fe8f6 (the late contact of section 5); "V": S with contact 1.8
+at 10:00 and Bomb x 0.5 (keys); "F": the shipped state 99057dc (O1a's damage numbers, Bomb x 0.5; measured
+with e11 and the keys that give F's values). A clear counts at its time; seeds 1-n unless noted.
+
+| Bot, form | Before (main) | S (a1fe8f6) | V | F (shipped) |
+| --- | --- | --- | --- | --- |
+| human Agumon | 16:33 (1-20), 1 of 40 before 10:00 | 22:06 (12 seeds, 20:26-23:51), 4 clear, 0 before 10:00 | 19:32 (3) | see below |
+| human Veemon | 15:09 (1-20) | 10:59 (6, 9:43-18:07), 1 before 10:00 | 11:44 (4) | see below |
+| human Guilmon | - | 8:39 (3, 5:51-10:50) | | see below |
+| human Dorumon | - | 11:24 (3, 8:53-13:59) | | see below |
+| kite Agumon | 22:07 (1-20) | 21:57 (6), 3 clear | | see below |
+| kite Veemon | 19:52 (201-220) | 15:22 (201-206, 11:56-19:09) | | |
+| kite Guilmon | - | 10:23 (3, 10:06-21:42) | | see below |
+| kite Dorumon | - | 25:01 (3, 23:08-25:01), 2 TIME UP | | |
+
+Every S / V run: no defeat before 3:00, no Lua error, the first level-up within 17.1 s, the highest
+non-Guardian hit 18.3 %, no clamp.
+
+**What the S runs show.** Agumon (Cleaver, Cutter, Bomb at the densest group from Lv 16) outlasts the
+others by ten minutes; Veemon's, Guilmon's and Dorumon's human runs end at 9-12 minutes, in phase 2 and at
+the 10:00 Guardian: Mummymon and MRβ02 (1.0-1.3 MaxHP each over phase 2), Mammothmon still alive in phase 2
+(Guilmon 1.2-1.6 MaxHP: Fang Thrust's two boxes are slow against one big target), Tyrannomon, then
+Anomalocarimon / SkullGreymon (about 1.1 each). So S is not the answer: the late contact punished the forms
+without Agumon's crowd damage. F keeps O1a's numbers and halves Bomb (as Impact); its runs are below.
