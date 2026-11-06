@@ -1,4 +1,5 @@
-# W22 (19.24, 19.17.3): Play:MinimumProtocol 48 as the production example has it; the floor in code (49) still refuses 48:
+# W22 (19.24, 19.17.3): Play:MinimumProtocol 48 as a server updated without 19.22 step 7 has it (the production example
+# says 49 since the I1a review); the floor in code (49) still refuses 48:
 # the protocol 48 client reads minimumProtocol 49 from /api/v1/status and stops with its "Update required" text.
 a: Update required: the server needs a newer version of the game
 !a: online-script: step

@@ -147,7 +147,8 @@ public class WorldApiTests
     {
         for (var i = 0; ; i++)
         {
-            if (await read() is { } value || i >= 50) return await read();
+            var value = await read();
+            if (value is not null || i >= 50) return value;
             await Task.Delay(100);
         }
     }
@@ -193,7 +194,10 @@ public class WorldApiTests
         }
     }
 
-    /// <summary>The production example configuration (Play:MinimumProtocol 48) still refuses a 48 client: W22's server half.</summary>
+    /// <summary>
+    /// The production example configuration says Play:MinimumProtocol 49 (19.22 step 7); a server updated without that
+    /// edit (48 from release 0.1.6) still refuses a 48 client by the floor in code: W22's server half.
+    /// </summary>
     [DbFact]
     public async Task The_production_example_refuses_a_room_client()
     {
@@ -201,12 +205,16 @@ public class WorldApiTests
         Assert.True(File.Exists(example), example);
         using var json = System.Text.Json.JsonDocument.Parse(await File.ReadAllTextAsync(example));
         var configured = json.RootElement.GetProperty("Play").GetProperty("MinimumProtocol").GetInt32();
-        Assert.Equal(48, configured); // W22: the example as a server updated without the edit of 19.22 step 7 has it
+        Assert.Equal(DW4Online.Domain.World.WorldProtocol.Version, configured);
+        Assert.Equal(49, json.RootElement.GetProperty("Play").GetProperty("CurrentProtocol").GetInt32());
         Assert.True(json.RootElement.GetProperty("Play").GetProperty("RequireWorld").GetBoolean());
-        await using var host = await TestHost.StartAsync(new() { ["Play:MinimumProtocol"] = configured.ToString() });
-        var (token, _, _) = await host.RegisterAsync("Room48");
-        Assert.Equal(HttpStatusCode.UpgradeRequired, (await host.Client(token).PostAsJsonAsync("/api/v1/world/enter", Enter(48))).StatusCode);
-        Assert.Equal("rooms_retired", await (await host.Client(token).GetAsync("/api/v1/rooms")).ProblemCode());
+        foreach (var minimum in new[] { configured, 48 })
+        {
+            await using var host = await TestHost.StartAsync(new() { ["Play:MinimumProtocol"] = minimum.ToString() });
+            var (token, _, _) = await host.RegisterAsync("Room48");
+            Assert.Equal(HttpStatusCode.UpgradeRequired, (await host.Client(token).PostAsJsonAsync("/api/v1/world/enter", Enter(48))).StatusCode);
+            Assert.Equal("rooms_retired", await (await host.Client(token).GetAsync("/api/v1/rooms")).ProblemCode());
+        }
     }
 
     [DbFact]

@@ -1,5 +1,5 @@
 {
-  "desc": "a protocol 48 client sees \"Update required\" with the server on the production example configuration; /api/v1/rooms answers 410",
+  "desc": "a protocol 48 client sees \"Update required\" with a server still on Play:MinimumProtocol 48 (updated without 19.22 step 7); /api/v1/rooms answers 410",
   "world": true,
   "autochoice": "first",
   "seed_story": false,

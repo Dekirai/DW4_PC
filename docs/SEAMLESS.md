@@ -11057,8 +11057,8 @@ the decision stays under the lock).
   `ERR protocol` below that constant, the same one the handshake checks,
   so the floor never falls behind the protocol (a floor of 47 would admit
   today's room clients, which speak 48). DEPLOY.md's step still raises the configured
-  value (19.22 step 7), and W22 runs against the production example
-  configuration.
+  value (19.22 step 7; the production example says 49), and W22 runs
+  against a server that kept 48 (an update without that step).
 - **The data hash.** Today the room join compares the client's data hash
   with the room creator's (`RoomService`, `room.DataHash != dataHash`), and
   "ranked" means that hash is in `Rooms:RankedDataHashes`. In the world: `World:DataHashes` (a
@@ -11834,7 +11834,7 @@ means round I1a):
 | W19 | I1 / I2 | 35 fake presence senders plus friend f plus blocked x in stagML11: the real client draws 30, with f (I2) and never x; frame time at 144 Hz recorded |
 | W20 | I4 | a party of three takes the gate within 3 s: one instance, the leader hosts, the entry scene together; a fourth member at home follows by travel next to the leader; W20b: a member reaches the barrier 1 s before the leader: the leader's group is the base, every engine has the leader's story (the member's own phase differs in the seed) |
 | W21 | I5 | b's client is killed in a's instance and restarted: *Play* returns it next to a ("Returning to Kim's instance..."); a seat expired: home |
-| W22 | I1 | a protocol 48 client (the release before the world) sees "Update required" with the server on the production example configuration (`Play:MinimumProtocol` 48); `/api/v1/rooms` answers 410 |
+| W22 | I1 | a protocol 48 client (the release before the world) sees "Update required" with a server still on `Play:MinimumProtocol` 48 (updated without 19.22 step 7; the production example says 49); `/api/v1/rooms` answers 410 |
 | W23 | I5 | the host crashes and restarts within 50 s: his slot is rejoined from a checkpoint, he stays host, the guests never left |
 | W24 | I1 | an ordered server restart with a guest b and the host a in a field: both home on their own stories, `online_card.dat` and the server revisions untouched by the foreign story |
 | W25 | I1 | the same with the server process killed (no CLOSE): the clients reconnect to the new process, find no instance and take the home departure themselves |
