@@ -4,6 +4,8 @@
 #include "overflow_run.hpp"
 
 #include "dw4/card_store.hpp"
+#include "dw4/engine/engine.hpp"
+#include "dw4/engine/managers.hpp"
 
 #include <algorithm>
 #include <charconv>
@@ -536,6 +538,14 @@ bool form_unlocked(const OverflowProfile& p, std::string_view model, std::uint32
     if (model == "p_impdrafm") return any_form(p, [](auto&, const FormStats& s) { return clears_from(s, 1) > 0; });
     if (model == "p_metalgaru") return any_form(p, [](auto&, const FormStats& s) { return s.best_level >= 40; });
     return false;
+}
+
+std::uint32_t story_forms(const engine::Engine& story) {
+    std::uint32_t forms = 0;
+    if (const auto* sys = story.get<engine::GameSystem>())
+        for (const auto& [species, used] : sys->players[0].base_isuse)
+            if (used && species >= 0 && species < 16) forms |= 1u << species;
+    return forms;
 }
 
 std::string form_unlock_text(std::string_view model) {

@@ -6,6 +6,8 @@
 // unlocks, the run request's options and the path rule. No game data.
 #include "../src/game/overflow_profile.hpp"
 #include "../src/game/overflow_run.hpp"
+#include "dw4/engine/engine.hpp"
+#include "dw4/engine/managers.hpp"
 
 #include <algorithm>
 #include <array>
@@ -462,6 +464,24 @@ void forms() {
     p.forms["p_vmon"].best_defeats = 1500;
     p.forms["p_girumon"].best_level = 40;
     check(ov::form_unlocked(p, "p_beelzeb") && ov::form_unlocked(p, "p_metalgaru"), "defeats in one run, run level 40");
+    // The story's forms from a story engine (only read).
+    {
+        dw4::engine::Engine story{dw4::MountedResources{}};
+        auto* sys = story.get<dw4::engine::GameSystem>();
+        check(sys != nullptr, "a story engine");
+        sys->players[0].base_isuse.clear();
+        sys->players[0].base_isuse[0] = 1;
+        sys->players[0].base_isuse[13] = 1; // MetalGarurumon
+        sys->players[0].base_isuse[9] = 0;
+        sys->players[1].base_isuse[10] = 1; // another player's: not the story character's
+        const auto forms = ov::story_forms(story);
+        check(forms == ((1u << 0) | (1u << 13)), "player 1's reached forms");
+        ov::OverflowProfile empty;
+        check(ov::form_unlocked(empty, "p_metalgaru", forms) && !ov::form_unlocked(empty, "p_bwargrey", forms) &&
+                  !ov::form_unlocked(empty, "p_alpha", forms),
+              "the story's forms open their faces");
+        check(sys->players[0].base_isuse.size() == 3, "nothing written");
+    }
 }
 
 void request_and_path() {

@@ -34,6 +34,10 @@
 #include <string_view>
 #include <vector>
 
+namespace dw4::engine {
+class Engine;
+}
+
 namespace dw4::game::overflow {
 
 struct RunRequest; // overflow_run.hpp
@@ -162,6 +166,9 @@ bool rookie_form(std::string_view model);
 bool form_unlocked(const OverflowProfile& profile, std::string_view model, std::uint32_t story_forms = 0);
 // The unlock condition's text for a locked face ("Survive 10:00 with Agumon.").
 std::string form_unlock_text(std::string_view model);
+// The forms the story's character has reached (bit n: shinka row n; player
+// 1's BASE_ISUSE in the story engine), only read (17.1 answer 7).
+std::uint32_t story_forms(const engine::Engine& story);
 
 // ---------------------------------------------------------------------------
 // A run's end (4.9)
