@@ -519,6 +519,23 @@ public partial class HubLogicTests
     }
 
     [Fact]
+    public void The_hosts_remove_op_sends_the_guest_home_removed_and_is_audited_as_instance_remove()
+    {
+        var h = SealedPair(out _);
+        var audits = new List<(string Event, long? Account, long? Actor)>();
+        h.Hub.Audit = (e, account, actor, _) => audits.Add((e, account, actor));
+        var w = W(h, "a");
+        h.Seal(300);
+        h.Send("b", new InstanceOpMsg(InstanceOpKind.Remove, h.Mem("a").Id).Frame()); // a guest: refused
+        Assert.Same(w, W(h, "b"));
+        h.Send("a", new InstanceOpMsg(InstanceOpKind.Remove, h.Mem("b").Id).Frame());
+        Assert.Null(h.Mem("b").World);
+        h.Seal(100);
+        Assert.Contains(h.P("a").Ticks().SelectMany(t => t.Rec.Events), e => e.Type == Ev.Home && e.HomeMask == 0b10 && e.Payload[1] == (byte)HomeReason.Removed);
+        Assert.Equal([("instance_remove", h.Mem("b").AccountId, h.Mem("a").AccountId)], audits);
+    }
+
+    [Fact]
     public void Play_on_another_pc_replaces_the_session_and_ends_a_hosted_instance()
     {
         var h = SealedPair(out _);

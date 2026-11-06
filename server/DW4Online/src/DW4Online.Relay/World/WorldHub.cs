@@ -546,7 +546,8 @@ public sealed partial class RoomHub
             case InstanceOpKind.Remove when isHost || m.Staff:
                 if (w.Members.FirstOrDefault(x => x.Id == msg.Argument) is { } target && target != w.Host)
                 {
-                    if (!isHost) Audit?.Invoke("staff_remove", target.AccountId, m.AccountId, new { wid = w.Wid });
+                    // (Audit rows of 19.17.1: a staff removal staff_remove, the host's instance_remove.)
+                    Audit?.Invoke(isHost ? "instance_remove" : "staff_remove", target.AccountId, m.AccountId, new { wid = w.Wid });
                     Remove(w, target, isHost ? HomeReason.Removed : HomeReason.Staff, now);
                 }
                 break;

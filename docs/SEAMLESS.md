@@ -13209,6 +13209,10 @@ the remembered visibility off the lock). Decisions the design left open:
   live; staff see every visibility but blocks and bars count for a staff
   member who plays (the override comes with I3's *Join as moderator*);
   a staff member taking a seat in another's instance writes `staff_join`.
+  The relay's audit rows (through the history queue, off the lock):
+  `staff_join`, `instance_visibility`, and for INSTANCE_OP from the game
+  `staff_end_instance`, `staff_remove` (staff) and `instance_remove` (the
+  host); the website's End and Remove are web's rows (`WorldService`).
 - **Presence**: the selection runs once a second off the lock (the
   thread pool in the relay) and is swapped in at the next housekeeping; a
   receiver's figures in a hub stage: friends first, then the nearest, at
