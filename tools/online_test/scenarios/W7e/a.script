@@ -1,4 +1,4 @@
-# W7e, host a (k5): with b on stag0101's matz02 (both parked at the barrier) its link is cut for 20 s.
+# W7e, host a (k10): with b on stag0101's matz02 (both parked at the barrier) its link is cut for 20 s.
 campaign until stage=stagml11,control
 idle until epoch>=@80
 explore mate00 yes until stage=stag0101,control

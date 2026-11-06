@@ -1,5 +1,5 @@
 {
-  "desc": "a drops while its stage group with b is parked at a barrier: b goes on at once; a, back after 20 s, arrives alone and joins b, still host",
+  "desc": "a drops while its stage group with b is parked at a barrier: b goes on at once; a, back after 20 s, arrives alone and joins b, still host (k10 for both: the route crosses stag0101's rock slope, which a k2 character does not survive)",
   "world": true,
   "autochoice": "first",
   "seed_story": true,
@@ -18,7 +18,7 @@
     {
       "name": "a",
       "script": "a.script",
-      "card": "k5",
+      "card": "k10",
       "start": 0,
       "cut": {
         "at": 230,
@@ -29,7 +29,7 @@
     {
       "name": "b",
       "script": "b.script",
-      "card": "k2",
+      "card": "k10",
       "start": 3,
       "seed_story": true
     }

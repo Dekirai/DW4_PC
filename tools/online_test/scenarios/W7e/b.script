@@ -1,4 +1,4 @@
-# W7e, guest b (k2): on matz02 with a; when a drops at the barrier b goes on into stag0102 at once.
+# W7e, guest b (k10): on matz02 with a; when a drops at the barrier b goes on into stag0102 at once.
 campaign until stage=stagml11,control
 idle until epoch>=@100
 explore mate00 yes until stage=stag0101,control

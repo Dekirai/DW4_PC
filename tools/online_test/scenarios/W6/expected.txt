@@ -1,6 +1,7 @@
 # W6 (19.24, 19.6.5).
 a: online-script: step .* log: a home
 b: online-script: step .* log: b in dng101b1
+b: online: .*The instance ends
 b: online-script: step .* log: b home after the end
 b: online-script: step .* log: own story
 relay: instance_end .*reason=host_left
