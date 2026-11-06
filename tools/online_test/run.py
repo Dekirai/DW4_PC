@@ -1233,7 +1233,7 @@ def check_achievements(sc, api, tag, passwords, lock, problems, notes):
     for name, want in sorted(sc["achievements"].items()):
         with lock:
             s, body = api.call("POST", "/api/v1/auth/login", {"username": tag + name, "password": passwords[name], "deviceName": "online_test",
-                                                              "protocol": 44})
+                                                              "protocol": WORLD_PROTOCOL})
         if s != 200 or not body or not body.get("token"):
             problems.append("%s: no login for the achievement check (%s %s)" % (name, s, body))
             continue
@@ -1812,7 +1812,7 @@ def check_characters(sc, api, env, out, problems, notes):
         for l in ch:
             if l.startswith(("conflict", "refused")) or "not uploaded" in l:
                 problems.append("%s: %s" % (name, l))
-        s, body = api.call("POST", "/api/v1/auth/login", {"username": account, "password": password, "deviceName": "online_test", "protocol": 45})
+        s, body = api.call("POST", "/api/v1/auth/login", {"username": account, "password": password, "deviceName": "online_test", "protocol": WORLD_PROTOCOL})
         if s != 200 or not body or not body.get("token"):
             problems.append("%s: no login for the character check (%s)" % (name, s))
             continue

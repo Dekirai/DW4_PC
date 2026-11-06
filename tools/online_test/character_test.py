@@ -84,7 +84,7 @@ def put_character(api, token, record, revision, play_seconds):
     import urllib.error
     import urllib.request
     body = json.dumps({"record": base64.b64encode(record).decode(), "playSeconds": play_seconds,
-                       "context": {"players": 1, "protocol": 45, "clientVersion": "0.56.0"}}).encode()
+                       "context": {"players": 1, "protocol": 49, "clientVersion": "0.56.0"}}).encode()
     req = urllib.request.Request(api.base + "/api/v1/online-character", data=body, method="PUT")
     req.add_header("Content-Type", "application/json")
     req.add_header("Authorization", "Bearer " + token)

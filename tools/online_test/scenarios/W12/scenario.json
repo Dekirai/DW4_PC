@@ -1,5 +1,5 @@
 {
-  "desc": "settings: a hosts Hard with the randomizer and camera mode 1; b (Normal, 0, none) plays Hard in the instance and Normal at home (the difficulty is the Game Start dialog's: DW4_DIFFICULTY in the test runs)",
+  "desc": "settings: a hosts Hard with the randomizer and camera mode 1; b (Normal, 0, none) plays Hard in the instance and Normal at home (the difficulty is the Game Start dialog's: --online-difficulty in the test runs: the client locks online play with DW4_DIFFICULTY)",
   "world": true,
   "autochoice": "first",
   "seed_story": true,
@@ -30,9 +30,10 @@
           "zones": 0
         }
       },
-      "env": {
-        "DW4_DIFFICULTY": "1"
-      }
+      "args": [
+        "--online-difficulty",
+        "1"
+      ]
     },
     {
       "name": "b",
@@ -40,9 +41,10 @@
       "card": "k10",
       "start": 3,
       "seed_story": true,
-      "env": {
-        "DW4_DIFFICULTY": "0"
-      }
+      "args": [
+        "--online-difficulty",
+        "0"
+      ]
     }
   ]
 }
