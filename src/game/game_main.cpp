@@ -1475,15 +1475,26 @@ int run(const Options& options, dw4::game::Settings& settings) {
                               : name == "records" ? LS::records : name == "help" ? LS::help : LS::talk;
             overflow_lobby.open_test_screen(chosen);
         }
+        // The lobby's meta from the meta file (lane F): the screens' data, the
+        // first meeting written when it is over.
+        dw4::game::overflow::connect_lobby(overflow_lobby);
         // (DW4_OVERFLOW_SEEN=1, test runs: the first meeting counts as done; the
         // meta file of lane F remembers it in play.)
-        if (std::getenv("DW4_OVERFLOW_SEEN") && options.smoke_frames != 0) overflow_lobby.meta().seen_intro = true;
+        if (std::getenv("DW4_OVERFLOW_SEEN") && options.smoke_frames != 0) {
+            dw4::game::overflow::meta().mark_intro_seen();
+            dw4::game::overflow::refresh_lobby(overflow_lobby);
+        }
         bool overflow_resources_set = false;
         // The select's Yes (SURVIVAL.md 9.2): the switch fades the story out
         // and the run starts with the chosen form and loadout. Test runs add
         // DW4_OVERFLOW_TEST_RUN's KEY=VALUE tokens (bot=, frames=, shots=,
         // ...: a hidden run started from the lobby's screens).
         auto overflow_lobby_action = [&](const dw4::game::overflow::LobbyAction& action, bool offline) {
+            // The meta file learns the lobby's choices (a Plug Lab purchase, the
+            // started run's loadout, the first meeting; lane F).
+            if (action.kind != dw4::game::overflow::LobbyAction::Kind::none &&
+                (action.kind != dw4::game::overflow::LobbyAction::Kind::start_run || !overflow_switch.busy()))
+                dw4::game::overflow::lobby_action(overflow_lobby, action, dw4::game::overflow::story_forms(engine));
             if (action.kind != dw4::game::overflow::LobbyAction::Kind::start_run || overflow_switch.busy()) return;
             auto request = action.request;
             request.seed = std::uint32_t(std::chrono::steady_clock::now().time_since_epoch().count() & 0x7FFFFFFF) | 1u;
@@ -2073,12 +2084,16 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     dw4::game::overflow::RunSummary back;
                     back.end = outcome.end;
                     back.seconds = outcome.seconds;
+                    // The run's Sim Bits and records into the lobby's meta (lane F).
+                    dw4::game::overflow::refresh_lobby(overflow_lobby, dw4::game::overflow::story_forms(engine));
                     if (outcome.end != dw4::game::overflow::RunEnd::failed && outcome.end != dw4::game::overflow::RunEnd::window_closed)
                         overflow_lobby.returned(back);
                 }
                 state_message = outcome.end == dw4::game::overflow::RunEnd::failed ? "Data Overflow could not run: " + outcome.error
                                                                                     : std::string("Back from Data Overflow (") +
                                                                                           dw4::game::overflow::run_end_name(outcome.end) + ")";
+                // A profile that is not saved (locked at the start, a failed write; lane F).
+                if (const auto problem = dw4::game::overflow::meta().save_problem(); !problem.empty()) state_message += " " + problem;
                 message_until = last + std::chrono::seconds(3);
                 if (outcome.end == dw4::game::overflow::RunEnd::window_closed || overflow_quit_after) running = false;
                 continue;

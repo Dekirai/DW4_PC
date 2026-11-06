@@ -508,6 +508,8 @@ private:
                     for (auto& line : self.meta_lines()) d.result_lines.push_back(std::move(line));
             }(*this);
         d.cleared = director_->outcome() == ov::Outcome::cleared;
+        // The meta's part (lane F): the HUD's Bits, the results' Sim Bits and NEW! records.
+        fill_meta_screen(d, run);
     }
 
     // The run's summary and log (T6), once.
