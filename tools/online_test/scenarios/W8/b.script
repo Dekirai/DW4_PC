@@ -1,4 +1,4 @@
-# W8, guest b (k5: a k2 falls on stag0101's rock slope on the way to matz00): leaves a's stag0101 for dng101b1 alone (a new stage group of a's instance, a's story) and plays there.
+# W8, guest b (k9, level 19: k2 and k5 characters fall on stag0101's rock slope on the way to matz00; its own story lacks key item 10, a's k10 has it): leaves a's stag0101 for dng101b1 alone (a new stage group of a's instance, a's story) and plays there.
 campaign until stage=stagml11,control
 idle until epoch>=@100
 explore mate00 yes until stage=stag0101,control

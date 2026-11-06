@@ -1,4 +1,4 @@
-# W27, guest b (k5): joins a, goes into dng101b1 (a stage group of its own in a's instance); a's game over ends the
+# W27, guest b (k9: k5 fell on stag0101's rock slope on the way to matz00): joins a, goes into dng101b1 (a stage group of its own in a's instance); a's game over ends the
 # instance: b goes home on its own story.
 campaign until stage=stagml11,control
 idle until epoch>=@100
