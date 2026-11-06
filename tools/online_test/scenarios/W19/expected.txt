@@ -1,4 +1,4 @@
-# W19 (19.24, 19.13; friends with I2).
+# W19 (19.24, 19.13; friends with I2): 35 fake presence senders (FakeClient, the relay lane's world client) in stagML11.
 a: online-script: step .* log: 30 figures
-a: online-script: step .* log: still 30
+a: online-script: step .* log: never all 35
 !a: online-script: FAIL

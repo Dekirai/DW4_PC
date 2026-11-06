@@ -837,6 +837,23 @@ def fake_world_notes(out, names):
     return notes, problems
 
 
+def frame_notes(out, names):
+    """The clients' frame times (W19's "frame time recorded"): the host lines of each client's online log ("host: N
+    passes/s, P pictures/s, longest pass L ms"), every 10 s: the pictures per second (a hidden client draws only with
+    "shots") and the longest pass."""
+    notes = []
+    rx = re.compile(r"host: ([0-9.]+) passes/s, ([0-9.]+) pictures/s, longest pass (\d+) ms")
+    for n in names:
+        path = os.path.join(out, n + ".online.log")
+        rows = [tuple(float(x) for x in m.groups()) for m in (rx.search(l) for l in open(path, encoding="utf-8", errors="replace"))
+                if m] if os.path.exists(path) else []
+        if rows:
+            pics = [r[1] for r in rows]
+            notes.append("%s frame times: %d samples, pictures/s min %.1f avg %.1f, longest pass max %d ms (median of the 10 s maxima %d ms)" % (
+                n, len(rows), min(pics), sum(pics) / len(pics), max(r[2] for r in rows), sorted(r[2] for r in rows)[len(rows) // 2]))
+    return notes
+
+
 def run_real(stack, sc, api, relay_port, pin, diag, lock, connection):
     """One game scenario: hidden game clients with scripts that enter the world (--online-play) on the scenario's own
     server (main gives every scenario a fresh one)."""
@@ -1128,6 +1145,8 @@ def run_real(stack, sc, api, relay_port, pin, diag, lock, connection):
     problems, notes = evaluate_real(sc, src, out, code, diag, timed_out, exits)
     problems += timed_problems + fake_problems
     notes += timed_notes
+    if sc.get("frame_times"):
+        notes += frame_notes(out, [c["name"] for c in sc["clients"]])
     if fake_names:
         fn, fp = fake_world_notes(out, fake_names)
         notes += fn

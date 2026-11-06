@@ -21,5 +21,6 @@
       "start": 0,
       "shots": true
     }
-  ]
+  ],
+  "frame_times": true
 }
