@@ -43,7 +43,11 @@ public sealed record WorldPlayContext(uint Wid, long? HistoryId, bool IsHost, in
 public sealed record WorldSnapshot(DateTime BuiltAtUtc, int MembersOnline, IReadOnlyList<WorldInstanceRow> Instances)
 {
     public static readonly WorldSnapshot Empty = new(DateTime.MinValue, 0, []);
+    /// <summary>Every connected member (web 14:10): counts, friends' whereabouts, accounts.last_seen_at.</summary>
+    public IReadOnlyList<WorldOnlineRow> Online { get; init; } = [];
 }
+
+public sealed record WorldOnlineRow(long AccountId, uint MemberId, string Name, string Stage, uint Wid, bool Staff, bool Spectating = false);
 
 public sealed record WorldInstanceRow(uint Wid, long? HistoryId, long HostAccountId, string HostName, int HostBox,
     string Area, string HostStage, string Visibility,

@@ -864,13 +864,15 @@ public sealed partial class RoomHub
         return ContextOf(m, now);
     }
 
+    /// <summary>The play context (web 14:10): at home Wid 0, IsHost true, Players 1 and the member's own settings; in an instance the
+    /// most players it had in the last minute.</summary>
     private WorldPlayContext ContextOf(HubMember m, long now)
     {
-        var w = m.World;
-        var players = RecentInstancePlayers(m.AccountId, now) ?? 1;
-        var settings = w?.Settings ?? m.Settings;
-        return new WorldPlayContext(w?.Wid ?? 0, w?.HistoryId, w?.Host == m, players, settings.RandomizerActive, w?.DataHash ?? m.DataHash,
-            settings.Difficulty);
+        if (m.World is not { } w) return new WorldPlayContext(0, null, true, 1, m.Settings.RandomizerActive, m.DataHash, m.Settings.Difficulty);
+        var players = Math.Max(w.Seats.Count, 1);
+        for (var n = players + 1; n < w.SeenWithPlayers.Length; ++n)
+            if (w.SeenWithPlayers[n] != 0 && Ms(now - w.SeenWithPlayers[n]) <= 60_000) players = n;
+        return new WorldPlayContext(w.Wid, w.HistoryId, w.Host == m, players, w.Settings.RandomizerActive, w.DataHash, w.Settings.Difficulty);
     }
 
     private void RememberContext(HubMember m, long now) => _recentContexts[m.AccountId] = (ContextOf(m, now), now);
@@ -887,7 +889,10 @@ public sealed partial class RoomHub
                 w.Settings.Canonical(Wire.WorldProtocol, w.DataHash), w.Randomizer, "", w.StartedUtc, w.StartingUntil != 0, w.Ending, w.HostAway,
                 members, []));
         }
-        return new WorldSnapshot(UtcNow, _members.Count, rows);
+        var online = _members.Values.Where(m => m.Connected).OrderBy(m => m.Id)
+            .Select(m => new WorldOnlineRow(m.AccountId, m.Id, m.Name, StageOf(m).ToLowerInvariant(), m.World is { Ending: false } w ? w.Wid : 0, m.Staff))
+            .ToList();
+        return new WorldSnapshot(UtcNow, online.Count, rows) { Online = online };
     }
 
     // Presence (19.13) ---------------------------------------------------------------------------------------------------------

@@ -5,6 +5,7 @@ using System.Net.Security;
 using System.Security.Cryptography;
 using System.Text.Json;
 using DW4Online.FakeClient;
+using DW4Online.Relay.Protocol;
 
 // DW4Online.FakeClient: fake DW4R2 clients, the impairment proxy and the loss matrix (SEAMLESS.md 6.4, 16).
 //
@@ -62,7 +63,8 @@ switch (args.FirstOrDefault())
                         cert is not null && Convert.ToBase64String(SHA256.HashData(cert.PublicKey.ExportSubjectPublicKeyInfo())) == pin;
                 using var http = new HttpClient(handler);
                 http.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
-                var r = await http.PostAsync(api + "/api/v1/rooms/" + room + "/ticket", null, ct);
+                // Round I1 (SEAMLESS.md 19.19): a world ticket (POST /world/ticket; --room is no longer used).
+                var r = await http.PostAsJsonAsync(api + "/api/v1/world/ticket", new { protocol = Wire.WorldProtocol }, ct);
                 r.EnsureSuccessStatusCode();
                 var body = await r.Content.ReadFromJsonAsync<JsonElement>(ct);
                 return body.GetProperty("relayTicket").GetString()!;
@@ -73,7 +75,7 @@ switch (args.FirstOrDefault())
             Host = Opt("--host", "127.0.0.1"),
             Port = int.Parse(Opt("--port"), CultureInfo.InvariantCulture),
             Ticket = ticket,
-            Protocol = int.Parse(Opt("--protocol", "43"), CultureInfo.InvariantCulture),
+            Protocol = int.Parse(Opt("--protocol", Wire.WorldProtocol.ToString(CultureInfo.InvariantCulture)), CultureInfo.InvariantCulture),
             DataHash = ulong.Parse(Opt("--data-hash", "1"), CultureInfo.InvariantCulture),
             SettingsHash = ulong.Parse(Opt("--settings-hash", "0"), NumberStyles.AllowHexSpecifier, CultureInfo.InvariantCulture),
             Name = Opt("--name", "fake"),

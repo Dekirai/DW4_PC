@@ -24,7 +24,7 @@ namespace DW4Online.FakeClient;
 /// </summary>
 public static class LoadGateNet
 {
-    public const string Room = "WORLD1";
+    public const string Room = Wire.WorldChannel;
     private static readonly double Freq = Stopwatch.Frequency;
     private static double Ms(long ticks) => ticks * 1000.0 / Freq;
 

@@ -114,8 +114,12 @@ public sealed class WorldHistoryQueue : IAsyncDisposable
         }
     }
 
+    private int _disposed;
+
+    /// <summary>Idempotent: the container disposes the gateway once per registration that hands it out.</summary>
     public async ValueTask DisposeAsync()
     {
+        if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
         _work.Writer.TryComplete();
         try
         {
