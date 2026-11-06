@@ -473,6 +473,11 @@ public:
     const std::array<std::string, 4>& guardian_plan() const { return guardian_plan_; }
     bool awakened() const { return awakened_; }
     int casts() const;
+    // The defeats whose last hit was a technique of Fire, Ice, Bolt or Dark
+    // (pcTech rows 0-19; lane F's Adept records), and the crates broken
+    // (none on O1b's arena yet).
+    const std::array<int, 4>& tech_defeats() const { return tech_defeats_; }
+    int crates() const { return 0; }
     const Vec3f& arena_centre() const { return centre_; }
     float arena_radius() const { return radius_; }
 
@@ -589,6 +594,7 @@ private:
         int art_hits = 0;
         bool other_damage = false;       // a technique hit it too
         bool last_art = false;           // the last hit was the Art's
+        std::int32_t last_source = 0;    // the last hit's source (damage_dealt)
         bool alive = true;
     };
     std::vector<Enemy> enemies_;
@@ -719,6 +725,7 @@ private:
     std::array<int, 2> pocket_gear_{-1, -1}; // the weapon pocket, the core pocket
     int x_data_ = 0, x_data_total_ = 0, chip_steps_ = 0;
     int element_ = 0;
+    std::array<int, 4> tech_defeats_{};
     // the kite bot
     int bot_a_ = 0, bot_l_ = 0;
     float bot_dx_ = 0, bot_dz_ = 0;  // its last way (it keeps walking)

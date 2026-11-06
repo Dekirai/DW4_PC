@@ -78,17 +78,23 @@ bool OverflowDirector::equip_gear(Engine& engine, int gear, int record) {
     if (!sys || gear < 0) return false;
     auto& player = sys->players[0];
     const auto& row = kGear[std::size_t(gear)];
+    // (The device it replaces leaves the slot unequipped, as DW4's window leaves it.)
+    auto unflag = [&](int index) {
+        if (index >= 0 && index < int(player.devices.size())) player.devices[std::size_t(index)].flag = false;
+    };
     ItemDevice device;
     device.type = row.slot == GearSlot::core ? 1 : row.slot == GearSlot::board ? 2 : 3;
     device.record = record;
     device.flag = true;
     if (row.slot == GearSlot::core) {
         if (const auto* old = player.device(player.main_slot[0])) device.value = old->value;
+        unflag(player.main_slot[0]);
         player.devices.push_back(device);
         player.main_slot[0] = int(player.devices.size()) - 1;
         core_gear_ = gear;
     } else if (row.slot == GearSlot::board) {
         if (const auto* old = player.device(player.sub_slot[0])) device.value = old->value;
+        unflag(player.sub_slot[0]);
         player.devices.push_back(device);
         player.sub_slot[0] = int(player.devices.size()) - 1;
         board_gear_ = gear;

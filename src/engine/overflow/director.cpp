@@ -722,6 +722,8 @@ void OverflowDirector::enemy_defeated(Engine& engine, int killer, int record, st
     for (auto& e : enemies_) {
         if (e.ram != index || e.family != family) continue;
         ++(e.last_art ? minute_art_kills_ : minute_tech_kills_);
+        if (e.last_source < 0)
+            if (const int row = (-e.last_source) % 1000; row >= 0 && row < 20) ++tech_defeats_[std::size_t(row / 5)];
         if (phase() == 1 && !e.corrupted && !e.other_damage && e.art_hits > 0) art_hits_per_kill_.push_back(e.art_hits);
         if (e.corrupted) {
             ++corrupted_defeats_;
@@ -747,6 +749,7 @@ void OverflowDirector::damage_dealt(Engine& engine, std::string_view family, int
         if (source == kTagArt) ++e.art_hits;
         else e.other_damage = true;
         e.last_art = source == kTagArt;
+        e.last_source = source;
         break;
     }
 }
