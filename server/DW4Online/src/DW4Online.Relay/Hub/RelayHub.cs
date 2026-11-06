@@ -193,6 +193,9 @@ public sealed class RelayHub : BackgroundService
     /// <summary>The sealing thread's passes over the hub, and those that found its lock taken (SEAMLESS.md 19.17.4: with one hub
     /// for the world a miss is world-wide seal jitter). Diagnostics and the load gate.</summary>
     public long SealPasses => Interlocked.Read(ref _sealPasses);
+    /// <summary>Frames the relay process wrote right after a hot path's lock (M4 (e), Relay:DirectSends) and through the
+    /// thread pool's writer.</summary>
+    public static (long Direct, long Pooled) FramesWritten => (Connection.DirectFrames, Connection.PooledFrames);
     public long SealTryMisses => Interlocked.Read(ref _sealTryMisses);
     private long _sealPasses;
     private long _sealTryMisses;
@@ -210,18 +213,27 @@ public sealed class RelayHub : BackgroundService
             Interlocked.Increment(ref _sealTryMisses);
             return Stopwatch.GetTimestamp() + Stopwatch.Frequency / 1000;
         }
+        // (The pass's SEALED frames are written by this thread once the lock is released, M4 (e).)
+        Outbox.Enter();
         try
         {
-            return hub.Seal(Stopwatch.GetTimestamp());
-        }
-        catch (Exception e)
-        {
-            hub.Fault(e, "sealing");
-            return long.MaxValue;
+            try
+            {
+                return hub.Seal(Stopwatch.GetTimestamp());
+            }
+            catch (Exception e)
+            {
+                hub.Fault(e, "sealing");
+                return long.MaxValue;
+            }
+            finally
+            {
+                Monitor.Exit(hub.Sync);
+            }
         }
         finally
         {
-            Monitor.Exit(hub.Sync);
+            Outbox.Exit();
         }
     }
 
@@ -237,6 +249,7 @@ public sealed class RelayHub : BackgroundService
                 var beat = (now - lastBeat) >= 5 * Stopwatch.Frequency;
                 if (beat) lastBeat = now;
                 List<long> connected = [];
+                Outbox.Enter();
                 try
                 {
                     lock (_hub.Sync)
@@ -259,6 +272,10 @@ public sealed class RelayHub : BackgroundService
                 catch (Exception e)
                 {
                     _log.LogError(e, "Relay housekeeping failed");
+                }
+                finally
+                {
+                    Outbox.Exit();
                 }
                 // The heartbeat goes to the account service on its own task: it writes to the database, and a slow or stalled
                 // database must never hold up the pings, holds and timeouts.
@@ -378,7 +395,16 @@ public sealed class RelayHub : BackgroundService
             var m = member;
             var graceful = await conn.ReadLoopAsync((type, payload) =>
             {
-                lock (_hub.Sync) _hub.Receive(m, type, payload.Span, Stopwatch.GetTimestamp());
+                // (The frames this one produces are written by this thread once the lock is released, M4 (e).)
+                Outbox.Enter();
+                try
+                {
+                    lock (_hub.Sync) _hub.Receive(m, type, payload.Span, Stopwatch.GetTimestamp());
+                }
+                finally
+                {
+                    Outbox.Exit();
+                }
             });
             lock (_hub.Sync) _hub.Disconnect(member, conn, Stopwatch.GetTimestamp(), graceful);
             // The writer ends with its queue: BYE gets the goodbye; a connection that ended without one (a crash, a lost network)

@@ -42,6 +42,8 @@ public static class LoadGateNet
         var options = new RelayOptions
         {
             Enabled = true, ListenAddress = "127.0.0.1", Port = port, MaxConnectionsPerIp = 1024, IdleTimeoutSeconds = 120, LagLeaveSeconds = 600,
+            // (DW4_LOADGATE_DIRECT_SENDS=0: the writer of every frame on the thread pool, the relay before M4 (e).)
+            DirectSends = Environment.GetEnvironmentVariable("DW4_LOADGATE_DIRECT_SENDS") != "0",
         };
         var relay = new RelayHub(options, new SealingOptions(), new InstanceOptions(), tickets, NullLoggerFactory.Instance);
         relay.Admission = a => ValueTask.FromResult<HubAdmit?>(new HubAdmit(a.AccountId, "m" + a.AccountId));
@@ -66,6 +68,7 @@ public static class LoadGateNet
         browsing.Start();
         TimeSpan cpu0 = default;
         long passes0 = 0, misses0 = 0, at0 = 0;
+        (long Direct, long Pooled) written0 = default;
         int gc0 = 0;
         long[] late0 = new long[SealLateness.BoundsMs.Length + 1];
         Dictionary<string, long> counters0 = [];
@@ -84,6 +87,7 @@ public static class LoadGateNet
                     gc0 = GC.CollectionCount(0) + GC.CollectionCount(1) + GC.CollectionCount(2);
                     passes0 = relay.SealPasses;
                     misses0 = relay.SealTryMisses;
+                    written0 = RelayHub.FramesWritten;
                     if (hub is not null)
                         lock (hub.Sync)
                         {
@@ -105,6 +109,9 @@ public static class LoadGateNet
                         ["relay_gcs"] = GC.CollectionCount(0) + GC.CollectionCount(1) + GC.CollectionCount(2) - gc0,
                         ["relay_server_gc"] = System.Runtime.GCSettings.IsServerGC,
                     };
+                    var written = RelayHub.FramesWritten;
+                    r["relay_frames_direct_per_second"] = Math.Round((written.Direct - written0.Direct) / wall);
+                    r["relay_frames_pooled_per_second"] = Math.Round((written.Pooled - written0.Pooled) / wall);
                     var passes = relay.SealPasses - passes0;
                     var misses = relay.SealTryMisses - misses0;
                     r["seal_passes_per_second"] = Math.Round(passes / wall);

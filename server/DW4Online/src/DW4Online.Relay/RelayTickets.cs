@@ -45,6 +45,12 @@ public sealed class RelayOptions
     public int ReconnectSeconds { get; set; } = 10;
     /// <summary>After this long of continuous filling the server stamps LEAVE for a lagging member.</summary>
     public int LagLeaveSeconds { get; set; } = 10;
+    /// <summary>
+    /// M4 (e), round I1a: game frames produced by a received frame, a sealing pass or the housekeeping are written by that
+    /// thread right after the hub's lock (non-blocking; a full socket buffer and state transfers go to the asynchronous
+    /// writer). Off: every frame goes through the thread pool's writer (the relay before I1a).
+    /// </summary>
+    public bool DirectSends { get; set; } = true;
     /// <summary>Folder for one JSON-lines membership log per room (diagnostics and the online test stack); empty = off.</summary>
     public string DiagnosticsDirectory { get; set; } = "";
 }
