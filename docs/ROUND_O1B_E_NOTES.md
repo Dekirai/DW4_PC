@@ -61,6 +61,21 @@ rewrite them: runs.sh / q.sh / jobs.sh are the O1a `build/t/runs.sh` with the se
 the summary lines `end`, `run_seconds`, `level`, `highest_hit_share`, `first_level_up_s`, `guardians_defeated`,
 `awakened`, `taken_by PHASE FAMILY SHARE`.)
 
+## 4. Checks (the original stays the original)
+
+| Check | Build | Result |
+| --- | --- | --- |
+| det.sh `o1b_content_1` | dff074d3 (e8) | 4004f056 / 396cb219 in both runs |
+| r25c `o1b_content_r25c` (`segments.sh r25c 4`) | a1ac5dd (e10) | 10 / 10 segments, 1,748,011 frames, every save "same story" (wall 340 s) |
+| ctest (full) | 90c0090 | 58 / 58 |
+| ctest `-R overflow` | a1fe8f6 (final defaults) | 12 / 12 (overflow_guardians, overflow_gear new; overflow_balance with the four Rookies) |
+
+The only change outside a run engine is `Engine::route_donor`'s new defaulted parameter `scripts_only`
+(false everywhere but in `load_overflow_donors`): the story's randomizer takes the same path as before.
+After e10 only run-engine values changed (Tuning, tables.inc, the balance test), so det.sh and r25c stand.
+T3 / T4 / T5 / T8 / T11 (lane A's host scripts) were not run again in this lane: it changed no host code
+except the F1 dev start's form list (`draw_dev_start`) and the driver's request keys.
+
 ## 5. Balance: what the content did to the run, and the answer
 
 **Step by step** (kite bot unless noted; Agumon, Veemon, Guilmon, Dorumon):
@@ -105,20 +120,41 @@ LordKnightmon x 14 HP (x 8: 17 of 20 kite runs cleared, its fall after 96-198 s)
 - **Phase 4's entry / the late game (10.7, 11.5):** the finale replaces "25:00 stands in for the finale":
   LordKnightmon, the quest timer, BT_BOSS2, QS_HURRY, TIME UP.
 
-## 4. Checks (the original stays the original)
+## 7. The final measurements (build/f/runs_f1, headless, nice 10, four at a time)
 
-| Check | Build | Result |
-| --- | --- | --- |
-| det.sh `o1b_content_1` | dff074d3 (e8) | 4004f056 / 396cb219 in both runs |
-| r25c `o1b_content_r25c` (`segments.sh r25c 4`) | a1ac5dd (e10) | 10 / 10 segments, 1,748,011 frames, every save "same story" (wall 340 s) |
-| ctest (full) | 90c0090 | 58 / 58 |
-| ctest `-R overflow` | a1fe8f6 (final defaults) | 12 / 12 (overflow_guardians, overflow_gear new; overflow_balance with the four Rookies) |
+Before: main d0e005b0 (OVERFLOW_DIRECTOR.md 11.3 / 11.6: Agumon and Veemon only, no Guardians, no gear, O1a's
+five techniques, the run's end at 25:00). "S": a1fe8f6 (the late contact of section 5); "V": S with contact 1.8
+at 10:00 and Bomb x 0.5 (keys); "F": the shipped state 99057dc (O1a's damage numbers, Bomb x 0.5; measured
+with e11 and the keys that give F's values). A clear counts at its time; seeds 1-n unless noted.
 
-The only change outside a run engine is `Engine::route_donor`'s new defaulted parameter `scripts_only`
-(false everywhere but in `load_overflow_donors`): the story's randomizer takes the same path as before.
-After e10 only run-engine values changed (Tuning, tables.inc, the balance test), so det.sh and r25c stand.
-T3 / T4 / T5 / T8 / T11 (lane A's host scripts) were not run again in this lane: it changed no host code
-except the F1 dev start's form list (`draw_dev_start`) and the driver's request keys.
+| Bot, form | Before (main) | S (a1fe8f6) | V | F (shipped) |
+| --- | --- | --- | --- | --- |
+| human Agumon | 16:33 (1-20), 1 of 40 before 10:00 | 22:06 (12 seeds, 20:26-23:51), 4 clear, 0 before 10:00 | 19:32 (3) | 22:13 (4, 20:36-22:35), 1 clear |
+| human Veemon | 15:09 (1-20) | 10:59 (6, 9:43-18:07), 1 before 10:00 | 11:44 (4) | 15:41 (4, 12:09-24:15) |
+| human Guilmon | - | 8:39 (3, 5:51-10:50) | | 13:41 (2, 6:04-21:18); with Mammothmon x 0.15 (f5d6f07, seeds 3-4): 17:53 (12:35-23:12) |
+| human Dorumon | - | 11:24 (3, 8:53-13:59) | | 15:08 (2, 9:04-21:11) |
+| kite Agumon | 22:07 (1-20) | 21:57 (6), 3 clear | | 22:21 (2), 2 clear |
+| kite Veemon | 19:52 (201-220) | 15:22 (201-206, 11:56-19:09) | | |
+| kite Guilmon | - | 10:23 (3, 10:06-21:42) | | 16:15 (2, 10:27-22:03), 1 clear; with Mammothmon x 0.15 (seeds 3-4): 16:27 (10:59-21:56), 1 clear |
+| kite Dorumon | - | 25:01 (3, 23:08-25:01), 2 TIME UP | | |
+
+Every S / V run: no defeat before 3:00, no Lua error, the first level-up within 17.1 s, the highest
+non-Guardian hit 18.3 %, no clamp.
+
+**What the S runs show.** Agumon (Cleaver, Cutter, Bomb at the densest group from Lv 16) outlasts the
+others by ten minutes; Veemon's, Guilmon's and Dorumon's human runs end at 9-12 minutes, in phase 2 and at
+the 10:00 Guardian: Mummymon and MRβ02 (1.0-1.3 MaxHP each over phase 2), Mammothmon still alive in phase 2
+(Guilmon 1.2-1.6 MaxHP: Fang Thrust's two boxes are slow against one big target), Tyrannomon, then
+Anomalocarimon / SkullGreymon (about 1.1 each). So S is not the answer: the late contact punished the forms
+without Agumon's crowd damage. F keeps O1a's numbers and halves Bomb (as Impact).
+
+**What F shows** (the shipped state, few seeds): every Rookie reaches the finale in some seeds (Agumon 4 of 4
+human and 2 of 2 kite, three clears; Veemon 24:15; Guilmon 21:18 and a clear at 22:03; Dorumon 21:11), no
+defeat before 3:00, no Lua error, the highest hit 11.2 %. The human Veemon (15:41), Guilmon (with Mammothmon x
+0.15: 17:53) and Dorumon (15:08) sit in 14.2's 14-18 minutes; the human Agumon (22:13) does not: Agumon is
+still the strongest Rookie by its techniques (Cleaver x 2.0, Cutter, Bomb), the forms are not within 15 % yet.
+The next balance round (with 20 seeds a form and bot): Agumon's class factor or Bomb further down, the Guardians'
+HP for Guilmon's Fang Thrust (one big target), then the kite bot's clear rate against LordKnightmon x 14.
 
 ## 8. Left (not done in this lane)
 
@@ -142,31 +178,3 @@ except the F1 dev start's form list (`draw_dev_start`) and the driver's request 
   form list and the driver's request keys).
 - **The user's run** decides the finale's HP (x 14) and the late contact (section 5): the bots model a newcomer
   and a kiting player, not him.
-
-## 7. The final measurements (build/f/runs_f1, headless, nice 10, four at a time)
-
-Before: main d0e005b0 (OVERFLOW_DIRECTOR.md 11.3 / 11.6: Agumon and Veemon only, no Guardians, no gear, O1a's
-five techniques, the run's end at 25:00). "S": a1fe8f6 (the late contact of section 5); "V": S with contact 1.8
-at 10:00 and Bomb x 0.5 (keys); "F": the shipped state 99057dc (O1a's damage numbers, Bomb x 0.5; measured
-with e11 and the keys that give F's values). A clear counts at its time; seeds 1-n unless noted.
-
-| Bot, form | Before (main) | S (a1fe8f6) | V | F (shipped) |
-| --- | --- | --- | --- | --- |
-| human Agumon | 16:33 (1-20), 1 of 40 before 10:00 | 22:06 (12 seeds, 20:26-23:51), 4 clear, 0 before 10:00 | 19:32 (3) | see below |
-| human Veemon | 15:09 (1-20) | 10:59 (6, 9:43-18:07), 1 before 10:00 | 11:44 (4) | see below |
-| human Guilmon | - | 8:39 (3, 5:51-10:50) | | see below |
-| human Dorumon | - | 11:24 (3, 8:53-13:59) | | see below |
-| kite Agumon | 22:07 (1-20) | 21:57 (6), 3 clear | | see below |
-| kite Veemon | 19:52 (201-220) | 15:22 (201-206, 11:56-19:09) | | |
-| kite Guilmon | - | 10:23 (3, 10:06-21:42) | | see below |
-| kite Dorumon | - | 25:01 (3, 23:08-25:01), 2 TIME UP | | |
-
-Every S / V run: no defeat before 3:00, no Lua error, the first level-up within 17.1 s, the highest
-non-Guardian hit 18.3 %, no clamp.
-
-**What the S runs show.** Agumon (Cleaver, Cutter, Bomb at the densest group from Lv 16) outlasts the
-others by ten minutes; Veemon's, Guilmon's and Dorumon's human runs end at 9-12 minutes, in phase 2 and at
-the 10:00 Guardian: Mummymon and MRβ02 (1.0-1.3 MaxHP each over phase 2), Mammothmon still alive in phase 2
-(Guilmon 1.2-1.6 MaxHP: Fang Thrust's two boxes are slow against one big target), Tyrannomon, then
-Anomalocarimon / SkullGreymon (about 1.1 each). So S is not the answer: the late contact punished the forms
-without Agumon's crowd damage. F keeps O1a's numbers and halves Bomb (as Impact); its runs are below.
