@@ -79,6 +79,21 @@ alone; the crashed client's open log blocked the rename; the host fell beside a 
 achievements' format). W30, W30b, W30x, W32 stood at stagML11's gate mat (the gate step needs `explore mate00 until
 onme:mate00` first, fixed); the run was stopped there and the rest went into run c2.
 
+Run c2 (`build/i1aweb/scen_c2.log`, 15 of 30 passed): PASS J1, M1, S1, S2, S17a (regression in the world), W18 (staff
+join, audit row, role staff), W26 (crash and restart), W4, W4b, W4bx, W5, W5f, W7 (20 s cut: grace and resume), W7c
+(half-open cut), W30x (counter-proof; W30 itself failed then, see below). FAIL for other lanes: W7b (RELAY: HOME stamped at
+a sealed tick after the lost host's leave, the guest leads alone and never goes home; contract web 16:45, same in c1's
+W12), W7d (RELAY / CLIENT: the host's resume after 45 s is closed as "too many frames per second"; contract web 16:40),
+W7e (the host was "taken out of the group" at the barrier; not analysed further). FAIL on the harness side, fixed and
+rerun in c3: W6, W8 (a k2 guest falls on stag0101's rock slope; k10's Gate Disk fails in the disk step), W9 (the host
+ended the instance early), W12 (the Hard host fell), W27 (a dead host goes along with the guest's exit), W29 (fake guests
+with data hash 1 got their own instance; achievements off), W30 / W30b / W32 (the explore bot's characters fall in Dry
+Land and in staggf04), S14p (ported), P1 (member ids), RG2 (retired with RG1 and RG10).
+
+Status of the W set (I1a's Done-when, trial merge 2): pass W1, W1x, W3, W4, W4b, W4bx, W5, W5f, W7, W7c, W11, W18, W19,
+W22, W25, W26, W28, S14z, A1; fail for the client / relay lanes W24, W7b, W7d (contract); W7e open; W30b needs a Dry Land
+walk (`requires: dry_land_walk`); W6, W8, W9, W12, W27, W29, W30, W30x, W32 see run c3.
+
 ## Test results, session 1 (2026-11-06)
 
 - Server unit tests: 420 of 420 (`build/i1aweb/unit3.log`; new: `AreaTableTests` 4, `WorldDomainTests` 6).
