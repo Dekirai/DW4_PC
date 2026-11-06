@@ -32,16 +32,18 @@ middleware (the details, the settings for Traefik with and without `stripPrefix`
 
 - Forwarded headers count only with `Service:BehindProxy` and only on plain-HTTP connections from this machine (the
   proxy's hop to 127.0.0.1:5280): never from a direct client (the game at `https://88.198.52.221:8443`), never on the
-  HTTPS endpoint (so TLS passthrough cannot name an address either). Each header's last value counts.
-- `X-Forwarded-Prefix` (a plain path) becomes the path base; a request path that still starts with it (a proxy that
-  kept the path and named the prefix too) has it cut once; then `Service:PathBase` applies as UsePathBase did. No
-  doubling in any combination.
+  HTTPS endpoint (so TLS passthrough cannot name an address either). `X-Forwarded-For`'s and `X-Forwarded-Proto`'s
+  last value counts.
+- `X-Forwarded-Prefix` counts only when it is `Service:PathBase` (letter case aside; changed in the fix stage, below):
+  a stripping proxy's request gets that base back; a path that still starts with it (a non-stripping proxy, one that
+  names the prefix too) has it cut once as UsePathBase did. No doubling in any combination; any other value (a
+  browser's own header a proxy passed on) is ignored, and without `PathBase` the header counts for nothing.
 - `X-Forwarded-For`: the last entry is the address the local proxy saw; when it lies in `Service:TrustedProxyNetworks`
-  (new: CIDR networks, e.g. Cloudflare's published ranges; only with BehindProxy; nothing wider than /8 or /16), the
-  entry before it, which that edge appended, is the client's. One edge hop only; an edge address is never trusted as
-  the connection's own peer. Traefik must keep Cloudflare's header:
-  `entryPoints.<name>.forwardedHeaders.trustedIPs` with the same ranges (it replaces the header otherwise; then the
-  edge stays the address, as before).
+  (new: Cloudflare's published ranges; only with BehindProxy; nothing wider than /8 or /16, no IPv4-mapped network,
+  no host bits), Cloudflare's `CF-Connecting-IP` is the client's address, if it is one public address (fix stage: the
+  first version took the `X-Forwarded-For` entry before the edge, which needed Traefik's
+  `forwardedHeaders.trustedIPs` on the entry point, a setting that holds for every site on it). Traefik stays at its
+  default; an edge address is never trusted as the connection's own peer.
 - Why not ASP.NET's middleware: its KnownNetworks trust a network at every position (a Cloudflare address connecting
   to port 8443 directly would be believed), its XForwardedPrefix sets the path base and then UsePathBase doubles it on
   a non-stripping proxy that names the prefix, and it takes a prefix from deeper hops.
@@ -96,9 +98,10 @@ expects), M1 1,890 ms (the donor's status window open: no checkpoint in time).
 
 - The release: DW4Online 0.1.6 goes on the server first (a backup before migration 0012, DEPLOY.md 8 and 9.1;
   `Play:MinimumProtocol` / `CurrentProtocol` 48), the game client after it.
-- The proxy settings on the server: Traefik's `forwardedHeaders.trustedIPs` (static configuration, a Traefik restart)
-  and `Service:BehindProxy`, `PathBase`, `TrustedProxyNetworks` in DW4Online (DEPLOY.md 6.2, case 2).
+- The proxy settings on the server, DW4Online only: `Service:BehindProxy`, `PathBase`, `TrustedProxyNetworks` and
+  `Web:Processors` (DEPLOY.md 6.2, case 2); Traefik's entry point stays as it is (no `forwardedHeaders.trustedIPs`).
 - Requests that reach Traefik from Cloudflare's network without passing through the site's zone (another account's
-  Worker) could name an address for the per-IP limits; Cloudflare's Authenticated Origin Pulls with an own
-  certificate would close that (DEPLOY.md 6.2).
+  Worker) could name an address (unlimited attempts past the per-IP limits, the account-wide lock from one machine, a
+  targeted lock of a player's name and address); Cloudflare's Authenticated Origin Pulls with an own certificate
+  would close that (DEPLOY.md 6.2).
 - Round I1a's design changes M1-M5 (SEAMLESS.md 19.25) are for its lanes; nothing of them is built here.

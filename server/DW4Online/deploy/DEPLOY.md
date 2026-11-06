@@ -540,22 +540,23 @@ The prefix never doubles.
 **The client address behind Cloudflare.** Every browser reaches Traefik from a Cloudflare edge, so with the defaults
 DW4Online sees that edge's address: all web users share a handful of addresses and their per-IP limits (5 logins a
 minute, 3 registrations an hour), and the sessions and the audit log record the edge. Cloudflare adds its own header,
-`CF-Connecting-IP`, with the address of the browser that connected to it, to every request through the site's zone
-(it replaces one the browser sent). Traefik passes it on unchanged, at its **default** settings: it does not trust
+`CF-Connecting-IP`, with the address of the browser that connected to it, to every request through the site's zone (it
+replaces one the browser sent). Traefik passes it on unchanged, at its **default** settings: it does not trust
 Cloudflare's forwarded headers, removes the incoming `X-Forwarded-For`, `X-Forwarded-Proto`, `X-Forwarded-Host` and
-`X-Real-Ip` and writes its own, with the address it saw, the edge's, as `X-Forwarded-For`. One setting in DW4Online is all it takes: `TrustedProxyNetworks` in `Service` (below) lists
-Cloudflare's networks (<https://www.cloudflare.com/ips/>, as of 05.11.2026). When the last `X-Forwarded-For` entry (the
-address Traefik saw) lies in one of them, `CF-Connecting-IP` is the browser's address, if it is exactly one public
-address: a missing or unusable one (a list, loopback, a private, link-local or multicast address, a Cloudflare address
-itself) keeps the edge's address, as without the setting.
+`X-Real-Ip` and writes its own, with the address it saw, the edge's, as `X-Forwarded-For`. One setting in DW4Online is
+all it takes: `TrustedProxyNetworks` in `Service` (below) lists Cloudflare's networks
+(<https://www.cloudflare.com/ips/>, as of 05.11.2026). When the last `X-Forwarded-For` entry (the address Traefik saw)
+lies in one of them, `CF-Connecting-IP` is the browser's address, if it is exactly one public address: a missing or
+unusable one (a list, loopback, a private, link-local or multicast address, a Cloudflare address itself) keeps the
+edge's address, as without the setting.
 
 **Leave Traefik's entry point as it is: no `forwardedHeaders.trustedIPs` (and no `insecure`) for Cloudflare.** That
 setting holds for every router on the entry point, not only DW4Online's: Traefik would then pass a browser's own
-`X-Real-Ip`, `X-Forwarded-Host` and the left part of `X-Forwarded-For` through Cloudflare to
-every site on `websecure`, and a site that trusts them (a host name for reset links, `X-Real-Ip` as the client's
-address) would take values an attacker chose. DW4Online does not need it. (Where it is set already for another site,
-DW4Online still works the same, it reads only the last `X-Forwarded-For` entry, `CF-Connecting-IP` and a prefix equal
-to `PathBase`; check the other sites, though.)
+`X-Real-Ip`, `X-Forwarded-Host` and the left part of `X-Forwarded-For` through Cloudflare to every site on
+`websecure`, and a site that trusts them (a host name for reset links, `X-Real-Ip` as the client's address) would take
+values an attacker chose. DW4Online does not need it. (Where it is set already for another site, DW4Online still works
+the same, it reads only the last `X-Forwarded-For` entry, `CF-Connecting-IP` and a prefix equal to `PathBase`; check
+the other sites, though.)
 
 How requests are read (Traefik on 127.0.0.1 at its default, a browser 203.0.113.9, an edge 172.64.1.1):
 
