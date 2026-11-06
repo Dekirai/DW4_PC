@@ -345,3 +345,6 @@ not run again: PC shutdown 18:30):**
 skill; A(t)'s halving; the scripts_only fix; the Drain hook in lua_host), a ctest for `guardian_clamps`, T3 / T4
 / T5 / T8 / T11 (T8 budget is directly affected: Guardians on by default, 25:00 now TIME UP), det.sh and r25c
 on 845b9717, all measurements of the table above, the pictures.
+- det.sh on 845b9717 (`build/det/dw4_game_e3.exe`, name `o1b_content_e3`): 4004f056 / 396cb219 in both runs
+  (log `build/det/det_e3.log`). r25c not run again (the changes are run-only: the overflow log, the rules'
+  Guardian branch, the Awakening branch; no story-side line).
