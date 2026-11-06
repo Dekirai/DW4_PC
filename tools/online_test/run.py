@@ -96,7 +96,7 @@ WORK = os.path.join(HERE, ".work")
 MYSQL_BIN = r"C:\xampp\mysql\bin"
 BELOW_NORMAL = 0x00004000
 NO_WINDOW = 0x08000000
-NEW_GROUP = 0x00000200  # CREATE_NEW_PROCESS_GROUP: the server gets Ctrl+Break (the host's ordered stop) without the harness
+NEW_GROUP = 0x00000200  # CREATE_NEW_PROCESS_GROUP: the server's own group (the harness never shares its console signals)
 PROTOCOL, DATA_HASH = 43, 1
 
 # The stand-in engine's timing for every client of a scenario (simulation: all must agree).
@@ -376,6 +376,8 @@ def start_server(stack, connection, extra=None, name=""):
                   "DiagnosticsDirectory": diag},
         "Web": {"DataProtectionKeysDirectory": "memory"},
         "Logging": {"File": {"Directory": os.path.join(folder, "server-log")}},
+        # The ordered stop of restart_server (a process without a console gets no Ctrl+C): the service stops once this exists.
+        "Testing": {"StopFile": os.path.join(folder, "stop.request")},
     }
     if getattr(stack.args, "play_protocol", 0):
         # The deployed server's configuration (Play:MinimumProtocol / CurrentProtocol, the field's 43).
@@ -394,20 +396,21 @@ def start_server(stack, connection, extra=None, name=""):
 
 
 def restart_server(stack, base, kill=False, down=0.0):
-    """Stops the server of `base` (gracefully: Ctrl+Break to its process group, the host's ordered stop, which closes the
-    world's connections with CLOSE server stopping; kill: TerminateProcess, no CLOSE, as a crash) and starts it again on
-    the same ports with the same settings `down` seconds later (W24, W25: the clients reconnect to the new process)."""
-    import signal
+    """Stops the server of `base` (gracefully: the stop file of Testing:StopFile, the host's ordered stop, which closes
+    the world's connections with CLOSE server stopping; kill: TerminateProcess, no CLOSE, as a crash) and starts it again
+    on the same ports with the same settings `down` seconds later (W24, W25: the clients reconnect to the new process)."""
     srv = stack.servers[base]
     proc = srv["proc"]
     if proc.poll() is None:
         if kill:
             proc.kill()
         else:
-            os.kill(proc.pid, signal.CTRL_BREAK_EVENT)
+            with open(os.path.join(srv["folder"], "stop.request"), "w") as f:
+                f.write("stop")
             try:
                 proc.wait(60)
             except subprocess.TimeoutExpired:
+                print("the server did not stop within 60 s of its stop file; killed", file=sys.stderr)
                 proc.kill()
     proc.wait(30)
     time.sleep(max(0.0, down))

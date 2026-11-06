@@ -127,6 +127,9 @@ public static class ServerApp
             return service;
         });
         services.AddHostedService<WorldHousekeeping>();
+        // The test stack's ordered stop (tools/online_test: the restart scenarios): only with Testing:StopFile set.
+        if (config["Testing:StopFile"] is { Length: > 0 } stopFile)
+            services.AddHostedService(sp => ActivatorUtilities.CreateInstance<StopFileWatcher>(sp, stopFile));
 
         builder.WebHost.ConfigureKestrel(kestrel =>
         {
