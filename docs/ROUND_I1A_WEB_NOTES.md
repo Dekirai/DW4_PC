@@ -132,26 +132,35 @@ The W scenarios after the merge (a DW4_ONLINE_DEV build of the merged client): `
 --game-exe EXE --data DATA --cards DIR --mysql-port P --ports A-B` (`--capabilities fake_world_clients,old_client` and
 `--old-game-exe` for W19, W22, W29).
 
-## What the W scenarios need from the other lanes (also in the contract)
+## What the W scenarios need (learned in the trial merges)
 
-- Client: `--online-play [BOX]`, `DW4_ONLINE_AUTOCHOICE`, the counter-proof hook `DW4_ONLINE_TEST_NO_REPLACE=1` (W1x, W30x;
-  the client lane names its hook in the contract if it differs), `DW4_DIFFICULTY` for the Game Start (W12).
-- Relay: the world log `world_<run>.jsonl` with `instance_start`, `instance_join` (how, role, stage), `instance_leave`,
-  `instance_end` (reason), `redirect`, `area_escape`; the history rows through `IInstanceHistoryRepository`.
-- Assumptions to check at the first run (cards and routes, not verifiable without the merged game): the r25c cards k2, k4,
-  k7, k10 (k-number = key items; k10 opens Dry Land and the Fortress), the gate menu's second entry is Dry Land (`gate mate00
-  1`), W30b's card has its last Security Gate on dng205b2, W7e's cut timing meets both members on the mat, W9's route
-  through the Fortress into stagML02.
+- Cards (r25c): k2 p4 k5 p5 k7 k8 p6 k9 k10 exist (no k4). A guest that explores stag0101 to matz00 (dng101b1) must be k9
+  or k10 (k2, p4 and k5 fall on the rock slope); the disk step takes the Gate Disk of k2 / k5 characters, not of a k10
+  (8 rows); the explore bot's characters fall in Dry Land (stag0201-0202) and in the Fortress (staggf02-04); a host on Hard
+  with the shuffled enemies waits near the entrance.
+- Every client with a card gets its own online story from its card ("seed_story" scenario); an own-story check needs
+  `upload_card` (else the client's own story is the missing character's).
+- A lobby gate step: `explore mate00 until onme:mate00` first, then `gate mate00 N` (0 Death Valley, 1 Dry Land, ...);
+  `explore mate00 yes` takes the first entry. A member's exit with `yes` takes a DEAD member along (side rule).
+- World member ids start at 1 in connection order; the relay logs a join of a starting instance as how=join (the client's
+  toast tells it from the automatic join); two strangers within the co-arrival window make an instance of their own.
 
-## Left (not in this branch)
+## Left
 
-- W19 and W29 need world-capable fake clients (presence senders, fake guests: the relay lane's FakeClient); W22 needs a
-  protocol 48 client build (`--old-game-exe`). They are written with `requires` and report SKIP until then.
-- The `--fake` scenarios of run.py (FakeClient's room protocol) and the four relay story tests: the relay lane's.
+- Other lanes (contract): CLIENT W24 (no way home after CLOSE 8), RELAY W7b (HOME stamped after the lost host's leave never
+  reaches the guest; also W12's first run), RELAY / CLIENT W7d (resume after 45 s closed as abuse), minor: the online card
+  keeps the entry's own story (web 15:40), `disk 8` with a k10 character.
+- Not passing yet and not analysed to the end: W7e (the host "taken out of the group" at the barrier), W9 (b, a k2 with its
+  own phase 2, fell in the Fortress), W32 (stops at staggf04; the explore bot fell in staggf02 in run c3), W30b
+  (`requires: dry_land_walk`). Runs c4 (W6, W12, W27, W29, S14p after the last fixes) and the `--fake` scenarios: see
+  "Scenario results".
+- Not run in the trial merges: the UI scenarios (`run.py ui ...`; ported: home, areas, offline, newchars) and the rest of
+  the regression (S3, S5, S11a/b, S16, S17b, S18/b, S19a-c, S21, S22a/b, L1-L3, M2, P2, P3, J5, JB, JR, JS, JS2, RG7,
+  RGJ1).
 - `player_reports`, `/reports`, `/admin/reports` and the admin account page's reports: round I1b.
-- Integration: take web's versions of the Domain files the relay branch holds as stubs (contract 13:05), register the
-  relay's `WorldGateway` before the `TryAdd` lines, add a test that `Wire.WorldProtocol == WorldProtocol.Version`, raise the
-  server version (0.1.7?) and check the migration number (0013 is the next after 0012_friends).
+- Integration: the resolutions of contract "web 14:20" (the 4 Domain stubs -> web's, ServerApp's web block, OnlineStoryTests,
+  the relay's WorldRelayTests with fakeWorld: false and tickets through WorldService); `build/i1aweb/tools/resolve_trial.py`
+  does them on an extracted tree.
 
 ## Progress
 
@@ -160,3 +169,8 @@ The W scenarios after the merge (a DW4_ONLINE_DEV build of the merged client): `
   friends' whereabouts, prefs, Recently played with; areas.json format 2, the stage graph and AreaTableTests; DEPLOY.md
   9.2; the impairment proxy's cuts; the harness in the world with the W scenarios; the staff audit list; the ordered stop
   of the restart scenarios. Commits 1d50f623 ... (see `git log d0e005b0..feat-i1a-web`).
+- 2026-11-06 afternoon (session 2): two trial merges of the three lanes; web's integration fixes (VisibilityNames,
+  worldWeb, AreaTable constants, overrideServices, PruneHistoryAsync) and the Wire / WorldProtocol test; release 0.1.7; the
+  end-to-end tools in the world (green in trial merge 2); fake world clients (W19, W29), W22 with the protocol 48 client,
+  the --fake scenarios in the world; the W and regression scenarios run with real clients and fixed from what they showed
+  (see "Scenario results"); findings for the client and relay lanes in the contract.
