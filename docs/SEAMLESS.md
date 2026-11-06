@@ -9135,17 +9135,20 @@ instance he may join is in that area (19.7.2, 19.30.3), the prompt opens
 over the frozen game where the list was:
 
 ```
- Dry Land: Mummy Desert                                       Your ping: 38 ms
- > Kim's instance (friend)  2/4  Ancient Ruins B2    Chapter 4, Hard  41 ms  Same story point
-   Lee's instance           3/4  Here (2)            Chapter 2        55 ms
-   Mo's instance            4/4  Station X           Full
-   Ann's instance           1/4  Demon Shift         Chapter 5        90 ms
+ Dry Land: Mummy Desert                                           Your ping: 38 ms
+ > Kim's instance (friend)  2/4  Ancient Ruins B2        Chapter 4, Hard  41 ms  Same story point
+   Rin's instance           3/4  Mummy Desert, Here (2)  Chapter 2        55 ms
+   Mo's instance            4/4  Station X               Full
+   Ann's instance           1/4  Demon Shift             Chapter 5        90 ms
    New instance   < Public >
  A: Choose   Left/Right: visibility   X: Details   B: Back
 ```
 
+- Every row shows the host's stage and, when players of the instance are
+  at the arrival stage, *Here (n)* beside it. Lee, who takes this gate,
+  is the arriving player in the lines below.
 - *A* on an instance: the gate's own departure runs (fade, loading). With
-  players of the instance at that stage ("Here"): "Joining Lee..." and the
+  players of the instance at that stage ("Here"): "Joining Rin..." and the
   player enters at the stage's entrance. Else he starts the stage as a
   guest in a new stage group of the instance, on the host's story
   (19.30.4), and the toast adds "Kim is in Ancient Ruins B2."; he meets
@@ -9155,8 +9158,10 @@ over the frozen game where the list was:
   in Kim's story (Chapter 4, Hard). Your level, items and Digimon stay
   yours." In step also: "Same story point: progress here also counts for
   your own story."
-- A row greyed *Not here yet*: the instance's story has not been at this
-  stage (a return-mat arrival, 19.30.3); not choosable before round I3.
+- A row greyed *Story not here yet*: the instance's story has not been at
+  this stage (a return-mat arrival on a floor it never reached, or a gate
+  the host's story has not opened, 19.30.3); not choosable before round
+  I3.
 - *A* on *New instance*: a new instance with the chosen visibility, which is
   remembered.
 - *X*: the members with form and level, the instance's settings.
@@ -9180,8 +9185,11 @@ will move.
   from a field into a dungeon, a member in a field gets the notice "Kim
   went into Ancient Ruins B1. Go along?  View: answer" for 20 s, a window
   without input; View/Back (F1) opens the F1 menu on the *Instance* page,
-  whose *Go along* box answers it (A: go along, B: stay) while the offer is
-  open. Nothing pauses; members already in a dungeon are never asked.
+  whose *Go along* box answers it (A: go along, B: close) while the offer
+  is open. After A the player plays on in his field until the entrants'
+  floor is joinable ("Going along when Kim's floor is ready...  View:
+  cancel"), then leaves and joins within about two seconds. Nothing
+  pauses; members already in a dungeon are never asked.
 - **The Online menu** is the F1 menu's *Online* tab: View/Back on the pad
   (`back_button_free`, as today) and F1 on the keyboard open the F1 menu,
   which opens on that tab while a world session runs; online it pauses
@@ -9229,10 +9237,10 @@ will move.
 | Where | Text |
 | --- | --- |
 | Home screen | "Play: <form> Lv <n> (Box <b>)", "Choose character", "Friends (<n> online)", "Party", "Instances", "Settings", "Account", "Log out", "Online now: <n> players, <m> instances" |
-| Prompt | "<area>: <stage>", "<host>'s instance", "(party)", "(friend)", "<stage of the host>", "Here (<n>)", "Not here yet", "New instance", "Public", "Friends", "Private", "Same story point", "Boss fight", "Quest: <name>", "Full", "Host reconnecting", "Arriving now", "Other settings", "Hard", "Very Hard", "Randomizer", "A: Choose   Left/Right: visibility   X: Details   B: Back" (loading-screen form from home: "B: Back to the lobby"; from round I3 on rows of players elsewhere: "Y: Join at <host>") |
-| Loading | "Joining <host>...", "<host> is in a boss fight. Waiting...", "B: Back to the lobby", "X: Join <member> instead", "<host>'s instance is full now.", "Couldn't join <host>: <reason>.", "Waiting for <host> (reconnecting, <s> s)", "Returning to <host>'s instance...", "Your guests are still playing. Return to them?", "A: Return   B: End the instance" |
+| Prompt | "<area>: <stage>", "<host>'s instance", "(party)", "(friend)", "<stage of the host>", "Here (<n>)", "Story not here yet", "New instance", "Public", "Friends", "Private", "Same story point", "Boss fight", "Quest: <name>", "Full", "Host reconnecting", "Arriving now", "Other settings", "Hard", "Very Hard", "Randomizer", "A: Choose   Left/Right: visibility   X: Details   B: Back" (loading-screen form from home: "B: Back to the lobby"; from round I3 on rows of players elsewhere: "Y: Join at <host>") |
+| Loading | "Joining <host>...", "Joining <name>...", "Waiting for <name>'s floor...", "<host> is in a boss fight. Waiting...", "B: Back to the lobby", "X: Join <member> instead", "<host>'s instance is full now.", "Couldn't join <host>: <reason>.", "Waiting for <host> (reconnecting, <s> s)", "Returning to <host>'s instance...", "Your guests are still playing. Return to them?", "A: Return   B: End the instance" |
 | Arrival | "You're a guest in <host>'s story (<story point>). Your level, items and Digimon stay yours.", "<host> is in <stage>.", "Same story point: progress here also counts for your own story.", "New instance (<visibility>). View: Online menu", "You arrived together with <host>: you're a guest in <host>'s story." |
-| Go along (19.30.6) | "<name> went into <stage>. Go along?", "<name> and <name> went into <stage>. Go along?", "View: answer" (keyboard "F1: answer"), "Go along", "<name> is in <stage>.", "A: Go along", "B: Stay", "<name> is in <stage> now.", "<name> left <dungeon>.", "<name> was defeated in <stage>.", "(defeated)", "(loading)", "(other quest)", "Couldn't go along: you were defeated.", "Couldn't go along: <name> left <dungeon>.", "<name> left <stage> before you arrived.", "<name> went on to <stage>." |
+| Go along (19.30.6) | "<name> went into <stage>. Go along?", "<name> and <name> went into <stage>. Go along?", "<name> is in <stage>. Go along?" (a late notice), "View: answer" (keyboard "F1: answer"), "Go along", "<name> is in <stage>.", "A: Go along", "B: Close", "<name> is in <stage> now.", "<name> left <dungeon>.", "<name> was defeated in <stage>.", "(defeated)", "(loading)", "(other quest)", "Going along when <name>'s floor is ready...", "<name> is in a boss fight. Going along when it ends.", "View: cancel", "A: Cancel", "Going along...", "Couldn't go along: you were defeated.", "Couldn't go along: <name> left <dungeon>.", "Couldn't go along: <name>'s floor stayed busy.", "Couldn't go along: a scene here took too long.", "<name> left <stage> before you arrived.", "<name> went on to <stage>." |
 | In the instance | "<name> joined.", "<name> left.", "<name> went to <stage>.", "<host> made the instance <visibility>.", "Shared story progress saved to your story.", "<name> is not available.", "Reconnected. You're playing apart from <host> until the next stage.", "You joined <host>'s instance. <host> is in <stage>. Leave: Online menu" (I1a's automatic join; "area" names a region since round 72, so the reconnect toast says "stage") |
 | End | "<host> left. The instance ends.", "<host> lost the connection. Waiting for <host>... <s> s", "<host> is back.", "<host> did not come back. The instance ends.", "<host> was defeated. Waiting for <host>... <s> s", "<host> was defeated. The instance ends.", "The instance has ended.", "A moderator ended this instance.", "You were removed from <host>'s instance.", "Back on your own story.", "The server restarted. Back on your own story.", "Server restart in <s> s." |
 | Leaving | "Leave <host>'s instance? You return to your lobby.", "End the instance for everyone?", "Your guests will return to their lobbies.", "Leave <host>'s instance and join <name>?" |
@@ -9245,7 +9253,7 @@ will move.
 | Online screens of the title | as today: D-pad, A, B, the on-screen keyboard for names | as today |
 | Online menu = the F1 menu's *Online* tab (in the game) | View/Back opens and closes the F1 menu as today (`game_main.cpp`, `back_button_free`); LB/RB switch pages; D-pad moves; A selects; B goes back or closes; X and Y are the page's second and third action | F1, arrows, Enter, Esc, Tab |
 | Prompt | D-pad up/down chooses a row; left/right the visibility on *New instance*; A chooses; X details; B back (gate form, and the loading-screen form, which since round 72 only arrivals from home get); from round I3 Y *Join at <host>* on a row whose players are elsewhere | arrows, Enter, Backspace for B |
-| Go-along notice (19.30.6) | nothing while it only shows (it takes no button); View/Back opens the F1 menu on the *Instance* page with the offer focused; there D-pad up/down chooses an offer, A goes along, B closes the menu (stay) | F1, arrows, Enter, Esc |
+| Go-along notice (19.30.6) | nothing while it only shows (it takes no button); View/Back opens the F1 menu on the *Instance* page, with the offer focused once the notice has been on screen for half a second (a View press in its first half second opens the menu with the cursor below the box); there D-pad up/down chooses an offer, A goes along (on a waiting go-along, A cancels it), B closes the menu and this offer's notices (the offer stays on the page) | F1, arrows, Enter, Esc |
 | Browser NPC | A near it, facing it (the press is held from the pad stream, 19.10); then as the *Instances* page | the A keys (Enter, Space, K) near it; not E, which is the game's R |
 | Player card | from the *Nearby* page (A on a row), the friend list, the *Instance* page; no pad button at the figure | C near a figure (unbound in the game's defaults) |
 | Spectator (staff) | LB/RB cycle the members' cameras; Y the free camera (right stick); View opens the menu with *Stop watching* | Tab, F, mouse |
@@ -9551,7 +9559,7 @@ STORY counts by its role.
 | --- | --- | --- | --- |
 | A member takes an exit to another field | barrier inside the instance (3.4 filtered) | 5.2 as built | "Lee went to B2." |
 | A member goes from a field into a dungeon | barrier inside the instance; the go-along offer to the members in fields (19.30.5) | 5.2 as built | "Kim went into Ancient Ruins B1. Go along?  View: answer" |
-| A member goes along | INTENT 4, GO stamped; its barrier joins the entrants at the entrance (19.30.7) | the exit port's departure for that slot (`ForkKind::exit`) | "Joining Kim..."; "Lee joined." |
+| A member goes along | INTENT 4 held until the entrants' floor is joinable, then GO stamped; its barrier joins the entrants at the entrance (19.30.7) | the exit port's departure for the GO slots of one step (`ForkKind::go`: the exit's side rule, forked between two steps) | "Going along when Kim's floor is ready..."; "Joining Kim..."; "Lee joined." |
 | A guest goes home (exit into a hub, gate disc, game over) | DISSOLVE, seat freed | as built | "Lee left." |
 | A guest's *Leave instance* | HOME(slot) | home departure (fork) | "Lee left." |
 | The host goes home on purpose | END `host_left`, HOME(all) after 3 s | home departure | "Kim left. The instance ends." |
@@ -9641,10 +9649,11 @@ not ending, and listed with their state:
 
 - joinable now, with seats for the whole group: a JOIN at S when the
   instance has a stage group there, else entering as a guest in a new
-  stage group at S (19.30.4) when S is a gate stage or visited;
-- *Not here yet* (greyed): no stage group at S, and S is neither a gate
-  stage nor visited (19.30.3); choosable from round I3 by *Join at
-  <host>*;
+  stage group at S (19.30.4) when S is a gate stage whose gate the host's
+  story has opened, or visited;
+- *Story not here yet* (greyed): no stage group at S, and S is neither a
+  gate stage whose gate the host's story has opened nor visited (19.30.3);
+  choosable from round I3 by *Join at <host>*;
 - *Boss fight* (boss-locked): choosing it waits (19.7.7);
 - *Host reconnecting* (greyed, not choosable);
 - *Full* (greyed; for staff *Spectate*, I3);
@@ -9684,7 +9693,7 @@ Q13's order: "party and friends first, then the best ping and free slots".
    point"), so a player who wants it sees it;
 7. the older instance.
 
-Greyed and waiting rows (boss fight, host reconnecting, full, not here yet)
+Greyed and waiting rows (boss fight, host reconnecting, full, story not here yet)
 come after the joinable ones. The first row is preselected. The relay sends OPTIONS again on
 a change, at most once a second, and the client keeps the cursor on the same
 instance.
@@ -9793,9 +9802,11 @@ CHOICE is checked again at the decision:
   stage (round 72), a NEW as a guest: a new stage group of the instance
   with the host's story by the replace (19.30.4).
 - **Boss-locked:** BARRIER_WAIT's existing *Wait for <names>* (JOIN when the
-  lock clears) or *Go alone*, which since round 72 is a new stage group of
-  the chosen instance at that stage, as a guest (19.30.4); before, a new
-  instance.
+  lock clears) or *Go alone*: a new instance of the arrival's own, on its
+  own story, with the visibility last chosen, as before round 72. Never a
+  new stage group of the chosen instance at that stage: that would be a
+  second copy of the host's boss fight, which the arrival could win alone
+  in the host's story.
 - **Full, ended, no longer visible meanwhile:** a refreshed prompt with the
   line "Kim's instance is full now." (gate form: before the departure;
   loading-screen form: the barrier keeps waiting).
@@ -10025,6 +10036,19 @@ in the world.
   Equal points stay equal, so a pair before the same boss keeps getting the
   progress together. Spectators never; a guest at any other point nothing.
   Values held in the host's grace mirror when they merge.
+- **Joiners count from their JOIN** (round 72's review). A member that
+  entered the visit by a JOIN (a walk-in, a travel, *Go along*) holds
+  through its restore everything the visit set before, and 8.3's pending
+  set carries those values as its own ("progress a member's engine adopted
+  through a join is pending"). So the client keeps the persistent shared
+  values of its restored state as the visit's *join base*, and STORY marks
+  which of its values are in it (I2). The mirror intersects the accepted
+  delta only with the values the guest's engine set after its JOIN tick: a
+  member who goes along after Kim's boss fell, stays 30 s and is in step
+  gets nothing of that boss. Base-group members and co-arrivals load the
+  visit's snapshot, which holds only confirmed values, so their base adds
+  nothing. The host's keeper still merges adopted values by the guest rules
+  (sets, harmless twice); they only never reach a mirror. W16c checks it.
 - **Why the guest's own report.** The host's STORY is the owner's and not
   spaced (round 59's exemption). Mirrored on its own, a modified host
   client could write into the own stories of every in-step guest, where
@@ -10304,7 +10328,8 @@ and stamped as GO (19.9.6).
   (the original has none at an entrance); scenario W14 records a join next
   to fighting enemies.
 - **Nobody alive.** While every present slot of the target stage group is
-  defeated, the relay holds the JOIN (the travel's hold, 19.9.2) until one
+  defeated (STATE's flag *no living member*, 19.18, which round I1b's go
+  along brings), the relay holds the JOIN (the travel's hold, 19.9.2) until one
   lives again or the group's game over takes it home (then the travel
   follows the instance as in 19.9.4's "the target took a barrier", or ends
   in the lobby when the instance ended). No rescue joins: a join never
@@ -10336,24 +10361,30 @@ any visit length. The user's P3 puts J before round I3.
 A member who travels to another member of its own instance (*Go along*,
 round I1b, 19.30.7; *Go to <member>*, round I3) never leaves the instance:
 no *Leave instance*, no HOME, its seat stays taken, its engine keeps the
-host's story. The relay stamps GO (slot, stage, point) in the member's
-stage group with the target's stage and the point through which the
-target's stage group entered it; the engine runs the exit port's departure
-for that slot, with an exit's side rule (19.30.7). Its barrier is one
-inside the instance: the target's stage group first (a co-arrival or a
-JOIN; from round I3 with the spawn next to the target's slot, 19.9.3); when
-the target has gone, a new stage group of the instance at that stage. Never
-home, never a new instance: invariant 6's round 72 sentence allows it, the
-target being where the instance's story is.
+host's story. The relay holds the request until the target's stage group
+is joinable and has a living member and the member's own stage group can
+take the event (19.30.7, step 2; the member plays on meanwhile), then
+stamps GO (slot, stage, point) in the member's stage group with the
+target's stage and the point through which the target's stage group
+entered it; the engine runs the exit port's departure for the GO slots of
+that step, with an exit's side rule (`ForkKind::go`, 19.30.7). Its barrier
+is one inside the instance: the target's stage group first (a co-arrival
+or a JOIN; from round I3 with the spawn next to the target's slot, 19.9.3),
+waited for while it exists, without `Instances:JoinHoldSeconds`; only when
+nobody of the instance is at that stage any more, a new stage group of the
+instance there. Never home, never a new instance, never a second stage
+group of the instance next to a living one on the same stage: invariant
+6's round 72 sentence allows it, the target being where the instance's
+story is.
 
 - GOTO mode 4 *go to host* and mode 8 *go to member* inside the own
   instance answer GOTO_RESULT *ok* without a token and stamp GO; a target
   in a hub stage (a defeated host in his return hold, 19.6.5) or at a
   barrier is "not found" or a short wait for its arrival.
 - 19.9.4's races apply, except that a failure lands in a new stage group
-  of the instance at the target's stage, not home; a target that took a
-  barrier while the joiner loaded is followed once (from round I3), as
-  there.
+  of the instance at the target's stage (when nobody of the instance is
+  there any more), not home; a target that took a barrier while the joiner
+  loaded is followed once (from round I3), as there.
 - **Before round I3 the minimum is *Go along*** (19.30.7): the GO event,
   the JOIN at the entrance and round J's checkpoint join (merged). Nothing
   of I3's travel (GOTO, the kept snapshot, the spawn next to a slot) is
@@ -10519,7 +10550,8 @@ a hundred requests are one toast, not two hundred seconds of them).
     HEADING the member is an ordinary fresh arrival (the party's instance,
     if any, is its prompt's top row).
   - Members at home elsewhere get the notice "Kim is heading to Cliff
-    Dungeon B1. Follow?  View: answer" (15 s on screen, no answer = stay;
+    Dungeon B1. Follow?  View: answer" (20 s on screen like the go-along
+    notice, `World:AnswerNoticeSeconds`; no answer = stay;
     the *Party* page answers it, A: *Follow*, B: *Stay*): the go-along
     notice's form (19.30.6), because A and B are the game's buttons
     (19.5.7). *Follow* is a travel: a co-arrival while the leader's base
@@ -10882,7 +10914,7 @@ release).
 
 | Object | Fields |
 | --- | --- |
-| `HubMember` (widened) | member id, account id, name, role, bound box, connection, its stage group and slot, its instance, party, friends and blocks (both directions, ids), prefs, presence (stage, last PRESENCE2), RTT samples, preferred slot, held seat, a pending GO (`GoAlong`: offer, stage, point; round 72) |
+| `HubMember` (widened) | member id, account id, name, role, bound box, connection, its stage group and slot, its instance, party, friends and blocks (both directions, ids), prefs, presence (stage, last PRESENCE2), RTT samples, preferred slot, held seat, a go-along request (`GoAlong`: offer, stage, point, waiting or stamped, since when; round 72) |
 | `WorldInstance` (new) | `wid` (u32, run-local, the only id on the wire; it may repeat after a restart), `HistoryId` (filled when the queued `instance_history` row is written; never sent to clients; the server maps `wid` to it for `achievement_unlocks.instance_id`, reports and the website), host member and box, data hash, visibility, settings and their hash, seats by member (taken, held, reserved), spectators, removal bars (account until time), host grace or return deadline, held story values, its stage groups, flags (starting, ending); round 72: its area, the visited stages, the go-along offers (at most three, 19.30.9) |
 | `HubInstance` (the stage group, today) | plus its `WorldInstance` |
 | `Party` | id, leader, members in join order, open invites (to, from, expires) |
@@ -11225,7 +11257,9 @@ the decision stays under the lock).
 | `World:HostReturnSeconds` | 60 | a defeated host's return, round I3 (question 37) |
 | `World:StartingSeconds` | 10 | the automatic co-arrival window of a new instance (19.7.6) |
 | `World:PlanWaitMs` | 1,000 | the gate form releases the held press without OPTIONS (19.7.4) |
-| `World:GoAlongNoticeSeconds` | 20 | how long the go-along notice is on screen; the offer stays on the *Instance* page while it is open (19.30.5); OFFER carries it |
+| `World:AnswerNoticeSeconds` | 20 | how long the go-along notice and the party's *Follow* notice are on screen; the offer stays on the *Instance* page while it is open (19.30.5, 19.12); OFFER carries it |
+| `World:GoAlongWaitSeconds` | 60 | how long a go-along request waits in the field for the entrants' floor (a boss fight there does not count, 19.30.7) |
+| `World:OfferReopenSeconds` | 120 | a member's re-entry into the same dungeon within this time after his offer closed reopens it silently (19.30.5) |
 | `World:DataHashes` | empty (any) | the game data the server admits (19.17.3) |
 | `World:SeatSeconds` | 120 | I5 |
 | `World:PartyIdleMinutes`, `World:InviteSeconds` | 10, 60 | I4 |
@@ -11287,7 +11321,7 @@ golden vectors on both sides (`online_wire_tests.cpp`,
 | 0x98 | FRIENDS_STATE | online friends: member, name, area, stage, wid, flags (host, joinable for this viewer, private, hidden) | on change, at most once per 2 s per friend (I2) |
 | 0x99 | GOTO_RESULT | request id, result (ok, boss wait, full, not found, ended, removed, busy, other settings, too long), stage, token (0 for a GOTO inside the own instance, 19.9.6), seconds | the answer to GOTO |
 | 0x9A | PARTY_STATE | party, leader, members (member, name, area, wid, connected), open invite | I4, on change |
-| 0x9B | OFFER | offer id u16, op (1 open, 2 changed, 3 closed), flags (show the notice), entrants (count u8, member u32 each), stage (where the first entrant is), notice seconds u8, close reason (left, defeated, ended, gone along) | round 72 (I1b, 19.30.5): to the members a go-along offer concerns, when it opens, gains an entrant (the notice again), moves deeper (no notice) or closes; to a member arriving in a field while one is open |
+| 0x9B | OFFER | offer id u16, op (1 open, 2 changed, 3 closed), flags (show the notice), entrants (count u8, member u32 each), stage (where the first entrant is), notice seconds u8, close reason (left, defeated, ended, gone along) | round 72 (I1b, 19.30.5): to the members a go-along offer concerns, when it opens, gains an entrant (the notice again), moves deeper (no notice) or closes; to a member arriving in a field while one is open (with the notice only as a late notice, 19.30.5; never for a member that was in a dungeon when it opened) |
 
 **Changed:**
 
@@ -11300,7 +11334,9 @@ golden vectors on both sides (`online_wire_tests.cpp`,
   (19.17.3).
 - HEADING 0x03 (round 72): + asked u8, the slots the exit port asked on
   the mat for this departure that stay (`ExitPort::asked` without the
-  leavers): no go-along notice for them (19.30.5).
+  leavers): no go-along notice for them (19.30.5). The relay resolves them
+  to member ids when HEADING arrives, against the stage group the port ran
+  in (an exit fork's parent when the sender is in its child already).
 - BARRIER 0x04: + travel token u32 (0: none), + plan id u16.
 - BARRIER_OK 0x84: members as u32 in the co-arrival list; + wid, host
   member, settings and their hash, the story owner key, the story mode
@@ -11313,19 +11349,31 @@ golden vectors on both sides (`online_wire_tests.cpp`,
 - JOIN_REQ 0x83: + kind (join, home, go) for solo-led stage groups
   (19.6.5); *go* (round 72) with the stage and point (19.30.7).
 - INTENT 0x0D: kind 3 *leave* (the own slot home; the relay stamps HOME);
-  kind 4 *go along* (round 72; argument: the offer id; the relay stamps
-  GO, 19.30.7).
+  kind 4 *go along* (round 72; argument: the offer id, or 0 to withdraw a
+  waiting request or report an expired GO; the relay holds it until the
+  target is ready, then stamps GO, 19.30.7).
+- STATE 0x0C (round 72, I1b): + flag 16 *no living member* (no present
+  slot alive, from the engine's alive mask), sent at once like the boss
+  lock: the go-along wait and every JOIN hold read it (no rescue joins,
+  19.9.3, 19.30.7).
 - STORY 0x0E / STORY_ACK 0x89: + the owner key (member u32, box u8); the
-  next free reason *owner*.
+  next free reason *owner*; STORY also marks which of its values are in
+  the sender's join base (I2, 19.8.6).
 - PRESENCE 0x87 and PRESENCE2 0x90 to clients: the member as u32, relation
   flags.
 - Tick events: JOIN + spawn kind (0xFF the entrance point, 0-3 next to that
   slot); HOME (slot mask, reason) is new and forks with `ForkKind::home`
-  (exactly the mask, 19.6.5); GO (slot u8, point u8, stage) is new (round
-  72): applied like INTENT at the first membership-safe step, the exit
-  port's departure for that slot with an exit's side rule and fork
-  (`ForkKind::exit`), the stage taken as named (19.30.7). Their numbers
-  follow round J's events and are pinned at the integration.
+  (exactly the mask, 19.6.5); GO (slot u8 first, point u8, stage) is new
+  (round 72): applied like INTENT at the first membership-safe step, every
+  GO of that step together (one `Engine::online_go` with their mask), the
+  exit port's departure with an exit's side rule and the new fork kind
+  `ForkKind::go` (forked between two steps like `give_up`, so its recorded
+  side is one frame later than an exit's), the stage taken as named; a GO
+  not applied 300 ticks after its tick expires on every engine (19.30.7).
+  At a fork GO and HOME follow their slots as LEAVE, INTENT and DELAY do
+  (`TickEvent.Slot` names GO's slot; HOME's mask is split by side), so a
+  GO waiting behind a fork goes with its slot into the child. Their
+  numbers follow round J's events and are pinned at the integration.
 - ROOM 0x8A and ROSTER 0x8D retire; their numbers stay reserved for good.
 - The client skips (and logs once) an undecodable WORLD_NOTICE,
   MEMBER_INFO, FRIENDS_STATE, INSTANCE_LIST, INSTANCE_INFO, PARTY_STATE or
@@ -11398,9 +11446,11 @@ Everything runs online only.
   context values (I3); the spectator's observer engine with the kept lobby
   snapshot, and the travel's kept snapshot of its parked engine (I3).
   Round 72: the replace at a guest's NEW (19.30.4); the GO event
-  (`Engine::online_go`: the exit port's departure for a slot to a stage
-  and point, its NEXTSTAGE without the zone remap, 19.30.7); HEADING's
-  asked mask from `ExitPort::asked`.
+  (`Engine::online_go`: the exit port's departure for the GO slots of one
+  step to a stage and point, `ForkKind::go`, its NEXTSTAGE without the
+  zone remap, the expiry after 300 ticks, 19.30.7); STATE's *no living
+  member*; HEADING's asked mask from `ExitPort::asked`; the join base
+  for STORY (I2, 19.8.6).
 - **The Cheats tab** (section 17's "Before round D" fix, now before round
   I1): its controls disabled and its player buttons hidden whenever
   `online` is set; `cheats` in the character and achievement contexts from
@@ -11486,8 +11536,10 @@ New engine paths, all behind `Engine::online()`:
 - `ForkKind::home` (exactly the mask leaves; the side rule stays for every
   other fork kind);
 - GO (round 72: a stamped event in a live instance, or JOIN_AT's tick in a
-  solo-led stage group; the exit port's departure for one slot with an
-  exit's side rule and fork, the target taken as named, 19.30.7);
+  solo-led stage group; the exit port's departure for the GO slots of one
+  step with an exit's side rule, forked as `ForkKind::go` between two
+  steps, the target taken as named, expiring unapplied after 300 ticks,
+  19.30.7);
 - the replace at a guest's NEW (round 72: a solo engine from home, parked
   at its barrier before its transition steps, 19.30.4);
 - the settings at a restore;
@@ -11983,7 +12035,14 @@ members who accept (19.9.6).
   not (free travel); question 32's guard, *Remove* and the visibility answer
   it. Co-arrival puts strangers into a stranger's new public instance
   without asking (answer 21); party-and-friends-only co-arrival is the
-  fallback if players complain.
+  fallback if players complain. Since round 72 the usual join is at the
+  gate while the host is elsewhere in the area: a stranger takes a seat
+  and plays on the host's story in a stage group of his own without ever
+  meeting the host, and on a busy server nearly every gate offers such
+  rows (answer 21 reread, 19.30.10). *Remove* (I1b), the visibility and
+  the preselection (question 40 (b): no preselected row without anyone at
+  the arrival stage) answer it; *Report player* and the instance history
+  show who played where.
 - **The host ends a run at any time** (Q7); guests keep what they earned but
   lose the run.
 - **Invisible staff** need trust; the audit log and the privacy page are the
@@ -12021,17 +12080,25 @@ members who accept (19.9.6).
   (a pit, a warp, a scene of its stage group) could leave half. It applies
   only at a membership-safe step, does nothing for a defeated, absent or
   leaving slot, and takes the exit port's built departure; the client
-  ctest runs it in each of those states.
+  ctest runs it in each of those states. A stage group whose
+  membership-safe step does not come (a member's exit prompt left open has
+  no time limit) cannot hold it: it expires after 300 ticks on every
+  engine alike.
 - **Offers in a busy area**: members going in and out of dungeons make
-  notices. At most three lines, none for moves inside a dungeon or out of
-  one, and each disappears after 20 s; if players find them noisy, a
-  switch "Go-along notices: on / friends and party only / off" is the
-  fallback.
+  notices. At most one notice per entrant and dungeon in 120 s (a re-entry
+  reopens the offer silently), none from an entrant the receiver blocked,
+  none after he closed the offer with B, none for moves inside a dungeon
+  or out of one; the closing lines stay in the box; each notice
+  disappears after 20 s. A switch "Go-along notices: on / friends and
+  party only / off" would be the next step if players still find them
+  noisy, but only after asking the user: he wants everyone asked.
 - **The host's lobby exit after a dungeon's boss** ends the instance for
   guests elsewhere in the area who did nothing (answer 24 as the user
   wants it); the line in the host's exit prompt warns him (19.30.1).
 - **The area table** is a judgement (the kinds, the Fortress, the dungeon
-  keys); `AreaTableTests` pins every area's scope against the stage graph.
+  keys); `AreaTableTests` pins every area's scope against a graph of all
+  stage scripts (not `campaign.cpp`'s story-plan graph), and the relay
+  counts any barrier out of the scope (`area_escape`).
 
 ### 19.28 Changes elsewhere in this document
 
