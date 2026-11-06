@@ -68,6 +68,17 @@ FakeHistory needed IInstanceHistoryRepository without PruneAsync (web moved it, 
 - Game scenarios with real clients: see "Scenario results" below.
 - No game code changed in this session (det.sh / ctest of session 1 stand).
 
+## Scenario results (trial merge 2, real hidden clients)
+
+Run c1 (`build/i1aweb/scen_c1.log`, run folder `build/i1aweb/trial2/tools/online_test/.work/run_20261106_144305`):
+PASS S14z, W1, A1, W11 (decision 41), W19 (35 fake presence senders, 30 drawn), W1x (the counter-proof fails as it
+must), W22 (protocol 48 client: "Update required"), W25 (killed server: both home), W28 (reset and restore), W3.
+FAIL W24: the client stays `closed` in the field after CLOSE 8 (no reconnect, no way home; contract web 16:05, client
+lane). FAIL W12, W18, W26, W27, W29 on the harness side, fixed since (b died on Hard; a host step waited for sealed ticks
+alone; the crashed client's open log blocked the rename; the host fell beside a living guest, no game over; the
+achievements' format). W30, W30b, W30x, W32 stood at stagML11's gate mat (the gate step needs `explore mate00 until
+onme:mate00` first, fixed); the run was stopped there and the rest went into run c2.
+
 ## Test results, session 1 (2026-11-06)
 
 - Server unit tests: 420 of 420 (`build/i1aweb/unit3.log`; new: `AreaTableTests` 4, `WorldDomainTests` 6).
