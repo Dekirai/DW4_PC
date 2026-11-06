@@ -83,6 +83,23 @@ Own stack: mysqld 3633 (not needed by the client lane so far), test ports
   commit; after b only a DEV-only hook and the env name list changed): det.sh 4004f056 / 396cb219 both runs
   (`work/dref/checks/det/det_i1aclient_c`). ctest 56/56 (`build/ctest_rel6.log`). The DEV=ON build compiles (`build/dev`).
 
+- 14:00 (second agent) Play straight into the own lobby (19.5.1): `src/game/online/title_driver.{hpp,cpp}` drives the
+  title's Game Start and the box's Call Digimon from the screens' own waits (TITLE2, LOADCTRL2, the own LOADINTF2
+  panel with its slot / box / difficulty helpers; read-only getters in the engine), behind a black "Entering the
+  server..." with the title muted; hand-overs: the difficulty dialog (the player's; `--online-difficulty` answers it),
+  no online character (Create Digimon), a card message, 90 s without the lobby. Never with `--online-script` or
+  `--input` (the campaign bot drives the title there). `DW4_TEST_TITLE_DRIVE=BOX` (dev, offline) drives a run's own
+  title through the app's input path (`build/smoke/drive1.log`: k2's card into stagML11 in 1,564 steps; screenshot
+  `build/smoke/drive_600.bmp` shows the loading screen). ctest `online_title` (57 checks with the data).
+- 14:15 the host's exit line also at a solo stage group's original prompt (exit mat scripts naming only hub stages,
+  `chunk_leads_home`; TITLE_TESTS_SCAN found 29 such mats in areas.json's stages) and with the gate disk under the
+  disk panel's cursor (`PanelManager::disk_under_cursor`).
+- 14:20 "Welcome back, Kim. 14 players online, 2 friends." (GET /world and GET /friends at the lobby; web's I1a
+  friend list carries the presence). ctest 57/57 (`build/ctest_rel7.log`).
+- 14:30 offline proof on build d (15b80d40, `build/off/dw4_i1aclient_d.exe`): det.sh 4004f056 / 396cb219 both runs
+  (`work/dref/checks/det/det_i1aclient_d`); r25c (`build/off/r25c_d.log`, run seg_r25c_i1aclient_d) and the save
+  state suite (`build/st/st_d.log`) see below.
+
 ## Left (in order)
 
 1. (done) ctest for the engine paths.
@@ -90,8 +107,20 @@ Own stack: mysqld 3633 (not needed by the client lane so far), test ports
 3. (done) Session.
 4. (done) App.
 5. (done) det.sh again at the end.
-6. (done) SEAMLESS.md 19.25 built notes; the contract decisions (contract file 13:30 entry).
-7. Not built (left, see SEAMLESS.md 19.25 "Built, lane client"): Play driving the title's Game Start / Call Digimon
-   behind one loading screen (19.5.1; Play starts at the title as the rooms did).
-8. Not this lane's: the W scenarios with real clients (harness lane after the merge); the host's exit line for a solo
-   stage group's own prompt and the gate disc; "Welcome back" with friends (I2); the half-rate ghosts (M5 fallback).
+6. (done) SEAMLESS.md 19.25 built notes; the contract decisions (contract file 13:30 entry, 14:40 entry of the
+   second agent).
+7. (done) Play driving the title's Game Start / Call Digimon behind one loading screen (19.5.1).
+8. (done) The host's exit line for a solo stage group's own prompt and the gate disk; "Welcome back" with friends.
+9. Not this lane's: the W scenarios with real clients (harness lane after the merge); the half-rate ghosts (M5
+   fallback, built only if a weaker GPU measures over the budget); *Choose character* (round D's boxes).
+
+## How to run the tests
+
+- `build/bld.cmd rel ON nodev` then `build/ctest.cmd rel` (57 suites; `online_title` alone:
+  `build/rel/dw4_online_title_tests.exe "E:/Games/Emulator/Dolphin-x64/Games/Digimon World 4 - Extracted"`).
+- The app's drive without a server (dev build): `DW4_NO_ERROR_BOX=1 DW4_TEST_TITLE_DRIVE=0 build/dev/dw4_game.exe
+  --data DATA --smoke-test 2600 --stage stagis10 --card-dir build/smoke/k2card` (k2's card: work/campaign/checkpoints/
+  r25c/k2).
+- Offline proof: copy `build/rel/dw4_game.exe` to `build/off/dw4_i1aclient_X.exe` and work/campaign/bin; `bash
+  work/dref/checks/det.sh <absolute exe path> i1aclient_X`; `cd work/campaign && EXE=dw4_i1aclient_X.exe
+  NAME=seg_r25c_i1aclient_X bash segments.sh r25c`; `EXE=<exe> bash build/st/st_all.sh` (own copy of the suite).

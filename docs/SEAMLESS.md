@@ -9148,7 +9148,12 @@ home (DISSOLVE, 3.4); it is the only way out of an area.
     engine online (the virtual card, the online rules, the replay rate
     calibration) and drives the title's Game Start and box choice behind one
     loading screen ("Entering the server..."); the own story comes before
-    the Game Start (round 59's `await_hello`, round G's hold).
+    the Game Start (round 59's `await_hello`, round G's hold). Built in
+    I1a's client lane (19.25): a box with clears gets the original
+    difficulty dialog at this Game Start too (19.8.7); it lifts the
+    loading screen for the player while it is open. A new account (no
+    online character on the card) stops at Create Digimon, the original
+    new-character flow.
   - **Choose character**: the same start with the original character select
     and the four online boxes; the original difficulty dialog comes back
     online, limited by the box's own clears (19.8.7); an empty box starts
@@ -12041,32 +12046,68 @@ here).*
   *Instance* page (host, visibility cycled by the host, members with stage,
   level and connection, *Leave instance* with 19.5.6's questions), and the
   F1 menu opens on that tab while the world runs; the line under the own
-  status window; the host's extra line at an exit prompt into a hub stage
-  (the exit port's prompt of a stage group of two or more only); name tags
-  coloured by relation (party green, friend blue, staff gold); Discord's
-  party as the instance's x/4; 30 ghost figures with 32 weapon packages at
-  full rate (M5; the half rate not built); the toasts' stage names from
-  the area table (`presence_data`, whose format 2 columns the web lane
-  writes; no separate reader).
-- **Tests:** ctest 56/56 (online: the replace, the redirect, the settings
+  status window; the host's extra line "Your guests will return to their
+  lobbies." at the exit port's prompt into a hub stage (a stage group of
+  two or more), at the original prompt of a stage group of one (its window
+  `i_zzstchgwb` is up and the own player stands on an exit mat whose
+  script names only hub stages, `chunk_leads_home`: a scan of every stage
+  of `areas.json` found 29 such mats, all on dungeons' last floors, the
+  boss stages, the quest dungeons and stag0401's `mats00`) and while the
+  gate disk is under the own disk panel's cursor (the disk has no prompt:
+  it takes him home at once; `PanelManager::disk_under_cursor`, read
+  only); name tags coloured by relation (party green, friend blue, staff
+  gold); Discord's party as the instance's x/4; 30 ghost figures with 32
+  weapon packages at full rate (M5; the half rate not built); the toasts'
+  stage names from the area table (`presence_data`, whose format 2 columns
+  the web lane writes; no separate reader).
+- **Play straight into the own lobby (19.5.1):** the world session starts
+  at the title as before, and the title driver
+  (`src/game/online/title_driver.hpp`) plays the title's own Game Start
+  and the box's Call Digimon behind one loading screen ("Entering the
+  server...", black, the title muted): START at "press start", Game Start,
+  Call Digimon, card slot A (the online character's virtual card), the
+  character's box (the card cache's), START. It reads the screens from the
+  engine before every step (TITLE2's state, LOADCTRL2's, the own
+  LOADINTF2 panel with its slot, box and difficulty helpers and its
+  message prompt; read-only getters, nothing of the engine changes) and
+  presses only when the screen that takes the button waits for it, with
+  the cursor where it should be: one step down, at least one up, the same
+  press again only after half a second without a change (a press the F1
+  menu swallowed). So it takes as long as the title takes on that PC and
+  never lands a press on another screen. Hand-overs (the loading screen
+  lifts): the original difficulty dialog is the player's while it is open
+  (19.8.7; the drive goes on after it; `--online-difficulty` answers it in
+  test runs); a card without the online character stops at Create Digimon
+  (the original new-character flow); a card message; no lobby after 90 s
+  of steps (at the press-start screen the old toast "Press START to play
+  your online character." comes back). At the lobby, 1.5 s after GET
+  /world and GET /friends were asked again: "Welcome back, Kim. 14 players
+  online, 2 friends." (the friends online from the web lane's I1a
+  presence in GET /friends; the players' part only with a count, the
+  friends' only with one or more online). The drive never runs with an
+  online test script or an input script (their campaign bot drives the
+  title as before, the W scenarios and the UI runs with `--input`);
+  `DW4_TEST_TITLE_DRIVE=BOX` (development test runs, offline, on the
+  forbidden list online) drives a run's own title through the app's input
+  path (k2's card from stagIS10 into stagML11 in 1,564 steps, 7 presses).
+- **Tests:** ctest 57/57 (online: the replace, the redirect, the settings
   at a restore, at a guest's NEW and at DISSOLVE, HOME without data and on
   real engines with an observer finding the side again, the local way
   home; online_session: `world_session` over the fake hub; online_wire:
-  `world_messages`; online_api and online_lobby: the world's REST and the
-  home screen); offline: `det.sh` 4004f056 / 396cb219 twice, r25c 10 of 10
-  with 1,748,011 frames, the save state suite 17 of 17.
+  `world_messages`; online_api and online_lobby: the world's REST, the
+  home screen, GET /friends and the welcome; online_title: the driver's
+  decisions and press rhythm, and with the game data the real title and
+  character select driven into stagML11 for boxes 0, 2 and 3 from three
+  start offsets, one after the attract demo, the difficulty dialog
+  answered by a test run and by the player, the exit mats of stag0101 and
+  dng101b2, the disk panel's cursor on the gate disk); offline: `det.sh`
+  4004f056 / 396cb219 twice, r25c 10 of 10 with 1,748,011 frames, the
+  save state suite 17 of 17 (on the last code commit).
 - **Not built in this lane** (the integration's or later rounds'): the W
   scenarios with real clients (the harness lane, after the merge); the
-  host's extra exit line for a solo stage group's own prompt and the gate
-  disc (the original prompt names no destination the client can read);
-  "Welcome back, Kim. 14 players online, 2 friends." (with I2's friends);
-  the half-rate ghost animation (M5: the fallback only); Play driving the
-  title's Game Start and the box's Call Digimon behind one loading screen
-  (19.5.1): Play starts the world session at the title as the rooms did
-  ("Press START to play your online character."), and the player calls
-  the character himself; an automatic call needs a title driver that does
-  not depend on frame timing (the campaign's presses do) and is left to a
-  later round with *Choose character* and round D's boxes.
+  half-rate ghost animation (M5: the fallback only, built only if a weaker
+  GPU measures over the budget); *Choose character* with the original
+  character select and the four online boxes (round D's boxes).
 
 **Round I1b: the prompt, go along, removal and *Report player*** (proposed
 r69; M, two lanes; round 72 adds the third lane *go along*, M-L).
