@@ -2293,6 +2293,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 // (a live analog stick or movement keys, else a bot's
                 // steering); the bots steer only while it is centred.
                 std::uint32_t script_buttons = scripted.held(frame);
+                const std::uint32_t script_held = script_buttons; // (the latch below waits for these)
                 if (overflow_scripted && overflow_lobby.dialog_open()) {
                     // (A test run's script drives Data Overflow's dialog; the
                     // story gets neutral pads meanwhile, SURVIVAL.md 3.3.)
@@ -2302,12 +2303,9 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     overflow_lobby.input(script_buttons, 0, 0);
                 }
                 if (overflow_scripted) {
-                    if (overflow_lobby.take_story_latch()) {
-                        overflow_script_latch = true;
-                        script_buttons = 0;
-                    }
+                    if (overflow_lobby.take_story_latch()) overflow_script_latch = true;
                     if (overflow_script_latch) {
-                        if (script_buttons != 0) script_buttons = 0;
+                        if (script_held != 0) script_buttons = 0;
                         else overflow_script_latch = false;
                     }
                 }
